@@ -117,6 +117,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("POST /api/v1/conversation/branches/switch", s.handleConversationBranchSwitch)
 	s.mux.HandleFunc("GET /api/v1/conversation/branches/compare", s.handleConversationBranchCompare)
 	s.mux.HandleFunc("GET /api/v1/prompts", s.handlePrompts)
+	s.mux.HandleFunc("GET /api/v1/prompts/stats", s.handlePromptStats)
 	s.mux.HandleFunc("POST /api/v1/prompts/render", s.handlePromptRender)
 	s.mux.HandleFunc("GET /api/v1/magicdoc", s.handleMagicDocShow)
 	s.mux.HandleFunc("POST /api/v1/magicdoc/update", s.handleMagicDocUpdate)
@@ -514,6 +515,32 @@ func (s *Server) handlePrompts(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"prompts": lib.List(),
 	})
+}
+
+func (s *Server) handlePromptStats(w http.ResponseWriter, r *http.Request) {
+	lib := promptlib.New()
+	_ = lib.LoadOverrides(s.engine.Status().ProjectRoot)
+
+	maxTemplateTokens := 450
+	if raw := strings.TrimSpace(r.URL.Query().Get("max_template_tokens")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			maxTemplateTokens = n
+		}
+	}
+	allowVars := []string{}
+	for _, entry := range r.URL.Query()["allow_var"] {
+		for _, part := range strings.Split(entry, ",") {
+			if p := strings.TrimSpace(part); p != "" {
+				allowVars = append(allowVars, p)
+			}
+		}
+	}
+
+	report := promptlib.BuildStatsReport(lib.List(), promptlib.StatsOptions{
+		MaxTemplateTokens: maxTemplateTokens,
+		AllowVars:         allowVars,
+	})
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {

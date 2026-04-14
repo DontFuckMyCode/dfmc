@@ -138,6 +138,7 @@ Endpoints:
 - `POST /api/v1/conversation/branches/switch`
 - `GET /api/v1/conversation/branches/compare?a=...&b=...`
 - `GET /api/v1/prompts`
+- `GET /api/v1/prompts/stats?max_template_tokens=...&allow_var=...`
 - `POST /api/v1/prompts/render`
 - `GET /api/v1/magicdoc`
 - `POST /api/v1/magicdoc/update`
@@ -215,6 +216,7 @@ go run ./cmd/dfmc remote tools --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote skills --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote prompt list --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote prompt render --url http://127.0.0.1:7779 --task security --query "auth audit"
+go run ./cmd/dfmc remote prompt stats --url http://127.0.0.1:7779 --max-template-tokens 450
 go run ./cmd/dfmc remote magicdoc show --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote magicdoc update --url http://127.0.0.1:7779 --title "Remote Brief"
 go run ./cmd/dfmc remote context budget --url http://127.0.0.1:7779 --query "security audit auth middleware"

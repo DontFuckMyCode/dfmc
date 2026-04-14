@@ -593,6 +593,26 @@ func TestPromptsEndpoints(t *testing.T) {
 		t.Fatalf("missing prompts field: %#v", listPayload)
 	}
 
+	statsResp, err := http.Get(ts.URL + "/api/v1/prompts/stats?max_template_tokens=200")
+	if err != nil {
+		t.Fatalf("get prompt stats: %v", err)
+	}
+	defer statsResp.Body.Close()
+	if statsResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(statsResp.Body)
+		t.Fatalf("unexpected stats status %d: %s", statsResp.StatusCode, string(raw))
+	}
+	var statsPayload map[string]any
+	if err := json.NewDecoder(statsResp.Body).Decode(&statsPayload); err != nil {
+		t.Fatalf("decode stats payload: %v", err)
+	}
+	if statsPayload["template_count"] == nil {
+		t.Fatalf("missing template_count in stats payload: %#v", statsPayload)
+	}
+	if statsPayload["max_template_tokens"] != float64(200) {
+		t.Fatalf("expected max_template_tokens=200, got: %#v", statsPayload["max_template_tokens"])
+	}
+
 	renderBody := bytes.NewBufferString(`{"type":"system","task":"security","query":"auth security audit"}`)
 	renderReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/prompts/render", renderBody)
 	if err != nil {

@@ -18,7 +18,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -2425,8 +2424,13 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 
 	case "prompt":
 		action := "list"
+		parseFrom := 1
 		if len(args) >= 2 {
-			action = strings.ToLower(strings.TrimSpace(args[1]))
+			candidate := strings.ToLower(strings.TrimSpace(args[1]))
+			if !strings.HasPrefix(candidate, "-") {
+				action = candidate
+				parseFrom = 2
+			}
 		}
 		fs := flag.NewFlagSet("remote prompt", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -2440,9 +2444,13 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		profile := fs.String("profile", "auto", "prompt profile")
 		query := fs.String("query", "", "user query")
 		contextFiles := fs.String("context-files", "(none)", "context file summary")
+		maxTemplateTokens := fs.Int("max-template-tokens", 450, "warning threshold for per-template token estimate")
+		failOnWarning := fs.Bool("fail-on-warning", false, "exit with non-zero status if warnings are found")
+		var allowVar multiStringFlag
+		fs.Var(&allowVar, "allow-var", "extra placeholder variable to allow (repeatable)")
 		var varsRaw multiStringFlag
 		fs.Var(&varsRaw, "var", "prompt var key=value (repeatable)")
-		if err := fs.Parse(args[2:]); err != nil {
+		if err := fs.Parse(args[parseFrom:]); err != nil {
 			return 2
 		}
 
@@ -2483,8 +2491,34 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			}
 			_ = printJSON(payload)
 			return 0
+		case "stats", "validate", "lint":
+			v := url.Values{}
+			if *maxTemplateTokens > 0 {
+				v.Set("max_template_tokens", strconv.Itoa(*maxTemplateTokens))
+			}
+			for _, raw := range allowVar {
+				if p := strings.TrimSpace(raw); p != "" {
+					v.Add("allow_var", p)
+				}
+			}
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/prompts/stats"
+			if encoded := v.Encode(); encoded != "" {
+				endpoint += "?" + encoded
+			}
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote prompt stats error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			if *failOnWarning {
+				if n, ok := payload["warning_count"].(float64); ok && n > 0 {
+					return 1
+				}
+			}
+			return 0
 		default:
-			fmt.Fprintln(os.Stderr, "usage: dfmc remote prompt [list|render --query ...]")
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote prompt [list|render --query ...|stats --max-template-tokens 450]")
 			return 2
 		}
 
@@ -2815,138 +2849,6 @@ func parsePromptVars(items []string) (map[string]string, error) {
 		out[key] = strings.TrimSpace(parts[1])
 	}
 	return out, nil
-}
-
-type promptTemplateStats struct {
-	ID                  string   `json:"id"`
-	Type                string   `json:"type"`
-	Task                string   `json:"task"`
-	Language            string   `json:"language,omitempty"`
-	Profile             string   `json:"profile,omitempty"`
-	Compose             string   `json:"compose,omitempty"`
-	Priority            int      `json:"priority,omitempty"`
-	Tokens              int      `json:"tokens"`
-	Placeholders        []string `json:"placeholders,omitempty"`
-	UnknownPlaceholders []string `json:"unknown_placeholders,omitempty"`
-	Warnings            []string `json:"warnings,omitempty"`
-}
-
-type promptStatsReport struct {
-	TemplateCount     int                   `json:"template_count"`
-	MaxTemplateTokens int                   `json:"max_template_tokens"`
-	TotalTokens       int                   `json:"total_tokens"`
-	AvgTokens         float64               `json:"avg_tokens"`
-	MaxTokens         int                   `json:"max_tokens"`
-	WarningCount      int                   `json:"warning_count"`
-	Templates         []promptTemplateStats `json:"templates"`
-}
-
-var promptPlaceholderRe = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_]+)\s*\}\}`)
-
-func buildPromptStatsReport(templates []promptlib.Template, maxTemplateTokens int, allowVars []string) promptStatsReport {
-	known := defaultPromptKnownVars()
-	for _, raw := range allowVars {
-		k := strings.TrimSpace(raw)
-		if k == "" {
-			continue
-		}
-		known[k] = struct{}{}
-	}
-
-	report := promptStatsReport{
-		TemplateCount:     len(templates),
-		MaxTemplateTokens: maxTemplateTokens,
-		Templates:         make([]promptTemplateStats, 0, len(templates)),
-	}
-	for _, tpl := range templates {
-		ph := extractPromptPlaceholders(tpl.Body)
-		unknown := make([]string, 0, len(ph))
-		for _, name := range ph {
-			if _, ok := known[name]; !ok {
-				unknown = append(unknown, name)
-			}
-		}
-		sort.Strings(unknown)
-
-		tokens := estimatePromptTokens(tpl.Body)
-		item := promptTemplateStats{
-			ID:                  strings.TrimSpace(tpl.ID),
-			Type:                strings.TrimSpace(tpl.Type),
-			Task:                strings.TrimSpace(tpl.Task),
-			Language:            strings.TrimSpace(tpl.Language),
-			Profile:             strings.TrimSpace(tpl.Profile),
-			Compose:             strings.TrimSpace(tpl.Compose),
-			Priority:            tpl.Priority,
-			Tokens:              tokens,
-			Placeholders:        ph,
-			UnknownPlaceholders: unknown,
-			Warnings:            []string{},
-		}
-		if maxTemplateTokens > 0 && tokens > maxTemplateTokens {
-			item.Warnings = append(item.Warnings, fmt.Sprintf("token_estimate=%d exceeds threshold=%d", tokens, maxTemplateTokens))
-		}
-		if len(unknown) > 0 {
-			item.Warnings = append(item.Warnings, "unknown placeholders: "+strings.Join(unknown, ", "))
-		}
-		if len(item.Warnings) > 0 {
-			report.WarningCount += len(item.Warnings)
-		}
-
-		report.TotalTokens += tokens
-		if tokens > report.MaxTokens {
-			report.MaxTokens = tokens
-		}
-		report.Templates = append(report.Templates, item)
-	}
-	if report.TemplateCount > 0 {
-		report.AvgTokens = float64(report.TotalTokens) / float64(report.TemplateCount)
-	}
-	return report
-}
-
-func defaultPromptKnownVars() map[string]struct{} {
-	return map[string]struct{}{
-		"project_root":     {},
-		"task":             {},
-		"language":         {},
-		"profile":          {},
-		"project_brief":    {},
-		"user_query":       {},
-		"context_files":    {},
-		"injected_context": {},
-		"tools_overview":   {},
-		"tool_call_policy": {},
-		"response_policy":  {},
-	}
-}
-
-func extractPromptPlaceholders(body string) []string {
-	matches := promptPlaceholderRe.FindAllStringSubmatch(body, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(matches))
-	for _, m := range matches {
-		if len(m) < 2 {
-			continue
-		}
-		k := strings.TrimSpace(m[1])
-		if k == "" {
-			continue
-		}
-		if _, ok := seen[k]; ok {
-			continue
-		}
-		seen[k] = struct{}{}
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func estimatePromptTokens(text string) int {
-	return len(strings.Fields(strings.TrimSpace(text)))
 }
 
 func remoteJSONRequest(method, endpoint, token string, payload any, timeout time.Duration) (map[string]any, int, error) {
@@ -5095,7 +4997,10 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			return 2
 		}
 
-		report := buildPromptStatsReport(lib.List(), *maxTemplateTokens, allowVar)
+		report := promptlib.BuildStatsReport(lib.List(), promptlib.StatsOptions{
+			MaxTemplateTokens: *maxTemplateTokens,
+			AllowVars:         allowVar,
+		})
 		if jsonMode {
 			_ = printJSON(report)
 		} else {

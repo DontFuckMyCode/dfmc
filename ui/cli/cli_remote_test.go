@@ -307,6 +307,8 @@ func TestRunRemotePromptLifecycle(t *testing.T) {
 		switch {
 		case r.URL.Path == "/api/v1/prompts" && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`{"prompts":[{"id":"system.base","type":"system","task":"general"}]}`))
+		case r.URL.Path == "/api/v1/prompts/stats" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"template_count":12,"warning_count":0,"max_template_tokens":450}`))
 		case r.URL.Path == "/api/v1/prompts/render" && r.Method == http.MethodPost:
 			_, _ = w.Write([]byte(`{"type":"system","task":"security","language":"go","prompt":"SECURITY PROMPT"}`))
 		default:
@@ -319,11 +321,32 @@ func TestRunRemotePromptLifecycle(t *testing.T) {
 	cases := [][]string{
 		{"prompt", "list", "--url", ts.URL},
 		{"prompt", "render", "--url", ts.URL, "--task", "security", "--query", "auth audit"},
+		{"prompt", "stats", "--url", ts.URL, "--max-template-tokens", "450"},
 	}
 	for _, args := range cases {
 		if code := runRemote(context.Background(), eng, args, true); code != 0 {
 			t.Fatalf("runRemote %v exit=%d", args, code)
 		}
+	}
+}
+
+func TestRunRemotePromptStatsFailOnWarning(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/prompts/stats" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"template_count":12,"warning_count":2,"max_template_tokens":450}`))
+	}))
+	defer ts.Close()
+
+	args := []string{"prompt", "stats", "--url", ts.URL, "--fail-on-warning"}
+	if code := runRemote(context.Background(), eng, args, true); code != 1 {
+		t.Fatalf("expected fail-on-warning exit=1, got %d", code)
 	}
 }
 
