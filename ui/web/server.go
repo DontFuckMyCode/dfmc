@@ -39,6 +39,13 @@ type AnalyzeRequest struct {
 	Security   bool   `json:"security"`
 	Complexity bool   `json:"complexity"`
 	DeadCode   bool   `json:"dead_code"`
+	MagicDoc   bool   `json:"magicdoc"`
+
+	MagicDocPath     string `json:"magicdoc_path"`
+	MagicDocTitle    string `json:"magicdoc_title"`
+	MagicDocHotspots int    `json:"magicdoc_hotspots"`
+	MagicDocDeps     int    `json:"magicdoc_deps"`
+	MagicDocRecent   int    `json:"magicdoc_recent"`
 }
 
 type ToolExecRequest struct {
@@ -587,30 +594,12 @@ func (s *Server) handleMagicDocUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	target := resolveMagicDocPath(root, strings.TrimSpace(req.Path))
-	content, err := buildMagicDocContentForWeb(r.Context(), s.engine, root, strings.TrimSpace(req.Title), req.Hotspots, req.Deps, req.Recent)
+	out, err := s.updateMagicDoc(r.Context(), root, req)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-	prev, _ := os.ReadFile(target)
-	updated := string(prev) != content
-	if updated {
-		if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":  "ok",
-		"path":    filepath.ToSlash(target),
-		"updated": updated,
-		"bytes":   len(content),
-	})
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
@@ -717,7 +706,53 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	if req.MagicDoc {
+		root := strings.TrimSpace(report.ProjectRoot)
+		if root == "" {
+			root = strings.TrimSpace(s.engine.Status().ProjectRoot)
+		}
+		magic, err := s.updateMagicDoc(r.Context(), root, MagicDocUpdateRequest{
+			Path:     req.MagicDocPath,
+			Title:    req.MagicDocTitle,
+			Hotspots: req.MagicDocHotspots,
+			Deps:     req.MagicDocDeps,
+			Recent:   req.MagicDocRecent,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"report":   report,
+			"magicdoc": magic,
+		})
+		return
+	}
 	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *Server) updateMagicDoc(ctx context.Context, root string, req MagicDocUpdateRequest) (map[string]any, error) {
+	target := resolveMagicDocPath(root, strings.TrimSpace(req.Path))
+	content, err := buildMagicDocContentForWeb(ctx, s.engine, root, strings.TrimSpace(req.Title), req.Hotspots, req.Deps, req.Recent)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return nil, err
+	}
+	prev, _ := os.ReadFile(target)
+	updated := string(prev) != content
+	if updated {
+		if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+			return nil, err
+		}
+	}
+	return map[string]any{
+		"status":  "ok",
+		"path":    filepath.ToSlash(target),
+		"updated": updated,
+		"bytes":   len(content),
+	}, nil
 }
 
 func (s *Server) handleToolExec(w http.ResponseWriter, r *http.Request) {

@@ -1945,6 +1945,12 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		security := fs.Bool("security", false, "include security report")
 		complexity := fs.Bool("complexity", false, "include complexity report")
 		deadCode := fs.Bool("dead-code", false, "include dead-code report")
+		magicDoc := fs.Bool("magicdoc", false, "update magic doc after remote analyze")
+		magicDocPath := fs.String("magicdoc-path", "", "custom magic doc path")
+		magicDocTitle := fs.String("magicdoc-title", "DFMC Project Brief", "magic doc title")
+		magicDocHotspots := fs.Int("magicdoc-hotspots", 8, "max hotspot entries for magic doc")
+		magicDocDeps := fs.Int("magicdoc-deps", 8, "max dependency entries for magic doc")
+		magicDocRecent := fs.Int("magicdoc-recent", 5, "max recent entries for magic doc")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
 		}
@@ -1953,11 +1959,17 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/analyze",
 			*token,
 			map[string]any{
-				"path":       *path,
-				"full":       *full,
-				"security":   *security,
-				"complexity": *complexity,
-				"dead_code":  *deadCode,
+				"path":              *path,
+				"full":              *full,
+				"security":          *security,
+				"complexity":        *complexity,
+				"dead_code":         *deadCode,
+				"magicdoc":          *magicDoc,
+				"magicdoc_path":     strings.TrimSpace(*magicDocPath),
+				"magicdoc_title":    strings.TrimSpace(*magicDocTitle),
+				"magicdoc_hotspots": *magicDocHotspots,
+				"magicdoc_deps":     *magicDocDeps,
+				"magicdoc_recent":   *magicDocRecent,
 			},
 			*timeout,
 		)

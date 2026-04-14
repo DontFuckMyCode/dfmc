@@ -218,6 +218,7 @@ go run ./cmd/dfmc remote context budget --url http://127.0.0.1:7779 --query "sec
 go run ./cmd/dfmc remote tool read_file --url http://127.0.0.1:7779 --param path=README.md --param line_start=1 --param line_end=5
 go run ./cmd/dfmc remote skill review --url http://127.0.0.1:7779 --input "auth katmanini incele"
 go run ./cmd/dfmc remote analyze --url http://127.0.0.1:7779 --full
+go run ./cmd/dfmc remote analyze --url http://127.0.0.1:7779 --full --magicdoc
 go run ./cmd/dfmc remote files list --url http://127.0.0.1:7779 --limit 100
 go run ./cmd/dfmc remote files get README.md --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote memory working --url http://127.0.0.1:7779

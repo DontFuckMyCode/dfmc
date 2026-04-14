@@ -357,6 +357,37 @@ func TestRunRemoteContextBudget(t *testing.T) {
 	}
 }
 
+func TestRunRemoteAnalyzeWithMagicDoc(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/analyze" || r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"bad request"}`))
+			return
+		}
+		if req["magicdoc"] != true {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"magicdoc flag missing"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"report":{"files":12},"magicdoc":{"status":"ok","updated":true}}`))
+	}))
+	defer ts.Close()
+
+	args := []string{"analyze", "--url", ts.URL, "--full", "--magicdoc", "--magicdoc-title", "Remote Analyze Brief"}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
 func TestRunRemoteMagicDocLifecycle(t *testing.T) {
 	eng := newCLITestEngine(t)
 

@@ -227,6 +227,48 @@ func TestAnalyzeEndpoint(t *testing.T) {
 	}
 }
 
+func TestAnalyzeEndpointWithMagicDoc(t *testing.T) {
+	eng := newTestEngine(t)
+	root := t.TempDir()
+	eng.ProjectRoot = root
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main(){}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := bytes.NewBufferString(`{"complexity":true,"magicdoc":true,"magicdoc_title":"Analyze Brief"}`)
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/analyze", body)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("analyze request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status %d: %s", resp.StatusCode, string(raw))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if _, ok := payload["report"]; !ok {
+		t.Fatalf("missing report field: %#v", payload)
+	}
+	magic, ok := payload["magicdoc"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing magicdoc field: %#v", payload)
+	}
+	if magic["updated"] != true {
+		t.Fatalf("expected magicdoc updated=true, got: %#v", magic)
+	}
+}
+
 func TestFileContentAndToolExecEndpoints(t *testing.T) {
 	eng := newTestEngine(t)
 	root := t.TempDir()
