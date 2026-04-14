@@ -66,3 +66,69 @@ func TestGrepTool(t *testing.T) {
 		t.Fatalf("expected TODO in grep output: %q", res.Output)
 	}
 }
+
+func TestToolOutputCompressionBySandboxLimit(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "big.txt")
+	body := strings.Repeat("line with repetitive content for compression test\n", 400)
+	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Security.Sandbox.MaxOutput = "400B"
+	eng := New(*cfg)
+
+	res, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path": "big.txt",
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute read_file: %v", err)
+	}
+	if !res.Truncated {
+		t.Fatal("expected truncated=true for large tool output")
+	}
+	if len([]byte(res.Output)) > 400 {
+		t.Fatalf("expected compressed output <= 400 bytes, got %d", len([]byte(res.Output)))
+	}
+}
+
+func TestToolOutputCompressionPreservesRelevantLines(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "big.txt")
+	var b strings.Builder
+	for i := 0; i < 260; i++ {
+		if i == 180 {
+			b.WriteString("THIS_IS_MAGIC_MATCH line\n")
+		} else {
+			b.WriteString("ordinary filler line\n")
+		}
+	}
+	if err := os.WriteFile(file, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Security.Sandbox.MaxOutput = "1KB"
+	eng := New(*cfg)
+
+	res, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":  "big.txt",
+			"query": "magic_match",
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute read_file: %v", err)
+	}
+	if !res.Truncated {
+		t.Fatal("expected truncated=true for large tool output")
+	}
+	if !strings.Contains(strings.ToLower(res.Output), "magic_match") {
+		t.Fatalf("expected compressed output to keep relevant line, got: %q", res.Output)
+	}
+}
