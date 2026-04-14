@@ -195,6 +195,12 @@ func TestContextBudgetEndpoint(t *testing.T) {
 	if _, ok := payload["max_tokens_total"]; !ok {
 		t.Fatalf("missing max_tokens_total field: %#v", payload)
 	}
+	if _, ok := payload["context_available_tokens"]; !ok {
+		t.Fatalf("missing context_available_tokens field: %#v", payload)
+	}
+	if _, ok := payload["reserve_total_tokens"]; !ok {
+		t.Fatalf("missing reserve_total_tokens field: %#v", payload)
+	}
 }
 
 func TestContextBriefEndpoint(t *testing.T) {

@@ -73,6 +73,13 @@ type ContextBudgetInfo struct {
 	ProviderMaxContext int    `json:"provider_max_context"`
 	Task               string `json:"task"`
 
+	ContextAvailableTokens int `json:"context_available_tokens"`
+	ReserveTotalTokens     int `json:"reserve_total_tokens"`
+	ReservePromptTokens    int `json:"reserve_prompt_tokens"`
+	ReserveHistoryTokens   int `json:"reserve_history_tokens"`
+	ReserveResponseTokens  int `json:"reserve_response_tokens"`
+	ReserveToolTokens      int `json:"reserve_tool_tokens"`
+
 	MaxFiles         int    `json:"max_files"`
 	MaxTokensTotal   int    `json:"max_tokens_total"`
 	MaxTokensPerFile int    `json:"max_tokens_per_file"`
@@ -247,18 +254,33 @@ func (e *Engine) Status() Status {
 
 func (e *Engine) ContextBudgetPreview(question string) ContextBudgetInfo {
 	opts := e.contextBuildOptions(question)
+	providerLimit := e.providerMaxContext()
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
+	reserve := e.contextReserveBreakdown(question)
+	available := providerLimit - reserve.Total
+	if available < minContextTotalBudgetTokens {
+		available = minContextTotalBudgetTokens
+	}
 	return ContextBudgetInfo{
-		Provider:           e.provider(),
-		Model:              e.model(),
-		ProviderMaxContext: e.providerMaxContext(),
-		Task:               detectContextTask(question),
-		MaxFiles:           opts.MaxFiles,
-		MaxTokensTotal:     opts.MaxTokensTotal,
-		MaxTokensPerFile:   opts.MaxTokensPerFile,
-		MaxHistoryTokens:   e.conversationHistoryBudget(),
-		Compression:        opts.Compression,
-		IncludeTests:       opts.IncludeTests,
-		IncludeDocs:        opts.IncludeDocs,
+		Provider:               e.provider(),
+		Model:                  e.model(),
+		ProviderMaxContext:     providerLimit,
+		Task:                   detectContextTask(question),
+		ContextAvailableTokens: available,
+		ReserveTotalTokens:     reserve.Total,
+		ReservePromptTokens:    reserve.Prompt,
+		ReserveHistoryTokens:   reserve.History,
+		ReserveResponseTokens:  reserve.Response,
+		ReserveToolTokens:      reserve.Tool,
+		MaxFiles:               opts.MaxFiles,
+		MaxTokensTotal:         opts.MaxTokensTotal,
+		MaxTokensPerFile:       opts.MaxTokensPerFile,
+		MaxHistoryTokens:       e.conversationHistoryBudget(),
+		Compression:            opts.Compression,
+		IncludeTests:           opts.IncludeTests,
+		IncludeDocs:            opts.IncludeDocs,
 	}
 }
 
@@ -336,6 +358,14 @@ type contextTaskBudgetProfile struct {
 	PerFileScale float64
 }
 
+type contextReserveBreakdown struct {
+	Prompt   int
+	History  int
+	Response int
+	Tool     int
+	Total    int
+}
+
 func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 	if e.Context == nil {
 		return nil
@@ -409,7 +439,8 @@ func (e *Engine) contextBuildOptions(question string) ctxmgr.BuildOptions {
 	if providerLimit <= 0 {
 		providerLimit = defaultProviderContextTokens
 	}
-	availableForContext := providerLimit - e.contextReserveTokens(question)
+	reserve := e.contextReserveBreakdown(question)
+	availableForContext := providerLimit - reserve.Total
 	if availableForContext < minContextTotalBudgetTokens {
 		availableForContext = minContextTotalBudgetTokens
 	}
@@ -524,7 +555,7 @@ func (e *Engine) PromptRuntime() ctxmgr.PromptRuntime {
 	return e.promptRuntime()
 }
 
-func (e *Engine) contextReserveTokens(question string) int {
+func (e *Engine) contextReserveBreakdown(question string) contextReserveBreakdown {
 	promptReserve := maxInt(basePromptReserveTokens, estimateTokens(question)*3)
 	responseReserve := defaultResponseReserveTokens
 	if prof, ok := e.Config.Providers.Profiles[e.provider()]; ok && prof.MaxTokens > 0 {
@@ -536,7 +567,16 @@ func (e *Engine) contextReserveTokens(question string) int {
 	if responseReserve < minContextPerFileTokens {
 		responseReserve = minContextPerFileTokens
 	}
-	return promptReserve + responseReserve + baseToolReserveTokens + e.conversationHistoryBudget()
+	historyReserve := e.conversationHistoryBudget()
+	toolReserve := baseToolReserveTokens
+	total := promptReserve + responseReserve + toolReserve + historyReserve
+	return contextReserveBreakdown{
+		Prompt:   promptReserve,
+		History:  historyReserve,
+		Response: responseReserve,
+		Tool:     toolReserve,
+		Total:    total,
+	}
 }
 
 func (e *Engine) buildRequestMessages(question string, chunks []types.ContextChunk, systemPrompt string) []provider.Message {

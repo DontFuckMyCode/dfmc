@@ -113,6 +113,16 @@ func TestContextBudgetPreview_ReflectsEffectiveOptions(t *testing.T) {
 	if preview.MaxHistoryTokens != 700 {
 		t.Fatalf("expected history budget 700, got %d", preview.MaxHistoryTokens)
 	}
+	if preview.ContextAvailableTokens <= 0 {
+		t.Fatalf("expected positive context available tokens, got %d", preview.ContextAvailableTokens)
+	}
+	if preview.ReserveTotalTokens <= 0 {
+		t.Fatalf("expected positive reserve total, got %d", preview.ReserveTotalTokens)
+	}
+	sum := preview.ReservePromptTokens + preview.ReserveHistoryTokens + preview.ReserveResponseTokens + preview.ReserveToolTokens
+	if sum != preview.ReserveTotalTokens {
+		t.Fatalf("reserve mismatch: sum=%d total=%d", sum, preview.ReserveTotalTokens)
+	}
 }
 
 func TestContextBuildOptions_TaskAdaptiveScaling(t *testing.T) {
