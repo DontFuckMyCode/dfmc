@@ -156,6 +156,8 @@ go run ./cmd/dfmc config set context.include_tests true
 go run ./cmd/dfmc config edit
 go run ./cmd/dfmc context budget --query "security audit auth middleware"
 go run ./cmd/dfmc context recent
+go run ./cmd/dfmc context brief --max-words 240
+go run ./cmd/dfmc context brief --path docs/BRIEF.md --max-words 180
 ```
 
 ### 7) Use memory and conversation commands

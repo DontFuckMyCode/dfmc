@@ -5188,8 +5188,50 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		}
 		return 0
 
+	case "brief":
+		fs := flag.NewFlagSet("context brief", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		maxWords := fs.Int("max-words", 240, "max words for context brief")
+		pathFlag := fs.String("path", "", "path to magic doc file (relative to project root or absolute)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		projectRoot := strings.TrimSpace(eng.Status().ProjectRoot)
+		if projectRoot == "" {
+			fmt.Fprintln(os.Stderr, "context brief error: project root is not set")
+			return 1
+		}
+		targetPath := resolvePromptBriefPath(projectRoot, strings.TrimSpace(*pathFlag))
+		data, err := os.ReadFile(targetPath)
+		exists := err == nil
+		brief := loadPromptProjectBriefWithPath(projectRoot, strings.TrimSpace(*pathFlag), *maxWords)
+		if brief == "" {
+			brief = "(none)"
+		}
+		wordCount := len(strings.Fields(strings.TrimSpace(brief)))
+		sizeBytes := 0
+		if exists {
+			sizeBytes = len(data)
+		}
+
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"path":       filepath.ToSlash(targetPath),
+				"exists":     exists,
+				"max_words":  *maxWords,
+				"word_count": wordCount,
+				"brief":      brief,
+				"size_bytes": sizeBytes,
+			})
+			return 0
+		}
+		fmt.Printf("context brief: path=%s exists=%t words=%d max=%d bytes=%d\n", filepath.ToSlash(targetPath), exists, wordCount, *maxWords, sizeBytes)
+		fmt.Println(brief)
+		return 0
+
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc context [budget --query \"...\"]|[recent]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc context [budget --query \"...\"]|[recent]|[brief --max-words 240 --path ...]")
 		return 2
 	}
 }
@@ -5397,11 +5439,15 @@ func truncateLine(s string, max int) string {
 }
 
 func loadPromptProjectBrief(projectRoot string, maxWords int) string {
+	return loadPromptProjectBriefWithPath(projectRoot, "", maxWords)
+}
+
+func loadPromptProjectBriefWithPath(projectRoot, pathFlag string, maxWords int) string {
 	root := strings.TrimSpace(projectRoot)
 	if root == "" || maxWords <= 0 {
 		return "(none)"
 	}
-	path := filepath.Join(root, ".dfmc", "magic", "MAGIC_DOC.md")
+	path := resolvePromptBriefPath(root, pathFlag)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "(none)"
@@ -5426,6 +5472,16 @@ func loadPromptProjectBrief(projectRoot string, maxWords int) string {
 		return "(none)"
 	}
 	return trimWords(strings.Join(filtered, "\n"), maxWords)
+}
+
+func resolvePromptBriefPath(projectRoot, pathFlag string) string {
+	if strings.TrimSpace(pathFlag) == "" {
+		return filepath.Join(projectRoot, ".dfmc", "magic", "MAGIC_DOC.md")
+	}
+	if filepath.IsAbs(pathFlag) {
+		return pathFlag
+	}
+	return filepath.Join(projectRoot, pathFlag)
 }
 
 func trimWords(text string, maxWords int) string {
