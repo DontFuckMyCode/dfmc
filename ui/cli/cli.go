@@ -4773,6 +4773,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			"task":             resolvedTask,
 			"language":         resolvedLanguage,
 			"profile":          resolvedProfile,
+			"project_brief":    loadPromptProjectBrief(projectRoot, 240),
 			"user_query":       strings.TrimSpace(*query),
 			"context_files":    strings.TrimSpace(*contextFiles),
 			"injected_context": "(none)",
@@ -5082,6 +5083,49 @@ func truncateLine(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+func loadPromptProjectBrief(projectRoot string, maxWords int) string {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" || maxWords <= 0 {
+		return "(none)"
+	}
+	path := filepath.Join(root, ".dfmc", "magic", "MAGIC_DOC.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "(none)"
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return "(none)"
+	}
+	lines := strings.Split(text, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "```") {
+			continue
+		}
+		filtered = append(filtered, t)
+		if len(filtered) >= 48 {
+			break
+		}
+	}
+	if len(filtered) == 0 {
+		return "(none)"
+	}
+	return trimWords(strings.Join(filtered, "\n"), maxWords)
+}
+
+func trimWords(text string, maxWords int) string {
+	if maxWords <= 0 {
+		return ""
+	}
+	words := strings.Fields(strings.TrimSpace(text))
+	if len(words) <= maxWords {
+		return strings.TrimSpace(text)
+	}
+	return strings.Join(words[:maxWords], " ")
 }
 
 func printHelp() {

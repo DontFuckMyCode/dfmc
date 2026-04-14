@@ -511,6 +511,7 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 		"task":             resolvedTask,
 		"language":         resolvedLang,
 		"profile":          resolvedProfile,
+		"project_brief":    loadProjectBriefForPromptRender(s.engine.Status().ProjectRoot, 240),
 		"user_query":       strings.TrimSpace(req.Query),
 		"context_files":    strings.TrimSpace(req.ContextFiles),
 		"injected_context": "(none)",
@@ -896,6 +897,49 @@ func writeJSON(w http.ResponseWriter, code int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func loadProjectBriefForPromptRender(projectRoot string, maxWords int) string {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" || maxWords <= 0 {
+		return "(none)"
+	}
+	path := resolveMagicDocPath(root, "")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "(none)"
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return "(none)"
+	}
+	lines := strings.Split(text, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "```") {
+			continue
+		}
+		filtered = append(filtered, t)
+		if len(filtered) >= 48 {
+			break
+		}
+	}
+	if len(filtered) == 0 {
+		return "(none)"
+	}
+	return trimWordsForWeb(strings.Join(filtered, "\n"), maxWords)
+}
+
+func trimWordsForWeb(text string, maxWords int) string {
+	if maxWords <= 0 {
+		return ""
+	}
+	words := strings.Fields(strings.TrimSpace(text))
+	if len(words) <= maxWords {
+		return strings.TrimSpace(text)
+	}
+	return strings.Join(words[:maxWords], " ")
 }
 
 func resolveMagicDocPath(projectRoot, pathFlag string) string {

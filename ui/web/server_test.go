@@ -466,6 +466,16 @@ func TestConversationsEndpoints(t *testing.T) {
 
 func TestPromptsEndpoints(t *testing.T) {
 	eng := newTestEngine(t)
+	root := t.TempDir()
+	eng.ProjectRoot = root
+	magicDir := filepath.Join(root, ".dfmc", "magic")
+	if err := os.MkdirAll(magicDir, 0o755); err != nil {
+		t.Fatalf("mkdir magic dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(magicDir, "MAGIC_DOC.md"), []byte("# MAGIC DOC: Prompt Brief\n\nCritical prompt brief line.\n"), 0o644); err != nil {
+		t.Fatalf("write magic doc: %v", err)
+	}
+
 	srv := New(eng, "127.0.0.1", 0)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -509,6 +519,9 @@ func TestPromptsEndpoints(t *testing.T) {
 	prompt, _ := renderPayload["prompt"].(string)
 	if !strings.Contains(strings.ToLower(prompt), "security") {
 		t.Fatalf("expected security prompt, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "Critical prompt brief line.") {
+		t.Fatalf("expected project brief injection in prompt render, got: %s", prompt)
 	}
 }
 
