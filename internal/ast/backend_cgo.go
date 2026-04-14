@@ -3,9 +3,11 @@
 package ast
 
 func currentBackendStatus() BackendStatus {
+	reason := "tree-sitter is available for go, javascript/jsx, typescript/tsx, and python in cgo-enabled builds; unsupported languages continue to use regex fallback"
 	return BackendStatus{
 		Preferred: "tree-sitter",
 		Active:    "hybrid",
-		Reason:    "tree-sitter is available for cgo-enabled builds; unsupported languages continue to use regex fallback",
+		Reason:    reason,
+		Languages: buildBackendLanguageStatuses("tree-sitter", reason),
 	}
 }

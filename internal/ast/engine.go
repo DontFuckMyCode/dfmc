@@ -34,12 +34,14 @@ type ParseResult struct {
 type Engine struct {
 	extToLang map[string]string
 	cache     *parseCache
+	metrics   *parseMetricsTracker
 }
 
 func New() *Engine {
 	return &Engine{
 		extToLang: extensionLanguageMap(),
 		cache:     newParseCache(10000),
+		metrics:   newParseMetricsTracker(),
 	}
 }
 
@@ -53,24 +55,33 @@ func (e *Engine) ParseFile(ctx context.Context, path string) (*ParseResult, erro
 
 func (e *Engine) ParseContent(ctx context.Context, path string, content []byte) (*ParseResult, error) {
 	start := time.Now()
+	e.metrics.recordRequest()
 
 	select {
 	case <-ctx.Done():
+		e.metrics.recordError("", "")
 		return nil, ctx.Err()
 	default:
 	}
 
-	hash := hashContent(content)
-	if cached := e.cache.Get(path, hash); cached != nil {
-		return cached, nil
-	}
-
 	lang := e.detectLanguage(path, content)
 	if lang == "" {
+		e.metrics.recordUnsupported(path)
 		return nil, fmt.Errorf("unsupported language: %s", path)
 	}
 
-	symbols, imports, parseErrors := extractWithPreferredBackend(ctx, path, lang, content)
+	hash := hashContent(content)
+	if cached := e.cache.Get(path, hash); cached != nil {
+		e.metrics.recordCacheHit(lang)
+		return cached, nil
+	}
+	e.metrics.recordCacheMiss(lang)
+
+	symbols, imports, parseErrors, backend, err := extractWithPreferredBackend(ctx, path, lang, content)
+	if err != nil {
+		e.metrics.recordError(lang, backend)
+		return nil, err
+	}
 
 	res := &ParseResult{
 		Path:     path,
@@ -84,6 +95,7 @@ func (e *Engine) ParseContent(ctx context.Context, path string, content []byte) 
 	}
 
 	e.cache.Set(path, res)
+	e.metrics.recordParse(lang, backend, time.Since(start))
 	return res, nil
 }
 

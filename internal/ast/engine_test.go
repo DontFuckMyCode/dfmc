@@ -173,3 +173,77 @@ async def fetch_data(client):
 		}
 	}
 }
+
+func TestBackendStatus_LanguageMatrix(t *testing.T) {
+	e := New()
+	status := e.BackendStatus()
+	if status.Preferred == "" {
+		t.Fatal("expected preferred backend to be populated")
+	}
+	if len(status.Languages) == 0 {
+		t.Fatal("expected language matrix to be populated")
+	}
+
+	expected := map[string]bool{
+		"go":         false,
+		"javascript": false,
+		"jsx":        false,
+		"typescript": false,
+		"tsx":        false,
+		"python":     false,
+	}
+	for _, item := range status.Languages {
+		if _, ok := expected[item.Language]; ok {
+			expected[item.Language] = true
+		}
+		if item.Preferred != "tree-sitter" {
+			t.Fatalf("expected %q preferred backend to be tree-sitter, got %q", item.Language, item.Preferred)
+		}
+		if item.Active == "" {
+			t.Fatalf("expected %q active backend to be populated", item.Language)
+		}
+	}
+	for lang, seen := range expected {
+		if !seen {
+			t.Fatalf("expected %q in backend language matrix: %#v", lang, status.Languages)
+		}
+	}
+}
+
+func TestParseMetrics_TracksRequestsCacheAndBackend(t *testing.T) {
+	e := New()
+	src := []byte(`package sample
+
+func Hello() {}
+`)
+
+	if _, err := e.ParseContent(context.Background(), "sample.go", src); err != nil {
+		t.Fatalf("first parse: %v", err)
+	}
+	if _, err := e.ParseContent(context.Background(), "sample.go", src); err != nil {
+		t.Fatalf("second parse: %v", err)
+	}
+
+	metrics := e.ParseMetrics()
+	if metrics.Requests != 2 {
+		t.Fatalf("expected 2 requests, got %d", metrics.Requests)
+	}
+	if metrics.Parsed != 1 {
+		t.Fatalf("expected 1 parsed file, got %d", metrics.Parsed)
+	}
+	if metrics.CacheHits != 1 || metrics.CacheMisses != 1 {
+		t.Fatalf("expected cache hit/miss to be 1/1, got %d/%d", metrics.CacheHits, metrics.CacheMisses)
+	}
+	if metrics.LastLanguage != "go" {
+		t.Fatalf("expected last language go, got %q", metrics.LastLanguage)
+	}
+	if metrics.LastBackend == "" {
+		t.Fatal("expected last backend to be populated")
+	}
+	if metrics.ByLanguage["go"] != 1 {
+		t.Fatalf("expected go parse count to be 1, got %d", metrics.ByLanguage["go"])
+	}
+	if metrics.ByBackend[metrics.LastBackend] != 1 {
+		t.Fatalf("expected backend %q parse count to be 1, got %d", metrics.LastBackend, metrics.ByBackend[metrics.LastBackend])
+	}
+}

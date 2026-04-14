@@ -61,12 +61,15 @@ type Engine struct {
 }
 
 type Status struct {
-	State       EngineState `json:"state"`
-	ProjectRoot string      `json:"project_root"`
-	Provider    string      `json:"provider"`
-	Model       string      `json:"model"`
-	ASTBackend  string      `json:"ast_backend"`
-	ASTReason   string      `json:"ast_reason,omitempty"`
+	State        EngineState                 `json:"state"`
+	ProjectRoot  string                      `json:"project_root"`
+	Provider     string                      `json:"provider"`
+	Model        string                      `json:"model"`
+	ASTBackend   string                      `json:"ast_backend"`
+	ASTReason    string                      `json:"ast_reason,omitempty"`
+	ASTLanguages []ast.BackendLanguageStatus `json:"ast_languages,omitempty"`
+	ASTMetrics   ast.ParseMetrics            `json:"ast_metrics,omitempty"`
+	CodeMap      codemap.BuildMetrics        `json:"codemap_metrics,omitempty"`
 }
 
 type ContextBudgetInfo struct {
@@ -290,18 +293,29 @@ func (e *Engine) Status() Status {
 	defer e.mu.RUnlock()
 	astBackend := ""
 	astReason := ""
+	var astLanguages []ast.BackendLanguageStatus
+	var astMetrics ast.ParseMetrics
+	var codemapMetrics codemap.BuildMetrics
 	if e.AST != nil {
 		bs := e.AST.BackendStatus()
 		astBackend = bs.Active
 		astReason = bs.Reason
+		astLanguages = bs.Languages
+		astMetrics = e.AST.ParseMetrics()
+	}
+	if e.CodeMap != nil {
+		codemapMetrics = e.CodeMap.Metrics()
 	}
 	return Status{
-		State:       e.state,
-		ProjectRoot: e.ProjectRoot,
-		Provider:    e.provider(),
-		Model:       e.model(),
-		ASTBackend:  astBackend,
-		ASTReason:   astReason,
+		State:        e.state,
+		ProjectRoot:  e.ProjectRoot,
+		Provider:     e.provider(),
+		Model:        e.model(),
+		ASTBackend:   astBackend,
+		ASTReason:    astReason,
+		ASTLanguages: astLanguages,
+		ASTMetrics:   astMetrics,
+		CodeMap:      codemapMetrics,
 	}
 }
 
