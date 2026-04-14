@@ -93,6 +93,8 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runContext(ctx, eng, cmdArgs, opts.JSON)
 	case "prompt":
 		return runPrompt(ctx, eng, cmdArgs, opts.JSON)
+	case "magicdoc":
+		return runMagicDoc(ctx, eng, cmdArgs, opts.JSON)
 	case "plugin":
 		return runPlugin(ctx, eng, cmdArgs, opts.JSON)
 	case "skill":
@@ -283,6 +285,7 @@ func commandDocs() []commandDoc {
 		{Name: "config", Description: "Configuration management"},
 		{Name: "context", Description: "Context budget and recent files"},
 		{Name: "prompt", Description: "Prompt library management"},
+		{Name: "magicdoc", Description: "Build/show concise project magic doc"},
 		{Name: "plugin", Description: "Plugin management"},
 		{Name: "skill", Description: "Skill management"},
 		{Name: "serve", Description: "Start Web API server"},
@@ -387,6 +390,7 @@ func commandNames() []string {
 		"config",
 		"context",
 		"prompt",
+		"magicdoc",
 		"plugin",
 		"skill",
 		"serve",
@@ -5036,6 +5040,7 @@ Commands:
   config      Configuration management (list/get/set/edit)
   context     Context budget and recent files
   prompt      Prompt library management (list/render)
+  magicdoc    Build/show concise project magic doc
   plugin      Plugin management (list/info/install/remove/enable/disable)
   skill       Skill management (list/info/run)
   serve       Start Web API server

@@ -11,6 +11,9 @@ templates:
       Language: {{language}}
       Profile: {{profile}}
 
+      Project brief:
+      {{project_brief}}
+
       User request:
       {{user_query}}
 

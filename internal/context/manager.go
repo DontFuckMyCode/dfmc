@@ -171,6 +171,7 @@ func (m *Manager) BuildSystemPrompt(projectRoot, query string, chunks []types.Co
 			"task":             task,
 			"language":         language,
 			"profile":          profile,
+			"project_brief":    loadProjectBrief(projectRoot, limits.ProjectBriefTokens),
 			"user_query":       strings.TrimSpace(query),
 			"context_files":    summarizeContextFiles(projectRoot, chunks, limits.ContextFiles),
 			"injected_context": injected,
@@ -450,20 +451,22 @@ func detectPromptProfile(query, task string) string {
 }
 
 type renderBudget struct {
-	ContextFiles   int
-	ToolList       int
-	InjectedBlocks int
-	InjectedLines  int
-	InjectedTokens int
+	ContextFiles       int
+	ToolList           int
+	InjectedBlocks     int
+	InjectedLines      int
+	InjectedTokens     int
+	ProjectBriefTokens int
 }
 
 func promptRenderBudget(task, profile string) renderBudget {
 	b := renderBudget{
-		ContextFiles:   10,
-		ToolList:       16,
-		InjectedBlocks: 2,
-		InjectedLines:  80,
-		InjectedTokens: 320,
+		ContextFiles:       10,
+		ToolList:           16,
+		InjectedBlocks:     2,
+		InjectedLines:      80,
+		InjectedTokens:     320,
+		ProjectBriefTokens: 180,
 	}
 	if strings.EqualFold(strings.TrimSpace(profile), "deep") {
 		b.ContextFiles = 16
@@ -471,6 +474,7 @@ func promptRenderBudget(task, profile string) renderBudget {
 		b.InjectedBlocks = 3
 		b.InjectedLines = 140
 		b.InjectedTokens = 700
+		b.ProjectBriefTokens = 320
 	}
 	switch strings.ToLower(strings.TrimSpace(task)) {
 	case "security", "review":
@@ -509,6 +513,41 @@ func summarizeTools(tools []string, limit int) string {
 		lines = append(lines, "- "+n)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func loadProjectBrief(projectRoot string, maxTokens int) string {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" || maxTokens <= 0 {
+		return "(none)"
+	}
+	path := filepath.Join(root, ".dfmc", "magic", "MAGIC_DOC.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "(none)"
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return "(none)"
+	}
+	lines := strings.Split(text, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		if strings.HasPrefix(t, "```") {
+			continue
+		}
+		filtered = append(filtered, t)
+		if len(filtered) >= 48 {
+			break
+		}
+	}
+	if len(filtered) == 0 {
+		return "(none)"
+	}
+	return trimToTokenBudget(strings.Join(filtered, "\n"), maxTokens)
 }
 
 func buildToolCallPolicy(task string) string {

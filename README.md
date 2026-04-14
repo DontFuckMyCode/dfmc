@@ -302,6 +302,17 @@ body: |
   - Report severity and exploitability preconditions.
 ```
 
+### 14) Magic doc (low-token project brief)
+
+```bash
+go run ./cmd/dfmc magicdoc update
+go run ./cmd/dfmc magicdoc update --title "Backend Brief"
+go run ./cmd/dfmc magicdoc show
+```
+
+By default this writes `.dfmc/magic/MAGIC_DOC.md`.  
+When present, DFMC injects a budgeted slice of this brief into the system prompt as `project_brief` to improve context continuity with lower token usage.
+
 ## Command Overview
 
 Available:
@@ -317,6 +328,7 @@ Available:
 - `dfmc conversation`
 - `dfmc config`
 - `dfmc prompt`
+- `dfmc magicdoc`
 - `dfmc plugin`
 - `dfmc skill`
 - `dfmc review`

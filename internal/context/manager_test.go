@@ -107,6 +107,34 @@ func VerifyToken(token string) bool {
 	}
 }
 
+func TestBuildSystemPromptInjectsProjectBrief(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "auth.go")
+	if err := os.WriteFile(target, []byte("package auth\nfunc VerifyToken(token string) bool { return token != \"\" }\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	magicDir := filepath.Join(tmp, ".dfmc", "magic")
+	if err := os.MkdirAll(magicDir, 0o755); err != nil {
+		t.Fatalf("mkdir magic dir: %v", err)
+	}
+	magicPath := filepath.Join(magicDir, "MAGIC_DOC.md")
+	if err := os.WriteFile(magicPath, []byte("# MAGIC DOC: Test\n\nCritical note: auth boundary is strict.\n"), 0o644); err != nil {
+		t.Fatalf("write magic doc: %v", err)
+	}
+
+	ae := ast.New()
+	cm := codemap.New(ae)
+	if err := cm.BuildFromFiles(context.Background(), []string{target}); err != nil {
+		t.Fatalf("build codemap: %v", err)
+	}
+	mgr := New(cm)
+
+	prompt := mgr.BuildSystemPrompt(tmp, "review auth flow", nil, nil)
+	if !strings.Contains(prompt, "Critical note: auth boundary is strict.") {
+		t.Fatalf("expected project brief in prompt, got: %s", prompt)
+	}
+}
+
 func TestBuildSystemPromptInjectionBudgetCompactVsDeep(t *testing.T) {
 	tmp := t.TempDir()
 	target := filepath.Join(tmp, "auth.go")
