@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -58,6 +60,29 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 	if _, ok := payload["state"]; !ok {
 		t.Fatalf("missing state field: %#v", payload)
+	}
+}
+
+func TestHealthEndpoint(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("get healthz: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if payload["status"] != "ok" {
+		t.Fatalf("unexpected payload: %#v", payload)
 	}
 }
 
@@ -115,6 +140,34 @@ func TestProvidersEndpoint(t *testing.T) {
 	}
 	if _, ok := payload["providers"]; !ok {
 		t.Fatalf("missing providers field: %#v", payload)
+	}
+}
+
+func TestSkillsEndpoint(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/skills")
+	if err != nil {
+		t.Fatalf("get skills: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	skillsRaw, ok := payload["skills"]
+	if !ok {
+		t.Fatalf("missing skills field: %#v", payload)
+	}
+	skills, ok := skillsRaw.([]any)
+	if !ok || len(skills) == 0 {
+		t.Fatalf("expected non-empty skills list, got: %#v", skillsRaw)
 	}
 }
 
@@ -200,5 +253,87 @@ func TestFileContentAndToolExecEndpoints(t *testing.T) {
 	output, _ := toolPayload["output"].(string)
 	if strings.TrimSpace(output) != "world" {
 		t.Fatalf("unexpected tool output: %q", output)
+	}
+}
+
+func TestSkillExecEndpoint(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := bytes.NewBufferString(`{"input":"Sadece OK yaz"}`)
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/skills/review", body)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("skill request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status %d: %s", resp.StatusCode, string(raw))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if _, ok := payload["answer"]; !ok {
+		t.Fatalf("missing answer field: %#v", payload)
+	}
+}
+
+func TestWSEventStreamEndpoint(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/ws?type=test:event")
+	if err != nil {
+		t.Fatalf("ws request: %v", err)
+	}
+	defer resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("unexpected content-type: %s", ct)
+	}
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		eng.EventBus.Publish(engine.Event{
+			Type:    "test:event",
+			Source:  "test",
+			Payload: map[string]any{"ok": true},
+		})
+	}()
+
+	reader := bufio.NewReader(resp.Body)
+	deadline := time.Now().Add(2 * time.Second)
+	foundConnected := false
+	foundEvent := false
+
+	for time.Now().Before(deadline) {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read stream line: %v", err)
+		}
+		if strings.Contains(line, `"type":"connected"`) {
+			foundConnected = true
+		}
+		if strings.Contains(line, `"event":"test:event"`) {
+			foundEvent = true
+			break
+		}
+	}
+
+	if !foundConnected {
+		t.Fatal("expected connected event")
+	}
+	if !foundEvent {
+		t.Fatal("expected test:event in stream")
 	}
 }

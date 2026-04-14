@@ -14,9 +14,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
+	"gopkg.in/yaml.v3"
 )
 
 type Server struct {
@@ -41,6 +43,11 @@ type ToolExecRequest struct {
 	Params map[string]any `json:"params"`
 }
 
+type SkillExecRequest struct {
+	Input   string `json:"input"`
+	Message string `json:"message"`
+}
+
 func New(eng *engine.Engine, host string, port int) *Server {
 	s := &Server{
 		engine: eng,
@@ -53,6 +60,7 @@ func New(eng *engine.Engine, host string, port int) *Server {
 
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /", s.handleIndex)
+	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /api/v1/status", s.handleStatus)
 	s.mux.HandleFunc("POST /api/v1/chat", s.handleChat)
 	s.mux.HandleFunc("GET /api/v1/codemap", s.handleCodeMap)
@@ -66,6 +74,10 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/files", s.handleFiles)
 	s.mux.HandleFunc("GET /api/v1/files/{path...}", s.handleFileContent)
 	s.mux.HandleFunc("GET /ws", s.handleWebSocket)
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 func (s *Server) Start() error {
@@ -150,9 +162,53 @@ func (s *Server) handleProviders(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"skills": []any{},
+	items := []map[string]any{
+		{"name": "review", "source": "builtin", "builtin": true},
+		{"name": "explain", "source": "builtin", "builtin": true},
+		{"name": "refactor", "source": "builtin", "builtin": true},
+		{"name": "test", "source": "builtin", "builtin": true},
+		{"name": "doc", "source": "builtin", "builtin": true},
+	}
+	seen := map[string]struct{}{
+		"review":   {},
+		"explain":  {},
+		"refactor": {},
+		"test":     {},
+		"doc":      {},
+	}
+
+	roots := []struct {
+		path   string
+		source string
+	}{
+		{path: filepath.Join(s.engine.Status().ProjectRoot, ".dfmc", "skills"), source: "project"},
+		{path: filepath.Join(config.UserConfigDir(), "skills"), source: "global"},
+	}
+	for _, root := range roots {
+		files, _ := filepath.Glob(filepath.Join(root.path, "*.y*ml"))
+		for _, p := range files {
+			name := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
+			key := strings.ToLower(strings.TrimSpace(name))
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			items = append(items, map[string]any{
+				"name":    name,
+				"source":  root.source,
+				"builtin": false,
+				"path":    p,
+			})
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return strings.ToLower(fmt.Sprint(items[i]["name"])) < strings.ToLower(fmt.Sprint(items[j]["name"]))
 	})
+	writeJSON(w, http.StatusOK, map[string]any{"skills": items})
 }
 
 func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
@@ -307,15 +363,90 @@ func (s *Server) handleToolExec(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSkillExec(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PathValue("name"))
-	writeJSON(w, http.StatusNotImplemented, map[string]any{
-		"error": fmt.Sprintf("skill execution is not implemented yet: %s", name),
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "skill name is required"})
+		return
+	}
+
+	req := SkillExecRequest{}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	input := strings.TrimSpace(req.Input)
+	if input == "" {
+		input = strings.TrimSpace(req.Message)
+	}
+
+	prompt, source, ok := s.resolveSkillPrompt(name, input)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": fmt.Sprintf("skill not found: %s", name)})
+		return
+	}
+
+	answer, err := s.engine.Ask(r.Context(), prompt)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"skill":  name,
+		"source": source,
+		"input":  input,
+		"answer": answer,
 	})
 }
 
-func (s *Server) handleWebSocket(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]any{
-		"error": "websocket endpoint is not implemented yet",
+func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "streaming not supported"})
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	eventType := "*"
+	if t := strings.TrimSpace(r.URL.Query().Get("type")); t != "" {
+		eventType = t
+	}
+	ch := s.engine.EventBus.Subscribe(eventType)
+	defer s.engine.EventBus.Unsubscribe(eventType, ch)
+
+	writeSSE(w, flusher, map[string]any{
+		"type": "connected",
+		"ts":   time.Now().UTC().Format(time.RFC3339),
 	})
+
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			writeSSE(w, flusher, map[string]any{
+				"type":    "event",
+				"event":   ev.Type,
+				"source":  ev.Source,
+				"payload": ev.Payload,
+				"ts":      ev.Timestamp.UTC().Format(time.RFC3339),
+			})
+		case <-ticker.C:
+			writeSSE(w, flusher, map[string]any{
+				"type": "ping",
+				"ts":   time.Now().UTC().Format(time.RFC3339),
+			})
+		}
+	}
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -432,4 +563,78 @@ func resolvePathWithinRoot(root, rel string) (string, error) {
 		return "", fmt.Errorf("path escapes project root")
 	}
 	return absTarget, nil
+}
+
+func (s *Server) resolveSkillPrompt(name, input string) (prompt string, source string, ok bool) {
+	builtin := map[string]string{
+		"review":   "Perform a strict code review. Prioritize bugs, risks, behavioral regressions, and missing tests.\n\nRequest:\n{input}",
+		"explain":  "Explain the target code in a clear and structured way, including key flows and important caveats.\n\nRequest:\n{input}",
+		"refactor": "Provide a safe refactor plan and concrete edits with minimal regression risk.\n\nRequest:\n{input}",
+		"test":     "Create or improve automated tests for the target, including edge cases and failure paths.\n\nRequest:\n{input}",
+		"doc":      "Write practical documentation for the requested code or module.\n\nRequest:\n{input}",
+	}
+	key := strings.ToLower(strings.TrimSpace(name))
+	if tpl, exists := builtin[key]; exists {
+		return applySkillPromptTemplate(tpl, input), "builtin", true
+	}
+
+	roots := []string{
+		filepath.Join(s.engine.Status().ProjectRoot, ".dfmc", "skills"),
+		filepath.Join(config.UserConfigDir(), "skills"),
+	}
+	for _, root := range roots {
+		files, _ := filepath.Glob(filepath.Join(root, "*.y*ml"))
+		for _, path := range files {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			raw := map[string]any{}
+			if err := yaml.Unmarshal(data, &raw); err != nil {
+				continue
+			}
+			skillName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			if v, exists := raw["name"]; exists {
+				n := strings.TrimSpace(fmt.Sprint(v))
+				if n != "" {
+					skillName = n
+				}
+			}
+			if !strings.EqualFold(skillName, name) {
+				continue
+			}
+			tpl := ""
+			if v, exists := raw["prompt"]; exists {
+				tpl = strings.TrimSpace(fmt.Sprint(v))
+			}
+			if tpl == "" {
+				if v, exists := raw["template"]; exists {
+					tpl = strings.TrimSpace(fmt.Sprint(v))
+				}
+			}
+			if tpl == "" {
+				return "", "", false
+			}
+			src := "project"
+			if strings.Contains(strings.ToLower(path), strings.ToLower(filepath.Join(config.UserConfigDir(), "skills"))) {
+				src = "global"
+			}
+			return applySkillPromptTemplate(tpl, input), src, true
+		}
+	}
+	return "", "", false
+}
+
+func applySkillPromptTemplate(tpl, input string) string {
+	p := strings.TrimSpace(tpl)
+	if strings.Contains(p, "{input}") {
+		return strings.ReplaceAll(p, "{input}", input)
+	}
+	if strings.TrimSpace(input) == "" {
+		return p
+	}
+	if p == "" {
+		return input
+	}
+	return p + "\n\nUser request:\n" + input
 }

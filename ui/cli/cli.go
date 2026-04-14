@@ -1,19 +1,30 @@
 package cli
 
 import (
+	"archive/zip"
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"html"
+	"io"
+	"math"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -77,8 +88,16 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runServe(ctx, eng, cmdArgs, opts.JSON)
 	case "config":
 		return runConfig(ctx, eng, cmdArgs, opts.JSON)
-	case "plugin", "skill", "remote", "review", "explain", "refactor", "test", "doc":
-		return runPlaceholder(cmd, opts.JSON)
+	case "plugin":
+		return runPlugin(ctx, eng, cmdArgs, opts.JSON)
+	case "skill":
+		return runSkill(ctx, eng, cmdArgs, opts.JSON)
+	case "review", "explain", "refactor", "test", "doc":
+		return runSkillShortcut(ctx, eng, cmd, cmdArgs, opts.JSON)
+	case "remote":
+		return runRemote(ctx, eng, cmdArgs, opts.JSON)
+	case "doctor":
+		return runDoctor(ctx, eng, cmdArgs, opts.JSON)
 	default:
 		if strings.HasPrefix(cmd, "-") {
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", cmd)
@@ -118,14 +137,21 @@ func runVersion(eng *engine.Engine, version string, args []string, jsonMode bool
 	jsonMode = jsonMode || *jsonFlag
 
 	st := eng.Status()
+	loadedProviders := []string{}
+	if eng.Providers != nil {
+		loadedProviders = eng.Providers.List()
+		sort.Strings(loadedProviders)
+	}
 	payload := map[string]any{
-		"name":         "dfmc",
-		"version":      version,
-		"provider":     st.Provider,
-		"model":        st.Model,
-		"project_root": st.ProjectRoot,
-		"state":        st.State,
-		"go_version":   runtimeVersion(),
+		"name":             "dfmc",
+		"version":          version,
+		"provider":         st.Provider,
+		"model":            st.Model,
+		"project_root":     st.ProjectRoot,
+		"state":            st.State,
+		"go_version":       runtimeVersion(),
+		"loaded_providers": loadedProviders,
+		"binary_size":      executableSize(),
 	}
 	if jsonMode {
 		_ = printJSON(payload)
@@ -135,6 +161,10 @@ func runVersion(eng *engine.Engine, version string, args []string, jsonMode bool
 	fmt.Printf("provider: %s\n", st.Provider)
 	fmt.Printf("model: %s\n", st.Model)
 	fmt.Printf("project: %s\n", st.ProjectRoot)
+	fmt.Printf("providers: %s\n", strings.Join(loadedProviders, ", "))
+	if sz := executableSize(); sz > 0 {
+		fmt.Printf("binary size: %d bytes\n", sz)
+	}
 	return 0
 }
 
@@ -323,11 +353,13 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 	var security bool
 	var complexity bool
 	var deadCode bool
+	var deps bool
 	fs.BoolVar(&jsonFlag, "json", false, "output as json")
 	fs.BoolVar(&full, "full", false, "run full analysis set")
 	fs.BoolVar(&security, "security", false, "run security analysis")
 	fs.BoolVar(&complexity, "complexity", false, "run complexity analysis")
 	fs.BoolVar(&deadCode, "dead-code", false, "run dead code analysis")
+	fs.BoolVar(&deps, "deps", false, "run dependency analysis summary")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -348,8 +380,21 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		fmt.Fprintf(os.Stderr, "analyze failed: %v\n", err)
 		return 1
 	}
+	depSummary := []depStat{}
+	if deps || full {
+		depSummary = collectDependencyStats(eng, 20)
+	}
 	if jsonMode {
-		_ = printJSON(report)
+		if deps || full {
+			_ = printJSON(map[string]any{
+				"report":        report,
+				"dependencies":  depSummary,
+				"dep_count":     len(depSummary),
+				"dep_requested": true,
+			})
+		} else {
+			_ = printJSON(report)
+		}
 		return 0
 	}
 	fmt.Printf("Project: %s\n", report.ProjectRoot)
@@ -375,13 +420,22 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 	if len(report.DeadCode) > 0 {
 		fmt.Printf("Dead code candidates: %d\n", len(report.DeadCode))
 	}
+	if deps || full {
+		fmt.Printf("Dependencies: %d\n", len(depSummary))
+		for i, d := range depSummary {
+			if i >= 10 {
+				break
+			}
+			fmt.Printf("  - %s (%d imports)\n", d.Module, d.Count)
+		}
+	}
 	return 0
 }
 
 func runMap(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
 	fs := flag.NewFlagSet("map", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	format := fs.String("format", "ascii", "ascii|json")
+	format := fs.String("format", "ascii", "ascii|json|dot|svg")
 	jsonFlag := fs.Bool("json", false, "output as json")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -404,6 +458,14 @@ func runMap(ctx context.Context, eng *engine.Engine, args []string, jsonMode boo
 			"nodes": graph.Nodes(),
 			"edges": graph.Edges(),
 		})
+		return 0
+	}
+	if f == "dot" {
+		fmt.Println(graphToDOT(graph.Nodes(), graph.Edges()))
+		return 0
+	}
+	if f == "svg" {
+		fmt.Println(graphToSVG(graph.Nodes(), graph.Edges()))
 		return 0
 	}
 
@@ -684,33 +746,2214 @@ func runServe(ctx context.Context, eng *engine.Engine, args []string, jsonMode b
 	fs.SetOutput(os.Stderr)
 	host := fs.String("host", eng.Config.Web.Host, "host")
 	port := fs.Int("port", eng.Config.Web.Port, "port")
+	auth := fs.String("auth", eng.Config.Web.Auth, "none|token")
+	token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_WEB_TOKEN")), "api token (for auth=token)")
+	openBrowser := fs.Bool("open-browser", eng.Config.Web.OpenBrowser, "open default browser")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	mode := strings.ToLower(strings.TrimSpace(*auth))
+	if mode != "none" && mode != "token" {
+		fmt.Fprintln(os.Stderr, "serve auth must be none|token")
+		return 2
+	}
+	if mode == "token" && strings.TrimSpace(*token) == "" {
+		fmt.Fprintln(os.Stderr, "serve token auth requires --token or DFMC_WEB_TOKEN")
+		return 2
+	}
+
 	if jsonMode {
 		_ = printJSON(map[string]any{
 			"status": "starting",
 			"host":   *host,
 			"port":   *port,
+			"auth":   mode,
 		})
 	}
 
 	srv := web.New(eng, *host, *port)
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- srv.Start()
-	}()
+	handler := srv.Handler()
+	if mode == "token" {
+		handler = bearerTokenMiddleware(handler, *token)
+	}
 
-	select {
-	case <-ctx.Done():
+	addr := fmt.Sprintf("%s:%d", *host, *port)
+	server := &http.Server{
+		Addr:    addr,
+		Handler: handler,
+	}
+	fmt.Printf("DFMC Web API listening on http://%s\n", addr)
+	if *openBrowser {
+		target := "http://" + addr
+		go func() {
+			// Give server a small head-start before opening browser.
+			time.Sleep(120 * time.Millisecond)
+			_ = tryOpenBrowser(target)
+		}()
+	}
+	if err := serveWithContext(ctx, server); err != nil {
+		fmt.Fprintf(os.Stderr, "serve error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
+	if len(args) == 0 {
+		args = []string{"start"}
+	}
+
+	switch args[0] {
+	case "status":
+		payload := map[string]any{
+			"enabled":   eng.Config.Remote.Enabled,
+			"host":      eng.Config.Web.Host,
+			"grpc_port": eng.Config.Remote.GRPCPort,
+			"ws_port":   eng.Config.Remote.WSPort,
+			"auth":      eng.Config.Remote.Auth,
+		}
+		if jsonMode {
+			_ = printJSON(payload)
+			return 0
+		}
+		fmt.Printf("Remote enabled: %t\n", eng.Config.Remote.Enabled)
+		fmt.Printf("Host:           %s\n", eng.Config.Web.Host)
+		fmt.Printf("gRPC port:      %d\n", eng.Config.Remote.GRPCPort)
+		fmt.Printf("WS/HTTP port:   %d\n", eng.Config.Remote.WSPort)
+		fmt.Printf("Auth:           %s\n", eng.Config.Remote.Auth)
 		return 0
-	case err := <-errCh:
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "serve error: %v\n", err)
+
+	case "probe":
+		fs := flag.NewFlagSet("remote probe", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 3*time.Second, "request timeout")
+		endpointsRaw := fs.String("endpoints", "/healthz,/api/v1/status,/api/v1/providers", "comma-separated endpoint paths")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		client := &http.Client{Timeout: *timeout}
+		endpoints := parseEndpointList(*endpointsRaw)
+		results := make([]remoteProbeResult, 0, len(endpoints))
+		hasFailure := false
+		for _, endpoint := range endpoints {
+			res := probeRemoteEndpoint(client, *baseURL, endpoint, *token)
+			results = append(results, res)
+			if !res.OK {
+				hasFailure = true
+			}
+		}
+
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"url":       *baseURL,
+				"timeout":   timeout.String(),
+				"endpoints": endpoints,
+				"results":   results,
+			})
+			if hasFailure {
+				return 1
+			}
+			return 0
+		}
+
+		fmt.Printf("Remote probe: %s\n", *baseURL)
+		for _, r := range results {
+			status := "PASS"
+			if !r.OK {
+				status = "FAIL"
+			}
+			details := strings.TrimSpace(r.Error)
+			if details == "" {
+				details = strings.TrimSpace(r.Body)
+			}
+			if details == "" {
+				details = "(empty)"
+			}
+			fmt.Printf("[%s] %s -> %d (%dms) %s\n", status, r.Endpoint, r.StatusCode, r.DurationMs, truncateLine(details, 160))
+		}
+		if hasFailure {
 			return 1
 		}
 		return 0
+
+	case "ask":
+		fs := flag.NewFlagSet("remote ask", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 60*time.Second, "request timeout")
+		message := fs.String("message", "", "question/message to send")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if strings.TrimSpace(*message) == "" && len(fs.Args()) > 0 {
+			*message = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		}
+		if strings.TrimSpace(*message) == "" {
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote ask [--url ...] [--token ...] --message \"...\"")
+			return 2
+		}
+
+		events, answer, err := remoteAsk(*baseURL, *token, strings.TrimSpace(*message), *timeout, jsonMode)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "remote ask error: %v\n", err)
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"url":      *baseURL,
+				"message":  *message,
+				"events":   events,
+				"answer":   answer,
+				"event_n":  len(events),
+				"received": time.Now().UTC().Format(time.RFC3339),
+			})
+			return 0
+		}
+		if !strings.HasSuffix(answer, "\n") {
+			fmt.Println()
+		}
+		return 0
+
+	case "tool":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote tool <name> [--url ...] [--token ...] [--param key=value]")
+			return 2
+		}
+		name := strings.TrimSpace(args[1])
+		fs := flag.NewFlagSet("remote tool", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
+		var paramsRaw multiStringFlag
+		fs.Var(&paramsRaw, "param", "tool param in key=value format (repeatable)")
+		if err := fs.Parse(args[2:]); err != nil {
+			return 2
+		}
+		params, err := parseKeyValueParams(paramsRaw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "remote tool param error: %v\n", err)
+			return 2
+		}
+		payload, _, err := remoteJSONRequest(
+			http.MethodPost,
+			strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/tools/"+url.PathEscape(name),
+			*token,
+			map[string]any{"params": params},
+			*timeout,
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "remote tool error: %v\n", err)
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(payload)
+			return 0
+		}
+		if out, ok := payload["output"]; ok {
+			fmt.Println(fmt.Sprint(out))
+		} else {
+			_ = printJSON(payload)
+		}
+		return 0
+
+	case "skill":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote skill <name> [--url ...] [--token ...] [--input ...]")
+			return 2
+		}
+		name := strings.TrimSpace(args[1])
+		fs := flag.NewFlagSet("remote skill", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 60*time.Second, "request timeout")
+		input := fs.String("input", "", "skill input text")
+		if err := fs.Parse(args[2:]); err != nil {
+			return 2
+		}
+		if strings.TrimSpace(*input) == "" && len(fs.Args()) > 0 {
+			*input = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		}
+		payload, _, err := remoteJSONRequest(
+			http.MethodPost,
+			strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/skills/"+url.PathEscape(name),
+			*token,
+			map[string]any{"input": *input},
+			*timeout,
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "remote skill error: %v\n", err)
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(payload)
+			return 0
+		}
+		if out, ok := payload["answer"]; ok {
+			fmt.Println(fmt.Sprint(out))
+		} else {
+			_ = printJSON(payload)
+		}
+		return 0
+
+	case "analyze":
+		fs := flag.NewFlagSet("remote analyze", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 60*time.Second, "request timeout")
+		path := fs.String("path", "", "target path")
+		full := fs.Bool("full", false, "run full analysis")
+		security := fs.Bool("security", false, "include security report")
+		complexity := fs.Bool("complexity", false, "include complexity report")
+		deadCode := fs.Bool("dead-code", false, "include dead-code report")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		payload, _, err := remoteJSONRequest(
+			http.MethodPost,
+			strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/analyze",
+			*token,
+			map[string]any{
+				"path":       *path,
+				"full":       *full,
+				"security":   *security,
+				"complexity": *complexity,
+				"dead_code":  *deadCode,
+			},
+			*timeout,
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "remote analyze error: %v\n", err)
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(payload)
+			return 0
+		}
+		_ = printJSON(payload)
+		return 0
+
+	case "start":
+		fs := flag.NewFlagSet("remote start", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		host := fs.String("host", eng.Config.Web.Host, "bind host")
+		grpcPort := fs.Int("grpc-port", eng.Config.Remote.GRPCPort, "bind grpc port")
+		port := fs.Int("ws-port", eng.Config.Remote.WSPort, "bind ws/http port")
+		auth := fs.String("auth", eng.Config.Remote.Auth, "none|token")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token (for auth=token)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		mode := strings.ToLower(strings.TrimSpace(*auth))
+		if mode != "none" && mode != "token" {
+			fmt.Fprintln(os.Stderr, "remote auth must be none|token")
+			return 2
+		}
+		if mode == "token" && strings.TrimSpace(*token) == "" {
+			fmt.Fprintln(os.Stderr, "remote token auth requires --token or DFMC_REMOTE_TOKEN")
+			return 2
+		}
+
+		base := web.New(eng, *host, *port)
+		handler := base.Handler()
+		if mode == "token" {
+			handler = bearerTokenMiddleware(handler, *token)
+		}
+
+		addr := fmt.Sprintf("%s:%d", *host, *port)
+		server := &http.Server{
+			Addr:    addr,
+			Handler: handler,
+		}
+
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"status":    "starting",
+				"mode":      "remote",
+				"host":      *host,
+				"grpc_port": *grpcPort,
+				"ws_port":   *port,
+				"auth":      mode,
+				"healthz":   fmt.Sprintf("http://%s/healthz", addr),
+				"base_api":  fmt.Sprintf("http://%s/api/v1", addr),
+				"grpc":      "not_started",
+			})
+		} else {
+			fmt.Printf("DFMC remote server listening on http://%s\n", addr)
+			fmt.Printf("gRPC port (reserved): %d\n", *grpcPort)
+			fmt.Printf("Auth: %s\n", mode)
+		}
+
+		if err := serveWithContext(ctx, server); err != nil {
+			fmt.Fprintf(os.Stderr, "remote server error: %v\n", err)
+			return 1
+		}
+		return 0
+
+	default:
+		fmt.Fprintln(os.Stderr, "usage: dfmc remote [status|probe|ask|tool|skill|analyze|start --host 127.0.0.1 --ws-port 7779 --auth none|token]")
+		return 2
 	}
+}
+
+type remoteProbeResult struct {
+	Endpoint   string `json:"endpoint"`
+	OK         bool   `json:"ok"`
+	StatusCode int    `json:"status_code"`
+	DurationMs int64  `json:"duration_ms"`
+	Body       string `json:"body,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+func parseEndpointList(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if !strings.HasPrefix(p, "/") {
+			p = "/" + p
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return []string{"/healthz"}
+	}
+	return out
+}
+
+func probeRemoteEndpoint(client *http.Client, baseURL, endpoint, token string) remoteProbeResult {
+	start := time.Now()
+	res := remoteProbeResult{Endpoint: endpoint}
+
+	url := strings.TrimRight(strings.TrimSpace(baseURL), "/") + endpoint
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		res.Error = err.Error()
+		res.DurationMs = time.Since(start).Milliseconds()
+		return res
+	}
+	if tok := strings.TrimSpace(token); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		res.Error = err.Error()
+		res.DurationMs = time.Since(start).Milliseconds()
+		return res
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	res.StatusCode = resp.StatusCode
+	res.Body = strings.TrimSpace(string(body))
+	res.OK = resp.StatusCode >= 200 && resp.StatusCode < 300
+	res.DurationMs = time.Since(start).Milliseconds()
+	return res
+}
+
+type remoteChatEvent struct {
+	Type  string `json:"type"`
+	Delta string `json:"delta,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+func remoteAsk(baseURL, token, message string, timeout time.Duration, streamOutput bool) ([]remoteChatEvent, string, error) {
+	payload, err := json.Marshal(map[string]string{"message": message})
+	if err != nil {
+		return nil, "", err
+	}
+	endpoint := strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/api/v1/chat"
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if tok := strings.TrimSpace(token); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, "", fmt.Errorf("remote returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+
+	events := make([]remoteChatEvent, 0, 64)
+	var answer strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		ev, ok, err := parseSSEDataLine(scanner.Text())
+		if err != nil {
+			return events, answer.String(), err
+		}
+		if !ok {
+			continue
+		}
+		events = append(events, ev)
+		switch ev.Type {
+		case "delta":
+			answer.WriteString(ev.Delta)
+			if streamOutput {
+				fmt.Print(ev.Delta)
+			}
+		case "error":
+			msg := strings.TrimSpace(ev.Error)
+			if msg == "" {
+				msg = "remote stream error"
+			}
+			return events, answer.String(), fmt.Errorf(msg)
+		case "done":
+			return events, answer.String(), nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return events, answer.String(), err
+	}
+	return events, answer.String(), nil
+}
+
+func parseSSEDataLine(line string) (remoteChatEvent, bool, error) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "data:") {
+		return remoteChatEvent{}, false, nil
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	if payload == "" {
+		return remoteChatEvent{}, false, nil
+	}
+	var ev remoteChatEvent
+	if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+		return remoteChatEvent{}, true, fmt.Errorf("invalid sse json: %w", err)
+	}
+	return ev, true, nil
+}
+
+type multiStringFlag []string
+
+func (m *multiStringFlag) String() string {
+	return strings.Join(*m, ",")
+}
+
+func (m *multiStringFlag) Set(value string) error {
+	*m = append(*m, value)
+	return nil
+}
+
+func parseKeyValueParams(items []string) (map[string]any, error) {
+	out := map[string]any{}
+	for _, raw := range items {
+		parts := strings.SplitN(strings.TrimSpace(raw), "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid key=value: %s", raw)
+		}
+		key := strings.TrimSpace(parts[0])
+		if key == "" {
+			return nil, fmt.Errorf("empty key in param: %s", raw)
+		}
+		val, err := parseConfigValue(strings.TrimSpace(parts[1]))
+		if err != nil {
+			return nil, err
+		}
+		out[key] = val
+	}
+	return out, nil
+}
+
+func remoteJSONRequest(method, endpoint, token string, payload any, timeout time.Duration) (map[string]any, int, error) {
+	var body io.Reader
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return nil, 0, err
+		}
+		body = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequest(method, endpoint, body)
+	if err != nil {
+		return nil, 0, err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if tok := strings.TrimSpace(token); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	rawBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	out := map[string]any{}
+	if len(strings.TrimSpace(string(rawBody))) > 0 {
+		if err := json.Unmarshal(rawBody, &out); err != nil {
+			return nil, resp.StatusCode, fmt.Errorf("invalid json response (%d): %s", resp.StatusCode, strings.TrimSpace(string(rawBody)))
+		}
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if msg, ok := out["error"]; ok {
+			return out, resp.StatusCode, fmt.Errorf("remote returned %s: %v", resp.Status, msg)
+		}
+		return out, resp.StatusCode, fmt.Errorf("remote returned %s", resp.Status)
+	}
+	return out, resp.StatusCode, nil
+}
+
+type doctorCheck struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"` // pass|warn|fail
+	Details string `json:"details"`
+}
+
+func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
+	_ = ctx
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	network := fs.Bool("network", false, "check provider endpoint network reachability")
+	timeout := fs.Duration("timeout", 2*time.Second, "network check timeout")
+	providersOnly := fs.Bool("providers-only", false, "only run provider checks")
+	fix := fs.Bool("fix", false, "attempt safe auto-fixes for config")
+	globalFix := fs.Bool("global", false, "with --fix, update ~/.dfmc/config.yaml instead of project config")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	checks := make([]doctorCheck, 0, 16)
+	add := func(name, status, details string) {
+		checks = append(checks, doctorCheck{
+			Name:    name,
+			Status:  status,
+			Details: details,
+		})
+	}
+
+	if *fix {
+		details, err := applyDoctorFixes(eng, *globalFix)
+		if err != nil {
+			add("doctor.fix", "warn", err.Error())
+		} else {
+			add("doctor.fix", "pass", details)
+		}
+	}
+
+	if eng.Config == nil {
+		add("config.loaded", "fail", "engine config is nil")
+	} else {
+		if *providersOnly {
+			if len(eng.Config.Providers.Profiles) == 0 {
+				add("config.providers", "fail", "providers.profiles is empty")
+			} else {
+				add("config.providers", "pass", "provider profiles are present")
+			}
+		} else if err := eng.Config.Validate(); err != nil {
+			add("config.valid", "fail", err.Error())
+		} else {
+			add("config.valid", "pass", "configuration is valid")
+		}
+	}
+
+	if !*providersOnly {
+		root := strings.TrimSpace(eng.Status().ProjectRoot)
+		if root == "" {
+			add("project.root", "warn", "project root is empty")
+		} else if st, err := os.Stat(root); err != nil {
+			add("project.root", "fail", err.Error())
+		} else if !st.IsDir() {
+			add("project.root", "fail", "project root is not a directory")
+		} else {
+			add("project.root", "pass", root)
+		}
+
+		if eng.Config != nil {
+			addFileSystemHealthCheck(&checks, "storage.data_dir", eng.Config.DataDir())
+			addFileSystemHealthCheck(&checks, "plugins.dir", eng.Config.PluginDir())
+		}
+
+		for _, bin := range []string{"git", "go"} {
+			if path, err := exec.LookPath(bin); err != nil {
+				add("dependency."+bin, "warn", "not found in PATH")
+			} else {
+				add("dependency."+bin, "pass", path)
+			}
+		}
+	}
+
+	if eng.Config != nil {
+		names := make([]string, 0, len(eng.Config.Providers.Profiles))
+		for name := range eng.Config.Providers.Profiles {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			prof := eng.Config.Providers.Profiles[name]
+			configured := providerConfigured(name, prof)
+			if configured {
+				add("provider."+name+".configured", "pass", "credentials/endpoint present")
+			} else {
+				add("provider."+name+".configured", "warn", "missing api_key or required endpoint")
+			}
+			if *network && configured {
+				status, details := providerReachabilityStatus(name, prof, *timeout)
+				add("provider."+name+".network", status, details)
+			}
+		}
+	}
+
+	failN, warnN, passN := 0, 0, 0
+	for _, c := range checks {
+		switch c.Status {
+		case "fail":
+			failN++
+		case "warn":
+			warnN++
+		default:
+			passN++
+		}
+	}
+	exitCode := 0
+	overall := "ok"
+	if failN > 0 {
+		exitCode = 1
+		overall = "fail"
+	} else if warnN > 0 {
+		overall = "warn"
+	}
+
+	if jsonMode {
+		_ = printJSON(map[string]any{
+			"status":   overall,
+			"summary":  map[string]int{"pass": passN, "warn": warnN, "fail": failN},
+			"checks":   checks,
+			"network":  *network,
+			"timeout":  timeout.String(),
+			"fix":      *fix,
+			"scope":    map[bool]string{true: "providers", false: "full"}[*providersOnly],
+			"provider": eng.Status().Provider,
+		})
+		return exitCode
+	}
+
+	fmt.Println("DFMC doctor report")
+	for _, c := range checks {
+		fmt.Printf("[%s] %s: %s\n", strings.ToUpper(c.Status), c.Name, c.Details)
+	}
+	fmt.Printf("Summary: pass=%d warn=%d fail=%d\n", passN, warnN, failN)
+	return exitCode
+}
+
+func applyDoctorFixes(eng *engine.Engine, global bool) (string, error) {
+	if eng == nil {
+		return "", fmt.Errorf("engine is nil")
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	targetPath := projectConfigPath(cwd)
+	if global {
+		targetPath = filepath.Join(config.UserConfigDir(), "config.yaml")
+	}
+
+	currentMap, err := loadConfigFileMap(targetPath)
+	if err != nil {
+		return "", err
+	}
+	if len(currentMap) == 0 {
+		defMap, err := configToMap(config.DefaultConfig())
+		if err != nil {
+			return "", err
+		}
+		currentMap = defMap
+	}
+
+	if _, ok := getConfigPath(currentMap, "version"); !ok {
+		if err := setConfigPath(currentMap, "version", config.DefaultVersion); err != nil {
+			return "", err
+		}
+	}
+	if _, ok := getConfigPath(currentMap, "providers.profiles"); !ok {
+		if err := setConfigPath(currentMap, "providers.profiles", config.DefaultConfig().Providers.Profiles); err != nil {
+			return "", err
+		}
+	}
+
+	profiles := map[string]any{}
+	if raw, ok := getConfigPath(currentMap, "providers.profiles"); ok {
+		switch v := raw.(type) {
+		case map[string]any:
+			profiles = v
+		case map[any]any:
+			for k, val := range v {
+				key := strings.TrimSpace(fmt.Sprint(k))
+				if key != "" {
+					profiles[key] = val
+				}
+			}
+		}
+	}
+	if len(profiles) == 0 {
+		defMap, err := configToMap(config.DefaultConfig())
+		if err != nil {
+			return "", err
+		}
+		if err := setConfigPath(currentMap, "providers.profiles", defMap["providers"].(map[string]any)["profiles"]); err != nil {
+			return "", err
+		}
+		if raw, ok := getConfigPath(currentMap, "providers.profiles"); ok {
+			if v, ok := raw.(map[string]any); ok {
+				profiles = v
+			}
+		}
+	}
+
+	rawPrimary, _ := getConfigPath(currentMap, "providers.primary")
+	primary := strings.TrimSpace(fmt.Sprint(rawPrimary))
+	if primary == "" || !profilesHasKey(profiles, primary) {
+		primary = choosePreferredProvider(profiles, config.DefaultConfig().Providers.Primary)
+		if primary == "" {
+			primary = config.DefaultConfig().Providers.Primary
+		}
+		if err := setConfigPath(currentMap, "providers.primary", primary); err != nil {
+			return "", err
+		}
+	}
+
+	if raw, ok := getConfigPath(currentMap, "web.auth"); ok {
+		auth := strings.ToLower(strings.TrimSpace(fmt.Sprint(raw)))
+		if auth != "none" && auth != "token" {
+			if err := setConfigPath(currentMap, "web.auth", "none"); err != nil {
+				return "", err
+			}
+		}
+	}
+	if raw, ok := getConfigPath(currentMap, "remote.auth"); ok {
+		auth := strings.ToLower(strings.TrimSpace(fmt.Sprint(raw)))
+		if auth != "none" && auth != "token" && auth != "mtls" {
+			if err := setConfigPath(currentMap, "remote.auth", "token"); err != nil {
+				return "", err
+			}
+		}
+	}
+
+	var oldData []byte
+	oldData, _ = os.ReadFile(targetPath)
+	if err := saveConfigFileMap(targetPath, currentMap); err != nil {
+		return "", err
+	}
+	if err := eng.ReloadConfig(cwd); err != nil {
+		if len(oldData) == 0 {
+			_ = os.Remove(targetPath)
+		} else {
+			_ = os.WriteFile(targetPath, oldData, 0o644)
+		}
+		return "", fmt.Errorf("fix applied but reload failed (reverted): %w", err)
+	}
+
+	return "updated " + targetPath, nil
+}
+
+func profilesHasKey(profiles map[string]any, name string) bool {
+	for k := range profiles {
+		if strings.EqualFold(strings.TrimSpace(k), strings.TrimSpace(name)) {
+			return true
+		}
+	}
+	return false
+}
+
+func choosePreferredProvider(profiles map[string]any, fallback string) string {
+	preferredOrder := []string{
+		"anthropic",
+		"openai",
+		"deepseek",
+		"google",
+		"zai",
+		"generic",
+		"alibaba",
+		"kimi",
+		"minimax",
+	}
+	for _, name := range preferredOrder {
+		prof, ok := profileByName(profiles, name)
+		if !ok {
+			continue
+		}
+		modelCfg := modelConfigFromAny(prof)
+		if providerConfigured(name, modelCfg) {
+			return name
+		}
+	}
+	for _, name := range preferredOrder {
+		if profilesHasKey(profiles, name) {
+			return name
+		}
+	}
+	if profilesHasKey(profiles, fallback) {
+		return fallback
+	}
+	keys := make([]string, 0, len(profiles))
+	for k := range profiles {
+		keys = append(keys, strings.TrimSpace(k))
+	}
+	sort.Strings(keys)
+	if len(keys) > 0 {
+		return keys[0]
+	}
+	return ""
+}
+
+func profileByName(profiles map[string]any, name string) (any, bool) {
+	for k, v := range profiles {
+		if strings.EqualFold(strings.TrimSpace(k), strings.TrimSpace(name)) {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+func modelConfigFromAny(v any) config.ModelConfig {
+	out := config.ModelConfig{}
+	switch m := v.(type) {
+	case map[string]any:
+		if raw, ok := m["api_key"]; ok {
+			out.APIKey = strings.TrimSpace(fmt.Sprint(raw))
+		}
+		if raw, ok := m["base_url"]; ok {
+			out.BaseURL = strings.TrimSpace(fmt.Sprint(raw))
+		}
+		if raw, ok := m["model"]; ok {
+			out.Model = strings.TrimSpace(fmt.Sprint(raw))
+		}
+	case config.ModelConfig:
+		out = m
+	}
+	return out
+}
+
+func addFileSystemHealthCheck(checks *[]doctorCheck, name, dir string) {
+	if strings.TrimSpace(dir) == "" {
+		*checks = append(*checks, doctorCheck{Name: name, Status: "fail", Details: "path is empty"})
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		*checks = append(*checks, doctorCheck{Name: name, Status: "fail", Details: err.Error()})
+		return
+	}
+	probe, err := os.CreateTemp(dir, ".dfmc-health-*")
+	if err != nil {
+		*checks = append(*checks, doctorCheck{Name: name, Status: "fail", Details: "not writable: " + err.Error()})
+		return
+	}
+	_ = probe.Close()
+	_ = os.Remove(probe.Name())
+	*checks = append(*checks, doctorCheck{Name: name, Status: "pass", Details: dir})
+}
+
+func providerConfigured(name string, prof config.ModelConfig) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	apiKey := strings.TrimSpace(prof.APIKey)
+	baseURL := strings.TrimSpace(prof.BaseURL)
+
+	switch name {
+	case "generic":
+		return baseURL != ""
+	default:
+		return apiKey != "" || baseURL != ""
+	}
+}
+
+func providerReachabilityStatus(name string, prof config.ModelConfig, timeout time.Duration) (string, string) {
+	target, err := providerEndpoint(name, prof)
+	if err != nil {
+		return "warn", err.Error()
+	}
+	conn, err := net.DialTimeout("tcp", target, timeout)
+	if err != nil {
+		return "warn", fmt.Sprintf("dial %s failed: %v", target, err)
+	}
+	_ = conn.Close()
+	return "pass", "reachable: " + target
+}
+
+func providerEndpoint(name string, prof config.ModelConfig) (string, error) {
+	if strings.TrimSpace(prof.BaseURL) != "" {
+		u, err := url.Parse(strings.TrimSpace(prof.BaseURL))
+		if err != nil {
+			return "", fmt.Errorf("invalid base_url: %w", err)
+		}
+		if strings.TrimSpace(u.Host) == "" {
+			return "", fmt.Errorf("invalid base_url host")
+		}
+		if strings.Contains(u.Host, ":") {
+			return u.Host, nil
+		}
+		if strings.EqualFold(u.Scheme, "http") {
+			return net.JoinHostPort(u.Host, "80"), nil
+		}
+		return net.JoinHostPort(u.Host, "443"), nil
+	}
+
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "anthropic":
+		return "api.anthropic.com:443", nil
+	case "openai":
+		return "api.openai.com:443", nil
+	case "google":
+		return "generativelanguage.googleapis.com:443", nil
+	case "deepseek":
+		return "api.deepseek.com:443", nil
+	case "kimi":
+		return "api.moonshot.cn:443", nil
+	case "minimax":
+		return "api.minimax.chat:443", nil
+	case "zai":
+		return "api.z.ai:443", nil
+	case "alibaba":
+		return "dashscope.aliyuncs.com:443", nil
+	default:
+		return "", fmt.Errorf("no endpoint mapping for provider %q", name)
+	}
+}
+
+func serveWithContext(ctx context.Context, server *http.Server) error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.ListenAndServe()
+	}()
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+		return nil
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
+}
+
+func bearerTokenMiddleware(next http.Handler, token string) http.Handler {
+	expected := "Bearer " + strings.TrimSpace(token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			writeRemoteJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+			return
+		}
+		got := strings.TrimSpace(r.Header.Get("Authorization"))
+		if got != expected {
+			writeRemoteJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func writeRemoteJSON(w http.ResponseWriter, code int, payload any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+type pluginInfo struct {
+	Name      string `json:"name"`
+	Path      string `json:"path,omitempty"`
+	Installed bool   `json:"installed"`
+	Enabled   bool   `json:"enabled"`
+	Version   string `json:"version,omitempty"`
+	Type      string `json:"type,omitempty"`
+	Entry     string `json:"entry,omitempty"`
+	Manifest  string `json:"manifest,omitempty"`
+}
+
+type pluginManifest struct {
+	Name        string `yaml:"name"`
+	Version     string `yaml:"version"`
+	Type        string `yaml:"type"`
+	Entry       string `yaml:"entry"`
+	Description string `yaml:"description"`
+}
+
+type skillInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Source      string `json:"source"`
+	Builtin     bool   `json:"builtin"`
+	Prompt      string `json:"-"`
+}
+
+func runPlugin(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
+	_ = ctx
+	if len(args) == 0 {
+		args = []string{"list"}
+	}
+	switch args[0] {
+	case "list":
+		items := discoverPlugins(eng.Config.PluginDir(), eng.Config.Plugins.Enabled)
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"directory": eng.Config.PluginDir(),
+				"plugins":   items,
+			})
+			return 0
+		}
+		if len(items) == 0 {
+			fmt.Printf("No plugins found in %s\n", eng.Config.PluginDir())
+			return 0
+		}
+		for _, p := range items {
+			state := "disabled"
+			if p.Enabled {
+				state = "enabled"
+			}
+			installed := "missing"
+			if p.Installed {
+				installed = "installed"
+			}
+			meta := ""
+			if p.Version != "" {
+				meta = " v" + p.Version
+			}
+			if p.Type != "" {
+				meta += " (" + p.Type + ")"
+			}
+			fmt.Printf("- %s%s [%s, %s]\n", p.Name, meta, state, installed)
+		}
+		return 0
+
+	case "info":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc plugin info <name>")
+			return 2
+		}
+		name := strings.TrimSpace(args[1])
+		items := discoverPlugins(eng.Config.PluginDir(), eng.Config.Plugins.Enabled)
+		for _, p := range items {
+			if strings.EqualFold(p.Name, name) {
+				if jsonMode {
+					_ = printJSON(p)
+				} else {
+					fmt.Printf("Name:      %s\n", p.Name)
+					fmt.Printf("Installed: %t\n", p.Installed)
+					fmt.Printf("Enabled:   %t\n", p.Enabled)
+					if strings.TrimSpace(p.Version) != "" {
+						fmt.Printf("Version:   %s\n", p.Version)
+					}
+					if strings.TrimSpace(p.Type) != "" {
+						fmt.Printf("Type:      %s\n", p.Type)
+					}
+					if strings.TrimSpace(p.Entry) != "" {
+						fmt.Printf("Entry:     %s\n", p.Entry)
+					}
+					if strings.TrimSpace(p.Manifest) != "" {
+						fmt.Printf("Manifest:  %s\n", p.Manifest)
+					}
+					if strings.TrimSpace(p.Path) != "" {
+						fmt.Printf("Path:      %s\n", p.Path)
+					}
+				}
+				return 0
+			}
+		}
+		fmt.Fprintf(os.Stderr, "plugin not found: %s\n", name)
+		return 1
+
+	case "enable", "disable":
+		fs := flag.NewFlagSet("plugin "+args[0], flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		global := fs.Bool("global", false, "write to ~/.dfmc/config.yaml")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if len(fs.Args()) < 1 {
+			fmt.Fprintf(os.Stderr, "usage: dfmc plugin %s [--global] <name>\n", args[0])
+			return 2
+		}
+		name := strings.TrimSpace(fs.Args()[0])
+		enabled := args[0] == "enable"
+		if err := updatePluginEnabled(ctx, eng, name, enabled, *global); err != nil {
+			fmt.Fprintf(os.Stderr, "plugin %s failed: %v\n", args[0], err)
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"status":  "ok",
+				"plugin":  name,
+				"enabled": enabled,
+			})
+		} else {
+			fmt.Printf("Plugin %s: %s\n", name, map[bool]string{true: "enabled", false: "disabled"}[enabled])
+		}
+		return 0
+
+	case "install":
+		fs := flag.NewFlagSet("plugin install", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		nameOverride := fs.String("name", "", "plugin name override")
+		enable := fs.Bool("enable", true, "enable after install")
+		global := fs.Bool("global", false, "write enable state to ~/.dfmc/config.yaml")
+		force := fs.Bool("force", false, "overwrite existing plugin target")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if len(fs.Args()) < 1 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc plugin install [--name X] [--enable] [--global] [--force] <source_path_or_url>")
+			return 2
+		}
+		sourcePath := strings.TrimSpace(fs.Args()[0])
+		installed, err := installPluginFile(eng.Config.PluginDir(), sourcePath, strings.TrimSpace(*nameOverride), *force)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "plugin install failed: %v\n", err)
+			return 1
+		}
+		if *enable {
+			if err := updatePluginEnabled(ctx, eng, installed.Name, true, *global); err != nil {
+				fmt.Fprintf(os.Stderr, "plugin installed but enable failed: %v\n", err)
+				return 1
+			}
+			installed.Enabled = true
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"status": "ok",
+				"plugin": installed,
+			})
+		} else {
+			fmt.Printf("Installed plugin %s at %s\n", installed.Name, installed.Path)
+			if installed.Enabled {
+				fmt.Println("Plugin enabled")
+			}
+		}
+		return 0
+
+	case "remove":
+		fs := flag.NewFlagSet("plugin remove", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		global := fs.Bool("global", false, "write disable state to ~/.dfmc/config.yaml")
+		purge := fs.Bool("purge", true, "remove installed files")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if len(fs.Args()) < 1 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc plugin remove [--global] [--purge=true] <name>")
+			return 2
+		}
+		name := strings.TrimSpace(fs.Args()[0])
+		if err := updatePluginEnabled(ctx, eng, name, false, *global); err != nil {
+			fmt.Fprintf(os.Stderr, "plugin disable failed: %v\n", err)
+			return 1
+		}
+		removedPath := ""
+		if *purge {
+			path, err := removeInstalledPlugin(eng.Config.PluginDir(), name)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "plugin remove failed: %v\n", err)
+				return 1
+			}
+			removedPath = path
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"status":  "ok",
+				"plugin":  name,
+				"removed": removedPath,
+			})
+		} else {
+			fmt.Printf("Plugin %s disabled\n", name)
+			if removedPath != "" {
+				fmt.Printf("Removed %s\n", removedPath)
+			}
+		}
+		return 0
+
+	default:
+		fmt.Fprintln(os.Stderr, "usage: dfmc plugin [list|info <name>|enable <name>|disable <name>|install <path>|remove <name>]")
+		return 2
+	}
+}
+
+func runSkill(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
+	if len(args) == 0 {
+		args = []string{"list"}
+	}
+	switch args[0] {
+	case "list":
+		items := discoverSkills(eng.Status().ProjectRoot)
+		if jsonMode {
+			_ = printJSON(map[string]any{"skills": items})
+			return 0
+		}
+		for _, s := range items {
+			label := s.Source
+			if s.Builtin {
+				label = "builtin"
+			}
+			fmt.Printf("- %s [%s]\n", s.Name, label)
+		}
+		return 0
+
+	case "info":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc skill info <name>")
+			return 2
+		}
+		name := strings.TrimSpace(args[1])
+		items := discoverSkills(eng.Status().ProjectRoot)
+		for _, s := range items {
+			if strings.EqualFold(s.Name, name) {
+				if jsonMode {
+					_ = printJSON(s)
+				} else {
+					fmt.Printf("Name:        %s\n", s.Name)
+					fmt.Printf("Source:      %s\n", s.Source)
+					fmt.Printf("Builtin:     %t\n", s.Builtin)
+					if s.Description != "" {
+						fmt.Printf("Description: %s\n", s.Description)
+					}
+					if s.Path != "" {
+						fmt.Printf("Path:        %s\n", s.Path)
+					}
+				}
+				return 0
+			}
+		}
+		fmt.Fprintf(os.Stderr, "skill not found: %s\n", name)
+		return 1
+
+	case "run":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc skill run <name> [input]")
+			return 2
+		}
+		name := strings.TrimSpace(args[1])
+		input := strings.TrimSpace(strings.Join(args[2:], " "))
+		return runNamedSkill(ctx, eng, name, input, jsonMode)
+
+	default:
+		fmt.Fprintln(os.Stderr, "usage: dfmc skill [list|info <name>|run <name> [input]]")
+		return 2
+	}
+}
+
+func runSkillShortcut(ctx context.Context, eng *engine.Engine, name string, args []string, jsonMode bool) int {
+	input := strings.TrimSpace(strings.Join(args, " "))
+	if input == "" {
+		input = "Analyze the current project."
+	}
+	return runNamedSkill(ctx, eng, name, input, jsonMode)
+}
+
+func runNamedSkill(ctx context.Context, eng *engine.Engine, name, input string, jsonMode bool) int {
+	items := discoverSkills(eng.Status().ProjectRoot)
+	for _, s := range items {
+		if !strings.EqualFold(s.Name, name) {
+			continue
+		}
+		prompt := buildSkillPrompt(s, input)
+		answer, err := eng.Ask(ctx, prompt)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "skill run failed: %v\n", err)
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"skill":  s.Name,
+				"source": s.Source,
+				"input":  input,
+				"answer": answer,
+			})
+			return 0
+		}
+		fmt.Println(answer)
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "skill not found: %s\n", name)
+	return 1
+}
+
+func buildSkillPrompt(skill skillInfo, input string) string {
+	p := strings.TrimSpace(skill.Prompt)
+	if p == "" {
+		p = input
+	} else if strings.Contains(p, "{input}") {
+		p = strings.ReplaceAll(p, "{input}", input)
+	} else if strings.TrimSpace(input) != "" {
+		p = p + "\n\nUser request:\n" + input
+	}
+	return p
+}
+
+func discoverPlugins(pluginDir string, enabled []string) []pluginInfo {
+	seen := map[string]pluginInfo{}
+	entries, err := os.ReadDir(pluginDir)
+	if err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			base := strings.TrimSuffix(name, filepath.Ext(name))
+			path := filepath.Join(pluginDir, name)
+			if e.IsDir() {
+				base = name
+			} else {
+				ext := strings.ToLower(filepath.Ext(name))
+				if !pluginFileExtSupported(ext) {
+					continue
+				}
+			}
+			info := pluginInfo{
+				Name:      base,
+				Path:      path,
+				Installed: true,
+				Enabled:   containsCI(enabled, base),
+			}
+			if mf, mfPath, ok := readPluginManifest(path); ok {
+				if strings.TrimSpace(mf.Name) != "" {
+					info.Name = strings.TrimSpace(mf.Name)
+				}
+				info.Version = strings.TrimSpace(mf.Version)
+				info.Type = strings.TrimSpace(mf.Type)
+				info.Entry = strings.TrimSpace(mf.Entry)
+				info.Manifest = mfPath
+				info.Enabled = info.Enabled || containsCI(enabled, info.Name)
+			}
+			key := strings.ToLower(strings.TrimSpace(info.Name))
+			if key == "" {
+				continue
+			}
+			seen[key] = info
+		}
+	}
+
+	for _, name := range enabled {
+		n := strings.TrimSpace(name)
+		key := strings.ToLower(n)
+		if n == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = pluginInfo{
+			Name:      n,
+			Installed: false,
+			Enabled:   true,
+		}
+	}
+
+	out := make([]pluginInfo, 0, len(seen))
+	for _, p := range seen {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out
+}
+
+func installPluginFile(pluginDir, sourcePath, nameOverride string, force bool) (pluginInfo, error) {
+	if strings.TrimSpace(sourcePath) == "" {
+		return pluginInfo{}, fmt.Errorf("source path is required")
+	}
+
+	resolvedSource, cleanup, err := resolvePluginSource(sourcePath)
+	if err != nil {
+		return pluginInfo{}, err
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	srcAbs, err := filepath.Abs(resolvedSource)
+	if err != nil {
+		return pluginInfo{}, err
+	}
+	srcAbs, archiveCleanup, err := expandPluginSourceIfArchive(srcAbs)
+	if err != nil {
+		return pluginInfo{}, err
+	}
+	if archiveCleanup != nil {
+		defer archiveCleanup()
+	}
+	srcInfo, err := os.Stat(srcAbs)
+	if err != nil {
+		return pluginInfo{}, err
+	}
+	if !srcInfo.IsDir() {
+		if !pluginSourceFileExtSupported(strings.ToLower(filepath.Ext(srcAbs))) {
+			return pluginInfo{}, fmt.Errorf("unsupported plugin file extension: %s", filepath.Ext(srcAbs))
+		}
+	}
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		return pluginInfo{}, err
+	}
+	pluginDirAbs, err := filepath.Abs(pluginDir)
+	if err != nil {
+		return pluginInfo{}, err
+	}
+
+	targetName := strings.TrimSpace(nameOverride)
+	if targetName == "" {
+		if srcInfo.IsDir() {
+			if mf, _, ok := readPluginManifest(srcAbs); ok && strings.TrimSpace(mf.Name) != "" {
+				targetName = strings.TrimSpace(mf.Name)
+			}
+		}
+		if srcInfo.IsDir() {
+			if targetName == "" {
+				targetName = filepath.Base(srcAbs)
+			}
+		} else {
+			targetName = strings.TrimSuffix(filepath.Base(srcAbs), filepath.Ext(srcAbs))
+		}
+	}
+	targetName = sanitizePluginName(targetName)
+	if targetName == "" {
+		return pluginInfo{}, fmt.Errorf("invalid plugin name")
+	}
+
+	targetPath := filepath.Join(pluginDirAbs, targetName)
+	if !srcInfo.IsDir() {
+		ext := filepath.Ext(srcAbs)
+		if ext != "" {
+			targetPath = targetPath + ext
+		}
+	}
+	targetPath, err = resolvePathWithinBase(pluginDirAbs, targetPath)
+	if err != nil {
+		return pluginInfo{}, err
+	}
+
+	if _, err := os.Stat(targetPath); err == nil {
+		if !force {
+			return pluginInfo{}, fmt.Errorf("target already exists: %s (use --force)", targetPath)
+		}
+		if err := removePathSafe(pluginDirAbs, targetPath); err != nil {
+			return pluginInfo{}, err
+		}
+	}
+
+	if srcInfo.IsDir() {
+		if err := copyDir(srcAbs, targetPath); err != nil {
+			return pluginInfo{}, err
+		}
+		if err := validatePluginManifestEntry(targetPath); err != nil {
+			_ = removePathSafe(pluginDirAbs, targetPath)
+			return pluginInfo{}, err
+		}
+	} else {
+		if err := copyFile(srcAbs, targetPath); err != nil {
+			return pluginInfo{}, err
+		}
+	}
+
+	info := pluginInfo{
+		Name:      targetName,
+		Path:      targetPath,
+		Installed: true,
+		Enabled:   false,
+	}
+	if srcInfo.IsDir() {
+		if mf, mfPath, ok := readPluginManifest(targetPath); ok {
+			info.Version = strings.TrimSpace(mf.Version)
+			info.Type = strings.TrimSpace(mf.Type)
+			info.Entry = strings.TrimSpace(mf.Entry)
+			info.Manifest = mfPath
+			if strings.TrimSpace(mf.Name) != "" && strings.TrimSpace(nameOverride) == "" {
+				info.Name = strings.TrimSpace(mf.Name)
+			}
+		}
+	}
+	return info, nil
+}
+
+func removeInstalledPlugin(pluginDir, name string) (string, error) {
+	items := discoverPlugins(pluginDir, nil)
+	for _, item := range items {
+		if !item.Installed || strings.TrimSpace(item.Path) == "" {
+			continue
+		}
+		base := strings.TrimSuffix(filepath.Base(item.Path), filepath.Ext(item.Path))
+		if !strings.EqualFold(item.Name, name) && !strings.EqualFold(base, name) {
+			continue
+		}
+		pluginDirAbs, err := filepath.Abs(pluginDir)
+		if err != nil {
+			return "", err
+		}
+		targetPath, err := resolvePathWithinBase(pluginDirAbs, item.Path)
+		if err != nil {
+			return "", err
+		}
+		if err := removePathSafe(pluginDirAbs, targetPath); err != nil {
+			return "", err
+		}
+		return targetPath, nil
+	}
+	return "", nil
+}
+
+func resolvePluginSource(source string) (resolved string, cleanup func(), err error) {
+	if isHTTPPluginSource(source) {
+		path, err := downloadPluginSource(source)
+		if err != nil {
+			return "", nil, err
+		}
+		return path, func() { _ = os.Remove(path) }, nil
+	}
+	return source, nil, nil
+}
+
+func isHTTPPluginSource(source string) bool {
+	u, err := url.Parse(strings.TrimSpace(source))
+	if err != nil {
+		return false
+	}
+	if u == nil {
+		return false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return strings.TrimSpace(u.Host) != ""
+	default:
+		return false
+	}
+}
+
+func downloadPluginSource(src string) (string, error) {
+	resp, err := http.Get(src) //nolint:gosec // plugin install intentionally fetches user-provided URL.
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("download failed with status: %s", resp.Status)
+	}
+
+	ext := ".plugin"
+	if u, err := url.Parse(src); err == nil {
+		if e := strings.TrimSpace(filepath.Ext(u.Path)); e != "" {
+			ext = e
+		}
+	}
+	tmp, err := os.CreateTemp("", "dfmc-plugin-*"+ext)
+	if err != nil {
+		return "", err
+	}
+	defer tmp.Close()
+
+	if _, err := io.Copy(tmp, resp.Body); err != nil {
+		return "", err
+	}
+	return tmp.Name(), nil
+}
+
+func readPluginManifest(path string) (pluginManifest, string, bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return pluginManifest{}, "", false
+	}
+	if !info.IsDir() {
+		return pluginManifest{}, "", false
+	}
+
+	candidates := []string{
+		filepath.Join(path, "plugin.yaml"),
+		filepath.Join(path, "plugin.yml"),
+	}
+	for _, candidate := range candidates {
+		data, err := os.ReadFile(candidate)
+		if err != nil {
+			continue
+		}
+		var mf pluginManifest
+		if err := yaml.Unmarshal(data, &mf); err != nil {
+			continue
+		}
+		if strings.TrimSpace(mf.Name) == "" &&
+			strings.TrimSpace(mf.Version) == "" &&
+			strings.TrimSpace(mf.Type) == "" &&
+			strings.TrimSpace(mf.Entry) == "" {
+			continue
+		}
+		return mf, candidate, true
+	}
+	return pluginManifest{}, "", false
+}
+
+func sanitizePluginName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	name = strings.ReplaceAll(name, "\\", "_")
+	name = strings.ReplaceAll(name, "/", "_")
+	name = strings.ReplaceAll(name, ":", "_")
+	return name
+}
+
+func pluginFileExtSupported(ext string) bool {
+	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".so", ".dll", ".dylib", ".wasm", ".js", ".mjs", ".py", ".sh":
+		return true
+	default:
+		return false
+	}
+}
+
+func pluginSourceFileExtSupported(ext string) bool {
+	if pluginFileExtSupported(ext) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(ext), ".zip")
+}
+
+func expandPluginSourceIfArchive(path string) (string, func(), error) {
+	if !strings.EqualFold(filepath.Ext(path), ".zip") {
+		return path, nil, nil
+	}
+	tmpDir, err := os.MkdirTemp("", "dfmc-plugin-zip-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(tmpDir) }
+	if err := extractZipArchive(path, tmpDir); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	root := archiveRootDir(tmpDir)
+	return root, cleanup, nil
+}
+
+func archiveRootDir(tmpDir string) string {
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil || len(entries) != 1 || !entries[0].IsDir() {
+		return tmpDir
+	}
+	return filepath.Join(tmpDir, entries[0].Name())
+}
+
+func extractZipArchive(srcZip, dstDir string) error {
+	r, err := zip.OpenReader(srcZip)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	if len(r.File) == 0 {
+		return fmt.Errorf("zip archive is empty")
+	}
+	for _, f := range r.File {
+		cleanName := filepath.Clean(f.Name)
+		if cleanName == "." || cleanName == "" {
+			continue
+		}
+		if filepath.IsAbs(cleanName) || cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("zip archive contains unsafe path: %s", f.Name)
+		}
+		targetPath, err := resolvePathWithinBase(dstDir, filepath.Join(dstDir, cleanName))
+		if err != nil {
+			return err
+		}
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(targetPath, 0o755); err != nil {
+				return err
+			}
+			continue
+		}
+		if f.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("zip archive contains symlink entry: %s", f.Name)
+		}
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return err
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		if err := writeFileFromReader(targetPath, rc); err != nil {
+			_ = rc.Close()
+			return err
+		}
+		_ = rc.Close()
+	}
+	return nil
+}
+
+func writeFileFromReader(path string, r io.Reader) error {
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, r); err != nil {
+		return err
+	}
+	return out.Close()
+}
+
+func validatePluginManifestEntry(pluginPath string) error {
+	mf, _, ok := readPluginManifest(pluginPath)
+	if !ok {
+		return nil
+	}
+	entry := strings.TrimSpace(mf.Entry)
+	if entry == "" {
+		return nil
+	}
+	entryPath, err := resolvePathWithinBase(pluginPath, filepath.Join(pluginPath, entry))
+	if err != nil {
+		return fmt.Errorf("plugin manifest entry invalid: %w", err)
+	}
+	st, err := os.Stat(entryPath)
+	if err != nil {
+		return fmt.Errorf("plugin manifest entry not found: %s", entry)
+	}
+	if st.IsDir() {
+		return fmt.Errorf("plugin manifest entry points to directory: %s", entry)
+	}
+	if ext := strings.ToLower(filepath.Ext(entryPath)); ext != "" && !pluginFileExtSupported(ext) {
+		return fmt.Errorf("plugin manifest entry has unsupported extension: %s", ext)
+	}
+	return nil
+}
+
+func resolvePathWithinBase(base, target string) (string, error) {
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return "", err
+	}
+	targetAbs := target
+	if !filepath.IsAbs(targetAbs) {
+		targetAbs = filepath.Join(baseAbs, targetAbs)
+	}
+	targetAbs, err = filepath.Abs(targetAbs)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(baseAbs, targetAbs)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes plugin directory")
+	}
+	return targetAbs, nil
+}
+
+func removePathSafe(base, target string) error {
+	targetAbs, err := resolvePathWithinBase(base, target)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(targetAbs); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return os.RemoveAll(targetAbs)
+}
+
+func copyFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
+}
+
+func copyDir(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		return copyFile(path, target)
+	})
+}
+
+func updatePluginEnabled(ctx context.Context, eng *engine.Engine, name string, enabled, global bool) error {
+	_ = ctx
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("plugin name is required")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	targetPath := projectConfigPath(cwd)
+	if global {
+		targetPath = filepath.Join(config.UserConfigDir(), "config.yaml")
+	}
+
+	currentMap, err := loadConfigFileMap(targetPath)
+	if err != nil {
+		return err
+	}
+	var list []string
+	raw, _ := getConfigPath(currentMap, "plugins.enabled")
+	switch arr := raw.(type) {
+	case []any:
+		for _, item := range arr {
+			v := strings.TrimSpace(fmt.Sprint(item))
+			if v != "" {
+				list = append(list, v)
+			}
+		}
+	case []string:
+		for _, item := range arr {
+			v := strings.TrimSpace(item)
+			if v != "" {
+				list = append(list, v)
+			}
+		}
+	}
+
+	if enabled {
+		if !containsCI(list, name) {
+			list = append(list, name)
+		}
+	} else {
+		next := make([]string, 0, len(list))
+		for _, item := range list {
+			if !strings.EqualFold(item, name) {
+				next = append(next, item)
+			}
+		}
+		list = next
+	}
+
+	values := make([]any, 0, len(list))
+	for _, item := range list {
+		values = append(values, item)
+	}
+	if err := setConfigPath(currentMap, "plugins.enabled", values); err != nil {
+		return err
+	}
+
+	var oldData []byte
+	oldData, _ = os.ReadFile(targetPath)
+	if err := saveConfigFileMap(targetPath, currentMap); err != nil {
+		return err
+	}
+	if err := eng.ReloadConfig(cwd); err != nil {
+		if len(oldData) == 0 {
+			_ = os.Remove(targetPath)
+		} else {
+			_ = os.WriteFile(targetPath, oldData, 0o644)
+		}
+		return fmt.Errorf("config reload failed, reverted: %w", err)
+	}
+	return nil
+}
+
+func discoverSkills(projectRoot string) []skillInfo {
+	out := make([]skillInfo, 0, 16)
+	seen := map[string]struct{}{}
+	for _, item := range builtinSkills() {
+		key := strings.ToLower(item.Name)
+		seen[key] = struct{}{}
+		out = append(out, item)
+	}
+
+	roots := []struct {
+		Path   string
+		Source string
+	}{
+		{Path: filepath.Join(projectRoot, ".dfmc", "skills"), Source: "project"},
+		{Path: filepath.Join(config.UserConfigDir(), "skills"), Source: "global"},
+	}
+
+	for _, root := range roots {
+		files, _ := filepath.Glob(filepath.Join(root.Path, "*.y*ml"))
+		for _, path := range files {
+			item := readSkillFile(path, root.Source)
+			if strings.TrimSpace(item.Name) == "" {
+				continue
+			}
+			key := strings.ToLower(item.Name)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, item)
+		}
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out
+}
+
+func builtinSkills() []skillInfo {
+	return []skillInfo{
+		{
+			Name:        "review",
+			Description: "Code review shortcut focused on bugs, regressions, and missing tests",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt:      "Perform a strict code review. Prioritize bugs, risks, behavioral regressions, and missing tests.\n\nRequest:\n{input}",
+		},
+		{
+			Name:        "explain",
+			Description: "Explain code behavior and architecture clearly",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt:      "Explain the target code in a clear and structured way, including key flows and important caveats.\n\nRequest:\n{input}",
+		},
+		{
+			Name:        "refactor",
+			Description: "Refactor planning and implementation guidance",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt:      "Provide a safe refactor plan and concrete edits with minimal regression risk.\n\nRequest:\n{input}",
+		},
+		{
+			Name:        "test",
+			Description: "Generate or improve tests for target code",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt:      "Create or improve automated tests for the target, including edge cases and failure paths.\n\nRequest:\n{input}",
+		},
+		{
+			Name:        "doc",
+			Description: "Generate concise and accurate documentation",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt:      "Write practical documentation for the requested code or module.\n\nRequest:\n{input}",
+		},
+	}
+}
+
+func readSkillFile(path, source string) skillInfo {
+	item := skillInfo{
+		Name:    strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
+		Path:    path,
+		Source:  source,
+		Builtin: false,
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return item
+	}
+	raw := map[string]any{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return item
+	}
+	if v, ok := raw["name"]; ok {
+		name := strings.TrimSpace(fmt.Sprint(v))
+		if name != "" {
+			item.Name = name
+		}
+	}
+	if v, ok := raw["description"]; ok {
+		item.Description = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if v, ok := raw["prompt"]; ok {
+		item.Prompt = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if item.Prompt == "" {
+		if v, ok := raw["template"]; ok {
+			item.Prompt = strings.TrimSpace(fmt.Sprint(v))
+		}
+	}
+	return item
+}
+
+func containsCI(list []string, target string) bool {
+	for _, item := range list {
+		if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
+type depStat struct {
+	Module string `json:"module"`
+	Count  int    `json:"count"`
+}
+
+func collectDependencyStats(eng *engine.Engine, limit int) []depStat {
+	if eng == nil || eng.CodeMap == nil || eng.CodeMap.Graph() == nil {
+		return nil
+	}
+	counts := map[string]int{}
+	for _, e := range eng.CodeMap.Graph().Edges() {
+		if e.Type != "imports" {
+			continue
+		}
+		mod := strings.TrimPrefix(e.To, "module:")
+		mod = strings.TrimSpace(mod)
+		if mod == "" {
+			continue
+		}
+		counts[mod]++
+	}
+	out := make([]depStat, 0, len(counts))
+	for mod, count := range counts {
+		out = append(out, depStat{Module: mod, Count: count})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count == out[j].Count {
+			return out[i].Module < out[j].Module
+		}
+		return out[i].Count > out[j].Count
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func graphToDOT(nodes []codemap.Node, edges []codemap.Edge) string {
+	var b strings.Builder
+	b.WriteString("digraph DFMC {\n")
+	for _, n := range nodes {
+		label := n.Name
+		if strings.TrimSpace(label) == "" {
+			label = n.ID
+		}
+		if n.Kind != "" {
+			label = label + "\\n(" + n.Kind + ")"
+		}
+		fmt.Fprintf(&b, "  \"%s\" [label=\"%s\"];\n", escapeDOT(n.ID), escapeDOT(label))
+	}
+	for _, e := range edges {
+		fmt.Fprintf(&b, "  \"%s\" -> \"%s\" [label=\"%s\"];\n",
+			escapeDOT(e.From), escapeDOT(e.To), escapeDOT(e.Type))
+	}
+	b.WriteString("}\n")
+	return b.String()
+}
+
+func graphToSVG(nodes []codemap.Node, edges []codemap.Edge) string {
+	const (
+		width     = 1200.0
+		height    = 800.0
+		margin    = 90.0
+		nodeR     = 14.0
+		fontSize  = 12
+		labelDy   = 24.0
+		strokeW   = 1.2
+		centerPad = 20.0
+	)
+
+	var b strings.Builder
+	b.WriteString(`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">` + "\n")
+	b.WriteString(`  <defs><style>
+    .edge { stroke: #64748b; stroke-width: 1.2; opacity: 0.8; }
+    .node { fill: #0ea5e9; stroke: #075985; stroke-width: 1.2; }
+    .label { fill: #0f172a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; text-anchor: middle; }
+    .kind { fill: #334155; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; text-anchor: middle; }
+  </style></defs>` + "\n")
+	b.WriteString(`  <rect x="0" y="0" width="1200" height="800" fill="#f8fafc"/>` + "\n")
+
+	if len(nodes) == 0 {
+		b.WriteString(`  <text x="600" y="400" class="label">No codemap nodes</text>` + "\n")
+		b.WriteString(`</svg>` + "\n")
+		return b.String()
+	}
+
+	type pt struct {
+		x float64
+		y float64
+	}
+	pos := make(map[string]pt, len(nodes))
+	cx := width / 2
+	cy := height / 2
+	r := math.Min(width, height)/2 - margin
+	if len(nodes) == 1 {
+		pos[nodes[0].ID] = pt{x: cx, y: cy}
+	} else {
+		for i, n := range nodes {
+			angle := (2 * math.Pi * float64(i) / float64(len(nodes))) - math.Pi/2
+			x := cx + (r-centerPad)*math.Cos(angle)
+			y := cy + (r-centerPad)*math.Sin(angle)
+			pos[n.ID] = pt{x: x, y: y}
+		}
+	}
+
+	for _, e := range edges {
+		from, okFrom := pos[e.From]
+		to, okTo := pos[e.To]
+		if !okFrom || !okTo {
+			continue
+		}
+		fmt.Fprintf(&b, `  <line class="edge" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>`+"\n",
+			from.x, from.y, to.x, to.y)
+	}
+
+	for _, n := range nodes {
+		p := pos[n.ID]
+		label := strings.TrimSpace(n.Name)
+		if label == "" {
+			label = n.ID
+		}
+		kind := strings.TrimSpace(n.Kind)
+		fmt.Fprintf(&b, `  <circle class="node" cx="%.1f" cy="%.1f" r="%.1f"/>`+"\n", p.x, p.y, nodeR)
+		fmt.Fprintf(&b, `  <text class="label" x="%.1f" y="%.1f">%s</text>`+"\n", p.x, p.y+labelDy, xmlEscape(label))
+		if kind != "" {
+			fmt.Fprintf(&b, `  <text class="kind" x="%.1f" y="%.1f">%s</text>`+"\n", p.x, p.y+labelDy+12, xmlEscape(kind))
+		}
+	}
+
+	b.WriteString(`</svg>` + "\n")
+	return b.String()
+}
+
+func xmlEscape(s string) string {
+	return html.EscapeString(s)
+}
+
+func escapeDOT(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	return s
 }
 
 func runConfig(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
@@ -1134,15 +3377,16 @@ Commands:
   conversation Conversation history (list/search)
   memory      Memory management
   config      Configuration management (list/get/set/edit)
-  plugin      Plugin management (placeholder)
-  skill       Skill management (placeholder)
+  plugin      Plugin management (list/info/install/remove/enable/disable)
+  skill       Skill management (list/info/run)
   serve       Start Web API server
-  remote      Remote control server (placeholder)
-  review      Code review shortcut (placeholder)
-  explain     Explain code shortcut (placeholder)
-  refactor    Refactor code shortcut (placeholder)
-  test        Test generation shortcut (placeholder)
-  doc         Documentation shortcut (placeholder)
+  remote      Remote control server (status/probe/ask/tool/skill/analyze/start)
+  doctor      Environment and config health checks
+  review      Code review shortcut
+  explain     Explain code shortcut
+  refactor    Refactor code shortcut
+  test        Test generation shortcut
+  doc         Documentation shortcut
   version     Version info
 
 Global flags:
@@ -1163,4 +3407,38 @@ func printJSON(v any) error {
 
 func runtimeVersion() string {
 	return runtime.Version()
+}
+
+func executableSize() int64 {
+	exe, err := os.Executable()
+	if err != nil {
+		return 0
+	}
+	st, err := os.Stat(exe)
+	if err != nil {
+		return 0
+	}
+	return st.Size()
+}
+
+func tryOpenBrowser(targetURL string) error {
+	name, args, ok := browserCommandForOS(runtime.GOOS, targetURL)
+	if !ok {
+		return fmt.Errorf("unsupported platform for browser open: %s", runtime.GOOS)
+	}
+	cmd := exec.Command(name, args...)
+	return cmd.Start()
+}
+
+func browserCommandForOS(goos, targetURL string) (name string, args []string, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(goos)) {
+	case "windows":
+		return "cmd", []string{"/c", "start", "", targetURL}, true
+	case "darwin":
+		return "open", []string{targetURL}, true
+	case "linux":
+		return "xdg-open", []string{targetURL}, true
+	default:
+		return "", nil, false
+	}
 }

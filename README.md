@@ -22,6 +22,8 @@ Implemented now:
   - `chat` now uses provider stream path (SSE for Anthropic/OpenAI-compatible providers)
 - Context builder for relevant code snippets
 - Tool engine (`read_file`, `list_dir`, `grep_codebase`)
+- Skill commands (`skill list/info/run`) and built-in shortcuts (`review`, `explain`, `refactor`, `test`, `doc`)
+- Plugin commands (`plugin list/info/install/remove/enable/disable`) with config-backed enable state
 - Web API server (`dfmc serve`) with status, codemap, tools, memory, files, chat SSE
 - Conversation persistence (JSONL)
 - Memory store (working + episodic + semantic via bbolt buckets)
@@ -76,6 +78,7 @@ go run ./cmd/dfmc chat
 ```bash
 go run ./cmd/dfmc analyze
 go run ./cmd/dfmc analyze --security --dead-code --complexity
+go run ./cmd/dfmc analyze --deps
 go run ./cmd/dfmc analyze --full --json
 ```
 
@@ -92,12 +95,16 @@ go run ./cmd/dfmc --json scan
 go run ./cmd/dfmc tool list
 go run ./cmd/dfmc tool run read_file --path internal/engine/engine.go --line_start 1 --line_end 40
 go run ./cmd/dfmc tool run grep_codebase --pattern "ErrProviderUnavailable" --max_results 10
+go run ./cmd/dfmc map --format dot
+go run ./cmd/dfmc map --format svg > codemap.svg
 ```
 
 ### 6.1) Run Web API
 
 ```bash
 go run ./cmd/dfmc serve --host 127.0.0.1 --port 7788
+go run ./cmd/dfmc serve --host 127.0.0.1 --port 7788 --open-browser=false
+DFMC_WEB_TOKEN=change-me go run ./cmd/dfmc serve --host 127.0.0.1 --port 7788 --auth token
 ```
 
 Endpoints:
@@ -109,10 +116,11 @@ Endpoints:
 - `GET /api/v1/tools`
 - `POST /api/v1/tools/:name`
 - `GET /api/v1/skills`
-- `POST /api/v1/skills/:name` (placeholder response)
+- `POST /api/v1/skills/:name`
 - `GET /api/v1/memory`
 - `GET /api/v1/files`
 - `GET /api/v1/files/:path`
+- `GET /ws` (event stream, SSE)
 
 ### 6.2) Manage config
 
@@ -136,6 +144,50 @@ go run ./cmd/dfmc conversation list
 go run ./cmd/dfmc conversation search middleware
 ```
 
+### 8) Use skills and plugin controls
+
+```bash
+go run ./cmd/dfmc skill list
+go run ./cmd/dfmc skill info review
+go run ./cmd/dfmc --provider offline review "auth modulu icin riskleri bul"
+
+go run ./cmd/dfmc plugin list
+go run ./cmd/dfmc plugin install --name my-plugin --enable ./path/to/my-plugin.py
+go run ./cmd/dfmc plugin install --name my-plugin --enable https://example.com/plugins/my-plugin.mjs
+go run ./cmd/dfmc plugin install --enable ./path/to/plugin-bundle.zip
+go run ./cmd/dfmc plugin enable my-plugin
+go run ./cmd/dfmc plugin remove my-plugin
+go run ./cmd/dfmc plugin disable my-plugin
+```
+
+Plugin install supports directories, `.zip` bundles, and these file types:
+- `.so`, `.dll`, `.dylib`, `.wasm`, `.js`, `.mjs`, `.py`, `.sh`
+If a plugin directory has `plugin.yaml` / `plugin.yml`, `plugin list` and `plugin info` show manifest metadata (`name`, `version`, `type`, `entry`). During install, manifest `entry` is validated for path safety and existence.
+
+Note: global flags must come before the command (`dfmc --provider ... review ...`).
+
+### 9) Remote mode (headless)
+
+```bash
+go run ./cmd/dfmc remote status
+go run ./cmd/dfmc remote probe --url http://127.0.0.1:7779
+go run ./cmd/dfmc remote ask --url http://127.0.0.1:7779 --message "auth middleware'i acikla"
+go run ./cmd/dfmc remote tool read_file --url http://127.0.0.1:7779 --param path=README.md --param line_start=1 --param line_end=5
+go run ./cmd/dfmc remote skill review --url http://127.0.0.1:7779 --input "auth katmanini incele"
+go run ./cmd/dfmc remote analyze --url http://127.0.0.1:7779 --full
+DFMC_REMOTE_TOKEN=change-me go run ./cmd/dfmc remote start --auth token --grpc-port 7778 --ws-port 7779
+```
+
+### 10) Run diagnostics
+
+```bash
+go run ./cmd/dfmc doctor
+go run ./cmd/dfmc doctor --network --timeout 3s
+go run ./cmd/dfmc doctor --providers-only
+go run ./cmd/dfmc doctor --fix
+go run ./cmd/dfmc --json doctor
+```
+
 ## Command Overview
 
 Available:
@@ -150,10 +202,19 @@ Available:
 - `dfmc memory`
 - `dfmc conversation`
 - `dfmc config`
+- `dfmc plugin`
+- `dfmc skill`
+- `dfmc review`
+- `dfmc explain`
+- `dfmc refactor`
+- `dfmc test`
+- `dfmc doc`
 - `dfmc serve`
+- `dfmc remote`
+- `dfmc doctor`
 
 Scaffolded (placeholder):
-- `plugin`, `skill`, `remote`, `review`, `explain`, `refactor`, `test`, `doc`
+- none
 
 ## Configuration
 
