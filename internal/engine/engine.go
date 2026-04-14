@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
@@ -322,6 +323,8 @@ const (
 	defaultHistoryBudgetTokens   = 1200
 	maxHistoryBudgetTokens       = 2048
 	maxHistoryMessages           = 12
+	minHistorySummaryTokens      = 24
+	maxHistorySummaryTokens      = 96
 	maxResponseReserveTokens     = 16384
 	basePromptReserveTokens      = 900
 	baseToolReserveTokens        = 512
@@ -501,7 +504,25 @@ func (e *Engine) contextReserveTokens(question string) int {
 
 func (e *Engine) buildRequestMessages(question string, chunks []types.ContextChunk, systemPrompt string) []provider.Message {
 	historyBudget := e.historyBudgetForRequest(question, chunks, systemPrompt)
-	msgs := e.trimmedConversationMessages(historyBudget)
+	summaryBudget := 0
+	if historyBudget >= 64 {
+		summaryBudget = clampInt(historyBudget/6, minHistorySummaryTokens, maxHistorySummaryTokens)
+	}
+	mainBudget := historyBudget - summaryBudget
+	if mainBudget < minHistorySummaryTokens {
+		mainBudget = historyBudget
+		summaryBudget = 0
+	}
+
+	msgs, omitted := e.trimmedConversationMessages(mainBudget)
+	if summaryBudget > 0 && len(omitted) > 0 {
+		summary := buildHistorySummary(omitted, summaryBudget)
+		if strings.TrimSpace(summary) != "" {
+			msgs = append([]provider.Message{
+				{Role: types.RoleAssistant, Content: summary},
+			}, msgs...)
+		}
+	}
 	msgs = append(msgs, provider.Message{
 		Role:    types.RoleUser,
 		Content: question,
@@ -530,48 +551,61 @@ func (e *Engine) conversationHistoryBudget() int {
 	return budget
 }
 
-func (e *Engine) trimmedConversationMessages(budget int) []provider.Message {
+func (e *Engine) trimmedConversationMessages(budget int) ([]provider.Message, []types.Message) {
 	if e.Conversation == nil {
-		return nil
+		return nil, nil
 	}
 	active := e.Conversation.Active()
 	if active == nil {
-		return nil
+		return nil, nil
 	}
-	history := active.Messages()
-	if len(history) == 0 {
-		return nil
+	rawHistory := active.Messages()
+	if len(rawHistory) == 0 {
+		return nil, nil
 	}
 	if budget <= 0 {
-		return nil
+		return nil, nil
 	}
-	out := make([]provider.Message, 0, minInt(maxHistoryMessages, len(history)))
-	used := 0
 
-	for i := len(history) - 1; i >= 0; i-- {
-		if len(out) >= maxHistoryMessages || used >= budget {
-			break
-		}
-		msg := history[i]
+	history := make([]types.Message, 0, len(rawHistory))
+	for _, msg := range rawHistory {
 		if msg.Role != types.RoleUser && msg.Role != types.RoleAssistant {
 			continue
 		}
-		content := strings.TrimSpace(msg.Content)
-		if content == "" {
+		if strings.TrimSpace(msg.Content) == "" {
 			continue
 		}
+		history = append(history, msg)
+	}
+	if len(history) == 0 {
+		return nil, nil
+	}
+
+	out := make([]provider.Message, 0, minInt(maxHistoryMessages, len(history)))
+	used := 0
+	cutoff := -1
+
+	for i := len(history) - 1; i >= 0; i-- {
+		if len(out) >= maxHistoryMessages || used >= budget {
+			cutoff = i
+			break
+		}
+		msg := history[i]
+		content := strings.TrimSpace(msg.Content)
 		tok := estimateTokens(content)
 		if tok <= 0 {
 			continue
 		}
 		if used+tok > budget {
 			remaining := budget - used
-			if remaining < 24 {
+			if remaining < minHistorySummaryTokens {
+				cutoff = i
 				break
 			}
 			content = trimToTokenBudget(content, remaining)
 			tok = estimateTokens(content)
 			if tok <= 0 {
+				cutoff = i
 				break
 			}
 		}
@@ -585,7 +619,12 @@ func (e *Engine) trimmedConversationMessages(budget int) []provider.Message {
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
-	return out
+	if cutoff < 0 {
+		return out, nil
+	}
+	omitted := make([]types.Message, cutoff+1)
+	copy(omitted, history[:cutoff+1])
+	return out, omitted
 }
 
 func (e *Engine) historyBudgetForRequest(question string, chunks []types.ContextChunk, systemPrompt string) int {
@@ -626,6 +665,115 @@ func trimToTokenBudget(content string, maxTokens int) string {
 		return strings.TrimSpace(content)
 	}
 	return strings.Join(words[:maxTokens], " ")
+}
+
+func buildHistorySummary(omitted []types.Message, maxTokens int) string {
+	if maxTokens <= 0 || len(omitted) == 0 {
+		return ""
+	}
+	userN := 0
+	assistantN := 0
+	for _, m := range omitted {
+		if m.Role == types.RoleUser {
+			userN++
+		}
+		if m.Role == types.RoleAssistant {
+			assistantN++
+		}
+	}
+	terms := topTermsFromMessages(omitted, 4)
+	intents := recentOmittedUserIntents(omitted, 2, 12)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "[History summary] %d earlier messages omitted (%d user, %d assistant).", len(omitted), userN, assistantN)
+	if len(terms) > 0 {
+		b.WriteString(" Topics: ")
+		b.WriteString(strings.Join(terms, ", "))
+		b.WriteString(".")
+	}
+	if len(intents) > 0 {
+		b.WriteString(" Recent omitted user intents: ")
+		b.WriteString(strings.Join(intents, " | "))
+		b.WriteString(".")
+	}
+	return trimToTokenBudget(b.String(), maxTokens)
+}
+
+func recentOmittedUserIntents(messages []types.Message, maxItems, maxTokensPerItem int) []string {
+	if maxItems <= 0 {
+		return nil
+	}
+	out := make([]string, 0, maxItems)
+	for i := len(messages) - 1; i >= 0 && len(out) < maxItems; i-- {
+		if messages[i].Role != types.RoleUser {
+			continue
+		}
+		s := trimToTokenBudget(strings.TrimSpace(messages[i].Content), maxTokensPerItem)
+		if s == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+func topTermsFromMessages(messages []types.Message, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	stop := map[string]struct{}{
+		"the": {}, "and": {}, "for": {}, "with": {}, "this": {}, "that": {}, "from": {}, "into": {}, "your": {}, "you": {},
+		"bir": {}, "ve": {}, "ile": {}, "icin": {}, "için": {}, "ama": {}, "gibi": {}, "daha": {}, "bunu": {}, "sunu": {},
+		"code": {}, "file": {}, "line": {}, "tool": {}, "message": {}, "messages": {}, "user": {}, "assistant": {},
+	}
+	counts := map[string]int{}
+	for _, msg := range messages {
+		for _, tok := range tokenizeForSummary(msg.Content) {
+			if _, blocked := stop[tok]; blocked {
+				continue
+			}
+			counts[tok]++
+		}
+	}
+	type kv struct {
+		Key   string
+		Count int
+	}
+	ranked := make([]kv, 0, len(counts))
+	for k, c := range counts {
+		ranked = append(ranked, kv{Key: k, Count: c})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].Count == ranked[j].Count {
+			return ranked[i].Key < ranked[j].Key
+		}
+		return ranked[i].Count > ranked[j].Count
+	})
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	out := make([]string, 0, len(ranked))
+	for _, item := range ranked {
+		out = append(out, item.Key)
+	}
+	return out
+}
+
+func tokenizeForSummary(text string) []string {
+	parts := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(text)), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
+	})
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if len(p) < 3 {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (e *Engine) setState(state EngineState) {

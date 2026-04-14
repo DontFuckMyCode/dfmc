@@ -339,6 +339,7 @@ Token-efficient context tuning:
 - `context.compression`: `none|standard|aggressive` tradeoff between fidelity and token cost.
 - Budgets are task-adaptive (`security/review/debug` gets more context; `planning/doc` gets leaner context).
 - `[[file:...]]` markers in the query focus retrieval to fewer files with deeper per-file slices.
+- When history exceeds budget, DFMC injects a compact history summary instead of dropping all older context.
 
 Recommended baseline:
 

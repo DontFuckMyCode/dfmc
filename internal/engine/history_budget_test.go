@@ -80,7 +80,7 @@ func TestTrimmedConversationMessages_RespectsBudgetAndRoleFilter(t *testing.T) {
 	})
 
 	budget := eng.conversationHistoryBudget()
-	msgs := eng.trimmedConversationMessages(budget)
+	msgs, omitted := eng.trimmedConversationMessages(budget)
 	if len(msgs) == 0 {
 		t.Fatal("expected trimmed messages")
 	}
@@ -96,6 +96,9 @@ func TestTrimmedConversationMessages_RespectsBudgetAndRoleFilter(t *testing.T) {
 	}
 	if total > budget {
 		t.Fatalf("expected history tokens <= %d, got %d", budget, total)
+	}
+	if len(omitted) == 0 {
+		t.Fatal("expected omitted history entries for long conversation")
 	}
 }
 
@@ -143,5 +146,58 @@ func TestHistoryBudgetForRequest_ShrinksWhenContextIsLarge(t *testing.T) {
 	}
 	if largeBudget < 0 {
 		t.Fatalf("history budget cannot be negative, got %d", largeBudget)
+	}
+}
+
+func TestBuildRequestMessages_IncludesSummaryWhenOmitted(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Context.MaxHistoryTokens = 180
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{
+		Config:       cfg,
+		Providers:    router,
+		Conversation: conversation.New(nil),
+	}
+
+	now := time.Now()
+	for i := 0; i < 16; i++ {
+		eng.Conversation.AddMessage("offline", "offline-analyzer-v1", types.Message{
+			Role:      types.RoleUser,
+			Content:   strings.Repeat("investigate auth token middleware ", 4),
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+		})
+		eng.Conversation.AddMessage("offline", "offline-analyzer-v1", types.Message{
+			Role:      types.RoleAssistant,
+			Content:   strings.Repeat("analysis details and findings ", 4),
+			Timestamp: now.Add(time.Duration(i)*time.Second + time.Millisecond),
+		})
+	}
+
+	msgs := eng.buildRequestMessages("final question", nil, "")
+	if len(msgs) < 2 {
+		t.Fatalf("expected history + user question, got %d messages", len(msgs))
+	}
+	last := msgs[len(msgs)-1]
+	if last.Role != types.RoleUser || last.Content != "final question" {
+		t.Fatalf("expected last message to be current question, got role=%s content=%q", last.Role, last.Content)
+	}
+
+	hasSummary := false
+	totalHistoryTokens := 0
+	for _, m := range msgs[:len(msgs)-1] {
+		totalHistoryTokens += estimateTokens(m.Content)
+		if strings.Contains(m.Content, "[History summary]") {
+			hasSummary = true
+		}
+	}
+	if !hasSummary {
+		t.Fatal("expected summary message when older history is omitted")
+	}
+	allowed := eng.historyBudgetForRequest("final question", nil, "")
+	if totalHistoryTokens > allowed {
+		t.Fatalf("expected history tokens <= %d, got %d", allowed, totalHistoryTokens)
 	}
 }
