@@ -326,3 +326,33 @@ func TestRunRemotePromptLifecycle(t *testing.T) {
 		}
 	}
 }
+
+func TestRunRemoteContextBudget(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/context/budget" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if got := r.URL.Query().Get("q"); got != "security audit auth middleware" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"unexpected query"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"provider":"zai","model":"glm-5.1","task":"security","max_tokens_total":12000}`))
+	}))
+	defer ts.Close()
+
+	cases := [][]string{
+		{"context", "budget", "--url", ts.URL, "--query", "security audit auth middleware"},
+		{"context", "--url", ts.URL, "--query", "security audit auth middleware"},
+	}
+	for _, args := range cases {
+		if code := runRemote(context.Background(), eng, args, true); code != 0 {
+			t.Fatalf("runRemote %v exit=%d", args, code)
+		}
+	}
+}

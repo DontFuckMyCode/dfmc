@@ -1912,6 +1912,53 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		_ = printJSON(payload)
 		return 0
 
+	case "context":
+		action := "budget"
+		parseFrom := 1
+		if len(args) >= 2 {
+			candidate := strings.ToLower(strings.TrimSpace(args[1]))
+			if !strings.HasPrefix(candidate, "-") {
+				action = candidate
+				parseFrom = 2
+			}
+		}
+		fs := flag.NewFlagSet("remote context", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
+		query := fs.String("query", "", "query for task-aware budget simulation")
+		if err := fs.Parse(args[parseFrom:]); err != nil {
+			return 2
+		}
+
+		switch action {
+		case "budget", "show":
+			q := strings.TrimSpace(*query)
+			if q == "" && len(fs.Args()) > 0 {
+				q = strings.TrimSpace(strings.Join(fs.Args(), " "))
+			}
+			v := url.Values{}
+			if q != "" {
+				v.Set("q", q)
+			}
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/context/budget"
+			if encoded := v.Encode(); encoded != "" {
+				endpoint += "?" + encoded
+			}
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote context budget error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		default:
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote context [budget --query \"...\"] [--url ...] [--token ...]")
+			return 2
+		}
+
 	case "files":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: dfmc remote files [list|get <path>] [--url ...] [--token ...]")
@@ -2406,7 +2453,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc remote [status|probe|events|ask|tool|tools|skill|skills|prompt|analyze|files|memory|conversation (list/search/active/new/save/load/branch)|codemap|start --host 127.0.0.1 --ws-port 7779 --auth none|token]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc remote [status|probe|events|ask|tool|tools|skill|skills|prompt|analyze|context|files|memory|conversation (list/search/active/new/save/load/branch)|codemap|start --host 127.0.0.1 --ws-port 7779 --auth none|token]")
 		return 2
 	}
 }
@@ -4992,7 +5039,7 @@ Commands:
   plugin      Plugin management (list/info/install/remove/enable/disable)
   skill       Skill management (list/info/run)
   serve       Start Web API server
-  remote      Remote control server (status/probe/events/ask/tool/tools/skill/skills/prompt/analyze/files/memory/conversation+branch/codemap/start)
+  remote      Remote control server (status/probe/events/ask/tool/tools/skill/skills/prompt/analyze/context/files/memory/conversation+branch/codemap/start)
   doctor      Environment and config health checks
   completion  Generate shell completion scripts
   man         Generate command manual page
