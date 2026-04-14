@@ -65,6 +65,20 @@ type Status struct {
 	Model       string      `json:"model"`
 }
 
+type ContextBudgetInfo struct {
+	Provider           string `json:"provider"`
+	Model              string `json:"model"`
+	ProviderMaxContext int    `json:"provider_max_context"`
+
+	MaxFiles         int    `json:"max_files"`
+	MaxTokensTotal   int    `json:"max_tokens_total"`
+	MaxTokensPerFile int    `json:"max_tokens_per_file"`
+	MaxHistoryTokens int    `json:"max_history_tokens"`
+	Compression      string `json:"compression"`
+	IncludeTests     bool   `json:"include_tests"`
+	IncludeDocs      bool   `json:"include_docs"`
+}
+
 type AnalyzeReport struct {
 	ProjectRoot string            `json:"project_root"`
 	Files       int               `json:"files"`
@@ -225,6 +239,22 @@ func (e *Engine) Status() Status {
 		ProjectRoot: e.ProjectRoot,
 		Provider:    e.provider(),
 		Model:       e.model(),
+	}
+}
+
+func (e *Engine) ContextBudgetPreview(question string) ContextBudgetInfo {
+	opts := e.contextBuildOptions(question)
+	return ContextBudgetInfo{
+		Provider:           e.provider(),
+		Model:              e.model(),
+		ProviderMaxContext: e.providerMaxContext(),
+		MaxFiles:           opts.MaxFiles,
+		MaxTokensTotal:     opts.MaxTokensTotal,
+		MaxTokensPerFile:   opts.MaxTokensPerFile,
+		MaxHistoryTokens:   e.conversationHistoryBudget(),
+		Compression:        opts.Compression,
+		IncludeTests:       opts.IncludeTests,
+		IncludeDocs:        opts.IncludeDocs,
 	}
 }
 

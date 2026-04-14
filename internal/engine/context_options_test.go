@@ -83,3 +83,31 @@ func TestContextBuildOptions_ProviderLimitWins(t *testing.T) {
 		t.Fatalf("per-file budget cannot exceed total budget: %d > %d", opts.MaxTokensPerFile, opts.MaxTokensTotal)
 	}
 }
+
+func TestContextBudgetPreview_ReflectsEffectiveOptions(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Context.MaxFiles = 9
+	cfg.Context.MaxTokensTotal = 9000
+	cfg.Context.MaxTokensPerFile = 1500
+	cfg.Context.MaxHistoryTokens = 700
+
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{Config: cfg, Providers: router}
+	preview := eng.ContextBudgetPreview("check auth flow")
+
+	if preview.MaxFiles != 9 {
+		t.Fatalf("expected max files 9, got %d", preview.MaxFiles)
+	}
+	if preview.MaxTokensTotal != 9000 {
+		t.Fatalf("expected max total 9000, got %d", preview.MaxTokensTotal)
+	}
+	if preview.MaxTokensPerFile <= 0 || preview.MaxTokensPerFile > 1500 {
+		t.Fatalf("unexpected per-file budget: %d", preview.MaxTokensPerFile)
+	}
+	if preview.MaxHistoryTokens != 700 {
+		t.Fatalf("expected history budget 700, got %d", preview.MaxHistoryTokens)
+	}
+}

@@ -768,6 +768,19 @@ func runChatSlash(ctx context.Context, eng *engine.Engine, line string) (exit bo
 		}
 		switch action {
 		case "show":
+			preview := eng.ContextBudgetPreview("")
+			fmt.Printf("context budget: provider=%s model=%s provider_max=%d total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
+				preview.Provider,
+				preview.Model,
+				preview.ProviderMaxContext,
+				preview.MaxTokensTotal,
+				preview.MaxTokensPerFile,
+				preview.MaxHistoryTokens,
+				preview.MaxFiles,
+				preview.Compression,
+				preview.IncludeTests,
+				preview.IncludeDocs,
+			)
 			w := eng.MemoryWorking()
 			if len(w.RecentFiles) == 0 {
 				fmt.Println("context: no recent files yet")
