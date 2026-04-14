@@ -778,10 +778,14 @@ func runChatSlash(ctx context.Context, eng *engine.Engine, line string) (exit bo
 		switch action {
 		case "show":
 			preview := eng.ContextBudgetPreview("")
-			fmt.Printf("context budget: provider=%s model=%s task=%s provider_max=%d available=%d reserve_total=%d reserve[prompt=%d history=%d response=%d tools=%d] total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
+			fmt.Printf("context budget: provider=%s model=%s task=%s mentions=%d scale[t=%.2f f=%.2f pf=%.2f] provider_max=%d available=%d reserve_total=%d reserve[prompt=%d history=%d response=%d tools=%d] total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
 				preview.Provider,
 				preview.Model,
 				preview.Task,
+				preview.ExplicitFileMentions,
+				preview.TaskTotalScale,
+				preview.TaskFileScale,
+				preview.TaskPerFileScale,
 				preview.ProviderMaxContext,
 				preview.ContextAvailableTokens,
 				preview.ReserveTotalTokens,
@@ -5067,10 +5071,14 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 			_ = printJSON(preview)
 			return 0
 		}
-		fmt.Printf("context budget: provider=%s model=%s task=%s provider_max=%d available=%d reserve_total=%d reserve[prompt=%d history=%d response=%d tools=%d] total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
+		fmt.Printf("context budget: provider=%s model=%s task=%s mentions=%d scale[t=%.2f f=%.2f pf=%.2f] provider_max=%d available=%d reserve_total=%d reserve[prompt=%d history=%d response=%d tools=%d] total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
 			preview.Provider,
 			preview.Model,
 			preview.Task,
+			preview.ExplicitFileMentions,
+			preview.TaskTotalScale,
+			preview.TaskFileScale,
+			preview.TaskPerFileScale,
 			preview.ProviderMaxContext,
 			preview.ContextAvailableTokens,
 			preview.ReserveTotalTokens,

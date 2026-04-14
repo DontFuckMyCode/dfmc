@@ -387,6 +387,7 @@ Token-efficient context tuning:
 - `context.compression`: `none|standard|aggressive` tradeoff between fidelity and token cost.
 - Budgets are task-adaptive (`security/review/debug` gets more context; `planning/doc` gets leaner context).
 - `context budget` preview now includes reserve breakdown (`prompt/history/response/tools`) and available context headroom.
+- `context budget` preview also exposes task scaling coefficients and `[[file:...]]` marker count.
 - System prompt tool-call policy is provider-aware (e.g., `function-calling` vs `tool_use`) and budget-aware.
 - `[[file:...]]` markers in the query focus retrieval to fewer files with deeper per-file slices.
 - When history exceeds budget, DFMC injects a compact history summary instead of dropping all older context.

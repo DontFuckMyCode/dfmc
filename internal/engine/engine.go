@@ -68,10 +68,14 @@ type Status struct {
 }
 
 type ContextBudgetInfo struct {
-	Provider           string `json:"provider"`
-	Model              string `json:"model"`
-	ProviderMaxContext int    `json:"provider_max_context"`
-	Task               string `json:"task"`
+	Provider             string  `json:"provider"`
+	Model                string  `json:"model"`
+	ProviderMaxContext   int     `json:"provider_max_context"`
+	Task                 string  `json:"task"`
+	ExplicitFileMentions int     `json:"explicit_file_mentions"`
+	TaskTotalScale       float64 `json:"task_total_scale"`
+	TaskFileScale        float64 `json:"task_file_scale"`
+	TaskPerFileScale     float64 `json:"task_per_file_scale"`
 
 	ContextAvailableTokens int `json:"context_available_tokens"`
 	ReserveTotalTokens     int `json:"reserve_total_tokens"`
@@ -254,6 +258,9 @@ func (e *Engine) Status() Status {
 
 func (e *Engine) ContextBudgetPreview(question string) ContextBudgetInfo {
 	opts := e.contextBuildOptions(question)
+	task := detectContextTask(question)
+	profile := contextTaskProfile(task)
+	explicitMentions := countExplicitFileMentions(question)
 	providerLimit := e.providerMaxContext()
 	if providerLimit <= 0 {
 		providerLimit = defaultProviderContextTokens
@@ -267,7 +274,11 @@ func (e *Engine) ContextBudgetPreview(question string) ContextBudgetInfo {
 		Provider:               e.provider(),
 		Model:                  e.model(),
 		ProviderMaxContext:     providerLimit,
-		Task:                   detectContextTask(question),
+		Task:                   task,
+		ExplicitFileMentions:   explicitMentions,
+		TaskTotalScale:         profile.TotalScale,
+		TaskFileScale:          profile.FileScale,
+		TaskPerFileScale:       profile.PerFileScale,
 		ContextAvailableTokens: available,
 		ReserveTotalTokens:     reserve.Total,
 		ReservePromptTokens:    reserve.Prompt,

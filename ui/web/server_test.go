@@ -201,6 +201,12 @@ func TestContextBudgetEndpoint(t *testing.T) {
 	if _, ok := payload["reserve_total_tokens"]; !ok {
 		t.Fatalf("missing reserve_total_tokens field: %#v", payload)
 	}
+	if _, ok := payload["explicit_file_mentions"]; !ok {
+		t.Fatalf("missing explicit_file_mentions field: %#v", payload)
+	}
+	if _, ok := payload["task_total_scale"]; !ok {
+		t.Fatalf("missing task_total_scale field: %#v", payload)
+	}
 }
 
 func TestContextBriefEndpoint(t *testing.T) {

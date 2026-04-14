@@ -113,6 +113,12 @@ func TestContextBudgetPreview_ReflectsEffectiveOptions(t *testing.T) {
 	if preview.MaxHistoryTokens != 700 {
 		t.Fatalf("expected history budget 700, got %d", preview.MaxHistoryTokens)
 	}
+	if preview.ExplicitFileMentions != 0 {
+		t.Fatalf("expected explicit file mentions 0, got %d", preview.ExplicitFileMentions)
+	}
+	if preview.TaskTotalScale <= 0 || preview.TaskFileScale <= 0 || preview.TaskPerFileScale <= 0 {
+		t.Fatalf("unexpected task scales: %#v", preview)
+	}
 	if preview.ContextAvailableTokens <= 0 {
 		t.Fatalf("expected positive context available tokens, got %d", preview.ContextAvailableTokens)
 	}
@@ -162,8 +168,12 @@ func TestContextBuildOptions_ExplicitFileMentionsFocusScope(t *testing.T) {
 
 	general := eng.contextBuildOptions("debug auth flow")
 	focused := eng.contextBuildOptions("debug [[file:internal/auth/service.go#L1-L80]] with [[file:internal/auth/token.go]]")
+	preview := eng.ContextBudgetPreview("debug [[file:internal/auth/service.go#L1-L80]] with [[file:internal/auth/token.go]]")
 
 	if focused.MaxFiles >= general.MaxFiles {
 		t.Fatalf("expected explicit file markers to reduce max_files, got focused=%d general=%d", focused.MaxFiles, general.MaxFiles)
+	}
+	if preview.ExplicitFileMentions != 2 {
+		t.Fatalf("expected explicit file mentions=2, got %d", preview.ExplicitFileMentions)
 	}
 }
