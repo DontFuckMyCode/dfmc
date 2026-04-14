@@ -332,6 +332,7 @@ Common env vars:
 Token-efficient context tuning:
 - `context.max_tokens_total`: hard cap for all retrieved code context per request.
 - `context.max_tokens_per_file`: per-file chunk cap after compression.
+- `context.max_history_tokens`: max token budget for prior conversation messages sent with each request.
 - `context.compression`: `none|standard|aggressive` tradeoff between fidelity and token cost.
 
 Recommended baseline:
@@ -341,6 +342,7 @@ context:
   max_files: 50
   max_tokens_total: 16000
   max_tokens_per_file: 2000
+  max_history_tokens: 1200
   compression: standard
   include_tests: false
   include_docs: true

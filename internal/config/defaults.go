@@ -24,6 +24,7 @@ func DefaultConfig() *Config {
 			MaxFiles:         50,
 			MaxTokensTotal:   16000,
 			MaxTokensPerFile: 2000,
+			MaxHistoryTokens: 1200,
 			Compression:      "standard",
 			IncludeTests:     false,
 			IncludeDocs:      true,

@@ -98,3 +98,21 @@ func TestTrimmedConversationMessages_RespectsBudgetAndRoleFilter(t *testing.T) {
 		t.Fatalf("expected history tokens <= %d, got %d", budget, total)
 	}
 }
+
+func TestConversationHistoryBudget_UsesConfigOverride(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Context.MaxHistoryTokens = 300
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{
+		Config:       cfg,
+		Providers:    router,
+		Conversation: conversation.New(nil),
+	}
+
+	if got := eng.conversationHistoryBudget(); got != 300 {
+		t.Fatalf("expected history budget override 300, got %d", got)
+	}
+}

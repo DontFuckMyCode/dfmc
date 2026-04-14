@@ -34,6 +34,9 @@ func (c *Config) Validate() error {
 	if c.Context.MaxTokensPerFile <= 0 {
 		return fmt.Errorf("context.max_tokens_per_file must be > 0")
 	}
+	if c.Context.MaxHistoryTokens <= 0 {
+		return fmt.Errorf("context.max_history_tokens must be > 0")
+	}
 	switch c.Context.Compression {
 	case "none", "standard", "aggressive":
 	default:

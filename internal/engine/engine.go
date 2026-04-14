@@ -408,13 +408,16 @@ func (e *Engine) buildRequestMessages(question string) []provider.Message {
 }
 
 func (e *Engine) conversationHistoryBudget() int {
-	limit := e.providerMaxContext()
-	if limit <= 0 {
-		limit = defaultProviderContextTokens
-	}
-	budget := limit / 16
+	budget := e.Config.Context.MaxHistoryTokens
 	if budget <= 0 {
-		budget = defaultHistoryBudgetTokens
+		limit := e.providerMaxContext()
+		if limit <= 0 {
+			limit = defaultProviderContextTokens
+		}
+		budget = limit / 16
+		if budget <= 0 {
+			budget = defaultHistoryBudgetTokens
+		}
 	}
 	if budget < minContextPerFileTokens {
 		budget = minContextPerFileTokens
