@@ -274,6 +274,8 @@ go run ./cmd/dfmc prompt list
 go run ./cmd/dfmc prompt render --query "security audit auth middleware"
 go run ./cmd/dfmc prompt render --task planning --language go --query "roadmap cikar"
 go run ./cmd/dfmc prompt render --task review --var context_files="- internal/auth/middleware.go:1-120"
+go run ./cmd/dfmc prompt stats
+go run ./cmd/dfmc prompt stats --max-template-tokens 450 --fail-on-warning
 ```
 
 Inline file injection in user query (Claude Code-style):

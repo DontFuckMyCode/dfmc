@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -2816,6 +2817,138 @@ func parsePromptVars(items []string) (map[string]string, error) {
 	return out, nil
 }
 
+type promptTemplateStats struct {
+	ID                  string   `json:"id"`
+	Type                string   `json:"type"`
+	Task                string   `json:"task"`
+	Language            string   `json:"language,omitempty"`
+	Profile             string   `json:"profile,omitempty"`
+	Compose             string   `json:"compose,omitempty"`
+	Priority            int      `json:"priority,omitempty"`
+	Tokens              int      `json:"tokens"`
+	Placeholders        []string `json:"placeholders,omitempty"`
+	UnknownPlaceholders []string `json:"unknown_placeholders,omitempty"`
+	Warnings            []string `json:"warnings,omitempty"`
+}
+
+type promptStatsReport struct {
+	TemplateCount     int                   `json:"template_count"`
+	MaxTemplateTokens int                   `json:"max_template_tokens"`
+	TotalTokens       int                   `json:"total_tokens"`
+	AvgTokens         float64               `json:"avg_tokens"`
+	MaxTokens         int                   `json:"max_tokens"`
+	WarningCount      int                   `json:"warning_count"`
+	Templates         []promptTemplateStats `json:"templates"`
+}
+
+var promptPlaceholderRe = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_]+)\s*\}\}`)
+
+func buildPromptStatsReport(templates []promptlib.Template, maxTemplateTokens int, allowVars []string) promptStatsReport {
+	known := defaultPromptKnownVars()
+	for _, raw := range allowVars {
+		k := strings.TrimSpace(raw)
+		if k == "" {
+			continue
+		}
+		known[k] = struct{}{}
+	}
+
+	report := promptStatsReport{
+		TemplateCount:     len(templates),
+		MaxTemplateTokens: maxTemplateTokens,
+		Templates:         make([]promptTemplateStats, 0, len(templates)),
+	}
+	for _, tpl := range templates {
+		ph := extractPromptPlaceholders(tpl.Body)
+		unknown := make([]string, 0, len(ph))
+		for _, name := range ph {
+			if _, ok := known[name]; !ok {
+				unknown = append(unknown, name)
+			}
+		}
+		sort.Strings(unknown)
+
+		tokens := estimatePromptTokens(tpl.Body)
+		item := promptTemplateStats{
+			ID:                  strings.TrimSpace(tpl.ID),
+			Type:                strings.TrimSpace(tpl.Type),
+			Task:                strings.TrimSpace(tpl.Task),
+			Language:            strings.TrimSpace(tpl.Language),
+			Profile:             strings.TrimSpace(tpl.Profile),
+			Compose:             strings.TrimSpace(tpl.Compose),
+			Priority:            tpl.Priority,
+			Tokens:              tokens,
+			Placeholders:        ph,
+			UnknownPlaceholders: unknown,
+			Warnings:            []string{},
+		}
+		if maxTemplateTokens > 0 && tokens > maxTemplateTokens {
+			item.Warnings = append(item.Warnings, fmt.Sprintf("token_estimate=%d exceeds threshold=%d", tokens, maxTemplateTokens))
+		}
+		if len(unknown) > 0 {
+			item.Warnings = append(item.Warnings, "unknown placeholders: "+strings.Join(unknown, ", "))
+		}
+		if len(item.Warnings) > 0 {
+			report.WarningCount += len(item.Warnings)
+		}
+
+		report.TotalTokens += tokens
+		if tokens > report.MaxTokens {
+			report.MaxTokens = tokens
+		}
+		report.Templates = append(report.Templates, item)
+	}
+	if report.TemplateCount > 0 {
+		report.AvgTokens = float64(report.TotalTokens) / float64(report.TemplateCount)
+	}
+	return report
+}
+
+func defaultPromptKnownVars() map[string]struct{} {
+	return map[string]struct{}{
+		"project_root":     {},
+		"task":             {},
+		"language":         {},
+		"profile":          {},
+		"project_brief":    {},
+		"user_query":       {},
+		"context_files":    {},
+		"injected_context": {},
+		"tools_overview":   {},
+		"tool_call_policy": {},
+		"response_policy":  {},
+	}
+}
+
+func extractPromptPlaceholders(body string) []string {
+	matches := promptPlaceholderRe.FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		k := strings.TrimSpace(m[1])
+		if k == "" {
+			continue
+		}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func estimatePromptTokens(text string) int {
+	return len(strings.Fields(strings.TrimSpace(text)))
+}
+
 func remoteJSONRequest(method, endpoint, token string, payload any, timeout time.Duration) (map[string]any, int, error) {
 	var body io.Reader
 	if payload != nil {
@@ -4951,8 +5084,49 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 		return 0
 
+	case "stats", "validate", "lint":
+		fs := flag.NewFlagSet("prompt stats", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		maxTemplateTokens := fs.Int("max-template-tokens", 450, "warning threshold for per-template token estimate")
+		failOnWarning := fs.Bool("fail-on-warning", false, "exit with non-zero status if warnings are found")
+		var allowVar multiStringFlag
+		fs.Var(&allowVar, "allow-var", "extra placeholder variable to allow (repeatable)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		report := buildPromptStatsReport(lib.List(), *maxTemplateTokens, allowVar)
+		if jsonMode {
+			_ = printJSON(report)
+		} else {
+			fmt.Printf(
+				"prompt stats: templates=%d total_tokens=%d avg_tokens=%.1f max_tokens=%d warnings=%d threshold=%d\n",
+				report.TemplateCount,
+				report.TotalTokens,
+				report.AvgTokens,
+				report.MaxTokens,
+				report.WarningCount,
+				report.MaxTemplateTokens,
+			)
+			if report.WarningCount == 0 {
+				fmt.Println("prompt stats: no warnings")
+			} else {
+				fmt.Println("warnings:")
+				for _, item := range report.Templates {
+					if len(item.Warnings) == 0 {
+						continue
+					}
+					fmt.Printf("- %s: %s\n", item.ID, strings.Join(item.Warnings, "; "))
+				}
+			}
+		}
+		if *failOnWarning && report.WarningCount > 0 {
+			return 1
+		}
+		return 0
+
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\"]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\"]|[stats --max-template-tokens 450]")
 		return 2
 	}
 }
