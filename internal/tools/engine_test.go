@@ -132,3 +132,84 @@ func TestToolOutputCompressionPreservesRelevantLines(t *testing.T) {
 		t.Fatalf("expected compressed output to keep relevant line, got: %q", res.Output)
 	}
 }
+
+func TestToolParamsNormalizeReadFileDefaultRange(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "huge.txt")
+	var b strings.Builder
+	for i := 0; i < 600; i++ {
+		b.WriteString("line\n")
+	}
+	if err := os.WriteFile(file, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	res, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path": "huge.txt",
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute read_file: %v", err)
+	}
+	start, _ := res.Data["line_start"].(int)
+	end, _ := res.Data["line_end"].(int)
+	if start != 1 {
+		t.Fatalf("expected line_start=1, got %d", start)
+	}
+	if end != 200 {
+		t.Fatalf("expected normalized line_end=200, got %d", end)
+	}
+}
+
+func TestToolParamsNormalizeGrepMaxResultsClamp(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "main.go")
+	var b strings.Builder
+	for i := 0; i < 900; i++ {
+		b.WriteString("// TODO: item\n")
+	}
+	if err := os.WriteFile(file, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"pattern":     "TODO",
+			"max_results": 9999,
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute grep: %v", err)
+	}
+	if n, _ := res.Data["count"].(int); n > 500 {
+		t.Fatalf("expected max_results clamp <= 500, got %d", n)
+	}
+}
+
+func TestToolFailureGuardAfterRepeatedErrors(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+	args := Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path": "../outside.txt",
+		},
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := eng.Execute(context.Background(), "read_file", args); err == nil {
+			t.Fatalf("expected boundary error at attempt %d", i+1)
+		}
+	}
+	_, err := eng.Execute(context.Background(), "read_file", args)
+	if err == nil {
+		t.Fatal("expected repeated-failure guard error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "failed repeatedly") {
+		t.Fatalf("expected repeated failure message, got: %v", err)
+	}
+}

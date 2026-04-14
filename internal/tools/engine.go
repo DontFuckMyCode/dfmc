@@ -34,15 +34,18 @@ type Tool interface {
 }
 
 type Engine struct {
-	mu       sync.RWMutex
-	registry map[string]Tool
-	cfg      config.Config
+	mu             sync.RWMutex
+	registry       map[string]Tool
+	cfg            config.Config
+	failureMu      sync.Mutex
+	recentFailures map[string]int
 }
 
 func New(cfg config.Config) *Engine {
 	e := &Engine{
-		registry: map[string]Tool{},
-		cfg:      cfg,
+		registry:       map[string]Tool{},
+		cfg:            cfg,
+		recentFailures: map[string]int{},
 	}
 	e.Register(NewReadFileTool())
 	e.Register(NewListDirTool())
@@ -91,15 +94,92 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 		return Result{}, fmt.Errorf("resolve project root: %w", err)
 	}
 	req.ProjectRoot = absRoot
+	req.Params = normalizeToolParams(name, req.Params)
+	failureKey := toolFailureKey(name, req.Params)
 
 	res, err := tool.Execute(ctx, req)
 	res.DurationMs = time.Since(start).Milliseconds()
 	if err != nil {
+		if n := e.trackFailure(failureKey); n >= 3 {
+			return res, fmt.Errorf("tool %q failed repeatedly (%d times); change params or strategy", name, n)
+		}
 		return res, err
 	}
+	e.clearFailure(failureKey)
 	res = e.compressToolOutput(req, res)
 	res.Success = true
 	return res, nil
+}
+
+func (e *Engine) trackFailure(key string) int {
+	e.failureMu.Lock()
+	defer e.failureMu.Unlock()
+	e.recentFailures[key]++
+	return e.recentFailures[key]
+}
+
+func (e *Engine) clearFailure(key string) {
+	e.failureMu.Lock()
+	defer e.failureMu.Unlock()
+	delete(e.recentFailures, key)
+}
+
+func normalizeToolParams(name string, params map[string]any) map[string]any {
+	if params == nil {
+		params = map[string]any{}
+	}
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "read_file":
+		start := asInt(params, "line_start", 1)
+		if start < 1 {
+			start = 1
+		}
+		end := asInt(params, "line_end", start+199)
+		if end < start {
+			end = start
+		}
+		if end-start+1 > 400 {
+			end = start + 399
+		}
+		params["line_start"] = start
+		params["line_end"] = end
+	case "list_dir":
+		maxEntries := asInt(params, "max_entries", 200)
+		if maxEntries <= 0 {
+			maxEntries = 200
+		}
+		if maxEntries > 500 {
+			maxEntries = 500
+		}
+		params["max_entries"] = maxEntries
+	case "grep_codebase":
+		maxResults := asInt(params, "max_results", 80)
+		if maxResults <= 0 {
+			maxResults = 80
+		}
+		if maxResults > 500 {
+			maxResults = 500
+		}
+		params["max_results"] = maxResults
+	}
+	return params
+}
+
+func toolFailureKey(name string, params map[string]any) string {
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString(strings.ToLower(strings.TrimSpace(name)))
+	for _, k := range keys {
+		b.WriteString("|")
+		b.WriteString(strings.TrimSpace(k))
+		b.WriteString("=")
+		b.WriteString(strings.TrimSpace(fmt.Sprint(params[k])))
+	}
+	return b.String()
 }
 
 func (e *Engine) compressToolOutput(req Request, res Result) Result {
