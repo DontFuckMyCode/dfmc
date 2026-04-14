@@ -586,13 +586,6 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 		resolvedLang = promptlib.InferLanguage(req.Query, nil)
 	}
 	resolvedProfile := strings.TrimSpace(req.Profile)
-	if strings.EqualFold(resolvedProfile, "auto") || resolvedProfile == "" {
-		resolvedProfile = "compact"
-		q := strings.ToLower(strings.TrimSpace(req.Query))
-		if strings.Contains(q, "detaylı") || strings.Contains(q, "detailed") || strings.Contains(q, "deep") || resolvedTask == "security" || resolvedTask == "review" || resolvedTask == "planning" {
-			resolvedProfile = "deep"
-		}
-	}
 	runtimeHints := s.engine.PromptRuntime()
 	if p := strings.TrimSpace(req.RuntimeProvider); p != "" {
 		runtimeHints.Provider = p
@@ -606,15 +599,19 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 	if req.RuntimeMaxContext > 0 {
 		runtimeHints.MaxContext = req.RuntimeMaxContext
 	}
+	if strings.EqualFold(resolvedProfile, "auto") || resolvedProfile == "" {
+		resolvedProfile = ctxmgr.ResolvePromptProfile(req.Query, resolvedTask, runtimeHints)
+	}
+	budget := ctxmgr.ResolvePromptRenderBudget(resolvedTask, resolvedProfile, runtimeHints)
 	vars := map[string]string{
 		"project_root":     s.engine.Status().ProjectRoot,
 		"task":             resolvedTask,
 		"language":         resolvedLang,
 		"profile":          resolvedProfile,
-		"project_brief":    loadProjectBriefForPromptRender(s.engine.Status().ProjectRoot, "", 240),
+		"project_brief":    loadProjectBriefForPromptRender(s.engine.Status().ProjectRoot, "", budget.ProjectBriefTokens),
 		"user_query":       strings.TrimSpace(req.Query),
 		"context_files":    strings.TrimSpace(req.ContextFiles),
-		"injected_context": "(none)",
+		"injected_context": ctxmgr.BuildInjectedContextWithBudget(s.engine.Status().ProjectRoot, req.Query, budget),
 		"tools_overview":   strings.Join(s.engine.ListTools(), ", "),
 		"tool_call_policy": ctxmgr.BuildToolCallPolicy(resolvedTask, runtimeHints),
 		"response_policy":  ctxmgr.BuildResponsePolicy(resolvedTask, resolvedProfile),
@@ -632,13 +629,25 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 		Profile:  resolvedProfile,
 		Vars:     vars,
 	})
+	promptBudgetTokens := ctxmgr.PromptTokenBudget(resolvedTask, resolvedProfile, runtimeHints)
+	trimmed := false
+	if promptBudgetTokens > 0 {
+		before := promptlib.EstimateTokens(prompt)
+		prompt = strings.TrimSpace(ctxmgr.TrimPromptToBudget(prompt, promptBudgetTokens))
+		after := promptlib.EstimateTokens(prompt)
+		trimmed = after < before
+	}
+	promptTokensEstimate := promptlib.EstimateTokens(prompt)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"type":     req.Type,
-		"task":     resolvedTask,
-		"language": resolvedLang,
-		"profile":  resolvedProfile,
-		"vars":     vars,
-		"prompt":   prompt,
+		"type":                   req.Type,
+		"task":                   resolvedTask,
+		"language":               resolvedLang,
+		"profile":                resolvedProfile,
+		"vars":                   vars,
+		"prompt":                 prompt,
+		"prompt_tokens_estimate": promptTokensEstimate,
+		"prompt_budget_tokens":   promptBudgetTokens,
+		"prompt_trimmed":         trimmed,
 	})
 }
 

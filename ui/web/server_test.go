@@ -684,6 +684,12 @@ func TestPromptsEndpoints(t *testing.T) {
 	if !strings.Contains(prompt, "near 200 tokens") {
 		t.Fatalf("expected runtime max context budget in prompt render, got: %s", prompt)
 	}
+	if _, ok := renderPayload["prompt_tokens_estimate"].(float64); !ok {
+		t.Fatalf("expected prompt_tokens_estimate in payload, got: %#v", renderPayload)
+	}
+	if _, ok := renderPayload["prompt_budget_tokens"].(float64); !ok {
+		t.Fatalf("expected prompt_budget_tokens in payload, got: %#v", renderPayload)
+	}
 }
 
 func TestMagicDocEndpoints(t *testing.T) {

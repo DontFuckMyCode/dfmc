@@ -283,6 +283,7 @@ go run ./cmd/dfmc prompt render --query "security audit auth middleware"
 go run ./cmd/dfmc prompt render --task planning --language go --query "roadmap cikar"
 go run ./cmd/dfmc prompt render --task review --var context_files="- internal/auth/middleware.go:1-120"
 go run ./cmd/dfmc prompt render --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
+go run ./cmd/dfmc --json prompt render --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc prompt stats
 go run ./cmd/dfmc prompt stats --max-template-tokens 450 --fail-on-warning
 ```
@@ -296,6 +297,19 @@ Inline file injection in user query (Claude Code-style):
 
 These markers are automatically resolved and injected into system prompt context.
 Injection payload is budgeted automatically (compact/deep profile aware) to reduce token burn.
+
+Inline fenced-code injection is also supported in query text:
+
+~~~text
+```go
+func VerifyToken(token string) bool { return token != "" }
+```
+~~~
+
+When using `--json` with `prompt render`, output now includes:
+- `prompt_tokens_estimate`
+- `prompt_budget_tokens`
+- `prompt_trimmed`
 
 Prompt templates are loaded from:
 - built-in defaults (`internal/promptlib/defaults`)
@@ -394,7 +408,10 @@ Token-efficient context tuning:
 - `context budget` preview now includes reserve breakdown (`prompt/history/response/tools`) and available context headroom.
 - `context budget` preview also exposes task scaling coefficients and `[[file:...]]` marker count.
 - System prompt tool-call policy is provider-aware (e.g., `function-calling` vs `tool_use`) and budget-aware.
+- Prompt profile and render budget are runtime-aware (`max_context`, low-latency mode, task type).
+- Final rendered system prompts are capped by a task/runtime token budget to avoid prompt bloat.
 - `[[file:...]]` markers in the query focus retrieval to fewer files with deeper per-file slices.
+- Triple-backtick code blocks in the query are treated as explicit injected context (budget-limited).
 - When history exceeds budget, DFMC injects a compact history summary instead of dropping all older context.
 
 Recommended baseline:

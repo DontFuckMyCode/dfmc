@@ -132,6 +132,20 @@ func VerifyToken(token string) bool {
 	}
 }
 
+func TestBuildSystemPromptInjectsQueryCodeFenceContext(t *testing.T) {
+	tmp := t.TempDir()
+	mgr := New(codemap.New(ast.New()))
+	query := "please inspect this snippet ```go\nfunc Verify(token string) bool { return token != \"\" }\n```"
+
+	prompt := mgr.BuildSystemPrompt(tmp, query, nil, nil)
+	if !strings.Contains(prompt, "[[query-code:1]]") {
+		t.Fatalf("expected query-code marker in prompt, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "func Verify(token string) bool") {
+		t.Fatalf("expected inline query code in prompt, got: %s", prompt)
+	}
+}
+
 func TestBuildSystemPromptInjectsProjectBrief(t *testing.T) {
 	tmp := t.TempDir()
 	target := filepath.Join(tmp, "auth.go")
@@ -190,6 +204,28 @@ func TestBuildSystemPromptInjectionBudgetCompactVsDeep(t *testing.T) {
 	}
 	if len(strings.Fields(deepPrompt)) <= len(strings.Fields(compactPrompt)) {
 		t.Fatalf("expected deep prompt to allow larger injection budget")
+	}
+}
+
+func TestBuildSystemPromptRespectsPromptTokenBudget(t *testing.T) {
+	tmp := t.TempDir()
+	mgr := New(codemap.New(ast.New()))
+	runtime := PromptRuntime{
+		Provider:    "openai",
+		Model:       "glm-5.1",
+		ToolStyle:   "function-calling",
+		LowLatency:  true,
+		MaxContext:  1000,
+		DefaultMode: "chat",
+	}
+	query := "security audit auth flow " + strings.Repeat("alpha beta gamma delta epsilon zeta ", 180)
+
+	prompt := mgr.BuildSystemPromptWithRuntime(tmp, query, nil, nil, runtime)
+	task := "security"
+	profile := ResolvePromptProfile(query, task, runtime)
+	budget := PromptTokenBudget(task, profile, runtime)
+	if got := len(strings.Fields(prompt)); got > budget {
+		t.Fatalf("expected prompt tokens <= budget (%d), got %d", budget, got)
 	}
 }
 

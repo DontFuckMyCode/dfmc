@@ -5016,14 +5016,6 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		if strings.EqualFold(resolvedLanguage, "auto") || resolvedLanguage == "" {
 			resolvedLanguage = promptlib.InferLanguage(*query, nil)
 		}
-		resolvedProfile := strings.TrimSpace(*profile)
-		if strings.EqualFold(resolvedProfile, "auto") || resolvedProfile == "" {
-			resolvedProfile = "compact"
-			q := strings.ToLower(strings.TrimSpace(*query))
-			if strings.Contains(q, "detayli") || strings.Contains(q, "detaylı") || strings.Contains(q, "detailed") || strings.Contains(q, "deep") || resolvedTask == "security" || resolvedTask == "review" || resolvedTask == "planning" {
-				resolvedProfile = "deep"
-			}
-		}
 
 		runtimeHints := eng.PromptRuntime()
 		if p := strings.TrimSpace(*runtimeProvider); p != "" {
@@ -5038,15 +5030,22 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		if *runtimeMaxContext > 0 {
 			runtimeHints.MaxContext = *runtimeMaxContext
 		}
+
+		resolvedProfile := strings.TrimSpace(*profile)
+		if strings.EqualFold(resolvedProfile, "auto") || resolvedProfile == "" {
+			resolvedProfile = ctxmgr.ResolvePromptProfile(*query, resolvedTask, runtimeHints)
+		}
+		budget := ctxmgr.ResolvePromptRenderBudget(resolvedTask, resolvedProfile, runtimeHints)
+
 		vars := map[string]string{
 			"project_root":     projectRoot,
 			"task":             resolvedTask,
 			"language":         resolvedLanguage,
 			"profile":          resolvedProfile,
-			"project_brief":    loadPromptProjectBrief(projectRoot, 240),
+			"project_brief":    loadPromptProjectBrief(projectRoot, budget.ProjectBriefTokens),
 			"user_query":       strings.TrimSpace(*query),
 			"context_files":    strings.TrimSpace(*contextFiles),
-			"injected_context": "(none)",
+			"injected_context": ctxmgr.BuildInjectedContextWithBudget(projectRoot, *query, budget),
 			"tools_overview":   strings.Join(eng.ListTools(), ", "),
 			"tool_call_policy": ctxmgr.BuildToolCallPolicy(resolvedTask, runtimeHints),
 			"response_policy":  ctxmgr.BuildResponsePolicy(resolvedTask, resolvedProfile),
@@ -5067,14 +5066,27 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			Profile:  resolvedProfile,
 			Vars:     vars,
 		})
+
+		promptBudgetTokens := ctxmgr.PromptTokenBudget(resolvedTask, resolvedProfile, runtimeHints)
+		trimmed := false
+		if promptBudgetTokens > 0 {
+			before := promptlib.EstimateTokens(out)
+			out = strings.TrimSpace(ctxmgr.TrimPromptToBudget(out, promptBudgetTokens))
+			after := promptlib.EstimateTokens(out)
+			trimmed = after < before
+		}
+		promptTokensEstimate := promptlib.EstimateTokens(out)
 		if jsonMode {
 			_ = printJSON(map[string]any{
-				"type":     strings.TrimSpace(*typ),
-				"task":     resolvedTask,
-				"language": resolvedLanguage,
-				"profile":  resolvedProfile,
-				"vars":     vars,
-				"prompt":   out,
+				"type":                   strings.TrimSpace(*typ),
+				"task":                   resolvedTask,
+				"language":               resolvedLanguage,
+				"profile":                resolvedProfile,
+				"vars":                   vars,
+				"prompt":                 out,
+				"prompt_tokens_estimate": promptTokensEstimate,
+				"prompt_budget_tokens":   promptBudgetTokens,
+				"prompt_trimmed":         trimmed,
 			})
 			return 0
 		}

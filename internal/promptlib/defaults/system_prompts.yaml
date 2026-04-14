@@ -145,3 +145,93 @@ templates:
       - Explain intent, behavior, and usage constraints.
       - Include concrete examples where useful.
       - Keep wording precise, concise, and implementation-aligned.
+
+  - id: system.tools.function_calling
+    type: system
+    task: general
+    compose: append
+    priority: 72
+    body: |
+      Function-calling execution contract:
+      - Always emit valid JSON arguments matching the tool schema exactly.
+      - Keep tool arguments minimal and deterministic.
+      - Do not mix natural-language commentary into tool payload fields.
+      - If tool output is large, summarize the evidence and keep key snippets.
+
+  - id: system.language.go
+    type: system
+    task: general
+    language: go
+    compose: append
+    priority: 62
+    body: |
+      Go guidance:
+      - Prefer explicit error returns over hidden control flow.
+      - Keep interfaces small and ownership boundaries clear.
+      - Respect context cancellation and deadline propagation.
+      - Favor targeted table-driven tests for changed behavior.
+
+  - id: system.language.typescript
+    type: system
+    task: general
+    language: typescript
+    compose: append
+    priority: 62
+    body: |
+      TypeScript guidance:
+      - Preserve strict typing; avoid broad `any` fallbacks.
+      - Keep runtime checks aligned with compile-time assumptions.
+      - Use narrow, explicit object shapes for tool and API contracts.
+      - Add tests for edge cases where type narrowing matters.
+
+  - id: system.language.python
+    type: system
+    task: general
+    language: python
+    compose: append
+    priority: 62
+    body: |
+      Python guidance:
+      - Keep behavior explicit and side effects localized.
+      - Prefer readability and predictable control flow over clever shortcuts.
+      - Validate error paths in tests for changed execution branches.
+      - Keep import boundaries and module responsibilities clean.
+
+  - id: system.language.rust
+    type: system
+    task: general
+    language: rust
+    compose: append
+    priority: 62
+    body: |
+      Rust guidance:
+      - Keep ownership and borrowing intent obvious.
+      - Minimize unsafe scope and document invariants when used.
+      - Prefer small, composable functions with explicit Result handling.
+      - Verify behavior with focused tests around boundary conditions.
+
+  - id: system.security.go
+    type: system
+    task: security
+    language: go
+    compose: append
+    priority: 84
+    body: |
+      Go security focus:
+      - Check auth middleware ordering and bypass paths.
+      - Validate request parsing and untrusted input handling.
+      - Review goroutine lifecycle for leakage and race risks.
+      - Confirm secret material is never logged or returned.
+
+  - id: system.security.typescript
+    type: system
+    task: security
+    language: typescript
+    compose: append
+    priority: 84
+    body: |
+      TypeScript security focus:
+      - Verify server-side authorization is independent of client checks.
+      - Review serialization/deserialization boundaries for injection risk.
+      - Check dependency-driven attack surface in changed paths.
+      - Ensure sensitive fields are filtered before response output.

@@ -170,13 +170,10 @@ func (m *Manager) BuildSystemPromptWithRuntime(projectRoot, query string, chunks
 
 	task := promptlib.DetectTask(query)
 	language := promptlib.InferLanguage(query, chunks)
-	profile := detectPromptProfile(query, task)
-	limits := promptRenderBudget(task, profile)
-	injected := extractInjectedContext(projectRoot, query, limits.InjectedBlocks, limits.InjectedLines)
-	if limits.InjectedTokens > 0 {
-		injected = trimToTokenBudget(injected, limits.InjectedTokens)
-	}
-	return m.prompts.Render(promptlib.RenderRequest{
+	profile := ResolvePromptProfile(query, task, runtime)
+	limits := ResolvePromptRenderBudget(task, profile, runtime)
+	injected := BuildInjectedContextWithBudget(projectRoot, query, limits)
+	prompt := m.prompts.Render(promptlib.RenderRequest{
 		Type:     "system",
 		Task:     task,
 		Language: language,
@@ -195,6 +192,10 @@ func (m *Manager) BuildSystemPromptWithRuntime(projectRoot, query string, chunks
 			"response_policy":  BuildResponsePolicy(task, profile),
 		},
 	})
+	if budget := PromptTokenBudget(task, profile, runtime); budget > 0 {
+		prompt = trimToTokenBudget(prompt, budget)
+	}
+	return prompt
 }
 
 func tokenizeQuery(query string) []string {
@@ -334,16 +335,16 @@ func detectLanguageFromPath(path string) string {
 	}
 }
 
-var injectionMarker = regexp.MustCompile(`\[\[file:([^\]#]+?)(?:#L(\d+)(?:-L?(\d+))?)?\]\]`)
+var (
+	injectionMarker  = regexp.MustCompile(`\[\[file:([^\]#]+?)(?:#L(\d+)(?:-L?(\d+))?)?\]\]`)
+	queryCodeBlockRe = regexp.MustCompile("(?s)```([a-zA-Z0-9_+-]*)\\r?\\n(.*?)\\r?\\n?```")
+)
 
 func extractInjectedContext(projectRoot, query string, maxBlocks, maxLines int) string {
-	if strings.TrimSpace(projectRoot) == "" || strings.TrimSpace(query) == "" {
+	if strings.TrimSpace(query) == "" {
 		return "(none)"
 	}
 	matches := injectionMarker.FindAllStringSubmatch(query, -1)
-	if len(matches) == 0 {
-		return "(none)"
-	}
 	if maxBlocks <= 0 {
 		maxBlocks = 3
 	}
@@ -351,75 +352,122 @@ func extractInjectedContext(projectRoot, query string, maxBlocks, maxLines int) 
 		maxLines = 120
 	}
 
-	blocks := make([]string, 0, min(len(matches), maxBlocks))
-	seen := map[string]struct{}{}
-	for _, m := range matches {
-		if len(blocks) >= maxBlocks {
-			break
-		}
-		rel := strings.TrimSpace(m[1])
-		if rel == "" {
-			continue
-		}
-		key := rel + "#" + safeSub(m, 2) + "#" + safeSub(m, 3)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
+	blocks := make([]string, 0, maxBlocks)
+	if strings.TrimSpace(projectRoot) != "" && len(matches) > 0 {
+		seen := map[string]struct{}{}
+		for _, m := range matches {
+			if len(blocks) >= maxBlocks {
+				break
+			}
+			rel := strings.TrimSpace(m[1])
+			if rel == "" {
+				continue
+			}
+			key := rel + "#" + safeSub(m, 2) + "#" + safeSub(m, 3)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
 
-		abs, err := resolvePathWithinRoot(projectRoot, rel)
-		if err != nil {
-			continue
-		}
-		data, err := os.ReadFile(abs)
-		if err != nil {
-			continue
-		}
-		lines := strings.Split(string(data), "\n")
-		lineStart := 1
-		lineEnd := len(lines)
-		if safeSub(m, 2) != "" {
-			if n, err := strconv.Atoi(safeSub(m, 2)); err == nil && n > 0 {
-				lineStart = n
+			abs, err := resolvePathWithinRoot(projectRoot, rel)
+			if err != nil {
+				continue
 			}
-		}
-		if safeSub(m, 3) != "" {
-			if n, err := strconv.Atoi(safeSub(m, 3)); err == nil && n >= lineStart {
-				lineEnd = n
+			data, err := os.ReadFile(abs)
+			if err != nil {
+				continue
 			}
-		}
-		if lineStart > len(lines) {
-			lineStart = len(lines)
-		}
-		if lineStart < 1 {
-			lineStart = 1
-		}
-		if lineEnd > len(lines) {
-			lineEnd = len(lines)
-		}
-		if lineEnd < lineStart {
-			lineEnd = lineStart
-		}
-		if lineEnd-lineStart+1 > maxLines {
-			lineEnd = lineStart + maxLines - 1
+			lines := strings.Split(string(data), "\n")
+			lineStart := 1
+			lineEnd := len(lines)
+			if safeSub(m, 2) != "" {
+				if n, err := strconv.Atoi(safeSub(m, 2)); err == nil && n > 0 {
+					lineStart = n
+				}
+			}
+			if safeSub(m, 3) != "" {
+				if n, err := strconv.Atoi(safeSub(m, 3)); err == nil && n >= lineStart {
+					lineEnd = n
+				}
+			}
+			if lineStart > len(lines) {
+				lineStart = len(lines)
+			}
+			if lineStart < 1 {
+				lineStart = 1
+			}
 			if lineEnd > len(lines) {
 				lineEnd = len(lines)
 			}
-		}
+			if lineEnd < lineStart {
+				lineEnd = lineStart
+			}
+			if lineEnd-lineStart+1 > maxLines {
+				lineEnd = lineStart + maxLines - 1
+				if lineEnd > len(lines) {
+					lineEnd = len(lines)
+				}
+			}
 
-		snippet := strings.Join(lines[lineStart-1:lineEnd], "\n")
-		lang := detectLanguageFromPath(rel)
-		if lang == "" {
-			lang = "text"
+			snippet := strings.Join(lines[lineStart-1:lineEnd], "\n")
+			lang := detectLanguageFromPath(rel)
+			if lang == "" {
+				lang = "text"
+			}
+			blocks = append(blocks,
+				fmt.Sprintf("[[file:%s#L%d-L%d]]\n```%s\n%s\n```",
+					filepath.ToSlash(rel), lineStart, lineEnd, lang, snippet))
 		}
-		blocks = append(blocks,
-			fmt.Sprintf("[[file:%s#L%d-L%d]]\n```%s\n%s\n```",
-				filepath.ToSlash(rel), lineStart, lineEnd, lang, snippet))
+	}
+	if len(blocks) < maxBlocks {
+		for i, block := range extractQueryCodeBlocks(query, maxBlocks-len(blocks), maxLines) {
+			if strings.TrimSpace(block) == "" {
+				continue
+			}
+			blocks = append(blocks, fmt.Sprintf("[[query-code:%d]]\n%s", i+1, block))
+			if len(blocks) >= maxBlocks {
+				break
+			}
+		}
 	}
 	if len(blocks) == 0 {
 		return "(none)"
 	}
 	return strings.Join(blocks, "\n\n")
+}
+
+func extractQueryCodeBlocks(query string, maxBlocks, maxLines int) []string {
+	if maxBlocks <= 0 {
+		return nil
+	}
+	matches := queryCodeBlockRe.FindAllStringSubmatch(query, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	if maxLines <= 0 {
+		maxLines = 120
+	}
+	out := make([]string, 0, min(len(matches), maxBlocks))
+	for _, m := range matches {
+		if len(out) >= maxBlocks {
+			break
+		}
+		lang := strings.TrimSpace(safeSub(m, 1))
+		if lang == "" {
+			lang = "text"
+		}
+		raw := strings.ReplaceAll(safeSub(m, 2), "\r\n", "\n")
+		lines := strings.Split(raw, "\n")
+		if len(lines) > maxLines {
+			lines = append(lines[:maxLines], "... [query code truncated]")
+		}
+		snippet := strings.TrimSpace(strings.Join(lines, "\n"))
+		if snippet == "" {
+			continue
+		}
+		out = append(out, fmt.Sprintf("```%s\n%s\n```", lang, snippet))
+	}
+	return out
 }
 
 func resolvePathWithinRoot(root, rel string) (string, error) {
@@ -452,20 +500,31 @@ func safeSub(parts []string, idx int) string {
 	return ""
 }
 
-func detectPromptProfile(query, task string) string {
+func ResolvePromptProfile(query, task string, runtime PromptRuntime) string {
 	q := strings.ToLower(strings.TrimSpace(query))
-	if strings.Contains(q, "detayli") || strings.Contains(q, "detaylı") || strings.Contains(q, "detailed") || strings.Contains(q, "deep") {
+	if containsAnyFold(q, []string{"detayli", "detaylı", "detailed", "deep", "thorough", "exhaustive", "ayrintili", "ayrıntılı"}) {
 		return "deep"
+	}
+	if containsAnyFold(q, []string{"compact", "short", "minimal", "kisa", "kısa", "ozet", "özet"}) {
+		return "compact"
 	}
 	switch strings.ToLower(strings.TrimSpace(task)) {
 	case "security", "review", "planning":
+		if runtime.MaxContext > 0 && runtime.MaxContext <= 12000 {
+			return "compact"
+		}
 		return "deep"
-	default:
+	}
+	if runtime.LowLatency {
 		return "compact"
 	}
+	if runtime.MaxContext > 0 && runtime.MaxContext <= 12000 {
+		return "compact"
+	}
+	return "compact"
 }
 
-type renderBudget struct {
+type PromptRenderBudget struct {
 	ContextFiles       int
 	ToolList           int
 	InjectedBlocks     int
@@ -474,8 +533,8 @@ type renderBudget struct {
 	ProjectBriefTokens int
 }
 
-func promptRenderBudget(task, profile string) renderBudget {
-	b := renderBudget{
+func ResolvePromptRenderBudget(task, profile string, runtime PromptRuntime) PromptRenderBudget {
+	b := PromptRenderBudget{
 		ContextFiles:       10,
 		ToolList:           16,
 		InjectedBlocks:     2,
@@ -498,7 +557,97 @@ func promptRenderBudget(task, profile string) renderBudget {
 	case "planning":
 		b.ContextFiles += 2
 	}
+	if runtime.LowLatency {
+		b.ContextFiles = maxInt(4, int(float64(b.ContextFiles)*0.72))
+		b.ToolList = maxInt(8, int(float64(b.ToolList)*0.72))
+		b.InjectedBlocks = maxInt(1, b.InjectedBlocks-1)
+		b.InjectedLines = maxInt(28, int(float64(b.InjectedLines)*0.65))
+		b.InjectedTokens = maxInt(120, int(float64(b.InjectedTokens)*0.65))
+		b.ProjectBriefTokens = maxInt(90, int(float64(b.ProjectBriefTokens)*0.68))
+	}
+	if runtime.MaxContext > 0 {
+		scale := float64(runtime.MaxContext) / 128000.0
+		if scale > 1.0 {
+			scale = 1.0
+		}
+		if scale < 0.22 {
+			scale = 0.22
+		}
+		b.ContextFiles = maxInt(3, int(float64(b.ContextFiles)*scale))
+		b.ToolList = maxInt(6, int(float64(b.ToolList)*scale))
+		b.InjectedLines = maxInt(24, int(float64(b.InjectedLines)*scale))
+		b.InjectedTokens = maxInt(100, int(float64(b.InjectedTokens)*scale))
+		b.ProjectBriefTokens = maxInt(80, int(float64(b.ProjectBriefTokens)*scale))
+	}
 	return b
+}
+
+func BuildInjectedContext(projectRoot, query, task, profile string, runtime PromptRuntime) string {
+	resolvedProfile := strings.TrimSpace(profile)
+	if resolvedProfile == "" {
+		resolvedProfile = ResolvePromptProfile(query, task, runtime)
+	}
+	limits := ResolvePromptRenderBudget(task, resolvedProfile, runtime)
+	return BuildInjectedContextWithBudget(projectRoot, query, limits)
+}
+
+func BuildInjectedContextWithBudget(projectRoot, query string, limits PromptRenderBudget) string {
+	injected := extractInjectedContext(projectRoot, query, limits.InjectedBlocks, limits.InjectedLines)
+	if limits.InjectedTokens > 0 {
+		injected = trimToTokenBudget(injected, limits.InjectedTokens)
+	}
+	return injected
+}
+
+func PromptTokenBudget(task, profile string, runtime PromptRuntime) int {
+	budget := 680
+	if strings.EqualFold(strings.TrimSpace(profile), "deep") {
+		budget = 1200
+	}
+	switch strings.ToLower(strings.TrimSpace(task)) {
+	case "security", "review":
+		budget += 220
+	case "planning":
+		budget += 120
+	case "doc":
+		budget -= 90
+	}
+	if runtime.LowLatency {
+		budget = int(float64(budget) * 0.82)
+	}
+	if runtime.MaxContext > 0 {
+		cap := runtime.MaxContext / 7
+		if cap < 220 {
+			cap = 220
+		}
+		if cap > 2600 {
+			cap = 2600
+		}
+		if budget > cap {
+			budget = cap
+		}
+	}
+	if budget < 220 {
+		budget = 220
+	}
+	return budget
+}
+
+func TrimPromptToBudget(prompt string, maxTokens int) string {
+	return trimToTokenBudget(prompt, maxTokens)
+}
+
+func containsAnyFold(in string, terms []string) bool {
+	for _, t := range terms {
+		v := strings.TrimSpace(strings.ToLower(t))
+		if v == "" {
+			continue
+		}
+		if strings.Contains(in, v) {
+			return true
+		}
+	}
+	return false
 }
 
 func summarizeTools(tools []string, limit int) string {
@@ -820,6 +969,13 @@ func shouldIncludePath(path string, includeTests, includeDocs bool) bool {
 		}
 	}
 	return true
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func minInt(a, b int) int {
