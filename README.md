@@ -65,6 +65,7 @@ This creates:
 go run ./cmd/dfmc ask "auth middleware nasil calisiyor?"
 go run ./cmd/dfmc status
 go run ./cmd/dfmc --json status --query "security audit auth middleware"
+go run ./cmd/dfmc --json status --query "security audit auth middleware" --runtime-tool-style function-calling --runtime-max-context 1000
 ```
 
 If provider API keys are not configured, DFMC automatically uses offline mode with local-context response generation.

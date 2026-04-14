@@ -187,6 +187,10 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 	fs.SetOutput(os.Stderr)
 	jsonFlag := fs.Bool("json", false, "output as json")
 	query := fs.String("query", "", "optional query for context/prompt status snapshot")
+	runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for context/prompt snapshot")
+	runtimeModel := fs.String("runtime-model", "", "runtime model override for context/prompt snapshot")
+	runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+	runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for context/prompt snapshot")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -210,8 +214,21 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 	_ = templates.LoadOverrides(projectRoot)
 
 	q := strings.TrimSpace(*query)
-	contextPreview := eng.ContextBudgetPreview(q)
-	promptRecommendation := eng.PromptRecommendation(q)
+	runtimeHints := eng.PromptRuntime()
+	if p := strings.TrimSpace(*runtimeProvider); p != "" {
+		runtimeHints.Provider = p
+	}
+	if m := strings.TrimSpace(*runtimeModel); m != "" {
+		runtimeHints.Model = m
+	}
+	if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+		runtimeHints.ToolStyle = ts
+	}
+	if *runtimeMaxContext > 0 {
+		runtimeHints.MaxContext = *runtimeMaxContext
+	}
+	contextPreview := eng.ContextBudgetPreviewWithRuntime(q, runtimeHints)
+	promptRecommendation := eng.PromptRecommendationWithRuntime(q, runtimeHints)
 
 	payload := map[string]any{
 		"name":                   "dfmc",
