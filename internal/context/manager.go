@@ -172,7 +172,7 @@ func (m *Manager) BuildSystemPrompt(projectRoot, query string, chunks []types.Co
 			"language":         language,
 			"profile":          profile,
 			"user_query":       strings.TrimSpace(query),
-			"context_files":    summarizeContextFiles(chunks, limits.ContextFiles),
+			"context_files":    summarizeContextFiles(projectRoot, chunks, limits.ContextFiles),
 			"injected_context": injected,
 			"tools_overview":   summarizeTools(tools, limits.ToolList),
 			"tool_call_policy": buildToolCallPolicy(task),
@@ -246,22 +246,48 @@ func estimateTokens(content string) int {
 	return len(strings.Fields(content))
 }
 
-func summarizeContextFiles(chunks []types.ContextChunk, limit int) string {
+func summarizeContextFiles(projectRoot string, chunks []types.ContextChunk, limit int) string {
 	if len(chunks) == 0 || limit <= 0 {
 		return "(none)"
 	}
+	overflow := 0
 	if len(chunks) > limit {
+		overflow = len(chunks) - limit
 		chunks = chunks[:limit]
 	}
 	lines := make([]string, 0, len(chunks))
 	for _, ch := range chunks {
-		path := filepath.ToSlash(ch.Path)
+		path := compactPath(projectRoot, ch.Path)
 		if path == "" {
 			path = "(unknown)"
 		}
 		lines = append(lines, fmt.Sprintf("- %s:%d-%d", path, ch.LineStart, ch.LineEnd))
 	}
+	if overflow > 0 {
+		lines = append(lines, fmt.Sprintf("- ... +%d more files", overflow))
+	}
 	return strings.Join(lines, "\n")
+}
+
+func compactPath(projectRoot, path string) string {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return ""
+	}
+	absPath, errPath := filepath.Abs(p)
+	absRoot, errRoot := filepath.Abs(strings.TrimSpace(projectRoot))
+	if errPath == nil && errRoot == nil && strings.TrimSpace(absRoot) != "" {
+		if rel, err := filepath.Rel(absRoot, absPath); err == nil {
+			if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				p = rel
+			}
+		}
+	}
+	p = filepath.ToSlash(p)
+	if len(p) <= 88 {
+		return p
+	}
+	return p[:42] + ".../" + p[len(p)-40:]
 }
 
 func detectLanguageFromPath(path string) string {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
+	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 func TestBuildContextFromQuery(t *testing.T) {
@@ -227,5 +228,21 @@ func TestBuildWithOptions_ExcludesTestsAndDocsWhenDisabled(t *testing.T) {
 		if strings.Contains(p, "/docs/") {
 			t.Fatalf("docs file should be excluded, got %s", p)
 		}
+	}
+}
+
+func TestSummarizeContextFiles_CompactsPathsAndShowsOverflow(t *testing.T) {
+	root := t.TempDir()
+	chunks := []types.ContextChunk{
+		{Path: filepath.Join(root, "internal", "auth", "middleware.go"), LineStart: 1, LineEnd: 40},
+		{Path: filepath.Join(root, "internal", "auth", "service.go"), LineStart: 5, LineEnd: 80},
+		{Path: filepath.Join(root, "internal", "auth", "token.go"), LineStart: 10, LineEnd: 60},
+	}
+	out := summarizeContextFiles(root, chunks, 2)
+	if !strings.Contains(out, "internal/auth/middleware.go:1-40") {
+		t.Fatalf("expected project-relative path, got: %s", out)
+	}
+	if !strings.Contains(out, "... +1 more files") {
+		t.Fatalf("expected overflow marker, got: %s", out)
 	}
 }
