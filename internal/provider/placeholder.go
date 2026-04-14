@@ -10,13 +10,15 @@ type PlaceholderProvider struct {
 	name       string
 	model      string
 	configured bool
+	maxContext int
 }
 
-func NewPlaceholderProvider(name, model string, configured bool) *PlaceholderProvider {
+func NewPlaceholderProvider(name, model string, configured bool, maxContext int) *PlaceholderProvider {
 	return &PlaceholderProvider{
 		name:       name,
 		model:      model,
 		configured: configured,
+		maxContext: maxContext,
 	}
 }
 
@@ -67,6 +69,9 @@ func (p *PlaceholderProvider) CountTokens(text string) int {
 }
 
 func (p *PlaceholderProvider) MaxContext() int {
+	if p.maxContext > 0 {
+		return p.maxContext
+	}
 	return 128000
 }
 

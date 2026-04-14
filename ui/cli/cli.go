@@ -32,6 +32,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
+	"github.com/dontfuckmycode/dfmc/ui/tui"
 	"github.com/dontfuckmycode/dfmc/ui/web"
 	"gopkg.in/yaml.v3"
 )
@@ -78,6 +79,8 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runAsk(ctx, eng, cmdArgs, opts.JSON)
 	case "chat":
 		return runChat(ctx, eng, cmdArgs, opts.JSON)
+	case "tui":
+		return runTUI(ctx, eng, cmdArgs, opts.JSON)
 	case "analyze":
 		return runAnalyze(ctx, eng, cmdArgs, opts.JSON)
 	case "map":
@@ -560,6 +563,7 @@ func commandDocs() []commandDoc {
 		{Name: "status", Description: "Runtime status snapshot"},
 		{Name: "init", Description: "Initialize DFMC in project"},
 		{Name: "chat", Description: "Interactive chat session"},
+		{Name: "tui", Description: "Terminal workbench (chat/status/patch)"},
 		{Name: "ask", Description: "One-shot question"},
 		{Name: "analyze", Description: "Analyze codebase"},
 		{Name: "scan", Description: "Quick security scan"},
@@ -666,6 +670,7 @@ func commandNames() []string {
 		"status",
 		"init",
 		"chat",
+		"tui",
 		"ask",
 		"analyze",
 		"scan",
@@ -866,6 +871,27 @@ func runChat(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 			fmt.Println()
 		}
 	}
+}
+
+func runTUI(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
+	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	noAltScreen := fs.Bool("no-alt-screen", false, "disable alternate screen mode")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if jsonMode {
+		fmt.Fprintln(os.Stderr, "tui does not support --json")
+		return 2
+	}
+	if eng.ConversationActive() == nil {
+		_ = eng.ConversationStart()
+	}
+	if err := tui.Run(ctx, eng, tui.Options{AltScreen: !*noAltScreen}); err != nil {
+		fmt.Fprintf(os.Stderr, "tui failed: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func runChatSlash(ctx context.Context, eng *engine.Engine, line string) (exit bool, handled bool) {
@@ -3316,7 +3342,7 @@ func remoteAsk(baseURL, token, message string, timeout time.Duration, streamOutp
 			if msg == "" {
 				msg = "remote stream error"
 			}
-			return events, answer.String(), fmt.Errorf(msg)
+			return events, answer.String(), errors.New(msg)
 		case "done":
 			return events, answer.String(), nil
 		}
@@ -5314,7 +5340,6 @@ func escapeDOT(s string) string {
 }
 
 func runConfig(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
-	_ = ctx
 	if len(args) == 0 {
 		args = []string{"list"}
 	}
@@ -5455,6 +5480,79 @@ func runConfig(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fmt.Printf("Updated %s in %s\n", keyPath, targetPath)
 		return 0
 
+	case "sync-models":
+		fs := flag.NewFlagSet("config sync-models", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		global := fs.Bool("global", false, "write to ~/.dfmc/config.yaml")
+		apiURL := fs.String("url", config.DefaultModelsDevAPIURL, "models.dev catalog url")
+		rewriteBaseURL := fs.Bool("rewrite-base-url", true, "replace provider base_url values from models.dev")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config sync-models error: %v\n", err)
+			return 1
+		}
+		targetPath := projectConfigPath(cwd)
+		if *global {
+			targetPath = filepath.Join(config.UserConfigDir(), "config.yaml")
+		}
+
+		catalog, err := config.FetchModelsDevCatalog(ctx, *apiURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config sync-models fetch error: %v\n", err)
+			return 1
+		}
+		if err := config.SaveModelsDevCatalog(config.ModelsDevCachePath(), catalog); err != nil {
+			fmt.Fprintf(os.Stderr, "config sync-models cache error: %v\n", err)
+			return 1
+		}
+
+		cloned, err := cloneConfig(eng.Config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config sync-models error: %v\n", err)
+			return 1
+		}
+		beforeProfiles := map[string]config.ModelConfig{}
+		for name, prof := range cloned.Providers.Profiles {
+			beforeProfiles[name] = prof
+		}
+		cloned.Providers.Profiles = config.MergeProviderProfilesFromModelsDev(cloned.Providers.Profiles, catalog, config.ModelsDevMergeOptions{
+			RewriteBaseURL: *rewriteBaseURL,
+		})
+		if strings.TrimSpace(cloned.Providers.Primary) == "" {
+			cloned.Providers.Primary = eng.Config.Providers.Primary
+		}
+		if err := cloned.Save(targetPath); err != nil {
+			fmt.Fprintf(os.Stderr, "config sync-models save error: %v\n", err)
+			return 1
+		}
+		if err := eng.ReloadConfig(cwd); err != nil {
+			fmt.Fprintf(os.Stderr, "config sync-models reload error: %v\n", err)
+			return 1
+		}
+
+		changes := diffProviderProfiles(beforeProfiles, cloned.Providers.Profiles)
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"status":       "ok",
+				"config_file":  targetPath,
+				"cache_file":   config.ModelsDevCachePath(),
+				"providers":    changes,
+				"provider_n":   len(changes),
+				"catalog_url":  strings.TrimSpace(*apiURL),
+				"rewrite_base": *rewriteBaseURL,
+			})
+			return 0
+		}
+		fmt.Printf("Synced %d provider profile(s) from %s into %s\n", len(changes), strings.TrimSpace(*apiURL), targetPath)
+		for _, line := range changes {
+			fmt.Printf("- %s\n", line)
+		}
+		return 0
+
 	case "edit":
 		fs := flag.NewFlagSet("config edit", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -5513,7 +5611,7 @@ func runConfig(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc config [list|get|set|edit]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc config [list|get|set|sync-models|edit]")
 		return 2
 	}
 }
@@ -5969,6 +6067,49 @@ func projectConfigPath(cwd string) string {
 	return filepath.Join(root, config.DefaultDirName, "config.yaml")
 }
 
+func cloneConfig(cfg *config.Config) (*config.Config, error) {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	out := &config.Config{}
+	if err := yaml.Unmarshal(data, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func diffProviderProfiles(before, after map[string]config.ModelConfig) []string {
+	names := make([]string, 0, len(after))
+	for name := range after {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		prev, ok := before[name]
+		curr := after[name]
+		if ok &&
+			prev.Model == curr.Model &&
+			prev.BaseURL == curr.BaseURL &&
+			prev.MaxTokens == curr.MaxTokens &&
+			prev.MaxContext == curr.MaxContext &&
+			prev.Protocol == curr.Protocol {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s => model=%s protocol=%s max_context=%d max_tokens=%d base_url=%s",
+			name,
+			blankFallback(curr.Model, "-"),
+			blankFallback(curr.Protocol, "-"),
+			curr.MaxContext,
+			curr.MaxTokens,
+			blankFallback(curr.BaseURL, "(default)"),
+		))
+	}
+	return out
+}
+
 func configToMap(cfg *config.Config) (map[string]any, error) {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
@@ -6227,6 +6368,7 @@ Commands:
   status      Runtime status snapshot
   init        Initialize DFMC in project
   chat        Interactive chat session
+  tui         Terminal workbench (chat/status/patch)
   ask         One-shot question
   analyze     Analyze codebase
   scan        Quick security scan

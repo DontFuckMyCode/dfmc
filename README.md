@@ -11,6 +11,7 @@ Status: Alpha (actively under development)
 Implemented now:
 - CLI entrypoint and command router
 - Config loading (defaults + global + project + env)
+- Models.dev-backed provider profile sync (`dfmc config sync-models`)
 - Engine lifecycle and event bus
 - Local AST extraction (regex-based v1)
 - CodeMap graph (nodes/edges, cycles, hotspots, path traversal)
@@ -25,6 +26,7 @@ Implemented now:
 - Skill commands (`skill list/info/run`) and built-in shortcuts (`review`, `explain`, `refactor`, `test`, `doc`)
 - Plugin commands (`plugin list/info/install/remove/enable/disable`) with config-backed enable state
 - Web API server (`dfmc serve`) with status, codemap, tools, memory, files, chat SSE
+- Terminal workbench (`dfmc tui`) with chat, status, and patch panels
 - Conversation persistence (JSONL)
 - Memory store (working + episodic + semantic via bbolt buckets)
 - Security scan (regex patterns for secrets and common vulnerability indicators)
@@ -34,7 +36,7 @@ Planned next:
 - Real tree-sitter integration
 - Streaming-native provider transport (SSE) and richer tool-calling formats
 - Richer tool catalog and skill execution pipeline
-- TUI + WebUI + remote control
+- Richer TUI/WebUI workflows and remote control
 
 ## Quick Start
 
@@ -82,6 +84,19 @@ Chat slash commands:
 - `/provider [name]`, `/model [name]`
 - `/branch [name]`, `/branch list`, `/branch create <name>`, `/branch switch <name>`, `/branch compare <a> <b>`
 - `/context show`, `/memory`, `/tools`, `/skills`, `/diff`, `/undo`, `/apply [--check] [patch.diff]`, `/run <skill> [input]`, `/cost`
+
+### 3.2) Terminal workbench
+
+```bash
+go run ./cmd/dfmc tui
+go run ./cmd/dfmc tui --no-alt-screen
+```
+
+The first TUI shell includes:
+- `Chat` panel with streaming answers
+- `Status` panel with AST/codemap runtime signals
+- `Files` panel with project browsing and file preview
+- `Patch` panel for worktree diff, latest assistant patch, check/apply, and conversation undo
 
 ### 4) Analyze codebase
 
@@ -160,6 +175,8 @@ Endpoints:
 go run ./cmd/dfmc config list
 go run ./cmd/dfmc config get providers.primary
 go run ./cmd/dfmc config set context.include_tests true
+go run ./cmd/dfmc config sync-models
+go run ./cmd/dfmc config sync-models --rewrite-base-url=false
 go run ./cmd/dfmc config edit
 go run ./cmd/dfmc context budget --query "security audit auth middleware"
 go run ./cmd/dfmc context budget --query "security audit auth middleware" --runtime-tool-style function-calling --runtime-max-context 1000
@@ -171,6 +188,7 @@ go run ./cmd/dfmc context brief --path docs/BRIEF.md --max-words 180
 ```
 When `runtime-max-context` is low (`<=12000`), context budgeting automatically switches to more aggressive compression; for very tight windows (`<=8000`), doc slices are auto-disabled.
 `dfmc --json context recommend ...` includes directly actionable config updates under `tuning_suggestions`.
+`dfmc config sync-models` refreshes provider models, protocols, output token limits, and context windows from [models.dev](https://models.dev/api.json), while preserving API keys.
 
 ### 7) Use memory and conversation commands
 

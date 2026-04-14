@@ -19,19 +19,23 @@ type OpenAICompatibleProvider struct {
 	model      string
 	apiKey     string
 	baseURL    string
+	maxTokens  int
+	maxContext int
 	httpClient *http.Client
 }
 
-func NewOpenAICompatibleProvider(name, model, apiKey, baseURL string) *OpenAICompatibleProvider {
+func NewOpenAICompatibleProvider(name, model, apiKey, baseURL string, maxTokens, maxContext int) *OpenAICompatibleProvider {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
 		baseURL = defaultOpenAIBaseURL(name)
 	}
 	return &OpenAICompatibleProvider{
-		name:    name,
-		model:   model,
-		apiKey:  apiKey,
-		baseURL: strings.TrimRight(baseURL, "/"),
+		name:       name,
+		model:      model,
+		apiKey:     apiKey,
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		maxTokens:  maxTokens,
+		maxContext: maxContext,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -78,6 +82,9 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 	body := map[string]any{
 		"model":    model,
 		"messages": messages,
+	}
+	if p.maxTokens > 0 {
+		body["max_tokens"] = p.maxTokens
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -187,6 +194,9 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 		"messages": messages,
 		"stream":   true,
 	}
+	if p.maxTokens > 0 {
+		body["max_tokens"] = p.maxTokens
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -280,6 +290,9 @@ func (p *OpenAICompatibleProvider) CountTokens(text string) int {
 }
 
 func (p *OpenAICompatibleProvider) MaxContext() int {
+	if p.maxContext > 0 {
+		return p.maxContext
+	}
 	return 128000
 }
 

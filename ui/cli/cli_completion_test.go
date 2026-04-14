@@ -9,22 +9,22 @@ func TestCompletionGenerators(t *testing.T) {
 	}
 
 	bash := completionBash(cmds)
-	if bash == "" || !containsAll(bash, []string{"complete -F", "dfmc", "analyze"}) {
+	if bash == "" || !containsAll(bash, []string{"complete -F", "dfmc", "analyze", "tui"}) {
 		t.Fatalf("unexpected bash completion script: %s", bash)
 	}
 
 	zsh := completionZsh(cmds)
-	if zsh == "" || !containsAll(zsh, []string{"compdef", "dfmc", "doctor"}) {
+	if zsh == "" || !containsAll(zsh, []string{"compdef", "dfmc", "doctor", "tui"}) {
 		t.Fatalf("unexpected zsh completion script: %s", zsh)
 	}
 
 	fish := completionFish(cmds)
-	if fish == "" || !containsAll(fish, []string{"complete -c dfmc", "remote"}) {
+	if fish == "" || !containsAll(fish, []string{"complete -c dfmc", "remote", "tui"}) {
 		t.Fatalf("unexpected fish completion script: %s", fish)
 	}
 
 	pwsh := completionPowerShell(cmds)
-	if pwsh == "" || !containsAll(pwsh, []string{"Register-ArgumentCompleter", "version"}) {
+	if pwsh == "" || !containsAll(pwsh, []string{"Register-ArgumentCompleter", "version", "tui"}) {
 		t.Fatalf("unexpected powershell completion script: %s", pwsh)
 	}
 }

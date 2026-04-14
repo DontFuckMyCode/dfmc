@@ -3,22 +3,20 @@ package config
 import "path/filepath"
 
 func DefaultConfig() *Config {
+	profiles := modelsDevSeedProfiles()
+	profiles["generic"] = ModelConfig{
+		Model:      "qwen3.5-coder",
+		BaseURL:    "http://localhost:11434/v1",
+		MaxTokens:  8192,
+		MaxContext: 128000,
+		Protocol:   "openai-compatible",
+	}
 	return &Config{
 		Version: DefaultVersion,
 		Providers: ProvidersConfig{
 			Primary:  "anthropic",
 			Fallback: []string{"openai", "deepseek"},
-			Profiles: map[string]ModelConfig{
-				"anthropic": {Model: "claude-sonnet-4-6", MaxTokens: 16384},
-				"openai":    {Model: "gpt-5.4", MaxTokens: 8192},
-				"google":    {Model: "gemini-3.1-pro", MaxTokens: 8192},
-				"deepseek":  {Model: "deepseek-chat", MaxTokens: 8192},
-				"kimi":      {Model: "kimi-k2.5", MaxTokens: 8192},
-				"minimax":   {Model: "minimax-m2.7", MaxTokens: 8192},
-				"zai":       {Model: "glm-5", MaxTokens: 8192},
-				"alibaba":   {Model: "qwen3.5-plus", MaxTokens: 8192},
-				"generic":   {Model: "qwen3.5-coder", BaseURL: "http://localhost:11434/v1", MaxTokens: 8192},
-			},
+			Profiles: profiles,
 		},
 		Context: ContextConfig{
 			MaxFiles:         50,
