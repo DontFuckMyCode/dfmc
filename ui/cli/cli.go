@@ -26,6 +26,8 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
+	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -65,6 +67,8 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 	case "help", "-h", "--help":
 		printHelp()
 		return 0
+	case "status":
+		return runStatus(eng, version, cmdArgs, opts.JSON)
 	case "version":
 		return runVersion(eng, version, cmdArgs, opts.JSON)
 	case "init":
@@ -89,8 +93,12 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runServe(ctx, eng, cmdArgs, opts.JSON)
 	case "config":
 		return runConfig(ctx, eng, cmdArgs, opts.JSON)
+	case "context":
+		return runContext(ctx, eng, cmdArgs, opts.JSON)
 	case "prompt":
 		return runPrompt(ctx, eng, cmdArgs, opts.JSON)
+	case "magicdoc":
+		return runMagicDoc(ctx, eng, cmdArgs, opts.JSON)
 	case "plugin":
 		return runPlugin(ctx, eng, cmdArgs, opts.JSON)
 	case "skill":
@@ -171,6 +179,110 @@ func runVersion(eng *engine.Engine, version string, args []string, jsonMode bool
 	fmt.Printf("providers: %s\n", strings.Join(loadedProviders, ", "))
 	if sz := executableSize(); sz > 0 {
 		fmt.Printf("binary size: %d bytes\n", sz)
+	}
+	return 0
+}
+
+func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool) int {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	jsonFlag := fs.Bool("json", false, "output as json")
+	query := fs.String("query", "", "optional query for context/prompt status snapshot")
+	runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for context/prompt snapshot")
+	runtimeModel := fs.String("runtime-model", "", "runtime model override for context/prompt snapshot")
+	runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+	runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for context/prompt snapshot")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	jsonMode = jsonMode || *jsonFlag
+
+	st := eng.Status()
+	projectRoot := strings.TrimSpace(st.ProjectRoot)
+	if projectRoot == "" {
+		projectRoot = config.FindProjectRoot("")
+	}
+
+	loadedProviders := []string{}
+	if eng.Providers != nil {
+		loadedProviders = eng.Providers.List()
+		sort.Strings(loadedProviders)
+	}
+	tools := eng.ListTools()
+	sort.Strings(tools)
+	skills := discoverSkills(projectRoot)
+	templates := promptlib.New()
+	_ = templates.LoadOverrides(projectRoot)
+
+	q := strings.TrimSpace(*query)
+	runtimeHints := eng.PromptRuntime()
+	if p := strings.TrimSpace(*runtimeProvider); p != "" {
+		runtimeHints.Provider = p
+	}
+	if m := strings.TrimSpace(*runtimeModel); m != "" {
+		runtimeHints.Model = m
+	}
+	if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+		runtimeHints.ToolStyle = ts
+	}
+	if *runtimeMaxContext > 0 {
+		runtimeHints.MaxContext = *runtimeMaxContext
+	}
+	contextPreview := eng.ContextBudgetPreviewWithRuntime(q, runtimeHints)
+	promptRecommendation := eng.PromptRecommendationWithRuntime(q, runtimeHints)
+	contextTuning := eng.ContextTuningSuggestionsWithRuntime(q, runtimeHints)
+
+	payload := map[string]any{
+		"name":                       "dfmc",
+		"version":                    version,
+		"state":                      st.State,
+		"ready":                      st.State == engine.StateReady || st.State == engine.StateServing,
+		"provider":                   st.Provider,
+		"model":                      st.Model,
+		"ast_backend":                st.ASTBackend,
+		"ast_reason":                 st.ASTReason,
+		"project_root":               projectRoot,
+		"go_version":                 runtimeVersion(),
+		"loaded_providers":           loadedProviders,
+		"tools_count":                len(tools),
+		"skills_count":               len(skills),
+		"prompt_templates_count":     len(templates.List()),
+		"query":                      q,
+		"context_budget":             contextPreview,
+		"context_tuning_suggestions": contextTuning,
+		"prompt_recommendation":      promptRecommendation,
+	}
+
+	if jsonMode {
+		_ = printJSON(payload)
+		return 0
+	}
+
+	fmt.Printf("dfmc %s\n", version)
+	fmt.Printf("state: %v (ready=%t)\n", st.State, st.State == engine.StateReady || st.State == engine.StateServing)
+	fmt.Printf("provider/model: %s / %s\n", st.Provider, st.Model)
+	if strings.TrimSpace(st.ASTBackend) != "" {
+		fmt.Printf("ast backend: %s\n", st.ASTBackend)
+	}
+	fmt.Printf("project: %s\n", projectRoot)
+	fmt.Printf("providers: %d loaded\n", len(loadedProviders))
+	fmt.Printf("tools: %d, skills: %d, prompt templates: %d\n", len(tools), len(skills), len(templates.List()))
+	fmt.Printf("context budget: task=%s total=%d per_file=%d files=%d reserve=%d available=%d\n",
+		contextPreview.Task,
+		contextPreview.MaxTokensTotal,
+		contextPreview.MaxTokensPerFile,
+		contextPreview.MaxFiles,
+		contextPreview.ReserveTotalTokens,
+		contextPreview.ContextAvailableTokens,
+	)
+	fmt.Printf("prompt recommendation: profile=%s role=%s budget=%d tool_style=%s\n",
+		promptRecommendation.Profile,
+		promptRecommendation.Role,
+		promptRecommendation.PromptBudgetTokens,
+		promptRecommendation.ToolStyle,
+	)
+	if len(contextTuning) > 0 {
+		fmt.Printf("context tuning suggestions: %d\n", len(contextTuning))
 	}
 	return 0
 }
@@ -269,6 +381,7 @@ type commandDoc struct {
 
 func commandDocs() []commandDoc {
 	return []commandDoc{
+		{Name: "status", Description: "Runtime status snapshot"},
 		{Name: "init", Description: "Initialize DFMC in project"},
 		{Name: "chat", Description: "Interactive chat session"},
 		{Name: "ask", Description: "One-shot question"},
@@ -279,7 +392,9 @@ func commandDocs() []commandDoc {
 		{Name: "conversation", Description: "Conversation management (list/search/load/save/undo/branch)"},
 		{Name: "memory", Description: "Memory management"},
 		{Name: "config", Description: "Configuration management"},
+		{Name: "context", Description: "Context budget and recent files"},
 		{Name: "prompt", Description: "Prompt library management"},
+		{Name: "magicdoc", Description: "Build/show concise project magic doc"},
 		{Name: "plugin", Description: "Plugin management"},
 		{Name: "skill", Description: "Skill management"},
 		{Name: "serve", Description: "Start Web API server"},
@@ -372,6 +487,7 @@ func renderManRoff(docs []commandDoc) string {
 
 func commandNames() []string {
 	return []string{
+		"status",
 		"init",
 		"chat",
 		"ask",
@@ -382,7 +498,9 @@ func commandNames() []string {
 		"conversation",
 		"memory",
 		"config",
+		"context",
 		"prompt",
+		"magicdoc",
 		"plugin",
 		"skill",
 		"serve",
@@ -768,6 +886,30 @@ func runChatSlash(ctx context.Context, eng *engine.Engine, line string) (exit bo
 		}
 		switch action {
 		case "show":
+			preview := eng.ContextBudgetPreview("")
+			fmt.Printf("context budget: provider=%s model=%s task=%s mentions=%d scale[t=%.2f f=%.2f pf=%.2f] provider_max=%d available=%d reserve_total=%d reserve[prompt=%d history=%d response=%d tools=%d] total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
+				preview.Provider,
+				preview.Model,
+				preview.Task,
+				preview.ExplicitFileMentions,
+				preview.TaskTotalScale,
+				preview.TaskFileScale,
+				preview.TaskPerFileScale,
+				preview.ProviderMaxContext,
+				preview.ContextAvailableTokens,
+				preview.ReserveTotalTokens,
+				preview.ReservePromptTokens,
+				preview.ReserveHistoryTokens,
+				preview.ReserveResponseTokens,
+				preview.ReserveToolTokens,
+				preview.MaxTokensTotal,
+				preview.MaxTokensPerFile,
+				preview.MaxHistoryTokens,
+				preview.MaxFiles,
+				preview.Compression,
+				preview.IncludeTests,
+				preview.IncludeDocs,
+			)
 			w := eng.MemoryWorking()
 			if len(w.RecentFiles) == 0 {
 				fmt.Println("context: no recent files yet")
@@ -825,7 +967,62 @@ func runChatSlash(ctx context.Context, eng *engine.Engine, line string) (exit bo
 		return false, true
 
 	case "/apply":
-		fmt.Println("apply is not implemented in this REPL yet")
+		checkOnly := false
+		diffPath := ""
+		for _, a := range args {
+			v := strings.TrimSpace(a)
+			if v == "" {
+				continue
+			}
+			if v == "--check" {
+				checkOnly = true
+				continue
+			}
+			if diffPath == "" {
+				diffPath = v
+			}
+		}
+		patchText := ""
+		if diffPath != "" {
+			data, err := os.ReadFile(diffPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "apply error: cannot read diff file: %v\n", err)
+				return false, true
+			}
+			patchText = extractUnifiedDiff(string(data))
+			if strings.TrimSpace(patchText) == "" {
+				fmt.Fprintln(os.Stderr, "apply error: no unified diff found in file")
+				return false, true
+			}
+		} else {
+			patchText = latestAssistantUnifiedDiff(eng.ConversationActive())
+			if strings.TrimSpace(patchText) == "" {
+				fmt.Fprintln(os.Stderr, "apply: no assistant diff found. Provide a diff file path or ask for a unified diff.")
+				return false, true
+			}
+		}
+
+		root := strings.TrimSpace(eng.Status().ProjectRoot)
+		if root == "" {
+			root = "."
+		}
+		if err := applyUnifiedDiff(root, patchText, checkOnly); err != nil {
+			fmt.Fprintf(os.Stderr, "apply error: %v\n", err)
+			return false, true
+		}
+		if checkOnly {
+			fmt.Println("apply check: patch is valid")
+			return false, true
+		}
+		changed, err := gitChangedFiles(root, 12)
+		if err != nil || len(changed) == 0 {
+			fmt.Println("patch applied")
+			return false, true
+		}
+		fmt.Printf("patch applied (%d file(s)):\n", len(changed))
+		for _, file := range changed {
+			fmt.Printf("- %s\n", file)
+		}
 		return false, true
 
 	case "/run":
@@ -866,7 +1063,7 @@ func printChatHelp() {
   /skills                       List skills
   /diff                         Show working tree diff
   /undo                         Undo last conversation exchange
-  /apply                        Reserved for future patch apply flow
+  /apply [--check] [patch.diff] Apply latest assistant unified diff (or diff file)
   /run <skill> [input]          Run skill
   /cost                         Show token/cost summary`)
 }
@@ -932,6 +1129,124 @@ func gitWorkingDiff(projectRoot string, maxBytes int64) (string, error) {
 	return string(out), nil
 }
 
+func latestAssistantUnifiedDiff(active *conversation.Conversation) string {
+	if active == nil {
+		return ""
+	}
+	msgs := active.Messages()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != types.RoleAssistant {
+			continue
+		}
+		if patch := extractUnifiedDiff(msgs[i].Content); strings.TrimSpace(patch) != "" {
+			return patch
+		}
+	}
+	return ""
+}
+
+func extractUnifiedDiff(in string) string {
+	text := strings.TrimSpace(strings.ReplaceAll(in, "\r\n", "\n"))
+	if text == "" {
+		return ""
+	}
+	for _, marker := range []string{"```diff", "```patch", "```"} {
+		idx := 0
+		for {
+			start := strings.Index(text[idx:], marker)
+			if start < 0 {
+				break
+			}
+			start += idx
+			blockStart := strings.Index(text[start:], "\n")
+			if blockStart < 0 {
+				break
+			}
+			blockStart += start + 1
+			end := strings.Index(text[blockStart:], "\n```")
+			if end < 0 {
+				break
+			}
+			end += blockStart
+			block := strings.TrimSpace(text[blockStart:end])
+			if looksLikeUnifiedDiff(block) {
+				return block
+			}
+			idx = end + 4
+		}
+	}
+	if looksLikeUnifiedDiff(text) {
+		return text
+	}
+	return ""
+}
+
+func looksLikeUnifiedDiff(diff string) bool {
+	d := "\n" + strings.TrimSpace(diff) + "\n"
+	if strings.Contains(d, "\ndiff --git ") {
+		return true
+	}
+	return strings.Contains(d, "\n--- ") && strings.Contains(d, "\n+++ ") && strings.Contains(d, "\n@@ ")
+}
+
+func applyUnifiedDiff(projectRoot, patch string, checkOnly bool) error {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		root = "."
+	}
+	patch = strings.ReplaceAll(patch, "\r\n", "\n")
+	if patch != "" && !strings.HasSuffix(patch, "\n") {
+		patch += "\n"
+	}
+	args := []string{"-C", root, "apply", "--whitespace=nowarn", "--recount"}
+	if checkOnly {
+		args = append(args, "--check")
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Stdin = strings.NewReader(patch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
+}
+
+func gitChangedFiles(projectRoot string, limit int) ([]string, error) {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		root = "."
+	}
+	cmd := exec.Command("git", "-C", root, "status", "--short", "--")
+	out, err := cmd.Output()
+	if err != nil {
+		if ee := (&exec.ExitError{}); errors.As(err, &ee) {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
+		}
+		return nil, err
+	}
+	text := strings.ReplaceAll(string(out), "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	files := make([]string, 0, len(lines))
+	for _, raw := range lines {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		if len(raw) > 3 {
+			files = append(files, strings.TrimSpace(raw[3:]))
+		} else {
+			files = append(files, strings.TrimSpace(raw))
+		}
+		if limit > 0 && len(files) >= limit {
+			break
+		}
+	}
+	return files, nil
+}
+
 func runPlaceholder(name string, jsonMode bool) int {
 	if jsonMode {
 		_ = printJSON(map[string]any{
@@ -953,12 +1268,24 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 	var complexity bool
 	var deadCode bool
 	var deps bool
+	var magicDoc bool
+	var magicDocPath string
+	var magicDocTitle string
+	var magicDocHotspots int
+	var magicDocDeps int
+	var magicDocRecent int
 	fs.BoolVar(&jsonFlag, "json", false, "output as json")
 	fs.BoolVar(&full, "full", false, "run full analysis set")
 	fs.BoolVar(&security, "security", false, "run security analysis")
 	fs.BoolVar(&complexity, "complexity", false, "run complexity analysis")
 	fs.BoolVar(&deadCode, "dead-code", false, "run dead code analysis")
 	fs.BoolVar(&deps, "deps", false, "run dependency analysis summary")
+	fs.BoolVar(&magicDoc, "magicdoc", false, "update .dfmc/magic/MAGIC_DOC.md after analyze")
+	fs.StringVar(&magicDocPath, "magicdoc-path", "", "custom magic doc path")
+	fs.StringVar(&magicDocTitle, "magicdoc-title", "DFMC Project Brief", "magic doc title")
+	fs.IntVar(&magicDocHotspots, "magicdoc-hotspots", 8, "max hotspot entries for magic doc")
+	fs.IntVar(&magicDocDeps, "magicdoc-deps", 8, "max dependency entries for magic doc")
+	fs.IntVar(&magicDocRecent, "magicdoc-recent", 5, "max recent items for magic doc")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -983,17 +1310,58 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 	if deps || full {
 		depSummary = collectDependencyStats(eng, 20)
 	}
-	if jsonMode {
-		if deps || full {
-			_ = printJSON(map[string]any{
-				"report":        report,
-				"dependencies":  depSummary,
-				"dep_count":     len(depSummary),
-				"dep_requested": true,
-			})
-		} else {
-			_ = printJSON(report)
+	magicDocResult := map[string]any{}
+	if magicDoc {
+		root := strings.TrimSpace(report.ProjectRoot)
+		if root == "" {
+			root = strings.TrimSpace(eng.Status().ProjectRoot)
 		}
+		if root == "" {
+			if cwd, err := os.Getwd(); err == nil {
+				root = cwd
+			}
+		}
+		target := resolveMagicDocPath(root, strings.TrimSpace(magicDocPath))
+		content, err := buildMagicDocContent(ctx, eng, root, strings.TrimSpace(magicDocTitle), magicDocHotspots, magicDocDeps, magicDocRecent)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "magicdoc build failed: %v\n", err)
+			return 1
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "magicdoc mkdir failed: %v\n", err)
+			return 1
+		}
+		prev, _ := os.ReadFile(target)
+		updated := string(prev) != content
+		if updated {
+			if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+				fmt.Fprintf(os.Stderr, "magicdoc write failed: %v\n", err)
+				return 1
+			}
+		}
+		magicDocResult = map[string]any{
+			"path":    target,
+			"updated": updated,
+			"bytes":   len(content),
+		}
+	}
+	if jsonMode {
+		if deps || full || magicDoc {
+			out := map[string]any{
+				"report": report,
+			}
+			if deps || full {
+				out["dependencies"] = depSummary
+				out["dep_count"] = len(depSummary)
+				out["dep_requested"] = true
+			}
+			if magicDoc {
+				out["magicdoc"] = magicDocResult
+			}
+			_ = printJSON(out)
+			return 0
+		}
+		_ = printJSON(report)
 		return 0
 	}
 	fmt.Printf("Project: %s\n", report.ProjectRoot)
@@ -1027,6 +1395,9 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 			}
 			fmt.Printf("  - %s (%d imports)\n", d.Module, d.Count)
 		}
+	}
+	if magicDoc {
+		fmt.Printf("MagicDoc: %s (%s)\n", fmt.Sprint(magicDocResult["path"]), map[bool]string{true: "updated", false: "unchanged"}[magicDocResult["updated"] == true])
 	}
 	return 0
 }
@@ -1867,6 +2238,12 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		security := fs.Bool("security", false, "include security report")
 		complexity := fs.Bool("complexity", false, "include complexity report")
 		deadCode := fs.Bool("dead-code", false, "include dead-code report")
+		magicDoc := fs.Bool("magicdoc", false, "update magic doc after remote analyze")
+		magicDocPath := fs.String("magicdoc-path", "", "custom magic doc path")
+		magicDocTitle := fs.String("magicdoc-title", "DFMC Project Brief", "magic doc title")
+		magicDocHotspots := fs.Int("magicdoc-hotspots", 8, "max hotspot entries for magic doc")
+		magicDocDeps := fs.Int("magicdoc-deps", 8, "max dependency entries for magic doc")
+		magicDocRecent := fs.Int("magicdoc-recent", 5, "max recent entries for magic doc")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
 		}
@@ -1875,11 +2252,17 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/analyze",
 			*token,
 			map[string]any{
-				"path":       *path,
-				"full":       *full,
-				"security":   *security,
-				"complexity": *complexity,
-				"dead_code":  *deadCode,
+				"path":              *path,
+				"full":              *full,
+				"security":          *security,
+				"complexity":        *complexity,
+				"dead_code":         *deadCode,
+				"magicdoc":          *magicDoc,
+				"magicdoc_path":     strings.TrimSpace(*magicDocPath),
+				"magicdoc_title":    strings.TrimSpace(*magicDocTitle),
+				"magicdoc_hotspots": *magicDocHotspots,
+				"magicdoc_deps":     *magicDocDeps,
+				"magicdoc_recent":   *magicDocRecent,
 			},
 			*timeout,
 		)
@@ -1893,6 +2276,122 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 		_ = printJSON(payload)
 		return 0
+
+	case "context":
+		action := "budget"
+		parseFrom := 1
+		if len(args) >= 2 {
+			candidate := strings.ToLower(strings.TrimSpace(args[1]))
+			if !strings.HasPrefix(candidate, "-") {
+				action = candidate
+				parseFrom = 2
+			}
+		}
+		fs := flag.NewFlagSet("remote context", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
+		query := fs.String("query", "", "query for task-aware budget simulation")
+		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for context simulation")
+		runtimeModel := fs.String("runtime-model", "", "runtime model override for context simulation")
+		runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+		runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for context simulation")
+		maxWords := fs.Int("max-words", 240, "max words for context brief")
+		briefPath := fs.String("path", "", "path to magic doc file (relative to project root or absolute)")
+		if err := fs.Parse(args[parseFrom:]); err != nil {
+			return 2
+		}
+
+		switch action {
+		case "budget", "show":
+			q := strings.TrimSpace(*query)
+			if q == "" && len(fs.Args()) > 0 {
+				q = strings.TrimSpace(strings.Join(fs.Args(), " "))
+			}
+			v := url.Values{}
+			if q != "" {
+				v.Set("q", q)
+			}
+			if p := strings.TrimSpace(*runtimeProvider); p != "" {
+				v.Set("runtime_provider", p)
+			}
+			if m := strings.TrimSpace(*runtimeModel); m != "" {
+				v.Set("runtime_model", m)
+			}
+			if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+				v.Set("runtime_tool_style", ts)
+			}
+			if *runtimeMaxContext > 0 {
+				v.Set("runtime_max_context", strconv.Itoa(*runtimeMaxContext))
+			}
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/context/budget"
+			if encoded := v.Encode(); encoded != "" {
+				endpoint += "?" + encoded
+			}
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote context budget error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		case "recommend", "recommendations":
+			q := strings.TrimSpace(*query)
+			if q == "" && len(fs.Args()) > 0 {
+				q = strings.TrimSpace(strings.Join(fs.Args(), " "))
+			}
+			v := url.Values{}
+			if q != "" {
+				v.Set("q", q)
+			}
+			if p := strings.TrimSpace(*runtimeProvider); p != "" {
+				v.Set("runtime_provider", p)
+			}
+			if m := strings.TrimSpace(*runtimeModel); m != "" {
+				v.Set("runtime_model", m)
+			}
+			if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+				v.Set("runtime_tool_style", ts)
+			}
+			if *runtimeMaxContext > 0 {
+				v.Set("runtime_max_context", strconv.Itoa(*runtimeMaxContext))
+			}
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/context/recommend"
+			if encoded := v.Encode(); encoded != "" {
+				endpoint += "?" + encoded
+			}
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote context recommend error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		case "brief":
+			v := url.Values{}
+			if *maxWords > 0 {
+				v.Set("max_words", strconv.Itoa(*maxWords))
+			}
+			if p := strings.TrimSpace(*briefPath); p != "" {
+				v.Set("path", p)
+			}
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/context/brief"
+			if encoded := v.Encode(); encoded != "" {
+				endpoint += "?" + encoded
+			}
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote context brief error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		default:
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote context [budget --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[brief --max-words 240 --path ...] [--url ...] [--token ...]")
+			return 2
+		}
 
 	case "files":
 		if len(args) < 2 {
@@ -2266,8 +2765,13 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 
 	case "prompt":
 		action := "list"
+		parseFrom := 1
 		if len(args) >= 2 {
-			action = strings.ToLower(strings.TrimSpace(args[1]))
+			candidate := strings.ToLower(strings.TrimSpace(args[1]))
+			if !strings.HasPrefix(candidate, "-") {
+				action = candidate
+				parseFrom = 2
+			}
 		}
 		fs := flag.NewFlagSet("remote prompt", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -2279,11 +2783,20 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		task := fs.String("task", "auto", "prompt task")
 		language := fs.String("language", "auto", "prompt language")
 		profile := fs.String("profile", "auto", "prompt profile")
+		role := fs.String("role", "auto", "prompt role")
 		query := fs.String("query", "", "user query")
 		contextFiles := fs.String("context-files", "(none)", "context file summary")
+		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for tool policy rendering")
+		runtimeModel := fs.String("runtime-model", "", "runtime model override for tool policy rendering")
+		runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+		runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for tool policy rendering")
+		maxTemplateTokens := fs.Int("max-template-tokens", 450, "warning threshold for per-template token estimate")
+		failOnWarning := fs.Bool("fail-on-warning", false, "exit with non-zero status if warnings are found")
+		var allowVar multiStringFlag
+		fs.Var(&allowVar, "allow-var", "extra placeholder variable to allow (repeatable)")
 		var varsRaw multiStringFlag
 		fs.Var(&varsRaw, "var", "prompt var key=value (repeatable)")
-		if err := fs.Parse(args[2:]); err != nil {
+		if err := fs.Parse(args[parseFrom:]); err != nil {
 			return 2
 		}
 
@@ -2308,13 +2821,18 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/prompts/render",
 				*token,
 				map[string]any{
-					"type":          *typ,
-					"task":          *task,
-					"language":      *language,
-					"profile":       *profile,
-					"query":         *query,
-					"context_files": *contextFiles,
-					"vars":          extraVars,
+					"type":                *typ,
+					"task":                *task,
+					"language":            *language,
+					"profile":             *profile,
+					"role":                *role,
+					"query":               *query,
+					"context_files":       *contextFiles,
+					"runtime_provider":    strings.TrimSpace(*runtimeProvider),
+					"runtime_model":       strings.TrimSpace(*runtimeModel),
+					"runtime_tool_style":  strings.TrimSpace(*runtimeToolStyle),
+					"runtime_max_context": *runtimeMaxContext,
+					"vars":                extraVars,
 				},
 				*timeout,
 			)
@@ -2324,8 +2842,122 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			}
 			_ = printJSON(payload)
 			return 0
+		case "recommend", "recommendation", "tune":
+			v := url.Values{}
+			if p := strings.TrimSpace(*query); p != "" {
+				v.Set("q", p)
+			}
+			if p := strings.TrimSpace(*runtimeProvider); p != "" {
+				v.Set("runtime_provider", p)
+			}
+			if m := strings.TrimSpace(*runtimeModel); m != "" {
+				v.Set("runtime_model", m)
+			}
+			if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+				v.Set("runtime_tool_style", ts)
+			}
+			if *runtimeMaxContext > 0 {
+				v.Set("runtime_max_context", strconv.Itoa(*runtimeMaxContext))
+			}
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/prompts/recommend"
+			if encoded := v.Encode(); encoded != "" {
+				endpoint += "?" + encoded
+			}
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote prompt recommend error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		case "stats", "validate", "lint":
+			v := url.Values{}
+			if *maxTemplateTokens > 0 {
+				v.Set("max_template_tokens", strconv.Itoa(*maxTemplateTokens))
+			}
+			for _, raw := range allowVar {
+				if p := strings.TrimSpace(raw); p != "" {
+					v.Add("allow_var", p)
+				}
+			}
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/prompts/stats"
+			if encoded := v.Encode(); encoded != "" {
+				endpoint += "?" + encoded
+			}
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote prompt stats error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			if *failOnWarning {
+				if n, ok := payload["warning_count"].(float64); ok && n > 0 {
+					return 1
+				}
+			}
+			return 0
 		default:
-			fmt.Fprintln(os.Stderr, "usage: dfmc remote prompt [list|render --query ...]")
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote prompt [list|render --query ... --runtime-tool-style ... --runtime-max-context ...|recommend --query ... --runtime-tool-style ... --runtime-max-context ...|stats --max-template-tokens 450]")
+			return 2
+		}
+
+	case "magicdoc":
+		action := "show"
+		if len(args) >= 2 {
+			action = strings.ToLower(strings.TrimSpace(args[1]))
+		}
+		fs := flag.NewFlagSet("remote magicdoc", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
+		path := fs.String("path", "", "target magic doc path")
+		title := fs.String("title", "DFMC Project Brief", "magic doc title")
+		hotspots := fs.Int("hotspots", 8, "max hotspot entries")
+		deps := fs.Int("deps", 8, "max dependency entries")
+		recent := fs.Int("recent", 5, "max recent entries")
+		if err := fs.Parse(args[2:]); err != nil {
+			return 2
+		}
+
+		switch action {
+		case "show", "cat":
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/magicdoc"
+			if p := strings.TrimSpace(*path); p != "" {
+				v := url.Values{}
+				v.Set("path", p)
+				endpoint += "?" + v.Encode()
+			}
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote magicdoc show error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		case "update", "sync", "generate":
+			payload, _, err := remoteJSONRequest(
+				http.MethodPost,
+				strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/magicdoc/update",
+				*token,
+				map[string]any{
+					"path":     strings.TrimSpace(*path),
+					"title":    strings.TrimSpace(*title),
+					"hotspots": *hotspots,
+					"deps":     *deps,
+					"recent":   *recent,
+				},
+				*timeout,
+			)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote magicdoc update error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		default:
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote magicdoc [show|update] [--path ...] [--title ...]")
 			return 2
 		}
 
@@ -2388,7 +3020,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc remote [status|probe|events|ask|tool|tools|skill|skills|prompt|analyze|files|memory|conversation (list/search/active/new/save/load/branch)|codemap|start --host 127.0.0.1 --ws-port 7779 --auth none|token]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc remote [status|probe|events|ask|tool|tools|skill|skills|prompt|magicdoc|analyze|context|files|memory|conversation (list/search/active/new/save/load/branch)|codemap|start --host 127.0.0.1 --ws-port 7779 --auth none|token]")
 		return 2
 	}
 }
@@ -2791,6 +3423,19 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 	}
 
 	if !*providersOnly {
+		if strings.TrimSpace(eng.Status().ASTBackend) == "" {
+			add("ast.backend", "warn", "ast engine backend is unavailable")
+		} else {
+			status := "pass"
+			details := eng.Status().ASTBackend
+			if reason := strings.TrimSpace(eng.Status().ASTReason); reason != "" {
+				details += ": " + reason
+			}
+			if eng.Status().ASTBackend == "regex" {
+				status = "warn"
+			}
+			add("ast.backend", status, details)
+		}
 		root := strings.TrimSpace(eng.Status().ProjectRoot)
 		if root == "" {
 			add("project.root", "warn", "project root is empty")
@@ -2801,6 +3446,8 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		} else {
 			add("project.root", "pass", root)
 		}
+		addMagicDocHealthCheck(&checks, root, 24*time.Hour)
+		addPromptHealthCheck(&checks, root, 450)
 
 		if eng.Config != nil {
 			addFileSystemHealthCheck(&checks, "storage.data_dir", eng.Config.DataDir())
@@ -3085,6 +3732,94 @@ func addFileSystemHealthCheck(checks *[]doctorCheck, name, dir string) {
 	_ = probe.Close()
 	_ = os.Remove(probe.Name())
 	*checks = append(*checks, doctorCheck{Name: name, Status: "pass", Details: dir})
+}
+
+func addMagicDocHealthCheck(checks *[]doctorCheck, projectRoot string, staleAfter time.Duration) {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		*checks = append(*checks, doctorCheck{
+			Name:    "magicdoc.health",
+			Status:  "warn",
+			Details: "project root is empty (cannot evaluate magic doc)",
+		})
+		return
+	}
+	if staleAfter <= 0 {
+		staleAfter = 24 * time.Hour
+	}
+	path := resolveMagicDocPath(root, "")
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			*checks = append(*checks, doctorCheck{
+				Name:    "magicdoc.health",
+				Status:  "warn",
+				Details: fmt.Sprintf("missing: %s (run: dfmc magicdoc update)", path),
+			})
+			return
+		}
+		*checks = append(*checks, doctorCheck{
+			Name:    "magicdoc.health",
+			Status:  "warn",
+			Details: fmt.Sprintf("cannot read %s: %v", path, err),
+		})
+		return
+	}
+	age := time.Since(info.ModTime())
+	if age > staleAfter {
+		*checks = append(*checks, doctorCheck{
+			Name:    "magicdoc.health",
+			Status:  "warn",
+			Details: fmt.Sprintf("stale (%s): %s (run: dfmc magicdoc update)", age.Round(time.Minute), path),
+		})
+		return
+	}
+	*checks = append(*checks, doctorCheck{
+		Name:    "magicdoc.health",
+		Status:  "pass",
+		Details: fmt.Sprintf("fresh (%s): %s", age.Round(time.Minute), path),
+	})
+}
+
+func addPromptHealthCheck(checks *[]doctorCheck, projectRoot string, maxTemplateTokens int) {
+	lib := promptlib.New()
+	_ = lib.LoadOverrides(strings.TrimSpace(projectRoot))
+	report := promptlib.BuildStatsReport(lib.List(), promptlib.StatsOptions{
+		MaxTemplateTokens: maxTemplateTokens,
+	})
+	if report.TemplateCount == 0 {
+		*checks = append(*checks, doctorCheck{
+			Name:    "prompt.health",
+			Status:  "warn",
+			Details: "no prompt templates loaded",
+		})
+		return
+	}
+	if report.WarningCount > 0 {
+		first := ""
+		for _, t := range report.Templates {
+			if len(t.Warnings) == 0 {
+				continue
+			}
+			first = t.ID + ": " + t.Warnings[0]
+			break
+		}
+		msg := fmt.Sprintf("warnings=%d templates=%d threshold=%d", report.WarningCount, report.TemplateCount, report.MaxTemplateTokens)
+		if strings.TrimSpace(first) != "" {
+			msg += " first=" + first
+		}
+		*checks = append(*checks, doctorCheck{
+			Name:    "prompt.health",
+			Status:  "warn",
+			Details: msg,
+		})
+		return
+	}
+	*checks = append(*checks, doctorCheck{
+		Name:    "prompt.health",
+		Status:  "pass",
+		Details: fmt.Sprintf("templates=%d total_tokens=%d max_tokens=%d", report.TemplateCount, report.TotalTokens, report.MaxTokens),
+	})
 }
 
 func providerConfigured(name string, prof config.ModelConfig) bool {
@@ -4612,8 +5347,13 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		task := fs.String("task", "auto", "task (auto|general|planning|review|security|refactor|test|doc|debug)")
 		language := fs.String("language", "auto", "language (auto|go|typescript|python|rust|...)")
 		profile := fs.String("profile", "auto", "prompt profile (auto|compact|deep)")
+		role := fs.String("role", "auto", "prompt role (auto|generalist|planner|security_auditor|code_reviewer|debugger|refactorer|test_engineer|documenter|architect)")
 		query := fs.String("query", "", "user request/query")
 		contextFiles := fs.String("context-files", "(none)", "context file summary to inject")
+		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for tool policy rendering")
+		runtimeModel := fs.String("runtime-model", "", "runtime model override for tool policy rendering")
+		runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+		runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for tool policy rendering")
 		var varsRaw multiStringFlag
 		fs.Var(&varsRaw, "var", "template variable in key=value format (repeatable)")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -4630,26 +5370,44 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		if strings.EqualFold(resolvedLanguage, "auto") || resolvedLanguage == "" {
 			resolvedLanguage = promptlib.InferLanguage(*query, nil)
 		}
+
+		runtimeHints := eng.PromptRuntime()
+		if p := strings.TrimSpace(*runtimeProvider); p != "" {
+			runtimeHints.Provider = p
+		}
+		if m := strings.TrimSpace(*runtimeModel); m != "" {
+			runtimeHints.Model = m
+		}
+		if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+			runtimeHints.ToolStyle = ts
+		}
+		if *runtimeMaxContext > 0 {
+			runtimeHints.MaxContext = *runtimeMaxContext
+		}
+
 		resolvedProfile := strings.TrimSpace(*profile)
 		if strings.EqualFold(resolvedProfile, "auto") || resolvedProfile == "" {
-			resolvedProfile = "compact"
-			q := strings.ToLower(strings.TrimSpace(*query))
-			if strings.Contains(q, "detaylı") || strings.Contains(q, "detailed") || strings.Contains(q, "deep") || resolvedTask == "security" || resolvedTask == "review" || resolvedTask == "planning" {
-				resolvedProfile = "deep"
-			}
+			resolvedProfile = ctxmgr.ResolvePromptProfile(*query, resolvedTask, runtimeHints)
 		}
+		resolvedRole := strings.TrimSpace(*role)
+		if strings.EqualFold(resolvedRole, "auto") || resolvedRole == "" {
+			resolvedRole = ctxmgr.ResolvePromptRole(*query, resolvedTask)
+		}
+		budget := ctxmgr.ResolvePromptRenderBudget(resolvedTask, resolvedProfile, runtimeHints)
 
 		vars := map[string]string{
 			"project_root":     projectRoot,
 			"task":             resolvedTask,
 			"language":         resolvedLanguage,
 			"profile":          resolvedProfile,
+			"role":             resolvedRole,
+			"project_brief":    loadPromptProjectBrief(projectRoot, budget.ProjectBriefTokens),
 			"user_query":       strings.TrimSpace(*query),
 			"context_files":    strings.TrimSpace(*contextFiles),
-			"injected_context": "(none)",
+			"injected_context": ctxmgr.BuildInjectedContextWithBudget(projectRoot, *query, budget),
 			"tools_overview":   strings.Join(eng.ListTools(), ", "),
-			"tool_call_policy": "Use minimum necessary tools with narrow scope.",
-			"response_policy":  "Prioritize concise, actionable output.",
+			"tool_call_policy": ctxmgr.BuildToolCallPolicy(resolvedTask, runtimeHints),
+			"response_policy":  ctxmgr.BuildResponsePolicy(resolvedTask, resolvedProfile),
 		}
 		extraVars, err := parsePromptVars(varsRaw)
 		if err != nil {
@@ -4665,16 +5423,31 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			Task:     resolvedTask,
 			Language: resolvedLanguage,
 			Profile:  resolvedProfile,
+			Role:     resolvedRole,
 			Vars:     vars,
 		})
+
+		promptBudgetTokens := ctxmgr.PromptTokenBudget(resolvedTask, resolvedProfile, runtimeHints)
+		trimmed := false
+		if promptBudgetTokens > 0 {
+			before := promptlib.EstimateTokens(out)
+			out = strings.TrimSpace(ctxmgr.TrimPromptToBudget(out, promptBudgetTokens))
+			after := promptlib.EstimateTokens(out)
+			trimmed = after < before
+		}
+		promptTokensEstimate := promptlib.EstimateTokens(out)
 		if jsonMode {
 			_ = printJSON(map[string]any{
-				"type":     strings.TrimSpace(*typ),
-				"task":     resolvedTask,
-				"language": resolvedLanguage,
-				"profile":  resolvedProfile,
-				"vars":     vars,
-				"prompt":   out,
+				"type":                   strings.TrimSpace(*typ),
+				"task":                   resolvedTask,
+				"language":               resolvedLanguage,
+				"profile":                resolvedProfile,
+				"role":                   resolvedRole,
+				"vars":                   vars,
+				"prompt":                 out,
+				"prompt_tokens_estimate": promptTokensEstimate,
+				"prompt_budget_tokens":   promptBudgetTokens,
+				"prompt_trimmed":         trimmed,
 			})
 			return 0
 		}
@@ -4684,8 +5457,299 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 		return 0
 
+	case "stats", "validate", "lint":
+		fs := flag.NewFlagSet("prompt stats", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		maxTemplateTokens := fs.Int("max-template-tokens", 450, "warning threshold for per-template token estimate")
+		failOnWarning := fs.Bool("fail-on-warning", false, "exit with non-zero status if warnings are found")
+		var allowVar multiStringFlag
+		fs.Var(&allowVar, "allow-var", "extra placeholder variable to allow (repeatable)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		report := promptlib.BuildStatsReport(lib.List(), promptlib.StatsOptions{
+			MaxTemplateTokens: *maxTemplateTokens,
+			AllowVars:         allowVar,
+		})
+		if jsonMode {
+			_ = printJSON(report)
+		} else {
+			fmt.Printf(
+				"prompt stats: templates=%d total_tokens=%d avg_tokens=%.1f max_tokens=%d warnings=%d threshold=%d\n",
+				report.TemplateCount,
+				report.TotalTokens,
+				report.AvgTokens,
+				report.MaxTokens,
+				report.WarningCount,
+				report.MaxTemplateTokens,
+			)
+			if report.WarningCount == 0 {
+				fmt.Println("prompt stats: no warnings")
+			} else {
+				fmt.Println("warnings:")
+				for _, item := range report.Templates {
+					if len(item.Warnings) == 0 {
+						continue
+					}
+					fmt.Printf("- %s: %s\n", item.ID, strings.Join(item.Warnings, "; "))
+				}
+			}
+		}
+		if *failOnWarning && report.WarningCount > 0 {
+			return 1
+		}
+		return 0
+
+	case "recommend", "recommendation", "tune":
+		fs := flag.NewFlagSet("prompt recommend", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		query := fs.String("query", "", "query for prompt profile/budget recommendation")
+		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for recommendation simulation")
+		runtimeModel := fs.String("runtime-model", "", "runtime model override for recommendation simulation")
+		runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+		runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for recommendation simulation")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if strings.TrimSpace(*query) == "" && len(fs.Args()) > 0 {
+			*query = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		}
+		runtimeHints := eng.PromptRuntime()
+		if p := strings.TrimSpace(*runtimeProvider); p != "" {
+			runtimeHints.Provider = p
+		}
+		if m := strings.TrimSpace(*runtimeModel); m != "" {
+			runtimeHints.Model = m
+		}
+		if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+			runtimeHints.ToolStyle = ts
+		}
+		if *runtimeMaxContext > 0 {
+			runtimeHints.MaxContext = *runtimeMaxContext
+		}
+		info := eng.PromptRecommendationWithRuntime(*query, runtimeHints)
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"query":          strings.TrimSpace(*query),
+				"recommendation": info,
+			})
+			return 0
+		}
+		fmt.Printf(
+			"prompt recommend: task=%s language=%s profile=%s role=%s provider=%s model=%s tool_style=%s max_context=%d budget=%d render[files=%d tools=%d injected_blocks=%d injected_lines=%d injected_tokens=%d brief=%d]\n",
+			info.Task,
+			info.Language,
+			info.Profile,
+			info.Role,
+			info.Provider,
+			info.Model,
+			info.ToolStyle,
+			info.MaxContext,
+			info.PromptBudgetTokens,
+			info.ContextFiles,
+			info.ToolList,
+			info.InjectedBlocks,
+			info.InjectedLines,
+			info.InjectedTokens,
+			info.ProjectBriefTokens,
+		)
+		for _, hint := range info.Hints {
+			fmt.Printf("- [%s] %s: %s\n", strings.ToUpper(hint.Severity), hint.Code, hint.Message)
+		}
+		return 0
+
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\"]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[stats --max-template-tokens 450]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]")
+		return 2
+	}
+}
+
+func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
+	_ = ctx
+	if len(args) == 0 {
+		args = []string{"budget"}
+	}
+	action := strings.ToLower(strings.TrimSpace(args[0]))
+
+	switch action {
+	case "budget", "show":
+		fs := flag.NewFlagSet("context budget", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		query := fs.String("query", "", "query for task-aware budget simulation")
+		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for budget simulation")
+		runtimeModel := fs.String("runtime-model", "", "runtime model override for budget simulation")
+		runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+		runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for budget simulation")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if strings.TrimSpace(*query) == "" && len(fs.Args()) > 0 {
+			*query = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		}
+		runtimeHints := eng.PromptRuntime()
+		if p := strings.TrimSpace(*runtimeProvider); p != "" {
+			runtimeHints.Provider = p
+		}
+		if m := strings.TrimSpace(*runtimeModel); m != "" {
+			runtimeHints.Model = m
+		}
+		if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+			runtimeHints.ToolStyle = ts
+		}
+		if *runtimeMaxContext > 0 {
+			runtimeHints.MaxContext = *runtimeMaxContext
+		}
+		preview := eng.ContextBudgetPreviewWithRuntime(*query, runtimeHints)
+		if jsonMode {
+			_ = printJSON(preview)
+			return 0
+		}
+		fmt.Printf("context budget: provider=%s model=%s task=%s mentions=%d scale[t=%.2f f=%.2f pf=%.2f] provider_max=%d available=%d reserve_total=%d reserve[prompt=%d history=%d response=%d tools=%d] total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
+			preview.Provider,
+			preview.Model,
+			preview.Task,
+			preview.ExplicitFileMentions,
+			preview.TaskTotalScale,
+			preview.TaskFileScale,
+			preview.TaskPerFileScale,
+			preview.ProviderMaxContext,
+			preview.ContextAvailableTokens,
+			preview.ReserveTotalTokens,
+			preview.ReservePromptTokens,
+			preview.ReserveHistoryTokens,
+			preview.ReserveResponseTokens,
+			preview.ReserveToolTokens,
+			preview.MaxTokensTotal,
+			preview.MaxTokensPerFile,
+			preview.MaxHistoryTokens,
+			preview.MaxFiles,
+			preview.Compression,
+			preview.IncludeTests,
+			preview.IncludeDocs,
+		)
+		return 0
+
+	case "recommend", "recommendations":
+		fs := flag.NewFlagSet("context recommend", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		query := fs.String("query", "", "query for context tuning recommendations")
+		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for recommendation simulation")
+		runtimeModel := fs.String("runtime-model", "", "runtime model override for recommendation simulation")
+		runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+		runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for recommendation simulation")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if strings.TrimSpace(*query) == "" && len(fs.Args()) > 0 {
+			*query = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		}
+		runtimeHints := eng.PromptRuntime()
+		if p := strings.TrimSpace(*runtimeProvider); p != "" {
+			runtimeHints.Provider = p
+		}
+		if m := strings.TrimSpace(*runtimeModel); m != "" {
+			runtimeHints.Model = m
+		}
+		if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+			runtimeHints.ToolStyle = ts
+		}
+		if *runtimeMaxContext > 0 {
+			runtimeHints.MaxContext = *runtimeMaxContext
+		}
+		preview := eng.ContextBudgetPreviewWithRuntime(*query, runtimeHints)
+		recs := eng.ContextRecommendationsWithRuntime(*query, runtimeHints)
+		tuning := eng.ContextTuningSuggestionsWithRuntime(*query, runtimeHints)
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"query":              strings.TrimSpace(*query),
+				"preview":            preview,
+				"recommendations":    recs,
+				"tuning_suggestions": tuning,
+			})
+			return 0
+		}
+		fmt.Printf("context recommend: task=%s mentions=%d available=%d total=%d reserve=%d\n",
+			preview.Task,
+			preview.ExplicitFileMentions,
+			preview.ContextAvailableTokens,
+			preview.MaxTokensTotal,
+			preview.ReserveTotalTokens,
+		)
+		for _, rec := range recs {
+			fmt.Printf("- [%s] %s: %s\n", strings.ToUpper(rec.Severity), rec.Code, rec.Message)
+		}
+		if len(tuning) > 0 {
+			fmt.Println("tuning suggestions:")
+			for _, s := range tuning {
+				fmt.Printf("- [%s] %s=%v (%s)\n", strings.ToUpper(strings.TrimSpace(s.Priority)), s.Key, s.Value, s.Reason)
+			}
+		}
+		return 0
+
+	case "recent", "files":
+		w := eng.MemoryWorking()
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"count": len(w.RecentFiles),
+				"files": w.RecentFiles,
+			})
+			return 0
+		}
+		if len(w.RecentFiles) == 0 {
+			fmt.Println("context: no recent files yet")
+			return 0
+		}
+		fmt.Println("recent context files:")
+		for _, f := range w.RecentFiles {
+			fmt.Printf("- %s\n", f)
+		}
+		return 0
+
+	case "brief":
+		fs := flag.NewFlagSet("context brief", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		maxWords := fs.Int("max-words", 240, "max words for context brief")
+		pathFlag := fs.String("path", "", "path to magic doc file (relative to project root or absolute)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		projectRoot := strings.TrimSpace(eng.Status().ProjectRoot)
+		if projectRoot == "" {
+			fmt.Fprintln(os.Stderr, "context brief error: project root is not set")
+			return 1
+		}
+		targetPath := resolvePromptBriefPath(projectRoot, strings.TrimSpace(*pathFlag))
+		data, err := os.ReadFile(targetPath)
+		exists := err == nil
+		brief := loadPromptProjectBriefWithPath(projectRoot, strings.TrimSpace(*pathFlag), *maxWords)
+		if brief == "" {
+			brief = "(none)"
+		}
+		wordCount := len(strings.Fields(strings.TrimSpace(brief)))
+		sizeBytes := 0
+		if exists {
+			sizeBytes = len(data)
+		}
+
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"path":       filepath.ToSlash(targetPath),
+				"exists":     exists,
+				"max_words":  *maxWords,
+				"word_count": wordCount,
+				"brief":      brief,
+				"size_bytes": sizeBytes,
+			})
+			return 0
+		}
+		fmt.Printf("context brief: path=%s exists=%t words=%d max=%d bytes=%d\n", filepath.ToSlash(targetPath), exists, wordCount, *maxWords, sizeBytes)
+		fmt.Println(brief)
+		return 0
+
+	default:
+		fmt.Fprintln(os.Stderr, "usage: dfmc context [budget --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[recent]|[brief --max-words 240 --path ...]")
 		return 2
 	}
 }
@@ -4892,10 +5956,68 @@ func truncateLine(s string, max int) string {
 	return s[:max] + "..."
 }
 
+func loadPromptProjectBrief(projectRoot string, maxWords int) string {
+	return loadPromptProjectBriefWithPath(projectRoot, "", maxWords)
+}
+
+func loadPromptProjectBriefWithPath(projectRoot, pathFlag string, maxWords int) string {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" || maxWords <= 0 {
+		return "(none)"
+	}
+	path := resolvePromptBriefPath(root, pathFlag)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "(none)"
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return "(none)"
+	}
+	lines := strings.Split(text, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "```") {
+			continue
+		}
+		filtered = append(filtered, t)
+		if len(filtered) >= 48 {
+			break
+		}
+	}
+	if len(filtered) == 0 {
+		return "(none)"
+	}
+	return trimWords(strings.Join(filtered, "\n"), maxWords)
+}
+
+func resolvePromptBriefPath(projectRoot, pathFlag string) string {
+	if strings.TrimSpace(pathFlag) == "" {
+		return filepath.Join(projectRoot, ".dfmc", "magic", "MAGIC_DOC.md")
+	}
+	if filepath.IsAbs(pathFlag) {
+		return pathFlag
+	}
+	return filepath.Join(projectRoot, pathFlag)
+}
+
+func trimWords(text string, maxWords int) string {
+	if maxWords <= 0 {
+		return ""
+	}
+	words := strings.Fields(strings.TrimSpace(text))
+	if len(words) <= maxWords {
+		return strings.TrimSpace(text)
+	}
+	return strings.Join(words[:maxWords], " ")
+}
+
 func printHelp() {
 	fmt.Println(`Usage: dfmc [global flags] <command> [args]
 
 Commands:
+  status      Runtime status snapshot
   init        Initialize DFMC in project
   chat        Interactive chat session
   ask         One-shot question
@@ -4906,11 +6028,13 @@ Commands:
   conversation Conversation management (list/search/load/save/undo/branch)
   memory      Memory management
   config      Configuration management (list/get/set/edit)
+  context     Context budget and recent files
   prompt      Prompt library management (list/render)
+  magicdoc    Build/show concise project magic doc
   plugin      Plugin management (list/info/install/remove/enable/disable)
   skill       Skill management (list/info/run)
   serve       Start Web API server
-  remote      Remote control server (status/probe/events/ask/tool/tools/skill/skills/prompt/analyze/files/memory/conversation+branch/codemap/start)
+  remote      Remote control server (status/probe/events/ask/tool/tools/skill/skills/prompt/analyze/context/files/memory/conversation+branch/codemap/start)
   doctor      Environment and config health checks
   completion  Generate shell completion scripts
   man         Generate command manual page

@@ -55,6 +55,97 @@ func (t *ReadFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	}, nil
 }
 
+type WriteFileTool struct{}
+
+func NewWriteFileTool() *WriteFileTool { return &WriteFileTool{} }
+func (t *WriteFileTool) Name() string  { return "write_file" }
+func (t *WriteFileTool) Description() string {
+	return "Write or create a text file."
+}
+func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) {
+	path := asString(req.Params, "path", "")
+	content := asString(req.Params, "content", "")
+	createDirs := asBool(req.Params, "create_dirs", true)
+	overwrite := asBool(req.Params, "overwrite", true)
+
+	absPath, err := EnsureWithinRoot(req.ProjectRoot, path)
+	if err != nil {
+		return Result{}, err
+	}
+	if createDirs {
+		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+			return Result{}, err
+		}
+	}
+	if !overwrite {
+		if _, err := os.Stat(absPath); err == nil {
+			return Result{}, fmt.Errorf("file already exists: %s", absPath)
+		}
+	}
+	if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil {
+		return Result{}, err
+	}
+	return Result{
+		Output: "file written",
+		Data: map[string]any{
+			"path":  absPath,
+			"bytes": len([]byte(content)),
+		},
+	}, nil
+}
+
+type EditFileTool struct{}
+
+func NewEditFileTool() *EditFileTool { return &EditFileTool{} }
+func (t *EditFileTool) Name() string { return "edit_file" }
+func (t *EditFileTool) Description() string {
+	return "Apply exact string replacement on a text file."
+}
+func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
+	path := asString(req.Params, "path", "")
+	oldStr := asString(req.Params, "old_string", "")
+	newStr := asString(req.Params, "new_string", "")
+	replaceAll := asBool(req.Params, "replace_all", false)
+
+	if strings.TrimSpace(oldStr) == "" {
+		return Result{}, fmt.Errorf("old_string is required")
+	}
+
+	absPath, err := EnsureWithinRoot(req.ProjectRoot, path)
+	if err != nil {
+		return Result{}, err
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return Result{}, err
+	}
+	src := string(data)
+	n := strings.Count(src, oldStr)
+	if n == 0 {
+		return Result{}, fmt.Errorf("old_string not found in file")
+	}
+	if n > 1 && !replaceAll {
+		return Result{}, fmt.Errorf("old_string is not unique; use replace_all=true")
+	}
+
+	replacedN := 1
+	updated := strings.Replace(src, oldStr, newStr, 1)
+	if replaceAll {
+		replacedN = n
+		updated = strings.ReplaceAll(src, oldStr, newStr)
+	}
+	if err := os.WriteFile(absPath, []byte(updated), 0o644); err != nil {
+		return Result{}, err
+	}
+	return Result{
+		Output: "file edited",
+		Data: map[string]any{
+			"path":         absPath,
+			"replacements": replacedN,
+		},
+	}, nil
+}
+
 type ListDirTool struct{}
 
 func NewListDirTool() *ListDirTool  { return &ListDirTool{} }

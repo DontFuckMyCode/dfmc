@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
@@ -18,6 +19,7 @@ import (
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/memory"
+	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/internal/storage"
@@ -63,6 +65,72 @@ type Status struct {
 	ProjectRoot string      `json:"project_root"`
 	Provider    string      `json:"provider"`
 	Model       string      `json:"model"`
+	ASTBackend  string      `json:"ast_backend"`
+	ASTReason   string      `json:"ast_reason,omitempty"`
+}
+
+type ContextBudgetInfo struct {
+	Provider             string  `json:"provider"`
+	Model                string  `json:"model"`
+	ProviderMaxContext   int     `json:"provider_max_context"`
+	Task                 string  `json:"task"`
+	ExplicitFileMentions int     `json:"explicit_file_mentions"`
+	TaskTotalScale       float64 `json:"task_total_scale"`
+	TaskFileScale        float64 `json:"task_file_scale"`
+	TaskPerFileScale     float64 `json:"task_per_file_scale"`
+
+	ContextAvailableTokens int `json:"context_available_tokens"`
+	ReserveTotalTokens     int `json:"reserve_total_tokens"`
+	ReservePromptTokens    int `json:"reserve_prompt_tokens"`
+	ReserveHistoryTokens   int `json:"reserve_history_tokens"`
+	ReserveResponseTokens  int `json:"reserve_response_tokens"`
+	ReserveToolTokens      int `json:"reserve_tool_tokens"`
+
+	MaxFiles         int    `json:"max_files"`
+	MaxTokensTotal   int    `json:"max_tokens_total"`
+	MaxTokensPerFile int    `json:"max_tokens_per_file"`
+	MaxHistoryTokens int    `json:"max_history_tokens"`
+	Compression      string `json:"compression"`
+	IncludeTests     bool   `json:"include_tests"`
+	IncludeDocs      bool   `json:"include_docs"`
+}
+
+type ContextRecommendation struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+}
+
+type ContextTuningSuggestion struct {
+	Priority string `json:"priority"`
+	Key      string `json:"key"`
+	Value    any    `json:"value"`
+	Reason   string `json:"reason"`
+}
+
+type PromptRecommendationInfo struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+
+	Task     string `json:"task"`
+	Language string `json:"language"`
+	Profile  string `json:"profile"`
+	Role     string `json:"role"`
+
+	ToolStyle  string `json:"tool_style"`
+	MaxContext int    `json:"max_context"`
+	LowLatency bool   `json:"low_latency"`
+
+	PromptBudgetTokens int `json:"prompt_budget_tokens"`
+
+	ContextFiles       int `json:"context_files"`
+	ToolList           int `json:"tool_list"`
+	InjectedBlocks     int `json:"injected_blocks"`
+	InjectedLines      int `json:"injected_lines"`
+	InjectedTokens     int `json:"injected_tokens"`
+	ProjectBriefTokens int `json:"project_brief_tokens"`
+
+	Hints []ContextRecommendation `json:"hints"`
 }
 
 type AnalyzeReport struct {
@@ -220,11 +288,240 @@ func (e *Engine) State() EngineState {
 func (e *Engine) Status() Status {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	astBackend := ""
+	astReason := ""
+	if e.AST != nil {
+		bs := e.AST.BackendStatus()
+		astBackend = bs.Active
+		astReason = bs.Reason
+	}
 	return Status{
 		State:       e.state,
 		ProjectRoot: e.ProjectRoot,
 		Provider:    e.provider(),
 		Model:       e.model(),
+		ASTBackend:  astBackend,
+		ASTReason:   astReason,
+	}
+}
+
+func (e *Engine) ContextBudgetPreview(question string) ContextBudgetInfo {
+	return e.ContextBudgetPreviewWithRuntime(question, ctxmgr.PromptRuntime{})
+}
+
+func (e *Engine) ContextBudgetPreviewWithRuntime(question string, overrides ctxmgr.PromptRuntime) ContextBudgetInfo {
+	runtime := e.promptRuntimeWithOverrides(overrides)
+	opts := e.contextBuildOptionsWithRuntime(question, runtime)
+	task := detectContextTask(question)
+	profile := contextTaskProfile(task)
+	explicitMentions := countExplicitFileMentions(question)
+	providerLimit := e.providerMaxContextForRuntime(runtime)
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
+	reserve := e.contextReserveBreakdownWithRuntime(question, runtime)
+	available := providerLimit - reserve.Total
+	if available < minContextTotalBudgetTokens {
+		available = minContextTotalBudgetTokens
+	}
+	providerName := strings.TrimSpace(runtime.Provider)
+	if providerName == "" {
+		providerName = e.provider()
+	}
+	modelName := strings.TrimSpace(runtime.Model)
+	if modelName == "" {
+		modelName = e.model()
+	}
+	return ContextBudgetInfo{
+		Provider:               providerName,
+		Model:                  modelName,
+		ProviderMaxContext:     providerLimit,
+		Task:                   task,
+		ExplicitFileMentions:   explicitMentions,
+		TaskTotalScale:         profile.TotalScale,
+		TaskFileScale:          profile.FileScale,
+		TaskPerFileScale:       profile.PerFileScale,
+		ContextAvailableTokens: available,
+		ReserveTotalTokens:     reserve.Total,
+		ReservePromptTokens:    reserve.Prompt,
+		ReserveHistoryTokens:   reserve.History,
+		ReserveResponseTokens:  reserve.Response,
+		ReserveToolTokens:      reserve.Tool,
+		MaxFiles:               opts.MaxFiles,
+		MaxTokensTotal:         opts.MaxTokensTotal,
+		MaxTokensPerFile:       opts.MaxTokensPerFile,
+		MaxHistoryTokens:       e.conversationHistoryBudget(),
+		Compression:            opts.Compression,
+		IncludeTests:           opts.IncludeTests,
+		IncludeDocs:            opts.IncludeDocs,
+	}
+}
+
+func (e *Engine) ContextRecommendations(question string) []ContextRecommendation {
+	return e.ContextRecommendationsWithRuntime(question, ctxmgr.PromptRuntime{})
+}
+
+func (e *Engine) ContextRecommendationsWithRuntime(question string, overrides ctxmgr.PromptRuntime) []ContextRecommendation {
+	preview := e.ContextBudgetPreviewWithRuntime(question, overrides)
+	recs := make([]ContextRecommendation, 0, 6)
+	add := func(severity, code, message string) {
+		recs = append(recs, ContextRecommendation{
+			Severity: strings.TrimSpace(strings.ToLower(severity)),
+			Code:     strings.TrimSpace(strings.ToLower(code)),
+			Message:  strings.TrimSpace(message),
+		})
+	}
+
+	available := preview.ContextAvailableTokens
+	if available <= 0 {
+		available = minContextTotalBudgetTokens
+	}
+	utilization := float64(preview.MaxTokensTotal) / float64(available)
+
+	if utilization >= 0.92 {
+		add("warn", "near_context_cap", "Context budget is near provider limit. Reduce max_files, lower max_tokens_per_file, or use [[file:...]] markers.")
+	}
+	if preview.ReserveHistoryTokens > available/3 {
+		add("warn", "history_reserve_high", "History reserve is large relative to available context. Lower context.max_history_tokens for deeper code context.")
+	}
+	if preview.ExplicitFileMentions == 0 {
+		add("info", "use_file_markers", "No explicit file markers detected. Add [[file:path#Lx-Ly]] to focus retrieval and reduce token waste.")
+	}
+	if (preview.Task == "security" || preview.Task == "review" || preview.Task == "debug") && preview.MaxTokensPerFile < 320 {
+		add("warn", "shallow_file_slices", "Per-file token budget is shallow for this task type. Consider increasing context.max_tokens_per_file.")
+	}
+	if (preview.Task == "security" || preview.Task == "review") && utilization < 0.55 {
+		add("info", "headroom_available", "There is context headroom for deeper inspection. You can increase context.max_tokens_total for richer evidence.")
+	}
+	if len(recs) == 0 {
+		add("info", "balanced_budget", "Current context budget looks balanced for this query.")
+	}
+	return recs
+}
+
+func (e *Engine) ContextTuningSuggestions(question string) []ContextTuningSuggestion {
+	return e.ContextTuningSuggestionsWithRuntime(question, ctxmgr.PromptRuntime{})
+}
+
+func (e *Engine) ContextTuningSuggestionsWithRuntime(question string, overrides ctxmgr.PromptRuntime) []ContextTuningSuggestion {
+	preview := e.ContextBudgetPreviewWithRuntime(question, overrides)
+	suggestions := make([]ContextTuningSuggestion, 0, 6)
+	add := func(priority, key string, value any, reason string) {
+		suggestions = append(suggestions, ContextTuningSuggestion{
+			Priority: strings.TrimSpace(strings.ToLower(priority)),
+			Key:      strings.TrimSpace(key),
+			Value:    value,
+			Reason:   strings.TrimSpace(reason),
+		})
+	}
+
+	available := preview.ContextAvailableTokens
+	if available <= 0 {
+		available = minContextTotalBudgetTokens
+	}
+	utilization := float64(preview.MaxTokensTotal) / float64(available)
+
+	if utilization >= 0.92 {
+		targetTotal := int(math.Round(float64(available) * 0.78))
+		if targetTotal < minContextTotalBudgetTokens {
+			targetTotal = minContextTotalBudgetTokens
+		}
+		add("high", "context.max_tokens_total", targetTotal, "Current budget is near context cap; lowering total budget reduces truncation risk.")
+	}
+	if preview.ReserveHistoryTokens > available/3 {
+		targetHistory := available / 4
+		if targetHistory < minContextPerFileTokens {
+			targetHistory = minContextPerFileTokens
+		}
+		if targetHistory > maxHistoryBudgetTokens {
+			targetHistory = maxHistoryBudgetTokens
+		}
+		add("high", "context.max_history_tokens", targetHistory, "History reserve is large relative to available context; reducing it increases code context headroom.")
+	}
+	if (preview.Task == "security" || preview.Task == "review" || preview.Task == "debug") && preview.MaxTokensPerFile < 320 {
+		perFile := 320
+		if capPerFile := preview.MaxTokensTotal / maxInt(1, preview.MaxFiles); capPerFile > 0 && capPerFile < perFile {
+			perFile = capPerFile
+		}
+		if perFile < minContextPerFileTokens {
+			perFile = minContextPerFileTokens
+		}
+		add("medium", "context.max_tokens_per_file", perFile, "Task type benefits from deeper per-file slices for evidence quality.")
+	}
+	if preview.ProviderMaxContext <= 12000 && preview.Compression != "aggressive" {
+		add("medium", "context.compression", "aggressive", "Tight runtime context benefits from aggressive compression to preserve critical context.")
+	}
+	if preview.ProviderMaxContext <= 8000 && preview.IncludeDocs {
+		add("low", "context.include_docs", false, "Disabling docs frees tokens for code context in very tight windows.")
+	}
+	if len(suggestions) == 0 {
+		add("low", "context.profile", "balanced", "No urgent tuning required for current query/runtime profile.")
+	}
+	return suggestions
+}
+
+func (e *Engine) PromptRecommendation(question string) PromptRecommendationInfo {
+	return e.PromptRecommendationWithRuntime(question, ctxmgr.PromptRuntime{})
+}
+
+func (e *Engine) PromptRecommendationWithRuntime(question string, overrides ctxmgr.PromptRuntime) PromptRecommendationInfo {
+	query := strings.TrimSpace(question)
+	runtime := e.promptRuntimeWithOverrides(overrides)
+	task := detectContextTask(query)
+	language := promptlib.InferLanguage(query, nil)
+	role := ctxmgr.ResolvePromptRole(query, task)
+	profile := ctxmgr.ResolvePromptProfile(query, task, runtime)
+	renderBudget := ctxmgr.ResolvePromptRenderBudget(task, profile, runtime)
+	promptBudget := ctxmgr.PromptTokenBudget(task, profile, runtime)
+
+	hints := make([]ContextRecommendation, 0, 4)
+	add := func(severity, code, message string) {
+		hints = append(hints, ContextRecommendation{
+			Severity: strings.TrimSpace(strings.ToLower(severity)),
+			Code:     strings.TrimSpace(strings.ToLower(code)),
+			Message:  strings.TrimSpace(message),
+		})
+	}
+
+	if runtime.MaxContext > 0 && promptBudget > runtime.MaxContext/4 {
+		add("warn", "prompt_budget_high", "Prompt budget is high relative to runtime max_context. Use compact profile or narrower injected context.")
+	}
+	if runtime.MaxContext > 0 && runtime.MaxContext <= 12000 && profile == "deep" {
+		add("warn", "runtime_context_tight", "Runtime context is tight for deep profile. Compact profile may reduce truncation risk.")
+	}
+	if countExplicitFileMentions(query) == 0 && !strings.Contains(query, "```") {
+		add("info", "add_explicit_context", "No explicit file marker or fenced code detected. Add [[file:...]] or inline code blocks for higher precision.")
+	}
+	if runtime.ToolStyle == "" {
+		add("info", "tool_style_unknown", "Provider tool style is unknown. Consider explicit runtime tool-style override when rendering prompts.")
+	}
+	if len(hints) == 0 {
+		add("info", "prompt_budget_balanced", "Prompt profile and budget look balanced for this query.")
+	}
+
+	return PromptRecommendationInfo{
+		Provider: runtime.Provider,
+		Model:    runtime.Model,
+
+		Task:     task,
+		Language: language,
+		Profile:  profile,
+		Role:     role,
+
+		ToolStyle:  runtime.ToolStyle,
+		MaxContext: runtime.MaxContext,
+		LowLatency: runtime.LowLatency,
+
+		PromptBudgetTokens: promptBudget,
+
+		ContextFiles:       renderBudget.ContextFiles,
+		ToolList:           renderBudget.ToolList,
+		InjectedBlocks:     renderBudget.InjectedBlocks,
+		InjectedLines:      renderBudget.InjectedLines,
+		InjectedTokens:     renderBudget.InjectedTokens,
+		ProjectBriefTokens: renderBudget.ProjectBriefTokens,
+
+		Hints: hints,
 	}
 }
 
@@ -276,6 +573,812 @@ func (e *Engine) model() string {
 		return ""
 	}
 	return profile.Model
+}
+
+const (
+	defaultContextTotalCapTokens = 16000
+	minContextTotalBudgetTokens  = 512
+	minContextPerFileTokens      = 96
+	minContextFiles              = 2
+	maxContextFiles              = 64
+	defaultProviderContextTokens = 32000
+	defaultResponseReserveTokens = 2048
+	defaultHistoryBudgetTokens   = 1200
+	maxHistoryBudgetTokens       = 2048
+	maxHistoryMessages           = 12
+	minHistorySummaryTokens      = 24
+	maxHistorySummaryTokens      = 96
+	maxResponseReserveTokens     = 16384
+	basePromptReserveTokens      = 900
+	baseToolReserveTokens        = 512
+)
+
+type contextTaskBudgetProfile struct {
+	TotalScale   float64
+	FileScale    float64
+	PerFileScale float64
+}
+
+type contextReserveBreakdown struct {
+	Prompt   int
+	History  int
+	Response int
+	Tool     int
+	Total    int
+}
+
+func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
+	if e.Context == nil {
+		return nil
+	}
+	opts := e.contextBuildOptions(question)
+	chunks, err := e.Context.BuildWithOptions(question, opts)
+	if err != nil {
+		e.EventBus.Publish(Event{
+			Type:    "context:error",
+			Source:  "engine",
+			Payload: err.Error(),
+		})
+		return nil
+	}
+	total := 0
+	for _, c := range chunks {
+		total += c.TokenCount
+	}
+	task := detectContextTask(question)
+	e.EventBus.Publish(Event{
+		Type:   "context:built",
+		Source: "engine",
+		Payload: map[string]any{
+			"files":       len(chunks),
+			"tokens":      total,
+			"budget":      opts.MaxTokensTotal,
+			"per_file":    opts.MaxTokensPerFile,
+			"compression": opts.Compression,
+			"task":        task,
+		},
+	})
+	return chunks
+}
+
+func (e *Engine) contextBuildOptions(question string) ctxmgr.BuildOptions {
+	return e.contextBuildOptionsWithRuntime(question, e.promptRuntime())
+}
+
+func (e *Engine) contextBuildOptionsWithRuntime(question string, runtime ctxmgr.PromptRuntime) ctxmgr.BuildOptions {
+	cfg := e.Config.Context
+	task := detectContextTask(question)
+	profile := contextTaskProfile(task)
+	explicitFileRefs := countExplicitFileMentions(question)
+	providerLimit := e.providerMaxContextForRuntime(runtime)
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
+	opts := ctxmgr.BuildOptions{
+		MaxFiles:         cfg.MaxFiles,
+		MaxTokensTotal:   cfg.MaxTokensTotal,
+		MaxTokensPerFile: cfg.MaxTokensPerFile,
+		Compression:      cfg.Compression,
+		IncludeTests:     cfg.IncludeTests,
+		IncludeDocs:      cfg.IncludeDocs,
+	}
+	opts.Compression = normalizeContextCompression(opts.Compression)
+	if runtime.LowLatency || providerLimit <= 12000 {
+		opts.Compression = strongerContextCompression(opts.Compression, "aggressive")
+	} else if providerLimit <= 32000 {
+		opts.Compression = strongerContextCompression(opts.Compression, "standard")
+	}
+	if providerLimit <= 8000 && task != "doc" {
+		opts.IncludeDocs = false
+	}
+	if opts.MaxFiles <= 0 {
+		opts.MaxFiles = 8
+	}
+	opts.MaxFiles = clampInt(int(math.Round(float64(opts.MaxFiles)*profile.FileScale)), minContextFiles, maxContextFiles)
+	if explicitFileRefs > 0 {
+		// Explicit file markers imply targeted retrieval: fewer files, deeper slices.
+		opts.MaxFiles = minInt(opts.MaxFiles, explicitFileRefs+4)
+		opts.MaxFiles = maxInt(opts.MaxFiles, minContextFiles)
+	}
+
+	if opts.MaxTokensPerFile <= 0 {
+		opts.MaxTokensPerFile = 1200
+	}
+	opts.MaxTokensPerFile = maxInt(minContextPerFileTokens, int(math.Round(float64(opts.MaxTokensPerFile)*profile.PerFileScale)))
+
+	configuredTotal := opts.MaxTokensTotal
+	if configuredTotal <= 0 {
+		configuredTotal = opts.MaxFiles * opts.MaxTokensPerFile
+		configuredTotal = minInt(configuredTotal, defaultContextTotalCapTokens)
+	}
+	configuredTotal = maxInt(minContextTotalBudgetTokens, int(math.Round(float64(configuredTotal)*profile.TotalScale)))
+
+	reserve := e.contextReserveBreakdownWithRuntime(question, runtime)
+	availableForContext := providerLimit - reserve.Total
+	if availableForContext < minContextTotalBudgetTokens {
+		availableForContext = minContextTotalBudgetTokens
+	}
+
+	opts.MaxTokensTotal = minInt(configuredTotal, availableForContext)
+	if opts.MaxTokensTotal < minContextTotalBudgetTokens {
+		opts.MaxTokensTotal = minContextTotalBudgetTokens
+	}
+
+	perFileByTotal := opts.MaxTokensTotal / opts.MaxFiles
+	if perFileByTotal < minContextPerFileTokens {
+		perFileByTotal = minContextPerFileTokens
+	}
+	opts.MaxTokensPerFile = minInt(opts.MaxTokensPerFile, perFileByTotal)
+	if opts.MaxTokensPerFile > opts.MaxTokensTotal {
+		opts.MaxTokensPerFile = opts.MaxTokensTotal
+	}
+	return opts
+}
+
+func detectContextTask(question string) string {
+	task := strings.TrimSpace(strings.ToLower(promptlib.DetectTask(question)))
+	if task == "" {
+		return "general"
+	}
+	return task
+}
+
+func contextTaskProfile(task string) contextTaskBudgetProfile {
+	switch task {
+	case "security":
+		return contextTaskBudgetProfile{TotalScale: 1.25, FileScale: 1.20, PerFileScale: 1.15}
+	case "review":
+		return contextTaskBudgetProfile{TotalScale: 1.18, FileScale: 1.12, PerFileScale: 1.10}
+	case "debug":
+		return contextTaskBudgetProfile{TotalScale: 1.15, FileScale: 1.10, PerFileScale: 1.08}
+	case "test":
+		return contextTaskBudgetProfile{TotalScale: 1.05, FileScale: 1.08, PerFileScale: 1.00}
+	case "planning":
+		return contextTaskBudgetProfile{TotalScale: 0.82, FileScale: 0.85, PerFileScale: 0.90}
+	case "doc":
+		return contextTaskBudgetProfile{TotalScale: 0.78, FileScale: 0.82, PerFileScale: 0.88}
+	default:
+		return contextTaskBudgetProfile{TotalScale: 1.00, FileScale: 1.00, PerFileScale: 1.00}
+	}
+}
+
+var (
+	explicitFileMentionRe = regexp.MustCompile(`\[\[file:[^\]]+\]\]`)
+	fileMentionRe         = regexp.MustCompile(`(?i)\b[\w./-]+\.(go|ts|tsx|js|jsx|py|rs|java|cs|php|yaml|yml|json|md)\b`)
+)
+
+func countExplicitFileMentions(question string) int {
+	if strings.TrimSpace(question) == "" {
+		return 0
+	}
+	return len(explicitFileMentionRe.FindAllStringIndex(question, -1))
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func (e *Engine) providerMaxContext() int {
+	if e.Providers == nil {
+		return 0
+	}
+	p, ok := e.Providers.Get(e.provider())
+	if !ok || p == nil {
+		return 0
+	}
+	return p.MaxContext()
+}
+
+func (e *Engine) providerMaxContextForRuntime(runtime ctxmgr.PromptRuntime) int {
+	if runtime.MaxContext > 0 {
+		return runtime.MaxContext
+	}
+	providerName := strings.TrimSpace(runtime.Provider)
+	if providerName == "" || strings.EqualFold(providerName, e.provider()) {
+		return e.providerMaxContext()
+	}
+	if e.Providers == nil {
+		return 0
+	}
+	p, ok := e.Providers.Get(providerName)
+	if !ok || p == nil {
+		return 0
+	}
+	if max := p.MaxContext(); max > 0 {
+		return max
+	}
+	return p.Hints().MaxContext
+}
+
+func normalizeContextCompression(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "none", "standard", "aggressive":
+		return strings.ToLower(strings.TrimSpace(v))
+	default:
+		return "standard"
+	}
+}
+
+func strongerContextCompression(current, desired string) string {
+	cur := normalizeContextCompression(current)
+	des := normalizeContextCompression(desired)
+	if contextCompressionRank(des) > contextCompressionRank(cur) {
+		return des
+	}
+	return cur
+}
+
+func contextCompressionRank(level string) int {
+	switch normalizeContextCompression(level) {
+	case "none":
+		return 0
+	case "standard":
+		return 1
+	case "aggressive":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func (e *Engine) promptRuntime() ctxmgr.PromptRuntime {
+	rt := ctxmgr.PromptRuntime{
+		Provider: strings.TrimSpace(e.provider()),
+		Model:    strings.TrimSpace(e.model()),
+	}
+	if e.Providers == nil {
+		return rt
+	}
+	p, ok := e.Providers.Get(rt.Provider)
+	if !ok || p == nil {
+		return rt
+	}
+	hints := p.Hints()
+	if rt.Model == "" {
+		rt.Model = strings.TrimSpace(p.Model())
+	}
+	rt.ToolStyle = strings.TrimSpace(hints.ToolStyle)
+	rt.DefaultMode = strings.TrimSpace(hints.DefaultMode)
+	rt.Cache = hints.Cache
+	rt.LowLatency = hints.LowLatency
+	rt.MaxContext = hints.MaxContext
+	if rt.MaxContext <= 0 {
+		rt.MaxContext = p.MaxContext()
+	}
+	if len(hints.BestFor) > 0 {
+		rt.BestFor = append([]string(nil), hints.BestFor...)
+	}
+	return rt
+}
+
+func (e *Engine) PromptRuntime() ctxmgr.PromptRuntime {
+	return e.promptRuntime()
+}
+
+func (e *Engine) promptRuntimeWithOverrides(overrides ctxmgr.PromptRuntime) ctxmgr.PromptRuntime {
+	runtime := e.promptRuntime()
+
+	overrideProvider := strings.TrimSpace(overrides.Provider)
+	if overrideProvider != "" && !strings.EqualFold(overrideProvider, runtime.Provider) {
+		runtime = e.promptRuntimeForProvider(overrideProvider, strings.TrimSpace(overrides.Model))
+	}
+
+	if provider := strings.TrimSpace(overrides.Provider); provider != "" {
+		runtime.Provider = provider
+	}
+	if model := strings.TrimSpace(overrides.Model); model != "" {
+		runtime.Model = model
+	}
+	if style := strings.TrimSpace(overrides.ToolStyle); style != "" {
+		runtime.ToolStyle = style
+	}
+	if mode := strings.TrimSpace(overrides.DefaultMode); mode != "" {
+		runtime.DefaultMode = mode
+	}
+	if overrides.Cache {
+		runtime.Cache = true
+	}
+	if overrides.LowLatency {
+		runtime.LowLatency = true
+	}
+	if overrides.MaxContext > 0 {
+		runtime.MaxContext = overrides.MaxContext
+	}
+	if len(overrides.BestFor) > 0 {
+		runtime.BestFor = append([]string(nil), overrides.BestFor...)
+	}
+
+	return runtime
+}
+
+func (e *Engine) promptRuntimeForProvider(providerName, modelOverride string) ctxmgr.PromptRuntime {
+	rt := ctxmgr.PromptRuntime{
+		Provider: strings.TrimSpace(providerName),
+		Model:    strings.TrimSpace(modelOverride),
+	}
+	if e.Providers == nil {
+		return rt
+	}
+	p, ok := e.Providers.Get(rt.Provider)
+	if !ok || p == nil {
+		return rt
+	}
+	hints := p.Hints()
+	if rt.Model == "" {
+		rt.Model = strings.TrimSpace(p.Model())
+	}
+	rt.ToolStyle = strings.TrimSpace(hints.ToolStyle)
+	rt.DefaultMode = strings.TrimSpace(hints.DefaultMode)
+	rt.Cache = hints.Cache
+	rt.LowLatency = hints.LowLatency
+	rt.MaxContext = hints.MaxContext
+	if rt.MaxContext <= 0 {
+		rt.MaxContext = p.MaxContext()
+	}
+	if len(hints.BestFor) > 0 {
+		rt.BestFor = append([]string(nil), hints.BestFor...)
+	}
+	return rt
+}
+
+func (e *Engine) contextReserveBreakdown(question string) contextReserveBreakdown {
+	return e.contextReserveBreakdownWithRuntime(question, e.promptRuntime())
+}
+
+func (e *Engine) contextReserveBreakdownWithRuntime(question string, runtime ctxmgr.PromptRuntime) contextReserveBreakdown {
+	promptReserve := maxInt(basePromptReserveTokens, estimateTokens(question)*3)
+	responseReserve := defaultResponseReserveTokens
+	providerName := strings.TrimSpace(runtime.Provider)
+	if providerName == "" {
+		providerName = e.provider()
+	}
+	if prof, ok := e.Config.Providers.Profiles[providerName]; ok && prof.MaxTokens > 0 {
+		responseReserve = prof.MaxTokens
+	}
+	if responseReserve > maxResponseReserveTokens {
+		responseReserve = maxResponseReserveTokens
+	}
+	if responseReserve < minContextPerFileTokens {
+		responseReserve = minContextPerFileTokens
+	}
+	historyReserve := e.conversationHistoryBudget()
+	toolReserve := baseToolReserveTokens
+	providerLimit := e.providerMaxContextForRuntime(runtime)
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
+
+	// Tight context windows require proportionally smaller reserve buckets to avoid
+	// starving the retrieval budget.
+	if providerLimit <= 24000 {
+		promptReserve = minInt(promptReserve, maxInt(minContextPerFileTokens*2, providerLimit/5))
+		responseReserve = minInt(responseReserve, maxInt(minContextPerFileTokens, providerLimit/4))
+		historyReserve = minInt(historyReserve, maxInt(minContextPerFileTokens, providerLimit/6))
+		toolReserve = minInt(toolReserve, maxInt(minContextPerFileTokens/2, providerLimit/8))
+	}
+
+	// Keep reserve total bounded so context has meaningful headroom even on small windows.
+	maxTotalReserve := providerLimit - minContextTotalBudgetTokens
+	if maxTotalReserve < minContextPerFileTokens {
+		maxTotalReserve = minContextPerFileTokens
+	}
+	total := promptReserve + responseReserve + toolReserve + historyReserve
+	if total > maxTotalReserve {
+		scale := float64(maxTotalReserve) / float64(total)
+		promptReserve = maxInt(minContextPerFileTokens, int(math.Round(float64(promptReserve)*scale)))
+		responseReserve = maxInt(minContextPerFileTokens, int(math.Round(float64(responseReserve)*scale)))
+		historyReserve = maxInt(minContextPerFileTokens, int(math.Round(float64(historyReserve)*scale)))
+		toolReserve = maxInt(minContextPerFileTokens/2, int(math.Round(float64(toolReserve)*scale)))
+
+		total = promptReserve + responseReserve + toolReserve + historyReserve
+		overflow := total - maxTotalReserve
+		if overflow > 0 {
+			cut := minInt(overflow, maxInt(0, responseReserve-minContextPerFileTokens))
+			responseReserve -= cut
+			overflow -= cut
+		}
+		if overflow > 0 {
+			cut := minInt(overflow, maxInt(0, historyReserve-minContextPerFileTokens))
+			historyReserve -= cut
+			overflow -= cut
+		}
+		if overflow > 0 {
+			cut := minInt(overflow, maxInt(0, toolReserve-(minContextPerFileTokens/2)))
+			toolReserve -= cut
+			overflow -= cut
+		}
+		if overflow > 0 {
+			cut := minInt(overflow, maxInt(0, promptReserve-minContextPerFileTokens))
+			promptReserve -= cut
+		}
+	}
+	total = promptReserve + responseReserve + toolReserve + historyReserve
+	return contextReserveBreakdown{
+		Prompt:   promptReserve,
+		History:  historyReserve,
+		Response: responseReserve,
+		Tool:     toolReserve,
+		Total:    total,
+	}
+}
+
+func (e *Engine) buildRequestMessages(question string, chunks []types.ContextChunk, systemPrompt string) []provider.Message {
+	historyBudget := e.historyBudgetForRequest(question, chunks, systemPrompt)
+	summaryBudget := 0
+	if historyBudget >= 64 {
+		summaryBudget = clampInt(historyBudget/6, minHistorySummaryTokens, maxHistorySummaryTokens)
+	}
+	mainBudget := historyBudget - summaryBudget
+	if mainBudget < minHistorySummaryTokens {
+		mainBudget = historyBudget
+		summaryBudget = 0
+	}
+
+	msgs, omitted := e.trimmedConversationMessages(mainBudget)
+	if summaryBudget > 0 && len(omitted) > 0 {
+		summary := buildHistorySummary(omitted, summaryBudget)
+		if strings.TrimSpace(summary) != "" {
+			msgs = append([]provider.Message{
+				{Role: types.RoleAssistant, Content: summary},
+			}, msgs...)
+		}
+	}
+	msgs = append(msgs, provider.Message{
+		Role:    types.RoleUser,
+		Content: question,
+	})
+	return msgs
+}
+
+func (e *Engine) conversationHistoryBudget() int {
+	budget := e.Config.Context.MaxHistoryTokens
+	if budget <= 0 {
+		limit := e.providerMaxContext()
+		if limit <= 0 {
+			limit = defaultProviderContextTokens
+		}
+		budget = limit / 16
+		if budget <= 0 {
+			budget = defaultHistoryBudgetTokens
+		}
+	}
+	if budget < minContextPerFileTokens {
+		budget = minContextPerFileTokens
+	}
+	if budget > maxHistoryBudgetTokens {
+		budget = maxHistoryBudgetTokens
+	}
+	return budget
+}
+
+func (e *Engine) trimmedConversationMessages(budget int) ([]provider.Message, []types.Message) {
+	if e.Conversation == nil {
+		return nil, nil
+	}
+	active := e.Conversation.Active()
+	if active == nil {
+		return nil, nil
+	}
+	rawHistory := active.Messages()
+	if len(rawHistory) == 0 {
+		return nil, nil
+	}
+	if budget <= 0 {
+		return nil, nil
+	}
+
+	history := make([]types.Message, 0, len(rawHistory))
+	for _, msg := range rawHistory {
+		if msg.Role != types.RoleUser && msg.Role != types.RoleAssistant {
+			continue
+		}
+		if strings.TrimSpace(msg.Content) == "" {
+			continue
+		}
+		history = append(history, msg)
+	}
+	if len(history) == 0 {
+		return nil, nil
+	}
+
+	out := make([]provider.Message, 0, minInt(maxHistoryMessages, len(history)))
+	used := 0
+	cutoff := -1
+
+	for i := len(history) - 1; i >= 0; i-- {
+		if len(out) >= maxHistoryMessages || used >= budget {
+			cutoff = i
+			break
+		}
+		msg := history[i]
+		content := strings.TrimSpace(msg.Content)
+		tok := estimateTokens(content)
+		if tok <= 0 {
+			continue
+		}
+		if used+tok > budget {
+			remaining := budget - used
+			if remaining < minHistorySummaryTokens {
+				cutoff = i
+				break
+			}
+			content = trimToTokenBudget(content, remaining)
+			tok = estimateTokens(content)
+			if tok <= 0 {
+				cutoff = i
+				break
+			}
+		}
+		out = append(out, provider.Message{
+			Role:    msg.Role,
+			Content: content,
+		})
+		used += tok
+	}
+
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	if cutoff < 0 {
+		return out, nil
+	}
+	omitted := make([]types.Message, cutoff+1)
+	copy(omitted, history[:cutoff+1])
+	return out, omitted
+}
+
+func (e *Engine) historyBudgetForRequest(question string, chunks []types.ContextChunk, systemPrompt string) int {
+	providerLimit := e.providerMaxContext()
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
+	responseReserve := defaultResponseReserveTokens
+	if prof, ok := e.Config.Providers.Profiles[e.provider()]; ok && prof.MaxTokens > 0 {
+		responseReserve = prof.MaxTokens
+	}
+	if responseReserve > maxResponseReserveTokens {
+		responseReserve = maxResponseReserveTokens
+	}
+	if responseReserve < minContextPerFileTokens {
+		responseReserve = minContextPerFileTokens
+	}
+
+	usedByRequest := estimateTokens(question) + estimateTokens(systemPrompt) + baseToolReserveTokens
+	for _, ch := range chunks {
+		usedByRequest += ch.TokenCount
+	}
+	available := providerLimit - responseReserve - usedByRequest
+	if available <= 0 {
+		return 0
+	}
+
+	maxHistory := e.conversationHistoryBudget()
+	return minInt(maxHistory, available)
+}
+
+func trimToTokenBudget(content string, maxTokens int) string {
+	if maxTokens <= 0 {
+		return ""
+	}
+	words := strings.Fields(strings.TrimSpace(content))
+	if len(words) <= maxTokens {
+		return strings.TrimSpace(content)
+	}
+	return strings.Join(words[:maxTokens], " ")
+}
+
+func buildHistorySummary(omitted []types.Message, maxTokens int) string {
+	if maxTokens <= 0 || len(omitted) == 0 {
+		return ""
+	}
+	userN := 0
+	assistantN := 0
+	for _, m := range omitted {
+		if m.Role == types.RoleUser {
+			userN++
+		}
+		if m.Role == types.RoleAssistant {
+			assistantN++
+		}
+	}
+	terms := topTermsFromMessages(omitted, 3)
+	files := topFileMentions(omitted, 2)
+	primary := latestOmittedByRole(omitted, types.RoleUser, 12)
+	progress := latestOmittedByRole(omitted, types.RoleAssistant, 12)
+	openItems := recentUserQuestions(omitted, 1, 10)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "[History summary] Scope=%d msgs (%dU/%dA).", len(omitted), userN, assistantN)
+	if primary != "" {
+		b.WriteString(" Primary=")
+		b.WriteString(primary)
+		b.WriteString(".")
+	}
+	if progress != "" {
+		b.WriteString(" Progress=")
+		b.WriteString(progress)
+		b.WriteString(".")
+	}
+	if len(terms) > 0 {
+		b.WriteString(" Topics=")
+		b.WriteString(strings.Join(terms, ", "))
+		b.WriteString(".")
+	}
+	if len(files) > 0 {
+		b.WriteString(" Files=")
+		b.WriteString(strings.Join(files, ", "))
+		b.WriteString(".")
+	}
+	if len(openItems) > 0 {
+		b.WriteString(" Open=")
+		b.WriteString(strings.Join(openItems, " | "))
+		b.WriteString(".")
+	}
+	return trimToTokenBudget(b.String(), maxTokens)
+}
+
+func latestOmittedByRole(messages []types.Message, role types.MessageRole, maxTokens int) string {
+	if maxTokens <= 0 {
+		return ""
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != role {
+			continue
+		}
+		s := trimToTokenBudget(strings.TrimSpace(messages[i].Content), maxTokens)
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func recentUserQuestions(messages []types.Message, maxItems, maxTokensPerItem int) []string {
+	if maxItems <= 0 {
+		return nil
+	}
+	out := make([]string, 0, maxItems)
+	for i := len(messages) - 1; i >= 0 && len(out) < maxItems; i-- {
+		msg := messages[i]
+		if msg.Role != types.RoleUser {
+			continue
+		}
+		text := strings.TrimSpace(msg.Content)
+		if !strings.Contains(text, "?") {
+			continue
+		}
+		s := trimToTokenBudget(text, maxTokensPerItem)
+		if s == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+func recentOmittedUserIntents(messages []types.Message, maxItems, maxTokensPerItem int) []string {
+	if maxItems <= 0 {
+		return nil
+	}
+	out := make([]string, 0, maxItems)
+	for i := len(messages) - 1; i >= 0 && len(out) < maxItems; i-- {
+		if messages[i].Role != types.RoleUser {
+			continue
+		}
+		s := trimToTokenBudget(strings.TrimSpace(messages[i].Content), maxTokensPerItem)
+		if s == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+func topTermsFromMessages(messages []types.Message, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	stop := map[string]struct{}{
+		"the": {}, "and": {}, "for": {}, "with": {}, "this": {}, "that": {}, "from": {}, "into": {}, "your": {}, "you": {},
+		"about": {}, "also": {}, "just": {}, "when": {}, "then": {}, "than": {}, "what": {}, "which": {}, "where": {}, "while": {},
+		"code": {}, "file": {}, "line": {}, "tool": {}, "message": {}, "messages": {}, "user": {}, "assistant": {},
+	}
+	counts := map[string]int{}
+	for _, msg := range messages {
+		for _, tok := range tokenizeForSummary(msg.Content) {
+			if _, blocked := stop[tok]; blocked {
+				continue
+			}
+			counts[tok]++
+		}
+	}
+	type kv struct {
+		Key   string
+		Count int
+	}
+	ranked := make([]kv, 0, len(counts))
+	for k, c := range counts {
+		ranked = append(ranked, kv{Key: k, Count: c})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].Count == ranked[j].Count {
+			return ranked[i].Key < ranked[j].Key
+		}
+		return ranked[i].Count > ranked[j].Count
+	})
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	out := make([]string, 0, len(ranked))
+	for _, item := range ranked {
+		out = append(out, item.Key)
+	}
+	return out
+}
+
+func tokenizeForSummary(text string) []string {
+	parts := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(text)), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
+	})
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if len(p) < 3 {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func topFileMentions(messages []types.Message, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	counts := map[string]int{}
+	for _, msg := range messages {
+		matches := fileMentionRe.FindAllString(strings.TrimSpace(msg.Content), -1)
+		for _, m := range matches {
+			key := strings.ToLower(strings.TrimSpace(strings.Trim(m, ".,;:()[]{}\"'`")))
+			if key == "" {
+				continue
+			}
+			counts[key]++
+		}
+	}
+	type kv struct {
+		Key   string
+		Count int
+	}
+	ranked := make([]kv, 0, len(counts))
+	for k, c := range counts {
+		ranked = append(ranked, kv{Key: k, Count: c})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].Count == ranked[j].Count {
+			return ranked[i].Key < ranked[j].Key
+		}
+		return ranked[i].Count > ranked[j].Count
+	})
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	out := make([]string, 0, len(ranked))
+	for _, item := range ranked {
+		out = append(out, item.Key)
+	}
+	return out
 }
 
 func (e *Engine) setState(state EngineState) {
@@ -332,29 +1435,24 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 	}
 	e.ensureIndexed(ctx)
 
-	var chunks []types.ContextChunk
-	if e.Context != nil {
-		var err error
-		chunks, err = e.Context.Build(question, 8)
-		if err != nil {
-			e.EventBus.Publish(Event{
-				Type:    "context:error",
-				Source:  "engine",
-				Payload: err.Error(),
-			})
-		}
-	}
+	chunks := e.buildContextChunks(question)
 
+	systemPrompt := ""
+	if e.Context != nil {
+		systemPrompt = e.Context.BuildSystemPromptWithRuntime(
+			e.ProjectRoot,
+			question,
+			chunks,
+			e.ListTools(),
+			e.promptRuntime(),
+		)
+	}
 	req := provider.CompletionRequest{
 		Provider: e.provider(),
 		Model:    e.model(),
-		Messages: []provider.Message{
-			{Role: types.RoleUser, Content: question},
-		},
-		Context: chunks,
-	}
-	if e.Context != nil {
-		req.System = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks, e.ListTools())
+		Messages: e.buildRequestMessages(question, chunks, systemPrompt),
+		Context:  chunks,
+		System:   systemPrompt,
 	}
 
 	resp, usedProvider, err := e.Providers.Complete(ctx, req)
@@ -386,29 +1484,24 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 	}
 	e.ensureIndexed(ctx)
 
-	var chunks []types.ContextChunk
-	if e.Context != nil {
-		var err error
-		chunks, err = e.Context.Build(question, 8)
-		if err != nil {
-			e.EventBus.Publish(Event{
-				Type:    "context:error",
-				Source:  "engine",
-				Payload: err.Error(),
-			})
-		}
-	}
+	chunks := e.buildContextChunks(question)
 
+	systemPrompt := ""
+	if e.Context != nil {
+		systemPrompt = e.Context.BuildSystemPromptWithRuntime(
+			e.ProjectRoot,
+			question,
+			chunks,
+			e.ListTools(),
+			e.promptRuntime(),
+		)
+	}
 	req := provider.CompletionRequest{
 		Provider: e.provider(),
 		Model:    e.model(),
-		Messages: []provider.Message{
-			{Role: types.RoleUser, Content: question},
-		},
-		Context: chunks,
-	}
-	if e.Context != nil {
-		req.System = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks, e.ListTools())
+		Messages: e.buildRequestMessages(question, chunks, systemPrompt),
+		Context:  chunks,
+		System:   systemPrompt,
 	}
 
 	stream, usedProvider, err := e.Providers.Stream(ctx, req)
@@ -895,6 +1988,13 @@ func looksEntrypoint(name, file string) bool {
 
 func minInt(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b

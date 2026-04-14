@@ -21,7 +21,7 @@ Implemented now:
 - Streaming support:
   - `chat` now uses provider stream path (SSE for Anthropic/OpenAI-compatible providers)
 - Context builder for relevant code snippets
-- Tool engine (`read_file`, `list_dir`, `grep_codebase`)
+- Tool engine (`read_file`, `write_file`, `edit_file`, `list_dir`, `grep_codebase`)
 - Skill commands (`skill list/info/run`) and built-in shortcuts (`review`, `explain`, `refactor`, `test`, `doc`)
 - Plugin commands (`plugin list/info/install/remove/enable/disable`) with config-backed enable state
 - Web API server (`dfmc serve`) with status, codemap, tools, memory, files, chat SSE
@@ -62,8 +62,12 @@ This creates:
 ### 3) Ask a question
 
 ```bash
-go run ./cmd/dfmc ask "auth middleware nasil calisiyor?"
+go run ./cmd/dfmc ask "how does auth middleware work?"
+go run ./cmd/dfmc status
+go run ./cmd/dfmc --json status --query "security audit auth middleware"
+go run ./cmd/dfmc --json status --query "security audit auth middleware" --runtime-tool-style function-calling --runtime-max-context 1000
 ```
+`status` JSON output includes `context_tuning_suggestions` when a query is provided.
 
 If provider API keys are not configured, DFMC automatically uses offline mode with local-context response generation.
 
@@ -77,7 +81,7 @@ Chat slash commands:
 - `/help`, `/exit`, `/clear`, `/save`, `/load <id>`, `/history [limit]`
 - `/provider [name]`, `/model [name]`
 - `/branch [name]`, `/branch list`, `/branch create <name>`, `/branch switch <name>`, `/branch compare <a> <b>`
-- `/context show`, `/memory`, `/tools`, `/skills`, `/diff`, `/undo`, `/run <skill> [input]`, `/cost`
+- `/context show`, `/memory`, `/tools`, `/skills`, `/diff`, `/undo`, `/apply [--check] [patch.diff]`, `/run <skill> [input]`, `/cost`
 
 ### 4) Analyze codebase
 
@@ -86,6 +90,7 @@ go run ./cmd/dfmc analyze
 go run ./cmd/dfmc analyze --security --dead-code --complexity
 go run ./cmd/dfmc analyze --deps
 go run ./cmd/dfmc analyze --full --json
+go run ./cmd/dfmc analyze --full --magicdoc
 ```
 
 ### 5) Run security scan
@@ -100,6 +105,8 @@ go run ./cmd/dfmc --json scan
 ```bash
 go run ./cmd/dfmc tool list
 go run ./cmd/dfmc tool run read_file --path internal/engine/engine.go --line_start 1 --line_end 40
+go run ./cmd/dfmc tool run write_file --path tmp/demo.txt --content "hello"
+go run ./cmd/dfmc tool run edit_file --path tmp/demo.txt --old_string hello --new_string hi
 go run ./cmd/dfmc tool run grep_codebase --pattern "ErrProviderUnavailable" --max_results 10
 go run ./cmd/dfmc map --format dot
 go run ./cmd/dfmc map --format svg > codemap.svg
@@ -117,6 +124,9 @@ Endpoints:
 - `GET /api/v1/status`
 - `POST /api/v1/chat` (SSE)
 - `GET /api/v1/codemap`
+- `GET /api/v1/context/budget?q=...&runtime_provider=...&runtime_model=...&runtime_tool_style=...&runtime_max_context=...`
+- `GET /api/v1/context/recommend?q=...&runtime_provider=...&runtime_model=...&runtime_tool_style=...&runtime_max_context=...`
+- `GET /api/v1/context/brief?max_words=...&path=...`
 - `POST /api/v1/analyze`
 - `GET /api/v1/providers`
 - `GET /api/v1/tools`
@@ -133,7 +143,11 @@ Endpoints:
 - `POST /api/v1/conversation/branches/switch`
 - `GET /api/v1/conversation/branches/compare?a=...&b=...`
 - `GET /api/v1/prompts`
+- `GET /api/v1/prompts/stats?max_template_tokens=...&allow_var=...`
+- `GET /api/v1/prompts/recommend?q=...&runtime_provider=...&runtime_model=...&runtime_tool_style=...&runtime_max_context=...`
 - `POST /api/v1/prompts/render`
+- `GET /api/v1/magicdoc`
+- `POST /api/v1/magicdoc/update`
 - `GET /api/v1/conversations`
 - `GET /api/v1/conversations/search?q=...`
 - `GET /api/v1/files`
@@ -147,7 +161,16 @@ go run ./cmd/dfmc config list
 go run ./cmd/dfmc config get providers.primary
 go run ./cmd/dfmc config set context.include_tests true
 go run ./cmd/dfmc config edit
+go run ./cmd/dfmc context budget --query "security audit auth middleware"
+go run ./cmd/dfmc context budget --query "security audit auth middleware" --runtime-tool-style function-calling --runtime-max-context 1000
+go run ./cmd/dfmc context recommend --query "debug [[file:internal/auth/service.go]]"
+go run ./cmd/dfmc context recommend --query "debug [[file:internal/auth/service.go]]" --runtime-tool-style function-calling --runtime-max-context 1000
+go run ./cmd/dfmc context recent
+go run ./cmd/dfmc context brief --max-words 240
+go run ./cmd/dfmc context brief --path docs/BRIEF.md --max-words 180
 ```
+When `runtime-max-context` is low (`<=12000`), context budgeting automatically switches to more aggressive compression; for very tight windows (`<=8000`), doc slices are auto-disabled.
+`dfmc --json context recommend ...` includes directly actionable config updates under `tuning_suggestions`.
 
 ### 7) Use memory and conversation commands
 
@@ -175,7 +198,7 @@ go run ./cmd/dfmc conversation branch compare main experiment
 ```bash
 go run ./cmd/dfmc skill list
 go run ./cmd/dfmc skill info review
-go run ./cmd/dfmc --provider offline review "auth modulu icin riskleri bul"
+go run ./cmd/dfmc --provider offline review "find risks in the auth module"
 
 go run ./cmd/dfmc plugin list
 go run ./cmd/dfmc plugin install --name my-plugin --enable ./path/to/my-plugin.py
@@ -199,14 +222,26 @@ go run ./cmd/dfmc remote status
 go run ./cmd/dfmc remote status --live --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote probe --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote events --url http://127.0.0.1:7779 --type "*" --timeout 10s --max 20
-go run ./cmd/dfmc remote ask --url http://127.0.0.1:7779 --message "auth middleware'i acikla"
+go run ./cmd/dfmc remote ask --url http://127.0.0.1:7779 --message "explain the auth middleware"
 go run ./cmd/dfmc remote tools --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote skills --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote prompt list --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote prompt render --url http://127.0.0.1:7779 --task security --query "auth audit"
+go run ./cmd/dfmc remote prompt render --url http://127.0.0.1:7779 --task security --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
+go run ./cmd/dfmc remote prompt recommend --url http://127.0.0.1:7779 --query "auth audit"
+go run ./cmd/dfmc remote prompt recommend --url http://127.0.0.1:7779 --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
+go run ./cmd/dfmc remote prompt stats --url http://127.0.0.1:7779 --max-template-tokens 450
+go run ./cmd/dfmc remote magicdoc show --url http://127.0.0.1:7779
+go run ./cmd/dfmc remote magicdoc update --url http://127.0.0.1:7779 --title "Remote Brief"
+go run ./cmd/dfmc remote context budget --url http://127.0.0.1:7779 --query "security audit auth middleware"
+go run ./cmd/dfmc remote context budget --url http://127.0.0.1:7779 --query "security audit auth middleware" --runtime-tool-style function-calling --runtime-max-context 1000
+go run ./cmd/dfmc remote context recommend --url http://127.0.0.1:7779 --query "debug [[file:internal/auth/service.go]]"
+go run ./cmd/dfmc remote context recommend --url http://127.0.0.1:7779 --query "debug [[file:internal/auth/service.go]]" --runtime-tool-style function-calling --runtime-max-context 1000
+go run ./cmd/dfmc remote context brief --url http://127.0.0.1:7779 --max-words 240 --path docs/BRIEF.md
 go run ./cmd/dfmc remote tool read_file --url http://127.0.0.1:7779 --param path=README.md --param line_start=1 --param line_end=5
-go run ./cmd/dfmc remote skill review --url http://127.0.0.1:7779 --input "auth katmanini incele"
+go run ./cmd/dfmc remote skill review --url http://127.0.0.1:7779 --input "review the auth layer"
 go run ./cmd/dfmc remote analyze --url http://127.0.0.1:7779 --full
+go run ./cmd/dfmc remote analyze --url http://127.0.0.1:7779 --full --magicdoc
 go run ./cmd/dfmc remote files list --url http://127.0.0.1:7779 --limit 100
 go run ./cmd/dfmc remote files get README.md --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote memory working --url http://127.0.0.1:7779
@@ -235,6 +270,8 @@ go run ./cmd/dfmc doctor --fix
 go run ./cmd/dfmc --json doctor
 ```
 
+`doctor` now also reports `magicdoc.health` (missing/fresh/stale) and `prompt.health` (template warnings/token thresholds).
+
 ### 11) Generate shell completion
 
 ```bash
@@ -256,8 +293,15 @@ go run ./cmd/dfmc man --format markdown > MANUAL.md
 ```bash
 go run ./cmd/dfmc prompt list
 go run ./cmd/dfmc prompt render --query "security audit auth middleware"
-go run ./cmd/dfmc prompt render --task planning --language go --query "roadmap cikar"
+go run ./cmd/dfmc prompt render --task planning --language go --query "create a roadmap"
 go run ./cmd/dfmc prompt render --task review --var context_files="- internal/auth/middleware.go:1-120"
+go run ./cmd/dfmc prompt render --task security --role security_auditor --query "auth audit"
+go run ./cmd/dfmc prompt render --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
+go run ./cmd/dfmc prompt recommend --query "security audit auth middleware"
+go run ./cmd/dfmc prompt recommend --query "security audit auth middleware" --runtime-tool-style function-calling --runtime-max-context 1000
+go run ./cmd/dfmc --json prompt render --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
+go run ./cmd/dfmc prompt stats
+go run ./cmd/dfmc prompt stats --max-template-tokens 450 --fail-on-warning
 ```
 
 Inline file injection in user query (Claude Code-style):
@@ -268,6 +312,20 @@ Inline file injection in user query (Claude Code-style):
 ```
 
 These markers are automatically resolved and injected into system prompt context.
+Injection payload is budgeted automatically (compact/deep profile aware) to reduce token burn.
+
+Inline fenced-code injection is also supported in query text:
+
+~~~text
+```go
+func VerifyToken(token string) bool { return token != "" }
+```
+~~~
+
+When using `--json` with `prompt render`, output now includes:
+- `prompt_tokens_estimate`
+- `prompt_budget_tokens`
+- `prompt_trimmed`
 
 Prompt templates are loaded from:
 - built-in defaults (`internal/promptlib/defaults`)
@@ -279,10 +337,39 @@ Supported file formats in prompt library:
 - `.json`
 - `.md` (with optional YAML frontmatter)
 
+Template composition modes:
+- `compose: replace` (default): base template body
+- `compose: append`: additive fragment (task/profile/language overlays)
+- `role`: optional role axis for specialized prompt overlays (`planner`, `security_auditor`, `code_reviewer`, etc.)
+
+Example overlay template:
+```yaml
+id: system.security.overlay
+type: system
+task: security
+compose: append
+priority: 90
+body: |
+  Security mode contract:
+  - Report severity and exploitability preconditions.
+```
+
+### 14) Magic doc (low-token project brief)
+
+```bash
+go run ./cmd/dfmc magicdoc update
+go run ./cmd/dfmc magicdoc update --title "Backend Brief"
+go run ./cmd/dfmc magicdoc show
+```
+
+By default this writes `.dfmc/magic/MAGIC_DOC.md`.  
+When present, DFMC injects a budgeted slice of this brief into the system prompt as `project_brief` to improve context continuity with lower token usage.
+
 ## Command Overview
 
 Available:
 - `dfmc init`
+- `dfmc status`
 - `dfmc version`
 - `dfmc ask`
 - `dfmc chat` (basic REPL)
@@ -294,6 +381,7 @@ Available:
 - `dfmc conversation`
 - `dfmc config`
 - `dfmc prompt`
+- `dfmc magicdoc`
 - `dfmc plugin`
 - `dfmc skill`
 - `dfmc review`
@@ -328,6 +416,34 @@ Common env vars:
 - `MINIMAX_API_KEY`
 - `ZAI_API_KEY`
 - `ALIBABA_API_KEY`
+
+Token-efficient context tuning:
+- `context.max_tokens_total`: hard cap for all retrieved code context per request.
+- `context.max_tokens_per_file`: per-file chunk cap after compression.
+- `context.max_history_tokens`: max token budget for prior conversation messages sent with each request.
+- `context.compression`: `none|standard|aggressive` tradeoff between fidelity and token cost.
+- Budgets are task-adaptive (`security/review/debug` gets more context; `planning/doc` gets leaner context).
+- `context budget` preview now includes reserve breakdown (`prompt/history/response/tools`) and available context headroom.
+- `context budget` preview also exposes task scaling coefficients and `[[file:...]]` marker count.
+- System prompt tool-call policy is provider-aware (e.g., `function-calling` vs `tool_use`) and budget-aware.
+- Prompt profile and render budget are runtime-aware (`max_context`, low-latency mode, task type).
+- Final rendered system prompts are capped by a task/runtime token budget to avoid prompt bloat.
+- `[[file:...]]` markers in the query focus retrieval to fewer files with deeper per-file slices.
+- Triple-backtick code blocks in the query are treated as explicit injected context (budget-limited).
+- When history exceeds budget, DFMC injects a compact history summary instead of dropping all older context.
+
+Recommended baseline:
+
+```yaml
+context:
+  max_files: 50
+  max_tokens_total: 16000
+  max_tokens_per_file: 2000
+  max_history_tokens: 1200
+  compression: standard
+  include_tests: false
+  include_docs: true
+```
 
 ## Project Structure
 

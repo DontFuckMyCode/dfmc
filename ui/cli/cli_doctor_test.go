@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -133,4 +134,102 @@ func TestRunDoctorFixRepairsProjectConfig(t *testing.T) {
 	if reloaded.Remote.Auth != "none" && reloaded.Remote.Auth != "token" && reloaded.Remote.Auth != "mtls" {
 		t.Fatalf("remote.auth was not fixed: %s", reloaded.Remote.Auth)
 	}
+}
+
+func TestAddMagicDocHealthCheck(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		root := t.TempDir()
+		checks := []doctorCheck{}
+		addMagicDocHealthCheck(&checks, root, 24*time.Hour)
+		if len(checks) != 1 {
+			t.Fatalf("expected one check, got %d", len(checks))
+		}
+		if checks[0].Status != "warn" || !strings.Contains(checks[0].Details, "missing") {
+			t.Fatalf("unexpected missing check: %+v", checks[0])
+		}
+	})
+
+	t.Run("fresh", func(t *testing.T) {
+		root := t.TempDir()
+		path := resolveMagicDocPath(root, "")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir magic dir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte("# MAGIC DOC: Test\n"), 0o644); err != nil {
+			t.Fatalf("write magic doc: %v", err)
+		}
+		checks := []doctorCheck{}
+		addMagicDocHealthCheck(&checks, root, 24*time.Hour)
+		if len(checks) != 1 {
+			t.Fatalf("expected one check, got %d", len(checks))
+		}
+		if checks[0].Status != "pass" || !strings.Contains(checks[0].Details, "fresh") {
+			t.Fatalf("unexpected fresh check: %+v", checks[0])
+		}
+	})
+
+	t.Run("stale", func(t *testing.T) {
+		root := t.TempDir()
+		path := resolveMagicDocPath(root, "")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir magic dir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte("# MAGIC DOC: Test\n"), 0o644); err != nil {
+			t.Fatalf("write magic doc: %v", err)
+		}
+		old := time.Now().Add(-72 * time.Hour)
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatalf("chtimes: %v", err)
+		}
+		checks := []doctorCheck{}
+		addMagicDocHealthCheck(&checks, root, 24*time.Hour)
+		if len(checks) != 1 {
+			t.Fatalf("expected one check, got %d", len(checks))
+		}
+		if checks[0].Status != "warn" || !strings.Contains(checks[0].Details, "stale") {
+			t.Fatalf("unexpected stale check: %+v", checks[0])
+		}
+	})
+}
+
+func TestAddPromptHealthCheck(t *testing.T) {
+	t.Run("pass_default_templates", func(t *testing.T) {
+		root := t.TempDir()
+		checks := []doctorCheck{}
+		addPromptHealthCheck(&checks, root, 1000)
+		if len(checks) != 1 {
+			t.Fatalf("expected one check, got %d", len(checks))
+		}
+		if checks[0].Name != "prompt.health" || checks[0].Status != "pass" {
+			t.Fatalf("unexpected prompt health check: %+v", checks[0])
+		}
+	})
+
+	t.Run("warn_on_unknown_placeholder", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, ".dfmc", "prompts")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir prompts dir: %v", err)
+		}
+		override := `
+id: system.general.bad_var
+type: system
+task: general
+priority: 999
+body: |
+  Broken var {{doctor_unknown_var}}
+`
+		if err := os.WriteFile(filepath.Join(dir, "bad_var.yaml"), []byte(override), 0o644); err != nil {
+			t.Fatalf("write override: %v", err)
+		}
+
+		checks := []doctorCheck{}
+		addPromptHealthCheck(&checks, root, 1000)
+		if len(checks) != 1 {
+			t.Fatalf("expected one check, got %d", len(checks))
+		}
+		if checks[0].Status != "warn" || !strings.Contains(checks[0].Details, "warnings=") {
+			t.Fatalf("unexpected prompt warn check: %+v", checks[0])
+		}
+	})
 }

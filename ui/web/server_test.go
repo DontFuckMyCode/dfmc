@@ -171,6 +171,139 @@ func TestSkillsEndpoint(t *testing.T) {
 	}
 }
 
+func TestContextBudgetEndpoint(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/context/budget?q=security+audit+auth&runtime_max_context=1000")
+	if err != nil {
+		t.Fatalf("get context budget: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if payload["task"] != "security" {
+		t.Fatalf("expected task=security, got: %#v", payload["task"])
+	}
+	if _, ok := payload["max_tokens_total"]; !ok {
+		t.Fatalf("missing max_tokens_total field: %#v", payload)
+	}
+	if _, ok := payload["context_available_tokens"]; !ok {
+		t.Fatalf("missing context_available_tokens field: %#v", payload)
+	}
+	if _, ok := payload["reserve_total_tokens"]; !ok {
+		t.Fatalf("missing reserve_total_tokens field: %#v", payload)
+	}
+	if _, ok := payload["explicit_file_mentions"]; !ok {
+		t.Fatalf("missing explicit_file_mentions field: %#v", payload)
+	}
+	if _, ok := payload["task_total_scale"]; !ok {
+		t.Fatalf("missing task_total_scale field: %#v", payload)
+	}
+	if got, _ := payload["provider_max_context"].(float64); int(got) != 1000 {
+		t.Fatalf("expected provider_max_context=1000, got: %#v", payload["provider_max_context"])
+	}
+}
+
+func TestContextRecommendEndpoint(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/context/recommend?q=debug+%5B%5Bfile%3Ainternal%2Fauth%2Fservice.go%5D%5D&runtime_max_context=1000")
+	if err != nil {
+		t.Fatalf("get context recommend: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if _, ok := payload["preview"]; !ok {
+		t.Fatalf("missing preview field: %#v", payload)
+	}
+	recs, ok := payload["recommendations"].([]any)
+	if !ok || len(recs) == 0 {
+		t.Fatalf("expected non-empty recommendations, got: %#v", payload["recommendations"])
+	}
+	tuning, ok := payload["tuning_suggestions"].([]any)
+	if !ok || len(tuning) == 0 {
+		t.Fatalf("expected non-empty tuning_suggestions, got: %#v", payload["tuning_suggestions"])
+	}
+	preview, ok := payload["preview"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected preview object, got: %#v", payload["preview"])
+	}
+	if got, _ := preview["provider_max_context"].(float64); int(got) != 1000 {
+		t.Fatalf("expected preview provider_max_context=1000, got: %#v", preview["provider_max_context"])
+	}
+}
+
+func TestContextBriefEndpoint(t *testing.T) {
+	eng := newTestEngine(t)
+	root := t.TempDir()
+	eng.ProjectRoot = root
+
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "docs", "BRIEF.md"),
+		[]byte("# MAGIC DOC: Custom Brief\n\nContext brief endpoint smoke line.\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("write brief file: %v", err)
+	}
+
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/context/brief?path=docs/BRIEF.md&max_words=20")
+	if err != nil {
+		t.Fatalf("get context brief: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status %d: %s", resp.StatusCode, string(raw))
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if payload["exists"] != true {
+		t.Fatalf("expected exists=true, got: %#v", payload)
+	}
+	if payload["max_words"] != float64(20) {
+		t.Fatalf("expected max_words=20, got: %#v", payload["max_words"])
+	}
+	path, _ := payload["path"].(string)
+	if !strings.Contains(path, "/docs/BRIEF.md") {
+		t.Fatalf("expected custom path in payload, got: %s", path)
+	}
+	brief, _ := payload["brief"].(string)
+	if !strings.Contains(brief, "Context brief endpoint smoke line.") {
+		t.Fatalf("expected brief content from custom file, got: %s", brief)
+	}
+	wordCount, _ := payload["word_count"].(float64)
+	if wordCount <= 0 || wordCount > 20 {
+		t.Fatalf("unexpected word_count: %#v", payload["word_count"])
+	}
+}
+
 func TestAnalyzeEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
@@ -198,6 +331,48 @@ func TestAnalyzeEndpoint(t *testing.T) {
 	}
 	if _, ok := payload["files"]; !ok {
 		t.Fatalf("missing files field: %#v", payload)
+	}
+}
+
+func TestAnalyzeEndpointWithMagicDoc(t *testing.T) {
+	eng := newTestEngine(t)
+	root := t.TempDir()
+	eng.ProjectRoot = root
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main(){}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := bytes.NewBufferString(`{"complexity":true,"magicdoc":true,"magicdoc_title":"Analyze Brief"}`)
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/analyze", body)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("analyze request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status %d: %s", resp.StatusCode, string(raw))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if _, ok := payload["report"]; !ok {
+		t.Fatalf("missing report field: %#v", payload)
+	}
+	magic, ok := payload["magicdoc"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing magicdoc field: %#v", payload)
+	}
+	if magic["updated"] != true {
+		t.Fatalf("expected magicdoc updated=true, got: %#v", magic)
 	}
 }
 
@@ -340,7 +515,7 @@ func TestWSEventStreamEndpoint(t *testing.T) {
 
 func TestConversationsEndpoints(t *testing.T) {
 	eng := newTestEngine(t)
-	_, _ = eng.Ask(context.Background(), "merhaba conversation test")
+	_, _ = eng.Ask(context.Background(), "hello conversation test")
 	_ = eng.ConversationSave()
 
 	srv := New(eng, "127.0.0.1", 0)
@@ -364,7 +539,7 @@ func TestConversationsEndpoints(t *testing.T) {
 		t.Fatalf("missing conversations field: %#v", listPayload)
 	}
 
-	searchResp, err := http.Get(ts.URL + "/api/v1/conversations/search?q=merhaba&limit=5")
+	searchResp, err := http.Get(ts.URL + "/api/v1/conversations/search?q=hello&limit=5")
 	if err != nil {
 		t.Fatalf("search conversations: %v", err)
 	}
@@ -377,7 +552,7 @@ func TestConversationsEndpoints(t *testing.T) {
 	if err := json.NewDecoder(searchResp.Body).Decode(&searchPayload); err != nil {
 		t.Fatalf("decode search payload: %v", err)
 	}
-	if searchPayload["query"] != "merhaba" {
+	if searchPayload["query"] != "hello" {
 		t.Fatalf("unexpected query field: %#v", searchPayload)
 	}
 
@@ -440,6 +615,16 @@ func TestConversationsEndpoints(t *testing.T) {
 
 func TestPromptsEndpoints(t *testing.T) {
 	eng := newTestEngine(t)
+	root := t.TempDir()
+	eng.ProjectRoot = root
+	magicDir := filepath.Join(root, ".dfmc", "magic")
+	if err := os.MkdirAll(magicDir, 0o755); err != nil {
+		t.Fatalf("mkdir magic dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(magicDir, "MAGIC_DOC.md"), []byte("# MAGIC DOC: Prompt Brief\n\nCritical prompt brief line.\n"), 0o644); err != nil {
+		t.Fatalf("write magic doc: %v", err)
+	}
+
 	srv := New(eng, "127.0.0.1", 0)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -461,7 +646,54 @@ func TestPromptsEndpoints(t *testing.T) {
 		t.Fatalf("missing prompts field: %#v", listPayload)
 	}
 
-	renderBody := bytes.NewBufferString(`{"type":"system","task":"security","query":"auth security audit"}`)
+	statsResp, err := http.Get(ts.URL + "/api/v1/prompts/stats?max_template_tokens=200")
+	if err != nil {
+		t.Fatalf("get prompt stats: %v", err)
+	}
+	defer statsResp.Body.Close()
+	if statsResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(statsResp.Body)
+		t.Fatalf("unexpected stats status %d: %s", statsResp.StatusCode, string(raw))
+	}
+	var statsPayload map[string]any
+	if err := json.NewDecoder(statsResp.Body).Decode(&statsPayload); err != nil {
+		t.Fatalf("decode stats payload: %v", err)
+	}
+	if statsPayload["template_count"] == nil {
+		t.Fatalf("missing template_count in stats payload: %#v", statsPayload)
+	}
+	if statsPayload["max_template_tokens"] != float64(200) {
+		t.Fatalf("expected max_template_tokens=200, got: %#v", statsPayload["max_template_tokens"])
+	}
+
+	recommendResp, err := http.Get(ts.URL + "/api/v1/prompts/recommend?q=security+audit+auth&runtime_tool_style=function-calling&runtime_max_context=1000")
+	if err != nil {
+		t.Fatalf("get prompt recommend: %v", err)
+	}
+	defer recommendResp.Body.Close()
+	if recommendResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(recommendResp.Body)
+		t.Fatalf("unexpected recommend status %d: %s", recommendResp.StatusCode, string(raw))
+	}
+	var recommendPayload map[string]any
+	if err := json.NewDecoder(recommendResp.Body).Decode(&recommendPayload); err != nil {
+		t.Fatalf("decode recommend payload: %v", err)
+	}
+	rec, ok := recommendPayload["recommendation"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing recommendation field: %#v", recommendPayload)
+	}
+	if rec["prompt_budget_tokens"] == nil {
+		t.Fatalf("missing prompt_budget_tokens in recommendation payload: %#v", recommendPayload)
+	}
+	if got, _ := rec["tool_style"].(string); got != "function-calling" {
+		t.Fatalf("expected tool_style override in recommendation payload, got: %#v", rec["tool_style"])
+	}
+	if got, _ := rec["max_context"].(float64); int(got) != 1000 {
+		t.Fatalf("expected max_context override in recommendation payload, got: %#v", rec["max_context"])
+	}
+
+	renderBody := bytes.NewBufferString(`{"type":"system","task":"security","query":"auth security audit","runtime_tool_style":"function-calling","runtime_max_context":1000}`)
 	renderReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/prompts/render", renderBody)
 	if err != nil {
 		t.Fatalf("new render request: %v", err)
@@ -483,5 +715,70 @@ func TestPromptsEndpoints(t *testing.T) {
 	prompt, _ := renderPayload["prompt"].(string)
 	if !strings.Contains(strings.ToLower(prompt), "security") {
 		t.Fatalf("expected security prompt, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "Critical prompt brief line.") {
+		t.Fatalf("expected project brief injection in prompt render, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "strict function-call JSON") {
+		t.Fatalf("expected runtime tool-style override in prompt render, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "near 200 tokens") {
+		t.Fatalf("expected runtime max context budget in prompt render, got: %s", prompt)
+	}
+	if role, _ := renderPayload["role"].(string); role == "" {
+		t.Fatalf("expected role in render payload, got: %#v", renderPayload)
+	}
+	if _, ok := renderPayload["prompt_tokens_estimate"].(float64); !ok {
+		t.Fatalf("expected prompt_tokens_estimate in payload, got: %#v", renderPayload)
+	}
+	if _, ok := renderPayload["prompt_budget_tokens"].(float64); !ok {
+		t.Fatalf("expected prompt_budget_tokens in payload, got: %#v", renderPayload)
+	}
+}
+
+func TestMagicDocEndpoints(t *testing.T) {
+	eng := newTestEngine(t)
+	root := t.TempDir()
+	eng.ProjectRoot = root
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main(){}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	updateBody := bytes.NewBufferString(`{"title":"Remote Brief","hotspots":4,"deps":4,"recent":3}`)
+	updateReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/magicdoc/update", updateBody)
+	if err != nil {
+		t.Fatalf("new update request: %v", err)
+	}
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateResp, err := http.DefaultClient.Do(updateReq)
+	if err != nil {
+		t.Fatalf("magicdoc update request: %v", err)
+	}
+	defer updateResp.Body.Close()
+	if updateResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(updateResp.Body)
+		t.Fatalf("unexpected update status %d: %s", updateResp.StatusCode, string(raw))
+	}
+
+	showResp, err := http.Get(ts.URL + "/api/v1/magicdoc")
+	if err != nil {
+		t.Fatalf("magicdoc show request: %v", err)
+	}
+	defer showResp.Body.Close()
+	if showResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(showResp.Body)
+		t.Fatalf("unexpected show status %d: %s", showResp.StatusCode, string(raw))
+	}
+	var showPayload map[string]any
+	if err := json.NewDecoder(showResp.Body).Decode(&showPayload); err != nil {
+		t.Fatalf("decode show payload: %v", err)
+	}
+	content, _ := showPayload["content"].(string)
+	if !strings.Contains(content, "# MAGIC DOC: Remote Brief") {
+		t.Fatalf("expected magic doc title in content, got: %s", content)
 	}
 }

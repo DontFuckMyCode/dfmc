@@ -16,6 +16,9 @@ func TestDetectTask(t *testing.T) {
 		"refactor this module":     "refactor",
 		"let's make a plan":        "planning",
 		"fix this panic":           "debug",
+		"run threat analysis":      "security",
+		"step-by-step roadmap":     "planning",
+		"step-by-step plan":        "planning",
 	}
 	for query, want := range cases {
 		if got := DetectTask(query); got != want {
@@ -33,7 +36,7 @@ func TestInferLanguage(t *testing.T) {
 	if got := InferLanguage("please inspect this", chunks); got != "go" {
 		t.Fatalf("InferLanguage from chunks=%q want=go", got)
 	}
-	if got := InferLanguage("python için güvenlik", nil); got != "python" {
+	if got := InferLanguage("python security review", nil); got != "python" {
 		t.Fatalf("InferLanguage explicit=%q want=python", got)
 	}
 }
@@ -117,5 +120,102 @@ Plan for {{project_root}}
 	}
 	if tpl.ID != "system.plan.custom" || tpl.Task != "planning" || tpl.Language != "go" {
 		t.Fatalf("unexpected template meta: %+v", tpl)
+	}
+}
+
+func TestRenderComposesTaskAndProfileFragments(t *testing.T) {
+	lib := &Library{
+		templates:   []Template{},
+		loadedRoots: map[string]struct{}{},
+	}
+	lib.upsert(Template{
+		ID:      "base",
+		Type:    "system",
+		Task:    "general",
+		Compose: "replace",
+		Body:    "BASE {{task}}",
+	})
+	lib.upsert(Template{
+		ID:      "task.security",
+		Type:    "system",
+		Task:    "security",
+		Compose: "append",
+		Body:    "TASK {{task}}",
+	})
+	lib.upsert(Template{
+		ID:      "profile.deep",
+		Type:    "system",
+		Task:    "general",
+		Profile: "deep",
+		Compose: "append",
+		Body:    "PROFILE {{profile}}",
+	})
+
+	out := lib.Render(RenderRequest{
+		Type:    "system",
+		Task:    "security",
+		Profile: "deep",
+		Vars: map[string]string{
+			"task":    "security",
+			"profile": "deep",
+		},
+	})
+
+	if !strings.Contains(out, "BASE security") {
+		t.Fatalf("expected base fragment, got: %s", out)
+	}
+	if !strings.Contains(out, "TASK security") {
+		t.Fatalf("expected task fragment, got: %s", out)
+	}
+	if !strings.Contains(out, "PROFILE deep") {
+		t.Fatalf("expected profile fragment, got: %s", out)
+	}
+}
+
+func TestRenderComposesRoleFragments(t *testing.T) {
+	lib := &Library{
+		templates:   []Template{},
+		loadedRoots: map[string]struct{}{},
+	}
+	lib.upsert(Template{
+		ID:      "base",
+		Type:    "system",
+		Task:    "general",
+		Compose: "replace",
+		Body:    "BASE {{role}}",
+	})
+	lib.upsert(Template{
+		ID:      "role.reviewer",
+		Type:    "system",
+		Task:    "general",
+		Role:    "code_reviewer",
+		Compose: "append",
+		Body:    "ROLE {{role}}",
+	})
+
+	out := lib.Render(RenderRequest{
+		Type: "system",
+		Task: "review",
+		Role: "code_reviewer",
+		Vars: map[string]string{
+			"role": "code_reviewer",
+		},
+	})
+	if !strings.Contains(out, "BASE code_reviewer") {
+		t.Fatalf("expected role in base fragment, got: %s", out)
+	}
+	if !strings.Contains(out, "ROLE code_reviewer") {
+		t.Fatalf("expected role fragment, got: %s", out)
+	}
+}
+
+func TestNormalizeTemplateComposeMode(t *testing.T) {
+	a := normalizeTemplate(Template{Type: "system", Task: "general", Compose: "append", Body: "x"})
+	if a.Compose != "append" {
+		t.Fatalf("expected append compose, got: %q", a.Compose)
+	}
+	b := normalizeTemplate(Template{Type: "system", Task: "general", Body: "x"})
+	if b.Compose != "replace" {
+		t.Fatalf("expected default replace compose, got: %q", b.Compose)
 	}
 }

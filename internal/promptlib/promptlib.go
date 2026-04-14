@@ -26,6 +26,8 @@ type Template struct {
 	Task        string `json:"task" yaml:"task"`
 	Language    string `json:"language" yaml:"language"`
 	Profile     string `json:"profile" yaml:"profile"`
+	Role        string `json:"role" yaml:"role"`
+	Compose     string `json:"compose,omitempty" yaml:"compose"`
 	Priority    int    `json:"priority" yaml:"priority"`
 	Description string `json:"description" yaml:"description"`
 	Body        string `json:"body" yaml:"body"`
@@ -36,6 +38,7 @@ type RenderRequest struct {
 	Task     string
 	Language string
 	Profile  string
+	Role     string
 	Vars     map[string]string
 }
 
@@ -137,23 +140,25 @@ func (l *Library) Render(req RenderRequest) string {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	best := Template{}
-	bestScore := -1_000_000
-	for _, t := range l.templates {
-		score, ok := templateScore(t, req)
-		if !ok {
-			continue
-		}
-		if score > bestScore {
-			bestScore = score
-			best = t
-		}
+	baseTpl, baseScore := l.bestReplaceTemplate(req)
+	base := defaultFallbackPrompt(req)
+	if baseScore >= 0 {
+		base = renderBody(baseTpl.Body, req.Vars)
 	}
 
-	if bestScore < 0 {
-		return defaultFallbackPrompt(req)
+	appendParts := l.renderAppendParts(req)
+	if len(appendParts) == 0 {
+		return base
 	}
-	return renderBody(best.Body, req.Vars)
+	out := []string{base}
+	for _, p := range appendParts {
+		rendered := strings.TrimSpace(renderBody(p.Body, req.Vars))
+		if rendered == "" {
+			continue
+		}
+		out = append(out, rendered)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n\n"))
 }
 
 func (l *Library) upsert(t Template) {
@@ -188,6 +193,8 @@ func normalizeTemplate(t Template) Template {
 	}
 	t.Language = normalizeKey(t.Language)
 	t.Profile = normalizeKey(t.Profile)
+	t.Role = normalizeKey(t.Role)
+	t.Compose = normalizeComposeMode(t.Compose)
 	t.Description = strings.TrimSpace(t.Description)
 	t.Body = strings.TrimSpace(t.Body)
 	return t
@@ -199,11 +206,106 @@ func normalizeKey(s string) string {
 	return s
 }
 
+func normalizeComposeMode(s string) string {
+	switch normalizeKey(s) {
+	case "append":
+		return "append"
+	default:
+		return "replace"
+	}
+}
+
+func (l *Library) bestReplaceTemplate(req RenderRequest) (Template, int) {
+	best := Template{}
+	bestScore := -1_000_000
+	for _, t := range l.templates {
+		if t.Compose != "replace" {
+			continue
+		}
+		score, ok := templateScore(t, req)
+		if !ok {
+			continue
+		}
+		if score > bestScore || (score == bestScore && t.Priority > best.Priority) {
+			bestScore = score
+			best = t
+		}
+	}
+	return best, bestScore
+}
+
+func (l *Library) renderAppendParts(req RenderRequest) []Template {
+	type scored struct {
+		template Template
+		score    int
+	}
+	picks := map[string]scored{}
+	extras := make([]scored, 0, 4)
+	for _, t := range l.templates {
+		if t.Compose != "append" {
+			continue
+		}
+		score, ok := templateScore(t, req)
+		if !ok {
+			continue
+		}
+		axis := appendAxis(t, req)
+		entry := scored{template: t, score: score}
+		if axis == "extra" {
+			extras = append(extras, entry)
+			continue
+		}
+		if cur, ok := picks[axis]; !ok || entry.score > cur.score || (entry.score == cur.score && entry.template.Priority > cur.template.Priority) {
+			picks[axis] = entry
+		}
+	}
+
+	out := make([]Template, 0, 6)
+	for _, axis := range []string{"global", "task", "language", "profile", "role"} {
+		if v, ok := picks[axis]; ok {
+			out = append(out, v.template)
+		}
+	}
+	if len(extras) > 0 {
+		sort.Slice(extras, func(i, j int) bool {
+			if extras[i].score == extras[j].score {
+				return extras[i].template.Priority > extras[j].template.Priority
+			}
+			return extras[i].score > extras[j].score
+		})
+		out = append(out, extras[0].template)
+	}
+	return out
+}
+
+func appendAxis(t Template, req RenderRequest) string {
+	task := normalizeKey(req.Task)
+	lang := normalizeKey(req.Language)
+	profile := normalizeKey(req.Profile)
+	role := normalizeKey(req.Role)
+
+	switch {
+	case t.Task == "general" && t.Language == "" && t.Profile == "" && t.Role == "":
+		return "global"
+	case task != "" && t.Task == task && t.Language == "" && t.Profile == "" && t.Role == "":
+		return "task"
+	case lang != "" && t.Language == lang && t.Task == "general" && t.Profile == "" && t.Role == "":
+		return "language"
+	case profile != "" && t.Profile == profile && t.Task == "general" && t.Language == "" && t.Role == "":
+		return "profile"
+	case role != "" && t.Role == role && t.Task == "general" && t.Language == "" && t.Profile == "":
+		return "role"
+	default:
+		return "extra"
+	}
+}
+
 func templateScore(t Template, req RenderRequest) (int, bool) {
 	typ := normalizeKey(req.Type)
 	task := normalizeKey(req.Task)
 	lang := normalizeKey(req.Language)
 	profile := normalizeKey(req.Profile)
+	role := normalizeKey(req.Role)
 
 	if typ != "" && t.Type != typ {
 		return 0, false
@@ -239,6 +341,16 @@ func templateScore(t Template, req RenderRequest) (int, bool) {
 			score += 2
 		case t.Profile == profile:
 			score += 20
+		default:
+			return 0, false
+		}
+	}
+	if role != "" {
+		switch {
+		case t.Role == "":
+			score += 1
+		case t.Role == role:
+			score += 18
 		default:
 			return 0, false
 		}
@@ -415,6 +527,9 @@ func decodeMarkdownTemplate(path string, data []byte) (Template, bool) {
 				if strings.TrimSpace(meta.Profile) != "" {
 					t.Profile = meta.Profile
 				}
+				if strings.TrimSpace(meta.Role) != "" {
+					t.Role = meta.Role
+				}
 				if strings.TrimSpace(meta.Description) != "" {
 					t.Description = meta.Description
 				}
@@ -451,32 +566,59 @@ func fallbackTemplateID(path string) string {
 
 func DetectTask(query string) string {
 	q := strings.ToLower(" " + strings.TrimSpace(query) + " ")
+	qFolded := " " + foldSearchText(strings.TrimSpace(query)) + " "
 	has := func(words ...string) bool {
 		for _, w := range words {
-			if strings.Contains(q, " "+strings.ToLower(w)+" ") {
+			key := strings.ToLower(strings.TrimSpace(w))
+			if key == "" {
+				continue
+			}
+			if strings.Contains(q, " "+key+" ") || strings.Contains(qFolded, " "+foldSearchText(key)+" ") {
 				return true
 			}
 		}
 		return false
 	}
 	switch {
-	case has("security", "audit", "vuln", "vulnerability", "xss", "sqli", "güvenlik", "zaafiyet"):
+	case has("security", "audit", "vuln", "vulnerability", "xss", "sqli", "threat", "exploit"):
 		return "security"
-	case has("review", "code review", "incele", "inceleme"):
+	case has("review", "code review", "inspect", "analysis"):
 		return "review"
 	case has("refactor", "cleanup", "restructure"):
 		return "refactor"
 	case has("test", "tests", "unit test", "integration test"):
 		return "test"
-	case has("doc", "docs", "documentation", "belgele"):
+	case has("doc", "docs", "documentation", "document"):
 		return "doc"
-	case has("plan", "planning", "roadmap", "phase", "sprint", "adım", "adim"):
+	case has("plan", "planning", "roadmap", "phase", "sprint", "step-by-step"):
 		return "planning"
-	case has("bug", "fix", "error", "exception", "panic", "hata", "debug"):
+	case has("bug", "fix", "error", "exception", "panic", "debug", "traceback"):
 		return "debug"
 	default:
 		return "general"
 	}
+}
+
+func foldSearchText(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		switch r {
+		case 0x131, 0x130:
+			r = 'i'
+		case 0x11f, 0x11e:
+			r = 'g'
+		case 0x15f, 0x15e:
+			r = 's'
+		case 0xfc, 0xdc:
+			r = 'u'
+		case 0xf6, 0xd6:
+			r = 'o'
+		case 0xe7, 0xc7:
+			r = 'c'
+		}
+		b.WriteRune(r)
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 func InferLanguage(query string, chunks []types.ContextChunk) string {

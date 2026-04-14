@@ -307,6 +307,10 @@ func TestRunRemotePromptLifecycle(t *testing.T) {
 		switch {
 		case r.URL.Path == "/api/v1/prompts" && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`{"prompts":[{"id":"system.base","type":"system","task":"general"}]}`))
+		case r.URL.Path == "/api/v1/prompts/recommend" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"query":"auth audit","recommendation":{"task":"security","profile":"deep","prompt_budget_tokens":1200}}`))
+		case r.URL.Path == "/api/v1/prompts/stats" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"template_count":12,"warning_count":0,"max_template_tokens":450}`))
 		case r.URL.Path == "/api/v1/prompts/render" && r.Method == http.MethodPost:
 			_, _ = w.Write([]byte(`{"type":"system","task":"security","language":"go","prompt":"SECURITY PROMPT"}`))
 		default:
@@ -319,6 +323,320 @@ func TestRunRemotePromptLifecycle(t *testing.T) {
 	cases := [][]string{
 		{"prompt", "list", "--url", ts.URL},
 		{"prompt", "render", "--url", ts.URL, "--task", "security", "--query", "auth audit"},
+		{"prompt", "recommend", "--url", ts.URL, "--query", "auth audit"},
+		{"prompt", "stats", "--url", ts.URL, "--max-template-tokens", "450"},
+	}
+	for _, args := range cases {
+		if code := runRemote(context.Background(), eng, args, true); code != 0 {
+			t.Fatalf("runRemote %v exit=%d", args, code)
+		}
+	}
+}
+
+func TestRunRemotePromptStatsFailOnWarning(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/prompts/stats" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"template_count":12,"warning_count":2,"max_template_tokens":450}`))
+	}))
+	defer ts.Close()
+
+	args := []string{"prompt", "stats", "--url", ts.URL, "--fail-on-warning"}
+	if code := runRemote(context.Background(), eng, args, true); code != 1 {
+		t.Fatalf("expected fail-on-warning exit=1, got %d", code)
+	}
+}
+
+func TestRunRemotePromptRenderWithRuntimeOverrides(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/prompts/render" || r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"bad request"}`))
+			return
+		}
+		if req["runtime_tool_style"] != "function-calling" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_tool_style missing"}`))
+			return
+		}
+		if req["runtime_max_context"] != float64(1000) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_max_context missing"}`))
+			return
+		}
+		if req["role"] != "security_auditor" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"role missing"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"type":"system","task":"security","language":"go","prompt":"SECURITY PROMPT"}`))
+	}))
+	defer ts.Close()
+
+	args := []string{
+		"prompt", "render", "--url", ts.URL, "--task", "security", "--query", "auth audit",
+		"--role", "security_auditor",
+		"--runtime-tool-style", "function-calling",
+		"--runtime-max-context", "1000",
+	}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
+func TestRunRemotePromptRecommendWithRuntimeOverrides(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/prompts/recommend" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if got := r.URL.Query().Get("runtime_tool_style"); got != "function-calling" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_tool_style missing"}`))
+			return
+		}
+		if got := r.URL.Query().Get("runtime_max_context"); got != "1000" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_max_context missing"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"query":"auth audit","recommendation":{"task":"security","profile":"compact","tool_style":"function-calling","max_context":1000}}`))
+	}))
+	defer ts.Close()
+
+	args := []string{
+		"prompt", "recommend", "--url", ts.URL, "--query", "auth audit",
+		"--runtime-tool-style", "function-calling",
+		"--runtime-max-context", "1000",
+	}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
+func TestRunRemoteContextBudget(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/context/budget" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if got := r.URL.Query().Get("q"); got != "security audit auth middleware" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"unexpected query"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"provider":"zai","model":"glm-5.1","task":"security","max_tokens_total":12000}`))
+	}))
+	defer ts.Close()
+
+	cases := [][]string{
+		{"context", "budget", "--url", ts.URL, "--query", "security audit auth middleware"},
+		{"context", "--url", ts.URL, "--query", "security audit auth middleware"},
+	}
+	for _, args := range cases {
+		if code := runRemote(context.Background(), eng, args, true); code != 0 {
+			t.Fatalf("runRemote %v exit=%d", args, code)
+		}
+	}
+}
+
+func TestRunRemoteContextRecommend(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/context/recommend" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if got := r.URL.Query().Get("q"); got != "debug [[file:internal/auth/service.go]]" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"unexpected query"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"query":"debug [[file:internal/auth/service.go]]","preview":{"task":"debug"},"recommendations":[{"severity":"info","code":"balanced_budget","message":"ok"}]}`))
+	}))
+	defer ts.Close()
+
+	args := []string{"context", "recommend", "--url", ts.URL, "--query", "debug [[file:internal/auth/service.go]]"}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
+func TestRunRemoteContextBudgetWithRuntimeOverrides(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/context/budget" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if got := r.URL.Query().Get("runtime_tool_style"); got != "function-calling" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_tool_style missing"}`))
+			return
+		}
+		if got := r.URL.Query().Get("runtime_max_context"); got != "1000" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_max_context missing"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"provider":"zai","model":"glm-5.1","task":"security","provider_max_context":1000,"max_tokens_total":512}`))
+	}))
+	defer ts.Close()
+
+	args := []string{
+		"context", "budget", "--url", ts.URL, "--query", "security audit auth middleware",
+		"--runtime-tool-style", "function-calling",
+		"--runtime-max-context", "1000",
+	}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
+func TestRunRemoteContextRecommendWithRuntimeOverrides(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/context/recommend" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if got := r.URL.Query().Get("runtime_tool_style"); got != "function-calling" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_tool_style missing"}`))
+			return
+		}
+		if got := r.URL.Query().Get("runtime_max_context"); got != "1000" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_max_context missing"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"query":"debug [[file:internal/auth/service.go]]","preview":{"task":"debug","provider_max_context":1000},"recommendations":[{"severity":"warn","code":"near_context_cap","message":"tight budget"}]}`))
+	}))
+	defer ts.Close()
+
+	args := []string{
+		"context", "recommend", "--url", ts.URL, "--query", "debug [[file:internal/auth/service.go]]",
+		"--runtime-tool-style", "function-calling",
+		"--runtime-max-context", "1000",
+	}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
+func TestRunRemoteContextBrief(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/context/brief" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if got := r.URL.Query().Get("max_words"); got != "180" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"unexpected max_words"}`))
+			return
+		}
+		if got := r.URL.Query().Get("path"); got != "docs/BRIEF.md" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"unexpected path"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"path":"docs/BRIEF.md","exists":true,"max_words":180,"word_count":12,"brief":"Context brief line"}`))
+	}))
+	defer ts.Close()
+
+	args := []string{"context", "brief", "--url", ts.URL, "--max-words", "180", "--path", "docs/BRIEF.md"}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
+func TestRunRemoteAnalyzeWithMagicDoc(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/analyze" || r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"bad request"}`))
+			return
+		}
+		if req["magicdoc"] != true {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"magicdoc flag missing"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"report":{"files":12},"magicdoc":{"status":"ok","updated":true}}`))
+	}))
+	defer ts.Close()
+
+	args := []string{"analyze", "--url", ts.URL, "--full", "--magicdoc", "--magicdoc-title", "Remote Analyze Brief"}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
+func TestRunRemoteMagicDocLifecycle(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/magicdoc" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"path":".dfmc/magic/MAGIC_DOC.md","exists":true,"content":"# MAGIC DOC: X"}`))
+		case r.URL.Path == "/api/v1/magicdoc/update" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"status":"ok","path":".dfmc/magic/MAGIC_DOC.md","updated":true,"bytes":1200}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		}
+	}))
+	defer ts.Close()
+
+	cases := [][]string{
+		{"magicdoc", "show", "--url", ts.URL},
+		{"magicdoc", "update", "--url", ts.URL, "--title", "Remote Brief"},
 	}
 	for _, args := range cases {
 		if code := runRemote(context.Background(), eng, args, true); code != 0 {
