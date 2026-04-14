@@ -2039,6 +2039,26 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			}
 			_ = printJSON(payload)
 			return 0
+		case "recommend", "recommendations":
+			q := strings.TrimSpace(*query)
+			if q == "" && len(fs.Args()) > 0 {
+				q = strings.TrimSpace(strings.Join(fs.Args(), " "))
+			}
+			v := url.Values{}
+			if q != "" {
+				v.Set("q", q)
+			}
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/context/recommend"
+			if encoded := v.Encode(); encoded != "" {
+				endpoint += "?" + encoded
+			}
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote context recommend error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
 		case "brief":
 			v := url.Values{}
 			if *maxWords > 0 {
@@ -2059,7 +2079,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			_ = printJSON(payload)
 			return 0
 		default:
-			fmt.Fprintln(os.Stderr, "usage: dfmc remote context [budget --query \"...\"]|[brief --max-words 240 --path ...] [--url ...] [--token ...]")
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote context [budget --query \"...\"]|[recommend --query \"...\"]|[brief --max-words 240 --path ...] [--url ...] [--token ...]")
 			return 2
 		}
 
@@ -5096,6 +5116,38 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		)
 		return 0
 
+	case "recommend", "recommendations":
+		fs := flag.NewFlagSet("context recommend", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		query := fs.String("query", "", "query for context tuning recommendations")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if strings.TrimSpace(*query) == "" && len(fs.Args()) > 0 {
+			*query = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		}
+		preview := eng.ContextBudgetPreview(*query)
+		recs := eng.ContextRecommendations(*query)
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"query":           strings.TrimSpace(*query),
+				"preview":         preview,
+				"recommendations": recs,
+			})
+			return 0
+		}
+		fmt.Printf("context recommend: task=%s mentions=%d available=%d total=%d reserve=%d\n",
+			preview.Task,
+			preview.ExplicitFileMentions,
+			preview.ContextAvailableTokens,
+			preview.MaxTokensTotal,
+			preview.ReserveTotalTokens,
+		)
+		for _, rec := range recs {
+			fmt.Printf("- [%s] %s: %s\n", strings.ToUpper(rec.Severity), rec.Code, rec.Message)
+		}
+		return 0
+
 	case "recent", "files":
 		w := eng.MemoryWorking()
 		if jsonMode {
@@ -5158,7 +5210,7 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc context [budget --query \"...\"]|[recent]|[brief --max-words 240 --path ...]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc context [budget --query \"...\"]|[recommend --query \"...\"]|[recent]|[brief --max-words 240 --path ...]")
 		return 2
 	}
 }

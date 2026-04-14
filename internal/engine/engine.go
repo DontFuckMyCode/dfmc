@@ -93,6 +93,12 @@ type ContextBudgetInfo struct {
 	IncludeDocs      bool   `json:"include_docs"`
 }
 
+type ContextRecommendation struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+}
+
 type AnalyzeReport struct {
 	ProjectRoot string            `json:"project_root"`
 	Files       int               `json:"files"`
@@ -293,6 +299,44 @@ func (e *Engine) ContextBudgetPreview(question string) ContextBudgetInfo {
 		IncludeTests:           opts.IncludeTests,
 		IncludeDocs:            opts.IncludeDocs,
 	}
+}
+
+func (e *Engine) ContextRecommendations(question string) []ContextRecommendation {
+	preview := e.ContextBudgetPreview(question)
+	recs := make([]ContextRecommendation, 0, 6)
+	add := func(severity, code, message string) {
+		recs = append(recs, ContextRecommendation{
+			Severity: strings.TrimSpace(strings.ToLower(severity)),
+			Code:     strings.TrimSpace(strings.ToLower(code)),
+			Message:  strings.TrimSpace(message),
+		})
+	}
+
+	available := preview.ContextAvailableTokens
+	if available <= 0 {
+		available = minContextTotalBudgetTokens
+	}
+	utilization := float64(preview.MaxTokensTotal) / float64(available)
+
+	if utilization >= 0.92 {
+		add("warn", "near_context_cap", "Context budget is near provider limit. Reduce max_files, lower max_tokens_per_file, or use [[file:...]] markers.")
+	}
+	if preview.ReserveHistoryTokens > available/3 {
+		add("warn", "history_reserve_high", "History reserve is large relative to available context. Lower context.max_history_tokens for deeper code context.")
+	}
+	if preview.ExplicitFileMentions == 0 {
+		add("info", "use_file_markers", "No explicit file markers detected. Add [[file:path#Lx-Ly]] to focus retrieval and reduce token waste.")
+	}
+	if (preview.Task == "security" || preview.Task == "review" || preview.Task == "debug") && preview.MaxTokensPerFile < 320 {
+		add("warn", "shallow_file_slices", "Per-file token budget is shallow for this task type. Consider increasing context.max_tokens_per_file.")
+	}
+	if (preview.Task == "security" || preview.Task == "review") && utilization < 0.55 {
+		add("info", "headroom_available", "There is context headroom for deeper inspection. You can increase context.max_tokens_total for richer evidence.")
+	}
+	if len(recs) == 0 {
+		add("info", "balanced_budget", "Current context budget looks balanced for this query.")
+	}
+	return recs
 }
 
 func (e *Engine) SetProviderModel(provider, model string) {

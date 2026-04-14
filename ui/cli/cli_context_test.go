@@ -17,6 +17,10 @@ func TestRunContextBudgetAndRecent(t *testing.T) {
 	if code := runContext(context.Background(), eng, []string{"recent"}, true); code != 0 {
 		t.Fatalf("context recent exit=%d", code)
 	}
+
+	if code := runContext(context.Background(), eng, []string{"recommend", "--query", "debug [[file:internal/auth/service.go]]"}, true); code != 0 {
+		t.Fatalf("context recommend exit=%d", code)
+	}
 }
 
 func TestRunContextBrief(t *testing.T) {

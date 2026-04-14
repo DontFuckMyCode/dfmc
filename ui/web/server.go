@@ -101,6 +101,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("POST /api/v1/chat", s.handleChat)
 	s.mux.HandleFunc("GET /api/v1/codemap", s.handleCodeMap)
 	s.mux.HandleFunc("GET /api/v1/context/budget", s.handleContextBudget)
+	s.mux.HandleFunc("GET /api/v1/context/recommend", s.handleContextRecommend)
 	s.mux.HandleFunc("GET /api/v1/context/brief", s.handleContextBrief)
 	s.mux.HandleFunc("GET /api/v1/providers", s.handleProviders)
 	s.mux.HandleFunc("GET /api/v1/skills", s.handleSkills)
@@ -177,6 +178,17 @@ func (s *Server) handleContextBudget(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	preview := s.engine.ContextBudgetPreview(query)
 	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) handleContextRecommend(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	preview := s.engine.ContextBudgetPreview(query)
+	recs := s.engine.ContextRecommendations(query)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"query":           query,
+		"preview":         preview,
+		"recommendations": recs,
+	})
 }
 
 func (s *Server) handleContextBrief(w http.ResponseWriter, r *http.Request) {

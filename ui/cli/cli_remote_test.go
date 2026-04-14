@@ -380,6 +380,31 @@ func TestRunRemoteContextBudget(t *testing.T) {
 	}
 }
 
+func TestRunRemoteContextRecommend(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/context/recommend" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if got := r.URL.Query().Get("q"); got != "debug [[file:internal/auth/service.go]]" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"unexpected query"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"query":"debug [[file:internal/auth/service.go]]","preview":{"task":"debug"},"recommendations":[{"severity":"info","code":"balanced_budget","message":"ok"}]}`))
+	}))
+	defer ts.Close()
+
+	args := []string{"context", "recommend", "--url", ts.URL, "--query", "debug [[file:internal/auth/service.go]]"}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
 func TestRunRemoteContextBrief(t *testing.T) {
 	eng := newCLITestEngine(t)
 

@@ -177,3 +177,22 @@ func TestContextBuildOptions_ExplicitFileMentionsFocusScope(t *testing.T) {
 		t.Fatalf("expected explicit file mentions=2, got %d", preview.ExplicitFileMentions)
 	}
 }
+
+func TestContextRecommendations_AlwaysReturnsGuidance(t *testing.T) {
+	cfg := config.DefaultConfig()
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{Config: cfg, Providers: router}
+
+	recs := eng.ContextRecommendations("security audit auth middleware")
+	if len(recs) == 0 {
+		t.Fatal("expected at least one recommendation")
+	}
+	for _, rec := range recs {
+		if rec.Code == "" || rec.Message == "" {
+			t.Fatalf("invalid recommendation: %#v", rec)
+		}
+	}
+}

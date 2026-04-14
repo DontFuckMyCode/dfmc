@@ -121,6 +121,7 @@ Endpoints:
 - `POST /api/v1/chat` (SSE)
 - `GET /api/v1/codemap`
 - `GET /api/v1/context/budget?q=...`
+- `GET /api/v1/context/recommend?q=...`
 - `GET /api/v1/context/brief?max_words=...&path=...`
 - `POST /api/v1/analyze`
 - `GET /api/v1/providers`
@@ -156,6 +157,7 @@ go run ./cmd/dfmc config get providers.primary
 go run ./cmd/dfmc config set context.include_tests true
 go run ./cmd/dfmc config edit
 go run ./cmd/dfmc context budget --query "security audit auth middleware"
+go run ./cmd/dfmc context recommend --query "debug [[file:internal/auth/service.go]]"
 go run ./cmd/dfmc context recent
 go run ./cmd/dfmc context brief --max-words 240
 go run ./cmd/dfmc context brief --path docs/BRIEF.md --max-words 180
@@ -220,6 +222,7 @@ go run ./cmd/dfmc remote prompt stats --url http://127.0.0.1:7779 --max-template
 go run ./cmd/dfmc remote magicdoc show --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote magicdoc update --url http://127.0.0.1:7779 --title "Remote Brief"
 go run ./cmd/dfmc remote context budget --url http://127.0.0.1:7779 --query "security audit auth middleware"
+go run ./cmd/dfmc remote context recommend --url http://127.0.0.1:7779 --query "debug [[file:internal/auth/service.go]]"
 go run ./cmd/dfmc remote context brief --url http://127.0.0.1:7779 --max-words 240 --path docs/BRIEF.md
 go run ./cmd/dfmc remote tool read_file --url http://127.0.0.1:7779 --param path=README.md --param line_start=1 --param line_end=5
 go run ./cmd/dfmc remote skill review --url http://127.0.0.1:7779 --input "auth katmanini incele"

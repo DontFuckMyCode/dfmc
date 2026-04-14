@@ -209,6 +209,33 @@ func TestContextBudgetEndpoint(t *testing.T) {
 	}
 }
 
+func TestContextRecommendEndpoint(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/context/recommend?q=debug+%5B%5Bfile%3Ainternal%2Fauth%2Fservice.go%5D%5D")
+	if err != nil {
+		t.Fatalf("get context recommend: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if _, ok := payload["preview"]; !ok {
+		t.Fatalf("missing preview field: %#v", payload)
+	}
+	recs, ok := payload["recommendations"].([]any)
+	if !ok || len(recs) == 0 {
+		t.Fatalf("expected non-empty recommendations, got: %#v", payload["recommendations"])
+	}
+}
+
 func TestContextBriefEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	root := t.TempDir()
