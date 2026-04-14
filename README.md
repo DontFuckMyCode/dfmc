@@ -73,6 +73,12 @@ If provider API keys are not configured, DFMC automatically uses offline mode wi
 go run ./cmd/dfmc chat
 ```
 
+Chat slash commands:
+- `/help`, `/exit`, `/clear`, `/save`, `/load <id>`, `/history [limit]`
+- `/provider [name]`, `/model [name]`
+- `/branch [name]`, `/branch list`, `/branch create <name>`, `/branch switch <name>`, `/branch compare <a> <b>`
+- `/context show`, `/memory`, `/tools`, `/skills`, `/diff`, `/undo`, `/run <skill> [input]`, `/cost`
+
 ### 4) Analyze codebase
 
 ```bash
@@ -118,6 +124,16 @@ Endpoints:
 - `GET /api/v1/skills`
 - `POST /api/v1/skills/:name`
 - `GET /api/v1/memory`
+- `GET /api/v1/conversation`
+- `POST /api/v1/conversation/new`
+- `POST /api/v1/conversation/save`
+- `POST /api/v1/conversation/load`
+- `GET /api/v1/conversation/branches`
+- `POST /api/v1/conversation/branches/create`
+- `POST /api/v1/conversation/branches/switch`
+- `GET /api/v1/conversation/branches/compare?a=...&b=...`
+- `GET /api/v1/conversations`
+- `GET /api/v1/conversations/search?q=...`
 - `GET /api/v1/files`
 - `GET /api/v1/files/:path`
 - `GET /ws` (event stream, SSE)
@@ -142,6 +158,14 @@ go run ./cmd/dfmc memory clear --tier semantic
 
 go run ./cmd/dfmc conversation list
 go run ./cmd/dfmc conversation search middleware
+go run ./cmd/dfmc conversation active
+go run ./cmd/dfmc conversation save
+go run ./cmd/dfmc conversation undo
+go run ./cmd/dfmc conversation load conv_20260414_101500.123
+go run ./cmd/dfmc conversation branch list
+go run ./cmd/dfmc conversation branch create experiment
+go run ./cmd/dfmc conversation branch switch experiment
+go run ./cmd/dfmc conversation branch compare main experiment
 ```
 
 ### 8) Use skills and plugin controls
@@ -170,11 +194,30 @@ Note: global flags must come before the command (`dfmc --provider ... review ...
 
 ```bash
 go run ./cmd/dfmc remote status
+go run ./cmd/dfmc remote status --live --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote probe --url http://127.0.0.1:7779
+go run ./cmd/dfmc remote events --url http://127.0.0.1:7779 --type "*" --timeout 10s --max 20
 go run ./cmd/dfmc remote ask --url http://127.0.0.1:7779 --message "auth middleware'i acikla"
+go run ./cmd/dfmc remote tools --url http://127.0.0.1:7779
+go run ./cmd/dfmc remote skills --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote tool read_file --url http://127.0.0.1:7779 --param path=README.md --param line_start=1 --param line_end=5
 go run ./cmd/dfmc remote skill review --url http://127.0.0.1:7779 --input "auth katmanini incele"
 go run ./cmd/dfmc remote analyze --url http://127.0.0.1:7779 --full
+go run ./cmd/dfmc remote files list --url http://127.0.0.1:7779 --limit 100
+go run ./cmd/dfmc remote files get README.md --url http://127.0.0.1:7779
+go run ./cmd/dfmc remote memory working --url http://127.0.0.1:7779
+go run ./cmd/dfmc remote memory list --url http://127.0.0.1:7779 --tier semantic
+go run ./cmd/dfmc remote conversation list --url http://127.0.0.1:7779 --limit 20
+go run ./cmd/dfmc remote conversation search --url http://127.0.0.1:7779 --query "auth"
+go run ./cmd/dfmc remote conversation active --url http://127.0.0.1:7779
+go run ./cmd/dfmc remote conversation new --url http://127.0.0.1:7779
+go run ./cmd/dfmc remote conversation save --url http://127.0.0.1:7779
+go run ./cmd/dfmc remote conversation load --url http://127.0.0.1:7779 --id conv_20260414_101500.123
+go run ./cmd/dfmc remote conversation branch list --url http://127.0.0.1:7779
+go run ./cmd/dfmc remote conversation branch create --url http://127.0.0.1:7779 --name experiment
+go run ./cmd/dfmc remote conversation branch switch --url http://127.0.0.1:7779 --name experiment
+go run ./cmd/dfmc remote conversation branch compare --url http://127.0.0.1:7779 --a main --b experiment
+go run ./cmd/dfmc remote codemap --url http://127.0.0.1:7779 --format dot
 DFMC_REMOTE_TOKEN=change-me go run ./cmd/dfmc remote start --auth token --grpc-port 7778 --ws-port 7779
 ```
 
@@ -186,6 +229,22 @@ go run ./cmd/dfmc doctor --network --timeout 3s
 go run ./cmd/dfmc doctor --providers-only
 go run ./cmd/dfmc doctor --fix
 go run ./cmd/dfmc --json doctor
+```
+
+### 11) Generate shell completion
+
+```bash
+go run ./cmd/dfmc completion bash > dfmc.bash
+go run ./cmd/dfmc completion zsh > _dfmc
+go run ./cmd/dfmc completion fish > dfmc.fish
+go run ./cmd/dfmc completion powershell > dfmc.ps1
+```
+
+### 12) Generate man page
+
+```bash
+go run ./cmd/dfmc man --format man > dfmc.1
+go run ./cmd/dfmc man --format markdown > MANUAL.md
 ```
 
 ## Command Overview
@@ -212,6 +271,8 @@ Available:
 - `dfmc serve`
 - `dfmc remote`
 - `dfmc doctor`
+- `dfmc completion`
+- `dfmc man`
 
 Scaffolded (placeholder):
 - none

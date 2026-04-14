@@ -41,6 +41,16 @@ type Summary struct {
 	Model     string    `json:"model"`
 }
 
+type BranchComparison struct {
+	BranchA       string `json:"branch_a"`
+	BranchB       string `json:"branch_b"`
+	MessagesA     int    `json:"messages_a"`
+	MessagesB     int    `json:"messages_b"`
+	SharedPrefixN int    `json:"shared_prefix_count"`
+	OnlyA         int    `json:"only_a"`
+	OnlyB         int    `json:"only_b"`
+}
+
 type Manager struct {
 	mu      sync.RWMutex
 	store   *storage.Store
@@ -157,6 +167,67 @@ func (m *Manager) BranchList() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func (m *Manager) BranchCompare(branchA, branchB string) (BranchComparison, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.active == nil {
+		return BranchComparison{}, fmt.Errorf("no active conversation")
+	}
+	a := strings.TrimSpace(branchA)
+	b := strings.TrimSpace(branchB)
+	if a == "" || b == "" {
+		return BranchComparison{}, fmt.Errorf("both branch names are required")
+	}
+	msgsA, ok := m.active.Branches[a]
+	if !ok {
+		return BranchComparison{}, fmt.Errorf("branch not found: %s", a)
+	}
+	msgsB, ok := m.active.Branches[b]
+	if !ok {
+		return BranchComparison{}, fmt.Errorf("branch not found: %s", b)
+	}
+	shared := sharedPrefixLen(msgsA, msgsB)
+	return BranchComparison{
+		BranchA:       a,
+		BranchB:       b,
+		MessagesA:     len(msgsA),
+		MessagesB:     len(msgsB),
+		SharedPrefixN: shared,
+		OnlyA:         max(0, len(msgsA)-shared),
+		OnlyB:         max(0, len(msgsB)-shared),
+	}, nil
+}
+
+func (m *Manager) UndoLast() (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.active == nil {
+		return 0, fmt.Errorf("no active conversation")
+	}
+	msgs := m.active.Branches[m.active.Branch]
+	if len(msgs) == 0 {
+		return 0, nil
+	}
+
+	removed := 1
+	trimTo := len(msgs) - 1
+	if len(msgs) >= 2 {
+		last := msgs[len(msgs)-1]
+		prev := msgs[len(msgs)-2]
+		if prev.Role == types.RoleUser && last.Role == types.RoleAssistant {
+			removed = 2
+			trimTo = len(msgs) - 2
+		}
+	}
+	if trimTo < 0 {
+		trimTo = 0
+	}
+	next := make([]types.Message, trimTo)
+	copy(next, msgs[:trimTo])
+	m.active.Branches[m.active.Branch] = next
+	return removed, nil
 }
 
 func (m *Manager) SaveActive() error {
@@ -305,4 +376,21 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func sharedPrefixLen(a, b []types.Message) int {
+	n := min(len(a), len(b))
+	for i := 0; i < n; i++ {
+		if a[i].Role != b[i].Role || a[i].Content != b[i].Content {
+			return i
+		}
+	}
+	return n
 }

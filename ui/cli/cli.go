@@ -98,6 +98,10 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runRemote(ctx, eng, cmdArgs, opts.JSON)
 	case "doctor":
 		return runDoctor(ctx, eng, cmdArgs, opts.JSON)
+	case "completion":
+		return runCompletion(cmdArgs, opts.JSON)
+	case "man":
+		return runMan(cmdArgs, opts.JSON)
 	default:
 		if strings.HasPrefix(cmd, "-") {
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", cmd)
@@ -214,6 +218,231 @@ func runInit(jsonMode bool, projectOverride string) int {
 	return 0
 }
 
+func runCompletion(args []string, jsonMode bool) int {
+	fs := flag.NewFlagSet("completion", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	shell := fs.String("shell", "", "bash|zsh|fish|powershell")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*shell) == "" && len(fs.Args()) > 0 {
+		*shell = fs.Args()[0]
+	}
+	sh := strings.ToLower(strings.TrimSpace(*shell))
+	if sh == "" {
+		fmt.Fprintln(os.Stderr, "usage: dfmc completion [--shell bash|zsh|fish|powershell]")
+		return 2
+	}
+
+	commands := commandNames()
+	if jsonMode {
+		_ = printJSON(map[string]any{
+			"shell":    sh,
+			"commands": commands,
+		})
+		return 0
+	}
+
+	switch sh {
+	case "bash":
+		fmt.Print(completionBash(commands))
+	case "zsh":
+		fmt.Print(completionZsh(commands))
+	case "fish":
+		fmt.Print(completionFish(commands))
+	case "powershell", "pwsh":
+		fmt.Print(completionPowerShell(commands))
+	default:
+		fmt.Fprintf(os.Stderr, "unsupported shell: %s\n", sh)
+		return 2
+	}
+	return 0
+}
+
+type commandDoc struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func commandDocs() []commandDoc {
+	return []commandDoc{
+		{Name: "init", Description: "Initialize DFMC in project"},
+		{Name: "chat", Description: "Interactive chat session"},
+		{Name: "ask", Description: "One-shot question"},
+		{Name: "analyze", Description: "Analyze codebase"},
+		{Name: "scan", Description: "Quick security scan"},
+		{Name: "map", Description: "Generate/display codemap"},
+		{Name: "tool", Description: "Tool engine (list/run)"},
+		{Name: "conversation", Description: "Conversation management (list/search/load/save/undo/branch)"},
+		{Name: "memory", Description: "Memory management"},
+		{Name: "config", Description: "Configuration management"},
+		{Name: "plugin", Description: "Plugin management"},
+		{Name: "skill", Description: "Skill management"},
+		{Name: "serve", Description: "Start Web API server"},
+		{Name: "remote", Description: "Remote control server"},
+		{Name: "doctor", Description: "Environment and config health checks"},
+		{Name: "completion", Description: "Generate shell completion scripts"},
+		{Name: "man", Description: "Generate command manual page"},
+		{Name: "review", Description: "Code review shortcut"},
+		{Name: "explain", Description: "Explain code shortcut"},
+		{Name: "refactor", Description: "Refactor code shortcut"},
+		{Name: "test", Description: "Test generation shortcut"},
+		{Name: "doc", Description: "Documentation shortcut"},
+		{Name: "version", Description: "Version info"},
+		{Name: "help", Description: "Show help"},
+	}
+}
+
+func runMan(args []string, jsonMode bool) int {
+	fs := flag.NewFlagSet("man", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	format := fs.String("format", "man", "man|markdown")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	docs := commandDocs()
+	if jsonMode {
+		_ = printJSON(map[string]any{
+			"format":   strings.ToLower(strings.TrimSpace(*format)),
+			"commands": docs,
+		})
+		return 0
+	}
+
+	switch strings.ToLower(strings.TrimSpace(*format)) {
+	case "markdown", "md":
+		fmt.Print(renderManMarkdown(docs))
+	case "man", "roff":
+		fmt.Print(renderManRoff(docs))
+	default:
+		fmt.Fprintf(os.Stderr, "unsupported man format: %s\n", *format)
+		return 2
+	}
+	return 0
+}
+
+func renderManMarkdown(docs []commandDoc) string {
+	var b strings.Builder
+	b.WriteString("# dfmc(1)\n\n")
+	b.WriteString("Don't Fuck My Code command line interface.\n\n")
+	b.WriteString("## Usage\n\n")
+	b.WriteString("`dfmc [global flags] <command> [args]`\n\n")
+	b.WriteString("## Commands\n\n")
+	for _, d := range docs {
+		fmt.Fprintf(&b, "- `%s`: %s\n", d.Name, d.Description)
+	}
+	b.WriteString("\n## Global Flags\n\n")
+	b.WriteString("- `--provider`: LLM provider override\n")
+	b.WriteString("- `--model`: model override\n")
+	b.WriteString("- `--profile`: config profile\n")
+	b.WriteString("- `--verbose`: verbose output\n")
+	b.WriteString("- `--json`: JSON output mode\n")
+	b.WriteString("- `--no-color`: disable colors\n")
+	b.WriteString("- `--project`: project root path\n")
+	return b.String()
+}
+
+func renderManRoff(docs []commandDoc) string {
+	var b strings.Builder
+	b.WriteString(".TH DFMC 1 \"DFMC\" \"dfmc\"\n")
+	b.WriteString(".SH NAME\n")
+	b.WriteString("dfmc \\- Don't Fuck My Code CLI\n")
+	b.WriteString(".SH SYNOPSIS\n")
+	b.WriteString(".B dfmc\n")
+	b.WriteString("[global flags] <command> [args]\n")
+	b.WriteString(".SH COMMANDS\n")
+	for _, d := range docs {
+		fmt.Fprintf(&b, ".TP\n.B %s\n%s\n", d.Name, d.Description)
+	}
+	b.WriteString(".SH GLOBAL FLAGS\n")
+	b.WriteString(".TP\n.B --provider\nLLM provider override\n")
+	b.WriteString(".TP\n.B --model\nModel override\n")
+	b.WriteString(".TP\n.B --profile\nConfig profile\n")
+	b.WriteString(".TP\n.B --verbose\nVerbose output\n")
+	b.WriteString(".TP\n.B --json\nJSON output mode\n")
+	b.WriteString(".TP\n.B --no-color\nDisable colors\n")
+	b.WriteString(".TP\n.B --project\nProject root path\n")
+	return b.String()
+}
+
+func commandNames() []string {
+	return []string{
+		"init",
+		"chat",
+		"ask",
+		"analyze",
+		"scan",
+		"map",
+		"tool",
+		"conversation",
+		"memory",
+		"config",
+		"plugin",
+		"skill",
+		"serve",
+		"remote",
+		"doctor",
+		"completion",
+		"man",
+		"review",
+		"explain",
+		"refactor",
+		"test",
+		"doc",
+		"version",
+		"help",
+	}
+}
+
+func completionBash(commands []string) string {
+	cmds := strings.Join(commands, " ")
+	return fmt.Sprintf(`# bash completion for dfmc
+_dfmc_completion() {
+  local cur
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  COMPREPLY=( $(compgen -W "%s" -- "$cur") )
+  return 0
+}
+complete -F _dfmc_completion dfmc
+`, cmds)
+}
+
+func completionZsh(commands []string) string {
+	cmds := strings.Join(commands, " ")
+	return fmt.Sprintf(`#compdef dfmc
+_dfmc_completion() {
+  local -a commands
+  commands=(%s)
+  _describe 'command' commands
+}
+compdef _dfmc_completion dfmc
+`, cmds)
+}
+
+func completionFish(commands []string) string {
+	var b strings.Builder
+	b.WriteString("# fish completion for dfmc\n")
+	b.WriteString("complete -c dfmc -f\n")
+	for _, cmd := range commands {
+		fmt.Fprintf(&b, "complete -c dfmc -n '__fish_use_subcommand' -a %s\n", cmd)
+	}
+	return b.String()
+}
+
+func completionPowerShell(commands []string) string {
+	cmds := strings.Join(commands, "', '")
+	return fmt.Sprintf(`# PowerShell completion for dfmc
+Register-ArgumentCompleter -Native -CommandName dfmc -ScriptBlock {
+  param($wordToComplete, $commandAst, $cursorPosition)
+  $commands = @('%s')
+  $commands | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+    [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+  }
+}
+`, cmds)
+}
+
 func runAsk(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
 	question := strings.TrimSpace(strings.Join(args, " "))
 	if question == "" {
@@ -240,17 +469,44 @@ func runAsk(ctx context.Context, eng *engine.Engine, args []string, jsonMode boo
 }
 
 func runChat(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
-	_ = args
+	fs := flag.NewFlagSet("chat", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	branch := fs.String("branch", "", "start/switch to branch name")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if eng.ConversationActive() == nil {
+		_ = eng.ConversationStart()
+	}
+	if b := strings.TrimSpace(*branch); b != "" {
+		if err := eng.ConversationBranchSwitch(b); err != nil {
+			if err2 := eng.ConversationBranchCreate(b); err2 != nil {
+				fmt.Fprintf(os.Stderr, "branch setup failed: %v\n", err)
+				return 1
+			}
+			if err2 := eng.ConversationBranchSwitch(b); err2 != nil {
+				fmt.Fprintf(os.Stderr, "branch switch failed: %v\n", err2)
+				return 1
+			}
+		}
+	}
+
 	if jsonMode {
+		active := eng.ConversationActive()
+		branchName := ""
+		if active != nil {
+			branchName = active.Branch
+		}
 		_ = printJSON(map[string]any{
 			"status": "chat_started",
 			"mode":   "basic_repl",
+			"branch": branchName,
 		})
 		return 0
 	}
 
 	fmt.Println("DFMC interactive chat (type /exit to quit)")
-	fmt.Println("Streaming responses are enabled when provider supports it.")
+	fmt.Println("Type /help for slash commands.")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -273,37 +529,17 @@ func runChat(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 		if line == "" {
 			continue
 		}
+		if strings.HasPrefix(line, "/") {
+			shouldExit, handled := runChatSlash(ctx, eng, line)
+			if handled {
+				if shouldExit {
+					return 0
+				}
+				continue
+			}
+		}
 		if line == "/exit" || line == "exit" || line == "quit" {
 			return 0
-		}
-		if line == "/save" {
-			if err := eng.ConversationSave(); err != nil {
-				fmt.Fprintf(os.Stderr, "save error: %v\n", err)
-			} else {
-				fmt.Println("conversation saved")
-			}
-			continue
-		}
-		if line == "/history" {
-			items, err := eng.ConversationList()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "history error: %v\n", err)
-			} else {
-				for i, item := range items {
-					if i >= 10 {
-						break
-					}
-					fmt.Printf("- %s (%d messages)\n", item.ID, item.MessageN)
-				}
-			}
-			continue
-		}
-		if line == "/memory" {
-			w := eng.MemoryWorking()
-			fmt.Printf("last question: %s\n", w.LastQuestion)
-			fmt.Printf("last answer: %s\n", truncateLine(w.LastAnswer, 120))
-			fmt.Printf("recent files: %d\n", len(w.RecentFiles))
-			continue
 		}
 		stream, err := eng.StreamAsk(ctx, line)
 		if err != nil {
@@ -331,6 +567,364 @@ func runChat(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 			fmt.Println()
 		}
 	}
+}
+
+func runChatSlash(ctx context.Context, eng *engine.Engine, line string) (exit bool, handled bool) {
+	parts := strings.Fields(strings.TrimSpace(line))
+	if len(parts) == 0 {
+		return false, false
+	}
+	cmd := strings.ToLower(parts[0])
+	args := parts[1:]
+
+	switch cmd {
+	case "/help":
+		printChatHelp()
+		return false, true
+
+	case "/exit":
+		return true, true
+
+	case "/clear":
+		conv := eng.ConversationStart()
+		if conv == nil {
+			fmt.Fprintln(os.Stderr, "unable to create conversation")
+			return false, true
+		}
+		fmt.Printf("Started new conversation: %s\n", conv.ID)
+		return false, true
+
+	case "/save":
+		if err := eng.ConversationSave(); err != nil {
+			fmt.Fprintf(os.Stderr, "save error: %v\n", err)
+		} else {
+			fmt.Println("conversation saved")
+		}
+		return false, true
+
+	case "/load":
+		if len(args) < 1 {
+			fmt.Fprintln(os.Stderr, "usage: /load <conversation-id>")
+			return false, true
+		}
+		conv, err := eng.ConversationLoad(args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "load error: %v\n", err)
+			return false, true
+		}
+		fmt.Printf("Loaded conversation %s (%d messages)\n", conv.ID, len(conv.Messages()))
+		return false, true
+
+	case "/history":
+		limit := 10
+		if len(args) > 0 {
+			if n, err := strconv.Atoi(args[0]); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		items, err := eng.ConversationList()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "history error: %v\n", err)
+			return false, true
+		}
+		for i, item := range items {
+			if i >= limit {
+				break
+			}
+			fmt.Printf("- %s (%d messages)\n", item.ID, item.MessageN)
+		}
+		return false, true
+
+	case "/memory":
+		w := eng.MemoryWorking()
+		fmt.Printf("last question: %s\n", w.LastQuestion)
+		fmt.Printf("last answer: %s\n", truncateLine(w.LastAnswer, 120))
+		fmt.Printf("recent files: %d\n", len(w.RecentFiles))
+		return false, true
+
+	case "/provider":
+		if len(args) == 0 {
+			st := eng.Status()
+			fmt.Printf("provider=%s model=%s\n", st.Provider, st.Model)
+			return false, true
+		}
+		eng.SetProviderModel(strings.TrimSpace(args[0]), "")
+		st := eng.Status()
+		fmt.Printf("provider set to %s (model=%s)\n", st.Provider, st.Model)
+		return false, true
+
+	case "/model":
+		if len(args) == 0 {
+			st := eng.Status()
+			fmt.Printf("provider=%s model=%s\n", st.Provider, st.Model)
+			return false, true
+		}
+		st := eng.Status()
+		eng.SetProviderModel(st.Provider, strings.TrimSpace(args[0]))
+		st = eng.Status()
+		fmt.Printf("model set to %s (provider=%s)\n", st.Model, st.Provider)
+		return false, true
+
+	case "/branch":
+		if eng.ConversationActive() == nil {
+			_ = eng.ConversationStart()
+		}
+		if len(args) == 0 {
+			active := eng.ConversationActive()
+			fmt.Printf("current branch: %s\n", active.Branch)
+			for _, name := range eng.ConversationBranchList() {
+				fmt.Printf("- %s\n", name)
+			}
+			return false, true
+		}
+		action := strings.ToLower(strings.TrimSpace(args[0]))
+		switch action {
+		case "list":
+			for _, name := range eng.ConversationBranchList() {
+				fmt.Printf("- %s\n", name)
+			}
+			return false, true
+		case "create":
+			if len(args) < 2 {
+				fmt.Fprintln(os.Stderr, "usage: /branch create <name>")
+				return false, true
+			}
+			name := strings.TrimSpace(args[1])
+			if err := eng.ConversationBranchCreate(name); err != nil {
+				fmt.Fprintf(os.Stderr, "branch create error: %v\n", err)
+				return false, true
+			}
+			fmt.Printf("branch created: %s\n", name)
+			return false, true
+		case "switch":
+			if len(args) < 2 {
+				fmt.Fprintln(os.Stderr, "usage: /branch switch <name>")
+				return false, true
+			}
+			name := strings.TrimSpace(args[1])
+			if err := eng.ConversationBranchSwitch(name); err != nil {
+				fmt.Fprintf(os.Stderr, "branch switch error: %v\n", err)
+				return false, true
+			}
+			fmt.Printf("switched branch: %s\n", name)
+			return false, true
+		case "compare":
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "usage: /branch compare <branch-a> <branch-b>")
+				return false, true
+			}
+			comp, err := eng.ConversationBranchCompare(args[1], args[2])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "branch compare error: %v\n", err)
+				return false, true
+			}
+			fmt.Printf("%s vs %s: shared=%d only_%s=%d only_%s=%d\n",
+				comp.BranchA, comp.BranchB, comp.SharedPrefixN, comp.BranchA, comp.OnlyA, comp.BranchB, comp.OnlyB)
+			return false, true
+		default:
+			// /branch <name> => switch if exists, otherwise create+switch
+			name := strings.TrimSpace(args[0])
+			if err := eng.ConversationBranchSwitch(name); err == nil {
+				fmt.Printf("switched branch: %s\n", name)
+				return false, true
+			}
+			if err := eng.ConversationBranchCreate(name); err != nil {
+				fmt.Fprintf(os.Stderr, "branch error: %v\n", err)
+				return false, true
+			}
+			if err := eng.ConversationBranchSwitch(name); err != nil {
+				fmt.Fprintf(os.Stderr, "branch switch error: %v\n", err)
+				return false, true
+			}
+			fmt.Printf("created and switched branch: %s\n", name)
+			return false, true
+		}
+
+	case "/tools":
+		for _, t := range eng.ListTools() {
+			fmt.Printf("- %s\n", t)
+		}
+		return false, true
+
+	case "/skills":
+		for _, s := range discoverSkills(eng.Status().ProjectRoot) {
+			source := s.Source
+			if s.Builtin {
+				source = "builtin"
+			}
+			fmt.Printf("- %s [%s]\n", s.Name, source)
+		}
+		return false, true
+
+	case "/context":
+		action := "show"
+		if len(args) > 0 {
+			action = strings.ToLower(strings.TrimSpace(args[0]))
+		}
+		switch action {
+		case "show":
+			w := eng.MemoryWorking()
+			if len(w.RecentFiles) == 0 {
+				fmt.Println("context: no recent files yet")
+				return false, true
+			}
+			fmt.Println("recent context files:")
+			for _, f := range w.RecentFiles {
+				fmt.Printf("- %s\n", f)
+			}
+		case "add", "rm", "remove":
+			fmt.Println("context add/remove is not available in this REPL yet")
+		default:
+			fmt.Fprintln(os.Stderr, "usage: /context [show|add <file>|rm <file>]")
+		}
+		return false, true
+
+	case "/cost":
+		active := eng.ConversationActive()
+		if active == nil {
+			fmt.Println("no active conversation")
+			return false, true
+		}
+		msgN, userN, assistantN, tokenN := summarizeMessageUsage(active.Messages())
+		usd := estimateConversationCostUSD(strings.ToLower(strings.TrimSpace(active.Provider)), tokenN)
+		fmt.Printf("messages=%d user=%d assistant=%d tokens=%d", msgN, userN, assistantN, tokenN)
+		if usd >= 0 {
+			fmt.Printf(" approx_cost=$%.6f", usd)
+		}
+		fmt.Println()
+		return false, true
+
+	case "/diff":
+		diff, err := gitWorkingDiff(eng.Status().ProjectRoot, 200_000)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "diff error: %v\n", err)
+			return false, true
+		}
+		if strings.TrimSpace(diff) == "" {
+			fmt.Println("working tree is clean")
+			return false, true
+		}
+		fmt.Print(diff)
+		if !strings.HasSuffix(diff, "\n") {
+			fmt.Println()
+		}
+		return false, true
+
+	case "/undo":
+		removed, err := eng.ConversationUndoLast()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "undo error: %v\n", err)
+			return false, true
+		}
+		fmt.Printf("undone messages: %d\n", removed)
+		return false, true
+
+	case "/apply":
+		fmt.Println("apply is not implemented in this REPL yet")
+		return false, true
+
+	case "/run":
+		if len(args) < 1 {
+			fmt.Fprintln(os.Stderr, "usage: /run <skill> [input]")
+			return false, true
+		}
+		name := strings.TrimSpace(args[0])
+		input := strings.TrimSpace(strings.Join(args[1:], " "))
+		if input == "" {
+			input = "Analyze the current project."
+		}
+		_ = runNamedSkill(ctx, eng, name, input, false)
+		return false, true
+	}
+
+	return false, false
+}
+
+func printChatHelp() {
+	fmt.Println(`Chat slash commands:
+  /help                         Show this help
+  /exit                         Exit chat
+  /clear                        Start a new conversation
+  /save                         Save active conversation
+  /load <id>                    Load conversation by id
+  /history [limit]              List saved conversations
+  /provider [name]              Show/set provider
+  /model [name]                 Show/set model
+  /branch [name]                Switch/create branch
+  /branch list                  List branches
+  /branch create <name>         Create branch
+  /branch switch <name>         Switch branch
+  /branch compare <a> <b>       Compare branches
+  /context [show]               Show recent context files
+  /memory                       Show working memory snapshot
+  /tools                        List tools
+  /skills                       List skills
+  /diff                         Show working tree diff
+  /undo                         Undo last conversation exchange
+  /apply                        Reserved for future patch apply flow
+  /run <skill> [input]          Run skill
+  /cost                         Show token/cost summary`)
+}
+
+func summarizeMessageUsage(msgs []types.Message) (messages int, users int, assistants int, tokens int) {
+	for _, msg := range msgs {
+		messages++
+		switch msg.Role {
+		case types.RoleUser:
+			users++
+		case types.RoleAssistant:
+			assistants++
+		}
+		if msg.TokenCnt > 0 {
+			tokens += msg.TokenCnt
+			continue
+		}
+		// Fallback estimate for historic messages without explicit token count.
+		tokens += len(strings.Fields(msg.Content))
+	}
+	return messages, users, assistants, tokens
+}
+
+func estimateConversationCostUSD(provider string, totalTokens int) float64 {
+	if totalTokens <= 0 {
+		return 0
+	}
+	blendedPerMillion := map[string]float64{
+		"anthropic": 9.0,
+		"openai":    6.25,
+		"google":    7.0,
+		"deepseek":  0.35,
+		"kimi":      1.8,
+		"minimax":   0.75,
+		"zai":       2.1,
+		"alibaba":   2.0,
+	}
+	rate, ok := blendedPerMillion[provider]
+	if !ok {
+		return -1
+	}
+	return (float64(totalTokens) / 1_000_000.0) * rate
+}
+
+func gitWorkingDiff(projectRoot string, maxBytes int64) (string, error) {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		root = "."
+	}
+	args := []string{"-C", root, "diff", "--"}
+	cmd := exec.Command("git", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		if ee := (&exec.ExitError{}); errors.As(err, &ee) {
+			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", err
+	}
+	if maxBytes > 0 && int64(len(out)) > maxBytes {
+		out = out[:maxBytes]
+		return string(out) + "\n... [truncated]\n", nil
+	}
+	return string(out), nil
 }
 
 func runPlaceholder(name string, jsonMode bool) int {
@@ -716,6 +1310,100 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 			fmt.Printf("- %s (%d messages)\n", item.ID, item.MessageN)
 		}
 		return 0
+
+	case "active":
+		active := eng.ConversationActive()
+		if active == nil {
+			if jsonMode {
+				_ = printJSON(map[string]any{"active": nil})
+				return 0
+			}
+			fmt.Println("No active conversation.")
+			return 0
+		}
+		payload := map[string]any{
+			"id":         active.ID,
+			"provider":   active.Provider,
+			"model":      active.Model,
+			"started_at": active.StartedAt,
+			"branch":     active.Branch,
+			"branches":   eng.ConversationBranchList(),
+			"messages":   len(active.Messages()),
+		}
+		if jsonMode {
+			_ = printJSON(payload)
+			return 0
+		}
+		fmt.Printf("ID:       %s\n", active.ID)
+		fmt.Printf("Provider: %s\n", active.Provider)
+		fmt.Printf("Model:    %s\n", active.Model)
+		fmt.Printf("Branch:   %s\n", active.Branch)
+		fmt.Printf("Messages: %d\n", len(active.Messages()))
+		return 0
+
+	case "new", "clear":
+		c := eng.ConversationStart()
+		if c == nil {
+			fmt.Fprintln(os.Stderr, "failed to start a new conversation")
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"status": "ok",
+				"id":     c.ID,
+				"branch": c.Branch,
+			})
+		} else {
+			fmt.Printf("Started new conversation: %s\n", c.ID)
+		}
+		return 0
+
+	case "save":
+		if err := eng.ConversationSave(); err != nil {
+			fmt.Fprintf(os.Stderr, "conversation save error: %v\n", err)
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{"status": "ok"})
+		} else {
+			fmt.Println("conversation saved")
+		}
+		return 0
+
+	case "undo":
+		n, err := eng.ConversationUndoLast()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "conversation undo error: %v\n", err)
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{"status": "ok", "removed": n})
+		} else {
+			fmt.Printf("undone messages: %d\n", n)
+		}
+		return 0
+
+	case "load":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc conversation load <id>")
+			return 2
+		}
+		c, err := eng.ConversationLoad(strings.TrimSpace(args[1]))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "conversation load error: %v\n", err)
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"id":       c.ID,
+				"branch":   c.Branch,
+				"messages": len(c.Messages()),
+			})
+		} else {
+			fmt.Printf("Loaded %s (%d messages)\n", c.ID, len(c.Messages()))
+		}
+		return 0
+
 	case "search":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: dfmc conversation search <query>")
@@ -735,8 +1423,83 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 			fmt.Printf("- %s (%d messages)\n", item.ID, item.MessageN)
 		}
 		return 0
+
+	case "branch":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc conversation branch [list|create|switch|compare]")
+			return 2
+		}
+		action := strings.ToLower(strings.TrimSpace(args[1]))
+		if eng.ConversationActive() == nil {
+			_ = eng.ConversationStart()
+		}
+		switch action {
+		case "list":
+			items := eng.ConversationBranchList()
+			if jsonMode {
+				_ = printJSON(map[string]any{"branches": items})
+			} else {
+				for _, name := range items {
+					fmt.Printf("- %s\n", name)
+				}
+			}
+			return 0
+		case "create":
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "usage: dfmc conversation branch create <name>")
+				return 2
+			}
+			name := strings.TrimSpace(args[2])
+			if err := eng.ConversationBranchCreate(name); err != nil {
+				fmt.Fprintf(os.Stderr, "branch create error: %v\n", err)
+				return 1
+			}
+			if jsonMode {
+				_ = printJSON(map[string]any{"status": "ok", "branch": name})
+			} else {
+				fmt.Printf("branch created: %s\n", name)
+			}
+			return 0
+		case "switch":
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "usage: dfmc conversation branch switch <name>")
+				return 2
+			}
+			name := strings.TrimSpace(args[2])
+			if err := eng.ConversationBranchSwitch(name); err != nil {
+				fmt.Fprintf(os.Stderr, "branch switch error: %v\n", err)
+				return 1
+			}
+			if jsonMode {
+				_ = printJSON(map[string]any{"status": "ok", "branch": name})
+			} else {
+				fmt.Printf("branch switched: %s\n", name)
+			}
+			return 0
+		case "compare":
+			if len(args) < 4 {
+				fmt.Fprintln(os.Stderr, "usage: dfmc conversation branch compare <branch-a> <branch-b>")
+				return 2
+			}
+			comp, err := eng.ConversationBranchCompare(strings.TrimSpace(args[2]), strings.TrimSpace(args[3]))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "branch compare error: %v\n", err)
+				return 1
+			}
+			if jsonMode {
+				_ = printJSON(comp)
+			} else {
+				fmt.Printf("%s vs %s: shared=%d only_%s=%d only_%s=%d\n",
+					comp.BranchA, comp.BranchB, comp.SharedPrefixN, comp.BranchA, comp.OnlyA, comp.BranchB, comp.OnlyB)
+			}
+			return 0
+		default:
+			fmt.Fprintln(os.Stderr, "usage: dfmc conversation branch [list|create|switch|compare]")
+			return 2
+		}
+
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc conversation [list|search <query>]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc conversation [list|search <query>|active|new|clear|save|undo|load <id>|branch ...]")
 		return 2
 	}
 }
@@ -805,22 +1568,59 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 
 	switch args[0] {
 	case "status":
-		payload := map[string]any{
-			"enabled":   eng.Config.Remote.Enabled,
-			"host":      eng.Config.Web.Host,
-			"grpc_port": eng.Config.Remote.GRPCPort,
-			"ws_port":   eng.Config.Remote.WSPort,
-			"auth":      eng.Config.Remote.Auth,
+		fs := flag.NewFlagSet("remote status", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		live := fs.Bool("live", false, "query remote server status instead of local config")
+		baseURL := fs.String("url", defaultURL, "remote base URL (for --live)")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 10*time.Second, "request timeout")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
 		}
-		if jsonMode {
-			_ = printJSON(payload)
+
+		if !*live {
+			payload := map[string]any{
+				"enabled":   eng.Config.Remote.Enabled,
+				"host":      eng.Config.Web.Host,
+				"grpc_port": eng.Config.Remote.GRPCPort,
+				"ws_port":   eng.Config.Remote.WSPort,
+				"auth":      eng.Config.Remote.Auth,
+			}
+			if jsonMode {
+				_ = printJSON(payload)
+				return 0
+			}
+			fmt.Printf("Remote enabled: %t\n", eng.Config.Remote.Enabled)
+			fmt.Printf("Host:           %s\n", eng.Config.Web.Host)
+			fmt.Printf("gRPC port:      %d\n", eng.Config.Remote.GRPCPort)
+			fmt.Printf("WS/HTTP port:   %d\n", eng.Config.Remote.WSPort)
+			fmt.Printf("Auth:           %s\n", eng.Config.Remote.Auth)
 			return 0
 		}
-		fmt.Printf("Remote enabled: %t\n", eng.Config.Remote.Enabled)
-		fmt.Printf("Host:           %s\n", eng.Config.Web.Host)
-		fmt.Printf("gRPC port:      %d\n", eng.Config.Remote.GRPCPort)
-		fmt.Printf("WS/HTTP port:   %d\n", eng.Config.Remote.WSPort)
-		fmt.Printf("Auth:           %s\n", eng.Config.Remote.Auth)
+
+		statusURL := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/status"
+		providersURL := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/providers"
+		statusPayload, _, err := remoteJSONRequest(http.MethodGet, statusURL, *token, nil, *timeout)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "remote status error: %v\n", err)
+			return 1
+		}
+		providersPayload, _, err := remoteJSONRequest(http.MethodGet, providersURL, *token, nil, *timeout)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "remote providers error: %v\n", err)
+			return 1
+		}
+		out := map[string]any{
+			"url":       *baseURL,
+			"status":    statusPayload,
+			"providers": providersPayload,
+		}
+		if jsonMode {
+			_ = printJSON(out)
+			return 0
+		}
+		_ = printJSON(out)
 		return 0
 
 	case "probe":
@@ -877,6 +1677,51 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 		if hasFailure {
 			return 1
+		}
+		return 0
+
+	case "events":
+		fs := flag.NewFlagSet("remote events", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		eventType := fs.String("type", "*", "event type filter")
+		timeout := fs.Duration("timeout", 20*time.Second, "stream timeout")
+		maxEvents := fs.Int("max", 100, "max events to collect before stopping")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/ws"
+		if t := strings.TrimSpace(*eventType); t != "" {
+			endpoint = endpoint + "?type=" + url.QueryEscape(t)
+		}
+		events, err := remoteCollectEvents(endpoint, *token, *timeout, *maxEvents)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "remote events error: %v\n", err)
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"url":      endpoint,
+				"count":    len(events),
+				"events":   events,
+				"timeout":  timeout.String(),
+				"max":      *maxEvents,
+				"filter":   *eventType,
+				"received": time.Now().UTC().Format(time.RFC3339),
+			})
+			return 0
+		}
+		fmt.Printf("Remote events: %s\n", endpoint)
+		for _, ev := range events {
+			kind := strings.TrimSpace(fmt.Sprint(ev["type"]))
+			if kind == "" {
+				kind = "event"
+			}
+			body := truncateLine(compactJSON(ev), 200)
+			fmt.Printf("[%s] %s\n", strings.ToUpper(kind), body)
 		}
 		return 0
 
@@ -1044,6 +1889,376 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		_ = printJSON(payload)
 		return 0
 
+	case "files":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote files [list|get <path>] [--url ...] [--token ...]")
+			return 2
+		}
+		action := strings.ToLower(strings.TrimSpace(args[1]))
+		fs := flag.NewFlagSet("remote files", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
+		limit := fs.Int("limit", 500, "max files for list")
+		if err := fs.Parse(args[2:]); err != nil {
+			return 2
+		}
+
+		switch action {
+		case "list":
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/files?limit=" + strconv.Itoa(*limit)
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote files list error: %v\n", err)
+				return 1
+			}
+			if jsonMode {
+				_ = printJSON(payload)
+				return 0
+			}
+			root := strings.TrimSpace(fmt.Sprint(payload["root"]))
+			if root != "" {
+				fmt.Printf("Root: %s\n", root)
+			}
+			items, _ := payload["files"].([]any)
+			for _, it := range items {
+				fmt.Println(fmt.Sprint(it))
+			}
+			return 0
+		case "get":
+			var rel string
+			if len(fs.Args()) > 0 {
+				rel = strings.TrimSpace(fs.Args()[0])
+			}
+			if rel == "" {
+				fmt.Fprintln(os.Stderr, "usage: dfmc remote files get <path> [--url ...] [--token ...]")
+				return 2
+			}
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/files/" + remotePathEscape(rel)
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote files get error: %v\n", err)
+				return 1
+			}
+			if jsonMode {
+				_ = printJSON(payload)
+				return 0
+			}
+			if typ := strings.TrimSpace(fmt.Sprint(payload["type"])); typ == "file" {
+				fmt.Println(fmt.Sprint(payload["content"]))
+				return 0
+			}
+			_ = printJSON(payload)
+			return 0
+		default:
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote files [list|get <path>] [--url ...] [--token ...]")
+			return 2
+		}
+
+	case "memory":
+		action := "working"
+		if len(args) >= 2 {
+			action = strings.ToLower(strings.TrimSpace(args[1]))
+		}
+		fs := flag.NewFlagSet("remote memory", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
+		tier := fs.String("tier", "episodic", "working|episodic|semantic")
+		if err := fs.Parse(args[2:]); err != nil {
+			return 2
+		}
+
+		switch action {
+		case "working":
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/memory?tier=working"
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote memory working error: %v\n", err)
+				return 1
+			}
+			if jsonMode {
+				_ = printJSON(payload)
+			} else {
+				_ = printJSON(payload)
+			}
+			return 0
+		case "list":
+			v := url.Values{}
+			v.Set("tier", strings.ToLower(strings.TrimSpace(*tier)))
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/memory?" + v.Encode()
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote memory list error: %v\n", err)
+				return 1
+			}
+			if jsonMode {
+				_ = printJSON(payload)
+				return 0
+			}
+			_ = printJSON(payload)
+			return 0
+		default:
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote memory [working|list --tier episodic|semantic] [--url ...] [--token ...]")
+			return 2
+		}
+
+	case "conversation":
+		action := "list"
+		if len(args) >= 2 {
+			action = strings.ToLower(strings.TrimSpace(args[1]))
+		}
+		branchAction := "list"
+		parseFrom := 2
+		if action == "branch" && len(args) >= 3 {
+			branchAction = strings.ToLower(strings.TrimSpace(args[2]))
+			parseFrom = 3
+		}
+		fs := flag.NewFlagSet("remote conversation", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
+		limit := fs.Int("limit", 20, "max results")
+		query := fs.String("query", "", "search query")
+		id := fs.String("id", "", "conversation id")
+		name := fs.String("name", "", "branch name")
+		branchA := fs.String("a", "", "branch A name")
+		branchB := fs.String("b", "", "branch B name")
+		if err := fs.Parse(args[parseFrom:]); err != nil {
+			return 2
+		}
+
+		switch action {
+		case "list":
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversations?limit=" + strconv.Itoa(*limit)
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote conversation list error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		case "search":
+			q := strings.TrimSpace(*query)
+			if q == "" && len(fs.Args()) > 0 {
+				q = strings.TrimSpace(strings.Join(fs.Args(), " "))
+			}
+			v := url.Values{}
+			v.Set("q", q)
+			v.Set("limit", strconv.Itoa(*limit))
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversations/search?" + v.Encode()
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote conversation search error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		case "active":
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation"
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote conversation active error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		case "new", "clear":
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/new"
+			payload, _, err := remoteJSONRequest(http.MethodPost, endpoint, *token, map[string]any{}, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote conversation new error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		case "save":
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/save"
+			payload, _, err := remoteJSONRequest(http.MethodPost, endpoint, *token, map[string]any{}, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote conversation save error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		case "load":
+			convID := strings.TrimSpace(*id)
+			if convID == "" && len(fs.Args()) > 0 {
+				convID = strings.TrimSpace(fs.Args()[0])
+			}
+			if convID == "" {
+				fmt.Fprintln(os.Stderr, "usage: dfmc remote conversation load --id <conversation-id>")
+				return 2
+			}
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/load"
+			payload, _, err := remoteJSONRequest(http.MethodPost, endpoint, *token, map[string]any{"id": convID}, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote conversation load error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		case "branch":
+			switch branchAction {
+			case "list":
+				endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/branches"
+				payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "remote conversation branch list error: %v\n", err)
+					return 1
+				}
+				_ = printJSON(payload)
+				return 0
+			case "create":
+				branchName := strings.TrimSpace(*name)
+				if branchName == "" && len(fs.Args()) > 0 {
+					branchName = strings.TrimSpace(fs.Args()[0])
+				}
+				if branchName == "" {
+					fmt.Fprintln(os.Stderr, "usage: dfmc remote conversation branch create --name <branch>")
+					return 2
+				}
+				endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/branches/create"
+				payload, _, err := remoteJSONRequest(http.MethodPost, endpoint, *token, map[string]any{"name": branchName}, *timeout)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "remote conversation branch create error: %v\n", err)
+					return 1
+				}
+				_ = printJSON(payload)
+				return 0
+			case "switch":
+				branchName := strings.TrimSpace(*name)
+				if branchName == "" && len(fs.Args()) > 0 {
+					branchName = strings.TrimSpace(fs.Args()[0])
+				}
+				if branchName == "" {
+					fmt.Fprintln(os.Stderr, "usage: dfmc remote conversation branch switch --name <branch>")
+					return 2
+				}
+				endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/branches/switch"
+				payload, _, err := remoteJSONRequest(http.MethodPost, endpoint, *token, map[string]any{"name": branchName}, *timeout)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "remote conversation branch switch error: %v\n", err)
+					return 1
+				}
+				_ = printJSON(payload)
+				return 0
+			case "compare":
+				a := strings.TrimSpace(*branchA)
+				b := strings.TrimSpace(*branchB)
+				if a == "" && len(fs.Args()) >= 1 {
+					a = strings.TrimSpace(fs.Args()[0])
+				}
+				if b == "" && len(fs.Args()) >= 2 {
+					b = strings.TrimSpace(fs.Args()[1])
+				}
+				if a == "" || b == "" {
+					fmt.Fprintln(os.Stderr, "usage: dfmc remote conversation branch compare --a <branch-a> --b <branch-b>")
+					return 2
+				}
+				v := url.Values{}
+				v.Set("a", a)
+				v.Set("b", b)
+				endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/branches/compare?" + v.Encode()
+				payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "remote conversation branch compare error: %v\n", err)
+					return 1
+				}
+				_ = printJSON(payload)
+				return 0
+			default:
+				fmt.Fprintln(os.Stderr, "usage: dfmc remote conversation branch [list|create|switch|compare]")
+				return 2
+			}
+		default:
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote conversation [list|search|active|new|save|load|branch ...] [--url ...] [--token ...]")
+			return 2
+		}
+
+	case "codemap":
+		fs := flag.NewFlagSet("remote codemap", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
+		format := fs.String("format", "json", "json|dot|svg|ascii")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/codemap"
+		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "remote codemap error: %v\n", err)
+			return 1
+		}
+		nodes, edges, err := decodeCodemapPayload(payload)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "remote codemap decode error: %v\n", err)
+			return 1
+		}
+		f := strings.ToLower(strings.TrimSpace(*format))
+		if jsonMode || f == "json" {
+			_ = printJSON(map[string]any{"nodes": nodes, "edges": edges})
+			return 0
+		}
+		switch f {
+		case "dot":
+			fmt.Println(graphToDOT(nodes, edges))
+		case "svg":
+			fmt.Println(graphToSVG(nodes, edges))
+		default:
+			for _, e := range edges {
+				fmt.Printf("%s -> %s (%s)\n", e.From, e.To, e.Type)
+			}
+		}
+		return 0
+
+	case "tools":
+		fs := flag.NewFlagSet("remote tools", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/tools"
+		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "remote tools error: %v\n", err)
+			return 1
+		}
+		_ = printJSON(payload)
+		return 0
+
+	case "skills":
+		fs := flag.NewFlagSet("remote skills", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/skills"
+		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "remote skills error: %v\n", err)
+			return 1
+		}
+		_ = printJSON(payload)
+		return 0
+
 	case "start":
 		fs := flag.NewFlagSet("remote start", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -1103,7 +2318,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc remote [status|probe|ask|tool|skill|analyze|start --host 127.0.0.1 --ws-port 7779 --auth none|token]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc remote [status|probe|events|ask|tool|tools|skill|skills|analyze|files|memory|conversation (list/search/active/new/save/load/branch)|codemap|start --host 127.0.0.1 --ws-port 7779 --auth none|token]")
 		return 2
 	}
 }
@@ -1250,6 +2465,22 @@ func parseSSEDataLine(line string) (remoteChatEvent, bool, error) {
 	return ev, true, nil
 }
 
+func parseSSEJSONLine(line string) (map[string]any, bool, error) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "data:") {
+		return nil, false, nil
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	if payload == "" {
+		return nil, false, nil
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal([]byte(payload), &out); err != nil {
+		return nil, true, fmt.Errorf("invalid sse json: %w", err)
+	}
+	return out, true, nil
+}
+
 type multiStringFlag []string
 
 func (m *multiStringFlag) String() string {
@@ -1320,6 +2551,104 @@ func remoteJSONRequest(method, endpoint, token string, payload any, timeout time
 		return out, resp.StatusCode, fmt.Errorf("remote returned %s", resp.Status)
 	}
 	return out, resp.StatusCode, nil
+}
+
+func remoteCollectEvents(endpoint, token string, timeout time.Duration, maxEvents int) ([]map[string]any, error) {
+	if maxEvents <= 0 {
+		maxEvents = 100
+	}
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	if tok := strings.TrimSpace(token); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("remote returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+
+	capHint := maxEvents
+	if capHint > 32 {
+		capHint = 32
+	}
+	events := make([]map[string]any, 0, capHint)
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		ev, ok, err := parseSSEJSONLine(scanner.Text())
+		if err != nil {
+			return events, err
+		}
+		if !ok {
+			continue
+		}
+		events = append(events, ev)
+		if len(events) >= maxEvents {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return events, err
+	}
+	return events, nil
+}
+
+func compactJSON(v any) string {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(raw)
+}
+
+func decodeCodemapPayload(payload map[string]any) ([]codemap.Node, []codemap.Edge, error) {
+	nodes := []codemap.Node{}
+	edges := []codemap.Edge{}
+
+	nodesRaw, ok := payload["nodes"]
+	if !ok {
+		return nodes, edges, fmt.Errorf("missing nodes field")
+	}
+	edgesRaw, ok := payload["edges"]
+	if !ok {
+		return nodes, edges, fmt.Errorf("missing edges field")
+	}
+	nb, err := json.Marshal(nodesRaw)
+	if err != nil {
+		return nodes, edges, err
+	}
+	if err := json.Unmarshal(nb, &nodes); err != nil {
+		return nodes, edges, err
+	}
+	eb, err := json.Marshal(edgesRaw)
+	if err != nil {
+		return nodes, edges, err
+	}
+	if err := json.Unmarshal(eb, &edges); err != nil {
+		return nodes, edges, err
+	}
+	return nodes, edges, nil
+}
+
+func remotePathEscape(path string) string {
+	path = strings.TrimSpace(path)
+	path = strings.TrimPrefix(path, "/")
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(path, "/")
+	for i := range parts {
+		parts[i] = url.PathEscape(parts[i])
+	}
+	return strings.Join(parts, "/")
 }
 
 type doctorCheck struct {
@@ -3374,14 +4703,16 @@ Commands:
   scan        Quick security scan
   map         Generate/display codemap
   tool        Tool engine (list/run)
-  conversation Conversation history (list/search)
+  conversation Conversation management (list/search/load/save/undo/branch)
   memory      Memory management
   config      Configuration management (list/get/set/edit)
   plugin      Plugin management (list/info/install/remove/enable/disable)
   skill       Skill management (list/info/run)
   serve       Start Web API server
-  remote      Remote control server (status/probe/ask/tool/skill/analyze/start)
+  remote      Remote control server (status/probe/events/ask/tool/tools/skill/skills/analyze/files/memory/conversation+branch/codemap/start)
   doctor      Environment and config health checks
+  completion  Generate shell completion scripts
+  man         Generate command manual page
   review      Code review shortcut
   explain     Explain code shortcut
   refactor    Refactor code shortcut

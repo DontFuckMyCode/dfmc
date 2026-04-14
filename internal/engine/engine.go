@@ -526,6 +526,20 @@ func (e *Engine) ConversationSave() error {
 	return e.Conversation.SaveActive()
 }
 
+func (e *Engine) ConversationStart() *conversation.Conversation {
+	if e.Conversation == nil {
+		return nil
+	}
+	return e.Conversation.Start(e.provider(), e.model())
+}
+
+func (e *Engine) ConversationLoad(id string) (*conversation.Conversation, error) {
+	if e.Conversation == nil {
+		return nil, fmt.Errorf("conversation manager is not initialized")
+	}
+	return e.Conversation.Load(id)
+}
+
 func (e *Engine) ConversationList() ([]conversation.Summary, error) {
 	if e.Conversation == nil {
 		return nil, fmt.Errorf("conversation manager is not initialized")
@@ -538,6 +552,41 @@ func (e *Engine) ConversationSearch(query string, limit int) ([]conversation.Sum
 		return nil, fmt.Errorf("conversation manager is not initialized")
 	}
 	return e.Conversation.Search(query, limit)
+}
+
+func (e *Engine) ConversationBranchCreate(name string) error {
+	if e.Conversation == nil {
+		return fmt.Errorf("conversation manager is not initialized")
+	}
+	return e.Conversation.BranchCreate(name)
+}
+
+func (e *Engine) ConversationBranchSwitch(name string) error {
+	if e.Conversation == nil {
+		return fmt.Errorf("conversation manager is not initialized")
+	}
+	return e.Conversation.BranchSwitch(name)
+}
+
+func (e *Engine) ConversationBranchList() []string {
+	if e.Conversation == nil {
+		return nil
+	}
+	return e.Conversation.BranchList()
+}
+
+func (e *Engine) ConversationBranchCompare(a, b string) (conversation.BranchComparison, error) {
+	if e.Conversation == nil {
+		return conversation.BranchComparison{}, fmt.Errorf("conversation manager is not initialized")
+	}
+	return e.Conversation.BranchCompare(a, b)
+}
+
+func (e *Engine) ConversationUndoLast() (int, error) {
+	if e.Conversation == nil {
+		return 0, fmt.Errorf("conversation manager is not initialized")
+	}
+	return e.Conversation.UndoLast()
 }
 
 func (e *Engine) ensureIndexed(ctx context.Context) {

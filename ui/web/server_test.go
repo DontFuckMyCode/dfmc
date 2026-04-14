@@ -337,3 +337,103 @@ func TestWSEventStreamEndpoint(t *testing.T) {
 		t.Fatal("expected test:event in stream")
 	}
 }
+
+func TestConversationsEndpoints(t *testing.T) {
+	eng := newTestEngine(t)
+	_, _ = eng.Ask(context.Background(), "merhaba conversation test")
+	_ = eng.ConversationSave()
+
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/conversations")
+	if err != nil {
+		t.Fatalf("get conversations: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status %d: %s", resp.StatusCode, string(raw))
+	}
+	var listPayload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&listPayload); err != nil {
+		t.Fatalf("decode list payload: %v", err)
+	}
+	if _, ok := listPayload["conversations"]; !ok {
+		t.Fatalf("missing conversations field: %#v", listPayload)
+	}
+
+	searchResp, err := http.Get(ts.URL + "/api/v1/conversations/search?q=merhaba&limit=5")
+	if err != nil {
+		t.Fatalf("search conversations: %v", err)
+	}
+	defer searchResp.Body.Close()
+	if searchResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(searchResp.Body)
+		t.Fatalf("unexpected status %d: %s", searchResp.StatusCode, string(raw))
+	}
+	var searchPayload map[string]any
+	if err := json.NewDecoder(searchResp.Body).Decode(&searchPayload); err != nil {
+		t.Fatalf("decode search payload: %v", err)
+	}
+	if searchPayload["query"] != "merhaba" {
+		t.Fatalf("unexpected query field: %#v", searchPayload)
+	}
+
+	activeResp, err := http.Get(ts.URL + "/api/v1/conversation")
+	if err != nil {
+		t.Fatalf("get active conversation: %v", err)
+	}
+	defer activeResp.Body.Close()
+	if activeResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(activeResp.Body)
+		t.Fatalf("unexpected status %d: %s", activeResp.StatusCode, string(raw))
+	}
+
+	newReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/conversation/new", bytes.NewBufferString(`{}`))
+	newReq.Header.Set("Content-Type", "application/json")
+	newResp, err := http.DefaultClient.Do(newReq)
+	if err != nil {
+		t.Fatalf("new conversation request: %v", err)
+	}
+	defer newResp.Body.Close()
+	if newResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(newResp.Body)
+		t.Fatalf("unexpected status %d: %s", newResp.StatusCode, string(raw))
+	}
+
+	createBranchReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/conversation/branches/create", bytes.NewBufferString(`{"name":"alt"}`))
+	createBranchReq.Header.Set("Content-Type", "application/json")
+	createBranchResp, err := http.DefaultClient.Do(createBranchReq)
+	if err != nil {
+		t.Fatalf("create branch request: %v", err)
+	}
+	defer createBranchResp.Body.Close()
+	if createBranchResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(createBranchResp.Body)
+		t.Fatalf("unexpected status %d: %s", createBranchResp.StatusCode, string(raw))
+	}
+
+	switchBranchReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/conversation/branches/switch", bytes.NewBufferString(`{"name":"alt"}`))
+	switchBranchReq.Header.Set("Content-Type", "application/json")
+	switchBranchResp, err := http.DefaultClient.Do(switchBranchReq)
+	if err != nil {
+		t.Fatalf("switch branch request: %v", err)
+	}
+	defer switchBranchResp.Body.Close()
+	if switchBranchResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(switchBranchResp.Body)
+		t.Fatalf("unexpected status %d: %s", switchBranchResp.StatusCode, string(raw))
+	}
+
+	compareResp, err := http.Get(ts.URL + "/api/v1/conversation/branches/compare?a=main&b=alt")
+	if err != nil {
+		t.Fatalf("compare branch request: %v", err)
+	}
+	defer compareResp.Body.Close()
+	if compareResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(compareResp.Body)
+		t.Fatalf("unexpected status %d: %s", compareResp.StatusCode, string(raw))
+	}
+}

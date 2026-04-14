@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -113,6 +114,27 @@ func TestParseSSEDataLine(t *testing.T) {
 	}
 }
 
+func TestParseSSEJSONLine(t *testing.T) {
+	ev, ok, err := parseSSEJSONLine(`data: {"type":"ping","ts":"2026-01-01T00:00:00Z"}`)
+	if err != nil {
+		t.Fatalf("parseSSEJSONLine error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if ev["type"] != "ping" {
+		t.Fatalf("unexpected event: %#v", ev)
+	}
+
+	_, ok, err = parseSSEJSONLine(`: keepalive`)
+	if err != nil {
+		t.Fatalf("unexpected error for comment line: %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false for non-data line")
+	}
+}
+
 func TestRemoteAsk(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/chat" {
@@ -135,6 +157,31 @@ func TestRemoteAsk(t *testing.T) {
 	}
 	if len(events) != 3 {
 		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+}
+
+func TestRemoteCollectEvents(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ws" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"connected\"}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"event\",\"event\":\"index:done\"}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"ping\"}\n\n")
+	}))
+	defer ts.Close()
+
+	events, err := remoteCollectEvents(ts.URL+"/ws", "", 2*time.Second, 3)
+	if err != nil {
+		t.Fatalf("remoteCollectEvents error: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+	if events[1]["type"] != "event" {
+		t.Fatalf("unexpected second event: %#v", events[1])
 	}
 }
 
@@ -175,5 +222,79 @@ func TestRemoteJSONRequest(t *testing.T) {
 	}
 	if ok, _ := out["ok"].(bool); !ok {
 		t.Fatalf("unexpected response: %#v", out)
+	}
+}
+
+func TestRemotePathEscape(t *testing.T) {
+	got := remotePathEscape("dir with space/file#.go")
+	if got != "dir%20with%20space/file%23.go" {
+		t.Fatalf("unexpected escaped path: %s", got)
+	}
+}
+
+func TestDecodeCodemapPayload(t *testing.T) {
+	payload := map[string]any{
+		"nodes": []map[string]any{
+			{"id": "n1", "name": "A", "kind": "file", "path": "a.go"},
+		},
+		"edges": []map[string]any{
+			{"from": "n1", "to": "n2", "type": "imports"},
+		},
+	}
+	nodes, edges, err := decodeCodemapPayload(payload)
+	if err != nil {
+		t.Fatalf("decodeCodemapPayload error: %v", err)
+	}
+	if len(nodes) != 1 || nodes[0].ID != "n1" {
+		t.Fatalf("unexpected nodes: %#v", nodes)
+	}
+	if len(edges) != 1 || edges[0].Type != "imports" {
+		t.Fatalf("unexpected edges: %#v", edges)
+	}
+}
+
+func TestRunRemoteConversationLifecycle(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/conversation" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"id":"conv_1","branch":"main","messages":2}`))
+		case r.URL.Path == "/api/v1/conversation/new" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"id":"conv_2","branch":"main","messages":0}`))
+		case r.URL.Path == "/api/v1/conversation/save" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case r.URL.Path == "/api/v1/conversation/load" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"id":"conv_1","branch":"main","messages":2}`))
+		case r.URL.Path == "/api/v1/conversation/branches" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"branches":["main","alt"]}`))
+		case r.URL.Path == "/api/v1/conversation/branches/create" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"status":"ok","branch":"alt"}`))
+		case r.URL.Path == "/api/v1/conversation/branches/switch" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"status":"ok","branch":"alt"}`))
+		case r.URL.Path == "/api/v1/conversation/branches/compare" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"branch_a":"main","branch_b":"alt","shared_prefix_count":2}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		}
+	}))
+	defer ts.Close()
+
+	cases := [][]string{
+		{"conversation", "active", "--url", ts.URL},
+		{"conversation", "new", "--url", ts.URL},
+		{"conversation", "save", "--url", ts.URL},
+		{"conversation", "load", "--url", ts.URL, "--id", "conv_1"},
+		{"conversation", "branch", "list", "--url", ts.URL},
+		{"conversation", "branch", "create", "--url", ts.URL, "--name", "alt"},
+		{"conversation", "branch", "switch", "--url", ts.URL, "--name", "alt"},
+		{"conversation", "branch", "compare", "--url", ts.URL, "--a", "main", "--b", "alt"},
+	}
+	for _, args := range cases {
+		if code := runRemote(context.Background(), eng, args, true); code != 0 {
+			t.Fatalf("runRemote %v exit=%d", args, code)
+		}
 	}
 }
