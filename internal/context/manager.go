@@ -20,6 +20,15 @@ type Manager struct {
 	prompts *promptlib.Library
 }
 
+type BuildOptions struct {
+	MaxFiles         int
+	MaxTokensTotal   int
+	MaxTokensPerFile int
+	Compression      string
+	IncludeTests     bool
+	IncludeDocs      bool
+}
+
 func New(cm *codemap.Engine) *Manager {
 	return &Manager{
 		codemap: cm,
@@ -28,17 +37,38 @@ func New(cm *codemap.Engine) *Manager {
 }
 
 func (m *Manager) Build(query string, maxFiles int) ([]types.ContextChunk, error) {
+	return m.BuildWithOptions(query, BuildOptions{
+		MaxFiles:         maxFiles,
+		MaxTokensTotal:   maxFiles * 1200,
+		MaxTokensPerFile: 1200,
+		Compression:      "standard",
+		IncludeTests:     true,
+		IncludeDocs:      true,
+	})
+}
+
+func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.ContextChunk, error) {
 	if m == nil || m.codemap == nil || m.codemap.Graph() == nil {
 		return nil, nil
 	}
-	if maxFiles <= 0 {
-		maxFiles = 6
+	if opts.MaxFiles <= 0 {
+		opts.MaxFiles = 6
 	}
+	if opts.MaxTokensPerFile <= 0 {
+		opts.MaxTokensPerFile = 1200
+	}
+	if opts.MaxTokensTotal <= 0 {
+		opts.MaxTokensTotal = opts.MaxFiles * opts.MaxTokensPerFile
+	}
+	if opts.MaxTokensTotal < 128 {
+		opts.MaxTokensTotal = 128
+	}
+	opts.Compression = normalizeCompression(opts.Compression)
 
 	terms := tokenizeQuery(query)
 	scores := map[string]float64{}
-
 	graph := m.codemap.Graph()
+
 	for _, n := range graph.Nodes() {
 		switch n.Kind {
 		case "file":
@@ -65,7 +95,7 @@ func (m *Manager) Build(query string, maxFiles int) ([]types.ContextChunk, error
 		}
 	}
 
-	for _, hs := range graph.HotSpots(maxFiles * 2) {
+	for _, hs := range graph.HotSpots(opts.MaxFiles * 3) {
 		if hs.Path != "" {
 			scores[hs.Path] += 1.0
 		}
@@ -86,26 +116,32 @@ func (m *Manager) Build(query string, maxFiles int) ([]types.ContextChunk, error
 		return rankedPaths[i].Score > rankedPaths[j].Score
 	})
 
-	chunks := make([]types.ContextChunk, 0, maxFiles)
+	chunks := make([]types.ContextChunk, 0, opts.MaxFiles)
+	remaining := opts.MaxTokensTotal
 	for _, r := range rankedPaths {
-		if len(chunks) >= maxFiles {
+		if len(chunks) >= opts.MaxFiles || remaining <= 0 {
 			break
 		}
+		if !shouldIncludePath(r.Path, opts.IncludeTests, opts.IncludeDocs) {
+			continue
+		}
+
 		content, err := os.ReadFile(r.Path)
 		if err != nil {
 			continue
 		}
-		snippet, lineStart, lineEnd := extractSnippet(string(content), terms, 60)
-		chunks = append(chunks, types.ContextChunk{
-			Path:        r.Path,
-			Language:    detectLanguageFromPath(r.Path),
-			Content:     snippet,
-			LineStart:   lineStart,
-			LineEnd:     lineEnd,
-			TokenCount:  estimateTokens(snippet),
-			Score:       r.Score,
-			Compression: "standard",
-		})
+		chunk := buildChunkForBudget(r.Path, string(content), terms, r.Score, opts.Compression, opts.MaxTokensPerFile)
+		if chunk.TokenCount <= 0 || strings.TrimSpace(chunk.Content) == "" {
+			continue
+		}
+		if chunk.TokenCount > remaining {
+			chunk = downshiftChunkForRemaining(chunk, remaining, opts.MaxTokensPerFile)
+		}
+		if chunk.TokenCount <= 0 || strings.TrimSpace(chunk.Content) == "" {
+			continue
+		}
+		chunks = append(chunks, chunk)
+		remaining -= chunk.TokenCount
 	}
 
 	return chunks, nil
@@ -372,7 +408,7 @@ func safeSub(parts []string, idx int) string {
 
 func detectPromptProfile(query, task string) string {
 	q := strings.ToLower(strings.TrimSpace(query))
-	if strings.Contains(q, "detaylı") || strings.Contains(q, "detailed") || strings.Contains(q, "deep") {
+	if strings.Contains(q, "detayli") || strings.Contains(q, "detaylı") || strings.Contains(q, "detailed") || strings.Contains(q, "deep") {
 		return "deep"
 	}
 	switch strings.ToLower(strings.TrimSpace(task)) {
@@ -457,4 +493,198 @@ func buildResponsePolicy(task, profile string) string {
 			"- Start with short answer, then critical details.")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func normalizeCompression(v string) string {
+	c := strings.ToLower(strings.TrimSpace(v))
+	switch c {
+	case "none", "standard", "aggressive":
+		return c
+	default:
+		return "standard"
+	}
+}
+
+func buildChunkForBudget(path, raw string, terms []string, score float64, compression string, maxTokensPerFile int) types.ContextChunk {
+	levels := compressionFallbackOrder(compression)
+	lang := detectLanguageFromPath(path)
+	for _, lvl := range levels {
+		content, lineStart, lineEnd := compressContent(raw, terms, lang, lvl, maxTokensPerFile)
+		tc := estimateTokens(content)
+		if tc <= 0 || strings.TrimSpace(content) == "" {
+			continue
+		}
+		return types.ContextChunk{
+			Path:        path,
+			Language:    lang,
+			Content:     content,
+			LineStart:   lineStart,
+			LineEnd:     lineEnd,
+			TokenCount:  tc,
+			Score:       score,
+			Compression: lvl,
+		}
+	}
+	return types.ContextChunk{}
+}
+
+func downshiftChunkForRemaining(chunk types.ContextChunk, remaining, maxTokensPerFile int) types.ContextChunk {
+	if remaining <= 0 {
+		return types.ContextChunk{}
+	}
+	budget := remaining
+	if maxTokensPerFile > 0 && budget > maxTokensPerFile {
+		budget = maxTokensPerFile
+	}
+	if chunk.TokenCount <= budget {
+		return chunk
+	}
+	trimmed := trimToTokenBudget(chunk.Content, budget)
+	if strings.TrimSpace(trimmed) == "" {
+		return types.ContextChunk{}
+	}
+	chunk.Content = trimmed
+	chunk.TokenCount = estimateTokens(trimmed)
+	chunk.Compression = chunk.Compression + "+trim"
+	return chunk
+}
+
+func compressionFallbackOrder(primary string) []string {
+	switch normalizeCompression(primary) {
+	case "none":
+		return []string{"none", "standard", "aggressive"}
+	case "aggressive":
+		return []string{"aggressive"}
+	default:
+		return []string{"standard", "aggressive"}
+	}
+}
+
+func compressContent(raw string, terms []string, lang, level string, maxTokens int) (string, int, int) {
+	switch level {
+	case "none":
+		lineStart, lineEnd := 1, len(strings.Split(raw, "\n"))
+		return trimToTokenBudget(raw, maxTokens), lineStart, lineEnd
+	case "aggressive":
+		sig := extractSignatures(raw, lang, 160)
+		if strings.TrimSpace(sig) == "" {
+			snippet, lineStart, lineEnd := extractSnippet(raw, terms, 30)
+			return trimToTokenBudget(stripComments(snippet), maxTokens), lineStart, lineEnd
+		}
+		return trimToTokenBudget(sig, maxTokens), 1, minInt(160, len(strings.Split(raw, "\n")))
+	default:
+		snippet, lineStart, lineEnd := extractSnippet(raw, terms, 60)
+		return trimToTokenBudget(stripComments(snippet), maxTokens), lineStart, lineEnd
+	}
+}
+
+func trimToTokenBudget(content string, maxTokens int) string {
+	if maxTokens <= 0 {
+		return ""
+	}
+	words := strings.Fields(content)
+	if len(words) <= maxTokens {
+		return strings.TrimSpace(content)
+	}
+	suffix := "... [truncated for token budget]"
+	suffixTokens := estimateTokens(suffix)
+	if maxTokens <= suffixTokens {
+		return strings.Join(words[:maxTokens], " ")
+	}
+	limit := maxTokens - suffixTokens
+	if limit <= 0 {
+		limit = maxTokens
+	}
+	return strings.Join(words[:limit], " ") + "\n" + suffix
+}
+
+func stripComments(content string) string {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	inBlock := false
+	for _, line := range lines {
+		l := line
+		trim := strings.TrimSpace(l)
+		if inBlock {
+			if strings.Contains(trim, "*/") {
+				inBlock = false
+			}
+			continue
+		}
+		if strings.HasPrefix(trim, "/*") {
+			if !strings.Contains(trim, "*/") {
+				inBlock = true
+			}
+			continue
+		}
+		if strings.HasPrefix(trim, "//") || strings.HasPrefix(trim, "#") {
+			continue
+		}
+		if idx := strings.Index(l, "//"); idx >= 0 {
+			l = l[:idx]
+		}
+		l = strings.TrimRight(l, " \t")
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		out = append(out, l)
+	}
+	return strings.Join(out, "\n")
+}
+
+var signatureLineRe = regexp.MustCompile(`^\s*(func|type|class|interface|def|fn|pub|const|var|let|struct|enum|impl|export\s+(function|class|const|let|type|interface)|async\s+function)\b`)
+
+func extractSignatures(content, lang string, maxLines int) string {
+	if maxLines <= 0 {
+		maxLines = 120
+	}
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, min(maxLines, len(lines)))
+	for _, line := range lines {
+		if len(out) >= maxLines {
+			break
+		}
+		trim := strings.TrimSpace(line)
+		if trim == "" {
+			continue
+		}
+		if signatureLineRe.MatchString(trim) {
+			out = append(out, trim)
+			continue
+		}
+		if (lang == "go" || lang == "rust" || lang == "java" || lang == "csharp") && strings.HasPrefix(trim, "package ") {
+			out = append(out, trim)
+			continue
+		}
+		if strings.HasPrefix(trim, "import ") || strings.HasPrefix(trim, "from ") {
+			out = append(out, trim)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func shouldIncludePath(path string, includeTests, includeDocs bool) bool {
+	p := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if p == "" {
+		return false
+	}
+	if !includeTests {
+		if strings.Contains(p, "/test/") || strings.Contains(p, "/tests/") || strings.HasSuffix(p, "_test.go") ||
+			strings.HasSuffix(p, ".spec.ts") || strings.HasSuffix(p, ".test.ts") || strings.HasSuffix(p, ".spec.js") || strings.HasSuffix(p, ".test.js") {
+			return false
+		}
+	}
+	if !includeDocs {
+		if strings.HasSuffix(p, ".md") || strings.HasSuffix(p, ".rst") || strings.HasSuffix(p, ".txt") || strings.Contains(p, "/docs/") {
+			return false
+		}
+	}
+	return true
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

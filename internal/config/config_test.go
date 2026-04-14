@@ -74,3 +74,12 @@ func TestFindProjectRoot(t *testing.T) {
 		t.Fatalf("expected %s, got %s", root, got)
 	}
 }
+
+func TestValidate_ContextMaxTokensTotalMustBePositive(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Context.MaxTokensTotal = 0
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for context.max_tokens_total <= 0")
+	}
+}

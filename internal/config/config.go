@@ -57,6 +57,7 @@ type RoutingRule struct {
 
 type ContextConfig struct {
 	MaxFiles         int    `yaml:"max_files"`
+	MaxTokensTotal   int    `yaml:"max_tokens_total"`
 	MaxTokensPerFile int    `yaml:"max_tokens_per_file"`
 	Compression      string `yaml:"compression"`
 	IncludeTests     bool   `yaml:"include_tests"`

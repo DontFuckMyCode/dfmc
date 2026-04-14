@@ -329,6 +329,23 @@ Common env vars:
 - `ZAI_API_KEY`
 - `ALIBABA_API_KEY`
 
+Token-efficient context tuning:
+- `context.max_tokens_total`: hard cap for all retrieved code context per request.
+- `context.max_tokens_per_file`: per-file chunk cap after compression.
+- `context.compression`: `none|standard|aggressive` tradeoff between fidelity and token cost.
+
+Recommended baseline:
+
+```yaml
+context:
+  max_files: 50
+  max_tokens_total: 16000
+  max_tokens_per_file: 2000
+  compression: standard
+  include_tests: false
+  include_docs: true
+```
+
 ## Project Structure
 
 ```text

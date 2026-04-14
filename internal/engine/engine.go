@@ -278,6 +278,123 @@ func (e *Engine) model() string {
 	return profile.Model
 }
 
+const (
+	defaultContextTotalCapTokens = 16000
+	minContextTotalBudgetTokens  = 512
+	minContextPerFileTokens      = 96
+	defaultProviderContextTokens = 32000
+	defaultResponseReserveTokens = 2048
+	maxResponseReserveTokens     = 16384
+	basePromptReserveTokens      = 900
+	baseToolReserveTokens        = 512
+)
+
+func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
+	if e.Context == nil {
+		return nil
+	}
+	opts := e.contextBuildOptions(question)
+	chunks, err := e.Context.BuildWithOptions(question, opts)
+	if err != nil {
+		e.EventBus.Publish(Event{
+			Type:    "context:error",
+			Source:  "engine",
+			Payload: err.Error(),
+		})
+		return nil
+	}
+	total := 0
+	for _, c := range chunks {
+		total += c.TokenCount
+	}
+	e.EventBus.Publish(Event{
+		Type:   "context:built",
+		Source: "engine",
+		Payload: map[string]any{
+			"files":       len(chunks),
+			"tokens":      total,
+			"budget":      opts.MaxTokensTotal,
+			"per_file":    opts.MaxTokensPerFile,
+			"compression": opts.Compression,
+		},
+	})
+	return chunks
+}
+
+func (e *Engine) contextBuildOptions(question string) ctxmgr.BuildOptions {
+	cfg := e.Config.Context
+	opts := ctxmgr.BuildOptions{
+		MaxFiles:         cfg.MaxFiles,
+		MaxTokensTotal:   cfg.MaxTokensTotal,
+		MaxTokensPerFile: cfg.MaxTokensPerFile,
+		Compression:      cfg.Compression,
+		IncludeTests:     cfg.IncludeTests,
+		IncludeDocs:      cfg.IncludeDocs,
+	}
+	if opts.MaxFiles <= 0 {
+		opts.MaxFiles = 8
+	}
+	if opts.MaxTokensPerFile <= 0 {
+		opts.MaxTokensPerFile = 1200
+	}
+
+	configuredTotal := opts.MaxTokensTotal
+	if configuredTotal <= 0 {
+		configuredTotal = opts.MaxFiles * opts.MaxTokensPerFile
+		configuredTotal = minInt(configuredTotal, defaultContextTotalCapTokens)
+	}
+
+	providerLimit := e.providerMaxContext()
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
+	availableForContext := providerLimit - e.contextReserveTokens(question)
+	if availableForContext < minContextTotalBudgetTokens {
+		availableForContext = minContextTotalBudgetTokens
+	}
+
+	opts.MaxTokensTotal = minInt(configuredTotal, availableForContext)
+	if opts.MaxTokensTotal < minContextTotalBudgetTokens {
+		opts.MaxTokensTotal = minContextTotalBudgetTokens
+	}
+
+	perFileByTotal := opts.MaxTokensTotal / opts.MaxFiles
+	if perFileByTotal < minContextPerFileTokens {
+		perFileByTotal = minContextPerFileTokens
+	}
+	opts.MaxTokensPerFile = minInt(opts.MaxTokensPerFile, perFileByTotal)
+	if opts.MaxTokensPerFile > opts.MaxTokensTotal {
+		opts.MaxTokensPerFile = opts.MaxTokensTotal
+	}
+	return opts
+}
+
+func (e *Engine) providerMaxContext() int {
+	if e.Providers == nil {
+		return 0
+	}
+	p, ok := e.Providers.Get(e.provider())
+	if !ok || p == nil {
+		return 0
+	}
+	return p.MaxContext()
+}
+
+func (e *Engine) contextReserveTokens(question string) int {
+	promptReserve := maxInt(basePromptReserveTokens, estimateTokens(question)*3)
+	responseReserve := defaultResponseReserveTokens
+	if prof, ok := e.Config.Providers.Profiles[e.provider()]; ok && prof.MaxTokens > 0 {
+		responseReserve = prof.MaxTokens
+	}
+	if responseReserve > maxResponseReserveTokens {
+		responseReserve = maxResponseReserveTokens
+	}
+	if responseReserve < minContextPerFileTokens {
+		responseReserve = minContextPerFileTokens
+	}
+	return promptReserve + responseReserve + baseToolReserveTokens
+}
+
 func (e *Engine) setState(state EngineState) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -332,18 +449,7 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 	}
 	e.ensureIndexed(ctx)
 
-	var chunks []types.ContextChunk
-	if e.Context != nil {
-		var err error
-		chunks, err = e.Context.Build(question, 8)
-		if err != nil {
-			e.EventBus.Publish(Event{
-				Type:    "context:error",
-				Source:  "engine",
-				Payload: err.Error(),
-			})
-		}
-	}
+	chunks := e.buildContextChunks(question)
 
 	req := provider.CompletionRequest{
 		Provider: e.provider(),
@@ -386,18 +492,7 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 	}
 	e.ensureIndexed(ctx)
 
-	var chunks []types.ContextChunk
-	if e.Context != nil {
-		var err error
-		chunks, err = e.Context.Build(question, 8)
-		if err != nil {
-			e.EventBus.Publish(Event{
-				Type:    "context:error",
-				Source:  "engine",
-				Payload: err.Error(),
-			})
-		}
-	}
+	chunks := e.buildContextChunks(question)
 
 	req := provider.CompletionRequest{
 		Provider: e.provider(),
@@ -895,6 +990,13 @@ func looksEntrypoint(name, file string) bool {
 
 func minInt(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b

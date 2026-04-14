@@ -28,6 +28,9 @@ func (c *Config) Validate() error {
 	if c.Context.MaxFiles <= 0 {
 		return fmt.Errorf("context.max_files must be > 0")
 	}
+	if c.Context.MaxTokensTotal <= 0 {
+		return fmt.Errorf("context.max_tokens_total must be > 0")
+	}
 	if c.Context.MaxTokensPerFile <= 0 {
 		return fmt.Errorf("context.max_tokens_per_file must be > 0")
 	}
