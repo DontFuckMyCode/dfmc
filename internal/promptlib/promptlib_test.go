@@ -16,6 +16,10 @@ func TestDetectTask(t *testing.T) {
 		"refactor this module":     "refactor",
 		"let's make a plan":        "planning",
 		"fix this panic":           "debug",
+		"guvenlik denetimi yap":    "security",
+		"g\u00fcvenlik denetimi":   "security",
+		"adim adim roadmap cikar":  "planning",
+		"ad\u0131m ad\u0131m plan": "planning",
 	}
 	for query, want := range cases {
 		if got := DetectTask(query); got != want {
@@ -33,7 +37,7 @@ func TestInferLanguage(t *testing.T) {
 	if got := InferLanguage("please inspect this", chunks); got != "go" {
 		t.Fatalf("InferLanguage from chunks=%q want=go", got)
 	}
-	if got := InferLanguage("python için güvenlik", nil); got != "python" {
+	if got := InferLanguage("python icin guvenlik", nil); got != "python" {
 		t.Fatalf("InferLanguage explicit=%q want=python", got)
 	}
 }

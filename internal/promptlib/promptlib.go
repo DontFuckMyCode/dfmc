@@ -451,16 +451,21 @@ func fallbackTemplateID(path string) string {
 
 func DetectTask(query string) string {
 	q := strings.ToLower(" " + strings.TrimSpace(query) + " ")
+	qFolded := " " + foldSearchText(strings.TrimSpace(query)) + " "
 	has := func(words ...string) bool {
 		for _, w := range words {
-			if strings.Contains(q, " "+strings.ToLower(w)+" ") {
+			key := strings.ToLower(strings.TrimSpace(w))
+			if key == "" {
+				continue
+			}
+			if strings.Contains(q, " "+key+" ") || strings.Contains(qFolded, " "+foldSearchText(key)+" ") {
 				return true
 			}
 		}
 		return false
 	}
 	switch {
-	case has("security", "audit", "vuln", "vulnerability", "xss", "sqli", "güvenlik", "zaafiyet"):
+	case has("security", "audit", "vuln", "vulnerability", "xss", "sqli", "guvenlik", "zaafiyet"):
 		return "security"
 	case has("review", "code review", "incele", "inceleme"):
 		return "review"
@@ -470,13 +475,35 @@ func DetectTask(query string) string {
 		return "test"
 	case has("doc", "docs", "documentation", "belgele"):
 		return "doc"
-	case has("plan", "planning", "roadmap", "phase", "sprint", "adım", "adim"):
+	case has("plan", "planning", "roadmap", "phase", "sprint", "adim"):
 		return "planning"
 	case has("bug", "fix", "error", "exception", "panic", "hata", "debug"):
 		return "debug"
 	default:
 		return "general"
 	}
+}
+
+func foldSearchText(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		switch r {
+		case 0x131, 0x130:
+			r = 'i'
+		case 0x11f, 0x11e:
+			r = 'g'
+		case 0x15f, 0x15e:
+			r = 's'
+		case 0xfc, 0xdc:
+			r = 'u'
+		case 0xf6, 0xd6:
+			r = 'o'
+		case 0xe7, 0xc7:
+			r = 'c'
+		}
+		b.WriteRune(r)
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 func InferLanguage(query string, chunks []types.ContextChunk) string {
