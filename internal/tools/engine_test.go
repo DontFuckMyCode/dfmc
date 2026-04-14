@@ -213,3 +213,159 @@ func TestToolFailureGuardAfterRepeatedErrors(t *testing.T) {
 		t.Fatalf("expected repeated failure message, got: %v", err)
 	}
 }
+
+func TestWriteFileRequiresPriorReadForExistingFile(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "a.txt")
+	if err := os.WriteFile(file, []byte("old"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	_, err := eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":    "a.txt",
+			"content": "new",
+		},
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "requires prior read_file") {
+		t.Fatalf("expected prior-read guard error, got: %v", err)
+	}
+
+	if _, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path": "a.txt",
+		},
+	}); err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	if _, err := eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":    "a.txt",
+			"content": "new",
+		},
+	}); err != nil {
+		t.Fatalf("write_file after read should succeed: %v", err)
+	}
+	got, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read updated file: %v", err)
+	}
+	if string(got) != "new" {
+		t.Fatalf("unexpected file content: %q", string(got))
+	}
+}
+
+func TestWriteFileAllowsNewFileWithoutRead(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+	target := filepath.Join(tmp, "new.txt")
+
+	if _, err := eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":    "new.txt",
+			"content": "hello",
+		},
+	}); err != nil {
+		t.Fatalf("write_file new file: %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read new file: %v", err)
+	}
+	if string(got) != "hello" {
+		t.Fatalf("unexpected new file content: %q", string(got))
+	}
+}
+
+func TestEditFileRequiresReadAndUniqueness(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "main.go")
+	if err := os.WriteFile(file, []byte("var x = 1\nvar x = 2\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	eng := New(*config.DefaultConfig())
+
+	_, err := eng.Execute(context.Background(), "edit_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":       "main.go",
+			"old_string": "var x",
+			"new_string": "var y",
+		},
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "requires prior read_file") {
+		t.Fatalf("expected prior-read guard error, got: %v", err)
+	}
+
+	if _, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "main.go"},
+	}); err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	_, err = eng.Execute(context.Background(), "edit_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":       "main.go",
+			"old_string": "var x",
+			"new_string": "var y",
+		},
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not unique") {
+		t.Fatalf("expected uniqueness error, got: %v", err)
+	}
+
+	if _, err := eng.Execute(context.Background(), "edit_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":        "main.go",
+			"old_string":  "var x",
+			"new_string":  "var y",
+			"replace_all": true,
+		},
+	}); err != nil {
+		t.Fatalf("edit_file replace_all: %v", err)
+	}
+	got, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read edited file: %v", err)
+	}
+	if strings.Contains(string(got), "var x") {
+		t.Fatalf("expected replacement, got: %q", string(got))
+	}
+}
+
+func TestEditFileFailsIfChangedSinceRead(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "a.txt")
+	if err := os.WriteFile(file, []byte("alpha"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	eng := New(*config.DefaultConfig())
+
+	if _, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "a.txt"},
+	}); err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	if err := os.WriteFile(file, []byte("beta"), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	_, err := eng.Execute(context.Background(), "edit_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":       "a.txt",
+			"old_string": "beta",
+			"new_string": "gamma",
+		},
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "changed since last read_file") {
+		t.Fatalf("expected changed-since-read guard error, got: %v", err)
+	}
+}

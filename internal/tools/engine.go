@@ -2,6 +2,9 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,6 +42,8 @@ type Engine struct {
 	cfg            config.Config
 	failureMu      sync.Mutex
 	recentFailures map[string]int
+	readMu         sync.Mutex
+	readSnapshots  map[string]string
 }
 
 func New(cfg config.Config) *Engine {
@@ -46,8 +51,11 @@ func New(cfg config.Config) *Engine {
 		registry:       map[string]Tool{},
 		cfg:            cfg,
 		recentFailures: map[string]int{},
+		readSnapshots:  map[string]string{},
 	}
 	e.Register(NewReadFileTool())
+	e.Register(NewWriteFileTool())
+	e.Register(NewEditFileTool())
 	e.Register(NewListDirTool())
 	e.Register(NewGrepCodebaseTool())
 	return e
@@ -95,6 +103,16 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 	}
 	req.ProjectRoot = absRoot
 	req.Params = normalizeToolParams(name, req.Params)
+	if requiresReadBeforeMutation(name) {
+		path := asString(req.Params, "path", "")
+		absPath, err := EnsureWithinRoot(req.ProjectRoot, path)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := e.ensureReadBeforeMutation(absPath); err != nil {
+			return Result{}, err
+		}
+	}
 	failureKey := toolFailureKey(name, req.Params)
 
 	res, err := tool.Execute(ctx, req)
@@ -107,8 +125,43 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 	}
 	e.clearFailure(failureKey)
 	res = e.compressToolOutput(req, res)
+	e.recordReadSnapshot(name, req.Params, res)
 	res.Success = true
 	return res, nil
+}
+
+func requiresReadBeforeMutation(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "write_file", "edit_file":
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *Engine) ensureReadBeforeMutation(absPath string) error {
+	_, err := os.Stat(absPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // Creating a new file does not require prior read.
+		}
+		return err
+	}
+	hash, err := fileContentHash(absPath)
+	if err != nil {
+		return err
+	}
+
+	e.readMu.Lock()
+	defer e.readMu.Unlock()
+	lastReadHash, ok := e.readSnapshots[absPath]
+	if !ok {
+		return fmt.Errorf("modifying existing file requires prior read_file: %s", absPath)
+	}
+	if lastReadHash != hash {
+		return fmt.Errorf("file changed since last read_file; read again before modifying: %s", absPath)
+	}
+	return nil
 }
 
 func (e *Engine) trackFailure(key string) int {
@@ -180,6 +233,51 @@ func toolFailureKey(name string, params map[string]any) string {
 		b.WriteString(strings.TrimSpace(fmt.Sprint(params[k])))
 	}
 	return b.String()
+}
+
+func (e *Engine) recordReadSnapshot(name string, params map[string]any, res Result) {
+	toolName := strings.ToLower(strings.TrimSpace(name))
+	switch toolName {
+	case "read_file":
+		p := strings.TrimSpace(asString(res.Data, "path", ""))
+		if p == "" {
+			p = strings.TrimSpace(asString(params, "path", ""))
+		}
+		if p == "" {
+			return
+		}
+		hash, err := fileContentHash(p)
+		if err != nil {
+			return
+		}
+		e.readMu.Lock()
+		e.readSnapshots[p] = hash
+		e.readMu.Unlock()
+	case "write_file", "edit_file":
+		p := strings.TrimSpace(asString(res.Data, "path", ""))
+		if p == "" {
+			p = strings.TrimSpace(asString(params, "path", ""))
+		}
+		if p == "" {
+			return
+		}
+		hash, err := fileContentHash(p)
+		if err != nil {
+			return
+		}
+		e.readMu.Lock()
+		e.readSnapshots[p] = hash
+		e.readMu.Unlock()
+	}
+}
+
+func fileContentHash(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func (e *Engine) compressToolOutput(req Request, res Result) Result {

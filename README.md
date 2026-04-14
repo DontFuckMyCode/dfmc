@@ -21,7 +21,7 @@ Implemented now:
 - Streaming support:
   - `chat` now uses provider stream path (SSE for Anthropic/OpenAI-compatible providers)
 - Context builder for relevant code snippets
-- Tool engine (`read_file`, `list_dir`, `grep_codebase`)
+- Tool engine (`read_file`, `write_file`, `edit_file`, `list_dir`, `grep_codebase`)
 - Skill commands (`skill list/info/run`) and built-in shortcuts (`review`, `explain`, `refactor`, `test`, `doc`)
 - Plugin commands (`plugin list/info/install/remove/enable/disable`) with config-backed enable state
 - Web API server (`dfmc serve`) with status, codemap, tools, memory, files, chat SSE
@@ -100,6 +100,8 @@ go run ./cmd/dfmc --json scan
 ```bash
 go run ./cmd/dfmc tool list
 go run ./cmd/dfmc tool run read_file --path internal/engine/engine.go --line_start 1 --line_end 40
+go run ./cmd/dfmc tool run write_file --path tmp/demo.txt --content "hello"
+go run ./cmd/dfmc tool run edit_file --path tmp/demo.txt --old_string hello --new_string hi
 go run ./cmd/dfmc tool run grep_codebase --pattern "ErrProviderUnavailable" --max_results 10
 go run ./cmd/dfmc map --format dot
 go run ./cmd/dfmc map --format svg > codemap.svg
