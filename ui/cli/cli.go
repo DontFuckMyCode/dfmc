@@ -4652,7 +4652,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		if strings.EqualFold(resolvedProfile, "auto") || resolvedProfile == "" {
 			resolvedProfile = "compact"
 			q := strings.ToLower(strings.TrimSpace(*query))
-			if strings.Contains(q, "detaylı") || strings.Contains(q, "detailed") || strings.Contains(q, "deep") || resolvedTask == "security" || resolvedTask == "review" || resolvedTask == "planning" {
+			if strings.Contains(q, "detayli") || strings.Contains(q, "detaylı") || strings.Contains(q, "detailed") || strings.Contains(q, "deep") || resolvedTask == "security" || resolvedTask == "review" || resolvedTask == "planning" {
 				resolvedProfile = "deep"
 			}
 		}
