@@ -16,6 +16,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 	"gopkg.in/yaml.v3"
@@ -56,6 +57,15 @@ type ConversationBranchRequest struct {
 	Name string `json:"name"`
 }
 
+type PromptRenderRequest struct {
+	Type         string            `json:"type"`
+	Task         string            `json:"task"`
+	Language     string            `json:"language"`
+	Query        string            `json:"query"`
+	ContextFiles string            `json:"context_files"`
+	Vars         map[string]string `json:"vars"`
+}
+
 func New(eng *engine.Engine, host string, port int) *Server {
 	s := &Server{
 		engine: eng,
@@ -87,6 +97,8 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("POST /api/v1/conversation/branches/create", s.handleConversationBranchCreate)
 	s.mux.HandleFunc("POST /api/v1/conversation/branches/switch", s.handleConversationBranchSwitch)
 	s.mux.HandleFunc("GET /api/v1/conversation/branches/compare", s.handleConversationBranchCompare)
+	s.mux.HandleFunc("GET /api/v1/prompts", s.handlePrompts)
+	s.mux.HandleFunc("POST /api/v1/prompts/render", s.handlePromptRender)
 	s.mux.HandleFunc("GET /api/v1/conversations", s.handleConversations)
 	s.mux.HandleFunc("GET /api/v1/conversations/search", s.handleConversationSearch)
 	s.mux.HandleFunc("GET /api/v1/files", s.handleFiles)
@@ -432,6 +444,67 @@ func (s *Server) handleConversationBranchCompare(w http.ResponseWriter, r *http.
 		return
 	}
 	writeJSON(w, http.StatusOK, comp)
+}
+
+func (s *Server) handlePrompts(w http.ResponseWriter, _ *http.Request) {
+	lib := promptlib.New()
+	_ = lib.LoadOverrides(s.engine.Status().ProjectRoot)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"prompts": lib.List(),
+	})
+}
+
+func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
+	req := PromptRenderRequest{
+		Type:     "system",
+		Task:     "auto",
+		Language: "auto",
+		Vars:     map[string]string{},
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	if strings.TrimSpace(req.Type) == "" {
+		req.Type = "system"
+	}
+	resolvedTask := strings.TrimSpace(req.Task)
+	if strings.EqualFold(resolvedTask, "auto") || resolvedTask == "" {
+		resolvedTask = promptlib.DetectTask(req.Query)
+	}
+	resolvedLang := strings.TrimSpace(req.Language)
+	if strings.EqualFold(resolvedLang, "auto") || resolvedLang == "" {
+		resolvedLang = promptlib.InferLanguage(req.Query, nil)
+	}
+	vars := map[string]string{
+		"project_root":     s.engine.Status().ProjectRoot,
+		"task":             resolvedTask,
+		"language":         resolvedLang,
+		"user_query":       strings.TrimSpace(req.Query),
+		"context_files":    strings.TrimSpace(req.ContextFiles),
+		"injected_context": "(none)",
+	}
+	for k, v := range req.Vars {
+		vars[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+
+	lib := promptlib.New()
+	_ = lib.LoadOverrides(s.engine.Status().ProjectRoot)
+	prompt := lib.Render(promptlib.RenderRequest{
+		Type:     req.Type,
+		Task:     resolvedTask,
+		Language: resolvedLang,
+		Vars:     vars,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"type":     req.Type,
+		"task":     resolvedTask,
+		"language": resolvedLang,
+		"vars":     vars,
+		"prompt":   prompt,
+	})
 }
 
 func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {

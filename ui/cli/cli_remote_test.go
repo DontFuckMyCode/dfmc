@@ -298,3 +298,31 @@ func TestRunRemoteConversationLifecycle(t *testing.T) {
 		}
 	}
 }
+
+func TestRunRemotePromptLifecycle(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/prompts" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"prompts":[{"id":"system.base","type":"system","task":"general"}]}`))
+		case r.URL.Path == "/api/v1/prompts/render" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"type":"system","task":"security","language":"go","prompt":"SECURITY PROMPT"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		}
+	}))
+	defer ts.Close()
+
+	cases := [][]string{
+		{"prompt", "list", "--url", ts.URL},
+		{"prompt", "render", "--url", ts.URL, "--task", "security", "--query", "auth audit"},
+	}
+	for _, args := range cases {
+		if code := runRemote(context.Background(), eng, args, true); code != 0 {
+			t.Fatalf("runRemote %v exit=%d", args, code)
+		}
+	}
+}

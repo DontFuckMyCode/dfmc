@@ -132,6 +132,8 @@ Endpoints:
 - `POST /api/v1/conversation/branches/create`
 - `POST /api/v1/conversation/branches/switch`
 - `GET /api/v1/conversation/branches/compare?a=...&b=...`
+- `GET /api/v1/prompts`
+- `POST /api/v1/prompts/render`
 - `GET /api/v1/conversations`
 - `GET /api/v1/conversations/search?q=...`
 - `GET /api/v1/files`
@@ -200,6 +202,8 @@ go run ./cmd/dfmc remote events --url http://127.0.0.1:7779 --type "*" --timeout
 go run ./cmd/dfmc remote ask --url http://127.0.0.1:7779 --message "auth middleware'i acikla"
 go run ./cmd/dfmc remote tools --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote skills --url http://127.0.0.1:7779
+go run ./cmd/dfmc remote prompt list --url http://127.0.0.1:7779
+go run ./cmd/dfmc remote prompt render --url http://127.0.0.1:7779 --task security --query "auth audit"
 go run ./cmd/dfmc remote tool read_file --url http://127.0.0.1:7779 --param path=README.md --param line_start=1 --param line_end=5
 go run ./cmd/dfmc remote skill review --url http://127.0.0.1:7779 --input "auth katmanini incele"
 go run ./cmd/dfmc remote analyze --url http://127.0.0.1:7779 --full
@@ -247,6 +251,34 @@ go run ./cmd/dfmc man --format man > dfmc.1
 go run ./cmd/dfmc man --format markdown > MANUAL.md
 ```
 
+### 13) Prompt library (task/language aware)
+
+```bash
+go run ./cmd/dfmc prompt list
+go run ./cmd/dfmc prompt render --query "security audit auth middleware"
+go run ./cmd/dfmc prompt render --task planning --language go --query "roadmap cikar"
+go run ./cmd/dfmc prompt render --task review --var context_files="- internal/auth/middleware.go:1-120"
+```
+
+Inline file injection in user query (Claude Code-style):
+
+```text
+[[file:internal/auth/middleware.go]]
+[[file:internal/auth/middleware.go#L10-L80]]
+```
+
+These markers are automatically resolved and injected into system prompt context.
+
+Prompt templates are loaded from:
+- built-in defaults (`internal/promptlib/defaults`)
+- global overrides (`~/.dfmc/prompts`)
+- project overrides (`.dfmc/prompts`)
+
+Supported file formats in prompt library:
+- `.yaml` / `.yml`
+- `.json`
+- `.md` (with optional YAML frontmatter)
+
 ## Command Overview
 
 Available:
@@ -261,6 +293,7 @@ Available:
 - `dfmc memory`
 - `dfmc conversation`
 - `dfmc config`
+- `dfmc prompt`
 - `dfmc plugin`
 - `dfmc skill`
 - `dfmc review`

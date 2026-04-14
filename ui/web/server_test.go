@@ -437,3 +437,51 @@ func TestConversationsEndpoints(t *testing.T) {
 		t.Fatalf("unexpected status %d: %s", compareResp.StatusCode, string(raw))
 	}
 }
+
+func TestPromptsEndpoints(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	listResp, err := http.Get(ts.URL + "/api/v1/prompts")
+	if err != nil {
+		t.Fatalf("get prompts: %v", err)
+	}
+	defer listResp.Body.Close()
+	if listResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(listResp.Body)
+		t.Fatalf("unexpected status %d: %s", listResp.StatusCode, string(raw))
+	}
+	var listPayload map[string]any
+	if err := json.NewDecoder(listResp.Body).Decode(&listPayload); err != nil {
+		t.Fatalf("decode list payload: %v", err)
+	}
+	if _, ok := listPayload["prompts"]; !ok {
+		t.Fatalf("missing prompts field: %#v", listPayload)
+	}
+
+	renderBody := bytes.NewBufferString(`{"type":"system","task":"security","query":"auth security audit"}`)
+	renderReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/prompts/render", renderBody)
+	if err != nil {
+		t.Fatalf("new render request: %v", err)
+	}
+	renderReq.Header.Set("Content-Type", "application/json")
+	renderResp, err := http.DefaultClient.Do(renderReq)
+	if err != nil {
+		t.Fatalf("render request: %v", err)
+	}
+	defer renderResp.Body.Close()
+	if renderResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(renderResp.Body)
+		t.Fatalf("unexpected status %d: %s", renderResp.StatusCode, string(raw))
+	}
+	var renderPayload map[string]any
+	if err := json.NewDecoder(renderResp.Body).Decode(&renderPayload); err != nil {
+		t.Fatalf("decode render payload: %v", err)
+	}
+	prompt, _ := renderPayload["prompt"].(string)
+	if !strings.Contains(strings.ToLower(prompt), "security") {
+		t.Fatalf("expected security prompt, got: %s", prompt)
+	}
+}

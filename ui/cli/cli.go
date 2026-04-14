@@ -27,6 +27,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 	"github.com/dontfuckmycode/dfmc/ui/web"
 	"gopkg.in/yaml.v3"
@@ -88,6 +89,8 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runServe(ctx, eng, cmdArgs, opts.JSON)
 	case "config":
 		return runConfig(ctx, eng, cmdArgs, opts.JSON)
+	case "prompt":
+		return runPrompt(ctx, eng, cmdArgs, opts.JSON)
 	case "plugin":
 		return runPlugin(ctx, eng, cmdArgs, opts.JSON)
 	case "skill":
@@ -276,6 +279,7 @@ func commandDocs() []commandDoc {
 		{Name: "conversation", Description: "Conversation management (list/search/load/save/undo/branch)"},
 		{Name: "memory", Description: "Memory management"},
 		{Name: "config", Description: "Configuration management"},
+		{Name: "prompt", Description: "Prompt library management"},
 		{Name: "plugin", Description: "Plugin management"},
 		{Name: "skill", Description: "Skill management"},
 		{Name: "serve", Description: "Start Web API server"},
@@ -378,6 +382,7 @@ func commandNames() []string {
 		"conversation",
 		"memory",
 		"config",
+		"prompt",
 		"plugin",
 		"skill",
 		"serve",
@@ -2259,6 +2264,69 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		_ = printJSON(payload)
 		return 0
 
+	case "prompt":
+		action := "list"
+		if len(args) >= 2 {
+			action = strings.ToLower(strings.TrimSpace(args[1]))
+		}
+		fs := flag.NewFlagSet("remote prompt", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
+		typ := fs.String("type", "system", "prompt type")
+		task := fs.String("task", "auto", "prompt task")
+		language := fs.String("language", "auto", "prompt language")
+		query := fs.String("query", "", "user query")
+		contextFiles := fs.String("context-files", "(none)", "context file summary")
+		var varsRaw multiStringFlag
+		fs.Var(&varsRaw, "var", "prompt var key=value (repeatable)")
+		if err := fs.Parse(args[2:]); err != nil {
+			return 2
+		}
+
+		switch action {
+		case "list":
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/prompts"
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote prompt list error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		case "render":
+			extraVars, err := parsePromptVars(varsRaw)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote prompt var parse error: %v\n", err)
+				return 2
+			}
+			payload, _, err := remoteJSONRequest(
+				http.MethodPost,
+				strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/prompts/render",
+				*token,
+				map[string]any{
+					"type":          *typ,
+					"task":          *task,
+					"language":      *language,
+					"query":         *query,
+					"context_files": *contextFiles,
+					"vars":          extraVars,
+				},
+				*timeout,
+			)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote prompt render error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		default:
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote prompt [list|render --query ...]")
+			return 2
+		}
+
 	case "start":
 		fs := flag.NewFlagSet("remote start", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -2318,7 +2386,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc remote [status|probe|events|ask|tool|tools|skill|skills|analyze|files|memory|conversation (list/search/active/new/save/load/branch)|codemap|start --host 127.0.0.1 --ws-port 7779 --auth none|token]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc remote [status|probe|events|ask|tool|tools|skill|skills|prompt|analyze|files|memory|conversation (list/search/active/new/save/load/branch)|codemap|start --host 127.0.0.1 --ws-port 7779 --auth none|token]")
 		return 2
 	}
 }
@@ -2508,6 +2576,22 @@ func parseKeyValueParams(items []string) (map[string]any, error) {
 			return nil, err
 		}
 		out[key] = val
+	}
+	return out, nil
+}
+
+func parsePromptVars(items []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, raw := range items {
+		parts := strings.SplitN(strings.TrimSpace(raw), "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid key=value: %s", raw)
+		}
+		key := strings.TrimSpace(parts[0])
+		if key == "" {
+			return nil, fmt.Errorf("empty key in var: %s", raw)
+		}
+		out[key] = strings.TrimSpace(parts[1])
 	}
 	return out, nil
 }
@@ -4490,6 +4574,104 @@ func runConfig(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 	}
 }
 
+func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
+	_ = ctx
+	if len(args) == 0 {
+		args = []string{"list"}
+	}
+
+	lib := promptlib.New()
+	projectRoot := eng.Status().ProjectRoot
+	_ = lib.LoadOverrides(projectRoot)
+
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "list":
+		items := lib.List()
+		if jsonMode {
+			_ = printJSON(map[string]any{"prompts": items})
+			return 0
+		}
+		for _, item := range items {
+			fmt.Printf("- %s type=%s task=%s", item.ID, item.Type, item.Task)
+			if strings.TrimSpace(item.Language) != "" {
+				fmt.Printf(" lang=%s", item.Language)
+			}
+			if item.Priority != 0 {
+				fmt.Printf(" priority=%d", item.Priority)
+			}
+			fmt.Println()
+		}
+		return 0
+
+	case "render":
+		fs := flag.NewFlagSet("prompt render", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		typ := fs.String("type", "system", "prompt type")
+		task := fs.String("task", "auto", "task (auto|general|planning|review|security|refactor|test|doc|debug)")
+		language := fs.String("language", "auto", "language (auto|go|typescript|python|rust|...)")
+		query := fs.String("query", "", "user request/query")
+		contextFiles := fs.String("context-files", "(none)", "context file summary to inject")
+		var varsRaw multiStringFlag
+		fs.Var(&varsRaw, "var", "template variable in key=value format (repeatable)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if strings.TrimSpace(*query) == "" && len(fs.Args()) > 0 {
+			*query = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		}
+		resolvedTask := strings.TrimSpace(*task)
+		if strings.EqualFold(resolvedTask, "auto") || resolvedTask == "" {
+			resolvedTask = promptlib.DetectTask(*query)
+		}
+		resolvedLanguage := strings.TrimSpace(*language)
+		if strings.EqualFold(resolvedLanguage, "auto") || resolvedLanguage == "" {
+			resolvedLanguage = promptlib.InferLanguage(*query, nil)
+		}
+
+		vars := map[string]string{
+			"project_root":  projectRoot,
+			"task":          resolvedTask,
+			"language":      resolvedLanguage,
+			"user_query":    strings.TrimSpace(*query),
+			"context_files": strings.TrimSpace(*contextFiles),
+		}
+		extraVars, err := parsePromptVars(varsRaw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "prompt render var parse error: %v\n", err)
+			return 2
+		}
+		for k, v := range extraVars {
+			vars[k] = v
+		}
+
+		out := lib.Render(promptlib.RenderRequest{
+			Type:     strings.TrimSpace(*typ),
+			Task:     resolvedTask,
+			Language: resolvedLanguage,
+			Vars:     vars,
+		})
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"type":     strings.TrimSpace(*typ),
+				"task":     resolvedTask,
+				"language": resolvedLanguage,
+				"vars":     vars,
+				"prompt":   out,
+			})
+			return 0
+		}
+		fmt.Print(out)
+		if !strings.HasSuffix(out, "\n") {
+			fmt.Println()
+		}
+		return 0
+
+	default:
+		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\"]")
+		return 2
+	}
+}
+
 func projectConfigPath(cwd string) string {
 	root := config.FindProjectRoot(cwd)
 	if strings.TrimSpace(root) == "" {
@@ -4706,10 +4888,11 @@ Commands:
   conversation Conversation management (list/search/load/save/undo/branch)
   memory      Memory management
   config      Configuration management (list/get/set/edit)
+  prompt      Prompt library management (list/render)
   plugin      Plugin management (list/info/install/remove/enable/disable)
   skill       Skill management (list/info/run)
   serve       Start Web API server
-  remote      Remote control server (status/probe/events/ask/tool/tools/skill/skills/analyze/files/memory/conversation+branch/codemap/start)
+  remote      Remote control server (status/probe/events/ask/tool/tools/skill/skills/prompt/analyze/files/memory/conversation+branch/codemap/start)
   doctor      Environment and config health checks
   completion  Generate shell completion scripts
   man         Generate command manual page
