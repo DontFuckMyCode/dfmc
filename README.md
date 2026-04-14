@@ -62,12 +62,12 @@ This creates:
 ### 3) Ask a question
 
 ```bash
-go run ./cmd/dfmc ask "auth middleware nasil calisiyor?"
+go run ./cmd/dfmc ask "how does auth middleware work?"
 go run ./cmd/dfmc status
 go run ./cmd/dfmc --json status --query "security audit auth middleware"
 go run ./cmd/dfmc --json status --query "security audit auth middleware" --runtime-tool-style function-calling --runtime-max-context 1000
 ```
-`status` JSON çıktısı, sorgu verildiğinde `context_tuning_suggestions` alanında token-verimli ayar önerileri de içerir.
+`status` JSON output includes `context_tuning_suggestions` when a query is provided.
 
 If provider API keys are not configured, DFMC automatically uses offline mode with local-context response generation.
 
@@ -169,8 +169,8 @@ go run ./cmd/dfmc context recent
 go run ./cmd/dfmc context brief --max-words 240
 go run ./cmd/dfmc context brief --path docs/BRIEF.md --max-words 180
 ```
-`runtime-max-context` düşük olduğunda (`<=12000`) context bütçesi otomatik olarak daha agresif sıkıştırma moduna geçirilir; çok sıkı pencerelerde (`<=8000`) docs dilimleri otomatik kapatılır.
-`dfmc --json context recommend ...` çıktısı `tuning_suggestions` alanında doğrudan uygulanabilir config önerileri üretir.
+When `runtime-max-context` is low (`<=12000`), context budgeting automatically switches to more aggressive compression; for very tight windows (`<=8000`), doc slices are auto-disabled.
+`dfmc --json context recommend ...` includes directly actionable config updates under `tuning_suggestions`.
 
 ### 7) Use memory and conversation commands
 
@@ -198,7 +198,7 @@ go run ./cmd/dfmc conversation branch compare main experiment
 ```bash
 go run ./cmd/dfmc skill list
 go run ./cmd/dfmc skill info review
-go run ./cmd/dfmc --provider offline review "auth modulu icin riskleri bul"
+go run ./cmd/dfmc --provider offline review "find risks in the auth module"
 
 go run ./cmd/dfmc plugin list
 go run ./cmd/dfmc plugin install --name my-plugin --enable ./path/to/my-plugin.py
@@ -222,7 +222,7 @@ go run ./cmd/dfmc remote status
 go run ./cmd/dfmc remote status --live --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote probe --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote events --url http://127.0.0.1:7779 --type "*" --timeout 10s --max 20
-go run ./cmd/dfmc remote ask --url http://127.0.0.1:7779 --message "auth middleware'i acikla"
+go run ./cmd/dfmc remote ask --url http://127.0.0.1:7779 --message "explain the auth middleware"
 go run ./cmd/dfmc remote tools --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote skills --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote prompt list --url http://127.0.0.1:7779
@@ -239,7 +239,7 @@ go run ./cmd/dfmc remote context recommend --url http://127.0.0.1:7779 --query "
 go run ./cmd/dfmc remote context recommend --url http://127.0.0.1:7779 --query "debug [[file:internal/auth/service.go]]" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc remote context brief --url http://127.0.0.1:7779 --max-words 240 --path docs/BRIEF.md
 go run ./cmd/dfmc remote tool read_file --url http://127.0.0.1:7779 --param path=README.md --param line_start=1 --param line_end=5
-go run ./cmd/dfmc remote skill review --url http://127.0.0.1:7779 --input "auth katmanini incele"
+go run ./cmd/dfmc remote skill review --url http://127.0.0.1:7779 --input "review the auth layer"
 go run ./cmd/dfmc remote analyze --url http://127.0.0.1:7779 --full
 go run ./cmd/dfmc remote analyze --url http://127.0.0.1:7779 --full --magicdoc
 go run ./cmd/dfmc remote files list --url http://127.0.0.1:7779 --limit 100
@@ -293,7 +293,7 @@ go run ./cmd/dfmc man --format markdown > MANUAL.md
 ```bash
 go run ./cmd/dfmc prompt list
 go run ./cmd/dfmc prompt render --query "security audit auth middleware"
-go run ./cmd/dfmc prompt render --task planning --language go --query "roadmap cikar"
+go run ./cmd/dfmc prompt render --task planning --language go --query "create a roadmap"
 go run ./cmd/dfmc prompt render --task review --var context_files="- internal/auth/middleware.go:1-120"
 go run ./cmd/dfmc prompt render --task security --role security_auditor --query "auth audit"
 go run ./cmd/dfmc prompt render --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000

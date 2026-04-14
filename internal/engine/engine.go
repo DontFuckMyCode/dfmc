@@ -1281,7 +1281,7 @@ func topTermsFromMessages(messages []types.Message, limit int) []string {
 	}
 	stop := map[string]struct{}{
 		"the": {}, "and": {}, "for": {}, "with": {}, "this": {}, "that": {}, "from": {}, "into": {}, "your": {}, "you": {},
-		"bir": {}, "ve": {}, "ile": {}, "icin": {}, "için": {}, "ama": {}, "gibi": {}, "daha": {}, "bunu": {}, "sunu": {},
+		"about": {}, "also": {}, "just": {}, "when": {}, "then": {}, "than": {}, "what": {}, "which": {}, "where": {}, "while": {},
 		"code": {}, "file": {}, "line": {}, "tool": {}, "message": {}, "messages": {}, "user": {}, "assistant": {},
 	}
 	counts := map[string]int{}

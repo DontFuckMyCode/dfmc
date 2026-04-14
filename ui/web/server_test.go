@@ -515,7 +515,7 @@ func TestWSEventStreamEndpoint(t *testing.T) {
 
 func TestConversationsEndpoints(t *testing.T) {
 	eng := newTestEngine(t)
-	_, _ = eng.Ask(context.Background(), "merhaba conversation test")
+	_, _ = eng.Ask(context.Background(), "hello conversation test")
 	_ = eng.ConversationSave()
 
 	srv := New(eng, "127.0.0.1", 0)
@@ -539,7 +539,7 @@ func TestConversationsEndpoints(t *testing.T) {
 		t.Fatalf("missing conversations field: %#v", listPayload)
 	}
 
-	searchResp, err := http.Get(ts.URL + "/api/v1/conversations/search?q=merhaba&limit=5")
+	searchResp, err := http.Get(ts.URL + "/api/v1/conversations/search?q=hello&limit=5")
 	if err != nil {
 		t.Fatalf("search conversations: %v", err)
 	}
@@ -552,7 +552,7 @@ func TestConversationsEndpoints(t *testing.T) {
 	if err := json.NewDecoder(searchResp.Body).Decode(&searchPayload); err != nil {
 		t.Fatalf("decode search payload: %v", err)
 	}
-	if searchPayload["query"] != "merhaba" {
+	if searchPayload["query"] != "hello" {
 		t.Fatalf("unexpected query field: %#v", searchPayload)
 	}
 

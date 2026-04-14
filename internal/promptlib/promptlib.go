@@ -580,19 +580,19 @@ func DetectTask(query string) string {
 		return false
 	}
 	switch {
-	case has("security", "audit", "vuln", "vulnerability", "xss", "sqli", "guvenlik", "zaafiyet"):
+	case has("security", "audit", "vuln", "vulnerability", "xss", "sqli", "threat", "exploit"):
 		return "security"
-	case has("review", "code review", "incele", "inceleme"):
+	case has("review", "code review", "inspect", "analysis"):
 		return "review"
 	case has("refactor", "cleanup", "restructure"):
 		return "refactor"
 	case has("test", "tests", "unit test", "integration test"):
 		return "test"
-	case has("doc", "docs", "documentation", "belgele"):
+	case has("doc", "docs", "documentation", "document"):
 		return "doc"
-	case has("plan", "planning", "roadmap", "phase", "sprint", "adim"):
+	case has("plan", "planning", "roadmap", "phase", "sprint", "step-by-step"):
 		return "planning"
-	case has("bug", "fix", "error", "exception", "panic", "hata", "debug"):
+	case has("bug", "fix", "error", "exception", "panic", "debug", "traceback"):
 		return "debug"
 	default:
 		return "general"

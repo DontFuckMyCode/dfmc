@@ -505,10 +505,10 @@ func safeSub(parts []string, idx int) string {
 
 func ResolvePromptProfile(query, task string, runtime PromptRuntime) string {
 	q := strings.ToLower(strings.TrimSpace(query))
-	if containsAnyFold(q, []string{"detayli", "detaylı", "detailed", "deep", "thorough", "exhaustive", "ayrintili", "ayrıntılı"}) {
+	if containsAnyFold(q, []string{"detailed", "deep", "thorough", "exhaustive", "in-depth"}) {
 		return "deep"
 	}
-	if containsAnyFold(q, []string{"compact", "short", "minimal", "kisa", "kısa", "ozet", "özet"}) {
+	if containsAnyFold(q, []string{"compact", "short", "minimal", "brief", "concise", "summary"}) {
 		return "compact"
 	}
 	switch strings.ToLower(strings.TrimSpace(task)) {
@@ -529,7 +529,7 @@ func ResolvePromptProfile(query, task string, runtime PromptRuntime) string {
 
 func ResolvePromptRole(query, task string) string {
 	q := strings.ToLower(strings.TrimSpace(query))
-	if containsAnyFold(q, []string{"architect", "architecture", "tasarim", "tasarım"}) {
+	if containsAnyFold(q, []string{"architect", "architecture", "system design"}) {
 		return "architect"
 	}
 	switch strings.ToLower(strings.TrimSpace(task)) {
