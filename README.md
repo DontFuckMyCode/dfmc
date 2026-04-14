@@ -86,6 +86,7 @@ go run ./cmd/dfmc analyze
 go run ./cmd/dfmc analyze --security --dead-code --complexity
 go run ./cmd/dfmc analyze --deps
 go run ./cmd/dfmc analyze --full --json
+go run ./cmd/dfmc analyze --full --magicdoc
 ```
 
 ### 5) Run security scan

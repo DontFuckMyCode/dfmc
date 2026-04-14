@@ -975,12 +975,24 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 	var complexity bool
 	var deadCode bool
 	var deps bool
+	var magicDoc bool
+	var magicDocPath string
+	var magicDocTitle string
+	var magicDocHotspots int
+	var magicDocDeps int
+	var magicDocRecent int
 	fs.BoolVar(&jsonFlag, "json", false, "output as json")
 	fs.BoolVar(&full, "full", false, "run full analysis set")
 	fs.BoolVar(&security, "security", false, "run security analysis")
 	fs.BoolVar(&complexity, "complexity", false, "run complexity analysis")
 	fs.BoolVar(&deadCode, "dead-code", false, "run dead code analysis")
 	fs.BoolVar(&deps, "deps", false, "run dependency analysis summary")
+	fs.BoolVar(&magicDoc, "magicdoc", false, "update .dfmc/magic/MAGIC_DOC.md after analyze")
+	fs.StringVar(&magicDocPath, "magicdoc-path", "", "custom magic doc path")
+	fs.StringVar(&magicDocTitle, "magicdoc-title", "DFMC Project Brief", "magic doc title")
+	fs.IntVar(&magicDocHotspots, "magicdoc-hotspots", 8, "max hotspot entries for magic doc")
+	fs.IntVar(&magicDocDeps, "magicdoc-deps", 8, "max dependency entries for magic doc")
+	fs.IntVar(&magicDocRecent, "magicdoc-recent", 5, "max recent items for magic doc")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -1005,17 +1017,58 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 	if deps || full {
 		depSummary = collectDependencyStats(eng, 20)
 	}
-	if jsonMode {
-		if deps || full {
-			_ = printJSON(map[string]any{
-				"report":        report,
-				"dependencies":  depSummary,
-				"dep_count":     len(depSummary),
-				"dep_requested": true,
-			})
-		} else {
-			_ = printJSON(report)
+	magicDocResult := map[string]any{}
+	if magicDoc {
+		root := strings.TrimSpace(report.ProjectRoot)
+		if root == "" {
+			root = strings.TrimSpace(eng.Status().ProjectRoot)
 		}
+		if root == "" {
+			if cwd, err := os.Getwd(); err == nil {
+				root = cwd
+			}
+		}
+		target := resolveMagicDocPath(root, strings.TrimSpace(magicDocPath))
+		content, err := buildMagicDocContent(ctx, eng, root, strings.TrimSpace(magicDocTitle), magicDocHotspots, magicDocDeps, magicDocRecent)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "magicdoc build failed: %v\n", err)
+			return 1
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "magicdoc mkdir failed: %v\n", err)
+			return 1
+		}
+		prev, _ := os.ReadFile(target)
+		updated := string(prev) != content
+		if updated {
+			if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+				fmt.Fprintf(os.Stderr, "magicdoc write failed: %v\n", err)
+				return 1
+			}
+		}
+		magicDocResult = map[string]any{
+			"path":    target,
+			"updated": updated,
+			"bytes":   len(content),
+		}
+	}
+	if jsonMode {
+		if deps || full || magicDoc {
+			out := map[string]any{
+				"report": report,
+			}
+			if deps || full {
+				out["dependencies"] = depSummary
+				out["dep_count"] = len(depSummary)
+				out["dep_requested"] = true
+			}
+			if magicDoc {
+				out["magicdoc"] = magicDocResult
+			}
+			_ = printJSON(out)
+			return 0
+		}
+		_ = printJSON(report)
 		return 0
 	}
 	fmt.Printf("Project: %s\n", report.ProjectRoot)
@@ -1049,6 +1102,9 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 			}
 			fmt.Printf("  - %s (%d imports)\n", d.Module, d.Count)
 		}
+	}
+	if magicDoc {
+		fmt.Printf("MagicDoc: %s (%s)\n", fmt.Sprint(magicDocResult["path"]), map[bool]string{true: "updated", false: "unchanged"}[magicDocResult["updated"] == true])
 	}
 	return 0
 }
