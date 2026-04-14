@@ -64,12 +64,15 @@ func TestBuildSystemPromptUsesPromptLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build context: %v", err)
 	}
-	prompt := mgr.BuildSystemPrompt(tmp, "security audit this auth path", chunks)
+	prompt := mgr.BuildSystemPrompt(tmp, "security audit this auth path", chunks, []string{"read_file", "grep_codebase"})
 	if !strings.Contains(strings.ToLower(prompt), "security") {
 		t.Fatalf("expected security-focused prompt, got: %s", prompt)
 	}
 	if !strings.Contains(prompt, tmp) {
 		t.Fatalf("expected project root in prompt, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "read_file") {
+		t.Fatalf("expected tools overview in prompt, got: %s", prompt)
 	}
 }
 
@@ -93,7 +96,7 @@ func VerifyToken(token string) bool {
 	}
 	mgr := New(cm)
 	query := "please inspect [[file:auth.go#L1-L4]] and explain risks"
-	prompt := mgr.BuildSystemPrompt(tmp, query, nil)
+	prompt := mgr.BuildSystemPrompt(tmp, query, nil, nil)
 
 	if !strings.Contains(prompt, "[[file:auth.go#L1-L4]]") {
 		t.Fatalf("expected injected marker block in prompt, got: %s", prompt)

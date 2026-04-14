@@ -354,7 +354,7 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 		Context: chunks,
 	}
 	if e.Context != nil {
-		req.System = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks)
+		req.System = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks, e.ListTools())
 	}
 
 	resp, usedProvider, err := e.Providers.Complete(ctx, req)
@@ -408,7 +408,7 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 		Context: chunks,
 	}
 	if e.Context != nil {
-		req.System = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks)
+		req.System = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks, e.ListTools())
 	}
 
 	stream, usedProvider, err := e.Providers.Stream(ctx, req)

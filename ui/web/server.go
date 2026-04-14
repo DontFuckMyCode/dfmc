@@ -61,6 +61,7 @@ type PromptRenderRequest struct {
 	Type         string            `json:"type"`
 	Task         string            `json:"task"`
 	Language     string            `json:"language"`
+	Profile      string            `json:"profile"`
 	Query        string            `json:"query"`
 	ContextFiles string            `json:"context_files"`
 	Vars         map[string]string `json:"vars"`
@@ -459,6 +460,7 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 		Type:     "system",
 		Task:     "auto",
 		Language: "auto",
+		Profile:  "auto",
 		Vars:     map[string]string{},
 	}
 	if r.Body != nil {
@@ -478,13 +480,25 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 	if strings.EqualFold(resolvedLang, "auto") || resolvedLang == "" {
 		resolvedLang = promptlib.InferLanguage(req.Query, nil)
 	}
+	resolvedProfile := strings.TrimSpace(req.Profile)
+	if strings.EqualFold(resolvedProfile, "auto") || resolvedProfile == "" {
+		resolvedProfile = "compact"
+		q := strings.ToLower(strings.TrimSpace(req.Query))
+		if strings.Contains(q, "detaylı") || strings.Contains(q, "detailed") || strings.Contains(q, "deep") || resolvedTask == "security" || resolvedTask == "review" || resolvedTask == "planning" {
+			resolvedProfile = "deep"
+		}
+	}
 	vars := map[string]string{
 		"project_root":     s.engine.Status().ProjectRoot,
 		"task":             resolvedTask,
 		"language":         resolvedLang,
+		"profile":          resolvedProfile,
 		"user_query":       strings.TrimSpace(req.Query),
 		"context_files":    strings.TrimSpace(req.ContextFiles),
 		"injected_context": "(none)",
+		"tools_overview":   strings.Join(s.engine.ListTools(), ", "),
+		"tool_call_policy": "Use minimum necessary tools with narrow scope.",
+		"response_policy":  "Prioritize concise, actionable output.",
 	}
 	for k, v := range req.Vars {
 		vars[strings.TrimSpace(k)] = strings.TrimSpace(v)
@@ -496,12 +510,14 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 		Type:     req.Type,
 		Task:     resolvedTask,
 		Language: resolvedLang,
+		Profile:  resolvedProfile,
 		Vars:     vars,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"type":     req.Type,
 		"task":     resolvedTask,
 		"language": resolvedLang,
+		"profile":  resolvedProfile,
 		"vars":     vars,
 		"prompt":   prompt,
 	})

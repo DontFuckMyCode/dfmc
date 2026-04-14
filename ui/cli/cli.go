@@ -2278,6 +2278,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		typ := fs.String("type", "system", "prompt type")
 		task := fs.String("task", "auto", "prompt task")
 		language := fs.String("language", "auto", "prompt language")
+		profile := fs.String("profile", "auto", "prompt profile")
 		query := fs.String("query", "", "user query")
 		contextFiles := fs.String("context-files", "(none)", "context file summary")
 		var varsRaw multiStringFlag
@@ -2310,6 +2311,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 					"type":          *typ,
 					"task":          *task,
 					"language":      *language,
+					"profile":       *profile,
 					"query":         *query,
 					"context_files": *contextFiles,
 					"vars":          extraVars,
@@ -4609,6 +4611,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		typ := fs.String("type", "system", "prompt type")
 		task := fs.String("task", "auto", "task (auto|general|planning|review|security|refactor|test|doc|debug)")
 		language := fs.String("language", "auto", "language (auto|go|typescript|python|rust|...)")
+		profile := fs.String("profile", "auto", "prompt profile (auto|compact|deep)")
 		query := fs.String("query", "", "user request/query")
 		contextFiles := fs.String("context-files", "(none)", "context file summary to inject")
 		var varsRaw multiStringFlag
@@ -4627,13 +4630,26 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		if strings.EqualFold(resolvedLanguage, "auto") || resolvedLanguage == "" {
 			resolvedLanguage = promptlib.InferLanguage(*query, nil)
 		}
+		resolvedProfile := strings.TrimSpace(*profile)
+		if strings.EqualFold(resolvedProfile, "auto") || resolvedProfile == "" {
+			resolvedProfile = "compact"
+			q := strings.ToLower(strings.TrimSpace(*query))
+			if strings.Contains(q, "detaylı") || strings.Contains(q, "detailed") || strings.Contains(q, "deep") || resolvedTask == "security" || resolvedTask == "review" || resolvedTask == "planning" {
+				resolvedProfile = "deep"
+			}
+		}
 
 		vars := map[string]string{
-			"project_root":  projectRoot,
-			"task":          resolvedTask,
-			"language":      resolvedLanguage,
-			"user_query":    strings.TrimSpace(*query),
-			"context_files": strings.TrimSpace(*contextFiles),
+			"project_root":     projectRoot,
+			"task":             resolvedTask,
+			"language":         resolvedLanguage,
+			"profile":          resolvedProfile,
+			"user_query":       strings.TrimSpace(*query),
+			"context_files":    strings.TrimSpace(*contextFiles),
+			"injected_context": "(none)",
+			"tools_overview":   strings.Join(eng.ListTools(), ", "),
+			"tool_call_policy": "Use minimum necessary tools with narrow scope.",
+			"response_policy":  "Prioritize concise, actionable output.",
 		}
 		extraVars, err := parsePromptVars(varsRaw)
 		if err != nil {
@@ -4648,6 +4664,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			Type:     strings.TrimSpace(*typ),
 			Task:     resolvedTask,
 			Language: resolvedLanguage,
+			Profile:  resolvedProfile,
 			Vars:     vars,
 		})
 		if jsonMode {
@@ -4655,6 +4672,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				"type":     strings.TrimSpace(*typ),
 				"task":     resolvedTask,
 				"language": resolvedLanguage,
+				"profile":  resolvedProfile,
 				"vars":     vars,
 				"prompt":   out,
 			})

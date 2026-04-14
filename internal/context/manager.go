@@ -111,7 +111,7 @@ func (m *Manager) Build(query string, maxFiles int) ([]types.ContextChunk, error
 	return chunks, nil
 }
 
-func (m *Manager) BuildSystemPrompt(projectRoot, query string, chunks []types.ContextChunk) string {
+func (m *Manager) BuildSystemPrompt(projectRoot, query string, chunks []types.ContextChunk, tools []string) string {
 	if m == nil || m.prompts == nil {
 		return "You are DFMC, a code intelligence assistant. Be concise, practical, and safe."
 	}
@@ -119,18 +119,24 @@ func (m *Manager) BuildSystemPrompt(projectRoot, query string, chunks []types.Co
 
 	task := promptlib.DetectTask(query)
 	language := promptlib.InferLanguage(query, chunks)
+	profile := detectPromptProfile(query, task)
 	injected := extractInjectedContext(projectRoot, query, 3, 120)
 	return m.prompts.Render(promptlib.RenderRequest{
 		Type:     "system",
 		Task:     task,
 		Language: language,
+		Profile:  profile,
 		Vars: map[string]string{
 			"project_root":     projectRoot,
 			"task":             task,
 			"language":         language,
+			"profile":          profile,
 			"user_query":       strings.TrimSpace(query),
 			"context_files":    summarizeContextFiles(chunks, 12),
 			"injected_context": injected,
+			"tools_overview":   summarizeTools(tools, 24),
+			"tool_call_policy": buildToolCallPolicy(task),
+			"response_policy":  buildResponsePolicy(task, profile),
 		},
 	})
 }
@@ -362,4 +368,93 @@ func safeSub(parts []string, idx int) string {
 		return strings.TrimSpace(parts[idx])
 	}
 	return ""
+}
+
+func detectPromptProfile(query, task string) string {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if strings.Contains(q, "detaylı") || strings.Contains(q, "detailed") || strings.Contains(q, "deep") {
+		return "deep"
+	}
+	switch strings.ToLower(strings.TrimSpace(task)) {
+	case "security", "review", "planning":
+		return "deep"
+	default:
+		return "compact"
+	}
+}
+
+func summarizeTools(tools []string, limit int) string {
+	if len(tools) == 0 {
+		return "(none)"
+	}
+	clean := make([]string, 0, len(tools))
+	seen := map[string]struct{}{}
+	for _, name := range tools {
+		n := strings.TrimSpace(name)
+		if n == "" {
+			continue
+		}
+		k := strings.ToLower(n)
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		clean = append(clean, n)
+	}
+	sort.Strings(clean)
+	if limit > 0 && len(clean) > limit {
+		clean = clean[:limit]
+	}
+	lines := make([]string, 0, len(clean))
+	for _, n := range clean {
+		lines = append(lines, "- "+n)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func buildToolCallPolicy(task string) string {
+	lines := []string{
+		"1) Call tools only when they reduce uncertainty materially.",
+		"2) Prefer the minimum tool set needed for a reliable result.",
+		"3) Keep calls narrow (targeted files/ranges/filters).",
+		"4) Reuse prior tool outputs; avoid duplicate calls.",
+		"5) Validate edited scope with the smallest relevant test first.",
+	}
+	switch strings.ToLower(strings.TrimSpace(task)) {
+	case "security":
+		lines = append(lines,
+			"6) Collect concrete evidence before remediation edits.",
+			"7) Report exploitability conditions and confidence.")
+	case "review":
+		lines = append(lines,
+			"6) Anchor findings to concrete evidence (file/line).",
+			"7) Prioritize high-severity and high-confidence issues.")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func buildResponsePolicy(task, profile string) string {
+	depth := "compact"
+	if strings.EqualFold(strings.TrimSpace(profile), "deep") {
+		depth = "deep"
+	}
+	lines := []string{
+		"- Output depth: " + depth,
+		"- Maximize signal density; avoid filler text.",
+		"- Keep assumptions explicit and short.",
+		"- Prefer precise file references for code claims.",
+	}
+	switch strings.ToLower(strings.TrimSpace(task)) {
+	case "review", "security":
+		lines = append(lines,
+			"- Order findings by severity first.",
+			"- Include impact and concrete fix guidance per finding.")
+	case "planning":
+		lines = append(lines,
+			"- Provide phased execution plan with checkpoints.")
+	default:
+		lines = append(lines,
+			"- Start with short answer, then critical details.")
+	}
+	return strings.Join(lines, "\n")
 }
