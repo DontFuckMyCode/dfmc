@@ -106,6 +106,39 @@ func VerifyToken(token string) bool {
 	}
 }
 
+func TestBuildSystemPromptInjectionBudgetCompactVsDeep(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "auth.go")
+	var b strings.Builder
+	b.WriteString("package auth\n\nfunc VerifyToken(token string) bool {\n")
+	for i := 0; i < 420; i++ {
+		b.WriteString("value := \"alpha beta gamma delta epsilon zeta eta theta iota kappa\"\n")
+	}
+	b.WriteString("return token != \"\"\n}\n")
+	if err := os.WriteFile(target, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	ae := ast.New()
+	cm := codemap.New(ae)
+	if err := cm.BuildFromFiles(context.Background(), []string{target}); err != nil {
+		t.Fatalf("build codemap: %v", err)
+	}
+	mgr := New(cm)
+
+	compactQuery := "inspect [[file:auth.go#L1-L420]]"
+	deepQuery := "inspect [[file:auth.go#L1-L420]] detailed"
+	compactPrompt := mgr.BuildSystemPrompt(tmp, compactQuery, nil, nil)
+	deepPrompt := mgr.BuildSystemPrompt(tmp, deepQuery, nil, nil)
+
+	if !strings.Contains(compactPrompt, "truncated for token budget") {
+		t.Fatalf("expected compact prompt injection to be token-trimmed, got: %s", compactPrompt)
+	}
+	if len(strings.Fields(deepPrompt)) <= len(strings.Fields(compactPrompt)) {
+		t.Fatalf("expected deep prompt to allow larger injection budget")
+	}
+}
+
 func TestBuildWithOptions_RespectsTokenBudgets(t *testing.T) {
 	tmp := t.TempDir()
 	big := filepath.Join(tmp, "big.go")

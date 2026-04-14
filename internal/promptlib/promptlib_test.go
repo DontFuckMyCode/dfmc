@@ -123,3 +123,63 @@ Plan for {{project_root}}
 		t.Fatalf("unexpected template meta: %+v", tpl)
 	}
 }
+
+func TestRenderComposesTaskAndProfileFragments(t *testing.T) {
+	lib := &Library{
+		templates:   []Template{},
+		loadedRoots: map[string]struct{}{},
+	}
+	lib.upsert(Template{
+		ID:      "base",
+		Type:    "system",
+		Task:    "general",
+		Compose: "replace",
+		Body:    "BASE {{task}}",
+	})
+	lib.upsert(Template{
+		ID:      "task.security",
+		Type:    "system",
+		Task:    "security",
+		Compose: "append",
+		Body:    "TASK {{task}}",
+	})
+	lib.upsert(Template{
+		ID:      "profile.deep",
+		Type:    "system",
+		Task:    "general",
+		Profile: "deep",
+		Compose: "append",
+		Body:    "PROFILE {{profile}}",
+	})
+
+	out := lib.Render(RenderRequest{
+		Type:    "system",
+		Task:    "security",
+		Profile: "deep",
+		Vars: map[string]string{
+			"task":    "security",
+			"profile": "deep",
+		},
+	})
+
+	if !strings.Contains(out, "BASE security") {
+		t.Fatalf("expected base fragment, got: %s", out)
+	}
+	if !strings.Contains(out, "TASK security") {
+		t.Fatalf("expected task fragment, got: %s", out)
+	}
+	if !strings.Contains(out, "PROFILE deep") {
+		t.Fatalf("expected profile fragment, got: %s", out)
+	}
+}
+
+func TestNormalizeTemplateComposeMode(t *testing.T) {
+	a := normalizeTemplate(Template{Type: "system", Task: "general", Compose: "append", Body: "x"})
+	if a.Compose != "append" {
+		t.Fatalf("expected append compose, got: %q", a.Compose)
+	}
+	b := normalizeTemplate(Template{Type: "system", Task: "general", Body: "x"})
+	if b.Compose != "replace" {
+		t.Fatalf("expected default replace compose, got: %q", b.Compose)
+	}
+}

@@ -156,7 +156,11 @@ func (m *Manager) BuildSystemPrompt(projectRoot, query string, chunks []types.Co
 	task := promptlib.DetectTask(query)
 	language := promptlib.InferLanguage(query, chunks)
 	profile := detectPromptProfile(query, task)
-	injected := extractInjectedContext(projectRoot, query, 3, 120)
+	limits := promptRenderBudget(task, profile)
+	injected := extractInjectedContext(projectRoot, query, limits.InjectedBlocks, limits.InjectedLines)
+	if limits.InjectedTokens > 0 {
+		injected = trimToTokenBudget(injected, limits.InjectedTokens)
+	}
 	return m.prompts.Render(promptlib.RenderRequest{
 		Type:     "system",
 		Task:     task,
@@ -168,9 +172,9 @@ func (m *Manager) BuildSystemPrompt(projectRoot, query string, chunks []types.Co
 			"language":         language,
 			"profile":          profile,
 			"user_query":       strings.TrimSpace(query),
-			"context_files":    summarizeContextFiles(chunks, 12),
+			"context_files":    summarizeContextFiles(chunks, limits.ContextFiles),
 			"injected_context": injected,
-			"tools_overview":   summarizeTools(tools, 24),
+			"tools_overview":   summarizeTools(tools, limits.ToolList),
 			"tool_call_policy": buildToolCallPolicy(task),
 			"response_policy":  buildResponsePolicy(task, profile),
 		},
@@ -417,6 +421,39 @@ func detectPromptProfile(query, task string) string {
 	default:
 		return "compact"
 	}
+}
+
+type renderBudget struct {
+	ContextFiles   int
+	ToolList       int
+	InjectedBlocks int
+	InjectedLines  int
+	InjectedTokens int
+}
+
+func promptRenderBudget(task, profile string) renderBudget {
+	b := renderBudget{
+		ContextFiles:   10,
+		ToolList:       16,
+		InjectedBlocks: 2,
+		InjectedLines:  80,
+		InjectedTokens: 320,
+	}
+	if strings.EqualFold(strings.TrimSpace(profile), "deep") {
+		b.ContextFiles = 16
+		b.ToolList = 24
+		b.InjectedBlocks = 3
+		b.InjectedLines = 140
+		b.InjectedTokens = 700
+	}
+	switch strings.ToLower(strings.TrimSpace(task)) {
+	case "security", "review":
+		b.ContextFiles += 2
+		b.InjectedTokens += 140
+	case "planning":
+		b.ContextFiles += 2
+	}
+	return b
 }
 
 func summarizeTools(tools []string, limit int) string {

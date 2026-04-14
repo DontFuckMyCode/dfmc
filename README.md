@@ -272,6 +272,7 @@ Inline file injection in user query (Claude Code-style):
 ```
 
 These markers are automatically resolved and injected into system prompt context.
+Injection payload is budgeted automatically (compact/deep profile aware) to reduce token burn.
 
 Prompt templates are loaded from:
 - built-in defaults (`internal/promptlib/defaults`)
@@ -282,6 +283,22 @@ Supported file formats in prompt library:
 - `.yaml` / `.yml`
 - `.json`
 - `.md` (with optional YAML frontmatter)
+
+Template composition modes:
+- `compose: replace` (default): base template body
+- `compose: append`: additive fragment (task/profile/language overlays)
+
+Example overlay template:
+```yaml
+id: system.security.overlay
+type: system
+task: security
+compose: append
+priority: 90
+body: |
+  Security mode contract:
+  - Report severity and exploitability preconditions.
+```
 
 ## Command Overview
 

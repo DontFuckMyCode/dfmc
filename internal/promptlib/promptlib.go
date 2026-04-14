@@ -26,6 +26,7 @@ type Template struct {
 	Task        string `json:"task" yaml:"task"`
 	Language    string `json:"language" yaml:"language"`
 	Profile     string `json:"profile" yaml:"profile"`
+	Compose     string `json:"compose,omitempty" yaml:"compose"`
 	Priority    int    `json:"priority" yaml:"priority"`
 	Description string `json:"description" yaml:"description"`
 	Body        string `json:"body" yaml:"body"`
@@ -137,23 +138,25 @@ func (l *Library) Render(req RenderRequest) string {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	best := Template{}
-	bestScore := -1_000_000
-	for _, t := range l.templates {
-		score, ok := templateScore(t, req)
-		if !ok {
-			continue
-		}
-		if score > bestScore {
-			bestScore = score
-			best = t
-		}
+	baseTpl, baseScore := l.bestReplaceTemplate(req)
+	base := defaultFallbackPrompt(req)
+	if baseScore >= 0 {
+		base = renderBody(baseTpl.Body, req.Vars)
 	}
 
-	if bestScore < 0 {
-		return defaultFallbackPrompt(req)
+	appendParts := l.renderAppendParts(req)
+	if len(appendParts) == 0 {
+		return base
 	}
-	return renderBody(best.Body, req.Vars)
+	out := []string{base}
+	for _, p := range appendParts {
+		rendered := strings.TrimSpace(renderBody(p.Body, req.Vars))
+		if rendered == "" {
+			continue
+		}
+		out = append(out, rendered)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n\n"))
 }
 
 func (l *Library) upsert(t Template) {
@@ -188,6 +191,7 @@ func normalizeTemplate(t Template) Template {
 	}
 	t.Language = normalizeKey(t.Language)
 	t.Profile = normalizeKey(t.Profile)
+	t.Compose = normalizeComposeMode(t.Compose)
 	t.Description = strings.TrimSpace(t.Description)
 	t.Body = strings.TrimSpace(t.Body)
 	return t
@@ -197,6 +201,97 @@ func normalizeKey(s string) string {
 	s = strings.TrimSpace(strings.ToLower(s))
 	s = strings.ReplaceAll(s, " ", "_")
 	return s
+}
+
+func normalizeComposeMode(s string) string {
+	switch normalizeKey(s) {
+	case "append":
+		return "append"
+	default:
+		return "replace"
+	}
+}
+
+func (l *Library) bestReplaceTemplate(req RenderRequest) (Template, int) {
+	best := Template{}
+	bestScore := -1_000_000
+	for _, t := range l.templates {
+		if t.Compose != "replace" {
+			continue
+		}
+		score, ok := templateScore(t, req)
+		if !ok {
+			continue
+		}
+		if score > bestScore || (score == bestScore && t.Priority > best.Priority) {
+			bestScore = score
+			best = t
+		}
+	}
+	return best, bestScore
+}
+
+func (l *Library) renderAppendParts(req RenderRequest) []Template {
+	type scored struct {
+		template Template
+		score    int
+	}
+	picks := map[string]scored{}
+	extras := make([]scored, 0, 4)
+	for _, t := range l.templates {
+		if t.Compose != "append" {
+			continue
+		}
+		score, ok := templateScore(t, req)
+		if !ok {
+			continue
+		}
+		axis := appendAxis(t, req)
+		entry := scored{template: t, score: score}
+		if axis == "extra" {
+			extras = append(extras, entry)
+			continue
+		}
+		if cur, ok := picks[axis]; !ok || entry.score > cur.score || (entry.score == cur.score && entry.template.Priority > cur.template.Priority) {
+			picks[axis] = entry
+		}
+	}
+
+	out := make([]Template, 0, 5)
+	for _, axis := range []string{"global", "task", "language", "profile"} {
+		if v, ok := picks[axis]; ok {
+			out = append(out, v.template)
+		}
+	}
+	if len(extras) > 0 {
+		sort.Slice(extras, func(i, j int) bool {
+			if extras[i].score == extras[j].score {
+				return extras[i].template.Priority > extras[j].template.Priority
+			}
+			return extras[i].score > extras[j].score
+		})
+		out = append(out, extras[0].template)
+	}
+	return out
+}
+
+func appendAxis(t Template, req RenderRequest) string {
+	task := normalizeKey(req.Task)
+	lang := normalizeKey(req.Language)
+	profile := normalizeKey(req.Profile)
+
+	switch {
+	case t.Task == "general" && t.Language == "" && t.Profile == "":
+		return "global"
+	case task != "" && t.Task == task && t.Language == "" && t.Profile == "":
+		return "task"
+	case lang != "" && t.Language == lang && t.Task == "general" && t.Profile == "":
+		return "language"
+	case profile != "" && t.Profile == profile && t.Task == "general" && t.Language == "":
+		return "profile"
+	default:
+		return "extra"
+	}
 }
 
 func templateScore(t Template, req RenderRequest) (int, bool) {
