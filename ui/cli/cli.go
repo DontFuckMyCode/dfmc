@@ -769,9 +769,10 @@ func runChatSlash(ctx context.Context, eng *engine.Engine, line string) (exit bo
 		switch action {
 		case "show":
 			preview := eng.ContextBudgetPreview("")
-			fmt.Printf("context budget: provider=%s model=%s provider_max=%d total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
+			fmt.Printf("context budget: provider=%s model=%s task=%s provider_max=%d total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
 				preview.Provider,
 				preview.Model,
+				preview.Task,
 				preview.ProviderMaxContext,
 				preview.MaxTokensTotal,
 				preview.MaxTokensPerFile,

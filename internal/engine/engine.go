@@ -18,6 +18,7 @@ import (
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/memory"
+	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/internal/storage"
@@ -69,6 +70,7 @@ type ContextBudgetInfo struct {
 	Provider           string `json:"provider"`
 	Model              string `json:"model"`
 	ProviderMaxContext int    `json:"provider_max_context"`
+	Task               string `json:"task"`
 
 	MaxFiles         int    `json:"max_files"`
 	MaxTokensTotal   int    `json:"max_tokens_total"`
@@ -248,6 +250,7 @@ func (e *Engine) ContextBudgetPreview(question string) ContextBudgetInfo {
 		Provider:           e.provider(),
 		Model:              e.model(),
 		ProviderMaxContext: e.providerMaxContext(),
+		Task:               detectContextTask(question),
 		MaxFiles:           opts.MaxFiles,
 		MaxTokensTotal:     opts.MaxTokensTotal,
 		MaxTokensPerFile:   opts.MaxTokensPerFile,
@@ -312,6 +315,8 @@ const (
 	defaultContextTotalCapTokens = 16000
 	minContextTotalBudgetTokens  = 512
 	minContextPerFileTokens      = 96
+	minContextFiles              = 2
+	maxContextFiles              = 64
 	defaultProviderContextTokens = 32000
 	defaultResponseReserveTokens = 2048
 	defaultHistoryBudgetTokens   = 1200
@@ -321,6 +326,12 @@ const (
 	basePromptReserveTokens      = 900
 	baseToolReserveTokens        = 512
 )
+
+type contextTaskBudgetProfile struct {
+	TotalScale   float64
+	FileScale    float64
+	PerFileScale float64
+}
 
 func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 	if e.Context == nil {
@@ -340,6 +351,7 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 	for _, c := range chunks {
 		total += c.TokenCount
 	}
+	task := detectContextTask(question)
 	e.EventBus.Publish(Event{
 		Type:   "context:built",
 		Source: "engine",
@@ -349,6 +361,7 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 			"budget":      opts.MaxTokensTotal,
 			"per_file":    opts.MaxTokensPerFile,
 			"compression": opts.Compression,
+			"task":        task,
 		},
 	})
 	return chunks
@@ -356,6 +369,9 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 
 func (e *Engine) contextBuildOptions(question string) ctxmgr.BuildOptions {
 	cfg := e.Config.Context
+	task := detectContextTask(question)
+	profile := contextTaskProfile(task)
+	explicitFileRefs := countExplicitFileMentions(question)
 	opts := ctxmgr.BuildOptions{
 		MaxFiles:         cfg.MaxFiles,
 		MaxTokensTotal:   cfg.MaxTokensTotal,
@@ -367,15 +383,24 @@ func (e *Engine) contextBuildOptions(question string) ctxmgr.BuildOptions {
 	if opts.MaxFiles <= 0 {
 		opts.MaxFiles = 8
 	}
+	opts.MaxFiles = clampInt(int(math.Round(float64(opts.MaxFiles)*profile.FileScale)), minContextFiles, maxContextFiles)
+	if explicitFileRefs > 0 {
+		// Explicit file markers imply targeted retrieval: fewer files, deeper slices.
+		opts.MaxFiles = minInt(opts.MaxFiles, explicitFileRefs+4)
+		opts.MaxFiles = maxInt(opts.MaxFiles, minContextFiles)
+	}
+
 	if opts.MaxTokensPerFile <= 0 {
 		opts.MaxTokensPerFile = 1200
 	}
+	opts.MaxTokensPerFile = maxInt(minContextPerFileTokens, int(math.Round(float64(opts.MaxTokensPerFile)*profile.PerFileScale)))
 
 	configuredTotal := opts.MaxTokensTotal
 	if configuredTotal <= 0 {
 		configuredTotal = opts.MaxFiles * opts.MaxTokensPerFile
 		configuredTotal = minInt(configuredTotal, defaultContextTotalCapTokens)
 	}
+	configuredTotal = maxInt(minContextTotalBudgetTokens, int(math.Round(float64(configuredTotal)*profile.TotalScale)))
 
 	providerLimit := e.providerMaxContext()
 	if providerLimit <= 0 {
@@ -400,6 +425,52 @@ func (e *Engine) contextBuildOptions(question string) ctxmgr.BuildOptions {
 		opts.MaxTokensPerFile = opts.MaxTokensTotal
 	}
 	return opts
+}
+
+func detectContextTask(question string) string {
+	task := strings.TrimSpace(strings.ToLower(promptlib.DetectTask(question)))
+	if task == "" {
+		return "general"
+	}
+	return task
+}
+
+func contextTaskProfile(task string) contextTaskBudgetProfile {
+	switch task {
+	case "security":
+		return contextTaskBudgetProfile{TotalScale: 1.25, FileScale: 1.20, PerFileScale: 1.15}
+	case "review":
+		return contextTaskBudgetProfile{TotalScale: 1.18, FileScale: 1.12, PerFileScale: 1.10}
+	case "debug":
+		return contextTaskBudgetProfile{TotalScale: 1.15, FileScale: 1.10, PerFileScale: 1.08}
+	case "test":
+		return contextTaskBudgetProfile{TotalScale: 1.05, FileScale: 1.08, PerFileScale: 1.00}
+	case "planning":
+		return contextTaskBudgetProfile{TotalScale: 0.82, FileScale: 0.85, PerFileScale: 0.90}
+	case "doc":
+		return contextTaskBudgetProfile{TotalScale: 0.78, FileScale: 0.82, PerFileScale: 0.88}
+	default:
+		return contextTaskBudgetProfile{TotalScale: 1.00, FileScale: 1.00, PerFileScale: 1.00}
+	}
+}
+
+var explicitFileMentionRe = regexp.MustCompile(`\[\[file:[^\]]+\]\]`)
+
+func countExplicitFileMentions(question string) int {
+	if strings.TrimSpace(question) == "" {
+		return 0
+	}
+	return len(explicitFileMentionRe.FindAllStringIndex(question, -1))
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 func (e *Engine) providerMaxContext() int {

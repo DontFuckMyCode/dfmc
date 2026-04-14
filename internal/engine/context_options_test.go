@@ -98,6 +98,9 @@ func TestContextBudgetPreview_ReflectsEffectiveOptions(t *testing.T) {
 	eng := &Engine{Config: cfg, Providers: router}
 	preview := eng.ContextBudgetPreview("check auth flow")
 
+	if preview.Task != "general" {
+		t.Fatalf("expected task general, got %s", preview.Task)
+	}
 	if preview.MaxFiles != 9 {
 		t.Fatalf("expected max files 9, got %d", preview.MaxFiles)
 	}
@@ -109,5 +112,48 @@ func TestContextBudgetPreview_ReflectsEffectiveOptions(t *testing.T) {
 	}
 	if preview.MaxHistoryTokens != 700 {
 		t.Fatalf("expected history budget 700, got %d", preview.MaxHistoryTokens)
+	}
+}
+
+func TestContextBuildOptions_TaskAdaptiveScaling(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Context.MaxFiles = 20
+	cfg.Context.MaxTokensPerFile = 1600
+	cfg.Context.MaxTokensTotal = 12000
+
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{Config: cfg, Providers: router}
+
+	sec := eng.contextBuildOptions("run security audit for auth and token handling")
+	plan := eng.contextBuildOptions("plan next sprint roadmap for codebase cleanup")
+
+	if sec.MaxTokensTotal <= plan.MaxTokensTotal {
+		t.Fatalf("expected security budget > planning budget, got security=%d planning=%d", sec.MaxTokensTotal, plan.MaxTokensTotal)
+	}
+	if sec.MaxFiles <= plan.MaxFiles {
+		t.Fatalf("expected security max files > planning max files, got security=%d planning=%d", sec.MaxFiles, plan.MaxFiles)
+	}
+}
+
+func TestContextBuildOptions_ExplicitFileMentionsFocusScope(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Context.MaxFiles = 20
+	cfg.Context.MaxTokensPerFile = 1500
+	cfg.Context.MaxTokensTotal = 12000
+
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{Config: cfg, Providers: router}
+
+	general := eng.contextBuildOptions("debug auth flow")
+	focused := eng.contextBuildOptions("debug [[file:internal/auth/service.go#L1-L80]] with [[file:internal/auth/token.go]]")
+
+	if focused.MaxFiles >= general.MaxFiles {
+		t.Fatalf("expected explicit file markers to reduce max_files, got focused=%d general=%d", focused.MaxFiles, general.MaxFiles)
 	}
 }

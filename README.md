@@ -334,6 +334,8 @@ Token-efficient context tuning:
 - `context.max_tokens_per_file`: per-file chunk cap after compression.
 - `context.max_history_tokens`: max token budget for prior conversation messages sent with each request.
 - `context.compression`: `none|standard|aggressive` tradeoff between fidelity and token cost.
+- Budgets are task-adaptive (`security/review/debug` gets more context; `planning/doc` gets leaner context).
+- `[[file:...]]` markers in the query focus retrieval to fewer files with deeper per-file slices.
 
 Recommended baseline:
 
