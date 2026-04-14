@@ -148,6 +148,8 @@ go run ./cmd/dfmc config list
 go run ./cmd/dfmc config get providers.primary
 go run ./cmd/dfmc config set context.include_tests true
 go run ./cmd/dfmc config edit
+go run ./cmd/dfmc context budget --query "security audit auth middleware"
+go run ./cmd/dfmc context recent
 ```
 
 ### 7) Use memory and conversation commands

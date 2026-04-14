@@ -89,6 +89,8 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runServe(ctx, eng, cmdArgs, opts.JSON)
 	case "config":
 		return runConfig(ctx, eng, cmdArgs, opts.JSON)
+	case "context":
+		return runContext(ctx, eng, cmdArgs, opts.JSON)
 	case "prompt":
 		return runPrompt(ctx, eng, cmdArgs, opts.JSON)
 	case "plugin":
@@ -279,6 +281,7 @@ func commandDocs() []commandDoc {
 		{Name: "conversation", Description: "Conversation management (list/search/load/save/undo/branch)"},
 		{Name: "memory", Description: "Memory management"},
 		{Name: "config", Description: "Configuration management"},
+		{Name: "context", Description: "Context budget and recent files"},
 		{Name: "prompt", Description: "Prompt library management"},
 		{Name: "plugin", Description: "Plugin management"},
 		{Name: "skill", Description: "Skill management"},
@@ -382,6 +385,7 @@ func commandNames() []string {
 		"conversation",
 		"memory",
 		"config",
+		"context",
 		"prompt",
 		"plugin",
 		"skill",
@@ -4704,6 +4708,69 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 	}
 }
 
+func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
+	_ = ctx
+	if len(args) == 0 {
+		args = []string{"budget"}
+	}
+	action := strings.ToLower(strings.TrimSpace(args[0]))
+
+	switch action {
+	case "budget", "show":
+		fs := flag.NewFlagSet("context budget", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		query := fs.String("query", "", "query for task-aware budget simulation")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if strings.TrimSpace(*query) == "" && len(fs.Args()) > 0 {
+			*query = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		}
+		preview := eng.ContextBudgetPreview(*query)
+		if jsonMode {
+			_ = printJSON(preview)
+			return 0
+		}
+		fmt.Printf("context budget: provider=%s model=%s task=%s provider_max=%d total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
+			preview.Provider,
+			preview.Model,
+			preview.Task,
+			preview.ProviderMaxContext,
+			preview.MaxTokensTotal,
+			preview.MaxTokensPerFile,
+			preview.MaxHistoryTokens,
+			preview.MaxFiles,
+			preview.Compression,
+			preview.IncludeTests,
+			preview.IncludeDocs,
+		)
+		return 0
+
+	case "recent", "files":
+		w := eng.MemoryWorking()
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"count": len(w.RecentFiles),
+				"files": w.RecentFiles,
+			})
+			return 0
+		}
+		if len(w.RecentFiles) == 0 {
+			fmt.Println("context: no recent files yet")
+			return 0
+		}
+		fmt.Println("recent context files:")
+		for _, f := range w.RecentFiles {
+			fmt.Printf("- %s\n", f)
+		}
+		return 0
+
+	default:
+		fmt.Fprintln(os.Stderr, "usage: dfmc context [budget --query \"...\"]|[recent]")
+		return 2
+	}
+}
+
 func projectConfigPath(cwd string) string {
 	root := config.FindProjectRoot(cwd)
 	if strings.TrimSpace(root) == "" {
@@ -4920,6 +4987,7 @@ Commands:
   conversation Conversation management (list/search/load/save/undo/branch)
   memory      Memory management
   config      Configuration management (list/get/set/edit)
+  context     Context budget and recent files
   prompt      Prompt library management (list/render)
   plugin      Plugin management (list/info/install/remove/enable/disable)
   skill       Skill management (list/info/run)
