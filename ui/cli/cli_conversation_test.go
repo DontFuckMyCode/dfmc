@@ -184,3 +184,117 @@ func TestGitWorkingDiff(t *testing.T) {
 		t.Fatalf("expected a.txt in diff, got: %s", diff)
 	}
 }
+
+func TestRunChatSlashApplyFromLatestAssistantDiff(t *testing.T) {
+	eng := newCLITestEngine(t)
+	root := t.TempDir()
+	run := func(args ...string) error {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		return cmd.Run()
+	}
+	if err := run("init"); err != nil {
+		t.Skipf("git is unavailable: %v", err)
+	}
+	_ = run("config", "user.name", "dfmc-test")
+	_ = run("config", "user.email", "dfmc@test.local")
+
+	target := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(target, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	_ = run("add", "a.txt")
+	_ = run("commit", "-m", "init")
+
+	eng.ProjectRoot = root
+	_ = eng.ConversationStart()
+	eng.Conversation.AddMessage("offline", "offline-analyzer-v1", types.Message{
+		Role:    types.RoleAssistant,
+		Content: "```diff\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1,2 @@\n hello\n+world\n```\n",
+	})
+
+	exit, handled := runChatSlash(context.Background(), eng, "/apply")
+	if exit || !handled {
+		t.Fatalf("expected handled /apply command, exit=%v handled=%v", exit, handled)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if !strings.Contains(string(data), "world") {
+		t.Fatalf("expected patch to apply, got: %s", string(data))
+	}
+}
+
+func TestRunChatSlashApplyCheckOnlyDoesNotModify(t *testing.T) {
+	eng := newCLITestEngine(t)
+	root := t.TempDir()
+	run := func(args ...string) error {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		return cmd.Run()
+	}
+	if err := run("init"); err != nil {
+		t.Skipf("git is unavailable: %v", err)
+	}
+	_ = run("config", "user.name", "dfmc-test")
+	_ = run("config", "user.email", "dfmc@test.local")
+
+	target := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(target, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	_ = run("add", "a.txt")
+	_ = run("commit", "-m", "init")
+
+	eng.ProjectRoot = root
+	_ = eng.ConversationStart()
+	eng.Conversation.AddMessage("offline", "offline-analyzer-v1", types.Message{
+		Role:    types.RoleAssistant,
+		Content: "```diff\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1,2 @@\n hello\n+world\n```\n",
+	})
+
+	exit, handled := runChatSlash(context.Background(), eng, "/apply --check")
+	if exit || !handled {
+		t.Fatalf("expected handled /apply --check command, exit=%v handled=%v", exit, handled)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if strings.Contains(string(data), "world") {
+		t.Fatalf("expected check mode to avoid file changes, got: %s", string(data))
+	}
+}
+
+func TestGitChangedFilesPreservesLeadingStatusColumn(t *testing.T) {
+	root := t.TempDir()
+	run := func(args ...string) error {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		return cmd.Run()
+	}
+	if err := run("init"); err != nil {
+		t.Skipf("git is unavailable: %v", err)
+	}
+	_ = run("config", "user.name", "dfmc-test")
+	_ = run("config", "user.email", "dfmc@test.local")
+
+	target := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(target, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	_ = run("add", "a.txt")
+	_ = run("commit", "-m", "init")
+	if err := os.WriteFile(target, []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatalf("rewrite file: %v", err)
+	}
+
+	files, err := gitChangedFiles(root, 10)
+	if err != nil {
+		t.Fatalf("gitChangedFiles error: %v", err)
+	}
+	if len(files) != 1 || files[0] != "a.txt" {
+		t.Fatalf("expected [a.txt], got %#v", files)
+	}
+}

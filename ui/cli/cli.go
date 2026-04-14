@@ -27,6 +27,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
+	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -238,6 +239,8 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 		"ready":                      st.State == engine.StateReady || st.State == engine.StateServing,
 		"provider":                   st.Provider,
 		"model":                      st.Model,
+		"ast_backend":                st.ASTBackend,
+		"ast_reason":                 st.ASTReason,
 		"project_root":               projectRoot,
 		"go_version":                 runtimeVersion(),
 		"loaded_providers":           loadedProviders,
@@ -258,6 +261,9 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 	fmt.Printf("dfmc %s\n", version)
 	fmt.Printf("state: %v (ready=%t)\n", st.State, st.State == engine.StateReady || st.State == engine.StateServing)
 	fmt.Printf("provider/model: %s / %s\n", st.Provider, st.Model)
+	if strings.TrimSpace(st.ASTBackend) != "" {
+		fmt.Printf("ast backend: %s\n", st.ASTBackend)
+	}
 	fmt.Printf("project: %s\n", projectRoot)
 	fmt.Printf("providers: %d loaded\n", len(loadedProviders))
 	fmt.Printf("tools: %d, skills: %d, prompt templates: %d\n", len(tools), len(skills), len(templates.List()))
@@ -961,7 +967,62 @@ func runChatSlash(ctx context.Context, eng *engine.Engine, line string) (exit bo
 		return false, true
 
 	case "/apply":
-		fmt.Println("apply is not implemented in this REPL yet")
+		checkOnly := false
+		diffPath := ""
+		for _, a := range args {
+			v := strings.TrimSpace(a)
+			if v == "" {
+				continue
+			}
+			if v == "--check" {
+				checkOnly = true
+				continue
+			}
+			if diffPath == "" {
+				diffPath = v
+			}
+		}
+		patchText := ""
+		if diffPath != "" {
+			data, err := os.ReadFile(diffPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "apply error: cannot read diff file: %v\n", err)
+				return false, true
+			}
+			patchText = extractUnifiedDiff(string(data))
+			if strings.TrimSpace(patchText) == "" {
+				fmt.Fprintln(os.Stderr, "apply error: no unified diff found in file")
+				return false, true
+			}
+		} else {
+			patchText = latestAssistantUnifiedDiff(eng.ConversationActive())
+			if strings.TrimSpace(patchText) == "" {
+				fmt.Fprintln(os.Stderr, "apply: no assistant diff found. Provide a diff file path or ask for a unified diff.")
+				return false, true
+			}
+		}
+
+		root := strings.TrimSpace(eng.Status().ProjectRoot)
+		if root == "" {
+			root = "."
+		}
+		if err := applyUnifiedDiff(root, patchText, checkOnly); err != nil {
+			fmt.Fprintf(os.Stderr, "apply error: %v\n", err)
+			return false, true
+		}
+		if checkOnly {
+			fmt.Println("apply check: patch is valid")
+			return false, true
+		}
+		changed, err := gitChangedFiles(root, 12)
+		if err != nil || len(changed) == 0 {
+			fmt.Println("patch applied")
+			return false, true
+		}
+		fmt.Printf("patch applied (%d file(s)):\n", len(changed))
+		for _, file := range changed {
+			fmt.Printf("- %s\n", file)
+		}
 		return false, true
 
 	case "/run":
@@ -1002,7 +1063,7 @@ func printChatHelp() {
   /skills                       List skills
   /diff                         Show working tree diff
   /undo                         Undo last conversation exchange
-  /apply                        Reserved for future patch apply flow
+  /apply [--check] [patch.diff] Apply latest assistant unified diff (or diff file)
   /run <skill> [input]          Run skill
   /cost                         Show token/cost summary`)
 }
@@ -1066,6 +1127,124 @@ func gitWorkingDiff(projectRoot string, maxBytes int64) (string, error) {
 		return string(out) + "\n... [truncated]\n", nil
 	}
 	return string(out), nil
+}
+
+func latestAssistantUnifiedDiff(active *conversation.Conversation) string {
+	if active == nil {
+		return ""
+	}
+	msgs := active.Messages()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != types.RoleAssistant {
+			continue
+		}
+		if patch := extractUnifiedDiff(msgs[i].Content); strings.TrimSpace(patch) != "" {
+			return patch
+		}
+	}
+	return ""
+}
+
+func extractUnifiedDiff(in string) string {
+	text := strings.TrimSpace(strings.ReplaceAll(in, "\r\n", "\n"))
+	if text == "" {
+		return ""
+	}
+	for _, marker := range []string{"```diff", "```patch", "```"} {
+		idx := 0
+		for {
+			start := strings.Index(text[idx:], marker)
+			if start < 0 {
+				break
+			}
+			start += idx
+			blockStart := strings.Index(text[start:], "\n")
+			if blockStart < 0 {
+				break
+			}
+			blockStart += start + 1
+			end := strings.Index(text[blockStart:], "\n```")
+			if end < 0 {
+				break
+			}
+			end += blockStart
+			block := strings.TrimSpace(text[blockStart:end])
+			if looksLikeUnifiedDiff(block) {
+				return block
+			}
+			idx = end + 4
+		}
+	}
+	if looksLikeUnifiedDiff(text) {
+		return text
+	}
+	return ""
+}
+
+func looksLikeUnifiedDiff(diff string) bool {
+	d := "\n" + strings.TrimSpace(diff) + "\n"
+	if strings.Contains(d, "\ndiff --git ") {
+		return true
+	}
+	return strings.Contains(d, "\n--- ") && strings.Contains(d, "\n+++ ") && strings.Contains(d, "\n@@ ")
+}
+
+func applyUnifiedDiff(projectRoot, patch string, checkOnly bool) error {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		root = "."
+	}
+	patch = strings.ReplaceAll(patch, "\r\n", "\n")
+	if patch != "" && !strings.HasSuffix(patch, "\n") {
+		patch += "\n"
+	}
+	args := []string{"-C", root, "apply", "--whitespace=nowarn", "--recount"}
+	if checkOnly {
+		args = append(args, "--check")
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Stdin = strings.NewReader(patch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
+}
+
+func gitChangedFiles(projectRoot string, limit int) ([]string, error) {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		root = "."
+	}
+	cmd := exec.Command("git", "-C", root, "status", "--short", "--")
+	out, err := cmd.Output()
+	if err != nil {
+		if ee := (&exec.ExitError{}); errors.As(err, &ee) {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
+		}
+		return nil, err
+	}
+	text := strings.ReplaceAll(string(out), "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	files := make([]string, 0, len(lines))
+	for _, raw := range lines {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		if len(raw) > 3 {
+			files = append(files, strings.TrimSpace(raw[3:]))
+		} else {
+			files = append(files, strings.TrimSpace(raw))
+		}
+		if limit > 0 && len(files) >= limit {
+			break
+		}
+	}
+	return files, nil
 }
 
 func runPlaceholder(name string, jsonMode bool) int {
@@ -3244,6 +3423,19 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 	}
 
 	if !*providersOnly {
+		if strings.TrimSpace(eng.Status().ASTBackend) == "" {
+			add("ast.backend", "warn", "ast engine backend is unavailable")
+		} else {
+			status := "pass"
+			details := eng.Status().ASTBackend
+			if reason := strings.TrimSpace(eng.Status().ASTReason); reason != "" {
+				details += ": " + reason
+			}
+			if eng.Status().ASTBackend == "regex" {
+				status = "warn"
+			}
+			add("ast.backend", status, details)
+		}
 		root := strings.TrimSpace(eng.Status().ProjectRoot)
 		if root == "" {
 			add("project.root", "warn", "project root is empty")

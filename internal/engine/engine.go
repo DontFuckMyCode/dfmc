@@ -65,6 +65,8 @@ type Status struct {
 	ProjectRoot string      `json:"project_root"`
 	Provider    string      `json:"provider"`
 	Model       string      `json:"model"`
+	ASTBackend  string      `json:"ast_backend"`
+	ASTReason   string      `json:"ast_reason,omitempty"`
 }
 
 type ContextBudgetInfo struct {
@@ -286,11 +288,20 @@ func (e *Engine) State() EngineState {
 func (e *Engine) Status() Status {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	astBackend := ""
+	astReason := ""
+	if e.AST != nil {
+		bs := e.AST.BackendStatus()
+		astBackend = bs.Active
+		astReason = bs.Reason
+	}
 	return Status{
 		State:       e.state,
 		ProjectRoot: e.ProjectRoot,
 		Provider:    e.provider(),
 		Model:       e.model(),
+		ASTBackend:  astBackend,
+		ASTReason:   astReason,
 	}
 }
 

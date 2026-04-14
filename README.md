@@ -81,7 +81,7 @@ Chat slash commands:
 - `/help`, `/exit`, `/clear`, `/save`, `/load <id>`, `/history [limit]`
 - `/provider [name]`, `/model [name]`
 - `/branch [name]`, `/branch list`, `/branch create <name>`, `/branch switch <name>`, `/branch compare <a> <b>`
-- `/context show`, `/memory`, `/tools`, `/skills`, `/diff`, `/undo`, `/run <skill> [input]`, `/cost`
+- `/context show`, `/memory`, `/tools`, `/skills`, `/diff`, `/undo`, `/apply [--check] [patch.diff]`, `/run <skill> [input]`, `/cost`
 
 ### 4) Analyze codebase
 

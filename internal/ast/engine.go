@@ -70,14 +70,14 @@ func (e *Engine) ParseContent(ctx context.Context, path string, content []byte) 
 		return nil, fmt.Errorf("unsupported language: %s", path)
 	}
 
-	symbols := extractSymbols(path, lang, content)
-	imports := extractImports(lang, content)
+	symbols, imports, parseErrors := extractWithPreferredBackend(ctx, path, lang, content)
 
 	res := &ParseResult{
 		Path:     path,
 		Language: lang,
 		Symbols:  symbols,
 		Imports:  imports,
+		Errors:   parseErrors,
 		Hash:     hash,
 		ParsedAt: time.Now(),
 		Duration: time.Since(start),
@@ -165,6 +165,10 @@ func hashContent(content []byte) uint64 {
 }
 
 func extractSymbols(path, lang string, content []byte) []types.Symbol {
+	if lang == "go" {
+		return extractGoSymbols(path, lang, content)
+	}
+
 	lines := strings.Split(string(content), "\n")
 	var symbols []types.Symbol
 
@@ -184,40 +188,13 @@ func extractSymbols(path, lang string, content []byte) []types.Symbol {
 	}
 
 	switch lang {
-	case "go":
-		reFunc := regexp.MustCompile(`^\s*func\s+([A-Za-z_]\w*)\s*\(`)
-		reMethod := regexp.MustCompile(`^\s*func\s*\([^)]*\)\s*([A-Za-z_]\w*)\s*\(`)
-		reType := regexp.MustCompile(`^\s*type\s+([A-Za-z_]\w*)\s+`)
-		reConst := regexp.MustCompile(`^\s*const\s+([A-Za-z_]\w*)\b`)
-		reVar := regexp.MustCompile(`^\s*var\s+([A-Za-z_]\w*)\b`)
-		for i, line := range lines {
-			if m := reMethod.FindStringSubmatch(line); len(m) > 1 {
-				add(types.SymbolMethod, m[1], i+1, strings.TrimSpace(line))
-				continue
-			}
-			if m := reFunc.FindStringSubmatch(line); len(m) > 1 {
-				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
-				continue
-			}
-			if m := reType.FindStringSubmatch(line); len(m) > 1 {
-				add(types.SymbolType, m[1], i+1, strings.TrimSpace(line))
-				continue
-			}
-			if m := reConst.FindStringSubmatch(line); len(m) > 1 {
-				add(types.SymbolConstant, m[1], i+1, strings.TrimSpace(line))
-				continue
-			}
-			if m := reVar.FindStringSubmatch(line); len(m) > 1 {
-				add(types.SymbolVariable, m[1], i+1, strings.TrimSpace(line))
-				continue
-			}
-		}
 	case "typescript", "tsx", "javascript", "jsx":
-		reFunc := regexp.MustCompile(`^\s*(?:export\s+)?function\s+([A-Za-z_]\w*)\s*\(`)
-		reClass := regexp.MustCompile(`^\s*(?:export\s+)?class\s+([A-Za-z_]\w*)\b`)
+		reFunc := regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?function\s+([A-Za-z_]\w*)\s*\(`)
+		reClass := regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_]\w*)\b`)
 		reInterface := regexp.MustCompile(`^\s*(?:export\s+)?interface\s+([A-Za-z_]\w*)\b`)
 		reType := regexp.MustCompile(`^\s*(?:export\s+)?type\s+([A-Za-z_]\w*)\b`)
-		reConstArrow := regexp.MustCompile(`^\s*(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?\(`)
+		reEnum := regexp.MustCompile(`^\s*(?:export\s+)?const\s+enum\s+([A-Za-z_]\w*)\b|^\s*(?:export\s+)?enum\s+([A-Za-z_]\w*)\b`)
+		reConstArrow := regexp.MustCompile(`^\s*(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_]\w*)\s*=>`)
 		for i, line := range lines {
 			switch {
 			case reFunc.MatchString(line):
@@ -232,17 +209,32 @@ func extractSymbols(path, lang string, content []byte) []types.Symbol {
 			case reType.MatchString(line):
 				m := reType.FindStringSubmatch(line)
 				add(types.SymbolType, m[1], i+1, strings.TrimSpace(line))
+			case reEnum.MatchString(line):
+				m := reEnum.FindStringSubmatch(line)
+				name := ""
+				for _, candidate := range m[1:] {
+					if strings.TrimSpace(candidate) != "" {
+						name = candidate
+						break
+					}
+				}
+				add(types.SymbolEnum, name, i+1, strings.TrimSpace(line))
 			case reConstArrow.MatchString(line):
 				m := reConstArrow.FindStringSubmatch(line)
 				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
 			}
 		}
 	case "python":
+		reAsyncFunc := regexp.MustCompile(`^\s*async\s+def\s+([A-Za-z_]\w*)\s*\(`)
 		reFunc := regexp.MustCompile(`^\s*def\s+([A-Za-z_]\w*)\s*\(`)
 		reClass := regexp.MustCompile(`^\s*class\s+([A-Za-z_]\w*)\s*[:(]`)
 		for i, line := range lines {
 			if m := reClass.FindStringSubmatch(line); len(m) > 1 {
 				add(types.SymbolClass, m[1], i+1, strings.TrimSpace(line))
+				continue
+			}
+			if m := reAsyncFunc.FindStringSubmatch(line); len(m) > 1 {
+				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
 				continue
 			}
 			if m := reFunc.FindStringSubmatch(line); len(m) > 1 {
@@ -277,6 +269,10 @@ func extractSymbols(path, lang string, content []byte) []types.Symbol {
 }
 
 func extractImports(lang string, content []byte) []string {
+	if lang == "go" {
+		return extractGoImports(content)
+	}
+
 	lines := strings.Split(string(content), "\n")
 	set := map[string]struct{}{}
 
@@ -290,15 +286,6 @@ func extractImports(lang string, content []byte) []string {
 	}
 
 	switch lang {
-	case "go":
-		reImport := regexp.MustCompile(`^\s*import\s+(?:"([^"]+)"|([A-Za-z_]\w*\s+)?"([^"]+)")`)
-		for _, line := range lines {
-			if m := reImport.FindStringSubmatch(line); len(m) > 0 {
-				for i := 1; i < len(m); i++ {
-					add(m[i])
-				}
-			}
-		}
 	case "typescript", "tsx", "javascript", "jsx":
 		reImport := regexp.MustCompile(`^\s*import\s+.*from\s+['"]([^'"]+)['"]`)
 		reRequire := regexp.MustCompile(`require\(['"]([^'"]+)['"]\)`)

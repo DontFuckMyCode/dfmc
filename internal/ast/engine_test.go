@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 func TestParseFile_GoSymbolsAndImports(t *testing.T) {
@@ -38,5 +40,136 @@ func Hello(name string) string {
 	}
 	if len(res.Imports) != 1 || res.Imports[0] != "fmt" {
 		t.Fatalf("expected import fmt, got %#v", res.Imports)
+	}
+}
+
+func TestParseFile_GoBlockImportsAndGroupedDecls(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "sample.go")
+	src := `package sample
+
+import (
+    "fmt"
+    alias "net/http"
+    _ "unsafe"
+)
+
+type Service interface {
+    Serve()
+}
+
+const (
+    Ready = true
+    Count, Total = 1, 2
+)
+
+var (
+    Name string
+    Enabled, Visible bool
+)
+
+func (s *Server) Serve() {}
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	e := New()
+	res, err := e.ParseFile(context.Background(), path)
+	if err != nil {
+		t.Fatalf("parse file: %v", err)
+	}
+
+	expectImports := map[string]bool{
+		"fmt":      false,
+		"net/http": false,
+		"unsafe":   false,
+	}
+	for _, item := range res.Imports {
+		if _, ok := expectImports[item]; ok {
+			expectImports[item] = true
+		}
+	}
+	for item, seen := range expectImports {
+		if !seen {
+			t.Fatalf("expected import %q in %#v", item, res.Imports)
+		}
+	}
+
+	expected := map[string]types.SymbolKind{
+		"Service": types.SymbolInterface,
+		"Ready":   types.SymbolConstant,
+		"Count":   types.SymbolConstant,
+		"Total":   types.SymbolConstant,
+		"Name":    types.SymbolVariable,
+		"Enabled": types.SymbolVariable,
+		"Visible": types.SymbolVariable,
+		"Serve":   types.SymbolMethod,
+	}
+	found := map[string]types.SymbolKind{}
+	for _, sym := range res.Symbols {
+		found[sym.Name] = sym.Kind
+	}
+	for name, kind := range expected {
+		if found[name] != kind {
+			t.Fatalf("expected symbol %s to have kind %s, got %s (all=%#v)", name, kind, found[name], res.Symbols)
+		}
+	}
+}
+
+func TestParseContent_TypeScriptModernDeclarations(t *testing.T) {
+	e := New()
+	src := []byte(`export default function makeThing() {}
+export abstract class Service {}
+export enum Mode { On, Off }
+export const runTask = async task => task
+`)
+	res, err := e.ParseContent(context.Background(), "sample.ts", src)
+	if err != nil {
+		t.Fatalf("parse content: %v", err)
+	}
+
+	expected := map[string]types.SymbolKind{
+		"makeThing": types.SymbolFunction,
+		"Service":   types.SymbolClass,
+		"Mode":      types.SymbolEnum,
+		"runTask":   types.SymbolFunction,
+	}
+	found := map[string]types.SymbolKind{}
+	for _, sym := range res.Symbols {
+		found[sym.Name] = sym.Kind
+	}
+	for name, kind := range expected {
+		if found[name] != kind {
+			t.Fatalf("expected symbol %s to have kind %s, got %s (all=%#v)", name, kind, found[name], res.Symbols)
+		}
+	}
+}
+
+func TestParseContent_PythonAsyncFunction(t *testing.T) {
+	e := New()
+	src := []byte(`class Service:
+    pass
+
+async def fetch_data(client):
+    return client
+`)
+	res, err := e.ParseContent(context.Background(), "sample.py", src)
+	if err != nil {
+		t.Fatalf("parse content: %v", err)
+	}
+
+	expected := map[string]types.SymbolKind{
+		"Service":    types.SymbolClass,
+		"fetch_data": types.SymbolFunction,
+	}
+	found := map[string]types.SymbolKind{}
+	for _, sym := range res.Symbols {
+		found[sym.Name] = sym.Kind
+	}
+	for name, kind := range expected {
+		if found[name] != kind {
+			t.Fatalf("expected symbol %s to have kind %s, got %s (all=%#v)", name, kind, found[name], res.Symbols)
+		}
 	}
 }
