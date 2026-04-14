@@ -218,6 +218,7 @@ go run ./cmd/dfmc remote tools --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote skills --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote prompt list --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote prompt render --url http://127.0.0.1:7779 --task security --query "auth audit"
+go run ./cmd/dfmc remote prompt render --url http://127.0.0.1:7779 --task security --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc remote prompt stats --url http://127.0.0.1:7779 --max-template-tokens 450
 go run ./cmd/dfmc remote magicdoc show --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote magicdoc update --url http://127.0.0.1:7779 --title "Remote Brief"
@@ -281,6 +282,7 @@ go run ./cmd/dfmc prompt list
 go run ./cmd/dfmc prompt render --query "security audit auth middleware"
 go run ./cmd/dfmc prompt render --task planning --language go --query "roadmap cikar"
 go run ./cmd/dfmc prompt render --task review --var context_files="- internal/auth/middleware.go:1-120"
+go run ./cmd/dfmc prompt render --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc prompt stats
 go run ./cmd/dfmc prompt stats --max-template-tokens 450 --fail-on-warning
 ```

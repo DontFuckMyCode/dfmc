@@ -17,6 +17,15 @@ func TestRunPromptListAndRender(t *testing.T) {
 	if code := runPrompt(context.Background(), eng, []string{"render", "--query", "security audit auth"}, true); code != 0 {
 		t.Fatalf("prompt render exit=%d", code)
 	}
+
+	if code := runPrompt(context.Background(), eng, []string{
+		"render",
+		"--query", "security audit auth",
+		"--runtime-tool-style", "function-calling",
+		"--runtime-max-context", "1000",
+	}, true); code != 0 {
+		t.Fatalf("prompt render runtime override exit=%d", code)
+	}
 }
 
 func TestRunPromptUsesProjectOverride(t *testing.T) {

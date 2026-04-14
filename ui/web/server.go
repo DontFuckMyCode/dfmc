@@ -67,13 +67,17 @@ type ConversationBranchRequest struct {
 }
 
 type PromptRenderRequest struct {
-	Type         string            `json:"type"`
-	Task         string            `json:"task"`
-	Language     string            `json:"language"`
-	Profile      string            `json:"profile"`
-	Query        string            `json:"query"`
-	ContextFiles string            `json:"context_files"`
-	Vars         map[string]string `json:"vars"`
+	Type              string            `json:"type"`
+	Task              string            `json:"task"`
+	Language          string            `json:"language"`
+	Profile           string            `json:"profile"`
+	Query             string            `json:"query"`
+	ContextFiles      string            `json:"context_files"`
+	Vars              map[string]string `json:"vars"`
+	RuntimeProvider   string            `json:"runtime_provider"`
+	RuntimeModel      string            `json:"runtime_model"`
+	RuntimeToolStyle  string            `json:"runtime_tool_style"`
+	RuntimeMaxContext int               `json:"runtime_max_context"`
 }
 
 type MagicDocUpdateRequest struct {
@@ -590,6 +594,18 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	runtimeHints := s.engine.PromptRuntime()
+	if p := strings.TrimSpace(req.RuntimeProvider); p != "" {
+		runtimeHints.Provider = p
+	}
+	if m := strings.TrimSpace(req.RuntimeModel); m != "" {
+		runtimeHints.Model = m
+	}
+	if ts := strings.TrimSpace(req.RuntimeToolStyle); ts != "" {
+		runtimeHints.ToolStyle = ts
+	}
+	if req.RuntimeMaxContext > 0 {
+		runtimeHints.MaxContext = req.RuntimeMaxContext
+	}
 	vars := map[string]string{
 		"project_root":     s.engine.Status().ProjectRoot,
 		"task":             resolvedTask,

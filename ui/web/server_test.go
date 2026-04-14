@@ -652,7 +652,7 @@ func TestPromptsEndpoints(t *testing.T) {
 		t.Fatalf("expected max_template_tokens=200, got: %#v", statsPayload["max_template_tokens"])
 	}
 
-	renderBody := bytes.NewBufferString(`{"type":"system","task":"security","query":"auth security audit"}`)
+	renderBody := bytes.NewBufferString(`{"type":"system","task":"security","query":"auth security audit","runtime_tool_style":"function-calling","runtime_max_context":1000}`)
 	renderReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/prompts/render", renderBody)
 	if err != nil {
 		t.Fatalf("new render request: %v", err)
@@ -677,6 +677,12 @@ func TestPromptsEndpoints(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Critical prompt brief line.") {
 		t.Fatalf("expected project brief injection in prompt render, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "strict function-call JSON") {
+		t.Fatalf("expected runtime tool-style override in prompt render, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "near 200 tokens") {
+		t.Fatalf("expected runtime max context budget in prompt render, got: %s", prompt)
 	}
 }
 

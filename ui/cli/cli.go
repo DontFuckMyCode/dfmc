@@ -2475,6 +2475,10 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		profile := fs.String("profile", "auto", "prompt profile")
 		query := fs.String("query", "", "user query")
 		contextFiles := fs.String("context-files", "(none)", "context file summary")
+		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for tool policy rendering")
+		runtimeModel := fs.String("runtime-model", "", "runtime model override for tool policy rendering")
+		runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+		runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for tool policy rendering")
 		maxTemplateTokens := fs.Int("max-template-tokens", 450, "warning threshold for per-template token estimate")
 		failOnWarning := fs.Bool("fail-on-warning", false, "exit with non-zero status if warnings are found")
 		var allowVar multiStringFlag
@@ -2506,13 +2510,17 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/prompts/render",
 				*token,
 				map[string]any{
-					"type":          *typ,
-					"task":          *task,
-					"language":      *language,
-					"profile":       *profile,
-					"query":         *query,
-					"context_files": *contextFiles,
-					"vars":          extraVars,
+					"type":                *typ,
+					"task":                *task,
+					"language":            *language,
+					"profile":             *profile,
+					"query":               *query,
+					"context_files":       *contextFiles,
+					"runtime_provider":    strings.TrimSpace(*runtimeProvider),
+					"runtime_model":       strings.TrimSpace(*runtimeModel),
+					"runtime_tool_style":  strings.TrimSpace(*runtimeToolStyle),
+					"runtime_max_context": *runtimeMaxContext,
+					"vars":                extraVars,
 				},
 				*timeout,
 			)
@@ -4988,6 +4996,10 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		profile := fs.String("profile", "auto", "prompt profile (auto|compact|deep)")
 		query := fs.String("query", "", "user request/query")
 		contextFiles := fs.String("context-files", "(none)", "context file summary to inject")
+		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for tool policy rendering")
+		runtimeModel := fs.String("runtime-model", "", "runtime model override for tool policy rendering")
+		runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+		runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for tool policy rendering")
 		var varsRaw multiStringFlag
 		fs.Var(&varsRaw, "var", "template variable in key=value format (repeatable)")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -5014,6 +5026,18 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 
 		runtimeHints := eng.PromptRuntime()
+		if p := strings.TrimSpace(*runtimeProvider); p != "" {
+			runtimeHints.Provider = p
+		}
+		if m := strings.TrimSpace(*runtimeModel); m != "" {
+			runtimeHints.Model = m
+		}
+		if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+			runtimeHints.ToolStyle = ts
+		}
+		if *runtimeMaxContext > 0 {
+			runtimeHints.MaxContext = *runtimeMaxContext
+		}
 		vars := map[string]string{
 			"project_root":     projectRoot,
 			"task":             resolvedTask,

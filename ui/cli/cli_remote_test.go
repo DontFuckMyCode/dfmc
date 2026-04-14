@@ -350,6 +350,46 @@ func TestRunRemotePromptStatsFailOnWarning(t *testing.T) {
 	}
 }
 
+func TestRunRemotePromptRenderWithRuntimeOverrides(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/prompts/render" || r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"bad request"}`))
+			return
+		}
+		if req["runtime_tool_style"] != "function-calling" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_tool_style missing"}`))
+			return
+		}
+		if req["runtime_max_context"] != float64(1000) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_max_context missing"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"type":"system","task":"security","language":"go","prompt":"SECURITY PROMPT"}`))
+	}))
+	defer ts.Close()
+
+	args := []string{
+		"prompt", "render", "--url", ts.URL, "--task", "security", "--query", "auth audit",
+		"--runtime-tool-style", "function-calling",
+		"--runtime-max-context", "1000",
+	}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
 func TestRunRemoteContextBudget(t *testing.T) {
 	eng := newCLITestEngine(t)
 
