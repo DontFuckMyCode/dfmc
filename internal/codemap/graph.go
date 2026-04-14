@@ -27,6 +27,11 @@ type Graph struct {
 	incoming map[string]map[string]Edge
 }
 
+type Counts struct {
+	Nodes int `json:"nodes"`
+	Edges int `json:"edges"`
+}
+
 func NewGraph() *Graph {
 	return &Graph{
 		nodes:    map[string]Node{},
@@ -90,6 +95,21 @@ func (g *Graph) Edges() []Edge {
 		return out[i].From < out[j].From
 	})
 	return out
+}
+
+func (g *Graph) Counts() Counts {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	edges := 0
+	for _, m := range g.outgoing {
+		edges += len(m)
+	}
+
+	return Counts{
+		Nodes: len(g.nodes),
+		Edges: edges,
+	}
 }
 
 func (g *Graph) Descendants(start string, depth int) []Node {

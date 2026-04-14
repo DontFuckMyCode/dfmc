@@ -28,7 +28,7 @@ func TestAnthropicProviderComplete(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewAnthropicProvider("claude-sonnet-4-6", "test-key", srv.URL)
+	p := NewAnthropicProvider("claude-sonnet-4-6", "test-key", srv.URL, 64000, 1000000)
 	resp, err := p.Complete(context.Background(), CompletionRequest{
 		System: "You are helpful.",
 		Messages: []Message{
@@ -60,7 +60,7 @@ func TestAnthropicProviderStream(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewAnthropicProvider("claude-sonnet-4-6", "test-key", srv.URL)
+	p := NewAnthropicProvider("claude-sonnet-4-6", "test-key", srv.URL, 64000, 1000000)
 	stream, err := p.Stream(context.Background(), CompletionRequest{
 		Messages: []Message{
 			{Role: types.RoleUser, Content: "say hello"},

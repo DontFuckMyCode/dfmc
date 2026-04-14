@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
@@ -31,6 +32,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
+	"github.com/dontfuckmycode/dfmc/ui/tui"
 	"github.com/dontfuckmycode/dfmc/ui/web"
 	"gopkg.in/yaml.v3"
 )
@@ -77,6 +79,8 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runAsk(ctx, eng, cmdArgs, opts.JSON)
 	case "chat":
 		return runChat(ctx, eng, cmdArgs, opts.JSON)
+	case "tui":
+		return runTUI(ctx, eng, cmdArgs, opts.JSON)
 	case "analyze":
 		return runAnalyze(ctx, eng, cmdArgs, opts.JSON)
 	case "map":
@@ -241,6 +245,9 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 		"model":                      st.Model,
 		"ast_backend":                st.ASTBackend,
 		"ast_reason":                 st.ASTReason,
+		"ast_languages":              st.ASTLanguages,
+		"ast_metrics":                st.ASTMetrics,
+		"codemap_metrics":            st.CodeMap,
 		"project_root":               projectRoot,
 		"go_version":                 runtimeVersion(),
 		"loaded_providers":           loadedProviders,
@@ -264,6 +271,15 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 	if strings.TrimSpace(st.ASTBackend) != "" {
 		fmt.Printf("ast backend: %s\n", st.ASTBackend)
 	}
+	if summary := formatASTLanguageSummary(st.ASTLanguages); summary != "" {
+		fmt.Printf("ast languages: %s\n", summary)
+	}
+	if summary := formatASTMetricsSummary(st.ASTMetrics); summary != "" {
+		fmt.Printf("ast metrics: %s\n", summary)
+	}
+	if summary := formatCodeMapMetricsSummary(st.CodeMap); summary != "" {
+		fmt.Printf("codemap: %s\n", summary)
+	}
 	fmt.Printf("project: %s\n", projectRoot)
 	fmt.Printf("providers: %d loaded\n", len(loadedProviders))
 	fmt.Printf("tools: %d, skills: %d, prompt templates: %d\n", len(tools), len(skills), len(templates.List()))
@@ -285,6 +301,169 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 		fmt.Printf("context tuning suggestions: %d\n", len(contextTuning))
 	}
 	return 0
+}
+
+func formatASTLanguageSummary(items []ast.BackendLanguageStatus) string {
+	if len(items) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		lang := strings.TrimSpace(item.Language)
+		active := strings.TrimSpace(item.Active)
+		if lang == "" || active == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", lang, active))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatASTMetricsSummary(metrics ast.ParseMetrics) string {
+	parts := make([]string, 0, 7)
+	if metrics.Requests > 0 {
+		parts = append(parts, fmt.Sprintf("requests=%d", metrics.Requests))
+	}
+	if metrics.Parsed > 0 {
+		parts = append(parts, fmt.Sprintf("parsed=%d", metrics.Parsed))
+	}
+	if metrics.CacheHits > 0 || metrics.CacheMisses > 0 {
+		parts = append(parts, fmt.Sprintf("cache=%d/%d", metrics.CacheHits, metrics.CacheMisses))
+	}
+	if metrics.AvgParseDurationMs > 0 {
+		parts = append(parts, fmt.Sprintf("avg=%.1fms", metrics.AvgParseDurationMs))
+	}
+	if metrics.LastLanguage != "" || metrics.LastBackend != "" {
+		parts = append(parts, fmt.Sprintf("last=%s/%s", blankFallback(metrics.LastLanguage, "-"), blankFallback(metrics.LastBackend, "-")))
+	}
+	if len(metrics.ByBackend) > 0 {
+		parts = append(parts, "backend["+formatMetricMap(metrics.ByBackend)+"]")
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatMetricMap(items map[string]int64) string {
+	if len(items) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(items))
+	for key := range items {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, items[key]))
+	}
+	return strings.Join(parts, ",")
+}
+
+func blankFallback(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func formatCodeMapMetricsSummary(metrics codemap.BuildMetrics) string {
+	parts := make([]string, 0, 12)
+	if metrics.Builds > 0 {
+		parts = append(parts, fmt.Sprintf("builds=%d", metrics.Builds))
+	}
+	if metrics.FilesRequested > 0 || metrics.FilesProcessed > 0 {
+		parts = append(parts, fmt.Sprintf("files=%d/%d", metrics.FilesProcessed, metrics.FilesRequested))
+	}
+	if metrics.FilesSkipped > 0 {
+		parts = append(parts, fmt.Sprintf("skipped=%d", metrics.FilesSkipped))
+	}
+	if metrics.ParseErrors > 0 {
+		parts = append(parts, fmt.Sprintf("parse_errors=%d", metrics.ParseErrors))
+	}
+	if metrics.LastDurationMs > 0 {
+		parts = append(parts, fmt.Sprintf("last=%dms", metrics.LastDurationMs))
+	}
+	if metrics.LastGraphNodes > 0 || metrics.LastGraphEdges > 0 {
+		parts = append(parts, fmt.Sprintf("graph=%dN/%dE", metrics.LastGraphNodes, metrics.LastGraphEdges))
+	}
+	if metrics.LastNodesAdded > 0 || metrics.LastEdgesAdded > 0 {
+		parts = append(parts, fmt.Sprintf("delta=+%dN/+%dE", metrics.LastNodesAdded, metrics.LastEdgesAdded))
+	}
+	if metrics.RecentBuilds > 1 {
+		parts = append(parts, fmt.Sprintf("trend=%druns", metrics.RecentBuilds))
+	}
+	if recent := latestBuildSample(metrics.Recent); recent != nil {
+		if langs := formatMetricKeySummary(recent.Languages, 3, false); len(langs) > 0 {
+			parts = append(parts, "recent_langs="+strings.Join(langs, ","))
+		}
+		if dirs := formatMetricKeySummary(recent.Directories, 2, true); len(dirs) > 0 {
+			parts = append(parts, "recent_dirs="+strings.Join(dirs, ","))
+		}
+	}
+	if langs := formatMetricKeySummary(metrics.RecentLanguages, 3, false); len(langs) > 0 {
+		parts = append(parts, "trend_langs="+strings.Join(langs, ","))
+	}
+	if dirs := formatMetricKeySummary(metrics.RecentDirectories, 2, true); len(dirs) > 0 {
+		parts = append(parts, "hot_dirs="+strings.Join(dirs, ","))
+	}
+	return strings.Join(parts, " ")
+}
+
+func latestBuildSample(samples []codemap.BuildSample) *codemap.BuildSample {
+	if len(samples) == 0 {
+		return nil
+	}
+	return &samples[len(samples)-1]
+}
+
+func formatMetricKeySummary(items map[string]int64, limit int, shortenPaths bool) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	type pair struct {
+		key   string
+		count int64
+	}
+	pairs := make([]pair, 0, len(items))
+	for key, count := range items {
+		label := strings.TrimSpace(key)
+		if label == "" {
+			continue
+		}
+		if shortenPaths {
+			label = shortenMetricPath(label)
+		}
+		pairs = append(pairs, pair{key: label, count: count})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].count == pairs[j].count {
+			return pairs[i].key < pairs[j].key
+		}
+		return pairs[i].count > pairs[j].count
+	})
+	if limit > 0 && len(pairs) > limit {
+		pairs = pairs[:limit]
+	}
+	out := make([]string, 0, len(pairs))
+	for _, item := range pairs {
+		out = append(out, item.key)
+	}
+	return out
+}
+
+func shortenMetricPath(value string) string {
+	pathValue := filepath.ToSlash(strings.TrimSpace(value))
+	if pathValue == "" || pathValue == "." {
+		return "."
+	}
+	trimmed := strings.Trim(pathValue, "/")
+	if trimmed == "" {
+		return pathValue
+	}
+	parts := strings.Split(trimmed, "/")
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return strings.Join(parts[len(parts)-2:], "/")
 }
 
 func runInit(jsonMode bool, projectOverride string) int {
@@ -384,6 +563,7 @@ func commandDocs() []commandDoc {
 		{Name: "status", Description: "Runtime status snapshot"},
 		{Name: "init", Description: "Initialize DFMC in project"},
 		{Name: "chat", Description: "Interactive chat session"},
+		{Name: "tui", Description: "Terminal workbench (chat/status/patch)"},
 		{Name: "ask", Description: "One-shot question"},
 		{Name: "analyze", Description: "Analyze codebase"},
 		{Name: "scan", Description: "Quick security scan"},
@@ -490,6 +670,7 @@ func commandNames() []string {
 		"status",
 		"init",
 		"chat",
+		"tui",
 		"ask",
 		"analyze",
 		"scan",
@@ -690,6 +871,27 @@ func runChat(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 			fmt.Println()
 		}
 	}
+}
+
+func runTUI(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
+	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	noAltScreen := fs.Bool("no-alt-screen", false, "disable alternate screen mode")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if jsonMode {
+		fmt.Fprintln(os.Stderr, "tui does not support --json")
+		return 2
+	}
+	if eng.ConversationActive() == nil {
+		_ = eng.ConversationStart()
+	}
+	if err := tui.Run(ctx, eng, tui.Options{AltScreen: !*noAltScreen}); err != nil {
+		fmt.Fprintf(os.Stderr, "tui failed: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func runChatSlash(ctx context.Context, eng *engine.Engine, line string) (exit bool, handled bool) {
@@ -3140,7 +3342,7 @@ func remoteAsk(baseURL, token, message string, timeout time.Duration, streamOutp
 			if msg == "" {
 				msg = "remote stream error"
 			}
-			return events, answer.String(), fmt.Errorf(msg)
+			return events, answer.String(), errors.New(msg)
 		case "done":
 			return events, answer.String(), nil
 		}
@@ -3423,20 +3625,51 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 	}
 
 	if !*providersOnly {
-		if strings.TrimSpace(eng.Status().ASTBackend) == "" {
+		statusSnapshot := eng.Status()
+		if strings.TrimSpace(statusSnapshot.ASTBackend) == "" {
 			add("ast.backend", "warn", "ast engine backend is unavailable")
 		} else {
 			status := "pass"
-			details := eng.Status().ASTBackend
-			if reason := strings.TrimSpace(eng.Status().ASTReason); reason != "" {
+			details := statusSnapshot.ASTBackend
+			if reason := strings.TrimSpace(statusSnapshot.ASTReason); reason != "" {
 				details += ": " + reason
 			}
-			if eng.Status().ASTBackend == "regex" {
+			if statusSnapshot.ASTBackend == "regex" {
 				status = "warn"
 			}
 			add("ast.backend", status, details)
 		}
-		root := strings.TrimSpace(eng.Status().ProjectRoot)
+		for _, lang := range statusSnapshot.ASTLanguages {
+			name := strings.TrimSpace(lang.Language)
+			if name == "" {
+				continue
+			}
+			checkStatus := "pass"
+			active := strings.TrimSpace(lang.Active)
+			if active == "" {
+				checkStatus = "warn"
+				active = "unavailable"
+			}
+			details := active
+			if reason := strings.TrimSpace(lang.Reason); reason != "" {
+				details += ": " + reason
+			}
+			if active == "regex" {
+				checkStatus = "warn"
+			}
+			add("ast."+name, checkStatus, details)
+		}
+		metricsDetails := formatASTMetricsSummary(statusSnapshot.ASTMetrics)
+		if strings.TrimSpace(metricsDetails) == "" {
+			metricsDetails = "no parse activity recorded yet"
+		}
+		add("ast.metrics", "pass", metricsDetails)
+		codemapDetails := formatCodeMapMetricsSummary(statusSnapshot.CodeMap)
+		if strings.TrimSpace(codemapDetails) == "" {
+			codemapDetails = "no codemap build activity recorded yet"
+		}
+		add("codemap.metrics", "pass", codemapDetails)
+		root := strings.TrimSpace(statusSnapshot.ProjectRoot)
 		if root == "" {
 			add("project.root", "warn", "project root is empty")
 		} else if st, err := os.Stat(root); err != nil {
@@ -5107,7 +5340,6 @@ func escapeDOT(s string) string {
 }
 
 func runConfig(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
-	_ = ctx
 	if len(args) == 0 {
 		args = []string{"list"}
 	}
@@ -5248,6 +5480,79 @@ func runConfig(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fmt.Printf("Updated %s in %s\n", keyPath, targetPath)
 		return 0
 
+	case "sync-models":
+		fs := flag.NewFlagSet("config sync-models", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		global := fs.Bool("global", false, "write to ~/.dfmc/config.yaml")
+		apiURL := fs.String("url", config.DefaultModelsDevAPIURL, "models.dev catalog url")
+		rewriteBaseURL := fs.Bool("rewrite-base-url", true, "replace provider base_url values from models.dev")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config sync-models error: %v\n", err)
+			return 1
+		}
+		targetPath := projectConfigPath(cwd)
+		if *global {
+			targetPath = filepath.Join(config.UserConfigDir(), "config.yaml")
+		}
+
+		catalog, err := config.FetchModelsDevCatalog(ctx, *apiURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config sync-models fetch error: %v\n", err)
+			return 1
+		}
+		if err := config.SaveModelsDevCatalog(config.ModelsDevCachePath(), catalog); err != nil {
+			fmt.Fprintf(os.Stderr, "config sync-models cache error: %v\n", err)
+			return 1
+		}
+
+		cloned, err := cloneConfig(eng.Config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config sync-models error: %v\n", err)
+			return 1
+		}
+		beforeProfiles := map[string]config.ModelConfig{}
+		for name, prof := range cloned.Providers.Profiles {
+			beforeProfiles[name] = prof
+		}
+		cloned.Providers.Profiles = config.MergeProviderProfilesFromModelsDev(cloned.Providers.Profiles, catalog, config.ModelsDevMergeOptions{
+			RewriteBaseURL: *rewriteBaseURL,
+		})
+		if strings.TrimSpace(cloned.Providers.Primary) == "" {
+			cloned.Providers.Primary = eng.Config.Providers.Primary
+		}
+		if err := cloned.Save(targetPath); err != nil {
+			fmt.Fprintf(os.Stderr, "config sync-models save error: %v\n", err)
+			return 1
+		}
+		if err := eng.ReloadConfig(cwd); err != nil {
+			fmt.Fprintf(os.Stderr, "config sync-models reload error: %v\n", err)
+			return 1
+		}
+
+		changes := diffProviderProfiles(beforeProfiles, cloned.Providers.Profiles)
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"status":       "ok",
+				"config_file":  targetPath,
+				"cache_file":   config.ModelsDevCachePath(),
+				"providers":    changes,
+				"provider_n":   len(changes),
+				"catalog_url":  strings.TrimSpace(*apiURL),
+				"rewrite_base": *rewriteBaseURL,
+			})
+			return 0
+		}
+		fmt.Printf("Synced %d provider profile(s) from %s into %s\n", len(changes), strings.TrimSpace(*apiURL), targetPath)
+		for _, line := range changes {
+			fmt.Printf("- %s\n", line)
+		}
+		return 0
+
 	case "edit":
 		fs := flag.NewFlagSet("config edit", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -5306,7 +5611,7 @@ func runConfig(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc config [list|get|set|edit]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc config [list|get|set|sync-models|edit]")
 		return 2
 	}
 }
@@ -5762,6 +6067,49 @@ func projectConfigPath(cwd string) string {
 	return filepath.Join(root, config.DefaultDirName, "config.yaml")
 }
 
+func cloneConfig(cfg *config.Config) (*config.Config, error) {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	out := &config.Config{}
+	if err := yaml.Unmarshal(data, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func diffProviderProfiles(before, after map[string]config.ModelConfig) []string {
+	names := make([]string, 0, len(after))
+	for name := range after {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		prev, ok := before[name]
+		curr := after[name]
+		if ok &&
+			prev.Model == curr.Model &&
+			prev.BaseURL == curr.BaseURL &&
+			prev.MaxTokens == curr.MaxTokens &&
+			prev.MaxContext == curr.MaxContext &&
+			prev.Protocol == curr.Protocol {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s => model=%s protocol=%s max_context=%d max_tokens=%d base_url=%s",
+			name,
+			blankFallback(curr.Model, "-"),
+			blankFallback(curr.Protocol, "-"),
+			curr.MaxContext,
+			curr.MaxTokens,
+			blankFallback(curr.BaseURL, "(default)"),
+		))
+	}
+	return out
+}
+
 func configToMap(cfg *config.Config) (map[string]any, error) {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
@@ -6020,6 +6368,7 @@ Commands:
   status      Runtime status snapshot
   init        Initialize DFMC in project
   chat        Interactive chat session
+  tui         Terminal workbench (chat/status/patch)
   ask         One-shot question
   analyze     Analyze codebase
   scan        Quick security scan

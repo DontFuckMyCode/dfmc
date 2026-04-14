@@ -42,33 +42,42 @@ func providerFromProfile(name string, profile config.ModelConfig) Provider {
 	model := profile.Model
 	apiKey := strings.TrimSpace(profile.APIKey)
 	baseURL := strings.TrimSpace(profile.BaseURL)
+	protocol := normalizedProtocol(name, profile.Protocol)
 
-	switch name {
+	switch protocol {
 	case "anthropic":
 		if apiKey == "" {
-			return NewPlaceholderProvider(name, model, false)
+			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
 		}
-		return NewAnthropicProvider(model, apiKey, baseURL)
-	case "openai":
-		if apiKey == "" {
-			return NewPlaceholderProvider(name, model, false)
+		return NewAnthropicProvider(model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext)
+	case "openai", "openai-compatible":
+		if name == "generic" && strings.TrimSpace(baseURL) == "" {
+			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
 		}
-		return NewOpenAICompatibleProvider(name, model, apiKey, baseURL)
-	case "deepseek":
-		if apiKey == "" {
-			return NewPlaceholderProvider(name, model, false)
+		if name != "generic" && apiKey == "" {
+			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
 		}
-		return NewOpenAICompatibleProvider(name, model, apiKey, baseURL)
-	case "generic":
-		if strings.TrimSpace(baseURL) == "" {
-			// Generic provider requires explicit endpoint; apiKey can be optional.
-			return NewPlaceholderProvider(name, model, false)
-		}
-		return NewOpenAICompatibleProvider(name, model, apiKey, baseURL)
+		return NewOpenAICompatibleProvider(name, model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext)
 	default:
-		// Keep other providers as placeholders until dedicated client is implemented.
-		configured := apiKey != ""
-		return NewPlaceholderProvider(name, model, configured)
+		configured := apiKey != "" || baseURL != ""
+		return NewPlaceholderProvider(name, model, configured, profile.MaxContext)
+	}
+}
+
+func normalizedProtocol(name, protocol string) string {
+	p := strings.ToLower(strings.TrimSpace(protocol))
+	if p != "" {
+		return p
+	}
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "anthropic", "minimax":
+		return "anthropic"
+	case "openai":
+		return "openai"
+	case "deepseek", "generic", "kimi", "zai", "alibaba":
+		return "openai-compatible"
+	default:
+		return ""
 	}
 }
 

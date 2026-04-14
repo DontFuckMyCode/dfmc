@@ -57,26 +57,57 @@ func TestOfflineStream(t *testing.T) {
 
 func TestProviderFromProfileSelectsLiveClients(t *testing.T) {
 	p1 := providerFromProfile("openai", config.ModelConfig{
-		Model:  "gpt-5.4",
-		APIKey: "k-test",
+		Model:      "gpt-5.4",
+		APIKey:     "k-test",
+		MaxContext: 1050000,
+		Protocol:   "openai",
 	})
 	if _, ok := p1.(*OpenAICompatibleProvider); !ok {
 		t.Fatalf("expected OpenAICompatibleProvider, got %T", p1)
 	}
+	if got := p1.MaxContext(); got != 1050000 {
+		t.Fatalf("expected openai max context 1050000, got %d", got)
+	}
 
 	p2 := providerFromProfile("anthropic", config.ModelConfig{
-		Model:  "claude-sonnet-4-6",
-		APIKey: "k-test",
+		Model:      "claude-sonnet-4-6",
+		APIKey:     "k-test",
+		MaxContext: 1000000,
+		Protocol:   "anthropic",
 	})
 	if _, ok := p2.(*AnthropicProvider); !ok {
 		t.Fatalf("expected AnthropicProvider, got %T", p2)
 	}
 
 	p3 := providerFromProfile("generic", config.ModelConfig{
-		Model:   "qwen",
-		BaseURL: "http://localhost:11434/v1",
+		Model:      "qwen",
+		BaseURL:    "http://localhost:11434/v1",
+		MaxContext: 128000,
+		Protocol:   "openai-compatible",
 	})
 	if _, ok := p3.(*OpenAICompatibleProvider); !ok {
 		t.Fatalf("expected OpenAICompatibleProvider for generic, got %T", p3)
+	}
+
+	p4 := providerFromProfile("kimi", config.ModelConfig{
+		Model:      "kimi-k2.5",
+		APIKey:     "k-test",
+		BaseURL:    "https://api.moonshot.ai/v1",
+		MaxContext: 262144,
+		Protocol:   "openai-compatible",
+	})
+	if _, ok := p4.(*OpenAICompatibleProvider); !ok {
+		t.Fatalf("expected OpenAICompatibleProvider for kimi, got %T", p4)
+	}
+
+	p5 := providerFromProfile("minimax", config.ModelConfig{
+		Model:      "MiniMax-M2.7",
+		APIKey:     "k-test",
+		BaseURL:    "https://api.minimax.io/anthropic/v1",
+		MaxContext: 204800,
+		Protocol:   "anthropic",
+	})
+	if _, ok := p5.(*AnthropicProvider); !ok {
+		t.Fatalf("expected AnthropicProvider for minimax, got %T", p5)
 	}
 }

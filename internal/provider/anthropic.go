@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,19 +17,23 @@ type AnthropicProvider struct {
 	model      string
 	apiKey     string
 	baseURL    string
+	maxTokens  int
+	maxContext int
 	httpClient *http.Client
 }
 
-func NewAnthropicProvider(model, apiKey, baseURL string) *AnthropicProvider {
+func NewAnthropicProvider(model, apiKey, baseURL string, maxTokens, maxContext int) *AnthropicProvider {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com/v1"
 	}
 	baseURL = normalizeAnthropicBaseURL(baseURL)
 	return &AnthropicProvider{
-		model:   model,
-		apiKey:  apiKey,
-		baseURL: strings.TrimRight(baseURL, "/"),
+		model:      model,
+		apiKey:     apiKey,
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		maxTokens:  maxTokens,
+		maxContext: maxContext,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -81,7 +86,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 
 	payload := map[string]any{
 		"model":      model,
-		"max_tokens": 2048,
+		"max_tokens": p.requestMaxTokens(),
 		"messages":   messages,
 	}
 	if strings.TrimSpace(req.System) != "" {
@@ -201,7 +206,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 
 	payload := map[string]any{
 		"model":      model,
-		"max_tokens": 2048,
+		"max_tokens": p.requestMaxTokens(),
 		"messages":   messages,
 		"stream":     true,
 	}
@@ -288,7 +293,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 				if msg == "" {
 					msg = "anthropic stream error"
 				}
-				ch <- StreamEvent{Type: StreamError, Err: fmt.Errorf(msg)}
+				ch <- StreamEvent{Type: StreamError, Err: errors.New(msg)}
 				return
 			}
 		}
@@ -343,6 +348,9 @@ func (p *AnthropicProvider) CountTokens(text string) int {
 }
 
 func (p *AnthropicProvider) MaxContext() int {
+	if p.maxContext > 0 {
+		return p.maxContext
+	}
 	return 1000000
 }
 
@@ -355,4 +363,11 @@ func (p *AnthropicProvider) Hints() ProviderHints {
 		MaxContext:  p.MaxContext(),
 		DefaultMode: "high",
 	}
+}
+
+func (p *AnthropicProvider) requestMaxTokens() int {
+	if p.maxTokens > 0 {
+		return p.maxTokens
+	}
+	return 2048
 }

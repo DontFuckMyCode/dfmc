@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 func newTestEngine(t *testing.T) *engine.Engine {
@@ -83,6 +85,39 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 	if payload["status"] != "ok" {
 		t.Fatalf("unexpected payload: %#v", payload)
+	}
+}
+
+func TestIndexWorkbench(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatalf("get index: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	html := string(body)
+	if !strings.Contains(html, "DFMC Workbench") {
+		t.Fatalf("expected workbench heading, got: %s", html)
+	}
+	if !strings.Contains(html, "Live Chat") {
+		t.Fatalf("expected live chat panel, got: %s", html)
+	}
+	if !strings.Contains(html, "CodeMap Pulse") {
+		t.Fatalf("expected codemap panel, got: %s", html)
+	}
+	if !strings.Contains(html, "Patch Lab") {
+		t.Fatalf("expected patch lab panel, got: %s", html)
 	}
 }
 
@@ -610,6 +645,145 @@ func TestConversationsEndpoints(t *testing.T) {
 	if compareResp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(compareResp.Body)
 		t.Fatalf("unexpected status %d: %s", compareResp.StatusCode, string(raw))
+	}
+}
+
+func TestWorkspaceEndpoints(t *testing.T) {
+	eng := newTestEngine(t)
+	root := t.TempDir()
+	run := func(args ...string) error {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		return cmd.Run()
+	}
+	if err := run("init"); err != nil {
+		t.Skipf("git is unavailable: %v", err)
+	}
+	_ = run("config", "user.name", "dfmc-test")
+	_ = run("config", "user.email", "dfmc@test.local")
+
+	aPath := filepath.Join(root, "a.txt")
+	bPath := filepath.Join(root, "b.txt")
+	if err := os.WriteFile(aPath, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	if err := os.WriteFile(bPath, []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	_ = run("add", "a.txt", "b.txt")
+	_ = run("commit", "-m", "init")
+	if err := os.WriteFile(bPath, []byte("base\nlocal\n"), 0o644); err != nil {
+		t.Fatalf("rewrite b.txt: %v", err)
+	}
+
+	eng.ProjectRoot = root
+	_ = eng.ConversationStart()
+	eng.Conversation.AddMessage("offline", "offline-analyzer-v1", types.Message{
+		Role:    types.RoleUser,
+		Content: "please produce a patch",
+	})
+	eng.Conversation.AddMessage("offline", "offline-analyzer-v1", types.Message{
+		Role:    types.RoleAssistant,
+		Content: "```diff\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1,2 @@\n hello\n+world\n```\n",
+	})
+
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	diffResp, err := http.Get(ts.URL + "/api/v1/workspace/diff")
+	if err != nil {
+		t.Fatalf("get workspace diff: %v", err)
+	}
+	defer diffResp.Body.Close()
+	if diffResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(diffResp.Body)
+		t.Fatalf("unexpected diff status %d: %s", diffResp.StatusCode, string(raw))
+	}
+	var diffPayload map[string]any
+	if err := json.NewDecoder(diffResp.Body).Decode(&diffPayload); err != nil {
+		t.Fatalf("decode diff payload: %v", err)
+	}
+	if diffPayload["clean"] != false {
+		t.Fatalf("expected dirty worktree, got %#v", diffPayload)
+	}
+	if !strings.Contains(diffPayload["diff"].(string), "b.txt") {
+		t.Fatalf("expected b.txt in diff payload, got %#v", diffPayload["diff"])
+	}
+
+	patchResp, err := http.Get(ts.URL + "/api/v1/workspace/patch")
+	if err != nil {
+		t.Fatalf("get workspace patch: %v", err)
+	}
+	defer patchResp.Body.Close()
+	var patchPayload map[string]any
+	if err := json.NewDecoder(patchResp.Body).Decode(&patchPayload); err != nil {
+		t.Fatalf("decode patch payload: %v", err)
+	}
+	if patchPayload["available"] != true {
+		t.Fatalf("expected available patch, got %#v", patchPayload)
+	}
+	patchText, _ := patchPayload["patch"].(string)
+	if !strings.Contains(patchText, "+++ b/a.txt") {
+		t.Fatalf("expected unified diff in patch payload, got %q", patchText)
+	}
+
+	checkReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/workspace/apply", bytes.NewBufferString(`{"source":"latest","check_only":true}`))
+	if err != nil {
+		t.Fatalf("new check request: %v", err)
+	}
+	checkReq.Header.Set("Content-Type", "application/json")
+	checkResp, err := http.DefaultClient.Do(checkReq)
+	if err != nil {
+		t.Fatalf("check patch request: %v", err)
+	}
+	defer checkResp.Body.Close()
+	if checkResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(checkResp.Body)
+		t.Fatalf("unexpected check status %d: %s", checkResp.StatusCode, string(raw))
+	}
+
+	applyReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/workspace/apply", bytes.NewBufferString(`{"source":"latest"}`))
+	if err != nil {
+		t.Fatalf("new apply request: %v", err)
+	}
+	applyReq.Header.Set("Content-Type", "application/json")
+	applyResp, err := http.DefaultClient.Do(applyReq)
+	if err != nil {
+		t.Fatalf("apply patch request: %v", err)
+	}
+	defer applyResp.Body.Close()
+	if applyResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(applyResp.Body)
+		t.Fatalf("unexpected apply status %d: %s", applyResp.StatusCode, string(raw))
+	}
+	applied, err := os.ReadFile(aPath)
+	if err != nil {
+		t.Fatalf("read applied file: %v", err)
+	}
+	if !strings.Contains(string(applied), "world") {
+		t.Fatalf("expected patch to modify a.txt, got: %s", string(applied))
+	}
+
+	undoReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/conversation/undo", bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("new undo request: %v", err)
+	}
+	undoResp, err := http.DefaultClient.Do(undoReq)
+	if err != nil {
+		t.Fatalf("undo request: %v", err)
+	}
+	defer undoResp.Body.Close()
+	if undoResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(undoResp.Body)
+		t.Fatalf("unexpected undo status %d: %s", undoResp.StatusCode, string(raw))
+	}
+	var undoPayload map[string]any
+	if err := json.NewDecoder(undoResp.Body).Decode(&undoPayload); err != nil {
+		t.Fatalf("decode undo payload: %v", err)
+	}
+	if undoPayload["removed"] != float64(2) {
+		t.Fatalf("expected removed=2, got %#v", undoPayload)
 	}
 }
 

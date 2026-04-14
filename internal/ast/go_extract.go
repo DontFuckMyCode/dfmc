@@ -2,17 +2,22 @@ package ast
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
-func extractWithPreferredBackend(ctx context.Context, path, lang string, content []byte) ([]types.Symbol, []string, []ParseError) {
+func extractWithPreferredBackend(ctx context.Context, path, lang string, content []byte) ([]types.Symbol, []string, []ParseError, string, error) {
 	if symbols, imports, errs, handled, err := parseWithTreeSitter(ctx, path, lang, content); handled && err == nil {
-		return symbols, imports, errs
+		return symbols, imports, errs, "tree-sitter", nil
+	} else if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, nil, nil, "", err
+		}
 	}
-	return extractSymbols(path, lang, content), extractImports(lang, content), nil
+	return extractSymbols(path, lang, content), extractImports(lang, content), nil, "regex", nil
 }
 
 func extractGoSymbols(path, lang string, content []byte) []types.Symbol {

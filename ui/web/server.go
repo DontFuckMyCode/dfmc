@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
+	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
@@ -64,6 +66,12 @@ type ConversationLoadRequest struct {
 
 type ConversationBranchRequest struct {
 	Name string `json:"name"`
+}
+
+type WorkspaceApplyRequest struct {
+	Patch     string `json:"patch"`
+	Source    string `json:"source"`
+	CheckOnly bool   `json:"check_only"`
 }
 
 type PromptRenderRequest struct {
@@ -119,6 +127,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("POST /api/v1/conversation/new", s.handleConversationNew)
 	s.mux.HandleFunc("POST /api/v1/conversation/save", s.handleConversationSave)
 	s.mux.HandleFunc("POST /api/v1/conversation/load", s.handleConversationLoad)
+	s.mux.HandleFunc("POST /api/v1/conversation/undo", s.handleConversationUndo)
 	s.mux.HandleFunc("GET /api/v1/conversation/branches", s.handleConversationBranches)
 	s.mux.HandleFunc("POST /api/v1/conversation/branches/create", s.handleConversationBranchCreate)
 	s.mux.HandleFunc("POST /api/v1/conversation/branches/switch", s.handleConversationBranchSwitch)
@@ -131,6 +140,9 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("POST /api/v1/magicdoc/update", s.handleMagicDocUpdate)
 	s.mux.HandleFunc("GET /api/v1/conversations", s.handleConversations)
 	s.mux.HandleFunc("GET /api/v1/conversations/search", s.handleConversationSearch)
+	s.mux.HandleFunc("GET /api/v1/workspace/diff", s.handleWorkspaceDiff)
+	s.mux.HandleFunc("GET /api/v1/workspace/patch", s.handleWorkspacePatch)
+	s.mux.HandleFunc("POST /api/v1/workspace/apply", s.handleWorkspaceApply)
 	s.mux.HandleFunc("GET /api/v1/files", s.handleFiles)
 	s.mux.HandleFunc("GET /api/v1/files/{path...}", s.handleFileContent)
 	s.mux.HandleFunc("GET /ws", s.handleWebSocket)
@@ -151,14 +163,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!doctype html>
-<html>
-<head><meta charset="utf-8"><title>DFMC</title></head>
-<body style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; padding: 24px;">
-<h2>DFMC Web API</h2>
-<p>Use <code>/api/v1/status</code>, <code>/api/v1/chat</code>, <code>/api/v1/codemap</code>, <code>/api/v1/files</code>.</p>
-</body>
-</html>`))
+	_, _ = w.Write([]byte(renderWorkbenchHTML()))
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -484,6 +489,18 @@ func (s *Server) handleConversationLoad(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (s *Server) handleConversationUndo(w http.ResponseWriter, _ *http.Request) {
+	removed, err := s.engine.ConversationUndoLast()
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "ok",
+		"removed": removed,
+	})
+}
+
 func (s *Server) handleConversationBranches(w http.ResponseWriter, _ *http.Request) {
 	if s.engine.ConversationActive() == nil {
 		_ = s.engine.ConversationStart()
@@ -558,6 +575,80 @@ func (s *Server) handleConversationBranchCompare(w http.ResponseWriter, r *http.
 		return
 	}
 	writeJSON(w, http.StatusOK, comp)
+}
+
+func (s *Server) handleWorkspaceDiff(w http.ResponseWriter, _ *http.Request) {
+	root := strings.TrimSpace(s.engine.Status().ProjectRoot)
+	if root == "" {
+		root = "."
+	}
+	diff, err := gitWorkingDiffWeb(root, 200_000)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	changed, err := gitChangedFilesWeb(root, 24)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"diff":          diff,
+		"clean":         strings.TrimSpace(diff) == "",
+		"changed_files": changed,
+	})
+}
+
+func (s *Server) handleWorkspacePatch(w http.ResponseWriter, _ *http.Request) {
+	patch := latestAssistantUnifiedDiffWeb(s.engine.ConversationActive())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"patch":     patch,
+		"available": strings.TrimSpace(patch) != "",
+	})
+}
+
+func (s *Server) handleWorkspaceApply(w http.ResponseWriter, r *http.Request) {
+	req := WorkspaceApplyRequest{}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	patch := strings.TrimSpace(req.Patch)
+	if patch == "" && strings.EqualFold(strings.TrimSpace(req.Source), "latest") {
+		patch = latestAssistantUnifiedDiffWeb(s.engine.ConversationActive())
+	}
+	if patch == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "patch is required or source=latest must resolve to an assistant diff"})
+		return
+	}
+	root := strings.TrimSpace(s.engine.Status().ProjectRoot)
+	if root == "" {
+		root = "."
+	}
+	if err := applyUnifiedDiffWeb(root, patch, req.CheckOnly); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	if req.CheckOnly {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":     "ok",
+			"check_only": true,
+			"valid":      true,
+		})
+		return
+	}
+	changed, err := gitChangedFilesWeb(root, 24)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":        "ok",
+		"check_only":    false,
+		"changed_files": changed,
+	})
 }
 
 func (s *Server) handlePrompts(w http.ResponseWriter, _ *http.Request) {
@@ -1100,6 +1191,144 @@ func writeJSON(w http.ResponseWriter, code int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+func gitWorkingDiffWeb(projectRoot string, maxBytes int64) (string, error) {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		root = "."
+	}
+	cmd := exec.Command("git", "-C", root, "diff", "--")
+	out, err := cmd.Output()
+	if err != nil {
+		if ee := (&exec.ExitError{}); errors.As(err, &ee) {
+			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", err
+	}
+	if maxBytes > 0 && int64(len(out)) > maxBytes {
+		out = out[:maxBytes]
+		return string(out) + "\n... [truncated]\n", nil
+	}
+	return string(out), nil
+}
+
+func latestAssistantUnifiedDiffWeb(active *conversation.Conversation) string {
+	if active == nil {
+		return ""
+	}
+	msgs := active.Messages()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != types.RoleAssistant {
+			continue
+		}
+		if patch := extractUnifiedDiffWeb(msgs[i].Content); strings.TrimSpace(patch) != "" {
+			return patch
+		}
+	}
+	return ""
+}
+
+func extractUnifiedDiffWeb(in string) string {
+	text := strings.TrimSpace(strings.ReplaceAll(in, "\r\n", "\n"))
+	if text == "" {
+		return ""
+	}
+	for _, marker := range []string{"```diff", "```patch", "```"} {
+		idx := 0
+		for {
+			start := strings.Index(text[idx:], marker)
+			if start < 0 {
+				break
+			}
+			start += idx
+			blockStart := strings.Index(text[start:], "\n")
+			if blockStart < 0 {
+				break
+			}
+			blockStart += start + 1
+			end := strings.Index(text[blockStart:], "\n```")
+			if end < 0 {
+				break
+			}
+			end += blockStart
+			block := strings.TrimSpace(text[blockStart:end])
+			if looksLikeUnifiedDiffWeb(block) {
+				return block
+			}
+			idx = end + 4
+		}
+	}
+	if looksLikeUnifiedDiffWeb(text) {
+		return text
+	}
+	return ""
+}
+
+func looksLikeUnifiedDiffWeb(diff string) bool {
+	d := "\n" + strings.TrimSpace(diff) + "\n"
+	if strings.Contains(d, "\ndiff --git ") {
+		return true
+	}
+	return strings.Contains(d, "\n--- ") && strings.Contains(d, "\n+++ ") && strings.Contains(d, "\n@@ ")
+}
+
+func applyUnifiedDiffWeb(projectRoot, patch string, checkOnly bool) error {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		root = "."
+	}
+	patch = strings.ReplaceAll(patch, "\r\n", "\n")
+	if patch != "" && !strings.HasSuffix(patch, "\n") {
+		patch += "\n"
+	}
+	args := []string{"-C", root, "apply", "--whitespace=nowarn", "--recount"}
+	if checkOnly {
+		args = append(args, "--check")
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Stdin = strings.NewReader(patch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
+}
+
+func gitChangedFilesWeb(projectRoot string, limit int) ([]string, error) {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		root = "."
+	}
+	cmd := exec.Command("git", "-C", root, "status", "--short", "--")
+	out, err := cmd.Output()
+	if err != nil {
+		if ee := (&exec.ExitError{}); errors.As(err, &ee) {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
+		}
+		return nil, err
+	}
+	text := strings.ReplaceAll(string(out), "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	files := make([]string, 0, len(lines))
+	for _, raw := range lines {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		if len(raw) > 3 {
+			files = append(files, strings.TrimSpace(raw[3:]))
+		} else {
+			files = append(files, strings.TrimSpace(raw))
+		}
+		if limit > 0 && len(files) >= limit {
+			break
+		}
+	}
+	return files, nil
+}
+
 func loadProjectBriefForPromptRender(projectRoot, pathFlag string, maxWords int) string {
 	root := strings.TrimSpace(projectRoot)
 	if root == "" || maxWords <= 0 {
@@ -1380,6 +1609,704 @@ func fallbackStringForWeb(v, alt string) string {
 		return alt
 	}
 	return v
+}
+
+func renderWorkbenchHTML() string {
+	return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DFMC Workbench</title>
+<style>
+:root {
+	--bg: #0b1220;
+	--panel: #121c2f;
+	--panel-2: #19253c;
+	--line: #2b3a57;
+	--text: #edf2ff;
+	--muted: #8da2c7;
+	--accent: #f25f5c;
+	--accent-2: #29c7ac;
+	--accent-3: #66b3ff;
+	--warn: #ffcb6b;
+	--shadow: 0 24px 60px rgba(2, 10, 28, 0.45);
+	--radius: 18px;
+	--font-ui: "Segoe UI", "Inter", system-ui, sans-serif;
+	--font-mono: "JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background:
+	radial-gradient(circle at top left, rgba(102,179,255,0.18), transparent 28%),
+	radial-gradient(circle at top right, rgba(242,95,92,0.16), transparent 24%),
+	linear-gradient(180deg, #09101b 0%, #0b1220 100%);
+	color: var(--text); font-family: var(--font-ui); }
+body { padding: 24px; }
+.shell { max-width: 1500px; margin: 0 auto; display: grid; gap: 18px; }
+.hero {
+	display: grid;
+	grid-template-columns: 1.4fr 1fr;
+	gap: 18px;
+	align-items: stretch;
+}
+.panel {
+	background: linear-gradient(180deg, rgba(18,28,47,0.96), rgba(12,19,32,0.96));
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow);
+}
+.hero-card { padding: 24px; position: relative; overflow: hidden; }
+.hero-card::after {
+	content: "";
+	position: absolute;
+	inset: auto -80px -80px auto;
+	width: 220px;
+	height: 220px;
+	border-radius: 999px;
+	background: radial-gradient(circle, rgba(41,199,172,0.16), transparent 68%);
+}
+.eyebrow {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 12px;
+	border-radius: 999px;
+	background: rgba(102,179,255,0.1);
+	border: 1px solid rgba(102,179,255,0.24);
+	color: #b9d8ff;
+	font: 600 12px var(--font-mono);
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+h1 {
+	margin: 16px 0 12px;
+	font-size: clamp(32px, 4vw, 56px);
+	line-height: 0.95;
+	letter-spacing: -0.05em;
+}
+.lede {
+	max-width: 58ch;
+	color: var(--muted);
+	font-size: 15px;
+	line-height: 1.65;
+}
+.chips, .stats-grid, .workspace, .stack, .header-row, .chat-controls, .action-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+.chips { margin-top: 18px; }
+.chip, .metric {
+	padding: 10px 12px;
+	border-radius: 14px;
+	background: rgba(255,255,255,0.03);
+	border: 1px solid rgba(255,255,255,0.08);
+}
+.chip strong, .metric strong { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.chip span, .metric span { display: block; margin-top: 4px; font: 600 14px var(--font-mono); }
+.stats-grid { align-content: start; padding: 24px; }
+.metric { min-width: 140px; flex: 1 1 140px; }
+.workspace {
+	display: grid;
+	grid-template-columns: minmax(320px, 1.15fr) minmax(420px, 1.6fr) minmax(300px, 1fr);
+	gap: 18px;
+}
+.stack {
+	display: grid;
+	gap: 18px;
+	align-content: start;
+}
+.pane-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 16px 18px 0;
+}
+.pane-title {
+	font: 700 14px var(--font-mono);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: #d8e6ff;
+}
+.pane-subtitle {
+	color: var(--muted);
+	font-size: 12px;
+}
+.pane-body { padding: 16px 18px 18px; }
+button, .button-link {
+	border: 0;
+	border-radius: 12px;
+	padding: 10px 14px;
+	font: 700 13px var(--font-mono);
+	cursor: pointer;
+	background: linear-gradient(135deg, var(--accent), #ff7b62);
+	color: #150d10;
+	text-decoration: none;
+}
+button.secondary {
+	background: rgba(255,255,255,0.04);
+	color: var(--text);
+	border: 1px solid rgba(255,255,255,0.08);
+}
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+textarea, input, select {
+	width: 100%;
+	border-radius: 14px;
+	border: 1px solid rgba(255,255,255,0.1);
+	background: rgba(7, 13, 23, 0.85);
+	color: var(--text);
+	padding: 12px 14px;
+	font: 500 14px var(--font-ui);
+}
+textarea {
+	min-height: 132px;
+	resize: vertical;
+	font-family: var(--font-ui);
+	line-height: 1.55;
+}
+.chat-controls { margin-top: 12px; align-items: center; }
+.chat-controls > * { flex: 1 1 180px; }
+.transcript {
+	margin-top: 14px;
+	display: grid;
+	gap: 12px;
+	max-height: 640px;
+	overflow: auto;
+	padding-right: 4px;
+}
+.message {
+	border: 1px solid rgba(255,255,255,0.08);
+	border-radius: 16px;
+	padding: 14px;
+	background: rgba(255,255,255,0.03);
+}
+.message.user { border-color: rgba(102,179,255,0.24); background: rgba(102,179,255,0.08); }
+.message.assistant { border-color: rgba(41,199,172,0.22); background: rgba(41,199,172,0.06); }
+.message.system { border-color: rgba(255,203,107,0.22); background: rgba(255,203,107,0.06); }
+.message .role {
+	font: 700 11px var(--font-mono);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--muted);
+	margin-bottom: 8px;
+}
+.message pre {
+	margin: 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+	font: 500 13px/1.6 var(--font-mono);
+}
+.list {
+	display: grid;
+	gap: 8px;
+	max-height: 300px;
+	overflow: auto;
+}
+.list-item {
+	padding: 10px 12px;
+	border-radius: 12px;
+	background: rgba(255,255,255,0.03);
+	border: 1px solid rgba(255,255,255,0.06);
+	cursor: pointer;
+	color: var(--text);
+	font: 500 13px var(--font-mono);
+}
+.list-item:hover, .list-item.active {
+	border-color: rgba(102,179,255,0.28);
+	background: rgba(102,179,255,0.08);
+}
+.codebox {
+	margin-top: 12px;
+	padding: 14px;
+	border-radius: 14px;
+	background: rgba(5, 10, 18, 0.88);
+	border: 1px solid rgba(255,255,255,0.08);
+	max-height: 360px;
+	overflow: auto;
+	font: 500 12px/1.65 var(--font-mono);
+	white-space: pre-wrap;
+}
+.mini-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+}
+.kv {
+	padding: 12px;
+	border-radius: 14px;
+	background: rgba(255,255,255,0.03);
+	border: 1px solid rgba(255,255,255,0.06);
+}
+.kv strong {
+	display: block;
+	color: var(--muted);
+	font: 700 11px var(--font-mono);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+}
+.kv span {
+	display: block;
+	margin-top: 6px;
+	font: 600 14px var(--font-mono);
+	word-break: break-word;
+}
+.inline-note {
+	margin-top: 12px;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1.5;
+}
+.graph-list { display: grid; gap: 8px; margin-top: 12px; }
+.graph-item {
+	padding: 10px 12px;
+	border-radius: 12px;
+	background: rgba(255,255,255,0.03);
+	border: 1px solid rgba(255,255,255,0.06);
+}
+.graph-item strong {
+	display: block;
+	font: 600 13px var(--font-mono);
+}
+.graph-item span {
+	display: block;
+	margin-top: 4px;
+	color: var(--muted);
+	font-size: 12px;
+}
+.footer-note {
+	padding: 0 4px 8px;
+	color: var(--muted);
+	font-size: 12px;
+}
+.pulse {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--muted);
+	font: 600 12px var(--font-mono);
+}
+.pulse::before {
+	content: "";
+	width: 10px;
+	height: 10px;
+	border-radius: 999px;
+	background: var(--accent-2);
+	box-shadow: 0 0 0 rgba(41,199,172,0.4);
+	animation: pulse 1.8s infinite;
+}
+@keyframes pulse {
+	0% { box-shadow: 0 0 0 0 rgba(41,199,172,0.4); }
+	70% { box-shadow: 0 0 0 12px rgba(41,199,172,0); }
+	100% { box-shadow: 0 0 0 0 rgba(41,199,172,0); }
+}
+@media (max-width: 1200px) {
+	.hero, .workspace { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+	body { padding: 14px; }
+	.hero-card, .stats-grid, .pane-body { padding-left: 14px; padding-right: 14px; }
+	.pane-header { padding-left: 14px; padding-right: 14px; }
+	.mini-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+	<section class="hero">
+		<div class="panel hero-card">
+			<div class="eyebrow">DFMC Workbench</div>
+			<h1>Your code deserves a live cockpit.</h1>
+			<p class="lede">
+				This is the first real operator surface for DFMC: inspect engine status, explore project files,
+				stream chat responses, and watch codemap signals without leaving the browser.
+			</p>
+			<div class="chips">
+				<div class="chip"><strong>Now</strong><span id="hero-provider">loading...</span></div>
+				<div class="chip"><strong>Project</strong><span id="hero-project">detecting...</span></div>
+				<div class="chip"><strong>AST</strong><span id="hero-ast">pending...</span></div>
+			</div>
+		</div>
+		<div class="panel stats-grid" id="top-metrics">
+			<div class="metric"><strong>State</strong><span id="metric-state">-</span></div>
+			<div class="metric"><strong>Tools</strong><span id="metric-tools">-</span></div>
+			<div class="metric"><strong>Skills</strong><span id="metric-skills">-</span></div>
+			<div class="metric"><strong>Files</strong><span id="metric-files">-</span></div>
+			<div class="metric"><strong>CodeMap</strong><span id="metric-codemap">-</span></div>
+			<div class="metric"><strong>Context</strong><span id="metric-context">-</span></div>
+		</div>
+	</section>
+
+	<section class="workspace">
+		<div class="stack">
+			<div class="panel">
+				<div class="pane-header">
+					<div>
+						<div class="pane-title">Project Files</div>
+						<div class="pane-subtitle">Browse and preview the live workspace.</div>
+					</div>
+					<button id="refresh-files" class="secondary" type="button">Refresh</button>
+				</div>
+				<div class="pane-body">
+					<div class="list" id="file-list"></div>
+					<div class="codebox" id="file-preview">Select a file to preview its contents.</div>
+				</div>
+			</div>
+			<div class="panel">
+				<div class="pane-header">
+					<div>
+						<div class="pane-title">Runtime Signals</div>
+						<div class="pane-subtitle">Engine, provider, AST, and recent context pressure.</div>
+					</div>
+				</div>
+				<div class="pane-body">
+					<div class="mini-grid">
+						<div class="kv"><strong>Provider</strong><span id="runtime-provider">-</span></div>
+						<div class="kv"><strong>Model</strong><span id="runtime-model">-</span></div>
+						<div class="kv"><strong>AST Backend</strong><span id="runtime-ast">-</span></div>
+						<div class="kv"><strong>Recent Context</strong><span id="runtime-context">-</span></div>
+					</div>
+					<div class="inline-note" id="runtime-note">Waiting for status snapshot.</div>
+				</div>
+			</div>
+			<div class="panel">
+				<div class="pane-header">
+					<div>
+						<div class="pane-title">Patch Lab</div>
+						<div class="pane-subtitle">See the worktree diff, load the latest assistant patch, then check or apply it.</div>
+					</div>
+				</div>
+				<div class="pane-body">
+					<div class="action-row">
+						<button id="refresh-diff" class="secondary" type="button">Refresh Diff</button>
+						<button id="load-latest-patch" class="secondary" type="button">Load Latest Patch</button>
+						<button id="undo-chat" class="secondary" type="button">Undo Chat</button>
+					</div>
+					<div class="inline-note" id="patch-status">Patch lab is idle.</div>
+					<textarea id="patch-editor" placeholder="Latest assistant unified diff will appear here, or paste your own patch."></textarea>
+					<div class="action-row">
+						<button id="check-patch" class="secondary" type="button">Check Patch</button>
+						<button id="apply-patch" type="button">Apply Patch</button>
+					</div>
+					<div class="codebox" id="workspace-diff">Working tree diff will appear here.</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="panel">
+			<div class="pane-header">
+				<div>
+					<div class="pane-title">Live Chat</div>
+					<div class="pane-subtitle">Stream answers directly from the engine over SSE.</div>
+				</div>
+				<div class="pulse" id="chat-status">idle</div>
+			</div>
+			<div class="pane-body">
+				<label for="chat-input" class="pane-subtitle">Prompt</label>
+				<textarea id="chat-input" placeholder="Ask DFMC to explain a flow, review a file, or plan a refactor."></textarea>
+				<div class="chat-controls">
+					<button id="chat-send" type="button">Send</button>
+					<button id="chat-status-refresh" class="secondary" type="button">Refresh status</button>
+					<input id="chat-hint" type="text" value="review internal/engine/engine.go" aria-label="quick hint">
+				</div>
+				<div class="transcript" id="chat-transcript">
+					<div class="message system">
+						<div class="role">system</div>
+						<pre>Workbench ready. Ask something and the answer will stream here.</pre>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="stack">
+			<div class="panel">
+				<div class="pane-header">
+					<div>
+						<div class="pane-title">CodeMap Pulse</div>
+						<div class="pane-subtitle">A quick structural read without leaving the page.</div>
+					</div>
+					<button id="refresh-codemap" class="secondary" type="button">Refresh</button>
+				</div>
+				<div class="pane-body">
+					<div class="mini-grid">
+						<div class="kv"><strong>Nodes</strong><span id="codemap-nodes">-</span></div>
+						<div class="kv"><strong>Edges</strong><span id="codemap-edges">-</span></div>
+					</div>
+					<div class="graph-list" id="codemap-hotspots"></div>
+				</div>
+			</div>
+			<div class="panel">
+				<div class="pane-header">
+					<div>
+						<div class="pane-title">Capabilities</div>
+						<div class="pane-subtitle">Available providers, tools, and built-in skills.</div>
+					</div>
+				</div>
+				<div class="pane-body">
+					<div class="mini-grid">
+						<div class="kv"><strong>Providers</strong><span id="cap-providers">-</span></div>
+						<div class="kv"><strong>Skills</strong><span id="cap-skills">-</span></div>
+					</div>
+					<div class="codebox" id="cap-tools">Loading tool catalog...</div>
+					<div class="footer-note">This is the bridge toward a full TUI: one shared operator model, multiple frontends.</div>
+				</div>
+			</div>
+		</div>
+	</section>
+</div>
+
+<script>
+const state = {
+	activeFile: "",
+	status: null,
+};
+
+function setText(id, value) {
+	const node = document.getElementById(id);
+	if (node) node.textContent = value;
+}
+
+function escapeHTML(value) {
+	return String(value ?? "")
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
+}
+
+function addMessage(role, content) {
+	const transcript = document.getElementById("chat-transcript");
+	const wrapper = document.createElement("div");
+	wrapper.className = "message " + role;
+	wrapper.innerHTML = '<div class="role">' + escapeHTML(role) + '</div><pre>' + escapeHTML(content) + '</pre>';
+	transcript.appendChild(wrapper);
+	transcript.scrollTop = transcript.scrollHeight;
+	return wrapper.querySelector("pre");
+}
+
+async function fetchJSON(url, options) {
+	const resp = await fetch(url, options);
+	if (!resp.ok) {
+		const text = await resp.text();
+		throw new Error(text || ("HTTP " + resp.status));
+	}
+	return resp.json();
+}
+
+function summarizeList(items, limit) {
+	if (!Array.isArray(items) || !items.length) return "-";
+	return items.slice(0, limit).join(", ");
+}
+
+async function loadStatus() {
+	const data = await fetchJSON("/api/v1/status");
+	state.status = data;
+	setText("hero-provider", (data.provider || "-") + " / " + (data.model || "-"));
+	setText("hero-project", data.project_root || "(no project)");
+	setText("hero-ast", data.ast_backend || "unknown");
+	setText("metric-state", String(data.state ?? "-"));
+	setText("metric-tools", String(data.tools_count ?? "-"));
+	setText("metric-skills", String(data.skills_count ?? "-"));
+	setText("metric-context", data.context_budget ? (data.context_budget.max_tokens_total + " tok") : "-");
+	const codemap = data.codemap_metrics || {};
+	setText("metric-codemap", codemap.builds ? (codemap.builds + " builds") : "cold");
+	setText("runtime-provider", data.provider || "-");
+	setText("runtime-model", data.model || "-");
+	setText("runtime-ast", data.ast_backend || "-");
+	const astLanguages = Array.isArray(data.ast_languages) ? data.ast_languages.slice(0, 4).map(item => item.language + "=" + item.active) : [];
+	setText("runtime-context", data.context_budget ? (data.context_budget.task + " / " + data.context_budget.max_files + " files") : "-");
+	setText("runtime-note", astLanguages.length ? ("AST matrix: " + astLanguages.join(", ")) : "No AST capability data yet.");
+}
+
+async function loadProvidersAndSkills() {
+	const [providers, skills, tools] = await Promise.all([
+		fetchJSON("/api/v1/providers"),
+		fetchJSON("/api/v1/skills"),
+		fetchJSON("/api/v1/tools"),
+	]);
+	const providerNames = (providers.providers || []).map(item => item.name + (item.active ? "*" : ""));
+	setText("cap-providers", summarizeList(providerNames, 6));
+	const skillNames = (skills.skills || []).map(item => item.name);
+	setText("cap-skills", summarizeList(skillNames, 6));
+	const toolNames = (tools.tools || []).slice().sort();
+	setText("metric-tools", String(toolNames.length));
+	document.getElementById("cap-tools").textContent = toolNames.length
+		? toolNames.join("\n")
+		: "No tools registered.";
+}
+
+async function loadFiles() {
+	const data = await fetchJSON("/api/v1/files?limit=80");
+	const files = Array.isArray(data.files) ? data.files : [];
+	setText("metric-files", String(files.length));
+	const list = document.getElementById("file-list");
+	list.innerHTML = "";
+	if (!files.length) {
+		const empty = document.createElement("div");
+		empty.className = "list-item";
+		empty.textContent = "No files found.";
+		list.appendChild(empty);
+		return;
+	}
+	files.slice(0, 60).forEach(path => {
+		const item = document.createElement("button");
+		item.type = "button";
+		item.className = "list-item" + (path === state.activeFile ? " active" : "");
+		item.textContent = path;
+		item.addEventListener("click", () => openFile(path));
+		list.appendChild(item);
+	});
+	if (!state.activeFile) {
+		openFile(files[0]);
+	}
+}
+
+async function openFile(path) {
+	state.activeFile = path;
+	for (const node of document.querySelectorAll("#file-list .list-item")) {
+		node.classList.toggle("active", node.textContent === path);
+	}
+	const data = await fetchJSON("/api/v1/files/" + encodeURIComponent(path).replace(/%2F/g, "/"));
+	document.getElementById("file-preview").textContent = data.content || "(empty file)";
+}
+
+async function loadCodeMap() {
+	const data = await fetchJSON("/api/v1/codemap");
+	const nodes = Array.isArray(data.nodes) ? data.nodes : [];
+	const edges = Array.isArray(data.edges) ? data.edges : [];
+	setText("codemap-nodes", String(nodes.length));
+	setText("codemap-edges", String(edges.length));
+	const hotspots = document.getElementById("codemap-hotspots");
+	hotspots.innerHTML = "";
+	const ranked = nodes
+		.filter(node => node && node.name)
+		.slice(0, 8);
+	if (!ranked.length) {
+		hotspots.innerHTML = '<div class="graph-item"><strong>CodeMap is still cold</strong><span>Run analysis or ask a question to warm it up.</span></div>';
+		return;
+	}
+	for (const node of ranked) {
+		const el = document.createElement("div");
+		el.className = "graph-item";
+		el.innerHTML = '<strong>' + escapeHTML(node.name || node.id || "node") + '</strong><span>' +
+			escapeHTML((node.kind || "node") + (node.path ? " • " + node.path : "")) +
+			'</span>';
+		hotspots.appendChild(el);
+	}
+}
+
+async function loadWorkspaceDiff() {
+	const data = await fetchJSON("/api/v1/workspace/diff");
+	const changed = Array.isArray(data.changed_files) ? data.changed_files : [];
+	document.getElementById("workspace-diff").textContent = data.diff || "Working tree is clean.";
+	setText("patch-status", data.clean
+		? "Working tree is clean."
+		: ("Changed files: " + (changed.length ? changed.join(", ") : "detected")));
+}
+
+async function loadLatestPatch() {
+	const data = await fetchJSON("/api/v1/workspace/patch");
+	document.getElementById("patch-editor").value = data.patch || "";
+	setText("patch-status", data.patch ? "Loaded latest assistant patch." : "No assistant patch found yet.");
+}
+
+async function applyPatch(checkOnly) {
+	const patch = document.getElementById("patch-editor").value.trim();
+	const body = patch ? { patch, check_only: checkOnly } : { source: "latest", check_only: checkOnly };
+	const data = await fetchJSON("/api/v1/workspace/apply", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	});
+	const changed = Array.isArray(data.changed_files) ? data.changed_files : [];
+	setText("patch-status", checkOnly
+		? "Patch check passed."
+		: ("Patch applied" + (changed.length ? ": " + changed.join(", ") : ".")));
+	await loadWorkspaceDiff();
+}
+
+async function undoConversation() {
+	const data = await fetchJSON("/api/v1/conversation/undo", { method: "POST" });
+	setText("patch-status", "Undone messages: " + String(data.removed ?? 0));
+}
+
+async function sendChat() {
+	const input = document.getElementById("chat-input");
+	const button = document.getElementById("chat-send");
+	const hint = document.getElementById("chat-hint");
+	const raw = input.value.trim() || hint.value.trim();
+	if (!raw) return;
+
+	addMessage("user", raw);
+	const target = addMessage("assistant", "");
+	button.disabled = true;
+	setText("chat-status", "streaming");
+
+	try {
+		const resp = await fetch("/api/v1/chat", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: raw }),
+		});
+		if (!resp.ok || !resp.body) {
+			throw new Error(await resp.text() || ("HTTP " + resp.status));
+		}
+		const reader = resp.body.getReader();
+		const decoder = new TextDecoder();
+		let buffer = "";
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
+			const parts = buffer.split("\n\n");
+			buffer = parts.pop() || "";
+			for (const part of parts) {
+				const line = part.split("\n").find(item => item.startsWith("data: "));
+				if (!line) continue;
+				const payload = JSON.parse(line.slice(6));
+				if (payload.type === "delta") {
+					target.textContent += payload.delta || "";
+				} else if (payload.type === "error") {
+					target.textContent += "\n[error] " + (payload.error || "unknown");
+				}
+			}
+		}
+		setText("chat-status", "idle");
+		input.value = "";
+	} catch (err) {
+		target.textContent = "[chat error] " + (err && err.message ? err.message : String(err));
+		setText("chat-status", "error");
+	} finally {
+		button.disabled = false;
+	}
+}
+
+async function boot() {
+	try {
+		await Promise.all([loadStatus(), loadProvidersAndSkills(), loadFiles(), loadCodeMap(), loadWorkspaceDiff()]);
+	} catch (err) {
+		addMessage("system", "Workbench load error: " + (err && err.message ? err.message : String(err)));
+	}
+}
+
+document.getElementById("chat-send").addEventListener("click", sendChat);
+document.getElementById("chat-status-refresh").addEventListener("click", () => Promise.all([loadStatus(), loadProvidersAndSkills()]));
+document.getElementById("refresh-files").addEventListener("click", loadFiles);
+document.getElementById("refresh-codemap").addEventListener("click", loadCodeMap);
+document.getElementById("refresh-diff").addEventListener("click", loadWorkspaceDiff);
+document.getElementById("load-latest-patch").addEventListener("click", loadLatestPatch);
+document.getElementById("check-patch").addEventListener("click", () => applyPatch(true));
+document.getElementById("apply-patch").addEventListener("click", () => applyPatch(false));
+document.getElementById("undo-chat").addEventListener("click", undoConversation);
+document.getElementById("chat-input").addEventListener("keydown", event => {
+	if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+		event.preventDefault();
+		sendChat();
+	}
+});
+boot();
+</script>
+</body>
+</html>`
 }
 
 func listFiles(root string, limit int) ([]string, error) {
