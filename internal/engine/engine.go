@@ -571,6 +571,10 @@ func (e *Engine) contextBuildOptionsWithRuntime(question string, runtime ctxmgr.
 	task := detectContextTask(question)
 	profile := contextTaskProfile(task)
 	explicitFileRefs := countExplicitFileMentions(question)
+	providerLimit := e.providerMaxContextForRuntime(runtime)
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
 	opts := ctxmgr.BuildOptions{
 		MaxFiles:         cfg.MaxFiles,
 		MaxTokensTotal:   cfg.MaxTokensTotal,
@@ -578,6 +582,15 @@ func (e *Engine) contextBuildOptionsWithRuntime(question string, runtime ctxmgr.
 		Compression:      cfg.Compression,
 		IncludeTests:     cfg.IncludeTests,
 		IncludeDocs:      cfg.IncludeDocs,
+	}
+	opts.Compression = normalizeContextCompression(opts.Compression)
+	if runtime.LowLatency || providerLimit <= 12000 {
+		opts.Compression = strongerContextCompression(opts.Compression, "aggressive")
+	} else if providerLimit <= 32000 {
+		opts.Compression = strongerContextCompression(opts.Compression, "standard")
+	}
+	if providerLimit <= 8000 && task != "doc" {
+		opts.IncludeDocs = false
 	}
 	if opts.MaxFiles <= 0 {
 		opts.MaxFiles = 8
@@ -601,10 +614,6 @@ func (e *Engine) contextBuildOptionsWithRuntime(question string, runtime ctxmgr.
 	}
 	configuredTotal = maxInt(minContextTotalBudgetTokens, int(math.Round(float64(configuredTotal)*profile.TotalScale)))
 
-	providerLimit := e.providerMaxContextForRuntime(runtime)
-	if providerLimit <= 0 {
-		providerLimit = defaultProviderContextTokens
-	}
 	reserve := e.contextReserveBreakdownWithRuntime(question, runtime)
 	availableForContext := providerLimit - reserve.Total
 	if availableForContext < minContextTotalBudgetTokens {
@@ -706,6 +715,37 @@ func (e *Engine) providerMaxContextForRuntime(runtime ctxmgr.PromptRuntime) int 
 		return max
 	}
 	return p.Hints().MaxContext
+}
+
+func normalizeContextCompression(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "none", "standard", "aggressive":
+		return strings.ToLower(strings.TrimSpace(v))
+	default:
+		return "standard"
+	}
+}
+
+func strongerContextCompression(current, desired string) string {
+	cur := normalizeContextCompression(current)
+	des := normalizeContextCompression(desired)
+	if contextCompressionRank(des) > contextCompressionRank(cur) {
+		return des
+	}
+	return cur
+}
+
+func contextCompressionRank(level string) int {
+	switch normalizeContextCompression(level) {
+	case "none":
+		return 0
+	case "standard":
+		return 1
+	case "aggressive":
+		return 2
+	default:
+		return 1
+	}
 }
 
 func (e *Engine) promptRuntime() ctxmgr.PromptRuntime {
@@ -830,7 +870,56 @@ func (e *Engine) contextReserveBreakdownWithRuntime(question string, runtime ctx
 	}
 	historyReserve := e.conversationHistoryBudget()
 	toolReserve := baseToolReserveTokens
+	providerLimit := e.providerMaxContextForRuntime(runtime)
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
+
+	// Tight context windows require proportionally smaller reserve buckets to avoid
+	// starving the retrieval budget.
+	if providerLimit <= 24000 {
+		promptReserve = minInt(promptReserve, maxInt(minContextPerFileTokens*2, providerLimit/5))
+		responseReserve = minInt(responseReserve, maxInt(minContextPerFileTokens, providerLimit/4))
+		historyReserve = minInt(historyReserve, maxInt(minContextPerFileTokens, providerLimit/6))
+		toolReserve = minInt(toolReserve, maxInt(minContextPerFileTokens/2, providerLimit/8))
+	}
+
+	// Keep reserve total bounded so context has meaningful headroom even on small windows.
+	maxTotalReserve := providerLimit - minContextTotalBudgetTokens
+	if maxTotalReserve < minContextPerFileTokens {
+		maxTotalReserve = minContextPerFileTokens
+	}
 	total := promptReserve + responseReserve + toolReserve + historyReserve
+	if total > maxTotalReserve {
+		scale := float64(maxTotalReserve) / float64(total)
+		promptReserve = maxInt(minContextPerFileTokens, int(math.Round(float64(promptReserve)*scale)))
+		responseReserve = maxInt(minContextPerFileTokens, int(math.Round(float64(responseReserve)*scale)))
+		historyReserve = maxInt(minContextPerFileTokens, int(math.Round(float64(historyReserve)*scale)))
+		toolReserve = maxInt(minContextPerFileTokens/2, int(math.Round(float64(toolReserve)*scale)))
+
+		total = promptReserve + responseReserve + toolReserve + historyReserve
+		overflow := total - maxTotalReserve
+		if overflow > 0 {
+			cut := minInt(overflow, maxInt(0, responseReserve-minContextPerFileTokens))
+			responseReserve -= cut
+			overflow -= cut
+		}
+		if overflow > 0 {
+			cut := minInt(overflow, maxInt(0, historyReserve-minContextPerFileTokens))
+			historyReserve -= cut
+			overflow -= cut
+		}
+		if overflow > 0 {
+			cut := minInt(overflow, maxInt(0, toolReserve-(minContextPerFileTokens/2)))
+			toolReserve -= cut
+			overflow -= cut
+		}
+		if overflow > 0 {
+			cut := minInt(overflow, maxInt(0, promptReserve-minContextPerFileTokens))
+			promptReserve -= cut
+		}
+	}
+	total = promptReserve + responseReserve + toolReserve + historyReserve
 	return contextReserveBreakdown{
 		Prompt:   promptReserve,
 		History:  historyReserve,

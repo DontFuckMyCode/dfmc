@@ -272,3 +272,34 @@ func TestContextBudgetPreviewWithRuntime_UsesMaxContextOverride(t *testing.T) {
 		t.Fatalf("expected tighter runtime to reduce total budget, got tight=%d base=%d", tight.MaxTokensTotal, base.MaxTokensTotal)
 	}
 }
+
+func TestContextBudgetPreviewWithRuntime_TightRuntimeScalesReserves(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Context.MaxFiles = 20
+	cfg.Context.MaxTokensPerFile = 2000
+	cfg.Context.MaxTokensTotal = 30000
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{Config: cfg, Providers: router}
+
+	tight := eng.ContextBudgetPreviewWithRuntime("security audit auth middleware", ctxmgr.PromptRuntime{
+		MaxContext: 1000,
+	})
+	if tight.ProviderMaxContext != 1000 {
+		t.Fatalf("expected provider max context override, got %d", tight.ProviderMaxContext)
+	}
+	if tight.ReserveTotalTokens > (tight.ProviderMaxContext - minContextTotalBudgetTokens) {
+		t.Fatalf("expected reserve total to be bounded for tight runtime, got reserve=%d provider_max=%d", tight.ReserveTotalTokens, tight.ProviderMaxContext)
+	}
+	if tight.ReserveResponseTokens >= 4096 {
+		t.Fatalf("expected response reserve to be scaled down for tight runtime, got %d", tight.ReserveResponseTokens)
+	}
+	if tight.Compression != "aggressive" {
+		t.Fatalf("expected aggressive compression for tight runtime, got %q", tight.Compression)
+	}
+	if tight.IncludeDocs {
+		t.Fatalf("expected docs to be disabled for tight runtime, got include_docs=%t", tight.IncludeDocs)
+	}
+}
