@@ -201,3 +201,35 @@ func TestBuildRequestMessages_IncludesSummaryWhenOmitted(t *testing.T) {
 		t.Fatalf("expected history tokens <= %d, got %d", allowed, totalHistoryTokens)
 	}
 }
+
+func TestBuildHistorySummary_ContainsStructuredSignal(t *testing.T) {
+	omitted := []types.Message{
+		{Role: types.RoleUser, Content: "Please inspect internal/auth/middleware.go and auth.go for token issues?"},
+		{Role: types.RoleAssistant, Content: "I reviewed auth.go and found edge-case handling gaps around refresh path."},
+		{Role: types.RoleUser, Content: "Can you patch middleware.go and add tests?"},
+	}
+	summary := buildHistorySummary(omitted, 120)
+	if !strings.Contains(summary, "[History summary]") {
+		t.Fatalf("expected summary prefix, got: %s", summary)
+	}
+	for _, marker := range []string{"Scope=", "Primary=", "Progress=", "Topics=", "Files=", "Open="} {
+		if !strings.Contains(summary, marker) {
+			t.Fatalf("expected marker %q in summary, got: %s", marker, summary)
+		}
+	}
+}
+
+func TestBuildHistorySummary_RespectsTokenLimit(t *testing.T) {
+	omitted := []types.Message{
+		{Role: types.RoleUser, Content: strings.Repeat("user asks about auth middleware and tokens ", 20) + "?"},
+		{Role: types.RoleAssistant, Content: strings.Repeat("assistant reports progress and findings on patches ", 20)},
+	}
+	const budget = 22
+	summary := buildHistorySummary(omitted, budget)
+	if summary == "" {
+		t.Fatal("expected non-empty summary")
+	}
+	if got := len(strings.Fields(summary)); got > budget {
+		t.Fatalf("expected summary token count <= %d, got %d (%q)", budget, got, summary)
+	}
+}

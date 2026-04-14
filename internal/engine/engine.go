@@ -457,7 +457,10 @@ func contextTaskProfile(task string) contextTaskBudgetProfile {
 	}
 }
 
-var explicitFileMentionRe = regexp.MustCompile(`\[\[file:[^\]]+\]\]`)
+var (
+	explicitFileMentionRe = regexp.MustCompile(`\[\[file:[^\]]+\]\]`)
+	fileMentionRe         = regexp.MustCompile(`(?i)\b[\w./-]+\.(go|ts|tsx|js|jsx|py|rs|java|cs|php|yaml|yml|json|md)\b`)
+)
 
 func countExplicitFileMentions(question string) int {
 	if strings.TrimSpace(question) == "" {
@@ -681,22 +684,82 @@ func buildHistorySummary(omitted []types.Message, maxTokens int) string {
 			assistantN++
 		}
 	}
-	terms := topTermsFromMessages(omitted, 4)
-	intents := recentOmittedUserIntents(omitted, 2, 12)
+	terms := topTermsFromMessages(omitted, 3)
+	files := topFileMentions(omitted, 2)
+	primary := latestOmittedByRole(omitted, types.RoleUser, 12)
+	progress := latestOmittedByRole(omitted, types.RoleAssistant, 12)
+	openItems := recentUserQuestions(omitted, 1, 10)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "[History summary] %d earlier messages omitted (%d user, %d assistant).", len(omitted), userN, assistantN)
+	fmt.Fprintf(&b, "[History summary] Scope=%d msgs (%dU/%dA).", len(omitted), userN, assistantN)
+	if primary != "" {
+		b.WriteString(" Primary=")
+		b.WriteString(primary)
+		b.WriteString(".")
+	}
+	if progress != "" {
+		b.WriteString(" Progress=")
+		b.WriteString(progress)
+		b.WriteString(".")
+	}
 	if len(terms) > 0 {
-		b.WriteString(" Topics: ")
+		b.WriteString(" Topics=")
 		b.WriteString(strings.Join(terms, ", "))
 		b.WriteString(".")
 	}
-	if len(intents) > 0 {
-		b.WriteString(" Recent omitted user intents: ")
-		b.WriteString(strings.Join(intents, " | "))
+	if len(files) > 0 {
+		b.WriteString(" Files=")
+		b.WriteString(strings.Join(files, ", "))
+		b.WriteString(".")
+	}
+	if len(openItems) > 0 {
+		b.WriteString(" Open=")
+		b.WriteString(strings.Join(openItems, " | "))
 		b.WriteString(".")
 	}
 	return trimToTokenBudget(b.String(), maxTokens)
+}
+
+func latestOmittedByRole(messages []types.Message, role types.MessageRole, maxTokens int) string {
+	if maxTokens <= 0 {
+		return ""
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != role {
+			continue
+		}
+		s := trimToTokenBudget(strings.TrimSpace(messages[i].Content), maxTokens)
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func recentUserQuestions(messages []types.Message, maxItems, maxTokensPerItem int) []string {
+	if maxItems <= 0 {
+		return nil
+	}
+	out := make([]string, 0, maxItems)
+	for i := len(messages) - 1; i >= 0 && len(out) < maxItems; i-- {
+		msg := messages[i]
+		if msg.Role != types.RoleUser {
+			continue
+		}
+		text := strings.TrimSpace(msg.Content)
+		if !strings.Contains(text, "?") {
+			continue
+		}
+		s := trimToTokenBudget(text, maxTokensPerItem)
+		if s == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
 }
 
 func recentOmittedUserIntents(messages []types.Message, maxItems, maxTokensPerItem int) []string {
@@ -772,6 +835,45 @@ func tokenizeForSummary(text string) []string {
 			continue
 		}
 		out = append(out, p)
+	}
+	return out
+}
+
+func topFileMentions(messages []types.Message, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	counts := map[string]int{}
+	for _, msg := range messages {
+		matches := fileMentionRe.FindAllString(strings.TrimSpace(msg.Content), -1)
+		for _, m := range matches {
+			key := strings.ToLower(strings.TrimSpace(strings.Trim(m, ".,;:()[]{}\"'`")))
+			if key == "" {
+				continue
+			}
+			counts[key]++
+		}
+	}
+	type kv struct {
+		Key   string
+		Count int
+	}
+	ranked := make([]kv, 0, len(counts))
+	for k, c := range counts {
+		ranked = append(ranked, kv{Key: k, Count: c})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].Count == ranked[j].Count {
+			return ranked[i].Key < ranked[j].Key
+		}
+		return ranked[i].Count > ranked[j].Count
+	})
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	out := make([]string, 0, len(ranked))
+	for _, item := range ranked {
+		out = append(out, item.Key)
 	}
 	return out
 }
