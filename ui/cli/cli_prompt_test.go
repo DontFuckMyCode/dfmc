@@ -21,6 +21,7 @@ func TestRunPromptListAndRender(t *testing.T) {
 	if code := runPrompt(context.Background(), eng, []string{
 		"render",
 		"--query", "security audit auth",
+		"--role", "security_auditor",
 		"--runtime-tool-style", "function-calling",
 		"--runtime-max-context", "1000",
 	}, true); code != 0 {

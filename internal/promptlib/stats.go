@@ -13,6 +13,7 @@ type StatsTemplate struct {
 	Task                string   `json:"task"`
 	Language            string   `json:"language,omitempty"`
 	Profile             string   `json:"profile,omitempty"`
+	Role                string   `json:"role,omitempty"`
 	Compose             string   `json:"compose,omitempty"`
 	Priority            int      `json:"priority,omitempty"`
 	Tokens              int      `json:"tokens"`
@@ -68,6 +69,7 @@ func BuildStatsReport(templates []Template, opts StatsOptions) StatsReport {
 			Task:                strings.TrimSpace(tpl.Task),
 			Language:            strings.TrimSpace(tpl.Language),
 			Profile:             strings.TrimSpace(tpl.Profile),
+			Role:                strings.TrimSpace(tpl.Role),
 			Compose:             strings.TrimSpace(tpl.Compose),
 			Priority:            tpl.Priority,
 			Tokens:              tokens,
@@ -103,6 +105,7 @@ func DefaultKnownVars() map[string]struct{} {
 		"task":             {},
 		"language":         {},
 		"profile":          {},
+		"role":             {},
 		"project_brief":    {},
 		"user_query":       {},
 		"context_files":    {},

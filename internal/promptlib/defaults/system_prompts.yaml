@@ -10,6 +10,7 @@ templates:
       Task: {{task}}
       Language: {{language}}
       Profile: {{profile}}
+      Role: {{role}}
 
       Project brief:
       {{project_brief}}
@@ -149,6 +150,7 @@ templates:
   - id: system.tools.function_calling
     type: system
     task: general
+    role: generalist
     compose: append
     priority: 72
     body: |
@@ -157,6 +159,42 @@ templates:
       - Keep tool arguments minimal and deterministic.
       - Do not mix natural-language commentary into tool payload fields.
       - If tool output is large, summarize the evidence and keep key snippets.
+
+  - id: system.role.planner
+    type: system
+    task: general
+    role: planner
+    compose: append
+    priority: 76
+    body: |
+      Planner role contract:
+      - Structure work into sequenced phases with clear entry/exit criteria.
+      - Keep scope explicit and call out dependency bottlenecks.
+      - Optimize for delivery cadence and rollback safety.
+
+  - id: system.role.security_auditor
+    type: system
+    task: general
+    role: security_auditor
+    compose: append
+    priority: 82
+    body: |
+      Security auditor role contract:
+      - Prioritize exploitability, impact, and confidence in findings.
+      - Distinguish confirmed evidence from hypotheses.
+      - Recommend minimum-risk remediations with verification steps.
+
+  - id: system.role.code_reviewer
+    type: system
+    task: general
+    role: code_reviewer
+    compose: append
+    priority: 78
+    body: |
+      Code reviewer role contract:
+      - Focus on correctness, regressions, and missing tests.
+      - Anchor concerns to concrete evidence in code or behavior.
+      - Keep suggested fixes directly actionable and scoped.
 
   - id: system.language.go
     type: system

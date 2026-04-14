@@ -26,6 +26,7 @@ type Template struct {
 	Task        string `json:"task" yaml:"task"`
 	Language    string `json:"language" yaml:"language"`
 	Profile     string `json:"profile" yaml:"profile"`
+	Role        string `json:"role" yaml:"role"`
 	Compose     string `json:"compose,omitempty" yaml:"compose"`
 	Priority    int    `json:"priority" yaml:"priority"`
 	Description string `json:"description" yaml:"description"`
@@ -37,6 +38,7 @@ type RenderRequest struct {
 	Task     string
 	Language string
 	Profile  string
+	Role     string
 	Vars     map[string]string
 }
 
@@ -191,6 +193,7 @@ func normalizeTemplate(t Template) Template {
 	}
 	t.Language = normalizeKey(t.Language)
 	t.Profile = normalizeKey(t.Profile)
+	t.Role = normalizeKey(t.Role)
 	t.Compose = normalizeComposeMode(t.Compose)
 	t.Description = strings.TrimSpace(t.Description)
 	t.Body = strings.TrimSpace(t.Body)
@@ -257,8 +260,8 @@ func (l *Library) renderAppendParts(req RenderRequest) []Template {
 		}
 	}
 
-	out := make([]Template, 0, 5)
-	for _, axis := range []string{"global", "task", "language", "profile"} {
+	out := make([]Template, 0, 6)
+	for _, axis := range []string{"global", "task", "language", "profile", "role"} {
 		if v, ok := picks[axis]; ok {
 			out = append(out, v.template)
 		}
@@ -279,16 +282,19 @@ func appendAxis(t Template, req RenderRequest) string {
 	task := normalizeKey(req.Task)
 	lang := normalizeKey(req.Language)
 	profile := normalizeKey(req.Profile)
+	role := normalizeKey(req.Role)
 
 	switch {
-	case t.Task == "general" && t.Language == "" && t.Profile == "":
+	case t.Task == "general" && t.Language == "" && t.Profile == "" && t.Role == "":
 		return "global"
-	case task != "" && t.Task == task && t.Language == "" && t.Profile == "":
+	case task != "" && t.Task == task && t.Language == "" && t.Profile == "" && t.Role == "":
 		return "task"
-	case lang != "" && t.Language == lang && t.Task == "general" && t.Profile == "":
+	case lang != "" && t.Language == lang && t.Task == "general" && t.Profile == "" && t.Role == "":
 		return "language"
-	case profile != "" && t.Profile == profile && t.Task == "general" && t.Language == "":
+	case profile != "" && t.Profile == profile && t.Task == "general" && t.Language == "" && t.Role == "":
 		return "profile"
+	case role != "" && t.Role == role && t.Task == "general" && t.Language == "" && t.Profile == "":
+		return "role"
 	default:
 		return "extra"
 	}
@@ -299,6 +305,7 @@ func templateScore(t Template, req RenderRequest) (int, bool) {
 	task := normalizeKey(req.Task)
 	lang := normalizeKey(req.Language)
 	profile := normalizeKey(req.Profile)
+	role := normalizeKey(req.Role)
 
 	if typ != "" && t.Type != typ {
 		return 0, false
@@ -334,6 +341,16 @@ func templateScore(t Template, req RenderRequest) (int, bool) {
 			score += 2
 		case t.Profile == profile:
 			score += 20
+		default:
+			return 0, false
+		}
+	}
+	if role != "" {
+		switch {
+		case t.Role == "":
+			score += 1
+		case t.Role == role:
+			score += 18
 		default:
 			return 0, false
 		}
@@ -509,6 +526,9 @@ func decodeMarkdownTemplate(path string, data []byte) (Template, bool) {
 				}
 				if strings.TrimSpace(meta.Profile) != "" {
 					t.Profile = meta.Profile
+				}
+				if strings.TrimSpace(meta.Role) != "" {
+					t.Role = meta.Role
 				}
 				if strings.TrimSpace(meta.Description) != "" {
 					t.Description = meta.Description

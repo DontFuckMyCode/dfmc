@@ -284,6 +284,7 @@ go run ./cmd/dfmc prompt list
 go run ./cmd/dfmc prompt render --query "security audit auth middleware"
 go run ./cmd/dfmc prompt render --task planning --language go --query "roadmap cikar"
 go run ./cmd/dfmc prompt render --task review --var context_files="- internal/auth/middleware.go:1-120"
+go run ./cmd/dfmc prompt render --task security --role security_auditor --query "auth audit"
 go run ./cmd/dfmc prompt render --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc prompt recommend --query "security audit auth middleware"
 go run ./cmd/dfmc --json prompt render --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
@@ -327,6 +328,7 @@ Supported file formats in prompt library:
 Template composition modes:
 - `compose: replace` (default): base template body
 - `compose: append`: additive fragment (task/profile/language overlays)
+- `role`: optional role axis for specialized prompt overlays (`planner`, `security_auditor`, `code_reviewer`, etc.)
 
 Example overlay template:
 ```yaml

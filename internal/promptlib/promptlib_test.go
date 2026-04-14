@@ -173,6 +173,43 @@ func TestRenderComposesTaskAndProfileFragments(t *testing.T) {
 	}
 }
 
+func TestRenderComposesRoleFragments(t *testing.T) {
+	lib := &Library{
+		templates:   []Template{},
+		loadedRoots: map[string]struct{}{},
+	}
+	lib.upsert(Template{
+		ID:      "base",
+		Type:    "system",
+		Task:    "general",
+		Compose: "replace",
+		Body:    "BASE {{role}}",
+	})
+	lib.upsert(Template{
+		ID:      "role.reviewer",
+		Type:    "system",
+		Task:    "general",
+		Role:    "code_reviewer",
+		Compose: "append",
+		Body:    "ROLE {{role}}",
+	})
+
+	out := lib.Render(RenderRequest{
+		Type: "system",
+		Task: "review",
+		Role: "code_reviewer",
+		Vars: map[string]string{
+			"role": "code_reviewer",
+		},
+	})
+	if !strings.Contains(out, "BASE code_reviewer") {
+		t.Fatalf("expected role in base fragment, got: %s", out)
+	}
+	if !strings.Contains(out, "ROLE code_reviewer") {
+		t.Fatalf("expected role fragment, got: %s", out)
+	}
+}
+
 func TestNormalizeTemplateComposeMode(t *testing.T) {
 	a := normalizeTemplate(Template{Type: "system", Task: "general", Compose: "append", Body: "x"})
 	if a.Compose != "append" {

@@ -71,6 +71,7 @@ type PromptRenderRequest struct {
 	Task              string            `json:"task"`
 	Language          string            `json:"language"`
 	Profile           string            `json:"profile"`
+	Role              string            `json:"role"`
 	Query             string            `json:"query"`
 	ContextFiles      string            `json:"context_files"`
 	Vars              map[string]string `json:"vars"`
@@ -611,12 +612,17 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 	if strings.EqualFold(resolvedProfile, "auto") || resolvedProfile == "" {
 		resolvedProfile = ctxmgr.ResolvePromptProfile(req.Query, resolvedTask, runtimeHints)
 	}
+	resolvedRole := strings.TrimSpace(req.Role)
+	if strings.EqualFold(resolvedRole, "auto") || resolvedRole == "" {
+		resolvedRole = ctxmgr.ResolvePromptRole(req.Query, resolvedTask)
+	}
 	budget := ctxmgr.ResolvePromptRenderBudget(resolvedTask, resolvedProfile, runtimeHints)
 	vars := map[string]string{
 		"project_root":     s.engine.Status().ProjectRoot,
 		"task":             resolvedTask,
 		"language":         resolvedLang,
 		"profile":          resolvedProfile,
+		"role":             resolvedRole,
 		"project_brief":    loadProjectBriefForPromptRender(s.engine.Status().ProjectRoot, "", budget.ProjectBriefTokens),
 		"user_query":       strings.TrimSpace(req.Query),
 		"context_files":    strings.TrimSpace(req.ContextFiles),
@@ -636,6 +642,7 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 		Task:     resolvedTask,
 		Language: resolvedLang,
 		Profile:  resolvedProfile,
+		Role:     resolvedRole,
 		Vars:     vars,
 	})
 	promptBudgetTokens := ctxmgr.PromptTokenBudget(resolvedTask, resolvedProfile, runtimeHints)
@@ -652,6 +659,7 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 		"task":                   resolvedTask,
 		"language":               resolvedLang,
 		"profile":                resolvedProfile,
+		"role":                   resolvedRole,
 		"vars":                   vars,
 		"prompt":                 prompt,
 		"prompt_tokens_estimate": promptTokensEstimate,

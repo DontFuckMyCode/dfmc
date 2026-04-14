@@ -2473,6 +2473,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		task := fs.String("task", "auto", "prompt task")
 		language := fs.String("language", "auto", "prompt language")
 		profile := fs.String("profile", "auto", "prompt profile")
+		role := fs.String("role", "auto", "prompt role")
 		query := fs.String("query", "", "user query")
 		contextFiles := fs.String("context-files", "(none)", "context file summary")
 		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for tool policy rendering")
@@ -2514,6 +2515,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 					"task":                *task,
 					"language":            *language,
 					"profile":             *profile,
+					"role":                *role,
 					"query":               *query,
 					"context_files":       *contextFiles,
 					"runtime_provider":    strings.TrimSpace(*runtimeProvider),
@@ -5010,6 +5012,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		task := fs.String("task", "auto", "task (auto|general|planning|review|security|refactor|test|doc|debug)")
 		language := fs.String("language", "auto", "language (auto|go|typescript|python|rust|...)")
 		profile := fs.String("profile", "auto", "prompt profile (auto|compact|deep)")
+		role := fs.String("role", "auto", "prompt role (auto|generalist|planner|security_auditor|code_reviewer|debugger|refactorer|test_engineer|documenter|architect)")
 		query := fs.String("query", "", "user request/query")
 		contextFiles := fs.String("context-files", "(none)", "context file summary to inject")
 		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for tool policy rendering")
@@ -5051,6 +5054,10 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		if strings.EqualFold(resolvedProfile, "auto") || resolvedProfile == "" {
 			resolvedProfile = ctxmgr.ResolvePromptProfile(*query, resolvedTask, runtimeHints)
 		}
+		resolvedRole := strings.TrimSpace(*role)
+		if strings.EqualFold(resolvedRole, "auto") || resolvedRole == "" {
+			resolvedRole = ctxmgr.ResolvePromptRole(*query, resolvedTask)
+		}
 		budget := ctxmgr.ResolvePromptRenderBudget(resolvedTask, resolvedProfile, runtimeHints)
 
 		vars := map[string]string{
@@ -5058,6 +5065,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			"task":             resolvedTask,
 			"language":         resolvedLanguage,
 			"profile":          resolvedProfile,
+			"role":             resolvedRole,
 			"project_brief":    loadPromptProjectBrief(projectRoot, budget.ProjectBriefTokens),
 			"user_query":       strings.TrimSpace(*query),
 			"context_files":    strings.TrimSpace(*contextFiles),
@@ -5080,6 +5088,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			Task:     resolvedTask,
 			Language: resolvedLanguage,
 			Profile:  resolvedProfile,
+			Role:     resolvedRole,
 			Vars:     vars,
 		})
 
@@ -5098,6 +5107,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				"task":                   resolvedTask,
 				"language":               resolvedLanguage,
 				"profile":                resolvedProfile,
+				"role":                   resolvedRole,
 				"vars":                   vars,
 				"prompt":                 out,
 				"prompt_tokens_estimate": promptTokensEstimate,
@@ -5175,10 +5185,11 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			return 0
 		}
 		fmt.Printf(
-			"prompt recommend: task=%s language=%s profile=%s provider=%s model=%s tool_style=%s max_context=%d budget=%d render[files=%d tools=%d injected_blocks=%d injected_lines=%d injected_tokens=%d brief=%d]\n",
+			"prompt recommend: task=%s language=%s profile=%s role=%s provider=%s model=%s tool_style=%s max_context=%d budget=%d render[files=%d tools=%d injected_blocks=%d injected_lines=%d injected_tokens=%d brief=%d]\n",
 			info.Task,
 			info.Language,
 			info.Profile,
+			info.Role,
 			info.Provider,
 			info.Model,
 			info.ToolStyle,

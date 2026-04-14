@@ -75,6 +75,9 @@ func TestBuildSystemPromptUsesPromptLibrary(t *testing.T) {
 	if !strings.Contains(prompt, "read_file") {
 		t.Fatalf("expected tools overview in prompt, got: %s", prompt)
 	}
+	if !strings.Contains(prompt, "Role: security_auditor") {
+		t.Fatalf("expected resolved role in prompt, got: %s", prompt)
+	}
 }
 
 func TestBuildSystemPromptWithRuntimeToolPolicy(t *testing.T) {
@@ -226,6 +229,15 @@ func TestBuildSystemPromptRespectsPromptTokenBudget(t *testing.T) {
 	budget := PromptTokenBudget(task, profile, runtime)
 	if got := len(strings.Fields(prompt)); got > budget {
 		t.Fatalf("expected prompt tokens <= budget (%d), got %d", budget, got)
+	}
+}
+
+func TestResolvePromptRoleByTaskAndQuery(t *testing.T) {
+	if got := ResolvePromptRole("security audit auth flow", "security"); got != "security_auditor" {
+		t.Fatalf("expected security_auditor, got %s", got)
+	}
+	if got := ResolvePromptRole("architecture proposal for auth boundary", "planning"); got != "architect" {
+		t.Fatalf("expected architect override, got %s", got)
 	}
 }
 

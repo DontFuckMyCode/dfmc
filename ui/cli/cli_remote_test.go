@@ -379,12 +379,18 @@ func TestRunRemotePromptRenderWithRuntimeOverrides(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":"runtime_max_context missing"}`))
 			return
 		}
+		if req["role"] != "security_auditor" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"role missing"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"type":"system","task":"security","language":"go","prompt":"SECURITY PROMPT"}`))
 	}))
 	defer ts.Close()
 
 	args := []string{
 		"prompt", "render", "--url", ts.URL, "--task", "security", "--query", "auth audit",
+		"--role", "security_auditor",
 		"--runtime-tool-style", "function-calling",
 		"--runtime-max-context", "1000",
 	}

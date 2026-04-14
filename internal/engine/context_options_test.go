@@ -212,6 +212,9 @@ func TestPromptRecommendation_ContainsBudgetAndHints(t *testing.T) {
 	if info.Profile == "" {
 		t.Fatal("expected non-empty profile")
 	}
+	if info.Role == "" {
+		t.Fatal("expected non-empty role")
+	}
 	if info.PromptBudgetTokens <= 0 {
 		t.Fatalf("expected positive prompt budget, got %d", info.PromptBudgetTokens)
 	}

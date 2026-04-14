@@ -106,6 +106,7 @@ type PromptRecommendationInfo struct {
 	Task     string `json:"task"`
 	Language string `json:"language"`
 	Profile  string `json:"profile"`
+	Role     string `json:"role"`
 
 	ToolStyle  string `json:"tool_style"`
 	MaxContext int    `json:"max_context"`
@@ -368,6 +369,7 @@ func (e *Engine) PromptRecommendation(question string) PromptRecommendationInfo 
 	runtime := e.promptRuntime()
 	task := detectContextTask(query)
 	language := promptlib.InferLanguage(query, nil)
+	role := ctxmgr.ResolvePromptRole(query, task)
 	profile := ctxmgr.ResolvePromptProfile(query, task, runtime)
 	renderBudget := ctxmgr.ResolvePromptRenderBudget(task, profile, runtime)
 	promptBudget := ctxmgr.PromptTokenBudget(task, profile, runtime)
@@ -404,6 +406,7 @@ func (e *Engine) PromptRecommendation(question string) PromptRecommendationInfo 
 		Task:     task,
 		Language: language,
 		Profile:  profile,
+		Role:     role,
 
 		ToolStyle:  runtime.ToolStyle,
 		MaxContext: runtime.MaxContext,

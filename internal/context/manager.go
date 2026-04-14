@@ -170,6 +170,7 @@ func (m *Manager) BuildSystemPromptWithRuntime(projectRoot, query string, chunks
 
 	task := promptlib.DetectTask(query)
 	language := promptlib.InferLanguage(query, chunks)
+	role := ResolvePromptRole(query, task)
 	profile := ResolvePromptProfile(query, task, runtime)
 	limits := ResolvePromptRenderBudget(task, profile, runtime)
 	injected := BuildInjectedContextWithBudget(projectRoot, query, limits)
@@ -178,11 +179,13 @@ func (m *Manager) BuildSystemPromptWithRuntime(projectRoot, query string, chunks
 		Task:     task,
 		Language: language,
 		Profile:  profile,
+		Role:     role,
 		Vars: map[string]string{
 			"project_root":     projectRoot,
 			"task":             task,
 			"language":         language,
 			"profile":          profile,
+			"role":             role,
 			"project_brief":    loadProjectBrief(projectRoot, limits.ProjectBriefTokens),
 			"user_query":       strings.TrimSpace(query),
 			"context_files":    summarizeContextFiles(projectRoot, chunks, limits.ContextFiles),
@@ -522,6 +525,31 @@ func ResolvePromptProfile(query, task string, runtime PromptRuntime) string {
 		return "compact"
 	}
 	return "compact"
+}
+
+func ResolvePromptRole(query, task string) string {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if containsAnyFold(q, []string{"architect", "architecture", "tasarim", "tasarım"}) {
+		return "architect"
+	}
+	switch strings.ToLower(strings.TrimSpace(task)) {
+	case "security":
+		return "security_auditor"
+	case "review":
+		return "code_reviewer"
+	case "planning":
+		return "planner"
+	case "debug":
+		return "debugger"
+	case "refactor":
+		return "refactorer"
+	case "test":
+		return "test_engineer"
+	case "doc":
+		return "documenter"
+	default:
+		return "generalist"
+	}
 }
 
 type PromptRenderBudget struct {
