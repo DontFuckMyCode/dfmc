@@ -45,6 +45,9 @@ func (p *PlaceholderProvider) Complete(_ context.Context, req CompletionRequest)
 }
 
 func (p *PlaceholderProvider) Stream(ctx context.Context, req CompletionRequest) (<-chan StreamEvent, error) {
+	if !p.configured {
+		return nil, fmt.Errorf("%w: %s api key missing", ErrProviderUnavailable, p.name)
+	}
 	ch := make(chan StreamEvent, 2)
 	go func() {
 		defer close(ch)

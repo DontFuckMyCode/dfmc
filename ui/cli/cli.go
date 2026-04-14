@@ -8,13 +8,17 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
+	"github.com/dontfuckmycode/dfmc/ui/web"
+	"gopkg.in/yaml.v3"
 )
 
 type globalOptions struct {
@@ -69,7 +73,11 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runMemory(ctx, eng, cmdArgs, opts.JSON)
 	case "conversation", "conv":
 		return runConversation(ctx, eng, cmdArgs, opts.JSON)
-	case "config", "plugin", "skill", "serve", "remote", "review", "explain", "refactor", "test", "doc":
+	case "serve":
+		return runServe(ctx, eng, cmdArgs, opts.JSON)
+	case "config":
+		return runConfig(ctx, eng, cmdArgs, opts.JSON)
+	case "plugin", "skill", "remote", "review", "explain", "refactor", "test", "doc":
 		return runPlaceholder(cmd, opts.JSON)
 	default:
 		if strings.HasPrefix(cmd, "-") {
@@ -212,7 +220,7 @@ func runChat(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 	}
 
 	fmt.Println("DFMC interactive chat (type /exit to quit)")
-	fmt.Println("Note: full provider streaming pipeline will be added in next phases.")
+	fmt.Println("Streaming responses are enabled when provider supports it.")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -267,12 +275,31 @@ func runChat(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 			fmt.Printf("recent files: %d\n", len(w.RecentFiles))
 			continue
 		}
-		resp, err := eng.Ask(ctx, line)
+		stream, err := eng.StreamAsk(ctx, line)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			continue
 		}
-		fmt.Println(resp)
+		printed := false
+		endsWithNL := true
+		for ev := range stream {
+			switch ev.Type {
+			case "delta":
+				fmt.Print(ev.Delta)
+				printed = true
+				endsWithNL = strings.HasSuffix(ev.Delta, "\n")
+			case "error":
+				if printed && !endsWithNL {
+					fmt.Println()
+				}
+				fmt.Fprintf(os.Stderr, "error: %v\n", ev.Err)
+				printed = false
+			case "done":
+			}
+		}
+		if printed && !endsWithNL {
+			fmt.Println()
+		}
 	}
 }
 
@@ -652,6 +679,430 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 	}
 }
 
+func runServe(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	host := fs.String("host", eng.Config.Web.Host, "host")
+	port := fs.Int("port", eng.Config.Web.Port, "port")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if jsonMode {
+		_ = printJSON(map[string]any{
+			"status": "starting",
+			"host":   *host,
+			"port":   *port,
+		})
+	}
+
+	srv := web.New(eng, *host, *port)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Start()
+	}()
+
+	select {
+	case <-ctx.Done():
+		return 0
+	case err := <-errCh:
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "serve error: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+}
+
+func runConfig(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
+	_ = ctx
+	if len(args) == 0 {
+		args = []string{"list"}
+	}
+
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("config list", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		raw := fs.Bool("raw", false, "show sensitive values")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		cfgMap, err := configToMap(eng.Config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config list error: %v\n", err)
+			return 1
+		}
+		out := sanitizeConfigValue(cfgMap, "", !*raw)
+		if jsonMode {
+			_ = printJSON(out)
+			return 0
+		}
+		data, err := yaml.Marshal(out)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config list error: %v\n", err)
+			return 1
+		}
+		fmt.Print(string(data))
+		return 0
+
+	case "get":
+		fs := flag.NewFlagSet("config get", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		raw := fs.Bool("raw", false, "show sensitive values")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if len(fs.Args()) < 1 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc config get [--raw] <path>")
+			return 2
+		}
+		keyPath := strings.TrimSpace(fs.Args()[0])
+		cfgMap, err := configToMap(eng.Config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config get error: %v\n", err)
+			return 1
+		}
+		value, ok := getConfigPath(cfgMap, keyPath)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "config path not found: %s\n", keyPath)
+			return 1
+		}
+		out := sanitizeConfigValue(value, keyPath, !*raw)
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"path":  keyPath,
+				"value": out,
+			})
+			return 0
+		}
+		switch v := out.(type) {
+		case string:
+			fmt.Println(v)
+		default:
+			data, err := yaml.Marshal(v)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "config get error: %v\n", err)
+				return 1
+			}
+			fmt.Print(string(data))
+		}
+		return 0
+
+	case "set":
+		fs := flag.NewFlagSet("config set", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		global := fs.Bool("global", false, "write to ~/.dfmc/config.yaml")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if len(fs.Args()) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc config set [--global] <path> <value>")
+			return 2
+		}
+		keyPath := strings.TrimSpace(fs.Args()[0])
+		rawValue := strings.Join(fs.Args()[1:], " ")
+		parsedValue, err := parseConfigValue(rawValue)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config set parse error: %v\n", err)
+			return 1
+		}
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config set error: %v\n", err)
+			return 1
+		}
+		targetPath := projectConfigPath(cwd)
+		if *global {
+			targetPath = filepath.Join(config.UserConfigDir(), "config.yaml")
+		}
+
+		currentMap, err := loadConfigFileMap(targetPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config set error: %v\n", err)
+			return 1
+		}
+		if err := setConfigPath(currentMap, keyPath, parsedValue); err != nil {
+			fmt.Fprintf(os.Stderr, "config set error: %v\n", err)
+			return 1
+		}
+
+		var oldData []byte
+		oldData, _ = os.ReadFile(targetPath)
+		if err := saveConfigFileMap(targetPath, currentMap); err != nil {
+			fmt.Fprintf(os.Stderr, "config set error: %v\n", err)
+			return 1
+		}
+		if err := eng.ReloadConfig(cwd); err != nil {
+			if len(oldData) == 0 {
+				_ = os.Remove(targetPath)
+			} else {
+				_ = os.WriteFile(targetPath, oldData, 0o644)
+			}
+			fmt.Fprintf(os.Stderr, "config reload failed, reverted change: %v\n", err)
+			return 1
+		}
+
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"status":      "ok",
+				"path":        keyPath,
+				"config_file": targetPath,
+			})
+			return 0
+		}
+		fmt.Printf("Updated %s in %s\n", keyPath, targetPath)
+		return 0
+
+	case "edit":
+		fs := flag.NewFlagSet("config edit", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		global := fs.Bool("global", false, "edit ~/.dfmc/config.yaml")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config edit error: %v\n", err)
+			return 1
+		}
+		targetPath := projectConfigPath(cwd)
+		if *global {
+			targetPath = filepath.Join(config.UserConfigDir(), "config.yaml")
+		}
+
+		if _, err := os.Stat(targetPath); errors.Is(err, os.ErrNotExist) {
+			if err := saveConfigFileMap(targetPath, map[string]any{}); err != nil {
+				fmt.Fprintf(os.Stderr, "config edit error: %v\n", err)
+				return 1
+			}
+		}
+
+		editor := strings.TrimSpace(os.Getenv("VISUAL"))
+		if editor == "" {
+			editor = strings.TrimSpace(os.Getenv("EDITOR"))
+		}
+		if editor == "" {
+			if runtime.GOOS == "windows" {
+				editor = "notepad"
+			} else {
+				editor = "vi"
+			}
+		}
+		editorParts := strings.Fields(editor)
+		if len(editorParts) == 0 {
+			fmt.Fprintln(os.Stderr, "config edit error: no editor configured")
+			return 1
+		}
+		cmdArgs := append(editorParts[1:], targetPath)
+		cmd := exec.Command(editorParts[0], cmdArgs...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "config edit error: %v\n", err)
+			return 1
+		}
+
+		if err := eng.ReloadConfig(cwd); err != nil {
+			fmt.Fprintf(os.Stderr, "config reload failed after edit: %v\n", err)
+			return 1
+		}
+		return 0
+
+	default:
+		fmt.Fprintln(os.Stderr, "usage: dfmc config [list|get|set|edit]")
+		return 2
+	}
+}
+
+func projectConfigPath(cwd string) string {
+	root := config.FindProjectRoot(cwd)
+	if strings.TrimSpace(root) == "" {
+		root = cwd
+	}
+	return filepath.Join(root, config.DefaultDirName, "config.yaml")
+}
+
+func configToMap(cfg *config.Config) (map[string]any, error) {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{}
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func loadConfigFileMap(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	out := map[string]any{}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return out, nil
+	}
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func saveConfigFileMap(path string, data map[string]any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	blob, err := yaml.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, blob, 0o644)
+}
+
+func parseConfigValue(raw string) (any, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", nil
+	}
+	var v any
+	if err := yaml.Unmarshal([]byte(s), &v); err == nil {
+		return v, nil
+	}
+
+	if b, err := strconv.ParseBool(s); err == nil {
+		return b, nil
+	}
+	if i, err := strconv.Atoi(s); err == nil {
+		return i, nil
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f, nil
+	}
+	return raw, nil
+}
+
+func getConfigPath(root map[string]any, path string) (any, bool) {
+	parts := splitConfigPath(path)
+	if len(parts) == 0 {
+		return root, true
+	}
+	var current any = root
+	for _, part := range parts {
+		switch node := current.(type) {
+		case map[string]any:
+			next, ok := node[part]
+			if !ok {
+				return nil, false
+			}
+			current = next
+		case []any:
+			idx, err := strconv.Atoi(part)
+			if err != nil || idx < 0 || idx >= len(node) {
+				return nil, false
+			}
+			current = node[idx]
+		default:
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+func setConfigPath(root map[string]any, path string, value any) error {
+	parts := splitConfigPath(path)
+	if len(parts) == 0 {
+		return fmt.Errorf("empty path")
+	}
+	current := root
+	for i := 0; i < len(parts)-1; i++ {
+		part := parts[i]
+		next, exists := current[part]
+		if !exists {
+			child := map[string]any{}
+			current[part] = child
+			current = child
+			continue
+		}
+		nextMap, ok := next.(map[string]any)
+		if !ok {
+			return fmt.Errorf("path segment %q is not an object", strings.Join(parts[:i+1], "."))
+		}
+		current = nextMap
+	}
+	current[parts[len(parts)-1]] = value
+	return nil
+}
+
+func splitConfigPath(path string) []string {
+	parts := strings.Split(strings.TrimSpace(path), ".")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func sanitizeConfigValue(value any, path string, enabled bool) any {
+	if !enabled {
+		return value
+	}
+	if isSensitivePath(path) {
+		return "***REDACTED***"
+	}
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, inner := range v {
+			nextPath := k
+			if path != "" {
+				nextPath = path + "." + k
+			}
+			out[k] = sanitizeConfigValue(inner, nextPath, enabled)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, inner := range v {
+			nextPath := strconv.Itoa(i)
+			if path != "" {
+				nextPath = path + "." + nextPath
+			}
+			out[i] = sanitizeConfigValue(inner, nextPath, enabled)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func isSensitivePath(path string) bool {
+	if path == "" {
+		return false
+	}
+	parts := splitConfigPath(path)
+	if len(parts) == 0 {
+		return false
+	}
+	key := strings.ToLower(parts[len(parts)-1])
+	switch key {
+	case "api_key", "apikey", "secret", "secret_key", "client_secret", "password", "passphrase", "token":
+		return true
+	}
+	return strings.HasSuffix(key, "_token")
+}
+
 func parseTier(v string) types.MemoryTier {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "semantic":
@@ -682,10 +1133,10 @@ Commands:
   tool        Tool engine (list/run)
   conversation Conversation history (list/search)
   memory      Memory management
-  config      Configuration management (placeholder)
+  config      Configuration management (list/get/set/edit)
   plugin      Plugin management (placeholder)
   skill       Skill management (placeholder)
-  serve       Start WebUI server (placeholder)
+  serve       Start Web API server
   remote      Remote control server (placeholder)
   review      Code review shortcut (placeholder)
   explain     Explain code shortcut (placeholder)

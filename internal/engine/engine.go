@@ -241,6 +241,25 @@ func (e *Engine) SetVerbose(v bool) {
 	e.verbose = v
 }
 
+func (e *Engine) ReloadConfig(cwd string) error {
+	cfg, err := config.LoadWithOptions(config.LoadOptions{CWD: cwd})
+	if err != nil {
+		return err
+	}
+	providers, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		return err
+	}
+	newTools := tools.New(*cfg)
+
+	e.mu.Lock()
+	e.Config = cfg
+	e.Providers = providers
+	e.Tools = newTools
+	e.mu.Unlock()
+	return nil
+}
+
 func (e *Engine) provider() string {
 	if e.providerOverride != "" {
 		return e.providerOverride
@@ -342,30 +361,7 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 	if err != nil {
 		return "", err
 	}
-	if e.Conversation != nil {
-		e.Conversation.AddMessage(usedProvider, resp.Model, types.Message{
-			Role:      types.RoleUser,
-			Content:   question,
-			Timestamp: time.Now(),
-		})
-		e.Conversation.AddMessage(usedProvider, resp.Model, types.Message{
-			Role:      types.RoleAssistant,
-			Content:   resp.Text,
-			Timestamp: time.Now(),
-			TokenCnt:  resp.Usage.TotalTokens,
-			Metadata: map[string]string{
-				"provider": usedProvider,
-				"model":    resp.Model,
-			},
-		})
-	}
-	if e.Memory != nil {
-		e.Memory.SetWorkingQuestionAnswer(question, resp.Text)
-		for _, ch := range chunks {
-			e.Memory.TouchFile(ch.Path)
-		}
-		_ = e.Memory.AddEpisodicInteraction(e.ProjectRoot, question, resp.Text, 0.7)
-	}
+	e.recordInteraction(question, resp.Text, usedProvider, resp.Model, resp.Usage.TotalTokens, chunks)
 	e.EventBus.Publish(Event{
 		Type:   "provider:complete",
 		Source: "engine",
@@ -376,6 +372,109 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 		},
 	})
 	return resp.Text, nil
+}
+
+func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provider.StreamEvent, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if strings.TrimSpace(question) == "" {
+		return nil, fmt.Errorf("question cannot be empty")
+	}
+	if e.Providers == nil {
+		return nil, fmt.Errorf("provider router is not initialized")
+	}
+	e.ensureIndexed(ctx)
+
+	var chunks []types.ContextChunk
+	if e.Context != nil {
+		var err error
+		chunks, err = e.Context.Build(question, 8)
+		if err != nil {
+			e.EventBus.Publish(Event{
+				Type:    "context:error",
+				Source:  "engine",
+				Payload: err.Error(),
+			})
+		}
+	}
+
+	req := provider.CompletionRequest{
+		Provider: e.provider(),
+		Model:    e.model(),
+		Messages: []provider.Message{
+			{Role: types.RoleUser, Content: question},
+		},
+		Context: chunks,
+	}
+	if e.Context != nil {
+		req.System = e.Context.BuildSystemPrompt(e.ProjectRoot)
+	}
+
+	stream, usedProvider, err := e.Providers.Stream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(chan provider.StreamEvent, 32)
+	go func() {
+		defer close(out)
+		var acc strings.Builder
+		for ev := range stream {
+			if ev.Type == provider.StreamDelta {
+				acc.WriteString(ev.Delta)
+			}
+			out <- ev
+			if ev.Type == provider.StreamError {
+				return
+			}
+			if ev.Type == provider.StreamDone {
+				answer := acc.String()
+				if strings.TrimSpace(answer) != "" {
+					tokenEstimate := estimateTokens(question) + estimateTokens(answer)
+					e.recordInteraction(question, answer, usedProvider, req.Model, tokenEstimate, chunks)
+					e.EventBus.Publish(Event{
+						Type:   "provider:complete",
+						Source: "engine",
+						Payload: map[string]any{
+							"provider": usedProvider,
+							"model":    req.Model,
+							"tokens":   tokenEstimate,
+						},
+					})
+				}
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
+func (e *Engine) recordInteraction(question, answer, providerName, model string, tokenCount int, chunks []types.ContextChunk) {
+	if e.Conversation != nil {
+		e.Conversation.AddMessage(providerName, model, types.Message{
+			Role:      types.RoleUser,
+			Content:   question,
+			Timestamp: time.Now(),
+		})
+		e.Conversation.AddMessage(providerName, model, types.Message{
+			Role:      types.RoleAssistant,
+			Content:   answer,
+			Timestamp: time.Now(),
+			TokenCnt:  tokenCount,
+			Metadata: map[string]string{
+				"provider": providerName,
+				"model":    model,
+			},
+		})
+	}
+	if e.Memory != nil {
+		e.Memory.SetWorkingQuestionAnswer(question, answer)
+		for _, ch := range chunks {
+			e.Memory.TouchFile(ch.Path)
+		}
+		_ = e.Memory.AddEpisodicInteraction(e.ProjectRoot, question, answer, 0.7)
+	}
 }
 
 func (e *Engine) MemoryWorking() memory.WorkingMemory {
@@ -750,4 +849,8 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func estimateTokens(text string) int {
+	return len(strings.Fields(text))
 }

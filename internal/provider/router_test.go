@@ -54,3 +54,29 @@ func TestOfflineStream(t *testing.T) {
 		t.Fatal("expected stream done event")
 	}
 }
+
+func TestProviderFromProfileSelectsLiveClients(t *testing.T) {
+	p1 := providerFromProfile("openai", config.ModelConfig{
+		Model:  "gpt-5.4",
+		APIKey: "k-test",
+	})
+	if _, ok := p1.(*OpenAICompatibleProvider); !ok {
+		t.Fatalf("expected OpenAICompatibleProvider, got %T", p1)
+	}
+
+	p2 := providerFromProfile("anthropic", config.ModelConfig{
+		Model:  "claude-sonnet-4-6",
+		APIKey: "k-test",
+	})
+	if _, ok := p2.(*AnthropicProvider); !ok {
+		t.Fatalf("expected AnthropicProvider, got %T", p2)
+	}
+
+	p3 := providerFromProfile("generic", config.ModelConfig{
+		Model:   "qwen",
+		BaseURL: "http://localhost:11434/v1",
+	})
+	if _, ok := p3.(*OpenAICompatibleProvider); !ok {
+		t.Fatalf("expected OpenAICompatibleProvider for generic, got %T", p3)
+	}
+}

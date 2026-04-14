@@ -28,8 +28,7 @@ func NewRouter(cfg config.ProvidersConfig) (*Router, error) {
 	r.Register(NewOfflineProvider())
 
 	for name, profile := range cfg.Profiles {
-		configured := strings.TrimSpace(profile.APIKey) != ""
-		r.Register(NewPlaceholderProvider(name, profile.Model, configured))
+		r.Register(providerFromProfile(name, profile))
 	}
 
 	if strings.TrimSpace(r.primary) == "" {
@@ -38,16 +37,51 @@ func NewRouter(cfg config.ProvidersConfig) (*Router, error) {
 	return r, nil
 }
 
+func providerFromProfile(name string, profile config.ModelConfig) Provider {
+	name = normalizeProviderName(name)
+	model := profile.Model
+	apiKey := strings.TrimSpace(profile.APIKey)
+	baseURL := strings.TrimSpace(profile.BaseURL)
+
+	switch name {
+	case "anthropic":
+		if apiKey == "" {
+			return NewPlaceholderProvider(name, model, false)
+		}
+		return NewAnthropicProvider(model, apiKey, baseURL)
+	case "openai":
+		if apiKey == "" {
+			return NewPlaceholderProvider(name, model, false)
+		}
+		return NewOpenAICompatibleProvider(name, model, apiKey, baseURL)
+	case "deepseek":
+		if apiKey == "" {
+			return NewPlaceholderProvider(name, model, false)
+		}
+		return NewOpenAICompatibleProvider(name, model, apiKey, baseURL)
+	case "generic":
+		if strings.TrimSpace(baseURL) == "" {
+			// Generic provider requires explicit endpoint; apiKey can be optional.
+			return NewPlaceholderProvider(name, model, false)
+		}
+		return NewOpenAICompatibleProvider(name, model, apiKey, baseURL)
+	default:
+		// Keep other providers as placeholders until dedicated client is implemented.
+		configured := apiKey != ""
+		return NewPlaceholderProvider(name, model, configured)
+	}
+}
+
 func (r *Router) Register(p Provider) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.providers[p.Name()] = p
+	r.providers[normalizeProviderName(p.Name())] = p
 }
 
 func (r *Router) Get(name string) (Provider, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	p, ok := r.providers[name]
+	p, ok := r.providers[normalizeProviderName(name)]
 	return p, ok
 }
 
@@ -65,7 +99,7 @@ func (r *Router) ResolveOrder(requested string) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 4)
 	add := func(name string) {
-		name = strings.TrimSpace(name)
+		name = normalizeProviderName(name)
 		if name == "" {
 			return
 		}
@@ -83,6 +117,10 @@ func (r *Router) ResolveOrder(requested string) []string {
 	}
 	add("offline")
 	return out
+}
+
+func normalizeProviderName(name string) string {
+	return strings.TrimSpace(strings.ToLower(name))
 }
 
 func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, string, error) {
