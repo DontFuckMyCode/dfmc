@@ -499,8 +499,9 @@ func (e *Engine) contextReserveTokens(question string) int {
 	return promptReserve + responseReserve + baseToolReserveTokens + e.conversationHistoryBudget()
 }
 
-func (e *Engine) buildRequestMessages(question string) []provider.Message {
-	msgs := e.trimmedConversationMessages()
+func (e *Engine) buildRequestMessages(question string, chunks []types.ContextChunk, systemPrompt string) []provider.Message {
+	historyBudget := e.historyBudgetForRequest(question, chunks, systemPrompt)
+	msgs := e.trimmedConversationMessages(historyBudget)
 	msgs = append(msgs, provider.Message{
 		Role:    types.RoleUser,
 		Content: question,
@@ -529,7 +530,7 @@ func (e *Engine) conversationHistoryBudget() int {
 	return budget
 }
 
-func (e *Engine) trimmedConversationMessages() []provider.Message {
+func (e *Engine) trimmedConversationMessages(budget int) []provider.Message {
 	if e.Conversation == nil {
 		return nil
 	}
@@ -541,7 +542,9 @@ func (e *Engine) trimmedConversationMessages() []provider.Message {
 	if len(history) == 0 {
 		return nil
 	}
-	budget := e.conversationHistoryBudget()
+	if budget <= 0 {
+		return nil
+	}
 	out := make([]provider.Message, 0, minInt(maxHistoryMessages, len(history)))
 	used := 0
 
@@ -583,6 +586,35 @@ func (e *Engine) trimmedConversationMessages() []provider.Message {
 		out[i], out[j] = out[j], out[i]
 	}
 	return out
+}
+
+func (e *Engine) historyBudgetForRequest(question string, chunks []types.ContextChunk, systemPrompt string) int {
+	providerLimit := e.providerMaxContext()
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
+	responseReserve := defaultResponseReserveTokens
+	if prof, ok := e.Config.Providers.Profiles[e.provider()]; ok && prof.MaxTokens > 0 {
+		responseReserve = prof.MaxTokens
+	}
+	if responseReserve > maxResponseReserveTokens {
+		responseReserve = maxResponseReserveTokens
+	}
+	if responseReserve < minContextPerFileTokens {
+		responseReserve = minContextPerFileTokens
+	}
+
+	usedByRequest := estimateTokens(question) + estimateTokens(systemPrompt) + baseToolReserveTokens
+	for _, ch := range chunks {
+		usedByRequest += ch.TokenCount
+	}
+	available := providerLimit - responseReserve - usedByRequest
+	if available <= 0 {
+		return 0
+	}
+
+	maxHistory := e.conversationHistoryBudget()
+	return minInt(maxHistory, available)
 }
 
 func trimToTokenBudget(content string, maxTokens int) string {
@@ -652,14 +684,16 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 
 	chunks := e.buildContextChunks(question)
 
+	systemPrompt := ""
+	if e.Context != nil {
+		systemPrompt = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks, e.ListTools())
+	}
 	req := provider.CompletionRequest{
 		Provider: e.provider(),
 		Model:    e.model(),
-		Messages: e.buildRequestMessages(question),
+		Messages: e.buildRequestMessages(question, chunks, systemPrompt),
 		Context:  chunks,
-	}
-	if e.Context != nil {
-		req.System = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks, e.ListTools())
+		System:   systemPrompt,
 	}
 
 	resp, usedProvider, err := e.Providers.Complete(ctx, req)
@@ -693,14 +727,16 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 
 	chunks := e.buildContextChunks(question)
 
+	systemPrompt := ""
+	if e.Context != nil {
+		systemPrompt = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks, e.ListTools())
+	}
 	req := provider.CompletionRequest{
 		Provider: e.provider(),
 		Model:    e.model(),
-		Messages: e.buildRequestMessages(question),
+		Messages: e.buildRequestMessages(question, chunks, systemPrompt),
 		Context:  chunks,
-	}
-	if e.Context != nil {
-		req.System = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks, e.ListTools())
+		System:   systemPrompt,
 	}
 
 	stream, usedProvider, err := e.Providers.Stream(ctx, req)

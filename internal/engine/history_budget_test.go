@@ -33,7 +33,7 @@ func TestBuildRequestMessages_AppendsCurrentQuestion(t *testing.T) {
 		Timestamp: time.Now(),
 	})
 
-	msgs := eng.buildRequestMessages("new question")
+	msgs := eng.buildRequestMessages("new question", nil, "")
 	if len(msgs) < 1 {
 		t.Fatal("expected at least one request message")
 	}
@@ -79,7 +79,8 @@ func TestTrimmedConversationMessages_RespectsBudgetAndRoleFilter(t *testing.T) {
 		Timestamp: now,
 	})
 
-	msgs := eng.trimmedConversationMessages()
+	budget := eng.conversationHistoryBudget()
+	msgs := eng.trimmedConversationMessages(budget)
 	if len(msgs) == 0 {
 		t.Fatal("expected trimmed messages")
 	}
@@ -93,7 +94,6 @@ func TestTrimmedConversationMessages_RespectsBudgetAndRoleFilter(t *testing.T) {
 		}
 		total += estimateTokens(m.Content)
 	}
-	budget := eng.conversationHistoryBudget()
 	if total > budget {
 		t.Fatalf("expected history tokens <= %d, got %d", budget, total)
 	}
@@ -114,5 +114,34 @@ func TestConversationHistoryBudget_UsesConfigOverride(t *testing.T) {
 
 	if got := eng.conversationHistoryBudget(); got != 300 {
 		t.Fatalf("expected history budget override 300, got %d", got)
+	}
+}
+
+func TestHistoryBudgetForRequest_ShrinksWhenContextIsLarge(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Context.MaxHistoryTokens = 1200
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{
+		Config:           cfg,
+		Providers:        router,
+		providerOverride: "offline",
+		Conversation:     conversation.New(nil),
+	}
+
+	smallBudget := eng.historyBudgetForRequest("short question", nil, "")
+	chunks := []types.ContextChunk{
+		{TokenCount: 4500},
+		{TokenCount: 3500},
+	}
+	largeBudget := eng.historyBudgetForRequest("short question", chunks, strings.Repeat("system ", 400))
+
+	if largeBudget >= smallBudget {
+		t.Fatalf("expected history budget to shrink with large request payload, small=%d large=%d", smallBudget, largeBudget)
+	}
+	if largeBudget < 0 {
+		t.Fatalf("history budget cannot be negative, got %d", largeBudget)
 	}
 }
