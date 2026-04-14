@@ -2001,6 +2001,8 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
 		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
 		query := fs.String("query", "", "query for task-aware budget simulation")
+		maxWords := fs.Int("max-words", 240, "max words for context brief")
+		briefPath := fs.String("path", "", "path to magic doc file (relative to project root or absolute)")
 		if err := fs.Parse(args[parseFrom:]); err != nil {
 			return 2
 		}
@@ -2026,8 +2028,27 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			}
 			_ = printJSON(payload)
 			return 0
+		case "brief":
+			v := url.Values{}
+			if *maxWords > 0 {
+				v.Set("max_words", strconv.Itoa(*maxWords))
+			}
+			if p := strings.TrimSpace(*briefPath); p != "" {
+				v.Set("path", p)
+			}
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/context/brief"
+			if encoded := v.Encode(); encoded != "" {
+				endpoint += "?" + encoded
+			}
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote context brief error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
 		default:
-			fmt.Fprintln(os.Stderr, "usage: dfmc remote context [budget --query \"...\"] [--url ...] [--token ...]")
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote context [budget --query \"...\"]|[brief --max-words 240 --path ...] [--url ...] [--token ...]")
 			return 2
 		}
 

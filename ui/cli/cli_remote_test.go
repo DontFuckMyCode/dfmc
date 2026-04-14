@@ -357,6 +357,36 @@ func TestRunRemoteContextBudget(t *testing.T) {
 	}
 }
 
+func TestRunRemoteContextBrief(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/context/brief" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if got := r.URL.Query().Get("max_words"); got != "180" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"unexpected max_words"}`))
+			return
+		}
+		if got := r.URL.Query().Get("path"); got != "docs/BRIEF.md" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"unexpected path"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"path":"docs/BRIEF.md","exists":true,"max_words":180,"word_count":12,"brief":"Context brief line"}`))
+	}))
+	defer ts.Close()
+
+	args := []string{"context", "brief", "--url", ts.URL, "--max-words", "180", "--path", "docs/BRIEF.md"}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
 func TestRunRemoteAnalyzeWithMagicDoc(t *testing.T) {
 	eng := newCLITestEngine(t)
 

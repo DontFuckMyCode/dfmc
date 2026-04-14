@@ -197,6 +197,60 @@ func TestContextBudgetEndpoint(t *testing.T) {
 	}
 }
 
+func TestContextBriefEndpoint(t *testing.T) {
+	eng := newTestEngine(t)
+	root := t.TempDir()
+	eng.ProjectRoot = root
+
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "docs", "BRIEF.md"),
+		[]byte("# MAGIC DOC: Custom Brief\n\nContext brief endpoint smoke line.\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("write brief file: %v", err)
+	}
+
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/context/brief?path=docs/BRIEF.md&max_words=20")
+	if err != nil {
+		t.Fatalf("get context brief: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status %d: %s", resp.StatusCode, string(raw))
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if payload["exists"] != true {
+		t.Fatalf("expected exists=true, got: %#v", payload)
+	}
+	if payload["max_words"] != float64(20) {
+		t.Fatalf("expected max_words=20, got: %#v", payload["max_words"])
+	}
+	path, _ := payload["path"].(string)
+	if !strings.Contains(path, "/docs/BRIEF.md") {
+		t.Fatalf("expected custom path in payload, got: %s", path)
+	}
+	brief, _ := payload["brief"].(string)
+	if !strings.Contains(brief, "Context brief endpoint smoke line.") {
+		t.Fatalf("expected brief content from custom file, got: %s", brief)
+	}
+	wordCount, _ := payload["word_count"].(float64)
+	if wordCount <= 0 || wordCount > 20 {
+		t.Fatalf("unexpected word_count: %#v", payload["word_count"])
+	}
+}
+
 func TestAnalyzeEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)

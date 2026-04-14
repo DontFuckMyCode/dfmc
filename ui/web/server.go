@@ -100,6 +100,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("POST /api/v1/chat", s.handleChat)
 	s.mux.HandleFunc("GET /api/v1/codemap", s.handleCodeMap)
 	s.mux.HandleFunc("GET /api/v1/context/budget", s.handleContextBudget)
+	s.mux.HandleFunc("GET /api/v1/context/brief", s.handleContextBrief)
 	s.mux.HandleFunc("GET /api/v1/providers", s.handleProviders)
 	s.mux.HandleFunc("GET /api/v1/skills", s.handleSkills)
 	s.mux.HandleFunc("GET /api/v1/tools", s.handleTools)
@@ -174,6 +175,41 @@ func (s *Server) handleContextBudget(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	preview := s.engine.ContextBudgetPreview(query)
 	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) handleContextBrief(w http.ResponseWriter, r *http.Request) {
+	root := strings.TrimSpace(s.engine.Status().ProjectRoot)
+	if root == "" {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "project root is not set"})
+		return
+	}
+	maxWords := 240
+	if raw := strings.TrimSpace(r.URL.Query().Get("max_words")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			maxWords = n
+		}
+	}
+	pathFlag := strings.TrimSpace(r.URL.Query().Get("path"))
+	path := resolveMagicDocPath(root, pathFlag)
+	raw, err := os.ReadFile(path)
+	exists := err == nil
+	brief := loadProjectBriefForPromptRender(root, pathFlag, maxWords)
+	if brief == "" {
+		brief = "(none)"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"path":       filepath.ToSlash(path),
+		"exists":     exists,
+		"max_words":  maxWords,
+		"word_count": len(strings.Fields(strings.TrimSpace(brief))),
+		"brief":      brief,
+		"size_bytes": func() int {
+			if !exists {
+				return 0
+			}
+			return len(raw)
+		}(),
+	})
 }
 
 func (s *Server) handleTools(w http.ResponseWriter, _ *http.Request) {
@@ -518,7 +554,7 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 		"task":             resolvedTask,
 		"language":         resolvedLang,
 		"profile":          resolvedProfile,
-		"project_brief":    loadProjectBriefForPromptRender(s.engine.Status().ProjectRoot, 240),
+		"project_brief":    loadProjectBriefForPromptRender(s.engine.Status().ProjectRoot, "", 240),
 		"user_query":       strings.TrimSpace(req.Query),
 		"context_files":    strings.TrimSpace(req.ContextFiles),
 		"injected_context": "(none)",
@@ -934,12 +970,12 @@ func writeJSON(w http.ResponseWriter, code int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func loadProjectBriefForPromptRender(projectRoot string, maxWords int) string {
+func loadProjectBriefForPromptRender(projectRoot, pathFlag string, maxWords int) string {
 	root := strings.TrimSpace(projectRoot)
 	if root == "" || maxWords <= 0 {
 		return "(none)"
 	}
-	path := resolveMagicDocPath(root, "")
+	path := resolveMagicDocPath(root, pathFlag)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "(none)"
