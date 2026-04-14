@@ -1,0 +1,63 @@
+package config
+
+import (
+	"fmt"
+	"strings"
+)
+
+func (c *Config) Validate() error {
+	if c.Version <= 0 {
+		return fmt.Errorf("invalid version: %d", c.Version)
+	}
+
+	if strings.TrimSpace(c.Providers.Primary) == "" {
+		return fmt.Errorf("providers.primary is required")
+	}
+	if c.Providers.Profiles == nil {
+		return fmt.Errorf("providers.profiles must be defined")
+	}
+	if _, ok := c.Providers.Profiles[c.Providers.Primary]; !ok {
+		return fmt.Errorf("providers.primary %q not found in providers.profiles", c.Providers.Primary)
+	}
+	for _, fb := range c.Providers.Fallback {
+		if _, ok := c.Providers.Profiles[fb]; !ok {
+			return fmt.Errorf("providers.fallback %q not found in providers.profiles", fb)
+		}
+	}
+
+	if c.Context.MaxFiles <= 0 {
+		return fmt.Errorf("context.max_files must be > 0")
+	}
+	if c.Context.MaxTokensPerFile <= 0 {
+		return fmt.Errorf("context.max_tokens_per_file must be > 0")
+	}
+	switch c.Context.Compression {
+	case "none", "standard", "aggressive":
+	default:
+		return fmt.Errorf("context.compression must be one of none|standard|aggressive")
+	}
+
+	if c.Web.Port <= 0 || c.Web.Port > 65535 {
+		return fmt.Errorf("web.port out of range: %d", c.Web.Port)
+	}
+	if c.Remote.GRPCPort <= 0 || c.Remote.GRPCPort > 65535 {
+		return fmt.Errorf("remote.grpc_port out of range: %d", c.Remote.GRPCPort)
+	}
+	if c.Remote.WSPort <= 0 || c.Remote.WSPort > 65535 {
+		return fmt.Errorf("remote.ws_port out of range: %d", c.Remote.WSPort)
+	}
+
+	switch c.Web.Auth {
+	case "none", "token":
+	default:
+		return fmt.Errorf("web.auth must be none|token")
+	}
+
+	switch c.Remote.Auth {
+	case "none", "token", "mtls":
+	default:
+		return fmt.Errorf("remote.auth must be none|token|mtls")
+	}
+
+	return nil
+}

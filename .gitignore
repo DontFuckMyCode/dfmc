@@ -1,0 +1,20 @@
+# Build output
+/bin/
+/dist/
+*.exe
+
+# DFMC data
+/.dfmc/
+
+# Go
+*.test
+*.out
+coverage.out
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+.project/

@@ -1,0 +1,52 @@
+package conversation
+
+import (
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/storage"
+	"github.com/dontfuckmycode/dfmc/pkg/types"
+)
+
+func TestConversationManagerSaveLoadSearch(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	mgr := New(store)
+	mgr.Start("offline", "offline-analyzer-v1")
+	mgr.AddMessage("offline", "offline-analyzer-v1", types.Message{
+		Role:      types.RoleUser,
+		Content:   "how does auth work",
+		Timestamp: time.Now(),
+	})
+	mgr.AddMessage("offline", "offline-analyzer-v1", types.Message{
+		Role:      types.RoleAssistant,
+		Content:   "auth flow explanation",
+		Timestamp: time.Now(),
+	})
+	if err := mgr.SaveActive(); err != nil {
+		t.Fatalf("save active: %v", err)
+	}
+
+	active := mgr.Active()
+	if active == nil {
+		t.Fatal("expected active conversation")
+	}
+	_, err = mgr.Load(active.ID)
+	if err != nil {
+		t.Fatalf("load conversation: %v", err)
+	}
+
+	results, err := mgr.Search("auth", 10)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected search results")
+	}
+}
