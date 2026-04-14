@@ -117,6 +117,7 @@ Endpoints:
 - `GET /api/v1/status`
 - `POST /api/v1/chat` (SSE)
 - `GET /api/v1/codemap`
+- `GET /api/v1/context/budget?q=...`
 - `POST /api/v1/analyze`
 - `GET /api/v1/providers`
 - `GET /api/v1/tools`

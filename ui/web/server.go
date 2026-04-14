@@ -83,6 +83,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/status", s.handleStatus)
 	s.mux.HandleFunc("POST /api/v1/chat", s.handleChat)
 	s.mux.HandleFunc("GET /api/v1/codemap", s.handleCodeMap)
+	s.mux.HandleFunc("GET /api/v1/context/budget", s.handleContextBudget)
 	s.mux.HandleFunc("GET /api/v1/providers", s.handleProviders)
 	s.mux.HandleFunc("GET /api/v1/skills", s.handleSkills)
 	s.mux.HandleFunc("GET /api/v1/tools", s.handleTools)
@@ -149,6 +150,12 @@ func (s *Server) handleCodeMap(w http.ResponseWriter, _ *http.Request) {
 		"nodes": graph.Nodes(),
 		"edges": graph.Edges(),
 	})
+}
+
+func (s *Server) handleContextBudget(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	preview := s.engine.ContextBudgetPreview(query)
+	writeJSON(w, http.StatusOK, preview)
 }
 
 func (s *Server) handleTools(w http.ResponseWriter, _ *http.Request) {

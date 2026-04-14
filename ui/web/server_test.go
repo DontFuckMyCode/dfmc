@@ -171,6 +171,32 @@ func TestSkillsEndpoint(t *testing.T) {
 	}
 }
 
+func TestContextBudgetEndpoint(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/context/budget?q=security+audit+auth")
+	if err != nil {
+		t.Fatalf("get context budget: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if payload["task"] != "security" {
+		t.Fatalf("expected task=security, got: %#v", payload["task"])
+	}
+	if _, ok := payload["max_tokens_total"]; !ok {
+		t.Fatalf("missing max_tokens_total field: %#v", payload)
+	}
+}
+
 func TestAnalyzeEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
