@@ -356,3 +356,31 @@ func TestRunRemoteContextBudget(t *testing.T) {
 		}
 	}
 }
+
+func TestRunRemoteMagicDocLifecycle(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/magicdoc" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"path":".dfmc/magic/MAGIC_DOC.md","exists":true,"content":"# MAGIC DOC: X"}`))
+		case r.URL.Path == "/api/v1/magicdoc/update" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"status":"ok","path":".dfmc/magic/MAGIC_DOC.md","updated":true,"bytes":1200}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		}
+	}))
+	defer ts.Close()
+
+	cases := [][]string{
+		{"magicdoc", "show", "--url", ts.URL},
+		{"magicdoc", "update", "--url", ts.URL, "--title", "Remote Brief"},
+	}
+	for _, args := range cases {
+		if code := runRemote(context.Background(), eng, args, true); code != 0 {
+			t.Fatalf("runRemote %v exit=%d", args, code)
+		}
+	}
+}

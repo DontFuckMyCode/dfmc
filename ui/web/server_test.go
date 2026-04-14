@@ -511,3 +511,50 @@ func TestPromptsEndpoints(t *testing.T) {
 		t.Fatalf("expected security prompt, got: %s", prompt)
 	}
 }
+
+func TestMagicDocEndpoints(t *testing.T) {
+	eng := newTestEngine(t)
+	root := t.TempDir()
+	eng.ProjectRoot = root
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main(){}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	updateBody := bytes.NewBufferString(`{"title":"Remote Brief","hotspots":4,"deps":4,"recent":3}`)
+	updateReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/magicdoc/update", updateBody)
+	if err != nil {
+		t.Fatalf("new update request: %v", err)
+	}
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateResp, err := http.DefaultClient.Do(updateReq)
+	if err != nil {
+		t.Fatalf("magicdoc update request: %v", err)
+	}
+	defer updateResp.Body.Close()
+	if updateResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(updateResp.Body)
+		t.Fatalf("unexpected update status %d: %s", updateResp.StatusCode, string(raw))
+	}
+
+	showResp, err := http.Get(ts.URL + "/api/v1/magicdoc")
+	if err != nil {
+		t.Fatalf("magicdoc show request: %v", err)
+	}
+	defer showResp.Body.Close()
+	if showResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(showResp.Body)
+		t.Fatalf("unexpected show status %d: %s", showResp.StatusCode, string(raw))
+	}
+	var showPayload map[string]any
+	if err := json.NewDecoder(showResp.Body).Decode(&showPayload); err != nil {
+		t.Fatalf("decode show payload: %v", err)
+	}
+	content, _ := showPayload["content"].(string)
+	if !strings.Contains(content, "# MAGIC DOC: Remote Brief") {
+		t.Fatalf("expected magic doc title in content, got: %s", content)
+	}
+}

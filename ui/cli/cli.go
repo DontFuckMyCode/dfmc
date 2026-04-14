@@ -2398,6 +2398,66 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			return 2
 		}
 
+	case "magicdoc":
+		action := "show"
+		if len(args) >= 2 {
+			action = strings.ToLower(strings.TrimSpace(args[1]))
+		}
+		fs := flag.NewFlagSet("remote magicdoc", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+		baseURL := fs.String("url", defaultURL, "remote base URL")
+		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
+		path := fs.String("path", "", "target magic doc path")
+		title := fs.String("title", "DFMC Project Brief", "magic doc title")
+		hotspots := fs.Int("hotspots", 8, "max hotspot entries")
+		deps := fs.Int("deps", 8, "max dependency entries")
+		recent := fs.Int("recent", 5, "max recent entries")
+		if err := fs.Parse(args[2:]); err != nil {
+			return 2
+		}
+
+		switch action {
+		case "show", "cat":
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/magicdoc"
+			if p := strings.TrimSpace(*path); p != "" {
+				v := url.Values{}
+				v.Set("path", p)
+				endpoint += "?" + v.Encode()
+			}
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote magicdoc show error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		case "update", "sync", "generate":
+			payload, _, err := remoteJSONRequest(
+				http.MethodPost,
+				strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/magicdoc/update",
+				*token,
+				map[string]any{
+					"path":     strings.TrimSpace(*path),
+					"title":    strings.TrimSpace(*title),
+					"hotspots": *hotspots,
+					"deps":     *deps,
+					"recent":   *recent,
+				},
+				*timeout,
+			)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote magicdoc update error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
+		default:
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote magicdoc [show|update] [--path ...] [--title ...]")
+			return 2
+		}
+
 	case "start":
 		fs := flag.NewFlagSet("remote start", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -2457,7 +2517,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc remote [status|probe|events|ask|tool|tools|skill|skills|prompt|analyze|context|files|memory|conversation (list/search/active/new/save/load/branch)|codemap|start --host 127.0.0.1 --ws-port 7779 --auth none|token]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc remote [status|probe|events|ask|tool|tools|skill|skills|prompt|magicdoc|analyze|context|files|memory|conversation (list/search/active/new/save/load/branch)|codemap|start --host 127.0.0.1 --ws-port 7779 --auth none|token]")
 		return 2
 	}
 }
