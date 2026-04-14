@@ -191,8 +191,8 @@ func (m *Manager) BuildSystemPromptWithRuntime(projectRoot, query string, chunks
 			"context_files":    summarizeContextFiles(projectRoot, chunks, limits.ContextFiles),
 			"injected_context": injected,
 			"tools_overview":   summarizeTools(tools, limits.ToolList),
-			"tool_call_policy": buildToolCallPolicy(task, runtime),
-			"response_policy":  buildResponsePolicy(task, profile),
+			"tool_call_policy": BuildToolCallPolicy(task, runtime),
+			"response_policy":  BuildResponsePolicy(task, profile),
 		},
 	})
 }
@@ -565,7 +565,7 @@ func loadProjectBrief(projectRoot string, maxTokens int) string {
 	return trimToTokenBudget(strings.Join(filtered, "\n"), maxTokens)
 }
 
-func buildToolCallPolicy(task string, runtime PromptRuntime) string {
+func BuildToolCallPolicy(task string, runtime PromptRuntime) string {
 	lines := []string{
 		"1) Call tools only when they reduce uncertainty materially.",
 		"2) Prefer the minimum tool set needed for a reliable result.",
@@ -609,7 +609,7 @@ func buildToolCallPolicy(task string, runtime PromptRuntime) string {
 	return strings.Join(lines, "\n")
 }
 
-func buildResponsePolicy(task, profile string) string {
+func BuildResponsePolicy(task, profile string) string {
 	depth := "compact"
 	if strings.EqualFold(strings.TrimSpace(profile), "deep") {
 		depth = "deep"

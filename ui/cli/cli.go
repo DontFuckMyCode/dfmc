@@ -26,6 +26,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -4940,6 +4941,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			}
 		}
 
+		runtimeHints := eng.PromptRuntime()
 		vars := map[string]string{
 			"project_root":     projectRoot,
 			"task":             resolvedTask,
@@ -4950,8 +4952,8 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			"context_files":    strings.TrimSpace(*contextFiles),
 			"injected_context": "(none)",
 			"tools_overview":   strings.Join(eng.ListTools(), ", "),
-			"tool_call_policy": "Use minimum necessary tools with narrow scope.",
-			"response_policy":  "Prioritize concise, actionable output.",
+			"tool_call_policy": ctxmgr.BuildToolCallPolicy(resolvedTask, runtimeHints),
+			"response_policy":  ctxmgr.BuildResponsePolicy(resolvedTask, resolvedProfile),
 		}
 		extraVars, err := parsePromptVars(varsRaw)
 		if err != nil {

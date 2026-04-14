@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
@@ -576,6 +577,7 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 			resolvedProfile = "deep"
 		}
 	}
+	runtimeHints := s.engine.PromptRuntime()
 	vars := map[string]string{
 		"project_root":     s.engine.Status().ProjectRoot,
 		"task":             resolvedTask,
@@ -586,8 +588,8 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 		"context_files":    strings.TrimSpace(req.ContextFiles),
 		"injected_context": "(none)",
 		"tools_overview":   strings.Join(s.engine.ListTools(), ", "),
-		"tool_call_policy": "Use minimum necessary tools with narrow scope.",
-		"response_policy":  "Prioritize concise, actionable output.",
+		"tool_call_policy": ctxmgr.BuildToolCallPolicy(resolvedTask, runtimeHints),
+		"response_policy":  ctxmgr.BuildResponsePolicy(resolvedTask, resolvedProfile),
 	}
 	for k, v := range req.Vars {
 		vars[strings.TrimSpace(k)] = strings.TrimSpace(v)

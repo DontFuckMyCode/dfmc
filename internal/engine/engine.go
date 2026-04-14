@@ -520,6 +520,10 @@ func (e *Engine) promptRuntime() ctxmgr.PromptRuntime {
 	return rt
 }
 
+func (e *Engine) PromptRuntime() ctxmgr.PromptRuntime {
+	return e.promptRuntime()
+}
+
 func (e *Engine) contextReserveTokens(question string) int {
 	promptReserve := maxInt(basePromptReserveTokens, estimateTokens(question)*3)
 	responseReserve := defaultResponseReserveTokens
