@@ -237,6 +237,10 @@ func TestContextRecommendEndpoint(t *testing.T) {
 	if !ok || len(recs) == 0 {
 		t.Fatalf("expected non-empty recommendations, got: %#v", payload["recommendations"])
 	}
+	tuning, ok := payload["tuning_suggestions"].([]any)
+	if !ok || len(tuning) == 0 {
+		t.Fatalf("expected non-empty tuning_suggestions, got: %#v", payload["tuning_suggestions"])
+	}
 	preview, ok := payload["preview"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected preview object, got: %#v", payload["preview"])

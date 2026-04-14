@@ -169,6 +169,7 @@ go run ./cmd/dfmc context brief --max-words 240
 go run ./cmd/dfmc context brief --path docs/BRIEF.md --max-words 180
 ```
 `runtime-max-context` düşük olduğunda (`<=12000`) context bütçesi otomatik olarak daha agresif sıkıştırma moduna geçirilir; çok sıkı pencerelerde (`<=8000`) docs dilimleri otomatik kapatılır.
+`dfmc --json context recommend ...` çıktısı `tuning_suggestions` alanında doğrudan uygulanabilir config önerileri üretir.
 
 ### 7) Use memory and conversation commands
 

@@ -99,6 +99,13 @@ type ContextRecommendation struct {
 	Message  string `json:"message"`
 }
 
+type ContextTuningSuggestion struct {
+	Priority string `json:"priority"`
+	Key      string `json:"key"`
+	Value    any    `json:"value"`
+	Reason   string `json:"reason"`
+}
+
 type PromptRecommendationInfo struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
@@ -379,6 +386,67 @@ func (e *Engine) ContextRecommendationsWithRuntime(question string, overrides ct
 		add("info", "balanced_budget", "Current context budget looks balanced for this query.")
 	}
 	return recs
+}
+
+func (e *Engine) ContextTuningSuggestions(question string) []ContextTuningSuggestion {
+	return e.ContextTuningSuggestionsWithRuntime(question, ctxmgr.PromptRuntime{})
+}
+
+func (e *Engine) ContextTuningSuggestionsWithRuntime(question string, overrides ctxmgr.PromptRuntime) []ContextTuningSuggestion {
+	preview := e.ContextBudgetPreviewWithRuntime(question, overrides)
+	suggestions := make([]ContextTuningSuggestion, 0, 6)
+	add := func(priority, key string, value any, reason string) {
+		suggestions = append(suggestions, ContextTuningSuggestion{
+			Priority: strings.TrimSpace(strings.ToLower(priority)),
+			Key:      strings.TrimSpace(key),
+			Value:    value,
+			Reason:   strings.TrimSpace(reason),
+		})
+	}
+
+	available := preview.ContextAvailableTokens
+	if available <= 0 {
+		available = minContextTotalBudgetTokens
+	}
+	utilization := float64(preview.MaxTokensTotal) / float64(available)
+
+	if utilization >= 0.92 {
+		targetTotal := int(math.Round(float64(available) * 0.78))
+		if targetTotal < minContextTotalBudgetTokens {
+			targetTotal = minContextTotalBudgetTokens
+		}
+		add("high", "context.max_tokens_total", targetTotal, "Current budget is near context cap; lowering total budget reduces truncation risk.")
+	}
+	if preview.ReserveHistoryTokens > available/3 {
+		targetHistory := available / 4
+		if targetHistory < minContextPerFileTokens {
+			targetHistory = minContextPerFileTokens
+		}
+		if targetHistory > maxHistoryBudgetTokens {
+			targetHistory = maxHistoryBudgetTokens
+		}
+		add("high", "context.max_history_tokens", targetHistory, "History reserve is large relative to available context; reducing it increases code context headroom.")
+	}
+	if (preview.Task == "security" || preview.Task == "review" || preview.Task == "debug") && preview.MaxTokensPerFile < 320 {
+		perFile := 320
+		if capPerFile := preview.MaxTokensTotal / maxInt(1, preview.MaxFiles); capPerFile > 0 && capPerFile < perFile {
+			perFile = capPerFile
+		}
+		if perFile < minContextPerFileTokens {
+			perFile = minContextPerFileTokens
+		}
+		add("medium", "context.max_tokens_per_file", perFile, "Task type benefits from deeper per-file slices for evidence quality.")
+	}
+	if preview.ProviderMaxContext <= 12000 && preview.Compression != "aggressive" {
+		add("medium", "context.compression", "aggressive", "Tight runtime context benefits from aggressive compression to preserve critical context.")
+	}
+	if preview.ProviderMaxContext <= 8000 && preview.IncludeDocs {
+		add("low", "context.include_docs", false, "Disabling docs frees tokens for code context in very tight windows.")
+	}
+	if len(suggestions) == 0 {
+		add("low", "context.profile", "balanced", "No urgent tuning required for current query/runtime profile.")
+	}
+	return suggestions
 }
 
 func (e *Engine) PromptRecommendation(question string) PromptRecommendationInfo {

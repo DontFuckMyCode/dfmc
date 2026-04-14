@@ -220,10 +220,12 @@ func (s *Server) handleContextRecommend(w http.ResponseWriter, r *http.Request) 
 	}
 	preview := s.engine.ContextBudgetPreviewWithRuntime(query, runtimeHints)
 	recs := s.engine.ContextRecommendationsWithRuntime(query, runtimeHints)
+	tuning := s.engine.ContextTuningSuggestionsWithRuntime(query, runtimeHints)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"query":           query,
-		"preview":         preview,
-		"recommendations": recs,
+		"query":              query,
+		"preview":            preview,
+		"recommendations":    recs,
+		"tuning_suggestions": tuning,
 	})
 }
 

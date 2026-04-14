@@ -5462,11 +5462,13 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		}
 		preview := eng.ContextBudgetPreviewWithRuntime(*query, runtimeHints)
 		recs := eng.ContextRecommendationsWithRuntime(*query, runtimeHints)
+		tuning := eng.ContextTuningSuggestionsWithRuntime(*query, runtimeHints)
 		if jsonMode {
 			_ = printJSON(map[string]any{
-				"query":           strings.TrimSpace(*query),
-				"preview":         preview,
-				"recommendations": recs,
+				"query":              strings.TrimSpace(*query),
+				"preview":            preview,
+				"recommendations":    recs,
+				"tuning_suggestions": tuning,
 			})
 			return 0
 		}
@@ -5479,6 +5481,12 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		)
 		for _, rec := range recs {
 			fmt.Printf("- [%s] %s: %s\n", strings.ToUpper(rec.Severity), rec.Code, rec.Message)
+		}
+		if len(tuning) > 0 {
+			fmt.Println("tuning suggestions:")
+			for _, s := range tuning {
+				fmt.Printf("- [%s] %s=%v (%s)\n", strings.ToUpper(strings.TrimSpace(s.Priority)), s.Key, s.Value, s.Reason)
+			}
 		}
 		return 0
 

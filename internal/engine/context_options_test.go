@@ -303,3 +303,33 @@ func TestContextBudgetPreviewWithRuntime_TightRuntimeScalesReserves(t *testing.T
 		t.Fatalf("expected docs to be disabled for tight runtime, got include_docs=%t", tight.IncludeDocs)
 	}
 }
+
+func TestContextTuningSuggestionsWithRuntime_ReturnsActionableSuggestions(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Context.MaxFiles = 20
+	cfg.Context.MaxTokensPerFile = 2000
+	cfg.Context.MaxTokensTotal = 30000
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{Config: cfg, Providers: router}
+
+	suggestions := eng.ContextTuningSuggestionsWithRuntime("security audit auth middleware", ctxmgr.PromptRuntime{
+		MaxContext: 1000,
+	})
+	if len(suggestions) == 0 {
+		t.Fatal("expected non-empty tuning suggestions")
+	}
+	hasActionable := false
+	for _, s := range suggestions {
+		key := strings.TrimSpace(s.Key)
+		if key == "context.max_tokens_total" || key == "context.max_history_tokens" || key == "context.compression" {
+			hasActionable = true
+			break
+		}
+	}
+	if !hasActionable {
+		t.Fatalf("expected actionable context tuning suggestion, got %#v", suggestions)
+	}
+}
