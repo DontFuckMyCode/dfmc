@@ -229,23 +229,25 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 	}
 	contextPreview := eng.ContextBudgetPreviewWithRuntime(q, runtimeHints)
 	promptRecommendation := eng.PromptRecommendationWithRuntime(q, runtimeHints)
+	contextTuning := eng.ContextTuningSuggestionsWithRuntime(q, runtimeHints)
 
 	payload := map[string]any{
-		"name":                   "dfmc",
-		"version":                version,
-		"state":                  st.State,
-		"ready":                  st.State == engine.StateReady || st.State == engine.StateServing,
-		"provider":               st.Provider,
-		"model":                  st.Model,
-		"project_root":           projectRoot,
-		"go_version":             runtimeVersion(),
-		"loaded_providers":       loadedProviders,
-		"tools_count":            len(tools),
-		"skills_count":           len(skills),
-		"prompt_templates_count": len(templates.List()),
-		"query":                  q,
-		"context_budget":         contextPreview,
-		"prompt_recommendation":  promptRecommendation,
+		"name":                       "dfmc",
+		"version":                    version,
+		"state":                      st.State,
+		"ready":                      st.State == engine.StateReady || st.State == engine.StateServing,
+		"provider":                   st.Provider,
+		"model":                      st.Model,
+		"project_root":               projectRoot,
+		"go_version":                 runtimeVersion(),
+		"loaded_providers":           loadedProviders,
+		"tools_count":                len(tools),
+		"skills_count":               len(skills),
+		"prompt_templates_count":     len(templates.List()),
+		"query":                      q,
+		"context_budget":             contextPreview,
+		"context_tuning_suggestions": contextTuning,
+		"prompt_recommendation":      promptRecommendation,
 	}
 
 	if jsonMode {
@@ -273,6 +275,9 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 		promptRecommendation.PromptBudgetTokens,
 		promptRecommendation.ToolStyle,
 	)
+	if len(contextTuning) > 0 {
+		fmt.Printf("context tuning suggestions: %d\n", len(contextTuning))
+	}
 	return 0
 }
 

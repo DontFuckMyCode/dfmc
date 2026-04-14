@@ -67,6 +67,7 @@ go run ./cmd/dfmc status
 go run ./cmd/dfmc --json status --query "security audit auth middleware"
 go run ./cmd/dfmc --json status --query "security audit auth middleware" --runtime-tool-style function-calling --runtime-max-context 1000
 ```
+`status` JSON çıktısı, sorgu verildiğinde `context_tuning_suggestions` alanında token-verimli ayar önerileri de içerir.
 
 If provider API keys are not configured, DFMC automatically uses offline mode with local-context response generation.
 
