@@ -284,6 +284,9 @@ const (
 	minContextPerFileTokens      = 96
 	defaultProviderContextTokens = 32000
 	defaultResponseReserveTokens = 2048
+	defaultHistoryBudgetTokens   = 1200
+	maxHistoryBudgetTokens       = 2048
+	maxHistoryMessages           = 12
 	maxResponseReserveTokens     = 16384
 	basePromptReserveTokens      = 900
 	baseToolReserveTokens        = 512
@@ -392,7 +395,101 @@ func (e *Engine) contextReserveTokens(question string) int {
 	if responseReserve < minContextPerFileTokens {
 		responseReserve = minContextPerFileTokens
 	}
-	return promptReserve + responseReserve + baseToolReserveTokens
+	return promptReserve + responseReserve + baseToolReserveTokens + e.conversationHistoryBudget()
+}
+
+func (e *Engine) buildRequestMessages(question string) []provider.Message {
+	msgs := e.trimmedConversationMessages()
+	msgs = append(msgs, provider.Message{
+		Role:    types.RoleUser,
+		Content: question,
+	})
+	return msgs
+}
+
+func (e *Engine) conversationHistoryBudget() int {
+	limit := e.providerMaxContext()
+	if limit <= 0 {
+		limit = defaultProviderContextTokens
+	}
+	budget := limit / 16
+	if budget <= 0 {
+		budget = defaultHistoryBudgetTokens
+	}
+	if budget < minContextPerFileTokens {
+		budget = minContextPerFileTokens
+	}
+	if budget > maxHistoryBudgetTokens {
+		budget = maxHistoryBudgetTokens
+	}
+	return budget
+}
+
+func (e *Engine) trimmedConversationMessages() []provider.Message {
+	if e.Conversation == nil {
+		return nil
+	}
+	active := e.Conversation.Active()
+	if active == nil {
+		return nil
+	}
+	history := active.Messages()
+	if len(history) == 0 {
+		return nil
+	}
+	budget := e.conversationHistoryBudget()
+	out := make([]provider.Message, 0, minInt(maxHistoryMessages, len(history)))
+	used := 0
+
+	for i := len(history) - 1; i >= 0; i-- {
+		if len(out) >= maxHistoryMessages || used >= budget {
+			break
+		}
+		msg := history[i]
+		if msg.Role != types.RoleUser && msg.Role != types.RoleAssistant {
+			continue
+		}
+		content := strings.TrimSpace(msg.Content)
+		if content == "" {
+			continue
+		}
+		tok := estimateTokens(content)
+		if tok <= 0 {
+			continue
+		}
+		if used+tok > budget {
+			remaining := budget - used
+			if remaining < 24 {
+				break
+			}
+			content = trimToTokenBudget(content, remaining)
+			tok = estimateTokens(content)
+			if tok <= 0 {
+				break
+			}
+		}
+		out = append(out, provider.Message{
+			Role:    msg.Role,
+			Content: content,
+		})
+		used += tok
+	}
+
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+func trimToTokenBudget(content string, maxTokens int) string {
+	if maxTokens <= 0 {
+		return ""
+	}
+	words := strings.Fields(strings.TrimSpace(content))
+	if len(words) <= maxTokens {
+		return strings.TrimSpace(content)
+	}
+	return strings.Join(words[:maxTokens], " ")
 }
 
 func (e *Engine) setState(state EngineState) {
@@ -454,10 +551,8 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 	req := provider.CompletionRequest{
 		Provider: e.provider(),
 		Model:    e.model(),
-		Messages: []provider.Message{
-			{Role: types.RoleUser, Content: question},
-		},
-		Context: chunks,
+		Messages: e.buildRequestMessages(question),
+		Context:  chunks,
 	}
 	if e.Context != nil {
 		req.System = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks, e.ListTools())
@@ -497,10 +592,8 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 	req := provider.CompletionRequest{
 		Provider: e.provider(),
 		Model:    e.model(),
-		Messages: []provider.Message{
-			{Role: types.RoleUser, Content: question},
-		},
-		Context: chunks,
+		Messages: e.buildRequestMessages(question),
+		Context:  chunks,
 	}
 	if e.Context != nil {
 		req.System = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks, e.ListTools())
