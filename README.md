@@ -122,8 +122,8 @@ Endpoints:
 - `GET /api/v1/status`
 - `POST /api/v1/chat` (SSE)
 - `GET /api/v1/codemap`
-- `GET /api/v1/context/budget?q=...`
-- `GET /api/v1/context/recommend?q=...`
+- `GET /api/v1/context/budget?q=...&runtime_provider=...&runtime_model=...&runtime_tool_style=...&runtime_max_context=...`
+- `GET /api/v1/context/recommend?q=...&runtime_provider=...&runtime_model=...&runtime_tool_style=...&runtime_max_context=...`
 - `GET /api/v1/context/brief?max_words=...&path=...`
 - `POST /api/v1/analyze`
 - `GET /api/v1/providers`
@@ -142,7 +142,7 @@ Endpoints:
 - `GET /api/v1/conversation/branches/compare?a=...&b=...`
 - `GET /api/v1/prompts`
 - `GET /api/v1/prompts/stats?max_template_tokens=...&allow_var=...`
-- `GET /api/v1/prompts/recommend?q=...`
+- `GET /api/v1/prompts/recommend?q=...&runtime_provider=...&runtime_model=...&runtime_tool_style=...&runtime_max_context=...`
 - `POST /api/v1/prompts/render`
 - `GET /api/v1/magicdoc`
 - `POST /api/v1/magicdoc/update`
@@ -160,7 +160,9 @@ go run ./cmd/dfmc config get providers.primary
 go run ./cmd/dfmc config set context.include_tests true
 go run ./cmd/dfmc config edit
 go run ./cmd/dfmc context budget --query "security audit auth middleware"
+go run ./cmd/dfmc context budget --query "security audit auth middleware" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc context recommend --query "debug [[file:internal/auth/service.go]]"
+go run ./cmd/dfmc context recommend --query "debug [[file:internal/auth/service.go]]" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc context recent
 go run ./cmd/dfmc context brief --max-words 240
 go run ./cmd/dfmc context brief --path docs/BRIEF.md --max-words 180
@@ -223,11 +225,14 @@ go run ./cmd/dfmc remote prompt list --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote prompt render --url http://127.0.0.1:7779 --task security --query "auth audit"
 go run ./cmd/dfmc remote prompt render --url http://127.0.0.1:7779 --task security --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc remote prompt recommend --url http://127.0.0.1:7779 --query "auth audit"
+go run ./cmd/dfmc remote prompt recommend --url http://127.0.0.1:7779 --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc remote prompt stats --url http://127.0.0.1:7779 --max-template-tokens 450
 go run ./cmd/dfmc remote magicdoc show --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote magicdoc update --url http://127.0.0.1:7779 --title "Remote Brief"
 go run ./cmd/dfmc remote context budget --url http://127.0.0.1:7779 --query "security audit auth middleware"
+go run ./cmd/dfmc remote context budget --url http://127.0.0.1:7779 --query "security audit auth middleware" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc remote context recommend --url http://127.0.0.1:7779 --query "debug [[file:internal/auth/service.go]]"
+go run ./cmd/dfmc remote context recommend --url http://127.0.0.1:7779 --query "debug [[file:internal/auth/service.go]]" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc remote context brief --url http://127.0.0.1:7779 --max-words 240 --path docs/BRIEF.md
 go run ./cmd/dfmc remote tool read_file --url http://127.0.0.1:7779 --param path=README.md --param line_start=1 --param line_end=5
 go run ./cmd/dfmc remote skill review --url http://127.0.0.1:7779 --input "auth katmanini incele"
@@ -289,6 +294,7 @@ go run ./cmd/dfmc prompt render --task review --var context_files="- internal/au
 go run ./cmd/dfmc prompt render --task security --role security_auditor --query "auth audit"
 go run ./cmd/dfmc prompt render --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc prompt recommend --query "security audit auth middleware"
+go run ./cmd/dfmc prompt recommend --query "security audit auth middleware" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc --json prompt render --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc prompt stats
 go run ./cmd/dfmc prompt stats --max-template-tokens 450 --fail-on-warning

@@ -288,22 +288,35 @@ func (e *Engine) Status() Status {
 }
 
 func (e *Engine) ContextBudgetPreview(question string) ContextBudgetInfo {
-	opts := e.contextBuildOptions(question)
+	return e.ContextBudgetPreviewWithRuntime(question, ctxmgr.PromptRuntime{})
+}
+
+func (e *Engine) ContextBudgetPreviewWithRuntime(question string, overrides ctxmgr.PromptRuntime) ContextBudgetInfo {
+	runtime := e.promptRuntimeWithOverrides(overrides)
+	opts := e.contextBuildOptionsWithRuntime(question, runtime)
 	task := detectContextTask(question)
 	profile := contextTaskProfile(task)
 	explicitMentions := countExplicitFileMentions(question)
-	providerLimit := e.providerMaxContext()
+	providerLimit := e.providerMaxContextForRuntime(runtime)
 	if providerLimit <= 0 {
 		providerLimit = defaultProviderContextTokens
 	}
-	reserve := e.contextReserveBreakdown(question)
+	reserve := e.contextReserveBreakdownWithRuntime(question, runtime)
 	available := providerLimit - reserve.Total
 	if available < minContextTotalBudgetTokens {
 		available = minContextTotalBudgetTokens
 	}
+	providerName := strings.TrimSpace(runtime.Provider)
+	if providerName == "" {
+		providerName = e.provider()
+	}
+	modelName := strings.TrimSpace(runtime.Model)
+	if modelName == "" {
+		modelName = e.model()
+	}
 	return ContextBudgetInfo{
-		Provider:               e.provider(),
-		Model:                  e.model(),
+		Provider:               providerName,
+		Model:                  modelName,
 		ProviderMaxContext:     providerLimit,
 		Task:                   task,
 		ExplicitFileMentions:   explicitMentions,
@@ -327,7 +340,11 @@ func (e *Engine) ContextBudgetPreview(question string) ContextBudgetInfo {
 }
 
 func (e *Engine) ContextRecommendations(question string) []ContextRecommendation {
-	preview := e.ContextBudgetPreview(question)
+	return e.ContextRecommendationsWithRuntime(question, ctxmgr.PromptRuntime{})
+}
+
+func (e *Engine) ContextRecommendationsWithRuntime(question string, overrides ctxmgr.PromptRuntime) []ContextRecommendation {
+	preview := e.ContextBudgetPreviewWithRuntime(question, overrides)
 	recs := make([]ContextRecommendation, 0, 6)
 	add := func(severity, code, message string) {
 		recs = append(recs, ContextRecommendation{
@@ -365,8 +382,12 @@ func (e *Engine) ContextRecommendations(question string) []ContextRecommendation
 }
 
 func (e *Engine) PromptRecommendation(question string) PromptRecommendationInfo {
+	return e.PromptRecommendationWithRuntime(question, ctxmgr.PromptRuntime{})
+}
+
+func (e *Engine) PromptRecommendationWithRuntime(question string, overrides ctxmgr.PromptRuntime) PromptRecommendationInfo {
 	query := strings.TrimSpace(question)
-	runtime := e.promptRuntime()
+	runtime := e.promptRuntimeWithOverrides(overrides)
 	task := detectContextTask(query)
 	language := promptlib.InferLanguage(query, nil)
 	role := ctxmgr.ResolvePromptRole(query, task)
@@ -542,6 +563,10 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 }
 
 func (e *Engine) contextBuildOptions(question string) ctxmgr.BuildOptions {
+	return e.contextBuildOptionsWithRuntime(question, e.promptRuntime())
+}
+
+func (e *Engine) contextBuildOptionsWithRuntime(question string, runtime ctxmgr.PromptRuntime) ctxmgr.BuildOptions {
 	cfg := e.Config.Context
 	task := detectContextTask(question)
 	profile := contextTaskProfile(task)
@@ -576,11 +601,11 @@ func (e *Engine) contextBuildOptions(question string) ctxmgr.BuildOptions {
 	}
 	configuredTotal = maxInt(minContextTotalBudgetTokens, int(math.Round(float64(configuredTotal)*profile.TotalScale)))
 
-	providerLimit := e.providerMaxContext()
+	providerLimit := e.providerMaxContextForRuntime(runtime)
 	if providerLimit <= 0 {
 		providerLimit = defaultProviderContextTokens
 	}
-	reserve := e.contextReserveBreakdown(question)
+	reserve := e.contextReserveBreakdownWithRuntime(question, runtime)
 	availableForContext := providerLimit - reserve.Total
 	if availableForContext < minContextTotalBudgetTokens {
 		availableForContext = minContextTotalBudgetTokens
@@ -662,6 +687,27 @@ func (e *Engine) providerMaxContext() int {
 	return p.MaxContext()
 }
 
+func (e *Engine) providerMaxContextForRuntime(runtime ctxmgr.PromptRuntime) int {
+	if runtime.MaxContext > 0 {
+		return runtime.MaxContext
+	}
+	providerName := strings.TrimSpace(runtime.Provider)
+	if providerName == "" || strings.EqualFold(providerName, e.provider()) {
+		return e.providerMaxContext()
+	}
+	if e.Providers == nil {
+		return 0
+	}
+	p, ok := e.Providers.Get(providerName)
+	if !ok || p == nil {
+		return 0
+	}
+	if max := p.MaxContext(); max > 0 {
+		return max
+	}
+	return p.Hints().MaxContext
+}
+
 func (e *Engine) promptRuntime() ctxmgr.PromptRuntime {
 	rt := ctxmgr.PromptRuntime{
 		Provider: strings.TrimSpace(e.provider()),
@@ -696,10 +742,84 @@ func (e *Engine) PromptRuntime() ctxmgr.PromptRuntime {
 	return e.promptRuntime()
 }
 
+func (e *Engine) promptRuntimeWithOverrides(overrides ctxmgr.PromptRuntime) ctxmgr.PromptRuntime {
+	runtime := e.promptRuntime()
+
+	overrideProvider := strings.TrimSpace(overrides.Provider)
+	if overrideProvider != "" && !strings.EqualFold(overrideProvider, runtime.Provider) {
+		runtime = e.promptRuntimeForProvider(overrideProvider, strings.TrimSpace(overrides.Model))
+	}
+
+	if provider := strings.TrimSpace(overrides.Provider); provider != "" {
+		runtime.Provider = provider
+	}
+	if model := strings.TrimSpace(overrides.Model); model != "" {
+		runtime.Model = model
+	}
+	if style := strings.TrimSpace(overrides.ToolStyle); style != "" {
+		runtime.ToolStyle = style
+	}
+	if mode := strings.TrimSpace(overrides.DefaultMode); mode != "" {
+		runtime.DefaultMode = mode
+	}
+	if overrides.Cache {
+		runtime.Cache = true
+	}
+	if overrides.LowLatency {
+		runtime.LowLatency = true
+	}
+	if overrides.MaxContext > 0 {
+		runtime.MaxContext = overrides.MaxContext
+	}
+	if len(overrides.BestFor) > 0 {
+		runtime.BestFor = append([]string(nil), overrides.BestFor...)
+	}
+
+	return runtime
+}
+
+func (e *Engine) promptRuntimeForProvider(providerName, modelOverride string) ctxmgr.PromptRuntime {
+	rt := ctxmgr.PromptRuntime{
+		Provider: strings.TrimSpace(providerName),
+		Model:    strings.TrimSpace(modelOverride),
+	}
+	if e.Providers == nil {
+		return rt
+	}
+	p, ok := e.Providers.Get(rt.Provider)
+	if !ok || p == nil {
+		return rt
+	}
+	hints := p.Hints()
+	if rt.Model == "" {
+		rt.Model = strings.TrimSpace(p.Model())
+	}
+	rt.ToolStyle = strings.TrimSpace(hints.ToolStyle)
+	rt.DefaultMode = strings.TrimSpace(hints.DefaultMode)
+	rt.Cache = hints.Cache
+	rt.LowLatency = hints.LowLatency
+	rt.MaxContext = hints.MaxContext
+	if rt.MaxContext <= 0 {
+		rt.MaxContext = p.MaxContext()
+	}
+	if len(hints.BestFor) > 0 {
+		rt.BestFor = append([]string(nil), hints.BestFor...)
+	}
+	return rt
+}
+
 func (e *Engine) contextReserveBreakdown(question string) contextReserveBreakdown {
+	return e.contextReserveBreakdownWithRuntime(question, e.promptRuntime())
+}
+
+func (e *Engine) contextReserveBreakdownWithRuntime(question string, runtime ctxmgr.PromptRuntime) contextReserveBreakdown {
 	promptReserve := maxInt(basePromptReserveTokens, estimateTokens(question)*3)
 	responseReserve := defaultResponseReserveTokens
-	if prof, ok := e.Config.Providers.Profiles[e.provider()]; ok && prof.MaxTokens > 0 {
+	providerName := strings.TrimSpace(runtime.Provider)
+	if providerName == "" {
+		providerName = e.provider()
+	}
+	if prof, ok := e.Config.Providers.Profiles[providerName]; ok && prof.MaxTokens > 0 {
 		responseReserve = prof.MaxTokens
 	}
 	if responseReserve > maxResponseReserveTokens {

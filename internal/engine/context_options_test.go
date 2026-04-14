@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 )
 
@@ -223,5 +224,51 @@ func TestPromptRecommendation_ContainsBudgetAndHints(t *testing.T) {
 	}
 	if len(info.Hints) == 0 {
 		t.Fatal("expected at least one prompt hint")
+	}
+}
+
+func TestPromptRecommendationWithRuntime_UsesOverrides(t *testing.T) {
+	cfg := config.DefaultConfig()
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{Config: cfg, Providers: router}
+
+	info := eng.PromptRecommendationWithRuntime("security audit auth middleware", ctxmgr.PromptRuntime{
+		ToolStyle:  "function-calling",
+		MaxContext: 1000,
+	})
+	if info.ToolStyle != "function-calling" {
+		t.Fatalf("expected tool style override to apply, got %q", info.ToolStyle)
+	}
+	if info.MaxContext != 1000 {
+		t.Fatalf("expected max context override to apply, got %d", info.MaxContext)
+	}
+	if info.Profile != "compact" {
+		t.Fatalf("expected compact profile for tight runtime context, got %q", info.Profile)
+	}
+}
+
+func TestContextBudgetPreviewWithRuntime_UsesMaxContextOverride(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Context.MaxFiles = 20
+	cfg.Context.MaxTokensPerFile = 2000
+	cfg.Context.MaxTokensTotal = 30000
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{Config: cfg, Providers: router}
+
+	base := eng.ContextBudgetPreview("security audit auth middleware")
+	tight := eng.ContextBudgetPreviewWithRuntime("security audit auth middleware", ctxmgr.PromptRuntime{
+		MaxContext: 1000,
+	})
+	if tight.ProviderMaxContext != 1000 {
+		t.Fatalf("expected provider max context override, got %d", tight.ProviderMaxContext)
+	}
+	if tight.MaxTokensTotal >= base.MaxTokensTotal {
+		t.Fatalf("expected tighter runtime to reduce total budget, got tight=%d base=%d", tight.MaxTokensTotal, base.MaxTokensTotal)
 	}
 }

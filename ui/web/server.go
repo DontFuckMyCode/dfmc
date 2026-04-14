@@ -182,14 +182,44 @@ func (s *Server) handleCodeMap(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleContextBudget(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	preview := s.engine.ContextBudgetPreview(query)
+	runtimeHints := s.engine.PromptRuntime()
+	if p := strings.TrimSpace(r.URL.Query().Get("runtime_provider")); p != "" {
+		runtimeHints.Provider = p
+	}
+	if m := strings.TrimSpace(r.URL.Query().Get("runtime_model")); m != "" {
+		runtimeHints.Model = m
+	}
+	if ts := strings.TrimSpace(r.URL.Query().Get("runtime_tool_style")); ts != "" {
+		runtimeHints.ToolStyle = ts
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("runtime_max_context")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			runtimeHints.MaxContext = n
+		}
+	}
+	preview := s.engine.ContextBudgetPreviewWithRuntime(query, runtimeHints)
 	writeJSON(w, http.StatusOK, preview)
 }
 
 func (s *Server) handleContextRecommend(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	preview := s.engine.ContextBudgetPreview(query)
-	recs := s.engine.ContextRecommendations(query)
+	runtimeHints := s.engine.PromptRuntime()
+	if p := strings.TrimSpace(r.URL.Query().Get("runtime_provider")); p != "" {
+		runtimeHints.Provider = p
+	}
+	if m := strings.TrimSpace(r.URL.Query().Get("runtime_model")); m != "" {
+		runtimeHints.Model = m
+	}
+	if ts := strings.TrimSpace(r.URL.Query().Get("runtime_tool_style")); ts != "" {
+		runtimeHints.ToolStyle = ts
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("runtime_max_context")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			runtimeHints.MaxContext = n
+		}
+	}
+	preview := s.engine.ContextBudgetPreviewWithRuntime(query, runtimeHints)
+	recs := s.engine.ContextRecommendationsWithRuntime(query, runtimeHints)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"query":           query,
 		"preview":         preview,
@@ -564,9 +594,24 @@ func (s *Server) handlePromptStats(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePromptRecommend(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	runtimeHints := s.engine.PromptRuntime()
+	if p := strings.TrimSpace(r.URL.Query().Get("runtime_provider")); p != "" {
+		runtimeHints.Provider = p
+	}
+	if m := strings.TrimSpace(r.URL.Query().Get("runtime_model")); m != "" {
+		runtimeHints.Model = m
+	}
+	if ts := strings.TrimSpace(r.URL.Query().Get("runtime_tool_style")); ts != "" {
+		runtimeHints.ToolStyle = ts
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("runtime_max_context")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			runtimeHints.MaxContext = n
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"query":          query,
-		"recommendation": s.engine.PromptRecommendation(query),
+		"recommendation": s.engine.PromptRecommendationWithRuntime(query, runtimeHints),
 	})
 }
 

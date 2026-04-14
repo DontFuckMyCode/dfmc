@@ -13,6 +13,9 @@ func TestRunContextBudgetAndRecent(t *testing.T) {
 	if code := runContext(context.Background(), eng, []string{"budget", "--query", "security audit auth"}, true); code != 0 {
 		t.Fatalf("context budget exit=%d", code)
 	}
+	if code := runContext(context.Background(), eng, []string{"budget", "--query", "security audit auth", "--runtime-max-context", "1000"}, true); code != 0 {
+		t.Fatalf("context budget runtime override exit=%d", code)
+	}
 
 	if code := runContext(context.Background(), eng, []string{"recent"}, true); code != 0 {
 		t.Fatalf("context recent exit=%d", code)
@@ -20,6 +23,9 @@ func TestRunContextBudgetAndRecent(t *testing.T) {
 
 	if code := runContext(context.Background(), eng, []string{"recommend", "--query", "debug [[file:internal/auth/service.go]]"}, true); code != 0 {
 		t.Fatalf("context recommend exit=%d", code)
+	}
+	if code := runContext(context.Background(), eng, []string{"recommend", "--query", "debug [[file:internal/auth/service.go]]", "--runtime-max-context", "1000"}, true); code != 0 {
+		t.Fatalf("context recommend runtime override exit=%d", code)
 	}
 }
 

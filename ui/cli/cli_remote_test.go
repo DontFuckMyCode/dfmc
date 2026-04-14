@@ -399,6 +399,40 @@ func TestRunRemotePromptRenderWithRuntimeOverrides(t *testing.T) {
 	}
 }
 
+func TestRunRemotePromptRecommendWithRuntimeOverrides(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/prompts/recommend" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if got := r.URL.Query().Get("runtime_tool_style"); got != "function-calling" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_tool_style missing"}`))
+			return
+		}
+		if got := r.URL.Query().Get("runtime_max_context"); got != "1000" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_max_context missing"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"query":"auth audit","recommendation":{"task":"security","profile":"compact","tool_style":"function-calling","max_context":1000}}`))
+	}))
+	defer ts.Close()
+
+	args := []string{
+		"prompt", "recommend", "--url", ts.URL, "--query", "auth audit",
+		"--runtime-tool-style", "function-calling",
+		"--runtime-max-context", "1000",
+	}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
 func TestRunRemoteContextBudget(t *testing.T) {
 	eng := newCLITestEngine(t)
 
@@ -449,6 +483,74 @@ func TestRunRemoteContextRecommend(t *testing.T) {
 	defer ts.Close()
 
 	args := []string{"context", "recommend", "--url", ts.URL, "--query", "debug [[file:internal/auth/service.go]]"}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
+func TestRunRemoteContextBudgetWithRuntimeOverrides(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/context/budget" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if got := r.URL.Query().Get("runtime_tool_style"); got != "function-calling" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_tool_style missing"}`))
+			return
+		}
+		if got := r.URL.Query().Get("runtime_max_context"); got != "1000" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_max_context missing"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"provider":"zai","model":"glm-5.1","task":"security","provider_max_context":1000,"max_tokens_total":512}`))
+	}))
+	defer ts.Close()
+
+	args := []string{
+		"context", "budget", "--url", ts.URL, "--query", "security audit auth middleware",
+		"--runtime-tool-style", "function-calling",
+		"--runtime-max-context", "1000",
+	}
+	if code := runRemote(context.Background(), eng, args, true); code != 0 {
+		t.Fatalf("runRemote %v exit=%d", args, code)
+	}
+}
+
+func TestRunRemoteContextRecommendWithRuntimeOverrides(t *testing.T) {
+	eng := newCLITestEngine(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/context/recommend" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if got := r.URL.Query().Get("runtime_tool_style"); got != "function-calling" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_tool_style missing"}`))
+			return
+		}
+		if got := r.URL.Query().Get("runtime_max_context"); got != "1000" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"runtime_max_context missing"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"query":"debug [[file:internal/auth/service.go]]","preview":{"task":"debug","provider_max_context":1000},"recommendations":[{"severity":"warn","code":"near_context_cap","message":"tight budget"}]}`))
+	}))
+	defer ts.Close()
+
+	args := []string{
+		"context", "recommend", "--url", ts.URL, "--query", "debug [[file:internal/auth/service.go]]",
+		"--runtime-tool-style", "function-calling",
+		"--runtime-max-context", "1000",
+	}
 	if code := runRemote(context.Background(), eng, args, true); code != 0 {
 		t.Fatalf("runRemote %v exit=%d", args, code)
 	}

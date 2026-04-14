@@ -177,7 +177,7 @@ func TestContextBudgetEndpoint(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/api/v1/context/budget?q=security+audit+auth")
+	resp, err := http.Get(ts.URL + "/api/v1/context/budget?q=security+audit+auth&runtime_max_context=1000")
 	if err != nil {
 		t.Fatalf("get context budget: %v", err)
 	}
@@ -207,6 +207,9 @@ func TestContextBudgetEndpoint(t *testing.T) {
 	if _, ok := payload["task_total_scale"]; !ok {
 		t.Fatalf("missing task_total_scale field: %#v", payload)
 	}
+	if got, _ := payload["provider_max_context"].(float64); int(got) != 1000 {
+		t.Fatalf("expected provider_max_context=1000, got: %#v", payload["provider_max_context"])
+	}
 }
 
 func TestContextRecommendEndpoint(t *testing.T) {
@@ -215,7 +218,7 @@ func TestContextRecommendEndpoint(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/api/v1/context/recommend?q=debug+%5B%5Bfile%3Ainternal%2Fauth%2Fservice.go%5D%5D")
+	resp, err := http.Get(ts.URL + "/api/v1/context/recommend?q=debug+%5B%5Bfile%3Ainternal%2Fauth%2Fservice.go%5D%5D&runtime_max_context=1000")
 	if err != nil {
 		t.Fatalf("get context recommend: %v", err)
 	}
@@ -233,6 +236,13 @@ func TestContextRecommendEndpoint(t *testing.T) {
 	recs, ok := payload["recommendations"].([]any)
 	if !ok || len(recs) == 0 {
 		t.Fatalf("expected non-empty recommendations, got: %#v", payload["recommendations"])
+	}
+	preview, ok := payload["preview"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected preview object, got: %#v", payload["preview"])
+	}
+	if got, _ := preview["provider_max_context"].(float64); int(got) != 1000 {
+		t.Fatalf("expected preview provider_max_context=1000, got: %#v", preview["provider_max_context"])
 	}
 }
 
@@ -652,7 +662,7 @@ func TestPromptsEndpoints(t *testing.T) {
 		t.Fatalf("expected max_template_tokens=200, got: %#v", statsPayload["max_template_tokens"])
 	}
 
-	recommendResp, err := http.Get(ts.URL + "/api/v1/prompts/recommend?q=security+audit+auth")
+	recommendResp, err := http.Get(ts.URL + "/api/v1/prompts/recommend?q=security+audit+auth&runtime_tool_style=function-calling&runtime_max_context=1000")
 	if err != nil {
 		t.Fatalf("get prompt recommend: %v", err)
 	}
@@ -671,6 +681,12 @@ func TestPromptsEndpoints(t *testing.T) {
 	}
 	if rec["prompt_budget_tokens"] == nil {
 		t.Fatalf("missing prompt_budget_tokens in recommendation payload: %#v", recommendPayload)
+	}
+	if got, _ := rec["tool_style"].(string); got != "function-calling" {
+		t.Fatalf("expected tool_style override in recommendation payload, got: %#v", rec["tool_style"])
+	}
+	if got, _ := rec["max_context"].(float64); int(got) != 1000 {
+		t.Fatalf("expected max_context override in recommendation payload, got: %#v", rec["max_context"])
 	}
 
 	renderBody := bytes.NewBufferString(`{"type":"system","task":"security","query":"auth security audit","runtime_tool_style":"function-calling","runtime_max_context":1000}`)

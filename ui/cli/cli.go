@@ -2093,6 +2093,10 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
 		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
 		query := fs.String("query", "", "query for task-aware budget simulation")
+		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for context simulation")
+		runtimeModel := fs.String("runtime-model", "", "runtime model override for context simulation")
+		runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+		runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for context simulation")
 		maxWords := fs.Int("max-words", 240, "max words for context brief")
 		briefPath := fs.String("path", "", "path to magic doc file (relative to project root or absolute)")
 		if err := fs.Parse(args[parseFrom:]); err != nil {
@@ -2108,6 +2112,18 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			v := url.Values{}
 			if q != "" {
 				v.Set("q", q)
+			}
+			if p := strings.TrimSpace(*runtimeProvider); p != "" {
+				v.Set("runtime_provider", p)
+			}
+			if m := strings.TrimSpace(*runtimeModel); m != "" {
+				v.Set("runtime_model", m)
+			}
+			if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+				v.Set("runtime_tool_style", ts)
+			}
+			if *runtimeMaxContext > 0 {
+				v.Set("runtime_max_context", strconv.Itoa(*runtimeMaxContext))
 			}
 			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/context/budget"
 			if encoded := v.Encode(); encoded != "" {
@@ -2128,6 +2144,18 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			v := url.Values{}
 			if q != "" {
 				v.Set("q", q)
+			}
+			if p := strings.TrimSpace(*runtimeProvider); p != "" {
+				v.Set("runtime_provider", p)
+			}
+			if m := strings.TrimSpace(*runtimeModel); m != "" {
+				v.Set("runtime_model", m)
+			}
+			if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+				v.Set("runtime_tool_style", ts)
+			}
+			if *runtimeMaxContext > 0 {
+				v.Set("runtime_max_context", strconv.Itoa(*runtimeMaxContext))
 			}
 			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/context/recommend"
 			if encoded := v.Encode(); encoded != "" {
@@ -2160,7 +2188,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			_ = printJSON(payload)
 			return 0
 		default:
-			fmt.Fprintln(os.Stderr, "usage: dfmc remote context [budget --query \"...\"]|[recommend --query \"...\"]|[brief --max-words 240 --path ...] [--url ...] [--token ...]")
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote context [budget --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[brief --max-words 240 --path ...] [--url ...] [--token ...]")
 			return 2
 		}
 
@@ -2618,6 +2646,18 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			if p := strings.TrimSpace(*query); p != "" {
 				v.Set("q", p)
 			}
+			if p := strings.TrimSpace(*runtimeProvider); p != "" {
+				v.Set("runtime_provider", p)
+			}
+			if m := strings.TrimSpace(*runtimeModel); m != "" {
+				v.Set("runtime_model", m)
+			}
+			if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+				v.Set("runtime_tool_style", ts)
+			}
+			if *runtimeMaxContext > 0 {
+				v.Set("runtime_max_context", strconv.Itoa(*runtimeMaxContext))
+			}
 			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/prompts/recommend"
 			if encoded := v.Encode(); encoded != "" {
 				endpoint += "?" + encoded
@@ -2656,7 +2696,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			}
 			return 0
 		default:
-			fmt.Fprintln(os.Stderr, "usage: dfmc remote prompt [list|render --query ...|recommend --query ...|stats --max-template-tokens 450]")
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote prompt [list|render --query ... --runtime-tool-style ... --runtime-max-context ...|recommend --query ... --runtime-tool-style ... --runtime-max-context ...|stats --max-template-tokens 450]")
 			return 2
 		}
 
@@ -5251,13 +5291,30 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs := flag.NewFlagSet("prompt recommend", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
 		query := fs.String("query", "", "query for prompt profile/budget recommendation")
+		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for recommendation simulation")
+		runtimeModel := fs.String("runtime-model", "", "runtime model override for recommendation simulation")
+		runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+		runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for recommendation simulation")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
 		}
 		if strings.TrimSpace(*query) == "" && len(fs.Args()) > 0 {
 			*query = strings.TrimSpace(strings.Join(fs.Args(), " "))
 		}
-		info := eng.PromptRecommendation(*query)
+		runtimeHints := eng.PromptRuntime()
+		if p := strings.TrimSpace(*runtimeProvider); p != "" {
+			runtimeHints.Provider = p
+		}
+		if m := strings.TrimSpace(*runtimeModel); m != "" {
+			runtimeHints.Model = m
+		}
+		if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+			runtimeHints.ToolStyle = ts
+		}
+		if *runtimeMaxContext > 0 {
+			runtimeHints.MaxContext = *runtimeMaxContext
+		}
+		info := eng.PromptRecommendationWithRuntime(*query, runtimeHints)
 		if jsonMode {
 			_ = printJSON(map[string]any{
 				"query":          strings.TrimSpace(*query),
@@ -5289,7 +5346,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\"]|[stats --max-template-tokens 450]|[recommend --query \"...\"]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[stats --max-template-tokens 450]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]")
 		return 2
 	}
 }
@@ -5306,13 +5363,30 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		fs := flag.NewFlagSet("context budget", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
 		query := fs.String("query", "", "query for task-aware budget simulation")
+		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for budget simulation")
+		runtimeModel := fs.String("runtime-model", "", "runtime model override for budget simulation")
+		runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+		runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for budget simulation")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
 		}
 		if strings.TrimSpace(*query) == "" && len(fs.Args()) > 0 {
 			*query = strings.TrimSpace(strings.Join(fs.Args(), " "))
 		}
-		preview := eng.ContextBudgetPreview(*query)
+		runtimeHints := eng.PromptRuntime()
+		if p := strings.TrimSpace(*runtimeProvider); p != "" {
+			runtimeHints.Provider = p
+		}
+		if m := strings.TrimSpace(*runtimeModel); m != "" {
+			runtimeHints.Model = m
+		}
+		if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+			runtimeHints.ToolStyle = ts
+		}
+		if *runtimeMaxContext > 0 {
+			runtimeHints.MaxContext = *runtimeMaxContext
+		}
+		preview := eng.ContextBudgetPreviewWithRuntime(*query, runtimeHints)
 		if jsonMode {
 			_ = printJSON(preview)
 			return 0
@@ -5346,14 +5420,31 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		fs := flag.NewFlagSet("context recommend", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
 		query := fs.String("query", "", "query for context tuning recommendations")
+		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for recommendation simulation")
+		runtimeModel := fs.String("runtime-model", "", "runtime model override for recommendation simulation")
+		runtimeToolStyle := fs.String("runtime-tool-style", "", "runtime tool style override (function-calling|tool_use|none|provider-native)")
+		runtimeMaxContext := fs.Int("runtime-max-context", 0, "runtime max context override for recommendation simulation")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
 		}
 		if strings.TrimSpace(*query) == "" && len(fs.Args()) > 0 {
 			*query = strings.TrimSpace(strings.Join(fs.Args(), " "))
 		}
-		preview := eng.ContextBudgetPreview(*query)
-		recs := eng.ContextRecommendations(*query)
+		runtimeHints := eng.PromptRuntime()
+		if p := strings.TrimSpace(*runtimeProvider); p != "" {
+			runtimeHints.Provider = p
+		}
+		if m := strings.TrimSpace(*runtimeModel); m != "" {
+			runtimeHints.Model = m
+		}
+		if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
+			runtimeHints.ToolStyle = ts
+		}
+		if *runtimeMaxContext > 0 {
+			runtimeHints.MaxContext = *runtimeMaxContext
+		}
+		preview := eng.ContextBudgetPreviewWithRuntime(*query, runtimeHints)
+		recs := eng.ContextRecommendationsWithRuntime(*query, runtimeHints)
 		if jsonMode {
 			_ = printJSON(map[string]any{
 				"query":           strings.TrimSpace(*query),
@@ -5436,7 +5527,7 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc context [budget --query \"...\"]|[recommend --query \"...\"]|[recent]|[brief --max-words 240 --path ...]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc context [budget --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[recent]|[brief --max-words 240 --path ...]")
 		return 2
 	}
 }
