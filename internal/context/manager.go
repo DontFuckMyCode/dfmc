@@ -29,6 +29,17 @@ type BuildOptions struct {
 	IncludeDocs      bool
 }
 
+type PromptRuntime struct {
+	Provider    string
+	Model       string
+	ToolStyle   string
+	DefaultMode string
+	Cache       bool
+	LowLatency  bool
+	MaxContext  int
+	BestFor     []string
+}
+
 func New(cm *codemap.Engine) *Manager {
 	return &Manager{
 		codemap: cm,
@@ -148,6 +159,10 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 }
 
 func (m *Manager) BuildSystemPrompt(projectRoot, query string, chunks []types.ContextChunk, tools []string) string {
+	return m.BuildSystemPromptWithRuntime(projectRoot, query, chunks, tools, PromptRuntime{})
+}
+
+func (m *Manager) BuildSystemPromptWithRuntime(projectRoot, query string, chunks []types.ContextChunk, tools []string, runtime PromptRuntime) string {
 	if m == nil || m.prompts == nil {
 		return "You are DFMC, a code intelligence assistant. Be concise, practical, and safe."
 	}
@@ -176,7 +191,7 @@ func (m *Manager) BuildSystemPrompt(projectRoot, query string, chunks []types.Co
 			"context_files":    summarizeContextFiles(projectRoot, chunks, limits.ContextFiles),
 			"injected_context": injected,
 			"tools_overview":   summarizeTools(tools, limits.ToolList),
-			"tool_call_policy": buildToolCallPolicy(task),
+			"tool_call_policy": buildToolCallPolicy(task, runtime),
 			"response_policy":  buildResponsePolicy(task, profile),
 		},
 	})
@@ -550,7 +565,7 @@ func loadProjectBrief(projectRoot string, maxTokens int) string {
 	return trimToTokenBudget(strings.Join(filtered, "\n"), maxTokens)
 }
 
-func buildToolCallPolicy(task string) string {
+func buildToolCallPolicy(task string, runtime PromptRuntime) string {
 	lines := []string{
 		"1) Call tools only when they reduce uncertainty materially.",
 		"2) Prefer the minimum tool set needed for a reliable result.",
@@ -558,15 +573,38 @@ func buildToolCallPolicy(task string) string {
 		"4) Reuse prior tool outputs; avoid duplicate calls.",
 		"5) Validate edited scope with the smallest relevant test first.",
 	}
+	switch strings.TrimSpace(strings.ToLower(runtime.ToolStyle)) {
+	case "function-calling":
+		lines = append(lines,
+			"6) Tool protocol: emit strict function-call JSON that matches schema exactly.",
+			"7) Keep tool payloads deterministic; no mixed prose inside arguments.")
+	case "tool_use":
+		lines = append(lines,
+			"6) Tool protocol: emit tool_use blocks with strict JSON input.",
+			"7) Pair each tool_result with the initiating tool_use id.")
+	case "none":
+		lines = append(lines,
+			"6) Runtime has no native tool-calling; rely on provided context and direct reasoning.")
+	default:
+		lines = append(lines,
+			"6) Follow provider-native tool format exactly; prioritize schema fidelity over verbosity.")
+	}
+	if runtime.MaxContext > 0 {
+		toolOutputBudget := runtime.MaxContext / 5
+		if toolOutputBudget < 96 {
+			toolOutputBudget = 96
+		}
+		lines = append(lines, "8) Keep cumulative tool output near "+strconv.Itoa(toolOutputBudget)+" tokens unless risk requires deeper evidence.")
+	}
 	switch strings.ToLower(strings.TrimSpace(task)) {
 	case "security":
 		lines = append(lines,
-			"6) Collect concrete evidence before remediation edits.",
-			"7) Report exploitability conditions and confidence.")
+			"9) Collect concrete evidence before remediation edits.",
+			"10) Report exploitability conditions and confidence.")
 	case "review":
 		lines = append(lines,
-			"6) Anchor findings to concrete evidence (file/line).",
-			"7) Prioritize high-severity and high-confidence issues.")
+			"9) Anchor findings to concrete evidence (file/line).",
+			"10) Prioritize high-severity and high-confidence issues.")
 	}
 	return strings.Join(lines, "\n")
 }

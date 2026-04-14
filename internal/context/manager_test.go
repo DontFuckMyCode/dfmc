@@ -77,6 +77,31 @@ func TestBuildSystemPromptUsesPromptLibrary(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptWithRuntimeToolPolicy(t *testing.T) {
+	tmp := t.TempDir()
+	mgr := New(codemap.New(ast.New()))
+
+	prompt := mgr.BuildSystemPromptWithRuntime(
+		tmp,
+		"security audit auth flow",
+		nil,
+		[]string{"read_file", "grep_codebase"},
+		PromptRuntime{
+			Provider:   "openai",
+			Model:      "glm-5.1",
+			ToolStyle:  "function-calling",
+			MaxContext: 128000,
+		},
+	)
+
+	if !strings.Contains(prompt, "strict function-call JSON") {
+		t.Fatalf("expected function-calling policy in prompt, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "near 25600 tokens") {
+		t.Fatalf("expected runtime-aware tool output budget in prompt, got: %s", prompt)
+	}
+}
+
 func TestBuildSystemPromptInjectsFileMarkerContext(t *testing.T) {
 	tmp := t.TempDir()
 	target := filepath.Join(tmp, "auth.go")

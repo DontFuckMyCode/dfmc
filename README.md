@@ -380,6 +380,7 @@ Token-efficient context tuning:
 - `context.max_history_tokens`: max token budget for prior conversation messages sent with each request.
 - `context.compression`: `none|standard|aggressive` tradeoff between fidelity and token cost.
 - Budgets are task-adaptive (`security/review/debug` gets more context; `planning/doc` gets leaner context).
+- System prompt tool-call policy is provider-aware (e.g., `function-calling` vs `tool_use`) and budget-aware.
 - `[[file:...]]` markers in the query focus retrieval to fewer files with deeper per-file slices.
 - When history exceeds budget, DFMC injects a compact history summary instead of dropping all older context.
 

@@ -490,6 +490,36 @@ func (e *Engine) providerMaxContext() int {
 	return p.MaxContext()
 }
 
+func (e *Engine) promptRuntime() ctxmgr.PromptRuntime {
+	rt := ctxmgr.PromptRuntime{
+		Provider: strings.TrimSpace(e.provider()),
+		Model:    strings.TrimSpace(e.model()),
+	}
+	if e.Providers == nil {
+		return rt
+	}
+	p, ok := e.Providers.Get(rt.Provider)
+	if !ok || p == nil {
+		return rt
+	}
+	hints := p.Hints()
+	if rt.Model == "" {
+		rt.Model = strings.TrimSpace(p.Model())
+	}
+	rt.ToolStyle = strings.TrimSpace(hints.ToolStyle)
+	rt.DefaultMode = strings.TrimSpace(hints.DefaultMode)
+	rt.Cache = hints.Cache
+	rt.LowLatency = hints.LowLatency
+	rt.MaxContext = hints.MaxContext
+	if rt.MaxContext <= 0 {
+		rt.MaxContext = p.MaxContext()
+	}
+	if len(hints.BestFor) > 0 {
+		rt.BestFor = append([]string(nil), hints.BestFor...)
+	}
+	return rt
+}
+
 func (e *Engine) contextReserveTokens(question string) int {
 	promptReserve := maxInt(basePromptReserveTokens, estimateTokens(question)*3)
 	responseReserve := defaultResponseReserveTokens
@@ -936,7 +966,13 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 
 	systemPrompt := ""
 	if e.Context != nil {
-		systemPrompt = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks, e.ListTools())
+		systemPrompt = e.Context.BuildSystemPromptWithRuntime(
+			e.ProjectRoot,
+			question,
+			chunks,
+			e.ListTools(),
+			e.promptRuntime(),
+		)
 	}
 	req := provider.CompletionRequest{
 		Provider: e.provider(),
@@ -979,7 +1015,13 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 
 	systemPrompt := ""
 	if e.Context != nil {
-		systemPrompt = e.Context.BuildSystemPrompt(e.ProjectRoot, question, chunks, e.ListTools())
+		systemPrompt = e.Context.BuildSystemPromptWithRuntime(
+			e.ProjectRoot,
+			question,
+			chunks,
+			e.ListTools(),
+			e.promptRuntime(),
+		)
 	}
 	req := provider.CompletionRequest{
 		Provider: e.provider(),
