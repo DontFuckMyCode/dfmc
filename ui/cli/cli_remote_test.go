@@ -307,6 +307,8 @@ func TestRunRemotePromptLifecycle(t *testing.T) {
 		switch {
 		case r.URL.Path == "/api/v1/prompts" && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`{"prompts":[{"id":"system.base","type":"system","task":"general"}]}`))
+		case r.URL.Path == "/api/v1/prompts/recommend" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"query":"auth audit","recommendation":{"task":"security","profile":"deep","prompt_budget_tokens":1200}}`))
 		case r.URL.Path == "/api/v1/prompts/stats" && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`{"template_count":12,"warning_count":0,"max_template_tokens":450}`))
 		case r.URL.Path == "/api/v1/prompts/render" && r.Method == http.MethodPost:
@@ -321,6 +323,7 @@ func TestRunRemotePromptLifecycle(t *testing.T) {
 	cases := [][]string{
 		{"prompt", "list", "--url", ts.URL},
 		{"prompt", "render", "--url", ts.URL, "--task", "security", "--query", "auth audit"},
+		{"prompt", "recommend", "--url", ts.URL, "--query", "auth audit"},
 		{"prompt", "stats", "--url", ts.URL, "--max-template-tokens", "450"},
 	}
 	for _, args := range cases {

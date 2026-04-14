@@ -196,3 +196,29 @@ func TestContextRecommendations_AlwaysReturnsGuidance(t *testing.T) {
 		}
 	}
 }
+
+func TestPromptRecommendation_ContainsBudgetAndHints(t *testing.T) {
+	cfg := config.DefaultConfig()
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{Config: cfg, Providers: router}
+
+	info := eng.PromptRecommendation("security audit auth middleware")
+	if info.Task != "security" {
+		t.Fatalf("expected task=security, got %s", info.Task)
+	}
+	if info.Profile == "" {
+		t.Fatal("expected non-empty profile")
+	}
+	if info.PromptBudgetTokens <= 0 {
+		t.Fatalf("expected positive prompt budget, got %d", info.PromptBudgetTokens)
+	}
+	if info.ContextFiles <= 0 || info.ToolList <= 0 {
+		t.Fatalf("unexpected render budget: %#v", info)
+	}
+	if len(info.Hints) == 0 {
+		t.Fatal("expected at least one prompt hint")
+	}
+}

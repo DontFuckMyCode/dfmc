@@ -140,6 +140,7 @@ Endpoints:
 - `GET /api/v1/conversation/branches/compare?a=...&b=...`
 - `GET /api/v1/prompts`
 - `GET /api/v1/prompts/stats?max_template_tokens=...&allow_var=...`
+- `GET /api/v1/prompts/recommend?q=...`
 - `POST /api/v1/prompts/render`
 - `GET /api/v1/magicdoc`
 - `POST /api/v1/magicdoc/update`
@@ -219,6 +220,7 @@ go run ./cmd/dfmc remote skills --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote prompt list --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote prompt render --url http://127.0.0.1:7779 --task security --query "auth audit"
 go run ./cmd/dfmc remote prompt render --url http://127.0.0.1:7779 --task security --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
+go run ./cmd/dfmc remote prompt recommend --url http://127.0.0.1:7779 --query "auth audit"
 go run ./cmd/dfmc remote prompt stats --url http://127.0.0.1:7779 --max-template-tokens 450
 go run ./cmd/dfmc remote magicdoc show --url http://127.0.0.1:7779
 go run ./cmd/dfmc remote magicdoc update --url http://127.0.0.1:7779 --title "Remote Brief"
@@ -283,6 +285,7 @@ go run ./cmd/dfmc prompt render --query "security audit auth middleware"
 go run ./cmd/dfmc prompt render --task planning --language go --query "roadmap cikar"
 go run ./cmd/dfmc prompt render --task review --var context_files="- internal/auth/middleware.go:1-120"
 go run ./cmd/dfmc prompt render --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
+go run ./cmd/dfmc prompt recommend --query "security audit auth middleware"
 go run ./cmd/dfmc --json prompt render --query "auth audit" --runtime-tool-style function-calling --runtime-max-context 1000
 go run ./cmd/dfmc prompt stats
 go run ./cmd/dfmc prompt stats --max-template-tokens 450 --fail-on-warning

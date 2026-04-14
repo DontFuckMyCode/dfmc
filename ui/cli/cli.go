@@ -2530,6 +2530,22 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			}
 			_ = printJSON(payload)
 			return 0
+		case "recommend", "recommendation", "tune":
+			v := url.Values{}
+			if p := strings.TrimSpace(*query); p != "" {
+				v.Set("q", p)
+			}
+			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/prompts/recommend"
+			if encoded := v.Encode(); encoded != "" {
+				endpoint += "?" + encoded
+			}
+			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "remote prompt recommend error: %v\n", err)
+				return 1
+			}
+			_ = printJSON(payload)
+			return 0
 		case "stats", "validate", "lint":
 			v := url.Values{}
 			if *maxTemplateTokens > 0 {
@@ -2557,7 +2573,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			}
 			return 0
 		default:
-			fmt.Fprintln(os.Stderr, "usage: dfmc remote prompt [list|render --query ...|stats --max-template-tokens 450]")
+			fmt.Fprintln(os.Stderr, "usage: dfmc remote prompt [list|render --query ...|recommend --query ...|stats --max-template-tokens 450]")
 			return 2
 		}
 
@@ -5140,8 +5156,48 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 		return 0
 
+	case "recommend", "recommendation", "tune":
+		fs := flag.NewFlagSet("prompt recommend", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		query := fs.String("query", "", "query for prompt profile/budget recommendation")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if strings.TrimSpace(*query) == "" && len(fs.Args()) > 0 {
+			*query = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		}
+		info := eng.PromptRecommendation(*query)
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"query":          strings.TrimSpace(*query),
+				"recommendation": info,
+			})
+			return 0
+		}
+		fmt.Printf(
+			"prompt recommend: task=%s language=%s profile=%s provider=%s model=%s tool_style=%s max_context=%d budget=%d render[files=%d tools=%d injected_blocks=%d injected_lines=%d injected_tokens=%d brief=%d]\n",
+			info.Task,
+			info.Language,
+			info.Profile,
+			info.Provider,
+			info.Model,
+			info.ToolStyle,
+			info.MaxContext,
+			info.PromptBudgetTokens,
+			info.ContextFiles,
+			info.ToolList,
+			info.InjectedBlocks,
+			info.InjectedLines,
+			info.InjectedTokens,
+			info.ProjectBriefTokens,
+		)
+		for _, hint := range info.Hints {
+			fmt.Printf("- [%s] %s: %s\n", strings.ToUpper(hint.Severity), hint.Code, hint.Message)
+		}
+		return 0
+
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\"]|[stats --max-template-tokens 450]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\"]|[stats --max-template-tokens 450]|[recommend --query \"...\"]")
 		return 2
 	}
 }

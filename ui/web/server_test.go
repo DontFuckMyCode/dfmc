@@ -652,6 +652,27 @@ func TestPromptsEndpoints(t *testing.T) {
 		t.Fatalf("expected max_template_tokens=200, got: %#v", statsPayload["max_template_tokens"])
 	}
 
+	recommendResp, err := http.Get(ts.URL + "/api/v1/prompts/recommend?q=security+audit+auth")
+	if err != nil {
+		t.Fatalf("get prompt recommend: %v", err)
+	}
+	defer recommendResp.Body.Close()
+	if recommendResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(recommendResp.Body)
+		t.Fatalf("unexpected recommend status %d: %s", recommendResp.StatusCode, string(raw))
+	}
+	var recommendPayload map[string]any
+	if err := json.NewDecoder(recommendResp.Body).Decode(&recommendPayload); err != nil {
+		t.Fatalf("decode recommend payload: %v", err)
+	}
+	rec, ok := recommendPayload["recommendation"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing recommendation field: %#v", recommendPayload)
+	}
+	if rec["prompt_budget_tokens"] == nil {
+		t.Fatalf("missing prompt_budget_tokens in recommendation payload: %#v", recommendPayload)
+	}
+
 	renderBody := bytes.NewBufferString(`{"type":"system","task":"security","query":"auth security audit","runtime_tool_style":"function-calling","runtime_max_context":1000}`)
 	renderReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/prompts/render", renderBody)
 	if err != nil {

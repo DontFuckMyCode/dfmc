@@ -26,6 +26,13 @@ func TestRunPromptListAndRender(t *testing.T) {
 	}, true); code != 0 {
 		t.Fatalf("prompt render runtime override exit=%d", code)
 	}
+
+	if code := runPrompt(context.Background(), eng, []string{
+		"recommend",
+		"--query", "security audit auth middleware",
+	}, true); code != 0 {
+		t.Fatalf("prompt recommend exit=%d", code)
+	}
 }
 
 func TestRunPromptUsesProjectOverride(t *testing.T) {

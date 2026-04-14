@@ -99,6 +99,30 @@ type ContextRecommendation struct {
 	Message  string `json:"message"`
 }
 
+type PromptRecommendationInfo struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+
+	Task     string `json:"task"`
+	Language string `json:"language"`
+	Profile  string `json:"profile"`
+
+	ToolStyle  string `json:"tool_style"`
+	MaxContext int    `json:"max_context"`
+	LowLatency bool   `json:"low_latency"`
+
+	PromptBudgetTokens int `json:"prompt_budget_tokens"`
+
+	ContextFiles       int `json:"context_files"`
+	ToolList           int `json:"tool_list"`
+	InjectedBlocks     int `json:"injected_blocks"`
+	InjectedLines      int `json:"injected_lines"`
+	InjectedTokens     int `json:"injected_tokens"`
+	ProjectBriefTokens int `json:"project_brief_tokens"`
+
+	Hints []ContextRecommendation `json:"hints"`
+}
+
 type AnalyzeReport struct {
 	ProjectRoot string            `json:"project_root"`
 	Files       int               `json:"files"`
@@ -337,6 +361,65 @@ func (e *Engine) ContextRecommendations(question string) []ContextRecommendation
 		add("info", "balanced_budget", "Current context budget looks balanced for this query.")
 	}
 	return recs
+}
+
+func (e *Engine) PromptRecommendation(question string) PromptRecommendationInfo {
+	query := strings.TrimSpace(question)
+	runtime := e.promptRuntime()
+	task := detectContextTask(query)
+	language := promptlib.InferLanguage(query, nil)
+	profile := ctxmgr.ResolvePromptProfile(query, task, runtime)
+	renderBudget := ctxmgr.ResolvePromptRenderBudget(task, profile, runtime)
+	promptBudget := ctxmgr.PromptTokenBudget(task, profile, runtime)
+
+	hints := make([]ContextRecommendation, 0, 4)
+	add := func(severity, code, message string) {
+		hints = append(hints, ContextRecommendation{
+			Severity: strings.TrimSpace(strings.ToLower(severity)),
+			Code:     strings.TrimSpace(strings.ToLower(code)),
+			Message:  strings.TrimSpace(message),
+		})
+	}
+
+	if runtime.MaxContext > 0 && promptBudget > runtime.MaxContext/4 {
+		add("warn", "prompt_budget_high", "Prompt budget is high relative to runtime max_context. Use compact profile or narrower injected context.")
+	}
+	if runtime.MaxContext > 0 && runtime.MaxContext <= 12000 && profile == "deep" {
+		add("warn", "runtime_context_tight", "Runtime context is tight for deep profile. Compact profile may reduce truncation risk.")
+	}
+	if countExplicitFileMentions(query) == 0 && !strings.Contains(query, "```") {
+		add("info", "add_explicit_context", "No explicit file marker or fenced code detected. Add [[file:...]] or inline code blocks for higher precision.")
+	}
+	if runtime.ToolStyle == "" {
+		add("info", "tool_style_unknown", "Provider tool style is unknown. Consider explicit runtime tool-style override when rendering prompts.")
+	}
+	if len(hints) == 0 {
+		add("info", "prompt_budget_balanced", "Prompt profile and budget look balanced for this query.")
+	}
+
+	return PromptRecommendationInfo{
+		Provider: runtime.Provider,
+		Model:    runtime.Model,
+
+		Task:     task,
+		Language: language,
+		Profile:  profile,
+
+		ToolStyle:  runtime.ToolStyle,
+		MaxContext: runtime.MaxContext,
+		LowLatency: runtime.LowLatency,
+
+		PromptBudgetTokens: promptBudget,
+
+		ContextFiles:       renderBudget.ContextFiles,
+		ToolList:           renderBudget.ToolList,
+		InjectedBlocks:     renderBudget.InjectedBlocks,
+		InjectedLines:      renderBudget.InjectedLines,
+		InjectedTokens:     renderBudget.InjectedTokens,
+		ProjectBriefTokens: renderBudget.ProjectBriefTokens,
+
+		Hints: hints,
+	}
 }
 
 func (e *Engine) SetProviderModel(provider, model string) {

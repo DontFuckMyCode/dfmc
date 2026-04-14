@@ -124,6 +124,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/conversation/branches/compare", s.handleConversationBranchCompare)
 	s.mux.HandleFunc("GET /api/v1/prompts", s.handlePrompts)
 	s.mux.HandleFunc("GET /api/v1/prompts/stats", s.handlePromptStats)
+	s.mux.HandleFunc("GET /api/v1/prompts/recommend", s.handlePromptRecommend)
 	s.mux.HandleFunc("POST /api/v1/prompts/render", s.handlePromptRender)
 	s.mux.HandleFunc("GET /api/v1/magicdoc", s.handleMagicDocShow)
 	s.mux.HandleFunc("POST /api/v1/magicdoc/update", s.handleMagicDocUpdate)
@@ -558,6 +559,14 @@ func (s *Server) handlePromptStats(w http.ResponseWriter, r *http.Request) {
 		AllowVars:         allowVars,
 	})
 	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *Server) handlePromptRecommend(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"query":          query,
+		"recommendation": s.engine.PromptRecommendation(query),
+	})
 }
 
 func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
