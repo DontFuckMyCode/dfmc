@@ -247,6 +247,8 @@ go run ./cmd/dfmc doctor --fix
 go run ./cmd/dfmc --json doctor
 ```
 
+`doctor` now also reports `magicdoc.health` (missing/fresh/stale) to keep prompt-brief context quality visible.
+
 ### 11) Generate shell completion
 
 ```bash

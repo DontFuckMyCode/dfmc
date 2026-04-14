@@ -2998,6 +2998,7 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		} else {
 			add("project.root", "pass", root)
 		}
+		addMagicDocHealthCheck(&checks, root, 24*time.Hour)
 
 		if eng.Config != nil {
 			addFileSystemHealthCheck(&checks, "storage.data_dir", eng.Config.DataDir())
@@ -3282,6 +3283,53 @@ func addFileSystemHealthCheck(checks *[]doctorCheck, name, dir string) {
 	_ = probe.Close()
 	_ = os.Remove(probe.Name())
 	*checks = append(*checks, doctorCheck{Name: name, Status: "pass", Details: dir})
+}
+
+func addMagicDocHealthCheck(checks *[]doctorCheck, projectRoot string, staleAfter time.Duration) {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		*checks = append(*checks, doctorCheck{
+			Name:    "magicdoc.health",
+			Status:  "warn",
+			Details: "project root is empty (cannot evaluate magic doc)",
+		})
+		return
+	}
+	if staleAfter <= 0 {
+		staleAfter = 24 * time.Hour
+	}
+	path := resolveMagicDocPath(root, "")
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			*checks = append(*checks, doctorCheck{
+				Name:    "magicdoc.health",
+				Status:  "warn",
+				Details: fmt.Sprintf("missing: %s (run: dfmc magicdoc update)", path),
+			})
+			return
+		}
+		*checks = append(*checks, doctorCheck{
+			Name:    "magicdoc.health",
+			Status:  "warn",
+			Details: fmt.Sprintf("cannot read %s: %v", path, err),
+		})
+		return
+	}
+	age := time.Since(info.ModTime())
+	if age > staleAfter {
+		*checks = append(*checks, doctorCheck{
+			Name:    "magicdoc.health",
+			Status:  "warn",
+			Details: fmt.Sprintf("stale (%s): %s (run: dfmc magicdoc update)", age.Round(time.Minute), path),
+		})
+		return
+	}
+	*checks = append(*checks, doctorCheck{
+		Name:    "magicdoc.health",
+		Status:  "pass",
+		Details: fmt.Sprintf("fresh (%s): %s", age.Round(time.Minute), path),
+	})
 }
 
 func providerConfigured(name string, prof config.ModelConfig) bool {
