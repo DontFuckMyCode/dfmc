@@ -3086,6 +3086,7 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			add("project.root", "pass", root)
 		}
 		addMagicDocHealthCheck(&checks, root, 24*time.Hour)
+		addPromptHealthCheck(&checks, root, 450)
 
 		if eng.Config != nil {
 			addFileSystemHealthCheck(&checks, "storage.data_dir", eng.Config.DataDir())
@@ -3416,6 +3417,47 @@ func addMagicDocHealthCheck(checks *[]doctorCheck, projectRoot string, staleAfte
 		Name:    "magicdoc.health",
 		Status:  "pass",
 		Details: fmt.Sprintf("fresh (%s): %s", age.Round(time.Minute), path),
+	})
+}
+
+func addPromptHealthCheck(checks *[]doctorCheck, projectRoot string, maxTemplateTokens int) {
+	lib := promptlib.New()
+	_ = lib.LoadOverrides(strings.TrimSpace(projectRoot))
+	report := promptlib.BuildStatsReport(lib.List(), promptlib.StatsOptions{
+		MaxTemplateTokens: maxTemplateTokens,
+	})
+	if report.TemplateCount == 0 {
+		*checks = append(*checks, doctorCheck{
+			Name:    "prompt.health",
+			Status:  "warn",
+			Details: "no prompt templates loaded",
+		})
+		return
+	}
+	if report.WarningCount > 0 {
+		first := ""
+		for _, t := range report.Templates {
+			if len(t.Warnings) == 0 {
+				continue
+			}
+			first = t.ID + ": " + t.Warnings[0]
+			break
+		}
+		msg := fmt.Sprintf("warnings=%d templates=%d threshold=%d", report.WarningCount, report.TemplateCount, report.MaxTemplateTokens)
+		if strings.TrimSpace(first) != "" {
+			msg += " first=" + first
+		}
+		*checks = append(*checks, doctorCheck{
+			Name:    "prompt.health",
+			Status:  "warn",
+			Details: msg,
+		})
+		return
+	}
+	*checks = append(*checks, doctorCheck{
+		Name:    "prompt.health",
+		Status:  "pass",
+		Details: fmt.Sprintf("templates=%d total_tokens=%d max_tokens=%d", report.TemplateCount, report.TotalTokens, report.MaxTokens),
 	})
 }
 

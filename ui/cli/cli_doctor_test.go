@@ -191,3 +191,45 @@ func TestAddMagicDocHealthCheck(t *testing.T) {
 		}
 	})
 }
+
+func TestAddPromptHealthCheck(t *testing.T) {
+	t.Run("pass_default_templates", func(t *testing.T) {
+		root := t.TempDir()
+		checks := []doctorCheck{}
+		addPromptHealthCheck(&checks, root, 1000)
+		if len(checks) != 1 {
+			t.Fatalf("expected one check, got %d", len(checks))
+		}
+		if checks[0].Name != "prompt.health" || checks[0].Status != "pass" {
+			t.Fatalf("unexpected prompt health check: %+v", checks[0])
+		}
+	})
+
+	t.Run("warn_on_unknown_placeholder", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, ".dfmc", "prompts")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir prompts dir: %v", err)
+		}
+		override := `
+id: system.general.bad_var
+type: system
+task: general
+priority: 999
+body: |
+  Broken var {{doctor_unknown_var}}
+`
+		if err := os.WriteFile(filepath.Join(dir, "bad_var.yaml"), []byte(override), 0o644); err != nil {
+			t.Fatalf("write override: %v", err)
+		}
+
+		checks := []doctorCheck{}
+		addPromptHealthCheck(&checks, root, 1000)
+		if len(checks) != 1 {
+			t.Fatalf("expected one check, got %d", len(checks))
+		}
+		if checks[0].Status != "warn" || !strings.Contains(checks[0].Details, "warnings=") {
+			t.Fatalf("unexpected prompt warn check: %+v", checks[0])
+		}
+	})
+}
