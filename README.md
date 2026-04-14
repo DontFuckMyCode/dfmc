@@ -63,6 +63,8 @@ This creates:
 
 ```bash
 go run ./cmd/dfmc ask "auth middleware nasil calisiyor?"
+go run ./cmd/dfmc status
+go run ./cmd/dfmc --json status --query "security audit auth middleware"
 ```
 
 If provider API keys are not configured, DFMC automatically uses offline mode with local-context response generation.
@@ -357,6 +359,7 @@ When present, DFMC injects a budgeted slice of this brief into the system prompt
 
 Available:
 - `dfmc init`
+- `dfmc status`
 - `dfmc version`
 - `dfmc ask`
 - `dfmc chat` (basic REPL)

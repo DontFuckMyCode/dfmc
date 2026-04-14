@@ -66,6 +66,8 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 	case "help", "-h", "--help":
 		printHelp()
 		return 0
+	case "status":
+		return runStatus(eng, version, cmdArgs, opts.JSON)
 	case "version":
 		return runVersion(eng, version, cmdArgs, opts.JSON)
 	case "init":
@@ -180,6 +182,83 @@ func runVersion(eng *engine.Engine, version string, args []string, jsonMode bool
 	return 0
 }
 
+func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool) int {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	jsonFlag := fs.Bool("json", false, "output as json")
+	query := fs.String("query", "", "optional query for context/prompt status snapshot")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	jsonMode = jsonMode || *jsonFlag
+
+	st := eng.Status()
+	projectRoot := strings.TrimSpace(st.ProjectRoot)
+	if projectRoot == "" {
+		projectRoot = config.FindProjectRoot("")
+	}
+
+	loadedProviders := []string{}
+	if eng.Providers != nil {
+		loadedProviders = eng.Providers.List()
+		sort.Strings(loadedProviders)
+	}
+	tools := eng.ListTools()
+	sort.Strings(tools)
+	skills := discoverSkills(projectRoot)
+	templates := promptlib.New()
+	_ = templates.LoadOverrides(projectRoot)
+
+	q := strings.TrimSpace(*query)
+	contextPreview := eng.ContextBudgetPreview(q)
+	promptRecommendation := eng.PromptRecommendation(q)
+
+	payload := map[string]any{
+		"name":                   "dfmc",
+		"version":                version,
+		"state":                  st.State,
+		"ready":                  st.State == engine.StateReady || st.State == engine.StateServing,
+		"provider":               st.Provider,
+		"model":                  st.Model,
+		"project_root":           projectRoot,
+		"go_version":             runtimeVersion(),
+		"loaded_providers":       loadedProviders,
+		"tools_count":            len(tools),
+		"skills_count":           len(skills),
+		"prompt_templates_count": len(templates.List()),
+		"query":                  q,
+		"context_budget":         contextPreview,
+		"prompt_recommendation":  promptRecommendation,
+	}
+
+	if jsonMode {
+		_ = printJSON(payload)
+		return 0
+	}
+
+	fmt.Printf("dfmc %s\n", version)
+	fmt.Printf("state: %v (ready=%t)\n", st.State, st.State == engine.StateReady || st.State == engine.StateServing)
+	fmt.Printf("provider/model: %s / %s\n", st.Provider, st.Model)
+	fmt.Printf("project: %s\n", projectRoot)
+	fmt.Printf("providers: %d loaded\n", len(loadedProviders))
+	fmt.Printf("tools: %d, skills: %d, prompt templates: %d\n", len(tools), len(skills), len(templates.List()))
+	fmt.Printf("context budget: task=%s total=%d per_file=%d files=%d reserve=%d available=%d\n",
+		contextPreview.Task,
+		contextPreview.MaxTokensTotal,
+		contextPreview.MaxTokensPerFile,
+		contextPreview.MaxFiles,
+		contextPreview.ReserveTotalTokens,
+		contextPreview.ContextAvailableTokens,
+	)
+	fmt.Printf("prompt recommendation: profile=%s role=%s budget=%d tool_style=%s\n",
+		promptRecommendation.Profile,
+		promptRecommendation.Role,
+		promptRecommendation.PromptBudgetTokens,
+		promptRecommendation.ToolStyle,
+	)
+	return 0
+}
+
 func runInit(jsonMode bool, projectOverride string) int {
 	root := projectOverride
 	if strings.TrimSpace(root) == "" {
@@ -274,6 +353,7 @@ type commandDoc struct {
 
 func commandDocs() []commandDoc {
 	return []commandDoc{
+		{Name: "status", Description: "Runtime status snapshot"},
 		{Name: "init", Description: "Initialize DFMC in project"},
 		{Name: "chat", Description: "Interactive chat session"},
 		{Name: "ask", Description: "One-shot question"},
@@ -379,6 +459,7 @@ func renderManRoff(docs []commandDoc) string {
 
 func commandNames() []string {
 	return []string{
+		"status",
 		"init",
 		"chat",
 		"ask",
@@ -5623,6 +5704,7 @@ func printHelp() {
 	fmt.Println(`Usage: dfmc [global flags] <command> [args]
 
 Commands:
+  status      Runtime status snapshot
   init        Initialize DFMC in project
   chat        Interactive chat session
   ask         One-shot question
