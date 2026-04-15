@@ -58,6 +58,62 @@ web:
 	}
 }
 
+func TestLoadWithOptions_LoadsProjectDotEnv(t *testing.T) {
+	tmp := t.TempDir()
+	projectRoot := filepath.Join(tmp, "project")
+	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, ".env"), []byte("ZAI_API_KEY=dotenv-zai-key\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		ProjectPath: projectPath,
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if got := cfg.Providers.Profiles["zai"].APIKey; got != "dotenv-zai-key" {
+		t.Fatalf("expected zai key from .env, got %q", got)
+	}
+}
+
+func TestLoadWithOptions_ProcessEnvOverridesDotEnv(t *testing.T) {
+	t.Setenv("ZAI_API_KEY", "process-zai-key")
+
+	tmp := t.TempDir()
+	projectRoot := filepath.Join(tmp, "project")
+	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, ".env"), []byte("ZAI_API_KEY=dotenv-zai-key\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		ProjectPath: projectPath,
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if got := cfg.Providers.Profiles["zai"].APIKey; got != "process-zai-key" {
+		t.Fatalf("expected process env to win over .env, got %q", got)
+	}
+}
+
 func TestFindProjectRoot(t *testing.T) {
 	tmp := t.TempDir()
 	root := filepath.Join(tmp, "repo")

@@ -58,6 +58,18 @@ func New(cfg config.Config) *Engine {
 	e.Register(NewEditFileTool())
 	e.Register(NewListDirTool())
 	e.Register(NewGrepCodebaseTool())
+	timeout, err := time.ParseDuration(strings.TrimSpace(cfg.Tools.Shell.Timeout))
+	if err != nil || timeout <= 0 {
+		timeout, _ = time.ParseDuration(strings.TrimSpace(cfg.Security.Sandbox.Timeout))
+	}
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	e.Register(NewRunCommandTool(runCommandConfig{
+		allowShell: cfg.Security.Sandbox.AllowShell,
+		timeout:    timeout,
+		blocked:    append([]string(nil), cfg.Tools.Shell.BlockedCommands...),
+	}))
 	return e
 }
 
@@ -214,6 +226,17 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 			maxResults = 500
 		}
 		params["max_results"] = maxResults
+	case "run_command":
+		timeoutMs := asInt(params, "timeout_ms", 0)
+		if timeoutMs < 0 {
+			timeoutMs = 0
+		}
+		if timeoutMs > 120_000 {
+			timeoutMs = 120_000
+		}
+		if timeoutMs > 0 {
+			params["timeout_ms"] = timeoutMs
+		}
 	}
 	return params
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -216,11 +217,13 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	}
 
 	projectPath := opts.ProjectPath
+	projectRoot := FindProjectRoot(opts.CWD)
 	if projectPath == "" {
-		projectRoot := FindProjectRoot(opts.CWD)
 		if projectRoot != "" {
 			projectPath = filepath.Join(projectRoot, DefaultDirName, "config.yaml")
 		}
+	} else if projectRoot == "" {
+		projectRoot = filepath.Dir(filepath.Dir(projectPath))
 	}
 	if projectPath != "" {
 		if err := loadYAML(projectPath, cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -228,6 +231,7 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 		}
 	}
 
+	loadDotEnv(projectRoot)
 	cfg.applyEnv()
 	cfg.Providers.Profiles = MergeProviderProfilesFromModelsDev(cfg.Providers.Profiles, nil, ModelsDevMergeOptions{})
 	if catalog, err := LoadModelsDevCatalog(ModelsDevCachePath()); err == nil {
@@ -252,6 +256,61 @@ func loadYAML(path string, out *Config) error {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
 	return nil
+}
+
+func loadDotEnv(root string) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return
+	}
+	path := filepath.Join(root, ".env")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if i == 0 {
+			line = strings.TrimPrefix(line, "\uFEFF")
+		}
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		value = parseDotEnvValue(value)
+		_ = os.Setenv(key, value)
+	}
+}
+
+func parseDotEnvValue(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "\"") || strings.HasPrefix(value, "'") {
+		if unquoted, err := strconv.Unquote(value); err == nil {
+			return unquoted
+		}
+		return strings.Trim(value, "\"'")
+	}
+	if idx := strings.Index(value, " #"); idx >= 0 {
+		value = strings.TrimSpace(value[:idx])
+	}
+	return value
 }
 
 func (c *Config) applyEnv() {

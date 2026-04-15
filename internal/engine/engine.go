@@ -58,18 +58,71 @@ type Engine struct {
 
 	mu    sync.RWMutex
 	state EngineState
+
+	lastContextIn ContextInStatus
 }
 
 type Status struct {
-	State        EngineState                 `json:"state"`
-	ProjectRoot  string                      `json:"project_root"`
-	Provider     string                      `json:"provider"`
-	Model        string                      `json:"model"`
-	ASTBackend   string                      `json:"ast_backend"`
-	ASTReason    string                      `json:"ast_reason,omitempty"`
-	ASTLanguages []ast.BackendLanguageStatus `json:"ast_languages,omitempty"`
-	ASTMetrics   ast.ParseMetrics            `json:"ast_metrics,omitempty"`
-	CodeMap      codemap.BuildMetrics        `json:"codemap_metrics,omitempty"`
+	State           EngineState                 `json:"state"`
+	ProjectRoot     string                      `json:"project_root"`
+	Provider        string                      `json:"provider"`
+	Model           string                      `json:"model"`
+	ProviderProfile ProviderProfileStatus       `json:"provider_profile,omitempty"`
+	ModelsDevCache  ModelsDevCacheStatus        `json:"models_dev_cache,omitempty"`
+	ContextIn       *ContextInStatus            `json:"context_in,omitempty"`
+	ASTBackend      string                      `json:"ast_backend"`
+	ASTReason       string                      `json:"ast_reason,omitempty"`
+	ASTLanguages    []ast.BackendLanguageStatus `json:"ast_languages,omitempty"`
+	ASTMetrics      ast.ParseMetrics            `json:"ast_metrics,omitempty"`
+	CodeMap         codemap.BuildMetrics        `json:"codemap_metrics,omitempty"`
+}
+
+type ContextInStatus struct {
+	Query                string                `json:"query,omitempty"`
+	Task                 string                `json:"task,omitempty"`
+	BuiltAt              time.Time             `json:"built_at,omitempty"`
+	Provider             string                `json:"provider,omitempty"`
+	Model                string                `json:"model,omitempty"`
+	ProviderMaxContext   int                   `json:"provider_max_context,omitempty"`
+	ContextAvailable     int                   `json:"context_available_tokens,omitempty"`
+	ExplicitFileMentions int                   `json:"explicit_file_mentions,omitempty"`
+	MaxFiles             int                   `json:"max_files,omitempty"`
+	MaxTokensTotal       int                   `json:"max_tokens_total,omitempty"`
+	MaxTokensPerFile     int                   `json:"max_tokens_per_file,omitempty"`
+	Compression          string                `json:"compression,omitempty"`
+	IncludeTests         bool                  `json:"include_tests"`
+	IncludeDocs          bool                  `json:"include_docs"`
+	FileCount            int                   `json:"file_count,omitempty"`
+	TokenCount           int                   `json:"token_count,omitempty"`
+	Reasons              []string              `json:"reasons,omitempty"`
+	Files                []ContextInFileStatus `json:"files,omitempty"`
+}
+
+type ContextInFileStatus struct {
+	Path        string  `json:"path"`
+	LineStart   int     `json:"line_start,omitempty"`
+	LineEnd     int     `json:"line_end,omitempty"`
+	TokenCount  int     `json:"token_count,omitempty"`
+	Score       float64 `json:"score,omitempty"`
+	Compression string  `json:"compression,omitempty"`
+	Reason      string  `json:"reason,omitempty"`
+}
+
+type ProviderProfileStatus struct {
+	Name       string `json:"name,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Protocol   string `json:"protocol,omitempty"`
+	BaseURL    string `json:"base_url,omitempty"`
+	MaxTokens  int    `json:"max_tokens,omitempty"`
+	MaxContext int    `json:"max_context,omitempty"`
+	Configured bool   `json:"configured"`
+}
+
+type ModelsDevCacheStatus struct {
+	Path      string    `json:"path,omitempty"`
+	Exists    bool      `json:"exists"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	SizeBytes int64     `json:"size_bytes,omitempty"`
 }
 
 type ContextBudgetInfo struct {
@@ -296,6 +349,8 @@ func (e *Engine) Status() Status {
 	var astLanguages []ast.BackendLanguageStatus
 	var astMetrics ast.ParseMetrics
 	var codemapMetrics codemap.BuildMetrics
+	providerProfile := e.providerProfileStatusLocked()
+	modelsDevCache := modelsDevCacheStatus()
 	if e.AST != nil {
 		bs := e.AST.BackendStatus()
 		astBackend = bs.Active
@@ -306,17 +361,35 @@ func (e *Engine) Status() Status {
 	if e.CodeMap != nil {
 		codemapMetrics = e.CodeMap.Metrics()
 	}
+	contextIn := cloneContextInStatus(e.lastContextIn)
 	return Status{
-		State:        e.state,
-		ProjectRoot:  e.ProjectRoot,
-		Provider:     e.provider(),
-		Model:        e.model(),
-		ASTBackend:   astBackend,
-		ASTReason:    astReason,
-		ASTLanguages: astLanguages,
-		ASTMetrics:   astMetrics,
-		CodeMap:      codemapMetrics,
+		State:           e.state,
+		ProjectRoot:     e.ProjectRoot,
+		Provider:        e.provider(),
+		Model:           e.model(),
+		ProviderProfile: providerProfile,
+		ModelsDevCache:  modelsDevCache,
+		ContextIn:       contextIn,
+		ASTBackend:      astBackend,
+		ASTReason:       astReason,
+		ASTLanguages:    astLanguages,
+		ASTMetrics:      astMetrics,
+		CodeMap:         codemapMetrics,
 	}
+}
+
+func cloneContextInStatus(src ContextInStatus) *ContextInStatus {
+	if strings.TrimSpace(src.Query) == "" && src.FileCount == 0 && src.TokenCount == 0 && len(src.Reasons) == 0 && len(src.Files) == 0 {
+		return nil
+	}
+	copyStatus := src
+	if len(src.Reasons) > 0 {
+		copyStatus.Reasons = append([]string(nil), src.Reasons...)
+	}
+	if len(src.Files) > 0 {
+		copyStatus.Files = append([]ContextInFileStatus(nil), src.Files...)
+	}
+	return &copyStatus
 }
 
 func (e *Engine) ContextBudgetPreview(question string) ContextBudgetInfo {
@@ -589,6 +662,64 @@ func (e *Engine) model() string {
 	return profile.Model
 }
 
+func (e *Engine) providerProfileStatusLocked() ProviderProfileStatus {
+	status := ProviderProfileStatus{
+		Name: strings.TrimSpace(e.provider()),
+	}
+	if e.Config == nil {
+		status.Model = strings.TrimSpace(e.model())
+		return status
+	}
+	if status.Name == "" {
+		status.Name = strings.TrimSpace(e.Config.Providers.Primary)
+	}
+	if profile, ok := e.Config.Providers.Profiles[status.Name]; ok {
+		status.Model = strings.TrimSpace(profile.Model)
+		status.Protocol = strings.TrimSpace(profile.Protocol)
+		status.BaseURL = strings.TrimSpace(profile.BaseURL)
+		status.MaxTokens = profile.MaxTokens
+		status.MaxContext = profile.MaxContext
+		status.Configured = providerProfileConfigured(status.Name, profile)
+	}
+	if status.Model == "" {
+		status.Model = strings.TrimSpace(e.model())
+	}
+	if override := strings.TrimSpace(e.modelOverride); override != "" {
+		status.Model = override
+	}
+	return status
+}
+
+func modelsDevCacheStatus() ModelsDevCacheStatus {
+	path := config.ModelsDevCachePath()
+	status := ModelsDevCacheStatus{
+		Path: strings.TrimSpace(path),
+	}
+	if status.Path == "" {
+		return status
+	}
+	info, err := os.Stat(status.Path)
+	if err != nil {
+		return status
+	}
+	status.Exists = true
+	status.UpdatedAt = info.ModTime()
+	status.SizeBytes = info.Size()
+	return status
+}
+
+func providerProfileConfigured(name string, profile config.ModelConfig) bool {
+	apiKey := strings.TrimSpace(profile.APIKey)
+	baseURL := strings.TrimSpace(profile.BaseURL)
+
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "generic":
+		return baseURL != ""
+	default:
+		return apiKey != "" || baseURL != ""
+	}
+}
+
 const (
 	defaultContextTotalCapTokens = 16000
 	minContextTotalBudgetTokens  = 512
@@ -625,9 +756,16 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 	if e.Context == nil {
 		return nil
 	}
-	opts := e.contextBuildOptions(question)
+	runtime := e.promptRuntime()
+	opts := e.contextBuildOptionsWithRuntime(question, runtime)
 	chunks, err := e.Context.BuildWithOptions(question, opts)
 	if err != nil {
+		e.setLastContextInStatus(ContextInStatus{
+			Query:   strings.TrimSpace(question),
+			Task:    detectContextTask(question),
+			BuiltAt: time.Now(),
+			Reasons: []string{"Context build failed: " + strings.TrimSpace(err.Error())},
+		})
 		e.EventBus.Publish(Event{
 			Type:    "context:error",
 			Source:  "engine",
@@ -635,6 +773,8 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 		})
 		return nil
 	}
+	report := e.buildContextInStatus(question, runtime, opts, chunks)
+	e.setLastContextInStatus(report)
 	total := 0
 	for _, c := range chunks {
 		total += c.TokenCount
@@ -650,6 +790,7 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 			"per_file":    opts.MaxTokensPerFile,
 			"compression": opts.Compression,
 			"task":        task,
+			"reasons":     report.Reasons,
 		},
 	})
 	return chunks
@@ -729,6 +870,167 @@ func (e *Engine) contextBuildOptionsWithRuntime(question string, runtime ctxmgr.
 	return opts
 }
 
+func (e *Engine) setLastContextInStatus(status ContextInStatus) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.lastContextIn = status
+}
+
+func (e *Engine) buildContextInStatus(question string, runtime ctxmgr.PromptRuntime, opts ctxmgr.BuildOptions, chunks []types.ContextChunk) ContextInStatus {
+	query := strings.TrimSpace(question)
+	task := detectContextTask(query)
+	profile := contextTaskProfile(task)
+	providerLimit := e.providerMaxContextForRuntime(runtime)
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
+	reserve := e.contextReserveBreakdownWithRuntime(query, runtime)
+	available := providerLimit - reserve.Total
+	if available < minContextTotalBudgetTokens {
+		available = minContextTotalBudgetTokens
+	}
+	providerName := strings.TrimSpace(runtime.Provider)
+	if providerName == "" {
+		providerName = e.provider()
+	}
+	modelName := strings.TrimSpace(runtime.Model)
+	if modelName == "" {
+		modelName = e.model()
+	}
+
+	terms := tokenizeContextQueryTerms(query)
+	explicitMentions := countExplicitFileMentions(query)
+	explicitPaths := explicitFileMentionPaths(query)
+	totalTokens := 0
+	files := make([]ContextInFileStatus, 0, len(chunks))
+	for _, chunk := range chunks {
+		totalTokens += chunk.TokenCount
+		path := normalizeContextPathForStatus(e.ProjectRoot, chunk.Path)
+		files = append(files, ContextInFileStatus{
+			Path:        path,
+			LineStart:   chunk.LineStart,
+			LineEnd:     chunk.LineEnd,
+			TokenCount:  chunk.TokenCount,
+			Score:       chunk.Score,
+			Compression: chunk.Compression,
+			Reason:      explainContextFileReason(path, terms, explicitPaths, chunk.Score),
+		})
+	}
+
+	reasons := make([]string, 0, 8)
+	reasons = append(reasons, fmt.Sprintf("task=%s profile(total x%.2f, files x%.2f, per-file x%.2f)", task, profile.TotalScale, profile.FileScale, profile.PerFileScale))
+	if explicitMentions > 0 {
+		reasons = append(reasons, fmt.Sprintf("explicit file markers detected (%d), retrieval was narrowed", explicitMentions))
+	}
+	if providerLimit <= 12000 {
+		reasons = append(reasons, "provider max context is tight, compression and budget were constrained")
+	}
+	configCompression := "standard"
+	if e.Config != nil {
+		configCompression = normalizeContextCompression(e.Config.Context.Compression)
+	}
+	if opts.Compression != configCompression {
+		reasons = append(reasons, fmt.Sprintf("compression adjusted from %s to %s for runtime budget", configCompression, opts.Compression))
+	}
+	if !opts.IncludeDocs {
+		reasons = append(reasons, "docs were excluded to preserve code-context tokens")
+	}
+	if !opts.IncludeTests {
+		reasons = append(reasons, "tests were excluded by context settings")
+	}
+	if available > 0 && opts.MaxTokensTotal >= int(float64(available)*0.9) {
+		reasons = append(reasons, "context budget is near runtime cap; deeper retrieval may require tighter query/file markers")
+	}
+
+	return ContextInStatus{
+		Query:                query,
+		Task:                 task,
+		BuiltAt:              time.Now(),
+		Provider:             providerName,
+		Model:                modelName,
+		ProviderMaxContext:   providerLimit,
+		ContextAvailable:     available,
+		ExplicitFileMentions: explicitMentions,
+		MaxFiles:             opts.MaxFiles,
+		MaxTokensTotal:       opts.MaxTokensTotal,
+		MaxTokensPerFile:     opts.MaxTokensPerFile,
+		Compression:          opts.Compression,
+		IncludeTests:         opts.IncludeTests,
+		IncludeDocs:          opts.IncludeDocs,
+		FileCount:            len(chunks),
+		TokenCount:           totalTokens,
+		Reasons:              reasons,
+		Files:                files,
+	}
+}
+
+func normalizeContextPathForStatus(projectRoot, path string) string {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	if path == "" {
+		return path
+	}
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		return path
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return path
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == "." || strings.HasPrefix(rel, "../") {
+		return path
+	}
+	return rel
+}
+
+func explainContextFileReason(path string, terms, explicitPaths []string, score float64) string {
+	if contextPathMatchesMention(path, explicitPaths) {
+		return "explicit [[file:...]] marker"
+	}
+	matchCount := 0
+	lowerPath := strings.ToLower(filepath.ToSlash(path))
+	for _, term := range terms {
+		if strings.Contains(lowerPath, term) {
+			matchCount++
+		}
+	}
+	if matchCount > 0 {
+		return fmt.Sprintf("matched %d query term(s)", matchCount)
+	}
+	if score >= 3 {
+		return "high codemap relevance score"
+	}
+	if score > 0 {
+		return "codemap ranking + hotspot weight"
+	}
+	return "fallback ranking to keep broad project coverage"
+}
+
+func contextPathMatchesMention(path string, mentions []string) bool {
+	if len(mentions) == 0 {
+		return false
+	}
+	lowerPath := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if lowerPath == "" {
+		return false
+	}
+	base := strings.ToLower(filepath.Base(lowerPath))
+	for _, mention := range mentions {
+		m := strings.ToLower(filepath.ToSlash(strings.TrimSpace(mention)))
+		if m == "" {
+			continue
+		}
+		if m == lowerPath || strings.HasSuffix(lowerPath, "/"+m) || strings.HasSuffix(lowerPath, m) {
+			return true
+		}
+		if mb := strings.ToLower(filepath.Base(m)); mb != "" && mb == base {
+			return true
+		}
+	}
+	return false
+}
+
 func detectContextTask(question string) string {
 	task := strings.TrimSpace(strings.ToLower(promptlib.DetectTask(question)))
 	if task == "" {
@@ -758,6 +1060,7 @@ func contextTaskProfile(task string) contextTaskBudgetProfile {
 
 var (
 	explicitFileMentionRe = regexp.MustCompile(`\[\[file:[^\]]+\]\]`)
+	explicitFilePathRe    = regexp.MustCompile(`\[\[file:([^\]#]+)(?:#[^\]]*)?\]\]`)
 	fileMentionRe         = regexp.MustCompile(`(?i)\b[\w./-]+\.(go|ts|tsx|js|jsx|py|rs|java|cs|php|yaml|yml|json|md)\b`)
 )
 
@@ -766,6 +1069,54 @@ func countExplicitFileMentions(question string) int {
 		return 0
 	}
 	return len(explicitFileMentionRe.FindAllStringIndex(question, -1))
+}
+
+func tokenizeContextQueryTerms(question string) []string {
+	parts := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(question)), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '.' && r != '/' && r != '-'
+	})
+	if len(parts) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if len(part) < 3 {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		out = append(out, part)
+	}
+	return out
+}
+
+func explicitFileMentionPaths(question string) []string {
+	matches := explicitFilePathRe.FindAllStringSubmatch(strings.TrimSpace(question), -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(matches))
+	seen := map[string]struct{}{}
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		path := strings.TrimSpace(filepath.ToSlash(match[1]))
+		if path == "" {
+			continue
+		}
+		key := strings.ToLower(path)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		paths = append(paths, path)
+	}
+	return paths
 }
 
 func clampInt(v, lo, hi int) int {
@@ -1447,6 +1798,13 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 	if e.Providers == nil {
 		return "", fmt.Errorf("provider router is not initialized")
 	}
+	if e.shouldUseLocalToolLoop() {
+		completion, err := e.askWithLocalTools(ctx, question)
+		if err != nil {
+			return "", err
+		}
+		return completion.Answer, nil
+	}
 	e.ensureIndexed(ctx)
 
 	chunks := e.buildContextChunks(question)
@@ -1495,6 +1853,13 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 	}
 	if e.Providers == nil {
 		return nil, fmt.Errorf("provider router is not initialized")
+	}
+	if e.shouldUseLocalToolLoop() {
+		completion, err := e.askWithLocalTools(ctx, question)
+		if err != nil {
+			return nil, err
+		}
+		return streamAnswerText(ctx, completion.Answer), nil
 	}
 	e.ensureIndexed(ctx)
 

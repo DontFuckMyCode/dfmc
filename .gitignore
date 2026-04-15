@@ -18,3 +18,7 @@ Thumbs.db
 .vscode/
 
 .project/
+
+
+.env
+.env.local

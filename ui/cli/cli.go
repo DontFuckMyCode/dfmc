@@ -243,6 +243,8 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 		"ready":                      st.State == engine.StateReady || st.State == engine.StateServing,
 		"provider":                   st.Provider,
 		"model":                      st.Model,
+		"provider_profile":           st.ProviderProfile,
+		"models_dev_cache":           st.ModelsDevCache,
 		"ast_backend":                st.ASTBackend,
 		"ast_reason":                 st.ASTReason,
 		"ast_languages":              st.ASTLanguages,
@@ -268,6 +270,12 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 	fmt.Printf("dfmc %s\n", version)
 	fmt.Printf("state: %v (ready=%t)\n", st.State, st.State == engine.StateReady || st.State == engine.StateServing)
 	fmt.Printf("provider/model: %s / %s\n", st.Provider, st.Model)
+	if summary := formatProviderProfileSummary(st.ProviderProfile); summary != "" {
+		fmt.Printf("provider profile: %s\n", summary)
+	}
+	if summary := formatModelsDevCacheSummary(st.ModelsDevCache); summary != "" {
+		fmt.Printf("models.dev cache: %s\n", summary)
+	}
 	if strings.TrimSpace(st.ASTBackend) != "" {
 		fmt.Printf("ast backend: %s\n", st.ASTBackend)
 	}
@@ -363,6 +371,53 @@ func blankFallback(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func formatProviderProfileSummary(profile engine.ProviderProfileStatus) string {
+	name := strings.TrimSpace(profile.Name)
+	model := strings.TrimSpace(profile.Model)
+	protocol := strings.TrimSpace(profile.Protocol)
+	baseURL := strings.TrimSpace(profile.BaseURL)
+	if name == "" && model == "" && protocol == "" && baseURL == "" && profile.MaxContext <= 0 && profile.MaxTokens <= 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, 6)
+	if name != "" || model != "" {
+		parts = append(parts, fmt.Sprintf("%s/%s", blankFallback(name, "-"), blankFallback(model, "-")))
+	}
+	if protocol != "" {
+		parts = append(parts, "proto="+protocol)
+	}
+	if profile.MaxContext > 0 {
+		parts = append(parts, fmt.Sprintf("ctx=%d", profile.MaxContext))
+	}
+	if profile.MaxTokens > 0 {
+		parts = append(parts, fmt.Sprintf("out=%d", profile.MaxTokens))
+	}
+	if baseURL != "" {
+		parts = append(parts, "endpoint="+baseURL)
+	}
+	parts = append(parts, "configured="+strconv.FormatBool(profile.Configured))
+	return strings.Join(parts, " ")
+}
+
+func formatModelsDevCacheSummary(cache engine.ModelsDevCacheStatus) string {
+	path := strings.TrimSpace(cache.Path)
+	if path == "" {
+		return ""
+	}
+	if !cache.Exists {
+		return "missing"
+	}
+	parts := []string{"ready"}
+	if !cache.UpdatedAt.IsZero() {
+		parts = append(parts, "updated="+cache.UpdatedAt.Format(time.RFC3339))
+	}
+	if cache.SizeBytes > 0 {
+		parts = append(parts, fmt.Sprintf("size=%d", cache.SizeBytes))
+	}
+	return strings.Join(parts, " ")
 }
 
 func formatCodeMapMetricsSummary(metrics codemap.BuildMetrics) string {
@@ -3697,6 +3752,20 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 	}
 
 	if eng.Config != nil {
+		cache := eng.Status().ModelsDevCache
+		if !cache.Exists {
+			add("modelsdev.cache", "warn", "missing: "+cache.Path)
+		} else {
+			details := cache.Path
+			if !cache.UpdatedAt.IsZero() {
+				details += " updated " + cache.UpdatedAt.Format(time.RFC3339)
+			}
+			if cache.SizeBytes > 0 {
+				details += fmt.Sprintf(" size=%d", cache.SizeBytes)
+			}
+			add("modelsdev.cache", "pass", details)
+		}
+
 		names := make([]string, 0, len(eng.Config.Providers.Profiles))
 		for name := range eng.Config.Providers.Profiles {
 			names = append(names, name)
@@ -3704,6 +3773,19 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		sort.Strings(names)
 		for _, name := range names {
 			prof := eng.Config.Providers.Profiles[name]
+			profileStatus := "pass"
+			if strings.TrimSpace(prof.Model) == "" || strings.TrimSpace(prof.Protocol) == "" || prof.MaxContext <= 0 || prof.MaxTokens <= 0 {
+				profileStatus = "warn"
+			}
+			add("provider."+name+".profile", profileStatus, formatProviderProfileSummary(engine.ProviderProfileStatus{
+				Name:       name,
+				Model:      prof.Model,
+				Protocol:   prof.Protocol,
+				BaseURL:    prof.BaseURL,
+				MaxTokens:  prof.MaxTokens,
+				MaxContext: prof.MaxContext,
+				Configured: providerConfigured(name, prof),
+			}))
 			configured := providerConfigured(name, prof)
 			if configured {
 				add("provider."+name+".configured", "pass", "credentials/endpoint present")

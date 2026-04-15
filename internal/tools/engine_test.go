@@ -369,3 +369,60 @@ func TestEditFileFailsIfChangedSinceRead(t *testing.T) {
 		t.Fatalf("expected changed-since-read guard error, got: %v", err)
 	}
 }
+
+func TestRunCommandToolRunsDirectCommand(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	res, err := eng.Execute(context.Background(), "run_command", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"command":    "go",
+			"args":       "version",
+			"timeout_ms": 10000,
+		},
+	})
+	if err != nil {
+		t.Fatalf("run_command: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(res.Output), "go version") {
+		t.Fatalf("expected go version output, got %q", res.Output)
+	}
+	if changed, _ := res.Data["workspace_changed"].(bool); changed {
+		t.Fatalf("expected go version to avoid workspace changes, got %#v", res.Data)
+	}
+}
+
+func TestRunCommandToolBlocksShellInterpreter(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	_, err := eng.Execute(context.Background(), "run_command", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"command": "powershell",
+			"args":    "-Command Get-ChildItem",
+		},
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "shell interpreters are blocked") {
+		t.Fatalf("expected shell interpreter block, got %v", err)
+	}
+}
+
+func TestRunCommandToolHonorsAllowShellFalse(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.Security.Sandbox.AllowShell = false
+	eng := New(*cfg)
+
+	_, err := eng.Execute(context.Background(), "run_command", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"command": "go",
+			"args":    "version",
+		},
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "allow_shell=false") {
+		t.Fatalf("expected allow_shell=false error, got %v", err)
+	}
+}
