@@ -317,7 +317,7 @@ func TestRenderChatViewShowsQuickActionsForNaturalLanguage(t *testing.T) {
 	m.input = "read note.txt"
 
 	view := m.renderChatView(120)
-	if !strings.Contains(view, "Quick Actions") || !strings.Contains(view, "/read note.txt 1 200") {
+	if !strings.Contains(view, "Quick actions") || !strings.Contains(view, "/read note.txt 1 200") {
 		t.Fatalf("expected quick actions block in chat view, got:\n%s", view)
 	}
 	if !strings.Contains(view, "/grep note") {
@@ -824,7 +824,7 @@ func TestRenderChatViewShowsCommandArgSuggestions(t *testing.T) {
 	m.input = "/provider op"
 
 	view := m.renderChatView(120)
-	if !strings.Contains(view, "Command Args") || !strings.Contains(view, "openai") {
+	if !strings.Contains(view, "Command args") || !strings.Contains(view, "openai") {
 		t.Fatalf("expected command arg suggestion section in chat view, got:\n%s", view)
 	}
 }
@@ -837,7 +837,7 @@ func TestRenderChatViewShowsToolCommandArgSuggestions(t *testing.T) {
 	m.input = "/tool read_file p"
 
 	view := m.renderChatView(120)
-	if !strings.Contains(view, "Command Args") || !strings.Contains(view, "path=") {
+	if !strings.Contains(view, "Command args") || !strings.Contains(view, "path=") {
 		t.Fatalf("expected tool command arg suggestion section in chat view, got:\n%s", view)
 	}
 }
@@ -1164,6 +1164,62 @@ func TestToolTimelineChipsTrackCallAndResult(t *testing.T) {
 	// longer renders a separate Tool Timeline section — the event lives
 	// inline in the transcript instead.
 	_ = m.renderChatView(140)
+}
+
+func TestToolCallsMirrorOntoStreamingAssistantMessage(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.status = engine.Status{Provider: "anthropic", Model: "claude-opus-4-6"}
+	m.sending = true
+	m.transcript = []chatLine{
+		{Role: "user", Content: "list dir"},
+		{Role: "assistant", Content: ""},
+	}
+	m.streamIndex = 1
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool":           "list_dir",
+			"step":           1,
+			"params_preview": "path=.",
+		},
+	})
+	if got := len(m.transcript[1].ToolChips); got != 1 {
+		t.Fatalf("expected tool:call to push chip onto streaming assistant line, got %d", got)
+	}
+	if chip := m.transcript[1].ToolChips[0]; chip.Status != "running" || chip.Name != "list_dir" {
+		t.Fatalf("expected running list_dir chip, got %#v", chip)
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":          "list_dir",
+			"step":          1,
+			"durationMs":    73,
+			"success":       true,
+			"output_tokens": 1280,
+			"truncated":     true,
+		},
+	})
+	if got := len(m.transcript[1].ToolChips); got != 1 {
+		t.Fatalf("tool:result should merge into the running chip, got %d", got)
+	}
+	chip := m.transcript[1].ToolChips[0]
+	if chip.Status != "ok" || chip.DurationMs != 73 {
+		t.Fatalf("expected merged ok chip with duration, got %#v", chip)
+	}
+	if chip.OutputTokens != 1280 || !chip.Truncated {
+		t.Fatalf("expected token delta + truncated flag on chip, got %#v", chip)
+	}
+
+	view := m.renderChatView(140)
+	if !strings.Contains(view, "list_dir") || !strings.Contains(view, "73ms") {
+		t.Fatalf("assistant bubble should render the tool chip strip inline; got:\n%s", view)
+	}
+	if !strings.Contains(view, "+1.3k tok") {
+		t.Fatalf("assistant bubble should render the tool token delta; got:\n%s", view)
+	}
 }
 
 func TestChatMentionNavigationAndTabCompletion(t *testing.T) {
@@ -2098,14 +2154,14 @@ func TestRenderStatusViewIncludesProviderProfileAndModelsDevCache(t *testing.T) 
 	if !strings.Contains(view, "proto=anthropic") {
 		t.Fatalf("expected provider profile in status view, got:\n%s", view)
 	}
-	if !strings.Contains(view, "Models.dev: ready") {
+	if !strings.Contains(view, "Catalog:") || !strings.Contains(view, "ready") {
 		t.Fatalf("expected models.dev cache line in status view, got:\n%s", view)
 	}
 	if !strings.Contains(view, "Runtime:") {
 		t.Fatalf("expected runtime connectivity line in status view, got:\n%s", view)
 	}
-	if !strings.Contains(view, "Context In:") || !strings.Contains(view, "Context Why:") || !strings.Contains(view, "Context Top:") {
-		t.Fatalf("expected context-in lines in status view, got:\n%s", view)
+	if !strings.Contains(view, "CONTEXT IN") || !strings.Contains(view, "Last:") || !strings.Contains(view, "Why:") || !strings.Contains(view, "Top:") {
+		t.Fatalf("expected grouped context-in section in status view, got:\n%s", view)
 	}
 }
 
@@ -2428,7 +2484,7 @@ func TestRenderPatchViewShowsPatchFiles(t *testing.T) {
 	}
 
 	view := m.renderPatchView(100)
-	if !strings.Contains(view, "Patch Files: internal/auth/service.go") {
+	if !strings.Contains(view, "Patch files:") || !strings.Contains(view, "internal/auth/service.go") {
 		t.Fatalf("expected patch files line in patch view, got:\n%s", view)
 	}
 	if !strings.Contains(view, "Pinned file is touched by latest patch.") {
@@ -2465,10 +2521,10 @@ func TestShiftPatchTargetAndRenderPatchViewUsesCurrentSection(t *testing.T) {
 	}
 
 	view := next.renderPatchView(100)
-	if !strings.Contains(view, "Patch Target: b.go (2/2, hunks=1)") {
+	if !strings.Contains(view, "Focus file:") || !strings.Contains(view, "b.go (2/2, hunks=1)") {
 		t.Fatalf("expected patch target summary for second section, got:\n%s", view)
 	}
-	if !strings.Contains(view, "Hunk Target: @@ -1 +1 @@ (1/1)") {
+	if !strings.Contains(view, "Focus hunk:") || !strings.Contains(view, "@@ -1 +1 @@ (1/1)") {
 		t.Fatalf("expected hunk target summary, got:\n%s", view)
 	}
 	if !strings.Contains(view, "+++ b/b.go") || strings.Contains(view, "+++ b/a.go") {
@@ -2501,7 +2557,7 @@ func TestShiftPatchHunkAndReviewHints(t *testing.T) {
 	}
 
 	view := next.renderPatchView(100)
-	if !strings.Contains(view, "Hunk Target: @@ -10 +10 @@ (2/2)") {
+	if !strings.Contains(view, "Focus hunk:") || !strings.Contains(view, "@@ -10 +10 @@ (2/2)") {
 		t.Fatalf("expected second hunk target, got:\n%s", view)
 	}
 	if !strings.Contains(view, "contains TODO/FIXME") || !strings.Contains(view, "check debug or panic statements") {
@@ -2610,12 +2666,42 @@ func TestRenderStatsPanelShowsAllSections(t *testing.T) {
 		"AGENT", "tool-call", "2/6", "read_file", "42ms",
 		"TOOLS", "enabled", "6 registered",
 		"GIT", "main", "+255", "-10",
-		"SESSION", "42m", "12 messages",
+		"SESSION", "42m", "12 msgs",
 		"ctrl+s",
 	} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("stats panel missing %q, got:\n%s", want, panel)
 		}
+	}
+}
+
+func TestRenderToolChipWrapsLongPreviewToSecondLine(t *testing.T) {
+	chip := toolChip{
+		Name:       "read_file",
+		Status:     "ok",
+		DurationMs: 42,
+		Preview:    "internal/provider/offline_analyzer.go L120-L320 — 8 security findings, 3 critical · AWS keys, SQL concat, weak crypto detected",
+	}
+	// Width 60: head+meta+preview cannot fit on one line so preview wraps.
+	out := renderToolChip(chip, 60)
+	if !strings.Contains(out, "\n") {
+		t.Fatalf("expected long preview to wrap to a second line; got:\n%s", out)
+	}
+	parts := strings.Split(out, "\n")
+	if len(parts) != 2 {
+		t.Fatalf("expected exactly two lines, got %d:\n%s", len(parts), out)
+	}
+	if !strings.Contains(parts[0], "read_file") || !strings.Contains(parts[0], "42ms") {
+		t.Fatalf("first line should hold head+meta, got: %q", parts[0])
+	}
+	if !strings.Contains(parts[1], "offline_analyzer") {
+		t.Fatalf("second line should begin with preview text, got: %q", parts[1])
+	}
+
+	// Short preview — single-line form.
+	short := renderToolChip(toolChip{Name: "list_dir", Status: "ok", Preview: "."}, 60)
+	if strings.Contains(short, "\n") {
+		t.Fatalf("short chip should stay on one line, got:\n%s", short)
 	}
 }
 

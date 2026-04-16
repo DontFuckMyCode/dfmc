@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"gopkg.in/yaml.v3"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
@@ -45,8 +47,10 @@ type chatLine struct {
 	ToolNames     []string
 	ToolCalls     int
 	ToolFailures  int
+	ToolChips     []toolChip
 	Timestamp     time.Time
 	TokenCount    int
+	DurationMs    int
 }
 
 type slashCommandItem struct {
@@ -133,6 +137,22 @@ type Model struct {
 	// Default on when the terminal is wide enough; ctrl+s flips it so the
 	// user can reclaim the width for chat on narrow screens.
 	showStatsPanel bool
+	// resumePromptActive turns on when the engine emits agent:loop:parked and
+	// controls whether the yellow "press enter to resume" banner is drawn
+	// above the composer. Esc dismisses it; a fresh submit or a successful
+	// resume clears it automatically.
+	resumePromptActive bool
+	// streamStartedAt records the wall-clock moment a stream was kicked off
+	// (fresh submit or /continue). Used to stamp the assistant line's
+	// DurationMs on chatDoneMsg so the reader can see how long a turn took.
+	streamStartedAt time.Time
+	// spinnerFrame advances on tea.Tick while sending/agent is active so the
+	// streaming indicator has live motion instead of a static glyph. Cheap —
+	// a single int bump per frame, rendered by renderStreamingIndicator.
+	spinnerFrame int
+	// spinnerTicking is true while a tea.Tick cmd is in flight so we don't
+	// schedule overlapping ticks.
+	spinnerTicking bool
 	// chatScrollback is the number of transcript entries hidden below the
 	// visible window, i.e. how far PageUp has scrolled us back from the
 	// tail. Zero means "pinned to latest" — any new message snaps us back
@@ -265,6 +285,34 @@ type engineEventMsg struct {
 	event engine.Event
 }
 
+// spinnerTickMsg fires on a short interval while something is streaming or the
+// agent loop is alive. Each tick bumps m.spinnerFrame so the streaming
+// indicator, stats panel, and any other animated surface can paint motion
+// instead of a static glyph.
+type spinnerTickMsg struct{}
+
+// spinnerInterval is the frame cadence. ~125ms lands at ~8fps, which reads as
+// continuous motion without chewing CPU.
+const spinnerInterval = 125 * time.Millisecond
+
+// spinnerTickCmd schedules the next spinner frame. The caller is responsible
+// for only scheduling one at a time (see Model.spinnerTicking).
+func spinnerTickCmd() tea.Cmd {
+	return tea.Tick(spinnerInterval, func(time.Time) tea.Msg { return spinnerTickMsg{} })
+}
+
+// heartbeatTickMsg fires once per second, forever. It keeps the session timer,
+// elapsed-duration chips, and any other wall-clock-driven widget alive when
+// nothing else is happening — without it, the UI would freeze to whatever was
+// last painted until the next event arrived.
+type heartbeatTickMsg struct{}
+
+const heartbeatInterval = 1 * time.Second
+
+func heartbeatTickCmd() tea.Cmd {
+	return tea.Tick(heartbeatInterval, func(time.Time) tea.Msg { return heartbeatTickMsg{} })
+}
+
 func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	if ctx == nil {
 		ctx = context.Background()
@@ -307,6 +355,7 @@ func (m Model) Init() tea.Cmd {
 		loadFilesCmd(m.eng),
 		subscribeEventsCmd(m.eng),
 		loadGitInfoCmd(m.projectRoot()),
+		heartbeatTickCmd(),
 	)
 }
 
@@ -511,9 +560,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, waitForStreamMsg(m.streamMessages)
 
+	case spinnerTickMsg:
+		m.spinnerFrame++
+		if m.sending || m.agentLoopActive {
+			return m, spinnerTickCmd()
+		}
+		m.spinnerTicking = false
+		return m, nil
+
+	case heartbeatTickMsg:
+		// 1Hz heartbeat. Keeps the session timer and elapsed chips live
+		// even when no events are in flight. Cheap — one int bump and a
+		// repaint per second.
+		return m, heartbeatTickCmd()
+
 	case chatDoneMsg:
 		m.annotateAssistantPatch(m.streamIndex)
 		m.annotateAssistantToolUsage(m.streamIndex)
+		if m.streamIndex >= 0 && m.streamIndex < len(m.transcript) && !m.streamStartedAt.IsZero() {
+			m.transcript[m.streamIndex].DurationMs = int(time.Since(m.streamStartedAt).Milliseconds())
+		}
+		m.streamStartedAt = time.Time{}
 		m.sending = false
 		m.streamMessages = nil
 		m.streamIndex = -1
@@ -726,6 +793,15 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyPgDown:
 		m.scrollTranscript(8)
 		return m, nil
+	case tea.KeyEsc:
+		// Esc dismisses the parked-resume banner without tearing down the
+		// parked state in the engine — the user can still /continue later.
+		if m.resumePromptActive {
+			m.resumePromptActive = false
+			m.notice = "Resume prompt dismissed — parked loop kept; /continue re-opens it."
+			return m, nil
+		}
+		return m, nil
 	case tea.KeyShiftUp, tea.KeyCtrlUp:
 		// Finer transcript scroll — Up/Down alone are taken by input
 		// history + picker navigation, so we reserve the modifier variants
@@ -889,6 +965,13 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		raw := strings.TrimSpace(m.input)
+		// Parked-resume affordance. When the loop is parked, a bare Enter
+		// resumes; any typed text is forwarded to the resumed loop as a
+		// /btw-style note so the user can redirect the continuation.
+		if !m.sending && m.resumePromptActive && m.eng != nil && m.eng.HasParkedAgent() {
+			m.setChatInput("")
+			return m.startChatResume(raw)
+		}
 		if raw == "" {
 			return m, nil
 		}
@@ -2297,6 +2380,7 @@ func (m Model) submitChatQuestion(question string, quickActions []quickActionSug
 		return m, nil
 	}
 	m.resetAgentRuntime()
+	m.resumePromptActive = false
 	m.toolTimeline = nil
 	m.chatScrollback = 0
 	if len(quickActions) > 0 {
@@ -2318,9 +2402,24 @@ func (m Model) submitChatQuestion(question string, quickActions []quickActionSug
 	)
 	m.streamIndex = len(m.transcript) - 1
 	m.sending = true
+	m.streamStartedAt = time.Now()
 	m.notice = "Streaming answer..."
 	m.streamMessages = startChatStream(m.ctx, m.eng, question)
-	return m, waitForStreamMsg(m.streamMessages)
+	return m, tea.Batch(waitForStreamMsg(m.streamMessages), m.ensureSpinnerTick())
+}
+
+// ensureSpinnerTick schedules the spinner tick when needed, but only if one
+// isn't already in flight. Mutates m.spinnerTicking and returns the cmd (nil
+// when no schedule is needed).
+func (m *Model) ensureSpinnerTick() tea.Cmd {
+	if m.spinnerTicking {
+		return nil
+	}
+	if !m.sending && !m.agentLoopActive {
+		return nil
+	}
+	m.spinnerTicking = true
+	return spinnerTickCmd()
 }
 
 // drainPendingQueue pops the oldest queued message and submits it as if the
@@ -2348,6 +2447,7 @@ func (m Model) drainPendingQueue() (Model, tea.Cmd) {
 // uses, so the UI treats it identically.
 func (m Model) startChatResume(note string) (Model, tea.Cmd) {
 	m.resetAgentRuntime()
+	m.resumePromptActive = false
 	m.toolTimeline = nil
 	m.chatScrollback = 0
 	banner := "Resuming parked agent loop"
@@ -2358,9 +2458,10 @@ func (m Model) startChatResume(note string) (Model, tea.Cmd) {
 	m.transcript = append(m.transcript, newChatLine("assistant", ""))
 	m.streamIndex = len(m.transcript) - 1
 	m.sending = true
+	m.streamStartedAt = time.Now()
 	m.notice = "Resuming agent loop..."
 	m.streamMessages = startChatResumeStream(m.ctx, m.eng, note)
-	return m, waitForStreamMsg(m.streamMessages)
+	return m, tea.Batch(waitForStreamMsg(m.streamMessages), m.ensureSpinnerTick())
 }
 
 func newChatLine(role, content string) chatLine {
@@ -3673,10 +3774,26 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 		if i > 0 {
 			lines = append(lines, "")
 		}
-		hdr := renderMessageHeader(item.Role, item.Timestamp, item.TokenCount)
+		durationMs := item.DurationMs
+		if m.streamIndex == i && m.sending && !m.streamStartedAt.IsZero() {
+			durationMs = int(time.Since(m.streamStartedAt).Milliseconds())
+		}
+		hdr := renderMessageHeader(messageHeaderInfo{
+			Role:         item.Role,
+			Timestamp:    item.Timestamp,
+			TokenCount:   item.TokenCount,
+			DurationMs:   durationMs,
+			ToolCalls:    item.ToolCalls,
+			ToolFailures: item.ToolFailures,
+			Streaming:    m.streamIndex == i && m.sending,
+			SpinnerFrame: m.spinnerFrame,
+		})
 		content := chatBubbleContent(item, m.streamIndex == i && m.sending)
 		lines = append(lines, renderMessageBubble(item.Role, content, hdr, width))
 		if strings.EqualFold(item.Role, "assistant") {
+			if strip := renderInlineToolChips(item.ToolChips, width); strip != "" {
+				lines = append(lines, strip)
+			}
 			if summary := m.chatPatchSummary(item); summary != "" {
 				lines = append(lines, subtleStyle.Render("    "+summary))
 			}
@@ -3717,6 +3834,9 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 	if m.showHelpOverlay {
 		tailLines = append(tailLines, "", m.renderHelpOverlay(min(width, 120)))
 	}
+	if m.resumePromptActive && !m.sending {
+		tailLines = append(tailLines, "", renderResumeBanner(m.agentLoopStep, m.agentLoopMaxToolStep, min(width, 100)))
+	}
 	inputLine := renderChatInputLine(m.input, m.chatCursor, m.chatCursorManual, m.chatCursorInput, m.sending)
 	tailLines = append(tailLines, "", sectionHeader("›", "Input"), renderInputBox(inputLine, min(width, 100)))
 	lines = tailLines
@@ -3737,14 +3857,14 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 		case "grep":
 			title = "Grep Picker"
 		}
-		mode := "session only"
+		mode := "session"
 		if m.commandPickerPersist {
-			mode = "persist to .dfmc/config.yaml"
+			mode = "persist → .dfmc/config.yaml"
 		}
-		lines = append(lines, sectionTitleStyle.Render(title+" (up/down + tab + enter, esc close, ctrl+s persist)"))
-		lines = append(lines, subtleStyle.Render("Apply mode: "+mode))
+		lines = append(lines, sectionTitleStyle.Render(title))
+		lines = append(lines, subtleStyle.Render("↑↓ move · tab cycle · enter apply · ctrl+s "+mode+" · esc close"))
 		if query := strings.TrimSpace(m.commandPickerQuery); query != "" {
-			lines = append(lines, subtleStyle.Render("Filter: "+query))
+			lines = append(lines, subtleStyle.Render("filter: "+query))
 		}
 		items := m.filteredCommandPickerItems()
 		if len(items) == 0 {
@@ -3779,7 +3899,8 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 	if suggestions.slashMenuActive {
 		items := suggestions.slashCommands
 		if len(items) > 0 {
-			lines = append(lines, sectionTitleStyle.Render("Command Menu (up/down + tab + enter)"))
+			lines = append(lines, sectionTitleStyle.Render("Commands"))
+			lines = append(lines, subtleStyle.Render("↑↓ move · tab cycle · enter run"))
 			selected := clampIndex(m.slashIndex, len(items))
 			start := 0
 			if selected > 4 {
@@ -3791,10 +3912,10 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 			}
 			for i := start; i < end; i++ {
 				prefix := "  "
-				label := fmt.Sprintf("%s - %s", items[i].Template, items[i].Description)
+				label := truncateSingleLine(fmt.Sprintf("%s — %s", items[i].Template, items[i].Description), width)
 				if i == selected {
 					prefix = "> "
-					label = titleStyle.Render(truncateSingleLine(label, width))
+					label = titleStyle.Render(label)
 				}
 				lines = append(lines, prefix+label)
 			}
@@ -3802,7 +3923,8 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 	}
 	if !suggestions.slashMenuActive {
 		if len(suggestions.slashArgSuggestions) > 0 {
-			lines = append(lines, sectionTitleStyle.Render("Command Args (up/down + tab)"))
+			lines = append(lines, sectionTitleStyle.Render("Command args"))
+			lines = append(lines, subtleStyle.Render("↑↓ move · tab fill"))
 			selected := clampIndex(m.slashArgIndex, len(suggestions.slashArgSuggestions))
 			start := 0
 			if selected > 4 {
@@ -3834,7 +3956,8 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 		}
 	}
 	if suggestions.mentionQuery != "" && len(suggestions.mentionSuggestions) > 0 {
-		lines = append(lines, sectionTitleStyle.Render("File Mentions (up/down + tab/enter)"))
+		lines = append(lines, sectionTitleStyle.Render("File mentions"))
+		lines = append(lines, subtleStyle.Render("↑↓ move · tab/enter insert"))
 		selected := clampIndex(m.mentionIndex, len(suggestions.mentionSuggestions))
 		for i, path := range suggestions.mentionSuggestions {
 			prefix := "  "
@@ -3847,7 +3970,8 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 		}
 	}
 	if len(suggestions.quickActions) > 0 {
-		lines = append(lines, sectionTitleStyle.Render("Quick Actions (up/down + tab, enter runs)"))
+		lines = append(lines, sectionTitleStyle.Render("Quick actions"))
+		lines = append(lines, subtleStyle.Render("↑↓ move · tab cycle · enter run"))
 		selected := clampIndex(m.quickActionIndex, len(suggestions.quickActions))
 		for i, action := range suggestions.quickActions {
 			prefix := "  "
@@ -3869,7 +3993,7 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 				phase = p
 			}
 		}
-		lines = append(lines, "", renderStreamingIndicator(phase))
+		lines = append(lines, "", renderStreamingIndicator(phase, m.spinnerFrame))
 	}
 	tail := strings.Join(lines, "\n")
 	return chatViewParts{Head: head, Tail: tail}
@@ -3961,42 +4085,59 @@ func (m Model) statsPanelVisible(contentWidth int) bool {
 }
 
 func (m Model) renderStatusView(width int) string {
+	inner := min(width, 80)
+	divider := renderDivider(inner)
+	group := func(icon, title string, rows []string) []string {
+		out := []string{accentStyle.Bold(true).Render(icon) + " " + sectionTitleStyle.Render(strings.ToUpper(title))}
+		for _, r := range rows {
+			if strings.TrimSpace(r) == "" {
+				continue
+			}
+			out = append(out, "  "+truncateForPanel(r, width-2))
+		}
+		return out
+	}
 	parts := []string{
 		sectionHeader("◉", "Status"),
-		subtleStyle.Render("Press r to refresh."),
-		renderDivider(min(width, 80)),
+		subtleStyle.Render("r refresh · ctrl+h keys"),
+		divider,
 		"",
-		fmt.Sprintf("Project:   %s", blankFallback(m.status.ProjectRoot, "(none)")),
-		fmt.Sprintf("Provider:  %s / %s", blankFallback(m.status.Provider, "-"), blankFallback(m.status.Model, "-")),
-		fmt.Sprintf("Profile:   %s", truncateForPanel(formatProviderProfileSummaryTUI(m.status.ProviderProfile), width)),
-		fmt.Sprintf("Runtime:   %s", truncateForPanel(providerConnectivityHintTUI(m.status), width)),
-		fmt.Sprintf("Models.dev: %s", truncateForPanel(formatModelsDevCacheSummaryTUI(m.status.ModelsDevCache), width)),
-		fmt.Sprintf("AST:       %s", blankFallback(m.status.ASTBackend, "-")),
-		fmt.Sprintf("Languages: %s", truncateForPanel(formatASTLanguageSummaryTUI(m.status.ASTLanguages), width)),
-		fmt.Sprintf("AST Metrics: %s", truncateForPanel(formatASTMetricsSummaryTUI(m.status.ASTMetrics), width)),
-		fmt.Sprintf("CodeMap:   %s", truncateForPanel(formatCodeMapMetricsSummaryTUI(m.status.CodeMap), width)),
-		"",
-		subtleStyle.Render(m.notice),
 	}
+	parts = append(parts, group("◉", "Project", []string{
+		"Root:     " + blankFallback(m.status.ProjectRoot, "(none)"),
+	})...)
+	parts = append(parts, "")
+	parts = append(parts, group("⎈", "Provider", []string{
+		"Provider: " + blankFallback(m.status.Provider, "-") + " / " + blankFallback(m.status.Model, "-"),
+		"Profile:  " + formatProviderProfileSummaryTUI(m.status.ProviderProfile),
+		"Runtime:  " + providerConnectivityHintTUI(m.status),
+		"Catalog:  " + formatModelsDevCacheSummaryTUI(m.status.ModelsDevCache),
+	})...)
+	parts = append(parts, "")
+	parts = append(parts, group("≡", "AST", []string{
+		"Backend:  " + blankFallback(m.status.ASTBackend, "-"),
+		"Langs:    " + formatASTLanguageSummaryTUI(m.status.ASTLanguages),
+		"Metrics:  " + formatASTMetricsSummaryTUI(m.status.ASTMetrics),
+		"CodeMap:  " + formatCodeMapMetricsSummaryTUI(m.status.CodeMap),
+	})...)
 	if summary := formatContextInSummaryTUI(m.status.ContextIn); summary != "" {
-		insertAt := len(parts) - 2
-		if insertAt < 0 {
-			insertAt = len(parts)
-		}
-		contextLines := []string{fmt.Sprintf("Context In: %s", truncateForPanel(summary, width))}
+		parts = append(parts, "")
+		rows := []string{"Last:     " + summary}
 		if why := formatContextInReasonSummaryTUI(m.status.ContextIn); why != "" {
-			contextLines = append(contextLines, fmt.Sprintf("Context Why: %s", truncateForPanel(why, width)))
+			rows = append(rows, "Why:      "+why)
 		}
 		if files := formatContextInTopFilesTUI(m.status.ContextIn, 3); files != "" {
-			contextLines = append(contextLines, fmt.Sprintf("Context Top: %s", truncateForPanel(files, width)))
+			rows = append(rows, "Top:      "+files)
 		}
 		if details := formatContextInDetailedFileLinesTUI(m.status.ContextIn, 2); len(details) > 0 {
 			for _, line := range details {
-				contextLines = append(contextLines, fmt.Sprintf("Context File: %s", truncateForPanel(line, width)))
+				rows = append(rows, "File:     "+line)
 			}
 		}
-		contextLines = append(contextLines, "")
-		parts = append(parts[:insertAt], append(contextLines, parts[insertAt:]...)...)
+		parts = append(parts, group("▦", "Context In", rows)...)
+	}
+	if note := strings.TrimSpace(m.notice); note != "" {
+		parts = append(parts, "", subtleStyle.Render(note))
 	}
 	return strings.Join(parts, "\n")
 }
@@ -4016,7 +4157,7 @@ func (m Model) renderFilesView(width int) string {
 
 	listLines := []string{
 		sectionHeader("▦", "Files"),
-		subtleStyle.Render("Keys: j/k or alt+j/alt+k move | enter reload | r/alt+r refresh | p/alt+p pin | i/alt+i insert | e/alt+e explain | v/alt+v review"),
+		subtleStyle.Render("enter reload · p pin · ctrl+h keys"),
 		renderDivider(listWidth - 2),
 		"",
 	}
@@ -4056,7 +4197,7 @@ func (m Model) renderFilesView(width int) string {
 			}
 			listLines = append(listLines, prefix+label)
 		}
-		listLines = append(listLines, "", subtleStyle.Render(fmt.Sprintf("%d files | selected %d/%d", len(m.files), m.fileIndex+1, len(m.files))))
+		listLines = append(listLines, "", subtleStyle.Render(fmt.Sprintf("%d/%d files", m.fileIndex+1, len(m.files))))
 	}
 
 	previewLines := []string{
@@ -4097,13 +4238,13 @@ func (m Model) renderPatchView(width int) string {
 	}
 	parts := []string{
 		sectionHeader("◈", "Patch Lab"),
-		subtleStyle.Render("Keys: d/alt+d diff | l/alt+l latest patch | n/b (or alt+n/alt+b) files | j/k (or alt+j/alt+k) hunks | f/alt+f focus | c/alt+c check | a/alt+a apply | u/alt+u undo"),
+		subtleStyle.Render("a apply · u undo · c check · ctrl+h keys"),
 		renderDivider(min(width, 100)),
 		"",
-		"Changed: " + truncateForPanel(changed, width),
-		"Patch Files: " + truncateForPanel(strings.Join(m.patchFilesOrNone(), ", "), width),
-		"Patch Target: " + truncateForPanel(m.patchTargetSummary(), width),
-		"Hunk Target: " + truncateForPanel(m.patchHunkSummary(), width),
+		"Changed:      " + truncateForPanel(changed, width),
+		"Patch files:  " + truncateForPanel(strings.Join(m.patchFilesOrNone(), ", "), width),
+		"Focus file:   " + truncateForPanel(m.patchTargetSummary(), width),
+		"Focus hunk:   " + truncateForPanel(m.patchHunkSummary(), width),
 		"",
 		sectionHeader("⇄", "Worktree Diff"),
 		diffPreview,
@@ -4117,10 +4258,9 @@ func (m Model) renderPatchView(width int) string {
 	if hints := m.patchReviewHints(); len(hints) > 0 {
 		parts = append(parts, "", subtleStyle.Render("Review cues: "+strings.Join(hints, " | ")))
 	}
-	parts = append(parts,
-		"",
-		subtleStyle.Render(m.notice),
-	)
+	if note := strings.TrimSpace(m.notice); note != "" {
+		parts = append(parts, "", subtleStyle.Render(note))
+	}
 	return strings.Join(parts, "\n")
 }
 
@@ -4142,7 +4282,7 @@ func (m Model) renderSetupView(width int) string {
 
 	listLines := []string{
 		sectionHeader("⚙", "Setup"),
-		subtleStyle.Render("Keys: j/k or alt+j/alt+k move | enter apply | m/alt+m edit model | s/alt+s save config | r/alt+r reload runtime"),
+		subtleStyle.Render("enter apply · m edit model · s save · ctrl+h keys"),
 		renderDivider(listWidth - 2),
 		"",
 	}
@@ -4184,13 +4324,11 @@ func (m Model) renderSetupView(width int) string {
 			fmt.Sprintf("Provider: %s", selected),
 			fmt.Sprintf("Model:    %s", blankFallback(model, "-")),
 			fmt.Sprintf("Protocol: %s", blankFallback(profile.Protocol, "-")),
-			fmt.Sprintf("Context:  %d", profile.MaxContext),
-			fmt.Sprintf("Output:   %d", profile.MaxTokens),
+			fmt.Sprintf("Context:  %s tokens", formatToolTokenCount(profile.MaxContext)),
+			fmt.Sprintf("Output:   %s tokens", formatToolTokenCount(profile.MaxTokens)),
 			fmt.Sprintf("Endpoint: %s", blankFallback(profile.BaseURL, "(default)")),
 			"",
-			subtleStyle.Render("Press enter to apply this provider/model to the current TUI session."),
-			subtleStyle.Render("Press s to save provider/model into project .dfmc/config.yaml."),
-			subtleStyle.Render("Slash commands still work: /providers, /provider NAME, /models, /model NAME."),
+			subtleStyle.Render("enter applies · s saves to .dfmc/config.yaml · slash: /provider /model"),
 		)
 		if m.setupEditing {
 			draft := m.setupDraft
@@ -4228,8 +4366,7 @@ func (m Model) renderToolsView(width int) string {
 
 	listLines := []string{
 		sectionHeader("⚒", "Tools"),
-		subtleStyle.Render("Keys: j/k or alt+j/alt+k move | enter run | r/alt+r rerun | e/alt+e edit params | x/alt+x reset"),
-		subtleStyle.Render("Edit mode: type values, enter save, esc cancel. Quotes keep spaces together."),
+		subtleStyle.Render("enter run · e edit params · x reset · ctrl+h keys"),
 		renderDivider(listWidth - 2),
 		"",
 	}
@@ -4285,7 +4422,7 @@ func (m Model) renderToolsView(width int) string {
 		detailLines = append(detailLines, sectionHeader("✓", "Last Result"))
 		resultText := strings.TrimSpace(m.toolOutput)
 		if resultText == "" {
-			resultText = subtleStyle.Render("No tool run yet.") + "  " + subtleStyle.Render("Press ") + codeStyle.Render("enter") + subtleStyle.Render(" to run the selected tool, ") + codeStyle.Render("e") + subtleStyle.Render(" to edit params, ") + codeStyle.Render("x") + subtleStyle.Render(" to reset.")
+			resultText = subtleStyle.Render("No tool run yet — press enter to run the selected tool.")
 		}
 		detailLines = append(detailLines, truncateForPanel(resultText, detailWidth))
 	}
@@ -4300,10 +4437,7 @@ func (m Model) renderToolsView(width int) string {
 // model, mode, and the parked/queued/btw badges — no need to duplicate. Keys
 // hint is gone; the starter screen and `/` palette cover discovery.
 func (m Model) renderFooter(width int) string {
-	maxWidth := width - 4
-	if maxWidth < 16 {
-		maxWidth = 16
-	}
+	maxWidth := max(width-4, 16)
 
 	tab := m.tabs[m.activeTab]
 	segments := []string{titleStyle.Render(" " + tab + " ")}
@@ -4400,6 +4534,7 @@ func helpOverlayTabHints(tab string) []string {
 		return []string{
 			"enter send · shift+enter newline · / commands · @ mention",
 			"wheel · shift+↑/↓ · pgup/pgdn scroll transcript",
+			"when parked: enter resumes · esc dismisses · type a note first to steer",
 		}
 	case "status":
 		return []string{"r refresh status"}
@@ -4810,6 +4945,8 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		m.agentLoopToolRounds = payloadInt(payload, "tool_rounds", 0)
 		m.agentLoopProvider = payloadString(payload, "provider", m.agentLoopProvider)
 		m.agentLoopModel = payloadString(payload, "model", m.agentLoopModel)
+		// A fresh loop start means any previously parked banner is obsolete.
+		m.resumePromptActive = false
 		files := payloadInt(payload, "context_files", 0)
 		tokens := payloadInt(payload, "context_tokens", 0)
 		line = fmt.Sprintf("Agent loop started: max_tools=%d context=%df/%dtok", m.agentLoopMaxToolStep, files, tokens)
@@ -4852,12 +4989,14 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		m.agentLoopProvider = payloadString(payload, "provider", m.agentLoopProvider)
 		m.agentLoopModel = payloadString(payload, "model", m.agentLoopModel)
 		paramsPreview := payloadString(payload, "params_preview", "")
-		m.pushToolChip(toolChip{
+		toolCallChip := toolChip{
 			Name:    toolName,
 			Status:  "running",
 			Step:    step,
 			Preview: paramsPreview,
-		})
+		}
+		m.pushToolChip(toolCallChip)
+		m.pushStreamingMessageToolChip(toolCallChip)
 		if step > 0 {
 			line = fmt.Sprintf("Agent tool call: %s (step %d)", toolName, step)
 		} else {
@@ -4896,13 +5035,17 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		if chipPreview == "" && !success {
 			chipPreview = payloadString(payload, "error", "")
 		}
-		m.finishToolChip(toolChip{
-			Name:       toolName,
-			Status:     status,
-			Step:       step,
-			DurationMs: duration,
-			Preview:    chipPreview,
-		})
+		finishedChip := toolChip{
+			Name:         toolName,
+			Status:       status,
+			Step:         step,
+			DurationMs:   duration,
+			Preview:      chipPreview,
+			OutputTokens: payloadInt(payload, "output_tokens", 0),
+			Truncated:    payloadBool(payload, "truncated", false),
+		}
+		m.finishToolChip(finishedChip)
+		m.finishStreamingMessageToolChip(finishedChip)
 		if duration > 0 {
 			line = fmt.Sprintf("Agent tool result: %s (%s, %dms)", toolName, status, duration)
 		} else {
@@ -4940,7 +5083,12 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		m.agentLoopActive = false
 		step := payloadInt(payload, "step", m.agentLoopStep)
 		maxSteps := payloadInt(payload, "max_tool_steps", m.agentLoopMaxToolStep)
-		line = fmt.Sprintf("Agent loop parked at step %d/%d — /continue to resume.", step, maxSteps)
+		m.agentLoopStep = step
+		if maxSteps > 0 {
+			m.agentLoopMaxToolStep = maxSteps
+		}
+		m.resumePromptActive = true
+		line = fmt.Sprintf("Agent loop parked at step %d/%d — press Enter to resume, Esc to dismiss.", step, maxSteps)
 	case "tool:error":
 		switch payload := event.Payload.(type) {
 		case string:
@@ -5140,6 +5288,70 @@ func (m *Model) pushToolChip(chip toolChip) {
 	}
 }
 
+// pushStreamingMessageToolChip mirrors a tool call onto the assistant
+// transcript line that's currently streaming, so users see inline per-
+// message chips (not just the global runtime strip). No-op when no message
+// is actively streaming.
+func (m *Model) pushStreamingMessageToolChip(chip toolChip) {
+	chip.Name = strings.TrimSpace(chip.Name)
+	if chip.Name == "" {
+		return
+	}
+	if m.streamIndex < 0 || m.streamIndex >= len(m.transcript) {
+		return
+	}
+	const maxPerMessage = 32
+	line := &m.transcript[m.streamIndex]
+	line.ToolChips = append(line.ToolChips, chip)
+	if len(line.ToolChips) > maxPerMessage {
+		drop := len(line.ToolChips) - maxPerMessage
+		line.ToolChips = line.ToolChips[drop:]
+	}
+}
+
+// finishStreamingMessageToolChip resolves the most recent running chip on
+// the streaming assistant message with a terminal status.
+func (m *Model) finishStreamingMessageToolChip(chip toolChip) {
+	chip.Name = strings.TrimSpace(chip.Name)
+	if chip.Name == "" {
+		return
+	}
+	if m.streamIndex < 0 || m.streamIndex >= len(m.transcript) {
+		return
+	}
+	line := &m.transcript[m.streamIndex]
+	for i := len(line.ToolChips) - 1; i >= 0; i-- {
+		existing := line.ToolChips[i]
+		if existing.Status != "running" {
+			continue
+		}
+		if !strings.EqualFold(existing.Name, chip.Name) {
+			continue
+		}
+		if chip.Step != 0 && existing.Step != 0 && existing.Step != chip.Step {
+			continue
+		}
+		merged := existing
+		merged.Status = chip.Status
+		merged.DurationMs = chip.DurationMs
+		if strings.TrimSpace(chip.Preview) != "" {
+			merged.Preview = chip.Preview
+		}
+		if chip.Step > merged.Step {
+			merged.Step = chip.Step
+		}
+		if chip.OutputTokens > 0 {
+			merged.OutputTokens = chip.OutputTokens
+		}
+		if chip.Truncated {
+			merged.Truncated = true
+		}
+		line.ToolChips[i] = merged
+		return
+	}
+	m.pushStreamingMessageToolChip(chip)
+}
+
 // finishToolChip updates the most recent running chip for the same tool+step
 // with a terminal status. Falls back to appending a fresh chip when no
 // matching in-flight entry is found (e.g. result seen without a prior call).
@@ -5167,6 +5379,12 @@ func (m *Model) finishToolChip(chip toolChip) {
 		}
 		if chip.Step > merged.Step {
 			merged.Step = chip.Step
+		}
+		if chip.OutputTokens > 0 {
+			merged.OutputTokens = chip.OutputTokens
+		}
+		if chip.Truncated {
+			merged.Truncated = true
 		}
 		m.toolTimeline[i] = merged
 		return
@@ -5359,10 +5577,7 @@ func formatContextInDetailedFileLinesTUI(report *engine.ContextInStatus, limit i
 			meta = append(meta, fmt.Sprintf("tok=%d", file.TokenCount))
 		}
 		if file.LineStart > 0 {
-			end := file.LineEnd
-			if end < file.LineStart {
-				end = file.LineStart
-			}
+			end := max(file.LineEnd, file.LineStart)
 			meta = append(meta, fmt.Sprintf("L%d-L%d", file.LineStart, end))
 		}
 		line := path
@@ -5389,10 +5604,7 @@ func truncateForPanel(text string, width int) string {
 	for i, line := range lines {
 		if width > 0 && len([]rune(line)) > width {
 			runes := []rune(line)
-			trimTo := width - 14
-			if trimTo < 0 {
-				trimTo = 0
-			}
+			trimTo := max(width-14, 0)
 			lines[i] = string(runes[:trimTo]) + "... [trimmed]"
 		}
 	}
@@ -5443,8 +5655,8 @@ func chatDigest(text string) string {
 		return ""
 	}
 	preview := trimmed
-	if idx := strings.IndexByte(trimmed, '\n'); idx >= 0 {
-		first := strings.TrimSpace(trimmed[:idx])
+	if first, _, ok := strings.Cut(trimmed, "\n"); ok {
+		first = strings.TrimSpace(first)
 		if first == "" {
 			first = "[multiline]"
 		}
@@ -6138,7 +6350,7 @@ func (m Model) slashAssistHints() []string {
 	if cmd == "" {
 		return []string{
 			"Type /help for all local commands.",
-			"Use up/down + tab to select from Command Menu.",
+			"↑↓ + tab picks from Commands.",
 		}
 	}
 	switch cmd {
@@ -6830,10 +7042,8 @@ func (m Model) runCommandSuggestions() []string {
 		if value == "" {
 			return
 		}
-		for _, existing := range suggestions {
-			if existing == value {
-				return
-			}
+		if slices.Contains(suggestions, value) {
+			return
 		}
 		suggestions = append(suggestions, value)
 	}
@@ -7200,6 +7410,10 @@ func (m Model) selectedFile() string {
 	return m.files[m.fileIndex]
 }
 
+// truncateSingleLine clips `text` to at most `width` visible terminal cells.
+// ANSI styling is preserved — we count display width, not runes or bytes —
+// so a styled label like lipgloss.Bold("streaming") doesn't get clipped to
+// "stre..." just because its escape sequences puffed the rune count.
 func truncateSingleLine(text string, width int) string {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -7208,14 +7422,13 @@ func truncateSingleLine(text string, width int) string {
 	if width <= 0 {
 		return trimmed
 	}
-	runes := []rune(trimmed)
-	if len(runes) <= width {
+	if ansi.StringWidth(trimmed) <= width {
 		return trimmed
 	}
 	if width <= 3 {
-		return string(runes[:width])
+		return ansi.Truncate(trimmed, width, "")
 	}
-	return string(runes[:width-3]) + "..."
+	return ansi.Truncate(trimmed, width, "…")
 }
 
 func formatCommandPickerItem(item commandPickerItem) string {

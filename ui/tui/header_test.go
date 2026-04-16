@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -188,5 +189,90 @@ func TestStarterDigitHotkeyIgnoredWhenTranscriptNonEmpty(t *testing.T) {
 	}
 	if mm.input != "1" {
 		t.Fatalf("digit should be typed literally once transcript has content, got %q", mm.input)
+	}
+}
+
+func TestRenderMessageHeaderShowsTimestampTokensAndDuration(t *testing.T) {
+	ts := time.Date(2026, time.April, 16, 14, 32, 5, 0, time.UTC)
+	out := renderMessageHeader(messageHeaderInfo{
+		Role:       "assistant",
+		Timestamp:  ts,
+		TokenCount: 1234,
+		DurationMs: 2150,
+		ToolCalls:  3,
+	})
+	for _, want := range []string{"14:32:05", "1,234 tok", "2.1s", "⚒ 3"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("message header missing %q, got %q", want, out)
+		}
+	}
+}
+
+func TestRenderMessageHeaderHighlightsToolFailures(t *testing.T) {
+	out := renderMessageHeader(messageHeaderInfo{
+		Role:         "assistant",
+		ToolCalls:    4,
+		ToolFailures: 1,
+	})
+	if !strings.Contains(out, "⚒ 4") || !strings.Contains(out, "✗ 1") {
+		t.Fatalf("tool-failure chip missing, got %q", out)
+	}
+}
+
+func TestRenderStreamingIndicatorAnimatesFrames(t *testing.T) {
+	a := renderStreamingIndicator("drafting reply", 0)
+	b := renderStreamingIndicator("drafting reply", 5)
+	if a == b {
+		t.Fatalf("spinner should animate across frames; both outputs identical:\n%s\n%s", a, b)
+	}
+	if !strings.Contains(a, "drafting reply") || !strings.Contains(b, "drafting reply") {
+		t.Fatalf("phase label dropped from indicator, got %q / %q", a, b)
+	}
+}
+
+func TestRenderResumeBannerMentionsKeysAndProgress(t *testing.T) {
+	out := renderResumeBanner(25, 25, 80)
+	for _, want := range []string{"parked", "25/25", "enter resumes", "esc dismisses"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("resume banner missing %q, got %q", want, out)
+		}
+	}
+}
+
+func TestParkedEventSetsResumePromptAndEnterResumes(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.status = engine.Status{Provider: "anthropic", Model: "claude-opus-4-6"}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:parked",
+		Payload: map[string]any{
+			"step":           25,
+			"max_tool_steps": 25,
+		},
+	})
+	if !m.resumePromptActive {
+		t.Fatalf("parked event should turn resumePromptActive on")
+	}
+	if m.agentLoopMaxToolStep != 25 || m.agentLoopStep != 25 {
+		t.Fatalf("parked event should record step/max, got %d/%d", m.agentLoopStep, m.agentLoopMaxToolStep)
+	}
+
+	// Banner must render in the tail above the input.
+	view := m.renderChatView(160)
+	if !strings.Contains(view, "parked") || !strings.Contains(view, "enter resumes") {
+		t.Fatalf("banner should surface above input while parked, got:\n%s", view)
+	}
+}
+
+func TestEscDismissesResumePromptWithoutClearingEngineState(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.resumePromptActive = true
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mm, ok := next.(Model)
+	if !ok {
+		t.Fatalf("expected Model, got %T", next)
+	}
+	if mm.resumePromptActive {
+		t.Fatalf("esc should clear resumePromptActive")
 	}
 }

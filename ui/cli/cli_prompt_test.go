@@ -43,6 +43,21 @@ func TestRunPromptListAndRender(t *testing.T) {
 	}, true); code != 0 {
 		t.Fatalf("prompt recommend runtime override exit=%d", code)
 	}
+
+	if code := runPrompt(context.Background(), eng, []string{
+		"inspect",
+		"--query", "review the auth module",
+	}, true); code != 0 {
+		t.Fatalf("prompt inspect exit=%d", code)
+	}
+
+	if code := runPrompt(context.Background(), eng, []string{
+		"inspect",
+		"--full",
+		"--query", "security audit",
+	}, false); code != 0 {
+		t.Fatalf("prompt inspect --full exit=%d", code)
+	}
 }
 
 func TestRunPromptUsesProjectOverride(t *testing.T) {

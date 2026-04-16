@@ -5849,6 +5849,95 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 		return 0
 
+	case "inspect", "show":
+		fs := flag.NewFlagSet("prompt inspect", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		full := fs.Bool("full", false, "print each section's full body instead of a preview")
+		queryFlag := fs.String("query", "", "user query to seed task/profile/role detection")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		query := strings.TrimSpace(*queryFlag)
+		if query == "" && len(fs.Args()) > 0 {
+			query = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		}
+		runtime := eng.PromptRuntime()
+		bundle := eng.Context.BuildSystemPromptBundle(projectRoot, query, nil, eng.ListTools(), runtime)
+		task := promptlib.DetectTask(query)
+		profile := ctxmgr.ResolvePromptProfile(query, task, runtime)
+		role := ctxmgr.ResolvePromptRole(query, task)
+		language := promptlib.InferLanguage(query, nil)
+		totalTokens := 0
+		cacheableTokens := 0
+		type sectionOut struct {
+			Index     int    `json:"index"`
+			Label     string `json:"label"`
+			Cacheable bool   `json:"cacheable"`
+			Tokens    int    `json:"tokens"`
+			Chars     int    `json:"chars"`
+			Lines     int    `json:"lines"`
+			Preview   string `json:"preview,omitempty"`
+			Text      string `json:"text,omitempty"`
+		}
+		sections := make([]sectionOut, 0, len(bundle.Sections))
+		for i, s := range bundle.Sections {
+			tokens := promptlib.EstimateTokens(s.Text)
+			totalTokens += tokens
+			if s.Cacheable {
+				cacheableTokens += tokens
+			}
+			firstLine := strings.TrimSpace(s.Text)
+			if nl := strings.IndexByte(firstLine, '\n'); nl >= 0 {
+				firstLine = firstLine[:nl]
+			}
+			if len(firstLine) > 80 {
+				firstLine = firstLine[:77] + "..."
+			}
+			so := sectionOut{
+				Index:     i + 1,
+				Label:     s.Label,
+				Cacheable: s.Cacheable,
+				Tokens:    tokens,
+				Chars:     len(s.Text),
+				Lines:     strings.Count(s.Text, "\n") + 1,
+				Preview:   firstLine,
+			}
+			if *full {
+				so.Text = s.Text
+			}
+			sections = append(sections, so)
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"task":             task,
+				"language":         language,
+				"profile":          profile,
+				"role":             role,
+				"section_count":    len(sections),
+				"total_tokens":     totalTokens,
+				"cacheable_tokens": cacheableTokens,
+				"sections":         sections,
+			})
+			return 0
+		}
+		fmt.Printf("prompt inspect: task=%s language=%s profile=%s role=%s sections=%d tokens=%d cacheable=%d\n",
+			task, language, profile, role, len(sections), totalTokens, cacheableTokens)
+		for _, s := range sections {
+			cache := "·"
+			if s.Cacheable {
+				cache = "▣"
+			}
+			fmt.Printf("  %s %2d  %-12s  tok=%-4d lines=%-3d  %s\n", cache, s.Index, s.Label, s.Tokens, s.Lines, s.Preview)
+			if *full {
+				fmt.Println("    ───")
+				for line := range strings.SplitSeq(strings.TrimRight(s.Text, "\n"), "\n") {
+					fmt.Println("    " + line)
+				}
+				fmt.Println("    ───")
+			}
+		}
+		return 0
+
 	case "stats", "validate", "lint":
 		fs := flag.NewFlagSet("prompt stats", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -5952,7 +6041,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[stats --max-template-tokens 450]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[inspect --query \"...\" --full]|[stats --max-template-tokens 450]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]")
 		return 2
 	}
 }

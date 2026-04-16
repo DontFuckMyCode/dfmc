@@ -606,6 +606,7 @@ func (e *Engine) publishNativeToolResult(trace nativeToolTrace) {
 	if e.EventBus == nil {
 		return
 	}
+	outputText := trace.Result.Output
 	payload := map[string]any{
 		"tool":           trace.Call.Name,
 		"success":        trace.Err == "",
@@ -614,7 +615,9 @@ func (e *Engine) publishNativeToolResult(trace nativeToolTrace) {
 		"provider":       trace.Provider,
 		"model":          trace.Model,
 		"truncated":      trace.Result.Truncated,
-		"output_preview": compactToolPayload(trace.Result.Output, 180),
+		"output_preview": compactToolPayload(outputText, 180),
+		"output_chars":   len(outputText),
+		"output_tokens":  estimateTokens(outputText),
 		"tool_call_id":   trace.Call.ID,
 		"surface":        "native",
 	}

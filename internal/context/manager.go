@@ -673,35 +673,38 @@ func BuildInjectedContextWithBudget(projectRoot, query string, limits PromptRend
 }
 
 func PromptTokenBudget(task, profile string, runtime PromptRuntime) int {
-	budget := 680
+	// Base contract (honesty, failure modes, output format, refusals) runs
+	// ~450 stable tokens before any dynamic section. Budgets below bake that
+	// in and leave meaningful differential room for injected context.
+	budget := 1100
 	if strings.EqualFold(strings.TrimSpace(profile), "deep") {
-		budget = 1200
+		budget = 1800
 	}
 	switch strings.ToLower(strings.TrimSpace(task)) {
 	case "security", "review":
-		budget += 220
+		budget += 260
 	case "planning":
-		budget += 120
+		budget += 160
 	case "doc":
-		budget -= 90
+		budget -= 60
 	}
 	if runtime.LowLatency {
-		budget = int(float64(budget) * 0.82)
+		budget = int(float64(budget) * 0.85)
 	}
 	if runtime.MaxContext > 0 {
-		cap := runtime.MaxContext / 5
-		if cap < 380 {
-			cap = 380
+		cap := runtime.MaxContext / 4
+		if cap < 720 {
+			cap = 720
 		}
-		if cap > 2600 {
-			cap = 2600
+		if cap > 3400 {
+			cap = 3400
 		}
 		if budget > cap {
 			budget = cap
 		}
 	}
-	if budget < 380 {
-		budget = 380
+	if budget < 720 {
+		budget = 720
 	}
 	return budget
 }

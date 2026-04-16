@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // --- palette --------------------------------------------------------------
@@ -113,6 +114,11 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorRoleUser).
 			Padding(0, 1)
+
+	resumeBannerStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(colorWarn).
+				Padding(0, 1)
 
 	dividerStyle = lipgloss.NewStyle().Foreground(colorPanelBorder)
 
@@ -296,11 +302,13 @@ func renderInlineTokens(text, delim string, style lipgloss.Style) string {
 // --- status chips & runtime card -----------------------------------------
 
 type toolChip struct {
-	Name       string
-	Status     string // "ok", "failed", "running"
-	DurationMs int
-	Preview    string
-	Step       int
+	Name         string
+	Status       string // "ok", "failed", "running"
+	DurationMs   int
+	Preview      string
+	Step         int
+	OutputTokens int // estimated tokens returned by the tool (0 when unknown)
+	Truncated    bool
 }
 
 func renderToolChip(chip toolChip, width int) string {
@@ -317,18 +325,76 @@ func renderToolChip(chip toolChip, width int) string {
 	if chip.DurationMs > 0 {
 		meta = append(meta, fmt.Sprintf("%dms", chip.DurationMs))
 	}
+	if chip.OutputTokens > 0 {
+		if chip.Truncated {
+			meta = append(meta, fmt.Sprintf("+%s tok⚠", formatToolTokenCount(chip.OutputTokens)))
+		} else {
+			meta = append(meta, fmt.Sprintf("+%s tok", formatToolTokenCount(chip.OutputTokens)))
+		}
+	}
 	status := strings.TrimSpace(chip.Status)
 	if status != "" && status != "ok" && status != "running" {
 		meta = append(meta, status)
 	}
-	line := head
+	head1 := head
 	if len(meta) > 0 {
-		line += " " + subtleStyle.Render("· "+strings.Join(meta, " · "))
+		head1 += " " + subtleStyle.Render("· "+strings.Join(meta, " · "))
 	}
-	if preview := strings.TrimSpace(chip.Preview); preview != "" {
-		line += " " + subtleStyle.Render("· "+preview)
+	preview := strings.TrimSpace(chip.Preview)
+	if preview == "" {
+		return truncateSingleLine(head1, width)
 	}
-	return truncateSingleLine(line, width)
+	single := head1 + " " + subtleStyle.Render("· "+preview)
+	if ansi.StringWidth(single) <= width {
+		return single
+	}
+	// Preview won't fit — render head on one line, indented preview below so
+	// nothing important gets silently clipped.
+	second := max(width-2, 16)
+	return truncateSingleLine(head1, width) + "\n  " + subtleStyle.Render(truncateSingleLine(preview, second))
+}
+
+// formatToolTokenCount renders a tool's output token estimate in the chip
+// — compact for small counts, "1.2k" style once four digits are needed.
+func formatToolTokenCount(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	return fmt.Sprintf("%.1fk", float64(n)/1000)
+}
+
+// renderInlineToolChips paints a compact multi-row tool strip below an
+// assistant bubble — one line per chip, indented so it visually hangs
+// under the message. Each chip shows icon + name + (step) + (duration) +
+// short preview, colour-coded by status. Wraps at `width` columns.
+func renderInlineToolChips(chips []toolChip, width int) string {
+	if len(chips) == 0 {
+		return ""
+	}
+	if width < 20 {
+		width = 20
+	}
+	indent := "    "
+	inner := width - len(indent)
+	if inner < 16 {
+		inner = 16
+	}
+	var b strings.Builder
+	for i, chip := range chips {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		// renderToolChip may return a two-line block when the preview
+		// can't fit alongside the head — indent each line.
+		for j, line := range strings.Split(renderToolChip(chip, inner), "\n") {
+			if j > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString(indent)
+			b.WriteString(line)
+		}
+	}
+	return b.String()
 }
 
 func chipIconStyle(status string) (string, lipgloss.Style) {
@@ -394,15 +460,74 @@ func renderRuntimeCard(rs runtimeSummary, width int) string {
 
 // --- message card --------------------------------------------------------
 
-func renderMessageHeader(role string, timestamp time.Time, tokens int) string {
-	parts := []string{roleBadge(role)}
-	if !timestamp.IsZero() {
-		parts = append(parts, subtleStyle.Render(timestamp.Format("15:04:05")))
+// messageHeaderInfo is the per-message metadata rendered above each bubble.
+// The renderer wraps role + timestamp + tokens + duration + tool usage into a
+// single scannable header line so the reader can see at a glance how expensive
+// a turn was and whether tools fired.
+type messageHeaderInfo struct {
+	Role         string
+	Timestamp    time.Time
+	TokenCount   int
+	DurationMs   int
+	ToolCalls    int
+	ToolFailures int
+	Streaming    bool
+	SpinnerFrame int
+}
+
+// spinnerFrames is the braille dot cycle used for the live streaming glyph.
+// Ten frames at ~125ms interval = one revolution per ~1.25s — calm enough to
+// read, alive enough to reassure.
+var spinnerFrames = [...]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// spinnerFrame returns the frame glyph for the given counter. Safe for any int.
+func spinnerFrame(frame int) string {
+	if frame < 0 {
+		frame = -frame
 	}
-	if tokens > 0 {
-		parts = append(parts, subtleStyle.Render(fmt.Sprintf("%dtok", tokens)))
+	return spinnerFrames[frame%len(spinnerFrames)]
+}
+
+func renderMessageHeader(info messageHeaderInfo) string {
+	parts := []string{roleBadge(info.Role)}
+	if info.Streaming {
+		parts = append(parts, infoStyle.Bold(true).Render(spinnerFrame(info.SpinnerFrame)))
+	}
+	if !info.Timestamp.IsZero() {
+		parts = append(parts, subtleStyle.Render(info.Timestamp.Format("15:04:05")))
+	}
+	if info.DurationMs > 0 {
+		parts = append(parts, subtleStyle.Render(formatDurationChip(info.DurationMs)))
+	}
+	if info.TokenCount > 0 {
+		parts = append(parts, subtleStyle.Render(fmt.Sprintf("%s tok", formatThousands(info.TokenCount))))
+	}
+	if info.ToolCalls > 0 {
+		chip := fmt.Sprintf("⚒ %d", info.ToolCalls)
+		if info.ToolFailures > 0 {
+			parts = append(parts, accentStyle.Render(chip)+" "+failStyle.Bold(true).Render(fmt.Sprintf("✗ %d", info.ToolFailures)))
+		} else {
+			parts = append(parts, accentStyle.Render(chip))
+		}
 	}
 	return strings.Join(parts, " ")
+}
+
+// formatDurationChip returns a compact human-readable duration: 850ms, 2.3s,
+// 1m04s. Kept tight so the message header stays on one line.
+func formatDurationChip(ms int) string {
+	if ms <= 0 {
+		return ""
+	}
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	if ms < 60_000 {
+		return fmt.Sprintf("%.1fs", float64(ms)/1000)
+	}
+	mins := ms / 60_000
+	secs := (ms % 60_000) / 1000
+	return fmt.Sprintf("%dm%02ds", mins, secs)
 }
 
 // renderMessageBubble renders a chat message as a left-bar "bubble" with the
@@ -599,6 +724,39 @@ func renderTokenMeter(used, max int) string {
 	return subtleStyle.Render("ctx ") + style.Bold(true).Render(label)
 }
 
+// renderStepBar draws a compact [████░░░░░░] step/max chip for the agent-loop
+// step budget. Green when there's room, yellow when nearing the cap, red when
+// within one step of parking. `cells` is the bar width in rune-cells.
+func renderStepBar(step, maxSteps, cells int) string {
+	if cells < 4 {
+		cells = 4
+	}
+	if maxSteps <= 0 {
+		return subtleStyle.Render(fmt.Sprintf("step %d", step))
+	}
+	if step < 0 {
+		step = 0
+	}
+	if step > maxSteps {
+		step = maxSteps
+	}
+	filled := (step * cells) / maxSteps
+	if step > 0 && filled == 0 {
+		filled = 1
+	}
+	style := okStyle
+	remaining := maxSteps - step
+	switch {
+	case remaining <= 1:
+		style = failStyle
+	case remaining <= 3:
+		style = warnStyle
+	}
+	bar := style.Render(strings.Repeat("█", filled)) + subtleStyle.Render(strings.Repeat("░", cells-filled))
+	label := fmt.Sprintf(" %d/%d", step, maxSteps)
+	return "[" + bar + "]" + style.Bold(true).Render(label)
+}
+
 // renderContextBar draws a compact progress bar [OOOO-----] followed by
 // used/max (pct%), coloured by the same ok/warn/fail thresholds as
 // renderTokenMeter. `cells` controls the bar width in rune-cells; 10 is a
@@ -763,27 +921,54 @@ func renderStarterPrompts(width int, configured bool) []string {
 	return lines
 }
 
-// renderStreamingIndicator returns a bold spinner-ish line for active turns.
-// Shown below the input box while a response is being generated.
-func renderStreamingIndicator(phase string) string {
+// renderStreamingIndicator returns a live spinner line for active turns.
+// Shown below the input box while a response is being generated. The frame
+// argument advances on tea.Tick so the glyph animates; when the caller has no
+// frame counter (tests, stills), passing 0 still reads fine.
+func renderStreamingIndicator(phase string, frame int) string {
 	phase = strings.TrimSpace(phase)
 	if phase == "" {
 		phase = "drafting reply"
 	}
-	return infoStyle.Bold(true).Render("◉ " + phase) + " " + subtleStyle.Render("· esc cancels · tokens will appear live")
+	glyph := spinnerFrame(frame)
+	return infoStyle.Bold(true).Render(glyph+" "+phase) + " " + subtleStyle.Render("· esc cancels · tokens stream live")
+}
+
+// renderResumeBanner paints the yellow-accented "agent parked" prompt shown
+// above the composer when the tool loop has hit its step cap. The user can
+// Enter to resume, Esc to dismiss, or type a note first to steer the
+// continuation.
+func renderResumeBanner(step, maxSteps, width int) string {
+	if width < 20 {
+		width = 20
+	}
+	title := warnStyle.Bold(true).Render("⏸ Agent loop parked")
+	progress := ""
+	if maxSteps > 0 {
+		progress = subtleStyle.Render(fmt.Sprintf(" at step %d/%d", step, maxSteps))
+	} else if step > 0 {
+		progress = subtleStyle.Render(fmt.Sprintf(" at step %d", step))
+	}
+	hint := subtleStyle.Render("  ↵ enter resumes") + subtleStyle.Render(" · ") +
+		subtleStyle.Render("esc dismisses") + subtleStyle.Render(" · ") +
+		subtleStyle.Render("type a note first to steer /continue")
+	head := truncateSingleLine(title+progress, width)
+	body := truncateSingleLine(hint, width)
+	return resumeBannerStyle.Width(width).Render(head + "\n" + body)
 }
 
 // --- right-side stats panel ----------------------------------------------
 
 // statsPanelWidth is the fixed column count the stats panel reserves. Tuned
-// so that seven labelled sections fit without wrapping on common terminals.
-const statsPanelWidth = 34
+// so common model names (claude-opus-4-6, gpt-5.4-turbo, glm-5.1) + short
+// labels fit on a line without clipping.
+const statsPanelWidth = 38
 
 // statsPanelMinContentWidth is the threshold below which the stats panel is
 // suppressed entirely — a chat viewport narrower than ~80 columns would be
-// unreadable if the panel stole another 34. The caller (renderActiveView)
+// unreadable if the panel stole another 38. The caller (renderActiveView)
 // checks this before deciding to compose the panel.
-const statsPanelMinContentWidth = 116
+const statsPanelMinContentWidth = 120
 
 // statsPanelInfo is the full snapshot the panel needs each frame. The model
 // assembles it from status / git / agent loop / session state.
@@ -831,14 +1016,16 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 	}
 
 	lines := []string{}
-	addSection := func(title string, body []string) {
+	divider := dividerStyle.Render(strings.Repeat("─", inner))
+	addSection := func(icon, title string, body []string) {
 		if len(body) == 0 {
 			return
 		}
 		if len(lines) > 0 {
-			lines = append(lines, "")
+			lines = append(lines, divider)
 		}
-		lines = append(lines, titleStyle.Render(" "+title+" "))
+		header := accentStyle.Bold(true).Render(icon) + " " + sectionTitleStyle.Render(title)
+		lines = append(lines, header)
 		for _, b := range body {
 			if b == "" {
 				lines = append(lines, "")
@@ -870,18 +1057,15 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 			boldStyle.Render(blankFallback(modelTrim, "-")),
 		}
 	}
-	addSection("PROVIDER", providerBody)
+	addSection("◉", "PROVIDER", providerBody)
 
 	// CONTEXT --------------------------------------------------------------
-	contextBody := []string{renderContextBar(info.ContextTokens, info.MaxContext, 14)}
+	contextBody := []string{renderContextBar(info.ContextTokens, info.MaxContext, 10)}
 	if info.MaxContext > 0 {
-		remaining := info.MaxContext - info.ContextTokens
-		if remaining < 0 {
-			remaining = 0
-		}
-		contextBody = append(contextBody, subtleStyle.Render(fmt.Sprintf("%s free", compactTokens(remaining))))
+		remaining := max(info.MaxContext-info.ContextTokens, 0)
+		contextBody = append(contextBody, subtleStyle.Render(fmt.Sprintf("%s free · %s used", compactTokens(remaining), compactTokens(info.ContextTokens))))
 	}
-	addSection("CONTEXT", contextBody)
+	addSection("▦", "CONTEXT", contextBody)
 
 	// AGENT ----------------------------------------------------------------
 	agentBody := []string{renderChatModeSegment(chatHeaderInfo{
@@ -891,6 +1075,9 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 		AgentStep:   info.AgentStep,
 		AgentMax:    info.AgentMaxSteps,
 	})}
+	if info.AgentActive && info.AgentMaxSteps > 0 {
+		agentBody = append(agentBody, renderStepBar(info.AgentStep, info.AgentMaxSteps, 14))
+	}
 	if info.ToolRounds > 0 {
 		agentBody = append(agentBody, subtleStyle.Render(fmt.Sprintf("tool rounds: %d", info.ToolRounds)))
 	}
@@ -914,7 +1101,7 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 	if info.PendingNotes > 0 {
 		agentBody = append(agentBody, infoStyle.Render(fmt.Sprintf("✎ btw %d", info.PendingNotes)))
 	}
-	addSection("AGENT", agentBody)
+	addSection("⚙", "AGENT", agentBody)
 
 	// TOOLS ----------------------------------------------------------------
 	toolsBody := []string{}
@@ -927,18 +1114,17 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 	} else {
 		toolsBody = append(toolsBody, subtleStyle.Render("off"))
 	}
-	addSection("TOOLS", toolsBody)
+	addSection("⚒", "TOOLS", toolsBody)
 
 	// GIT ------------------------------------------------------------------
 	branch := strings.TrimSpace(info.Branch)
 	if branch != "" {
-		label := branch
-		if info.Detached {
-			label = "(" + label + ")"
-		}
-		chip := accentStyle.Render("⎇ ") + boldStyle.Render(label)
+		chip := boldStyle.Render(branch)
 		if info.Dirty {
 			chip += warnStyle.Render("*")
+		}
+		if info.Detached {
+			chip += subtleStyle.Render(" (detached)")
 		}
 		gitBody := []string{chip}
 		if info.Inserted > 0 || info.Deleted > 0 {
@@ -947,23 +1133,22 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 				failStyle.Render(fmt.Sprintf("-%d", info.Deleted))
 			gitBody = append(gitBody, churn)
 		}
-		addSection("GIT", gitBody)
+		addSection("⎇", "GIT", gitBody)
 	}
 
 	// SESSION --------------------------------------------------------------
-	sessionBody := []string{
-		subtleStyle.Render("⏱ ") + boldStyle.Render(formatSessionDuration(info.SessionElapsed)),
-	}
+	sessionHead := boldStyle.Render(formatSessionDuration(info.SessionElapsed))
 	if info.MessageCount > 0 {
-		sessionBody = append(sessionBody, subtleStyle.Render(fmt.Sprintf("%d messages", info.MessageCount)))
+		sessionHead += subtleStyle.Render(fmt.Sprintf(" · %d msgs", info.MessageCount))
 	}
+	sessionBody := []string{sessionHead}
 	if pinned := strings.TrimSpace(info.Pinned); pinned != "" {
 		sessionBody = append(sessionBody, accentStyle.Render("◆ ")+boldStyle.Render(fileMarker(pinned)))
 	}
-	addSection("SESSION", sessionBody)
+	addSection("⏱", "SESSION", sessionBody)
 
 	// Footer hint so users discover the toggle without grepping for ctrl+s.
-	lines = append(lines, "", subtleStyle.Render("ctrl+s hide · ctrl+h keys"))
+	lines = append(lines, divider, subtleStyle.Render("  ctrl+s hide · ctrl+h keys"))
 
 	// Pad to requested height so vertical join aligns cleanly. If content is
 	// taller than available height we truncate from the bottom (hint line
