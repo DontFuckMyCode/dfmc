@@ -50,6 +50,11 @@ func providerFromProfile(name string, profile config.ModelConfig) Provider {
 			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
 		}
 		return NewAnthropicProvider(model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext)
+	case "google", "gemini":
+		if apiKey == "" {
+			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
+		}
+		return NewGoogleProvider(model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext)
 	case "openai", "openai-compatible":
 		if name == "generic" && strings.TrimSpace(baseURL) == "" {
 			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
@@ -74,6 +79,8 @@ func normalizedProtocol(name, protocol string) string {
 		return "anthropic"
 	case "openai":
 		return "openai"
+	case "google", "gemini":
+		return "google"
 	case "deepseek", "generic", "kimi", "zai", "alibaba":
 		return "openai-compatible"
 	default:
