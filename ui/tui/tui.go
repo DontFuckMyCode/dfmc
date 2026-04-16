@@ -7571,6 +7571,19 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "btw", Template: "/btw ", Description: "inject a note at the next tool-loop step"},
 		{Command: "coach", Template: "/coach", Description: coachLabel + " the background coach notes"},
 		{Command: "hints", Template: "/hints", Description: hintsLabel + " between-round trajectory hints"},
+		// Analyze family: these have TUI handlers (case "map", "scan") but
+		// live at SurfaceCLI|SurfaceWeb in the shared registry, so they
+		// never reach the palette through ForSurface. Surface them here so
+		// the picker lists every verb the dispatcher actually runs.
+		{Command: "map", Template: "/map", Description: "render the codemap (symbols, deps, cycles)"},
+		{Command: "scan", Template: "/scan", Description: "scan for security + correctness smells"},
+		// Template family: /refactor, /test, /doc dispatch through the same
+		// runTemplateSlash handler as /review and /explain (both of which
+		// come from the SurfaceAll registry entries). Pin them here so the
+		// full family shows up together.
+		{Command: "refactor", Template: "/refactor " + blankFallback(m.toolTargetFile(), "path/to/file.go"), Description: "propose a scoped, reversible refactor"},
+		{Command: "test", Template: "/test " + blankFallback(m.toolTargetFile(), "path/to/file.go"), Description: "draft tests for a target"},
+		{Command: "doc", Template: "/doc " + blankFallback(m.toolTargetFile(), "path/to/file.go"), Description: "draft or update documentation"},
 	}
 	for _, x := range extras {
 		add(x.Command, x.Template, x.Description)
