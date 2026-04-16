@@ -234,10 +234,19 @@ func defaultCommands() []Command {
 		},
 		{
 			Name:     "plugin",
-			Summary:  "List or manage plugin bundles.",
+			Summary:  "List or manage plugin bundles; call plugin methods over JSON-RPC.",
 			Category: CategoryTools,
 			Surfaces: SurfaceCLI | SurfaceWeb,
 			Usage:    "plugin SUBCOMMAND [args...]",
+			Subcommands: []Subcommand{
+				{Name: "list", Summary: "List installed and enabled plugins."},
+				{Name: "info", Summary: "Show metadata for one plugin."},
+				{Name: "install", Summary: "Install a plugin from a local path or URL."},
+				{Name: "remove", Summary: "Remove an installed plugin."},
+				{Name: "enable", Summary: "Enable a plugin in config."},
+				{Name: "disable", Summary: "Disable a plugin without removing it."},
+				{Name: "run", Aliases: []string{"call"}, Summary: "Invoke a method on a plugin over JSON-RPC."},
+			},
 		},
 
 		// ---------------- Config ----------------

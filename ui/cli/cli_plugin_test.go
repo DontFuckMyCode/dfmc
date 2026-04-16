@@ -203,3 +203,64 @@ func writeZipFile(path string, files map[string]string) error {
 	}
 	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
+
+func TestResolvePluginEntrySingleFile(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "plugin.py")
+	if err := os.WriteFile(script, []byte("# plugin\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	info := pluginInfo{Name: "x", Path: script, Installed: true}
+	got, err := resolvePluginEntry(info)
+	if err != nil {
+		t.Fatalf("resolvePluginEntry: %v", err)
+	}
+	if got != script {
+		t.Fatalf("want %q, got %q", script, got)
+	}
+}
+
+func TestResolvePluginEntryDirectoryWithManifest(t *testing.T) {
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "main.py")
+	if err := os.WriteFile(entry, []byte("# plugin entry\n"), 0o644); err != nil {
+		t.Fatalf("write entry: %v", err)
+	}
+	info := pluginInfo{Name: "x", Path: dir, Entry: "main.py", Installed: true}
+	got, err := resolvePluginEntry(info)
+	if err != nil {
+		t.Fatalf("resolvePluginEntry: %v", err)
+	}
+	if got != entry {
+		t.Fatalf("want %q, got %q", entry, got)
+	}
+}
+
+func TestResolvePluginEntryDirectoryMissingEntry(t *testing.T) {
+	dir := t.TempDir()
+	info := pluginInfo{Name: "x", Path: dir, Installed: true}
+	_, err := resolvePluginEntry(info)
+	if err == nil {
+		t.Fatalf("expected error when entry is missing")
+	}
+}
+
+func TestFindInstalledPluginByName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "alpha.py"), []byte("# a\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "beta.sh"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, ok := findInstalledPlugin(dir, "ALPHA")
+	if !ok {
+		t.Fatalf("findInstalledPlugin should be case-insensitive")
+	}
+	if got.Name != "alpha" {
+		t.Fatalf("unexpected plugin: %#v", got)
+	}
+	if _, ok := findInstalledPlugin(dir, "missing"); ok {
+		t.Fatalf("findInstalledPlugin returned ok for missing plugin")
+	}
+}
