@@ -241,6 +241,19 @@ type Model struct {
 	codemapErr     string
 	codemapLoaded  bool
 
+	// Conversations panel state — read view over the JSONL-persisted
+	// conversation store. The preview pane holds the first few messages
+	// of the currently highlighted entry; it's lazy-loaded on enter.
+	conversationsEntries      []conversation.Summary
+	conversationsScroll       int
+	conversationsQuery        string
+	conversationsLoading      bool
+	conversationsErr          string
+	conversationsSearchActive bool
+	conversationsLoaded       bool
+	conversationsPreview      []types.Message
+	conversationsPreviewID    string
+
 	agentLoopActive        bool
 	agentLoopStep          int
 	agentLoopMaxToolStep   int
@@ -370,7 +383,7 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	return Model{
 		ctx:               ctx,
 		eng:               eng,
-		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap"},
+		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations"},
 		activityFollow:    true,
 		memoryTier:        memoryTierAll,
 		codemapView:       codemapViewOverview,
@@ -567,6 +580,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.codemapScroll >= codemapViewRowCount(m.codemapView, m.codemapSnap) {
 			m.codemapScroll = 0
 		}
+		return m, nil
+
+	case conversationsLoadedMsg:
+		m.conversationsLoading = false
+		m.conversationsLoaded = true
+		if msg.err != nil {
+			m.conversationsErr = msg.err.Error()
+			return m, nil
+		}
+		m.conversationsErr = ""
+		m.conversationsEntries = msg.entries
+		if m.conversationsScroll >= len(m.conversationsEntries) {
+			m.conversationsScroll = 0
+		}
+		return m, nil
+
+	case conversationPreviewMsg:
+		if msg.err != nil {
+			m.notice = "conversations: " + msg.err.Error()
+			return m, nil
+		}
+		m.conversationsPreviewID = msg.id
+		m.conversationsPreview = msg.msgs
 		return m, nil
 
 	case patchApplyMsg:
@@ -784,6 +820,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, loadCodemapCmd(m.eng)
 			}
 			return m, nil
+		case "f10", "alt+0":
+			m.activeTab = 9
+			if !m.conversationsLoaded && !m.conversationsLoading {
+				m.conversationsLoading = true
+				return m, loadConversationsCmd(m.eng)
+			}
+			return m, nil
 		}
 
 		switch m.tabs[m.activeTab] {
@@ -828,6 +871,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleMemoryKey(msg)
 		case "CodeMap":
 			return m.handleCodemapKey(msg)
+		case "Conversations":
+			return m.handleConversationsKey(msg)
 		}
 	}
 	return m, nil
@@ -3866,6 +3911,8 @@ func (m Model) renderActiveView(width int, height int) string {
 		content = fitPanelContentHeight(m.renderMemoryView(contentWidth), innerHeight)
 	case "CodeMap":
 		content = fitPanelContentHeight(m.renderCodemapView(contentWidth), innerHeight)
+	case "Conversations":
+		content = fitPanelContentHeight(m.renderConversationsView(contentWidth), innerHeight)
 	default:
 		// Chat view is special — the input box (tail) must never be hidden
 		// or the user stops being able to type. We render head and tail
@@ -4742,7 +4789,7 @@ func (m Model) renderHelpOverlay(width int) string {
 	lines = append(lines,
 		"",
 		boldStyle.Render("Global"),
-		"  ctrl+p palette · alt+1..9 or f1..f9 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
+		"  ctrl+p palette · alt+1..0 or f1..f10 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
 		"  esc cancels current stream · ctrl+c interrupts · ctrl+u clear input",
 		"",
 		boldStyle.Render("Chat composer"),
