@@ -28,6 +28,16 @@ type BuildOptions struct {
 	Compression      string
 	IncludeTests     bool
 	IncludeDocs      bool
+	// SymbolAware enables codemap-driven retrieval: query identifiers
+	// are resolved against symbol nodes, and matching files pull their
+	// import-graph neighbors as context. Disable to force the pure
+	// text-matching path (useful for reproducibility in tests).
+	SymbolAware bool
+	// GraphDepth bounds how many hops out from a resolved seed file we
+	// walk through the import graph. Zero disables expansion even when
+	// SymbolAware is set. Practical range: 1-2; larger values produce
+	// diminishing returns at real cost to the budget.
+	GraphDepth int
 }
 
 type PromptRuntime struct {
@@ -56,6 +66,8 @@ func (m *Manager) Build(query string, maxFiles int) ([]types.ContextChunk, error
 		Compression:      "standard",
 		IncludeTests:     true,
 		IncludeDocs:      true,
+		SymbolAware:      true,
+		GraphDepth:       2,
 	})
 }
 
@@ -79,7 +91,23 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 
 	terms := tokenizeQuery(query)
 	scores := map[string]float64{}
+	// sources tracks the strongest provenance reason per file — later
+	// written into each chunk's Source so UIs and coach rules can see
+	// why retrieval picked what it did. Precedence: marker > symbol >
+	// graph-neighborhood > query-match > hotspot (enforced via the
+	// upgradeSource helper, not the map itself).
+	sources := map[string]string{}
 	graph := m.codemap.Graph()
+
+	upgradeSource := func(path, candidate string) {
+		if path == "" || candidate == "" {
+			return
+		}
+		current, ok := sources[path]
+		if !ok || chunkSourceRank(candidate) > chunkSourceRank(current) {
+			sources[path] = candidate
+		}
+	}
 
 	for _, n := range graph.Nodes() {
 		switch n.Kind {
@@ -89,6 +117,7 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 			for _, t := range terms {
 				if strings.Contains(pathLower, t) || strings.Contains(nameLower, t) {
 					scores[n.Path] += 2.0
+					upgradeSource(n.Path, ChunkSourceQueryMatch)
 				}
 			}
 			if _, ok := scores[n.Path]; !ok {
@@ -102,7 +131,36 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 			for _, t := range terms {
 				if strings.Contains(nameLower, t) {
 					scores[n.Path] += 3.0
+					upgradeSource(n.Path, ChunkSourceQueryMatch)
 				}
+			}
+		}
+	}
+
+	// Symbol-aware pass: resolve identifiers in the query against the
+	// codemap's symbol index, boost defining files, and walk outward
+	// through the import graph to surface sibling files (callers/peers
+	// that share module neighborhoods).
+	if opts.SymbolAware {
+		idents := extractIdentifiers(query)
+		seeds := resolveSymbolSeeds(graph, idents)
+		// Symbol hits outrank generic query-match bonuses because the
+		// resolution is semantic, not substring — we know the identifier
+		// *is* a defined symbol, not just a coincidental character run.
+		for path, strength := range seeds {
+			scores[path] += 4.0 + strength
+			upgradeSource(path, ChunkSourceSymbolMatch)
+		}
+		if len(seeds) > 0 && opts.GraphDepth > 0 {
+			seedList := make([]string, 0, len(seeds))
+			for path := range seeds {
+				seedList = append(seedList, path)
+			}
+			for path, hops := range expandViaGraph(graph, seedList, opts.GraphDepth) {
+				// Inverse-scale by hop distance so closer siblings win.
+				bonus := 1.5 / float64(hops)
+				scores[path] += bonus
+				upgradeSource(path, ChunkSourceGraphNeighborhood)
 			}
 		}
 	}
@@ -110,6 +168,7 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 	for _, hs := range graph.HotSpots(opts.MaxFiles * 3) {
 		if hs.Path != "" {
 			scores[hs.Path] += 1.0
+			upgradeSource(hs.Path, ChunkSourceHotspot)
 		}
 	}
 
@@ -151,6 +210,11 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 		}
 		if chunk.TokenCount <= 0 || strings.TrimSpace(chunk.Content) == "" {
 			continue
+		}
+		if src, ok := sources[r.Path]; ok {
+			chunk.Source = src
+		} else {
+			chunk.Source = ChunkSourceQueryMatch
 		}
 		chunks = append(chunks, chunk)
 		remaining -= chunk.TokenCount
@@ -215,23 +279,81 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 	return bundle
 }
 
-// trimBundleToBudget applies a token cap across the bundle, preserving the
-// stable prefix whenever possible — dynamic sections are trimmed first
-// since they change every request anyway. Falls back to trimming the last
-// section if the stable prefix alone still exceeds the budget.
+// trimBundleToBudget applies a token cap across the bundle. The dynamic
+// (non-cacheable) sections carry the user query and per-request context —
+// losing them defeats the entire prompt. So we reserve a floor for dynamic
+// content first, trim the cacheable prefix into whatever is left, and only
+// then let the dynamic sections use the remainder (plus any slack the stable
+// prefix didn't consume).
 func trimBundleToBudget(bundle *promptlib.PromptBundle, budget int) *promptlib.PromptBundle {
 	if bundle == nil || budget <= 0 || len(bundle.Sections) == 0 {
 		return bundle
 	}
-	out := &promptlib.PromptBundle{Sections: make([]promptlib.PromptSection, 0, len(bundle.Sections))}
-	remaining := budget
+
+	dynamicTokens := 0
+	dynamicCount := 0
 	for _, s := range bundle.Sections {
-		if remaining <= 0 {
-			break
+		if !s.Cacheable {
+			dynamicCount++
+			dynamicTokens += estimateTokens(s.Text)
 		}
+	}
+
+	dynamicFloor := 0
+	if dynamicCount > 0 {
+		// Reserve up to 25% of the budget for dynamic content (with a hard
+		// 180-token floor), so the user query and per-request context survive
+		// even when the stable prefix is large. Cap by actual dynamic size so
+		// we don't over-reserve when there isn't much dynamic content.
+		dynamicFloor = budget / 4
+		if dynamicFloor < 180 {
+			dynamicFloor = 180
+		}
+		if dynamicFloor > dynamicTokens {
+			dynamicFloor = dynamicTokens
+		}
+		if dynamicFloor > budget {
+			dynamicFloor = budget
+		}
+	}
+
+	stableBudget := budget - dynamicFloor
+	if stableBudget < 0 {
+		stableBudget = 0
+	}
+
+	out := &promptlib.PromptBundle{Sections: make([]promptlib.PromptSection, 0, len(bundle.Sections))}
+	stableRemaining := stableBudget
+	dynamicRemaining := dynamicFloor
+	for _, s := range bundle.Sections {
 		text := s.Text
-		if tok := estimateTokens(text); tok > remaining {
-			text = trimToTokenBudget(text, remaining)
+		if s.Cacheable {
+			if tok := estimateTokens(text); tok > stableRemaining {
+				text = trimToTokenBudget(text, stableRemaining)
+			}
+			stableRemaining -= estimateTokens(text)
+			// Any unused stable budget rolls forward to dynamic — the
+			// reverse (dynamic → stable) is deliberately disallowed to keep
+			// cache prefixes stable across turns.
+			if stableRemaining < 0 {
+				stableRemaining = 0
+			}
+		} else {
+			allowance := dynamicRemaining + stableRemaining
+			if tok := estimateTokens(text); tok > allowance {
+				text = trimToTokenBudget(text, allowance)
+			}
+			used := estimateTokens(text)
+			if used <= dynamicRemaining {
+				dynamicRemaining -= used
+			} else {
+				used -= dynamicRemaining
+				dynamicRemaining = 0
+				stableRemaining -= used
+				if stableRemaining < 0 {
+					stableRemaining = 0
+				}
+			}
 		}
 		if strings.TrimSpace(text) == "" {
 			continue
@@ -241,7 +363,6 @@ func trimBundleToBudget(bundle *promptlib.PromptBundle, budget int) *promptlib.P
 			Text:      text,
 			Cacheable: s.Cacheable,
 		})
-		remaining -= estimateTokens(text)
 	}
 	return out
 }
@@ -326,7 +447,18 @@ func summarizeContextFiles(projectRoot string, chunks []types.ContextChunk, limi
 		if path == "" {
 			path = "(unknown)"
 		}
-		lines = append(lines, fmt.Sprintf("- %s:%d-%d", path, ch.LineStart, ch.LineEnd))
+		tag := ""
+		switch ch.Source {
+		case ChunkSourceSymbolMatch:
+			tag = " (symbol)"
+		case ChunkSourceGraphNeighborhood:
+			tag = " (neighbor)"
+		case ChunkSourceMarker:
+			tag = " (pinned)"
+		case ChunkSourceHotspot:
+			tag = " (hotspot)"
+		}
+		lines = append(lines, fmt.Sprintf("- %s:%d-%d%s", path, ch.LineStart, ch.LineEnd, tag))
 	}
 	if overflow > 0 {
 		lines = append(lines, fmt.Sprintf("- ... +%d more files", overflow))
@@ -792,44 +924,34 @@ func loadProjectBrief(projectRoot string, maxTokens int) string {
 
 func BuildToolCallPolicy(task string, runtime PromptRuntime) string {
 	lines := []string{
-		"1) Call tools only when they reduce uncertainty materially.",
-		"2) Prefer the minimum tool set needed for a reliable result.",
-		"3) Keep calls narrow (targeted files/ranges/filters).",
-		"4) Reuse prior tool outputs; avoid duplicate calls.",
-		"5) Validate edited scope with the smallest relevant test first.",
+		"Discipline: call tools only when they reduce uncertainty; keep calls narrow; reuse prior outputs; validate edits with the smallest test.",
+		"Prefer dedicated tools over run_command: read_file (not cat), grep_codebase (not grep/rg), glob (not find), edit_file/apply_patch (not sed/awk), write_file (not echo>), web_fetch (not curl), ast_query for outlines. Use run_command only for build/test/lint/git/deps.",
+		"Parallelism: independent calls → one tool_batch_call; dependent commands → chain with && in a single run_command; never split a command across newlines; don't retry failing calls without changing inputs.",
+		"Mutation safety: read_file before edit_file/write_file (engine rejects blind mutations); multi-hunk edits → apply_patch (use dry_run when non-trivial); validate with targeted test/vet/tsc before declaring done.",
+		"Git/shell safety: never --no-verify or --no-gpg-sign without user consent; never force-push main or reset --hard without authorization; stage files by name (not add -A/.); after a pre-commit hook fails, fix and create a NEW commit (never --amend); HEREDOC for multi-line commit messages.",
 	}
 	switch strings.TrimSpace(strings.ToLower(runtime.ToolStyle)) {
 	case "function-calling":
-		lines = append(lines,
-			"6) Tool protocol: emit strict function-call JSON that matches schema exactly.",
-			"7) Keep tool payloads deterministic; no mixed prose inside arguments.")
+		lines = append(lines, "Protocol: strict function-call JSON matching schema; no prose inside arguments.")
 	case "tool_use":
-		lines = append(lines,
-			"6) Tool protocol: emit tool_use blocks with strict JSON input.",
-			"7) Pair each tool_result with the initiating tool_use id.")
+		lines = append(lines, "Protocol: tool_use blocks with strict JSON input; pair each tool_result with its tool_use id.")
 	case "none":
-		lines = append(lines,
-			"6) Runtime has no native tool-calling; rely on provided context and direct reasoning.")
+		lines = append(lines, "Protocol: no native tool-calling; rely on provided context and direct reasoning.")
 	default:
-		lines = append(lines,
-			"6) Follow provider-native tool format exactly; prioritize schema fidelity over verbosity.")
+		lines = append(lines, "Protocol: follow provider-native tool format exactly; schema fidelity over verbosity.")
 	}
 	if runtime.MaxContext > 0 {
 		toolOutputBudget := runtime.MaxContext / 5
 		if toolOutputBudget < 96 {
 			toolOutputBudget = 96
 		}
-		lines = append(lines, "8) Keep cumulative tool output near "+strconv.Itoa(toolOutputBudget)+" tokens unless risk requires deeper evidence.")
+		lines = append(lines, "Keep cumulative tool output near "+strconv.Itoa(toolOutputBudget)+" tokens unless risk requires deeper evidence.")
 	}
 	switch strings.ToLower(strings.TrimSpace(task)) {
 	case "security":
-		lines = append(lines,
-			"9) Collect concrete evidence before remediation edits.",
-			"10) Report exploitability conditions and confidence.")
+		lines = append(lines, "Security overlay: collect concrete evidence before remediation edits; report exploitability conditions and confidence.")
 	case "review":
-		lines = append(lines,
-			"9) Anchor findings to concrete evidence (file/line).",
-			"10) Prioritize high-severity and high-confidence issues.")
+		lines = append(lines, "Review overlay: anchor findings to file:line evidence; prioritize high-severity and high-confidence issues.")
 	}
 	return strings.Join(lines, "\n")
 }

@@ -184,7 +184,7 @@ func (t *toolCallTool) Spec() ToolSpec {
 	}
 }
 func (t *toolCallTool) Execute(ctx context.Context, req Request) (Result, error) {
-	name := strings.TrimSpace(asString(req.Params, "name", ""))
+	name := pickToolName(req.Params)
 	if name == "" {
 		return Result{}, fmt.Errorf("name is required")
 	}
@@ -292,7 +292,22 @@ func isMetaTool(name string) bool {
 func extractArgsObject(params map[string]any, key string) (map[string]any, error) {
 	raw, ok := params[key]
 	if !ok || raw == nil {
-		return map[string]any{}, nil
+		// Be defensive: some models (especially third-party OpenAI-compatible
+		// endpoints) emit the arguments under "input" or "arguments" despite
+		// our schema naming the field "args". Accept those as aliases when
+		// the primary key is missing, rather than failing the call outright.
+		if key == "args" {
+			for _, alt := range []string{"input", "arguments", "params"} {
+				if v, has := params[alt]; has && v != nil {
+					raw = v
+					ok = true
+					break
+				}
+			}
+		}
+		if !ok || raw == nil {
+			return map[string]any{}, nil
+		}
 	}
 	switch v := raw.(type) {
 	case map[string]any:
@@ -310,6 +325,18 @@ func extractArgsObject(params map[string]any, key string) (map[string]any, error
 	default:
 		return nil, fmt.Errorf("%s must be an object, got %T", key, raw)
 	}
+}
+
+// pickToolName reads the tool-name field from a call object, accepting
+// `name` (the schema-correct key) and `tool` as a fallback. Some models
+// — particularly fine-tuned OpenAI-compat endpoints — emit `tool` when
+// reproducing a tool-call shape from training data. Accepting the alias
+// turns what would be a hard failure into a working call.
+func pickToolName(obj map[string]any) string {
+	if name := strings.TrimSpace(asString(obj, "name", "")); name != "" {
+		return name
+	}
+	return strings.TrimSpace(asString(obj, "tool", ""))
 }
 
 type batchCall struct {
@@ -343,7 +370,7 @@ func extractCallsArray(params map[string]any) ([]batchCall, error) {
 		if !ok {
 			return nil, fmt.Errorf("calls[%d] must be an object", i)
 		}
-		name := strings.TrimSpace(asString(obj, "name", ""))
+		name := pickToolName(obj)
 		if name == "" {
 			return nil, fmt.Errorf("calls[%d].name is required", i)
 		}

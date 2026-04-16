@@ -6,6 +6,32 @@ import (
 	"testing"
 )
 
+func TestEnvVarForProvider(t *testing.T) {
+	cases := map[string]string{
+		"anthropic": "ANTHROPIC_API_KEY",
+		"openai":    "OPENAI_API_KEY",
+		"deepseek":  "DEEPSEEK_API_KEY",
+		"kimi":      "KIMI_API_KEY",
+		"minimax":   "MINIMAX_API_KEY",
+		"zai":       "ZAI_API_KEY",
+		"alibaba":   "ALIBABA_API_KEY",
+		"google":    "GOOGLE_AI_API_KEY",
+		"Anthropic": "ANTHROPIC_API_KEY", // case-insensitive
+		" openai ": "OPENAI_API_KEY",     // whitespace-tolerant
+	}
+	for in, want := range cases {
+		if got := EnvVarForProvider(in); got != want {
+			t.Errorf("EnvVarForProvider(%q) = %q; want %q", in, got, want)
+		}
+	}
+	if got := EnvVarForProvider("generic"); got != "" {
+		t.Errorf("EnvVarForProvider(generic) = %q; want empty (no canonical env var)", got)
+	}
+	if got := EnvVarForProvider(""); got != "" {
+		t.Errorf("EnvVarForProvider(empty) = %q; want empty", got)
+	}
+}
+
 func TestLoadWithOptions_MergeAndEnv(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
 

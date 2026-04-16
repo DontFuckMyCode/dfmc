@@ -227,3 +227,52 @@ func TestToolBatchCallRequiresCalls(t *testing.T) {
 		t.Fatal("expected error for missing calls")
 	}
 }
+
+// TestToolCallAcceptsToolAlias verifies that when a model emits `tool`
+// instead of the schema-correct `name`, the single-dispatch path still
+// executes the requested backend tool. Some third-party OpenAI-compatible
+// endpoints do this because their fine-tune reproduces training-data
+// shapes rather than our tool schema.
+func TestToolCallAcceptsToolAlias(t *testing.T) {
+	eng, tmp := newTestEngine(t)
+	res, err := eng.Execute(context.Background(), "tool_call", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"tool":  "read_file",
+			"input": map[string]any{"path": "hello.go"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("tool_call with tool/input aliases: %v", err)
+	}
+	if !strings.Contains(res.Output, "package main") {
+		t.Fatalf("expected file contents via alias dispatch, got %q", res.Output)
+	}
+}
+
+// TestToolBatchCallAcceptsToolAlias covers the same fallback on the batch
+// path: inner entries keyed `tool` still execute when `name` is absent.
+func TestToolBatchCallAcceptsToolAlias(t *testing.T) {
+	eng, tmp := newTestEngine(t)
+	res, err := eng.Execute(context.Background(), "tool_batch_call", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"calls": []any{
+				map[string]any{"tool": "read_file", "args": map[string]any{"path": "hello.go"}},
+				map[string]any{"name": "read_file", "arguments": map[string]any{"path": "hello.go"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("tool_batch_call with aliases: %v", err)
+	}
+	arr, _ := res.Data["results"].([]map[string]any)
+	if len(arr) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(arr))
+	}
+	for i, entry := range arr {
+		if ok, _ := entry["success"].(bool); !ok {
+			t.Fatalf("results[%d] should succeed via alias, got %v", i, entry)
+		}
+	}
+}

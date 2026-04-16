@@ -33,13 +33,39 @@ func NewOpenAICompatibleProvider(name, model, apiKey, baseURL string, maxTokens,
 		name:       name,
 		model:      model,
 		apiKey:     apiKey,
-		baseURL:    strings.TrimRight(baseURL, "/"),
+		baseURL:    normalizeOpenAIBaseURL(name, baseURL),
 		maxTokens:  maxTokens,
 		maxContext: maxContext,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
 	}
+}
+
+// normalizeOpenAIBaseURL trims the trailing slash and appends a sensible
+// version segment when the URL points at a known host's root (e.g.
+// https://api.deepseek.com without /v1). Users often paste the bare host
+// from provider docs; appending /chat/completions to a bare host yields a
+// 404 because the real endpoint lives under /v1. For hosts we recognize
+// we fix it; unknown hosts are left alone to avoid guessing wrong.
+func normalizeOpenAIBaseURL(name, raw string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if trimmed == "" {
+		return ""
+	}
+	lower := strings.ToLower(trimmed)
+	// Already contains a version or path segment — leave it.
+	for _, seg := range []string{"/v1", "/v2", "/v3", "/v4", "/openai", "/compatible-mode", "/paas", "/anthropic", "/api/"} {
+		if strings.Contains(lower, seg) {
+			return trimmed
+		}
+	}
+	// Bare host for a provider we know needs /v1.
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "openai", "deepseek", "kimi", "moonshot", "generic":
+		return trimmed + "/v1"
+	}
+	return trimmed
 }
 
 func (p *OpenAICompatibleProvider) Name() string  { return p.name }
@@ -345,6 +371,12 @@ func defaultOpenAIBaseURL(name string) string {
 		return "https://api.openai.com/v1"
 	case "deepseek":
 		return "https://api.deepseek.com/v1"
+	case "kimi", "moonshot":
+		return "https://api.moonshot.ai/v1"
+	case "zai":
+		return "https://api.z.ai/api/paas/v4"
+	case "alibaba":
+		return "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 	default:
 		return ""
 	}

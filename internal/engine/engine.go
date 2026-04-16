@@ -263,6 +263,7 @@ func (e *Engine) Init(ctx context.Context) error {
 	e.CodeMap = codemap.New(e.AST)
 	e.Context = ctxmgr.New(e.CodeMap)
 	e.Tools = tools.New(*e.Config)
+	e.Tools.SetSubagentRunner(e)
 	e.Memory = memory.New(e.Storage)
 	_ = e.Memory.Load()
 	e.Conversation = conversation.New(e.Storage)
@@ -821,6 +822,8 @@ func (e *Engine) contextBuildOptionsWithRuntime(question string, runtime ctxmgr.
 		Compression:      cfg.Compression,
 		IncludeTests:     cfg.IncludeTests,
 		IncludeDocs:      cfg.IncludeDocs,
+		SymbolAware:      cfg.SymbolAware,
+		GraphDepth:       cfg.GraphDepth,
 	}
 	opts.Compression = normalizeContextCompression(opts.Compression)
 	if runtime.LowLatency || providerLimit <= 12000 {
@@ -918,7 +921,7 @@ func (e *Engine) buildContextInStatus(question string, runtime ctxmgr.PromptRunt
 			TokenCount:  chunk.TokenCount,
 			Score:       chunk.Score,
 			Compression: chunk.Compression,
-			Reason:      explainContextFileReason(path, terms, explicitPaths, chunk.Score),
+			Reason:      explainContextFileReason(path, terms, explicitPaths, chunk.Score, chunk.Source),
 		})
 	}
 
@@ -989,8 +992,22 @@ func normalizeContextPathForStatus(projectRoot, path string) string {
 	return rel
 }
 
-func explainContextFileReason(path string, terms, explicitPaths []string, score float64) string {
+func explainContextFileReason(path string, terms, explicitPaths []string, score float64, source string) string {
 	if contextPathMatchesMention(path, explicitPaths) {
+		return "explicit [[file:...]] marker"
+	}
+	// The source label (set by the context manager when ranking) is the
+	// authoritative reason. Fall through to score-based heuristics only
+	// if the chunk arrived without one — that preserves backward behavior
+	// for older tests or providers that construct chunks directly.
+	switch source {
+	case ctxmgr.ChunkSourceSymbolMatch:
+		return "query identifier resolved to a codemap symbol"
+	case ctxmgr.ChunkSourceGraphNeighborhood:
+		return "import-graph neighbor of a symbol-matched seed"
+	case ctxmgr.ChunkSourceHotspot:
+		return "high codemap centrality (hotspot)"
+	case ctxmgr.ChunkSourceMarker:
 		return "explicit [[file:...]] marker"
 	}
 	matchCount := 0

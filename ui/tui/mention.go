@@ -14,9 +14,20 @@ package tui
 // A recency bonus from the engine's working memory lifts files the user has
 // recently touched so they surface before equally-scoring strangers. Shorter
 // paths tiebreak ahead of longer ones.
+//
+// Users can append a line range to the typed @mention (`@auth.go:10-50`,
+// `@auth.go#L10`, `@auth.go#L10-L50`). The range is kept verbatim through the
+// picker and attached to the inserted `[[file:...#L10-L50]]` marker so it
+// flows through to the context manager.
+//
+// The picker hides common binary/asset extensions by default so the first
+// eight rows stay useful even on projects that ship a lot of images or
+// fixtures. The filter relaxes automatically when the user explicitly types
+// one of those extensions into the query.
 
 import (
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -39,8 +50,9 @@ func newMentionRanker(files []string, recent []string) mentionRanker {
 }
 
 type mentionCandidate struct {
-	path  string
-	score int
+	path   string
+	score  int
+	recent bool
 }
 
 func (r mentionRanker) rank(query string, limit int) []mentionCandidate {
@@ -48,17 +60,22 @@ func (r mentionRanker) rank(query string, limit int) []mentionCandidate {
 		limit = 8
 	}
 	q := strings.ToLower(strings.TrimSpace(query))
+	showBinary := queryTargetsBinary(q)
 	candidates := make([]mentionCandidate, 0, len(r.files))
 	for _, raw := range r.files {
 		path := filepath.ToSlash(strings.TrimSpace(raw))
 		if path == "" {
 			continue
 		}
+		if !showBinary && mentionPickerSkip(path) {
+			continue
+		}
 		score := r.scoreOne(path, q)
 		if score <= 0 {
 			continue
 		}
-		candidates = append(candidates, mentionCandidate{path: path, score: score})
+		_, recent := r.recentIndex[path]
+		candidates = append(candidates, mentionCandidate{path: path, score: score, recent: recent})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].score != candidates[j].score {
@@ -77,8 +94,8 @@ func (r mentionRanker) rank(query string, limit int) []mentionCandidate {
 
 func (r mentionRanker) scoreOne(path, q string) int {
 	lowerPath := strings.ToLower(path)
-	base := strings.ToLower(filepath.Base(path))
-	base = strings.TrimSuffix(base, filepath.Ext(base))
+	baseExt := strings.ToLower(filepath.Base(path))
+	base := strings.TrimSuffix(baseExt, filepath.Ext(baseExt))
 
 	recency := r.recencyBonus(path)
 
@@ -87,14 +104,18 @@ func (r mentionRanker) scoreOne(path, q string) int {
 		return 1 + recency
 	}
 
+	// Queries with a ".ext" tail should also match the basename-with-extension
+	// form — otherwise `@token.go` scores below threshold against
+	// `internal/auth/token.go` because the raw substring only appears in the
+	// full path (tier 5, penalized) rather than against a basename tier.
 	switch {
-	case base == q || lowerPath == q:
+	case base == q || baseExt == q || lowerPath == q:
 		return 1000 + recency
-	case strings.HasPrefix(base, q):
+	case strings.HasPrefix(base, q) || strings.HasPrefix(baseExt, q):
 		return 800 - lenPenalty(path) + recency
 	case strings.HasPrefix(lowerPath, q):
 		return 700 - lenPenalty(path) + recency
-	case strings.Contains(base, q):
+	case strings.Contains(base, q) || strings.Contains(baseExt, q):
 		return 500 - lenPenalty(path) + recency
 	case strings.Contains(lowerPath, q):
 		return 400 - lenPenalty(path) + recency
@@ -148,6 +169,81 @@ func subsequenceGap(s, q string) (int, bool) {
 		return 0, false
 	}
 	return gap, true
+}
+
+// mentionBinaryExts enumerates extensions that rarely help the model and
+// would dilute the top of the picker (images, binaries, archives, fonts,
+// media, compiled classes, database files). The filter is a sensible default,
+// not a veto — if the query explicitly names one of these extensions the
+// filter relaxes so power users can still pick them.
+var mentionBinaryExts = map[string]struct{}{
+	".png": {}, ".jpg": {}, ".jpeg": {}, ".gif": {}, ".bmp": {}, ".tif": {}, ".tiff": {}, ".ico": {}, ".webp": {}, ".svg": {},
+	".pdf": {}, ".zip": {}, ".tar": {}, ".gz": {}, ".tgz": {}, ".bz2": {}, ".7z": {}, ".rar": {},
+	".exe": {}, ".dll": {}, ".so": {}, ".dylib": {}, ".bin": {}, ".o": {}, ".obj": {}, ".a": {}, ".class": {}, ".jar": {},
+	".mp3": {}, ".mp4": {}, ".mov": {}, ".wav": {}, ".ogg": {}, ".webm": {}, ".mkv": {}, ".flac": {}, ".m4a": {},
+	".woff": {}, ".woff2": {}, ".ttf": {}, ".otf": {}, ".eot": {},
+	".db": {}, ".sqlite": {}, ".sqlite3": {}, ".bolt": {},
+}
+
+// mentionPickerSkip returns true when a path's extension is in the default
+// binary-skip set. The filter is bypassed when the typed query matches the
+// extension (see queryTargetsBinary).
+func mentionPickerSkip(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		return false
+	}
+	_, skip := mentionBinaryExts[ext]
+	return skip
+}
+
+// queryTargetsBinary reports whether a query looks like the user is
+// explicitly asking for a binary extension (e.g. "logo.png", "favicon.ico").
+// When true, the picker skips its default filter. The check is anchored on
+// the dotted extension itself so "logo" does not match ".o" and similar
+// short extensions.
+func queryTargetsBinary(q string) bool {
+	q = strings.ToLower(strings.TrimSpace(q))
+	if q == "" {
+		return false
+	}
+	for ext := range mentionBinaryExts {
+		if strings.Contains(q, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// mentionRangeRE matches the suffix after the filename: either `:N[-M]` or
+// `#L N[-L?M]`. Accepts both bare digits after `:` and the `#L` form; always
+// normalizes the emitted suffix to `#L<start>[-L<end>]`.
+var mentionRangeRE = regexp.MustCompile(`(?i)(:|#L)(\d+)(?:[-:]L?(\d+))?$`)
+
+// splitMentionToken splits a typed token like `auth.go:10-50` or
+// `auth.go#L10-L50` into (fileQuery, normalizedRangeSuffix). When no range is
+// present, the suffix is empty. A malformed range is left alone (the whole
+// token is treated as the file query).
+func splitMentionToken(token string) (string, string) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", ""
+	}
+	m := mentionRangeRE.FindStringSubmatchIndex(token)
+	if m == nil {
+		return token, ""
+	}
+	prefix := token[:m[0]]
+	start := token[m[4]:m[5]]
+	end := ""
+	if m[6] != -1 {
+		end = token[m[6]:m[7]]
+	}
+	suffix := "#L" + start
+	if end != "" {
+		suffix += "-L" + end
+	}
+	return prefix, suffix
 }
 
 // engineRecentFiles extracts the working-memory recent-files list, handling

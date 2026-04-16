@@ -22,10 +22,14 @@ func TestRenderTUIHelp_MixesRegistryAndShortcuts(t *testing.T) {
 	if !strings.Contains(out, "TUI-only shortcuts:") {
 		t.Fatalf("TUI help missing shortcuts section")
 	}
-	for _, shortcut := range []string{"/reload", "/tools", "/diff", "/ls", "/grep"} {
+	for _, shortcut := range []string{"/reload", "/clear", "/quit", "/coach", "/hints", "/tools", "/diff", "/ls", "/grep", "/continue", "/btw"} {
 		if !strings.Contains(out, shortcut) {
 			t.Fatalf("TUI help missing shortcut %q", shortcut)
 		}
+	}
+	// Mentions line documents the range-suffix syntax.
+	if !strings.Contains(out, "@file.go:10-50") {
+		t.Fatalf("TUI help missing mention range-syntax hint")
 	}
 	// Panel hotkey hint.
 	if !strings.Contains(out, "F1 Chat") {

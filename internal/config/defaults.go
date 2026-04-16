@@ -26,6 +26,8 @@ func DefaultConfig() *Config {
 			Compression:      "standard",
 			IncludeTests:     false,
 			IncludeDocs:      true,
+			SymbolAware:      true,
+			GraphDepth:       2,
 		},
 		Memory: MemoryConfig{
 			Enabled:               true,
@@ -87,6 +89,10 @@ func DefaultConfig() *Config {
 			GRPCPort: 7778,
 			WSPort:   7779,
 			Auth:     "token",
+		},
+		Coach: CoachConfig{
+			Enabled:  true,
+			MaxNotes: 3,
 		},
 	}
 }

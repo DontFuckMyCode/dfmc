@@ -35,6 +35,7 @@ var (
 	colorRoleAssistant = lipgloss.Color("#8AF0CF")
 	colorRoleSystem    = lipgloss.Color("#F6D38A")
 	colorRoleTool      = lipgloss.Color("#C4A7FF")
+	colorRoleCoach     = lipgloss.Color("#F4B8D6")
 
 	colorOk     = lipgloss.Color("#6EE7A7")
 	colorFail   = lipgloss.Color("#FF8A8A")
@@ -84,6 +85,7 @@ var (
 	userLineStyle      = lipgloss.NewStyle().Foreground(colorRoleUser)
 	assistantLineStyle = lipgloss.NewStyle().Foreground(colorRoleAssistant)
 	systemLineStyle    = lipgloss.NewStyle().Foreground(colorRoleSystem)
+	coachLineStyle     = lipgloss.NewStyle().Foreground(colorRoleCoach).Italic(true)
 	inputLineStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#E5F2FF"))
 
 	boldStyle   = lipgloss.NewStyle().Bold(true)
@@ -99,6 +101,7 @@ var (
 	badgeAssistantStyle = lipgloss.NewStyle().Foreground(colorTitleFg).Background(colorRoleAssistant).Padding(0, 1).Bold(true)
 	badgeSystemStyle    = lipgloss.NewStyle().Foreground(colorTitleFg).Background(colorRoleSystem).Padding(0, 1).Bold(true)
 	badgeToolStyle      = lipgloss.NewStyle().Foreground(colorTitleFg).Background(colorRoleTool).Padding(0, 1).Bold(true)
+	badgeCoachStyle     = lipgloss.NewStyle().Foreground(colorTitleFg).Background(colorRoleCoach).Padding(0, 1).Bold(true)
 
 	cardBorderStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -138,6 +141,8 @@ func roleBadge(role string) string {
 		return badgeAssistantStyle.Render("DFMC")
 	case "tool":
 		return badgeToolStyle.Render("TOOL")
+	case "coach":
+		return badgeCoachStyle.Render("COACH")
 	default:
 		return badgeSystemStyle.Render("SYS")
 	}
@@ -151,6 +156,8 @@ func roleLineStyle(role string) lipgloss.Style {
 		return assistantLineStyle
 	case "tool":
 		return toolStyle
+	case "coach":
+		return coachLineStyle
 	default:
 		return systemLineStyle
 	}

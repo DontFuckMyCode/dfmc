@@ -10,6 +10,13 @@ import (
 var (
 	ErrProviderUnavailable = errors.New("provider unavailable")
 	ErrProviderNotFound    = errors.New("provider not found")
+	// ErrContextOverflow is a hint the router uses to decide whether to
+	// compact the conversation and retry the same provider before falling
+	// over to the next one. Providers that can detect the condition should
+	// wrap their error with it (via fmt.Errorf("%w: ...", ErrContextOverflow));
+	// the router also falls back to string-pattern detection for providers
+	// that don't.
+	ErrContextOverflow = errors.New("context length exceeded")
 )
 
 // ToolDescriptor is the provider-agnostic description of one callable tool.

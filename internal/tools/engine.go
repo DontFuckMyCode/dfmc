@@ -44,6 +44,7 @@ type Engine struct {
 	recentFailures map[string]int
 	readMu         sync.Mutex
 	readSnapshots  map[string]string
+	delegateTool   *DelegateTaskTool
 }
 
 func New(cfg config.Config) *Engine {
@@ -58,6 +59,24 @@ func New(cfg config.Config) *Engine {
 	e.Register(NewEditFileTool())
 	e.Register(NewListDirTool())
 	e.Register(NewGrepCodebaseTool())
+	e.Register(NewGlobTool())
+	e.Register(NewThinkTool())
+	e.Register(NewTodoWriteTool())
+	e.Register(NewWebFetchTool())
+	e.Register(NewWebSearchTool())
+	e.Register(NewASTQueryTool())
+	e.Register(NewApplyPatchTool())
+	e.Register(NewGitStatusTool())
+	e.Register(NewGitDiffTool())
+	e.Register(NewGitBranchTool())
+	e.Register(NewGitLogTool())
+	e.Register(NewGitWorktreeListTool())
+	e.Register(NewGitWorktreeAddTool())
+	e.Register(NewGitWorktreeRemoveTool())
+	e.Register(NewGitCommitTool())
+	e.Register(NewTaskSplitTool())
+	e.delegateTool = NewDelegateTaskTool()
+	e.Register(e.delegateTool)
 	timeout, err := time.ParseDuration(strings.TrimSpace(cfg.Tools.Shell.Timeout))
 	if err != nil || timeout <= 0 {
 		timeout, _ = time.ParseDuration(strings.TrimSpace(cfg.Security.Sandbox.Timeout))
@@ -72,6 +91,14 @@ func New(cfg config.Config) *Engine {
 	}))
 	RegisterMetaTools(e)
 	return e
+}
+
+// SetSubagentRunner wires the delegate_task tool to the engine's sub-agent
+// entry point. Engines call this once the agent loop is fully constructed.
+func (e *Engine) SetSubagentRunner(r SubagentRunner) {
+	if e.delegateTool != nil {
+		e.delegateTool.SetRunner(r)
+	}
 }
 
 // MetaSpecs returns the 4 meta-tool specs (tool_search, tool_help, tool_call,

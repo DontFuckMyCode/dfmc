@@ -103,3 +103,101 @@ func TestExpandAtFileMentionsWithRecent_PicksBestOnAmbiguity(t *testing.T) {
 		t.Fatalf("expected memory/store.go (alphabetical tiebreak), got %q", out2)
 	}
 }
+
+func TestSplitMentionToken_RangeForms(t *testing.T) {
+	cases := []struct {
+		name           string
+		in             string
+		wantPath, want string
+	}{
+		{"bare", "auth.go", "auth.go", ""},
+		{"colon range", "auth.go:10-50", "auth.go", "#L10-L50"},
+		{"colon single", "auth.go:42", "auth.go", "#L42"},
+		{"hash-L range", "auth.go#L10-L50", "auth.go", "#L10-L50"},
+		{"hash-L single", "auth.go#L42", "auth.go", "#L42"},
+		{"nested path", "internal/auth/token.go:120-180", "internal/auth/token.go", "#L120-L180"},
+		{"malformed keeps bare", "auth.go:foo-bar", "auth.go:foo-bar", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotPath, gotRange := splitMentionToken(tc.in)
+			if gotPath != tc.wantPath || gotRange != tc.want {
+				t.Fatalf("splitMentionToken(%q) = (%q,%q), want (%q,%q)",
+					tc.in, gotPath, gotRange, tc.wantPath, tc.want)
+			}
+		})
+	}
+}
+
+func TestExpandAtFileMentionsWithRecent_PreservesRangeSuffix(t *testing.T) {
+	files := []string{"internal/auth/token.go"}
+	out := expandAtFileMentionsWithRecent("look at @token.go:120-180 please", files, nil)
+	want := "[[file:internal/auth/token.go#L120-L180]]"
+	if !strings.Contains(out, want) {
+		t.Fatalf("expected %q in %q", want, out)
+	}
+}
+
+func TestMentionRanker_HidesBinaryByDefault(t *testing.T) {
+	files := []string{
+		"assets/logo.png",
+		"internal/auth/logo.go",
+	}
+	got := newMentionRanker(files, nil).rank("logo", 5)
+	// With a generic query, the .png should be filtered out.
+	for _, c := range got {
+		if strings.HasSuffix(c.path, ".png") {
+			t.Fatalf("expected .png to be filtered, got %+v", got)
+		}
+	}
+	if len(got) != 1 || got[0].path != "internal/auth/logo.go" {
+		t.Fatalf("expected only logo.go, got %+v", got)
+	}
+}
+
+func TestMentionRanker_ShowsBinaryWhenExtensionTyped(t *testing.T) {
+	files := []string{
+		"assets/logo.png",
+		"internal/auth/logo.go",
+	}
+	// Explicitly typing the .png extension relaxes the filter.
+	got := newMentionRanker(files, nil).rank("logo.png", 5)
+	found := false
+	for _, c := range got {
+		if c.path == "assets/logo.png" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected .png file to be shown when extension is typed, got %+v", got)
+	}
+}
+
+func TestMentionRanker_FlagsRecent(t *testing.T) {
+	files := []string{"a.go", "b.go"}
+	recent := []string{"b.go"}
+	got := newMentionRanker(files, recent).rank("", 5)
+	byPath := map[string]bool{}
+	for _, c := range got {
+		byPath[c.path] = c.recent
+	}
+	if !byPath["b.go"] {
+		t.Fatalf("expected b.go flagged recent, got %+v", got)
+	}
+	if byPath["a.go"] {
+		t.Fatalf("expected a.go NOT flagged recent, got %+v", got)
+	}
+}
+
+func TestActiveMentionQuery_ReturnsRangeSuffix(t *testing.T) {
+	query, suffix, ok := activeMentionQuery("please read @auth.go:10-50")
+	if !ok {
+		t.Fatalf("expected active mention, got none")
+	}
+	if query != "auth.go" {
+		t.Fatalf("expected query=auth.go, got %q", query)
+	}
+	if suffix != "#L10-L50" {
+		t.Fatalf("expected suffix=#L10-L50, got %q", suffix)
+	}
+}

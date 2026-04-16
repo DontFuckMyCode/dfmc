@@ -36,6 +36,10 @@ type parkedAgentState struct {
 	LastProvider  string
 	LastModel     string
 	ParkedAt      time.Time
+	// RecentCoachHints remembers trajectory hints already injected into
+	// this loop so the composer doesn't repeat itself round after round.
+	// Bounded to the last ~8 entries to keep de-dup cheap.
+	RecentCoachHints []string
 }
 
 // HasParkedAgent reports whether a previous agent loop was parked (cap hit)

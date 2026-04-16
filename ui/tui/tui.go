@@ -82,7 +82,8 @@ type chatSuggestionState struct {
 	slashCommands       []slashCommandItem
 	slashArgSuggestions []string
 	mentionQuery        string
-	mentionSuggestions  []string
+	mentionRange        string
+	mentionSuggestions  []mentionRow
 	quickActions        []quickActionSuggestion
 }
 
@@ -142,6 +143,15 @@ type Model struct {
 	// above the composer. Esc dismisses it; a fresh submit or a successful
 	// resume clears it automatically.
 	resumePromptActive bool
+	// coachMuted silences the user-facing coach:note transcript lines for
+	// this session (engine still publishes them; the TUI just drops them).
+	// Toggled by /coach.
+	coachMuted bool
+	// hintsVerbose surfaces the model-facing `[trajectory coach]` hints as
+	// subtle transcript lines so the user can see what DFMC is nudging the
+	// model with between rounds. Off by default — the hints are meant for
+	// the model. Toggled by /hints.
+	hintsVerbose bool
 	// streamStartedAt records the wall-clock moment a stream was kicked off
 	// (fresh submit or /continue). Used to stamp the assistant line's
 	// DurationMs on chatDoneMsg so the reader can see how long a turn took.
@@ -848,7 +858,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					idx--
 				}
 				m.mentionIndex = idx
-				m.notice = "Mention: " + suggestions.mentionSuggestions[m.mentionIndex]
+				m.notice = "Mention: " + suggestions.mentionSuggestions[m.mentionIndex].Path
 			}
 			return m, nil
 		}
@@ -907,7 +917,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					idx++
 				}
 				m.mentionIndex = idx
-				m.notice = "Mention: " + suggestions.mentionSuggestions[m.mentionIndex]
+				m.notice = "Mention: " + suggestions.mentionSuggestions[m.mentionIndex].Path
 			}
 			return m, nil
 		}
@@ -1181,8 +1191,9 @@ func (m Model) buildChatSuggestionState() chatSuggestionState {
 	} else {
 		state.slashArgSuggestions = m.activeSlashArgSuggestions()
 	}
-	if query, ok := activeMentionQuery(m.input); ok {
+	if query, rangeSuffix, ok := activeMentionQuery(m.input); ok {
 		state.mentionQuery = query
+		state.mentionRange = rangeSuffix
 		state.mentionSuggestions = m.mentionSuggestions(query, 8)
 	}
 	if !state.slashMenuActive && len(state.mentionSuggestions) == 0 && !m.commandPickerActive && !m.sending {
@@ -1191,12 +1202,13 @@ func (m Model) buildChatSuggestionState() chatSuggestionState {
 	return state
 }
 
-func autocompleteMentionSelectionFromSuggestions(input string, mentionIndex int, suggestions []string) (string, bool) {
+func autocompleteMentionSelectionFromSuggestions(input string, mentionIndex int, suggestions []mentionRow) (string, bool) {
 	if len(suggestions) == 0 {
 		return "", false
 	}
 	idx := clampIndex(mentionIndex, len(suggestions))
-	return replaceActiveMention(input, suggestions[idx]), true
+	_, rangeSuffix, _ := activeMentionQuery(input)
+	return replaceActiveMention(input, suggestions[idx].Path, rangeSuffix), true
 }
 
 func (m Model) quickActionsForCurrentInput() []quickActionSuggestion {
@@ -1992,6 +2004,34 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			return m.appendSystemMessage(renderTUICommandHelp(args[0])), nil, true
 		}
 		return m.appendSystemMessage(renderTUIHelp()), nil, true
+	case "quit", "exit", "q":
+		m.input = ""
+		m.notice = "Goodbye."
+		return m.appendSystemMessage("Exiting DFMC — goodbye."), tea.Quit, true
+	case "clear":
+		m.input = ""
+		m.transcript = nil
+		m.chatScrollback = 0
+		m.notice = "Transcript cleared."
+		return m.appendSystemMessage("Transcript cleared. Memory and conversation history are untouched."), nil, true
+	case "coach":
+		m.input = ""
+		m.coachMuted = !m.coachMuted
+		state := "on"
+		if m.coachMuted {
+			state = "muted"
+		}
+		m.notice = "Coach " + state + "."
+		return m.appendSystemMessage("Coach notes are now " + state + " for this session. Toggle again with /coach."), nil, true
+	case "hints":
+		m.input = ""
+		m.hintsVerbose = !m.hintsVerbose
+		state := "hidden"
+		if m.hintsVerbose {
+			state = "visible"
+		}
+		m.notice = "Trajectory hints " + state + "."
+		return m.appendSystemMessage("Trajectory coach hints between rounds are now " + state + ". Toggle again with /hints."), nil, true
 	case "status":
 		m.input = ""
 		return m.appendSystemMessage(m.statusCommandSummary()), loadStatusCmd(m.eng), true
@@ -2325,6 +2365,36 @@ func (m Model) appendSystemMessage(text string) Model {
 func (m Model) appendToolEventMessage(text string) Model {
 	m.transcript = append(m.transcript, newChatLine("tool", strings.TrimSpace(text)))
 	m.chatScrollback = 0
+	return m
+}
+
+// appendCoachMessage inserts a coach-tagged transcript line carrying the
+// background observer's commentary. Severity decides the subtle leading
+// marker so warn/celebrate notes stand apart from plain info nudges without
+// shouting; origin is appended as a muted tag so users can learn which rule
+// fired (useful for giving feedback like "quiet the mutation_unvalidated
+// rule"). Notes always land in the transcript — they're the user-facing
+// surface of the tiny-touches coach, not ephemeral chatter.
+func (m Model) appendCoachMessage(text, severity, origin string) Model {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return m
+	}
+	marker := ""
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "warn":
+		marker = warnStyle.Render("⚠") + " "
+	case "celebrate":
+		marker = okStyle.Render("✓") + " "
+	}
+	body := marker + text
+	if origin = strings.TrimSpace(origin); origin != "" {
+		body += " " + subtleStyle.Render("["+origin+"]")
+	}
+	m.transcript = append(m.transcript, newChatLine("coach", body))
+	m.chatScrollback = 0
+	m.appendActivity("coach: " + text)
+	m.notice = text
 	return m
 }
 
@@ -2926,8 +2996,36 @@ func (m Model) applyProviderModelSelection(providerName, model string) Model {
 		}
 		m.eng.SetProviderModel(providerName, model)
 		m.status = m.eng.Status()
+		m.notice = formatProviderSwitchNotice(m.status.ProviderProfile)
 	}
 	return m
+}
+
+// formatProviderSwitchNotice produces a one-line confirmation after a
+// provider/model switch. It names the profile, whether an endpoint and
+// API key are configured, and flags the likely offline-fallback case up
+// front so the user doesn't discover it only when a chat turn fails.
+func formatProviderSwitchNotice(p engine.ProviderProfileStatus) string {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		return ""
+	}
+	parts := []string{"provider → " + name}
+	if model := strings.TrimSpace(p.Model); model != "" {
+		parts = append(parts, "model: "+model)
+	}
+	if !p.Configured {
+		if env := config.EnvVarForProvider(name); env != "" {
+			parts = append(parts, fmt.Sprintf("⚠ no API key — set %s in .env or providers.profiles.%s.api_key (falling back to offline)", env, name))
+		} else {
+			parts = append(parts, fmt.Sprintf("⚠ no API key — set providers.profiles.%s.api_key in config.yaml (falling back to offline)", name))
+		}
+		return strings.Join(parts, " · ")
+	}
+	if base := strings.TrimSpace(p.BaseURL); base != "" {
+		parts = append(parts, "endpoint: "+base)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (m Model) projectConfigPath() (string, error) {
@@ -3898,8 +3996,10 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 	}
 	if suggestions.slashMenuActive {
 		items := suggestions.slashCommands
-		if len(items) > 0 {
-			lines = append(lines, sectionTitleStyle.Render("Commands"))
+		lines = append(lines, sectionTitleStyle.Render("Commands"))
+		if len(items) == 0 {
+			lines = append(lines, "  "+subtleStyle.Render("No matching command. Press esc to dismiss or /help for the catalog."))
+		} else {
 			lines = append(lines, subtleStyle.Render("↑↓ move · tab cycle · enter run"))
 			selected := clampIndex(m.slashIndex, len(items))
 			start := 0
@@ -3955,18 +4055,31 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 			lines = append(lines, "  "+subtleStyle.Render(hint))
 		}
 	}
-	if suggestions.mentionQuery != "" && len(suggestions.mentionSuggestions) > 0 {
-		lines = append(lines, sectionTitleStyle.Render("File mentions"))
-		lines = append(lines, subtleStyle.Render("↑↓ move · tab/enter insert"))
-		selected := clampIndex(m.mentionIndex, len(suggestions.mentionSuggestions))
-		for i, path := range suggestions.mentionSuggestions {
-			prefix := "  "
-			label := truncateSingleLine(path, width)
-			if i == selected {
-				prefix = "> "
-				label = titleStyle.Render(label)
+	if m.input != "" && strings.Contains(m.input, "@") {
+		switch {
+		case len(suggestions.mentionSuggestions) > 0:
+			lines = append(lines, sectionTitleStyle.Render("File mentions"))
+			hintTail := ""
+			if suggestions.mentionRange != "" {
+				hintTail = " · range " + suggestions.mentionRange
 			}
-			lines = append(lines, prefix+label)
+			lines = append(lines, subtleStyle.Render("↑↓ move · tab/enter insert · suffix :10-50 or #L10-L50 for ranges"+hintTail))
+			selected := clampIndex(m.mentionIndex, len(suggestions.mentionSuggestions))
+			for i, row := range suggestions.mentionSuggestions {
+				prefix := "  "
+				label := truncateSingleLine(row.Path, width)
+				if i == selected {
+					prefix = "> "
+					label = titleStyle.Render(label)
+				}
+				if row.Recent {
+					label += " " + subtleStyle.Render("· recent")
+				}
+				lines = append(lines, prefix+label)
+			}
+		case suggestions.mentionQuery != "":
+			lines = append(lines, sectionTitleStyle.Render("File mentions"))
+			lines = append(lines, "  "+subtleStyle.Render("No files matched '"+suggestions.mentionQuery+"' — refine query or press esc."))
 		}
 	}
 	if len(suggestions.quickActions) > 0 {
@@ -4517,7 +4630,9 @@ func (m Model) renderHelpOverlay(width int) string {
 		"",
 		boldStyle.Render("Chat composer"),
 		"  ↑/↓ history · tab accept suggestion · @ mention file · / browse commands",
+		"  @file:10-50 or @file#L10-L50 attaches a line range to the mention",
 		"  /continue · /devam resume a parked agent loop · /btw queue a note",
+		"  /clear wipes transcript · /quit exits · /coach mutes notes · /hints toggles trajectory",
 	)
 	out := make([]string, 0, len(lines))
 	for _, ln := range lines {
@@ -5089,6 +5204,29 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		}
 		m.resumePromptActive = true
 		line = fmt.Sprintf("Agent loop parked at step %d/%d — press Enter to resume, Esc to dismiss.", step, maxSteps)
+	case "coach:note":
+		if m.coachMuted {
+			return m
+		}
+		text := payloadString(payload, "text", "")
+		if strings.TrimSpace(text) == "" {
+			return m
+		}
+		severity := payloadString(payload, "severity", "info")
+		origin := payloadString(payload, "origin", "")
+		m = m.appendCoachMessage(text, severity, origin)
+		return m
+	case "agent:coach:hint":
+		if !m.hintsVerbose {
+			return m
+		}
+		hints, _ := payload["hints"].([]any)
+		for _, h := range hints {
+			if s, ok := h.(string); ok && strings.TrimSpace(s) != "" {
+				m = m.appendCoachMessage("→ "+s, "info", "trajectory")
+			}
+		}
+		return m
 	case "tool:error":
 		switch payload := event.Payload.(type) {
 		case string:
@@ -5250,7 +5388,8 @@ func shouldMirrorEventToTranscript(eventType string) bool {
 	switch strings.TrimSpace(strings.ToLower(eventType)) {
 	case "agent:loop:error", "agent:loop:max_steps", "agent:loop:parked",
 		"agent:loop:budget_exhausted",
-		"context:lifecycle:compacted", "context:lifecycle:handoff":
+		"context:lifecycle:compacted", "context:lifecycle:handoff",
+		"coach:note":
 		return true
 	default:
 		return false
@@ -6891,8 +7030,18 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 	// TUI extra and a registry command (e.g. `/prov` → `/providers` vs.
 	// `/provider`), the TUI-friendly plural form wins — that matches the
 	// established pre-registry behavior users built muscle memory around.
+	coachLabel := "mute"
+	if m.coachMuted {
+		coachLabel = "unmute"
+	}
+	hintsLabel := "show"
+	if m.hintsVerbose {
+		hintsLabel = "hide"
+	}
 	extras := []slashCommandItem{
 		{Command: "reload", Template: "/reload", Description: "reload config + env"},
+		{Command: "clear", Template: "/clear", Description: "clear transcript (memory untouched)"},
+		{Command: "quit", Template: "/quit", Description: "exit DFMC"},
 		{Command: "providers", Template: "/providers", Description: "list configured providers"},
 		{Command: "models", Template: "/models", Description: "show configured model"},
 		{Command: "tools", Template: "/tools", Description: "list tools and open panel"},
@@ -6907,6 +7056,8 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "continue", Template: "/continue", Description: "resume a parked agent loop"},
 		{Command: "devam", Template: "/devam", Description: "resume a parked agent loop (alias of /continue)"},
 		{Command: "btw", Template: "/btw ", Description: "inject a note at the next tool-loop step"},
+		{Command: "coach", Template: "/coach", Description: coachLabel + " the background coach notes"},
+		{Command: "hints", Template: "/hints", Description: hintsLabel + " between-round trajectory hints"},
 	}
 	for _, x := range extras {
 		add(x.Command, x.Template, x.Description)
@@ -6952,7 +7103,7 @@ func isKnownChatCommandToken(token string) bool {
 	}
 	switch token {
 	case "reload", "providers", "models", "tools", "ls", "read", "grep", "run", "diff", "patch", "apply", "undo",
-		"continue", "devam", "resume", "btw":
+		"continue", "devam", "resume", "btw", "quit", "exit", "q", "clear", "coach", "hints":
 		return true
 	}
 	if _, ok := commands.DefaultRegistry().Lookup(token); ok {
@@ -6987,11 +7138,20 @@ func composeChatPrompt(current, addition string) string {
 }
 
 func fileMarker(rel string) string {
+	return fileMarkerRange(rel, "")
+}
+
+// fileMarkerRange emits the context-manager marker with an optional line
+// range suffix (`#L10` or `#L10-L50`). The context manager's regex only
+// accepts `#L<start>[-L?<end>]`, so callers must pass a pre-normalized
+// suffix (see splitMentionToken).
+func fileMarkerRange(rel, rangeSuffix string) string {
 	rel = filepath.ToSlash(strings.TrimSpace(rel))
 	if rel == "" {
 		return ""
 	}
-	return "[[file:" + rel + "]]"
+	rangeSuffix = strings.TrimSpace(rangeSuffix)
+	return "[[file:" + rel + rangeSuffix + "]]"
 }
 
 func (m Model) recommendedRunCommandPreset() string {
@@ -7116,10 +7276,16 @@ func containsStringFold(items []string, target string) bool {
 	return false
 }
 
-func activeMentionQuery(input string) (string, bool) {
+// activeMentionQuery extracts the file query and optional range suffix from
+// the `@token` currently under the cursor. Returns (query, rangeSuffix, ok):
+// - query: the file path prefix to rank against, stripped of any range
+// - rangeSuffix: normalized `#L10[-L50]` form (empty when no range was typed)
+// - ok: true only when the current token starts with `@` and has at least
+//   one character of query body
+func activeMentionQuery(input string) (string, string, bool) {
 	input = strings.TrimSpace(input)
 	if input == "" {
-		return "", false
+		return "", "", false
 	}
 	lastSpace := strings.LastIndexAny(input, " \t\n")
 	token := input
@@ -7127,22 +7293,32 @@ func activeMentionQuery(input string) (string, bool) {
 		token = input[lastSpace+1:]
 	}
 	if !strings.HasPrefix(token, "@") {
-		return "", false
+		return "", "", false
 	}
-	return strings.TrimPrefix(token, "@"), true
+	body := strings.TrimPrefix(token, "@")
+	query, rangeSuffix := splitMentionToken(body)
+	return query, rangeSuffix, true
 }
 
-func (m Model) mentionSuggestions(query string, limit int) []string {
+// mentionRow is a render-ready picker entry. Recent flags files the engine's
+// working memory has recently touched so the UI can badge them without
+// re-querying the engine at draw time.
+type mentionRow struct {
+	Path   string
+	Recent bool
+}
+
+func (m Model) mentionSuggestions(query string, limit int) []mentionRow {
 	ranker := newMentionRanker(m.files, m.engineRecentFiles())
 	ranked := ranker.rank(query, limit)
-	out := make([]string, 0, len(ranked))
+	out := make([]mentionRow, 0, len(ranked))
 	for _, c := range ranked {
-		out = append(out, c.path)
+		out = append(out, mentionRow{Path: c.path, Recent: c.recent})
 	}
 	return out
 }
 
-func replaceActiveMention(input, path string) string {
+func replaceActiveMention(input, path, rangeSuffix string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return input
@@ -7158,7 +7334,7 @@ func replaceActiveMention(input, path string) string {
 	if !strings.HasPrefix(token, "@") {
 		return input
 	}
-	return prefix + fileMarker(path)
+	return prefix + fileMarkerRange(path, rangeSuffix)
 }
 
 func expandAtFileMentionsWithRecent(input string, files, recent []string) string {
@@ -7171,12 +7347,13 @@ func expandAtFileMentionsWithRecent(input string, files, recent []string) string
 		if !strings.HasPrefix(token, "@") || len(token) < 2 {
 			continue
 		}
-		query := filepath.ToSlash(strings.TrimSpace(strings.TrimPrefix(token, "@")))
-		if query == "" {
+		body := filepath.ToSlash(strings.TrimSpace(strings.TrimPrefix(token, "@")))
+		if body == "" {
 			continue
 		}
+		query, rangeSuffix := splitMentionToken(body)
 		if resolved, ok := resolveMentionQuery(files, recent, query); ok {
-			tokens[i] = fileMarker(resolved)
+			tokens[i] = fileMarkerRange(resolved, rangeSuffix)
 			changed = true
 		}
 	}
@@ -7735,6 +7912,10 @@ func renderTUIHelp() string {
 		"",
 		"TUI-only shortcuts:",
 		"    /reload                      Reload engine configuration",
+		"    /clear                       Clear transcript (memory untouched)",
+		"    /quit                        Exit DFMC",
+		"    /coach                       Mute or unmute background coach notes",
+		"    /hints                       Show or hide between-round trajectory hints",
 		"    /tools                       Show tool surface",
 		"    /diff                        Show staged patch diff",
 		"    /patch                       Open the patch panel",
@@ -7744,7 +7925,10 @@ func renderTUIHelp() string {
 		"    /read PATH [START] [END]     Read a file range",
 		"    /grep PATTERN                Search the project",
 		"    /run COMMAND [ARGS...]       Run a shell command",
+		"    /continue | /devam           Resume a parked agent loop",
+		"    /btw NOTE                    Queue a note for the next tool-loop step",
 		"",
+		"Mentions: @file.go picks a file · @file.go:10-50 or @file.go#L10-L50 attaches a range.",
 		"Panels: F1 Chat · F2 Status · F3 Files · F4 Patch · F5 Setup · F6 Tools · Ctrl+P palette",
 		"Run /help <command> for details on a specific command.",
 	}, "\n")

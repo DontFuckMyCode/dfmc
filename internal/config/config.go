@@ -36,6 +36,16 @@ type Config struct {
 	Web       WebConfig       `yaml:"web"`
 	Remote    RemoteConfig    `yaml:"remote"`
 	Project   ProjectConfig   `yaml:"project"`
+	Coach     CoachConfig     `yaml:"coach"`
+}
+
+// CoachConfig governs the background "tiny-touches" observer that publishes
+// coach:note events at the end of each agent turn. Rule-based today, the
+// default Enabled=true costs nothing (microseconds, zero network). Set
+// Enabled=false to silence the TUI coach role entirely.
+type CoachConfig struct {
+	Enabled  bool `yaml:"enabled"`
+	MaxNotes int  `yaml:"max_notes"`
 }
 
 // AgentConfig bounds the native tool loop so a runaway model can't drain a
@@ -156,6 +166,15 @@ type ContextConfig struct {
 	Compression      string `yaml:"compression"`
 	IncludeTests     bool   `yaml:"include_tests"`
 	IncludeDocs      bool   `yaml:"include_docs"`
+	// SymbolAware enables codemap-driven retrieval (extract identifiers
+	// from the query, resolve via AST symbol nodes, walk import graph
+	// to pull sibling files). Default on via BuildDefault.
+	SymbolAware bool `yaml:"symbol_aware"`
+	// GraphDepth bounds how many hops the import-graph walker takes
+	// from each resolved seed file. 0 disables expansion; 2 is the
+	// default and captures direct sibling files without pulling in
+	// every transitive dependency.
+	GraphDepth int `yaml:"graph_depth"`
 }
 
 type MemoryConfig struct {
@@ -358,22 +377,48 @@ func parseDotEnvValue(raw string) string {
 	return value
 }
 
-func (c *Config) applyEnv() {
-	envToProvider := map[string]string{
-		"ANTHROPIC_API_KEY": "anthropic",
-		"OPENAI_API_KEY":    "openai",
-		"GOOGLE_AI_API_KEY": "google",
-		"DEEPSEEK_API_KEY":  "deepseek",
-		"KIMI_API_KEY":      "kimi",
-		"MOONSHOT_API_KEY":  "kimi",
-		"MINIMAX_API_KEY":   "minimax",
-		"ZAI_API_KEY":       "zai",
-		"ALIBABA_API_KEY":   "alibaba",
+// providerAPIEnvVars maps env var name → provider profile name. Used both
+// to hydrate APIKey from the environment and to tell the user WHICH env
+// var is expected when a profile falls back to offline.
+var providerAPIEnvVars = map[string]string{
+	"ANTHROPIC_API_KEY": "anthropic",
+	"OPENAI_API_KEY":    "openai",
+	"GOOGLE_AI_API_KEY": "google",
+	"DEEPSEEK_API_KEY":  "deepseek",
+	"KIMI_API_KEY":      "kimi",
+	"MOONSHOT_API_KEY":  "kimi",
+	"MINIMAX_API_KEY":   "minimax",
+	"ZAI_API_KEY":       "zai",
+	"ALIBABA_API_KEY":   "alibaba",
+}
+
+// EnvVarForProvider returns the canonical env var name for a provider
+// profile (e.g. "anthropic" → "ANTHROPIC_API_KEY"). Returns "" for
+// unknown names. When multiple env vars map to the same provider
+// (e.g. KIMI / MOONSHOT), the canonical one is returned.
+func EnvVarForProvider(name string) string {
+	key := strings.ToLower(strings.TrimSpace(name))
+	if key == "" {
+		return ""
 	}
+	canonical := map[string]string{
+		"anthropic": "ANTHROPIC_API_KEY",
+		"openai":    "OPENAI_API_KEY",
+		"google":    "GOOGLE_AI_API_KEY",
+		"deepseek":  "DEEPSEEK_API_KEY",
+		"kimi":      "KIMI_API_KEY",
+		"minimax":   "MINIMAX_API_KEY",
+		"zai":       "ZAI_API_KEY",
+		"alibaba":   "ALIBABA_API_KEY",
+	}
+	return canonical[key]
+}
+
+func (c *Config) applyEnv() {
 	if c.Providers.Profiles == nil {
 		c.Providers.Profiles = map[string]ModelConfig{}
 	}
-	for envName, providerName := range envToProvider {
+	for envName, providerName := range providerAPIEnvVars {
 		val := strings.TrimSpace(os.Getenv(envName))
 		if val == "" {
 			continue
@@ -587,7 +632,7 @@ func modelsDevSeedProfiles() map[string]ModelConfig {
 		"anthropic": {Model: "claude-sonnet-4-6", MaxTokens: 64000, MaxContext: 1000000, Protocol: "anthropic"},
 		"openai":    {Model: "gpt-5.4", MaxTokens: 128000, MaxContext: 1050000, Protocol: "openai"},
 		"google":    {Model: "gemini-3.1-pro-preview-customtools", MaxTokens: 65536, MaxContext: 1048576, Protocol: "google"},
-		"deepseek":  {Model: "deepseek-chat", BaseURL: "https://api.deepseek.com", MaxTokens: 8192, MaxContext: 131072, Protocol: "openai-compatible"},
+		"deepseek":  {Model: "deepseek-chat", BaseURL: "https://api.deepseek.com/v1", MaxTokens: 8192, MaxContext: 131072, Protocol: "openai-compatible"},
 		"kimi":      {Model: "kimi-k2.5", BaseURL: "https://api.moonshot.ai/v1", MaxTokens: 262144, MaxContext: 262144, Protocol: "openai-compatible"},
 		"minimax":   {Model: "MiniMax-M2.7", BaseURL: "https://api.minimax.io/anthropic/v1", MaxTokens: 131072, MaxContext: 204800, Protocol: "anthropic"},
 		"zai":       {Model: "glm-5.1", BaseURL: "https://api.z.ai/api/paas/v4", MaxTokens: 131072, MaxContext: 200000, Protocol: "openai-compatible"},

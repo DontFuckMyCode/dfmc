@@ -197,8 +197,8 @@ func TestBuildSystemPromptInjectionBudgetCompactVsDeep(t *testing.T) {
 	}
 	mgr := New(cm)
 
-	compactQuery := "inspect [[file:auth.go#L1-L420]]"
-	deepQuery := "inspect [[file:auth.go#L1-L420]] detailed"
+	compactQuery := "summarize briefly [[file:auth.go#L1-L420]]"
+	deepQuery := "review deeply thoroughly [[file:auth.go#L1-L420]]"
 	compactPrompt := mgr.BuildSystemPrompt(tmp, compactQuery, nil, nil)
 	deepPrompt := mgr.BuildSystemPrompt(tmp, deepQuery, nil, nil)
 
@@ -206,7 +206,8 @@ func TestBuildSystemPromptInjectionBudgetCompactVsDeep(t *testing.T) {
 		t.Fatalf("expected compact prompt injection to be token-trimmed, got: %s", compactPrompt)
 	}
 	if len(strings.Fields(deepPrompt)) <= len(strings.Fields(compactPrompt)) {
-		t.Fatalf("expected deep prompt to allow larger injection budget")
+		t.Fatalf("expected deep prompt (%d words) to allow larger injection budget than compact (%d words)",
+			len(strings.Fields(deepPrompt)), len(strings.Fields(compactPrompt)))
 	}
 }
 

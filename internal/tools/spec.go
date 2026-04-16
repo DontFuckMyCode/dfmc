@@ -65,6 +65,12 @@ type ToolSpec struct {
 	Title       string   `json:"title,omitempty"` // human-friendly label
 	Summary     string   `json:"summary"`         // one-line description (what it does)
 	Purpose     string   `json:"purpose,omitempty"`
+	// Prompt is the operational guide shown to the model when it asks for
+	// detailed help on the tool (tool_help). It should call out when to pick
+	// this tool over alternatives, footguns, and patterns that matter in
+	// practice. Multi-line markdown is fine. Kept out of ShortHelp and the
+	// system-prompt overview to keep common paths cheap.
+	Prompt      string   `json:"prompt,omitempty"`
 	Args        []Arg    `json:"args,omitempty"`
 	Returns     string   `json:"returns,omitempty"`
 	Risk        Risk     `json:"risk"`
@@ -160,6 +166,9 @@ func (s ToolSpec) LongHelp() string {
 	}
 	if s.Purpose != "" {
 		b.WriteString("\nPurpose: " + s.Purpose + "\n")
+	}
+	if strings.TrimSpace(s.Prompt) != "" {
+		b.WriteString("\nGuide:\n" + strings.TrimSpace(s.Prompt) + "\n")
 	}
 	if len(s.Args) > 0 {
 		b.WriteString("\nArgs:\n")

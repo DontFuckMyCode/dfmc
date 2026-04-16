@@ -490,10 +490,11 @@ func TestAskWithMetadata_NativeToolLoop_RespectsConfiguredMaxSteps(t *testing.T)
 }
 
 // TestAskWithMetadata_NativeToolLoop_RespectsTokenBudget verifies that the
-// token-budget hard limit (cfg.Agent.MaxToolTokens) short-circuits the loop
-// even when step cap is far from reached, emitting agent:loop:budget_exhausted.
-// The scripted provider reports 30 TotalTokens per call; a 25-token budget
-// should trip after the first round.
+// token-budget hard limit (cfg.Agent.MaxToolTokens) parks the loop (rather
+// than erroring out and dropping work) when headroom is gone. It must emit
+// both agent:loop:budget_exhausted (telemetry) and agent:loop:parked (UI
+// resume prompt). The scripted provider reports 30 TotalTokens per call; a
+// 25-token budget should trip after the first round.
 func TestAskWithMetadata_NativeToolLoop_RespectsTokenBudget(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmp, "note.txt"), []byte("alpha\n"), 0o644); err != nil {
@@ -547,12 +548,18 @@ func TestAskWithMetadata_NativeToolLoop_RespectsTokenBudget(t *testing.T) {
 	evCh := eng.EventBus.Subscribe("*")
 	defer eng.EventBus.Unsubscribe("*", evCh)
 
-	_, err = eng.AskWithMetadata(context.Background(), "budget trip")
-	if err == nil {
-		t.Fatal("expected budget-exhausted error, got nil")
+	answer, err := eng.AskWithMetadata(context.Background(), "budget trip")
+	if err != nil {
+		t.Fatalf("expected budget trip to park (no error), got %v", err)
 	}
-	if !strings.Contains(err.Error(), "token budget") {
-		t.Fatalf("expected token-budget error, got %v", err)
+	if !strings.Contains(answer, "tool budget exhausted") {
+		t.Fatalf("expected parked notice mentioning tool budget, got %q", answer)
+	}
+	if !strings.Contains(answer, "/continue") {
+		t.Fatalf("expected parked notice to hint /continue, got %q", answer)
+	}
+	if !eng.HasParkedAgent() {
+		t.Fatal("expected engine to hold parked agent state after budget trip")
 	}
 
 	stub.mu.Lock()
@@ -573,6 +580,15 @@ func TestAskWithMetadata_NativeToolLoop_RespectsTokenBudget(t *testing.T) {
 	}
 	if got, _ := payload["tokens_used"].(int); got < 25 {
 		t.Fatalf("expected tokens_used >= 25, got %v", payload["tokens_used"])
+	}
+
+	parkedEv, ok := findEventByType(events, "agent:loop:parked")
+	if !ok {
+		t.Fatalf("expected agent:loop:parked event alongside budget_exhausted, got %v", eventTypes(events))
+	}
+	parkedPayload, _ := parkedEv.Payload.(map[string]any)
+	if reason, _ := parkedPayload["reason"].(string); reason != "budget_exhausted" {
+		t.Fatalf("expected parked reason=budget_exhausted, got %v", parkedPayload["reason"])
 	}
 }
 

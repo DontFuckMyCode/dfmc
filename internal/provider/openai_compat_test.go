@@ -13,7 +13,7 @@ import (
 
 func TestOpenAICompatibleProviderComplete(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
+		if r.URL.Path != "/v1/chat/completions" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		if got := r.Header.Get("Authorization"); got == "" {
@@ -28,7 +28,7 @@ func TestOpenAICompatibleProviderComplete(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("openai", "gpt-5.4", "test-key", srv.URL, 128000, 1050000)
+	p := NewOpenAICompatibleProvider("openai", "gpt-5.4", "test-key", srv.URL+"/v1", 128000, 1050000)
 	resp, err := p.Complete(context.Background(), CompletionRequest{
 		Messages: []Message{
 			{Role: types.RoleUser, Content: "say hello"},
@@ -54,7 +54,7 @@ func TestOpenAICompatibleProviderStream(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("openai", "gpt-5.4", "test-key", srv.URL, 128000, 1050000)
+	p := NewOpenAICompatibleProvider("openai", "gpt-5.4", "test-key", srv.URL+"/v1", 128000, 1050000)
 	stream, err := p.Stream(context.Background(), CompletionRequest{
 		Messages: []Message{
 			{Role: types.RoleUser, Content: "say hello"},
@@ -80,5 +80,27 @@ func TestOpenAICompatibleProviderStream(t *testing.T) {
 	}
 	if got := out.String(); got != "hello stream" {
 		t.Fatalf("unexpected stream text: %q", got)
+	}
+}
+
+func TestNormalizeOpenAIBaseURL(t *testing.T) {
+	cases := []struct {
+		name, provider, in, want string
+	}{
+		{"bare deepseek gets /v1", "deepseek", "https://api.deepseek.com", "https://api.deepseek.com/v1"},
+		{"deepseek with /v1 untouched", "deepseek", "https://api.deepseek.com/v1", "https://api.deepseek.com/v1"},
+		{"trailing slash trimmed", "deepseek", "https://api.deepseek.com/v1/", "https://api.deepseek.com/v1"},
+		{"kimi bare host gets /v1", "kimi", "https://api.moonshot.ai", "https://api.moonshot.ai/v1"},
+		{"zai compatible path preserved", "zai", "https://api.z.ai/api/paas/v4", "https://api.z.ai/api/paas/v4"},
+		{"alibaba compatible-mode preserved", "alibaba", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"},
+		{"unknown host left alone", "custom", "https://my-proxy.internal", "https://my-proxy.internal"},
+		{"empty stays empty", "deepseek", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeOpenAIBaseURL(tc.provider, tc.in); got != tc.want {
+				t.Fatalf("normalizeOpenAIBaseURL(%q,%q) = %q; want %q", tc.provider, tc.in, got, tc.want)
+			}
+		})
 	}
 }

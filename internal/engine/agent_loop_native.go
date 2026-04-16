@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
@@ -288,6 +289,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 				"surface":        "native",
 			})
 			e.publishProviderComplete(lastProvider, lastModel, totalTokens)
+			e.emitCoachNotes(question, completion)
 			return completion, nil
 		}
 
@@ -299,6 +301,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			ToolCalls: resp.ToolCalls,
 		})
 
+		freshStart := len(traces)
 		for _, call := range resp.ToolCalls {
 			trace := nativeToolTrace{
 				Call:       call,
@@ -331,62 +334,124 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			})
 		}
 
+		// Dynamic prompt composition: derive trajectory-aware coach hints
+		// from the round we just finished and inject them as a system-tagged
+		// user note before the next provider round-trip. Rules live in
+		// internal/context/trajectory.go; de-dup is tracked on the parked
+		// state so the same hint doesn't fire twice in one run.
+		if hints := buildTrajectoryHints(traces[freshStart:], traces, seed.RecentCoachHints); len(hints) > 0 {
+			if block := ctxmgr.FormatTrajectoryHints(hints); block != "" {
+				msgs = append(msgs, provider.Message{
+					Role:    types.RoleUser,
+					Content: block,
+				})
+				seed.RecentCoachHints = appendRecentHints(seed.RecentCoachHints, hints)
+				e.publishAgentLoopEvent("agent:coach:hint", map[string]any{
+					"step":  step,
+					"hints": hints,
+				})
+			}
+		}
+
 		if lim.MaxTokens > 0 && totalTokens >= lim.MaxTokens {
-			e.publishAgentLoopEvent("agent:loop:budget_exhausted", map[string]any{
-				"step":            step,
-				"max_tool_steps":  lim.MaxSteps,
-				"max_tool_tokens": lim.MaxTokens,
-				"tokens_used":     totalTokens,
-				"tool_rounds":     len(traces),
-				"surface":         "native",
-			})
-			return nativeToolCompletion{}, fmt.Errorf("agent tool loop exhausted token budget (%d/%d) after %d tool rounds", totalTokens, lim.MaxTokens, len(traces))
+			// Token-budget exhaustion parks the loop instead of erroring —
+			// the user's work so far (tool traces, mutations, chunks) is
+			// still useful, and /continue after /compact can pick up with
+			// fresh headroom. Erroring here would drop all that silently.
+			notice := fmt.Sprintf(
+				"Agent loop parked after step %d — tool budget exhausted (~%d/%d tokens, %d rounds). "+
+					"Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file.",
+				step, totalTokens, lim.MaxTokens, len(traces),
+			)
+			return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
 		}
 
 		if step == lim.MaxSteps {
-			parked := &parkedAgentState{
-				Question:      question,
-				Messages:      msgs,
-				Traces:        traces,
-				Chunks:        chunks,
-				SystemPrompt:  systemPrompt,
-				SystemBlocks:  systemBlocks,
-				Descriptors:   descriptors,
-				ContextTokens: seed.ContextTokens,
-				TotalTokens:   totalTokens,
-				Step:          step,
-				LastProvider:  lastProvider,
-				LastModel:     lastModel,
-			}
-			e.saveParkedAgent(parked)
-			e.publishAgentLoopEvent("agent:loop:parked", map[string]any{
-				"step":           step,
-				"max_tool_steps": lim.MaxSteps,
-				"tool_rounds":    len(traces),
-				"tokens_used":    totalTokens,
-				"surface":        "native",
-			})
 			notice := fmt.Sprintf(
 				"Agent loop parked at step %d (%d tool rounds, ~%d tokens). "+
 					"Type /continue (or devam) to resume, optionally with a note — e.g. /continue focus on the test file.",
 				step, len(traces), totalTokens,
 			)
-			completion := nativeToolCompletion{
-				Answer:       notice,
-				Provider:     lastProvider,
-				Model:        lastModel,
-				TokenCount:   totalTokens,
-				Context:      chunks,
-				ToolTraces:   traces,
-				SystemPrompt: systemPrompt,
-				Parked:       true,
-				ParkedAtStep: step,
-			}
-			return completion, nil
+			return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "step_cap"), nil
 		}
 	}
 
 	return nativeToolCompletion{}, fmt.Errorf("agent tool loop ended unexpectedly")
+}
+
+// parkNativeToolLoop freezes the running loop state under a `parkedAgentState`,
+// publishes the `agent:loop:parked` event (plus `agent:loop:budget_exhausted`
+// when the token budget tripped), and returns a `nativeToolCompletion` whose
+// Answer is a friendly notice telling the user to /continue. The helper is
+// shared by the two exit paths that used to inline this logic — MaxSteps cap
+// and MaxTokens budget — so they behave identically from the UI's point of
+// view. The only difference is `reason`, which lands in both events so the
+// TUI can distinguish "worked until step cap" from "ran out of headroom".
+func (e *Engine) parkNativeToolLoop(
+	question string,
+	seed *parkedAgentState,
+	msgs []provider.Message,
+	traces []nativeToolTrace,
+	chunks []types.ContextChunk,
+	systemPrompt string,
+	systemBlocks []provider.SystemBlock,
+	descriptors []provider.ToolDescriptor,
+	lastProvider, lastModel string,
+	totalTokens, step int,
+	notice, reason string,
+) nativeToolCompletion {
+	lim := e.agentLimits()
+	parked := &parkedAgentState{
+		Question:         question,
+		Messages:         msgs,
+		Traces:           traces,
+		Chunks:           chunks,
+		SystemPrompt:     systemPrompt,
+		SystemBlocks:     systemBlocks,
+		Descriptors:      descriptors,
+		ContextTokens:    seed.ContextTokens,
+		TotalTokens:      totalTokens,
+		Step:             step,
+		LastProvider:     lastProvider,
+		LastModel:        lastModel,
+		RecentCoachHints: seed.RecentCoachHints,
+	}
+	e.saveParkedAgent(parked)
+
+	if reason == "budget_exhausted" {
+		// Keep the dedicated telemetry event firing so operators grepping
+		// for budget trips still see them. The old behavior returned an
+		// error here; parking is strictly more graceful but shouldn't cost
+		// us the observability.
+		e.publishAgentLoopEvent("agent:loop:budget_exhausted", map[string]any{
+			"step":            step,
+			"max_tool_steps":  lim.MaxSteps,
+			"max_tool_tokens": lim.MaxTokens,
+			"tokens_used":     totalTokens,
+			"tool_rounds":     len(traces),
+			"surface":         "native",
+		})
+	}
+	e.publishAgentLoopEvent("agent:loop:parked", map[string]any{
+		"step":            step,
+		"max_tool_steps":  lim.MaxSteps,
+		"max_tool_tokens": lim.MaxTokens,
+		"tool_rounds":     len(traces),
+		"tokens_used":     totalTokens,
+		"reason":          reason,
+		"surface":         "native",
+	})
+	return nativeToolCompletion{
+		Answer:       notice,
+		Provider:     lastProvider,
+		Model:        lastModel,
+		TokenCount:   totalTokens,
+		Context:      chunks,
+		ToolTraces:   traces,
+		SystemPrompt: systemPrompt,
+		Parked:       true,
+		ParkedAtStep: step,
+	}
 }
 
 // buildNativeToolSystemPromptBundle composes the standard system prompt
