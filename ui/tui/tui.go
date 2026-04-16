@@ -4995,7 +4995,7 @@ func helpOverlayTabHints(tab string) []string {
 		}
 	case "memory":
 		return []string{
-			"j/k scroll · 1/2/3 tier · / search · r refresh",
+			"j/k scroll · t cycle tier · / search · r refresh · c clear",
 		}
 	case "codemap":
 		return []string{
