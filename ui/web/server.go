@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/commands"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
@@ -111,6 +112,8 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /", s.handleIndex)
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /api/v1/status", s.handleStatus)
+	s.mux.HandleFunc("GET /api/v1/commands", s.handleCommands)
+	s.mux.HandleFunc("GET /api/v1/commands/{name}", s.handleCommandDetail)
 	s.mux.HandleFunc("POST /api/v1/chat", s.handleChat)
 	s.mux.HandleFunc("GET /api/v1/codemap", s.handleCodeMap)
 	s.mux.HandleFunc("GET /api/v1/context/budget", s.handleContextBudget)
@@ -168,6 +171,28 @@ func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.engine.Status())
+}
+
+func (s *Server) handleCommands(w http.ResponseWriter, _ *http.Request) {
+	reg := commands.DefaultRegistry()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"groups": reg.ListByCategory(commands.SurfaceWeb),
+	})
+}
+
+func (s *Server) handleCommandDetail(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "command name is required"})
+		return
+	}
+	reg := commands.DefaultRegistry()
+	cmd, ok := reg.Lookup(name)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": fmt.Sprintf("command not found: %s", name)})
+		return
+	}
+	writeJSON(w, http.StatusOK, cmd)
 }
 
 func (s *Server) handleCodeMap(w http.ResponseWriter, _ *http.Request) {

@@ -146,6 +146,24 @@ func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*Completi
 		if err == nil {
 			return resp, p.Name(), nil
 		}
+		// Context overflow: trim the oldest non-tail messages and retry the
+		// SAME provider once before giving up on it. Moving to a fallback
+		// provider won't help if the same huge conversation just shifts over.
+		if isContextOverflow(err) {
+			compacted, trimmed := compactMessagesForRetry(req.Messages)
+			if trimmed > 0 {
+				retryReq := req
+				retryReq.Messages = compacted
+				resp, err2 := p.Complete(ctx, retryReq)
+				if err2 == nil {
+					return resp, p.Name(), nil
+				}
+				errs = append(errs, fmt.Errorf("%s (context overflow, compacted %d msgs, retry failed): %w", p.Name(), trimmed, err2))
+				continue
+			}
+			errs = append(errs, fmt.Errorf("%s: %w", p.Name(), err))
+			continue
+		}
 		if errors.Is(err, ErrProviderUnavailable) {
 			errs = append(errs, err)
 			continue
@@ -170,6 +188,21 @@ func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 		if err == nil {
 			return stream, p.Name(), nil
 		}
+		if isContextOverflow(err) {
+			compacted, trimmed := compactMessagesForRetry(req.Messages)
+			if trimmed > 0 {
+				retryReq := req
+				retryReq.Messages = compacted
+				stream, err2 := p.Stream(ctx, retryReq)
+				if err2 == nil {
+					return stream, p.Name(), nil
+				}
+				errs = append(errs, fmt.Errorf("%s (context overflow, compacted %d msgs, retry failed): %w", p.Name(), trimmed, err2))
+				continue
+			}
+			errs = append(errs, fmt.Errorf("%s: %w", p.Name(), err))
+			continue
+		}
 		if errors.Is(err, ErrProviderUnavailable) {
 			errs = append(errs, err)
 			continue
@@ -178,4 +211,74 @@ func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 	}
 
 	return nil, "", errors.Join(errs...)
+}
+
+// isContextOverflow matches either the explicit ErrContextOverflow sentinel or
+// the well-known upstream phrasing used by Anthropic and OpenAI. New upstreams
+// can just wrap ErrContextOverflow — the string-match branch is a best-effort
+// catch for providers that haven't been taught to.
+func isContextOverflow(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrContextOverflow) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	phrases := []string{
+		"context_length_exceeded",
+		"maximum context length",
+		"prompt is too long",
+		"context length",
+		"too many tokens",
+		"context window",
+		"input is too long",
+		"request too large",
+	}
+	for _, p := range phrases {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// compactMessagesForRetry drops the oldest non-tail messages and preserves:
+//   - the final user turn (required for every provider),
+//   - any trailing assistant/tool-result chain that follows that user turn,
+//   - a synthetic [context compacted] note so the model sees *why* older
+//     turns are missing instead of treating them as never having happened.
+//
+// Returns the compacted slice and the count of messages that were actually
+// dropped. When trimming would leave fewer than 2 messages, returns the
+// original slice and 0 — giving up is better than shipping a stub.
+func compactMessagesForRetry(msgs []Message) ([]Message, int) {
+	if len(msgs) <= 2 {
+		return msgs, 0
+	}
+	// Find the last user index — that's the start of the tail we must keep.
+	lastUser := -1
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if string(msgs[i].Role) == "user" {
+			lastUser = i
+			break
+		}
+	}
+	if lastUser <= 0 {
+		return msgs, 0
+	}
+	// If only one message would be dropped, don't bother — the retry is
+	// unlikely to fit otherwise.
+	if lastUser < 2 {
+		return msgs, 0
+	}
+	tail := msgs[lastUser:]
+	notice := Message{
+		Role:    "user",
+		Content: "[prior conversation compacted to fit context window; " + fmt.Sprintf("%d", lastUser) + " older messages omitted]",
+	}
+	compacted := make([]Message, 0, len(tail)+1)
+	compacted = append(compacted, notice)
+	compacted = append(compacted, tail...)
+	return compacted, lastUser
 }

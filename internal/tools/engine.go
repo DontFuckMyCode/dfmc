@@ -44,6 +44,7 @@ type Engine struct {
 	recentFailures map[string]int
 	readMu         sync.Mutex
 	readSnapshots  map[string]string
+	delegateTool   *DelegateTaskTool
 }
 
 func New(cfg config.Config) *Engine {
@@ -58,7 +59,74 @@ func New(cfg config.Config) *Engine {
 	e.Register(NewEditFileTool())
 	e.Register(NewListDirTool())
 	e.Register(NewGrepCodebaseTool())
+	e.Register(NewGlobTool())
+	e.Register(NewThinkTool())
+	e.Register(NewTodoWriteTool())
+	e.Register(NewWebFetchTool())
+	e.Register(NewWebSearchTool())
+	e.Register(NewASTQueryTool())
+	e.Register(NewApplyPatchTool())
+	e.Register(NewGitStatusTool())
+	e.Register(NewGitDiffTool())
+	e.Register(NewGitBranchTool())
+	e.Register(NewGitLogTool())
+	e.Register(NewGitWorktreeListTool())
+	e.Register(NewGitWorktreeAddTool())
+	e.Register(NewGitWorktreeRemoveTool())
+	e.Register(NewGitCommitTool())
+	e.Register(NewTaskSplitTool())
+	e.delegateTool = NewDelegateTaskTool()
+	e.Register(e.delegateTool)
+	timeout, err := time.ParseDuration(strings.TrimSpace(cfg.Tools.Shell.Timeout))
+	if err != nil || timeout <= 0 {
+		timeout, _ = time.ParseDuration(strings.TrimSpace(cfg.Security.Sandbox.Timeout))
+	}
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	e.Register(NewRunCommandTool(runCommandConfig{
+		allowShell: cfg.Security.Sandbox.AllowShell,
+		timeout:    timeout,
+		blocked:    append([]string(nil), cfg.Tools.Shell.BlockedCommands...),
+	}))
+	RegisterMetaTools(e)
 	return e
+}
+
+// SetSubagentRunner wires the delegate_task tool to the engine's sub-agent
+// entry point. Engines call this once the agent loop is fully constructed.
+func (e *Engine) SetSubagentRunner(r SubagentRunner) {
+	if e.delegateTool != nil {
+		e.delegateTool.SetRunner(r)
+	}
+}
+
+// MetaSpecs returns the 4 meta-tool specs (tool_search, tool_help, tool_call,
+// tool_batch_call). Provider serializers send only these to the model; the
+// rest of the registry stays backend-only and is reached via tool_call.
+func (e *Engine) MetaSpecs() []ToolSpec {
+	out := make([]ToolSpec, 0, 4)
+	for _, name := range []string{"tool_search", "tool_help", "tool_call", "tool_batch_call"} {
+		if spec, ok := e.Spec(name); ok {
+			out = append(out, spec)
+		}
+	}
+	return out
+}
+
+// BackendSpecs returns every spec EXCEPT the meta tools. Useful for status
+// output, docs, and tests that want to see what the registry actually
+// contains.
+func (e *Engine) BackendSpecs() []ToolSpec {
+	all := e.Specs()
+	out := make([]ToolSpec, 0, len(all))
+	for _, s := range all {
+		if isMetaTool(s.Name) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 func (e *Engine) Register(tool Tool) {
@@ -83,6 +151,77 @@ func (e *Engine) List() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Specs returns a stable-sorted slice of ToolSpec for every registered tool.
+// Tools that don't implement Specer get a synthetic spec derived from
+// Name()/Description() with Risk=RiskRead. This is the entry point every
+// provider serializer and the meta-tool surface read from.
+func (e *Engine) Specs() []ToolSpec {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := make([]ToolSpec, 0, len(e.registry))
+	for _, tool := range e.registry {
+		out = append(out, specForTool(tool))
+	}
+	SortSpecs(out)
+	return out
+}
+
+// Spec returns the ToolSpec for a named tool, or (zero, false) if not found.
+func (e *Engine) Spec(name string) (ToolSpec, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	tool, ok := e.registry[name]
+	if !ok {
+		return ToolSpec{}, false
+	}
+	return specForTool(tool), true
+}
+
+// Search ranks registered tools against a query and returns the top `limit`
+// specs. Pass limit<=0 for all matches. Non-matching tools are omitted.
+func (e *Engine) Search(query string, limit int) []ToolSpec {
+	specs := e.Specs()
+	type scored struct {
+		spec  ToolSpec
+		score int
+	}
+	ranked := make([]scored, 0, len(specs))
+	for _, s := range specs {
+		if score := ScoreMatch(s, query); score > 0 {
+			ranked = append(ranked, scored{spec: s, score: score})
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		return ranked[i].spec.Name < ranked[j].spec.Name
+	})
+	if limit > 0 && len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	out := make([]ToolSpec, len(ranked))
+	for i, r := range ranked {
+		out[i] = r.spec
+	}
+	return out
+}
+
+func specForTool(tool Tool) ToolSpec {
+	if s, ok := tool.(Specer); ok {
+		spec := s.Spec()
+		if spec.Risk == "" {
+			spec.Risk = RiskRead
+		}
+		return spec
+	}
+	return ToolSpec{
+		Name:    tool.Name(),
+		Summary: tool.Description(),
+		Risk:    RiskRead,
+	}
 }
 
 func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result, error) {
@@ -214,6 +353,17 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 			maxResults = 500
 		}
 		params["max_results"] = maxResults
+	case "run_command":
+		timeoutMs := asInt(params, "timeout_ms", 0)
+		if timeoutMs < 0 {
+			timeoutMs = 0
+		}
+		if timeoutMs > 120_000 {
+			timeoutMs = 120_000
+		}
+		if timeoutMs > 0 {
+			params["timeout_ms"] = timeoutMs
+		}
 	}
 	return params
 }

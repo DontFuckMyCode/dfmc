@@ -956,3 +956,72 @@ func TestMagicDocEndpoints(t *testing.T) {
 		t.Fatalf("expected magic doc title in content, got: %s", content)
 	}
 }
+
+func TestCommandsEndpoint(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Catalog.
+	resp, err := http.Get(ts.URL + "/api/v1/commands")
+	if err != nil {
+		t.Fatalf("get commands: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+	var payload struct {
+		Groups []struct {
+			Category string            `json:"category"`
+			Label    string            `json:"label"`
+			Commands []json.RawMessage `json:"commands"`
+		} `json:"groups"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode commands json: %v", err)
+	}
+	if len(payload.Groups) == 0 {
+		t.Fatalf("expected at least one group, got none")
+	}
+	seenQuery := false
+	for _, g := range payload.Groups {
+		if g.Label == "" {
+			t.Fatalf("group missing label: %+v", g)
+		}
+		if g.Category == "query" {
+			seenQuery = true
+		}
+	}
+	if !seenQuery {
+		t.Fatalf("expected `query` category in web surface, got: %+v", payload.Groups)
+	}
+
+	// Detail lookup via alias (conv -> conversation).
+	detailResp, err := http.Get(ts.URL + "/api/v1/commands/conv")
+	if err != nil {
+		t.Fatalf("get command detail: %v", err)
+	}
+	defer detailResp.Body.Close()
+	if detailResp.StatusCode != http.StatusOK {
+		t.Fatalf("detail status: %d", detailResp.StatusCode)
+	}
+	var detail map[string]any
+	if err := json.NewDecoder(detailResp.Body).Decode(&detail); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if detail["name"] != "conversation" {
+		t.Fatalf("alias should resolve to canonical name, got %v", detail["name"])
+	}
+
+	// 404 for unknown.
+	missResp, err := http.Get(ts.URL + "/api/v1/commands/definitely-not-a-command")
+	if err != nil {
+		t.Fatalf("get missing: %v", err)
+	}
+	defer missResp.Body.Close()
+	if missResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", missResp.StatusCode)
+	}
+}

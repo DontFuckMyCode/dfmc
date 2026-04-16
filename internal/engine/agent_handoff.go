@@ -1,0 +1,262 @@
+package engine
+
+// agent_handoff.go — offline (LLM-free) auto-new-session handoff. Complements
+// agent_compact.go: when the accumulated conversation history plus the next
+// user question will blow past AutoHandoffThresholdRatio of the provider's
+// context window, we close the current conversation and start a fresh one
+// seeded with a terse "handoff brief". The brief is produced without any
+// provider call — we scan the outgoing conversation for user intent, tool
+// activity, and the last assistant answer, and render a compact summary.
+//
+// Trip order:
+//   1. Below AutoCompactThresholdRatio      → loop runs raw.
+//   2. Above compact, below handoff         → mid-loop compaction (see
+//                                             agent_compact.go).
+//   3. Above AutoHandoffThresholdRatio      → this file: rotate conversation
+//                                             before the next turn even
+//                                             begins.
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/dontfuckmycode/dfmc/pkg/types"
+)
+
+// handoffReport captures what maybeAutoHandoff did so the caller can emit a
+// telemetry event and so tests can assert the behaviour.
+type handoffReport struct {
+	OldConversationID string
+	NewConversationID string
+	HistoryTokens     int
+	BriefTokens       int
+	MessagesSealed    int
+	ThresholdRatio    float64
+	MaxBriefTokens    int
+}
+
+// maybeAutoHandoff checks whether the current conversation plus the pending
+// question is over AutoHandoffThresholdRatio. If so, it seals the active
+// conversation, starts a new one seeded with a handoff brief assistant turn,
+// and publishes context:lifecycle:handoff. Returns the report so the caller
+// can surface the event payload.
+//
+// This function only ever rotates the *conversation manager* — it does not
+// touch the in-flight request state because rotation must happen before any
+// provider call is made for the new question.
+func (e *Engine) maybeAutoHandoff(question string) *handoffReport {
+	if e == nil || e.Conversation == nil {
+		return nil
+	}
+	lifecycle := e.resolveContextLifecycle()
+	if !lifecycle.Enabled {
+		return nil
+	}
+	ratio := lifecycle.AutoHandoffThresholdRatio
+	if ratio <= 0 {
+		return nil
+	}
+	// Guard against misconfigurations that would make compaction pointless.
+	if ratio <= lifecycle.AutoCompactThresholdRatio {
+		return nil
+	}
+
+	providerLimit := e.providerMaxContext()
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
+	threshold := int(float64(providerLimit) * ratio)
+	if threshold <= 0 {
+		return nil
+	}
+
+	active := e.Conversation.Active()
+	if active == nil {
+		return nil
+	}
+	history := active.Messages()
+	if len(history) == 0 {
+		return nil
+	}
+
+	pending := estimateTokens(question)
+	for _, msg := range history {
+		pending += estimateTokens(msg.Content)
+		for _, call := range msg.ToolCalls {
+			pending += estimateTokens(call.Name)
+			for k, v := range call.Params {
+				pending += estimateTokens(k) + estimateTokens(fmt.Sprint(v))
+			}
+		}
+		for _, r := range msg.Results {
+			pending += estimateTokens(r.Output)
+		}
+	}
+	if pending < threshold {
+		return nil
+	}
+
+	briefBudget := lifecycle.HandoffBriefMaxTokens
+	if briefBudget <= 0 {
+		briefBudget = 500
+	}
+	brief := buildHandoffBrief(active.ID, history, briefBudget)
+	if strings.TrimSpace(brief) == "" {
+		return nil
+	}
+
+	oldID := active.ID
+	provider := strings.TrimSpace(active.Provider)
+	if provider == "" {
+		provider = e.provider()
+	}
+	model := strings.TrimSpace(active.Model)
+	if model == "" {
+		model = e.model()
+	}
+
+	newConv := e.Conversation.Start(provider, model)
+	if newConv == nil {
+		return nil
+	}
+	e.Conversation.AddMessage(provider, model, types.Message{
+		Role:    types.RoleAssistant,
+		Content: brief,
+		Metadata: map[string]string{
+			"auto_handoff":       "true",
+			"source_conversation": oldID,
+		},
+	})
+
+	report := &handoffReport{
+		OldConversationID: oldID,
+		NewConversationID: newConv.ID,
+		HistoryTokens:     pending,
+		BriefTokens:       estimateTokens(brief),
+		MessagesSealed:    len(history),
+		ThresholdRatio:    ratio,
+		MaxBriefTokens:    briefBudget,
+	}
+	e.publishAgentLoopEvent("context:lifecycle:handoff", map[string]any{
+		"old_conversation": oldID,
+		"new_conversation": newConv.ID,
+		"history_tokens":   report.HistoryTokens,
+		"brief_tokens":     report.BriefTokens,
+		"messages_sealed":  report.MessagesSealed,
+		"threshold_ratio":  report.ThresholdRatio,
+		"max_brief_tokens": report.MaxBriefTokens,
+		"surface":          "conversation",
+	})
+	return report
+}
+
+// buildHandoffBrief renders a terse, LLM-free summary of an outgoing
+// conversation so the new session has just enough context to keep going
+// without paying for the whole transcript. Ordering:
+//   1. Original user intent (first user turn, truncated).
+//   2. Subsequent user asks (one-line each, up to a few).
+//   3. Tool activity summary — count per tool name, ok/fail split.
+//   4. Last assistant answer (truncated).
+//
+// Bounded by maxTokens (~4 chars per token). Deterministic: identical inputs
+// produce identical output.
+func buildHandoffBrief(convID string, history []types.Message, maxTokens int) string {
+	if len(history) == 0 {
+		return ""
+	}
+	var userTurns []string
+	var lastAssistant string
+	toolCounts := map[string]int{}
+	toolSuccess := map[string]int{}
+	toolFailure := map[string]int{}
+
+	for _, msg := range history {
+		switch msg.Role {
+		case types.RoleUser:
+			text := strings.TrimSpace(msg.Content)
+			if text != "" {
+				userTurns = append(userTurns, truncateRunes(text, 160))
+			}
+		case types.RoleAssistant:
+			if text := strings.TrimSpace(msg.Content); text != "" {
+				lastAssistant = text
+			}
+			for _, call := range msg.ToolCalls {
+				name := strings.TrimSpace(call.Name)
+				if name == "" {
+					continue
+				}
+				toolCounts[name]++
+			}
+			for _, r := range msg.Results {
+				name := strings.TrimSpace(r.Name)
+				if name == "" {
+					continue
+				}
+				if r.Success {
+					toolSuccess[name]++
+				} else {
+					toolFailure[name]++
+				}
+			}
+		}
+	}
+
+	lines := []string{fmt.Sprintf("[handoff brief · prior session %s]", convID)}
+	if len(userTurns) > 0 {
+		lines = append(lines, "original request: "+userTurns[0])
+		if len(userTurns) > 1 {
+			tail := userTurns[1:]
+			if len(tail) > 3 {
+				tail = tail[len(tail)-3:]
+			}
+			for _, t := range tail {
+				lines = append(lines, "follow-up: "+t)
+			}
+		}
+	}
+	if len(toolCounts) > 0 {
+		parts := make([]string, 0, len(toolCounts))
+		for _, name := range sortedStringKeys(toolCounts) {
+			count := toolCounts[name]
+			ok := toolSuccess[name]
+			fail := toolFailure[name]
+			parts = append(parts, fmt.Sprintf("%s×%d ok=%d fail=%d", name, count, ok, fail))
+		}
+		lines = append(lines, "tool activity: "+strings.Join(parts, "; "))
+	}
+	if lastAssistant != "" {
+		lines = append(lines, "last answer: "+truncateRunes(lastAssistant, 320))
+	}
+
+	body := strings.Join(lines, "\n")
+	if maxTokens > 0 {
+		budgetChars := maxTokens * 4
+		if budgetChars > 0 && len(body) > budgetChars {
+			body = body[:budgetChars] + "\n...[truncated]"
+		}
+	}
+	return body
+}
+
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "..."
+}
+
+func sortedStringKeys(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	// tiny inlined sort — avoids pulling in sort for one caller in hot path.
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j-1] > out[j]; j-- {
+			out[j-1], out[j] = out[j], out[j-1]
+		}
+	}
+	return out
+}

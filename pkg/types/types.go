@@ -96,6 +96,11 @@ type ContextChunk struct {
 	TokenCount  int     `json:"token_count"`
 	Score       float64 `json:"score"`
 	Compression string  `json:"compression"`
+	// Source labels *why* a chunk was included so UIs can show it and
+	// coach rules can spot weird mixes (e.g. a turn that used 100%
+	// hotspot files usually means retrieval didn't find anything
+	// specific). Values come from context.ChunkSource* constants.
+	Source string `json:"source,omitempty"`
 }
 
 type MemoryTier string

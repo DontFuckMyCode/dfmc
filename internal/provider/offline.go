@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"fmt"
 	"strings"
 )
 
@@ -29,30 +28,20 @@ func (p *OfflineProvider) Complete(_ context.Context, req CompletionRequest) (*C
 		}
 	}
 
-	var b strings.Builder
-	if question == "" {
-		b.WriteString("Offline mode is active. No user question was provided.")
+	// Pick the task out of the merged system prompt so the heuristic
+	// pipeline matches what the engine routed us for.
+	task := detectOfflineTask(req.System, question)
+
+	var out string
+	if len(req.Context) == 0 && question == "" {
+		out = "DFMC offline mode is active but no question or context was provided. " +
+			"Type a question or open files so the offline analyzer has something to look at. " +
+			"Configure an API key (`dfmc providers setup`) to enable online LLM generation."
 	} else {
-		b.WriteString("Offline mode is active. I analyzed your local code context and prepared a best-effort response.")
-		b.WriteString("\n\nQuestion:\n")
-		b.WriteString(question)
+		out = analyzeOffline(task, question, req.Context)
+		out += "\n\n---\n_DFMC offline — configure a provider API key (`dfmc providers setup`) for LLM generation._"
 	}
 
-	if len(req.Context) > 0 {
-		b.WriteString("\n\nRelevant files:")
-		limit := len(req.Context)
-		if limit > 6 {
-			limit = 6
-		}
-		for i := 0; i < limit; i++ {
-			ch := req.Context[i]
-			b.WriteString(fmt.Sprintf("\n- %s (score %.2f)", ch.Path, ch.Score))
-		}
-	}
-
-	b.WriteString("\n\nTip: configure provider API keys to enable full LLM generation.")
-
-	out := b.String()
 	usage := Usage{
 		InputTokens:  p.CountTokens(question),
 		OutputTokens: p.CountTokens(out),
@@ -75,6 +64,7 @@ func (p *OfflineProvider) Stream(ctx context.Context, req CompletionRequest) (<-
 			ch <- StreamEvent{Type: StreamError, Err: err}
 			return
 		}
+		ch <- StreamEvent{Type: StreamStart, Provider: p.Name(), Model: resp.Model}
 		lines := strings.Split(resp.Text, "\n")
 		for _, line := range lines {
 			select {
@@ -84,7 +74,14 @@ func (p *OfflineProvider) Stream(ctx context.Context, req CompletionRequest) (<-
 			case ch <- StreamEvent{Type: StreamDelta, Delta: line + "\n"}:
 			}
 		}
-		ch <- StreamEvent{Type: StreamDone}
+		usage := resp.Usage
+		ch <- StreamEvent{
+			Type:       StreamDone,
+			Provider:   p.Name(),
+			Model:      resp.Model,
+			Usage:      &usage,
+			StopReason: StopEnd,
+		}
 	}()
 	return ch, nil
 }

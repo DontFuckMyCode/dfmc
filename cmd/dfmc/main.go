@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/storage"
 	"github.com/dontfuckmycode/dfmc/ui/cli"
 )
 
@@ -31,11 +34,45 @@ func main() {
 	}
 
 	if err := eng.Init(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "init error: %v\n", err)
+		if allowsDegradedStartup(os.Args[1:]) {
+			fmt.Fprintf(os.Stderr, "init warning: %s\n", formatInitError(err))
+			exitCode := cli.Run(ctx, eng, os.Args[1:], version)
+			os.Exit(exitCode)
+		}
+		fmt.Fprintf(os.Stderr, "init error: %s\n", formatInitError(err))
 		os.Exit(1)
 	}
 
 	exitCode := cli.Run(ctx, eng, os.Args[1:], version)
 	eng.Shutdown()
 	os.Exit(exitCode)
+}
+
+func allowsDegradedStartup(args []string) bool {
+	for _, arg := range args {
+		trimmed := strings.TrimSpace(arg)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "-") {
+			continue
+		}
+		switch trimmed {
+		case "help", "-h", "--help", "version", "doctor", "completion", "man":
+			return true
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func formatInitError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, storage.ErrStoreLocked) {
+		return err.Error() + " Use `dfmc doctor` after closing the other session if you want a deeper diagnosis."
+	}
+	return err.Error()
 }

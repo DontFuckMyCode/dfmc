@@ -26,6 +26,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
+	"github.com/dontfuckmycode/dfmc/internal/commands"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
@@ -67,6 +68,10 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 
 	switch cmd {
 	case "help", "-h", "--help":
+		if len(cmdArgs) > 0 {
+			printCommandHelp(cmdArgs[0])
+			return 0
+		}
 		printHelp()
 		return 0
 	case "status":
@@ -243,6 +248,8 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 		"ready":                      st.State == engine.StateReady || st.State == engine.StateServing,
 		"provider":                   st.Provider,
 		"model":                      st.Model,
+		"provider_profile":           st.ProviderProfile,
+		"models_dev_cache":           st.ModelsDevCache,
 		"ast_backend":                st.ASTBackend,
 		"ast_reason":                 st.ASTReason,
 		"ast_languages":              st.ASTLanguages,
@@ -268,6 +275,12 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 	fmt.Printf("dfmc %s\n", version)
 	fmt.Printf("state: %v (ready=%t)\n", st.State, st.State == engine.StateReady || st.State == engine.StateServing)
 	fmt.Printf("provider/model: %s / %s\n", st.Provider, st.Model)
+	if summary := formatProviderProfileSummary(st.ProviderProfile); summary != "" {
+		fmt.Printf("provider profile: %s\n", summary)
+	}
+	if summary := formatModelsDevCacheSummary(st.ModelsDevCache); summary != "" {
+		fmt.Printf("models.dev cache: %s\n", summary)
+	}
 	if strings.TrimSpace(st.ASTBackend) != "" {
 		fmt.Printf("ast backend: %s\n", st.ASTBackend)
 	}
@@ -363,6 +376,53 @@ func blankFallback(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func formatProviderProfileSummary(profile engine.ProviderProfileStatus) string {
+	name := strings.TrimSpace(profile.Name)
+	model := strings.TrimSpace(profile.Model)
+	protocol := strings.TrimSpace(profile.Protocol)
+	baseURL := strings.TrimSpace(profile.BaseURL)
+	if name == "" && model == "" && protocol == "" && baseURL == "" && profile.MaxContext <= 0 && profile.MaxTokens <= 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, 6)
+	if name != "" || model != "" {
+		parts = append(parts, fmt.Sprintf("%s/%s", blankFallback(name, "-"), blankFallback(model, "-")))
+	}
+	if protocol != "" {
+		parts = append(parts, "proto="+protocol)
+	}
+	if profile.MaxContext > 0 {
+		parts = append(parts, fmt.Sprintf("ctx=%d", profile.MaxContext))
+	}
+	if profile.MaxTokens > 0 {
+		parts = append(parts, fmt.Sprintf("out=%d", profile.MaxTokens))
+	}
+	if baseURL != "" {
+		parts = append(parts, "endpoint="+baseURL)
+	}
+	parts = append(parts, "configured="+strconv.FormatBool(profile.Configured))
+	return strings.Join(parts, " ")
+}
+
+func formatModelsDevCacheSummary(cache engine.ModelsDevCacheStatus) string {
+	path := strings.TrimSpace(cache.Path)
+	if path == "" {
+		return ""
+	}
+	if !cache.Exists {
+		return "missing"
+	}
+	parts := []string{"ready"}
+	if !cache.UpdatedAt.IsZero() {
+		parts = append(parts, "updated="+cache.UpdatedAt.Format(time.RFC3339))
+	}
+	if cache.SizeBytes > 0 {
+		parts = append(parts, fmt.Sprintf("size=%d", cache.SizeBytes))
+	}
+	return strings.Join(parts, " ")
 }
 
 func formatCodeMapMetricsSummary(metrics codemap.BuildMetrics) string {
@@ -3697,6 +3757,20 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 	}
 
 	if eng.Config != nil {
+		cache := eng.Status().ModelsDevCache
+		if !cache.Exists {
+			add("modelsdev.cache", "warn", "missing: "+cache.Path)
+		} else {
+			details := cache.Path
+			if !cache.UpdatedAt.IsZero() {
+				details += " updated " + cache.UpdatedAt.Format(time.RFC3339)
+			}
+			if cache.SizeBytes > 0 {
+				details += fmt.Sprintf(" size=%d", cache.SizeBytes)
+			}
+			add("modelsdev.cache", "pass", details)
+		}
+
 		names := make([]string, 0, len(eng.Config.Providers.Profiles))
 		for name := range eng.Config.Providers.Profiles {
 			names = append(names, name)
@@ -3704,6 +3778,19 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		sort.Strings(names)
 		for _, name := range names {
 			prof := eng.Config.Providers.Profiles[name]
+			profileStatus := "pass"
+			if strings.TrimSpace(prof.Model) == "" || strings.TrimSpace(prof.Protocol) == "" || prof.MaxContext <= 0 || prof.MaxTokens <= 0 {
+				profileStatus = "warn"
+			}
+			add("provider."+name+".profile", profileStatus, formatProviderProfileSummary(engine.ProviderProfileStatus{
+				Name:       name,
+				Model:      prof.Model,
+				Protocol:   prof.Protocol,
+				BaseURL:    prof.BaseURL,
+				MaxTokens:  prof.MaxTokens,
+				MaxContext: prof.MaxContext,
+				Configured: providerConfigured(name, prof),
+			}))
 			configured := providerConfigured(name, prof)
 			if configured {
 				add("provider."+name+".configured", "pass", "credentials/endpoint present")
@@ -5762,6 +5849,95 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 		return 0
 
+	case "inspect", "show":
+		fs := flag.NewFlagSet("prompt inspect", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		full := fs.Bool("full", false, "print each section's full body instead of a preview")
+		queryFlag := fs.String("query", "", "user query to seed task/profile/role detection")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		query := strings.TrimSpace(*queryFlag)
+		if query == "" && len(fs.Args()) > 0 {
+			query = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		}
+		runtime := eng.PromptRuntime()
+		bundle := eng.Context.BuildSystemPromptBundle(projectRoot, query, nil, eng.ListTools(), runtime)
+		task := promptlib.DetectTask(query)
+		profile := ctxmgr.ResolvePromptProfile(query, task, runtime)
+		role := ctxmgr.ResolvePromptRole(query, task)
+		language := promptlib.InferLanguage(query, nil)
+		totalTokens := 0
+		cacheableTokens := 0
+		type sectionOut struct {
+			Index     int    `json:"index"`
+			Label     string `json:"label"`
+			Cacheable bool   `json:"cacheable"`
+			Tokens    int    `json:"tokens"`
+			Chars     int    `json:"chars"`
+			Lines     int    `json:"lines"`
+			Preview   string `json:"preview,omitempty"`
+			Text      string `json:"text,omitempty"`
+		}
+		sections := make([]sectionOut, 0, len(bundle.Sections))
+		for i, s := range bundle.Sections {
+			tokens := promptlib.EstimateTokens(s.Text)
+			totalTokens += tokens
+			if s.Cacheable {
+				cacheableTokens += tokens
+			}
+			firstLine := strings.TrimSpace(s.Text)
+			if nl := strings.IndexByte(firstLine, '\n'); nl >= 0 {
+				firstLine = firstLine[:nl]
+			}
+			if len(firstLine) > 80 {
+				firstLine = firstLine[:77] + "..."
+			}
+			so := sectionOut{
+				Index:     i + 1,
+				Label:     s.Label,
+				Cacheable: s.Cacheable,
+				Tokens:    tokens,
+				Chars:     len(s.Text),
+				Lines:     strings.Count(s.Text, "\n") + 1,
+				Preview:   firstLine,
+			}
+			if *full {
+				so.Text = s.Text
+			}
+			sections = append(sections, so)
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"task":             task,
+				"language":         language,
+				"profile":          profile,
+				"role":             role,
+				"section_count":    len(sections),
+				"total_tokens":     totalTokens,
+				"cacheable_tokens": cacheableTokens,
+				"sections":         sections,
+			})
+			return 0
+		}
+		fmt.Printf("prompt inspect: task=%s language=%s profile=%s role=%s sections=%d tokens=%d cacheable=%d\n",
+			task, language, profile, role, len(sections), totalTokens, cacheableTokens)
+		for _, s := range sections {
+			cache := "·"
+			if s.Cacheable {
+				cache = "▣"
+			}
+			fmt.Printf("  %s %2d  %-12s  tok=%-4d lines=%-3d  %s\n", cache, s.Index, s.Label, s.Tokens, s.Lines, s.Preview)
+			if *full {
+				fmt.Println("    ───")
+				for line := range strings.SplitSeq(strings.TrimRight(s.Text, "\n"), "\n") {
+					fmt.Println("    " + line)
+				}
+				fmt.Println("    ───")
+			}
+		}
+		return 0
+
 	case "stats", "validate", "lint":
 		fs := flag.NewFlagSet("prompt stats", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -5865,7 +6041,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[stats --max-template-tokens 450]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[inspect --query \"...\" --full]|[stats --max-template-tokens 450]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]")
 		return 2
 	}
 }
@@ -6361,38 +6537,33 @@ func trimWords(text string, maxWords int) string {
 	return strings.Join(words[:maxWords], " ")
 }
 
+// printHelp renders the top-level help text. Command listing comes from the
+// shared commands.Registry so CLI, TUI, and web stay in sync; the global-flags
+// block is CLI-only and stays hardcoded here.
 func printHelp() {
-	fmt.Println(`Usage: dfmc [global flags] <command> [args]
+	fmt.Println(renderCLIHelp(""))
+}
 
-Commands:
-  status      Runtime status snapshot
-  init        Initialize DFMC in project
-  chat        Interactive chat session
-  tui         Terminal workbench (chat/status/patch)
-  ask         One-shot question
-  analyze     Analyze codebase
-  scan        Quick security scan
-  map         Generate/display codemap
-  tool        Tool engine (list/run)
-  conversation Conversation management (list/search/load/save/undo/branch)
-  memory      Memory management
-  config      Configuration management (list/get/set/edit)
-  context     Context budget and recent files
-  prompt      Prompt library management (list/render)
-  magicdoc    Build/show concise project magic doc
-  plugin      Plugin management (list/info/install/remove/enable/disable)
-  skill       Skill management (list/info/run)
-  serve       Start Web API server
-  remote      Remote control server (status/probe/events/ask/tool/tools/skill/skills/prompt/analyze/context/files/memory/conversation+branch/codemap/start)
-  doctor      Environment and config health checks
-  completion  Generate shell completion scripts
-  man         Generate command manual page
-  review      Code review shortcut
-  explain     Explain code shortcut
-  refactor    Refactor code shortcut
-  test        Test generation shortcut
-  doc         Documentation shortcut
-  version     Version info
+// printCommandHelp renders a single-command detail view, or falls back to the
+// full catalog when the name is unknown.
+func printCommandHelp(name string) {
+	reg := commands.DefaultRegistry()
+	if detail := reg.RenderCommandHelp(name); detail != "" {
+		fmt.Println(detail)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", name)
+	fmt.Println(renderCLIHelp(""))
+}
+
+func renderCLIHelp(extraHeader string) string {
+	reg := commands.DefaultRegistry()
+	header := "Usage: dfmc [global flags] <command> [args]"
+	if extraHeader != "" {
+		header = extraHeader + "\n\n" + header
+	}
+	body := reg.RenderHelp(commands.SurfaceCLI, header)
+	globalFlags := `
 
 Global flags:
   --provider  LLM provider override
@@ -6401,7 +6572,10 @@ Global flags:
   --verbose   Verbose output
   --json      JSON output mode
   --no-color  Disable colors
-  --project   Project root path`)
+  --project   Project root path
+
+Run "dfmc help <command>" for details on a specific command.`
+	return body + globalFlags
 }
 
 func printJSON(v any) error {

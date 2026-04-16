@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,12 +29,67 @@ type Config struct {
 	Memory    MemoryConfig    `yaml:"memory"`
 	Security  SecurityConfig  `yaml:"security"`
 	Tools     ToolsConfig     `yaml:"tools"`
+	Agent     AgentConfig     `yaml:"agent"`
 	Hooks     HooksConfig     `yaml:"hooks"`
 	Plugins   PluginsConfig   `yaml:"plugins"`
 	TUI       TUIConfig       `yaml:"tui"`
 	Web       WebConfig       `yaml:"web"`
 	Remote    RemoteConfig    `yaml:"remote"`
 	Project   ProjectConfig   `yaml:"project"`
+	Coach     CoachConfig     `yaml:"coach"`
+}
+
+// CoachConfig governs the background "tiny-touches" observer that publishes
+// coach:note events at the end of each agent turn. Rule-based today, the
+// default Enabled=true costs nothing (microseconds, zero network). Set
+// Enabled=false to silence the TUI coach role entirely.
+type CoachConfig struct {
+	Enabled  bool `yaml:"enabled"`
+	MaxNotes int  `yaml:"max_notes"`
+}
+
+// AgentConfig bounds the native tool loop so a runaway model can't drain a
+// budget. All fields have defaults in DefaultConfig; zero values fall back.
+type AgentConfig struct {
+	// MaxToolSteps caps the number of model<->tool round-trips.
+	MaxToolSteps int `yaml:"max_tool_steps"`
+	// MaxToolTokens is the hard token budget across all provider calls in a
+	// single agent loop. Zero disables the budget.
+	MaxToolTokens int `yaml:"max_tool_tokens"`
+	// MaxToolResultChars trims the text output sent back as tool_result.
+	MaxToolResultChars int `yaml:"max_tool_result_chars"`
+	// MaxToolResultDataChars trims the JSON `data` payload of tool_result.
+	MaxToolResultDataChars int `yaml:"max_tool_result_data_chars"`
+	// ParallelBatchSize caps the concurrency of tool_batch_call dispatch.
+	// Reserved for S4; not consumed yet.
+	ParallelBatchSize int `yaml:"parallel_batch_size"`
+
+	// ContextLifecycle governs offline auto-compaction of in-loop history so
+	// token spend stays flat even across many tool rounds. Strictly offline —
+	// no extra LLM call — to honour DFMC's token-miser promise.
+	ContextLifecycle ContextLifecycleConfig `yaml:"context_lifecycle"`
+}
+
+type ContextLifecycleConfig struct {
+	// Enabled toggles auto-compaction. Default true; set false to always send
+	// the full rolling history to the provider.
+	Enabled bool `yaml:"enabled"`
+	// AutoCompactThresholdRatio is the share of the provider's context window
+	// (estimated tokens / provider_max_context) above which auto-compact
+	// fires. 0.7 means compact when >70% of the window is in use.
+	AutoCompactThresholdRatio float64 `yaml:"auto_compact_threshold_ratio"`
+	// KeepRecentRounds is the number of most-recent tool rounds preserved
+	// verbatim when compacting. Older rounds collapse into a single summary.
+	KeepRecentRounds int `yaml:"keep_recent_rounds"`
+	// HandoffBriefMaxTokens caps the size of the auto-new-session handoff
+	// brief injected as seed context when auto-new-session fires.
+	HandoffBriefMaxTokens int `yaml:"handoff_brief_max_tokens"`
+	// AutoHandoffThresholdRatio is the share of the provider's context window
+	// above which — even after compaction — a fresh conversation is started
+	// seeded with a handoff brief. Must be strictly above
+	// AutoCompactThresholdRatio so compaction always gets the first try.
+	// Default 0.9 (trip when >90% of the window is still in use).
+	AutoHandoffThresholdRatio float64 `yaml:"auto_handoff_threshold_ratio"`
 }
 
 type ProvidersConfig struct {
@@ -110,6 +166,15 @@ type ContextConfig struct {
 	Compression      string `yaml:"compression"`
 	IncludeTests     bool   `yaml:"include_tests"`
 	IncludeDocs      bool   `yaml:"include_docs"`
+	// SymbolAware enables codemap-driven retrieval (extract identifiers
+	// from the query, resolve via AST symbol nodes, walk import graph
+	// to pull sibling files). Default on via BuildDefault.
+	SymbolAware bool `yaml:"symbol_aware"`
+	// GraphDepth bounds how many hops the import-graph walker takes
+	// from each resolved seed file. 0 disables expansion; 2 is the
+	// default and captures direct sibling files without pulling in
+	// every transitive dependency.
+	GraphDepth int `yaml:"graph_depth"`
 }
 
 type MemoryConfig struct {
@@ -216,11 +281,13 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	}
 
 	projectPath := opts.ProjectPath
+	projectRoot := FindProjectRoot(opts.CWD)
 	if projectPath == "" {
-		projectRoot := FindProjectRoot(opts.CWD)
 		if projectRoot != "" {
 			projectPath = filepath.Join(projectRoot, DefaultDirName, "config.yaml")
 		}
+	} else if projectRoot == "" {
+		projectRoot = filepath.Dir(filepath.Dir(projectPath))
 	}
 	if projectPath != "" {
 		if err := loadYAML(projectPath, cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -228,6 +295,7 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 		}
 	}
 
+	loadDotEnv(projectRoot)
 	cfg.applyEnv()
 	cfg.Providers.Profiles = MergeProviderProfilesFromModelsDev(cfg.Providers.Profiles, nil, ModelsDevMergeOptions{})
 	if catalog, err := LoadModelsDevCatalog(ModelsDevCachePath()); err == nil {
@@ -254,22 +322,103 @@ func loadYAML(path string, out *Config) error {
 	return nil
 }
 
-func (c *Config) applyEnv() {
-	envToProvider := map[string]string{
-		"ANTHROPIC_API_KEY": "anthropic",
-		"OPENAI_API_KEY":    "openai",
-		"GOOGLE_AI_API_KEY": "google",
-		"DEEPSEEK_API_KEY":  "deepseek",
-		"KIMI_API_KEY":      "kimi",
-		"MOONSHOT_API_KEY":  "kimi",
-		"MINIMAX_API_KEY":   "minimax",
-		"ZAI_API_KEY":       "zai",
-		"ALIBABA_API_KEY":   "alibaba",
+func loadDotEnv(root string) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return
 	}
+	path := filepath.Join(root, ".env")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if i == 0 {
+			line = strings.TrimPrefix(line, "\uFEFF")
+		}
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		value = parseDotEnvValue(value)
+		_ = os.Setenv(key, value)
+	}
+}
+
+func parseDotEnvValue(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "\"") || strings.HasPrefix(value, "'") {
+		if unquoted, err := strconv.Unquote(value); err == nil {
+			return unquoted
+		}
+		return strings.Trim(value, "\"'")
+	}
+	if idx := strings.Index(value, " #"); idx >= 0 {
+		value = strings.TrimSpace(value[:idx])
+	}
+	return value
+}
+
+// providerAPIEnvVars maps env var name → provider profile name. Used both
+// to hydrate APIKey from the environment and to tell the user WHICH env
+// var is expected when a profile falls back to offline.
+var providerAPIEnvVars = map[string]string{
+	"ANTHROPIC_API_KEY": "anthropic",
+	"OPENAI_API_KEY":    "openai",
+	"GOOGLE_AI_API_KEY": "google",
+	"DEEPSEEK_API_KEY":  "deepseek",
+	"KIMI_API_KEY":      "kimi",
+	"MOONSHOT_API_KEY":  "kimi",
+	"MINIMAX_API_KEY":   "minimax",
+	"ZAI_API_KEY":       "zai",
+	"ALIBABA_API_KEY":   "alibaba",
+}
+
+// EnvVarForProvider returns the canonical env var name for a provider
+// profile (e.g. "anthropic" → "ANTHROPIC_API_KEY"). Returns "" for
+// unknown names. When multiple env vars map to the same provider
+// (e.g. KIMI / MOONSHOT), the canonical one is returned.
+func EnvVarForProvider(name string) string {
+	key := strings.ToLower(strings.TrimSpace(name))
+	if key == "" {
+		return ""
+	}
+	canonical := map[string]string{
+		"anthropic": "ANTHROPIC_API_KEY",
+		"openai":    "OPENAI_API_KEY",
+		"google":    "GOOGLE_AI_API_KEY",
+		"deepseek":  "DEEPSEEK_API_KEY",
+		"kimi":      "KIMI_API_KEY",
+		"minimax":   "MINIMAX_API_KEY",
+		"zai":       "ZAI_API_KEY",
+		"alibaba":   "ALIBABA_API_KEY",
+	}
+	return canonical[key]
+}
+
+func (c *Config) applyEnv() {
 	if c.Providers.Profiles == nil {
 		c.Providers.Profiles = map[string]ModelConfig{}
 	}
-	for envName, providerName := range envToProvider {
+	for envName, providerName := range providerAPIEnvVars {
 		val := strings.TrimSpace(os.Getenv(envName))
 		if val == "" {
 			continue
@@ -483,7 +632,7 @@ func modelsDevSeedProfiles() map[string]ModelConfig {
 		"anthropic": {Model: "claude-sonnet-4-6", MaxTokens: 64000, MaxContext: 1000000, Protocol: "anthropic"},
 		"openai":    {Model: "gpt-5.4", MaxTokens: 128000, MaxContext: 1050000, Protocol: "openai"},
 		"google":    {Model: "gemini-3.1-pro-preview-customtools", MaxTokens: 65536, MaxContext: 1048576, Protocol: "google"},
-		"deepseek":  {Model: "deepseek-chat", BaseURL: "https://api.deepseek.com", MaxTokens: 8192, MaxContext: 131072, Protocol: "openai-compatible"},
+		"deepseek":  {Model: "deepseek-chat", BaseURL: "https://api.deepseek.com/v1", MaxTokens: 8192, MaxContext: 131072, Protocol: "openai-compatible"},
 		"kimi":      {Model: "kimi-k2.5", BaseURL: "https://api.moonshot.ai/v1", MaxTokens: 262144, MaxContext: 262144, Protocol: "openai-compatible"},
 		"minimax":   {Model: "MiniMax-M2.7", BaseURL: "https://api.minimax.io/anthropic/v1", MaxTokens: 131072, MaxContext: 204800, Protocol: "anthropic"},
 		"zai":       {Model: "glm-5.1", BaseURL: "https://api.z.ai/api/paas/v4", MaxTokens: 131072, MaxContext: 200000, Protocol: "openai-compatible"},

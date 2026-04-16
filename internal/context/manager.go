@@ -12,6 +12,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -27,6 +28,16 @@ type BuildOptions struct {
 	Compression      string
 	IncludeTests     bool
 	IncludeDocs      bool
+	// SymbolAware enables codemap-driven retrieval: query identifiers
+	// are resolved against symbol nodes, and matching files pull their
+	// import-graph neighbors as context. Disable to force the pure
+	// text-matching path (useful for reproducibility in tests).
+	SymbolAware bool
+	// GraphDepth bounds how many hops out from a resolved seed file we
+	// walk through the import graph. Zero disables expansion even when
+	// SymbolAware is set. Practical range: 1-2; larger values produce
+	// diminishing returns at real cost to the budget.
+	GraphDepth int
 }
 
 type PromptRuntime struct {
@@ -55,6 +66,8 @@ func (m *Manager) Build(query string, maxFiles int) ([]types.ContextChunk, error
 		Compression:      "standard",
 		IncludeTests:     true,
 		IncludeDocs:      true,
+		SymbolAware:      true,
+		GraphDepth:       2,
 	})
 }
 
@@ -78,7 +91,23 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 
 	terms := tokenizeQuery(query)
 	scores := map[string]float64{}
+	// sources tracks the strongest provenance reason per file — later
+	// written into each chunk's Source so UIs and coach rules can see
+	// why retrieval picked what it did. Precedence: marker > symbol >
+	// graph-neighborhood > query-match > hotspot (enforced via the
+	// upgradeSource helper, not the map itself).
+	sources := map[string]string{}
 	graph := m.codemap.Graph()
+
+	upgradeSource := func(path, candidate string) {
+		if path == "" || candidate == "" {
+			return
+		}
+		current, ok := sources[path]
+		if !ok || chunkSourceRank(candidate) > chunkSourceRank(current) {
+			sources[path] = candidate
+		}
+	}
 
 	for _, n := range graph.Nodes() {
 		switch n.Kind {
@@ -88,6 +117,7 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 			for _, t := range terms {
 				if strings.Contains(pathLower, t) || strings.Contains(nameLower, t) {
 					scores[n.Path] += 2.0
+					upgradeSource(n.Path, ChunkSourceQueryMatch)
 				}
 			}
 			if _, ok := scores[n.Path]; !ok {
@@ -101,7 +131,36 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 			for _, t := range terms {
 				if strings.Contains(nameLower, t) {
 					scores[n.Path] += 3.0
+					upgradeSource(n.Path, ChunkSourceQueryMatch)
 				}
+			}
+		}
+	}
+
+	// Symbol-aware pass: resolve identifiers in the query against the
+	// codemap's symbol index, boost defining files, and walk outward
+	// through the import graph to surface sibling files (callers/peers
+	// that share module neighborhoods).
+	if opts.SymbolAware {
+		idents := extractIdentifiers(query)
+		seeds := resolveSymbolSeeds(graph, idents)
+		// Symbol hits outrank generic query-match bonuses because the
+		// resolution is semantic, not substring — we know the identifier
+		// *is* a defined symbol, not just a coincidental character run.
+		for path, strength := range seeds {
+			scores[path] += 4.0 + strength
+			upgradeSource(path, ChunkSourceSymbolMatch)
+		}
+		if len(seeds) > 0 && opts.GraphDepth > 0 {
+			seedList := make([]string, 0, len(seeds))
+			for path := range seeds {
+				seedList = append(seedList, path)
+			}
+			for path, hops := range expandViaGraph(graph, seedList, opts.GraphDepth) {
+				// Inverse-scale by hop distance so closer siblings win.
+				bonus := 1.5 / float64(hops)
+				scores[path] += bonus
+				upgradeSource(path, ChunkSourceGraphNeighborhood)
 			}
 		}
 	}
@@ -109,6 +168,7 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 	for _, hs := range graph.HotSpots(opts.MaxFiles * 3) {
 		if hs.Path != "" {
 			scores[hs.Path] += 1.0
+			upgradeSource(hs.Path, ChunkSourceHotspot)
 		}
 	}
 
@@ -151,6 +211,11 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 		if chunk.TokenCount <= 0 || strings.TrimSpace(chunk.Content) == "" {
 			continue
 		}
+		if src, ok := sources[r.Path]; ok {
+			chunk.Source = src
+		} else {
+			chunk.Source = ChunkSourceQueryMatch
+		}
 		chunks = append(chunks, chunk)
 		remaining -= chunk.TokenCount
 	}
@@ -163,8 +228,21 @@ func (m *Manager) BuildSystemPrompt(projectRoot, query string, chunks []types.Co
 }
 
 func (m *Manager) BuildSystemPromptWithRuntime(projectRoot, query string, chunks []types.ContextChunk, tools []string, runtime PromptRuntime) string {
+	return m.BuildSystemPromptBundle(projectRoot, query, chunks, tools, runtime).Text()
+}
+
+// BuildSystemPromptBundle is the cache-boundary-aware sibling of
+// BuildSystemPromptWithRuntime. It returns the rendered prompt as an
+// ordered list of PromptSections so providers that support prompt caching
+// (Anthropic) can emit cache_control annotations on the stable prefix.
+// Callers that need a flat string should call bundle.Text().
+func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []types.ContextChunk, tools []string, runtime PromptRuntime) *promptlib.PromptBundle {
 	if m == nil || m.prompts == nil {
-		return "You are DFMC, a code intelligence assistant. Be concise, practical, and safe."
+		return &promptlib.PromptBundle{
+			Sections: []promptlib.PromptSection{
+				{Label: "fallback", Text: "You are DFMC, a code intelligence assistant. Be concise, practical, and safe.", Cacheable: true},
+			},
+		}
 	}
 	_ = m.prompts.LoadOverrides(projectRoot)
 
@@ -174,7 +252,7 @@ func (m *Manager) BuildSystemPromptWithRuntime(projectRoot, query string, chunks
 	profile := ResolvePromptProfile(query, task, runtime)
 	limits := ResolvePromptRenderBudget(task, profile, runtime)
 	injected := BuildInjectedContextWithBudget(projectRoot, query, limits)
-	prompt := m.prompts.Render(promptlib.RenderRequest{
+	bundle := m.prompts.RenderBundle(promptlib.RenderRequest{
 		Type:     "system",
 		Task:     task,
 		Language: language,
@@ -196,9 +274,97 @@ func (m *Manager) BuildSystemPromptWithRuntime(projectRoot, query string, chunks
 		},
 	})
 	if budget := PromptTokenBudget(task, profile, runtime); budget > 0 {
-		prompt = trimToTokenBudget(prompt, budget)
+		bundle = trimBundleToBudget(bundle, budget)
 	}
-	return prompt
+	return bundle
+}
+
+// trimBundleToBudget applies a token cap across the bundle. The dynamic
+// (non-cacheable) sections carry the user query and per-request context —
+// losing them defeats the entire prompt. So we reserve a floor for dynamic
+// content first, trim the cacheable prefix into whatever is left, and only
+// then let the dynamic sections use the remainder (plus any slack the stable
+// prefix didn't consume).
+func trimBundleToBudget(bundle *promptlib.PromptBundle, budget int) *promptlib.PromptBundle {
+	if bundle == nil || budget <= 0 || len(bundle.Sections) == 0 {
+		return bundle
+	}
+
+	dynamicTokens := 0
+	dynamicCount := 0
+	for _, s := range bundle.Sections {
+		if !s.Cacheable {
+			dynamicCount++
+			dynamicTokens += estimateTokens(s.Text)
+		}
+	}
+
+	dynamicFloor := 0
+	if dynamicCount > 0 {
+		// Reserve up to 25% of the budget for dynamic content (with a hard
+		// 180-token floor), so the user query and per-request context survive
+		// even when the stable prefix is large. Cap by actual dynamic size so
+		// we don't over-reserve when there isn't much dynamic content.
+		dynamicFloor = budget / 4
+		if dynamicFloor < 180 {
+			dynamicFloor = 180
+		}
+		if dynamicFloor > dynamicTokens {
+			dynamicFloor = dynamicTokens
+		}
+		if dynamicFloor > budget {
+			dynamicFloor = budget
+		}
+	}
+
+	stableBudget := budget - dynamicFloor
+	if stableBudget < 0 {
+		stableBudget = 0
+	}
+
+	out := &promptlib.PromptBundle{Sections: make([]promptlib.PromptSection, 0, len(bundle.Sections))}
+	stableRemaining := stableBudget
+	dynamicRemaining := dynamicFloor
+	for _, s := range bundle.Sections {
+		text := s.Text
+		if s.Cacheable {
+			if tok := estimateTokens(text); tok > stableRemaining {
+				text = trimToTokenBudget(text, stableRemaining)
+			}
+			stableRemaining -= estimateTokens(text)
+			// Any unused stable budget rolls forward to dynamic — the
+			// reverse (dynamic → stable) is deliberately disallowed to keep
+			// cache prefixes stable across turns.
+			if stableRemaining < 0 {
+				stableRemaining = 0
+			}
+		} else {
+			allowance := dynamicRemaining + stableRemaining
+			if tok := estimateTokens(text); tok > allowance {
+				text = trimToTokenBudget(text, allowance)
+			}
+			used := estimateTokens(text)
+			if used <= dynamicRemaining {
+				dynamicRemaining -= used
+			} else {
+				used -= dynamicRemaining
+				dynamicRemaining = 0
+				stableRemaining -= used
+				if stableRemaining < 0 {
+					stableRemaining = 0
+				}
+			}
+		}
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		out.Sections = append(out.Sections, promptlib.PromptSection{
+			Label:     s.Label,
+			Text:      text,
+			Cacheable: s.Cacheable,
+		})
+	}
+	return out
 }
 
 func tokenizeQuery(query string) []string {
@@ -263,7 +429,7 @@ func extractSnippet(content string, terms []string, maxLines int) (string, int, 
 }
 
 func estimateTokens(content string) int {
-	return len(strings.Fields(content))
+	return tokens.Estimate(content)
 }
 
 func summarizeContextFiles(projectRoot string, chunks []types.ContextChunk, limit int) string {
@@ -281,7 +447,18 @@ func summarizeContextFiles(projectRoot string, chunks []types.ContextChunk, limi
 		if path == "" {
 			path = "(unknown)"
 		}
-		lines = append(lines, fmt.Sprintf("- %s:%d-%d", path, ch.LineStart, ch.LineEnd))
+		tag := ""
+		switch ch.Source {
+		case ChunkSourceSymbolMatch:
+			tag = " (symbol)"
+		case ChunkSourceGraphNeighborhood:
+			tag = " (neighbor)"
+		case ChunkSourceMarker:
+			tag = " (pinned)"
+		case ChunkSourceHotspot:
+			tag = " (hotspot)"
+		}
+		lines = append(lines, fmt.Sprintf("- %s:%d-%d%s", path, ch.LineStart, ch.LineEnd, tag))
 	}
 	if overflow > 0 {
 		lines = append(lines, fmt.Sprintf("- ... +%d more files", overflow))
@@ -628,35 +805,38 @@ func BuildInjectedContextWithBudget(projectRoot, query string, limits PromptRend
 }
 
 func PromptTokenBudget(task, profile string, runtime PromptRuntime) int {
-	budget := 680
+	// Base contract (honesty, failure modes, output format, refusals) runs
+	// ~450 stable tokens before any dynamic section. Budgets below bake that
+	// in and leave meaningful differential room for injected context.
+	budget := 1100
 	if strings.EqualFold(strings.TrimSpace(profile), "deep") {
-		budget = 1200
+		budget = 1800
 	}
 	switch strings.ToLower(strings.TrimSpace(task)) {
 	case "security", "review":
-		budget += 220
+		budget += 260
 	case "planning":
-		budget += 120
+		budget += 160
 	case "doc":
-		budget -= 90
+		budget -= 60
 	}
 	if runtime.LowLatency {
-		budget = int(float64(budget) * 0.82)
+		budget = int(float64(budget) * 0.85)
 	}
 	if runtime.MaxContext > 0 {
-		cap := runtime.MaxContext / 7
-		if cap < 220 {
-			cap = 220
+		cap := runtime.MaxContext / 4
+		if cap < 720 {
+			cap = 720
 		}
-		if cap > 2600 {
-			cap = 2600
+		if cap > 3400 {
+			cap = 3400
 		}
 		if budget > cap {
 			budget = cap
 		}
 	}
-	if budget < 220 {
-		budget = 220
+	if budget < 720 {
+		budget = 720
 	}
 	return budget
 }
@@ -744,44 +924,34 @@ func loadProjectBrief(projectRoot string, maxTokens int) string {
 
 func BuildToolCallPolicy(task string, runtime PromptRuntime) string {
 	lines := []string{
-		"1) Call tools only when they reduce uncertainty materially.",
-		"2) Prefer the minimum tool set needed for a reliable result.",
-		"3) Keep calls narrow (targeted files/ranges/filters).",
-		"4) Reuse prior tool outputs; avoid duplicate calls.",
-		"5) Validate edited scope with the smallest relevant test first.",
+		"Discipline: call tools only when they reduce uncertainty; keep calls narrow; reuse prior outputs; validate edits with the smallest test.",
+		"Prefer dedicated tools over run_command: read_file (not cat), grep_codebase (not grep/rg), glob (not find), edit_file/apply_patch (not sed/awk), write_file (not echo>), web_fetch (not curl), ast_query for outlines. Use run_command only for build/test/lint/git/deps.",
+		"Parallelism: independent calls → one tool_batch_call; dependent commands → chain with && in a single run_command; never split a command across newlines; don't retry failing calls without changing inputs.",
+		"Mutation safety: read_file before edit_file/write_file (engine rejects blind mutations); multi-hunk edits → apply_patch (use dry_run when non-trivial); validate with targeted test/vet/tsc before declaring done.",
+		"Git/shell safety: never --no-verify or --no-gpg-sign without user consent; never force-push main or reset --hard without authorization; stage files by name (not add -A/.); after a pre-commit hook fails, fix and create a NEW commit (never --amend); HEREDOC for multi-line commit messages.",
 	}
 	switch strings.TrimSpace(strings.ToLower(runtime.ToolStyle)) {
 	case "function-calling":
-		lines = append(lines,
-			"6) Tool protocol: emit strict function-call JSON that matches schema exactly.",
-			"7) Keep tool payloads deterministic; no mixed prose inside arguments.")
+		lines = append(lines, "Protocol: strict function-call JSON matching schema; no prose inside arguments.")
 	case "tool_use":
-		lines = append(lines,
-			"6) Tool protocol: emit tool_use blocks with strict JSON input.",
-			"7) Pair each tool_result with the initiating tool_use id.")
+		lines = append(lines, "Protocol: tool_use blocks with strict JSON input; pair each tool_result with its tool_use id.")
 	case "none":
-		lines = append(lines,
-			"6) Runtime has no native tool-calling; rely on provided context and direct reasoning.")
+		lines = append(lines, "Protocol: no native tool-calling; rely on provided context and direct reasoning.")
 	default:
-		lines = append(lines,
-			"6) Follow provider-native tool format exactly; prioritize schema fidelity over verbosity.")
+		lines = append(lines, "Protocol: follow provider-native tool format exactly; schema fidelity over verbosity.")
 	}
 	if runtime.MaxContext > 0 {
 		toolOutputBudget := runtime.MaxContext / 5
 		if toolOutputBudget < 96 {
 			toolOutputBudget = 96
 		}
-		lines = append(lines, "8) Keep cumulative tool output near "+strconv.Itoa(toolOutputBudget)+" tokens unless risk requires deeper evidence.")
+		lines = append(lines, "Keep cumulative tool output near "+strconv.Itoa(toolOutputBudget)+" tokens unless risk requires deeper evidence.")
 	}
 	switch strings.ToLower(strings.TrimSpace(task)) {
 	case "security":
-		lines = append(lines,
-			"9) Collect concrete evidence before remediation edits.",
-			"10) Report exploitability conditions and confidence.")
+		lines = append(lines, "Security overlay: collect concrete evidence before remediation edits; report exploitability conditions and confidence.")
 	case "review":
-		lines = append(lines,
-			"9) Anchor findings to concrete evidence (file/line).",
-			"10) Prioritize high-severity and high-confidence issues.")
+		lines = append(lines, "Review overlay: anchor findings to file:line evidence; prioritize high-severity and high-confidence issues.")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -896,23 +1066,7 @@ func compressContent(raw string, terms []string, lang, level string, maxTokens i
 }
 
 func trimToTokenBudget(content string, maxTokens int) string {
-	if maxTokens <= 0 {
-		return ""
-	}
-	words := strings.Fields(content)
-	if len(words) <= maxTokens {
-		return strings.TrimSpace(content)
-	}
-	suffix := "... [truncated for token budget]"
-	suffixTokens := estimateTokens(suffix)
-	if maxTokens <= suffixTokens {
-		return strings.Join(words[:maxTokens], " ")
-	}
-	limit := maxTokens - suffixTokens
-	if limit <= 0 {
-		limit = maxTokens
-	}
-	return strings.Join(words[:limit], " ") + "\n" + suffix
+	return tokens.TrimToBudget(content, maxTokens, "... [truncated for token budget]")
 }
 
 func stripComments(content string) string {

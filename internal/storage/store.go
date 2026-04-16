@@ -3,6 +3,7 @@ package storage
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,10 +24,34 @@ var defaultBuckets = []string{
 	"plugins",
 }
 
+var ErrStoreLocked = errors.New("storage database is locked")
+
 type Store struct {
 	db          *bbolt.DB
 	dataDir     string
 	artifactDir string
+}
+
+type OpenError struct {
+	Path  string
+	Cause error
+}
+
+func (e *OpenError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if errors.Is(e.Cause, ErrStoreLocked) {
+		return fmt.Sprintf("%s; close other DFMC/TUI processes using %s and try again", ErrStoreLocked.Error(), e.Path)
+	}
+	return fmt.Sprintf("open storage %s: %v", e.Path, e.Cause)
+}
+
+func (e *OpenError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
 }
 
 func Open(dataDir string) (*Store, error) {
@@ -44,7 +69,13 @@ func Open(dataDir string) (*Store, error) {
 		FreelistType: bbolt.FreelistMapType,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("open db: %w", err)
+		if errors.Is(err, bbolt.ErrTimeout) {
+			return nil, &OpenError{
+				Path:  dbPath,
+				Cause: fmt.Errorf("%w: %w", ErrStoreLocked, err),
+			}
+		}
+		return nil, &OpenError{Path: dbPath, Cause: err}
 	}
 
 	err = db.Update(func(tx *bbolt.Tx) error {

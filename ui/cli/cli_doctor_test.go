@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,17 @@ func TestRunDoctorJSON(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	if err := config.SaveModelsDevCatalog(config.ModelsDevCachePath(), config.ModelsDevCatalog{
+		"anthropic": {
+			ID:   "anthropic",
+			Name: "Anthropic",
+			Models: map[string]config.ModelsDevModel{
+				"claude-sonnet-4-6": {ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save models.dev cache: %v", err)
+	}
 
 	cfg := config.DefaultConfig()
 	eng, err := engine.New(cfg)
@@ -27,10 +39,34 @@ func TestRunDoctorJSON(t *testing.T) {
 	}
 	t.Cleanup(func() { eng.Shutdown() })
 
-	code := runDoctor(context.Background(), eng, []string{"--network=false"}, true)
-	if code != 0 {
-		t.Fatalf("expected doctor exit code 0, got %d", code)
+	out := captureStdout(t, func() {
+		code := runDoctor(context.Background(), eng, []string{"--network=false"}, true)
+		if code != 0 {
+			t.Fatalf("expected doctor exit code 0, got %d", code)
+		}
+	})
+
+	var payload struct {
+		Checks []doctorCheck `json:"checks"`
 	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("unmarshal doctor json: %v\n%s", err, out)
+	}
+	if !hasDoctorCheck(payload.Checks, "modelsdev.cache") {
+		t.Fatalf("expected modelsdev.cache check in doctor payload: %#v", payload.Checks)
+	}
+	if !hasDoctorCheck(payload.Checks, "provider.anthropic.profile") {
+		t.Fatalf("expected provider profile check in doctor payload: %#v", payload.Checks)
+	}
+}
+
+func hasDoctorCheck(checks []doctorCheck, name string) bool {
+	for _, check := range checks {
+		if check.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestProviderEndpointFromBaseURL(t *testing.T) {

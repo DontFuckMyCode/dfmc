@@ -44,6 +44,34 @@ func TestReadFileToolBoundary(t *testing.T) {
 	}
 }
 
+// TestReadFileToolOutOfRangeLineStartDoesNotPanic pins a previous crash where
+// a model passed line_start beyond EOF (e.g. 400 on a 213-line file) and the
+// tool panicked with "slice bounds out of range". The tool must degrade to an
+// empty segment with a sane line range instead.
+func TestReadFileToolOutOfRangeLineStartDoesNotPanic(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "small.txt")
+	if err := os.WriteFile(file, []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	res, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":       "small.txt",
+			"line_start": 400,
+			"line_end":   500,
+		},
+	})
+	if err != nil {
+		t.Fatalf("out-of-range read_file should not error, got: %v", err)
+	}
+	if strings.TrimSpace(res.Output) != "" {
+		t.Fatalf("expected empty segment for out-of-range line_start, got: %q", res.Output)
+	}
+}
+
 func TestGrepTool(t *testing.T) {
 	tmp := t.TempDir()
 	file := filepath.Join(tmp, "main.go")
@@ -367,5 +395,62 @@ func TestEditFileFailsIfChangedSinceRead(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "changed since last read_file") {
 		t.Fatalf("expected changed-since-read guard error, got: %v", err)
+	}
+}
+
+func TestRunCommandToolRunsDirectCommand(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	res, err := eng.Execute(context.Background(), "run_command", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"command":    "go",
+			"args":       "version",
+			"timeout_ms": 10000,
+		},
+	})
+	if err != nil {
+		t.Fatalf("run_command: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(res.Output), "go version") {
+		t.Fatalf("expected go version output, got %q", res.Output)
+	}
+	if changed, _ := res.Data["workspace_changed"].(bool); changed {
+		t.Fatalf("expected go version to avoid workspace changes, got %#v", res.Data)
+	}
+}
+
+func TestRunCommandToolBlocksShellInterpreter(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	_, err := eng.Execute(context.Background(), "run_command", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"command": "powershell",
+			"args":    "-Command Get-ChildItem",
+		},
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "shell interpreters are blocked") {
+		t.Fatalf("expected shell interpreter block, got %v", err)
+	}
+}
+
+func TestRunCommandToolHonorsAllowShellFalse(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.Security.Sandbox.AllowShell = false
+	eng := New(*cfg)
+
+	_, err := eng.Execute(context.Background(), "run_command", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"command": "go",
+			"args":    "version",
+		},
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "allow_shell=false") {
+		t.Fatalf("expected allow_shell=false error, got %v", err)
 	}
 }

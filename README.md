@@ -20,9 +20,10 @@ Implemented now:
   - Anthropic Messages API
   - OpenAI-compatible Chat Completions API (`openai`, `deepseek`, `generic` with `base_url`)
 - Streaming support:
-  - `chat` now uses provider stream path (SSE for Anthropic/OpenAI-compatible providers)
+  - `chat` uses provider stream path when possible
+  - Tool-capable providers now also have a first local tool bridge, so chat/TUI can execute `read_file`, `write_file`, `edit_file`, `list_dir`, `grep_codebase`, and guarded `run_command` steps through bounded agent loops
 - Context builder for relevant code snippets
-- Tool engine (`read_file`, `write_file`, `edit_file`, `list_dir`, `grep_codebase`)
+- Tool engine (`read_file`, `write_file`, `edit_file`, `list_dir`, `grep_codebase`, `run_command`)
 - Skill commands (`skill list/info/run`) and built-in shortcuts (`review`, `explain`, `refactor`, `test`, `doc`)
 - Plugin commands (`plugin list/info/install/remove/enable/disable`) with config-backed enable state
 - Web API server (`dfmc serve`) with status, codemap, tools, memory, files, chat SSE
@@ -72,6 +73,7 @@ go run ./cmd/dfmc --json status --query "security audit auth middleware" --runti
 `status` JSON output includes `context_tuning_suggestions` when a query is provided.
 
 If provider API keys are not configured, DFMC automatically uses offline mode with local-context response generation.
+Project-root `.env` files are auto-loaded during startup, and existing process env vars still take precedence.
 
 ### 3.1) Interactive streaming chat
 
@@ -85,6 +87,8 @@ Chat slash commands:
 - `/branch [name]`, `/branch list`, `/branch create <name>`, `/branch switch <name>`, `/branch compare <a> <b>`
 - `/context show`, `/memory`, `/tools`, `/skills`, `/diff`, `/undo`, `/apply [--check] [patch.diff]`, `/run <skill> [input]`, `/cost`
 
+When a configured provider is tool-capable, DFMC can now run a bounded local tool loop during chat turns: the model may request one tool at a time, receive the tool result, and continue toward a final answer.
+
 ### 3.2) Terminal workbench
 
 ```bash
@@ -96,7 +100,50 @@ The first TUI shell includes:
 - `Chat` panel with streaming answers
 - `Status` panel with AST/codemap runtime signals
 - `Files` panel with project browsing and file preview
-- `Patch` panel for worktree diff, latest assistant patch, check/apply, and conversation undo
+- `Patch` panel for worktree diff, latest assistant patch, touched-file hints, check/apply, and conversation undo
+- `Setup` panel for switching provider/model from configured profiles
+- `Tools` panel for preset read-only tool runs inside the terminal workbench
+- Chat now has the same first local tool bridge as CLI chat, so provider-backed sessions can read/list/grep, run guarded commands, and perform guarded file edits through the agent loop
+- Chat transcript now surfaces patch provenance for assistant responses that emit diffs
+- Chat transcript now also surfaces tool usage summaries for assistant responses that used local tools
+- Binary-looking files are preview-guarded instead of dumping terminal garbage
+
+Files panel shortcuts:
+- `j/k` or arrow keys move selection, `enter` reloads preview, `r` refreshes file list
+- `p` pins/unpins the selected file so chat requests automatically carry its `[[file:...]]` marker
+- `i` inserts `[[file:...]]` for the selected file into the chat prompt and switches to `Chat`
+- `e` prepares an "Explain selected file" prompt
+- `v` prepares a review prompt for the selected file
+
+Patch panel shortcuts:
+- `d` refreshes worktree diff, `l` reloads the latest assistant patch
+- `n` / `b` switch between files touched by the latest patch and narrow the patch preview to that file
+- `j` / `k` switch between hunks inside the current patch file
+- `f` jumps to the most relevant patched file in `Files` view, preferring the pinned file when possible
+- `c` runs patch check, `a` applies, `u` undoes the last conversation turn
+
+Setup panel shortcuts:
+- `j/k` moves across configured providers
+- `enter` applies the selected provider and its configured model to the current TUI session
+
+Tools panel shortcuts:
+- `j/k` moves across registered tools
+- `enter` runs the selected tool with the current params
+- `r` reruns the current tool preset
+- `e` opens the inline param editor, `enter` saves, `esc` cancels, `x` resets back to defaults
+- `read_file` uses the pinned/selected file, `list_dir` uses the selected file's directory, `grep_codebase` uses the current chat input or selected filename stem
+- `run_command` defaults to a safe `go version` preset and can be edited for bounded test/build/format commands
+- `run_command` also shows repo-aware suggestions like `go test`, `go build`, `pytest`, `npm test`, or `cargo test` when the project layout matches
+- Quoted values are supported in params, so `content="hello world"` stays intact
+- `write_file` and `edit_file` can now run from TUI when you provide explicit params; mutation safety checks still come from the tool engine
+
+Chat commands:
+- `/help`, `/status`, `/context`, `/tools`, `/diff`, `/patch`, `/undo`, `/apply [--check]`
+- `/providers` lists configured providers
+- `/provider NAME` switches the active provider inside the TUI session
+- `/models` shows the configured model for the active provider
+- `/model NAME` overrides the active model inside the TUI session
+- `/tools` also points to the `Tools` panel (`F6`) for preset execution
 
 ### 4) Analyze codebase
 
@@ -123,6 +170,7 @@ go run ./cmd/dfmc tool run read_file --path internal/engine/engine.go --line_sta
 go run ./cmd/dfmc tool run write_file --path tmp/demo.txt --content "hello"
 go run ./cmd/dfmc tool run edit_file --path tmp/demo.txt --old_string hello --new_string hi
 go run ./cmd/dfmc tool run grep_codebase --pattern "ErrProviderUnavailable" --max_results 10
+go run ./cmd/dfmc tool run run_command --command go --args "version"
 go run ./cmd/dfmc map --format dot
 go run ./cmd/dfmc map --format svg > codemap.svg
 ```

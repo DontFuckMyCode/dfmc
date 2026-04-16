@@ -6,6 +6,32 @@ import (
 	"testing"
 )
 
+func TestEnvVarForProvider(t *testing.T) {
+	cases := map[string]string{
+		"anthropic": "ANTHROPIC_API_KEY",
+		"openai":    "OPENAI_API_KEY",
+		"deepseek":  "DEEPSEEK_API_KEY",
+		"kimi":      "KIMI_API_KEY",
+		"minimax":   "MINIMAX_API_KEY",
+		"zai":       "ZAI_API_KEY",
+		"alibaba":   "ALIBABA_API_KEY",
+		"google":    "GOOGLE_AI_API_KEY",
+		"Anthropic": "ANTHROPIC_API_KEY", // case-insensitive
+		" openai ": "OPENAI_API_KEY",     // whitespace-tolerant
+	}
+	for in, want := range cases {
+		if got := EnvVarForProvider(in); got != want {
+			t.Errorf("EnvVarForProvider(%q) = %q; want %q", in, got, want)
+		}
+	}
+	if got := EnvVarForProvider("generic"); got != "" {
+		t.Errorf("EnvVarForProvider(generic) = %q; want empty (no canonical env var)", got)
+	}
+	if got := EnvVarForProvider(""); got != "" {
+		t.Errorf("EnvVarForProvider(empty) = %q; want empty", got)
+	}
+}
+
 func TestLoadWithOptions_MergeAndEnv(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
 
@@ -55,6 +81,62 @@ web:
 	p := cfg.Providers.Profiles["anthropic"]
 	if p.APIKey != "test-anthropic-key" {
 		t.Fatalf("expected anthropic key from env, got %q", p.APIKey)
+	}
+}
+
+func TestLoadWithOptions_LoadsProjectDotEnv(t *testing.T) {
+	tmp := t.TempDir()
+	projectRoot := filepath.Join(tmp, "project")
+	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, ".env"), []byte("ZAI_API_KEY=dotenv-zai-key\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		ProjectPath: projectPath,
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if got := cfg.Providers.Profiles["zai"].APIKey; got != "dotenv-zai-key" {
+		t.Fatalf("expected zai key from .env, got %q", got)
+	}
+}
+
+func TestLoadWithOptions_ProcessEnvOverridesDotEnv(t *testing.T) {
+	t.Setenv("ZAI_API_KEY", "process-zai-key")
+
+	tmp := t.TempDir()
+	projectRoot := filepath.Join(tmp, "project")
+	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, ".env"), []byte("ZAI_API_KEY=dotenv-zai-key\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		ProjectPath: projectPath,
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if got := cfg.Providers.Profiles["zai"].APIKey; got != "process-zai-key" {
+		t.Fatalf("expected process env to win over .env, got %q", got)
 	}
 }
 
