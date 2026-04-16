@@ -69,6 +69,13 @@ func defaultCommands() []Command {
 			Usage:    "refactor PATH [--goal TEXT]",
 		},
 		{
+			Name:     "debug",
+			Summary:  "Reproduce, bisect, and fix a bug with a regression test.",
+			Category: CategoryQuery,
+			Surfaces: SurfaceCLI | SurfaceWeb,
+			Usage:    "debug DESCRIPTION_OR_PATH",
+		},
+		{
 			Name:     "test",
 			Summary:  "Draft tests for the target file or recent changes.",
 			Category: CategoryQuery,

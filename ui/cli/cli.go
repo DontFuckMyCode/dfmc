@@ -112,7 +112,7 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runPlugin(ctx, eng, cmdArgs, opts.JSON)
 	case "skill":
 		return runSkill(ctx, eng, cmdArgs, opts.JSON)
-	case "review", "explain", "refactor", "test", "doc":
+	case "review", "explain", "refactor", "debug", "test", "doc":
 		return runSkillShortcut(ctx, eng, cmd, cmdArgs, opts.JSON)
 	case "remote":
 		return runRemote(ctx, eng, cmdArgs, opts.JSON)
@@ -5268,17 +5268,64 @@ func builtinSkills() []skillInfo {
 		},
 		{
 			Name:        "refactor",
-			Description: "Refactor planning and implementation guidance",
+			Description: "Plan and execute a safe refactor: scope, invariants, step list, verification",
 			Source:      "builtin",
 			Builtin:     true,
-			Prompt:      "Provide a safe refactor plan and concrete edits with minimal regression risk.\n\nRequest:\n{input}",
+			Prompt: `You are running the REFACTOR skill. Ship a concrete, reversible refactor — not a design essay.
+
+Playbook:
+1. Scope. Use grep_codebase / list_dir / read_file to find every call site and touched file. State what's IN scope and what's explicitly OUT of scope.
+2. Invariants. List the observable behaviors that must not change (public API, on-disk format, error types, side-effect ordering). If a test already pins one, name it.
+3. Step plan. Break the refactor into the smallest sequence of commits that each leave the tree green. Each step: files, change, how to verify.
+4. Execute. Make the edits via edit_file / write_file. Do NOT introduce new abstractions the task doesn't need. Do NOT rename things that aren't in scope.
+5. Verify. Run the smallest test command that exercises the changed code. If tests don't exist for the invariants, add them first or name the risk.
+6. Report. Summarise what moved, what stayed, and any invariant you could not mechanically verify.
+
+Stop and ask if the scope is unclear or the request implies a behavior change. Refactors that quietly change behavior are the worst kind.
+
+Request:
+{input}`,
+		},
+		{
+			Name:        "debug",
+			Description: "Reproduce, bisect, and fix a bug — with a regression test",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt: `You are running the DEBUG skill. Root-cause the problem; do not paper over it.
+
+Playbook:
+1. Reproduce. Turn the report into a minimal command or test that fails. If you cannot reproduce, stop and say so — guessing is worse than nothing.
+2. Bisect. Use git_log / git_diff, read_file, grep_codebase to narrow the failure to a specific function, commit, or config value. Name the exact line that produces the wrong behavior.
+3. Explain the mechanism. Write one paragraph that traces inputs through the code to the bad output. If the explanation hand-waves ("probably a race", "might be cache"), keep digging.
+4. Fix at the root. Prefer the smallest change that removes the cause. Do NOT add try/except that just swallows the error. Do NOT add a feature flag to bypass the path.
+5. Regression test. Add a test that fails without the fix and passes with it. Name the file and the test function.
+6. Verify. Run the new test AND the nearest existing test package. Report pass/fail output verbatim.
+7. Report. One-line cause, one-line fix, test name, any nearby latent bugs you spotted but left alone.
+
+If you are not sure the fix addresses the root cause, say that explicitly — a partial fix with a named uncertainty beats a confident patch that just moves the bug.
+
+Request:
+{input}`,
 		},
 		{
 			Name:        "test",
-			Description: "Generate or improve tests for target code",
+			Description: "Generate or improve tests: discover framework, find gaps, implement, run",
 			Source:      "builtin",
 			Builtin:     true,
-			Prompt:      "Create or improve automated tests for the target, including edge cases and failure paths.\n\nRequest:\n{input}",
+			Prompt: `You are running the TEST skill. Ship tests that actually execute, not pseudocode.
+
+Playbook:
+1. Discover the framework. Check go.mod / package.json / pyproject.toml and the existing _test files under the target package. Mirror the style already used — do not introduce a new test library.
+2. Map the surface. For the target code, list every exported function and every non-trivial branch (error paths, boundary values, empty slice, missing key).
+3. Identify gaps. Diff what already has coverage against what doesn't. Prioritise: correctness bugs > regression risk > edge cases > happy path.
+4. Write tests. Keep them isolated (no network, no shared global state). Use table-driven style when Go, parametrised when Python/TS. Each test name states the behavior it pins ("returns_error_when_path_escapes_root"), not the function name.
+5. Run them. Invoke the nearest test command via run_command. Paste the actual output. If any fail, fix the test or the code (decide which is wrong — do not silently edit the test to make it pass).
+6. Report. Files added, cases added, command used, final result. Call out tests you chose NOT to add and why (e.g. "skipped I/O-heavy path; would need a fixture the repo lacks").
+
+Do NOT add mocks for code the repo does not mock elsewhere. Do NOT assert on error message text unless the codebase already does — error types are sturdier than strings.
+
+Request:
+{input}`,
 		},
 		{
 			Name:        "doc",
