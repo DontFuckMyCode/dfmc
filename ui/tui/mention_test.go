@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestMentionRanker_PrefersExactBasenameAndBoostsRecency(t *testing.T) {
@@ -199,5 +202,77 @@ func TestActiveMentionQuery_ReturnsRangeSuffix(t *testing.T) {
 	}
 	if suffix != "#L10-L50" {
 		t.Fatalf("expected suffix=#L10-L50, got %q", suffix)
+	}
+}
+
+// Chat suggestion UX: once the user types `@`, the picker must show
+// *something* on every frame — a loading hint, an empty-state, or match
+// rows. Silent picker was the source of the "@ doesn't work" complaint.
+
+func TestBuildChatSuggestionState_MentionActiveEvenWithoutFiles(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.input = "please read @"
+	m.files = nil
+	state := m.buildChatSuggestionState()
+	if !state.mentionActive {
+		t.Fatalf("mentionActive should be true when input has trailing @, regardless of file index")
+	}
+	if len(state.quickActions) != 0 {
+		t.Fatalf("mentionActive should suppress quick actions, got %d", len(state.quickActions))
+	}
+}
+
+func TestRenderChatView_MentionPicker_ShowsIndexingHintWhenFilesEmpty(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.input = "please read @auth"
+	m.files = nil
+	view := m.renderChatView(120)
+	if !strings.Contains(view, "File mentions") {
+		t.Fatalf("expected mention section header when @ active, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Indexing project files") {
+		t.Fatalf("empty file index should surface an indexing hint, got:\n%s", view)
+	}
+}
+
+func TestRenderChatView_MentionPicker_ShowsNoMatchCopyWhenQueryHasNoHit(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.input = "skim @nothingmatchesthis"
+	m.files = []string{"internal/auth/token.go", "ui/cli/cli.go"}
+	view := m.renderChatView(120)
+	if !strings.Contains(view, "File mentions") {
+		t.Fatalf("expected mention section header, got:\n%s", view)
+	}
+	if !strings.Contains(view, "No files matched 'nothingmatchesthis'") {
+		t.Fatalf("non-matching query should surface a no-match hint, got:\n%s", view)
+	}
+}
+
+func TestRenderChatView_MentionPicker_ListsMatches(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.input = "please read @token"
+	m.files = []string{"internal/auth/token.go", "ui/cli/cli.go"}
+	view := m.renderChatView(160)
+	if !strings.Contains(view, "token.go") {
+		t.Fatalf("mention picker should list the match, got:\n%s", view)
+	}
+	// The hint should carry the "N/M files" progress counter.
+	if !strings.Contains(view, "/2 files") {
+		t.Fatalf("match header should include file count, got:\n%s", view)
+	}
+}
+
+func TestHandleChatKey_AtTriggersFileReloadWhenIndexEmpty(t *testing.T) {
+	// Can't construct a real engine in a unit test (no store); this exercises
+	// only the early-return guard: when eng is nil we must NOT dispatch a
+	// reload cmd (which would panic on nil engine). The inverse path — eng
+	// non-nil — is covered by the integration suite.
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0 // Chat tab
+	m.files = nil
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'@'}})
+	if cmd != nil {
+		// Only expected when eng != nil, which we didn't provide.
+		t.Fatalf("nil engine should not produce a reload cmd on @, got %T", cmd)
 	}
 }

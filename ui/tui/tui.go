@@ -84,10 +84,15 @@ type chatSuggestionState struct {
 	slashMenuActive     bool
 	slashCommands       []slashCommandItem
 	slashArgSuggestions []string
-	mentionQuery        string
-	mentionRange        string
-	mentionSuggestions  []mentionRow
-	quickActions        []quickActionSuggestion
+	// mentionActive is true when the trailing token begins with `@`, even
+	// if no files match yet. The render path keys off this so the picker
+	// always shows feedback (loading, empty-state, match list) instead of
+	// going silent and leaving the user unsure whether @ is wired up.
+	mentionActive      bool
+	mentionQuery       string
+	mentionRange       string
+	mentionSuggestions []mentionRow
+	quickActions       []quickActionSuggestion
 }
 
 type quickActionSuggestion struct {
@@ -1020,6 +1025,13 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.slashArgIndex = 0
 		m.mentionIndex = 0
 		m.quickActionIndex = 0
+		// When the user starts an @-mention but the project file index
+		// hasn't landed yet (startup race, or the walk failed silently),
+		// kick a refresh so the picker populates on the next frame
+		// instead of leaving a dead empty-state.
+		if strings.ContainsRune(string(msg.Runes), '@') && len(m.files) == 0 && m.eng != nil {
+			return m, loadFilesCmd(m.eng)
+		}
 		return m, nil
 	case tea.KeySpace:
 		m.exitInputHistoryNavigation()
@@ -1457,11 +1469,12 @@ func (m Model) buildChatSuggestionState() chatSuggestionState {
 		state.slashArgSuggestions = m.activeSlashArgSuggestions()
 	}
 	if query, rangeSuffix, ok := activeMentionQuery(m.input); ok {
+		state.mentionActive = true
 		state.mentionQuery = query
 		state.mentionRange = rangeSuffix
 		state.mentionSuggestions = m.mentionSuggestions(query, 8)
 	}
-	if !state.slashMenuActive && len(state.mentionSuggestions) == 0 && !m.commandPickerActive && !m.sending {
+	if !state.slashMenuActive && !state.mentionActive && !m.commandPickerActive && !m.sending {
 		state.quickActions = m.quickActionsForCurrentInput()
 	}
 	return state
@@ -4291,7 +4304,7 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 		if len(items) == 0 {
 			lines = append(lines, "  "+subtleStyle.Render("No matching command. Press esc to dismiss or /help for the catalog."))
 		} else {
-			lines = append(lines, subtleStyle.Render("↑↓ move · tab cycle · enter run"))
+			lines = append(lines, subtleStyle.Render(fmt.Sprintf("↑↓ move · tab cycle · enter run · %d commands (window of 6)", len(items))))
 			selected := clampIndex(m.slashIndex, len(items))
 			start := 0
 			if selected > 4 {
@@ -4346,15 +4359,16 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 			lines = append(lines, "  "+subtleStyle.Render(hint))
 		}
 	}
-	if m.input != "" && strings.Contains(m.input, "@") {
+	if suggestions.mentionActive {
+		lines = append(lines, sectionTitleStyle.Render("File mentions"))
 		switch {
 		case len(suggestions.mentionSuggestions) > 0:
-			lines = append(lines, sectionTitleStyle.Render("File mentions"))
 			hintTail := ""
 			if suggestions.mentionRange != "" {
 				hintTail = " · range " + suggestions.mentionRange
 			}
-			lines = append(lines, subtleStyle.Render("↑↓ move · tab/enter insert · suffix :10-50 or #L10-L50 for ranges"+hintTail))
+			lines = append(lines, subtleStyle.Render(fmt.Sprintf("↑↓ move · tab/enter insert · suffix :10-50 or #L10-L50 for ranges · %d/%d files%s",
+				len(suggestions.mentionSuggestions), len(m.files), hintTail)))
 			selected := clampIndex(m.mentionIndex, len(suggestions.mentionSuggestions))
 			for i, row := range suggestions.mentionSuggestions {
 				prefix := "  "
@@ -4368,9 +4382,15 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 				}
 				lines = append(lines, prefix+label)
 			}
+		case len(m.files) == 0:
+			// Startup race: user typed @ before loadFilesCmd finished (or
+			// the walk failed). Tell them explicitly so they don't think
+			// @ is broken — press r in the Files tab or wait a moment.
+			lines = append(lines, "  "+subtleStyle.Render("Indexing project files… if this persists, open the Files tab (F3) and press r to reload."))
 		case suggestions.mentionQuery != "":
-			lines = append(lines, sectionTitleStyle.Render("File mentions"))
 			lines = append(lines, "  "+subtleStyle.Render("No files matched '"+suggestions.mentionQuery+"' — refine query or press esc."))
+		default:
+			lines = append(lines, "  "+subtleStyle.Render("No files matched. Type a path after @ — supports :10-50 or #L10-L50 line ranges."))
 		}
 	}
 	if len(suggestions.quickActions) > 0 {

@@ -953,7 +953,7 @@ func renderStarterPrompts(width int, configured bool) []string {
 	}
 	lines = append(lines,
 		"",
-		subtleStyle.Render("  Tips: "+accentStyle.Render("enter")+" send · "+accentStyle.Render("@")+" file mention · "+accentStyle.Render("/")+" commands · "+accentStyle.Render("ctrl+p")+" palette · "+accentStyle.Render("alt+1..6")+" tabs"),
+		subtleStyle.Render("  Tips: "+accentStyle.Render("enter")+" send · "+accentStyle.Render("@")+" file mention · "+accentStyle.Render("/")+" commands · "+accentStyle.Render("ctrl+p")+" palette · "+accentStyle.Render("f1..f12")+" or "+accentStyle.Render("alt+1..0/t/y/w/o")+" tabs"),
 	)
 	return lines
 }
