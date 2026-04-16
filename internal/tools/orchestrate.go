@@ -86,13 +86,13 @@ When NOT to use:
 		Tags: []string{"meta", "planning", "subagent", "orchestration"},
 		Args: []Arg{
 			{Name: "task", Type: ArgString, Description: "Free-text task for the deterministic splitter. Required unless `stages` is given."},
-			{Name: "stages", Type: ArgArray, Description: "Explicit DAG: array of {id, task, depends_on?, title?, hint?, model?}. When provided, skips the text splitter and runs stages in topological layers. Optional per-stage `model` routes that stage to a specific provider profile (e.g., cheap scan stages → deepseek, synthesis → anthropic)."},
+			{Name: "stages", Type: ArgArray, Description: "Explicit DAG: array of {id, task, depends_on?, title?, hint?, model?, race?}. When provided, skips the text splitter and runs stages in topological layers. Optional per-stage `model` routes that stage to a specific provider profile. Optional `race` is a 2-3 element provider list that runs the stage on each in parallel and keeps the first success — costs N×, use sparingly (e.g., the final synthesis only). `model` and `race` are mutually exclusive."},
 			{Name: "max_parallel", Type: ArgInteger, Default: defaultOrchestrateParallel, Description: "Max concurrent sub-agents (clamped by engine ParallelBatchSize)."},
 			{Name: "role", Type: ArgString, Description: "Optional role label passed to every sub-agent."},
 			{Name: "sub_max_steps", Type: ArgInteger, Default: 0, Description: "Per-sub-agent step budget (0=engine default)."},
 			{Name: "force_sequential", Type: ArgBoolean, Default: false, Description: "Run subtasks sequentially (one at a time) even when they could parallelise. Applies to both text-split and DAG modes."},
 		},
-		Returns:  "{task, mode(single|parallel|sequential|dag), subtask_count, aggregated, stages:[{id?,title,hint,summary,tool_calls,duration_ms,error?,skipped?}]}",
+		Returns:  "{task, mode(single|parallel|sequential|dag), subtask_count, aggregated, stages:[{id?,title,hint,summary,tool_calls,duration_ms,error?,skipped?,model?,race_winner?,race_candidates?}]}",
 		Examples: []string{`{"task":"Survey engine.go, map the router, and document the manager"}`, `{"task":"First list the test files, then run the ones under internal/engine","force_sequential":true}`, `{"stages":[{"id":"perf","task":"audit perf in engine.go"},{"id":"sec","task":"audit security in engine.go"},{"id":"report","task":"write a report combining both","depends_on":["perf","sec"]}]}`, `{"stages":[{"id":"scan","task":"list suspicious files","model":"deepseek"},{"id":"synth","task":"write findings report","depends_on":["scan"],"model":"anthropic"}]}`},
 		CostHint: "io-bound",
 	}

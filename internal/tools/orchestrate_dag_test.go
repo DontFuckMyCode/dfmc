@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -412,6 +413,184 @@ func TestOrchestrateDAGPerStageModelOverride(t *testing.T) {
 			t.Fatalf("unexpected stage id %q", id)
 		}
 	}
+}
+
+// TestOrchestrateDAGRaceReturnsWinner: a stage with race:["fast","slow"]
+// must fan out two sub-agents, keep the fast one's summary, and record
+// race_winner="fast" plus the full candidate list. The slow sub-agent
+// must see its context cancelled so it doesn't keep spending after the
+// race is decided.
+func TestOrchestrateDAGRaceReturnsWinner(t *testing.T) {
+	cfg := *config.DefaultConfig()
+	eng := New(cfg)
+	runner := &perModelRunner{
+		delays: map[string]time.Duration{
+			"fast": 10 * time.Millisecond,
+			"slow": 300 * time.Millisecond,
+		},
+	}
+	eng.SetSubagentRunner(runner)
+
+	res, err := eng.Execute(context.Background(), "orchestrate", Request{
+		Params: map[string]any{
+			"stages": dagStagesParam(
+				map[string]any{"id": "synth", "task": "write report", "race": []any{"fast", "slow"}},
+			),
+		},
+	})
+	if err != nil {
+		t.Fatalf("orchestrate race: %v", err)
+	}
+	stages, _ := res.Data["stages"].([]map[string]any)
+	if len(stages) != 1 {
+		t.Fatalf("want 1 stage, got %d", len(stages))
+	}
+	winner, _ := stages[0]["race_winner"].(string)
+	if winner != "fast" {
+		t.Fatalf("race_winner=%q, want fast (stage=%+v)", winner, stages[0])
+	}
+	cands, _ := stages[0]["race_candidates"].([]string)
+	if len(cands) != 2 {
+		t.Fatalf("race_candidates=%v, want 2 entries", cands)
+	}
+	summary, _ := stages[0]["summary"].(string)
+	if !strings.Contains(summary, "fast-reply") {
+		t.Fatalf("winner summary=%q, want fast-reply marker", summary)
+	}
+
+	// The slow sub-agent must have been cancelled; give it a brief window
+	// to propagate the cancellation before asserting.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&runner.slowCancelled) >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&runner.slowCancelled) < 1 {
+		t.Fatalf("slow candidate was not cancelled after the fast one won")
+	}
+}
+
+// TestOrchestrateDAGRaceAllFailReturnsJoinedError: when every candidate
+// errors the stage must surface a joined error and the caller must be
+// able to tell both failures happened (no silent partial success).
+func TestOrchestrateDAGRaceAllFailReturnsJoinedError(t *testing.T) {
+	cfg := *config.DefaultConfig()
+	eng := New(cfg)
+	runner := &perModelRunner{
+		errs: map[string]string{
+			"a": "boom-a",
+			"b": "boom-b",
+		},
+	}
+	eng.SetSubagentRunner(runner)
+
+	_, err := eng.Execute(context.Background(), "orchestrate", Request{
+		Params: map[string]any{
+			"stages": dagStagesParam(
+				map[string]any{"id": "synth", "task": "t", "race": []any{"a", "b"}},
+			),
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected joined race error, got nil")
+	}
+	if !strings.Contains(err.Error(), "boom-a") || !strings.Contains(err.Error(), "boom-b") {
+		t.Fatalf("expected both candidate errors in %v", err)
+	}
+}
+
+// TestOrchestrateDAGRaceAndModelMutuallyExclusive: specifying both `model`
+// and `race` on the same stage is ambiguous routing; the parser must
+// refuse at config time so the model doesn't silently lose one of its
+// hints.
+func TestOrchestrateDAGRaceAndModelMutuallyExclusive(t *testing.T) {
+	cfg := *config.DefaultConfig()
+	eng := New(cfg)
+	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
+
+	_, err := eng.Execute(context.Background(), "orchestrate", Request{
+		Params: map[string]any{
+			"stages": dagStagesParam(
+				map[string]any{"id": "A", "task": "t", "model": "x", "race": []any{"a", "b"}},
+			),
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected mutual-exclusion error, got %v", err)
+	}
+}
+
+// TestOrchestrateDAGRaceCapEnforced: a race list larger than the hard cap
+// must be refused — the alternative is N× cost explosions from a single
+// tool call.
+func TestOrchestrateDAGRaceCapEnforced(t *testing.T) {
+	cfg := *config.DefaultConfig()
+	eng := New(cfg)
+	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
+
+	_, err := eng.Execute(context.Background(), "orchestrate", Request{
+		Params: map[string]any{
+			"stages": dagStagesParam(
+				map[string]any{"id": "A", "task": "t", "race": []any{"a", "b", "c", "d"}},
+			),
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "cap") {
+		t.Fatalf("expected cap error, got %v", err)
+	}
+}
+
+// TestOrchestrateDAGRaceSingletonRejected: a one-element race has no
+// racing semantics (nothing to compare against). The parser must nudge
+// the caller toward `model` instead of silently running a single sub-agent.
+func TestOrchestrateDAGRaceSingletonRejected(t *testing.T) {
+	cfg := *config.DefaultConfig()
+	eng := New(cfg)
+	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
+
+	_, err := eng.Execute(context.Background(), "orchestrate", Request{
+		Params: map[string]any{
+			"stages": dagStagesParam(
+				map[string]any{"id": "A", "task": "t", "race": []any{"only"}},
+			),
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "pointless") {
+		t.Fatalf("expected pointless-race error, got %v", err)
+	}
+}
+
+// perModelRunner routes SubagentRequest.Model to a delay/error map so
+// race tests can pick deterministic winners and track cancellation of
+// losers. Safe for concurrent use.
+type perModelRunner struct {
+	delays        map[string]time.Duration
+	errs          map[string]string
+	slowCancelled int32
+}
+
+func (r *perModelRunner) RunSubagent(ctx context.Context, req SubagentRequest) (SubagentResult, error) {
+	delay := r.delays[req.Model]
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			if req.Model == "slow" {
+				atomic.AddInt32(&r.slowCancelled, 1)
+			}
+			return SubagentResult{}, ctx.Err()
+		}
+	}
+	if msg, ok := r.errs[req.Model]; ok && msg != "" {
+		return SubagentResult{}, fmt.Errorf("%s", msg)
+	}
+	return SubagentResult{
+		Summary:    req.Model + "-reply",
+		ToolCalls:  1,
+		DurationMs: delay.Milliseconds(),
+	}, nil
 }
 
 // TestOrchestrateDAGEmptyStageModelNotRecorded: stages without a `model`

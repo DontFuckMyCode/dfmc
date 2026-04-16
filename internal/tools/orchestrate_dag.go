@@ -20,21 +20,31 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // orchestrateStage is one node in the DAG. IDs are free-form strings
 // chosen by the caller; the only requirement is uniqueness within the
 // request.
+// maxRaceCandidates caps the stage-level race fan-out. Race runs N full
+// sub-agent loops in parallel and keeps the first success — so N×cost in
+// the worst case. 3 gives enough diversity (two stronger providers + one
+// fallback) without letting a single tool call fan out N sub-agents across
+// 6-provider catalogs.
+const maxRaceCandidates = 3
+
 type orchestrateStage struct {
 	ID        string
 	Task      string
 	Title     string
 	Hint      string
 	Model     string
+	Race      []string
 	DependsOn []string
 }
 
@@ -71,14 +81,61 @@ func parseOrchestrateStages(raw any) ([]orchestrateStage, error) {
 		if err != nil {
 			return nil, fmt.Errorf("stages[%d].depends_on: %w", i, err)
 		}
+		race, err := parseRaceList(m["race"])
+		if err != nil {
+			return nil, fmt.Errorf("stages[%d].race: %w", i, err)
+		}
+		model := strings.TrimSpace(asString(m, "model", ""))
+		if len(race) > 0 && model != "" {
+			return nil, fmt.Errorf("stages[%d]: model and race are mutually exclusive — pick one", i)
+		}
 		out = append(out, orchestrateStage{
 			ID:        id,
 			Task:      task,
 			Title:     strings.TrimSpace(asString(m, "title", "")),
 			Hint:      strings.TrimSpace(asString(m, "hint", "")),
-			Model:     strings.TrimSpace(asString(m, "model", "")),
+			Model:     model,
+			Race:      race,
 			DependsOn: deps,
 		})
+	}
+	return out, nil
+}
+
+// parseRaceList parses stages[i].race — an optional []any of provider names
+// to race for this stage. Deduped, trimmed, capped at maxRaceCandidates so
+// a malformed or oversized list can't fan out unbounded sub-agents. Returns
+// (nil, nil) for nil/empty input; any non-array shape is a fail-fast error.
+func parseRaceList(raw any) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("must be an array of provider names, got %T", raw)
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(list))
+	for i, item := range list {
+		s, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("[%d] must be a string, got %T", i, item)
+		}
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	if len(out) > maxRaceCandidates {
+		return nil, fmt.Errorf("race has %d candidates; cap is %d (each runs a full sub-agent)", len(out), maxRaceCandidates)
+	}
+	if len(out) == 1 {
+		return nil, fmt.Errorf("race with one candidate is pointless — use `model` instead")
 	}
 	return out, nil
 }
@@ -251,12 +308,18 @@ func (t *OrchestrateTool) runDAG(
 				if title == "" {
 					title = s.ID
 				}
-				stageResult, err := t.runStage(ctx, runner, SubagentRequest{
-					Task:     dagPromptFor(s, priors),
-					Role:     role,
-					MaxSteps: subSteps,
-					Model:    s.Model,
-				}, title, s.Hint)
+				var stageResult map[string]any
+				var err error
+				if len(s.Race) > 0 {
+					stageResult, err = t.runRaceStage(ctx, runner, s, priors, title, role, subSteps)
+				} else {
+					stageResult, err = t.runStage(ctx, runner, SubagentRequest{
+						Task:     dagPromptFor(s, priors),
+						Role:     role,
+						MaxSteps: subSteps,
+						Model:    s.Model,
+					}, title, s.Hint)
+				}
 				stageResult["id"] = s.ID
 				if s.Model != "" {
 					stageResult["model"] = s.Model
@@ -316,6 +379,90 @@ func assembleDAGResult(task string, stages []orchestrateStage, layers [][]int, r
 			"aggregated":    strings.Join(aggregated, "\n\n"),
 		},
 	}
+}
+
+// runRaceStage fans one DAG stage out to N concurrent sub-agents (one per
+// race candidate), each with a different Model. First success wins and the
+// losers are cancelled via a child context. If every candidate errors, the
+// joined error is returned so the caller can record the stage failure.
+//
+// The returned map carries the winner's summary plus `race_winner` and
+// `race_candidates` for observability; the stage record looks like a normal
+// single-runner stage otherwise, so downstream aggregation doesn't need to
+// special-case it.
+func (t *OrchestrateTool) runRaceStage(
+	ctx context.Context,
+	runner SubagentRunner,
+	stage orchestrateStage,
+	priors []string,
+	title, role string,
+	subSteps int,
+) (map[string]any, error) {
+	prompt := dagPromptFor(stage, priors)
+	raceCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	type outcome struct {
+		model   string
+		result  SubagentResult
+		err     error
+		elapsed int64
+	}
+	out := make(chan outcome, len(stage.Race))
+
+	start := time.Now()
+	for _, model := range stage.Race {
+		go func(model string) {
+			t0 := time.Now()
+			res, err := runner.RunSubagent(raceCtx, SubagentRequest{
+				Task:     prompt,
+				Role:     role,
+				MaxSteps: subSteps,
+				Model:    model,
+			})
+			out <- outcome{
+				model:   model,
+				result:  res,
+				err:     err,
+				elapsed: time.Since(t0).Milliseconds(),
+			}
+		}(model)
+	}
+
+	var errs []error
+	for range stage.Race {
+		select {
+		case <-ctx.Done():
+			return map[string]any{
+				"title":           title,
+				"hint":            stage.Hint,
+				"race_candidates": append([]string(nil), stage.Race...),
+				"error":           ctx.Err().Error(),
+				"duration_ms":     time.Since(start).Milliseconds(),
+			}, ctx.Err()
+		case r := <-out:
+			if r.err == nil {
+				cancel() // cancel in-flight losers
+				return map[string]any{
+					"title":           title,
+					"hint":            stage.Hint,
+					"summary":         strings.TrimSpace(r.result.Summary),
+					"tool_calls":      r.result.ToolCalls,
+					"duration_ms":     r.result.DurationMs,
+					"race_winner":     r.model,
+					"race_candidates": append([]string(nil), stage.Race...),
+				}, nil
+			}
+			errs = append(errs, fmt.Errorf("%s: %w", r.model, r.err))
+		}
+	}
+	return map[string]any{
+		"title":           title,
+		"hint":            stage.Hint,
+		"race_candidates": append([]string(nil), stage.Race...),
+		"error":           fmt.Errorf("race lost: %w", errors.Join(errs...)).Error(),
+		"duration_ms":     time.Since(start).Milliseconds(),
+	}, errors.Join(errs...)
 }
 
 // dagPromptFor shapes the prompt for a DAG stage. Similar to the text-
