@@ -746,6 +746,68 @@ func TestHandleEngineEventToolCallUpdatesActivityWithoutTranscriptNoise(t *testi
 	}
 }
 
+// TestHandleEngineEventToolResultFailureMirrorsToTranscript — tool failures
+// are rare but critical, and a failed chip is easy to miss in a long turn.
+// Force the transcript to carry the error message so scrollback preserves
+// it even after the user leaves the Activity panel.
+func TestHandleEngineEventToolResultFailureMirrorsToTranscript(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.sending = true
+	m.transcript = []chatLine{
+		{Role: "user", Content: "apply the patch"},
+		{Role: "assistant", Content: ""},
+	}
+	m.streamIndex = 1
+
+	next := m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":       "apply_patch",
+			"success":    false,
+			"durationMs": 12,
+			"error":      "patch conflict at engine.go:42",
+		},
+	})
+	if len(next.transcript) != 3 {
+		t.Fatalf("tool failure should append a transcript line, got %d entries", len(next.transcript))
+	}
+	last := next.transcript[len(next.transcript)-1]
+	if last.Role != "tool" {
+		t.Fatalf("failure message should be tool-tagged, got role=%q", last.Role)
+	}
+	if !strings.Contains(last.Content, "apply_patch") {
+		t.Fatalf("failure transcript line should name the tool, got %q", last.Content)
+	}
+	if !strings.Contains(last.Content, "patch conflict") {
+		t.Fatalf("failure transcript line should preserve the error text, got %q", last.Content)
+	}
+}
+
+// TestHandleEngineEventToolResultSuccessSkipsTranscript — the inverse of the
+// above: a successful tool call must not flood the transcript. The chip
+// strip already handles successful progress.
+func TestHandleEngineEventToolResultSuccessSkipsTranscript(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.sending = true
+	m.transcript = []chatLine{
+		{Role: "user", Content: "read"},
+		{Role: "assistant", Content: ""},
+	}
+	m.streamIndex = 1
+
+	next := m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":       "read_file",
+			"success":    true,
+			"durationMs": 12,
+		},
+	})
+	if len(next.transcript) != 2 {
+		t.Fatalf("successful tool should not append transcript, got %d entries: %+v", len(next.transcript), next.transcript)
+	}
+}
+
 func TestHandleEngineEventToolResultUpdatesActivityWithoutTranscriptWhenIdle(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.sending = false

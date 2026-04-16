@@ -5749,7 +5749,14 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 	}
 	m.appendActivity(line)
 	m.notice = line
-	if m.sending && shouldMirrorEventToTranscript(eventType) {
+	mirror := shouldMirrorEventToTranscript(eventType)
+	// Tool failures are rare but critical — never silently drop them from
+	// the transcript. A failed chip alone in a long turn is easy to miss,
+	// so mirror the error event with its preview/error text.
+	if !mirror && eventType == "tool:result" && !payloadBool(payload, "success", true) {
+		mirror = true
+	}
+	if m.sending && mirror {
 		m = m.appendToolEventMessage(line)
 	}
 	return m
