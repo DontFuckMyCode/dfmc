@@ -23,7 +23,7 @@ func TestViewIncludesWorkbenchPanels(t *testing.T) {
 	m.width = 100
 
 	view := m.View()
-	for _, needle := range []string{"DFMC Workbench", "Chat", "Status", "Files", "Patch", "Setup", "Tools"} {
+	for _, needle := range []string{"DFMC WORKBENCH", "Chat", "Status", "Files", "Patch", "Setup", "Tools"} {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("expected view to contain %q, got:\n%s", needle, view)
 		}
@@ -301,6 +301,111 @@ func TestChatSlashToolArgTabCompletesToolName(t *testing.T) {
 	}
 	if completed.input != "/tool read_file" {
 		t.Fatalf("expected /tool read_file completion, got %q", completed.input)
+	}
+}
+
+func TestRenderChatViewShowsQuickActionsForNaturalLanguage(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "note.txt"), "alpha\nbeta\n")
+	eng := newTUITestEngine(t)
+	eng.ProjectRoot = root
+
+	m := NewModel(context.Background(), eng)
+	m.activeTab = 0
+	m.status = eng.Status()
+	m.files = []string{"note.txt"}
+	m.input = "read note.txt"
+
+	view := m.renderChatView(120)
+	if !strings.Contains(view, "Quick Actions") || !strings.Contains(view, "/read note.txt 1 200") {
+		t.Fatalf("expected quick actions block in chat view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "/grep note") {
+		t.Fatalf("expected secondary grep quick action in chat view, got:\n%s", view)
+	}
+}
+
+func TestChatTabPreparesQuickActionFromNaturalLanguage(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "note.txt"), "alpha\nbeta\n")
+	eng := newTUITestEngine(t)
+	eng.ProjectRoot = root
+
+	m := NewModel(context.Background(), eng)
+	m.activeTab = 0
+	m.status = eng.Status()
+	m.files = []string{"note.txt"}
+	m.input = "read note.txt"
+
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	next, ok := nextModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model after quick-action tab, got %T", nextModel)
+	}
+	if next.input != "/read note.txt 1 200" {
+		t.Fatalf("expected quick action to prepare slash command, got %q", next.input)
+	}
+}
+
+func TestChatDownThenTabPreparesSecondQuickAction(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "note.txt"), "alpha\nbeta\n")
+	eng := newTUITestEngine(t)
+	eng.ProjectRoot = root
+
+	m := NewModel(context.Background(), eng)
+	m.activeTab = 0
+	m.status = eng.Status()
+	m.files = []string{"note.txt"}
+	m.input = "read note.txt"
+
+	downModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	down, ok := downModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model after quick-action down, got %T", downModel)
+	}
+	if down.quickActionIndex != 1 {
+		t.Fatalf("expected quick action index 1 after down, got %d", down.quickActionIndex)
+	}
+
+	nextModel, _ := down.Update(tea.KeyMsg{Type: tea.KeyTab})
+	next, ok := nextModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model after quick-action tab, got %T", nextModel)
+	}
+	if !strings.HasPrefix(next.input, "/grep ") {
+		t.Fatalf("expected second quick action to prepare grep command, got %q", next.input)
+	}
+}
+
+func TestChatEnterRunsSelectedQuickAction(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "note.txt"), "alpha\nbeta\n")
+	eng := newTUITestEngine(t)
+	eng.ProjectRoot = root
+
+	m := NewModel(context.Background(), eng)
+	m.activeTab = 0
+	m.status = eng.Status()
+	m.files = []string{"note.txt"}
+	m.input = "read note.txt"
+
+	downModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	down, ok := downModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model after quick-action down, got %T", downModel)
+	}
+
+	nextModel, cmd := down.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, ok := nextModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model after quick-action enter, got %T", nextModel)
+	}
+	if cmd == nil {
+		t.Fatal("expected tool command from selected quick action")
+	}
+	if !next.chatToolPending || next.chatToolName != "grep_codebase" {
+		t.Fatalf("expected selected quick action grep_codebase to run, got pending=%v name=%q", next.chatToolPending, next.chatToolName)
 	}
 }
 
@@ -613,7 +718,10 @@ func TestAutoToolIntentFromQuestionTurkishList(t *testing.T) {
 	}
 }
 
-func TestHandleEngineEventToolCallUpdatesActivityAndTranscript(t *testing.T) {
+func TestHandleEngineEventToolCallUpdatesActivityWithoutTranscriptNoise(t *testing.T) {
+	// Signal-density rule: tool:call events feed chips + activity log +
+	// runtime card, but must not flood the transcript with narration — the
+	// transcript is reserved for real state changes (errors, parks, compactions).
 	m := NewModel(context.Background(), nil)
 	m.sending = true
 	m.transcript = []chatLine{
@@ -633,12 +741,8 @@ func TestHandleEngineEventToolCallUpdatesActivityAndTranscript(t *testing.T) {
 	if len(next.activityLog) == 0 || !strings.Contains(next.activityLog[len(next.activityLog)-1], "read_file") {
 		t.Fatalf("expected activity log update, got %#v", next.activityLog)
 	}
-	if len(next.transcript) < 3 {
-		t.Fatalf("expected system transcript line from engine event, got %#v", next.transcript)
-	}
-	last := next.transcript[len(next.transcript)-1]
-	if last.Role != "system" || !strings.Contains(last.Content, "Agent tool call: read_file") || !strings.Contains(last.Content, "path=internal/engine/engine.go") {
-		t.Fatalf("expected system tool call line, got %#v", last)
+	if len(next.transcript) != 2 {
+		t.Fatalf("expected transcript untouched by tool:call, got %#v", next.transcript)
 	}
 }
 
@@ -662,13 +766,35 @@ func TestHandleEngineEventToolResultUpdatesActivityWithoutTranscriptWhenIdle(t *
 	}
 }
 
-func TestRenderChatViewShowsLiveActivitySection(t *testing.T) {
+func TestRenderChatViewSurfacesToolEventsViaRuntimeCard(t *testing.T) {
+	// Signal-density rule: tool progress lives in the runtime card and chips,
+	// not in the transcript. Legacy side panels (Live Activity / Tool Timeline)
+	// are gone, and the transcript no longer echoes every call.
 	m := NewModel(context.Background(), nil)
-	m.activityLog = []string{"Agent tool call: read_file (step 1)"}
+	m.sending = true
+	m.transcript = []chatLine{
+		{Role: "user", Content: "scan"},
+		{Role: "assistant", Content: ""},
+	}
+	m.streamIndex = 1
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool":           "read_file",
+			"step":           1,
+			"params_preview": "path=note.txt",
+		},
+	})
 
-	view := m.renderChatView(90)
-	if !strings.Contains(view, "Live Activity") || !strings.Contains(view, "Agent tool call: read_file") {
-		t.Fatalf("expected live activity section in chat view, got:\n%s", view)
+	view := m.renderChatView(120)
+	if !strings.Contains(view, "read_file") {
+		t.Fatalf("expected read_file chip/card visible in chat view, got:\n%s", view)
+	}
+	if strings.Contains(view, "Agent tool call: read_file") {
+		t.Fatalf("tool:call should not narrate into the transcript, got:\n%s", view)
+	}
+	if strings.Contains(view, "Live Activity") || strings.Contains(view, "Tool Timeline") {
+		t.Fatalf("legacy side panels should be removed, got:\n%s", view)
 	}
 }
 
@@ -834,6 +960,76 @@ func TestReadPickerEnterPreparesReadCommand(t *testing.T) {
 	}
 }
 
+func TestChatSlashRunWithoutArgsOpensRunPicker(t *testing.T) {
+	eng := newTUITestEngine(t)
+	m := NewModel(context.Background(), eng)
+	m.activeTab = 0
+	m.status = eng.Status()
+	m.files = []string{"go.mod"}
+	m.input = "/run"
+
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, ok := nextModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model after /run, got %T", nextModel)
+	}
+	if !next.commandPickerActive || next.commandPickerKind != "run" {
+		t.Fatalf("expected run picker to open, got active=%v kind=%q", next.commandPickerActive, next.commandPickerKind)
+	}
+}
+
+func TestChatSlashGrepWithoutArgsOpensGrepPicker(t *testing.T) {
+	eng := newTUITestEngine(t)
+	m := NewModel(context.Background(), eng)
+	m.activeTab = 0
+	m.status = eng.Status()
+	m.files = []string{"internal/engine/engine.go"}
+	m.input = "/grep"
+
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, ok := nextModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model after /grep, got %T", nextModel)
+	}
+	if !next.commandPickerActive || next.commandPickerKind != "grep" {
+		t.Fatalf("expected grep picker to open, got active=%v kind=%q", next.commandPickerActive, next.commandPickerKind)
+	}
+}
+
+func TestRunPickerEnterPreparesRunCommand(t *testing.T) {
+	eng := newTUITestEngine(t)
+	m := NewModel(context.Background(), eng)
+	m.activeTab = 0
+	m.status = eng.Status()
+	m = m.startCommandPicker("run", "go test ./...", false)
+
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, ok := nextModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model after run picker enter, got %T", nextModel)
+	}
+	if !strings.HasPrefix(next.input, "/run go test ./...") {
+		t.Fatalf("expected prepared run command, got %q", next.input)
+	}
+}
+
+func TestGrepPickerEnterPreparesGrepCommand(t *testing.T) {
+	eng := newTUITestEngine(t)
+	m := NewModel(context.Background(), eng)
+	m.activeTab = 0
+	m.status = eng.Status()
+	m = m.startCommandPicker("grep", "TODO", false)
+
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, ok := nextModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model after grep picker enter, got %T", nextModel)
+	}
+	if next.input != "/grep TODO" {
+		t.Fatalf("expected prepared grep command, got %q", next.input)
+	}
+}
+
 func TestHandleEngineEventContextBuiltUpdatesActivity(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 
@@ -899,63 +1095,12 @@ func TestHandleEngineEventAgentLoopLifecycle(t *testing.T) {
 	}
 }
 
-func TestHandleEngineEventContextContractAndHints(t *testing.T) {
+func TestRenderChatViewShowsAgentRuntimeCard(t *testing.T) {
+	// Signal-density rule: the header owns phase/step/provider/model so the
+	// runtime card only surfaces what the header doesn't — tool rounds and
+	// the last tool's status/duration.
 	m := NewModel(context.Background(), nil)
-
-	contract := m.handleEngineEvent(engine.Event{
-		Type: "agent:loop:contract",
-		Payload: map[string]any{
-			"provider":         "openai",
-			"model":            "gpt-5.4",
-			"context_snapshot": "files=3 tokens=700 top=internal/engine/engine.go#L1-L80(220tok)",
-			"pre_tool":         "Pre-tool instruction (context enter): choose one narrow tool call.",
-			"post_tool":        "Post-tool instruction (context exit): decide one next call OR final answer.",
-		},
-	})
-	if !contract.agentLoopActive || contract.agentLoopPhase != "contract" {
-		t.Fatalf("expected contract to activate runtime phase, got %#v", contract)
-	}
-	if !strings.Contains(contract.agentLoopContractPre, "context enter") || !strings.Contains(contract.agentLoopContractPost, "context exit") {
-		t.Fatalf("expected contract hints to be stored, got pre=%q post=%q", contract.agentLoopContractPre, contract.agentLoopContractPost)
-	}
-
-	enter := contract.handleEngineEvent(engine.Event{
-		Type: "agent:loop:context_enter",
-		Payload: map[string]any{
-			"step":             2,
-			"max_tool_steps":   6,
-			"tool_rounds":      1,
-			"instruction":      "Step 2/6 context-enter: use read_file evidence to decide one next call or final answer.",
-			"context_snapshot": "files=3 tokens=700 top=internal/engine/engine.go#L1-L80(220tok)",
-		},
-	})
-	if enter.agentLoopPhase != "context-enter" || enter.agentLoopStep != 2 || enter.agentLoopToolRounds != 1 {
-		t.Fatalf("expected context-enter update, got %#v", enter)
-	}
-	if !strings.Contains(enter.agentLoopEnterHint, "context-enter") {
-		t.Fatalf("expected enter hint stored, got %q", enter.agentLoopEnterHint)
-	}
-
-	exit := enter.handleEngineEvent(engine.Event{
-		Type: "agent:loop:context_exit",
-		Payload: map[string]any{
-			"step":        2,
-			"tool_rounds": 2,
-			"tool":        "read_file",
-			"success":     true,
-			"instruction": "Context-exit after read_file: keep relevant evidence, then choose one next call or final answer.",
-		},
-	})
-	if exit.agentLoopPhase != "context-exit" || exit.agentLoopLastTool != "read_file" || exit.agentLoopLastStatus != "ok" {
-		t.Fatalf("expected context-exit update, got %#v", exit)
-	}
-	if !strings.Contains(exit.agentLoopExitHint, "Context-exit") {
-		t.Fatalf("expected exit hint stored, got %q", exit.agentLoopExitHint)
-	}
-}
-
-func TestRenderChatViewShowsAgentRuntimeSection(t *testing.T) {
-	m := NewModel(context.Background(), nil)
+	m.status = engine.Status{Provider: "openai", Model: "gpt-5.4"}
 	m.agentLoopActive = true
 	m.agentLoopPhase = "tool-result"
 	m.agentLoopStep = 2
@@ -965,44 +1110,60 @@ func TestRenderChatViewShowsAgentRuntimeSection(t *testing.T) {
 	m.agentLoopModel = "gpt-5.4"
 	m.agentLoopLastTool = "read_file"
 	m.agentLoopLastStatus = "ok"
-	m.agentLoopLastOutput = "package main ..."
+	m.agentLoopLastDuration = 42
 
-	view := m.renderChatView(110)
-	if !strings.Contains(view, "Agent Runtime") || !strings.Contains(view, "phase=tool-result") || !strings.Contains(view, "last_tool=read_file (ok)") {
-		t.Fatalf("expected agent runtime section in chat view, got:\n%s", view)
+	view := m.renderChatView(140)
+	// Header surfaces phase + step + provider/model.
+	for _, want := range []string{"tool-result", "2/6", "openai", "gpt-5.4"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected header to contain %q, got:\n%s", want, view)
+		}
+	}
+	// Runtime card adds only what the header lacks: round count and last tool chip.
+	for _, want := range []string{"tools 2", "read_file", "42"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected runtime card to contain %q, got:\n%s", want, view)
+		}
 	}
 }
 
-func TestRenderChatViewShowsContextLoopHints(t *testing.T) {
+func TestToolTimelineChipsTrackCallAndResult(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.agentLoopActive = true
-	m.agentLoopPhase = "context-enter"
-	m.agentLoopContextScope = "files=3 tokens=700 top=internal/engine/engine.go#L1-L80(220tok)"
-	m.agentLoopEnterHint = "Step 2/6 context-enter: use read_file evidence to decide one next call or final answer."
-	m.agentLoopExitHint = "Context-exit after read_file: keep relevant evidence, then choose one next call or final answer."
-	m.agentLoopContractPre = "Pre-tool instruction (context enter): choose one narrow tool call."
-	m.agentLoopContractPost = "Post-tool instruction (context exit): decide one next call OR final answer."
 
-	view := m.renderChatView(120)
-	if !strings.Contains(view, "context_scope=") || !strings.Contains(view, "context_enter=") || !strings.Contains(view, "context_exit=") {
-		t.Fatalf("expected context loop hint lines in chat view, got:\n%s", view)
-	}
-	if !strings.Contains(view, "contract_pre=") || !strings.Contains(view, "contract_post=") {
-		t.Fatalf("expected contract hint lines in chat view, got:\n%s", view)
-	}
-}
-
-func TestRenderChatViewShowsToolTimelineSection(t *testing.T) {
-	m := NewModel(context.Background(), nil)
-	m.toolTimeline = []string{
-		"Context built: 3 files, 720 tokens (review, aggressive)",
-		"Agent tool call: read_file (step 1) path=internal/engine/engine.go line_start=1 line_end=80",
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool":           "read_file",
+			"step":           1,
+			"params_preview": "path=note.txt",
+		},
+	})
+	if len(m.toolTimeline) != 1 || m.toolTimeline[0].Status != "running" {
+		t.Fatalf("expected running chip after tool:call, got %#v", m.toolTimeline)
 	}
 
-	view := m.renderChatView(110)
-	if !strings.Contains(view, "Tool Timeline") || !strings.Contains(view, "Agent tool call: read_file") {
-		t.Fatalf("expected tool timeline section in chat view, got:\n%s", view)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":           "read_file",
+			"step":           1,
+			"durationMs":     42,
+			"success":        true,
+			"output_preview": "alpha",
+		},
+	})
+	if len(m.toolTimeline) != 1 {
+		t.Fatalf("expected chip to be merged, got %#v", m.toolTimeline)
 	}
+	chip := m.toolTimeline[0]
+	if chip.Status != "ok" || chip.DurationMs != 42 {
+		t.Fatalf("expected ok chip with duration, got %#v", chip)
+	}
+
+	// After F3 the chip state still drives summaries, but the chat view no
+	// longer renders a separate Tool Timeline section — the event lives
+	// inline in the transcript instead.
+	_ = m.renderChatView(140)
 }
 
 func TestChatMentionNavigationAndTabCompletion(t *testing.T) {
@@ -1977,14 +2138,35 @@ func TestRenderFooterShowsStateAndTabHints(t *testing.T) {
 	m.notice = "Agent tool result: read_file (ok, 22ms)"
 
 	footer := m.renderFooter(120)
-	if !strings.Contains(footer, "tab=Chat") || !strings.Contains(footer, "provider=openai") || !strings.Contains(footer, "model=gpt-5.4") {
-		t.Fatalf("expected state line in footer, got:\n%s", footer)
+	if !strings.Contains(footer, "Chat") {
+		t.Fatalf("expected tab chip in footer, got:\n%s", footer)
 	}
-	if !strings.Contains(footer, "keys: enter send") {
-		t.Fatalf("expected chat-specific shortcuts in footer, got:\n%s", footer)
+	if !strings.Contains(footer, "Agent tool result") {
+		t.Fatalf("expected notice text trailing in footer, got:\n%s", footer)
 	}
-	if strings.Count(footer, "\n") != 1 {
-		t.Fatalf("expected two-line footer output, got:\n%s", footer)
+	if strings.Contains(footer, "\n") {
+		t.Fatalf("footer must be a single line, got:\n%s", footer)
+	}
+	if strings.Contains(footer, "keys:") {
+		t.Fatalf("footer must not carry the keys hint — it lives in the ctrl+h overlay now, got:\n%s", footer)
+	}
+	if strings.Contains(footer, "tab=") || strings.Contains(footer, "provider=") || strings.Contains(footer, "mode=") {
+		t.Fatalf("footer should not duplicate header state as key=value, got:\n%s", footer)
+	}
+}
+
+func TestHelpOverlayShowsTabKeysWhenToggled(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	if m.showHelpOverlay {
+		t.Fatal("help overlay should default to off")
+	}
+	m.showHelpOverlay = true
+	out := m.renderHelpOverlay(120)
+	if !strings.Contains(out, "enter send") || !strings.Contains(out, "ctrl+p palette") {
+		t.Fatalf("expected chat hints in help overlay, got:\n%s", out)
+	}
+	if !strings.Contains(out, "ctrl+h") {
+		t.Fatalf("expected self-describing ctrl+h close hint, got:\n%s", out)
 	}
 }
 
@@ -2111,7 +2293,7 @@ func TestRenderChatAndFilesViewShowPinnedFile(t *testing.T) {
 	m.files = []string{"internal/auth/service.go"}
 
 	chatView := m.renderChatView(80)
-	if !strings.Contains(chatView, "Pinned context: [[file:internal/auth/service.go]]") {
+	if !strings.Contains(chatView, "pinned: [[file:internal/auth/service.go]]") {
 		t.Fatalf("expected chat view to show pinned context, got:\n%s", chatView)
 	}
 
@@ -2392,5 +2574,118 @@ func runGit(t *testing.T, dir string, args ...string) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+	}
+}
+
+// ---- stats panel ---------------------------------------------------------
+
+func TestRenderStatsPanelShowsAllSections(t *testing.T) {
+	info := statsPanelInfo{
+		Provider:       "openai",
+		Model:          "gpt-5.4",
+		Configured:     true,
+		ContextTokens:  45_000,
+		MaxContext:     200_000,
+		AgentActive:    true,
+		AgentPhase:     "tool-call",
+		AgentStep:      2,
+		AgentMaxSteps:  6,
+		ToolRounds:     2,
+		LastTool:       "read_file",
+		LastStatus:     "ok",
+		LastDurationMs: 42,
+		ToolsEnabled:   true,
+		ToolCount:      6,
+		Branch:         "main",
+		Dirty:          true,
+		Inserted:       255,
+		Deleted:        10,
+		SessionElapsed: 42 * time.Minute,
+		MessageCount:   12,
+	}
+	panel := renderStatsPanel(info, 30)
+	for _, want := range []string{
+		"PROVIDER", "openai", "gpt-5.4",
+		"CONTEXT", "45k/200k",
+		"AGENT", "tool-call", "2/6", "read_file", "42ms",
+		"TOOLS", "enabled", "6 registered",
+		"GIT", "main", "+255", "-10",
+		"SESSION", "42m", "12 messages",
+		"ctrl+s",
+	} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("stats panel missing %q, got:\n%s", want, panel)
+		}
+	}
+}
+
+func TestRenderStatsPanelUnconfiguredShowsGuidance(t *testing.T) {
+	panel := renderStatsPanel(statsPanelInfo{
+		SessionElapsed: 10 * time.Second,
+	}, 16)
+	for _, want := range []string{"no provider", "f5 setup", "/provider"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("unconfigured stats panel should surface %q, got:\n%s", want, panel)
+		}
+	}
+}
+
+func TestCtrlSTogglesStatsPanel(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	if !m.showStatsPanel {
+		t.Fatalf("stats panel should default to visible")
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	mm := next.(Model)
+	if mm.showStatsPanel {
+		t.Fatalf("ctrl+s should toggle stats panel off")
+	}
+	next2, _ := mm.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	mm2 := next2.(Model)
+	if !mm2.showStatsPanel {
+		t.Fatalf("ctrl+s should toggle stats panel back on")
+	}
+}
+
+func TestStatsPanelHiddenBelowWidthThreshold(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	// Below the min width, panel must stay hidden even when the toggle is on.
+	if m.statsPanelVisible(statsPanelMinContentWidth - 1) {
+		t.Fatalf("panel should hide below width threshold regardless of toggle")
+	}
+	if !m.statsPanelVisible(statsPanelMinContentWidth) {
+		t.Fatalf("panel should show at width threshold")
+	}
+	m.showStatsPanel = false
+	if m.statsPanelVisible(statsPanelMinContentWidth + 40) {
+		t.Fatalf("panel must respect the ctrl+s toggle when disabled")
+	}
+}
+
+func TestChatHeaderSlimDropsPanelOwnedFields(t *testing.T) {
+	// When the stats panel is visible the chat header must drop fields the
+	// panel owns (provider/model/ctx meter/tools) to avoid double-painting.
+	info := chatHeaderInfo{
+		Provider:      "openai",
+		Model:         "gpt-5.4",
+		Configured:    true,
+		MaxContext:    200_000,
+		ContextTokens: 45_000,
+		ToolsEnabled:  true,
+		Slim:          true,
+	}
+	head := renderChatHeader(info, 160)
+	for _, leak := range []string{"openai", "gpt-5.4", "tools on", "45,000"} {
+		if strings.Contains(head, leak) {
+			t.Fatalf("slim header should not repeat panel-owned field %q, got:\n%s", leak, head)
+		}
+	}
+
+	// Streaming alerts must still surface in the slim header — the panel
+	// shows mode too, but the header's job in slim mode is to yell alerts.
+	info.Streaming = true
+	headStreaming := renderChatHeader(info, 160)
+	if !strings.Contains(headStreaming, "streaming") {
+		t.Fatalf("slim header should still flag active streaming, got:\n%s", headStreaming)
 	}
 }

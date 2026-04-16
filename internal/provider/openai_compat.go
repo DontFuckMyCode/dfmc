@@ -54,29 +54,7 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 		return nil, fmt.Errorf("%w: %s api key missing", ErrProviderUnavailable, p.name)
 	}
 
-	messages := make([]map[string]string, 0, len(req.Messages)+2)
-	if strings.TrimSpace(req.System) != "" {
-		messages = append(messages, map[string]string{
-			"role":    "system",
-			"content": req.System,
-		})
-	}
-	for _, m := range req.Messages {
-		role := string(m.Role)
-		if role == "" {
-			role = "user"
-		}
-		messages = append(messages, map[string]string{
-			"role":    role,
-			"content": m.Content,
-		})
-	}
-	if len(req.Context) > 0 {
-		messages = append(messages, map[string]string{
-			"role":    "system",
-			"content": renderContextChunks(req.Context),
-		})
-	}
+	messages := buildOpenAIMessages(req)
 
 	model := nonEmpty(req.Model, p.model)
 	body := map[string]any{
@@ -85,6 +63,12 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 	}
 	if p.maxTokens > 0 {
 		body["max_tokens"] = p.maxTokens
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = openaiToolDescriptors(req.Tools)
+		if choice := openaiToolChoice(req.ToolChoice); choice != nil {
+			body["tool_choice"] = choice
+		}
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -126,9 +110,8 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 			TotalTokens      int `json:"total_tokens"`
 		} `json:"usage"`
 		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
+			FinishReason string             `json:"finish_reason"`
+			Message      openaiChatMessage  `json:"message"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
@@ -136,8 +119,12 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 	}
 
 	text := ""
+	var toolCalls []ToolCall
+	stop := StopUnknown
 	if len(parsed.Choices) > 0 {
 		text = parsed.Choices[0].Message.Content
+		toolCalls = parseOpenAIToolCalls(parsed.Choices[0].Message.ToolCalls)
+		stop = openaiStopReason(parsed.Choices[0].FinishReason)
 	}
 	usage := Usage{
 		InputTokens:  parsed.Usage.PromptTokens,
@@ -151,9 +138,11 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 	}
 
 	return &CompletionResponse{
-		Text:  text,
-		Model: nonEmpty(parsed.Model, model),
-		Usage: usage,
+		Text:       text,
+		Model:      nonEmpty(parsed.Model, model),
+		Usage:      usage,
+		ToolCalls:  toolCalls,
+		StopReason: stop,
 	}, nil
 }
 
@@ -165,29 +154,7 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 		return nil, fmt.Errorf("%w: %s api key missing", ErrProviderUnavailable, p.name)
 	}
 
-	messages := make([]map[string]string, 0, len(req.Messages)+2)
-	if strings.TrimSpace(req.System) != "" {
-		messages = append(messages, map[string]string{
-			"role":    "system",
-			"content": req.System,
-		})
-	}
-	for _, m := range req.Messages {
-		role := string(m.Role)
-		if role == "" {
-			role = "user"
-		}
-		messages = append(messages, map[string]string{
-			"role":    role,
-			"content": m.Content,
-		})
-	}
-	if len(req.Context) > 0 {
-		messages = append(messages, map[string]string{
-			"role":    "system",
-			"content": renderContextChunks(req.Context),
-		})
-	}
+	messages := buildOpenAIMessages(req)
 	model := nonEmpty(req.Model, p.model)
 	body := map[string]any{
 		"model":    model,
@@ -196,6 +163,12 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 	}
 	if p.maxTokens > 0 {
 		body["max_tokens"] = p.maxTokens
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = openaiToolDescriptors(req.Tools)
+		if choice := openaiToolChoice(req.ToolChoice); choice != nil {
+			body["tool_choice"] = choice
+		}
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -223,12 +196,42 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 	}
 
 	ch := make(chan StreamEvent, 32)
+	providerName := p.name
 	go func() {
 		defer close(ch)
 		defer resp.Body.Close()
 
 		sc := bufio.NewScanner(resp.Body)
 		sc.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+
+		resolvedModel := model
+		startAnnounced := false
+		usage := Usage{}
+		usageSet := false
+		stopReason := StopUnknown
+
+		emitStart := func() {
+			if startAnnounced {
+				return
+			}
+			startAnnounced = true
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- StreamEvent{Type: StreamStart, Provider: providerName, Model: resolvedModel}:
+			}
+		}
+
+		finish := func() {
+			emitStart()
+			done := StreamEvent{Type: StreamDone, Provider: providerName, Model: resolvedModel, StopReason: stopReason}
+			if usageSet {
+				u := usage
+				u.TotalTokens = u.InputTokens + u.OutputTokens
+				done.Usage = &u
+			}
+			ch <- done
+		}
 
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())
@@ -243,31 +246,59 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 				continue
 			}
 			if payload == "[DONE]" {
-				ch <- StreamEvent{Type: StreamDone}
+				finish()
 				return
 			}
 			if strings.Contains(payload, "\"success\":false") {
-				ch <- StreamEvent{Type: StreamError, Err: fmt.Errorf("%s provider error: %s", p.name, payload)}
+				ch <- StreamEvent{Type: StreamError, Err: fmt.Errorf("%s provider error: %s", providerName, payload)}
 				return
 			}
 
 			var evt struct {
+				Model   string `json:"model"`
 				Choices []struct {
 					Delta struct {
 						Content string `json:"content"`
 					} `json:"delta"`
+					FinishReason string `json:"finish_reason"`
 				} `json:"choices"`
+				Usage *struct {
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+					TotalTokens      int `json:"total_tokens"`
+				} `json:"usage"`
 			}
 			if err := json.Unmarshal([]byte(payload), &evt); err != nil {
 				continue
 			}
+			if strings.TrimSpace(evt.Model) != "" {
+				resolvedModel = evt.Model
+			}
+			if evt.Usage != nil {
+				if evt.Usage.PromptTokens > 0 {
+					usage.InputTokens = evt.Usage.PromptTokens
+					usageSet = true
+				}
+				if evt.Usage.CompletionTokens > 0 {
+					usage.OutputTokens = evt.Usage.CompletionTokens
+					usageSet = true
+				}
+				if evt.Usage.TotalTokens > 0 {
+					usage.TotalTokens = evt.Usage.TotalTokens
+					usageSet = true
+				}
+			}
 			if len(evt.Choices) == 0 {
 				continue
+			}
+			if fr := strings.TrimSpace(evt.Choices[0].FinishReason); fr != "" {
+				stopReason = openaiStopReason(fr)
 			}
 			delta := evt.Choices[0].Delta.Content
 			if delta == "" {
 				continue
 			}
+			emitStart()
 			select {
 			case <-ctx.Done():
 				ch <- StreamEvent{Type: StreamError, Err: ctx.Err()}
@@ -279,7 +310,7 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 			ch <- StreamEvent{Type: StreamError, Err: err}
 			return
 		}
-		ch <- StreamEvent{Type: StreamDone}
+		finish()
 	}()
 
 	return ch, nil
@@ -298,12 +329,13 @@ func (p *OpenAICompatibleProvider) MaxContext() int {
 
 func (p *OpenAICompatibleProvider) Hints() ProviderHints {
 	return ProviderHints{
-		ToolStyle:   "function-calling",
-		Cache:       false,
-		LowLatency:  false,
-		BestFor:     []string{"general", "code"},
-		MaxContext:  p.MaxContext(),
-		DefaultMode: "balanced",
+		ToolStyle:     "function-calling",
+		Cache:         false,
+		LowLatency:    false,
+		BestFor:       []string{"general", "code"},
+		MaxContext:    p.MaxContext(),
+		DefaultMode:   "balanced",
+		SupportsTools: true,
 	}
 }
 

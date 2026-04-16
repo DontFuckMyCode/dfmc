@@ -23,6 +23,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/internal/storage"
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -60,6 +61,10 @@ type Engine struct {
 	state EngineState
 
 	lastContextIn ContextInStatus
+
+	agentMu         sync.Mutex
+	agentParked     *parkedAgentState
+	agentNotesQueue []string
 }
 
 type Status struct {
@@ -1528,14 +1533,7 @@ func (e *Engine) historyBudgetForRequest(question string, chunks []types.Context
 }
 
 func trimToTokenBudget(content string, maxTokens int) string {
-	if maxTokens <= 0 {
-		return ""
-	}
-	words := strings.Fields(strings.TrimSpace(content))
-	if len(words) <= maxTokens {
-		return strings.TrimSpace(content)
-	}
-	return strings.Join(words[:maxTokens], " ")
+	return tokens.TrimToBudget(content, maxTokens, "")
 }
 
 func buildHistorySummary(omitted []types.Message, maxTokens int) string {
@@ -1788,6 +1786,50 @@ func (e *Engine) Ask(ctx context.Context, question string) (string, error) {
 	return e.AskWithMetadata(ctx, question)
 }
 
+// buildSystemPrompt renders the system prompt bundle via the context manager
+// and returns both the flat text form (for providers that ignore caching)
+// and the structured SystemBlocks (for Anthropic's prompt caching). Returns
+// empty values when the context manager is unavailable.
+func (e *Engine) buildSystemPrompt(question string, chunks []types.ContextChunk) (string, []provider.SystemBlock) {
+	if e.Context == nil {
+		return "", nil
+	}
+	bundle := e.Context.BuildSystemPromptBundle(
+		e.ProjectRoot,
+		question,
+		chunks,
+		e.ListTools(),
+		e.promptRuntime(),
+	)
+	return bundleToSystemBlocks(bundle)
+}
+
+// bundleToSystemBlocks converts a PromptBundle into the paired (flat text,
+// SystemBlocks) form consumed by providers. When the bundle has no cacheable
+// sections the blocks slice is nil so non-cache-aware providers keep the
+// flat-string fast path.
+func bundleToSystemBlocks(bundle *promptlib.PromptBundle) (string, []provider.SystemBlock) {
+	if bundle == nil {
+		return "", nil
+	}
+	text := bundle.Text()
+	if !bundle.HasCacheable() {
+		return text, nil
+	}
+	blocks := make([]provider.SystemBlock, 0, len(bundle.Sections))
+	for _, s := range bundle.Sections {
+		if strings.TrimSpace(s.Text) == "" {
+			continue
+		}
+		blocks = append(blocks, provider.SystemBlock{
+			Label:     s.Label,
+			Text:      s.Text,
+			Cacheable: s.Cacheable,
+		})
+	}
+	return text, blocks
+}
+
 func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1798,8 +1840,9 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 	if e.Providers == nil {
 		return "", fmt.Errorf("provider router is not initialized")
 	}
-	if e.shouldUseLocalToolLoop() {
-		completion, err := e.askWithLocalTools(ctx, question)
+	e.maybeAutoHandoff(question)
+	if e.shouldUseNativeToolLoop() {
+		completion, err := e.askWithNativeTools(ctx, question)
 		if err != nil {
 			return "", err
 		}
@@ -1809,22 +1852,14 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 
 	chunks := e.buildContextChunks(question)
 
-	systemPrompt := ""
-	if e.Context != nil {
-		systemPrompt = e.Context.BuildSystemPromptWithRuntime(
-			e.ProjectRoot,
-			question,
-			chunks,
-			e.ListTools(),
-			e.promptRuntime(),
-		)
-	}
+	systemPrompt, systemBlocks := e.buildSystemPrompt(question, chunks)
 	req := provider.CompletionRequest{
-		Provider: e.provider(),
-		Model:    e.model(),
-		Messages: e.buildRequestMessages(question, chunks, systemPrompt),
-		Context:  chunks,
-		System:   systemPrompt,
+		Provider:     e.provider(),
+		Model:        e.model(),
+		Messages:     e.buildRequestMessages(question, chunks, systemPrompt),
+		Context:      chunks,
+		System:       systemPrompt,
+		SystemBlocks: systemBlocks,
 	}
 
 	resp, usedProvider, err := e.Providers.Complete(ctx, req)
@@ -1854,8 +1889,9 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 	if e.Providers == nil {
 		return nil, fmt.Errorf("provider router is not initialized")
 	}
-	if e.shouldUseLocalToolLoop() {
-		completion, err := e.askWithLocalTools(ctx, question)
+	e.maybeAutoHandoff(question)
+	if e.shouldUseNativeToolLoop() {
+		completion, err := e.askWithNativeTools(ctx, question)
 		if err != nil {
 			return nil, err
 		}
@@ -1865,22 +1901,14 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 
 	chunks := e.buildContextChunks(question)
 
-	systemPrompt := ""
-	if e.Context != nil {
-		systemPrompt = e.Context.BuildSystemPromptWithRuntime(
-			e.ProjectRoot,
-			question,
-			chunks,
-			e.ListTools(),
-			e.promptRuntime(),
-		)
-	}
+	systemPrompt, systemBlocks := e.buildSystemPrompt(question, chunks)
 	req := provider.CompletionRequest{
-		Provider: e.provider(),
-		Model:    e.model(),
-		Messages: e.buildRequestMessages(question, chunks, systemPrompt),
-		Context:  chunks,
-		System:   systemPrompt,
+		Provider:     e.provider(),
+		Model:        e.model(),
+		Messages:     e.buildRequestMessages(question, chunks, systemPrompt),
+		Context:      chunks,
+		System:       systemPrompt,
+		SystemBlocks: systemBlocks,
 	}
 
 	stream, usedProvider, err := e.Providers.Stream(ctx, req)
@@ -2380,5 +2408,5 @@ func maxInt(a, b int) int {
 }
 
 func estimateTokens(text string) int {
-	return len(strings.Fields(text))
+	return tokens.Estimate(text)
 }

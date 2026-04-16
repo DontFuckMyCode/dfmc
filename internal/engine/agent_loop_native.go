@@ -1,0 +1,629 @@
+package engine
+
+// agent_loop_native.go — provider-native agent loop.
+//
+// The model only sees the 4 meta tools (tool_search, tool_help, tool_call,
+// tool_batch_call). It discovers backend tools through tool_search/tool_help
+// and invokes them through tool_call / tool_batch_call. Tool dialogue rides
+// on Anthropic's tool_use blocks or OpenAI's tool_calls — the text-bridge
+// fenced JSON format is gone.
+//
+// The loop is bounded by maxNativeToolSteps (config-overridable in S4).
+// Per-call failures don't abort the loop; the model gets a tool_result with
+// is_error=true and decides how to recover.
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/promptlib"
+	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/tools"
+	"github.com/dontfuckmycode/dfmc/pkg/types"
+)
+
+// Defaults used when agent config is unset. Concrete values come from
+// cfg.Agent (see config.AgentConfig); these are only the safety floor.
+const (
+	defaultMaxNativeToolSteps       = 25
+	defaultMaxNativeToolTokens      = 120000
+	defaultMaxNativeToolResultChars = 3200
+	defaultMaxNativeToolDataChars   = 1200
+)
+
+// agentLimits is the resolved runtime budget for a single agent loop.
+type agentLimits struct {
+	MaxSteps        int
+	MaxTokens       int
+	MaxResultChars  int
+	MaxDataChars    int
+}
+
+func (e *Engine) agentLimits() agentLimits {
+	lim := agentLimits{
+		MaxSteps:       defaultMaxNativeToolSteps,
+		MaxTokens:      defaultMaxNativeToolTokens,
+		MaxResultChars: defaultMaxNativeToolResultChars,
+		MaxDataChars:   defaultMaxNativeToolDataChars,
+	}
+	if e == nil || e.Config == nil {
+		return lim
+	}
+	cfg := e.Config.Agent
+	if cfg.MaxToolSteps > 0 {
+		lim.MaxSteps = cfg.MaxToolSteps
+	}
+	if cfg.MaxToolTokens > 0 {
+		lim.MaxTokens = cfg.MaxToolTokens
+	}
+	if cfg.MaxToolResultChars > 0 {
+		lim.MaxResultChars = cfg.MaxToolResultChars
+	}
+	if cfg.MaxToolResultDataChars > 0 {
+		lim.MaxDataChars = cfg.MaxToolResultDataChars
+	}
+	return lim
+}
+
+type nativeToolTrace struct {
+	Call       provider.ToolCall
+	Result     tools.Result
+	Err        string
+	Provider   string
+	Model      string
+	Step       int
+	OccurredAt time.Time
+}
+
+type nativeToolCompletion struct {
+	Answer       string
+	Provider     string
+	Model        string
+	TokenCount   int
+	Context      []types.ContextChunk
+	ToolTraces   []nativeToolTrace
+	SystemPrompt string
+	// Parked is true when the loop hit MaxSteps and saved its state for /continue
+	// to pick up. Answer is a friendly "parked at step N" notice in that case.
+	Parked       bool
+	ParkedAtStep int
+}
+
+// shouldUseNativeToolLoop reports whether the active provider negotiates
+// provider-native tool calling (Anthropic, OpenAI) AND has at least one
+// backend tool to expose. Falls back to false for offline/placeholder.
+func (e *Engine) shouldUseNativeToolLoop() bool {
+	if e == nil || e.Tools == nil || e.Providers == nil {
+		return false
+	}
+	if len(e.Tools.BackendSpecs()) == 0 {
+		return false
+	}
+	p, ok := e.Providers.Get(e.provider())
+	if !ok || p == nil {
+		return false
+	}
+	return p.Hints().SupportsTools
+}
+
+func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativeToolCompletion, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	e.ensureIndexed(ctx)
+
+	// Fresh question → abandon any stale parked loop.
+	e.ClearParkedAgent()
+
+	chunks := e.buildContextChunks(question)
+	systemPrompt, systemBlocks := e.buildNativeToolSystemPromptBundle(question, chunks)
+	descriptors := metaSpecsToDescriptors(e.Tools.MetaSpecs())
+
+	contextTokens := 0
+	for _, c := range chunks {
+		contextTokens += c.TokenCount
+	}
+
+	seed := &parkedAgentState{
+		Question:      question,
+		Messages:      e.buildToolLoopRequestMessages(question, chunks, systemPrompt, nil),
+		Traces:        nil,
+		Chunks:        chunks,
+		SystemPrompt:  systemPrompt,
+		SystemBlocks:  systemBlocks,
+		Descriptors:   descriptors,
+		ContextTokens: contextTokens,
+		TotalTokens:   0,
+		Step:          0,
+		LastProvider:  e.provider(),
+		LastModel:     e.model(),
+	}
+	lim := e.agentLimits()
+	e.publishAgentLoopEvent("agent:loop:start", map[string]any{
+		"provider":        seed.LastProvider,
+		"model":           seed.LastModel,
+		"max_tool_steps":  lim.MaxSteps,
+		"max_tool_tokens": lim.MaxTokens,
+		"surface":         "native",
+		"context_files":   len(chunks),
+		"context_tokens":  contextTokens,
+		"meta_tools":      metaToolNames(descriptors),
+	})
+	return e.runNativeToolLoop(ctx, seed, lim)
+}
+
+// ResumeAgent re-enters the native tool loop from a previously parked state.
+// An optional note is appended as a user message before the next round-trip,
+// so "devam, ama X de unutma" lands as guidance. Returns an error when there
+// is no parked loop.
+func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolCompletion, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	seed := e.takeParkedAgent()
+	if seed == nil {
+		return nativeToolCompletion{}, fmt.Errorf("no parked agent loop to resume")
+	}
+	if trimmed := strings.TrimSpace(note); trimmed != "" {
+		seed.Messages = append(seed.Messages, provider.Message{
+			Role:    types.RoleUser,
+			Content: trimmed,
+		})
+	}
+	lim := e.agentLimits()
+	e.publishAgentLoopEvent("agent:loop:resume", map[string]any{
+		"resumed_from_step": seed.Step,
+		"max_tool_steps":    lim.MaxSteps,
+		"tool_rounds":       len(seed.Traces),
+		"tokens_used":       seed.TotalTokens,
+		"surface":           "native",
+	})
+	// Give the resumed loop a fresh cap of MaxSteps *additional* iterations
+	// on top of whatever it already consumed. That's what the user typed
+	// /continue for — they want more work, not another instant park.
+	seed.Step = 0
+	return e.runNativeToolLoop(ctx, seed, lim)
+}
+
+func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, lim agentLimits) (nativeToolCompletion, error) {
+	msgs := seed.Messages
+	traces := seed.Traces
+	if traces == nil {
+		traces = make([]nativeToolTrace, 0, lim.MaxSteps)
+	}
+	totalTokens := seed.TotalTokens
+	chunks := seed.Chunks
+	systemPrompt := seed.SystemPrompt
+	systemBlocks := seed.SystemBlocks
+	descriptors := seed.Descriptors
+	lastProvider := seed.LastProvider
+	lastModel := seed.LastModel
+	question := seed.Question
+
+	for step := 1; step <= lim.MaxSteps; step++ {
+		if notes := e.drainAgentNotes(); len(notes) > 0 {
+			for _, note := range notes {
+				msgs = append(msgs, provider.Message{
+					Role:    types.RoleUser,
+					Content: "[user btw] " + note,
+				})
+				e.publishAgentLoopEvent("agent:note:injected", map[string]any{
+					"step": step,
+					"note": note,
+				})
+			}
+		}
+
+		if compacted, report := e.maybeCompactNativeLoopHistory(msgs, systemPrompt, chunks); report != nil {
+			msgs = compacted
+			e.publishAgentLoopEvent("context:lifecycle:compacted", map[string]any{
+				"step":             step,
+				"before_tokens":    report.BeforeTokens,
+				"after_tokens":     report.AfterTokens,
+				"rounds_collapsed": report.RoundsCollapsed,
+				"messages_removed": report.MessagesRemoved,
+				"threshold_ratio":  report.ThresholdRatio,
+				"keep_recent":      report.KeepRecentRounds,
+				"surface":          "native",
+			})
+		}
+
+		e.publishAgentLoopEvent("agent:loop:thinking", map[string]any{
+			"step":           step,
+			"max_tool_steps": lim.MaxSteps,
+			"tool_rounds":    len(traces),
+			"tokens_used":    totalTokens,
+			"surface":        "native",
+		})
+
+		req := provider.CompletionRequest{
+			Provider:     e.provider(),
+			Model:        e.model(),
+			System:       systemPrompt,
+			SystemBlocks: systemBlocks,
+			Context:      chunks,
+			Messages:     msgs,
+			Tools:        descriptors,
+			ToolChoice:   "auto",
+		}
+
+		resp, usedProvider, err := e.Providers.Complete(ctx, req)
+		if err != nil {
+			e.publishAgentLoopEvent("agent:loop:error", map[string]any{
+				"step":  step,
+				"error": err.Error(),
+			})
+			return nativeToolCompletion{}, err
+		}
+		totalTokens += resp.Usage.TotalTokens
+		if strings.TrimSpace(usedProvider) != "" {
+			lastProvider = usedProvider
+		}
+		if strings.TrimSpace(resp.Model) != "" {
+			lastModel = resp.Model
+		}
+
+		// No tool calls → final answer.
+		if len(resp.ToolCalls) == 0 {
+			completion := nativeToolCompletion{
+				Answer:       resp.Text,
+				Provider:     lastProvider,
+				Model:        lastModel,
+				TokenCount:   totalTokens,
+				Context:      chunks,
+				ToolTraces:   traces,
+				SystemPrompt: systemPrompt,
+			}
+			e.recordNativeAgentInteraction(question, completion)
+			e.publishAgentLoopEvent("agent:loop:final", map[string]any{
+				"step":           step,
+				"max_tool_steps": lim.MaxSteps,
+				"tool_rounds":    len(traces),
+				"tokens_used":    totalTokens,
+				"provider":       lastProvider,
+				"model":          lastModel,
+				"surface":        "native",
+			})
+			e.publishProviderComplete(lastProvider, lastModel, totalTokens)
+			return completion, nil
+		}
+
+		// Append the assistant turn (text + tool_calls) so the model sees its
+		// own previous step on the next round.
+		msgs = append(msgs, provider.Message{
+			Role:      types.RoleAssistant,
+			Content:   resp.Text,
+			ToolCalls: resp.ToolCalls,
+		})
+
+		for _, call := range resp.ToolCalls {
+			trace := nativeToolTrace{
+				Call:       call,
+				Provider:   lastProvider,
+				Model:      lastModel,
+				Step:       step,
+				OccurredAt: time.Now(),
+			}
+			e.publishNativeToolCall(trace)
+
+			res, toolErr := e.Tools.Execute(ctx, call.Name, tools.Request{
+				ProjectRoot: e.ProjectRoot,
+				Params:      call.Input,
+			})
+			if toolErr != nil {
+				trace.Err = toolErr.Error()
+			} else {
+				trace.Result = res
+			}
+			e.publishNativeToolResult(trace)
+			traces = append(traces, trace)
+
+			content, isErr := formatNativeToolResultPayloadWithLimits(res, toolErr, lim.MaxResultChars, lim.MaxDataChars)
+			msgs = append(msgs, provider.Message{
+				Role:       types.RoleUser,
+				Content:    content,
+				ToolCallID: call.ID,
+				ToolName:   call.Name,
+				ToolError:  isErr,
+			})
+		}
+
+		if lim.MaxTokens > 0 && totalTokens >= lim.MaxTokens {
+			e.publishAgentLoopEvent("agent:loop:budget_exhausted", map[string]any{
+				"step":            step,
+				"max_tool_steps":  lim.MaxSteps,
+				"max_tool_tokens": lim.MaxTokens,
+				"tokens_used":     totalTokens,
+				"tool_rounds":     len(traces),
+				"surface":         "native",
+			})
+			return nativeToolCompletion{}, fmt.Errorf("agent tool loop exhausted token budget (%d/%d) after %d tool rounds", totalTokens, lim.MaxTokens, len(traces))
+		}
+
+		if step == lim.MaxSteps {
+			parked := &parkedAgentState{
+				Question:      question,
+				Messages:      msgs,
+				Traces:        traces,
+				Chunks:        chunks,
+				SystemPrompt:  systemPrompt,
+				SystemBlocks:  systemBlocks,
+				Descriptors:   descriptors,
+				ContextTokens: seed.ContextTokens,
+				TotalTokens:   totalTokens,
+				Step:          step,
+				LastProvider:  lastProvider,
+				LastModel:     lastModel,
+			}
+			e.saveParkedAgent(parked)
+			e.publishAgentLoopEvent("agent:loop:parked", map[string]any{
+				"step":           step,
+				"max_tool_steps": lim.MaxSteps,
+				"tool_rounds":    len(traces),
+				"tokens_used":    totalTokens,
+				"surface":        "native",
+			})
+			notice := fmt.Sprintf(
+				"Agent loop parked at step %d (%d tool rounds, ~%d tokens). "+
+					"Type /continue (or devam) to resume, optionally with a note — e.g. /continue focus on the test file.",
+				step, len(traces), totalTokens,
+			)
+			completion := nativeToolCompletion{
+				Answer:       notice,
+				Provider:     lastProvider,
+				Model:        lastModel,
+				TokenCount:   totalTokens,
+				Context:      chunks,
+				ToolTraces:   traces,
+				SystemPrompt: systemPrompt,
+				Parked:       true,
+				ParkedAtStep: step,
+			}
+			return completion, nil
+		}
+	}
+
+	return nativeToolCompletion{}, fmt.Errorf("agent tool loop ended unexpectedly")
+}
+
+// buildNativeToolSystemPromptBundle composes the standard system prompt
+// (project brief, task style, tool-call policy) and folds the short
+// native-mode tool surface block into the *stable* prefix so the whole
+// instruction stack (≈40 extra tokens) is eligible for Anthropic prompt
+// caching alongside the rest of the base template. Returns both the flat
+// text (for providers that ignore caching) and the structured SystemBlocks.
+func (e *Engine) buildNativeToolSystemPromptBundle(question string, chunks []types.ContextChunk) (string, []provider.SystemBlock) {
+	var bundle *promptlib.PromptBundle
+	if e.Context != nil {
+		bundle = e.Context.BuildSystemPromptBundle(
+			e.ProjectRoot,
+			question,
+			chunks,
+			e.ListTools(),
+			e.promptRuntime(),
+		)
+	}
+	bridge := strings.TrimSpace(buildNativeMetaToolInstructions(e.Tools.BackendSpecs()))
+	if bridge == "" {
+		return bundleToSystemBlocks(bundle)
+	}
+	bridgeText := "[DFMC native tool surface]\n" + bridge
+
+	if bundle == nil || len(bundle.Sections) == 0 {
+		composed := &promptlib.PromptBundle{Sections: []promptlib.PromptSection{
+			{Label: "stable", Text: bridgeText, Cacheable: true},
+		}}
+		return bundleToSystemBlocks(composed)
+	}
+
+	sections := make([]promptlib.PromptSection, 0, len(bundle.Sections)+1)
+	injected := false
+	for _, s := range bundle.Sections {
+		if !injected && s.Cacheable {
+			s.Text = strings.TrimSpace(s.Text) + "\n\n" + bridgeText
+			injected = true
+		}
+		sections = append(sections, s)
+	}
+	if !injected {
+		// No cacheable section exists yet (template lacks the cache-break
+		// marker). Prepend a stable section so the tool surface stays
+		// cacheable on its own and the base prompt remains dynamic until a
+		// template author adds a boundary.
+		sections = append([]promptlib.PromptSection{
+			{Label: "stable", Text: bridgeText, Cacheable: true},
+		}, sections...)
+	}
+	return bundleToSystemBlocks(&promptlib.PromptBundle{Sections: sections})
+}
+
+func buildNativeMetaToolInstructions(backend []tools.ToolSpec) string {
+	lines := []string{
+		"You have 4 meta tools that proxy to a richer backend registry:",
+		"  - tool_search(query, limit?) — discover backend tools by topic",
+		"  - tool_help(name)            — fetch full schema/usage for one tool",
+		"  - tool_call(name, args)      — execute a single backend tool",
+		"  - tool_batch_call(calls[])   — execute several backend tools in one round-trip",
+		"Discover before invoking. Cite evidence by file/line. Never dump raw tool output to the user.",
+	}
+	if len(backend) > 0 {
+		preview := backend
+		if len(preview) > 6 {
+			preview = preview[:6]
+		}
+		names := make([]string, 0, len(preview))
+		for _, s := range preview {
+			names = append(names, s.Name)
+		}
+		hint := "Backend registry includes: " + strings.Join(names, ", ")
+		if len(backend) > len(preview) {
+			hint += fmt.Sprintf(" (+%d more — use tool_search to discover)", len(backend)-len(preview))
+		}
+		lines = append(lines, hint)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// metaSpecsToDescriptors converts ToolSpecs into the provider-agnostic
+// ToolDescriptor shape that providers serialize into Anthropic's tools[] or
+// OpenAI's tools[].function entries.
+func metaSpecsToDescriptors(specs []tools.ToolSpec) []provider.ToolDescriptor {
+	out := make([]provider.ToolDescriptor, 0, len(specs))
+	for _, s := range specs {
+		out = append(out, provider.ToolDescriptor{
+			Name:        s.Name,
+			Description: s.Summary,
+			InputSchema: s.JSONSchema(),
+		})
+	}
+	return out
+}
+
+func metaToolNames(descs []provider.ToolDescriptor) []string {
+	names := make([]string, 0, len(descs))
+	for _, d := range descs {
+		names = append(names, d.Name)
+	}
+	return names
+}
+
+// formatNativeToolResultPayloadWithLimits turns a tools.Result + error into
+// the string payload sent back to the model as tool_result content. Failures
+// are signalled with isError=true so the model can pivot rather than retry
+// the same call. maxOutput/maxData = 0 falls back to unbounded trim.
+func formatNativeToolResultPayloadWithLimits(res tools.Result, toolErr error, maxOutput, maxData int) (string, bool) {
+	if toolErr != nil {
+		return "ERROR: " + toolErr.Error(), true
+	}
+	output := strings.TrimSpace(res.Output)
+	hasData := len(res.Data) > 0
+	if output == "" && !hasData {
+		return "(no output)", false
+	}
+	out := trimToolPayload(output, maxOutput)
+	if hasData {
+		if raw, err := json.MarshalIndent(res.Data, "", "  "); err == nil {
+			data := trimToolPayload(string(raw), maxData)
+			if out == "" {
+				out = data
+			} else {
+				out = out + "\n\nDATA:\n" + data
+			}
+		}
+	}
+	if res.Truncated {
+		out += "\n\n(output truncated by sandbox)"
+	}
+	return out, false
+}
+
+func (e *Engine) recordNativeAgentInteraction(question string, completion nativeToolCompletion) {
+	now := time.Now()
+	assistantMsg := types.Message{
+		Role:      types.RoleAssistant,
+		Content:   completion.Answer,
+		Timestamp: now,
+		TokenCnt:  completion.TokenCount,
+		Metadata: map[string]string{
+			"provider":    completion.Provider,
+			"model":       completion.Model,
+			"tool_rounds": fmt.Sprintf("%d", len(completion.ToolTraces)),
+			"surface":     "native",
+		},
+	}
+	for _, trace := range completion.ToolTraces {
+		callMetadata := map[string]string{
+			"provider":     trace.Provider,
+			"model":        trace.Model,
+			"step":         fmt.Sprintf("%d", trace.Step),
+			"tool_call_id": trace.Call.ID,
+		}
+		resultMetadata := map[string]string{
+			"provider":     trace.Provider,
+			"model":        trace.Model,
+			"step":         fmt.Sprintf("%d", trace.Step),
+			"tool_call_id": trace.Call.ID,
+		}
+		if trace.Err != "" {
+			resultMetadata["error"] = trace.Err
+		}
+		assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, types.ToolCallRecord{
+			Name:      trace.Call.Name,
+			Params:    trace.Call.Input,
+			Timestamp: trace.OccurredAt,
+			Metadata:  callMetadata,
+		})
+		assistantMsg.Results = append(assistantMsg.Results, types.ToolResultRecord{
+			Name:      trace.Call.Name,
+			Output:    strings.TrimSpace(trace.Result.Output),
+			Success:   trace.Err == "",
+			Timestamp: trace.OccurredAt,
+			Metadata:  resultMetadata,
+		})
+	}
+
+	if e.Conversation != nil {
+		e.Conversation.AddMessage(completion.Provider, completion.Model, types.Message{
+			Role:      types.RoleUser,
+			Content:   question,
+			Timestamp: now,
+		})
+		e.Conversation.AddMessage(completion.Provider, completion.Model, assistantMsg)
+	}
+	if e.Memory != nil {
+		e.Memory.SetWorkingQuestionAnswer(question, completion.Answer)
+		for _, ch := range completion.Context {
+			e.Memory.TouchFile(ch.Path)
+		}
+		_ = e.Memory.AddEpisodicInteraction(e.ProjectRoot, question, completion.Answer, 0.75)
+	}
+}
+
+func (e *Engine) publishNativeToolCall(trace nativeToolTrace) {
+	if e.EventBus == nil {
+		return
+	}
+	e.EventBus.Publish(Event{
+		Type:   "tool:call",
+		Source: "engine",
+		Payload: map[string]any{
+			"tool":           trace.Call.Name,
+			"params":         trace.Call.Input,
+			"params_preview": formatToolParamsPreview(trace.Call.Input, 180),
+			"step":           trace.Step,
+			"provider":       trace.Provider,
+			"model":          trace.Model,
+			"tool_call_id":   trace.Call.ID,
+			"surface":        "native",
+		},
+	})
+}
+
+func (e *Engine) publishNativeToolResult(trace nativeToolTrace) {
+	if e.EventBus == nil {
+		return
+	}
+	payload := map[string]any{
+		"tool":           trace.Call.Name,
+		"success":        trace.Err == "",
+		"durationMs":     trace.Result.DurationMs,
+		"step":           trace.Step,
+		"provider":       trace.Provider,
+		"model":          trace.Model,
+		"truncated":      trace.Result.Truncated,
+		"output_preview": compactToolPayload(trace.Result.Output, 180),
+		"tool_call_id":   trace.Call.ID,
+		"surface":        "native",
+	}
+	if trace.Err != "" {
+		payload["error"] = trace.Err
+	}
+	e.EventBus.Publish(Event{
+		Type:    "tool:result",
+		Source:  "engine",
+		Payload: payload,
+	})
+}

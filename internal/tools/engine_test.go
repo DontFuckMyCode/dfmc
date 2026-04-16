@@ -44,6 +44,34 @@ func TestReadFileToolBoundary(t *testing.T) {
 	}
 }
 
+// TestReadFileToolOutOfRangeLineStartDoesNotPanic pins a previous crash where
+// a model passed line_start beyond EOF (e.g. 400 on a 213-line file) and the
+// tool panicked with "slice bounds out of range". The tool must degrade to an
+// empty segment with a sane line range instead.
+func TestReadFileToolOutOfRangeLineStartDoesNotPanic(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "small.txt")
+	if err := os.WriteFile(file, []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	res, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":       "small.txt",
+			"line_start": 400,
+			"line_end":   500,
+		},
+	})
+	if err != nil {
+		t.Fatalf("out-of-range read_file should not error, got: %v", err)
+	}
+	if strings.TrimSpace(res.Output) != "" {
+		t.Fatalf("expected empty segment for out-of-range line_start, got: %q", res.Output)
+	}
+}
+
 func TestGrepTool(t *testing.T) {
 	tmp := t.TempDir()
 	file := filepath.Join(tmp, "main.go")

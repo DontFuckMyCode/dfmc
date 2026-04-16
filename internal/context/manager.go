@@ -12,6 +12,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -163,8 +164,21 @@ func (m *Manager) BuildSystemPrompt(projectRoot, query string, chunks []types.Co
 }
 
 func (m *Manager) BuildSystemPromptWithRuntime(projectRoot, query string, chunks []types.ContextChunk, tools []string, runtime PromptRuntime) string {
+	return m.BuildSystemPromptBundle(projectRoot, query, chunks, tools, runtime).Text()
+}
+
+// BuildSystemPromptBundle is the cache-boundary-aware sibling of
+// BuildSystemPromptWithRuntime. It returns the rendered prompt as an
+// ordered list of PromptSections so providers that support prompt caching
+// (Anthropic) can emit cache_control annotations on the stable prefix.
+// Callers that need a flat string should call bundle.Text().
+func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []types.ContextChunk, tools []string, runtime PromptRuntime) *promptlib.PromptBundle {
 	if m == nil || m.prompts == nil {
-		return "You are DFMC, a code intelligence assistant. Be concise, practical, and safe."
+		return &promptlib.PromptBundle{
+			Sections: []promptlib.PromptSection{
+				{Label: "fallback", Text: "You are DFMC, a code intelligence assistant. Be concise, practical, and safe.", Cacheable: true},
+			},
+		}
 	}
 	_ = m.prompts.LoadOverrides(projectRoot)
 
@@ -174,7 +188,7 @@ func (m *Manager) BuildSystemPromptWithRuntime(projectRoot, query string, chunks
 	profile := ResolvePromptProfile(query, task, runtime)
 	limits := ResolvePromptRenderBudget(task, profile, runtime)
 	injected := BuildInjectedContextWithBudget(projectRoot, query, limits)
-	prompt := m.prompts.Render(promptlib.RenderRequest{
+	bundle := m.prompts.RenderBundle(promptlib.RenderRequest{
 		Type:     "system",
 		Task:     task,
 		Language: language,
@@ -196,9 +210,40 @@ func (m *Manager) BuildSystemPromptWithRuntime(projectRoot, query string, chunks
 		},
 	})
 	if budget := PromptTokenBudget(task, profile, runtime); budget > 0 {
-		prompt = trimToTokenBudget(prompt, budget)
+		bundle = trimBundleToBudget(bundle, budget)
 	}
-	return prompt
+	return bundle
+}
+
+// trimBundleToBudget applies a token cap across the bundle, preserving the
+// stable prefix whenever possible — dynamic sections are trimmed first
+// since they change every request anyway. Falls back to trimming the last
+// section if the stable prefix alone still exceeds the budget.
+func trimBundleToBudget(bundle *promptlib.PromptBundle, budget int) *promptlib.PromptBundle {
+	if bundle == nil || budget <= 0 || len(bundle.Sections) == 0 {
+		return bundle
+	}
+	out := &promptlib.PromptBundle{Sections: make([]promptlib.PromptSection, 0, len(bundle.Sections))}
+	remaining := budget
+	for _, s := range bundle.Sections {
+		if remaining <= 0 {
+			break
+		}
+		text := s.Text
+		if tok := estimateTokens(text); tok > remaining {
+			text = trimToTokenBudget(text, remaining)
+		}
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		out.Sections = append(out.Sections, promptlib.PromptSection{
+			Label:     s.Label,
+			Text:      text,
+			Cacheable: s.Cacheable,
+		})
+		remaining -= estimateTokens(text)
+	}
+	return out
 }
 
 func tokenizeQuery(query string) []string {
@@ -263,7 +308,7 @@ func extractSnippet(content string, terms []string, maxLines int) (string, int, 
 }
 
 func estimateTokens(content string) int {
-	return len(strings.Fields(content))
+	return tokens.Estimate(content)
 }
 
 func summarizeContextFiles(projectRoot string, chunks []types.ContextChunk, limit int) string {
@@ -644,9 +689,9 @@ func PromptTokenBudget(task, profile string, runtime PromptRuntime) int {
 		budget = int(float64(budget) * 0.82)
 	}
 	if runtime.MaxContext > 0 {
-		cap := runtime.MaxContext / 7
-		if cap < 220 {
-			cap = 220
+		cap := runtime.MaxContext / 5
+		if cap < 380 {
+			cap = 380
 		}
 		if cap > 2600 {
 			cap = 2600
@@ -655,8 +700,8 @@ func PromptTokenBudget(task, profile string, runtime PromptRuntime) int {
 			budget = cap
 		}
 	}
-	if budget < 220 {
-		budget = 220
+	if budget < 380 {
+		budget = 380
 	}
 	return budget
 }
@@ -896,23 +941,7 @@ func compressContent(raw string, terms []string, lang, level string, maxTokens i
 }
 
 func trimToTokenBudget(content string, maxTokens int) string {
-	if maxTokens <= 0 {
-		return ""
-	}
-	words := strings.Fields(content)
-	if len(words) <= maxTokens {
-		return strings.TrimSpace(content)
-	}
-	suffix := "... [truncated for token budget]"
-	suffixTokens := estimateTokens(suffix)
-	if maxTokens <= suffixTokens {
-		return strings.Join(words[:maxTokens], " ")
-	}
-	limit := maxTokens - suffixTokens
-	if limit <= 0 {
-		limit = maxTokens
-	}
-	return strings.Join(words[:limit], " ") + "\n" + suffix
+	return tokens.TrimToBudget(content, maxTokens, "... [truncated for token budget]")
 }
 
 func stripComments(content string) string {

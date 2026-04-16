@@ -49,48 +49,21 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 	}
 	model := nonEmpty(req.Model, p.model)
 
-	type textBlock struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	type message struct {
-		Role    string      `json:"role"`
-		Content []textBlock `json:"content"`
-	}
-
-	messages := make([]message, 0, len(req.Messages)+1)
-	for _, m := range req.Messages {
-		role := string(m.Role)
-		if role == "" {
-			role = "user"
-		}
-		if role == "system" {
-			// System prompt goes to top-level `system` field in Anthropic API.
-			continue
-		}
-		messages = append(messages, message{
-			Role: role,
-			Content: []textBlock{
-				{Type: "text", Text: m.Content},
-			},
-		})
-	}
-	if len(req.Context) > 0 {
-		messages = append(messages, message{
-			Role: "user",
-			Content: []textBlock{
-				{Type: "text", Text: renderContextChunks(req.Context)},
-			},
-		})
-	}
+	messages := buildAnthropicMessages(req)
 
 	payload := map[string]any{
 		"model":      model,
 		"max_tokens": p.requestMaxTokens(),
 		"messages":   messages,
 	}
-	if strings.TrimSpace(req.System) != "" {
-		payload["system"] = req.System
+	if sys := anthropicSystemPayload(req); sys != nil {
+		payload["system"] = sys
+	}
+	if len(req.Tools) > 0 {
+		payload["tools"] = anthropicToolDescriptors(req.Tools)
+		if choice := anthropicToolChoice(req.ToolChoice); choice != nil {
+			payload["tool_choice"] = choice
+		}
 	}
 
 	body, err := json.Marshal(payload)
@@ -125,27 +98,19 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 	}
 
 	var parsed struct {
-		Model string `json:"model"`
-		Usage struct {
+		Model      string `json:"model"`
+		StopReason string `json:"stop_reason"`
+		Usage      struct {
 			InputTokens  int `json:"input_tokens"`
 			OutputTokens int `json:"output_tokens"`
 		} `json:"usage"`
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
+		Content []anthropicContentBlock `json:"content"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return nil, fmt.Errorf("decode anthropic response: %w", err)
 	}
 
-	var b strings.Builder
-	for _, c := range parsed.Content {
-		if c.Type == "text" {
-			b.WriteString(c.Text)
-		}
-	}
-	text := b.String()
+	text, toolCalls := splitAnthropicContent(parsed.Content)
 	usage := Usage{
 		InputTokens:  parsed.Usage.InputTokens,
 		OutputTokens: parsed.Usage.OutputTokens,
@@ -158,9 +123,11 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 	}
 
 	return &CompletionResponse{
-		Text:  text,
-		Model: nonEmpty(parsed.Model, model),
-		Usage: usage,
+		Text:       text,
+		Model:      nonEmpty(parsed.Model, model),
+		Usage:      usage,
+		ToolCalls:  toolCalls,
+		StopReason: anthropicStopReason(parsed.StopReason),
 	}, nil
 }
 
@@ -170,39 +137,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 	}
 	model := nonEmpty(req.Model, p.model)
 
-	type textBlock struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	type message struct {
-		Role    string      `json:"role"`
-		Content []textBlock `json:"content"`
-	}
-
-	messages := make([]message, 0, len(req.Messages)+1)
-	for _, m := range req.Messages {
-		role := string(m.Role)
-		if role == "" {
-			role = "user"
-		}
-		if role == "system" {
-			continue
-		}
-		messages = append(messages, message{
-			Role: role,
-			Content: []textBlock{
-				{Type: "text", Text: m.Content},
-			},
-		})
-	}
-	if len(req.Context) > 0 {
-		messages = append(messages, message{
-			Role: "user",
-			Content: []textBlock{
-				{Type: "text", Text: renderContextChunks(req.Context)},
-			},
-		})
-	}
+	messages := buildAnthropicMessages(req)
 
 	payload := map[string]any{
 		"model":      model,
@@ -210,8 +145,14 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 		"messages":   messages,
 		"stream":     true,
 	}
-	if strings.TrimSpace(req.System) != "" {
-		payload["system"] = req.System
+	if sys := anthropicSystemPayload(req); sys != nil {
+		payload["system"] = sys
+	}
+	if len(req.Tools) > 0 {
+		payload["tools"] = anthropicToolDescriptors(req.Tools)
+		if choice := anthropicToolChoice(req.ToolChoice); choice != nil {
+			payload["tool_choice"] = choice
+		}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -245,6 +186,27 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 		sc := bufio.NewScanner(resp.Body)
 		sc.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
+		// Running model/usage/stop_reason snapshot assembled from Anthropic's
+		// message_start / message_delta frames. Populated on StreamDone so
+		// downstream consumers don't need a separate Complete call.
+		resolvedModel := model
+		startAnnounced := false
+		usage := Usage{}
+		usageSet := false
+		stopReason := StopUnknown
+
+		emitStart := func() {
+			if startAnnounced {
+				return
+			}
+			startAnnounced = true
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- StreamEvent{Type: StreamStart, Provider: "anthropic", Model: resolvedModel}:
+			}
+		}
+
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())
 			if line == "" || strings.HasPrefix(line, ":") || strings.HasPrefix(line, "event:") {
@@ -265,9 +227,21 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 			var evt struct {
 				Type  string `json:"type"`
 				Delta struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
+					Type       string `json:"type"`
+					Text       string `json:"text"`
+					StopReason string `json:"stop_reason"`
 				} `json:"delta"`
+				Message struct {
+					Model string `json:"model"`
+					Usage struct {
+						InputTokens  int `json:"input_tokens"`
+						OutputTokens int `json:"output_tokens"`
+					} `json:"usage"`
+				} `json:"message"`
+				Usage struct {
+					InputTokens  int `json:"input_tokens"`
+					OutputTokens int `json:"output_tokens"`
+				} `json:"usage"`
 				Error struct {
 					Message string `json:"message"`
 				} `json:"error"`
@@ -276,7 +250,21 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 				continue
 			}
 			switch evt.Type {
+			case "message_start":
+				if strings.TrimSpace(evt.Message.Model) != "" {
+					resolvedModel = evt.Message.Model
+				}
+				if evt.Message.Usage.InputTokens > 0 {
+					usage.InputTokens = evt.Message.Usage.InputTokens
+					usageSet = true
+				}
+				if evt.Message.Usage.OutputTokens > 0 {
+					usage.OutputTokens = evt.Message.Usage.OutputTokens
+					usageSet = true
+				}
+				emitStart()
 			case "content_block_delta":
+				emitStart()
 				if evt.Delta.Text != "" {
 					select {
 					case <-ctx.Done():
@@ -285,8 +273,23 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 					case ch <- StreamEvent{Type: StreamDelta, Delta: evt.Delta.Text}:
 					}
 				}
+			case "message_delta":
+				if strings.TrimSpace(evt.Delta.StopReason) != "" {
+					stopReason = anthropicStopReason(evt.Delta.StopReason)
+				}
+				if evt.Usage.OutputTokens > 0 {
+					usage.OutputTokens = evt.Usage.OutputTokens
+					usageSet = true
+				}
 			case "message_stop":
-				ch <- StreamEvent{Type: StreamDone}
+				emitStart()
+				done := StreamEvent{Type: StreamDone, Provider: "anthropic", Model: resolvedModel, StopReason: stopReason}
+				if usageSet {
+					u := usage
+					u.TotalTokens = u.InputTokens + u.OutputTokens
+					done.Usage = &u
+				}
+				ch <- done
 				return
 			case "error":
 				msg := strings.TrimSpace(evt.Error.Message)
@@ -301,7 +304,14 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 			ch <- StreamEvent{Type: StreamError, Err: err}
 			return
 		}
-		ch <- StreamEvent{Type: StreamDone}
+		emitStart()
+		done := StreamEvent{Type: StreamDone, Provider: "anthropic", Model: resolvedModel, StopReason: stopReason}
+		if usageSet {
+			u := usage
+			u.TotalTokens = u.InputTokens + u.OutputTokens
+			done.Usage = &u
+		}
+		ch <- done
 	}()
 
 	return ch, nil
@@ -356,12 +366,13 @@ func (p *AnthropicProvider) MaxContext() int {
 
 func (p *AnthropicProvider) Hints() ProviderHints {
 	return ProviderHints{
-		ToolStyle:   "tool_use",
-		Cache:       true,
-		LowLatency:  false,
-		BestFor:     []string{"review", "reasoning", "long-context"},
-		MaxContext:  p.MaxContext(),
-		DefaultMode: "high",
+		ToolStyle:     "tool_use",
+		Cache:         true,
+		LowLatency:    false,
+		BestFor:       []string{"review", "reasoning", "long-context"},
+		MaxContext:    p.MaxContext(),
+		DefaultMode:   "high",
+		SupportsTools: true,
 	}
 }
 

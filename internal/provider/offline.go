@@ -75,6 +75,7 @@ func (p *OfflineProvider) Stream(ctx context.Context, req CompletionRequest) (<-
 			ch <- StreamEvent{Type: StreamError, Err: err}
 			return
 		}
+		ch <- StreamEvent{Type: StreamStart, Provider: p.Name(), Model: resp.Model}
 		lines := strings.Split(resp.Text, "\n")
 		for _, line := range lines {
 			select {
@@ -84,7 +85,14 @@ func (p *OfflineProvider) Stream(ctx context.Context, req CompletionRequest) (<-
 			case ch <- StreamEvent{Type: StreamDelta, Delta: line + "\n"}:
 			}
 		}
-		ch <- StreamEvent{Type: StreamDone}
+		usage := resp.Usage
+		ch <- StreamEvent{
+			Type:       StreamDone,
+			Provider:   p.Name(),
+			Model:      resp.Model,
+			Usage:      &usage,
+			StopReason: StopEnd,
+		}
 	}()
 	return ch, nil
 }

@@ -26,6 +26,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
+	"github.com/dontfuckmycode/dfmc/internal/commands"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
@@ -67,6 +68,10 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 
 	switch cmd {
 	case "help", "-h", "--help":
+		if len(cmdArgs) > 0 {
+			printCommandHelp(cmdArgs[0])
+			return 0
+		}
 		printHelp()
 		return 0
 	case "status":
@@ -6443,38 +6448,33 @@ func trimWords(text string, maxWords int) string {
 	return strings.Join(words[:maxWords], " ")
 }
 
+// printHelp renders the top-level help text. Command listing comes from the
+// shared commands.Registry so CLI, TUI, and web stay in sync; the global-flags
+// block is CLI-only and stays hardcoded here.
 func printHelp() {
-	fmt.Println(`Usage: dfmc [global flags] <command> [args]
+	fmt.Println(renderCLIHelp(""))
+}
 
-Commands:
-  status      Runtime status snapshot
-  init        Initialize DFMC in project
-  chat        Interactive chat session
-  tui         Terminal workbench (chat/status/patch)
-  ask         One-shot question
-  analyze     Analyze codebase
-  scan        Quick security scan
-  map         Generate/display codemap
-  tool        Tool engine (list/run)
-  conversation Conversation management (list/search/load/save/undo/branch)
-  memory      Memory management
-  config      Configuration management (list/get/set/edit)
-  context     Context budget and recent files
-  prompt      Prompt library management (list/render)
-  magicdoc    Build/show concise project magic doc
-  plugin      Plugin management (list/info/install/remove/enable/disable)
-  skill       Skill management (list/info/run)
-  serve       Start Web API server
-  remote      Remote control server (status/probe/events/ask/tool/tools/skill/skills/prompt/analyze/context/files/memory/conversation+branch/codemap/start)
-  doctor      Environment and config health checks
-  completion  Generate shell completion scripts
-  man         Generate command manual page
-  review      Code review shortcut
-  explain     Explain code shortcut
-  refactor    Refactor code shortcut
-  test        Test generation shortcut
-  doc         Documentation shortcut
-  version     Version info
+// printCommandHelp renders a single-command detail view, or falls back to the
+// full catalog when the name is unknown.
+func printCommandHelp(name string) {
+	reg := commands.DefaultRegistry()
+	if detail := reg.RenderCommandHelp(name); detail != "" {
+		fmt.Println(detail)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", name)
+	fmt.Println(renderCLIHelp(""))
+}
+
+func renderCLIHelp(extraHeader string) string {
+	reg := commands.DefaultRegistry()
+	header := "Usage: dfmc [global flags] <command> [args]"
+	if extraHeader != "" {
+		header = extraHeader + "\n\n" + header
+	}
+	body := reg.RenderHelp(commands.SurfaceCLI, header)
+	globalFlags := `
 
 Global flags:
   --provider  LLM provider override
@@ -6483,7 +6483,10 @@ Global flags:
   --verbose   Verbose output
   --json      JSON output mode
   --no-color  Disable colors
-  --project   Project root path`)
+  --project   Project root path
+
+Run "dfmc help <command>" for details on a specific command.`
+	return body + globalFlags
 }
 
 func printJSON(v any) error {

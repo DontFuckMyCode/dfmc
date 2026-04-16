@@ -52,6 +52,20 @@ func DefaultConfig() *Config {
 				Timeout:         "30s",
 			},
 		},
+		Agent: AgentConfig{
+			MaxToolSteps:           25,
+			MaxToolTokens:          120000,
+			MaxToolResultChars:     3200,
+			MaxToolResultDataChars: 1200,
+			ParallelBatchSize:      4,
+			ContextLifecycle: ContextLifecycleConfig{
+				Enabled:                   true,
+				AutoCompactThresholdRatio: 0.7,
+				KeepRecentRounds:          3,
+				HandoffBriefMaxTokens:     500,
+				AutoHandoffThresholdRatio: 0.9,
+			},
+		},
 		Hooks: HooksConfig{Entries: map[string][]HookEntry{}},
 		Plugins: PluginsConfig{
 			Directory: filepath.Join(UserConfigDir(), "plugins"),

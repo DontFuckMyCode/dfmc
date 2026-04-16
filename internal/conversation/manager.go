@@ -69,11 +69,29 @@ func New(store *storage.Store) *Manager {
 	}
 }
 
+// newConversationID returns a fresh conversation ID that is guaranteed not
+// to collide with the currently-active conversation (if any). The base is a
+// human-friendly millisecond timestamp; on collision we fall back to the
+// full nanosecond clock so rapid-fire Start() calls — e.g. an auto-handoff
+// firing in the same millisecond the previous session was created — still
+// produce unique IDs.
+func newConversationID(active *Conversation, tag string) string {
+	now := time.Now()
+	base := "conv_" + now.Format("20060102_150405.000")
+	if tag != "" {
+		base += "_" + tag
+	}
+	if active == nil || active.ID != base {
+		return base
+	}
+	return base + "_" + fmt.Sprintf("%09d", now.Nanosecond()%1_000_000_000)
+}
+
 func (m *Manager) Start(provider, model string) *Conversation {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	id := "conv_" + time.Now().Format("20060102_150405.000")
+	id := newConversationID(m.active, "")
 	c := &Conversation{
 		ID:        id,
 		Provider:  provider,
@@ -99,7 +117,7 @@ func (m *Manager) ensureActiveLocked(provider, model string) {
 	if m.active != nil {
 		return
 	}
-	id := "conv_" + time.Now().Format("20060102_150405.000")
+	id := newConversationID(m.active, "")
 	m.active = &Conversation{
 		ID:        id,
 		Provider:  provider,

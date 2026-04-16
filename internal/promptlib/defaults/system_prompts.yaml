@@ -15,15 +15,6 @@ templates:
       Project brief:
       {{project_brief}}
 
-      User request:
-      {{user_query}}
-
-      Context files:
-      {{context_files}}
-
-      Injected code:
-      {{injected_context}}
-
       Tool catalog:
       {{tools_overview}}
 
@@ -38,6 +29,17 @@ templates:
       - Keep scope minimal, reversible, and testable.
       - Surface uncertainty explicitly and resolve it with focused tool calls.
       - Never invent files, commands, or results.
+
+      <<DFMC_CACHE_BREAK>>
+
+      User request:
+      {{user_query}}
+
+      Context files:
+      {{context_files}}
+
+      Injected code:
+      {{injected_context}}
 
   - id: system.profile.compact
     type: system

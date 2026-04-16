@@ -29,12 +29,57 @@ type Config struct {
 	Memory    MemoryConfig    `yaml:"memory"`
 	Security  SecurityConfig  `yaml:"security"`
 	Tools     ToolsConfig     `yaml:"tools"`
+	Agent     AgentConfig     `yaml:"agent"`
 	Hooks     HooksConfig     `yaml:"hooks"`
 	Plugins   PluginsConfig   `yaml:"plugins"`
 	TUI       TUIConfig       `yaml:"tui"`
 	Web       WebConfig       `yaml:"web"`
 	Remote    RemoteConfig    `yaml:"remote"`
 	Project   ProjectConfig   `yaml:"project"`
+}
+
+// AgentConfig bounds the native tool loop so a runaway model can't drain a
+// budget. All fields have defaults in DefaultConfig; zero values fall back.
+type AgentConfig struct {
+	// MaxToolSteps caps the number of model<->tool round-trips.
+	MaxToolSteps int `yaml:"max_tool_steps"`
+	// MaxToolTokens is the hard token budget across all provider calls in a
+	// single agent loop. Zero disables the budget.
+	MaxToolTokens int `yaml:"max_tool_tokens"`
+	// MaxToolResultChars trims the text output sent back as tool_result.
+	MaxToolResultChars int `yaml:"max_tool_result_chars"`
+	// MaxToolResultDataChars trims the JSON `data` payload of tool_result.
+	MaxToolResultDataChars int `yaml:"max_tool_result_data_chars"`
+	// ParallelBatchSize caps the concurrency of tool_batch_call dispatch.
+	// Reserved for S4; not consumed yet.
+	ParallelBatchSize int `yaml:"parallel_batch_size"`
+
+	// ContextLifecycle governs offline auto-compaction of in-loop history so
+	// token spend stays flat even across many tool rounds. Strictly offline —
+	// no extra LLM call — to honour DFMC's token-miser promise.
+	ContextLifecycle ContextLifecycleConfig `yaml:"context_lifecycle"`
+}
+
+type ContextLifecycleConfig struct {
+	// Enabled toggles auto-compaction. Default true; set false to always send
+	// the full rolling history to the provider.
+	Enabled bool `yaml:"enabled"`
+	// AutoCompactThresholdRatio is the share of the provider's context window
+	// (estimated tokens / provider_max_context) above which auto-compact
+	// fires. 0.7 means compact when >70% of the window is in use.
+	AutoCompactThresholdRatio float64 `yaml:"auto_compact_threshold_ratio"`
+	// KeepRecentRounds is the number of most-recent tool rounds preserved
+	// verbatim when compacting. Older rounds collapse into a single summary.
+	KeepRecentRounds int `yaml:"keep_recent_rounds"`
+	// HandoffBriefMaxTokens caps the size of the auto-new-session handoff
+	// brief injected as seed context when auto-new-session fires.
+	HandoffBriefMaxTokens int `yaml:"handoff_brief_max_tokens"`
+	// AutoHandoffThresholdRatio is the share of the provider's context window
+	// above which — even after compaction — a fresh conversation is started
+	// seeded with a handoff brief. Must be strictly above
+	// AutoCompactThresholdRatio so compaction always gets the first try.
+	// Default 0.9 (trip when >90% of the window is still in use).
+	AutoHandoffThresholdRatio float64 `yaml:"auto_handoff_threshold_ratio"`
 }
 
 type ProvidersConfig struct {

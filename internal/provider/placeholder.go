@@ -50,7 +50,7 @@ func (p *PlaceholderProvider) Stream(ctx context.Context, req CompletionRequest)
 	if !p.configured {
 		return nil, fmt.Errorf("%w: %s api key missing", ErrProviderUnavailable, p.name)
 	}
-	ch := make(chan StreamEvent, 2)
+	ch := make(chan StreamEvent, 3)
 	go func() {
 		defer close(ch)
 		resp, err := p.Complete(ctx, req)
@@ -58,8 +58,16 @@ func (p *PlaceholderProvider) Stream(ctx context.Context, req CompletionRequest)
 			ch <- StreamEvent{Type: StreamError, Err: err}
 			return
 		}
+		ch <- StreamEvent{Type: StreamStart, Provider: p.name, Model: resp.Model}
 		ch <- StreamEvent{Type: StreamDelta, Delta: resp.Text}
-		ch <- StreamEvent{Type: StreamDone}
+		usage := resp.Usage
+		ch <- StreamEvent{
+			Type:       StreamDone,
+			Provider:   p.name,
+			Model:      resp.Model,
+			Usage:      &usage,
+			StopReason: resp.StopReason,
+		}
 	}()
 	return ch, nil
 }

@@ -36,11 +36,14 @@ func (t *ReadFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	if start < 1 {
 		start = 1
 	}
+	if start > len(lines)+1 {
+		start = len(lines) + 1
+	}
 	if end > len(lines) {
 		end = len(lines)
 	}
-	if end < start {
-		end = start
+	if end < start-1 {
+		end = start - 1
 	}
 
 	segment := strings.Join(lines[start-1:end], "\n")
