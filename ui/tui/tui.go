@@ -232,6 +232,15 @@ type Model struct {
 	memoryErr          string
 	memorySearchActive bool
 
+	// CodeMap panel state — snapshot of the symbol/dep graph from
+	// internal/codemap. View rotates overview/hotspots/orphans/cycles.
+	codemapSnap    codemapSnapshot
+	codemapView    string
+	codemapScroll  int
+	codemapLoading bool
+	codemapErr     string
+	codemapLoaded  bool
+
 	agentLoopActive        bool
 	agentLoopStep          int
 	agentLoopMaxToolStep   int
@@ -361,9 +370,10 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	return Model{
 		ctx:               ctx,
 		eng:               eng,
-		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory"},
+		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap"},
 		activityFollow:    true,
 		memoryTier:        memoryTierAll,
+		codemapView:       codemapViewOverview,
 		streamIndex:       -1,
 		inputHistoryIndex: -1,
 		toolOverrides: map[string]string{},
@@ -542,6 +552,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.memoryScroll >= len(m.memoryEntries) {
 			m.memoryScroll = 0
+		}
+		return m, nil
+
+	case codemapLoadedMsg:
+		m.codemapLoading = false
+		m.codemapLoaded = true
+		if msg.err != nil {
+			m.codemapErr = msg.err.Error()
+			return m, nil
+		}
+		m.codemapErr = ""
+		m.codemapSnap = msg.snap
+		if m.codemapScroll >= codemapViewRowCount(m.codemapView, m.codemapSnap) {
+			m.codemapScroll = 0
 		}
 		return m, nil
 
@@ -753,6 +777,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, loadMemoryCmd(m.eng, m.memoryTier)
 			}
 			return m, nil
+		case "f9", "alt+9":
+			m.activeTab = 8
+			if !m.codemapLoaded && !m.codemapLoading {
+				m.codemapLoading = true
+				return m, loadCodemapCmd(m.eng)
+			}
+			return m, nil
 		}
 
 		switch m.tabs[m.activeTab] {
@@ -795,6 +826,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleActivityKey(msg)
 		case "Memory":
 			return m.handleMemoryKey(msg)
+		case "CodeMap":
+			return m.handleCodemapKey(msg)
 		}
 	}
 	return m, nil
@@ -3831,6 +3864,8 @@ func (m Model) renderActiveView(width int, height int) string {
 		content = fitPanelContentHeight(m.renderActivityView(contentWidth), innerHeight)
 	case "Memory":
 		content = fitPanelContentHeight(m.renderMemoryView(contentWidth), innerHeight)
+	case "CodeMap":
+		content = fitPanelContentHeight(m.renderCodemapView(contentWidth), innerHeight)
 	default:
 		// Chat view is special — the input box (tail) must never be hidden
 		// or the user stops being able to type. We render head and tail
@@ -4707,7 +4742,7 @@ func (m Model) renderHelpOverlay(width int) string {
 	lines = append(lines,
 		"",
 		boldStyle.Render("Global"),
-		"  ctrl+p palette · alt+1..8 or f1..f8 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
+		"  ctrl+p palette · alt+1..9 or f1..f9 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
 		"  esc cancels current stream · ctrl+c interrupts · ctrl+u clear input",
 		"",
 		boldStyle.Render("Chat composer"),
