@@ -268,6 +268,13 @@ func defaultCommands() []Command {
 			Surfaces: SurfaceCLI,
 			Usage:    "tui",
 		},
+		{
+			Name:     "mcp",
+			Summary:  "Serve DFMC tools to MCP-compatible hosts over stdio (JSON-RPC 2.0).",
+			Category: CategoryServer,
+			Surfaces: SurfaceCLI,
+			Usage:    "mcp",
+		},
 
 		// ---------------- System ----------------
 		{

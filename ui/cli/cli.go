@@ -118,6 +118,8 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runRemote(ctx, eng, cmdArgs, opts.JSON)
 	case "doctor":
 		return runDoctor(ctx, eng, cmdArgs, opts.JSON)
+	case "mcp":
+		return runMCP(ctx, eng, cmdArgs, version)
 	case "completion":
 		return runCompletion(cmdArgs, opts.JSON)
 	case "man":
