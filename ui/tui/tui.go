@@ -297,6 +297,14 @@ type Model struct {
 	contextErr         string
 	contextInputActive bool
 
+	// Providers panel state — diagnostic view over the provider router.
+	// Rows are cached (refresh on 'r' or first tab activation) because
+	// Hints() is cheap but there's no point redoing the walk on every
+	// keystroke.
+	providersRows   []providerRow
+	providersScroll int
+	providersErr    string
+
 	agentLoopActive        bool
 	agentLoopStep          int
 	agentLoopMaxToolStep   int
@@ -426,7 +434,7 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	return Model{
 		ctx:               ctx,
 		eng:               eng,
-		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context"},
+		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers"},
 		activityFollow:    true,
 		memoryTier:        memoryTierAll,
 		codemapView:       codemapViewOverview,
@@ -921,6 +929,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// just flip the tab; the empty state teaches what e/enter do.
 			m.activeTab = 13
 			return m, nil
+		case "alt+o":
+			// Providers — o for "prOviders". Router walk is synchronous
+			// and cheap, so we populate on first activation rather than
+			// dispatching a tea.Cmd.
+			m.activeTab = 14
+			if len(m.providersRows) == 0 && m.providersErr == "" {
+				m = m.refreshProvidersRows()
+			}
+			return m, nil
 		}
 
 		switch m.tabs[m.activeTab] {
@@ -975,6 +992,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handlePlansKey(msg)
 		case "Context":
 			return m.handleContextKey(msg)
+		case "Providers":
+			return m.handleProvidersKey(msg)
 		}
 	}
 	return m, nil
@@ -4023,6 +4042,8 @@ func (m Model) renderActiveView(width int, height int) string {
 		content = fitPanelContentHeight(m.renderPlansView(contentWidth), innerHeight)
 	case "Context":
 		content = fitPanelContentHeight(m.renderContextView(contentWidth), innerHeight)
+	case "Providers":
+		content = fitPanelContentHeight(m.renderProvidersView(contentWidth), innerHeight)
 	default:
 		// Chat view is special — the input box (tail) must never be hidden
 		// or the user stops being able to type. We render head and tail
@@ -4899,7 +4920,7 @@ func (m Model) renderHelpOverlay(width int) string {
 	lines = append(lines,
 		"",
 		boldStyle.Render("Global"),
-		"  ctrl+p palette · alt+1..0/alt+t/alt+y/alt+w or f1..f12 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
+		"  ctrl+p palette · alt+1..0/alt+t/alt+y/alt+w/alt+o or f1..f12 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
 		"  esc cancels current stream · ctrl+c interrupts · ctrl+u clear input",
 		"",
 		boldStyle.Render("Chat composer"),
@@ -4972,8 +4993,12 @@ func helpOverlayTabHints(tab string) []string {
 		return []string{
 			"e edit query · enter preview · esc cancel edit · c clear",
 		}
+	case "providers":
+		return []string{
+			"j/k scroll · r refresh · g/G top/bottom",
+		}
 	default:
-		return []string{"alt+1..0/alt+t/alt+y/alt+w tabs · ctrl+p palette · ctrl+q quit"}
+		return []string{"alt+1..0/alt+t/alt+y/alt+w/alt+o tabs · ctrl+p palette · ctrl+q quit"}
 	}
 }
 
