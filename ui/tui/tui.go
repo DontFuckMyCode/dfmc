@@ -4985,6 +4985,10 @@ func helpOverlayTabHints(tab string) []string {
 		return []string{
 			"j/k select · enter run · e edit params · x reset · r rerun",
 		}
+	case "activity":
+		return []string{
+			"j/k scroll · pgup/pgdn page · g/G top/tail · p toggle follow · c clear",
+		}
 	case "memory":
 		return []string{
 			"j/k scroll · 1/2/3 tier · / search · r refresh",

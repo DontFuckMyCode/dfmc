@@ -2226,6 +2226,27 @@ func TestHelpOverlayShowsTabKeysWhenToggled(t *testing.T) {
 	}
 }
 
+// TestHelpOverlayCoversEveryTab — regression guard: each tab in NewModel's
+// tabs array must have its own case in helpOverlayTabHints, not fall into
+// the default "tabs · palette · quit" bucket. When a new panel lands, this
+// test fails loudly until the author adds a tab-specific hint block — no
+// panel should ship with blank keybinding discovery.
+func TestHelpOverlayCoversEveryTab(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	fallback := helpOverlayTabHints("__definitely-not-a-tab__")
+	fallbackJoined := strings.Join(fallback, "|")
+	for _, tab := range m.tabs {
+		hints := helpOverlayTabHints(tab)
+		if len(hints) == 0 {
+			t.Errorf("tab %q has no help hints", tab)
+			continue
+		}
+		if strings.Join(hints, "|") == fallbackJoined {
+			t.Errorf("tab %q falls through to the generic default hint — add a dedicated case", tab)
+		}
+	}
+}
+
 func TestFitPanelContentHeightTruncatesWithEllipsis(t *testing.T) {
 	text := strings.Join([]string{"a", "b", "c", "d", "e"}, "\n")
 	got := fitPanelContentHeight(text, 3)
