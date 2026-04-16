@@ -354,3 +354,89 @@ func TestOrchestrateDAGMalformedStagesRejected(t *testing.T) {
 		})
 	}
 }
+
+// TestOrchestrateDAGPerStageModelOverride: each stage's optional `model`
+// must reach SubagentRequest.Model verbatim so downstream RunSubagent can
+// route that stage to a specific provider profile. The returned stage
+// record must also echo the model so callers can confirm routing.
+func TestOrchestrateDAGPerStageModelOverride(t *testing.T) {
+	cfg := *config.DefaultConfig()
+	eng := New(cfg)
+	runner := &recordingRunner{failAtCall: -1}
+	eng.SetSubagentRunner(runner)
+
+	res, err := eng.Execute(context.Background(), "orchestrate", Request{
+		Params: map[string]any{
+			"stages": dagStagesParam(
+				map[string]any{"id": "scan", "task": "list files", "model": "deepseek"},
+				map[string]any{"id": "synth", "task": "summarize", "depends_on": depSlice("scan"), "model": "anthropic"},
+			),
+		},
+	})
+	if err != nil {
+		t.Fatalf("orchestrate dag: %v", err)
+	}
+
+	gotModels := map[string]string{}
+	for _, call := range runner.calls {
+		head := call.Task
+		if i := strings.Index(head, "\n"); i >= 0 {
+			head = head[:i]
+		}
+		gotModels[strings.TrimSpace(head)] = call.Model
+	}
+	if gotModels["list files"] != "deepseek" {
+		t.Fatalf("scan stage model=%q, want deepseek (all=%+v)", gotModels["list files"], gotModels)
+	}
+	if gotModels["summarize"] != "anthropic" {
+		t.Fatalf("synth stage model=%q, want anthropic (all=%+v)", gotModels["summarize"], gotModels)
+	}
+
+	stages, _ := res.Data["stages"].([]map[string]any)
+	if len(stages) != 2 {
+		t.Fatalf("want 2 stage records, got %d", len(stages))
+	}
+	for _, s := range stages {
+		id, _ := s["id"].(string)
+		model, _ := s["model"].(string)
+		switch id {
+		case "scan":
+			if model != "deepseek" {
+				t.Fatalf("scan record model=%q, want deepseek", model)
+			}
+		case "synth":
+			if model != "anthropic" {
+				t.Fatalf("synth record model=%q, want anthropic", model)
+			}
+		default:
+			t.Fatalf("unexpected stage id %q", id)
+		}
+	}
+}
+
+// TestOrchestrateDAGEmptyStageModelNotRecorded: stages without a `model`
+// field must NOT have a "model" key on their record, so callers can tell
+// an overridden stage from a default-routed one.
+func TestOrchestrateDAGEmptyStageModelNotRecorded(t *testing.T) {
+	cfg := *config.DefaultConfig()
+	eng := New(cfg)
+	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
+
+	res, err := eng.Execute(context.Background(), "orchestrate", Request{
+		Params: map[string]any{
+			"stages": dagStagesParam(
+				map[string]any{"id": "A", "task": "plain"},
+			),
+		},
+	})
+	if err != nil {
+		t.Fatalf("orchestrate dag: %v", err)
+	}
+	stages, _ := res.Data["stages"].([]map[string]any)
+	if len(stages) != 1 {
+		t.Fatalf("want 1 stage record, got %d", len(stages))
+	}
+	if _, has := stages[0]["model"]; has {
+		t.Fatalf("unroutinted stage must not carry a model key: %+v", stages[0])
+	}
+}

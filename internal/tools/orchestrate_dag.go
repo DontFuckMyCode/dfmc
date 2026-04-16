@@ -34,6 +34,7 @@ type orchestrateStage struct {
 	Task      string
 	Title     string
 	Hint      string
+	Model     string
 	DependsOn []string
 }
 
@@ -75,6 +76,7 @@ func parseOrchestrateStages(raw any) ([]orchestrateStage, error) {
 			Task:      task,
 			Title:     strings.TrimSpace(asString(m, "title", "")),
 			Hint:      strings.TrimSpace(asString(m, "hint", "")),
+			Model:     strings.TrimSpace(asString(m, "model", "")),
 			DependsOn: deps,
 		})
 	}
@@ -253,8 +255,12 @@ func (t *OrchestrateTool) runDAG(
 					Task:     dagPromptFor(s, priors),
 					Role:     role,
 					MaxSteps: subSteps,
+					Model:    s.Model,
 				}, title, s.Hint)
 				stageResult["id"] = s.ID
+				if s.Model != "" {
+					stageResult["model"] = s.Model
+				}
 				mu.Lock()
 				results[idx] = stageResult
 				if err != nil {
