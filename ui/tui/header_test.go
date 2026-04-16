@@ -132,7 +132,7 @@ func TestRenderChatHeaderMovesPinnedToSecondLine(t *testing.T) {
 func TestRenderStarterPromptsListsSixActions(t *testing.T) {
 	out := renderStarterPrompts(120, true)
 	joined := strings.Join(out, "\n")
-	for _, cmd := range []string{"/review", "/explain", "/analyze", "/codemap", "/security", "/refactor"} {
+	for _, cmd := range []string{"/review", "/explain", "/analyze", "/map", "/scan", "/refactor"} {
 		if !strings.Contains(joined, cmd) {
 			t.Fatalf("starter prompts missing %q, got:\n%s", cmd, joined)
 		}
@@ -162,7 +162,7 @@ func TestRenderChatViewUsesStarterPromptsWhenEmpty(t *testing.T) {
 	if !strings.Contains(view, "Welcome") {
 		t.Fatalf("empty transcript should render welcome block, got:\n%s", view)
 	}
-	if !strings.Contains(view, "/review") || !strings.Contains(view, "/codemap") {
+	if !strings.Contains(view, "/review") || !strings.Contains(view, "/map") {
 		t.Fatalf("empty transcript should render starter commands, got:\n%s", view)
 	}
 }

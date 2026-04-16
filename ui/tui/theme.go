@@ -894,8 +894,8 @@ func defaultStarterPrompts() []starterPrompt {
 		{Key: "1", Title: "Review this project", Cmd: "/review", Hint: "quality, risks, suggestions"},
 		{Key: "2", Title: "Explain a file", Cmd: "/explain @", Hint: "press @ to pick a file"},
 		{Key: "3", Title: "Analyze architecture", Cmd: "/analyze", Hint: "symbols, hotspots, deps"},
-		{Key: "4", Title: "Map the codebase", Cmd: "/codemap", Hint: "dependency graph, cycles"},
-		{Key: "5", Title: "Find bugs & smells", Cmd: "/security", Hint: "security + correctness scan"},
+		{Key: "4", Title: "Map the codebase", Cmd: "/map", Hint: "dependency graph, cycles"},
+		{Key: "5", Title: "Find bugs & smells", Cmd: "/scan", Hint: "security + correctness scan"},
 		{Key: "6", Title: "Draft a refactor plan", Cmd: "/refactor", Hint: "stepwise, low-risk"},
 	}
 }

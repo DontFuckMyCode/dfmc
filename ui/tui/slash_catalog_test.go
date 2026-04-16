@@ -48,20 +48,22 @@ func TestEveryCatalogCommandDispatches(t *testing.T) {
 			if !handled {
 				t.Fatalf("catalog entry %q did not produce handled=true", input)
 			}
-			// After dispatch, look at the last transcript line if any — it
-			// must not claim "Unknown command" or we have a stale catalog
-			// entry.
-			// executeChatCommand returns the model via the tea.Model any
-			// interface; re-call with the typed receiver to access transcript.
+			// After dispatch, the last transcript line is the one executeChatCommand
+			// wrote. We only flag the unknown-command fallthrough by checking the
+			// *prefix* of the final message — substring matching would false-
+			// positive on commands like /diff that can surface the phrase
+			// "Unknown command" inside the diff body of the test file itself.
 			next, _, _ := m.executeChatCommand(input)
 			mm, ok := next.(Model)
 			if !ok {
 				t.Fatalf("expected Model, got %T", next)
 			}
-			for _, line := range mm.transcript {
-				if strings.Contains(line.Content, "Unknown command") {
-					t.Fatalf("catalog entry %q fell through to 'Unknown command': %q", input, line.Content)
-				}
+			if len(mm.transcript) == 0 {
+				return
+			}
+			last := mm.transcript[len(mm.transcript)-1].Content
+			if strings.HasPrefix(last, "Unknown command:") || strings.HasPrefix(last, "Unknown chat command:") {
+				t.Fatalf("catalog entry %q fell through to unknown-command branch: %q", input, last)
 			}
 		})
 	}
@@ -106,6 +108,41 @@ func TestSuggestSlashCommand_SuggestsClosestOnTypo(t *testing.T) {
 	last := mm.transcript[len(mm.transcript)-1].Content
 	if !strings.Contains(last, "review") {
 		t.Fatalf("typo /revieww should suggest /review, got:\n%s", last)
+	}
+}
+
+// TestStarterPromptsAllDispatch — every command offered on the welcome
+// screen (digits 1..N) must route to a real handler, not the 'Unknown
+// command' fallthrough. This guard catches drift between the starter list
+// and the dispatch switch — e.g. a starter pointing at '/codemap' when the
+// actual verb is '/map'.
+func TestStarterPromptsAllDispatch(t *testing.T) {
+	starters := defaultStarterPrompts()
+	if len(starters) == 0 {
+		t.Fatal("defaultStarterPrompts returned nothing; welcome screen would be empty")
+	}
+	for _, s := range starters {
+		t.Run(s.Key+"-"+s.Title, func(t *testing.T) {
+			// Strip trailing '@' (starter 2 primes the mention picker) and
+			// any extra whitespace so we exercise the bare command.
+			raw := strings.TrimSpace(strings.TrimSuffix(s.Cmd, "@"))
+			if raw == "" {
+				t.Fatalf("starter %q has empty Cmd", s.Key)
+			}
+			m := NewModel(context.Background(), nil)
+			next, _, handled := m.executeChatCommand(raw)
+			if !handled {
+				t.Fatalf("starter %q (Cmd=%q) did not dispatch", s.Key, s.Cmd)
+			}
+			mm := next.(Model)
+			if len(mm.transcript) == 0 {
+				return
+			}
+			last := mm.transcript[len(mm.transcript)-1].Content
+			if strings.HasPrefix(last, "Unknown command:") || strings.HasPrefix(last, "Unknown chat command:") {
+				t.Fatalf("starter %q (Cmd=%q) fell through to unknown-command branch: %q", s.Key, s.Cmd, last)
+			}
+		})
 	}
 }
 
