@@ -111,6 +111,25 @@ func TestSuggestSlashCommand_SuggestsClosestOnTypo(t *testing.T) {
 	}
 }
 
+// TestSlashPickerIsBorderedModal — the / command picker renders as a
+// bordered modal matching the @ file picker, so the composer has two
+// consistent first-class picker surfaces. Users previously couldn't tell
+// the inline strip was a real picker; the box makes the affordance obvious.
+func TestSlashPickerIsBorderedModal(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.input = "/re"
+	view := m.renderChatView(160)
+	if !strings.ContainsAny(view, "╭╮╰╯") {
+		t.Fatalf("slash picker should render inside a bordered modal, got:\n%s", view)
+	}
+	if !strings.Contains(view, "◆ Commands") {
+		t.Fatalf("slash picker should carry the ◆ Commands title, got:\n%s", view)
+	}
+	if !strings.Contains(view, "enter run") {
+		t.Fatalf("slash picker footer should advertise enter, got:\n%s", view)
+	}
+}
+
 // TestStarterPromptsAllDispatch — every command offered on the welcome
 // screen (digits 1..N) must route to a real handler, not the 'Unknown
 // command' fallthrough. This guard catches drift between the starter list

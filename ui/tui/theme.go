@@ -123,6 +123,23 @@ var (
 				BorderForeground(colorWarn).
 				Padding(0, 1)
 
+	// mentionPickerStyle frames the @ file picker as a visible modal over
+	// the composer. An accent-bordered box sells the "this is a real picker,
+	// pick something or esc out" read — the prior inline list looked like
+	// a passive suggestion strip.
+	mentionPickerStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(colorAccent).
+				Padding(0, 1)
+
+	// mentionSelectedRowStyle highlights the currently-selected file row so
+	// the eye catches it immediately.
+	mentionSelectedRowStyle = lipgloss.NewStyle().
+				Foreground(colorTitleFg).
+				Background(colorAccent).
+				Bold(true).
+				Padding(0, 1)
+
 	dividerStyle = lipgloss.NewStyle().Foreground(colorPanelBorder)
 
 	bannerStyle = lipgloss.NewStyle().

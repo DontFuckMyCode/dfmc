@@ -227,8 +227,8 @@ func TestRenderChatView_MentionPicker_ShowsIndexingHintWhenFilesEmpty(t *testing
 	m.input = "please read @auth"
 	m.files = nil
 	view := m.renderChatView(120)
-	if !strings.Contains(view, "File mentions") {
-		t.Fatalf("expected mention section header when @ active, got:\n%s", view)
+	if !strings.Contains(view, "File Picker") {
+		t.Fatalf("expected File Picker modal header when @ active, got:\n%s", view)
 	}
 	if !strings.Contains(view, "Indexing project files") {
 		t.Fatalf("empty file index should surface an indexing hint, got:\n%s", view)
@@ -240,11 +240,33 @@ func TestRenderChatView_MentionPicker_ShowsNoMatchCopyWhenQueryHasNoHit(t *testi
 	m.input = "skim @nothingmatchesthis"
 	m.files = []string{"internal/auth/token.go", "ui/cli/cli.go"}
 	view := m.renderChatView(120)
-	if !strings.Contains(view, "File mentions") {
-		t.Fatalf("expected mention section header, got:\n%s", view)
+	if !strings.Contains(view, "File Picker") {
+		t.Fatalf("expected File Picker modal header, got:\n%s", view)
 	}
 	if !strings.Contains(view, "No files matched 'nothingmatchesthis'") {
 		t.Fatalf("non-matching query should surface a no-match hint, got:\n%s", view)
+	}
+}
+
+// TestRenderChatView_MentionPicker_IsBorderedModal — pin the visual
+// promotion of the @ picker from an inline suggestion strip to a bordered
+// modal. Users couldn't tell the old one was a real picker they should
+// commit to; the box sells "this is the file picker, drive it or esc out".
+func TestRenderChatView_MentionPicker_IsBorderedModal(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.input = "review @"
+	m.files = []string{"internal/auth/token.go", "ui/cli/cli.go"}
+	view := m.renderChatView(160)
+	// Bordered box — rounded unicode corners are the cheapest proof.
+	if !strings.ContainsAny(view, "╭╮╰╯") {
+		t.Fatalf("expected a bordered modal box, got:\n%s", view)
+	}
+	if !strings.Contains(view, "◆ File Picker") {
+		t.Fatalf("expected the 'File Picker' modal title, got:\n%s", view)
+	}
+	// Footer must keep the keybindings visible on every frame.
+	if !strings.Contains(view, "tab/enter insert") || !strings.Contains(view, "esc cancel") {
+		t.Fatalf("footer should surface the commit/cancel keys, got:\n%s", view)
 	}
 }
 

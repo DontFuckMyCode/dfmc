@@ -4303,31 +4303,7 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 		}
 	}
 	if suggestions.slashMenuActive {
-		items := suggestions.slashCommands
-		lines = append(lines, sectionTitleStyle.Render("Commands"))
-		if len(items) == 0 {
-			lines = append(lines, "  "+subtleStyle.Render("No matching command. Press esc to dismiss or /help for the catalog."))
-		} else {
-			lines = append(lines, subtleStyle.Render(fmt.Sprintf("↑↓ move · tab cycle · enter run · %d commands (window of 6)", len(items))))
-			selected := clampIndex(m.slashIndex, len(items))
-			start := 0
-			if selected > 4 {
-				start = selected - 4
-			}
-			end := start + 6
-			if end > len(items) {
-				end = len(items)
-			}
-			for i := start; i < end; i++ {
-				prefix := "  "
-				label := truncateSingleLine(fmt.Sprintf("%s — %s", items[i].Template, items[i].Description), width)
-				if i == selected {
-					prefix = "> "
-					label = titleStyle.Render(label)
-				}
-				lines = append(lines, prefix+label)
-			}
-		}
+		lines = append(lines, "", renderSlashPickerModal(suggestions.slashCommands, m.slashIndex, min(width-2, 110)))
 	}
 	if !suggestions.slashMenuActive {
 		if len(suggestions.slashArgSuggestions) > 0 {
@@ -4364,38 +4340,7 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 		}
 	}
 	if suggestions.mentionActive {
-		lines = append(lines, sectionTitleStyle.Render("File mentions"))
-		switch {
-		case len(suggestions.mentionSuggestions) > 0:
-			hintTail := ""
-			if suggestions.mentionRange != "" {
-				hintTail = " · range " + suggestions.mentionRange
-			}
-			lines = append(lines, subtleStyle.Render(fmt.Sprintf("↑↓ move · tab/enter insert · suffix :10-50 or #L10-L50 for ranges · %d/%d files%s",
-				len(suggestions.mentionSuggestions), len(m.files), hintTail)))
-			selected := clampIndex(m.mentionIndex, len(suggestions.mentionSuggestions))
-			for i, row := range suggestions.mentionSuggestions {
-				prefix := "  "
-				label := truncateSingleLine(row.Path, width)
-				if i == selected {
-					prefix = "> "
-					label = titleStyle.Render(label)
-				}
-				if row.Recent {
-					label += " " + subtleStyle.Render("· recent")
-				}
-				lines = append(lines, prefix+label)
-			}
-		case len(m.files) == 0:
-			// Startup race: user typed @ before loadFilesCmd finished (or
-			// the walk failed). Tell them explicitly so they don't think
-			// @ is broken — press r in the Files tab or wait a moment.
-			lines = append(lines, "  "+subtleStyle.Render("Indexing project files… if this persists, open the Files tab (F3) and press r to reload."))
-		case suggestions.mentionQuery != "":
-			lines = append(lines, "  "+subtleStyle.Render("No files matched '"+suggestions.mentionQuery+"' — refine query or press esc."))
-		default:
-			lines = append(lines, "  "+subtleStyle.Render("No files matched. Type a path after @ — supports :10-50 or #L10-L50 line ranges."))
-		}
+		lines = append(lines, "", renderMentionPickerModal(suggestions, m.mentionIndex, len(m.files), min(width-2, 110)))
 	}
 	if len(suggestions.quickActions) > 0 {
 		lines = append(lines, sectionTitleStyle.Render("Quick actions"))
@@ -7895,6 +7840,142 @@ func expandAtFileMentionsWithRecent(input string, files, recent []string) string
 		return input
 	}
 	return strings.Join(tokens, " ")
+}
+
+// renderMentionPickerModal frames the @ file picker as a visible bordered
+// box — the earlier inline list looked like a passive suggestion strip and
+// users didn't realise they could commit with enter. The modal makes the
+// state change obvious and teaches the keys on every render. Width is
+// clamped by the caller so a tiny terminal doesn't crash the layout.
+func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles int, width int) string {
+	if width < 40 {
+		width = 40
+	}
+	// Title bar — uses the accent style so the eye locks on.
+	title := accentStyle.Bold(true).Render("◆ File Picker") +
+		subtleStyle.Render("  —  ") +
+		boldStyle.Render("@"+s.MentionQuery())
+	if s.MentionRange() != "" {
+		title += subtleStyle.Render(" · range "+s.MentionRange())
+	}
+
+	countLine := ""
+	switch {
+	case len(s.MentionSuggestions()) > 0:
+		countLine = subtleStyle.Render(fmt.Sprintf(
+			"%d/%d files match", len(s.MentionSuggestions()), totalFiles))
+	case totalFiles == 0:
+		countLine = warnStyle.Render("file index empty")
+	default:
+		countLine = warnStyle.Render("no files match")
+	}
+
+	// Body — either the match rows, or a descriptive empty state.
+	bodyLines := []string{}
+	switch {
+	case len(s.MentionSuggestions()) > 0:
+		selected := clampIndex(mentionIndex, len(s.MentionSuggestions()))
+		for i, row := range s.MentionSuggestions() {
+			label := truncateSingleLine(row.Path, width-6)
+			if row.Recent {
+				label += " " + subtleStyle.Render("· recent")
+			}
+			if i == selected {
+				bodyLines = append(bodyLines, mentionSelectedRowStyle.Render("▶ "+label))
+			} else {
+				bodyLines = append(bodyLines, "  "+label)
+			}
+		}
+	case totalFiles == 0:
+		bodyLines = append(bodyLines,
+			subtleStyle.Render("Indexing project files…"),
+			subtleStyle.Render("If this persists, open the Files tab (F3) and press r to reload,"),
+			subtleStyle.Render("or confirm you launched dfmc from a project root."),
+		)
+	case s.MentionQuery() != "":
+		bodyLines = append(bodyLines,
+			subtleStyle.Render("No files matched '"+s.MentionQuery()+"'."),
+			subtleStyle.Render("Refine the query or press esc to cancel."),
+		)
+	default:
+		bodyLines = append(bodyLines,
+			subtleStyle.Render("Type a path after @ to filter."),
+			subtleStyle.Render("Ranges: auth.go:10-50 or auth.go#L10-L50 attaches that slice."),
+		)
+	}
+
+	// Footer — always show how to drive it so users don't have to remember.
+	footer := subtleStyle.Render(
+		"↑/↓ move · tab/enter insert as [[file:…]] · esc cancel")
+
+	parts := []string{title, countLine, ""}
+	parts = append(parts, bodyLines...)
+	parts = append(parts, "", footer)
+	return mentionPickerStyle.Width(width).Render(strings.Join(parts, "\n"))
+}
+
+// MentionQuery and friends expose chatSuggestionState fields to callers in
+// other files. Keeping them as methods rather than exporting the fields lets
+// the render code remain in this file while tests can construct the state
+// directly via the unexported fields.
+func (s chatSuggestionState) MentionQuery() string          { return s.mentionQuery }
+func (s chatSuggestionState) MentionRange() string          { return s.mentionRange }
+func (s chatSuggestionState) MentionSuggestions() []mentionRow {
+	return s.mentionSuggestions
+}
+
+// renderSlashPickerModal frames the `/` command picker in the same bordered
+// modal style as the file picker. Consistency with the @ modal makes the
+// composer feel like it has two first-class picker affordances rather than
+// two different "kind of a dropdown" experiences.
+func renderSlashPickerModal(items []slashCommandItem, slashIndex, width int) string {
+	if width < 40 {
+		width = 40
+	}
+	title := accentStyle.Bold(true).Render("◆ Commands") +
+		subtleStyle.Render("  —  type to filter, enter to run")
+
+	count := ""
+	if len(items) > 0 {
+		count = subtleStyle.Render(fmt.Sprintf("%d matching · window of 6", len(items)))
+	} else {
+		count = warnStyle.Render("no match")
+	}
+
+	body := []string{}
+	if len(items) == 0 {
+		body = append(body,
+			subtleStyle.Render("No command matched the current prefix."),
+			subtleStyle.Render("Press esc to dismiss, or /help for the full catalog."),
+		)
+	} else {
+		selected := clampIndex(slashIndex, len(items))
+		start := 0
+		if selected > 4 {
+			start = selected - 4
+		}
+		end := start + 6
+		if end > len(items) {
+			end = len(items)
+		}
+		for i := start; i < end; i++ {
+			line := fmt.Sprintf("%s  %s", items[i].Template,
+				subtleStyle.Render("· "+items[i].Description))
+			label := truncateSingleLine(line, width-6)
+			if i == selected {
+				body = append(body, mentionSelectedRowStyle.Render("▶ "+label))
+			} else {
+				body = append(body, "  "+label)
+			}
+		}
+	}
+
+	footer := subtleStyle.Render("↑/↓ move · tab cycle · enter run · esc cancel")
+
+	parts := []string{title, count, ""}
+	parts = append(parts, body...)
+	parts = append(parts, "", footer)
+	return mentionPickerStyle.Width(width).Render(strings.Join(parts, "\n"))
 }
 
 func indexOfString(items []string, target string) int {
