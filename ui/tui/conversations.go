@@ -150,7 +150,7 @@ func formatConversationPreview(msgs []types.Message, width int) []string {
 
 func (m Model) renderConversationsView(width int) string {
 	width = clampInt(width, 24, 1000)
-	hint := subtleStyle.Render("j/k scroll · enter preview · / search · r refresh · c clear search")
+	hint := subtleStyle.Render("j/k scroll · enter preview (loads as active) · / search · r refresh · c clear search")
 	header := sectionHeader("⎔", "Conversations")
 	queryLine := subtleStyle.Render("query: ")
 	if strings.TrimSpace(m.conversationsQuery) != "" {
@@ -200,7 +200,12 @@ func (m Model) renderConversationsView(width int) string {
 		selectedID = filtered[m.conversationsScroll].ID
 	}
 	if selectedID != "" && selectedID == m.conversationsPreviewID {
-		lines = append(lines, "", subtleStyle.Render("preview · "+selectedID))
+		// Manager.Load sets the preview target as the active conversation
+		// as a side-effect of reading messages — make that visible so users
+		// don't wonder why the Chat history switched out from under them.
+		lines = append(lines, "",
+			subtleStyle.Render("preview · "+selectedID+" · ")+okStyle.Render("loaded as active")+subtleStyle.Render(" — f1/alt+1 to resume in Chat"),
+		)
 		lines = append(lines, formatConversationPreview(m.conversationsPreview, width-2)...)
 	}
 

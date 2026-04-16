@@ -660,6 +660,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.conversationsPreviewID = msg.id
 		m.conversationsPreview = msg.msgs
+		// Manager.Load sets the conversation as active as a side-effect,
+		// so pressing enter here is effectively "load + preview". Surface
+		// that so users aren't surprised when Chat history rolls over.
+		m.notice = fmt.Sprintf("Loaded conversation %s (%d messages) — switch to Chat (f1/alt+1) to resume.", msg.id, len(msg.msgs))
 		return m, nil
 
 	case promptsLoadedMsg:
@@ -4999,7 +5003,7 @@ func helpOverlayTabHints(tab string) []string {
 		}
 	case "conversations":
 		return []string{
-			"j/k scroll · enter preview · / search · r refresh · c clear search",
+			"j/k scroll · enter preview (loads as active) · / search · r refresh · c clear search",
 		}
 	case "prompts":
 		return []string{

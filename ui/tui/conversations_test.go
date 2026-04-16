@@ -194,6 +194,45 @@ func TestConversationsSearchInputFlow(t *testing.T) {
 	}
 }
 
+// TestConversationPreviewMsgSetsLoadedNotice — the preview arrival handler
+// must tell the user that Manager.Load has side-effect activated the
+// conversation, not stay silent. Users were complaining that the Chat
+// history changed out from under them after they 'just previewed'.
+func TestConversationPreviewMsgSetsLoadedNotice(t *testing.T) {
+	m := newConversationsTestModel()
+	next, _ := m.Update(conversationPreviewMsg{
+		id:   "2026-04-16-auth-flow",
+		msgs: []types.Message{{Role: "user", Content: "hi"}, {Role: "assistant", Content: "hello"}},
+	})
+	mm := next.(Model)
+	if mm.conversationsPreviewID != "2026-04-16-auth-flow" {
+		t.Fatalf("preview id not stored, got %q", mm.conversationsPreviewID)
+	}
+	if !strings.Contains(mm.notice, "Loaded conversation") {
+		t.Fatalf("notice should announce load, got %q", mm.notice)
+	}
+	if !strings.Contains(mm.notice, "2026-04-16-auth-flow") {
+		t.Fatalf("notice should include the conversation id, got %q", mm.notice)
+	}
+	if !strings.Contains(mm.notice, "Chat") {
+		t.Fatalf("notice should point user back to the Chat tab, got %q", mm.notice)
+	}
+}
+
+// TestRenderConversationsViewAnnouncesActiveOnPreview — the preview header
+// must make the 'loaded as active' side-effect visible inline, so users see
+// the state change on the same panel instead of discovering it later.
+func TestRenderConversationsViewAnnouncesActiveOnPreview(t *testing.T) {
+	m := newConversationsTestModel()
+	m.conversationsEntries = sampleConversationSummaries()
+	m.conversationsPreviewID = "2026-04-16-auth-flow"
+	m.conversationsPreview = []types.Message{{Role: "user", Content: "hi"}}
+	out := m.renderConversationsView(160)
+	if !strings.Contains(out, "loaded as active") {
+		t.Fatalf("preview header should surface the active-load side-effect, got:\n%s", out)
+	}
+}
+
 func TestConversationsRefreshSetsLoading(t *testing.T) {
 	m := newConversationsTestModel()
 	m2, _ := m.handleConversationsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
