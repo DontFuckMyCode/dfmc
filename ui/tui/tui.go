@@ -29,6 +29,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/planning"
+	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	toolruntime "github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -254,6 +255,18 @@ type Model struct {
 	conversationsPreview      []types.Message
 	conversationsPreviewID    string
 
+	// Prompts panel state — read view over the merged promptlib catalog
+	// (defaults + ~/.dfmc/prompts + .dfmc/prompts). Preview is rendered
+	// inline when the user hits enter on a row.
+	promptsTemplates     []promptlib.Template
+	promptsScroll        int
+	promptsQuery         string
+	promptsLoading       bool
+	promptsErr           string
+	promptsSearchActive  bool
+	promptsLoaded        bool
+	promptsPreviewID     string
+
 	agentLoopActive        bool
 	agentLoopStep          int
 	agentLoopMaxToolStep   int
@@ -383,7 +396,7 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	return Model{
 		ctx:               ctx,
 		eng:               eng,
-		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations"},
+		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts"},
 		activityFollow:    true,
 		memoryTier:        memoryTierAll,
 		codemapView:       codemapViewOverview,
@@ -603,6 +616,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.conversationsPreviewID = msg.id
 		m.conversationsPreview = msg.msgs
+		return m, nil
+
+	case promptsLoadedMsg:
+		m.promptsLoading = false
+		m.promptsLoaded = true
+		if msg.err != nil {
+			m.promptsErr = msg.err.Error()
+			return m, nil
+		}
+		m.promptsErr = ""
+		m.promptsTemplates = msg.templates
+		if m.promptsScroll >= len(m.promptsTemplates) {
+			m.promptsScroll = 0
+		}
 		return m, nil
 
 	case patchApplyMsg:
@@ -827,6 +854,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, loadConversationsCmd(m.eng)
 			}
 			return m, nil
+		case "f11", "alt+t":
+			m.activeTab = 10
+			if !m.promptsLoaded && !m.promptsLoading {
+				m.promptsLoading = true
+				return m, loadPromptsCmd(m.eng)
+			}
+			return m, nil
 		}
 
 		switch m.tabs[m.activeTab] {
@@ -873,6 +907,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleCodemapKey(msg)
 		case "Conversations":
 			return m.handleConversationsKey(msg)
+		case "Prompts":
+			return m.handlePromptsKey(msg)
 		}
 	}
 	return m, nil
@@ -3913,6 +3949,8 @@ func (m Model) renderActiveView(width int, height int) string {
 		content = fitPanelContentHeight(m.renderCodemapView(contentWidth), innerHeight)
 	case "Conversations":
 		content = fitPanelContentHeight(m.renderConversationsView(contentWidth), innerHeight)
+	case "Prompts":
+		content = fitPanelContentHeight(m.renderPromptsView(contentWidth), innerHeight)
 	default:
 		// Chat view is special — the input box (tail) must never be hidden
 		// or the user stops being able to type. We render head and tail
@@ -4789,7 +4827,7 @@ func (m Model) renderHelpOverlay(width int) string {
 	lines = append(lines,
 		"",
 		boldStyle.Render("Global"),
-		"  ctrl+p palette · alt+1..0 or f1..f10 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
+		"  ctrl+p palette · alt+1..0/alt+t or f1..f11 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
 		"  esc cancels current stream · ctrl+c interrupts · ctrl+u clear input",
 		"",
 		boldStyle.Render("Chat composer"),
@@ -4834,8 +4872,24 @@ func helpOverlayTabHints(tab string) []string {
 		return []string{
 			"j/k select · enter run · e edit params · x reset · r rerun",
 		}
+	case "memory":
+		return []string{
+			"j/k scroll · 1/2/3 tier · / search · r refresh",
+		}
+	case "codemap":
+		return []string{
+			"j/k scroll · v cycle view (overview/hotspots/orphans/cycles) · r refresh",
+		}
+	case "conversations":
+		return []string{
+			"j/k scroll · enter preview · / search · r refresh · c clear search",
+		}
+	case "prompts":
+		return []string{
+			"j/k scroll · enter preview · / search · r refresh · c clear search",
+		}
 	default:
-		return []string{"alt+1..6 tabs · ctrl+p palette · ctrl+q quit"}
+		return []string{"alt+1..0/alt+t tabs · ctrl+p palette · ctrl+q quit"}
 	}
 }
 
