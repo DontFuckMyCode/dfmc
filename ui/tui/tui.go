@@ -4245,6 +4245,9 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 	}
 	inputLine := renderChatInputLine(m.input, m.chatCursor, m.chatCursorManual, m.chatCursorInput, m.sending)
 	tailLines = append(tailLines, "", sectionHeader("›", "Input"), renderInputBox(inputLine, min(width, 100)))
+	if strip := m.renderContextStrip(min(width, 120)); strip != "" {
+		tailLines = append(tailLines, strip)
+	}
 	lines = tailLines
 	if m.commandPickerActive {
 		kind := strings.TrimSpace(strings.ToLower(m.commandPickerKind))
@@ -7840,6 +7843,83 @@ func expandAtFileMentionsWithRecent(input string, files, recent []string) string
 		return input
 	}
 	return strings.Join(tokens, " ")
+}
+
+// renderContextStrip summarizes what will be attached to the next message:
+// pinned file, inline [[file:...]] markers, fenced code blocks, and a rough
+// char count. It sits directly below the input so users can see their
+// context budget forming in real time rather than discovering after send.
+// Returns "" when nothing is attached so we don't paint a dead strip.
+func (m Model) renderContextStrip(width int) string {
+	if width < 40 {
+		width = 40
+	}
+	input := m.input
+
+	pinned := strings.TrimSpace(m.pinnedFile)
+	markerCount := countFileMarkers(input)
+	fenceCount := countFencedBlocks(input)
+	atMentions := countAtMentions(input)
+
+	// Nothing to show — the strip disappears when the composer is resting.
+	if pinned == "" && markerCount == 0 && fenceCount == 0 && atMentions == 0 && strings.TrimSpace(input) == "" {
+		return ""
+	}
+
+	parts := []string{accentStyle.Render("📎 context")}
+	if pinned != "" {
+		parts = append(parts, subtleStyle.Render("pinned:")+" "+boldStyle.Render(pinned))
+	}
+	if markerCount > 0 {
+		parts = append(parts, subtleStyle.Render("markers:")+" "+boldStyle.Render(fmt.Sprintf("%d", markerCount)))
+	}
+	if atMentions > 0 {
+		// Unresolved @mentions — these still get resolved at send time, but
+		// counting them separately shows users which pieces are bare refs vs
+		// concrete [[file:]] markers.
+		parts = append(parts, subtleStyle.Render("@refs:")+" "+boldStyle.Render(fmt.Sprintf("%d", atMentions)))
+	}
+	if fenceCount > 0 {
+		parts = append(parts, subtleStyle.Render("fenced:")+" "+boldStyle.Render(fmt.Sprintf("%d", fenceCount)))
+	}
+	if trimmed := strings.TrimSpace(input); trimmed != "" {
+		parts = append(parts, subtleStyle.Render("chars:")+" "+boldStyle.Render(fmt.Sprintf("%d", len([]rune(trimmed)))))
+	}
+
+	joined := strings.Join(parts, subtleStyle.Render("  ·  "))
+	return "  " + truncateSingleLine(joined, width-2)
+}
+
+// countFileMarkers counts `[[file:...]]` markers in the current input. The
+// regex mirrors what the context manager resolves.
+func countFileMarkers(s string) int {
+	return strings.Count(s, "[[file:")
+}
+
+// countFencedBlocks counts complete triple-backtick blocks in the input.
+// Odd fences (open but not yet closed) are treated as zero — the user is
+// still mid-edit so we don't surface a partial count.
+func countFencedBlocks(s string) int {
+	n := strings.Count(s, "```")
+	return n / 2
+}
+
+// countAtMentions counts bare `@token` refs that start after whitespace or
+// at string start. Matches only well-formed references that the resolve
+// pass would actually try to expand.
+func countAtMentions(s string) int {
+	if !strings.Contains(s, "@") {
+		return 0
+	}
+	count := 0
+	prevSpace := true
+	for _, r := range s {
+		if r == '@' && prevSpace {
+			count++
+		}
+		prevSpace = r == ' ' || r == '\t' || r == '\n'
+	}
+	return count
 }
 
 // renderMentionPickerModal frames the @ file picker as a visible bordered

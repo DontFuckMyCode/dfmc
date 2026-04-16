@@ -284,6 +284,73 @@ func TestRenderChatView_MentionPicker_ListsMatches(t *testing.T) {
 	}
 }
 
+// TestRenderContextStrip_HiddenWhenComposerEmpty — the context strip must
+// not paint a dead bar when there's nothing attached. Empty composer with
+// no pinned file and no markers should yield "".
+func TestRenderContextStrip_HiddenWhenComposerEmpty(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	got := m.renderContextStrip(120)
+	if got != "" {
+		t.Fatalf("empty composer should produce empty strip, got %q", got)
+	}
+}
+
+// TestRenderContextStrip_ShowsMarkersAndFences — users need to see what the
+// context manager will actually pick up from their message before sending.
+// Inline [[file:...]] markers, fenced blocks, and @refs should each show up.
+func TestRenderContextStrip_ShowsMarkersAndFences(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.input = "Review [[file:a.go]] and [[file:b.go#L10-L50]] plus @c.go\n" +
+		"```go\nfunc main(){}\n```"
+	got := m.renderContextStrip(160)
+	if !strings.Contains(got, "markers:") {
+		t.Fatalf("expected markers count, got %q", got)
+	}
+	if !strings.Contains(got, "@refs:") {
+		t.Fatalf("expected @refs count, got %q", got)
+	}
+	if !strings.Contains(got, "fenced:") {
+		t.Fatalf("expected fenced count, got %q", got)
+	}
+	if !strings.Contains(got, "chars:") {
+		t.Fatalf("expected chars count, got %q", got)
+	}
+}
+
+// TestRenderContextStrip_ShowsPinned — the pinned file is the most stable
+// piece of context and must surface even when nothing else is attached.
+func TestRenderContextStrip_ShowsPinned(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.pinnedFile = "internal/auth/token.go"
+	got := m.renderContextStrip(120)
+	if !strings.Contains(got, "pinned:") || !strings.Contains(got, "internal/auth/token.go") {
+		t.Fatalf("expected pinned file in strip, got %q", got)
+	}
+}
+
+// TestCountHelpers — the small counting functions drive the strip; pin
+// their edge cases so future callers can rely on them.
+func TestCountHelpers(t *testing.T) {
+	if n := countFileMarkers("[[file:a.go]] and [[file:b.go]]"); n != 2 {
+		t.Errorf("countFileMarkers: want 2, got %d", n)
+	}
+	if n := countFileMarkers("no marker here"); n != 0 {
+		t.Errorf("countFileMarkers: want 0, got %d", n)
+	}
+	if n := countFencedBlocks("```\nfoo\n```"); n != 1 {
+		t.Errorf("countFencedBlocks: complete pair = 1, got %d", n)
+	}
+	if n := countFencedBlocks("```\nfoo\n"); n != 0 {
+		t.Errorf("countFencedBlocks: odd fence = 0, got %d", n)
+	}
+	if n := countAtMentions("hi @foo and @bar but email@x.com"); n != 2 {
+		t.Errorf("countAtMentions: want 2 (email@ not mid-token), got %d", n)
+	}
+	if n := countAtMentions("@only"); n != 1 {
+		t.Errorf("countAtMentions: leading @ counts, got %d", n)
+	}
+}
+
 func TestHandleChatKey_AtTriggersFileReloadWhenIndexEmpty(t *testing.T) {
 	// Can't construct a real engine in a unit test (no store); this exercises
 	// only the early-return guard: when eng is nil we must NOT dispatch a
