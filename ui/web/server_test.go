@@ -119,6 +119,102 @@ func TestIndexWorkbench(t *testing.T) {
 	if !strings.Contains(html, "Patch Lab") {
 		t.Fatalf("expected patch lab panel, got: %s", html)
 	}
+	// Activity panel + its JS wiring must ship so the observability story is
+	// symmetric with the TUI. If a refactor drops the firehose handler these
+	// guards catch it.
+	if !strings.Contains(html, `id="activity-log"`) {
+		t.Fatalf("expected activity log container, got: %s", html)
+	}
+	if !strings.Contains(html, "function classifyActivityEvent") {
+		t.Fatalf("activity classifier not inlined: %s", html)
+	}
+	if !strings.Contains(html, "connectActivityStream()") {
+		t.Fatalf("activity stream bootstrap missing: %s", html)
+	}
+	// The activity renderer must use DOM APIs only — event payloads are
+	// untrusted and we've seen other renderers in the file assign innerHTML
+	// for other (trusted) content, so we scope the check to the activity
+	// function body.
+	start := strings.Index(html, "function renderActivityLog")
+	if start < 0 {
+		t.Fatalf("renderActivityLog function missing")
+	}
+	end := strings.Index(html[start:], "\nfunction ")
+	if end < 0 {
+		end = len(html) - start
+	}
+	activityBody := html[start : start+end]
+	forbiddenHTMLSink := "." + "innerHTML"
+	if strings.Contains(activityBody, forbiddenHTMLSink) {
+		t.Fatalf("renderActivityLog touches innerHTML — must use textContent/appendChild for untrusted payloads")
+	}
+}
+
+func TestWebSocketEventStreamShape(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/ws?type=*", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open ws: %v", err)
+	}
+	defer resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("unexpected content-type: %q", ct)
+	}
+
+	// Publish after a small delay so the subscribe has time to attach.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		eng.EventBus.Publish(engine.Event{
+			Type:    "tool:call",
+			Source:  "test",
+			Payload: map[string]any{"tool": "read_file", "step": 2},
+		})
+	}()
+
+	seen := false
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 1<<20)
+	deadline := time.Now().Add(3 * time.Second)
+	for !seen {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for tool:call frame")
+		}
+		if !scanner.Scan() {
+			t.Fatalf("stream closed before event arrived: %v", scanner.Err())
+		}
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var frame map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &frame); err != nil {
+			t.Fatalf("decode frame %q: %v", line, err)
+		}
+		if frame["type"] != "event" {
+			continue
+		}
+		// Skip unrelated startup events (engine:*, index:*, etc.) — we only
+		// care that the shape matches for a specific tool:call.
+		if frame["event"] != "tool:call" {
+			continue
+		}
+		payload, ok := frame["payload"].(map[string]any)
+		if !ok {
+			t.Fatalf("payload not a map: %T %v", frame["payload"], frame["payload"])
+		}
+		if payload["tool"] != "read_file" {
+			t.Fatalf("payload tool=%v", payload["tool"])
+		}
+		seen = true
+	}
 }
 
 func TestChatSSEEndpoint(t *testing.T) {

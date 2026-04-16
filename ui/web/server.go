@@ -1904,6 +1904,37 @@ textarea {
 	font: 500 12px/1.65 var(--font-mono);
 	white-space: pre-wrap;
 }
+.activity-log {
+	margin-top: 12px;
+	padding: 10px 12px;
+	border-radius: 14px;
+	background: rgba(5, 10, 18, 0.88);
+	border: 1px solid rgba(255,255,255,0.08);
+	max-height: 320px;
+	overflow: auto;
+	font: 500 12px/1.55 var(--font-mono);
+	display: grid;
+	gap: 2px;
+}
+.activity-row {
+	display: grid;
+	grid-template-columns: 82px 26px 1fr;
+	gap: 6px;
+	padding: 2px 4px;
+	border-radius: 6px;
+	align-items: baseline;
+}
+.activity-row:hover { background: rgba(102,179,255,0.05); }
+.activity-row .ts { color: var(--muted); }
+.activity-row .kind { text-align: center; }
+.activity-row.kind-agent .kind { color: var(--accent); }
+.activity-row.kind-tool .kind { color: var(--accent-3); }
+.activity-row.kind-stream .kind { color: var(--accent-2); }
+.activity-row.kind-ctx .kind { color: var(--accent-2); }
+.activity-row.kind-error { background: rgba(242,95,92,0.10); }
+.activity-row.kind-error .kind { color: var(--accent); }
+.activity-row.kind-index .kind { color: var(--muted); }
+.activity-empty { color: var(--muted); padding: 6px 4px; }
 .mini-grid {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2066,6 +2097,23 @@ textarea {
 						<button id="apply-patch" type="button">Apply Patch</button>
 					</div>
 					<div class="codebox" id="workspace-diff">Working tree diff will appear here.</div>
+				</div>
+			</div>
+			<div class="panel">
+				<div class="pane-header">
+					<div>
+						<div class="pane-title">Activity</div>
+						<div class="pane-subtitle">Live firehose of engine, agent, tool, and context events.</div>
+					</div>
+					<div class="pulse" id="activity-status">idle</div>
+				</div>
+				<div class="pane-body">
+					<div class="action-row">
+						<button id="activity-clear" class="secondary" type="button">Clear</button>
+						<button id="activity-follow" type="button">Pause follow</button>
+						<span class="inline-note" id="activity-summary">0 events</span>
+					</div>
+					<div class="activity-log" id="activity-log" role="log" aria-live="polite"></div>
 				</div>
 			</div>
 		</div>
@@ -2363,6 +2411,155 @@ async function boot() {
 	} catch (err) {
 		addMessage("system", "Workbench load error: " + (err && err.message ? err.message : String(err)));
 	}
+	connectActivityStream();
+}
+
+// Activity panel — mirrors the TUI firehose. Consumes /ws (SSE) and
+// classifies each event into a kind so the CSS can colour rows. Writes
+// to the DOM via textContent only; payloads are event-source controlled.
+const ACTIVITY_LIMIT = 500;
+const activityState = {
+	entries: [],
+	follow: true,
+	eventSource: null,
+};
+
+function classifyActivityEvent(ev) {
+	const type = (ev && ev.event || "").toLowerCase();
+	const payload = (ev && ev.payload) || {};
+	const fallback = { kind: "info", icon: "\u00b7", text: type };
+	if (!type) return fallback;
+	if (type.startsWith("agent:")) {
+		if (type === "agent:loop:start") {
+			return { kind: "agent", icon: "\u25c9",
+				text: "agent start \u00b7 " + (payload.provider || "") + "/" + (payload.model || "") + " max=" + (payload.max_tool_steps || 0) };
+		}
+		if (type === "agent:loop:thinking") {
+			return { kind: "agent", icon: "\u25c9",
+				text: "agent thinking \u00b7 " + (payload.step || 0) + "/" + (payload.max_tool_steps || 0) };
+		}
+		if (type === "agent:loop:end") {
+			return { kind: "agent", icon: "\u25c9", text: "agent end \u00b7 " + (payload.reason || "done") };
+		}
+		if (type === "agent:loop:error") {
+			return { kind: "error", icon: "\u2717", text: "agent error \u00b7 " + (payload.error || "") };
+		}
+		return { kind: "agent", icon: "\u25c9", text: type };
+	}
+	if (type.startsWith("tool:")) {
+		if (type === "tool:call") {
+			return { kind: "tool", icon: "\u25cc",
+				text: "tool call \u00b7 " + (payload.tool || "tool") + (payload.step ? (" (step " + payload.step + ")") : "") };
+		}
+		if (type === "tool:result") {
+			return { kind: "tool", icon: "\u25cc",
+				text: "tool done \u00b7 " + (payload.tool || "tool") + " (" + (payload.duration_ms || 0) + "ms)" };
+		}
+		if (type === "tool:error") {
+			return { kind: "error", icon: "\u2717",
+				text: "tool failed \u00b7 " + (payload.tool || "tool") + " " + (payload.error || "") };
+		}
+	}
+	if (type.startsWith("context:") || type.startsWith("ctx:")) {
+		if (type === "context:lifecycle:compacted") {
+			return { kind: "ctx", icon: "\u25c8",
+				text: "context compacted \u00b7 " + (payload.tokens_before || 0) + " \u2192 " + (payload.tokens_after || 0) + " tok" };
+		}
+		return { kind: "ctx", icon: "\u25c8", text: type };
+	}
+	if (type.startsWith("index:")) {
+		if (type === "index:done") return { kind: "index", icon: "\u25a4", text: "index done \u00b7 " + (payload.files || 0) + " files" };
+		if (type === "index:error") return { kind: "error", icon: "\u2717", text: "index error \u00b7 " + (payload.error || "") };
+		return { kind: "index", icon: "\u25a4", text: type };
+	}
+	if (type.startsWith("stream:")) return { kind: "stream", icon: "\u21e2", text: type };
+	if (type.includes("error") || type.includes("fail")) {
+		return { kind: "error", icon: "\u2717", text: type + (payload.error ? (" \u00b7 " + payload.error) : "") };
+	}
+	return fallback;
+}
+
+function renderActivityLog() {
+	const el = document.getElementById("activity-log");
+	if (!el) return;
+	while (el.firstChild) el.removeChild(el.firstChild);
+	if (activityState.entries.length === 0) {
+		const empty = document.createElement("div");
+		empty.className = "activity-empty";
+		empty.textContent = "No events yet. Agent calls, tool use, context compaction, and index runs stream in here live.";
+		el.appendChild(empty);
+	} else {
+		const frag = document.createDocumentFragment();
+		for (const entry of activityState.entries) {
+			const row = document.createElement("div");
+			row.className = "activity-row kind-" + entry.kind;
+			const ts = document.createElement("span"); ts.className = "ts"; ts.textContent = entry.ts;
+			const kind = document.createElement("span"); kind.className = "kind"; kind.textContent = entry.icon;
+			const text = document.createElement("span"); text.className = "text"; text.textContent = entry.text;
+			row.appendChild(ts); row.appendChild(kind); row.appendChild(text);
+			frag.appendChild(row);
+		}
+		el.appendChild(frag);
+	}
+	const summary = document.getElementById("activity-summary");
+	if (summary) {
+		const counts = activityState.entries.reduce((acc, e) => { acc[e.kind] = (acc[e.kind] || 0) + 1; return acc; }, {});
+		summary.textContent = activityState.entries.length + " events \u00b7 tool=" + (counts.tool || 0)
+			+ " agent=" + (counts.agent || 0) + " err=" + (counts.error || 0) + " ctx=" + (counts.ctx || 0);
+	}
+	if (activityState.follow) { el.scrollTop = el.scrollHeight; }
+}
+
+function pushActivityEntry(classified) {
+	const d = new Date();
+	const ts = String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0") + ":" + String(d.getSeconds()).padStart(2,"0");
+	const entry = { ts, kind: classified.kind, icon: classified.icon, text: classified.text };
+	const last = activityState.entries[activityState.entries.length-1];
+	if (last && last.kind === entry.kind && last.text === entry.text) return;
+	activityState.entries.push(entry);
+	if (activityState.entries.length > ACTIVITY_LIMIT) {
+		activityState.entries.splice(0, activityState.entries.length - ACTIVITY_LIMIT);
+	}
+	renderActivityLog();
+}
+
+function setActivityStatus(text) {
+	const el = document.getElementById("activity-status");
+	if (el) el.textContent = text;
+}
+
+function connectActivityStream() {
+	if (activityState.eventSource) return;
+	try {
+		const es = new EventSource("/ws");
+		activityState.eventSource = es;
+		setActivityStatus("connected");
+		es.onmessage = (msg) => {
+			try {
+				const data = JSON.parse(msg.data);
+				if (!data || data.type !== "event") return;
+				pushActivityEntry(classifyActivityEvent(data));
+			} catch (err) { /* swallow malformed frames */ }
+		};
+		es.onerror = () => {
+			setActivityStatus("retrying...");
+			if (es.readyState === 2) { activityState.eventSource = null; }
+		};
+	} catch (err) {
+		setActivityStatus("unavailable");
+	}
+}
+
+function toggleActivityFollow() {
+	activityState.follow = !activityState.follow;
+	const btn = document.getElementById("activity-follow");
+	if (btn) btn.textContent = activityState.follow ? "Pause follow" : "Resume follow";
+	if (activityState.follow) renderActivityLog();
+}
+
+function clearActivityLog() {
+	activityState.entries = [];
+	renderActivityLog();
 }
 
 document.getElementById("chat-send").addEventListener("click", sendChat);
@@ -2374,6 +2571,8 @@ document.getElementById("load-latest-patch").addEventListener("click", loadLates
 document.getElementById("check-patch").addEventListener("click", () => applyPatch(true));
 document.getElementById("apply-patch").addEventListener("click", () => applyPatch(false));
 document.getElementById("undo-chat").addEventListener("click", undoConversation);
+document.getElementById("activity-clear").addEventListener("click", clearActivityLog);
+document.getElementById("activity-follow").addEventListener("click", toggleActivityFollow);
 document.getElementById("chat-input").addEventListener("keydown", event => {
 	if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
 		event.preventDefault();
