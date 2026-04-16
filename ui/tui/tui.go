@@ -215,6 +215,13 @@ type Model struct {
 	eventSub    chan engine.Event
 	activityLog []string
 
+	// Activity panel state — a timestamped firehose fed by every engine
+	// event (not the filtered shouldLogActivity gate). activityFollow=true
+	// pins the view to the tail; any manual scroll unpins it.
+	activityEntries []activityEntry
+	activityScroll  int
+	activityFollow  bool
+
 	agentLoopActive        bool
 	agentLoopStep          int
 	agentLoopMaxToolStep   int
@@ -344,7 +351,8 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	return Model{
 		ctx:               ctx,
 		eng:               eng,
-		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools"},
+		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity"},
+		activityFollow:    true,
 		streamIndex:       -1,
 		inputHistoryIndex: -1,
 		toolOverrides: map[string]string{},
@@ -705,6 +713,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "f6":
 			m.activeTab = 5
 			return m, nil
+		case "f7":
+			m.activeTab = 6
+			return m, nil
+		case "alt+7":
+			m.activeTab = 6
+			return m, nil
 		}
 
 		switch m.tabs[m.activeTab] {
@@ -743,6 +757,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleSetupKey(msg)
 		case "Tools":
 			return m.handleToolsKey(msg)
+		case "Activity":
+			return m.handleActivityKey(msg)
 		}
 	}
 	return m, nil
@@ -3775,6 +3791,8 @@ func (m Model) renderActiveView(width int, height int) string {
 		content = fitPanelContentHeight(m.renderSetupView(contentWidth), innerHeight)
 	case "Tools":
 		content = fitPanelContentHeight(m.renderToolsView(contentWidth), innerHeight)
+	case "Activity":
+		content = fitPanelContentHeight(m.renderActivityView(contentWidth), innerHeight)
 	default:
 		// Chat view is special — the input box (tail) must never be hidden
 		// or the user stops being able to type. We render head and tail
@@ -5075,6 +5093,9 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 	if eventType == "" {
 		return m
 	}
+	// Activity panel captures every event before any filtering — it's the
+	// firehose so users can see what the agent actually did.
+	m.recordActivityEvent(event)
 	line := ""
 	payload, _ := toStringAnyMap(event.Payload)
 	switch eventType {
