@@ -31,6 +31,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/planning"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/security"
 	toolruntime "github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -267,6 +268,18 @@ type Model struct {
 	promptsLoaded        bool
 	promptsPreviewID     string
 
+	// Security panel state — findings from internal/security.Scanner.
+	// Scans are manual (r) because I/O is noticeable on large trees; the
+	// view toggle flips between secrets and vulnerabilities.
+	securityReport       *security.Report
+	securityView         string
+	securityScroll       int
+	securityQuery        string
+	securityLoading      bool
+	securityErr          string
+	securitySearchActive bool
+	securityLoaded       bool
+
 	agentLoopActive        bool
 	agentLoopStep          int
 	agentLoopMaxToolStep   int
@@ -396,10 +409,11 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	return Model{
 		ctx:               ctx,
 		eng:               eng,
-		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts"},
+		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security"},
 		activityFollow:    true,
 		memoryTier:        memoryTierAll,
 		codemapView:       codemapViewOverview,
+		securityView:      securityViewSecrets,
 		streamIndex:       -1,
 		inputHistoryIndex: -1,
 		toolOverrides: map[string]string{},
@@ -632,6 +646,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case securityLoadedMsg:
+		m.securityLoading = false
+		m.securityLoaded = true
+		if msg.err != nil {
+			m.securityErr = msg.err.Error()
+			return m, nil
+		}
+		m.securityErr = ""
+		m.securityReport = msg.report
+		m.securityScroll = 0
+		return m, nil
+
 	case patchApplyMsg:
 		if msg.err != nil {
 			m.notice = "patch: " + msg.err.Error()
@@ -861,6 +887,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, loadPromptsCmd(m.eng)
 			}
 			return m, nil
+		case "f12":
+			// Security — no alt alias (alt+s is taken by Setup's save).
+			// Scan is manual via `r` inside the panel so landing here is
+			// cheap; we just flip the tab and show the empty-state hint.
+			m.activeTab = 11
+			return m, nil
 		}
 
 		switch m.tabs[m.activeTab] {
@@ -909,6 +941,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleConversationsKey(msg)
 		case "Prompts":
 			return m.handlePromptsKey(msg)
+		case "Security":
+			return m.handleSecurityKey(msg)
 		}
 	}
 	return m, nil
@@ -3951,6 +3985,8 @@ func (m Model) renderActiveView(width int, height int) string {
 		content = fitPanelContentHeight(m.renderConversationsView(contentWidth), innerHeight)
 	case "Prompts":
 		content = fitPanelContentHeight(m.renderPromptsView(contentWidth), innerHeight)
+	case "Security":
+		content = fitPanelContentHeight(m.renderSecurityView(contentWidth), innerHeight)
 	default:
 		// Chat view is special — the input box (tail) must never be hidden
 		// or the user stops being able to type. We render head and tail
@@ -4827,7 +4863,7 @@ func (m Model) renderHelpOverlay(width int) string {
 	lines = append(lines,
 		"",
 		boldStyle.Render("Global"),
-		"  ctrl+p palette · alt+1..0/alt+t or f1..f11 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
+		"  ctrl+p palette · alt+1..0/alt+t or f1..f12 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
 		"  esc cancels current stream · ctrl+c interrupts · ctrl+u clear input",
 		"",
 		boldStyle.Render("Chat composer"),
@@ -4887,6 +4923,10 @@ func helpOverlayTabHints(tab string) []string {
 	case "prompts":
 		return []string{
 			"j/k scroll · enter preview · / search · r refresh · c clear search",
+		}
+	case "security":
+		return []string{
+			"r rescan · v toggle secrets/vulns · j/k scroll · / search · c clear search",
 		}
 	default:
 		return []string{"alt+1..0/alt+t tabs · ctrl+p palette · ctrl+q quit"}
