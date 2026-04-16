@@ -89,6 +89,34 @@ func TestRenderChatHeaderUnconfiguredProviderGetsWarn(t *testing.T) {
 	}
 }
 
+// TestRenderChatHeaderShowsActivityBadges: when tools or subagents are in
+// flight, the header surfaces compact counts so the user sees fan-out live.
+func TestRenderChatHeaderShowsActivityBadges(t *testing.T) {
+	out := renderChatHeader(chatHeaderInfo{
+		Provider:        "anthropic",
+		Model:           "claude-opus-4-6",
+		Streaming:       true,
+		ActiveTools:     3,
+		ActiveSubagents: 2,
+	}, 200)
+	if !strings.Contains(out, "tools 3") {
+		t.Fatalf("expected active-tools badge, got %q", out)
+	}
+	if !strings.Contains(out, "subagents 2") {
+		t.Fatalf("expected active-subagents badge, got %q", out)
+	}
+	// Zero counts must stay off the header so a resting chat isn't cluttered.
+	resting := renderChatHeader(chatHeaderInfo{
+		Provider: "anthropic", Model: "claude-opus-4-6",
+	}, 200)
+	if strings.Contains(resting, "tools ") && !strings.Contains(resting, "tools on") && !strings.Contains(resting, "tools off") {
+		t.Fatalf("resting header should not render tools-count badge, got %q", resting)
+	}
+	if strings.Contains(resting, "subagents ") {
+		t.Fatalf("resting header should not render subagents-count badge, got %q", resting)
+	}
+}
+
 func TestRenderChatHeaderMovesPinnedToSecondLine(t *testing.T) {
 	out := renderChatHeader(chatHeaderInfo{
 		Provider: "anthropic", Model: "claude-opus-4-6", Pinned: "internal/foo.go",
@@ -261,6 +289,36 @@ func TestParkedEventSetsResumePromptAndEnterResumes(t *testing.T) {
 	view := m.renderChatView(160)
 	if !strings.Contains(view, "parked") || !strings.Contains(view, "enter resumes") {
 		t.Fatalf("banner should surface above input while parked, got:\n%s", view)
+	}
+}
+
+// TestParkedEventBudgetReasonArmsResumeWithoutDuplicateLine guards the
+// transcript cleanup: when the engine parks for budget_exhausted, the
+// dedicated "exhausted %d/%d" line already carries the context, so the
+// parked handler arms the resume banner but skips the generic "parked at
+// step N/M" echo to avoid double-logging.
+func TestParkedEventBudgetReasonArmsResumeWithoutDuplicateLine(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.status = engine.Status{Provider: "anthropic", Model: "claude-opus-4-6"}
+	m.sending = true
+	beforeMsgs := len(m.transcript)
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:parked",
+		Payload: map[string]any{
+			"step":           12,
+			"max_tool_steps": 25,
+			"reason":         "budget_exhausted",
+		},
+	})
+	if !m.resumePromptActive {
+		t.Fatal("budget-park should still arm the resume banner")
+	}
+	if m.agentLoopPhase != "parked" {
+		t.Fatalf("phase should flip to parked, got %q", m.agentLoopPhase)
+	}
+	if len(m.transcript) != beforeMsgs {
+		t.Fatalf("budget-park should suppress the transcript line, got %d new msgs", len(m.transcript)-beforeMsgs)
 	}
 }
 

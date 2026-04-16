@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -100,7 +101,11 @@ func (e *Engine) maybeAutoHandoff(question string) *handoffReport {
 	if briefBudget <= 0 {
 		briefBudget = 500
 	}
-	brief := buildHandoffBrief(active.ID, history, briefBudget)
+	var openTodos []tools.TodoItem
+	if e.Tools != nil {
+		openTodos = e.Tools.TodoSnapshot()
+	}
+	brief := buildHandoffBrief(active.ID, history, openTodos, briefBudget)
 	if strings.TrimSpace(brief) == "" {
 		return nil
 	}
@@ -156,11 +161,12 @@ func (e *Engine) maybeAutoHandoff(question string) *handoffReport {
 //   1. Original user intent (first user turn, truncated).
 //   2. Subsequent user asks (one-line each, up to a few).
 //   3. Tool activity summary — count per tool name, ok/fail split.
-//   4. Last assistant answer (truncated).
+//   4. Open todos (pending + in_progress from todo_write), if any.
+//   5. Last assistant answer (truncated).
 //
 // Bounded by maxTokens (~4 chars per token). Deterministic: identical inputs
 // produce identical output.
-func buildHandoffBrief(convID string, history []types.Message, maxTokens int) string {
+func buildHandoffBrief(convID string, history []types.Message, openTodos []tools.TodoItem, maxTokens int) string {
 	if len(history) == 0 {
 		return ""
 	}
@@ -225,6 +231,9 @@ func buildHandoffBrief(convID string, history []types.Message, maxTokens int) st
 		}
 		lines = append(lines, "tool activity: "+strings.Join(parts, "; "))
 	}
+	if openLines := renderOpenTodos(openTodos); len(openLines) > 0 {
+		lines = append(lines, openLines...)
+	}
 	if lastAssistant != "" {
 		lines = append(lines, "last answer: "+truncateRunes(lastAssistant, 320))
 	}
@@ -237,6 +246,48 @@ func buildHandoffBrief(convID string, history []types.Message, maxTokens int) st
 		}
 	}
 	return body
+}
+
+// renderOpenTodos emits brief lines for todo_write items still in-flight.
+// Completed items are dropped — the handoff brief is about "what's left",
+// not a status report. Caps at 8 lines to keep the brief bounded; overflow
+// is represented as "+N more".
+func renderOpenTodos(items []tools.TodoItem) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	const maxLines = 8
+	var pending, active []tools.TodoItem
+	for _, it := range items {
+		switch strings.ToLower(strings.TrimSpace(it.Status)) {
+		case "completed", "done":
+			continue
+		case "in_progress", "active", "doing":
+			active = append(active, it)
+		default:
+			pending = append(pending, it)
+		}
+	}
+	if len(pending)+len(active) == 0 {
+		return nil
+	}
+	header := fmt.Sprintf("open todos: %d pending, %d in_progress", len(pending), len(active))
+	out := []string{header}
+	ordered := append(active, pending...)
+	shown := 0
+	for _, it := range ordered {
+		if shown >= maxLines {
+			out = append(out, fmt.Sprintf("  (+%d more)", len(ordered)-shown))
+			break
+		}
+		mark := "[ ]"
+		if strings.EqualFold(strings.TrimSpace(it.Status), "in_progress") {
+			mark = "[~]"
+		}
+		out = append(out, fmt.Sprintf("  %s %s", mark, truncateRunes(strings.TrimSpace(it.Content), 140)))
+		shown++
+	}
+	return out
 }
 
 func truncateRunes(s string, max int) string {

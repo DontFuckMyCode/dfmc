@@ -2775,3 +2775,371 @@ func TestChatHeaderSlimDropsPanelOwnedFields(t *testing.T) {
 		t.Fatalf("slim header should still flag active streaming, got:\n%s", headStreaming)
 	}
 }
+
+// TestSlashSplitDecomposesBroadQuery drives the /split dispatcher through
+// Update() and checks that the resulting transcript message lists the
+// subtasks the deterministic splitter found. Exercises the path the coach
+// points users at when the loop parks for budget_exhausted.
+func TestSlashSplitDecomposesBroadQuery(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.setChatInput("/split first survey engine.go, then map the router, and document the manager")
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm, ok := out.(Model)
+	if !ok {
+		t.Fatalf("expected Model from Update, got %T", out)
+	}
+	if len(mm.transcript) == 0 {
+		t.Fatalf("/split should emit a system message, got empty transcript")
+	}
+	last := mm.transcript[len(mm.transcript)-1].Content
+	if !strings.Contains(last, "/split") {
+		t.Fatalf("expected /split header in output, got:\n%s", last)
+	}
+	if !strings.Contains(last, "subtasks") {
+		t.Fatalf("expected subtasks header, got:\n%s", last)
+	}
+	if !strings.Contains(last, "survey") || !strings.Contains(last, "router") {
+		t.Fatalf("expected both clauses captured as subtasks, got:\n%s", last)
+	}
+	// "first ... then ..." markers mean the plan is sequential, not parallel.
+	if !strings.Contains(last, "sequential") {
+		t.Fatalf("expected sequential mode for staged markers, got:\n%s", last)
+	}
+}
+
+// TestSlashSplitWithoutArgExplains guards the empty-args guard — a bare
+// /split must tell the user what the command does instead of silently
+// doing nothing.
+func TestSlashSplitWithoutArgExplains(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.setChatInput("/split")
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm, ok := out.(Model)
+	if !ok {
+		t.Fatalf("expected Model from Update, got %T", out)
+	}
+	if len(mm.transcript) == 0 {
+		t.Fatalf("/split without args should surface a usage line")
+	}
+	last := mm.transcript[len(mm.transcript)-1].Content
+	if !strings.Contains(last, "Usage: /split") {
+		t.Fatalf("expected usage hint, got:\n%s", last)
+	}
+}
+
+// TestSlashSplitAtomicExplainsNoDecomposition — when the query can't be
+// split the message must say so clearly rather than printing an empty list
+// that looks like the command failed.
+func TestSlashSplitAtomicExplainsNoDecomposition(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.setChatInput("/split fix the parser in token.go")
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm, ok := out.(Model)
+	if !ok {
+		t.Fatalf("expected Model from Update, got %T", out)
+	}
+	last := mm.transcript[len(mm.transcript)-1].Content
+	if !strings.Contains(last, "atomic") {
+		t.Fatalf("expected atomic-task message, got:\n%s", last)
+	}
+}
+
+// TestRenderToolChipShowsRTKCompression guards the per-chip compression
+// badge: when a tool:result carries RTK-style savings, the chip appends a
+// "rtk −<saved> (<pct>%)" chunk so the user can see the win right next to
+// the tool call that produced it.
+func TestRenderToolChipShowsRTKCompression(t *testing.T) {
+	out := renderToolChip(toolChip{
+		Name:            "run_command",
+		Status:          "ok",
+		DurationMs:      120,
+		SavedChars:      1800,
+		CompressedChars: 600,
+		CompressionPct:  75,
+	}, 140)
+	if !strings.Contains(out, "rtk") {
+		t.Fatalf("chip should advertise rtk compression, got: %q", out)
+	}
+	if !strings.Contains(out, "75%") {
+		t.Fatalf("chip should show compression percent, got: %q", out)
+	}
+
+	// Zero savings — no rtk badge.
+	none := renderToolChip(toolChip{Name: "read_file", Status: "ok"}, 140)
+	if strings.Contains(none, "rtk") {
+		t.Fatalf("chip without savings should not mention rtk, got: %q", none)
+	}
+}
+
+// TestStatsPanelShowsSessionCompressionSavings covers the TOOLS-section
+// "rtk saved N chars (M%)" line. When cumulative savings are zero the line
+// stays hidden so resting sessions aren't cluttered.
+func TestStatsPanelShowsSessionCompressionSavings(t *testing.T) {
+	panel := renderStatsPanel(statsPanelInfo{
+		Provider:              "openai",
+		Model:                 "gpt-5.4",
+		Configured:            true,
+		ToolsEnabled:          true,
+		ToolCount:             5,
+		CompressionSavedChars: 42_000,
+		CompressionRawChars:   100_000,
+	}, 20)
+	if !strings.Contains(panel, "rtk saved") {
+		t.Fatalf("TOOLS section should surface cumulative rtk savings, got:\n%s", panel)
+	}
+	if !strings.Contains(panel, "42%") {
+		t.Fatalf("savings line should include percent share, got:\n%s", panel)
+	}
+
+	quiet := renderStatsPanel(statsPanelInfo{
+		Provider:     "openai",
+		Model:        "gpt-5.4",
+		Configured:   true,
+		ToolsEnabled: true,
+	}, 20)
+	if strings.Contains(quiet, "rtk saved") {
+		t.Fatalf("panel should hide rtk line when savings are zero, got:\n%s", quiet)
+	}
+}
+
+// TestToolResultAccumulatesCompressionStats verifies that tool:result
+// events feed both the inline chip and the session totals on the Model so
+// the stats panel can show the lifetime compression win.
+func TestToolResultAccumulatesCompressionStats(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool": "run_command",
+			"step": 1,
+		},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":                    "run_command",
+			"step":                    1,
+			"durationMs":              50,
+			"success":                 true,
+			"output_chars":            1000,
+			"payload_chars":           400,
+			"compression_saved_chars": 600,
+			"compression_ratio":       0.40,
+		},
+	})
+	if len(m.toolTimeline) != 1 {
+		t.Fatalf("expected merged chip, got %d", len(m.toolTimeline))
+	}
+	chip := m.toolTimeline[0]
+	if chip.SavedChars != 600 || chip.CompressedChars != 400 {
+		t.Fatalf("chip should carry saved/compressed counts, got %#v", chip)
+	}
+	if chip.CompressionPct != 60 {
+		t.Fatalf("compression pct should be 60, got %d", chip.CompressionPct)
+	}
+	if m.compressionSavedChars != 600 || m.compressionRawChars != 1000 {
+		t.Fatalf("session totals not accumulated, got saved=%d raw=%d", m.compressionSavedChars, m.compressionRawChars)
+	}
+
+	// A second result doubles the running totals.
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool": "run_command",
+			"step": 2,
+		},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":                    "run_command",
+			"step":                    2,
+			"success":                 true,
+			"output_chars":            1000,
+			"payload_chars":           400,
+			"compression_saved_chars": 600,
+			"compression_ratio":       0.40,
+		},
+	})
+	if m.compressionSavedChars != 1200 || m.compressionRawChars != 2000 {
+		t.Fatalf("totals should accumulate across events, got saved=%d raw=%d", m.compressionSavedChars, m.compressionRawChars)
+	}
+
+	// And the stats panel must surface them.
+	info := m.statsPanelInfo()
+	if info.CompressionSavedChars != 1200 {
+		t.Fatalf("statsPanelInfo should forward session totals, got %d", info.CompressionSavedChars)
+	}
+}
+
+// TestToolCounterTracksConcurrentCalls proves the active-tool counter
+// increments on tool:call and decrements on tool:result so header badges
+// show "tools N" only while there's active fan-out.
+func TestToolCounterTracksConcurrentCalls(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+
+	m = m.handleEngineEvent(engine.Event{
+		Type:    "tool:call",
+		Payload: map[string]any{"tool": "read_file", "step": 1},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type:    "tool:call",
+		Payload: map[string]any{"tool": "grep_codebase", "step": 2},
+	})
+	if m.activeToolCount != 2 {
+		t.Fatalf("expected 2 concurrent tools, got %d", m.activeToolCount)
+	}
+	if head := m.chatHeaderInfo(); head.ActiveTools != 2 {
+		t.Fatalf("chatHeaderInfo should forward ActiveTools=2, got %d", head.ActiveTools)
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type:    "tool:result",
+		Payload: map[string]any{"tool": "read_file", "step": 1, "success": true},
+	})
+	if m.activeToolCount != 1 {
+		t.Fatalf("expected 1 remaining tool, got %d", m.activeToolCount)
+	}
+	m = m.handleEngineEvent(engine.Event{
+		Type:    "tool:result",
+		Payload: map[string]any{"tool": "grep_codebase", "step": 2, "success": true},
+	})
+	if m.activeToolCount != 0 {
+		t.Fatalf("expected counter back to 0, got %d", m.activeToolCount)
+	}
+	// Rogue extra tool:result must not drive the counter negative.
+	m = m.handleEngineEvent(engine.Event{
+		Type:    "tool:result",
+		Payload: map[string]any{"tool": "ghost", "step": 99, "success": true},
+	})
+	if m.activeToolCount != 0 {
+		t.Fatalf("counter should clamp to 0 on unmatched result, got %d", m.activeToolCount)
+	}
+}
+
+// TestSubagentEventsDriveChipsAndCounter covers the full subagent lifecycle
+// from delegate_task spawn through completion: chip pushed, header badge
+// incremented, then chip merged to "ok" status + badge decremented.
+func TestSubagentEventsDriveChipsAndCounter(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:subagent:start",
+		Payload: map[string]any{
+			"task": "refactor the auth middleware",
+			"role": "coder",
+		},
+	})
+	if m.activeSubagentCount != 1 {
+		t.Fatalf("expected activeSubagentCount=1 after start, got %d", m.activeSubagentCount)
+	}
+	if len(m.toolTimeline) == 0 {
+		t.Fatalf("expected subagent chip appended to timeline")
+	}
+	chip := m.toolTimeline[len(m.toolTimeline)-1]
+	if chip.Status != "subagent-running" {
+		t.Fatalf("expected subagent-running chip, got status=%q", chip.Status)
+	}
+	if !strings.Contains(chip.Name, "coder") {
+		t.Fatalf("expected role in chip name, got %q", chip.Name)
+	}
+	if head := m.chatHeaderInfo(); head.ActiveSubagents != 1 {
+		t.Fatalf("chatHeaderInfo should forward ActiveSubagents=1, got %d", head.ActiveSubagents)
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:subagent:done",
+		Payload: map[string]any{
+			"role":        "coder",
+			"duration_ms": 1234,
+			"tool_rounds": 5,
+			"parked":      false,
+			"err":         "",
+		},
+	})
+	if m.activeSubagentCount != 0 {
+		t.Fatalf("expected activeSubagentCount=0 after done, got %d", m.activeSubagentCount)
+	}
+	// The running chip should have been merged, not duplicated.
+	for _, c := range m.toolTimeline {
+		if c.Status == "subagent-running" {
+			t.Fatalf("subagent-running chip should have been merged to ok/failed, still running: %#v", c)
+		}
+	}
+	found := false
+	for _, c := range m.toolTimeline {
+		if c.Status == "subagent-ok" && strings.Contains(c.Name, "coder") {
+			found = true
+			if c.DurationMs != 1234 {
+				t.Fatalf("subagent chip missing duration, got %d", c.DurationMs)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected subagent-ok chip after done, timeline=%#v", m.toolTimeline)
+	}
+}
+
+// TestSubagentFailureSurfacesError: when delegate_task returns an error,
+// the chip status flips to subagent-failed with the error preview so the
+// user sees what went wrong without digging into logs.
+func TestSubagentFailureSurfacesError(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m = m.handleEngineEvent(engine.Event{
+		Type:    "agent:subagent:start",
+		Payload: map[string]any{"task": "broken task"},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:subagent:done",
+		Payload: map[string]any{
+			"duration_ms": 100,
+			"err":         "provider timeout",
+		},
+	})
+	found := false
+	for _, c := range m.toolTimeline {
+		if c.Status == "subagent-failed" {
+			found = true
+			if !strings.Contains(c.Preview, "provider timeout") {
+				t.Fatalf("failed chip should surface error preview, got %q", c.Preview)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected subagent-failed chip, got timeline=%#v", m.toolTimeline)
+	}
+}
+
+// TestBatchFanoutSurfacesInChipPreview: when tool_batch_call completes,
+// the TUI turns batch_count/batch_parallel/batch_ok/batch_fail payload
+// fields into a readable "N calls · P parallel · X ok · Y fail" chip preview.
+func TestBatchFanoutSurfacesInChipPreview(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m = m.handleEngineEvent(engine.Event{
+		Type:    "tool:call",
+		Payload: map[string]any{"tool": "tool_batch_call", "step": 1},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":           "tool_batch_call",
+			"step":           1,
+			"success":        true,
+			"durationMs":     80,
+			"batch_count":    4,
+			"batch_parallel": 4,
+			"batch_ok":       3,
+			"batch_fail":     1,
+		},
+	})
+	if len(m.toolTimeline) == 0 {
+		t.Fatalf("expected batch chip")
+	}
+	chip := m.toolTimeline[len(m.toolTimeline)-1]
+	for _, want := range []string{"4 calls", "4 parallel", "3 ok", "1 fail"} {
+		if !strings.Contains(chip.Preview, want) {
+			t.Fatalf("batch chip preview missing %q, got %q", want, chip.Preview)
+		}
+	}
+}

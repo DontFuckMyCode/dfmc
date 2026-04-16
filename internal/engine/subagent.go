@@ -35,16 +35,12 @@ func (e *Engine) RunSubagent(ctx context.Context, req tools.SubagentRequest) (to
 		return tools.SubagentResult{}, fmt.Errorf("sub-agent requires a provider with tool support (current: %s)", e.provider())
 	}
 
-	// Preserve parent's parked state. The sub-agent must not disturb it.
-	savedParked := e.takeParkedAgent()
-	defer func() {
-		// Discard any parked state the sub-agent may have created — it is
-		// scoped to its own task and the parent doesn't want to resume it.
-		e.ClearParkedAgent()
-		if savedParked != nil {
-			e.saveParkedAgent(savedParked)
-		}
-	}()
+	// Preserve parent's parked state across this (and any concurrent
+	// sibling) sub-agent runs. enterSubagent uses a reference counter so
+	// tool_batch_call(delegate_task) fan-outs don't race each other on the
+	// shared agentParked field — the parent's state is stashed once and
+	// restored once.
+	defer e.enterSubagent()()
 
 	task := buildSubagentPrompt(req)
 	chunks := e.buildContextChunks(task)

@@ -251,6 +251,27 @@ func (t *TodoWriteTool) render() Result {
 	}
 }
 
+// TodoItem is the exported projection of a single todo entry for consumers
+// outside the tools package (agent loop, handoff brief, TUI).
+type TodoItem struct {
+	Content    string `json:"content"`
+	Status     string `json:"status"`
+	ActiveForm string `json:"active_form,omitempty"`
+}
+
+// Snapshot returns a defensive copy of the current todo list so callers
+// can read it without racing with a concurrent todo_write call.
+func (t *TodoWriteTool) Snapshot() []TodoItem {
+	if t == nil || t.state == nil {
+		return nil
+	}
+	out := make([]TodoItem, len(t.state.items))
+	for i, it := range t.state.items {
+		out[i] = TodoItem{Content: it.Content, Status: it.Status, ActiveForm: it.ActiveForm}
+	}
+	return out
+}
+
 func parseTodoList(raw any) ([]todoItem, error) {
 	arr, ok := raw.([]any)
 	if !ok {

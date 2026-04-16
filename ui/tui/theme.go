@@ -316,6 +316,12 @@ type toolChip struct {
 	Step         int
 	OutputTokens int // estimated tokens returned by the tool (0 when unknown)
 	Truncated    bool
+	// RTK-style output compression stats (0 when unknown). CompressedChars
+	// is the model-bound payload size after compression; SavedChars is the
+	// number of characters dropped from the raw tool output.
+	CompressedChars int
+	SavedChars      int
+	CompressionPct  int // 0–99, how much of the raw output was dropped
 }
 
 func renderToolChip(chip toolChip, width int) string {
@@ -337,6 +343,13 @@ func renderToolChip(chip toolChip, width int) string {
 			meta = append(meta, fmt.Sprintf("+%s tok⚠", formatToolTokenCount(chip.OutputTokens)))
 		} else {
 			meta = append(meta, fmt.Sprintf("+%s tok", formatToolTokenCount(chip.OutputTokens)))
+		}
+	}
+	if chip.SavedChars > 0 {
+		if chip.CompressionPct > 0 {
+			meta = append(meta, fmt.Sprintf("rtk −%s (%d%%)", formatToolTokenCount(chip.SavedChars), chip.CompressionPct))
+		} else {
+			meta = append(meta, fmt.Sprintf("rtk −%s", formatToolTokenCount(chip.SavedChars)))
 		}
 	}
 	status := strings.TrimSpace(chip.Status)
@@ -418,6 +431,12 @@ func chipIconStyle(status string) (string, lipgloss.Style) {
 		return "✦", warnStyle
 	case "handoff":
 		return "⇨", accentStyle
+	case "subagent-running":
+		return "◈", accentStyle
+	case "subagent-ok":
+		return "◈", okStyle
+	case "subagent-failed":
+		return "◈", failStyle
 	default:
 		return "•", subtleStyle
 	}
@@ -626,6 +645,11 @@ type chatHeaderInfo struct {
 	Parked        bool
 	PendingNotes  int
 	Slim          bool
+	// ActiveTools / ActiveSubagents are live counts of in-flight tool calls
+	// and delegated sub-agents. They are shown as compact header badges when
+	// > 0 so the user can see fan-out (batch / delegate_task) in real time.
+	ActiveTools     int
+	ActiveSubagents int
 }
 
 // renderChatHeader returns 1 pre-styled line summarising chat state.
@@ -670,6 +694,12 @@ func renderChatHeader(info chatHeaderInfo, width int) string {
 
 	if info.Parked {
 		segments = append(segments, warnStyle.Bold(true).Render("⏸ parked — /continue"))
+	}
+	if info.ActiveTools > 0 {
+		segments = append(segments, infoStyle.Bold(true).Render(fmt.Sprintf("◌ tools %d", info.ActiveTools)))
+	}
+	if info.ActiveSubagents > 0 {
+		segments = append(segments, accentStyle.Bold(true).Render(fmt.Sprintf("◈ subagents %d", info.ActiveSubagents)))
 	}
 	if info.QueuedCount > 0 {
 		segments = append(segments, accentStyle.Bold(true).Render(fmt.Sprintf("▸ queued %d", info.QueuedCount)))
@@ -1007,6 +1037,10 @@ type statsPanelInfo struct {
 	SessionElapsed time.Duration
 	MessageCount   int
 	Pinned         string
+	// Cumulative RTK-style tool-output compression stats for the session,
+	// aggregated across all tool:result events.
+	CompressionSavedChars int
+	CompressionRawChars   int
 }
 
 // renderStatsPanel paints the right-hand "mission control" column for the
@@ -1120,6 +1154,17 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 		toolsBody = append(toolsBody, line)
 	} else {
 		toolsBody = append(toolsBody, subtleStyle.Render("off"))
+	}
+	if info.CompressionSavedChars > 0 {
+		pct := 0
+		if info.CompressionRawChars > 0 {
+			pct = int((int64(info.CompressionSavedChars) * 100) / int64(info.CompressionRawChars))
+		}
+		label := fmt.Sprintf("rtk saved %s chars", compactTokens(info.CompressionSavedChars))
+		if pct > 0 {
+			label += fmt.Sprintf(" (%d%%)", pct)
+		}
+		toolsBody = append(toolsBody, okStyle.Render(label))
 	}
 	addSection("⚒", "TOOLS", toolsBody)
 

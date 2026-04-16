@@ -44,7 +44,8 @@ type Engine struct {
 	recentFailures map[string]int
 	readMu         sync.Mutex
 	readSnapshots  map[string]string
-	delegateTool   *DelegateTaskTool
+	delegateTool    *DelegateTaskTool
+	orchestrateTool *OrchestrateTool
 }
 
 func New(cfg config.Config) *Engine {
@@ -77,6 +78,9 @@ func New(cfg config.Config) *Engine {
 	e.Register(NewTaskSplitTool())
 	e.delegateTool = NewDelegateTaskTool()
 	e.Register(e.delegateTool)
+	e.orchestrateTool = NewOrchestrateTool()
+	e.orchestrateTool.SetMaxParallelCeiling(cfg.Agent.ParallelBatchSize)
+	e.Register(e.orchestrateTool)
 	timeout, err := time.ParseDuration(strings.TrimSpace(cfg.Tools.Shell.Timeout))
 	if err != nil || timeout <= 0 {
 		timeout, _ = time.ParseDuration(strings.TrimSpace(cfg.Security.Sandbox.Timeout))
@@ -93,11 +97,15 @@ func New(cfg config.Config) *Engine {
 	return e
 }
 
-// SetSubagentRunner wires the delegate_task tool to the engine's sub-agent
-// entry point. Engines call this once the agent loop is fully constructed.
+// SetSubagentRunner wires the delegate_task and orchestrate tools to the
+// engine's sub-agent entry point. Engines call this once the agent loop is
+// fully constructed.
 func (e *Engine) SetSubagentRunner(r SubagentRunner) {
 	if e.delegateTool != nil {
 		e.delegateTool.SetRunner(r)
+	}
+	if e.orchestrateTool != nil {
+		e.orchestrateTool.SetRunner(r)
 	}
 }
 
@@ -112,6 +120,24 @@ func (e *Engine) MetaSpecs() []ToolSpec {
 		}
 	}
 	return out
+}
+
+// TodoSnapshot returns the current todo list recorded by the todo_write
+// tool, or nil when the tool is not registered. Safe for concurrent use;
+// the slice returned is a copy, not the live state.
+func (e *Engine) TodoSnapshot() []TodoItem {
+	if e == nil {
+		return nil
+	}
+	tool, ok := e.Get("todo_write")
+	if !ok {
+		return nil
+	}
+	tw, ok := tool.(*TodoWriteTool)
+	if !ok {
+		return nil
+	}
+	return tw.Snapshot()
 }
 
 // BackendSpecs returns every spec EXCEPT the meta tools. Useful for status

@@ -7,6 +7,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
+	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -236,7 +237,7 @@ func TestBuildHandoffBrief_Structure(t *testing.T) {
 		{Role: types.RoleAssistant, Content: "Done. Found 3 issues, all in auth middleware."},
 	}
 
-	brief := buildHandoffBrief("conv_xyz", history, 500)
+	brief := buildHandoffBrief("conv_xyz", history, nil, 500)
 	if brief == "" {
 		t.Fatal("expected non-empty brief")
 	}
@@ -264,7 +265,7 @@ func TestBuildHandoffBrief_TruncatesToBudget(t *testing.T) {
 		{Role: types.RoleUser, Content: longUser},
 		{Role: types.RoleAssistant, Content: strings.Repeat("beta ", 800)},
 	}
-	brief := buildHandoffBrief("c1", history, 20) // 20 * 4 = 80 char budget
+	brief := buildHandoffBrief("c1", history, nil, 20) // 20 * 4 = 80 char budget
 	if !strings.Contains(brief, "[truncated]") {
 		t.Fatalf("expected brief to be truncated under tight budget, got:\n%s", brief)
 	}
@@ -292,9 +293,9 @@ func TestBuildHandoffBrief_DeterministicToolOrder(t *testing.T) {
 			},
 		},
 	}
-	first := buildHandoffBrief("c1", history, 500)
+	first := buildHandoffBrief("c1", history, nil, 500)
 	for range 5 {
-		if got := buildHandoffBrief("c1", history, 500); got != first {
+		if got := buildHandoffBrief("c1", history, nil, 500); got != first {
 			t.Fatalf("expected deterministic brief; diverged:\nwant: %s\n got: %s", first, got)
 		}
 	}
@@ -304,5 +305,58 @@ func TestBuildHandoffBrief_DeterministicToolOrder(t *testing.T) {
 	idxZebra := strings.Index(first, "zebra_tool")
 	if idxAlpha < 0 || idxMid < 0 || idxZebra < 0 || !(idxAlpha < idxMid && idxMid < idxZebra) {
 		t.Fatalf("expected alphabetical tool ordering, got indices: alpha=%d mid=%d zebra=%d\n%s", idxAlpha, idxMid, idxZebra, first)
+	}
+}
+
+// TestBuildHandoffBrief_SurfacesOpenTodos: the brief must list todos still
+// pending or in-progress so the resumed session sees "what's left".
+// Completed items are dropped because they are not actionable.
+func TestBuildHandoffBrief_SurfacesOpenTodos(t *testing.T) {
+	history := []types.Message{
+		{Role: types.RoleUser, Content: "refactor the auth layer"},
+		{Role: types.RoleAssistant, Content: "on it"},
+	}
+	todos := []tools.TodoItem{
+		{Content: "audit middleware chain", Status: "completed"},
+		{Content: "migrate session store", Status: "in_progress"},
+		{Content: "rotate signing keys", Status: "pending"},
+		{Content: "write integration tests", Status: "pending"},
+	}
+	brief := buildHandoffBrief("c1", history, todos, 800)
+	if !strings.Contains(brief, "open todos: 2 pending, 1 in_progress") {
+		t.Fatalf("expected pending/in_progress header, got:\n%s", brief)
+	}
+	if !strings.Contains(brief, "migrate session store") {
+		t.Fatalf("expected in_progress item included, got:\n%s", brief)
+	}
+	if !strings.Contains(brief, "rotate signing keys") {
+		t.Fatalf("expected pending item included, got:\n%s", brief)
+	}
+	if strings.Contains(brief, "audit middleware chain") {
+		t.Fatalf("completed items must be excluded, got:\n%s", brief)
+	}
+	// in_progress should come before pending so the resumer picks up the
+	// active task first.
+	idxActive := strings.Index(brief, "migrate session store")
+	idxPending := strings.Index(brief, "rotate signing keys")
+	if idxActive < 0 || idxPending < 0 || idxActive >= idxPending {
+		t.Fatalf("expected in_progress before pending, got indices %d / %d\n%s", idxActive, idxPending, brief)
+	}
+}
+
+// TestBuildHandoffBrief_NoTodoSectionWhenNoneOpen: when every todo is done
+// the brief must not render a ghost "open todos:" line.
+func TestBuildHandoffBrief_NoTodoSectionWhenNoneOpen(t *testing.T) {
+	history := []types.Message{
+		{Role: types.RoleUser, Content: "ship it"},
+		{Role: types.RoleAssistant, Content: "shipped"},
+	}
+	todos := []tools.TodoItem{
+		{Content: "write release notes", Status: "completed"},
+		{Content: "tag the commit", Status: "done"},
+	}
+	brief := buildHandoffBrief("c1", history, todos, 500)
+	if strings.Contains(brief, "open todos") {
+		t.Fatalf("expected no open-todos section when all completed, got:\n%s", brief)
 	}
 }

@@ -3,13 +3,50 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 )
+
+// sleepTool is a test-only tool that sleeps for the configured duration and
+// reports when it ran. Used to prove tool_batch_call actually fans calls out
+// concurrently (wall-clock under N*sleep) and to verify result ordering even
+// when calls complete out of order.
+type sleepTool struct {
+	nameStr  string
+	sleep    time.Duration
+	inFlight *int32
+	peak     *int32
+	order    *int32
+}
+
+func (s *sleepTool) Name() string        { return s.nameStr }
+func (s *sleepTool) Description() string { return "sleep for a fixed duration" }
+func (s *sleepTool) Execute(ctx context.Context, _ Request) (Result, error) {
+	if s.inFlight != nil {
+		now := atomic.AddInt32(s.inFlight, 1)
+		defer atomic.AddInt32(s.inFlight, -1)
+		for {
+			p := atomic.LoadInt32(s.peak)
+			if now <= p || atomic.CompareAndSwapInt32(s.peak, p, now) {
+				break
+			}
+		}
+	}
+	select {
+	case <-time.After(s.sleep):
+	case <-ctx.Done():
+		return Result{}, ctx.Err()
+	}
+	finish := atomic.AddInt32(s.order, 1)
+	return Result{Output: fmt.Sprintf("%s:done#%d", s.nameStr, finish)}, nil
+}
 
 func newTestEngine(t *testing.T) (*Engine, string) {
 	t.Helper()
@@ -274,5 +311,236 @@ func TestToolBatchCallAcceptsToolAlias(t *testing.T) {
 		if ok, _ := entry["success"].(bool); !ok {
 			t.Fatalf("results[%d] should succeed via alias, got %v", i, entry)
 		}
+	}
+}
+
+// registerSleepers installs N sleepTool instances on the engine sharing the
+// same in-flight counters so tests can assert concurrency without timing
+// heuristics. Returns (peak concurrency observed pointer, completion-order
+// counter pointer) plus the tool names in registration order.
+func registerSleepers(eng *Engine, n int, sleep time.Duration) (*int32, *int32, []string) {
+	var inFlight, peak, order int32
+	names := make([]string, n)
+	for i := range n {
+		name := fmt.Sprintf("sleep_%d", i)
+		names[i] = name
+		eng.Register(&sleepTool{
+			nameStr:  name,
+			sleep:    sleep,
+			inFlight: &inFlight,
+			peak:     &peak,
+			order:    &order,
+		})
+	}
+	return &peak, &order, names
+}
+
+func buildBatchCallsForSleepers(names []string) []any {
+	out := make([]any, len(names))
+	for i, n := range names {
+		out[i] = map[string]any{"name": n, "args": map[string]any{}}
+	}
+	return out
+}
+
+func TestToolBatchCallRunsInParallel(t *testing.T) {
+	eng, tmp := newTestEngine(t)
+	peak, _, names := registerSleepers(eng, 4, 40*time.Millisecond)
+
+	start := time.Now()
+	res, err := eng.Execute(context.Background(), "tool_batch_call", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"calls": buildBatchCallsForSleepers(names)},
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("tool_batch_call: %v", err)
+	}
+	if got := atomic.LoadInt32(peak); got < 2 {
+		t.Fatalf("expected peak concurrency >= 2 with ParallelBatchSize=4, got %d", got)
+	}
+	// Sequential would take >= 4*40ms = 160ms. Parallel should finish well
+	// under that. Leave generous slack for loaded CI.
+	if elapsed >= 140*time.Millisecond {
+		t.Fatalf("batch wall-clock %v suggests serial execution (expected well under 160ms)", elapsed)
+	}
+	arr, _ := res.Data["results"].([]map[string]any)
+	if len(arr) != 4 {
+		t.Fatalf("expected 4 results, got %d", len(arr))
+	}
+	// parallel metadata should surface the effective concurrency.
+	if n, _ := res.Data["parallel"].(int); n < 2 {
+		t.Fatalf("expected parallel >= 2 in Data, got %v", res.Data["parallel"])
+	}
+}
+
+func TestToolBatchCallPreservesInputOrder(t *testing.T) {
+	eng, tmp := newTestEngine(t)
+	// Register three sleepers with staggered sleeps so completion order does
+	// not match input order when run concurrently.
+	_, _, names := registerSleepers(eng, 3, 0)
+	// Replace with per-index durations.
+	eng.Register(&sleepTool{nameStr: names[0], sleep: 30 * time.Millisecond, inFlight: new(int32), peak: new(int32), order: new(int32)})
+	eng.Register(&sleepTool{nameStr: names[1], sleep: 10 * time.Millisecond, inFlight: new(int32), peak: new(int32), order: new(int32)})
+	eng.Register(&sleepTool{nameStr: names[2], sleep: 20 * time.Millisecond, inFlight: new(int32), peak: new(int32), order: new(int32)})
+
+	res, err := eng.Execute(context.Background(), "tool_batch_call", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"calls": buildBatchCallsForSleepers(names)},
+	})
+	if err != nil {
+		t.Fatalf("tool_batch_call: %v", err)
+	}
+	arr, _ := res.Data["results"].([]map[string]any)
+	if len(arr) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(arr))
+	}
+	for i, entry := range arr {
+		if got, _ := entry["name"].(string); got != names[i] {
+			t.Fatalf("results[%d].name = %q, want %q — output order must match input order", i, got, names[i])
+		}
+	}
+	// The Output lines must also reflect input order (#1 is names[0], etc.)
+	outLines := strings.Split(strings.TrimSpace(res.Output), "\n")
+	for i, line := range outLines {
+		prefix := fmt.Sprintf("#%d %s:", i+1, names[i])
+		if !strings.HasPrefix(line, prefix) {
+			t.Fatalf("Output line %d = %q, want prefix %q", i, line, prefix)
+		}
+	}
+}
+
+func TestToolBatchCallSequentialWhenLimitOne(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := *config.DefaultConfig()
+	cfg.Agent.ParallelBatchSize = 1
+	eng := New(cfg)
+	_, _, names := registerSleepers(eng, 3, 20*time.Millisecond)
+
+	res, err := eng.Execute(context.Background(), "tool_batch_call", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"calls": buildBatchCallsForSleepers(names)},
+	})
+	if err != nil {
+		t.Fatalf("tool_batch_call: %v", err)
+	}
+	if n, _ := res.Data["parallel"].(int); n != 1 {
+		t.Fatalf("expected parallel=1 with ParallelBatchSize=1, got %v", res.Data["parallel"])
+	}
+	arr, _ := res.Data["results"].([]map[string]any)
+	if len(arr) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(arr))
+	}
+	for i, entry := range arr {
+		if ok, _ := entry["success"].(bool); !ok {
+			t.Fatalf("results[%d] should succeed, got %v", i, entry)
+		}
+	}
+}
+
+// concurrentRunner counts peak parallelism across RunSubagent invocations so
+// we can assert that tool_batch_call actually fans delegate_task out rather
+// than serialising it through the tools engine.
+type concurrentRunner struct {
+	sleep    time.Duration
+	inFlight int32
+	peak     int32
+}
+
+func (r *concurrentRunner) RunSubagent(ctx context.Context, req SubagentRequest) (SubagentResult, error) {
+	now := atomic.AddInt32(&r.inFlight, 1)
+	defer atomic.AddInt32(&r.inFlight, -1)
+	for {
+		p := atomic.LoadInt32(&r.peak)
+		if now <= p || atomic.CompareAndSwapInt32(&r.peak, p, now) {
+			break
+		}
+	}
+	select {
+	case <-time.After(r.sleep):
+	case <-ctx.Done():
+		return SubagentResult{}, ctx.Err()
+	}
+	return SubagentResult{Summary: "ran: " + req.Task, ToolCalls: 1, DurationMs: int64(r.sleep / time.Millisecond)}, nil
+}
+
+// TestToolBatchCallFansOutDelegateTask proves the orchestration promise:
+// tool_batch_call(delegate_task, delegate_task, ...) runs N sub-agents in
+// parallel bounded by ParallelBatchSize. Without this fan-out the "multiple
+// providers/models as subagents in parallel" design collapses into N
+// sequential round-trips.
+func TestToolBatchCallFansOutDelegateTask(t *testing.T) {
+	cfg := *config.DefaultConfig()
+	cfg.Agent.ParallelBatchSize = 4
+	eng := New(cfg)
+	runner := &concurrentRunner{sleep: 40 * time.Millisecond}
+	eng.SetSubagentRunner(runner)
+
+	calls := []any{}
+	for i := range 4 {
+		calls = append(calls, map[string]any{
+			"name": "delegate_task",
+			"args": map[string]any{"task": fmt.Sprintf("task-%d", i)},
+		})
+	}
+
+	start := time.Now()
+	res, err := eng.Execute(context.Background(), "tool_batch_call", Request{
+		Params: map[string]any{"calls": calls},
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("tool_batch_call: %v", err)
+	}
+	if got := atomic.LoadInt32(&runner.peak); got < 2 {
+		t.Fatalf("sub-agents did not run concurrently (peak=%d); expected at least 2", got)
+	}
+	// 4 calls × 40ms each = 160ms serial. With parallelism ≥2 we should beat
+	// 100ms comfortably on any dev machine.
+	if elapsed >= 120*time.Millisecond {
+		t.Fatalf("fan-out too slow (%s); batch is likely running serially", elapsed)
+	}
+	arr, _ := res.Data["results"].([]map[string]any)
+	if len(arr) != 4 {
+		t.Fatalf("expected 4 delegate_task results, got %d", len(arr))
+	}
+	for i, entry := range arr {
+		if ok, _ := entry["success"].(bool); !ok {
+			t.Fatalf("results[%d] should succeed, got %v", i, entry)
+		}
+	}
+}
+
+// TestToolBatchCallFailureIsolation proves a per-call error does not cancel
+// its siblings when they run concurrently.
+func TestToolBatchCallFailureIsolation(t *testing.T) {
+	eng, tmp := newTestEngine(t)
+	_, _, names := registerSleepers(eng, 2, 20*time.Millisecond)
+
+	res, err := eng.Execute(context.Background(), "tool_batch_call", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"calls": []any{
+				map[string]any{"name": names[0], "args": map[string]any{}},
+				map[string]any{"name": "does_not_exist", "args": map[string]any{}},
+				map[string]any{"name": names[1], "args": map[string]any{}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("tool_batch_call: %v", err)
+	}
+	arr, _ := res.Data["results"].([]map[string]any)
+	if len(arr) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(arr))
+	}
+	if ok, _ := arr[0]["success"].(bool); !ok {
+		t.Fatalf("results[0] should succeed despite sibling failure, got %v", arr[0])
+	}
+	if ok, _ := arr[1]["success"].(bool); ok {
+		t.Fatalf("results[1] should fail, got %v", arr[1])
+	}
+	if ok, _ := arr[2]["success"].(bool); !ok {
+		t.Fatalf("results[2] should succeed despite sibling failure, got %v", arr[2])
 	}
 }

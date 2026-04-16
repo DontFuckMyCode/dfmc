@@ -37,6 +37,16 @@ type ChatRequest struct {
 	Message string `json:"message"`
 }
 
+// AskRequest is the body of POST /api/v1/ask — a single-turn,
+// non-streaming completion. Race mode fans the same prompt out to multiple
+// providers in parallel and returns the first success; the winner's name
+// comes back in the response so the caller can log or display it.
+type AskRequest struct {
+	Message        string   `json:"message"`
+	Race           bool     `json:"race,omitempty"`
+	RaceProviders  []string `json:"race_providers,omitempty"`
+}
+
 type AnalyzeRequest struct {
 	Path       string `json:"path"`
 	Full       bool   `json:"full"`
@@ -115,6 +125,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/commands", s.handleCommands)
 	s.mux.HandleFunc("GET /api/v1/commands/{name}", s.handleCommandDetail)
 	s.mux.HandleFunc("POST /api/v1/chat", s.handleChat)
+	s.mux.HandleFunc("POST /api/v1/ask", s.handleAsk)
 	s.mux.HandleFunc("GET /api/v1/codemap", s.handleCodeMap)
 	s.mux.HandleFunc("GET /api/v1/context/budget", s.handleContextBudget)
 	s.mux.HandleFunc("GET /api/v1/context/recommend", s.handleContextRecommend)
@@ -1147,6 +1158,47 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+}
+
+// handleAsk answers a single-turn prompt. Unlike /api/v1/chat, which
+// streams and stays in the agent tool loop, this endpoint is one-shot: it
+// returns when the first provider reply comes back. When req.Race is true,
+// the router fans out to every candidate concurrently and the winner's
+// name is included in the response.
+func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
+	var req AskRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	msg := strings.TrimSpace(req.Message)
+	if msg == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "message is required"})
+		return
+	}
+	if req.Race {
+		answer, winner, err := s.engine.AskRaced(r.Context(), msg, req.RaceProviders)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"answer":     answer,
+			"winner":     winner,
+			"candidates": req.RaceProviders,
+			"mode":       "race",
+		})
+		return
+	}
+	answer, err := s.engine.Ask(r.Context(), msg)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"answer": answer,
+		"mode":   "single",
+	})
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {

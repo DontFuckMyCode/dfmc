@@ -6,8 +6,8 @@ package engine
 // When the native tool loop hits MaxSteps, instead of erroring out we freeze
 // the loop state (question, running message history, traces, tokens, context
 // chunks, system prompt) and emit a "parked" completion. The user can type
-// /continue (or the Turkish alias "devam") to resume exactly where it left
-// off, optionally with a note appended. Between iterations the loop also
+// /continue to resume exactly where it left off, optionally with a note
+// appended. Between iterations the loop also
 // drains any /btw notes the user has queued so they land before the next
 // provider round-trip.
 
@@ -150,6 +150,38 @@ func (e *Engine) saveParkedAgent(p *parkedAgentState) {
 	e.agentMu.Lock()
 	e.agentParked = p
 	e.agentMu.Unlock()
+}
+
+// enterSubagent stashes the parent's parked state aside when the first
+// subagent starts, and returns an exit function the caller defers to
+// restore it when the last subagent finishes. Safe for concurrent
+// subagents spawned via tool_batch_call(delegate_task): the parent's
+// parked state is only moved aside once (counter 0→1) and restored once
+// (counter 1→0). Any parked state produced by a subagent's own loop is
+// discarded on exit — subagents don't park-resume; the parent does.
+func (e *Engine) enterSubagent() func() {
+	if e == nil {
+		return func() {}
+	}
+	e.agentMu.Lock()
+	if e.subagentInFlight == 0 {
+		e.subagentStashed = e.agentParked
+		e.agentParked = nil
+	}
+	e.subagentInFlight++
+	e.agentMu.Unlock()
+	return func() {
+		e.agentMu.Lock()
+		e.subagentInFlight--
+		if e.subagentInFlight <= 0 {
+			e.subagentInFlight = 0
+			// Discard whatever a subagent parked — it's scoped to its own
+			// task and would confuse a later /continue from the parent.
+			e.agentParked = e.subagentStashed
+			e.subagentStashed = nil
+		}
+		e.agentMu.Unlock()
+	}
 }
 
 // itoaInt is a tiny allocation-free int formatter for status strings, to

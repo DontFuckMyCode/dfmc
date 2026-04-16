@@ -26,23 +26,40 @@ import (
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
-// Defaults used when agent config is unset. Concrete values come from
-// cfg.Agent (see config.AgentConfig); these are only the safety floor.
+// Defaults used when agent config is unset *and* the provider exposes no
+// context window. They act as a safety floor — the real runtime budget is
+// elastic and scales with `provider.MaxContext()` so a 1M-token window gets
+// a commensurately bigger tool budget instead of being throttled to 120k.
 const (
 	defaultMaxNativeToolSteps       = 25
 	defaultMaxNativeToolTokens      = 120000
 	defaultMaxNativeToolResultChars = 3200
 	defaultMaxNativeToolDataChars   = 1200
+
+	// elasticToolTokensRatio gives the tool loop 60% of the provider's
+	// context window. The other 40% covers base prompt, context chunks,
+	// response reserve, and scrollback headroom.
+	elasticToolTokensRatio = 0.60
+	// elasticToolResultCharsRatio caps an *individual* tool payload at
+	// ~2.5% of the window. A single read_file can't swamp the round.
+	elasticToolResultCharsRatio = 1.0 / 40.0
+	// elasticToolDataCharsRatio caps the JSON sidecar tighter — data
+	// payloads are usually duplicative of the text output.
+	elasticToolDataCharsRatio = 1.0 / 100.0
 )
 
 // agentLimits is the resolved runtime budget for a single agent loop.
 type agentLimits struct {
-	MaxSteps        int
-	MaxTokens       int
-	MaxResultChars  int
-	MaxDataChars    int
+	MaxSteps       int
+	MaxTokens      int
+	MaxResultChars int
+	MaxDataChars   int
 }
 
+// agentLimits resolves the runtime budget. Rule: cfg.Agent values are a
+// *floor*, not a cap. When the active provider exposes a context window we
+// scale each limit up proportionally — so capable models aren't strangled
+// by defaults meant for 128k windows. Cfg=0 means "fully elastic".
 func (e *Engine) agentLimits() agentLimits {
 	lim := agentLimits{
 		MaxSteps:       defaultMaxNativeToolSteps,
@@ -65,6 +82,21 @@ func (e *Engine) agentLimits() agentLimits {
 	}
 	if cfg.MaxToolResultDataChars > 0 {
 		lim.MaxDataChars = cfg.MaxToolResultDataChars
+	}
+
+	window := e.providerMaxContext()
+	if window <= 0 {
+		return lim
+	}
+
+	if scaled := int(float64(window) * elasticToolTokensRatio); scaled > lim.MaxTokens {
+		lim.MaxTokens = scaled
+	}
+	if scaled := int(float64(window) * elasticToolResultCharsRatio); scaled > lim.MaxResultChars {
+		lim.MaxResultChars = scaled
+	}
+	if scaled := int(float64(window) * elasticToolDataCharsRatio); scaled > lim.MaxDataChars {
+		lim.MaxDataChars = scaled
 	}
 	return lim
 }
@@ -91,6 +123,10 @@ type nativeToolCompletion struct {
 	// to pick up. Answer is a friendly "parked at step N" notice in that case.
 	Parked       bool
 	ParkedAtStep int
+	// ParkedReason discriminates why the loop parked so downstream surfaces
+	// (coach, TUI) can tailor their copy. Values: "step_cap" or
+	// "budget_exhausted". Empty when Parked is false.
+	ParkedReason string
 }
 
 // shouldUseNativeToolLoop reports whether the active provider negotiates
@@ -158,8 +194,8 @@ func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativ
 
 // ResumeAgent re-enters the native tool loop from a previously parked state.
 // An optional note is appended as a user message before the next round-trip,
-// so "devam, ama X de unutma" lands as guidance. Returns an error when there
-// is no parked loop.
+// e.g. /continue focus on the auth tests. Returns an error when there is no
+// parked loop.
 func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolCompletion, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -175,19 +211,51 @@ func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolComple
 		})
 	}
 	lim := e.agentLimits()
+
+	// Force-compact the parked history before the next provider round-trip.
+	// Without this, resume ships the full fat tool_result transcript back to
+	// the provider, which balloons Usage.TotalTokens past the budget on step
+	// 1 and re-parks us in a cycle.
+	priorTokens := seed.TotalTokens
+	if compacted, report := e.forceCompactNativeLoopHistory(seed.Messages, seed.SystemPrompt, seed.Chunks); report != nil {
+		seed.Messages = compacted
+		e.publishAgentLoopEvent("context:lifecycle:compacted", map[string]any{
+			"step":             0,
+			"before_tokens":    report.BeforeTokens,
+			"after_tokens":     report.AfterTokens,
+			"rounds_collapsed": report.RoundsCollapsed,
+			"messages_removed": report.MessagesRemoved,
+			"threshold_ratio":  report.ThresholdRatio,
+			"keep_recent":      report.KeepRecentRounds,
+			"surface":          "native",
+			"phase":            "resume",
+		})
+	}
+
 	e.publishAgentLoopEvent("agent:loop:resume", map[string]any{
 		"resumed_from_step": seed.Step,
 		"max_tool_steps":    lim.MaxSteps,
 		"tool_rounds":       len(seed.Traces),
-		"tokens_used":       seed.TotalTokens,
+		"tokens_used":       priorTokens,
 		"surface":           "native",
 	})
 	// Give the resumed loop a fresh cap of MaxSteps *additional* iterations
 	// on top of whatever it already consumed. That's what the user typed
-	// /continue for — they want more work, not another instant park.
+	// /continue for — they want more work, not another instant park. Reset
+	// TotalTokens too: the budget meters per resume attempt, not cumulative
+	// — otherwise every /continue trips MaxTokens on step 1.
 	seed.Step = 0
+	seed.TotalTokens = 0
 	return e.runNativeToolLoop(ctx, seed, lim)
 }
+
+// maxBudgetAutoRecoveries caps how many times a single agent-loop invocation
+// will auto-compact + reset tokens on budget_exhausted before giving up and
+// parking. One is usually enough: Fix A's force-compact on resume already
+// handles the bulk of the bloat; this is the safety net for runs that keep
+// growing mid-loop. Higher values risk infinite compact→fill→compact cycles
+// when the model's asks inherently generate more data than fits.
+const maxBudgetAutoRecoveries = 1
 
 func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, lim agentLimits) (nativeToolCompletion, error) {
 	msgs := seed.Messages
@@ -203,6 +271,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 	lastProvider := seed.LastProvider
 	lastModel := seed.LastModel
 	question := seed.Question
+	autoRecoveries := 0
 
 	for step := 1; step <= lim.MaxSteps; step++ {
 		if notes := e.drainAgentNotes(); len(notes) > 0 {
@@ -321,10 +390,16 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			} else {
 				trace.Result = res
 			}
-			e.publishNativeToolResult(trace)
-			traces = append(traces, trace)
 
 			content, isErr := formatNativeToolResultPayloadWithLimits(res, toolErr, lim.MaxResultChars, lim.MaxDataChars)
+			// Publish after formatting so we can attach RTK compression
+			// stats (raw→payload bytes) to the event for the TUI stats
+			// panel. Moving the publish here doesn't change ordering from
+			// the bus consumer's perspective — the next message append
+			// still happens before the next provider call.
+			e.publishNativeToolResultWithPayload(trace, content)
+			traces = append(traces, trace)
+
 			msgs = append(msgs, provider.Message{
 				Role:       types.RoleUser,
 				Content:    content,
@@ -354,22 +429,53 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		}
 
 		if lim.MaxTokens > 0 && totalTokens >= lim.MaxTokens {
-			// Token-budget exhaustion parks the loop instead of erroring —
-			// the user's work so far (tool traces, mutations, chunks) is
-			// still useful, and /continue after /compact can pick up with
-			// fresh headroom. Erroring here would drop all that silently.
-			notice := fmt.Sprintf(
-				"Agent loop parked after step %d — tool budget exhausted (~%d/%d tokens, %d rounds). "+
-					"Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file.",
-				step, totalTokens, lim.MaxTokens, len(traces),
-			)
-			return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
+			// Before parking, try auto-recovery: force-compact the running
+			// history and reset the per-run token counter so the next
+			// iteration gets fresh headroom. Only attempt this a fixed
+			// number of times to avoid infinite compact→fill cycles when
+			// the work inherently exceeds one budget.
+			if autoRecoveries < maxBudgetAutoRecoveries {
+				if compacted, report := e.forceCompactNativeLoopHistory(msgs, systemPrompt, chunks); report != nil && report.MessagesRemoved > 0 {
+					msgs = compacted
+					before := totalTokens
+					totalTokens = 0
+					autoRecoveries++
+					e.publishAgentLoopEvent("agent:loop:auto_recover", map[string]any{
+						"step":             step,
+						"attempt":          autoRecoveries,
+						"max_attempts":     maxBudgetAutoRecoveries,
+						"tokens_before":    before,
+						"rounds_collapsed": report.RoundsCollapsed,
+						"messages_removed": report.MessagesRemoved,
+						"reason":           "budget_exhausted",
+						"surface":          "native",
+					})
+					// Fall through to the step-cap check. If we're not at
+					// MaxSteps yet, the loop iterates with the slimmed
+					// history and a zeroed budget.
+				} else {
+					// Nothing to compact — park. Same behaviour as before.
+					notice := fmt.Sprintf(
+						"Agent loop parked after step %d — tool budget exhausted (~%d/%d tokens, %d rounds). "+
+							"Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file.",
+						step, totalTokens, lim.MaxTokens, len(traces),
+					)
+					return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
+				}
+			} else {
+				notice := fmt.Sprintf(
+					"Agent loop parked after step %d — tool budget exhausted (~%d/%d tokens, %d rounds). "+
+						"Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file.",
+					step, totalTokens, lim.MaxTokens, len(traces),
+				)
+				return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
+			}
 		}
 
 		if step == lim.MaxSteps {
 			notice := fmt.Sprintf(
 				"Agent loop parked at step %d (%d tool rounds, ~%d tokens). "+
-					"Type /continue (or devam) to resume, optionally with a note — e.g. /continue focus on the test file.",
+					"Type /continue to resume, optionally with a note — e.g. /continue focus on the test file.",
 				step, len(traces), totalTokens,
 			)
 			return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "step_cap"), nil
@@ -451,6 +557,7 @@ func (e *Engine) parkNativeToolLoop(
 		SystemPrompt: systemPrompt,
 		Parked:       true,
 		ParkedAtStep: step,
+		ParkedReason: reason,
 	}
 }
 
@@ -563,19 +670,32 @@ func formatNativeToolResultPayloadWithLimits(res tools.Result, toolErr error, ma
 	if toolErr != nil {
 		return "ERROR: " + toolErr.Error(), true
 	}
-	output := strings.TrimSpace(res.Output)
-	hasData := len(res.Data) > 0
+	// RTK-style pass: strip ANSI, drop progress/spinner noise, collapse
+	// repeated lines. Runs before char-budget trimming so we don't waste
+	// budget on decorative bytes the model doesn't need.
+	output := compressToolResult(strings.TrimSpace(res.Output))
+	data := res.Data
+	// For tool_batch_call fan-outs, cap each inner call's output/data
+	// proportionally so a 10-file read doesn't eat 10x the budget of a
+	// single read. Total model payload stays bounded by maxOutput/maxData
+	// regardless of batch size.
+	if data != nil {
+		if trimmed, didTrim := slimBatchInnerResults(data, maxOutput, maxData); didTrim {
+			data = trimmed
+		}
+	}
+	hasData := len(data) > 0
 	if output == "" && !hasData {
 		return "(no output)", false
 	}
 	out := trimToolPayload(output, maxOutput)
 	if hasData {
-		if raw, err := json.MarshalIndent(res.Data, "", "  "); err == nil {
-			data := trimToolPayload(string(raw), maxData)
+		if raw, err := json.MarshalIndent(data, "", "  "); err == nil {
+			dataStr := trimToolPayload(compressToolResult(string(raw)), maxData)
 			if out == "" {
-				out = data
+				out = dataStr
 			} else {
-				out = out + "\n\nDATA:\n" + data
+				out = out + "\n\nDATA:\n" + dataStr
 			}
 		}
 	}
@@ -583,6 +703,79 @@ func formatNativeToolResultPayloadWithLimits(res tools.Result, toolErr error, ma
 		out += "\n\n(output truncated by sandbox)"
 	}
 	return out, false
+}
+
+// slimBatchInnerResults detects a tool_batch_call-shaped Data map and caps
+// each inner call's `output` and `data` to a proportional slice of the outer
+// budget. Returns a shallow-cloned map so we don't mutate the live
+// tools.Result held by the trace (the TUI still sees the full payload via
+// the tool:result event, which uses the original Data). Second return is
+// true when slimming actually happened.
+func slimBatchInnerResults(data map[string]any, maxOutput, maxData int) (map[string]any, bool) {
+	rawResults, ok := data["results"]
+	if !ok {
+		return data, false
+	}
+	var results []map[string]any
+	switch v := rawResults.(type) {
+	case []map[string]any:
+		results = v
+	case []any:
+		for _, item := range v {
+			if m, ok := item.(map[string]any); ok {
+				results = append(results, m)
+			}
+		}
+	}
+	if len(results) == 0 {
+		return data, false
+	}
+
+	// Proportional budget per inner call with a sane floor (we want the
+	// model to get *something* useful from each call even if there are
+	// many). 400 chars ≈ 100 tokens — enough for a one-paragraph snippet
+	// or a few lines of shell output.
+	perOut := maxOutput / len(results)
+	if perOut < 400 {
+		perOut = 400
+	}
+	perData := maxData / len(results)
+	if perData < 200 {
+		perData = 200
+	}
+
+	clonedResults := make([]map[string]any, len(results))
+	changed := false
+	for i, r := range results {
+		slot := make(map[string]any, len(r))
+		for k, v := range r {
+			slot[k] = v
+		}
+		if s, ok := slot["output"].(string); ok {
+			compressed := compressToolResult(s)
+			if trimmed := trimToolPayload(compressed, perOut); trimmed != s {
+				slot["output"] = trimmed
+				changed = true
+			}
+		}
+		if inner, ok := slot["data"].(map[string]any); ok && len(inner) > 0 {
+			if raw, err := json.Marshal(inner); err == nil && len(raw) > perData {
+				slot["data"] = trimToolPayload(compressToolResult(string(raw)), perData)
+				changed = true
+			}
+		}
+		clonedResults[i] = slot
+	}
+	if !changed {
+		return data, false
+	}
+
+	out := make(map[string]any, len(data))
+	for k, v := range data {
+		out[k] = v
+	}
+	out["results"] = clonedResults
+	return out, true
 }
 
 func (e *Engine) recordNativeAgentInteraction(question string, completion nativeToolCompletion) {
@@ -667,7 +860,13 @@ func (e *Engine) publishNativeToolCall(trace nativeToolTrace) {
 	})
 }
 
-func (e *Engine) publishNativeToolResult(trace nativeToolTrace) {
+// publishNativeToolResultWithPayload emits a tool:result event enriched
+// with RTK compression stats — the exact bytes (and token estimate) that
+// go back to the model after the noise filter + char-cap trim. When
+// modelPayload is empty (e.g. coming from the legacy publish path), the
+// payload-size fields are omitted. The diff between raw output and payload
+// is the RTK savings the TUI stats panel can surface.
+func (e *Engine) publishNativeToolResultWithPayload(trace nativeToolTrace, modelPayload string) {
 	if e.EventBus == nil {
 		return
 	}
@@ -686,12 +885,68 @@ func (e *Engine) publishNativeToolResult(trace nativeToolTrace) {
 		"tool_call_id":   trace.Call.ID,
 		"surface":        "native",
 	}
+	if modelPayload != "" {
+		payload["payload_chars"] = len(modelPayload)
+		payload["payload_tokens"] = estimateTokens(modelPayload)
+		if raw := len(outputText); raw > 0 {
+			saved := max(raw-len(modelPayload), 0)
+			payload["compression_saved_chars"] = saved
+			// Ratio kept as float so the UI can render "83%".
+			payload["compression_ratio"] = float64(len(modelPayload)) / float64(raw)
+		}
+	}
 	if trace.Err != "" {
 		payload["error"] = trace.Err
+	}
+	if summary := batchFanoutSummary(trace.Call.Name, trace.Result.Data); summary != nil {
+		for k, v := range summary {
+			payload[k] = v
+		}
 	}
 	e.EventBus.Publish(Event{
 		Type:    "tool:result",
 		Source:  "engine",
 		Payload: payload,
 	})
+}
+
+// batchFanoutSummary extracts a compact {count, parallel, ok, fail} view
+// from the Result.Data of a tool_batch_call so the TUI can show
+// "4 parallel · 3 ok · 1 fail" in the chip preview. Returns nil for
+// non-batch tools or malformed data so the caller can skip cheaply.
+func batchFanoutSummary(toolName string, data map[string]any) map[string]any {
+	if toolName != "tool_batch_call" || data == nil {
+		return nil
+	}
+	results, _ := data["results"].([]map[string]any)
+	if results == nil {
+		// fallback: some call paths stringify into []any
+		if arr, ok := data["results"].([]any); ok {
+			for _, v := range arr {
+				if m, ok := v.(map[string]any); ok {
+					results = append(results, m)
+				}
+			}
+		}
+	}
+	if len(results) == 0 {
+		return nil
+	}
+	ok, fail := 0, 0
+	for _, r := range results {
+		if succ, _ := r["success"].(bool); succ {
+			ok++
+		} else {
+			fail++
+		}
+	}
+	out := map[string]any{
+		"batch_count": len(results),
+		"batch_ok":    ok,
+		"batch_fail":  fail,
+	}
+	if p, ok := data["parallel"].(int); ok && p > 0 {
+		out["batch_parallel"] = p
+	}
+	return out
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/planning"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	toolruntime "github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -227,6 +228,19 @@ type Model struct {
 	agentLoopLastOutput    string
 	agentLoopContextScope  string
 	toolTimeline           []toolChip
+
+	// Cumulative RTK-style tool-output compression stats for the session —
+	// aggregated across every tool:result event so the stats panel can show
+	// "rtk saved N chars (M%)" without re-walking the timeline.
+	compressionSavedChars int
+	compressionRawChars   int
+
+	// Live counters of in-flight fan-out. activeToolCount is incremented on
+	// tool:call and decremented on tool:result/tool:error; activeSubagentCount
+	// tracks delegate_task lifecycles via agent:subagent:start|done. Both
+	// feed the chat-header badges so the user can see parallel work unfold.
+	activeToolCount      int
+	activeSubagentCount  int
 
 	notice string
 }
@@ -2284,7 +2298,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.input = ""
 		m.notice = "Already in chat. Just type your message."
 		return m.appendSystemMessage("You're already in the chat tab — type your message and press enter."), nil, true
-	case "continue", "devam", "resume":
+	case "continue", "resume":
 		m.input = ""
 		if m.eng == nil || !m.eng.HasParkedAgent() {
 			m.notice = "Nothing to resume — no parked agent loop."
@@ -2293,6 +2307,14 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		note := strings.TrimSpace(strings.Join(args, " "))
 		next, cmdOut := m.startChatResume(note)
 		return next, cmdOut, true
+	case "split":
+		m.input = ""
+		query := strings.TrimSpace(strings.Join(args, " "))
+		if query == "" {
+			m.notice = "/split needs a task to decompose."
+			return m.appendSystemMessage("Usage: /split <task> — runs the deterministic splitter and shows the subtasks it detects so you can dispatch them individually."), nil, true
+		}
+		return m.appendSystemMessage(renderSplitPlan(planning.SplitTask(query))), nil, true
 	case "btw":
 		m.input = ""
 		note := strings.TrimSpace(strings.Join(args, " "))
@@ -4129,21 +4151,23 @@ func (m Model) chatHeaderInfo() chatHeaderInfo {
 	toolsEnabled := m.eng != nil && m.eng.Tools != nil
 	parked := m.eng != nil && m.eng.HasParkedAgent()
 	return chatHeaderInfo{
-		Provider:      provider,
-		Model:         model,
-		Configured:    configured || strings.EqualFold(provider, "offline"),
-		MaxContext:    maxCtx,
-		ContextTokens: tokens,
-		Pinned:        strings.TrimSpace(m.pinnedFile),
-		ToolsEnabled:  toolsEnabled,
-		Streaming:     m.sending,
-		AgentActive:   m.agentLoopActive,
-		AgentPhase:    m.agentLoopPhase,
-		AgentStep:     m.agentLoopStep,
-		AgentMax:      m.agentLoopMaxToolStep,
-		QueuedCount:   len(m.pendingQueue),
-		Parked:        parked,
-		PendingNotes:  m.pendingNoteCount,
+		Provider:        provider,
+		Model:           model,
+		Configured:      configured || strings.EqualFold(provider, "offline"),
+		MaxContext:      maxCtx,
+		ContextTokens:   tokens,
+		Pinned:          strings.TrimSpace(m.pinnedFile),
+		ToolsEnabled:    toolsEnabled,
+		Streaming:       m.sending,
+		AgentActive:     m.agentLoopActive,
+		AgentPhase:      m.agentLoopPhase,
+		AgentStep:       m.agentLoopStep,
+		AgentMax:        m.agentLoopMaxToolStep,
+		QueuedCount:     len(m.pendingQueue),
+		Parked:          parked,
+		PendingNotes:    m.pendingNoteCount,
+		ActiveTools:     m.activeToolCount,
+		ActiveSubagents: m.activeSubagentCount,
 	}
 }
 
@@ -4184,9 +4208,11 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		Detached:       m.gitInfo.Detached,
 		Inserted:       m.gitInfo.Inserted,
 		Deleted:        m.gitInfo.Deleted,
-		SessionElapsed: elapsed,
-		MessageCount:   len(m.transcript),
-		Pinned:         head.Pinned,
+		SessionElapsed:        elapsed,
+		MessageCount:          len(m.transcript),
+		Pinned:                head.Pinned,
+		CompressionSavedChars: m.compressionSavedChars,
+		CompressionRawChars:   m.compressionRawChars,
 	}
 }
 
@@ -4631,7 +4657,7 @@ func (m Model) renderHelpOverlay(width int) string {
 		boldStyle.Render("Chat composer"),
 		"  ↑/↓ history · tab accept suggestion · @ mention file · / browse commands",
 		"  @file:10-50 or @file#L10-L50 attaches a line range to the mention",
-		"  /continue · /devam resume a parked agent loop · /btw queue a note",
+		"  /continue resumes a parked agent loop · /btw queues a note",
 		"  /clear wipes transcript · /quit exits · /coach mutes notes · /hints toggles trajectory",
 	)
 	out := make([]string, 0, len(lines))
@@ -5112,6 +5138,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		}
 		m.pushToolChip(toolCallChip)
 		m.pushStreamingMessageToolChip(toolCallChip)
+		m.activeToolCount++
 		if step > 0 {
 			line = fmt.Sprintf("Agent tool call: %s (step %d)", toolName, step)
 		} else {
@@ -5150,17 +5177,50 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		if chipPreview == "" && !success {
 			chipPreview = payloadString(payload, "error", "")
 		}
+		if batchCount := payloadInt(payload, "batch_count", 0); batchCount > 0 {
+			batchParallel := payloadInt(payload, "batch_parallel", 0)
+			batchOK := payloadInt(payload, "batch_ok", 0)
+			batchFail := payloadInt(payload, "batch_fail", 0)
+			parts := []string{fmt.Sprintf("%d calls", batchCount)}
+			if batchParallel > 0 {
+				parts = append(parts, fmt.Sprintf("%d parallel", batchParallel))
+			}
+			parts = append(parts, fmt.Sprintf("%d ok", batchOK))
+			if batchFail > 0 {
+				parts = append(parts, fmt.Sprintf("%d fail", batchFail))
+			}
+			chipPreview = strings.Join(parts, " · ")
+		}
+		savedChars := payloadInt(payload, "compression_saved_chars", 0)
+		rawChars := payloadInt(payload, "output_chars", 0)
+		payloadChars := payloadInt(payload, "payload_chars", 0)
+		compressionPct := 0
+		if ratio, ok := payload["compression_ratio"].(float64); ok && ratio >= 0 && ratio <= 1 {
+			compressionPct = int((1 - ratio) * 100)
+		} else if rawChars > 0 && savedChars > 0 {
+			compressionPct = int((int64(savedChars) * 100) / int64(rawChars))
+		}
+		if savedChars > 0 && rawChars > 0 {
+			m.compressionSavedChars += savedChars
+			m.compressionRawChars += rawChars
+		}
 		finishedChip := toolChip{
-			Name:         toolName,
-			Status:       status,
-			Step:         step,
-			DurationMs:   duration,
-			Preview:      chipPreview,
-			OutputTokens: payloadInt(payload, "output_tokens", 0),
-			Truncated:    payloadBool(payload, "truncated", false),
+			Name:            toolName,
+			Status:          status,
+			Step:            step,
+			DurationMs:      duration,
+			Preview:         chipPreview,
+			OutputTokens:    payloadInt(payload, "output_tokens", 0),
+			Truncated:       payloadBool(payload, "truncated", false),
+			CompressedChars: payloadChars,
+			SavedChars:      savedChars,
+			CompressionPct:  compressionPct,
 		}
 		m.finishToolChip(finishedChip)
 		m.finishStreamingMessageToolChip(finishedChip)
+		if m.activeToolCount > 0 {
+			m.activeToolCount--
+		}
 		if duration > 0 {
 			line = fmt.Sprintf("Agent tool result: %s (%s, %dms)", toolName, status, duration)
 		} else {
@@ -5203,6 +5263,12 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			m.agentLoopMaxToolStep = maxSteps
 		}
 		m.resumePromptActive = true
+		// budget_exhausted already surfaces its own "exhausted %d/%d"
+		// transcript line with token counts; suppress the generic parked
+		// line in that case so the scrollback reads once, not twice.
+		if payloadString(payload, "reason", "") == "budget_exhausted" {
+			return m
+		}
 		line = fmt.Sprintf("Agent loop parked at step %d/%d — press Enter to resume, Esc to dismiss.", step, maxSteps)
 	case "coach:note":
 		if m.coachMuted {
@@ -5233,6 +5299,65 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			line = "Tool error: " + strings.TrimSpace(payload)
 		default:
 			line = "Tool error occurred."
+		}
+	case "agent:subagent:start":
+		task := payloadString(payload, "task", "task")
+		role := payloadString(payload, "role", "")
+		m.activeSubagentCount++
+		chipName := "subagent"
+		if role != "" {
+			chipName = "subagent/" + role
+		}
+		preview := truncateSingleLine(task, 72)
+		chip := toolChip{
+			Name:    chipName,
+			Status:  "subagent-running",
+			Preview: preview,
+		}
+		m.pushToolChip(chip)
+		m.pushStreamingMessageToolChip(chip)
+		if role != "" {
+			line = fmt.Sprintf("Subagent (%s) started: %s", role, preview)
+		} else {
+			line = "Subagent started: " + preview
+		}
+	case "agent:subagent:done":
+		if m.activeSubagentCount > 0 {
+			m.activeSubagentCount--
+		}
+		duration := payloadInt(payload, "duration_ms", 0)
+		rounds := payloadInt(payload, "tool_rounds", 0)
+		parked := payloadBool(payload, "parked", false)
+		errText := payloadString(payload, "err", "")
+		role := payloadString(payload, "role", "")
+		status := "subagent-ok"
+		chipPreview := fmt.Sprintf("%d rounds", rounds)
+		if parked {
+			chipPreview += " · parked"
+		}
+		if errText != "" {
+			status = "subagent-failed"
+			chipPreview = truncateSingleLine(errText, 72)
+		}
+		chipName := "subagent"
+		if role != "" {
+			chipName = "subagent/" + role
+		}
+		finished := toolChip{
+			Name:       chipName,
+			Status:     status,
+			DurationMs: duration,
+			Preview:    chipPreview,
+		}
+		m.finishToolChip(finished)
+		m.finishStreamingMessageToolChip(finished)
+		switch {
+		case errText != "":
+			line = fmt.Sprintf("Subagent failed (%dms): %s", duration, truncateSingleLine(errText, 120))
+		case parked:
+			line = fmt.Sprintf("Subagent parked after %d rounds (%dms).", rounds, duration)
+		default:
+			line = fmt.Sprintf("Subagent done: %d rounds (%dms).", rounds, duration)
 		}
 	case "context:built":
 		files := payloadInt(payload, "files", 0)
@@ -5275,6 +5400,52 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			Preview: fmt.Sprintf("%d/%d tok", used, budget),
 		})
 		line = fmt.Sprintf("Agent loop exhausted token budget (%d/%d).", used, budget)
+	case "provider:race:complete":
+		winner := payloadString(payload, "winner", "?")
+		tokens := payloadInt(payload, "tokens", 0)
+		duration := payloadInt(payload, "duration_ms", 0)
+		candidates, _ := payload["candidates"].([]any)
+		var names []string
+		for _, c := range candidates {
+			if s, ok := c.(string); ok && strings.TrimSpace(s) != "" {
+				names = append(names, s)
+			}
+		}
+		m.pushToolChip(toolChip{
+			Name:       "race",
+			Status:     "race-ok",
+			Preview:    fmt.Sprintf("won by %s", winner),
+			DurationMs: duration,
+		})
+		if len(names) > 0 {
+			line = fmt.Sprintf("Provider race: %s won [%s] (%dtok, %dms).", winner, strings.Join(names, ","), tokens, duration)
+		} else {
+			line = fmt.Sprintf("Provider race: %s won (%dtok, %dms).", winner, tokens, duration)
+		}
+	case "provider:race:failed":
+		errText := payloadString(payload, "error", "all candidates errored")
+		duration := payloadInt(payload, "duration_ms", 0)
+		m.pushToolChip(toolChip{
+			Name:       "race",
+			Status:     "race-failed",
+			Preview:    truncateSingleLine(errText, 72),
+			DurationMs: duration,
+		})
+		line = fmt.Sprintf("Provider race failed (%dms): %s", duration, truncateSingleLine(errText, 140))
+	case "agent:loop:auto_recover":
+		before := payloadInt(payload, "before_tokens", 0)
+		after := payloadInt(payload, "after_tokens", 0)
+		collapsed := payloadInt(payload, "rounds_collapsed", 0)
+		m.pushToolChip(toolChip{
+			Name:    "auto-recover",
+			Status:  "recover",
+			Preview: fmt.Sprintf("%d→%d tok · %d rounds", before, after, collapsed),
+		})
+		if collapsed > 0 {
+			line = fmt.Sprintf("Auto-recover: budget trip, compacted %d→%d tokens (%d rounds). Retrying.", before, after, collapsed)
+		} else {
+			line = "Auto-recover: budget trip, transcript slimmed. Retrying."
+		}
 	case "context:lifecycle:handoff":
 		historyTokens := payloadInt(payload, "history_tokens", 0)
 		briefTokens := payloadInt(payload, "brief_tokens", 0)
@@ -5458,10 +5629,14 @@ func (m *Model) finishStreamingMessageToolChip(chip toolChip) {
 	if m.streamIndex < 0 || m.streamIndex >= len(m.transcript) {
 		return
 	}
+	wantRunning := "running"
+	if strings.HasPrefix(strings.ToLower(chip.Status), "subagent-") {
+		wantRunning = "subagent-running"
+	}
 	line := &m.transcript[m.streamIndex]
 	for i := len(line.ToolChips) - 1; i >= 0; i-- {
 		existing := line.ToolChips[i]
-		if existing.Status != "running" {
+		if existing.Status != wantRunning {
 			continue
 		}
 		if !strings.EqualFold(existing.Name, chip.Name) {
@@ -5484,6 +5659,11 @@ func (m *Model) finishStreamingMessageToolChip(chip toolChip) {
 		}
 		if chip.Truncated {
 			merged.Truncated = true
+		}
+		if chip.SavedChars > 0 {
+			merged.SavedChars = chip.SavedChars
+			merged.CompressedChars = chip.CompressedChars
+			merged.CompressionPct = chip.CompressionPct
 		}
 		line.ToolChips[i] = merged
 		return
@@ -5499,9 +5679,13 @@ func (m *Model) finishToolChip(chip toolChip) {
 	if chip.Name == "" {
 		return
 	}
+	wantRunning := "running"
+	if strings.HasPrefix(strings.ToLower(chip.Status), "subagent-") {
+		wantRunning = "subagent-running"
+	}
 	for i := len(m.toolTimeline) - 1; i >= 0; i-- {
 		existing := m.toolTimeline[i]
-		if existing.Status != "running" {
+		if existing.Status != wantRunning {
 			continue
 		}
 		if !strings.EqualFold(existing.Name, chip.Name) {
@@ -5524,6 +5708,11 @@ func (m *Model) finishToolChip(chip toolChip) {
 		}
 		if chip.Truncated {
 			merged.Truncated = true
+		}
+		if chip.SavedChars > 0 {
+			merged.SavedChars = chip.SavedChars
+			merged.CompressedChars = chip.CompressedChars
+			merged.CompressionPct = chip.CompressionPct
 		}
 		m.toolTimeline[i] = merged
 		return
@@ -7054,7 +7243,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "apply", Template: "/apply --check", Description: "dry-run apply latest patch"},
 		{Command: "undo", Template: "/undo", Description: "undo last exchange"},
 		{Command: "continue", Template: "/continue", Description: "resume a parked agent loop"},
-		{Command: "devam", Template: "/devam", Description: "resume a parked agent loop (alias of /continue)"},
+		{Command: "split", Template: "/split ", Description: "decompose a broad task into focused subtasks"},
 		{Command: "btw", Template: "/btw ", Description: "inject a note at the next tool-loop step"},
 		{Command: "coach", Template: "/coach", Description: coachLabel + " the background coach notes"},
 		{Command: "hints", Template: "/hints", Description: hintsLabel + " between-round trajectory hints"},
@@ -7103,7 +7292,7 @@ func isKnownChatCommandToken(token string) bool {
 	}
 	switch token {
 	case "reload", "providers", "models", "tools", "ls", "read", "grep", "run", "diff", "patch", "apply", "undo",
-		"continue", "devam", "resume", "btw", "quit", "exit", "q", "clear", "coach", "hints":
+		"continue", "resume", "btw", "quit", "exit", "q", "clear", "coach", "hints":
 		return true
 	}
 	if _, ok := commands.DefaultRegistry().Lookup(token); ok {
@@ -7925,7 +8114,8 @@ func renderTUIHelp() string {
 		"    /read PATH [START] [END]     Read a file range",
 		"    /grep PATTERN                Search the project",
 		"    /run COMMAND [ARGS...]       Run a shell command",
-		"    /continue | /devam           Resume a parked agent loop",
+		"    /continue                    Resume a parked agent loop",
+		"    /split TASK                  Decompose a broad task into subtasks",
 		"    /btw NOTE                    Queue a note for the next tool-loop step",
 		"",
 		"Mentions: @file.go picks a file · @file.go:10-50 or @file.go#L10-L50 attaches a range.",
@@ -7943,4 +8133,33 @@ func renderTUICommandHelp(name string) string {
 		return detail
 	}
 	return fmt.Sprintf("Unknown command: %s. Try /help for the catalog.", name)
+}
+
+// renderSplitPlan formats a planning.Plan as a chat transcript block. Each
+// subtask gets a numbered bullet with its hint tag ("numbered-list",
+// "stage", "conjunction") so the user can see *why* the splitter chose to
+// break it. When the query doesn't decompose, the block says so — no silent
+// no-op that leaves the user wondering if the command ran.
+func renderSplitPlan(plan planning.Plan) string {
+	if len(plan.Subtasks) <= 1 {
+		return "/split — this task looks atomic (the splitter couldn't find parallel units). Ask it more narrowly or dispatch it as-is."
+	}
+	mode := "sequential"
+	if plan.Parallel {
+		mode = "parallel"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "/split — %d subtasks (%s, confidence %.2f):\n", len(plan.Subtasks), mode, plan.Confidence)
+	for i, s := range plan.Subtasks {
+		fmt.Fprintf(&b, "  %d. [%s] %s\n", i+1, s.Hint, strings.TrimSpace(s.Title))
+		if desc := strings.TrimSpace(s.Description); desc != "" && desc != strings.TrimSpace(s.Title) {
+			fmt.Fprintf(&b, "     %s\n", truncateSingleLine(desc, 160))
+		}
+	}
+	if plan.Parallel {
+		b.WriteString("\nDispatch each with a focused /ask or /continue — the model can fan them out in parallel.")
+	} else {
+		b.WriteString("\nRun them one at a time — the splitter detected ordering markers (first/then).")
+	}
+	return b.String()
 }

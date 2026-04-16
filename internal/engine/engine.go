@@ -65,6 +65,12 @@ type Engine struct {
 	agentMu         sync.Mutex
 	agentParked     *parkedAgentState
 	agentNotesQueue []string
+	// subagentInFlight counts active RunSubagent calls. The first subagent
+	// to start stashes the parent's parked state under subagentStashed;
+	// nested/concurrent subagents bump the counter without touching it.
+	// The last subagent to finish restores it. Guarded by agentMu.
+	subagentInFlight int
+	subagentStashed  *parkedAgentState
 }
 
 type Status struct {
@@ -1801,6 +1807,68 @@ func (e *Engine) indexCodebase(ctx context.Context) {
 
 func (e *Engine) Ask(ctx context.Context, question string) (string, error) {
 	return e.AskWithMetadata(ctx, question)
+}
+
+// AskRaced issues the same completion request against every candidate
+// provider concurrently and returns the first successful response. When
+// candidates is nil/empty the router derives candidates from ResolveOrder
+// (stripping the offline stub).
+//
+// Race mode always goes through the non-tool-loop path: racing N provider-
+// native tool loops would have them trying to edit files concurrently with
+// no coordination. For multi-turn tool work, use Ask/Chat normally; race is
+// for single-shot Q&A where latency or reliability matters more than cost.
+func (e *Engine) AskRaced(ctx context.Context, question string, candidates []string) (string, string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if strings.TrimSpace(question) == "" {
+		return "", "", fmt.Errorf("question cannot be empty")
+	}
+	if e.Providers == nil {
+		return "", "", fmt.Errorf("provider router is not initialized")
+	}
+	e.maybeAutoHandoff(question)
+	e.ensureIndexed(ctx)
+
+	chunks := e.buildContextChunks(question)
+	systemPrompt, systemBlocks := e.buildSystemPrompt(question, chunks)
+	req := provider.CompletionRequest{
+		Provider:     e.provider(),
+		Model:        e.model(),
+		Messages:     e.buildRequestMessages(question, chunks, systemPrompt),
+		Context:      chunks,
+		System:       systemPrompt,
+		SystemBlocks: systemBlocks,
+	}
+	start := time.Now()
+	resp, winner, err := e.Providers.CompleteRaced(ctx, req, candidates)
+	durMs := time.Since(start).Milliseconds()
+	if err != nil {
+		e.EventBus.Publish(Event{
+			Type:   "provider:race:failed",
+			Source: "engine",
+			Payload: map[string]any{
+				"candidates":  candidates,
+				"duration_ms": durMs,
+				"error":       err.Error(),
+			},
+		})
+		return "", "", err
+	}
+	e.recordInteraction(question, resp.Text, winner, resp.Model, resp.Usage.TotalTokens, chunks)
+	e.EventBus.Publish(Event{
+		Type:   "provider:race:complete",
+		Source: "engine",
+		Payload: map[string]any{
+			"winner":      winner,
+			"candidates":  candidates,
+			"model":       resp.Model,
+			"tokens":      resp.Usage.TotalTokens,
+			"duration_ms": durMs,
+		},
+	})
+	return resp.Text, winner, nil
 }
 
 // buildSystemPrompt renders the system prompt bundle via the context manager

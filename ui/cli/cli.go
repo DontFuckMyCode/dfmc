@@ -808,10 +808,38 @@ Register-ArgumentCompleter -Native -CommandName dfmc -ScriptBlock {
 }
 
 func runAsk(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
-	question := strings.TrimSpace(strings.Join(args, " "))
+	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	race := fs.Bool("race", false, "race configured providers concurrently; first success wins")
+	raceProviders := fs.String("race-providers", "", "comma-separated provider names to race; defaults to primary+fallbacks when --race is set")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	question := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if question == "" {
 		fmt.Fprintln(os.Stderr, "ask requires a question")
 		return 2
+	}
+
+	if *race {
+		candidates := splitCSV(*raceProviders)
+		answer, winner, err := eng.AskRaced(ctx, question, candidates)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ask --race failed: %v\n", err)
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(map[string]any{
+				"question":   question,
+				"answer":     answer,
+				"winner":     winner,
+				"candidates": candidates,
+				"mode":       "race",
+			})
+			return 0
+		}
+		fmt.Printf("(won by %s)\n%s\n", winner, answer)
+		return 0
 	}
 
 	answer, err := eng.Ask(ctx, question)
@@ -830,6 +858,27 @@ func runAsk(ctx context.Context, eng *engine.Engine, args []string, jsonMode boo
 
 	fmt.Println(answer)
 	return 0
+}
+
+// splitCSV trims and drops empties from a comma-separated CLI value.
+// "a, b ,, c" → ["a", "b", "c"]. Empty input returns nil so the engine
+// layer gets a clean "let the router derive candidates" signal.
+func splitCSV(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func runChat(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {

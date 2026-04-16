@@ -13,6 +13,33 @@ func TestRuleObserver_ParkedLoopSurfaced(t *testing.T) {
 	if notes[0].Severity != SeverityWarn {
 		t.Fatalf("parked note should be warn severity, got %q", notes[0].Severity)
 	}
+	if !strings.Contains(notes[0].Text, "/continue") {
+		t.Fatalf("step-cap park should coach the /continue path, got %q", notes[0].Text)
+	}
+}
+
+// TestRuleObserver_ParkedBudgetSuggestsSplit guards the branch added when the
+// runtime grew a dedicated budget-exhausted park reason. The user needs a
+// different nudge in this case: the scope was too wide, so /split is the
+// useful next move (instead of just /continue-ing into the same wall).
+func TestRuleObserver_ParkedBudgetSuggestsSplit(t *testing.T) {
+	notes := NewRuleObserver().Observe(Snapshot{
+		Parked:     true,
+		ParkReason: "budget_exhausted",
+		Question:   "rewrite the auth layer",
+	})
+	if len(notes) == 0 {
+		t.Fatalf("budget-exhausted park should emit at least one note")
+	}
+	if notes[0].Origin != "parked_budget" {
+		t.Fatalf("expected parked_budget note first, got %+v", notes)
+	}
+	if !strings.Contains(notes[0].Text, "/split") {
+		t.Fatalf("budget park should coach the /split path, got %q", notes[0].Text)
+	}
+	if notes[0].Severity != SeverityWarn {
+		t.Fatalf("budget park should be warn severity, got %q", notes[0].Severity)
+	}
 }
 
 func TestRuleObserver_MutationWithoutValidationFlagged(t *testing.T) {

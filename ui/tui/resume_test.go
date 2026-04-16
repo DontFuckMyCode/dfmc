@@ -116,29 +116,13 @@ func TestContinueCommandWarnsWhenNoParkedLoop(t *testing.T) {
 	}
 }
 
-func TestDevamAliasRoutesToContinue(t *testing.T) {
+func TestResumeAliasRoutesToContinue(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.setChatInput("devam")
-
+	m.setChatInput("/resume")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	mm, ok := next.(Model)
-	if !ok {
-		t.Fatalf("expected Model, got %T", next)
-	}
-	// "devam" without a leading slash is a plain question, not a command.
-	// It should NOT trigger resume — the user must type /devam or /continue.
-	// Instead, the model should attempt to submit (and bail only because
-	// there's no engine); assert that it did NOT treat it as resume.
-	if strings.Contains(strings.ToLower(mm.notice), "nothing to resume") {
-		t.Fatalf("bare 'devam' (no slash) should not be treated as /continue, got %q", mm.notice)
-	}
-
-	m2 := NewModel(context.Background(), nil)
-	m2.setChatInput("/devam")
-	next2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	mm2, _ := next2.(Model)
-	if !strings.Contains(mm2.notice, "Nothing to resume") {
-		t.Fatalf("/devam should route to /continue handler, got %q", mm2.notice)
+	mm, _ := next.(Model)
+	if !strings.Contains(mm.notice, "Nothing to resume") {
+		t.Fatalf("/resume should route to /continue handler, got %q", mm.notice)
 	}
 }
 
@@ -146,7 +130,7 @@ func TestSlashCatalogSurfacesResumeAndBtwCommands(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	catalog := m.slashCommandCatalog()
 
-	want := map[string]bool{"continue": false, "devam": false, "btw": false}
+	want := map[string]bool{"continue": false, "btw": false}
 	for _, item := range catalog {
 		name := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(item.Command)), "/")
 		if _, tracked := want[name]; tracked {
@@ -161,7 +145,7 @@ func TestSlashCatalogSurfacesResumeAndBtwCommands(t *testing.T) {
 }
 
 func TestIsKnownChatCommandTokenAcceptsResumeAndBtw(t *testing.T) {
-	for _, tok := range []string{"continue", "devam", "resume", "btw"} {
+	for _, tok := range []string{"continue", "resume", "btw"} {
 		if !isKnownChatCommandToken(tok) {
 			t.Errorf("expected %q to be a known chat command token", tok)
 		}

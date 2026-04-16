@@ -9,12 +9,13 @@ package tools
 //	tool_search(query, limit?)        → discovers which backend tools exist
 //	tool_help(name)                   → fetches the full spec for one tool
 //	tool_call(name, args)             → executes a single backend tool
-//	tool_batch_call(calls[])          → executes N backend tools (sequential)
+//	tool_batch_call(calls[])          → executes N backend tools in parallel
 //
 // The model pays token cost for only these 4 specs in the prompt; backend
-// tools are discovered on demand. Parallel execution lives in the agent loop
-// (S4), not here — tool_batch_call's only promise is "these N calls, in
-// order, in one round-trip".
+// tools are discovered on demand. tool_batch_call fans calls out onto a
+// semaphore bounded by AgentConfig.ParallelBatchSize (default 4); results
+// are returned in input order regardless of completion order. A per-call
+// failure does not abort the batch.
 //
 // All four tools implement the standard Tool interface so they can be
 // registered alongside normal tools and executed through the same Engine
@@ -25,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // defaultSearchLimit caps the search result count. Default is low on purpose:
@@ -209,14 +211,14 @@ type toolBatchCallTool struct{ engine *Engine }
 
 func (t *toolBatchCallTool) Name() string { return "tool_batch_call" }
 func (t *toolBatchCallTool) Description() string {
-	return "Execute multiple backend tool calls in one round-trip (sequential)."
+	return "Execute multiple backend tool calls in one round-trip (parallel, bounded)."
 }
 func (t *toolBatchCallTool) Spec() ToolSpec {
 	return ToolSpec{
 		Name:    "tool_batch_call",
 		Title:   "Batch call tools",
-		Summary: "Run several backend tool calls in order; results are returned as an array.",
-		Purpose: "Reduces round-trips when a task needs several independent reads. A per-call failure does not abort the batch.",
+		Summary: "Run several backend tool calls in parallel; results are returned in input order.",
+		Purpose: "Reduces wall-clock and round-trips when a task needs several independent reads. Concurrency is bounded by the agent config; a per-call failure does not abort the batch.",
 		Risk:    RiskExecute,
 		Tags:    []string{"meta", "execute", "batch"},
 		Args: []Arg{
@@ -240,41 +242,71 @@ func (t *toolBatchCallTool) Execute(ctx context.Context, req Request) (Result, e
 		return Result{}, fmt.Errorf("calls is empty")
 	}
 
-	results := make([]map[string]any, 0, len(calls))
-	var lines []string
+	limit := 1
+	if t.engine != nil {
+		if n := t.engine.cfg.Agent.ParallelBatchSize; n > 1 {
+			limit = n
+		}
+	}
+	if limit > len(calls) {
+		limit = len(calls)
+	}
+
+	results := make([]map[string]any, len(calls))
+	lines := make([]string, len(calls))
+
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+
 	for i, call := range calls {
 		entry := map[string]any{"name": call.Name}
 		if isMetaTool(call.Name) {
 			entry["success"] = false
 			entry["error"] = "tool_batch_call cannot invoke meta tools"
-			results = append(results, entry)
-			lines = append(lines, fmt.Sprintf("#%d %s: refused (meta tool)", i+1, call.Name))
+			results[i] = entry
+			lines[i] = fmt.Sprintf("#%d %s: refused (meta tool)", i+1, call.Name)
 			continue
 		}
-		sub := Request{ProjectRoot: req.ProjectRoot, Params: call.Args}
-		res, err := t.engine.Execute(ctx, call.Name, sub)
-		entry["duration_ms"] = res.DurationMs
-		if err != nil {
-			entry["success"] = false
-			entry["error"] = err.Error()
-			lines = append(lines, fmt.Sprintf("#%d %s: FAIL %s", i+1, call.Name, err.Error()))
-			results = append(results, entry)
-			continue
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, c batchCall, slot map[string]any) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			sub := Request{ProjectRoot: req.ProjectRoot, Params: c.Args}
+			res, execErr := t.engine.Execute(ctx, c.Name, sub)
+			slot["duration_ms"] = res.DurationMs
+			if execErr != nil {
+				slot["success"] = false
+				slot["error"] = execErr.Error()
+				results[idx] = slot
+				lines[idx] = fmt.Sprintf("#%d %s: FAIL %s", idx+1, c.Name, execErr.Error())
+				return
+			}
+			slot["success"] = true
+			slot["output"] = res.Output
+			slot["data"] = res.Data
+			if res.Truncated {
+				slot["truncated"] = true
+			}
+			results[idx] = slot
+			lines[idx] = fmt.Sprintf("#%d %s: OK (%dms)", idx+1, c.Name, res.DurationMs)
+		}(i, call, entry)
+	}
+	wg.Wait()
+
+	joined := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if l != "" {
+			joined = append(joined, l)
 		}
-		entry["success"] = true
-		entry["output"] = res.Output
-		entry["data"] = res.Data
-		if res.Truncated {
-			entry["truncated"] = true
-		}
-		lines = append(lines, fmt.Sprintf("#%d %s: OK (%dms)", i+1, call.Name, res.DurationMs))
-		results = append(results, entry)
 	}
 	return Result{
-		Output: strings.Join(lines, "\n"),
+		Output: strings.Join(joined, "\n"),
 		Data: map[string]any{
-			"count":   len(results),
-			"results": results,
+			"count":    len(results),
+			"results":  results,
+			"parallel": limit,
 		},
 	}, nil
 }

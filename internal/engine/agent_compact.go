@@ -91,7 +91,36 @@ func (e *Engine) maybeCompactNativeLoopHistory(
 	if current < threshold {
 		return msgs, nil
 	}
+	return e.compactNativeLoopHistory(msgs, systemPrompt, chunks, current, lifecycle)
+}
 
+// forceCompactNativeLoopHistory runs compaction unconditionally (no threshold
+// gate). Used on the resume path where we already know the parked history is
+// fat — the next provider call will trip budget unless we collapse first.
+// Still honours KeepRecentRounds and the "compaction saved nothing" early-out.
+func (e *Engine) forceCompactNativeLoopHistory(
+	msgs []provider.Message,
+	systemPrompt string,
+	chunks []types.ContextChunk,
+) ([]provider.Message, *compactionReport) {
+	lifecycle := e.resolveContextLifecycle()
+	if !lifecycle.Enabled {
+		return msgs, nil
+	}
+	current := estimateRequestTokens(systemPrompt, chunks, msgs)
+	return e.compactNativeLoopHistory(msgs, systemPrompt, chunks, current, lifecycle)
+}
+
+// compactNativeLoopHistory is the shared collapse routine: splits the
+// post-prefix messages into tool rounds, keeps the last KeepRecentRounds
+// verbatim, and replaces the older rounds with a single summary message.
+func (e *Engine) compactNativeLoopHistory(
+	msgs []provider.Message,
+	systemPrompt string,
+	chunks []types.ContextChunk,
+	current int,
+	lifecycle config.ContextLifecycleConfig,
+) ([]provider.Message, *compactionReport) {
 	prefixEnd := findNativeLoopPrefixEnd(msgs)
 	rounds := splitNativeLoopRounds(msgs[prefixEnd:])
 	if len(rounds) <= lifecycle.KeepRecentRounds {
@@ -123,8 +152,6 @@ func (e *Engine) maybeCompactNativeLoopHistory(
 	after := estimateRequestTokens(systemPrompt, chunks, rebuilt)
 	removed := len(msgs) - len(rebuilt)
 	if removed <= 0 || after >= current {
-		// Compaction did not save anything — keep original to avoid pointless
-		// dialogue rewriting.
 		return msgs, nil
 	}
 

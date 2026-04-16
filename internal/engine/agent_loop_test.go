@@ -29,16 +29,22 @@ type scriptedProvider struct {
 	name       string
 	model      string
 	hints      provider.ProviderHints
+	maxContext int
 	mu         sync.Mutex
 	responses  []scriptedResponse
 	requests   []provider.CompletionRequest
 	streamUsed bool
 }
 
-func (p *scriptedProvider) Name() string                  { return p.name }
-func (p *scriptedProvider) Model() string                 { return p.model }
-func (p *scriptedProvider) CountTokens(text string) int   { return len(strings.Fields(text)) }
-func (p *scriptedProvider) MaxContext() int               { return 128000 }
+func (p *scriptedProvider) Name() string                { return p.name }
+func (p *scriptedProvider) Model() string               { return p.model }
+func (p *scriptedProvider) CountTokens(text string) int { return len(strings.Fields(text)) }
+func (p *scriptedProvider) MaxContext() int {
+	if p.maxContext > 0 {
+		return p.maxContext
+	}
+	return 128000
+}
 func (p *scriptedProvider) Hints() provider.ProviderHints { return p.hints }
 
 func (p *scriptedProvider) Complete(_ context.Context, req provider.CompletionRequest) (*provider.CompletionResponse, error) {
@@ -519,6 +525,10 @@ func TestAskWithMetadata_NativeToolLoop_RespectsTokenBudget(t *testing.T) {
 		name:  "stub",
 		model: "stub-model",
 		hints: newNativeHints(),
+		// Keep MaxContext small enough that the elastic budget scaler
+		// (~60% of window) can't beat the 25-token cfg floor — otherwise
+		// this test wouldn't trip the budget path it's designed to cover.
+		maxContext: 40,
 		responses: []scriptedResponse{
 			{
 				ToolCalls: []provider.ToolCall{

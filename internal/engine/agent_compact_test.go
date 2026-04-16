@@ -250,6 +250,43 @@ func TestSplitNativeLoopRounds_KeepsAssistantToolResultPairing(t *testing.T) {
 	}
 }
 
+// TestForceCompactNativeLoopHistory_IgnoresThreshold: force-compact on the
+// resume path must fire even when the current footprint sits below the
+// configured threshold. Otherwise a parked loop with lots of rounds but
+// moderate byte size would not compact, and the first resume step would
+// blow the budget the same way that parked the loop.
+func TestForceCompactNativeLoopHistory_IgnoresThreshold(t *testing.T) {
+	eng := compactorEngine(t)
+	// Set the threshold absurdly high so maybeCompact would never fire.
+	eng.Config.Agent.ContextLifecycle.AutoCompactThresholdRatio = 0.99
+	eng.Config.Agent.ContextLifecycle.KeepRecentRounds = 1
+
+	msgs := []provider.Message{
+		{Role: types.RoleSystem, Content: "sys"},
+		{Role: types.RoleUser, Content: "do the work"},
+	}
+	// 4 rounds — even though individually small, force-compact should still
+	// collapse 3 of them because rounds > KeepRecentRounds.
+	for _, id := range []string{"r1", "r2", "r3", "r4"} {
+		msgs = append(msgs, makeRound(id, "read_file", id, strings.Repeat("payload ", 50), false)...)
+	}
+
+	if _, report := eng.maybeCompactNativeLoopHistory(msgs, "sys", nil); report != nil {
+		t.Fatalf("maybeCompact should be below threshold here, got report=%#v", report)
+	}
+
+	rebuilt, report := eng.forceCompactNativeLoopHistory(msgs, "sys", nil)
+	if report == nil {
+		t.Fatal("forceCompact should fire unconditionally when rounds > keep")
+	}
+	if report.RoundsCollapsed != 3 {
+		t.Fatalf("expected 3 rounds collapsed, got %d", report.RoundsCollapsed)
+	}
+	if len(rebuilt) >= len(msgs) {
+		t.Fatalf("rebuilt should be shorter than original, got %d vs %d", len(rebuilt), len(msgs))
+	}
+}
+
 // TestFindNativeLoopPrefixEnd_IgnoresToolResultUsers: the prefix boundary is
 // the last *organic* user turn — a user message with ToolCallID set is a
 // tool_result, not a prefix element.

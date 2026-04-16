@@ -45,8 +45,12 @@ type Snapshot struct {
 	ToolsUsed    []string // names of tools the model invoked this turn
 	FailedTools  []string // subset of ToolsUsed where the call errored
 	Mutations    []string // paths the model wrote/edited this turn
-	Parked       bool     // true when the loop hit step cap
-	Provider     string
+	Parked       bool     // true when the loop hit step cap or budget
+	// ParkReason discriminates why the loop parked. Values: "step_cap"
+	// (hit MaxSteps) or "budget_exhausted" (MaxTokens). Empty when the
+	// loop finished cleanly.
+	ParkReason string
+	Provider   string
 	Model        string
 	TokensUsed   int
 	ElapsedMs    int64
@@ -94,13 +98,27 @@ func (r *RuleObserver) Observe(s Snapshot) []Note {
 	}
 
 	// Parked loops: surface louder since the user has to decide /continue.
+	// The message branches on ParkReason — a budget trip means the scope is
+	// too wide, so suggest /split; a step-cap trip usually just needs one
+	// more turn with a tighter focus note.
 	if s.Parked {
-		if push(Note{
-			Text:     "Loop parked — hit its step cap. Type /continue to resume, optionally with a note to focus the next pass.",
-			Severity: SeverityWarn,
-			Origin:   "parked_loop",
-		}) {
-			return out
+		switch s.ParkReason {
+		case "budget_exhausted":
+			if push(Note{
+				Text:     "Loop parked — token budget exhausted. The request was likely too broad for a single turn. Try /split to break it into focused subtasks, or /continue with a narrower follow-up.",
+				Severity: SeverityWarn,
+				Origin:   "parked_budget",
+			}) {
+				return out
+			}
+		default:
+			if push(Note{
+				Text:     "Loop parked — hit its step cap. Type /continue to resume, optionally with a note to focus the next pass.",
+				Severity: SeverityWarn,
+				Origin:   "parked_loop",
+			}) {
+				return out
+			}
 		}
 	}
 
