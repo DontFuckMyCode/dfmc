@@ -280,6 +280,14 @@ type Model struct {
 	securitySearchActive bool
 	securityLoaded       bool
 
+	// Plans panel state — diagnostic view over internal/planning.SplitTask.
+	// Decomposition runs locally on enter; no engine round-trip.
+	plansQuery       string
+	plansPlan        *planning.Plan
+	plansScroll      int
+	plansErr         string
+	plansInputActive bool
+
 	agentLoopActive        bool
 	agentLoopStep          int
 	agentLoopMaxToolStep   int
@@ -409,7 +417,7 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	return Model{
 		ctx:               ctx,
 		eng:               eng,
-		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security"},
+		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans"},
 		activityFollow:    true,
 		memoryTier:        memoryTierAll,
 		codemapView:       codemapViewOverview,
@@ -893,6 +901,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// cheap; we just flip the tab and show the empty-state hint.
 			m.activeTab = 11
 			return m, nil
+		case "alt+y":
+			// Plans — no F13 on most keyboards, so use alt+y (y for "why
+			// did this split?"). Decomposition is offline and runs on
+			// enter inside the panel.
+			m.activeTab = 12
+			return m, nil
 		}
 
 		switch m.tabs[m.activeTab] {
@@ -943,6 +957,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handlePromptsKey(msg)
 		case "Security":
 			return m.handleSecurityKey(msg)
+		case "Plans":
+			return m.handlePlansKey(msg)
 		}
 	}
 	return m, nil
@@ -3987,6 +4003,8 @@ func (m Model) renderActiveView(width int, height int) string {
 		content = fitPanelContentHeight(m.renderPromptsView(contentWidth), innerHeight)
 	case "Security":
 		content = fitPanelContentHeight(m.renderSecurityView(contentWidth), innerHeight)
+	case "Plans":
+		content = fitPanelContentHeight(m.renderPlansView(contentWidth), innerHeight)
 	default:
 		// Chat view is special — the input box (tail) must never be hidden
 		// or the user stops being able to type. We render head and tail
@@ -4863,7 +4881,7 @@ func (m Model) renderHelpOverlay(width int) string {
 	lines = append(lines,
 		"",
 		boldStyle.Render("Global"),
-		"  ctrl+p palette · alt+1..0/alt+t or f1..f12 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
+		"  ctrl+p palette · alt+1..0/alt+t/alt+y or f1..f12 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
 		"  esc cancels current stream · ctrl+c interrupts · ctrl+u clear input",
 		"",
 		boldStyle.Render("Chat composer"),
@@ -4928,8 +4946,12 @@ func helpOverlayTabHints(tab string) []string {
 		return []string{
 			"r rescan · v toggle secrets/vulns · j/k scroll · / search · c clear search",
 		}
+	case "plans":
+		return []string{
+			"e edit task · enter run · esc cancel edit · j/k scroll · c clear",
+		}
 	default:
-		return []string{"alt+1..0/alt+t tabs · ctrl+p palette · ctrl+q quit"}
+		return []string{"alt+1..0/alt+t/alt+y tabs · ctrl+p palette · ctrl+q quit"}
 	}
 }
 
