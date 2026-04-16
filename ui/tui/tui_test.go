@@ -2258,6 +2258,25 @@ func TestFitPanelContentHeightTruncatesWithEllipsis(t *testing.T) {
 	}
 }
 
+// TestRenderFilesViewHintDescribesRealKeys — the inline hint at the top of
+// the Files panel must describe the actual keys handleFilesKey accepts, not
+// stale copy. Previously the hint said 'enter reload' when 'r' is the
+// reload key (enter loads the preview); this test pins the corrected copy.
+func TestRenderFilesViewHintDescribesRealKeys(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 2
+	view := m.renderFilesView(120)
+	if !strings.Contains(view, "r reload") {
+		t.Fatalf("Files hint should advertise r as the reload key, got:\n%s", view)
+	}
+	if !strings.Contains(view, "enter preview") {
+		t.Fatalf("Files hint should advertise enter as the preview key, got:\n%s", view)
+	}
+	if strings.Contains(view, "enter reload") {
+		t.Fatalf("stale 'enter reload' copy must not re-appear in Files hint, got:\n%s", view)
+	}
+}
+
 func TestRenderSetupViewShowsProviderDetails(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)

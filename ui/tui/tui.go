@@ -4585,7 +4585,7 @@ func (m Model) renderFilesView(width int) string {
 
 	listLines := []string{
 		sectionHeader("▦", "Files"),
-		subtleStyle.Render("enter reload · p pin · ctrl+h keys"),
+		subtleStyle.Render("j/k move · enter preview · r reload · p pin · i/e/v chat actions · ctrl+h keys"),
 		renderDivider(listWidth - 2),
 		"",
 	}
