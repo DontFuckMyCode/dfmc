@@ -1,0 +1,87 @@
+# GoReleaser config — produces cross-platform binaries, archives,
+# checksums, and a Homebrew formula on every tagged release.
+#
+# Build-time notes:
+#   - Tree-sitter bindings require CGO; the matrix here sticks to targets
+#     where upstream ships prebuilt toolchains (darwin, linux). Windows
+#     binaries are built without CGO and fall back to the regex AST
+#     extractor — documented in CLAUDE.md.
+#   - The version string is injected into main.version via ldflags so
+#     `dfmc version` reports the tag, not "dev".
+
+version: 2
+
+project_name: dfmc
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: dfmc-cgo
+    main: ./cmd/dfmc
+    binary: dfmc
+    env:
+      - CGO_ENABLED=1
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+  - id: dfmc-nocgo
+    main: ./cmd/dfmc
+    binary: dfmc
+    env:
+      - CGO_ENABLED=0
+    goos: [windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - CLAUDE.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+# Homebrew: publishes a formula to the dedicated tap repo on each stable
+# release. Users install with `brew install dontfuckmycode/tap/dfmc`.
+# Pre-releases (tagged -rc / -beta) skip the tap automatically.
+brews:
+  - name: dfmc
+    repository:
+      owner: dontfuckmycode
+      name: homebrew-tap
+    directory: Formula
+    homepage: "https://github.com/dontfuckmycode/dfmc"
+    description: "Code intelligence assistant — single Go binary, multi-provider LLM router."
+    license: "MIT"
+    skip_upload: auto
+    install: |
+      bin.install "dfmc"
+      generate_completions_from_executable(bin/"dfmc", "completion")
+    test: |
+      system "#{bin}/dfmc", "version"
+
+release:
+  draft: false
+  prerelease: auto

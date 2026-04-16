@@ -303,6 +303,13 @@ func defaultCommands() []Command {
 			Surfaces: SurfaceCLI | SurfaceWeb,
 		},
 		{
+			Name:     "update",
+			Summary:  "Check for a newer DFMC release on GitHub.",
+			Category: CategorySystem,
+			Surfaces: SurfaceCLI,
+			Usage:    "update [--channel stable|prerelease] [--json]",
+		},
+		{
 			Name:     "help",
 			Summary:  "Show help for DFMC or a specific command.",
 			Category: CategorySystem,

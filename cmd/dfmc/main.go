@@ -58,7 +58,7 @@ func allowsDegradedStartup(args []string) bool {
 			continue
 		}
 		switch trimmed {
-		case "help", "-h", "--help", "version", "doctor", "completion", "man":
+		case "help", "-h", "--help", "version", "doctor", "completion", "man", "update":
 			return true
 		default:
 			return false
