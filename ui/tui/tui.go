@@ -222,6 +222,16 @@ type Model struct {
 	activityScroll  int
 	activityFollow  bool
 
+	// Memory panel state — read view over internal/memory. Tier is a
+	// string (not MemoryTier) so "all" can park alongside real values.
+	memoryEntries      []types.MemoryEntry
+	memoryScroll       int
+	memoryTier         string
+	memoryQuery        string
+	memoryLoading      bool
+	memoryErr          string
+	memorySearchActive bool
+
 	agentLoopActive        bool
 	agentLoopStep          int
 	agentLoopMaxToolStep   int
@@ -351,8 +361,9 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	return Model{
 		ctx:               ctx,
 		eng:               eng,
-		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity"},
+		tabs:              []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory"},
 		activityFollow:    true,
+		memoryTier:        memoryTierAll,
 		streamIndex:       -1,
 		inputHistoryIndex: -1,
 		toolOverrides: map[string]string{},
@@ -515,6 +526,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fileSize = msg.size
 		if strings.TrimSpace(msg.path) != "" {
 			m.notice = fmt.Sprintf("Previewing %s (%d bytes)", msg.path, msg.size)
+		}
+		return m, nil
+
+	case memoryLoadedMsg:
+		m.memoryLoading = false
+		if msg.err != nil {
+			m.memoryErr = msg.err.Error()
+			return m, nil
+		}
+		m.memoryErr = ""
+		m.memoryEntries = msg.entries
+		if msg.tier != "" {
+			m.memoryTier = msg.tier
+		}
+		if m.memoryScroll >= len(m.memoryEntries) {
+			m.memoryScroll = 0
 		}
 		return m, nil
 
@@ -719,6 +746,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "alt+7":
 			m.activeTab = 6
 			return m, nil
+		case "f8", "alt+8":
+			m.activeTab = 7
+			if m.memoryEntries == nil && !m.memoryLoading {
+				m.memoryLoading = true
+				return m, loadMemoryCmd(m.eng, m.memoryTier)
+			}
+			return m, nil
 		}
 
 		switch m.tabs[m.activeTab] {
@@ -759,6 +793,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleToolsKey(msg)
 		case "Activity":
 			return m.handleActivityKey(msg)
+		case "Memory":
+			return m.handleMemoryKey(msg)
 		}
 	}
 	return m, nil
@@ -3793,6 +3829,8 @@ func (m Model) renderActiveView(width int, height int) string {
 		content = fitPanelContentHeight(m.renderToolsView(contentWidth), innerHeight)
 	case "Activity":
 		content = fitPanelContentHeight(m.renderActivityView(contentWidth), innerHeight)
+	case "Memory":
+		content = fitPanelContentHeight(m.renderMemoryView(contentWidth), innerHeight)
 	default:
 		// Chat view is special — the input box (tail) must never be hidden
 		// or the user stops being able to type. We render head and tail
@@ -4669,7 +4707,7 @@ func (m Model) renderHelpOverlay(width int) string {
 	lines = append(lines,
 		"",
 		boldStyle.Render("Global"),
-		"  ctrl+p palette · alt+1..6 or f1..f6 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
+		"  ctrl+p palette · alt+1..8 or f1..f8 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
 		"  esc cancels current stream · ctrl+c interrupts · ctrl+u clear input",
 		"",
 		boldStyle.Render("Chat composer"),
