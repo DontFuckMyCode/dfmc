@@ -746,6 +746,70 @@ func TestHandleEngineEventToolCallUpdatesActivityWithoutTranscriptNoise(t *testi
 	}
 }
 
+// TestEscCancelsStreamingTurn — while a chat turn is streaming, esc must
+// fire the per-stream cancel so the provider call aborts cleanly and the
+// user sees a cancellation notice immediately, rather than waiting for the
+// next token to arrive.
+func TestEscCancelsStreamingTurn(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.sending = true
+	cancelled := false
+	m.streamCancel = func() { cancelled = true }
+
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mm, ok := out.(Model)
+	if !ok {
+		t.Fatalf("expected Model from Update, got %T", out)
+	}
+	if !cancelled {
+		t.Fatalf("esc during streaming should fire the stream cancel func")
+	}
+	if mm.streamCancel != nil {
+		t.Fatalf("cancel func must be cleared after firing, got non-nil")
+	}
+	if !strings.Contains(strings.ToLower(mm.notice), "cancel") {
+		t.Fatalf("esc cancel should set a cancellation notice, got %q", mm.notice)
+	}
+}
+
+// TestEscWhenNotStreamingDismissesParkedBanner — if no turn is in flight,
+// esc falls through to the parked-resume banner dismissal so the previous
+// behavior keeps working.
+func TestEscWhenNotStreamingDismissesParkedBanner(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.sending = false
+	m.resumePromptActive = true
+
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mm := out.(Model)
+	if mm.resumePromptActive {
+		t.Fatalf("esc should dismiss the resume banner, got still active")
+	}
+}
+
+// TestCtrlUClearsChatInput — Unix-style clear-line keybinding, only active
+// on the Chat tab so other panels keep their local ctrl+u behaviour (if
+// any) free.
+func TestCtrlUClearsChatInput(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.setChatInput("half-written message")
+
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	mm := out.(Model)
+	if mm.input != "" {
+		t.Fatalf("ctrl+u should wipe the input, got %q", mm.input)
+	}
+	if mm.chatCursor != 0 {
+		t.Fatalf("cursor must snap to 0, got %d", mm.chatCursor)
+	}
+	if !strings.Contains(strings.ToLower(mm.notice), "cleared") {
+		t.Fatalf("expected clear notice, got %q", mm.notice)
+	}
+}
+
 // TestHandleEngineEventToolResultFailureMirrorsToTranscript — tool failures
 // are rare but critical, and a failed chip is easy to miss in a long turn.
 // Force the transcript to carry the error message so scrollback preserves

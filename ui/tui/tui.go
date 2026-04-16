@@ -122,6 +122,11 @@ type Model struct {
 	sending          bool
 	streamIndex      int
 	streamMessages   <-chan tea.Msg
+	// streamCancel aborts the currently-streaming chat turn when set. The
+	// submit path stores a per-stream context.CancelFunc here so Esc can
+	// stop the provider call and surface a friendly cancellation notice
+	// without tearing down the whole TUI context.
+	streamCancel context.CancelFunc
 	// pendingQueue holds chat questions the user submitted while the engine
 	// was still busy. When the current stream finishes we dequeue the oldest
 	// entry and submit it — draining FIFO until the queue empties. The
@@ -790,6 +795,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sending = false
 		m.streamMessages = nil
 		m.streamIndex = -1
+		m.clearStreamCancel()
 		m.resetAgentRuntime()
 		m.pendingNoteCount = 0
 		m.notice = "" // happy-path completion narrates itself via the transcript; no need to park a banner in the footer
@@ -804,6 +810,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sending = false
 		m.streamMessages = nil
 		m.streamIndex = -1
+		m.clearStreamCancel()
 		m.resetAgentRuntime()
 		m.pendingNoteCount = 0
 		m.notice = "chat: " + msg.err.Error()
@@ -816,6 +823,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sending = false
 		m.streamMessages = nil
 		m.streamIndex = -1
+		m.clearStreamCancel()
 		m.resetAgentRuntime()
 		m.pendingNoteCount = 0
 		next, drainCmd := m.drainPendingQueue()
@@ -825,6 +833,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
 			return m, tea.Quit
+		case "ctrl+u":
+			// Unix readline-style "clear input line". Only useful on the
+			// Chat tab — other panels don't have a live composer.
+			if m.activeTab == 0 {
+				m.setChatInput("")
+				m.chatCursor = 0
+				m.mentionIndex = 0
+				m.slashIndex = 0
+				m.slashArgIndex = 0
+				m.quickActionIndex = 0
+				m.notice = "Input cleared."
+				return m, nil
+			}
 		case "ctrl+h":
 			m.showHelpOverlay = !m.showHelpOverlay
 			return m, nil
@@ -1085,6 +1106,14 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.scrollTranscript(8)
 		return m, nil
 	case tea.KeyEsc:
+		// Streaming turn? Esc cancels the per-stream context. The goroutine
+		// in startChatStream races ctx.Done against the next token and
+		// emits chatDoneMsg/chatErrMsg, which clears sending state; we just
+		// fire the cancel and surface an immediate notice.
+		if m.sending && m.cancelActiveStream() {
+			m.notice = "Cancelling current turn… (provider may still finish the in-flight tool before stopping)"
+			return m, nil
+		}
 		// Esc dismisses the parked-resume banner without tearing down the
 		// parked state in the engine — the user can still /continue later.
 		if m.resumePromptActive {
@@ -2763,8 +2792,12 @@ func (m Model) submitChatQuestion(question string, quickActions []quickActionSug
 	m.streamIndex = len(m.transcript) - 1
 	m.sending = true
 	m.streamStartedAt = time.Now()
-	m.notice = "Streaming answer..."
-	m.streamMessages = startChatStream(m.ctx, m.eng, question)
+	m.notice = "Streaming answer... (esc cancels)"
+	// Per-stream context so esc can cancel this turn without killing the
+	// whole TUI's ctx (which would kill timers and subscriptions too).
+	streamCtx, cancel := context.WithCancel(m.ctx)
+	m.streamCancel = cancel
+	m.streamMessages = startChatStream(streamCtx, m.eng, question)
 	return m, tea.Batch(waitForStreamMsg(m.streamMessages), m.ensureSpinnerTick())
 }
 
@@ -4892,8 +4925,8 @@ func (m Model) renderHelpOverlay(width int) string {
 	lines = append(lines,
 		"",
 		boldStyle.Render("Global"),
-		"  ctrl+p palette · alt+1..0/alt+t/alt+y/alt+w/alt+o or f1..f12 tabs · ctrl+h help · ctrl+s stats · ctrl+q quit",
-		"  esc cancels current stream · ctrl+c interrupts · ctrl+u clear input",
+		"  ctrl+p palette · alt+1..0/alt+t/alt+y/alt+w/alt+o or f1..f12 tabs · ctrl+h help · ctrl+s stats",
+		"  ctrl+c/ctrl+q quit · ctrl+u clear chat input · esc cancels streaming turn (or dismisses parked banner)",
 		"",
 		boldStyle.Render("Chat composer"),
 		"  ↑/↓ history · tab accept suggestion · @ mention file · / browse commands",
@@ -7850,6 +7883,27 @@ func expandAtFileMentionsWithRecent(input string, files, recent []string) string
 		return input
 	}
 	return strings.Join(tokens, " ")
+}
+
+// clearStreamCancel drops the stored per-stream CancelFunc. Called from
+// every chat-lifecycle terminus (done, err, closed, explicit cancel) so
+// the next send starts clean and a stale cancel func can't be fired after
+// the stream it owned already finished.
+func (m *Model) clearStreamCancel() {
+	m.streamCancel = nil
+}
+
+// cancelActiveStream aborts an in-flight chat stream if one is running.
+// Returns true if a cancel fired — the caller uses that to decide whether
+// to emit the "cancelled by user" notice vs. fall through to other esc
+// behavior like dismissing the parked-resume banner.
+func (m *Model) cancelActiveStream() bool {
+	if m.streamCancel == nil {
+		return false
+	}
+	m.streamCancel()
+	m.streamCancel = nil
+	return true
 }
 
 // renderContextStrip summarizes what will be attached to the next message:
