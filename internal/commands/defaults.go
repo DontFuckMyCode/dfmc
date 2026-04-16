@@ -89,6 +89,20 @@ func defaultCommands() []Command {
 			Surfaces: SurfaceCLI | SurfaceWeb,
 			Usage:    "doc PATH [--style prose|reference]",
 		},
+		{
+			Name:     "generate",
+			Summary:  "Generate new code that obeys project conventions with tests.",
+			Category: CategoryQuery,
+			Surfaces: SurfaceCLI | SurfaceWeb,
+			Usage:    "generate DESCRIPTION_OR_PATH",
+		},
+		{
+			Name:     "onboard",
+			Summary:  "Codebase walkthrough: hot paths, surprises, where to start.",
+			Category: CategoryQuery,
+			Surfaces: SurfaceCLI | SurfaceWeb,
+			Usage:    "onboard [PATH]",
+		},
 
 		// ---------------- Analyze ----------------
 		{
@@ -111,6 +125,13 @@ func defaultCommands() []Command {
 			Category: CategoryAnalyze,
 			Surfaces: SurfaceCLI | SurfaceWeb,
 			Usage:    "scan [--severity low|medium|high]",
+		},
+		{
+			Name:     "audit",
+			Summary:  "Security audit: triaged findings with file:line and fix direction.",
+			Category: CategoryAnalyze,
+			Surfaces: SurfaceCLI | SurfaceWeb,
+			Usage:    "audit [PATH...]",
 		},
 
 		// ---------------- Project ----------------

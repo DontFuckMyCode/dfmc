@@ -53,15 +53,21 @@ func TestDiscoverSkillsIncludesProjectCustom(t *testing.T) {
 	}
 }
 
-// The three elevated builtin skills carry enough playbook structure that
+// The elevated builtin skills carry enough playbook structure that
 // their prompts must stay non-trivial — a future "simplify" pass that
 // reverts them to one-liners would erase the agent's methodology. Locking
 // the minimum shape here is cheap and catches that regression.
 func TestBuiltinSkillsElevatedPrompts(t *testing.T) {
 	want := map[string][]string{
+		"review":   {"Behavioral risk", "Must-fix", "Should-fix", "Tests to add"},
+		"explain":  {"Trace one real flow", "Name invariants", "Call out surprises", "Draw the shape"},
 		"refactor": {"Scope", "Invariants", "Step plan", "Verify"},
 		"debug":    {"Reproduce", "Bisect", "Fix at the root", "Regression test"},
 		"test":     {"Discover the framework", "Map the surface", "Identify gaps", "Run them"},
+		"doc":      {"Find the target", "Decide the shape", "Write for the reader", "Name the sharp edges"},
+		"generate": {"Understand the ask", "Learn the conventions", "Place the code", "Write at least one test"},
+		"audit":    {"Frame the surface", "Confirm each hit", "CRITICAL", "Fix direction"},
+		"onboard":  {"Name the hub", "Trace one real flow", "Map the modules", "Where to start"},
 	}
 	got := map[string]skillInfo{}
 	for _, s := range builtinSkills() {
