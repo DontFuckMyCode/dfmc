@@ -141,6 +141,17 @@ func normalizeProviderName(name string) string {
 
 func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, string, error) {
 	order := r.ResolveOrder(req.Provider)
+	// When the caller asked for tool-calling, strip providers that can't
+	// honour tools out of the fallback cascade. Without this filter, a
+	// mid-agent-loop error on the primary silently falls through to
+	// offline (Hints.SupportsTools=false), which returns a canned analyzer
+	// response with zero tool_calls — the agent loop then treats that as
+	// the final answer and the user sees an "offline" reply to what was a
+	// live tool-using task. Skipped providers are still eligible when the
+	// caller explicitly names one via req.Provider.
+	if len(req.Tools) > 0 {
+		order = r.filterToolCapable(order, req.Provider)
+	}
 	var errs []error
 
 	for _, name := range order {
@@ -278,8 +289,38 @@ func (r *Router) resolveRaceTargets(requested string, candidates []string) []rac
 	return targets
 }
 
+// filterToolCapable returns the subset of `order` whose providers report
+// SupportsTools=true, with one exception: if the caller explicitly named
+// `requested`, that provider survives even when it lacks tool support. That
+// way `--provider offline` still works for users who actively opt in; only
+// the silent-fallback path is closed off.
+func (r *Router) filterToolCapable(order []string, requested string) []string {
+	req := normalizeProviderName(requested)
+	out := make([]string, 0, len(order))
+	for _, name := range order {
+		if name == req {
+			out = append(out, name)
+			continue
+		}
+		p, ok := r.Get(name)
+		if !ok {
+			// Keep unknown names so the caller still gets the existing
+			// ErrProviderNotFound message instead of an empty cascade.
+			out = append(out, name)
+			continue
+		}
+		if p.Hints().SupportsTools {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan StreamEvent, string, error) {
 	order := r.ResolveOrder(req.Provider)
+	if len(req.Tools) > 0 {
+		order = r.filterToolCapable(order, req.Provider)
+	}
 	var errs []error
 
 	for _, name := range order {
