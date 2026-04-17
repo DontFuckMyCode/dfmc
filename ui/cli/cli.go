@@ -59,6 +59,12 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 	eng.SetProviderModel(opts.Provider, opts.Model)
 	eng.SetVerbose(opts.Verbose)
 
+	// Register a stdin-backed approver so any agent-driven subcommand
+	// (ask, chat, review, explain, refactor, etc.) that hits a gated tool
+	// can prompt the user. TUI runs overwrite this with its own modal
+	// approver when `dfmc tui` launches — see ui/tui/approver.go.
+	eng.SetApprover(newStdinApprover())
+
 	if len(rest) == 0 {
 		printHelp()
 		return 0
