@@ -114,6 +114,10 @@ func New(eng *engine.Engine, host string, port int) *Server {
 		mux:    http.NewServeMux(),
 		addr:   fmt.Sprintf("%s:%d", host, port),
 	}
+	// Register a deny-by-default approver so a publicly-reachable serve
+	// doesn't silently run gated tools; DFMC_APPROVE=yes|no lets the
+	// operator pick behaviour per serve process (same semantics as CLI).
+	eng.SetApprover(newWebApprover())
 	s.setupRoutes()
 	return s
 }
