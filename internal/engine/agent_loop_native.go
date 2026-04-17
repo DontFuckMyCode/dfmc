@@ -46,6 +46,27 @@ const (
 	// elasticToolDataCharsRatio caps the JSON sidecar tighter — data
 	// payloads are usually duplicative of the text output.
 	elasticToolDataCharsRatio = 1.0 / 100.0
+
+	// toolRoundSoftCap is the round count at which the loop injects a
+	// single synthesis nudge: "you have enough context, answer now."
+	// Tuned below the default step cap so a model that's stuck in a
+	// read-read-read loop gets one firm redirect before the hard cap
+	// takes away tool_use entirely. Real-world answers rarely need
+	// more than 5 rounds of gathering.
+	toolRoundSoftCap = 5
+	// toolRoundHardCap flips ToolChoice to "none" for every subsequent
+	// call, so the provider MUST emit natural-language text. This is
+	// what saves us from the observed 7-round pathology where the
+	// model keeps grepping past the budget. Spaced two rounds above
+	// the soft cap so the nudge has room to land.
+	toolRoundHardCap = 7
+	// budgetHeadroomDivisor reserves ~14% of MaxTokens as a safety
+	// margin before each round starts. Without it, the post-round
+	// gate can only detect exhaustion AFTER the round has consumed
+	// its tokens — a 40k round on top of 95k lands at 135k/120k and
+	// the cost is already burned. 1/7 is cheap, empirical, and
+	// prevents the overshoot without starving small budgets.
+	budgetHeadroomDivisor = 7
 )
 
 // agentLimits is the resolved runtime budget for a single agent loop.
@@ -272,6 +293,13 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 	lastModel := seed.LastModel
 	question := seed.Question
 	autoRecoveries := 0
+	// One-shot flags for recovery paths below. These are per-invocation
+	// state: synthesizeHintInjected gates the "stop tool-calling" nudge
+	// so it doesn't spam; emptyRecoveryTried lets us reprompt the model
+	// once when it returns zero tool_calls AND zero text (observed when
+	// the model gets confused by a compacted history or a tool failure).
+	synthesizeHintInjected := len(traces) >= toolRoundSoftCap
+	emptyRecoveryTried := false
 
 	for step := 1; step <= lim.MaxSteps; step++ {
 		if notes := e.drainAgentNotes(); len(notes) > 0 {
@@ -301,11 +329,95 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			})
 		}
 
+		// Pre-flight budget gate. The existing post-round gate at the
+		// bottom catches consumption after the fact — if a round takes
+		// 40k on top of 95k we only notice at 135k/120k, and the cost
+		// is already burned. Reserve ~14% of MaxTokens as headroom for
+		// the round we're about to start; when we can't fit, auto-
+		// compact once and retry, else park cleanly.
+		if lim.MaxTokens > 0 {
+			headroom := lim.MaxTokens / budgetHeadroomDivisor
+			if totalTokens+headroom >= lim.MaxTokens {
+				if autoRecoveries < maxBudgetAutoRecoveries {
+					if compacted, report := e.forceCompactNativeLoopHistory(msgs, systemPrompt, chunks); report != nil && report.MessagesRemoved > 0 {
+						msgs = compacted
+						before := totalTokens
+						totalTokens = 0
+						autoRecoveries++
+						e.publishAgentLoopEvent("agent:loop:auto_recover", map[string]any{
+							"step":             step,
+							"attempt":          autoRecoveries,
+							"max_attempts":     maxBudgetAutoRecoveries,
+							"tokens_before":    before,
+							"rounds_collapsed": report.RoundsCollapsed,
+							"messages_removed": report.MessagesRemoved,
+							"reason":           "budget_headroom_preflight",
+							"surface":          "native",
+						})
+						// Fall through — the next iteration re-checks the gate
+						// with the zeroed budget and runs the round normally.
+					} else {
+						notice := fmt.Sprintf(
+							"Agent loop parked before step %d — tool budget exhausted (~%d/%d tokens, need ~%d headroom, %d rounds). "+
+								"Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file.",
+							step, totalTokens, lim.MaxTokens, headroom, len(traces),
+						)
+						return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
+					}
+				} else {
+					notice := fmt.Sprintf(
+						"Agent loop parked before step %d — tool budget exhausted (~%d/%d tokens, need ~%d headroom, %d rounds). "+
+							"Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file.",
+						step, totalTokens, lim.MaxTokens, headroom, len(traces),
+					)
+					return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
+				}
+			}
+		}
+
+		// Synthesis nudge. After N rounds of tool calls the model often
+		// has enough context to answer but keeps reading. One explicit
+		// "stop gathering, answer now" message has been observed to
+		// break that pattern without the harder intervention below.
+		if !synthesizeHintInjected && len(traces) >= toolRoundSoftCap {
+			synthesizeHintInjected = true
+			msgs = append(msgs, provider.Message{
+				Role: types.RoleUser,
+				Content: fmt.Sprintf(
+					"[system] You have completed %d rounds of tool calls and gathered substantial context. "+
+						"Please synthesize a natural-language answer now based on what you've learned. "+
+						"Only make further tool calls if strictly necessary — otherwise respond with your findings.",
+					len(traces),
+				),
+			})
+			e.publishAgentLoopEvent("agent:loop:synthesize_hint", map[string]any{
+				"step":        step,
+				"tool_rounds": len(traces),
+				"surface":     "native",
+			})
+		}
+
+		// Hard cap: after N rounds the model doesn't get to ask for
+		// tools anymore. `ToolChoice: "none"` forces the next call to
+		// emit plain text. This is the final guardrail before the
+		// step cap trips.
+		toolChoice := "auto"
+		if len(traces) >= toolRoundHardCap {
+			toolChoice = "none"
+			e.publishAgentLoopEvent("agent:loop:tools_force_stop", map[string]any{
+				"step":        step,
+				"tool_rounds": len(traces),
+				"hard_cap":    toolRoundHardCap,
+				"surface":     "native",
+			})
+		}
+
 		e.publishAgentLoopEvent("agent:loop:thinking", map[string]any{
 			"step":           step,
 			"max_tool_steps": lim.MaxSteps,
 			"tool_rounds":    len(traces),
 			"tokens_used":    totalTokens,
+			"tool_choice":    toolChoice,
 			"surface":        "native",
 		})
 
@@ -317,7 +429,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			Context:      chunks,
 			Messages:     msgs,
 			Tools:        descriptors,
-			ToolChoice:   "auto",
+			ToolChoice:   toolChoice,
 		}
 
 		resp, usedProvider, err := e.Providers.Complete(ctx, req)
@@ -334,6 +446,56 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		}
 		if strings.TrimSpace(resp.Model) != "" {
 			lastModel = resp.Model
+		}
+
+		// Empty turn: zero tool_calls AND zero visible text. Usually a
+		// symptom of model confusion after a tool failure or an
+		// over-aggressive compact. The old behaviour was to treat this
+		// as a final answer (Answer="") and return silently — the user
+		// saw an empty assistant bubble and no explanation. Retry once
+		// with an explicit synthesis nudge; if it happens a second time
+		// we surface an honest failure message instead of a ghost.
+		if len(resp.ToolCalls) == 0 && strings.TrimSpace(resp.Text) == "" {
+			if !emptyRecoveryTried {
+				emptyRecoveryTried = true
+				msgs = append(msgs, provider.Message{
+					Role:      types.RoleAssistant,
+					Content:   resp.Text,
+					ToolCalls: resp.ToolCalls,
+				})
+				msgs = append(msgs, provider.Message{
+					Role: types.RoleUser,
+					Content: "[system] Your previous response was empty. Please provide a natural-language answer to the original question based on the context you've gathered. " +
+						"If you genuinely cannot answer, say so explicitly — do not return an empty response.",
+				})
+				e.publishAgentLoopEvent("agent:loop:empty_recovery", map[string]any{
+					"step":        step,
+					"tool_rounds": len(traces),
+					"tokens_used": totalTokens,
+					"surface":     "native",
+				})
+				continue
+			}
+			// Second empty turn — give up with a visible notice instead
+			// of returning a blank bubble.
+			completion := nativeToolCompletion{
+				Answer: "The model returned an empty response twice in a row even after an explicit synthesis nudge. " +
+					"Try rephrasing the question or `/continue` with a narrower scope.",
+				Provider:     lastProvider,
+				Model:        lastModel,
+				TokenCount:   totalTokens,
+				Context:      chunks,
+				ToolTraces:   traces,
+				SystemPrompt: systemPrompt,
+			}
+			e.recordNativeAgentInteraction(question, completion)
+			e.publishAgentLoopEvent("agent:loop:empty_final", map[string]any{
+				"step":        step,
+				"tool_rounds": len(traces),
+				"tokens_used": totalTokens,
+				"surface":     "native",
+			})
+			return completion, nil
 		}
 
 		// No tool calls → final answer.
