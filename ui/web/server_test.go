@@ -108,6 +108,56 @@ func TestStatusEndpointIncludesApprovalGateAndHooks(t *testing.T) {
 	}
 }
 
+func TestToolSpecEndpoint(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/tools/read_file")
+	if err != nil {
+		t.Fatalf("get tool spec: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+	var spec struct {
+		Name string `json:"name"`
+		Risk string `json:"risk"`
+		Args []struct {
+			Name     string `json:"name"`
+			Type     string `json:"type"`
+			Required bool   `json:"required"`
+		} `json:"args"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&spec); err != nil {
+		t.Fatalf("decode spec: %v", err)
+	}
+	if spec.Name != "read_file" || spec.Risk == "" {
+		t.Fatalf("unexpected spec payload: %#v", spec)
+	}
+	if len(spec.Args) == 0 {
+		t.Fatalf("read_file should advertise at least one arg")
+	}
+}
+
+func TestToolSpecEndpoint_UnknownTool(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/tools/definitely-not-real")
+	if err != nil {
+		t.Fatalf("get tool spec: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown tool, got %d", resp.StatusCode)
+	}
+}
+
 func TestHealthEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)

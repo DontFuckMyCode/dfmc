@@ -137,6 +137,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/providers", s.handleProviders)
 	s.mux.HandleFunc("GET /api/v1/skills", s.handleSkills)
 	s.mux.HandleFunc("GET /api/v1/tools", s.handleTools)
+	s.mux.HandleFunc("GET /api/v1/tools/{name}", s.handleToolSpec)
 	s.mux.HandleFunc("POST /api/v1/tools/{name}", s.handleToolExec)
 	s.mux.HandleFunc("POST /api/v1/skills/{name}", s.handleSkillExec)
 	s.mux.HandleFunc("POST /api/v1/analyze", s.handleAnalyze)
@@ -393,6 +394,27 @@ func (s *Server) handleTools(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tools": s.engine.ListTools(),
 	})
+}
+
+// handleToolSpec serves the structured ToolSpec for a single tool so the
+// workbench (and any scripting consumer) can render parameter shape and
+// risk without duplicating the CLI pretty-printer.
+func (s *Server) handleToolSpec(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "tool name is required"})
+		return
+	}
+	if s.engine == nil || s.engine.Tools == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "tools engine not initialized"})
+		return
+	}
+	spec, ok := s.engine.Tools.Spec(name)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": fmt.Sprintf("unknown tool: %s", name)})
+		return
+	}
+	writeJSON(w, http.StatusOK, spec)
 }
 
 func (s *Server) handleProviders(w http.ResponseWriter, _ *http.Request) {
