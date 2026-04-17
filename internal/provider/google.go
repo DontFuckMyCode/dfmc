@@ -22,7 +22,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 const defaultGoogleBaseURL = "https://generativelanguage.googleapis.com/v1beta"
@@ -53,7 +52,7 @@ func NewGoogleProvider(model, apiKey, baseURL string, maxTokens, maxContext int)
 		baseURL:    baseURL,
 		maxTokens:  maxTokens,
 		maxContext: maxContext,
-		httpClient: &http.Client{Timeout: 120 * time.Second},
+		httpClient: newProviderHTTPClient(),
 	}
 }
 

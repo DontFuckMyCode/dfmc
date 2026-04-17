@@ -23,6 +23,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 	"gopkg.in/yaml.v3"
 )
@@ -1375,11 +1376,17 @@ func writeJSON(w http.ResponseWriter, code int, payload any) {
 }
 
 func gitWorkingDiffWeb(projectRoot string, maxBytes int64) (string, error) {
-	root := strings.TrimSpace(projectRoot)
-	if root == "" {
-		root = "."
+	root, err := security.SanitizeGitRoot(projectRoot)
+	if err != nil {
+		return "", err
 	}
-	cmd := exec.Command("git", "-C", root, "diff", "--")
+	// cmd.Dir keeps the path out of git's CLI parser entirely; with
+	// `-C <root>` a path that starts with `-` could be read as a
+	// flag. exec.Command doesn't spawn a shell so classic CWE-78
+	// injection isn't possible, but argument-injection hardening is
+	// cheap and makes the static-scanner flag go away honestly.
+	cmd := exec.Command("git", "diff", "--")
+	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
 		if ee := (&exec.ExitError{}); errors.As(err, &ee) {

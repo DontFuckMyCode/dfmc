@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -36,9 +35,7 @@ func NewOpenAICompatibleProvider(name, model, apiKey, baseURL string, maxTokens,
 		baseURL:    normalizeOpenAIBaseURL(name, baseURL),
 		maxTokens:  maxTokens,
 		maxContext: maxContext,
-		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
-		},
+		httpClient: newProviderHTTPClient(),
 	}
 }
 

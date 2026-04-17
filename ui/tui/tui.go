@@ -9799,11 +9799,17 @@ func fitPanelContentHeight(content string, maxLines int) string {
 }
 
 func gitWorkingDiff(projectRoot string, maxBytes int64) (string, error) {
-	root := strings.TrimSpace(projectRoot)
-	if root == "" {
-		root = "."
+	root, err := security.SanitizeGitRoot(projectRoot)
+	if err != nil {
+		return "", err
 	}
-	cmd := exec.Command("git", "-C", root, "diff", "--")
+	// Use cmd.Dir instead of `-C <root>` so the path is never parsed
+	// as a git CLI flag. A root that starts with `-` would otherwise
+	// be interpreted as an option (e.g. `--upload-pack=...`) — real
+	// exec.Command doesn't spawn a shell, but avoiding argument-
+	// injection surface is still worth the single line.
+	cmd := exec.Command("git", "diff", "--")
+	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
 		if ee := (&exec.ExitError{}); errors.As(err, &ee) {

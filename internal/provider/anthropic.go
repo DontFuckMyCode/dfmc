@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 type AnthropicProvider struct {
@@ -34,9 +33,7 @@ func NewAnthropicProvider(model, apiKey, baseURL string, maxTokens, maxContext i
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		maxTokens:  maxTokens,
 		maxContext: maxContext,
-		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
-		},
+		httpClient: newProviderHTTPClient(),
 	}
 }
 
