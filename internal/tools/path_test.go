@@ -121,6 +121,93 @@ func TestEnsureWithinRoot_RefusesNewFileUnderSymlinkedEscape(t *testing.T) {
 	}
 }
 
+// --- writeFileAtomic --------------------------------------------------
+
+// The happy path: writing new contents replaces the old ones fully,
+// respects the requested permissions, and doesn't leave debris.
+func TestWriteFileAtomic_WritesAndCleansUp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := writeFileAtomic(path, []byte("new"), 0o644); err != nil {
+		t.Fatalf("atomic write: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != "new" {
+		t.Fatalf("want %q, got %q", "new", got)
+	}
+	// Verify no .dfmc-tmp-* debris remained.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.Contains(name, "dfmc-tmp") {
+			t.Fatalf("temp file not cleaned up: %s", name)
+		}
+	}
+}
+
+// The core atomicity guarantee: readers must never see a half-written
+// or truncated file. We can't literally induce a crash, but the
+// observable behaviour of "sibling temp + atomic rename" is that
+// stat'ing the target during an in-flight overwrite returns the OLD
+// size (because the old inode is still linked until the rename
+// completes). Test the implementation instead: after a successful
+// write, the file contains exactly `new`, never a truncated prefix.
+func TestWriteFileAtomic_FullReplaceNotTruncate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.bin")
+	old := make([]byte, 4096)
+	for i := range old {
+		old[i] = 'A'
+	}
+	if err := os.WriteFile(path, old, 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Overwrite with a shorter blob — non-atomic write would leave a
+	// small file with mixed contents at the tail; atomic rename
+	// guarantees exactly the new bytes.
+	if err := writeFileAtomic(path, []byte("short"), 0o644); err != nil {
+		t.Fatalf("atomic write: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != "short" {
+		t.Fatalf("want %q, got %q (len=%d)", "short", got, len(got))
+	}
+}
+
+// Requested permissions take effect. CreateTemp defaults to 0o600;
+// if the caller says 0o644 they expect 0o644 on the result.
+func TestWriteFileAtomic_HonoursPerm(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows file modes only carry read-only vs read-write bits;
+		// the fine-grained POSIX perms don't survive Chmod on NTFS.
+		t.Skip("POSIX perms not meaningful on NTFS")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	if err := writeFileAtomic(path, []byte("x"), 0o600); err != nil {
+		t.Fatalf("atomic write: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("perm: want 0o600, got %o", got)
+	}
+}
+
 func TestEnsureWithinRoot_RejectsEmptyPath(t *testing.T) {
 	root := t.TempDir()
 	if _, err := EnsureWithinRoot(root, ""); err == nil {

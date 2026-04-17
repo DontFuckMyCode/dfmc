@@ -741,3 +741,59 @@ func resolveExistingAncestor(absPath string) (string, error) {
 		current = parent
 	}
 }
+
+// writeFileAtomic replaces `path`'s contents with `data` such that a
+// crash mid-write can never leave the destination truncated or
+// half-written. Implementation: write to a sibling temp file on the
+// same filesystem, fsync, then rename over the target. os.Rename is
+// atomic on both POSIX and NTFS, so any reader either sees the
+// previous contents or the new contents — never the in-progress
+// state.
+//
+// The temp file lives in the same directory as the target so the
+// rename stays on one filesystem. If the rename fails, we best-effort
+// delete the temp to avoid leaving `.filename.dfmc-tmp.XXXXXX` debris
+// behind. `perm` controls the final file's permissions; the temp is
+// created with the same mode so the rename doesn't downgrade it.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	tmp, err := os.CreateTemp(dir, "."+base+".dfmc-tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp for atomic write: %w", err)
+	}
+	tmpPath := tmp.Name()
+	// Ensure we always clean up the temp unless the rename succeeds.
+	cleanup := func() {
+		_ = os.Remove(tmpPath)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("write temp: %w", err)
+	}
+	// fsync — not every OS/filesystem requires it, but POSIX semantics
+	// say that without fsync a crash could lose the data even after
+	// rename. Cheap insurance.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("sync temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("close temp: %w", err)
+	}
+	// Align temp's mode to `perm`. CreateTemp uses 0o600 by default; a
+	// call expecting a 0o644 world-readable config would otherwise end
+	// up with tighter-than-requested permissions.
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		cleanup()
+		return fmt.Errorf("chmod temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		cleanup()
+		return fmt.Errorf("rename temp to target: %w", err)
+	}
+	return nil
+}

@@ -99,7 +99,7 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 				return Result{}, err
 			}
-			if err := os.WriteFile(abs, []byte(updated), 0o644); err != nil {
+			if err := writeFileAtomic(abs, []byte(updated), 0o644); err != nil {
 				return Result{}, fmt.Errorf("write %s: %w", targetPath, err)
 			}
 		}

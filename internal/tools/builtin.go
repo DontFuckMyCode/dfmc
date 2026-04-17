@@ -85,7 +85,7 @@ func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) 
 			return Result{}, fmt.Errorf("file already exists: %s", absPath)
 		}
 	}
-	if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil {
+	if err := writeFileAtomic(absPath, []byte(content), 0o644); err != nil {
 		return Result{}, err
 	}
 	return Result{
@@ -160,7 +160,7 @@ func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
 		updated = strings.ReplaceAll(updatedNorm, "\n", "\r\n")
 	}
 
-	if err := os.WriteFile(absPath, []byte(updated), 0o644); err != nil {
+	if err := writeFileAtomic(absPath, []byte(updated), 0o644); err != nil {
 		return Result{}, err
 	}
 	return Result{
