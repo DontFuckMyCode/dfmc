@@ -10,6 +10,7 @@
 //   - server_conversation.go conversation list/search/load/save/undo + branches
 //   - server_workspace.go    workspace diff/patch/apply + git shell helpers
 //   - server_files.go        file listing / content + path-traversal guard
+//   - server_admin.go        scan / doctor / hooks / config — CLI parity
 //
 // The 925-line workbench UI lives in static/index.html and is pulled in via
 // //go:embed below; renderWorkbenchHTML simply surfaces it as a string.
@@ -161,6 +162,10 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("POST /api/v1/workspace/apply", s.handleWorkspaceApply)
 	s.mux.HandleFunc("GET /api/v1/files", s.handleFiles)
 	s.mux.HandleFunc("GET /api/v1/files/{path...}", s.handleFileContent)
+	s.mux.HandleFunc("GET /api/v1/scan", s.handleScan)
+	s.mux.HandleFunc("GET /api/v1/doctor", s.handleDoctor)
+	s.mux.HandleFunc("GET /api/v1/hooks", s.handleHooks)
+	s.mux.HandleFunc("GET /api/v1/config", s.handleConfigGet)
 	s.mux.HandleFunc("GET /ws", s.handleWebSocket)
 }
 
