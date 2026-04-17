@@ -218,10 +218,21 @@ func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativ
 	return e.runNativeToolLoop(ctx, seed, lim)
 }
 
+// resumeMaxMultiplier is the outer ceiling on cumulative agent work
+// across every /continue of a single root ask. Each resume normally
+// gets a fresh MaxSteps budget (so /continue actually progresses
+// instead of instantly re-parking), but unbounded resumes let a
+// model that keeps parking burn tokens forever. A multiplier of 3
+// lets the user /continue twice past the initial run for a total of
+// 3 x MaxSteps before the engine refuses further resumes. Tune via
+// this constant, not per-call — the semantic is "how many agent
+// budgets is one user question worth, at most."
+const resumeMaxMultiplier = 3
+
 // ResumeAgent re-enters the native tool loop from a previously parked state.
 // An optional note is appended as a user message before the next round-trip,
 // e.g. /continue focus on the auth tests. Returns an error when there is no
-// parked loop.
+// parked loop, or when the cumulative work ceiling has been hit.
 func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolCompletion, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -237,6 +248,45 @@ func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolComple
 		})
 	}
 	lim := e.agentLimits()
+
+	// Accumulate cumulative counters from the just-parked run BEFORE we
+	// zero out the per-attempt values below. Without this the outer
+	// ceiling never engages: every resume starts fresh and the model
+	// can park indefinitely.
+	seed.CumulativeSteps += seed.Step
+	seed.CumulativeTokens += seed.TotalTokens
+
+	// Hard ceiling — refuse further resumes when the model has already
+	// burned resumeMaxMultiplier full budgets. We re-park so the user
+	// can still inspect the state, but we won't run another round.
+	stepCeiling := lim.MaxSteps * resumeMaxMultiplier
+	tokenCeiling := lim.MaxTokens * resumeMaxMultiplier
+	if lim.MaxSteps > 0 && seed.CumulativeSteps >= stepCeiling {
+		e.saveParkedAgent(seed)
+		e.publishAgentLoopEvent("agent:loop:resume_refused", map[string]any{
+			"reason":            "cumulative_steps_ceiling",
+			"cumulative_steps":  seed.CumulativeSteps,
+			"ceiling":           stepCeiling,
+			"max_steps_per_run": lim.MaxSteps,
+			"surface":           "native",
+		})
+		return nativeToolCompletion{}, fmt.Errorf(
+			"resume refused: cumulative agent steps %d hit ceiling %d (%d x MaxSteps=%d). The model has already had %d full budgets on this question — start a new ask with refined scope instead of continuing",
+			seed.CumulativeSteps, stepCeiling, resumeMaxMultiplier, lim.MaxSteps, resumeMaxMultiplier)
+	}
+	if lim.MaxTokens > 0 && seed.CumulativeTokens >= tokenCeiling {
+		e.saveParkedAgent(seed)
+		e.publishAgentLoopEvent("agent:loop:resume_refused", map[string]any{
+			"reason":             "cumulative_tokens_ceiling",
+			"cumulative_tokens":  seed.CumulativeTokens,
+			"ceiling":            tokenCeiling,
+			"max_tokens_per_run": lim.MaxTokens,
+			"surface":            "native",
+		})
+		return nativeToolCompletion{}, fmt.Errorf(
+			"resume refused: cumulative agent tokens %d hit ceiling %d (%d x MaxTokens=%d). The model has already spent %d full token budgets on this question — start a new ask",
+			seed.CumulativeTokens, tokenCeiling, resumeMaxMultiplier, lim.MaxTokens, resumeMaxMultiplier)
+	}
 
 	// Force-compact the parked history before the next provider round-trip.
 	// Without this, resume ships the full fat tool_result transcript back to
@@ -263,13 +313,18 @@ func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolComple
 		"max_tool_steps":    lim.MaxSteps,
 		"tool_rounds":       len(seed.Traces),
 		"tokens_used":       priorTokens,
+		"cumulative_steps":  seed.CumulativeSteps,
+		"cumulative_tokens": seed.CumulativeTokens,
+		"step_ceiling":      stepCeiling,
+		"token_ceiling":     tokenCeiling,
 		"surface":           "native",
 	})
 	// Give the resumed loop a fresh cap of MaxSteps *additional* iterations
 	// on top of whatever it already consumed. That's what the user typed
 	// /continue for — they want more work, not another instant park. Reset
 	// TotalTokens too: the budget meters per resume attempt, not cumulative
-	// — otherwise every /continue trips MaxTokens on step 1.
+	// — otherwise every /continue trips MaxTokens on step 1. The outer
+	// ceiling above still bounds the total.
 	seed.Step = 0
 	seed.TotalTokens = 0
 	return e.runNativeToolLoop(ctx, seed, lim)
@@ -738,6 +793,12 @@ func (e *Engine) parkNativeToolLoop(
 		LastProvider:     lastProvider,
 		LastModel:        lastModel,
 		RecentCoachHints: seed.RecentCoachHints,
+		// Carry cumulative counters forward across park→resume→park
+		// cycles. Without this the ceiling in ResumeAgent never trips:
+		// each park rebuilds a fresh parkedAgentState and wipes the
+		// cumulative totals that track total work done on this ask.
+		CumulativeSteps:  seed.CumulativeSteps,
+		CumulativeTokens: seed.CumulativeTokens,
 	}
 	e.saveParkedAgent(parked)
 

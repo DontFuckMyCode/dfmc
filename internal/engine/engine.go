@@ -62,10 +62,32 @@ type Engine struct {
 	modelOverride    string
 	verbose          bool
 
+	// Lock ordering (MUST be held in this order to avoid deadlocks):
+	//   1. agentMu   — agent lifecycle + parked state
+	//   2. mu        — general state (state, lastContextIn, background)
+	// Never acquire agentMu while holding mu. Shutdown only touches mu;
+	// the agent loop only touches agentMu and reads state via State()
+	// which takes mu independently.
 	mu    sync.RWMutex
 	state EngineState
 
 	lastContextIn ContextInStatus
+
+	// memoryDegraded is set when Memory.Load() failed during Init. The
+	// engine keeps running with an empty in-memory store so the user
+	// isn't hard-blocked, but Status surfaces the flag so the TUI can
+	// show a "memory disabled" notice and downstream code can decide
+	// not to rely on historical recall.
+	memoryDegraded bool
+	memoryLoadErr  string
+
+	// Background lifecycle. indexCancel cancels the initial codebase
+	// indexer; indexWG waits for it (and any other engine-owned
+	// goroutines) to finish before Shutdown tears down AST / CodeMap /
+	// Storage. Without these, Shutdown could race with a still-running
+	// indexer touching the CodeMap after it's been closed.
+	indexCancel context.CancelFunc
+	indexWG     sync.WaitGroup
 
 	agentMu         sync.Mutex
 	agentParked     *parkedAgentState
@@ -91,6 +113,11 @@ type Status struct {
 	ASTLanguages    []ast.BackendLanguageStatus `json:"ast_languages,omitempty"`
 	ASTMetrics      ast.ParseMetrics            `json:"ast_metrics,omitempty"`
 	CodeMap         codemap.BuildMetrics        `json:"codemap_metrics,omitempty"`
+	// MemoryDegraded reports that the persistent memory store failed
+	// to load at Init and the engine is running with an empty store.
+	// TUI/web surfaces can render this next to the chat header.
+	MemoryDegraded bool   `json:"memory_degraded,omitempty"`
+	MemoryLoadErr  string `json:"memory_load_err,omitempty"`
 }
 
 type ContextInStatus struct {
@@ -310,7 +337,24 @@ func (e *Engine) Init(ctx context.Context) error {
 	e.Tools = tools.New(*e.Config)
 	e.Tools.SetSubagentRunner(e)
 	e.Memory = memory.New(e.Storage)
-	_ = e.Memory.Load()
+	// Memory.Load failure is non-fatal — a corrupt or missing memory
+	// db must not stop the user from running dfmc. But silently
+	// proceeding with an empty store masks real data loss; flag
+	// degradation so Status surfaces it and publish an event so the
+	// TUI can render a notice next to the chat header.
+	if err := e.Memory.Load(); err != nil {
+		e.mu.Lock()
+		e.memoryDegraded = true
+		e.memoryLoadErr = err.Error()
+		e.mu.Unlock()
+		e.EventBus.Publish(Event{
+			Type:   "memory:degraded",
+			Source: "engine",
+			Payload: map[string]any{
+				"reason": err.Error(),
+			},
+		})
+	}
 	e.Conversation = conversation.New(e.Storage)
 	e.Security = security.New()
 
@@ -340,7 +384,19 @@ func (e *Engine) Init(ctx context.Context) error {
 
 	e.ProjectRoot = config.FindProjectRoot("")
 	if e.ProjectRoot != "" {
-		go e.indexCodebase(ctx)
+		// Derive a cancellable child context so Shutdown can tell the
+		// indexer to stop, then Wait for it before tearing down the
+		// Storage / AST / CodeMap it's reading from. Without this we
+		// could panic when the indexer writes to a closed store.
+		indexCtx, cancel := context.WithCancel(ctx)
+		e.mu.Lock()
+		e.indexCancel = cancel
+		e.mu.Unlock()
+		e.indexWG.Add(1)
+		go func() {
+			defer e.indexWG.Done()
+			e.indexCodebase(indexCtx)
+		}()
 	}
 
 	// Fire session_start AFTER ProjectRoot is resolved so hooks have
@@ -461,10 +517,22 @@ func (e *Engine) Shutdown() {
 	e.setState(StateShuttingDown)
 	e.EventBus.Publish(Event{Type: "engine:shutdown", Source: "engine"})
 
-	// session_end fires at the top of Shutdown (not the bottom) so hooks
-	// have access to storage/conversation state before we start tearing
-	// it down. We use a fresh context with a tight cap — shutdown must
-	// not stall on a misbehaving hook.
+	// Cancel and join background goroutines (initial codebase indexer,
+	// anything else started via indexWG.Add) BEFORE tearing down the
+	// stores they're reading from. The indexer writes into CodeMap
+	// which in turn touches AST; closing Storage mid-write panics.
+	e.mu.Lock()
+	cancel := e.indexCancel
+	e.indexCancel = nil
+	e.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	e.indexWG.Wait()
+
+	// session_end fires after background goroutines have stopped so
+	// hooks see a quiesced state, but before we close Storage — hooks
+	// legitimately read conversation/memory here.
 	if e.Hooks != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		e.Hooks.Fire(ctx, hooks.EventSessionEnd, hooks.Payload{
@@ -527,6 +595,8 @@ func (e *Engine) Status() Status {
 		ASTLanguages:    astLanguages,
 		ASTMetrics:      astMetrics,
 		CodeMap:         codemapMetrics,
+		MemoryDegraded:  e.memoryDegraded,
+		MemoryLoadErr:   e.memoryLoadErr,
 	}
 }
 

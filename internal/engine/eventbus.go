@@ -25,7 +25,17 @@ func NewEventBus() *EventBus {
 	}
 }
 
+// Publish is nil-receiver-safe so callers with a best-effort pattern
+// (`if eb != nil { eb.Publish(...) }`) don't need the guard, and a
+// partially-initialized Engine (e.g. during a failed Init rollback)
+// can't panic when emitting a shutdown event. The check-then-use
+// pattern at call sites was also racy during shutdown — inlining the
+// guard here eliminates the race without forcing every caller to
+// hold the engine mutex.
 func (eb *EventBus) Publish(event Event) {
+	if eb == nil {
+		return
+	}
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
@@ -49,6 +59,13 @@ func (eb *EventBus) Publish(event Event) {
 }
 
 func (eb *EventBus) Subscribe(eventType string) chan Event {
+	if eb == nil {
+		// Return a closed channel so subscribers' range loops exit
+		// cleanly instead of blocking forever on a nil chan.
+		ch := make(chan Event)
+		close(ch)
+		return ch
+	}
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
@@ -58,6 +75,9 @@ func (eb *EventBus) Subscribe(eventType string) chan Event {
 }
 
 func (eb *EventBus) Unsubscribe(eventType string, ch chan Event) {
+	if eb == nil {
+		return
+	}
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 

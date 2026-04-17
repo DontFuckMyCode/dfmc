@@ -40,6 +40,13 @@ type parkedAgentState struct {
 	// this loop so the composer doesn't repeat itself round after round.
 	// Bounded to the last ~8 entries to keep de-dup cheap.
 	RecentCoachHints []string
+	// CumulativeSteps / CumulativeTokens accumulate across every
+	// /continue resume. Step + TotalTokens get reset on resume so each
+	// attempt gets a fresh MaxSteps budget, but these cumulative
+	// counters enforce an outer ceiling (resumeMaxMultiplier * MaxSteps)
+	// so a model that keeps parking can't burn tokens forever.
+	CumulativeSteps  int
+	CumulativeTokens int
 }
 
 // HasParkedAgent reports whether a previous agent loop was parked (cap hit)
