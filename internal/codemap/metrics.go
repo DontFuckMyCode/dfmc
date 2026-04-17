@@ -1,7 +1,6 @@
 package codemap
 
 import (
-	"sort"
 	"sync"
 	"time"
 )
@@ -166,31 +165,6 @@ func cloneCountMap(input map[string]int64) map[string]int64 {
 	out := make(map[string]int64, len(input))
 	for key, value := range input {
 		out[key] = value
-	}
-	return out
-}
-
-func summarizeCountMap(input map[string]int64, limit int) []string {
-	type pair struct {
-		key   string
-		count int64
-	}
-	items := make([]pair, 0, len(input))
-	for key, count := range input {
-		items = append(items, pair{key: key, count: count})
-	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].count == items[j].count {
-			return items[i].key < items[j].key
-		}
-		return items[i].count > items[j].count
-	})
-	if limit > 0 && len(items) > limit {
-		items = items[:limit]
-	}
-	out := make([]string, 0, len(items))
-	for _, item := range items {
-		out = append(out, item.key)
 	}
 	return out
 }

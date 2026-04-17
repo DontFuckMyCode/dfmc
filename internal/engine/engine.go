@@ -1890,27 +1890,6 @@ func recentUserQuestions(messages []types.Message, maxItems, maxTokensPerItem in
 	return out
 }
 
-func recentOmittedUserIntents(messages []types.Message, maxItems, maxTokensPerItem int) []string {
-	if maxItems <= 0 {
-		return nil
-	}
-	out := make([]string, 0, maxItems)
-	for i := len(messages) - 1; i >= 0 && len(out) < maxItems; i-- {
-		if messages[i].Role != types.RoleUser {
-			continue
-		}
-		s := trimToTokenBudget(strings.TrimSpace(messages[i].Content), maxTokensPerItem)
-		if s == "" {
-			continue
-		}
-		out = append(out, s)
-	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
-	return out
-}
-
 func topTermsFromMessages(messages []types.Message, limit int) []string {
 	if limit <= 0 {
 		return nil

@@ -103,16 +103,6 @@ var (
 	badgeToolStyle      = lipgloss.NewStyle().Foreground(colorTitleFg).Background(colorRoleTool).Padding(0, 1).Bold(true)
 	badgeCoachStyle     = lipgloss.NewStyle().Foreground(colorTitleFg).Background(colorRoleCoach).Padding(0, 1).Bold(true)
 
-	cardBorderStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorPanelBorder).
-			Padding(0, 1)
-
-	runtimeCardStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(colorInfo).
-				Padding(0, 1)
-
 	inputBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorRoleUser).
@@ -846,15 +836,6 @@ func renderDivider(width int) string {
 		width = 200
 	}
 	return dividerStyle.Render(strings.Repeat("─", width))
-}
-
-// renderRuntimeCardFramed wraps renderRuntimeCard in a coloured rounded box.
-func renderRuntimeCardFramed(rs runtimeSummary, width int) string {
-	inner := renderRuntimeCard(rs, width-4)
-	if strings.TrimSpace(inner) == "" {
-		return ""
-	}
-	return runtimeCardStyle.Width(width).Render(inner)
 }
 
 // renderInputBox wraps a prompt in a coloured rounded frame. Input may now

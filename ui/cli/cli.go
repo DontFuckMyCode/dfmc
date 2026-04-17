@@ -1714,18 +1714,6 @@ func gitChangedFiles(projectRoot string, limit int) ([]string, error) {
 	return files, nil
 }
 
-func runPlaceholder(name string, jsonMode bool) int {
-	if jsonMode {
-		_ = printJSON(map[string]any{
-			"command": name,
-			"status":  "not_implemented",
-		})
-		return 0
-	}
-	fmt.Printf("%s is scaffolded but not implemented yet.\n", name)
-	return 0
-}
-
 func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
 	fs := flag.NewFlagSet("analyze", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

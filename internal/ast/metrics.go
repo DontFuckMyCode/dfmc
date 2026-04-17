@@ -1,7 +1,6 @@
 package ast
 
 import (
-	"sort"
 	"sync"
 	"time"
 )
@@ -128,11 +127,3 @@ func (m *parseMetricsTracker) snapshot() ParseMetrics {
 	}
 }
 
-func sortedMetricKeys(items map[string]int64) []string {
-	keys := make([]string, 0, len(items))
-	for key := range items {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
