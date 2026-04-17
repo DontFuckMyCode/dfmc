@@ -2927,6 +2927,14 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.input = ""
 		m.notice = "Lifecycle hooks listed below."
 		return m.appendSystemMessage(m.describeHooks()), nil, true
+	case "stats", "tokens", "cost":
+		// Session metrics at a glance: tool rounds, RTK-style compression
+		// savings, context-window fill, agent loop progress. This makes
+		// the 'token miser' thesis tangible — users should be able to
+		// see how much they're saving, not just trust the claim.
+		m.input = ""
+		m.notice = "Session stats below."
+		return m.appendSystemMessage(m.describeStats()), nil, true
 	case "keylog":
 		// Toggle key-event dump into m.notice. Used to diagnose Turkish-
 		// keyboard AltGr delivery and similar terminal-specific weirdness
@@ -3394,6 +3402,91 @@ func (m Model) exportTranscript(target string) (string, error) {
 		return "", fmt.Errorf("write export file: %w", err)
 	}
 	return target, nil
+}
+
+// describeStats renders a one-card session-metrics snapshot: transcript
+// size, agent loop progress, active tool fan-out, token budget fill,
+// and RTK-style compression savings. Pure read over Model fields — no
+// engine call, so it's cheap and safe to run mid-stream.
+func (m Model) describeStats() string {
+	lines := []string{"▸ Session stats"}
+
+	elapsed := time.Duration(0)
+	if !m.sessionStart.IsZero() {
+		elapsed = time.Since(m.sessionStart).Round(time.Second)
+	}
+	lines = append(lines, fmt.Sprintf("  elapsed:     %s", elapsed))
+	lines = append(lines, fmt.Sprintf("  messages:    %d transcript line(s)", len(m.transcript)))
+
+	// Token budget. ContextIn carries the last computed budget if a turn
+	// has run; otherwise fall back to the provider's MaxContext only.
+	tokens, maxCtx := 0, 0
+	if m.status.ContextIn != nil {
+		tokens = m.status.ContextIn.TokenCount
+		maxCtx = m.status.ContextIn.ProviderMaxContext
+	}
+	if maxCtx == 0 {
+		maxCtx = m.status.ProviderProfile.MaxContext
+	}
+	if maxCtx > 0 {
+		pct := 0
+		if tokens > 0 {
+			pct = int(float64(tokens) / float64(maxCtx) * 100)
+		}
+		lines = append(lines, fmt.Sprintf("  context in:  %s / %s tokens (%d%% of window)",
+			formatThousands(tokens), formatThousands(maxCtx), pct))
+	} else {
+		lines = append(lines, "  context in:  (no provider window info yet)")
+	}
+
+	// Agent loop progress (cumulative across turns).
+	if m.agentLoopToolRounds > 0 || m.agentLoopStep > 0 {
+		phase := strings.TrimSpace(m.agentLoopPhase)
+		if phase == "" {
+			phase = "idle"
+		}
+		if m.agentLoopMaxToolStep > 0 {
+			lines = append(lines, fmt.Sprintf("  agent:       %s · step %d/%d · %d tool round(s)",
+				phase, m.agentLoopStep, m.agentLoopMaxToolStep, m.agentLoopToolRounds))
+		} else {
+			lines = append(lines, fmt.Sprintf("  agent:       %s · step %d · %d tool round(s)",
+				phase, m.agentLoopStep, m.agentLoopToolRounds))
+		}
+		if last := strings.TrimSpace(m.agentLoopLastTool); last != "" {
+			lines = append(lines, fmt.Sprintf("  last tool:   %s (%s, %dms)",
+				last, blankFallback(m.agentLoopLastStatus, "?"), m.agentLoopLastDuration))
+		}
+	} else {
+		lines = append(lines, "  agent:       no tool rounds this session yet")
+	}
+
+	// Fan-out live counters.
+	if m.activeToolCount > 0 || m.activeSubagentCount > 0 {
+		lines = append(lines, fmt.Sprintf("  in-flight:   %d tool(s), %d subagent(s)", m.activeToolCount, m.activeSubagentCount))
+	}
+
+	// RTK-style compression wins — the headline token-miser metric.
+	if m.compressionRawChars > 0 {
+		saved := m.compressionSavedChars
+		raw := m.compressionRawChars
+		pct := 0
+		if raw > 0 {
+			pct = int(float64(saved) / float64(raw) * 100)
+		}
+		lines = append(lines, fmt.Sprintf("  rtk savings: %s chars dropped (%d%% of %s raw output)",
+			formatThousands(saved), pct, formatThousands(raw)))
+	} else {
+		lines = append(lines, "  rtk savings: (no tool output yet to compress)")
+	}
+
+	// Recent denials — short summary, full list lives in /approve.
+	if m.eng != nil {
+		if denials := m.eng.RecentDenials(); len(denials) > 0 {
+			lines = append(lines, fmt.Sprintf("  denials:     %d blocked agent tool call(s) — see /approve", len(denials)))
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // describeHealth renders a compact health snapshot: provider/model/AST
@@ -8732,6 +8825,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "approve", Template: "/approve", Description: "show the tool-approval gate state (which tools prompt agent calls)"},
 		{Command: "hooks", Template: "/hooks", Description: "list lifecycle hooks registered per event (pre_tool, post_tool, user_prompt_submit, …)"},
 		{Command: "doctor", Template: "/doctor", Description: "in-chat health snapshot (provider, ast, tools, gate, hooks, denials)"},
+		{Command: "stats", Template: "/stats", Description: "session metrics: tool rounds, rtk savings, agent progress, context fill"},
 		{Command: "export", Template: "/export", Description: "save the current transcript to .dfmc/exports/*.md (or /export path.md)"},
 		{Command: "quit", Template: "/quit", Description: "exit DFMC"},
 		{Command: "providers", Template: "/providers", Description: "list configured providers"},
@@ -9880,6 +9974,7 @@ func renderTUIHelp() string {
 		"    /approve                     Show tool-approval gate state (which tools prompt agent calls)",
 		"    /hooks                       List lifecycle hooks registered per event",
 		"    /doctor                      In-chat health snapshot (alias /health)",
+		"    /stats                       Session metrics (alias /tokens, /cost)",
 		"    /export [PATH]               Save transcript to markdown (default .dfmc/exports/transcript-*.md)",
 		"    /quit                        Exit DFMC",
 		"    /coach                       Mute or unmute background coach notes",
