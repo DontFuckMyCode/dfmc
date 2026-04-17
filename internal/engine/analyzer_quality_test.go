@@ -349,3 +349,108 @@ func TestSkipStringLiteral_UnterminatedReturnsLen(t *testing.T) {
 		t.Fatalf("unterminated literal: want len=%d, got %d", len(line), got)
 	}
 }
+
+// --- declarationLineLooksReal ---------------------------------------
+//
+// These guard the dead-code detector against a specific false-positive
+// shape: the regex-fallback AST extracting identifiers from inside a
+// raw-string literal (e.g. JS embedded in a Go web server's HTML
+// bundle). The stripper blanks string-literal lines, so a declaration
+// that was really inside a string will point at an empty line and
+// declarationLineLooksReal returns false.
+
+func TestDeclarationLineLooksReal_GoDeclaration(t *testing.T) {
+	lines := []string{"package foo", "", "func Bar() {}"}
+	if !declarationLineLooksReal(lines, 3, ".go") {
+		t.Fatal("real Go func declaration should pass")
+	}
+}
+
+func TestDeclarationLineLooksReal_BlankLineFromStrippedString(t *testing.T) {
+	// Simulates: AST reported a symbol at line 5, but the stripper
+	// blanked that line because it was inside a raw string literal.
+	lines := []string{"package foo", "", "var s = `", "", "`"}
+	if declarationLineLooksReal(lines, 4, ".go") {
+		t.Fatal("blank line after stripping must be treated as not-a-real-decl")
+	}
+}
+
+func TestDeclarationLineLooksReal_JSPrefixesRecognized(t *testing.T) {
+	for _, src := range []string{
+		"const wrapper = () => {}",
+		"let count = 0",
+		"function handleClick(e) {",
+		"class Panel extends Base {",
+		"export function render() {}",
+		"async function load() {",
+	} {
+		if !declarationLineLooksReal([]string{src}, 1, ".js") {
+			t.Fatalf("expected %q to look like a real JS decl", src)
+		}
+	}
+}
+
+func TestDeclarationLineLooksReal_BareIdentifierIsNotDecl(t *testing.T) {
+	// Just a bare identifier (the kind of thing the regex AST might
+	// pull out of a template expression) — not a real declaration.
+	if declarationLineLooksReal([]string{"wrapper.click();"}, 1, ".js") {
+		t.Fatal("`wrapper.click();` is a call site, not a declaration")
+	}
+}
+
+func TestDeclarationLineLooksReal_PythonDef(t *testing.T) {
+	if !declarationLineLooksReal([]string{"def foo(x):"}, 1, ".py") {
+		t.Fatal("Python def must register as declaration")
+	}
+	if !declarationLineLooksReal([]string{"async def foo():"}, 1, ".py") {
+		t.Fatal("Python async def must register as declaration")
+	}
+	if declarationLineLooksReal([]string{"foo.bar()"}, 1, ".py") {
+		t.Fatal("Python call line must not register as declaration")
+	}
+}
+
+func TestDeclarationLineLooksReal_OutOfRangeIsPermissive(t *testing.T) {
+	// AST and stripper can drift by a few lines in pathological cases
+	// (unterminated strings, nested comments). Dropping a real symbol
+	// is worse than surfacing a false positive — permit out-of-range.
+	if !declarationLineLooksReal([]string{"x"}, 99, ".go") {
+		t.Fatal("out-of-range line must stay permissive")
+	}
+	if !declarationLineLooksReal(nil, 1, ".go") {
+		t.Fatal("empty lines slice must stay permissive")
+	}
+}
+
+func TestDeclarationLineLooksReal_UnknownExtensionPermissive(t *testing.T) {
+	// Unknown language — we can't judge, so default to permissive
+	// rather than silently eat findings on .ex/.erl/etc.
+	if !declarationLineLooksReal([]string{"module foo"}, 1, ".xyz") {
+		t.Fatal("unknown extension should not drop declarations")
+	}
+}
+
+// --- lineStartsWithAny ----------------------------------------------
+
+func TestLineStartsWithAny_RequiresBoundary(t *testing.T) {
+	// `function` is a JS keyword; `functional` is not a keyword — the
+	// helper must not match a prefix that flows into more identifier
+	// characters.
+	if lineStartsWithAny("functional = 1", "function") {
+		t.Fatal("`function` must not match `functional`")
+	}
+	if !lineStartsWithAny("function foo() {}", "function") {
+		t.Fatal("`function foo()` should match the `function` keyword")
+	}
+	if !lineStartsWithAny("func(", "func") {
+		t.Fatal("`func(` must match the `func` keyword (paren boundary)")
+	}
+}
+
+func TestLineStartsWithAny_EmptyRestIsMatch(t *testing.T) {
+	// A line that is literally just the keyword (rare, but not
+	// invalid — e.g. a lexer test fixture) should still match.
+	if !lineStartsWithAny("package", "package") {
+		t.Fatal("exact-match keyword-only line must match")
+	}
+}

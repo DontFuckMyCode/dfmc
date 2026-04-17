@@ -2573,7 +2573,8 @@ func (e *Engine) detectDeadCode(ctx context.Context, paths []string) ([]DeadCode
 		// this a symbol merely mentioned in `// TODO: replace foo` looks
 		// "used" and the detector gives it a pass — a real source of
 		// false negatives noted in audits.
-		codeContents[path] = stripStringsAndComments(text, filepath.Ext(path))
+		stripped := stripStringsAndComments(text, filepath.Ext(path))
+		codeContents[path] = stripped
 		if e.AST == nil {
 			continue
 		}
@@ -2581,8 +2582,21 @@ func (e *Engine) detectDeadCode(ctx context.Context, paths []string) ([]DeadCode
 		if err != nil {
 			continue
 		}
+		// Use the STRIPPED content for declaration-line verification.
+		// A declaration inside a backtick raw string (e.g. JS embedded
+		// in the web server's HTML bundle) will have its line blanked
+		// by the stripper, so isGoDeclarationLine will correctly say
+		// "not a real Go decl" and the symbol gets skipped.
+		strippedLines := strings.Split(stripped, "\n")
+		ext := strings.ToLower(filepath.Ext(path))
 		for _, sym := range res.Symbols {
 			if strings.TrimSpace(sym.Name) == "" {
+				continue
+			}
+			if !declarationLineLooksReal(strippedLines, sym.Line, ext) {
+				// AST matched a `const`/`let`/`function` inside a
+				// raw string literal (e.g. embedded JS/CSS) — not a
+				// real symbol of THIS file's language.
 				continue
 			}
 			symbols = append(symbols, symbolRef{
@@ -2647,6 +2661,77 @@ func (e *Engine) detectDeadCode(ctx context.Context, paths []string) ([]DeadCode
 		out = out[:100]
 	}
 	return out, nil
+}
+
+// declarationLineLooksReal answers whether the AST-reported symbol
+// at `line` (1-indexed) points at a line that actually looks like a
+// declaration in the host language. Needed because the regex-based
+// AST fallback happily extracts `const wrapper = ...` from inside a
+// Go raw-string literal that embeds JavaScript for a served HTML
+// page — those aren't real Go symbols, just text the AST scanned.
+//
+// Passing lines = stripped source (strings + comments blanked out).
+// A symbol inside a string literal will have its line blanked, so
+// the check for a real declaration keyword (const, var, func, type,
+// class, let, def, ...) correctly returns false.
+func declarationLineLooksReal(lines []string, line int, ext string) bool {
+	if line <= 0 || line > len(lines) {
+		// Out-of-range — can happen when the AST and stripped
+		// content diverge by a few lines. Be permissive; dropping a
+		// real symbol is worse than including a false positive here.
+		return true
+	}
+	t := strings.TrimSpace(lines[line-1])
+	if t == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
+	case "go":
+		return lineStartsWithAny(t, "func", "var", "const", "type", "package")
+	case "ts", "tsx", "js", "jsx", "mjs", "cjs":
+		return lineStartsWithAny(t, "function", "const", "let", "var",
+			"class", "interface", "type", "enum", "export", "import",
+			"async function", "abstract class")
+	case "py", "pyw":
+		return lineStartsWithAny(t, "def", "async def", "class")
+	case "rs":
+		return lineStartsWithAny(t, "fn", "pub fn", "struct", "enum",
+			"trait", "impl", "const", "static", "type", "mod",
+			"use")
+	case "java", "cs", "kt", "kts", "scala", "swift":
+		// Broad: these languages have many valid decl prefixes; require
+		// at least something that looks alphanumeric before a name. A
+		// stripped-to-spaces string literal line will be empty (already
+		// rejected above).
+		return isLetterByte(t[0]) || t[0] == '@'
+	case "c", "h", "cpp", "cc", "hpp":
+		return isLetterByte(t[0]) || t[0] == '#'
+	}
+	// Unknown language — default to permissive to avoid dropping real
+	// dead-code findings.
+	return true
+}
+
+func lineStartsWithAny(line string, prefixes ...string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(line, p) {
+			// Must be followed by whitespace, punctuation, or end of
+			// line — otherwise `function` matches inside `functional`.
+			rest := line[len(p):]
+			if rest == "" {
+				return true
+			}
+			c := rest[0]
+			if c == ' ' || c == '\t' || c == '(' || c == '{' || c == ':' || c == '<' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isLetterByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
 }
 
 // goExportedEntrypoint reports whether a Go symbol is potentially

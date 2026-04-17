@@ -12,9 +12,12 @@ package engine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 )
@@ -145,5 +148,59 @@ func TestResumeAgent_NoParkedStateStillErrors(t *testing.T) {
 	_, err := eng.ResumeAgent(context.Background(), "")
 	if err == nil || !strings.Contains(err.Error(), "no parked agent") {
 		t.Fatalf("want 'no parked agent' error, got %v", err)
+	}
+}
+
+// --- Dead-code: symbols inside raw-string literals --------------------
+
+// The regex-fallback AST happily picks identifiers out of anywhere,
+// including `const foo = ...` embedded in a Go raw-string literal
+// that serves a JS/HTML payload to a browser. Those aren't real Go
+// symbols — they're text. The detector must strip strings/comments
+// BEFORE ranking symbols and skip any symbol whose declaration line
+// doesn't look like a real decl in the host language.
+//
+// The bug surfaced on ui/web/server.go, which embeds sizeable JS
+// payloads for the SSE/remote-control front-ends. Pre-fix, `wrapper`,
+// `perEvent`, `providerNames`, and others surfaced as "dead Go code."
+func TestDetectDeadCode_IgnoresSymbolsInsideRawStrings(t *testing.T) {
+	dir := t.TempDir()
+	// A real unused Go symbol (must appear) plus a raw string that
+	// embeds JS with decl-shaped lines (must NOT appear).
+	src := "package p\n\n" +
+		"func unusedReal() {}\n\n" +
+		"var jsPayload = `\n" +
+		"<script>\n" +
+		"const wrapper = () => {};\n" +
+		"let perEvent = 0;\n" +
+		"function providerNames() { return []; }\n" +
+		"</script>\n" +
+		"`\n\n" +
+		"// jsPayload is held so it isn't itself dead.\n" +
+		"var _ = jsPayload\n"
+	path := filepath.Join(dir, "server.go")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	e := &Engine{AST: ast.New()}
+	items, err := e.detectDeadCode(context.Background(), []string{path})
+	if err != nil {
+		t.Fatalf("detectDeadCode: %v", err)
+	}
+
+	// unusedReal is the only legitimate dead symbol; the JS names
+	// must not appear.
+	gotNames := make(map[string]bool, len(items))
+	for _, it := range items {
+		gotNames[it.Name] = true
+	}
+	for _, banned := range []string{"wrapper", "perEvent", "providerNames"} {
+		if gotNames[banned] {
+			t.Fatalf("symbol %q comes from inside a Go raw-string literal; must not surface as dead code. Items: %+v", banned, items)
+		}
+	}
+	if !gotNames["unusedReal"] {
+		t.Fatalf("real unused Go func should still be flagged; items: %+v", items)
 	}
 }
