@@ -199,6 +199,77 @@ func pipePositions(line string) []int {
 	return out
 }
 
+// Regression: when body cells contain backticked code or **bold** the
+// markers get stripped by renderMarkdownLite. Before this fix the
+// widths were computed on the raw cell (with markers), padding was
+// added to reach colwidth, then the markers were removed — leaving
+// body cells 2–4 visible chars short and misaligning the column with
+// its own header. The fix: measure widths on the rendered cell, not
+// the raw markdown.
+func TestRenderMarkdownBlocks_AlignsTableWithBacktickedBody(t *testing.T) {
+	src := strings.Join([]string{
+		"| Özellik | Kaynak | Durum |",
+		"|---------|--------|-------|",
+		"| Go sembol çıkarma | `go_extract.go:23-114` | Tam |",
+		"| Tree-sitter Python | `treesitter_cgo.go:215-253` | Tam |",
+	}, "\n")
+
+	blocks := renderMarkdownBlocks(src)
+	if len(blocks) < 4 {
+		t.Fatalf("expected 4+ output lines, got %d", len(blocks))
+	}
+	plain := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		plain = append(plain, stripANSI(b))
+	}
+	header := pipePositions(plain[0])
+	if len(header) < 2 {
+		t.Fatalf("header row should have at least 2 delimiters, got %q", plain[0])
+	}
+	for i, row := range plain[2:] {
+		got := pipePositions(row)
+		if len(got) != len(header) {
+			t.Fatalf("body row %d delim count = %d, want %d\nrow: %q\nheader: %q",
+				i, len(got), len(header), row, plain[0])
+		}
+		for j := range got {
+			if got[j] != header[j] {
+				t.Fatalf("body row %d delim %d at col %d, want %d\nrow:    %q\nheader: %q",
+					i, j, got[j], header[j], row, plain[0])
+			}
+		}
+	}
+}
+
+// Same regression but with **bold** markers in the body instead of
+// backticks. Bold is stripped by renderMarkdownLite too; any markdown
+// inline marker that consumes literal characters has to be measured
+// post-render for alignment to hold.
+func TestRenderMarkdownBlocks_AlignsTableWithBoldBody(t *testing.T) {
+	src := strings.Join([]string{
+		"| Name | Severity | Note |",
+		"|------|----------|------|",
+		"| **Critical bug** | High | fix today |",
+		"| Style drift | Low | later |",
+	}, "\n")
+
+	blocks := renderMarkdownBlocks(src)
+	plain := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		plain = append(plain, stripANSI(b))
+	}
+	header := pipePositions(plain[0])
+	for i, row := range plain[2:] {
+		got := pipePositions(row)
+		for j := range got {
+			if got[j] != header[j] {
+				t.Fatalf("body row %d delim %d at col %d, want %d\nrow:    %q\nheader: %q",
+					i, j, got[j], header[j], row, plain[0])
+			}
+		}
+	}
+}
+
 func TestRenderMarkdownBlocks_TableFollowedByProseKeepsBoth(t *testing.T) {
 	src := strings.Join([]string{
 		"| A | B |",

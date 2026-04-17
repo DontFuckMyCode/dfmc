@@ -375,11 +375,26 @@ func renderMarkdownTable(lines []string) (int, []string) {
 		return 0, nil
 	}
 
-	// Column widths: max of every row's cell widths for that column.
+	// Pre-style every cell so width math happens on the *visible* text,
+	// not the raw markdown. renderMarkdownLite strips `**` and backtick
+	// markers — if we measured before that pass, cells with fenced code
+	// or bold would end up under-padded and the column wouldn't line up
+	// with the header. rendered[ri][ci] holds the ANSI-wrapped text and
+	// visibleWidth[ri][ci] is its lipgloss.Width.
+	rendered := make([][]string, len(rows))
+	visibleWidth := make([][]int, len(rows))
 	colWidths := make([]int, 0, len(rows[0]))
-	for _, row := range rows {
+	for ri, row := range rows {
+		rendered[ri] = make([]string, len(row))
+		visibleWidth[ri] = make([]int, len(row))
 		for ci, cell := range row {
-			w := lipgloss.Width(cell)
+			styled := renderMarkdownLite(cell)
+			if ri == 0 {
+				styled = boldStyle.Render(accentStyle.Render(styled))
+			}
+			w := lipgloss.Width(styled)
+			rendered[ri][ci] = styled
+			visibleWidth[ri][ci] = w
 			if ci >= len(colWidths) {
 				colWidths = append(colWidths, w)
 				continue
@@ -391,23 +406,21 @@ func renderMarkdownTable(lines []string) (int, []string) {
 	}
 
 	out := make([]string, 0, len(rows)+1)
-	for ri, row := range rows {
-		parts := make([]string, 0, len(row))
-		for ci, cell := range row {
+	for ri := range rendered {
+		parts := make([]string, 0, len(rendered[ri]))
+		for ci, styled := range rendered[ri] {
 			pad := 0
 			if ci < len(colWidths) {
-				pad = colWidths[ci] - lipgloss.Width(cell)
+				pad = colWidths[ci] - visibleWidth[ri][ci]
 			}
-			padded := cell + strings.Repeat(" ", max0(pad))
-			if ri == 0 {
-				padded = boldStyle.Render(accentStyle.Render(padded))
-			} else {
-				padded = renderMarkdownLite(padded)
-			}
+			// Pad AFTER the ANSI wrap so trailing spaces are plain text
+			// (uncolored) — keeps the bubble clean of stray background
+			// color bleed at the right edge.
+			padded := styled + strings.Repeat(" ", max0(pad))
 			parts = append(parts, padded)
 		}
-		rendered := "  " + strings.Join(parts, subtleStyle.Render("  │  "))
-		out = append(out, rendered)
+		joined := "  " + strings.Join(parts, subtleStyle.Render("  │  "))
+		out = append(out, joined)
 		if ri == 0 {
 			// Underline separator — subtle, single dash run per column.
 			sepParts := make([]string, 0, len(colWidths))
