@@ -727,6 +727,14 @@ type chatHeaderInfo struct {
 	// can never accidentally submit a mutation intent from within plan
 	// mode. Toggled by /plan and /code.
 	PlanMode bool
+	// ApprovalGated is set when tools.require_approval is non-empty so the
+	// user sees a persistent reminder that agent tool calls will prompt
+	// before running. Helps the user distinguish a frozen agent from one
+	// that's just waiting on a y/n answer.
+	ApprovalGated bool
+	// ApprovalPending is set while a y/n prompt is on screen so the badge
+	// loudens ("awaiting y/n") and the user can't miss the block.
+	ApprovalPending bool
 }
 
 // renderChatHeader returns 1 pre-styled line summarising chat state.
@@ -774,6 +782,11 @@ func renderChatHeader(info chatHeaderInfo, width int) string {
 		// plan mode on purpose want the confirmation, and users who
 		// forget they're in it most need the reminder.
 		segments = append(segments, warnStyle.Bold(true).Render("◈ PLAN — /code exits"))
+	}
+	if info.ApprovalPending {
+		segments = append(segments, failStyle.Bold(true).Render("⚠ APPROVAL — y/n"))
+	} else if info.ApprovalGated {
+		segments = append(segments, warnStyle.Render("⚠ gate on"))
 	}
 	if info.Parked {
 		segments = append(segments, warnStyle.Bold(true).Render("⏸ parked — /continue"))

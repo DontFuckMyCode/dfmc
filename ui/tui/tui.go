@@ -5197,6 +5197,10 @@ func (m Model) chatHeaderInfo() chatHeaderInfo {
 	}
 	toolsEnabled := m.eng != nil && m.eng.Tools != nil
 	parked := m.eng != nil && m.eng.HasParkedAgent()
+	gated := false
+	if m.eng != nil && m.eng.Config != nil {
+		gated = len(m.eng.Config.Tools.RequireApproval) > 0
+	}
 	return chatHeaderInfo{
 		Provider:        provider,
 		Model:           model,
@@ -5216,6 +5220,8 @@ func (m Model) chatHeaderInfo() chatHeaderInfo {
 		ActiveTools:     m.activeToolCount,
 		ActiveSubagents: m.activeSubagentCount,
 		PlanMode:        m.planMode,
+		ApprovalGated:   gated,
+		ApprovalPending: m.pendingApproval != nil,
 	}
 }
 
