@@ -2757,6 +2757,24 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.chatScrollback = 0
 		m.notice = "Transcript cleared."
 		return m.appendSystemMessage("Transcript cleared. Memory and conversation history are untouched."), nil, true
+	case "export", "save":
+		// Dump the current transcript to a markdown file under the project
+		// root (or to the path given as /export path.md). Writes locally,
+		// no network, no engine state touched — purely a view-layer save
+		// for users who want to share a session out of DFMC.
+		m.input = ""
+		if len(m.transcript) == 0 {
+			m.notice = "Nothing to export yet."
+			return m.appendSystemMessage("Transcript is empty; nothing to export."), nil, true
+		}
+		target := strings.TrimSpace(strings.Join(args, " "))
+		path, err := m.exportTranscript(target)
+		if err != nil {
+			m.notice = "Export failed: " + err.Error()
+			return m.appendSystemMessage("Export failed: " + err.Error()), nil, true
+		}
+		m.notice = "Exported transcript → " + path
+		return m.appendSystemMessage("▸ Transcript exported → " + path + " (" + fmt.Sprintf("%d lines", len(m.transcript)) + ")."), nil, true
 	case "retry":
 		// Regenerate the most recent assistant reply by resending the latest
 		// user message. Trailing assistant/tool/system lines after that user
@@ -3275,6 +3293,76 @@ func (m Model) appendSystemMessage(text string) Model {
 	m.transcript = append(m.transcript, newChatLine("system", strings.TrimSpace(text)))
 	m.chatScrollback = 0
 	return m
+}
+
+// exportTranscript writes the current chat transcript to a markdown file.
+// When `target` is empty it auto-generates a timestamped name under the
+// project root; otherwise it resolves the user-specified path (absolute
+// or relative to the project root). Returns the absolute path written.
+//
+// Layout is deliberately simple — one H2 per role, one blank line between
+// bubbles — so the result renders cleanly in any markdown viewer and
+// diffs nicely across sessions. Tool-event lines are prefixed '[tool]'
+// so the reader can skim past them.
+func (m Model) exportTranscript(target string) (string, error) {
+	if len(m.transcript) == 0 {
+		return "", fmt.Errorf("transcript is empty")
+	}
+	projectRoot := strings.TrimSpace(m.projectRoot())
+	if projectRoot == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("resolve working directory: %w", err)
+		}
+		projectRoot = cwd
+	}
+	if target == "" {
+		stamp := time.Now().Format("20060102-150405")
+		target = filepath.Join(".dfmc", "exports", "transcript-"+stamp+".md")
+	}
+	// Resolve against project root when relative.
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(projectRoot, target)
+	}
+	// Make sure the parent directory exists. MkdirAll is a no-op when it
+	// already does, so safe to call unconditionally.
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return "", fmt.Errorf("create export directory: %w", err)
+	}
+
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "# DFMC transcript — %s\n\n", time.Now().Format(time.RFC3339))
+	if provider := strings.TrimSpace(m.status.Provider); provider != "" {
+		fmt.Fprintf(&buf, "_provider:_ `%s`", provider)
+		if model := strings.TrimSpace(m.status.Model); model != "" {
+			fmt.Fprintf(&buf, " · _model:_ `%s`", model)
+		}
+		buf.WriteString("\n\n")
+	}
+	for _, line := range m.transcript {
+		role := strings.ToLower(strings.TrimSpace(line.Role))
+		content := strings.TrimRight(line.Content, "\n")
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		switch role {
+		case "user":
+			fmt.Fprintf(&buf, "## user\n\n%s\n\n", content)
+		case "assistant":
+			fmt.Fprintf(&buf, "## assistant\n\n%s\n\n", content)
+		case "tool":
+			fmt.Fprintf(&buf, "### [tool] %s\n\n%s\n\n", strings.Join(line.ToolNames, ", "), content)
+		case "system":
+			fmt.Fprintf(&buf, "### [system]\n\n%s\n\n", content)
+		default:
+			fmt.Fprintf(&buf, "### [%s]\n\n%s\n\n", role, content)
+		}
+	}
+
+	if err := os.WriteFile(target, []byte(buf.String()), 0o644); err != nil {
+		return "", fmt.Errorf("write export file: %w", err)
+	}
+	return target, nil
 }
 
 // describeHealth renders a compact health snapshot: provider/model/AST
@@ -8613,6 +8701,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "approve", Template: "/approve", Description: "show the tool-approval gate state (which tools prompt agent calls)"},
 		{Command: "hooks", Template: "/hooks", Description: "list lifecycle hooks registered per event (pre_tool, post_tool, user_prompt_submit, …)"},
 		{Command: "doctor", Template: "/doctor", Description: "in-chat health snapshot (provider, ast, tools, gate, hooks, denials)"},
+		{Command: "export", Template: "/export", Description: "save the current transcript to .dfmc/exports/*.md (or /export path.md)"},
 		{Command: "quit", Template: "/quit", Description: "exit DFMC"},
 		{Command: "providers", Template: "/providers", Description: "list configured providers"},
 		{Command: "models", Template: "/models", Description: "show configured model"},
@@ -9760,6 +9849,7 @@ func renderTUIHelp() string {
 		"    /approve                     Show tool-approval gate state (which tools prompt agent calls)",
 		"    /hooks                       List lifecycle hooks registered per event",
 		"    /doctor                      In-chat health snapshot (alias /health)",
+		"    /export [PATH]               Save transcript to markdown (default .dfmc/exports/transcript-*.md)",
 		"    /quit                        Exit DFMC",
 		"    /coach                       Mute or unmute background coach notes",
 		"    /hints                       Show or hide between-round trajectory hints",
