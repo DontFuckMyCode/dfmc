@@ -32,7 +32,7 @@ func runMCP(ctx context.Context, eng *engine.Engine, args []string, version stri
 		return 1
 	}
 
-	bridge := &engineMCPBridge{tools: eng.Tools, projectRoot: eng.ProjectRoot}
+	bridge := &engineMCPBridge{eng: eng}
 	srv := mcp.NewServer(os.Stdin, os.Stdout, bridge, mcp.ServerInfo{
 		Name:    "dfmc",
 		Version: version,
@@ -67,12 +67,14 @@ Example Claude Desktop config snippet:
   }`)
 }
 
-// engineMCPBridge exposes *tools.Engine as a mcp.ToolBridge. Lives in ui/cli
-// rather than internal/mcp so the mcp package doesn't import tools directly —
-// the engine-centric assembly naturally happens one layer up.
+// engineMCPBridge exposes *engine.Engine as a mcp.ToolBridge. Routes Call
+// through engine.CallTool so every MCP-driven invocation goes through the
+// same approval gate, hooks dispatch, and panic guard as a CLI/TUI/web
+// call. Without this routing, a tool panic raised by an MCP-initiated
+// invocation would crash the dfmc mcp process and the IDE host would see
+// a broken stdio transport instead of a tool_result with isError=true.
 type engineMCPBridge struct {
-	tools       *tools.Engine
-	projectRoot string
+	eng *engine.Engine
 }
 
 func (b *engineMCPBridge) List() []mcp.ToolDescriptor {
@@ -80,7 +82,10 @@ func (b *engineMCPBridge) List() []mcp.ToolDescriptor {
 	// tool_call/tool_batch_call) exists to keep prompt-token cost flat for
 	// DFMC's own agent loop. Over MCP the host already drives discovery,
 	// so the indirection would just waste round-trips.
-	specs := b.tools.BackendSpecs()
+	if b.eng == nil || b.eng.Tools == nil {
+		return nil
+	}
+	specs := b.eng.Tools.BackendSpecs()
 	out := make([]mcp.ToolDescriptor, 0, len(specs))
 	for _, s := range specs {
 		out = append(out, mcp.ToolDescriptor{
@@ -93,16 +98,19 @@ func (b *engineMCPBridge) List() []mcp.ToolDescriptor {
 }
 
 func (b *engineMCPBridge) Call(ctx context.Context, name string, rawArgs []byte) (mcp.CallToolResult, error) {
+	if b.eng == nil {
+		return mcp.CallToolResult{}, fmt.Errorf("engine not initialized")
+	}
 	params := map[string]any{}
 	if len(rawArgs) > 0 {
 		if err := json.Unmarshal(rawArgs, &params); err != nil {
 			return mcp.CallToolResult{}, fmt.Errorf("decode arguments: %w", err)
 		}
 	}
-	res, err := b.tools.Execute(ctx, name, tools.Request{
-		ProjectRoot: b.projectRoot,
-		Params:      params,
-	})
+	// CallTool funnels through executeToolWithLifecycle → panic guard.
+	// A panic inside the tool is converted to err here, so the MCP
+	// transport never sees a process crash.
+	res, err := b.eng.CallTool(ctx, name, params)
 	if err != nil {
 		return mcp.CallToolResult{
 			Content: []mcp.ContentBlock{mcp.TextContent(err.Error())},

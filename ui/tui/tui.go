@@ -5407,7 +5407,7 @@ func (m Model) renderActiveView(width int, height int) string {
 	case "Status":
 		content = fitPanelContentHeight(m.renderStatusView(contentWidth), innerHeight)
 	case "Files":
-		content = fitPanelContentHeight(m.renderFilesView(contentWidth), innerHeight)
+		content = fitPanelContentHeight(m.renderFilesViewSized(contentWidth, innerHeight), innerHeight)
 	case "Patch":
 		content = fitPanelContentHeight(m.renderPatchView(contentWidth), innerHeight)
 	case "Setup":
@@ -5944,6 +5944,18 @@ func (m Model) renderStatusView(width int) string {
 }
 
 func (m Model) renderFilesView(width int) string {
+	// Backwards-compatible default for tests that call without a height —
+	// 24 rows roughly matches a stock terminal page so the visible list
+	// stays close to the historic "14 entries + chrome" output.
+	return m.renderFilesViewSized(width, 24)
+}
+
+// renderFilesViewSized renders the Files tab with the list + preview both
+// scaled to the available vertical space. The previous fixed 14-row /
+// 18-line caps left huge dead zones on tall terminals (1080p / 4K). Here
+// the list grows to fill height-6 rows, and the preview gets the matching
+// budget so the right pane uses the page instead of stranding 60% empty.
+func (m Model) renderFilesViewSized(width, height int) string {
 	listWidth := width / 3
 	if listWidth < 28 {
 		listWidth = 28
@@ -5954,6 +5966,21 @@ func (m Model) renderFilesView(width int) string {
 	previewWidth := width - listWidth - 3
 	if previewWidth < 20 {
 		previewWidth = 20
+	}
+
+	// Reserve rows for: section header (1), legend (1), divider (1),
+	// blank (1), trailing blank+counter (2). Anything else is for entries.
+	const listChrome = 6
+	listRows := height - listChrome
+	if listRows < 8 {
+		listRows = 8
+	}
+	// Same budget for the preview pane — chrome is header (1), path (1),
+	// divider (1), blank (1), and the trailing size line + blank (2).
+	const previewChrome = 6
+	previewRows := height - previewChrome
+	if previewRows < 8 {
+		previewRows = 8
 	}
 
 	listLines := []string{
@@ -5972,16 +5999,17 @@ func (m Model) renderFilesView(width int) string {
 			subtleStyle.Render("  • confirm you launched ")+codeStyle.Render("dfmc")+subtleStyle.Render(" from a project root"),
 		)
 	} else {
-		start := 0
-		if m.fileIndex > 6 {
-			start = m.fileIndex - 6
+		// Center the cursor inside the visible window: half the rows
+		// above, half below. Pin to bounds at edges.
+		half := listRows / 2
+		start := m.fileIndex - half
+		if start < 0 {
+			start = 0
 		}
-		end := start + 14
+		end := start + listRows
 		if end > len(m.files) {
 			end = len(m.files)
-		}
-		if end-start < 14 && start > 0 {
-			start = end - 14
+			start = end - listRows
 			if start < 0 {
 				start = 0
 			}
@@ -6010,7 +6038,7 @@ func (m Model) renderFilesView(width int) string {
 	if strings.TrimSpace(m.filePath) != "" && m.filePath == strings.TrimSpace(m.pinnedFile) {
 		previewLines = append(previewLines, subtleStyle.Render("Pinned for chat context"), "")
 	}
-	content := truncateForPanel(m.filePreview, previewWidth)
+	content := truncateForPanelSized(m.filePreview, previewWidth, previewRows)
 	if content == "" {
 		content = subtleStyle.Render("No preview loaded.")
 	}
@@ -7634,13 +7662,23 @@ func formatContextInDetailedFileLinesTUI(report *engine.ContextInStatus, limit i
 }
 
 func truncateForPanel(text string, width int) string {
+	return truncateForPanelSized(text, width, 18)
+}
+
+// truncateForPanelSized lets callers choose the row cap so panels can
+// scale with the user's terminal height instead of the historic 18-line
+// hard cap that left tall windows mostly empty.
+func truncateForPanelSized(text string, width, maxLines int) string {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return ""
 	}
+	if maxLines <= 0 {
+		maxLines = 18
+	}
 	lines := strings.Split(trimmed, "\n")
-	if len(lines) > 18 {
-		lines = append(lines[:18], "... [truncated]")
+	if len(lines) > maxLines {
+		lines = append(lines[:maxLines], "... [truncated]")
 	}
 	for i, line := range lines {
 		if width > 0 && len([]rune(line)) > width {
@@ -10049,6 +10087,19 @@ func readProjectFile(root, rel string, maxBytes int) (string, int, error) {
 	if hasBinaryPreviewExtension(rel) {
 		size := int(info.Size())
 		return fmt.Sprintf("Binary preview disabled for %s.\nSize: %d bytes.\nUse an external viewer for this file type.", filepath.ToSlash(rel), size), size, nil
+	}
+	// Refuse to read secret-shaped files into the panel — even one auto-
+	// preview of `.env` is enough to publish API keys to anyone watching
+	// the screen. The user can still copy the file into a chat message
+	// with explicit consent if they really need to inspect it.
+	if looksLikeSecretFile(rel) {
+		size := int(info.Size())
+		notice := "🔒 Preview suppressed — this file matches a secret-bearing shape\n" +
+			"  (" + filepath.ToSlash(rel) + ", " + fmt.Sprintf("%d bytes", size) + ").\n\n" +
+			"Reasoning: the Files panel auto-previews on selection, so any keys in here\n" +
+			"would land on screen the moment you opened the tab. If you genuinely need to\n" +
+			"see the contents, ask in chat (e.g. \"show me .env\") so the read is explicit."
+		return notice, size, nil
 	}
 	data, err := os.ReadFile(target)
 	if err != nil {
