@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
 func TestBearerTokenMiddleware(t *testing.T) {
@@ -52,6 +56,38 @@ func TestBearerTokenMiddleware(t *testing.T) {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
 	})
+}
+
+// The "refuse --auth=none when bound off-loopback" guard in runServe
+// depends entirely on this classifier. If someone tightens the list
+// (e.g. drops ::1) or loosens it (e.g. adds 0.0.0.0), the guard's
+// behaviour flips silently — these cases pin the expected semantic.
+func TestIsLoopbackBindHost(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		// Loopback: fine to leave auth=none.
+		{"127.0.0.1", true},
+		{"localhost", true},
+		{"LocalHost", true}, // case-insensitive
+		{"::1", true},
+		{"[::1]", true},     // bracketed IPv6 literal (URL-style)
+		{"127.0.0.2", true}, // anything in 127.0.0.0/8 is loopback per RFC
+		{" 127.0.0.1 ", true},
+		// Not loopback: auth=none would expose the API.
+		{"0.0.0.0", false}, // bind-all — explicitly off-box
+		{"", false},        // empty == bind-all in net.Listen
+		{"192.168.1.10", false},
+		{"10.0.0.5", false},
+		{"::", false},
+		{"example.com", false},
+	}
+	for _, c := range cases {
+		if got := isLoopbackBindHost(c.in); got != c.want {
+			t.Errorf("isLoopbackBindHost(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
 }
 
 func TestParseEndpointList(t *testing.T) {
@@ -642,5 +678,42 @@ func TestRunRemoteMagicDocLifecycle(t *testing.T) {
 		if code := runRemote(context.Background(), eng, args, true); code != 0 {
 			t.Fatalf("runRemote %v exit=%d", args, code)
 		}
+	}
+}
+
+// runServe must refuse to start with --auth=none on a non-loopback
+// host, since the web API exposes tool/file/shell endpoints. We build
+// a minimal Engine (no Init — no bbolt, no providers) so the guard
+// runs long before any listener touches the network, and we don't
+// race with other tests that may hold the engine's bolt lock.
+func TestRunServe_RefusesNoAuthOffLoopback(t *testing.T) {
+	stub := &engine.Engine{Config: config.DefaultConfig()}
+
+	// Redirect stderr to capture the refusal message. The guard fires
+	// before any goroutines, so a plain pipe + sync read is enough.
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+
+	code := runServe(context.Background(), stub, []string{
+		"--host", "0.0.0.0",
+		"--port", "0",
+		"--auth", "none",
+	}, true)
+
+	_ = w.Close()
+	os.Stderr = origStderr
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	msg := string(buf[:n])
+
+	if code != 2 {
+		t.Fatalf("want exit code 2 (refuse), got %d; stderr=%q", code, msg)
+	}
+	if !strings.Contains(msg, "refusing") || !strings.Contains(msg, "--auth=token") || !strings.Contains(msg, "--insecure") {
+		t.Fatalf("stderr missing clear guidance, got: %q", msg)
 	}
 }

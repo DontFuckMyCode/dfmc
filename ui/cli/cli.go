@@ -2480,6 +2480,12 @@ func runServe(ctx context.Context, eng *engine.Engine, args []string, jsonMode b
 	auth := fs.String("auth", eng.Config.Web.Auth, "none|token")
 	token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_WEB_TOKEN")), "api token (for auth=token)")
 	openBrowser := fs.Bool("open-browser", eng.Config.Web.OpenBrowser, "open default browser")
+	// --insecure is the explicit opt-out for the non-loopback-without-
+	// auth guard below. Without it, we refuse to start a server that
+	// exposes tool/file endpoints unauthenticated on a LAN or public
+	// interface — a common foot-gun where a user flips --host 0.0.0.0
+	// for sharing and forgets that --auth still defaults to "none".
+	insecure := fs.Bool("insecure", false, "allow --auth=none on non-loopback hosts (exposes tools/files to the network)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -2491,6 +2497,18 @@ func runServe(ctx context.Context, eng *engine.Engine, args []string, jsonMode b
 	if mode == "token" && strings.TrimSpace(*token) == "" {
 		fmt.Fprintln(os.Stderr, "serve token auth requires --token or DFMC_WEB_TOKEN")
 		return 2
+	}
+	if mode == "none" && !isLoopbackBindHost(*host) && !*insecure {
+		fmt.Fprintf(os.Stderr,
+			"refusing to serve with --auth=none on non-loopback host %q: the web API exposes file/tool/shell endpoints. "+
+				"Pass --auth=token (with --token or DFMC_WEB_TOKEN) to require a bearer token, or add --insecure to accept the risk explicitly.\n",
+			*host)
+		return 2
+	}
+	if mode == "none" && !isLoopbackBindHost(*host) && *insecure {
+		fmt.Fprintf(os.Stderr,
+			"WARNING: --auth=none on non-loopback host %q — all API endpoints (file read/write, tool invocation, shell) are reachable without authentication. Anyone on the network can drive this process.\n",
+			*host)
 	}
 
 	if jsonMode {
@@ -4555,6 +4573,32 @@ func serveWithContext(ctx context.Context, server *http.Server) error {
 		}
 		return nil
 	}
+}
+
+// isLoopbackBindHost reports whether a `dfmc serve --host` value binds
+// only to the local machine. Loopback binds are safe to leave without
+// auth — nothing off-box can connect. Anything else (0.0.0.0, "", a
+// LAN/public IP) reaches further than the user's own machine and is
+// treated as network-exposed for the auth guard in runServe.
+//
+// Empty host is treated as non-loopback because Go's net package binds
+// that to all interfaces, exactly like "0.0.0.0".
+func isLoopbackBindHost(host string) bool {
+	h := strings.TrimSpace(host)
+	// Strip optional brackets around IPv6 literals like "[::1]".
+	if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		h = h[1 : len(h)-1]
+	}
+	h = strings.ToLower(h)
+	switch h {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	// A parseable IP covers oddities like "127.0.0.2" or "::ffff:127.0.0.1".
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 func bearerTokenMiddleware(next http.Handler, token string) http.Handler {
