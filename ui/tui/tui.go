@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"strconv"
@@ -523,8 +525,44 @@ func Run(ctx context.Context, eng *engine.Engine, opts Options) error {
 	eng.SetApprover(approver)
 	defer eng.SetApprover(nil)
 
-	_, err := p.Run()
-	return err
+	return runProgramSafely(p)
+}
+
+// runProgramSafely wraps tea.Program.Run with a panic guard that
+// restores the terminal to a usable state on crash. Without this, a
+// panic inside any panel's Update/View leaves the terminal stuck in
+// alt-screen + mouse-capture + hidden-cursor mode — the user gets a
+// blank screen that looks like a hang until they blindly type `reset`.
+func runProgramSafely(p *tea.Program) error {
+	return runWithPanicGuard(os.Stderr, func() error {
+		_, err := p.Run()
+		return err
+	})
+}
+
+// runWithPanicGuard is the testable core: it runs `fn` and, on panic,
+// emits ANSI reset sequences to `out`, prints the panic + stack, and
+// returns a wrapped error so the caller can exit cleanly. Split out
+// from runProgramSafely so tests don't need a real tea.Program.
+//
+// ANSI sequences emitted on panic:
+//   - CSI ?1049l — exit alt screen
+//   - CSI ?1000l / ?1002l / ?1006l — disable mouse reporting variants
+//   - CSI ?25h — show cursor
+//
+// Terminals ignore sequences that aren't currently active, so sending
+// all of them is safe regardless of which modes were enabled.
+func runWithPanicGuard(out io.Writer, fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			_, _ = fmt.Fprint(out,
+				"\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?25h")
+			_, _ = fmt.Fprintf(out, "\nDFMC TUI crashed: %v\n\n", r)
+			_, _ = fmt.Fprintf(out, "%s\n", debug.Stack())
+			err = fmt.Errorf("tui panic: %v", r)
+		}
+	}()
+	return fn()
 }
 
 func (m Model) Init() tea.Cmd {
