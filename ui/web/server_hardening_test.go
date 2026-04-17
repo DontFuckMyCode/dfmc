@@ -133,3 +133,63 @@ func TestResolveMagicDocPath_HonoursRelativeInsideRoot(t *testing.T) {
 		t.Fatalf("relative-inside-root resolution: got=%q want=%q", got, want)
 	}
 }
+
+// REPORT.md H3: handleAnalyze must reject AnalyzeRequest.Path values
+// that escape the configured project root. CLI usage is allowed to
+// pass arbitrary paths ("dfmc analyze /tmp/somewhere"), but the HTTP
+// handler is the trust boundary — a request body asking to analyse a
+// path outside the project root must be refused before the engine
+// starts walking that tree.
+//
+// We use deep parent-traversal because that's the same shape on every
+// OS. A POSIX absolute path like "/etc" gets reinterpreted as
+// project-relative on Windows (no drive letter), so it doesn't
+// reliably escape there — the symmetrical signal is "../"-many.
+func TestHandleAnalyze_RejectsParentTraversal(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := bytes.NewBufferString(`{"path":"../../../../../../../../etc"}`)
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/analyze", body)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		buf, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 400 on parent traversal; got %d: %s", resp.StatusCode, buf)
+	}
+	buf, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(buf), "project root") {
+		t.Fatalf("rejection message should explain the constraint; got: %s", buf)
+	}
+}
+
+// Empty path is the default ("analyse the project root") and must
+// continue to work — the guard only kicks in when path is non-empty.
+func TestHandleAnalyze_AcceptsEmptyPath(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := bytes.NewBufferString(`{}`)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/analyze", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		buf, _ := io.ReadAll(resp.Body)
+		t.Fatalf("empty-path analyse should succeed; got %d: %s", resp.StatusCode, buf)
+	}
+}

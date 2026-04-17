@@ -1110,6 +1110,22 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// REPORT.md H3: AnalyzeWithOptions accepts an arbitrary path on
+	// the CLI ("dfmc analyze /tmp/somewhere" is legitimate operator
+	// usage), but over HTTP the request body is untrusted. A caller
+	// asking to analyse "/etc" or "../../../home/other-user" would
+	// otherwise have the engine walk that tree. Constrain to inside
+	// the configured project root here — the trust boundary is the
+	// HTTP handler, not the engine.
+	root := strings.TrimSpace(s.engine.Status().ProjectRoot)
+	if pathArg := strings.TrimSpace(req.Path); pathArg != "" && root != "" {
+		if _, err := resolvePathWithinRoot(root, pathArg); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": "path must be inside the configured project root",
+			})
+			return
+		}
+	}
 	report, err := s.engine.AnalyzeWithOptions(r.Context(), engine.AnalyzeOptions{
 		Path:       req.Path,
 		Full:       req.Full,
