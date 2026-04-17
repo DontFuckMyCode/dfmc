@@ -3236,9 +3236,13 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 	case "version":
 		m.input = ""
 		return m.appendSystemMessage(m.versionSummary()), nil, true
-	case "doctor":
+	case "doctor", "health":
+		// Lightweight health snapshot that covers provider readiness, AST
+		// backend, approval gate, hooks, and recent denials in one card.
+		// Full `dfmc doctor` does network checks and --fix; this is the
+		// in-chat version so users can sanity-check without leaving TUI.
 		m.input = ""
-		return m.appendSystemMessage("Open /status or run `dfmc doctor` for full diagnostics. Current summary:\n" + m.statusCommandSummary()), loadStatusCmd(m.eng), true
+		return m.appendSystemMessage(m.describeHealth()), loadStatusCmd(m.eng), true
 	case "magicdoc", "magic":
 		m.input = ""
 		return m.appendSystemMessage(m.magicDocSlash(args)), nil, true
@@ -3271,6 +3275,107 @@ func (m Model) appendSystemMessage(text string) Model {
 	m.transcript = append(m.transcript, newChatLine("system", strings.TrimSpace(text)))
 	m.chatScrollback = 0
 	return m
+}
+
+// describeHealth renders a compact health snapshot: provider/model/AST
+// readiness, tool surface, approval gate, hooks count, recent denials,
+// memory store liveness. Intended as a "quick sanity check" the user
+// runs from chat (/doctor or /health) without leaving the TUI. Full
+// diagnostics still live in the `dfmc doctor` CLI (network, auto-fix).
+func (m Model) describeHealth() string {
+	lines := []string{"▸ DFMC health snapshot"}
+
+	// Engine presence. If nil something is very wrong — but NewModel can
+	// be passed nil in tests, so guard for it.
+	if m.eng == nil {
+		lines = append(lines, "  engine:   ✗ not initialized (no engine attached to model)")
+		return strings.Join(lines, "\n")
+	}
+
+	// Provider profile. A misconfigured provider is the #1 reason users
+	// report "agent isn't doing anything" — surface it first.
+	provider := strings.TrimSpace(m.status.Provider)
+	model := strings.TrimSpace(m.status.Model)
+	providerLine := "?"
+	switch {
+	case provider == "":
+		providerLine = "✗ no provider selected (run `dfmc config provider anthropic` or edit .dfmc/config.yaml)"
+	case strings.EqualFold(provider, "offline") || strings.EqualFold(provider, "placeholder"):
+		providerLine = fmt.Sprintf("◈ %s/%s — read-only (no mutating tool calls)", provider, blankFallback(model, "offline"))
+	case !m.status.ProviderProfile.Configured:
+		providerLine = fmt.Sprintf("⚠ %s/%s — profile not fully configured (missing API key or base_url?)", provider, blankFallback(model, "?"))
+	default:
+		providerLine = fmt.Sprintf("✓ %s/%s", provider, blankFallback(model, "?"))
+	}
+	lines = append(lines, "  provider: "+providerLine)
+
+	// AST backend — regex is a warning because tree-sitter needs CGO.
+	ast := strings.TrimSpace(m.status.ASTBackend)
+	switch ast {
+	case "":
+		lines = append(lines, "  ast:      ⚠ backend unavailable")
+	case "regex":
+		lines = append(lines, "  ast:      ⚠ regex fallback (build with CGO_ENABLED=1 for tree-sitter)")
+	default:
+		lines = append(lines, "  ast:      ✓ "+ast)
+	}
+
+	// Tools surface.
+	if m.eng.Tools == nil {
+		lines = append(lines, "  tools:    ✗ engine.Tools is nil")
+	} else {
+		tools := m.eng.Tools.List()
+		lines = append(lines, fmt.Sprintf("  tools:    ✓ %d registered", len(tools)))
+	}
+
+	// Memory store reachability.
+	if m.eng.Memory == nil {
+		lines = append(lines, "  memory:   ⚠ store not initialized")
+	} else {
+		lines = append(lines, "  memory:   ✓ bbolt store open")
+	}
+
+	// Approval gate condensed to one line (/approve has the long form).
+	gated := 0
+	if m.eng.Config != nil {
+		for _, s := range m.eng.Config.Tools.RequireApproval {
+			if strings.TrimSpace(s) != "" {
+				gated++
+			}
+		}
+	}
+	if gated == 0 {
+		lines = append(lines, "  gate:     off — no tools require approval (/approve to learn more)")
+	} else {
+		lines = append(lines, fmt.Sprintf("  gate:     ON — %d tool(s) gated (/approve for details)", gated))
+	}
+
+	// Hooks count.
+	hookTotal := 0
+	for _, entries := range m.eng.Hooks.Inventory() {
+		hookTotal += len(entries)
+	}
+	if hookTotal == 0 {
+		lines = append(lines, "  hooks:    none registered (/hooks to see)")
+	} else {
+		lines = append(lines, fmt.Sprintf("  hooks:    %d registered (/hooks for details)", hookTotal))
+	}
+
+	// Recent denials — useful when user wonders why the agent "did
+	// nothing" last turn.
+	denials := m.eng.RecentDenials()
+	if len(denials) > 0 {
+		newest := denials[len(denials)-1]
+		lines = append(lines, fmt.Sprintf("  denials:  %d this session — last: %s (%s ago)",
+			len(denials), newest.Tool, time.Since(newest.At).Round(time.Second)))
+	}
+
+	// Project root — helps users verify DFMC is looking at the right tree.
+	if root := strings.TrimSpace(m.projectRoot()); root != "" {
+		lines = append(lines, "  project:  "+root)
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // describeHooks renders a snapshot of every lifecycle hook registered
@@ -8507,6 +8612,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "compact", Template: "/compact", Description: "collapse older transcript into a summary (keeps last 6; /compact N for custom)"},
 		{Command: "approve", Template: "/approve", Description: "show the tool-approval gate state (which tools prompt agent calls)"},
 		{Command: "hooks", Template: "/hooks", Description: "list lifecycle hooks registered per event (pre_tool, post_tool, user_prompt_submit, …)"},
+		{Command: "doctor", Template: "/doctor", Description: "in-chat health snapshot (provider, ast, tools, gate, hooks, denials)"},
 		{Command: "quit", Template: "/quit", Description: "exit DFMC"},
 		{Command: "providers", Template: "/providers", Description: "list configured providers"},
 		{Command: "models", Template: "/models", Description: "show configured model"},
@@ -9653,6 +9759,7 @@ func renderTUIHelp() string {
 		"    /compact [N]                 Collapse older transcript into a summary (keeps last N; default 6)",
 		"    /approve                     Show tool-approval gate state (which tools prompt agent calls)",
 		"    /hooks                       List lifecycle hooks registered per event",
+		"    /doctor                      In-chat health snapshot (alias /health)",
 		"    /quit                        Exit DFMC",
 		"    /coach                       Mute or unmute background coach notes",
 		"    /hints                       Show or hide between-round trajectory hints",
