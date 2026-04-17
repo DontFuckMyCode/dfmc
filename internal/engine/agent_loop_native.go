@@ -371,29 +371,50 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		})
 
 		freshStart := len(traces)
-		for _, call := range resp.ToolCalls {
-			trace := nativeToolTrace{
+
+		// Publish call events up-front in issue order so the TUI / activity
+		// log reflects what the model asked for, even if we're about to fan
+		// the calls out across goroutines.
+		stepTraces := make([]nativeToolTrace, len(resp.ToolCalls))
+		for i, call := range resp.ToolCalls {
+			stepTraces[i] = nativeToolTrace{
 				Call:       call,
 				Provider:   lastProvider,
 				Model:      lastModel,
 				Step:       step,
 				OccurredAt: time.Now(),
 			}
-			e.publishNativeToolCall(trace)
+			e.publishNativeToolCall(stepTraces[i])
+		}
 
-			res, toolErr := e.executeToolWithLifecycle(ctx, call.Name, call.Input, "agent")
-			if toolErr != nil {
-				trace.Err = toolErr.Error()
+		// Parallelize when every call in the batch targets a read-only
+		// tool. Mixed batches (reads + writes / reads + run_command) stay
+		// sequential so ordering guarantees hold — run_command's
+		// workspace-changed snapshot alone makes interleaved execution
+		// unsafe.
+		batchSize := 1
+		if allParallelSafe(resp.ToolCalls) {
+			batchSize = e.parallelBatchSize()
+		}
+		results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize)
+
+		// Rejoin results in original call order for message append /
+		// trace accumulation. Doing this in a second pass (after
+		// executeToolCallsParallel returns in-order) keeps the message
+		// sequence the provider sees identical to the sequential path.
+		for i, call := range resp.ToolCalls {
+			r := results[i]
+			trace := stepTraces[i]
+			if r.Err != nil {
+				trace.Err = r.Err.Error()
 			} else {
-				trace.Result = res
+				trace.Result = r.Result
 			}
 
-			content, isErr := formatNativeToolResultPayloadWithLimits(res, toolErr, lim.MaxResultChars, lim.MaxDataChars)
+			content, isErr := formatNativeToolResultPayloadWithLimits(r.Result, r.Err, lim.MaxResultChars, lim.MaxDataChars)
 			// Publish after formatting so we can attach RTK compression
 			// stats (raw→payload bytes) to the event for the TUI stats
-			// panel. Moving the publish here doesn't change ordering from
-			// the bus consumer's perspective — the next message append
-			// still happens before the next provider call.
+			// panel. Publication order matches issue order.
 			e.publishNativeToolResultWithPayload(trace, content)
 			traces = append(traces, trace)
 
