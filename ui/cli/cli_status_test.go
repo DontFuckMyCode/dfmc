@@ -68,6 +68,130 @@ func TestRunStatusJSONIncludesProviderProfileAndModelsDevCache(t *testing.T) {
 	}
 }
 
+func TestRunStatusJSONIncludesApprovalGateAndHooks(t *testing.T) {
+	eng := newCLITestEngine(t)
+	eng.Config.Tools.RequireApproval = []string{"write_file", "run_command", "edit_file"}
+
+	out := captureStdout(t, func() {
+		if code := runStatus(eng, "dev", []string{}, true); code != 0 {
+			t.Fatalf("runStatus json exit=%d", code)
+		}
+	})
+
+	var payload struct {
+		ApprovalGate struct {
+			Active   bool     `json:"active"`
+			Wildcard bool     `json:"wildcard"`
+			Count    int      `json:"count"`
+			Tools    []string `json:"tools"`
+		} `json:"approval_gate"`
+		Hooks struct {
+			Total    int            `json:"total"`
+			PerEvent map[string]int `json:"per_event"`
+		} `json:"hooks"`
+		RecentDenials int `json:"recent_denials"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("unmarshal status json: %v\n%s", err, out)
+	}
+	if !payload.ApprovalGate.Active {
+		t.Fatalf("gate should be active with 3 tools configured: %#v", payload.ApprovalGate)
+	}
+	if payload.ApprovalGate.Count != 3 {
+		t.Fatalf("gate count should be 3, got %d", payload.ApprovalGate.Count)
+	}
+	if payload.ApprovalGate.Wildcard {
+		t.Fatalf("wildcard should be false for explicit list")
+	}
+	wantTools := map[string]bool{"write_file": true, "run_command": true, "edit_file": true}
+	for _, tool := range payload.ApprovalGate.Tools {
+		if !wantTools[tool] {
+			t.Fatalf("unexpected gated tool %q in payload", tool)
+		}
+	}
+	if payload.Hooks.Total < 0 {
+		t.Fatalf("hooks total must never be negative: %d", payload.Hooks.Total)
+	}
+	if payload.RecentDenials != 0 {
+		t.Fatalf("fresh engine should have zero recent denials, got %d", payload.RecentDenials)
+	}
+}
+
+func TestRunStatusJSONWildcardApprovalGate(t *testing.T) {
+	eng := newCLITestEngine(t)
+	eng.Config.Tools.RequireApproval = []string{"*"}
+
+	out := captureStdout(t, func() {
+		if code := runStatus(eng, "dev", []string{}, true); code != 0 {
+			t.Fatalf("runStatus json exit=%d", code)
+		}
+	})
+
+	var payload struct {
+		ApprovalGate struct {
+			Active   bool `json:"active"`
+			Wildcard bool `json:"wildcard"`
+			Count    int  `json:"count"`
+		} `json:"approval_gate"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("unmarshal status json: %v\n%s", err, out)
+	}
+	if !payload.ApprovalGate.Wildcard {
+		t.Fatalf("wildcard must be true when RequireApproval is [\"*\"], got %#v", payload.ApprovalGate)
+	}
+	if !payload.ApprovalGate.Active {
+		t.Fatalf("wildcard gate must be active")
+	}
+}
+
+func TestRunStatusTextMentionsGateAndHooks(t *testing.T) {
+	eng := newCLITestEngine(t)
+	eng.Config.Tools.RequireApproval = []string{"write_file", "run_command"}
+
+	out := captureStdout(t, func() {
+		if code := runStatus(eng, "dev", []string{}, false); code != 0 {
+			t.Fatalf("runStatus text exit=%d", code)
+		}
+	})
+
+	if !strings.Contains(out, "approval gate:") {
+		t.Fatalf("status text should mention approval gate, got:\n%s", out)
+	}
+	if !strings.Contains(out, "write_file") || !strings.Contains(out, "run_command") {
+		t.Fatalf("status text should list gated tools, got:\n%s", out)
+	}
+}
+
+func TestFormatApprovalGateSummary(t *testing.T) {
+	cases := []struct {
+		name string
+		in   approvalGateSummary
+		want string
+	}{
+		{"off", approvalGateSummary{}, "off"},
+		{"wildcard", approvalGateSummary{Active: true, Wildcard: true, Count: -1}, "on (*)"},
+		{"small list", approvalGateSummary{Active: true, Count: 2, Tools: []string{"edit_file", "write_file"}}, "on (edit_file, write_file)"},
+		{"long list", approvalGateSummary{Active: true, Count: 6, Tools: []string{"a", "b", "c", "d", "e", "f"}}, "on (6: a, b, c, d, …)"},
+	}
+	for _, c := range cases {
+		if got := formatApprovalGateSummary(c.in); got != c.want {
+			t.Errorf("%s: got %q want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestFormatHooksSummary(t *testing.T) {
+	if got := formatHooksSummary(hooksSummary{PerEvent: map[string]int{}}); got != "none registered" {
+		t.Fatalf("empty summary should read 'none registered', got %q", got)
+	}
+	s := hooksSummary{Total: 3, PerEvent: map[string]int{"pre_tool": 2, "post_tool": 1}}
+	got := formatHooksSummary(s)
+	if !strings.Contains(got, "3 (") || !strings.Contains(got, "pre_tool=2") || !strings.Contains(got, "post_tool=1") {
+		t.Fatalf("unexpected hooks summary %q", got)
+	}
+}
+
 func TestFormatASTLanguageSummary(t *testing.T) {
 	eng := newCLITestEngine(t)
 	summary := formatASTLanguageSummary(eng.Status().ASTLanguages)
