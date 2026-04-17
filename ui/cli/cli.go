@@ -2169,11 +2169,32 @@ func runScan(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 		fmt.Printf("  - [%s] %s:%d %s (%s)\n", strings.ToUpper(f.Severity), f.File, f.Line, f.Pattern, f.Match)
 	}
 	fmt.Printf("Vulnerabilities: %d\n", len(report.Security.Vulnerabilities))
+	// Severity breakdown before the sample: real audits care about the
+	// counts more than the first finding.
+	sevCounts := map[string]int{}
+	for _, f := range report.Security.Vulnerabilities {
+		sevCounts[strings.ToLower(strings.TrimSpace(f.Severity))]++
+	}
+	if len(report.Security.Vulnerabilities) > 0 {
+		fmt.Printf("  severity: high=%d medium=%d low=%d info=%d\n",
+			sevCounts["high"]+sevCounts["critical"],
+			sevCounts["medium"],
+			sevCounts["low"],
+			sevCounts["info"])
+	}
 	for i, f := range report.Security.Vulnerabilities {
 		if i >= 10 {
+			remaining := len(report.Security.Vulnerabilities) - 10
+			if remaining > 0 {
+				fmt.Printf("  ... +%d more (use --json for the full list)\n", remaining)
+			}
 			break
 		}
-		fmt.Printf("  - [%s] %s:%d %s | %s\n", strings.ToUpper(f.Severity), f.File, f.Line, f.Kind, f.CWE)
+		tag := f.CWE
+		if f.OWASP != "" {
+			tag = f.CWE + " / " + f.OWASP
+		}
+		fmt.Printf("  - [%s] %s:%d %s | %s\n", strings.ToUpper(f.Severity), f.File, f.Line, f.Kind, tag)
 	}
 	return 0
 }

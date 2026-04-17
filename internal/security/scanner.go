@@ -83,6 +83,7 @@ func (s *Scanner) ScanContent(path string, content []byte) ([]SecretFinding, []V
 	var vulns []VulnerabilityFinding
 
 	scanner := bufio.NewScanner(bytes.NewReader(content))
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
@@ -109,19 +110,34 @@ func (s *Scanner) ScanContent(path string, content []byte) ([]SecretFinding, []V
 		}
 
 		for _, pat := range s.vulns {
-			if pat.Pattern.MatchString(line) {
-				vulns = append(vulns, VulnerabilityFinding{
-					Kind:     pat.Kind,
-					File:     toSlash(path),
-					Line:     lineNo,
-					Severity: pat.Severity,
-					CWE:      pat.CWE,
-					OWASP:    pat.OWASP,
-					Snippet:  snippet(trimmed, 180),
-				})
+			if !pat.Pattern.MatchString(line) {
+				continue
 			}
+			// Regex false-positive guard shared with the AST scanner:
+			// if every argument in the first call on this line is a
+			// literal, the regex match is almost certainly a coincidence
+			// (e.g. `exec.Command("git", "-C", "/path", "diff")` flagged
+			// as CWE-78 even though nothing is user-controlled).
+			if argumentListAllLiterals(trimmed) {
+				continue
+			}
+			vulns = append(vulns, VulnerabilityFinding{
+				Kind:     pat.Kind,
+				File:     toSlash(path),
+				Line:     lineNo,
+				Severity: pat.Severity,
+				CWE:      pat.CWE,
+				OWASP:    pat.OWASP,
+				Snippet:  snippet(trimmed, 180),
+			})
 		}
 	}
+
+	// AST-aware pass: higher precision, per-language rules. Findings
+	// are appended as-is — dedup is handled by callers via line+CWE
+	// on the final report when needed, since the rule kinds differ.
+	astFindings := s.ScanASTRules(path, content)
+	vulns = append(vulns, astFindings...)
 
 	return secrets, vulns
 }
