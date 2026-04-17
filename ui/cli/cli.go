@@ -4040,6 +4040,20 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 
 	if !*providersOnly {
 		statusSnapshot := eng.Status()
+		// Memory-tier degradation is a silent-killer class of issue —
+		// the app still starts, conversations still run, but recall
+		// won't find anything because the bbolt-backed episodic/
+		// semantic tiers never loaded. Surface here so a user running
+		// `dfmc doctor` after a weird startup sees it immediately.
+		if statusSnapshot.MemoryDegraded {
+			details := "episodic/semantic memory unavailable"
+			if reason := strings.TrimSpace(statusSnapshot.MemoryLoadErr); reason != "" {
+				details += ": " + reason
+			}
+			add("memory.tier", "warn", details)
+		} else {
+			add("memory.tier", "pass", "episodic/semantic tiers loaded")
+		}
 		if strings.TrimSpace(statusSnapshot.ASTBackend) == "" {
 			add("ast.backend", "warn", "ast engine backend is unavailable")
 		} else {
