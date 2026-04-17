@@ -88,6 +88,9 @@ func (p *GoogleProvider) Complete(ctx context.Context, req CompletionRequest) (*
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
+		if isThrottleStatus(resp.StatusCode) {
+			return nil, newThrottledErrorFromResponse("google", resp, string(raw))
+		}
 		return nil, p.statusError(resp.StatusCode, raw)
 	}
 
@@ -151,6 +154,9 @@ func (p *GoogleProvider) Stream(ctx context.Context, req CompletionRequest) (<-c
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 		raw, _ := io.ReadAll(resp.Body)
+		if isThrottleStatus(resp.StatusCode) {
+			return nil, newThrottledErrorFromResponse("google", resp, string(raw))
+		}
 		return nil, p.statusError(resp.StatusCode, raw)
 	}
 

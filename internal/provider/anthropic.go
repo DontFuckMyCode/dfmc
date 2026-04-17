@@ -91,6 +91,9 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
+		if isThrottleStatus(resp.StatusCode) {
+			return nil, newThrottledErrorFromResponse("anthropic", resp, string(raw))
+		}
 		return nil, fmt.Errorf("anthropic error status %d: %s", resp.StatusCode, string(raw))
 	}
 	if errMsg := parseCommonProviderError(raw); errMsg != "" {

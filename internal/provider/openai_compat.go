@@ -122,6 +122,9 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
+		if isThrottleStatus(resp.StatusCode) {
+			return nil, newThrottledErrorFromResponse(p.name, resp, string(raw))
+		}
 		return nil, fmt.Errorf("%s error status %d: %s", p.name, resp.StatusCode, string(raw))
 	}
 	if errMsg := parseCommonProviderError(raw); errMsg != "" {

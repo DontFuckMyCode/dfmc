@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -17,7 +18,39 @@ var (
 	// the router also falls back to string-pattern detection for providers
 	// that don't.
 	ErrContextOverflow = errors.New("context length exceeded")
+	// ErrProviderThrottled is the signal for "transient rate-limit or
+	// overload" — 429 or 503 upstream. The router waits (respecting any
+	// Retry-After hint the provider surfaced) and retries the SAME
+	// provider a bounded number of times before moving to the fallback.
+	// Without this sentinel every 429 immediately cascaded to offline,
+	// which is rarely what the user wants.
+	ErrProviderThrottled = errors.New("provider throttled")
 )
+
+// ThrottledError carries the Retry-After hint when a provider surfaces
+// one. Wrap any throttled response in this type so the router's backoff
+// logic can honour the upstream's requested wait. Callers read it via
+// errors.As; the sentinel ErrProviderThrottled stays the primary signal
+// so existing error handling keeps working.
+type ThrottledError struct {
+	Provider   string
+	StatusCode int
+	// RetryAfter is the provider's suggested wait — zero means "no
+	// hint, use default backoff". Never negative.
+	RetryAfter time.Duration
+	Detail     string
+}
+
+func (e *ThrottledError) Error() string {
+	if e == nil {
+		return ErrProviderThrottled.Error()
+	}
+	return e.Detail
+}
+
+// Unwrap routes errors.Is(err, ErrProviderThrottled) through the
+// sentinel so existing branching keeps working without an errors.As.
+func (e *ThrottledError) Unwrap() error { return ErrProviderThrottled }
 
 // ToolDescriptor is the provider-agnostic description of one callable tool.
 // Anthropic and OpenAI providers serialize this into their native tool/

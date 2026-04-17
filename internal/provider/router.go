@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 )
@@ -160,7 +161,7 @@ func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*Completi
 			errs = append(errs, fmt.Errorf("%w: %s", ErrProviderNotFound, name))
 			continue
 		}
-		resp, err := p.Complete(ctx, req)
+		resp, err := r.completeWithThrottleRetry(ctx, p, req)
 		if err == nil {
 			return resp, p.Name(), nil
 		}
@@ -172,7 +173,7 @@ func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*Completi
 			if trimmed > 0 {
 				retryReq := req
 				retryReq.Messages = compacted
-				resp, err2 := p.Complete(ctx, retryReq)
+				resp, err2 := r.completeWithThrottleRetry(ctx, p, retryReq)
 				if err2 == nil {
 					return resp, p.Name(), nil
 				}
@@ -190,6 +191,86 @@ func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*Completi
 	}
 
 	return nil, "", errors.Join(errs...)
+}
+
+// completeWithThrottleRetry is the same-provider wrapper that honors
+// ThrottledError. On 429/503 we wait (Retry-After if the provider
+// supplied one, otherwise exponential backoff from 1s) and retry up to
+// maxThrottleRetries times before surfacing the error to the fallback
+// cascade. Every other error path is a straight passthrough so existing
+// caller behaviour is unchanged. Respects ctx.Done() during every
+// wait — an agent-loop cancel aborts retries immediately.
+func (r *Router) completeWithThrottleRetry(ctx context.Context, p Provider, req CompletionRequest) (*CompletionResponse, error) {
+	var lastErr error
+	for attempt := 0; attempt <= maxThrottleRetries; attempt++ {
+		resp, err := p.Complete(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		if !errors.Is(err, ErrProviderThrottled) {
+			return nil, err
+		}
+		lastErr = err
+		if attempt == maxThrottleRetries {
+			break
+		}
+		wait := throttleWait(err, attempt)
+		if wait <= 0 {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+	return nil, lastErr
+}
+
+// throttleWait prefers the upstream Retry-After hint when present,
+// falling back to exponential backoff for providers that didn't surface
+// one. Attempts are 0-indexed so the first backoff is 1s.
+func throttleWait(err error, attempt int) time.Duration {
+	var te *ThrottledError
+	if errors.As(err, &te) && te.RetryAfter > 0 {
+		return te.RetryAfter
+	}
+	return backoffForAttempt(attempt)
+}
+
+const maxThrottleRetries = 3
+
+// streamWithThrottleRetry mirrors completeWithThrottleRetry for the
+// streaming path. Note that providers MAY return the throttle error
+// synchronously from Stream() before the channel opens — that's the
+// path we retry here. Errors that arrive as StreamEvent values over an
+// already-open channel are delivered to the caller unchanged; retrying
+// mid-stream is unsafe because partial output has already been seen.
+func (r *Router) streamWithThrottleRetry(ctx context.Context, p Provider, req CompletionRequest) (<-chan StreamEvent, error) {
+	var lastErr error
+	for attempt := 0; attempt <= maxThrottleRetries; attempt++ {
+		stream, err := p.Stream(ctx, req)
+		if err == nil {
+			return stream, nil
+		}
+		if !errors.Is(err, ErrProviderThrottled) {
+			return nil, err
+		}
+		lastErr = err
+		if attempt == maxThrottleRetries {
+			break
+		}
+		wait := throttleWait(err, attempt)
+		if wait <= 0 {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+	return nil, lastErr
 }
 
 // CompleteRaced issues req against every candidate concurrently and returns
@@ -329,7 +410,7 @@ func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 			errs = append(errs, fmt.Errorf("%w: %s", ErrProviderNotFound, name))
 			continue
 		}
-		stream, err := p.Stream(ctx, req)
+		stream, err := r.streamWithThrottleRetry(ctx, p, req)
 		if err == nil {
 			return stream, p.Name(), nil
 		}
@@ -338,7 +419,7 @@ func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 			if trimmed > 0 {
 				retryReq := req
 				retryReq.Messages = compacted
-				stream, err2 := p.Stream(ctx, retryReq)
+				stream, err2 := r.streamWithThrottleRetry(ctx, p, retryReq)
 				if err2 == nil {
 					return stream, p.Name(), nil
 				}
