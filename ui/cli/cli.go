@@ -132,6 +132,10 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runProvidersList(eng, opts.JSON)
 	case "doctor":
 		return runDoctor(ctx, eng, cmdArgs, opts.JSON)
+	case "hooks":
+		return runHooksCLI(eng, cmdArgs, opts.JSON)
+	case "approvals", "approve", "permissions":
+		return runApprovalsCLI(eng, cmdArgs, opts.JSON)
 	case "mcp":
 		return runMCP(ctx, eng, cmdArgs, version)
 	case "update":

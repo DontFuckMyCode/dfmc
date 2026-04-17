@@ -327,6 +327,21 @@ func defaultCommands() []Command {
 			Surfaces: SurfaceCLI,
 		},
 		{
+			Name:     "hooks",
+			Summary:  "List lifecycle hooks registered around tool execution.",
+			Category: CategorySystem,
+			Surfaces: SurfaceCLI | SurfaceTUI,
+			Usage:    "hooks [--json]",
+		},
+		{
+			Name:     "approvals",
+			Aliases:  []string{"approve", "permissions"},
+			Summary:  "Show the tool approval gate and recent denials.",
+			Category: CategorySystem,
+			Surfaces: SurfaceCLI | SurfaceTUI,
+			Usage:    "approvals [--json]",
+		},
+		{
 			Name:     "version",
 			Summary:  "Print the DFMC build version.",
 			Category: CategorySystem,
