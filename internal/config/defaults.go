@@ -60,6 +60,9 @@ func DefaultConfig() *Config {
 			MaxToolResultChars:     3200,
 			MaxToolResultDataChars: 1200,
 			ParallelBatchSize:      4,
+			ToolRoundSoftCap:       5,
+			ToolRoundHardCap:       7,
+			BudgetHeadroomDivisor:  7,
 			ContextLifecycle: ContextLifecycleConfig{
 				Enabled:                   true,
 				AutoCompactThresholdRatio: 0.7,

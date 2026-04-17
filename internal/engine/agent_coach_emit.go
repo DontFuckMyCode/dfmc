@@ -115,7 +115,7 @@ func buildCoachSnapshot(question string, completion nativeToolCompletion) coach.
 		FailedTools:      failed,
 		Mutations:        mutations,
 		Parked:           completion.Parked,
-		ParkReason:       completion.ParkedReason,
+		ParkReason:       string(completion.ParkedReason),
 		Provider:         completion.Provider,
 		Model:            completion.Model,
 		TokensUsed:       completion.TokenCount,

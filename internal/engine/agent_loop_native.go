@@ -26,42 +26,8 @@ import (
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
-// parkPhase distinguishes the two contexts in which the loop reaches
-// the budget-exhausted park notice. "before" runs in the preflight
-// gate — we know we WOULD overflow if we ran the next round, so the
-// notice mentions the headroom we needed but didn't have. "after"
-// runs once we've already executed and seen the totalTokens go past
-// MaxTokens; headroom is moot at that point.
-type parkPhase int
-
-const (
-	parkPhaseBefore parkPhase = iota
-	parkPhaseAfter
-)
-
-// formatBudgetExhaustedNotice renders the "Agent loop parked … tool
-// budget exhausted" message that the engine emits when the native
-// loop can't run another tool round without busting MaxTokens. The
-// same string template appeared in 4 places (preflight headroom-fail
-// happy path, preflight headroom-fail catch-all, post-step compact-
-// failed path, post-step no-compact path) — fixing the wording in
-// one without the others was a regression magnet flagged in the
-// REPORT.md walk. headroom is ignored when phase == parkPhaseAfter.
-func formatBudgetExhaustedNotice(phase parkPhase, step, tokens, maxTokens, headroom, rounds int) string {
-	suffix := "Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file."
-	switch phase {
-	case parkPhaseBefore:
-		return fmt.Sprintf(
-			"Agent loop parked before step %d — tool budget exhausted (~%d/%d tokens, need ~%d headroom, %d rounds). %s",
-			step, tokens, maxTokens, headroom, rounds, suffix,
-		)
-	default:
-		return fmt.Sprintf(
-			"Agent loop parked after step %d — tool budget exhausted (~%d/%d tokens, %d rounds). %s",
-			step, tokens, maxTokens, rounds, suffix,
-		)
-	}
-}
+// parkPhase, ParkReason, formatBudgetExhaustedNotice, and parkNativeToolLoop
+// live in agent_parking.go.
 
 // Defaults used when agent config is unset *and* the provider exposes no
 // context window. They act as a safety floor — the real runtime budget is
@@ -117,6 +83,14 @@ type agentLimits struct {
 	MaxTokens      int
 	MaxResultChars int
 	MaxDataChars   int
+
+	// Round-cap and headroom knobs were hard-coded constants until the
+	// Config promotion landed. They sit in agentLimits so a single resolve
+	// step at loop start carries every budget dial — the loop body never
+	// re-reads cfg mid-iteration and tests can stub the whole struct.
+	RoundSoftCap          int
+	RoundHardCap          int
+	BudgetHeadroomDivisor int
 }
 
 // agentLimits resolves the runtime budget. Rule: cfg.Agent values are a
@@ -125,10 +99,13 @@ type agentLimits struct {
 // by defaults meant for 128k windows. Cfg=0 means "fully elastic".
 func (e *Engine) agentLimits() agentLimits {
 	lim := agentLimits{
-		MaxSteps:       defaultMaxNativeToolSteps,
-		MaxTokens:      defaultMaxNativeToolTokens,
-		MaxResultChars: defaultMaxNativeToolResultChars,
-		MaxDataChars:   defaultMaxNativeToolDataChars,
+		MaxSteps:              defaultMaxNativeToolSteps,
+		MaxTokens:             defaultMaxNativeToolTokens,
+		MaxResultChars:        defaultMaxNativeToolResultChars,
+		MaxDataChars:          defaultMaxNativeToolDataChars,
+		RoundSoftCap:          toolRoundSoftCap,
+		RoundHardCap:          toolRoundHardCap,
+		BudgetHeadroomDivisor: budgetHeadroomDivisor,
 	}
 	if e == nil || e.Config == nil {
 		return lim
@@ -145,6 +122,15 @@ func (e *Engine) agentLimits() agentLimits {
 	}
 	if cfg.MaxToolResultDataChars > 0 {
 		lim.MaxDataChars = cfg.MaxToolResultDataChars
+	}
+	if cfg.ToolRoundSoftCap > 0 {
+		lim.RoundSoftCap = cfg.ToolRoundSoftCap
+	}
+	if cfg.ToolRoundHardCap > 0 {
+		lim.RoundHardCap = cfg.ToolRoundHardCap
+	}
+	if cfg.BudgetHeadroomDivisor > 0 {
+		lim.BudgetHeadroomDivisor = cfg.BudgetHeadroomDivisor
 	}
 
 	window := e.providerMaxContext()
@@ -187,9 +173,9 @@ type nativeToolCompletion struct {
 	Parked       bool
 	ParkedAtStep int
 	// ParkedReason discriminates why the loop parked so downstream surfaces
-	// (coach, TUI) can tailor their copy. Values: "step_cap" or
-	// "budget_exhausted". Empty when Parked is false.
-	ParkedReason string
+	// (coach, TUI) can tailor their copy. Values: ParkReasonStepCap or
+	// ParkReasonBudgetExhausted. Empty when Parked is false.
+	ParkedReason ParkReason
 }
 
 // shouldUseNativeToolLoop reports whether the active provider negotiates
@@ -395,7 +381,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 	// so it doesn't spam; emptyRecoveryTried lets us reprompt the model
 	// once when it returns zero tool_calls AND zero text (observed when
 	// the model gets confused by a compacted history or a tool failure).
-	synthesizeHintInjected := len(traces) >= toolRoundSoftCap
+	synthesizeHintInjected := len(traces) >= lim.RoundSoftCap
 	emptyRecoveryTried := false
 
 	for step := 1; step <= lim.MaxSteps; step++ {
@@ -433,7 +419,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		// the round we're about to start; when we can't fit, auto-
 		// compact once and retry, else park cleanly.
 		if lim.MaxTokens > 0 {
-			headroom := lim.MaxTokens / budgetHeadroomDivisor
+			headroom := lim.MaxTokens / lim.BudgetHeadroomDivisor
 			if totalTokens+headroom >= lim.MaxTokens {
 				if autoRecoveries < maxBudgetAutoRecoveries {
 					if compacted, report := e.forceCompactNativeLoopHistory(msgs, systemPrompt, chunks); report != nil && report.MessagesRemoved > 0 {
@@ -455,11 +441,11 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 						// with the zeroed budget and runs the round normally.
 					} else {
 						notice := formatBudgetExhaustedNotice(parkPhaseBefore, step, totalTokens, lim.MaxTokens, headroom, len(traces))
-						return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
+						return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonBudgetExhausted), nil
 					}
 				} else {
 					notice := formatBudgetExhaustedNotice(parkPhaseBefore, step, totalTokens, lim.MaxTokens, headroom, len(traces))
-					return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
+					return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonBudgetExhausted), nil
 				}
 			}
 		}
@@ -468,7 +454,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		// has enough context to answer but keeps reading. One explicit
 		// "stop gathering, answer now" message has been observed to
 		// break that pattern without the harder intervention below.
-		if !synthesizeHintInjected && len(traces) >= toolRoundSoftCap {
+		if !synthesizeHintInjected && len(traces) >= lim.RoundSoftCap {
 			synthesizeHintInjected = true
 			msgs = append(msgs, provider.Message{
 				Role: types.RoleUser,
@@ -491,12 +477,12 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		// emit plain text. This is the final guardrail before the
 		// step cap trips.
 		toolChoice := "auto"
-		if len(traces) >= toolRoundHardCap {
+		if len(traces) >= lim.RoundHardCap {
 			toolChoice = "none"
 			e.publishAgentLoopEvent("agent:loop:tools_force_stop", map[string]any{
 				"step":        step,
 				"tool_rounds": len(traces),
-				"hard_cap":    toolRoundHardCap,
+				"hard_cap":    lim.RoundHardCap,
 				"surface":     "native",
 			})
 		}
@@ -757,11 +743,11 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 				} else {
 					// Nothing to compact — park. Same behaviour as before.
 					notice := formatBudgetExhaustedNotice(parkPhaseAfter, step, totalTokens, lim.MaxTokens, 0, len(traces))
-					return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
+					return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonBudgetExhausted), nil
 				}
 			} else {
 				notice := formatBudgetExhaustedNotice(parkPhaseAfter, step, totalTokens, lim.MaxTokens, 0, len(traces))
-				return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
+				return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonBudgetExhausted), nil
 			}
 		}
 
@@ -771,93 +757,11 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 					"Type /continue to resume, optionally with a note — e.g. /continue focus on the test file.",
 				step, len(traces), totalTokens,
 			)
-			return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "step_cap"), nil
+			return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonStepCap), nil
 		}
 	}
 
 	return nativeToolCompletion{}, fmt.Errorf("agent tool loop ended unexpectedly")
-}
-
-// parkNativeToolLoop freezes the running loop state under a `parkedAgentState`,
-// publishes the `agent:loop:parked` event (plus `agent:loop:budget_exhausted`
-// when the token budget tripped), and returns a `nativeToolCompletion` whose
-// Answer is a friendly notice telling the user to /continue. The helper is
-// shared by the two exit paths that used to inline this logic — MaxSteps cap
-// and MaxTokens budget — so they behave identically from the UI's point of
-// view. The only difference is `reason`, which lands in both events so the
-// TUI can distinguish "worked until step cap" from "ran out of headroom".
-func (e *Engine) parkNativeToolLoop(
-	question string,
-	seed *parkedAgentState,
-	msgs []provider.Message,
-	traces []nativeToolTrace,
-	chunks []types.ContextChunk,
-	systemPrompt string,
-	systemBlocks []provider.SystemBlock,
-	descriptors []provider.ToolDescriptor,
-	lastProvider, lastModel string,
-	totalTokens, step int,
-	notice, reason string,
-) nativeToolCompletion {
-	lim := e.agentLimits()
-	parked := &parkedAgentState{
-		Question:         question,
-		Messages:         msgs,
-		Traces:           traces,
-		Chunks:           chunks,
-		SystemPrompt:     systemPrompt,
-		SystemBlocks:     systemBlocks,
-		Descriptors:      descriptors,
-		ContextTokens:    seed.ContextTokens,
-		TotalTokens:      totalTokens,
-		Step:             step,
-		LastProvider:     lastProvider,
-		LastModel:        lastModel,
-		RecentCoachHints: seed.RecentCoachHints,
-		// Carry cumulative counters forward across park→resume→park
-		// cycles. Without this the ceiling in ResumeAgent never trips:
-		// each park rebuilds a fresh parkedAgentState and wipes the
-		// cumulative totals that track total work done on this ask.
-		CumulativeSteps:  seed.CumulativeSteps,
-		CumulativeTokens: seed.CumulativeTokens,
-	}
-	e.saveParkedAgent(parked)
-
-	if reason == "budget_exhausted" {
-		// Keep the dedicated telemetry event firing so operators grepping
-		// for budget trips still see them. The old behavior returned an
-		// error here; parking is strictly more graceful but shouldn't cost
-		// us the observability.
-		e.publishAgentLoopEvent("agent:loop:budget_exhausted", map[string]any{
-			"step":            step,
-			"max_tool_steps":  lim.MaxSteps,
-			"max_tool_tokens": lim.MaxTokens,
-			"tokens_used":     totalTokens,
-			"tool_rounds":     len(traces),
-			"surface":         "native",
-		})
-	}
-	e.publishAgentLoopEvent("agent:loop:parked", map[string]any{
-		"step":            step,
-		"max_tool_steps":  lim.MaxSteps,
-		"max_tool_tokens": lim.MaxTokens,
-		"tool_rounds":     len(traces),
-		"tokens_used":     totalTokens,
-		"reason":          reason,
-		"surface":         "native",
-	})
-	return nativeToolCompletion{
-		Answer:       notice,
-		Provider:     lastProvider,
-		Model:        lastModel,
-		TokenCount:   totalTokens,
-		Context:      chunks,
-		ToolTraces:   traces,
-		SystemPrompt: systemPrompt,
-		Parked:       true,
-		ParkedAtStep: step,
-		ParkedReason: reason,
-	}
 }
 
 // buildNativeToolSystemPromptBundle composes the standard system prompt

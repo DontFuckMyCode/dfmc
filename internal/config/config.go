@@ -64,6 +64,20 @@ type AgentConfig struct {
 	// Reserved for S4; not consumed yet.
 	ParallelBatchSize int `yaml:"parallel_batch_size"`
 
+	// ToolRoundSoftCap is the round count at which the loop injects a single
+	// synthesis nudge ("you have enough context, answer now"). Tuned below
+	// MaxToolSteps so a model stuck in a read-read-read loop gets one firm
+	// redirect before the hard cap takes tool_use away. 0 falls back to 5.
+	ToolRoundSoftCap int `yaml:"tool_round_soft_cap"`
+	// ToolRoundHardCap flips ToolChoice to "none" for every subsequent call,
+	// forcing natural-language text. 0 falls back to 7. Spaced two rounds
+	// above the soft cap so the nudge has room to land.
+	ToolRoundHardCap int `yaml:"tool_round_hard_cap"`
+	// BudgetHeadroomDivisor reserves 1/N of MaxTokens as a safety margin
+	// before each round starts so the post-round gate can't lose budget
+	// races. 0 falls back to 7 (~14% headroom).
+	BudgetHeadroomDivisor int `yaml:"budget_headroom_divisor"`
+
 	// ContextLifecycle governs offline auto-compaction of in-loop history so
 	// token spend stays flat even across many tool rounds. Strictly offline —
 	// no extra LLM call — to honour DFMC's token-miser promise.
