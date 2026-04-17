@@ -201,6 +201,66 @@ func TestCompleteWithThrottleRetry_RespectsContext(t *testing.T) {
 	}
 }
 
+// When ctx is cancelled mid-fallback, Router.Complete must return
+// the cancel error directly rather than churning through every
+// remaining provider (each of which would also return ctx.Err()) and
+// burying the reason behind an errors.Join. Agent loops and CLI
+// cancellations depend on seeing context.Canceled / DeadlineExceeded
+// unadorned so they can distinguish "user hit ctrl-c" from "every
+// provider really did fail."
+func TestRouterComplete_ShortCircuitsOnCancelledContext(t *testing.T) {
+	var calls int32
+	failing := &staticErrProvider{name: "alpha", calls: &calls, err: errors.New("500 boom")}
+	unreachable := &staticErrProvider{name: "beta", calls: &calls, err: errors.New("should not be called")}
+
+	r := &Router{
+		primary:  "alpha",
+		fallback: []string{"beta"},
+		providers: map[string]Provider{
+			"alpha": failing,
+			"beta":  unreachable,
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel BEFORE Complete runs. The loop entry check should
+	// surface ctx.Err() as the first thing on the very first iteration
+	// — no provider gets a chance to be called.
+	cancel()
+
+	_, _, err := r.Complete(ctx, CompletionRequest{Provider: "alpha"})
+	if err == nil {
+		t.Fatal("expected cancellation error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected ctx.Canceled to be surfaced, got: %v", err)
+	}
+	if n := atomic.LoadInt32(&calls); n != 0 {
+		t.Fatalf("no provider should be called when ctx is already cancelled; got %d calls", n)
+	}
+}
+
+// staticErrProvider always errors. Used for cascade testing.
+type staticErrProvider struct {
+	name  string
+	err   error
+	calls *int32
+}
+
+func (p *staticErrProvider) Name() string              { return p.name }
+func (p *staticErrProvider) Model() string             { return "test-model" }
+func (p *staticErrProvider) Hints() ProviderHints      { return ProviderHints{SupportsTools: true} }
+func (p *staticErrProvider) CountTokens(text string) int { return len(text) / 4 }
+func (p *staticErrProvider) MaxContext() int           { return 100_000 }
+func (p *staticErrProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+	atomic.AddInt32(p.calls, 1)
+	return nil, p.err
+}
+func (p *staticErrProvider) Stream(ctx context.Context, req CompletionRequest) (<-chan StreamEvent, error) {
+	atomic.AddInt32(p.calls, 1)
+	return nil, p.err
+}
+
 func TestCompleteWithThrottleRetry_NonThrottleErrorNoRetry(t *testing.T) {
 	// Non-throttle errors bubble up immediately so the fallback
 	// cascade can try the next provider without wasting time backing

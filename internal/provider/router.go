@@ -156,6 +156,19 @@ func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*Completi
 	var errs []error
 
 	for _, name := range order {
+		// If the caller's context is already dead, there is no point
+		// trying the next provider — each attempt would just immediately
+		// return ctx.Err() and the real cancel/deadline reason would get
+		// buried inside errors.Join below. Surface it directly so agent
+		// loops and cancellable CLI commands return the exact sentinel
+		// (context.Canceled / context.DeadlineExceeded) the caller
+		// expects.
+		if cerr := ctx.Err(); cerr != nil {
+			if len(errs) == 0 {
+				return nil, "", cerr
+			}
+			return nil, "", errors.Join(append(errs, cerr)...)
+		}
 		p, ok := r.Get(name)
 		if !ok {
 			errs = append(errs, fmt.Errorf("%w: %s", ErrProviderNotFound, name))
