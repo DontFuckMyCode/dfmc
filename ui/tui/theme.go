@@ -667,6 +667,11 @@ type messageHeaderInfo struct {
 	ToolFailures int
 	Streaming    bool
 	SpinnerFrame int
+	// CopyIndex is the 1-based position of this assistant response in
+	// the transcript. Zero means "not applicable" (user / system /
+	// tool rows). Rendered as a subtle `#N` chip so the reader knows
+	// which integer to pass to `/copy N`.
+	CopyIndex int
 }
 
 // spinnerFrames is the braille dot cycle used for the live streaming glyph.
@@ -684,6 +689,9 @@ func spinnerFrame(frame int) string {
 
 func renderMessageHeader(info messageHeaderInfo) string {
 	parts := []string{roleBadge(info.Role)}
+	if info.CopyIndex > 0 {
+		parts = append(parts, subtleStyle.Render(fmt.Sprintf("#%d", info.CopyIndex)))
+	}
 	if info.Streaming {
 		parts = append(parts, infoStyle.Bold(true).Render(spinnerFrame(info.SpinnerFrame)))
 	}

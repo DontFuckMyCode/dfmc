@@ -3001,6 +3001,9 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		}
 		m.notice = "Trajectory hints " + state + "."
 		return m.appendSystemMessage("Trajectory coach hints between rounds are now " + state + ". Toggle again with /hints."), nil, true
+	case "copy", "yank":
+		m.input = ""
+		return m.handleCopySlash(args)
 	case "mouse":
 		// Toggle bubbletea's mouse-event capture at runtime. With
 		// capture ON the wheel scrolls the transcript natively but
@@ -5497,6 +5500,11 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 	if len(m.transcript) == 0 {
 		lines = append(lines, renderStarterPrompts(min(width, 120), headerInfo.Configured)...)
 	}
+	// assistantCounter tracks the 1-based ordinal of each assistant
+	// message in the transcript so the renderer can stamp each one with
+	// a `#N` chip. That chip is the integer the user passes to `/copy N`
+	// to move a specific response to the clipboard.
+	assistantCounter := 0
 	for i, item := range m.transcript {
 		if i > 0 {
 			lines = append(lines, "")
@@ -5504,6 +5512,11 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 		durationMs := item.DurationMs
 		if m.streamIndex == i && m.sending && !m.streamStartedAt.IsZero() {
 			durationMs = int(time.Since(m.streamStartedAt).Milliseconds())
+		}
+		copyIdx := 0
+		if strings.EqualFold(item.Role, "assistant") {
+			assistantCounter++
+			copyIdx = assistantCounter
 		}
 		hdr := renderMessageHeader(messageHeaderInfo{
 			Role:         item.Role,
@@ -5514,6 +5527,7 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 			ToolFailures: item.ToolFailures,
 			Streaming:    m.streamIndex == i && m.sending,
 			SpinnerFrame: m.spinnerFrame,
+			CopyIndex:    copyIdx,
 		})
 		content := chatBubbleContent(item, m.streamIndex == i && m.sending)
 		lines = append(lines, renderMessageBubble(item.Role, content, hdr, width))
