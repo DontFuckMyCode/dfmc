@@ -381,10 +381,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			}
 			e.publishNativeToolCall(trace)
 
-			res, toolErr := e.Tools.Execute(ctx, call.Name, tools.Request{
-				ProjectRoot: e.ProjectRoot,
-				Params:      call.Input,
-			})
+			res, toolErr := e.executeToolWithLifecycle(ctx, call.Name, call.Input, "agent")
 			if toolErr != nil {
 				trace.Err = toolErr.Error()
 			} else {

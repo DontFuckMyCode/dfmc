@@ -18,6 +18,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
+	"github.com/dontfuckmycode/dfmc/internal/hooks"
 	"github.com/dontfuckmycode/dfmc/internal/memory"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
@@ -52,6 +53,10 @@ type Engine struct {
 	Memory       *memory.Store
 	Conversation *conversation.Manager
 	Security     *security.Scanner
+	// Hooks dispatches user-configured shell commands on lifecycle events
+	// (user_prompt_submit, pre_tool, post_tool, session_start/end). A nil
+	// value is safe — Fire is a no-op on nil.
+	Hooks *hooks.Dispatcher
 
 	providerOverride string
 	modelOverride    string
@@ -280,10 +285,36 @@ func (e *Engine) Init(ctx context.Context) error {
 		return fmt.Errorf("provider router init failed: %w", err)
 	}
 
+	// Hook dispatcher with observer that relays every hook outcome
+	// through the engine's event bus, so the TUI / Web UI / remote
+	// clients can render hook activity in the same timeline as tool
+	// calls and engine lifecycle events.
+	e.Hooks = hooks.New(e.Config.Hooks, func(r hooks.Report) {
+		e.EventBus.Publish(Event{
+			Type:   "hook:run",
+			Source: "hooks",
+			Payload: map[string]any{
+				"event":       string(r.Event),
+				"name":        r.Name,
+				"command":     r.Command,
+				"exit_code":   r.ExitCode,
+				"duration_ms": r.Duration.Milliseconds(),
+				"err":         errString(r.Err),
+			},
+		})
+	})
+
 	e.ProjectRoot = config.FindProjectRoot("")
 	if e.ProjectRoot != "" {
 		go e.indexCodebase(ctx)
 	}
+
+	// Fire session_start AFTER ProjectRoot is resolved so hooks have
+	// access to the right cwd via os.Getwd() even if the user launched
+	// dfmc from a subdirectory.
+	e.Hooks.Fire(ctx, hooks.EventSessionStart, hooks.Payload{
+		"project_root": e.ProjectRoot,
+	})
 
 	e.setState(StateReady)
 	e.EventBus.Publish(Event{Type: "engine:ready", Source: "engine"})
@@ -298,13 +329,7 @@ func (e *Engine) ListTools() []string {
 }
 
 func (e *Engine) CallTool(ctx context.Context, name string, params map[string]any) (tools.Result, error) {
-	if e.Tools == nil {
-		return tools.Result{}, fmt.Errorf("tool engine is not initialized")
-	}
-	res, err := e.Tools.Execute(ctx, name, tools.Request{
-		ProjectRoot: e.ProjectRoot,
-		Params:      params,
-	})
+	res, err := e.executeToolWithLifecycle(ctx, name, params, "user")
 	if err != nil {
 		e.EventBus.Publish(Event{
 			Type:    "tool:error",
@@ -324,6 +349,74 @@ func (e *Engine) CallTool(ctx context.Context, name string, params map[string]an
 	return res, nil
 }
 
+// executeToolWithLifecycle is the single point of entry for every tool
+// invocation in the engine. It owns:
+//   - approval gate (config.Tools.RequireApproval / Approver callback)
+//   - pre_tool/post_tool hook dispatch with full payload
+//   - raw tools.Engine.Execute call
+//
+// Both the user-initiated CallTool path and the agent-loop-initiated
+// path (agent_loop_native, subagent) funnel through here so hooks and
+// approval behave identically regardless of who decided to fire the
+// tool.
+//
+// The `source` tag distinguishes user-initiated calls ("user") from
+// agent calls ("agent", "subagent"). The approval gate currently only
+// gates agent-initiated calls — user typing /tool is already explicit
+// consent.
+func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, params map[string]any, source string) (tools.Result, error) {
+	if e.Tools == nil {
+		return tools.Result{}, fmt.Errorf("tool engine is not initialized")
+	}
+	// Approval gate — only engages for non-user sources and only when
+	// the tool is on the approval list. Blocks until the Approver
+	// responds or returns an implicit deny on timeout. See approver.go.
+	if source != "user" && e.requiresApproval(name) {
+		decision := e.askToolApproval(ctx, name, params, source)
+		if !decision.Approved {
+			reason := decision.Reason
+			if reason == "" {
+				reason = "user denied"
+			}
+			e.EventBus.Publish(Event{
+				Type:   "tool:denied",
+				Source: "engine",
+				Payload: map[string]any{
+					"name":   name,
+					"reason": reason,
+					"source": source,
+				},
+			})
+			return tools.Result{}, fmt.Errorf("tool %s denied: %s", name, reason)
+		}
+	}
+	if e.Hooks != nil && e.Hooks.Count(hooks.EventPreTool) > 0 {
+		e.Hooks.Fire(ctx, hooks.EventPreTool, hooks.Payload{
+			"tool_name":    name,
+			"tool_source":  source,
+			"project_root": e.ProjectRoot,
+		})
+	}
+	res, err := e.Tools.Execute(ctx, name, tools.Request{
+		ProjectRoot: e.ProjectRoot,
+		Params:      params,
+	})
+	if e.Hooks != nil && e.Hooks.Count(hooks.EventPostTool) > 0 {
+		success := "true"
+		if err != nil {
+			success = "false"
+		}
+		e.Hooks.Fire(ctx, hooks.EventPostTool, hooks.Payload{
+			"tool_name":        name,
+			"tool_source":      source,
+			"tool_success":     success,
+			"tool_duration_ms": fmt.Sprintf("%d", res.DurationMs),
+			"project_root":     e.ProjectRoot,
+		})
+	}
+	return res, err
+}
+
 func (e *Engine) StartServing() {
 	e.setState(StateServing)
 	e.EventBus.Publish(Event{Type: "engine:serving", Source: "engine"})
@@ -332,6 +425,18 @@ func (e *Engine) StartServing() {
 func (e *Engine) Shutdown() {
 	e.setState(StateShuttingDown)
 	e.EventBus.Publish(Event{Type: "engine:shutdown", Source: "engine"})
+
+	// session_end fires at the top of Shutdown (not the bottom) so hooks
+	// have access to storage/conversation state before we start tearing
+	// it down. We use a fresh context with a tight cap — shutdown must
+	// not stall on a misbehaving hook.
+	if e.Hooks != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		e.Hooks.Fire(ctx, hooks.EventSessionEnd, hooks.Payload{
+			"project_root": e.ProjectRoot,
+		})
+		cancel()
+	}
 
 	if e.Conversation != nil {
 		_ = e.Conversation.SaveActive()
@@ -1973,6 +2078,19 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 	}
 	if e.Providers == nil {
 		return nil, fmt.Errorf("provider router is not initialized")
+	}
+	// user_prompt_submit fires before we commit to a provider round-trip
+	// so hooks can observe every turn that leaves the UI, regardless of
+	// whether the engine routes through the native-tool loop or plain
+	// streaming. Hooks are best-effort — we don't block the ask if a
+	// hook fails or times out.
+	if e.Hooks != nil && e.Hooks.Count(hooks.EventUserPromptSubmit) > 0 {
+		e.Hooks.Fire(ctx, hooks.EventUserPromptSubmit, hooks.Payload{
+			"prompt":       question,
+			"provider":     e.provider(),
+			"model":        e.model(),
+			"project_root": e.ProjectRoot,
+		})
 	}
 	e.maybeAutoHandoff(question)
 	if e.shouldUseNativeToolLoop() {

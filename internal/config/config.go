@@ -206,6 +206,12 @@ type ToolsConfig struct {
 	Params  map[string]string  `yaml:"params,omitempty"`
 	Flags   map[string]bool    `yaml:"flags,omitempty"`
 	Limits  map[string]float64 `yaml:"limits,omitempty"`
+	// RequireApproval is the list of tool names that require human
+	// approval before the engine dispatches them — only consulted for
+	// non-user sources (agent, subagent). User-initiated CallTool
+	// invocations bypass the gate, since the user already typed the
+	// command. "*" matches every tool. Empty list disables the gate.
+	RequireApproval []string `yaml:"require_approval,omitempty"`
 }
 
 type ShellToolConfig struct {
