@@ -72,6 +72,59 @@ func TestBulletLineHandlesNumberedAndDashes(t *testing.T) {
 	}
 }
 
+// TestWrapBubbleLine_WrapsProseAtWordBoundary — long responses previously
+// got chopped by truncateSingleLine with a "…" and users lost the tail of
+// every sentence beyond the chat width. This is the regression guard: long
+// prose should come back as multiple rows instead of one truncated row.
+func TestWrapBubbleLine_WrapsProseAtWordBoundary(t *testing.T) {
+	line := "You can fix this by updating the configuration to use the new schema version and then restarting the service to pick up the changes."
+	rows := wrapBubbleLine(line, 40)
+	if len(rows) < 2 {
+		t.Fatalf("expected wrap into multiple rows at width=40, got %d: %q", len(rows), rows)
+	}
+	// No row should exceed the width.
+	for i, row := range rows {
+		// ansi.StringWidth handles ANSI codes; rows here are plain so len works.
+		if n := len(row); n > 40 {
+			t.Errorf("row %d width=%d exceeds limit 40: %q", i, n, row)
+		}
+	}
+	// The tail of the sentence must survive — no "…".
+	joined := strings.Join(rows, " ")
+	if !strings.Contains(joined, "pick up the changes") {
+		t.Fatalf("wrap must preserve the sentence tail, got %q", joined)
+	}
+	if strings.Contains(joined, "…") {
+		t.Fatalf("wrap must not use a truncation ellipsis, got %q", joined)
+	}
+}
+
+// TestWrapBubbleLine_ShortLinesPassThrough — input that already fits in the
+// width budget must come back untouched (no forced wrap, no re-join).
+func TestWrapBubbleLine_ShortLinesPassThrough(t *testing.T) {
+	rows := wrapBubbleLine("short enough", 40)
+	if len(rows) != 1 || rows[0] != "short enough" {
+		t.Fatalf("short line should pass through untouched, got %q", rows)
+	}
+}
+
+// TestRenderMessageBubble_WrapsLongProse end-to-end — the bubble layer must
+// surface wrapping as multiple bar-prefixed rows, not one "…" cut.
+func TestRenderMessageBubble_WrapsLongProse(t *testing.T) {
+	long := "This is a fairly long assistant answer that should wrap across multiple rows so the user can read all of it instead of losing the tail of the sentence to an ellipsis."
+	out := renderMessageBubble("assistant", long, "assistant · now", 60)
+	lines := strings.Split(out, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected header + multiple content rows, got %d: %q", len(lines), lines)
+	}
+	if strings.Contains(out, "…") {
+		t.Fatalf("bubble must not truncate long prose, got:\n%s", out)
+	}
+	if !strings.Contains(out, "tail of the sentence") {
+		t.Fatalf("bubble must preserve the sentence tail, got:\n%s", out)
+	}
+}
+
 func TestHeaderLevelMatchesPrefixes(t *testing.T) {
 	if headerLevel("# H1") != 1 || headerLevel("## H2") != 2 || headerLevel("### H3") != 3 {
 		t.Fatalf("header prefixes should resolve to levels 1/2/3")

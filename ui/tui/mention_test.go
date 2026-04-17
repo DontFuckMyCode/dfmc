@@ -284,6 +284,71 @@ func TestRenderChatView_MentionPicker_ListsMatches(t *testing.T) {
 	}
 }
 
+// TestRenderChatView_MentionPickerOwnsTailRealEstate — when the @ picker is
+// active it must be the dominant element under the composer. The context
+// strip, Slash Assist hints, and Quick actions all got pushed *above* the
+// picker in earlier builds, and in short terminals that meant the modal
+// rendered below the fold — so from the user's perspective "@ doesn't work".
+// This test pins the new contract: while the mention picker is up, those
+// competing decorations are suppressed, and the picker sits immediately
+// under the Input box.
+func TestRenderChatView_MentionPickerOwnsTailRealEstate(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.pinnedFile = "internal/auth/token.go" // would normally surface in context strip
+	m.input = "review @"
+	m.files = []string{"internal/auth/token.go", "ui/cli/cli.go"}
+	view := m.renderChatView(160)
+
+	if !strings.Contains(view, "◆ File Picker") {
+		t.Fatalf("mention picker should render, got:\n%s", view)
+	}
+	// The context strip carries a distinctive "📎 context" prefix and must
+	// be suppressed while the picker is active so it doesn't compete for
+	// space under the input box. (The chat header also surfaces pinned
+	// info — that's fine, it's not in the tail.)
+	if strings.Contains(view, "📎 context") {
+		t.Fatalf("context strip should be suppressed under active mention picker:\n%s", view)
+	}
+	// Slash Assist hints and Quick actions are the other common tail fillers
+	// that used to push the modal off-screen.
+	if strings.Contains(view, "Slash Assist") {
+		t.Fatalf("Slash Assist hints should be suppressed under active mention picker:\n%s", view)
+	}
+	if strings.Contains(view, "Quick actions") {
+		t.Fatalf("Quick actions should be suppressed under active mention picker:\n%s", view)
+	}
+}
+
+// TestRenderChatView_MentionPickerSitsUnderInputBox — pin ordering so the
+// Input box is followed by the modal, not by any other tail block. If a
+// future contributor adds a new tail decoration that sneaks in between them,
+// the picker will no longer read as "the next thing after input" and this
+// test fails on purpose.
+func TestRenderChatView_MentionPickerSitsUnderInputBox(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.input = "hi @"
+	m.files = []string{"internal/auth/token.go"}
+	view := m.renderChatView(160)
+
+	inputIdx := strings.Index(view, "› Input")
+	pickerIdx := strings.Index(view, "◆ File Picker")
+	if inputIdx < 0 || pickerIdx < 0 {
+		t.Fatalf("missing Input header or picker title in view:\n%s", view)
+	}
+	if pickerIdx < inputIdx {
+		t.Fatalf("picker should render below the Input box, got picker at %d before input at %d", pickerIdx, inputIdx)
+	}
+	// Between the Input header and the picker title nothing other than
+	// whitespace and the input box chrome should appear. A cheap proxy:
+	// the slice between them must not contain known competing titles.
+	between := view[inputIdx:pickerIdx]
+	for _, forbidden := range []string{"Slash Assist", "Quick actions", "Command args", "📎 context"} {
+		if strings.Contains(between, forbidden) {
+			t.Fatalf("found %q between Input and File Picker (should be nothing but input chrome):\n%s", forbidden, between)
+		}
+	}
+}
+
 // TestRenderContextStrip_HiddenWhenComposerEmpty — the context strip must
 // not paint a dead bar when there's nothing attached. Empty composer with
 // no pinned file and no markers should yield "".
@@ -314,6 +379,137 @@ func TestRenderContextStrip_ShowsMarkersAndFences(t *testing.T) {
 	}
 	if !strings.Contains(got, "chars:") {
 		t.Fatalf("expected chars count, got %q", got)
+	}
+}
+
+// TestCtrlTOpensFilePicker — the AltGr-@ fallback. Turkish (Q) keyboards
+// on MinTTY/Git Bash can swallow the '@' rune silently; Ctrl+T is the
+// guaranteed-deliverable alternative that puts '@' at the cursor and
+// kicks the existing mention picker. End-to-end check: one keypress →
+// picker modal appears in the render.
+func TestCtrlTOpensFilePicker(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.files = []string{"internal/auth/token.go", "ui/tui/tui.go"}
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	mm := out.(Model)
+	if !strings.Contains(mm.input, "@") {
+		t.Fatalf("ctrl+t must put '@' at the cursor; got input=%q", mm.input)
+	}
+	if mm.chatCursor != len([]rune(mm.input)) {
+		t.Fatalf("cursor must sit after the inserted '@', got %d (input len=%d)", mm.chatCursor, len([]rune(mm.input)))
+	}
+	view := mm.renderChatView(120)
+	if !strings.Contains(view, "◆ File Picker") {
+		t.Fatalf("ctrl+t must surface the file picker modal:\n%s", view)
+	}
+}
+
+// TestCtrlTPrependsSpaceMidWord — if the cursor is glued to a word when
+// Ctrl+T fires, we need a space before the '@' so the mention token is
+// just '@' (not "wordhello@"), which is what activeMentionQuery scans.
+func TestCtrlTPrependsSpaceMidWord(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.setChatInput("hello")
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	mm := out.(Model)
+	if mm.input != "hello @" {
+		t.Fatalf("ctrl+t after a word should prepend a space, got %q", mm.input)
+	}
+}
+
+// TestSlashFileOpensPicker — /file is the slash-command alias for @
+// and Ctrl+T. Useful if neither key is available on the user's terminal.
+func TestSlashFileOpensPicker(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.files = []string{"internal/auth/token.go"}
+	next, _, handled := m.executeChatCommand("/file")
+	if !handled {
+		t.Fatalf("/file must be handled=true")
+	}
+	mm := next.(Model)
+	if mm.input != "@" {
+		t.Fatalf("/file should leave composer primed with '@', got %q", mm.input)
+	}
+	view := mm.renderChatView(120)
+	if !strings.Contains(view, "◆ File Picker") {
+		t.Fatalf("/file must surface the file picker modal:\n%s", view)
+	}
+}
+
+// TestAtKeyWithNonRunesKeyType_StillInsertsAt — defensive regression for
+// the "@ yemiyor" bug on Turkish keyboards / Git Bash / MinTTY. When
+// bubbletea delivers a KeyMsg whose Type ISN'T KeyRunes but whose Runes
+// slice still contains '@' (AltGr+Q on Windows with Unix-TTY emulation
+// can arrive as KeyCtrlQ{Alt:true, Runes:['@']}), the composer must still
+// insert the '@' so the mention picker can fire.
+func TestAtKeyWithNonRunesKeyType_StillInsertsAt(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+
+	// Worst case — Type is KeyCtrlQ (what AltGr+Q can look like), Alt is
+	// set, but Runes carries the actual '@' the user intended. The old
+	// switch had no case for this and the key was eaten silently.
+	out, _ := m.Update(tea.KeyMsg{
+		Type:  tea.KeyCtrlQ,
+		Runes: []rune("@"),
+		Alt:   true,
+	})
+	mm := out.(Model)
+	if !strings.Contains(mm.input, "@") {
+		t.Fatalf("@ rune must reach the input buffer even when Type is not KeyRunes, got %q", mm.input)
+	}
+	// And the full render must show the file picker now that the @ is in.
+	mm.files = []string{"ui/tui/tui.go"}
+	view := mm.renderChatView(120)
+	if !strings.Contains(view, "◆ File Picker") {
+		t.Fatalf("mention picker must render after @ arrives via fallback, got:\n%s", view)
+	}
+}
+
+// TestControlKeyWithNoRunesIsIgnored — the fallback must NOT insert
+// anything for bare control sequences (e.g. Ctrl+C with Runes=nil).
+// Otherwise we'd double-fire on every control key.
+func TestControlKeyWithNoRunesIsIgnored(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	before := m.input
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlQ})
+	mm := out.(Model)
+	if mm.input != before {
+		t.Fatalf("control key with empty Runes must not mutate input, got %q", mm.input)
+	}
+}
+
+// TestRenderContextStrip_ShowsTokenEstimate — chars alone don't answer the
+// question that matters: "will this fit in the provider's context window?".
+// The strip must carry a token count so the composer has real budget
+// feedback, not just char count.
+func TestRenderContextStrip_ShowsTokenEstimate(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.input = "Explain the auth flow in this project and propose improvements."
+	got := m.renderContextStrip(160)
+	if !strings.Contains(got, "tokens:") {
+		t.Fatalf("expected tokens count in strip, got %q", got)
+	}
+	// Heuristic counter always gives at least 1 token for non-empty input.
+	if !strings.Contains(got, "~") {
+		t.Fatalf("token count should lead with '~' (heuristic marker), got %q", got)
+	}
+}
+
+// TestRenderContextStrip_TokenBudgetPercentWhenProviderKnown — when the
+// provider profile reports a MaxContext, the strip must translate the raw
+// token count into "% of budget" so users know how close they are to the
+// limit at a glance.
+func TestRenderContextStrip_TokenBudgetPercentWhenProviderKnown(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.input = "short question"
+	m.status.ProviderProfile.MaxContext = 200000
+	got := m.renderContextStrip(200)
+	if !strings.Contains(got, "% of 200000") {
+		t.Fatalf("expected budget percent suffix, got %q", got)
 	}
 }
 
@@ -348,6 +544,135 @@ func TestCountHelpers(t *testing.T) {
 	}
 	if n := countAtMentions("@only"); n != 1 {
 		t.Errorf("countAtMentions: leading @ counts, got %d", n)
+	}
+}
+
+// TestMentionFlow_EndToEnd — full user flow: type @, filter, tab-commit.
+// Verifies the marker lands in the input and the picker closes cleanly.
+// This is the regression anchor for the user-facing complaint that "@ file
+// selection doesn't work" — the whole flow runs here, no mocks.
+func TestMentionFlow_EndToEnd(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.files = []string{
+		"internal/auth/token.go",
+		"internal/auth/session.go",
+		"ui/cli/cli.go",
+		"ui/tui/tui.go",
+	}
+
+	// Step 1: type @ — mention picker should activate.
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'@'}})
+	m = out.(Model)
+	state := m.buildChatSuggestionState()
+	if !state.mentionActive {
+		t.Fatalf("typing @ should activate mention picker, state=%+v", state)
+	}
+	if len(state.mentionSuggestions) == 0 {
+		t.Fatalf("empty @ query should list recent files, got 0 suggestions")
+	}
+
+	// Step 2: type 'token' — picker should filter to auth/token.go.
+	for _, r := range "token" {
+		out, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = out.(Model)
+	}
+	state = m.buildChatSuggestionState()
+	if state.mentionQuery != "token" {
+		t.Fatalf("expected query=token, got %q", state.mentionQuery)
+	}
+	foundToken := false
+	for _, row := range state.mentionSuggestions {
+		if strings.HasSuffix(row.Path, "token.go") {
+			foundToken = true
+			break
+		}
+	}
+	if !foundToken {
+		t.Fatalf("filtered list should include token.go, got %+v", state.mentionSuggestions)
+	}
+
+	// Step 3: press tab — marker must replace @token in the input.
+	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = out.(Model)
+	if !strings.Contains(m.input, "[[file:internal/auth/token.go]]") {
+		t.Fatalf("tab should rewrite @token to a file marker, got input=%q", m.input)
+	}
+	if strings.Contains(m.input, "@token") {
+		t.Fatalf("after commit, the raw @token should be gone, got input=%q", m.input)
+	}
+
+	// Step 4: picker should no longer be active.
+	state = m.buildChatSuggestionState()
+	if state.mentionActive {
+		t.Fatalf("after commit, mention picker should be inactive, got active")
+	}
+}
+
+// TestMentionFlow_EnterCommitsSelection — same as above but using Enter
+// instead of Tab. Enter is the most discoverable commit key and users
+// might not realise Tab also works.
+func TestMentionFlow_EnterCommitsSelection(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.files = []string{"internal/auth/token.go", "ui/cli/cli.go"}
+
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'@'}})
+	m = out.(Model)
+	for _, r := range "tok" {
+		out, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = out.(Model)
+	}
+	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(Model)
+	if !strings.Contains(m.input, "[[file:internal/auth/token.go]]") {
+		t.Fatalf("enter should also commit the selection, got input=%q", m.input)
+	}
+	// Enter must NOT have sent the message (turn is still unsent).
+	if m.sending {
+		t.Fatalf("enter during mention-active state should insert, not submit; got m.sending=true")
+	}
+}
+
+// TestMentionFlow_PickerNavigation — arrow-down selects the next match and
+// a subsequent commit picks the highlighted row, not always row 0.
+func TestMentionFlow_PickerNavigation(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.files = []string{
+		"internal/auth/token.go",
+		"internal/auth/session.go",
+		"internal/auth/middleware.go",
+	}
+
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'@'}})
+	m = out.(Model)
+	for _, r := range "auth" {
+		out, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = out.(Model)
+	}
+	state := m.buildChatSuggestionState()
+	if len(state.mentionSuggestions) < 2 {
+		t.Fatalf("need ≥2 auth matches for navigation test, got %d", len(state.mentionSuggestions))
+	}
+	firstPath := state.mentionSuggestions[0].Path
+
+	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = out.(Model)
+	if m.mentionIndex != 1 {
+		t.Fatalf("KeyDown should advance mentionIndex to 1, got %d", m.mentionIndex)
+	}
+
+	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = out.(Model)
+	state = m.buildChatSuggestionState()
+	// The inserted marker should be the SECOND result, not the first.
+	secondPath := firstPath // placeholder; rebuild suggestions below
+	_ = secondPath
+	// After commit, input contains [[file:<picked>]]. Verify the picked path
+	// isn't firstPath (proving navigation took effect).
+	if strings.Contains(m.input, "[[file:"+firstPath+"]]") {
+		t.Fatalf("after KeyDown+Tab, expected picker to commit the SECOND row, but got first row %q in input %q", firstPath, m.input)
 	}
 }
 

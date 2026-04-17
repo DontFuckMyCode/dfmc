@@ -576,6 +576,11 @@ func formatDurationChip(ms int) string {
 // renderMessageBubble renders a chat message as a left-bar "bubble" with the
 // role-coloured accent stripe. Content is markdown-lite rendered. Multi-line
 // content keeps the stripe on every line. Width is the total line width.
+//
+// Long prose lines are word-wrapped, not truncated — the old behavior chopped
+// answers with a "…" and users lost the tail of every long sentence. Code-
+// block rows (prefixed with "  │ ") are wrapped with a continuation indent
+// so the vertical guide reads cleanly after a wrap.
 func renderMessageBubble(role, content, header string, width int) string {
 	style := roleLineStyle(role)
 	bar := style.Render("▎")
@@ -589,9 +594,29 @@ func renderMessageBubble(role, content, header string, width int) string {
 		return strings.Join(out, "\n")
 	}
 	for _, line := range renderMarkdownBlocks(content) {
-		out = append(out, bar+" "+truncateSingleLine(line, width-2))
+		for _, wrapped := range wrapBubbleLine(line, width-2) {
+			out = append(out, bar+" "+wrapped)
+		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// wrapBubbleLine splits a styled content line into visual rows that fit
+// within `limit` cells. ANSI escape codes and wide characters are preserved.
+// Empty input collapses to a single empty row so the caller still emits the
+// bar on blank paragraph separators.
+func wrapBubbleLine(line string, limit int) []string {
+	if limit <= 0 {
+		return []string{line}
+	}
+	if ansi.StringWidth(line) <= limit {
+		return []string{line}
+	}
+	wrapped := ansi.Wrap(line, limit, " 	,;:.!?")
+	if wrapped == "" {
+		return []string{line}
+	}
+	return strings.Split(wrapped, "\n")
 }
 
 // renderDivider returns a subtle horizontal rule.
@@ -614,13 +639,44 @@ func renderRuntimeCardFramed(rs runtimeSummary, width int) string {
 	return runtimeCardStyle.Width(width).Render(inner)
 }
 
-// renderInputBox wraps a prompt line in a coloured rounded frame.
+// renderInputBox wraps a prompt in a coloured rounded frame. Input may now
+// carry newlines (ctrl+j / alt+enter) — each logical line keeps its own row
+// inside the frame, and rows that exceed the inner width are soft-wrapped
+// so a pasted paragraph doesn't spill or disappear behind the border.
 func renderInputBox(line string, width int) string {
 	if width < 10 {
 		return inputLineStyle.Render(line)
 	}
-	inner := truncateSingleLine(line, width-4)
+	inner := formatInputBoxContent(line, width-4)
 	return inputBoxStyle.Width(width).Render(inputLineStyle.Render(inner))
+}
+
+// formatInputBoxContent takes composer input (possibly multi-line) and
+// returns the string the lipgloss frame will paint. Long logical lines are
+// soft-wrapped to `limit`; the cursor `|` marker inserted upstream survives
+// because ansi.Wrap treats it as regular content. Empty input is passed
+// through so the box still paints a hollow row with just the prompt.
+func formatInputBoxContent(content string, limit int) string {
+	if content == "" || limit <= 0 {
+		return content
+	}
+	// Normalise CRLF from pastes so each logical line is a clean "\n" split.
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	logical := strings.Split(content, "\n")
+	out := make([]string, 0, len(logical))
+	for _, line := range logical {
+		if ansi.StringWidth(line) <= limit {
+			out = append(out, line)
+			continue
+		}
+		wrapped := ansi.Wrap(line, limit, " 	,;:.!?/")
+		if wrapped == "" {
+			out = append(out, line)
+			continue
+		}
+		out = append(out, strings.Split(wrapped, "\n")...)
+	}
+	return strings.Join(out, "\n")
 }
 
 // renderBanner renders the top-of-app banner with a chunky ▌▐ accent.
@@ -667,6 +723,10 @@ type chatHeaderInfo struct {
 	// > 0 so the user can see fan-out (batch / delegate_task) in real time.
 	ActiveTools     int
 	ActiveSubagents int
+	// PlanMode flips the header into an investigate-only badge so the user
+	// can never accidentally submit a mutation intent from within plan
+	// mode. Toggled by /plan and /code.
+	PlanMode bool
 }
 
 // renderChatHeader returns 1 pre-styled line summarising chat state.
@@ -709,6 +769,12 @@ func renderChatHeader(info chatHeaderInfo, width int) string {
 		}
 	}
 
+	if info.PlanMode {
+		// Investigate-only badge is deliberately loud — users who enter
+		// plan mode on purpose want the confirmation, and users who
+		// forget they're in it most need the reminder.
+		segments = append(segments, warnStyle.Bold(true).Render("◈ PLAN — /code exits"))
+	}
 	if info.Parked {
 		segments = append(segments, warnStyle.Bold(true).Render("⏸ parked — /continue"))
 	}

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -32,6 +33,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/security"
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	toolruntime "github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -151,6 +153,19 @@ type Model struct {
 	// Default on when the terminal is wide enough; ctrl+s flips it so the
 	// user can reclaim the width for chat on narrow screens.
 	showStatsPanel bool
+	// keyLogEnabled dumps every incoming KeyMsg into m.notice so users can
+	// report back what bubbletea actually delivered on their terminal.
+	// Turned on via DFMC_KEYLOG=1 at startup or toggled at runtime with the
+	// /keylog slash command. The dump is the only practical way to debug
+	// keyboard-layout / MinTTY / AltGr issues remotely.
+	keyLogEnabled bool
+	// planMode makes the agent loop investigate-only: every turn is
+	// prepended with a directive forbidding mutations, and the header
+	// badges the mode so the user never sends destructive intent by
+	// accident. Toggled with /plan (enter) and /code (exit). Mirrors the
+	// "plan mode" Claude Code users expect — a safe think-aloud pass
+	// before touching files.
+	planMode bool
 	// resumePromptActive turns on when the engine emits agent:loop:parked and
 	// controls whether the yellow "press enter to resume" banner is drawn
 	// above the composer. Esc dismisses it; a fresh submit or a successful
@@ -456,6 +471,7 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 		// park a duplicate banner in the footer notice slot (signal density).
 		sessionStart:   time.Now(),
 		showStatsPanel: true,
+		keyLogEnabled:  os.Getenv("DFMC_KEYLOG") == "1",
 	}
 }
 
@@ -1033,6 +1049,16 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.commandPickerActive {
 		return m.handleCommandPickerKey(msg)
 	}
+	// Dump the incoming key so we can see what bubbletea delivered. We
+	// intentionally dump BEFORE the switch: the notice reflects the
+	// arrival, then the render re-runs and shows the picker/input state
+	// the user should compare against. Combined with m.input always being
+	// rendered in the input box, this tells us both the event and its
+	// effect.
+	if m.keyLogEnabled {
+		m.notice = fmt.Sprintf("key: %s · type=%d · runes=%q · alt=%t · input-before=%q",
+			msg.String(), msg.Type, string(msg.Runes), msg.Alt, m.input)
+	}
 	m.syncChatCursor()
 	switch msg.Type {
 	case tea.KeyRunes:
@@ -1050,6 +1076,9 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.slashArgIndex = 0
 		m.mentionIndex = 0
 		m.quickActionIndex = 0
+		if m.keyLogEnabled {
+			m.notice = fmt.Sprintf("KeyRunes inserted %q → input=%q", string(msg.Runes), m.input)
+		}
 		// When the user starts an @-mention but the project file index
 		// hasn't landed yet (startup race, or the walk failed silently),
 		// kick a refresh so the picker populates on the next frame
@@ -1098,6 +1127,67 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.moveChatCursorEnd()
+		return m, nil
+	case tea.KeyCtrlLeft:
+		// readline-style word-left. Leaves the picker indices alone so the
+		// user can re-anchor mid-word without losing their selection.
+		m.moveChatCursorWordLeft()
+		return m, nil
+	case tea.KeyCtrlRight:
+		m.moveChatCursorWordRight()
+		return m, nil
+	case tea.KeyCtrlT:
+		// Ctrl+T — open the file mention picker without typing '@'.
+		// Turkish keyboards (Q layout) + MinTTY deliver '@' as alt+q
+		// which can silently drop the '@' rune; users couldn't reach the
+		// picker via @ at all. Ctrl+T is the guaranteed-deliverable
+		// alternative — identical to typing '@' mid-composer except it
+		// inserts a leading space when needed so the trailing token
+		// becomes exactly '@', which is what activeMentionQuery checks.
+		if !m.sending {
+			m.exitInputHistoryNavigation()
+			// Ensure the '@' we insert is the start of a fresh mention
+			// token. If the cursor is mid-word (e.g. "helloX|") prepend
+			// a space so we get "helloX @|" rather than "helloX@|"
+			// (which would treat the whole word as the mention).
+			m.syncChatCursor()
+			runes := []rune(m.input)
+			needSpace := m.chatCursor > 0 && m.chatCursor <= len(runes) &&
+				!unicode.IsSpace(runes[m.chatCursor-1])
+			if needSpace {
+				m.insertInputText(" @")
+			} else {
+				m.insertInputText("@")
+			}
+			m.mentionIndex = 0
+			m.notice = "File picker open — type to filter, tab/enter inserts, esc cancels."
+			// Kick a refresh if the index is empty, same as the typed-@
+			// path does, so the picker isn't stuck on "Indexing…".
+			if len(m.files) == 0 && m.eng != nil {
+				return m, loadFilesCmd(m.eng)
+			}
+			return m, nil
+		}
+		return m, nil
+	case tea.KeyCtrlW:
+		// Ctrl+W — kill word before cursor. Whitespace-only separator
+		// keeps @mentions and [[file:...]] markers atomic.
+		m.exitInputHistoryNavigation()
+		m.deleteInputWordBeforeCursor()
+		m.slashIndex = 0
+		m.slashArgIndex = 0
+		m.mentionIndex = 0
+		m.quickActionIndex = 0
+		return m, nil
+	case tea.KeyCtrlK:
+		// Ctrl+K — kill to end of line. Pairs with Ctrl+U (kill whole
+		// line) so editors coming from bash/emacs feel at home.
+		m.exitInputHistoryNavigation()
+		m.deleteInputToEndOfLine()
+		m.slashIndex = 0
+		m.slashArgIndex = 0
+		m.mentionIndex = 0
+		m.quickActionIndex = 0
 		return m, nil
 	case tea.KeyPgUp:
 		m.scrollTranscript(-8)
@@ -1181,6 +1271,15 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.notice = "Quick action: " + suggestions.quickActions[idx].PreparedInput
 			return m, nil
 		}
+		// Multi-line buffer navigation. When input spans rows, Up first walks
+		// the buffer and only falls through to history navigation when the
+		// cursor is already on the first row. Single-line input skips this
+		// and goes straight to history, preserving the old behavior.
+		if !m.sending && strings.ContainsRune(m.input, '\n') {
+			if m.moveChatCursorRowUp() {
+				return m, nil
+			}
+		}
 		if !m.sending && m.recallInputHistoryPrev() {
 			m.slashIndex = 0
 			m.slashArgIndex = 0
@@ -1240,6 +1339,12 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.notice = "Quick action: " + suggestions.quickActions[idx].PreparedInput
 			return m, nil
 		}
+		// Symmetric to KeyUp — buffer row navigation when input has \n.
+		if !m.sending && strings.ContainsRune(m.input, '\n') {
+			if m.moveChatCursorRowDown() {
+				return m, nil
+			}
+		}
 		if !m.sending && m.recallInputHistoryNext() {
 			m.slashIndex = 0
 			m.slashArgIndex = 0
@@ -1275,7 +1380,33 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case tea.KeyCtrlJ:
+		// Ctrl+J — insert a literal newline. This is the reliable cross-
+		// terminal way to get a newline in the composer (Shift+Enter is
+		// indistinguishable from Enter on most terminals and was a lie in
+		// the old help overlay). Alt+Enter is handled at the KeyEnter
+		// branch below by checking msg.Alt.
+		m.exitInputHistoryNavigation()
+		m.insertInputText("\n")
+		m.slashIndex = 0
+		m.slashArgIndex = 0
+		m.mentionIndex = 0
+		m.quickActionIndex = 0
+		return m, nil
 	case tea.KeyEnter:
+		// Alt+Enter also inserts a newline rather than submitting — some
+		// terminals deliver Alt+Enter as KeyEnter with Alt=true. On
+		// terminals without a real Alt key this is a no-op for regular
+		// Enter and submission still works.
+		if msg.Alt {
+			m.exitInputHistoryNavigation()
+			m.insertInputText("\n")
+			m.slashIndex = 0
+			m.slashArgIndex = 0
+			m.mentionIndex = 0
+			m.quickActionIndex = 0
+			return m, nil
+		}
 		suggestions := m.buildChatSuggestionState()
 		if !m.sending && len(suggestions.mentionSuggestions) > 0 {
 			if next, ok := autocompleteMentionSelectionFromSuggestions(m.input, m.mentionIndex, suggestions.mentionSuggestions); ok {
@@ -1315,6 +1446,38 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.setChatInput("")
 		return m.submitChatQuestion(question, suggestions.quickActions)
+	}
+	// Defensive catch-all for keys that didn't match any explicit case but
+	// still carry printable runes. On Windows with non-standard keyboard
+	// layouts (Turkish Q, AltGr combos, IME pass-through) bubbletea can
+	// deliver a key event whose Type is something like KeyCtrlQ while
+	// Runes=['@'] — the earlier code ignored Runes in that branch and the
+	// '@' never reached the input buffer, which looked to the user like
+	// "the @ key doesn't trigger the picker". If Runes is non-empty and
+	// at least one rune is printable, insert them as text.
+	if len(msg.Runes) > 0 {
+		printable := false
+		for _, r := range msg.Runes {
+			if r >= 0x20 && r != 0x7f {
+				printable = true
+				break
+			}
+		}
+		if printable {
+			m.exitInputHistoryNavigation()
+			m.insertInputText(string(msg.Runes))
+			m.slashIndex = 0
+			m.slashArgIndex = 0
+			m.mentionIndex = 0
+			m.quickActionIndex = 0
+			if m.keyLogEnabled {
+				m.notice = fmt.Sprintf("FALLBACK inserted %q → input=%q", string(msg.Runes), m.input)
+			}
+			if strings.ContainsRune(string(msg.Runes), '@') && len(m.files) == 0 && m.eng != nil {
+				return m, loadFilesCmd(m.eng)
+			}
+			return m, nil
+		}
 	}
 	return m, nil
 }
@@ -1423,14 +1586,210 @@ func (m *Model) moveChatCursor(delta int) {
 	m.chatCursorInput = m.input
 }
 
+// moveChatCursorHome — Home / Ctrl+A: jump to the start of the current
+// logical line (not the buffer start). For single-line input this is
+// indistinguishable from the old buffer-start behavior; in a multi-line
+// composition it matches every text editor the user has ever used.
 func (m *Model) moveChatCursorHome() {
-	m.chatCursor = 0
+	m.syncChatCursor()
+	m.chatCursor = chatInputLineHome([]rune(m.input), m.chatCursor)
 	m.chatCursorManual = true
 	m.chatCursorInput = m.input
 }
 
+// moveChatCursorEnd — End / Ctrl+E: jump to the end of the current logical
+// line. Again identical to buffer-end when there are no newlines, and
+// correctly stops at the next `\n` when there are.
 func (m *Model) moveChatCursorEnd() {
-	m.chatCursor = len([]rune(m.input))
+	m.syncChatCursor()
+	m.chatCursor = chatInputLineEnd([]rune(m.input), m.chatCursor)
+	m.chatCursorManual = true
+	m.chatCursorInput = m.input
+}
+
+// chatInputLineHome returns the rune index of the start of the logical
+// line containing cursor. That's either 0 or the index just after the
+// preceding '\n'.
+func chatInputLineHome(runes []rune, cursor int) int {
+	if cursor <= 0 {
+		return 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	for i := cursor - 1; i >= 0; i-- {
+		if runes[i] == '\n' {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// chatInputLineEnd returns the rune index of the end of the logical line
+// containing cursor (the index of the next '\n', or len(runes)).
+func chatInputLineEnd(runes []rune, cursor int) int {
+	if cursor < 0 {
+		cursor = 0
+	}
+	for i := cursor; i < len(runes); i++ {
+		if runes[i] == '\n' {
+			return i
+		}
+	}
+	return len(runes)
+}
+
+// moveChatCursorRowUp drops the cursor onto the previous logical row at
+// the same column offset (clamped to that row's length). Returns false
+// when there's no previous row — the caller then falls back to whatever
+// Up normally does (history navigation, picker move).
+func (m *Model) moveChatCursorRowUp() bool {
+	m.syncChatCursor()
+	runes := []rune(m.input)
+	cursor := m.chatCursor
+	home := chatInputLineHome(runes, cursor)
+	if home == 0 {
+		return false
+	}
+	col := cursor - home
+	prevEnd := home - 1                         // index of the '\n' separating the rows
+	prevHome := chatInputLineHome(runes, prevEnd) // start of the previous row
+	prevLen := prevEnd - prevHome
+	if col > prevLen {
+		col = prevLen
+	}
+	m.chatCursor = prevHome + col
+	m.chatCursorManual = true
+	m.chatCursorInput = m.input
+	return true
+}
+
+// moveChatCursorRowDown — symmetric to moveChatCursorRowUp. Returns false
+// when there's no next row.
+func (m *Model) moveChatCursorRowDown() bool {
+	m.syncChatCursor()
+	runes := []rune(m.input)
+	cursor := m.chatCursor
+	home := chatInputLineHome(runes, cursor)
+	end := chatInputLineEnd(runes, cursor)
+	if end >= len(runes) {
+		return false
+	}
+	col := cursor - home
+	nextHome := end + 1
+	nextEnd := chatInputLineEnd(runes, nextHome)
+	nextLen := nextEnd - nextHome
+	if col > nextLen {
+		col = nextLen
+	}
+	m.chatCursor = nextHome + col
+	m.chatCursorManual = true
+	m.chatCursorInput = m.input
+	return true
+}
+
+// chatInputWordBoundaryLeft returns the rune index of the start of the
+// previous word, readline-style: skip any whitespace immediately behind
+// the cursor, then skip the run of non-whitespace before it. Returns 0
+// if the cursor is already at the start.
+func chatInputWordBoundaryLeft(runes []rune, cursor int) int {
+	if cursor <= 0 {
+		return 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	i := cursor
+	for i > 0 && isInputWordSeparator(runes[i-1]) {
+		i--
+	}
+	for i > 0 && !isInputWordSeparator(runes[i-1]) {
+		i--
+	}
+	return i
+}
+
+// chatInputWordBoundaryRight returns the rune index at the END of the
+// current or next word from cursor — readline convention: skip any
+// leading whitespace under the cursor, then skip the following word.
+// This is symmetric with chatInputWordBoundaryLeft (which lands on the
+// START of a word), so Ctrl+Left and Ctrl+Right both walk across word
+// boundaries rather than stalling on a word they're already inside.
+func chatInputWordBoundaryRight(runes []rune, cursor int) int {
+	if cursor < 0 {
+		cursor = 0
+	}
+	i := cursor
+	for i < len(runes) && isInputWordSeparator(runes[i]) {
+		i++
+	}
+	for i < len(runes) && !isInputWordSeparator(runes[i]) {
+		i++
+	}
+	return i
+}
+
+// isInputWordSeparator — whitespace is the only word boundary. This
+// matches bash/readline and keeps [[file:path]] markers, @mentions, and
+// paths like internal/auth/token.go intact as a single "word" so Ctrl+W
+// nukes the whole reference in one keystroke instead of fragmenting it.
+func isInputWordSeparator(r rune) bool {
+	switch r {
+	case ' ', '\t', '\n', '\r':
+		return true
+	}
+	return false
+}
+
+func (m *Model) moveChatCursorWordLeft() {
+	m.syncChatCursor()
+	m.chatCursor = chatInputWordBoundaryLeft([]rune(m.input), m.chatCursor)
+	m.chatCursorManual = true
+	m.chatCursorInput = m.input
+}
+
+func (m *Model) moveChatCursorWordRight() {
+	m.syncChatCursor()
+	m.chatCursor = chatInputWordBoundaryRight([]rune(m.input), m.chatCursor)
+	m.chatCursorManual = true
+	m.chatCursorInput = m.input
+}
+
+// deleteInputWordBeforeCursor implements Ctrl+W: kill the word to the
+// left of the cursor. Idempotent at the start of the line.
+func (m *Model) deleteInputWordBeforeCursor() {
+	m.syncChatCursor()
+	runes := []rune(m.input)
+	if m.chatCursor <= 0 || len(runes) == 0 {
+		return
+	}
+	cursor := m.chatCursor
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	start := chatInputWordBoundaryLeft(runes, cursor)
+	updated := append([]rune(nil), runes[:start]...)
+	updated = append(updated, runes[cursor:]...)
+	m.input = string(updated)
+	m.chatCursor = start
+	m.chatCursorManual = true
+	m.chatCursorInput = m.input
+}
+
+// deleteInputToEndOfLine implements Ctrl+K: kill text from the cursor to
+// the end of the input. Idempotent when already at the end.
+func (m *Model) deleteInputToEndOfLine() {
+	m.syncChatCursor()
+	runes := []rune(m.input)
+	cursor := m.chatCursor
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor >= len(runes) {
+		return
+	}
+	m.input = string(runes[:cursor])
+	m.chatCursor = cursor
 	m.chatCursorManual = true
 	m.chatCursorInput = m.input
 }
@@ -2325,6 +2684,124 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.chatScrollback = 0
 		m.notice = "Transcript cleared."
 		return m.appendSystemMessage("Transcript cleared. Memory and conversation history are untouched."), nil, true
+	case "retry":
+		// Regenerate the most recent assistant reply by resending the latest
+		// user message. Trailing assistant/tool/system lines after that user
+		// turn are dropped — the resend reopens that turn, it doesn't append
+		// a fresh one. If nothing to retry, tell the user rather than
+		// silently doing nothing.
+		m.input = ""
+		if m.sending {
+			m.notice = "Cannot /retry while a turn is already streaming."
+			return m.appendSystemMessage("A turn is already streaming — press esc to cancel it first, then /retry."), nil, true
+		}
+		lastUser := -1
+		for i := len(m.transcript) - 1; i >= 0; i-- {
+			if strings.EqualFold(m.transcript[i].Role, "user") {
+				lastUser = i
+				break
+			}
+		}
+		if lastUser < 0 {
+			m.notice = "Nothing to retry yet."
+			return m.appendSystemMessage("No prior user message in this transcript to retry. Type a question first."), nil, true
+		}
+		question := strings.TrimSpace(m.transcript[lastUser].Content)
+		if question == "" {
+			m.notice = "Last user message was empty."
+			return m.appendSystemMessage("The last user message was empty; nothing to regenerate."), nil, true
+		}
+		// Drop the previous user turn and everything after — submitChatQuestion
+		// re-appends the user line plus a fresh assistant placeholder. Retries
+		// that left the old reply visible confused users into thinking they'd
+		// accidentally double-sent.
+		m.transcript = m.transcript[:lastUser]
+		m.notice = "Retrying last question…"
+		next, cmd := m.submitChatQuestion(question, nil)
+		return next, cmd, true
+	case "edit":
+		// Pull the most recent user message back into the composer so the
+		// user can amend it, then press enter to resend. Complement of
+		// /retry, which resubmits verbatim. The old user/assistant turn
+		// pair is dropped on the edit so the user doesn't end up with two
+		// near-identical user messages stacked when they send the amended
+		// version.
+		if m.sending {
+			m.notice = "Cannot /edit while a turn is already streaming."
+			return m.appendSystemMessage("A turn is already streaming — press esc to cancel it first, then /edit."), nil, true
+		}
+		lastUserIdx := -1
+		for i := len(m.transcript) - 1; i >= 0; i-- {
+			if strings.EqualFold(m.transcript[i].Role, "user") {
+				lastUserIdx = i
+				break
+			}
+		}
+		if lastUserIdx < 0 {
+			m.input = ""
+			m.notice = "Nothing to edit yet."
+			return m.appendSystemMessage("No prior user message to edit. Type a question first."), nil, true
+		}
+		prior := m.transcript[lastUserIdx].Content
+		m.transcript = m.transcript[:lastUserIdx]
+		m.setChatInput(prior)
+		m.chatCursor = len([]rune(prior))
+		m.chatCursorManual = true
+		m.chatCursorInput = prior
+		m.notice = "Editing last message — press enter to resend."
+		return m, nil, true
+	case "file", "files":
+		// Slash-command fallback for the @ mention picker. Same trick as
+		// Ctrl+T: insert a leading "@" so the existing mention-picker
+		// machinery takes over. Particularly useful for users whose
+		// keyboard layout makes Ctrl+T awkward too.
+		m.input = ""
+		if m.sending {
+			m.notice = "Cannot open file picker while a turn is streaming."
+			return m.appendSystemMessage("A turn is streaming — esc to cancel first."), nil, true
+		}
+		m.setChatInput("@")
+		m.mentionIndex = 0
+		m.notice = "File picker open — type to filter, tab/enter inserts, esc cancels."
+		if len(m.files) == 0 && m.eng != nil {
+			return m, loadFilesCmd(m.eng), true
+		}
+		return m, nil, true
+	case "plan":
+		// Enter plan mode — agent runs read-only, proposes changes as a
+		// plan for the user to approve. Complements /retry and /edit:
+		// users who want to survey before mutating finally get a first-
+		// class switch instead of relying on prompt discipline.
+		m.input = ""
+		if m.planMode {
+			m.notice = "Already in plan mode — type your question, or /code to exit."
+			return m.appendSystemMessage("Plan mode is already ON. Your next prompt will investigate without modifying files. Use /code to exit."), nil, true
+		}
+		m.planMode = true
+		m.notice = "Plan mode ON — investigate-only, no file writes. /code exits."
+		return m.appendSystemMessage("▸ Plan mode ON. The agent will investigate with read-only tools (read_file, grep_codebase, ast_query, list_dir, glob, git_status, git_diff) and propose changes as a plan. Type /code to exit plan mode when you're ready to apply."), nil, true
+	case "code":
+		// Exit plan mode — subsequent prompts are free to mutate.
+		m.input = ""
+		if !m.planMode {
+			m.notice = "Already in code mode — plan mode was not active."
+			return m.appendSystemMessage("Not in plan mode. Prompts already allow file modifications."), nil, true
+		}
+		m.planMode = false
+		m.notice = "Plan mode OFF — prompts can now modify files."
+		return m.appendSystemMessage("▸ Plan mode OFF. Write/update prompts will now route through mutating tools (apply_patch, edit_file, write_file)."), nil, true
+	case "keylog":
+		// Toggle key-event dump into m.notice. Used to diagnose Turkish-
+		// keyboard AltGr delivery and similar terminal-specific weirdness
+		// without needing a side logfile.
+		m.input = ""
+		m.keyLogEnabled = !m.keyLogEnabled
+		state := "off"
+		if m.keyLogEnabled {
+			state = "on — press any key and read the footer"
+		}
+		m.notice = "Key log " + state
+		return m.appendSystemMessage("Key event dump is " + state + ". Toggle again with /keylog."), nil, true
 	case "coach":
 		m.input = ""
 		m.coachMuted = !m.coachMuted
@@ -2772,6 +3249,41 @@ func (m Model) submitChatQuestion(question string, quickActions []quickActionSug
 	m.resumePromptActive = false
 	m.toolTimeline = nil
 	m.chatScrollback = 0
+	// Offline-mode guardrail. When the user sends what clearly looks like
+	// an action ("update X", "write Y", "güncelle", "fix the bug", plus a
+	// [[file:]] marker) but the active provider is the offline analyzer,
+	// surface the mismatch before they wait on a stream that can't modify
+	// anything. The offline analyzer happily reads the file and prints
+	// heuristic observations — users reasonably mistake that for "my file
+	// got updated and nothing happened". A prepended system message kills
+	// the ambiguity without blocking the turn.
+	if m.looksLikeActionRequest(question) && !m.hasToolCapableProvider() {
+		m = m.appendSystemMessage(
+			"⚠ This looks like an action request (write/update/edit), but the active provider is the offline analyzer — it can only summarize files, it cannot modify them. " +
+				"Run /provider to pick a tool-capable provider (anthropic, openai, deepseek, kimi, zai, alibaba), then retry with /retry.",
+		)
+	}
+	// Tool-use enforcement for action requests on tool-capable providers.
+	// Weaker LLMs (e.g. GLM/Qwen/DeepSeek via openai-compat) routinely
+	// respond to "update README.md" by describing the changes in prose
+	// instead of calling apply_patch/edit_file/write_file — users then see
+	// the file content echoed back and conclude "nothing happened".
+	// Prepending an explicit directive dramatically raises the chance the
+	// model routes through a real tool call. Strong models (Claude, GPT-4)
+	// follow the directive anyway; weak models finally take the hint.
+	// Applied only when: intent is clear, provider is tool-capable, and
+	// the question doesn't already instruct tool use.
+	// In plan mode, inject the opposite directive: investigate only, no
+	// mutations. Takes precedence over the enforce-tool-use directive.
+	if m.planMode {
+		question = strings.TrimRight(question, "\n") +
+			"\n\n[DFMC plan mode] You are in INVESTIGATE-ONLY mode. " +
+			"Use ONLY read-only tools (read_file, grep_codebase, ast_query, list_dir, glob, git_status, git_diff, web_fetch, web_search). " +
+			"Do NOT call write_file, edit_file, apply_patch, or run_command with destructive arguments. " +
+			"Produce a concrete plan as the answer — numbered steps, files to touch, expected diffs — that the user can approve before any files are modified."
+	} else {
+		question = m.enforceToolUseForActionRequests(question)
+	}
 	if len(quickActions) > 0 {
 		selected := quickActions[clampIndex(m.quickActionIndex, len(quickActions))]
 		m.transcript = append(m.transcript, newChatLine("user", question))
@@ -3005,6 +3517,76 @@ func parseRunCommandChatArgs(args []string) (map[string]any, error) {
 		}
 	}
 	return params, nil
+}
+
+// looksLikeActionRequest returns true when the user's question contains a
+// clear write/edit verb. Used as the gate for the offline-mode guardrail —
+// we only warn when the user seems to expect file mutation, not on plain
+// read/explain questions where offline heuristics are still useful.
+func (m Model) looksLikeActionRequest(question string) bool {
+	lower := strings.ToLower(strings.TrimSpace(question))
+	if lower == "" {
+		return false
+	}
+	// Presence of a [[file:...]] marker alongside a verb is the strongest
+	// signal; bare verbs ("güncelle") without a file target are ambiguous
+	// and better left to the LLM than pre-empted.
+	hasFileMarker := strings.Contains(lower, "[[file:") || strings.Contains(lower, "@")
+	verbs := []string{
+		"güncelle", "guncelle", "yaz", "düzelt", "duzelt", "değiştir", "degistir",
+		"ekle", "kaldır", "kaldir", "sil", "refactor", "modify",
+		"update", "write", "edit", "fix", "change", "rename", "delete",
+		"add ", "remove ", "replace",
+	}
+	for _, v := range verbs {
+		if strings.Contains(lower, v) {
+			return hasFileMarker || strings.Contains(lower, ".go") ||
+				strings.Contains(lower, ".py") || strings.Contains(lower, ".md") ||
+				strings.Contains(lower, ".ts") || strings.Contains(lower, ".js")
+		}
+	}
+	return false
+}
+
+// enforceToolUseForActionRequests appends a terse, forceful directive to
+// the question when the user clearly wants a mutation on a tool-capable
+// provider. Returns the question untouched otherwise. The directive is
+// appended (not prepended) so file markers + user context stay adjacent,
+// and the tool-use sentence lands right before the assistant turn where
+// attention is highest. Skipped when the question already mentions a
+// tool or meta-tool name — we don't want to double up.
+func (m Model) enforceToolUseForActionRequests(question string) string {
+	if !m.looksLikeActionRequest(question) || !m.hasToolCapableProvider() {
+		return question
+	}
+	lower := strings.ToLower(question)
+	for _, existing := range []string{
+		"tool_call", "tool_batch_call", "apply_patch", "edit_file", "write_file",
+	} {
+		if strings.Contains(lower, existing) {
+			return question
+		}
+	}
+	directive := "\n\n[DFMC directive] You MUST use tool calls to make the requested changes. " +
+		"Route through tool_call with apply_patch (preferred), edit_file, or write_file as appropriate — " +
+		"read the target first if you haven't, then emit the tool call. " +
+		"Do NOT just describe the changes in prose; the user wants the files actually modified."
+	return strings.TrimRight(question, "\n") + directive
+}
+
+// hasToolCapableProvider reports whether the active provider is a real
+// LLM capable of issuing tool calls (so the agent loop can actually
+// modify files). The offline analyzer and the placeholder are both
+// read-only — everything else can route through the tool registry.
+func (m Model) hasToolCapableProvider() bool {
+	if m.eng == nil || m.eng.Tools == nil {
+		return false
+	}
+	provider := strings.ToLower(strings.TrimSpace(m.status.Provider))
+	if provider == "" || provider == "offline" || provider == "placeholder" {
+		return false
+	}
+	return m.status.ProviderProfile.Configured
 }
 
 func (m Model) autoToolIntentFromQuestion(question string) (string, map[string]any, string, bool) {
@@ -4278,8 +4860,25 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 	}
 	inputLine := renderChatInputLine(m.input, m.chatCursor, m.chatCursorManual, m.chatCursorInput, m.sending)
 	tailLines = append(tailLines, "", sectionHeader("›", "Input"), renderInputBox(inputLine, min(width, 100)))
-	if strip := m.renderContextStrip(min(width, 120)); strip != "" {
-		tailLines = append(tailLines, strip)
+
+	// Picker priority: when @ or / picker is active, it must be the dominant
+	// thing below the composer. Earlier versions rendered the context strip,
+	// slashAssistHints and quickActions first, pushing the @ modal off-screen
+	// in short terminals — users reported the picker "doesn't work" when in
+	// fact it was rendering below the fold. Now the active picker owns the
+	// real estate directly under the input and all other tail decoration is
+	// suppressed until the user dismisses or commits it.
+	pickerActive := suggestions.mentionActive || suggestions.slashMenuActive || m.commandPickerActive
+	if suggestions.mentionActive {
+		tailLines = append(tailLines, "", renderMentionPickerModal(suggestions, m.mentionIndex, len(m.files), min(width-2, 110)))
+	} else if suggestions.slashMenuActive {
+		tailLines = append(tailLines, "", renderSlashPickerModal(suggestions.slashCommands, m.slashIndex, min(width-2, 110)))
+	}
+
+	if !pickerActive {
+		if strip := m.renderContextStrip(min(width, 120)); strip != "" {
+			tailLines = append(tailLines, strip)
+		}
 	}
 	lines = tailLines
 	if m.commandPickerActive {
@@ -4338,10 +4937,10 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 			}
 		}
 	}
-	if suggestions.slashMenuActive {
-		lines = append(lines, "", renderSlashPickerModal(suggestions.slashCommands, m.slashIndex, min(width-2, 110)))
-	}
-	if !suggestions.slashMenuActive {
+	// Non-picker tail decoration. Gated on pickerActive so the @ / slash
+	// modals aren't competing with Slash Assist hints, Command args, or
+	// Quick actions — those can reappear when the picker closes.
+	if !pickerActive {
 		if len(suggestions.slashArgSuggestions) > 0 {
 			lines = append(lines, sectionTitleStyle.Render("Command args"))
 			lines = append(lines, subtleStyle.Render("↑↓ move · tab fill"))
@@ -4364,34 +4963,31 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 				lines = append(lines, prefix+label)
 			}
 		}
-	}
-	if hints := m.slashAssistHints(); len(hints) > 0 {
-		lines = append(lines, sectionTitleStyle.Render("Slash Assist"))
-		for _, hint := range hints {
-			hint = truncateSingleLine(strings.TrimSpace(hint), width)
-			if hint == "" {
-				continue
+		if hints := m.slashAssistHints(); len(hints) > 0 {
+			lines = append(lines, sectionTitleStyle.Render("Slash Assist"))
+			for _, hint := range hints {
+				hint = truncateSingleLine(strings.TrimSpace(hint), width)
+				if hint == "" {
+					continue
+				}
+				lines = append(lines, "  "+subtleStyle.Render(hint))
 			}
-			lines = append(lines, "  "+subtleStyle.Render(hint))
 		}
-	}
-	if suggestions.mentionActive {
-		lines = append(lines, "", renderMentionPickerModal(suggestions, m.mentionIndex, len(m.files), min(width-2, 110)))
-	}
-	if len(suggestions.quickActions) > 0 {
-		lines = append(lines, sectionTitleStyle.Render("Quick actions"))
-		lines = append(lines, subtleStyle.Render("↑↓ move · tab cycle · enter run"))
-		selected := clampIndex(m.quickActionIndex, len(suggestions.quickActions))
-		for i, action := range suggestions.quickActions {
-			prefix := "  "
-			label := truncateSingleLine(action.PreparedInput, width)
-			if i == selected {
-				prefix = "> "
-				label = titleStyle.Render(label)
-			}
-			lines = append(lines, prefix+label)
-			if reason := strings.TrimSpace(action.Reason); reason != "" {
-				lines = append(lines, "  "+subtleStyle.Render(truncateSingleLine(reason, width)))
+		if len(suggestions.quickActions) > 0 {
+			lines = append(lines, sectionTitleStyle.Render("Quick actions"))
+			lines = append(lines, subtleStyle.Render("↑↓ move · tab cycle · enter run"))
+			selected := clampIndex(m.quickActionIndex, len(suggestions.quickActions))
+			for i, action := range suggestions.quickActions {
+				prefix := "  "
+				label := truncateSingleLine(action.PreparedInput, width)
+				if i == selected {
+					prefix = "> "
+					label = titleStyle.Render(label)
+				}
+				lines = append(lines, prefix+label)
+				if reason := strings.TrimSpace(action.Reason); reason != "" {
+					lines = append(lines, "  "+subtleStyle.Render(truncateSingleLine(reason, width)))
+				}
 			}
 		}
 	}
@@ -4442,6 +5038,7 @@ func (m Model) chatHeaderInfo() chatHeaderInfo {
 		PendingNotes:    m.pendingNoteCount,
 		ActiveTools:     m.activeToolCount,
 		ActiveSubagents: m.activeSubagentCount,
+		PlanMode:        m.planMode,
 	}
 }
 
@@ -4931,8 +5528,13 @@ func (m Model) renderHelpOverlay(width int) string {
 		boldStyle.Render("Chat composer"),
 		"  ↑/↓ history · tab accept suggestion · @ mention file · / browse commands",
 		"  @file:10-50 or @file#L10-L50 attaches a line range to the mention",
+		"  ctrl+←/→ jump word · ctrl+w kill word · ctrl+k kill to end · ctrl+u clear line",
+		"  ctrl+a/ctrl+e line home/end · home/end same · backspace deletes char",
+		"  ctrl+t or /file open file picker (alias for @, useful on AltGr layouts)",
 		"  /continue resumes a parked agent loop · /btw queues a note",
 		"  /clear wipes transcript · /quit exits · /coach mutes notes · /hints toggles trajectory",
+		"  /plan enters investigate-only mode · /code exits and re-enables mutations",
+		"  /retry resends last user msg · /edit pulls last msg back to the composer",
 	)
 	out := make([]string, 0, len(lines))
 	for _, ln := range lines {
@@ -4947,7 +5549,7 @@ func helpOverlayTabHints(tab string) []string {
 	switch strings.TrimSpace(strings.ToLower(tab)) {
 	case "chat":
 		return []string{
-			"enter send · shift+enter newline · / commands · @ mention",
+			"enter send · ctrl+j or alt+enter newline · / commands · @ mention",
 			"wheel · shift+↑/↓ · pgup/pgdn scroll transcript",
 			"when parked: enter resumes · esc dismisses · type a note first to steer",
 		}
@@ -6275,26 +6877,59 @@ func chatBubbleContent(item chatLine, streaming bool) string {
 }
 
 func renderChatInputLine(input string, cursor int, manual bool, manualInput string, sending bool) string {
+	// Multi-line composition: a literal "\n" in the buffer becomes a new
+	// physical row. Continuation rows get a "  " indent instead of the "> "
+	// prompt so the prompt glyph never repeats. The cursor "|" lands on the
+	// correct logical row. Sending/streaming displays the raw buffer without
+	// a cursor since we're not collecting keystrokes at that moment.
 	if sending {
-		return "> " + input
+		return renderSendingInputBuffer(input)
 	}
 	runes := []rune(input)
-	max := len(runes)
+	total := len(runes)
 	if manual && manualInput != input {
 		manual = false
 	}
 	if !manual {
-		cursor = max
+		cursor = total
 	}
 	if cursor < 0 {
 		cursor = 0
 	}
-	if cursor > max {
-		cursor = max
+	if cursor > total {
+		cursor = total
 	}
 	before := string(runes[:cursor])
 	after := string(runes[cursor:])
-	return "> " + before + "|" + after
+	withCursor := before + "|" + after
+	logical := strings.Split(withCursor, "\n")
+	out := make([]string, 0, len(logical))
+	for i, row := range logical {
+		prefix := "> "
+		if i > 0 {
+			prefix = "  "
+		}
+		out = append(out, prefix+row)
+	}
+	return strings.Join(out, "\n")
+}
+
+// renderSendingInputBuffer prints the frozen input while a turn is streaming
+// (no cursor, just the text with the same prompt rules as the live editor).
+func renderSendingInputBuffer(input string) string {
+	if !strings.ContainsRune(input, '\n') {
+		return "> " + input
+	}
+	logical := strings.Split(input, "\n")
+	out := make([]string, 0, len(logical))
+	for i, row := range logical {
+		prefix := "> "
+		if i > 0 {
+			prefix = "  "
+		}
+		out = append(out, prefix+row)
+	}
+	return strings.Join(out, "\n")
 }
 
 func chatDigest(text string) string {
@@ -7562,6 +8197,12 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "patch", Template: "/patch", Description: "show latest patch summary"},
 		{Command: "apply", Template: "/apply --check", Description: "dry-run apply latest patch"},
 		{Command: "undo", Template: "/undo", Description: "undo last exchange"},
+		{Command: "retry", Template: "/retry", Description: "resend the last user message"},
+		{Command: "edit", Template: "/edit", Description: "pull last user message into composer to amend"},
+		{Command: "keylog", Template: "/keylog", Description: "toggle raw KeyMsg dump into the footer (diagnostic)"},
+		{Command: "file", Template: "/file", Description: "open the file picker (alias for @, avoids AltGr-@ conflicts)"},
+		{Command: "plan", Template: "/plan", Description: "enter investigate-only plan mode (read-only tools)"},
+		{Command: "code", Template: "/code", Description: "exit plan mode, allow file-mutating tool calls"},
 		{Command: "continue", Template: "/continue", Description: "resume a parked agent loop"},
 		{Command: "split", Template: "/split ", Description: "decompose a broad task into focused subtasks"},
 		{Command: "btw", Template: "/btw ", Description: "inject a note at the next tool-loop step"},
@@ -7907,9 +8548,11 @@ func (m *Model) cancelActiveStream() bool {
 }
 
 // renderContextStrip summarizes what will be attached to the next message:
-// pinned file, inline [[file:...]] markers, fenced code blocks, and a rough
-// char count. It sits directly below the input so users can see their
-// context budget forming in real time rather than discovering after send.
+// pinned file, inline [[file:...]] markers, fenced code blocks, and — the
+// piece that actually matters to providers — a heuristic token count with
+// percent-of-budget when the provider profile declares MaxContext. chars
+// are kept too since they answer a different "am I about to spam?" concern
+// but tokens drive what the API will accept.
 // Returns "" when nothing is attached so we don't paint a dead strip.
 func (m Model) renderContextStrip(width int) string {
 	if width < 40 {
@@ -7944,7 +8587,23 @@ func (m Model) renderContextStrip(width int) string {
 		parts = append(parts, subtleStyle.Render("fenced:")+" "+boldStyle.Render(fmt.Sprintf("%d", fenceCount)))
 	}
 	if trimmed := strings.TrimSpace(input); trimmed != "" {
-		parts = append(parts, subtleStyle.Render("chars:")+" "+boldStyle.Render(fmt.Sprintf("%d", len([]rune(trimmed)))))
+		chars := len([]rune(trimmed))
+		parts = append(parts, subtleStyle.Render("chars:")+" "+boldStyle.Render(fmt.Sprintf("%d", chars)))
+		// Token projection: heuristic is fast, safe, zero-alloc enough for
+		// every-frame rendering. When the provider declares MaxContext, show
+		// percent-of-budget so users can tell at a glance whether they're
+		// about to pack 200 tokens or 20000 into the next turn.
+		tok := tokens.Estimate(trimmed)
+		budget := m.status.ProviderProfile.MaxContext
+		if budget <= 0 && m.status.ContextIn != nil {
+			budget = m.status.ContextIn.ProviderMaxContext
+		}
+		tokenLabel := fmt.Sprintf("~%d", tok)
+		if budget > 0 {
+			pct := int(float64(tok) / float64(budget) * 100)
+			tokenLabel = fmt.Sprintf("~%d (%d%% of %d)", tok, pct, budget)
+		}
+		parts = append(parts, subtleStyle.Render("tokens:")+" "+boldStyle.Render(tokenLabel))
 	}
 
 	joined := strings.Join(parts, subtleStyle.Render("  ·  "))

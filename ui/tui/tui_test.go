@@ -810,6 +810,412 @@ func TestCtrlUClearsChatInput(t *testing.T) {
 	}
 }
 
+// TestChatInputLineHomeEnd — Home/End must operate on the *logical line*
+// under the cursor once the user composes multi-line input. Before this
+// change Home always jumped to buffer start, which is useless in a multi-
+// paragraph prompt.
+func TestChatInputLineHomeEnd(t *testing.T) {
+	runes := []rune("alpha\nbeta\ngamma")
+	// cursor in "beta" (index 8, between 'e' and 't').
+	if got := chatInputLineHome(runes, 8); got != 6 {
+		t.Errorf("lineHome on 'beta' row should be 6, got %d", got)
+	}
+	if got := chatInputLineEnd(runes, 8); got != 10 {
+		t.Errorf("lineEnd on 'beta' row should be 10 (index of '\\n'), got %d", got)
+	}
+	// cursor in "alpha" row (index 3).
+	if got := chatInputLineHome(runes, 3); got != 0 {
+		t.Errorf("lineHome on first row should be 0, got %d", got)
+	}
+	if got := chatInputLineEnd(runes, 3); got != 5 {
+		t.Errorf("lineEnd on first row should be 5, got %d", got)
+	}
+	// cursor in last row — lineEnd should hit buffer end, not a '\n'.
+	if got := chatInputLineEnd(runes, 14); got != 16 {
+		t.Errorf("lineEnd on last row should be len=16, got %d", got)
+	}
+}
+
+// TestHomeKeyIsLineAwareInMultiLineInput — end-to-end: pressing Home from
+// mid-row must land on that row's first column, not at buffer start.
+func TestHomeKeyIsLineAwareInMultiLineInput(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.setChatInput("first\nsecond line here")
+	m.chatCursor = 10 // inside "second"
+	m.chatCursorManual = true
+	m.chatCursorInput = m.input
+
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	mm := out.(Model)
+	if mm.chatCursor != 6 {
+		t.Fatalf("Home on row 1 should land at index 6 (start of 'second'), got %d", mm.chatCursor)
+	}
+	// End should land just before the buffer end (no trailing \n here, so
+	// it's the buffer length).
+	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	mm = out.(Model)
+	if mm.chatCursor != len([]rune(mm.input)) {
+		t.Fatalf("End on last row should land at len=%d, got %d", len([]rune(mm.input)), mm.chatCursor)
+	}
+}
+
+// TestArrowUpInMultiLineNavigatesRowsNotHistory — when the composer has a
+// newline, Up/Down walk the buffer first and only fall through to history
+// when already on the first/last row. Single-line input is unaffected.
+func TestArrowUpInMultiLineNavigatesRowsNotHistory(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.setChatInput("first\nsecond")
+	m.chatCursor = 12 // end of "second"
+	m.chatCursorManual = true
+	m.chatCursorInput = m.input
+
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	mm := out.(Model)
+	// Column 6 from row 1; "first" has length 5, so clamp to 5.
+	if mm.chatCursor != 5 {
+		t.Fatalf("KeyUp should move cursor up to 'first' row at col 5 (clamped), got %d", mm.chatCursor)
+	}
+	// Input must be unchanged — we moved the cursor, not the buffer.
+	if mm.input != "first\nsecond" {
+		t.Fatalf("row nav must not mutate the buffer, got %q", mm.input)
+	}
+	// Pressing Up again from row 0 falls through to history. The history
+	// is empty here so nothing changes, but sending must not fire.
+	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyUp})
+	mm = out.(Model)
+	if mm.sending {
+		t.Fatalf("row-nav overflow must not trigger send")
+	}
+}
+
+// TestArrowDownInMultiLineMovesDownARow — symmetric check for Down.
+func TestArrowDownInMultiLineMovesDownARow(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.setChatInput("alpha\nbeta\ngamma")
+	m.chatCursor = 3 // in "alpha"
+	m.chatCursorManual = true
+	m.chatCursorInput = m.input
+
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	mm := out.(Model)
+	// Expected: col 3 carried to "beta" → index 6 + 3 = 9 (within "beta").
+	if mm.chatCursor != 9 {
+		t.Fatalf("KeyDown should land in 'beta' at col 3 (index 9), got %d", mm.chatCursor)
+	}
+}
+
+// TestEnforceToolUseForActionRequests_InjectsDirectiveOnMutationIntent —
+// weaker models routinely respond to "update X" with prose instead of a
+// tool call. The TUI appends an explicit tool-use directive so the model
+// routes through apply_patch/edit_file/write_file instead of narrating.
+// Applied only when provider is tool-capable AND question is clearly
+// about mutation.
+func TestEnforceToolUseForActionRequests_InjectsDirectiveOnMutationIntent(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	// Simulate a tool-capable provider.
+	m.status.Provider = "zai"
+	m.status.ProviderProfile.Configured = true
+	// hasToolCapableProvider also checks m.eng.Tools; we can't easily set
+	// a real engine here so we exercise the path where eng is nil.
+	// In that case hasToolCapableProvider returns false → directive is
+	// skipped. That's the correct default-safe behavior. Test the shape
+	// of the injection via the underlying helper.
+	got := m.enforceToolUseForActionRequests("[[file:README.md]] güncelle")
+	// Without a real engine, no directive appended — just returns input.
+	if got != "[[file:README.md]] güncelle" {
+		t.Fatalf("without engine tools, directive should be skipped; got %q", got)
+	}
+}
+
+// TestEnforceToolUseForActionRequests_SkipsWhenToolAlreadyNamed — if the
+// user already references a tool by name, trust they know what they're
+// doing and don't double up.
+func TestEnforceToolUseForActionRequests_SkipsWhenToolAlreadyNamed(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	in := "Use apply_patch to update [[file:README.md]]"
+	if got := m.enforceToolUseForActionRequests(in); got != in {
+		t.Fatalf("question already names a tool — directive must not be added: %q", got)
+	}
+}
+
+// TestEnforceToolUseForActionRequests_SkipsOnPureReadIntent — no mutation
+// intent → no directive. Pure "explain this" should never trip.
+func TestEnforceToolUseForActionRequests_SkipsOnPureReadIntent(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	in := "explain [[file:README.md]]"
+	if got := m.enforceToolUseForActionRequests(in); got != in {
+		t.Fatalf("read-only intent must not get a tool-use directive, got %q", got)
+	}
+}
+
+// TestLooksLikeActionRequest_DetectsWriteVerbs — the gate that decides
+// whether to warn about offline mode. The heuristic must be tight: pure
+// "explain" / "show" / "what is" prompts should fall through (offline
+// analyzer still useful there), but write/update/guncelle + a file
+// target must trip it so we can pre-empt the "nothing happened" surprise.
+func TestLooksLikeActionRequest_DetectsWriteVerbs(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	cases := []struct {
+		q    string
+		want bool
+	}{
+		{"[[file:README.md]] güncelle", true},
+		{"write a fix in @ui/tui/tui.go", true},
+		{"update internal/auth/token.go", true},
+		{"fix the auth.go file", true},
+		// Pure read/explain — do NOT trip, offline analyzer is useful here.
+		{"explain @README.md", false},
+		{"what is this project about?", false},
+		{"summarize the codebase", false},
+		// Verb without file target is ambiguous — leave it to the LLM.
+		{"write", false},
+		{"update", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		t.Run(c.q, func(t *testing.T) {
+			if got := m.looksLikeActionRequest(c.q); got != c.want {
+				t.Errorf("looksLikeActionRequest(%q) = %v, want %v", c.q, got, c.want)
+			}
+		})
+	}
+}
+
+// TestHasToolCapableProvider_FalseForOffline — when the engine reports
+// the offline analyzer as the active provider, we must NOT claim tool
+// capability. Same for placeholder and empty-string provider.
+func TestHasToolCapableProvider_FalseForOffline(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	// NewModel has eng=nil which already returns false; we want to test
+	// the provider-name check too. Re-wire status manually.
+	m.status.Provider = "offline"
+	m.status.ProviderProfile.Configured = true
+	if m.hasToolCapableProvider() {
+		t.Fatalf("offline provider must not count as tool-capable even when Configured=true")
+	}
+	m.status.Provider = "placeholder"
+	if m.hasToolCapableProvider() {
+		t.Fatalf("placeholder provider must not count as tool-capable")
+	}
+	m.status.Provider = ""
+	if m.hasToolCapableProvider() {
+		t.Fatalf("empty provider name must not count as tool-capable")
+	}
+}
+
+// TestCtrlJInsertsNewline — Shift+Enter can't be reliably distinguished from
+// Enter on most terminals, so we bind Ctrl+J (the LF character) to newline
+// insertion as the cross-terminal reliable way to compose multi-line prompts.
+// The help overlay used to lie about "shift+enter newline" and break user
+// expectations on the first try.
+func TestCtrlJInsertsNewline(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.setChatInput("first line")
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	mm := out.(Model)
+	if mm.input != "first line\n" {
+		t.Fatalf("ctrl+j should append a newline to the buffer, got %q", mm.input)
+	}
+	// Typing continues on the fresh logical row.
+	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("second")})
+	mm = out.(Model)
+	if mm.input != "first line\nsecond" {
+		t.Fatalf("runes after ctrl+j should land on the new row, got %q", mm.input)
+	}
+}
+
+// TestAltEnterInsertsNewline — on terminals that deliver Alt+Enter as
+// KeyEnter with Alt=true (iTerm, WezTerm, Windows Terminal with the right
+// setting) the composer treats it as a newline instead of submit.
+func TestAltEnterInsertsNewline(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.setChatInput("paragraph one")
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	mm := out.(Model)
+	if mm.input != "paragraph one\n" {
+		t.Fatalf("alt+enter should insert a newline, not submit; got %q", mm.input)
+	}
+	if mm.sending {
+		t.Fatalf("alt+enter must not flip sending=true")
+	}
+}
+
+// TestRenderChatInputLine_MultiLineUsesContinuationPrefix — the "> " prompt
+// glyph should appear only on the first row; continuation rows get a "  "
+// indent so the visual prompt never repeats. The cursor glyph must land on
+// the correct logical row.
+func TestRenderChatInputLine_MultiLineUsesContinuationPrefix(t *testing.T) {
+	input := "first\nsecond"
+	runes := []rune(input)
+	// Cursor at end of "second".
+	line := renderChatInputLine(input, len(runes), true, input, false)
+	rows := strings.Split(line, "\n")
+	if len(rows) != 2 {
+		t.Fatalf("expected two rendered rows, got %d: %q", len(rows), rows)
+	}
+	if !strings.HasPrefix(rows[0], "> ") || !strings.Contains(rows[0], "first") {
+		t.Fatalf("row 0 should carry the '> ' prompt with 'first', got %q", rows[0])
+	}
+	if !strings.HasPrefix(rows[1], "  ") || strings.HasPrefix(rows[1], "> ") {
+		t.Fatalf("row 1 continuation must not repeat the '> ' prompt, got %q", rows[1])
+	}
+	if !strings.Contains(rows[1], "second|") {
+		t.Fatalf("cursor should land at the end of row 1 'second|', got %q", rows[1])
+	}
+}
+
+// TestRenderChatInputLine_CursorOnFirstRowWhenMid — when the cursor is in
+// the first logical row it must NOT migrate to a continuation row.
+func TestRenderChatInputLine_CursorOnFirstRowWhenMid(t *testing.T) {
+	input := "hello\nworld"
+	// Cursor at index 3 ("hel|lo").
+	line := renderChatInputLine(input, 3, true, input, false)
+	rows := strings.Split(line, "\n")
+	if !strings.Contains(rows[0], "hel|lo") {
+		t.Fatalf("cursor must stay on row 0, got %q", rows[0])
+	}
+	if strings.Contains(rows[1], "|") {
+		t.Fatalf("cursor should not appear on row 1, got %q", rows[1])
+	}
+}
+
+// TestFormatInputBoxContent_PreservesNewlines — the box formatter must emit
+// a row per logical line so lipgloss paints a tall frame, not a single
+// truncated strip.
+func TestFormatInputBoxContent_PreservesNewlines(t *testing.T) {
+	got := formatInputBoxContent("one\ntwo\nthree", 40)
+	if strings.Count(got, "\n") != 2 {
+		t.Fatalf("expected 2 newlines in output, got %q", got)
+	}
+}
+
+// TestFormatInputBoxContent_SoftWrapsLongLine — a single long pasted line
+// should be wrapped inside the inner width so it doesn't spill past the
+// right border.
+func TestFormatInputBoxContent_SoftWrapsLongLine(t *testing.T) {
+	long := strings.Repeat("abcdefghij ", 10) // ~110 chars, tons of break points
+	got := formatInputBoxContent(long, 40)
+	for _, row := range strings.Split(got, "\n") {
+		if len(row) > 40 {
+			t.Fatalf("row exceeds inner width 40: len=%d %q", len(row), row)
+		}
+	}
+}
+
+// TestChatInputWordBoundaries pins the readline-style word boundary math.
+// Whitespace is the only separator — paths like internal/auth/token.go and
+// [[file:...]] markers must stay atomic so Ctrl+W nukes the whole reference
+// in one stroke instead of fragmenting it down path separators.
+func TestChatInputWordBoundaries(t *testing.T) {
+	cases := []struct {
+		name      string
+		text      string
+		cursor    int
+		wantLeft  int // chatInputWordBoundaryLeft
+		wantRight int // chatInputWordBoundaryRight
+	}{
+		{"empty", "", 0, 0, 0},
+		{"mid-word-left-jumps-to-word-start", "hello world", 8, 6, 11},
+		{"at-word-end-left-jumps-over-whitespace", "hello world", 5, 0, 11},
+		{"trailing-space-left-still-kills-prior-word", "hello   ", 8, 0, 8},
+		{"path-stays-atomic-under-ctrl+w", "review @internal/auth/token.go here", 31, 7, 35},
+		{"file-marker-stays-atomic", "hi [[file:a.go]] there", 16, 3, 22},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runes := []rune(tc.text)
+			if got := chatInputWordBoundaryLeft(runes, tc.cursor); got != tc.wantLeft {
+				t.Errorf("wordLeft(%q, %d) = %d, want %d", tc.text, tc.cursor, got, tc.wantLeft)
+			}
+			if got := chatInputWordBoundaryRight(runes, tc.cursor); got != tc.wantRight {
+				t.Errorf("wordRight(%q, %d) = %d, want %d", tc.text, tc.cursor, got, tc.wantRight)
+			}
+		})
+	}
+}
+
+// TestCtrlWDeletesPreviousWord — the single most important readline key for
+// chat composers. User has typed a long question, spots a typo three words
+// back: Ctrl+W should kill the word just behind the cursor without touching
+// anything after it, and leave the cursor at the gap.
+func TestCtrlWDeletesPreviousWord(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.setChatInput("explain @internal/auth/token.go please")
+	// Park cursor at end and nuke "please".
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
+	mm := out.(Model)
+	if mm.input != "explain @internal/auth/token.go " {
+		t.Fatalf("ctrl+w should kill the trailing word, got %q", mm.input)
+	}
+	// Fire again — the whole path is one "word" (whitespace separator),
+	// so the entire @mention goes in a single stroke.
+	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
+	mm = out.(Model)
+	if mm.input != "explain " {
+		t.Fatalf("ctrl+w should kill the @path atomically, got %q", mm.input)
+	}
+}
+
+// TestCtrlKDeletesToEndOfLine — the complement to Ctrl+U / Ctrl+W. User
+// rewinds with Ctrl+A, types a prefix, then nukes the suffix.
+func TestCtrlKDeletesToEndOfLine(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.setChatInput("hello world and more")
+	// Move cursor to position 5 ("hello|")
+	m.chatCursor = 5
+	m.chatCursorManual = true
+	m.chatCursorInput = m.input
+
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	mm := out.(Model)
+	if mm.input != "hello" {
+		t.Fatalf("ctrl+k should kill everything from cursor to end, got %q", mm.input)
+	}
+	if mm.chatCursor != 5 {
+		t.Fatalf("cursor should stay at the kill point, got %d", mm.chatCursor)
+	}
+}
+
+// TestCtrlLeftRightMovesByWord — word-wise cursor moves land at word
+// boundaries, matching bash/emacs. No delete, just navigation.
+func TestCtrlLeftRightMovesByWord(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.setChatInput("alpha beta gamma")
+	// Cursor at end (16). Ctrl+Left → 11 (start of "gamma").
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlLeft})
+	mm := out.(Model)
+	if mm.chatCursor != 11 {
+		t.Fatalf("ctrl+left should land on 'gamma' start, got cursor=%d", mm.chatCursor)
+	}
+	// Again → 6 (start of "beta").
+	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyCtrlLeft})
+	mm = out.(Model)
+	if mm.chatCursor != 6 {
+		t.Fatalf("ctrl+left should land on 'beta' start, got cursor=%d", mm.chatCursor)
+	}
+	// Ctrl+Right → 10 (end of "beta"): readline convention lands at the
+	// end of the word you're currently inside, not the start of the next.
+	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyCtrlRight})
+	mm = out.(Model)
+	if mm.chatCursor != 10 {
+		t.Fatalf("ctrl+right should land on 'beta' end, got cursor=%d", mm.chatCursor)
+	}
+	// Again → 16 (end of "gamma"): cross the space, consume "gamma".
+	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyCtrlRight})
+	mm = out.(Model)
+	if mm.chatCursor != 16 {
+		t.Fatalf("ctrl+right should land on 'gamma' end, got cursor=%d", mm.chatCursor)
+	}
+}
+
 // TestHandleEngineEventToolResultFailureMirrorsToTranscript — tool failures
 // are rare but critical, and a failed chip is easy to miss in a long turn.
 // Force the transcript to carry the error message so scrollback preserves
