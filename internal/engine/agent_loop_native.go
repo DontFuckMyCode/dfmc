@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
@@ -412,42 +411,12 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			})
 		}
 
-		// Pre-flight budget gate. The existing post-round gate at the
-		// bottom catches consumption after the fact — if a round takes
-		// 40k on top of 95k we only notice at 135k/120k, and the cost
-		// is already burned. Reserve ~14% of MaxTokens as headroom for
-		// the round we're about to start; when we can't fit, auto-
-		// compact once and retry, else park cleanly.
-		if lim.MaxTokens > 0 {
-			headroom := lim.MaxTokens / lim.BudgetHeadroomDivisor
-			if totalTokens+headroom >= lim.MaxTokens {
-				if autoRecoveries < maxBudgetAutoRecoveries {
-					if compacted, report := e.forceCompactNativeLoopHistory(msgs, systemPrompt, chunks); report != nil && report.MessagesRemoved > 0 {
-						msgs = compacted
-						before := totalTokens
-						totalTokens = 0
-						autoRecoveries++
-						e.publishAgentLoopEvent("agent:loop:auto_recover", map[string]any{
-							"step":             step,
-							"attempt":          autoRecoveries,
-							"max_attempts":     maxBudgetAutoRecoveries,
-							"tokens_before":    before,
-							"rounds_collapsed": report.RoundsCollapsed,
-							"messages_removed": report.MessagesRemoved,
-							"reason":           "budget_headroom_preflight",
-							"surface":          "native",
-						})
-						// Fall through — the next iteration re-checks the gate
-						// with the zeroed budget and runs the round normally.
-					} else {
-						notice := formatBudgetExhaustedNotice(parkPhaseBefore, step, totalTokens, lim.MaxTokens, headroom, len(traces))
-						return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonBudgetExhausted), nil
-					}
-				} else {
-					notice := formatBudgetExhaustedNotice(parkPhaseBefore, step, totalTokens, lim.MaxTokens, headroom, len(traces))
-					return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonBudgetExhausted), nil
-				}
-			}
+		// Pre-flight budget gate (preflightBudget in agent_loop_phases.go).
+		// Park-or-recover before we burn another round's tokens.
+		var parked *nativeToolCompletion
+		msgs, totalTokens, autoRecoveries, parked = e.preflightBudget(seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, question, lastProvider, lastModel, totalTokens, step, autoRecoveries, lim)
+		if parked != nil {
+			return *parked, nil
 		}
 
 		// Synthesis nudge. After N rounds of tool calls the model often
@@ -523,54 +492,16 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			lastModel = resp.Model
 		}
 
-		// Empty turn: zero tool_calls AND zero visible text. Usually a
-		// symptom of model confusion after a tool failure or an
-		// over-aggressive compact. The old behaviour was to treat this
-		// as a final answer (Answer="") and return silently — the user
-		// saw an empty assistant bubble and no explanation. Retry once
-		// with an explicit synthesis nudge; if it happens a second time
-		// we surface an honest failure message instead of a ghost.
+		// Empty turn: zero tool_calls AND zero visible text. Delegate to
+		// handleEmptyTurn which handles the first-time nudge vs the
+		// second-time visible-failure case (in agent_loop_phases.go).
 		if len(resp.ToolCalls) == 0 && strings.TrimSpace(resp.Text) == "" {
-			if !emptyRecoveryTried {
-				emptyRecoveryTried = true
-				msgs = append(msgs, provider.Message{
-					Role:      types.RoleAssistant,
-					Content:   resp.Text,
-					ToolCalls: resp.ToolCalls,
-				})
-				msgs = append(msgs, provider.Message{
-					Role: types.RoleUser,
-					Content: "[system] Your previous response was empty. Please provide a natural-language answer to the original question based on the context you've gathered. " +
-						"If you genuinely cannot answer, say so explicitly — do not return an empty response.",
-				})
-				e.publishAgentLoopEvent("agent:loop:empty_recovery", map[string]any{
-					"step":        step,
-					"tool_rounds": len(traces),
-					"tokens_used": totalTokens,
-					"surface":     "native",
-				})
-				continue
+			var emptyOut *nativeToolCompletion
+			msgs, emptyRecoveryTried, emptyOut = e.handleEmptyTurn(question, msgs, traces, resp, chunks, systemPrompt, lastProvider, lastModel, step, totalTokens, emptyRecoveryTried)
+			if emptyOut != nil {
+				return *emptyOut, nil
 			}
-			// Second empty turn — give up with a visible notice instead
-			// of returning a blank bubble.
-			completion := nativeToolCompletion{
-				Answer: "The model returned an empty response twice in a row even after an explicit synthesis nudge. " +
-					"Try rephrasing the question or `/continue` with a narrower scope.",
-				Provider:     lastProvider,
-				Model:        lastModel,
-				TokenCount:   totalTokens,
-				Context:      chunks,
-				ToolTraces:   traces,
-				SystemPrompt: systemPrompt,
-			}
-			e.recordNativeAgentInteraction(question, completion)
-			e.publishAgentLoopEvent("agent:loop:empty_final", map[string]any{
-				"step":        step,
-				"tool_rounds": len(traces),
-				"tokens_used": totalTokens,
-				"surface":     "native",
-			})
-			return completion, nil
+			continue
 		}
 
 		// No tool calls → final answer.
@@ -599,156 +530,17 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			return completion, nil
 		}
 
-		// Append the assistant turn (text + tool_calls) so the model sees its
-		// own previous step on the next round.
-		msgs = append(msgs, provider.Message{
-			Role:      types.RoleAssistant,
-			Content:   resp.Text,
-			ToolCalls: resp.ToolCalls,
-		})
+		// Run the round's tool calls (executeAndAppendToolBatch in
+		// agent_loop_phases.go), then layer trajectory-aware coach
+		// hints over the result before the next provider round.
+		var freshStart int
+		msgs, traces, freshStart = e.executeAndAppendToolBatch(ctx, resp, msgs, traces, lastProvider, lastModel, step, totalTokens, lim)
+		msgs = e.injectTrajectoryHints(seed, msgs, traces, freshStart, step)
 
-		freshStart := len(traces)
-
-		// Publish call events up-front in issue order so the TUI / activity
-		// log reflects what the model asked for, even if we're about to fan
-		// the calls out across goroutines.
-		stepTraces := make([]nativeToolTrace, len(resp.ToolCalls))
-		for i, call := range resp.ToolCalls {
-			stepTraces[i] = nativeToolTrace{
-				Call:       call,
-				Provider:   lastProvider,
-				Model:      lastModel,
-				Step:       step,
-				OccurredAt: time.Now(),
-			}
-			e.publishNativeToolCall(stepTraces[i])
-		}
-
-		// Parallelize when every call in the batch targets a read-only
-		// tool. Mixed batches (reads + writes / reads + run_command) stay
-		// sequential so ordering guarantees hold — run_command's
-		// workspace-changed snapshot alone makes interleaved execution
-		// unsafe.
-		batchSize := 1
-		if allParallelSafe(resp.ToolCalls) {
-			batchSize = e.parallelBatchSize()
-		}
-		results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize)
-
-		// When we're already deep in the budget, halve the per-tool
-		// char caps so new round results don't accelerate the bloat.
-		// This kicks in once we've consumed 50% of MaxTokens — the
-		// point where previous rounds are already carrying substantial
-		// weight into every subsequent request.
-		effectiveMaxResult := lim.MaxResultChars
-		effectiveMaxData := lim.MaxDataChars
-		if lim.MaxTokens > 0 && totalTokens*2 >= lim.MaxTokens {
-			if effectiveMaxResult > 0 {
-				effectiveMaxResult /= 2
-			}
-			if effectiveMaxData > 0 {
-				effectiveMaxData /= 2
-			}
-		}
-
-		// Rejoin results in original call order for message append /
-		// trace accumulation. Doing this in a second pass (after
-		// executeToolCallsParallel returns in-order) keeps the message
-		// sequence the provider sees identical to the sequential path.
-		for i, call := range resp.ToolCalls {
-			r := results[i]
-			trace := stepTraces[i]
-			if r.Err != nil {
-				trace.Err = r.Err.Error()
-			} else {
-				trace.Result = r.Result
-			}
-
-			content, isErr := formatNativeToolResultPayloadWithLimits(r.Result, r.Err, effectiveMaxResult, effectiveMaxData)
-			// Publish after formatting so we can attach RTK compression
-			// stats (raw→payload bytes) to the event for the TUI stats
-			// panel. Publication order matches issue order.
-			e.publishNativeToolResultWithPayload(trace, content)
-			traces = append(traces, trace)
-
-			// Cross-round dedup: if the model already invoked this exact
-			// (name, input) combination and we kept the full payload in
-			// history, replace the older result with a one-line stub.
-			// The model always has the most-recent read in the live
-			// round, so the older one just bloats context. We never
-			// remove the message — ToolCallID chains must stay intact
-			// for provider APIs — only shrink its Content.
-			if prev := findPriorIdenticalToolResult(msgs, call, call.ID); prev >= 0 {
-				if len(msgs[prev].Content) > toolResultDedupStubBytes {
-					msgs[prev].Content = fmt.Sprintf(
-						"[deduped — identical %s call appears again in a later round; see that result for the current payload]",
-						call.Name,
-					)
-				}
-			}
-
-			msgs = append(msgs, provider.Message{
-				Role:       types.RoleUser,
-				Content:    content,
-				ToolCallID: call.ID,
-				ToolName:   call.Name,
-				ToolError:  isErr,
-			})
-		}
-
-		// Dynamic prompt composition: derive trajectory-aware coach hints
-		// from the round we just finished and inject them as a system-tagged
-		// user note before the next provider round-trip. Rules live in
-		// internal/context/trajectory.go; de-dup is tracked on the parked
-		// state so the same hint doesn't fire twice in one run.
-		if hints := buildTrajectoryHints(traces[freshStart:], traces, seed.RecentCoachHints); len(hints) > 0 {
-			if block := ctxmgr.FormatTrajectoryHints(hints); block != "" {
-				msgs = append(msgs, provider.Message{
-					Role:    types.RoleUser,
-					Content: block,
-				})
-				seed.RecentCoachHints = appendRecentHints(seed.RecentCoachHints, hints)
-				e.publishAgentLoopEvent("agent:coach:hint", map[string]any{
-					"step":  step,
-					"hints": hints,
-				})
-			}
-		}
-
-		if lim.MaxTokens > 0 && totalTokens >= lim.MaxTokens {
-			// Before parking, try auto-recovery: force-compact the running
-			// history and reset the per-run token counter so the next
-			// iteration gets fresh headroom. Only attempt this a fixed
-			// number of times to avoid infinite compact→fill cycles when
-			// the work inherently exceeds one budget.
-			if autoRecoveries < maxBudgetAutoRecoveries {
-				if compacted, report := e.forceCompactNativeLoopHistory(msgs, systemPrompt, chunks); report != nil && report.MessagesRemoved > 0 {
-					msgs = compacted
-					before := totalTokens
-					totalTokens = 0
-					autoRecoveries++
-					e.publishAgentLoopEvent("agent:loop:auto_recover", map[string]any{
-						"step":             step,
-						"attempt":          autoRecoveries,
-						"max_attempts":     maxBudgetAutoRecoveries,
-						"tokens_before":    before,
-						"rounds_collapsed": report.RoundsCollapsed,
-						"messages_removed": report.MessagesRemoved,
-						"reason":           "budget_exhausted",
-						"surface":          "native",
-					})
-					// Fall through to the step-cap check. If we're not at
-					// MaxSteps yet, the loop iterates with the slimmed
-					// history and a zeroed budget.
-				} else {
-					// Nothing to compact — park. Same behaviour as before.
-					notice := formatBudgetExhaustedNotice(parkPhaseAfter, step, totalTokens, lim.MaxTokens, 0, len(traces))
-					return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonBudgetExhausted), nil
-				}
-			} else {
-				notice := formatBudgetExhaustedNotice(parkPhaseAfter, step, totalTokens, lim.MaxTokens, 0, len(traces))
-				return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonBudgetExhausted), nil
-			}
+		// Post-step budget gate (postStepBudget in agent_loop_phases.go).
+		msgs, totalTokens, autoRecoveries, parked = e.postStepBudget(seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, question, lastProvider, lastModel, totalTokens, step, autoRecoveries, lim)
+		if parked != nil {
+			return *parked, nil
 		}
 
 		if step == lim.MaxSteps {
