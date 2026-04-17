@@ -73,7 +73,15 @@ Rules:
 - For renaming a symbol everywhere, set replace_all=true AND make old_string long enough to avoid collateral hits on unrelated code.
 - If you need to apply several hunks to the same file, prefer apply_patch with a single unified diff — fewer round-trips and the diff is self-documenting.
 - Always read_file first: the engine rejects edits to files whose content changed since the last read.
-- After edit, run the smallest validation that proves correctness (targeted test, go vet, tsc on the changed file).`,
+- After edit, run the smallest validation that proves correctness (targeted test, go vet, tsc on the changed file).
+
+Failure hints (read the error message carefully, don't blindly retry):
+- "not found — trimmed form matches" → drop surrounding whitespace from old_string.
+- "not found — indentation may be off" → re-read the region and copy bytes verbatim (tabs vs spaces).
+- "not unique: N matches (line A, line B)" → extend old_string with a neighbouring unique line, or pass replace_all=true.
+- "identical" → you did not actually change anything; re-plan the edit.
+
+Line endings are auto-normalized for matching (CRLF files match LF old_string and vice-versa); the tool re-applies the file's original newline style when writing, so you never need to think about this.`,
 		Risk: RiskWrite,
 		Tags: []string{"filesystem", "write", "edit", "code"},
 		Args: []Arg{

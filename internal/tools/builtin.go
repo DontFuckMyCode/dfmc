@@ -113,6 +113,9 @@ func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	if strings.TrimSpace(oldStr) == "" {
 		return Result{}, fmt.Errorf("old_string is required")
 	}
+	if oldStr == newStr {
+		return Result{}, fmt.Errorf("old_string and new_string are identical — nothing to do")
+	}
 
 	absPath, err := EnsureWithinRoot(req.ProjectRoot, path)
 	if err != nil {
@@ -123,30 +126,141 @@ func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 	src := string(data)
-	n := strings.Count(src, oldStr)
+
+	// Normalize both haystack and needle to LF for matching so an agent
+	// running on Linux can edit a file written on Windows (CRLF) without
+	// the match silently failing. The normalized forms are used for the
+	// replace; afterward we re-apply the file's original newline style
+	// to the rewritten content so we don't flip line endings as a
+	// side-effect of the edit.
+	wasCRLF := strings.Contains(src, "\r\n")
+	normSrc := strings.ReplaceAll(src, "\r\n", "\n")
+	normOld := strings.ReplaceAll(oldStr, "\r\n", "\n")
+	normNew := strings.ReplaceAll(newStr, "\r\n", "\n")
+
+	n := strings.Count(normSrc, normOld)
 	if n == 0 {
-		return Result{}, fmt.Errorf("old_string not found in file")
+		return Result{}, editFileMissMessage(absPath, normSrc, normOld, wasCRLF != strings.Contains(oldStr, "\r\n"))
 	}
 	if n > 1 && !replaceAll {
-		return Result{}, fmt.Errorf("old_string is not unique; use replace_all=true")
+		return Result{}, editFileAmbiguityMessage(normSrc, normOld, n)
 	}
 
 	replacedN := 1
-	updated := strings.Replace(src, oldStr, newStr, 1)
+	updatedNorm := strings.Replace(normSrc, normOld, normNew, 1)
 	if replaceAll {
 		replacedN = n
-		updated = strings.ReplaceAll(src, oldStr, newStr)
+		updatedNorm = strings.ReplaceAll(normSrc, normOld, normNew)
 	}
+
+	// Restore the file's original newline style so the edit stays a
+	// diff of content, not line endings.
+	updated := updatedNorm
+	if wasCRLF {
+		updated = strings.ReplaceAll(updatedNorm, "\n", "\r\n")
+	}
+
 	if err := os.WriteFile(absPath, []byte(updated), 0o644); err != nil {
 		return Result{}, err
 	}
 	return Result{
-		Output: "file edited",
+		Output: fmt.Sprintf("file edited (%d replacement%s)", replacedN, plural(replacedN)),
 		Data: map[string]any{
 			"path":         absPath,
 			"replacements": replacedN,
 		},
 	}, nil
+}
+
+// editFileMissMessage crafts a specific "old_string not found" error
+// that actually tells the agent *why* the match failed. Zero-context
+// errors burn tool rounds — the agent retries the same input and fails
+// identically. The hints here (whitespace-trim fuzzy match, CRLF
+// mismatch, unique-prefix anchor) steer the retry toward the real
+// problem.
+func editFileMissMessage(absPath, haystack, needle string, crlfMismatch bool) error {
+	var hints []string
+
+	trimmedNeedle := strings.TrimSpace(needle)
+	if trimmedNeedle != needle && trimmedNeedle != "" {
+		if strings.Contains(haystack, trimmedNeedle) {
+			hints = append(hints, "a trimmed form of old_string matches — leading/trailing whitespace in old_string differs from the file")
+		}
+	}
+
+	// Check whether the first non-trivial line of the needle appears
+	// anywhere — helps the agent anchor the retry.
+	firstLine := ""
+	for _, line := range strings.Split(needle, "\n") {
+		if s := strings.TrimSpace(line); s != "" {
+			firstLine = line
+			break
+		}
+	}
+	if firstLine != "" && !strings.Contains(haystack, firstLine) {
+		hints = append(hints, "first non-empty line of old_string doesn't appear verbatim — the indentation may be off")
+	}
+
+	if crlfMismatch {
+		hints = append(hints, "file uses CRLF line endings; supply old_string with the same line endings or rely on the tool's auto-normalization (already attempted)")
+	}
+
+	if strings.Contains(haystack, "\t") && !strings.Contains(needle, "\t") {
+		hints = append(hints, "file contains tab indentation; old_string may be using spaces")
+	}
+
+	base := fmt.Sprintf("old_string not found in %s", absPath)
+	if len(hints) == 0 {
+		return fmt.Errorf("%s — re-read the file and copy the exact lines you want to replace", base)
+	}
+	return fmt.Errorf("%s: %s", base, strings.Join(hints, "; "))
+}
+
+// editFileAmbiguityMessage tells the agent exactly how many matches
+// were found and the line numbers of the first few, so the retry can
+// either pick a more specific old_string or set replace_all=true
+// intentionally.
+func editFileAmbiguityMessage(haystack, needle string, count int) error {
+	lines := strings.Split(haystack, "\n")
+	offsets := make([]int, 0, 3)
+	for i, line := range lines {
+		if strings.Contains(line, needle) || (strings.HasPrefix(needle, "\n") && i+strings.Count(needle, "\n") <= len(lines)) {
+			offsets = append(offsets, i+1)
+			if len(offsets) >= 3 {
+				break
+			}
+		}
+	}
+	// Fall back to character-index-based line approximation when needle
+	// spans lines (the per-line scan above misses multi-line needles).
+	if len(offsets) == 0 {
+		idx := 0
+		for len(offsets) < 3 {
+			hit := strings.Index(haystack[idx:], needle)
+			if hit < 0 {
+				break
+			}
+			lineNum := 1 + strings.Count(haystack[:idx+hit], "\n")
+			offsets = append(offsets, lineNum)
+			idx += hit + len(needle)
+		}
+	}
+	locations := make([]string, 0, len(offsets))
+	for _, l := range offsets {
+		locations = append(locations, fmt.Sprintf("line %d", l))
+	}
+	loc := strings.Join(locations, ", ")
+	if loc != "" {
+		loc = " (" + loc + ")"
+	}
+	return fmt.Errorf("old_string is not unique: %d matches%s — extend it with surrounding lines for a unique anchor, or pass replace_all=true", count, loc)
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 type ListDirTool struct{}
