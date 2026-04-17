@@ -3627,10 +3627,19 @@ func (m Model) describeHealth() string {
 		lines = append(lines, fmt.Sprintf("  tools:    ✓ %d registered", len(tools)))
 	}
 
-	// Memory store reachability.
-	if m.eng.Memory == nil {
+	// Memory store reachability. The degraded flag surfaces a failed
+	// Memory.Load() from Init so the operator doesn't silently run on
+	// an empty store when the bbolt file is corrupt or locked.
+	switch {
+	case m.eng.Memory == nil:
 		lines = append(lines, "  memory:   ⚠ store not initialized")
-	} else {
+	case m.status.MemoryDegraded:
+		reason := strings.TrimSpace(m.status.MemoryLoadErr)
+		if reason == "" {
+			reason = "load failed"
+		}
+		lines = append(lines, "  memory:   ⚠ degraded — "+reason+" (running with empty store)")
+	default:
 		lines = append(lines, "  memory:   ✓ bbolt store open")
 	}
 
@@ -5864,6 +5873,16 @@ func (m Model) renderStatusView(width int) string {
 		"Metrics:  " + formatASTMetricsSummaryTUI(m.status.ASTMetrics),
 		"CodeMap:  " + formatCodeMapMetricsSummaryTUI(m.status.CodeMap),
 	})...)
+	// Memory panel: only render when degraded, to keep the Status
+	// view terse in the healthy common case. A banner-style single
+	// line is louder than a dedicated group when something's wrong.
+	if m.status.MemoryDegraded {
+		reason := strings.TrimSpace(m.status.MemoryLoadErr)
+		if reason == "" {
+			reason = "load failed"
+		}
+		parts = append(parts, "", warnStyle.Render("⚠ memory degraded — "+reason+" (running with empty store)"))
+	}
 	if summary := formatContextInSummaryTUI(m.status.ContextIn); summary != "" {
 		parts = append(parts, "")
 		rows := []string{"Last:     " + summary}

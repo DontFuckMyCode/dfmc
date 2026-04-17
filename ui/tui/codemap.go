@@ -29,6 +29,14 @@ const (
 	codemapHotspotLimit = 200
 	codemapOrphanLimit  = 200
 	codemapCycleLimit   = 50
+	// codemapCyclePathLimit caps the length of each individual cycle
+	// path. Without it a pathological dependency chain in a generated
+	// file can produce a single cycle with thousands of nodes, which
+	// balloons the snapshot's memory and the panel's render cost. 32
+	// is well past the longest real cycle any well-maintained codebase
+	// would have; chains longer than that get truncated with an
+	// ellipsis so the user still sees both endpoints.
+	codemapCyclePathLimit = 32
 
 	codemapViewOverview = "overview"
 	codemapViewHotspots = "hotspots"
@@ -88,6 +96,14 @@ func loadCodemapCmd(eng *engine.Engine) tea.Cmd {
 		if len(cycles) > codemapCycleLimit {
 			cycles = cycles[:codemapCycleLimit]
 		}
+		// Bound each cycle's path length too — see codemapCyclePathLimit.
+		// Keep the first and last N/2 nodes with an ellipsis marker so
+		// the user can still see the cycle's endpoints.
+		for i, path := range cycles {
+			if len(path) > codemapCyclePathLimit {
+				cycles[i] = truncateCyclePath(path, codemapCyclePathLimit)
+			}
+		}
 
 		return codemapLoadedMsg{snap: codemapSnapshot{
 			Nodes:     counts.Nodes,
@@ -99,6 +115,29 @@ func loadCodemapCmd(eng *engine.Engine) tea.Cmd {
 			Cycles:    cycles,
 		}}
 	}
+}
+
+// truncateCyclePath reduces an over-long dependency-cycle path down
+// to `limit` entries while keeping both endpoints visible. When a
+// path has 200 nodes and limit=32, the result is
+// `[p0, p1, ..., p15, "…", p184, ..., p199]` — the user still sees
+// where the cycle starts and ends, but the middle is collapsed to a
+// single ellipsis marker. Returns `path` untouched if it already
+// fits under the limit.
+func truncateCyclePath(path []string, limit int) []string {
+	if limit <= 0 || len(path) <= limit {
+		return path
+	}
+	// Reserve one slot for the ellipsis marker; split the rest evenly
+	// between head and tail. Odd limits prefer a bigger head.
+	keep := limit - 1
+	head := (keep + 1) / 2
+	tail := keep - head
+	out := make([]string, 0, limit)
+	out = append(out, path[:head]...)
+	out = append(out, "…")
+	out = append(out, path[len(path)-tail:]...)
+	return out
 }
 
 func (m Model) renderCodemapView(width int) string {

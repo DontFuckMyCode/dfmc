@@ -1735,6 +1735,7 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 	var complexity bool
 	var deadCode bool
 	var duplication bool
+	var todos bool
 	var deps bool
 	var magicDoc bool
 	var magicDocPath string
@@ -1748,6 +1749,7 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 	fs.BoolVar(&complexity, "complexity", false, "run complexity analysis")
 	fs.BoolVar(&deadCode, "dead-code", false, "run dead code analysis")
 	fs.BoolVar(&duplication, "duplication", false, "run code duplication analysis")
+	fs.BoolVar(&todos, "todos", false, "collect TODO/FIXME/HACK/XXX/NOTE markers from comments")
 	fs.BoolVar(&deps, "deps", false, "run dependency analysis summary")
 	fs.BoolVar(&magicDoc, "magicdoc", false, "update .dfmc/magic/MAGIC_DOC.md after analyze")
 	fs.StringVar(&magicDocPath, "magicdoc-path", "", "custom magic doc path")
@@ -1771,6 +1773,7 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		Complexity:  complexity,
 		DeadCode:    deadCode,
 		Duplication: duplication,
+		Todos:       todos,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "analyze failed: %v\n", err)
@@ -1880,6 +1883,34 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 				}
 				fmt.Printf("      %s:%d-%d\n", loc.File, loc.StartLine, loc.EndLine)
 			}
+		}
+	}
+	if report.Todos != nil && report.Todos.Total > 0 {
+		td := report.Todos
+		fmt.Printf("Todos: %d markers", td.Total)
+		if len(td.Kinds) > 0 {
+			// Stable alphabetical order so the line is deterministic.
+			keys := make([]string, 0, len(td.Kinds))
+			for k := range td.Kinds {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			parts := make([]string, 0, len(keys))
+			for _, k := range keys {
+				parts = append(parts, fmt.Sprintf("%s=%d", k, td.Kinds[k]))
+			}
+			fmt.Printf(" (%s)", strings.Join(parts, " "))
+		}
+		fmt.Println()
+		for i, item := range td.Items {
+			if i >= 5 {
+				remaining := len(td.Items) - 5
+				if remaining > 0 {
+					fmt.Printf("  … %d more (use --json for the full list)\n", remaining)
+				}
+				break
+			}
+			fmt.Printf("  - [%s] %s:%d %s\n", item.Kind, item.File, item.Line, item.Text)
 		}
 	}
 	if deps || full {

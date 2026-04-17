@@ -251,6 +251,7 @@ type AnalyzeReport struct {
 	DeadCode    []DeadCodeItem     `json:"dead_code,omitempty"`
 	Complexity  *ComplexityReport  `json:"complexity,omitempty"`
 	Duplication *DuplicationReport `json:"duplication,omitempty"`
+	Todos       *TodoReport        `json:"todos,omitempty"`
 }
 
 type AnalyzeOptions struct {
@@ -260,6 +261,7 @@ type AnalyzeOptions struct {
 	DeadCode    bool
 	Complexity  bool
 	Duplication bool
+	Todos       bool
 }
 
 type DeadCodeItem struct {
@@ -2495,6 +2497,10 @@ func (e *Engine) AnalyzeWithOptions(ctx context.Context, opts AnalyzeOptions) (A
 	if runDuplication {
 		dup := detectDuplication(paths, duplicationMinLines)
 		report.Duplication = &dup
+	}
+	if opts.Full || opts.Todos {
+		td := collectTodoMarkers(paths)
+		report.Todos = &td
 	}
 
 	return report, nil
