@@ -128,10 +128,14 @@ func (e *Engine) maybeAutoHandoff(question string) *handoffReport {
 		Role:    types.RoleAssistant,
 		Content: brief,
 		Metadata: map[string]string{
-			"auto_handoff":       "true",
+			"auto_handoff":        "true",
 			"source_conversation": oldID,
 		},
 	})
+	// New conversation starts with a non-trivial brief — flush
+	// immediately so the handoff state is durable. Same rationale
+	// as the per-turn save in the agent loop.
+	_ = e.Conversation.SaveActive()
 
 	report := &handoffReport{
 		OldConversationID: oldID,

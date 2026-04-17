@@ -1178,6 +1178,15 @@ func (e *Engine) recordNativeAgentInteraction(question string, completion native
 			Timestamp: now,
 		})
 		e.Conversation.AddMessage(completion.Provider, completion.Model, assistantMsg)
+		// Persist after every completed turn — without this the
+		// JSONL is only flushed at engine.Shutdown(), so a panic,
+		// SIGKILL, OOM, or power loss between turns silently drops
+		// the entire in-memory conversation. The save uses an atomic
+		// temp + rename (storage.SaveConversationLog), so the write
+		// cost is one disk transaction per turn and any reader either
+		// sees the previous full log or the new full log — never a
+		// torn intermediate.
+		_ = e.Conversation.SaveActive()
 	}
 	if e.Memory != nil {
 		e.Memory.SetWorkingQuestionAnswer(question, completion.Answer)
