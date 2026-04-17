@@ -2892,6 +2892,15 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		note := fmt.Sprintf("Compacted %d older transcript lines. Full history lives in the Conversations panel.", collapsedCount)
 		m.notice = fmt.Sprintf("Compacted %d lines (keep=%d).", collapsedCount, keep)
 		return m.appendSystemMessage(note), nil, true
+	case "approve", "approvals", "permissions":
+		// Surface the tool-approval gate configuration: which tools are
+		// gated, whether an approver is registered, whether a prompt is
+		// currently pending. Read-only — editing the gate requires a
+		// config change (opt-in by design; we don't want runtime slash
+		// commands silently widening the attack surface).
+		m.input = ""
+		m.notice = "Approval gate state shown below."
+		return m.appendSystemMessage(m.describeApprovalGate()), nil, true
 	case "keylog":
 		// Toggle key-event dump into m.notice. Used to diagnose Turkish-
 		// keyboard AltGr delivery and similar terminal-specific weirdness
@@ -3254,6 +3263,42 @@ func (m Model) appendSystemMessage(text string) Model {
 	m.transcript = append(m.transcript, newChatLine("system", strings.TrimSpace(text)))
 	m.chatScrollback = 0
 	return m
+}
+
+// describeApprovalGate returns a human-readable snapshot of the current
+// tool-approval configuration for the /approve slash command. Lists the
+// gated tools, whether a TUI approver is wired, and whether a prompt
+// is currently pending. Read-only: editing the gate is a config change,
+// not a slash action.
+func (m Model) describeApprovalGate() string {
+	var gated []string
+	if m.eng != nil && m.eng.Config != nil {
+		for _, raw := range m.eng.Config.Tools.RequireApproval {
+			if s := strings.TrimSpace(raw); s != "" {
+				gated = append(gated, s)
+			}
+		}
+	}
+	lines := []string{"▸ Tool approval gate"}
+	if len(gated) == 0 {
+		lines = append(lines,
+			"  state:    off — no tools require approval (tools.require_approval is empty)",
+			"  enable:   add tool names to .dfmc/config.yaml under tools.require_approval (or '*' for every tool)",
+			"  bypass:   user-initiated /tool calls are never gated",
+		)
+	} else {
+		lines = append(lines,
+			"  state:    ON",
+			"  gated:    "+strings.Join(gated, ", "),
+			"  bypass:   user-initiated /tool calls are never gated; only agent/subagent calls prompt",
+		)
+	}
+	if m.pendingApproval != nil {
+		lines = append(lines, fmt.Sprintf("  pending:  %s (source=%s) — press y/enter to approve, n/esc to deny", m.pendingApproval.Req.Tool, m.pendingApproval.Req.Source))
+	} else {
+		lines = append(lines, "  pending:  none")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // compactTranscript collapses all transcript entries older than the last
@@ -8369,6 +8414,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "reload", Template: "/reload", Description: "reload config + env"},
 		{Command: "clear", Template: "/clear", Description: "clear transcript (memory untouched)"},
 		{Command: "compact", Template: "/compact", Description: "collapse older transcript into a summary (keeps last 6; /compact N for custom)"},
+		{Command: "approve", Template: "/approve", Description: "show the tool-approval gate state (which tools prompt agent calls)"},
 		{Command: "quit", Template: "/quit", Description: "exit DFMC"},
 		{Command: "providers", Template: "/providers", Description: "list configured providers"},
 		{Command: "models", Template: "/models", Description: "show configured model"},
@@ -9513,6 +9559,7 @@ func renderTUIHelp() string {
 		"    /reload                      Reload engine configuration",
 		"    /clear                       Clear transcript (memory untouched)",
 		"    /compact [N]                 Collapse older transcript into a summary (keeps last N; default 6)",
+		"    /approve                     Show tool-approval gate state (which tools prompt agent calls)",
 		"    /quit                        Exit DFMC",
 		"    /coach                       Mute or unmute background coach notes",
 		"    /hints                       Show or hide between-round trajectory hints",
