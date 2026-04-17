@@ -65,6 +65,49 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestStatusEndpointIncludesApprovalGateAndHooks(t *testing.T) {
+	eng := newTestEngine(t)
+	eng.Config.Tools.RequireApproval = []string{"write_file", "run_command"}
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var payload struct {
+		ApprovalGate struct {
+			Active   bool     `json:"active"`
+			Wildcard bool     `json:"wildcard"`
+			Count    int      `json:"count"`
+			Tools    []string `json:"tools"`
+		} `json:"approval_gate"`
+		Hooks struct {
+			Total    int            `json:"total"`
+			PerEvent map[string]int `json:"per_event"`
+		} `json:"hooks"`
+		RecentDenials int `json:"recent_denials"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if !payload.ApprovalGate.Active || payload.ApprovalGate.Count != 2 {
+		t.Fatalf("expected active gate with 2 tools, got %#v", payload.ApprovalGate)
+	}
+	if payload.ApprovalGate.Wildcard {
+		t.Fatalf("wildcard must be false for explicit list")
+	}
+	if payload.Hooks.Total < 0 {
+		t.Fatalf("hooks total must never be negative: %d", payload.Hooks.Total)
+	}
+	if payload.RecentDenials != 0 {
+		t.Fatalf("fresh engine must have zero denials, got %d", payload.RecentDenials)
+	}
+}
+
 func TestHealthEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
