@@ -198,35 +198,113 @@ func clampCommandTimeout(requested, limit time.Duration) time.Duration {
 	return requested
 }
 
-func ensureCommandAllowed(command string, args []string, blocked []string) error {
-	full := strings.ToLower(strings.TrimSpace(strings.Join(append([]string{command}, args...), " ")))
-	for _, item := range append(defaultBlockedCommandPatterns(), blocked...) {
-		pattern := strings.ToLower(strings.TrimSpace(item))
-		if pattern != "" && strings.Contains(full, pattern) {
-			return fmt.Errorf("command blocked by policy: %s", item)
-		}
-	}
-	binary := strings.ToLower(filepath.Base(strings.TrimSpace(command)))
-	switch binary {
-	case "rm", "del", "rmdir", "format", "mkfs", "diskpart":
+// ensureCommandAllowed gates execution against the default block list
+// plus any user-configured patterns. The checks are ordered from
+// cheapest/most-specific to most-permissive:
+//
+//  1. Binary-name block: strips path + .exe and matches against a
+//     fixed list of destructive or privilege-escalating binaries. This
+//     catches rm, mkfs, sudo, shutdown, etc. regardless of how they
+//     were invoked.
+//  2. Structured arg-sequence block: for binaries that ARE legitimate
+//     (git, dd) but have specific flag combinations that are
+//     destructive. Token-based, so `echo "git reset --hard"` does not
+//     false-positive.
+//  3. User-configured patterns: kept as substring matches over the
+//     joined command+args for back-compat with .dfmc/config.yaml
+//     entries. Users opt into this shape knowing it matches substrings.
+//
+// Substring matching over the *defaults* was the old behaviour and led
+// to false positives like blocking `go build -o format ./...` (pattern
+// "format " matches inside the args) and `echo "mkfs is cool"`
+// (pattern "mkfs" matches the echoed string). The token-based checks
+// below avoid that class of bug entirely.
+func ensureCommandAllowed(command string, args []string, userBlocked []string) error {
+	binary := canonicalCommandBinary(command)
+	if isBlockedBinary(binary) {
 		return fmt.Errorf("command blocked by policy: %s", command)
-	case "git":
-		if hasArgSequence(args, "reset", "--hard") || hasArgSequence(args, "clean", "-fd") || hasArgSequence(args, "clean", "-fdx") || hasArgSequence(args, "checkout", "--") || hasArgSequence(args, "restore", "--source") {
-			return fmt.Errorf("command blocked by policy: git %s", strings.Join(args, " "))
+	}
+	if err := checkBlockedArgSequences(binary, args); err != nil {
+		return err
+	}
+	if len(userBlocked) > 0 {
+		full := strings.ToLower(strings.TrimSpace(strings.Join(append([]string{command}, args...), " ")))
+		for _, item := range userBlocked {
+			pattern := strings.ToLower(strings.TrimSpace(item))
+			if pattern == "" {
+				continue
+			}
+			if strings.Contains(full, pattern) {
+				return fmt.Errorf("command blocked by policy: %s", item)
+			}
 		}
 	}
 	return nil
 }
 
-func defaultBlockedCommandPatterns() []string {
-	return []string{
-		"rm -rf /",
-		"dd if=",
-		"mkfs",
-		"del /f",
-		"rmdir /s",
-		"format ",
+// canonicalCommandBinary extracts a lower-case, .exe-stripped binary
+// name from a command string. Doing this once up front keeps the
+// block checks simple and platform-symmetric (rm.exe and rm both look
+// like "rm").
+func canonicalCommandBinary(command string) string {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" {
+		// filepath.Base("") returns "." which is not what we want —
+		// the caller almost certainly has an upstream empty-command
+		// guard, but keep this defensive.
+		return ""
 	}
+	binary := strings.ToLower(filepath.Base(trimmed))
+	return strings.TrimSuffix(binary, ".exe")
+}
+
+// isBlockedBinary reports whether a canonicalised binary name is on
+// the "never run this directly" list. Grouped by rationale so future
+// maintainers can reason about whether to add entries.
+func isBlockedBinary(binary string) bool {
+	switch binary {
+	// Destructive filesystem / disk operations.
+	case "rm", "del", "rmdir", "format", "mkfs", "diskpart", "dd":
+		return true
+	// Privilege escalation — running these lifts the agent out of the
+	// user's normal permissions, which defeats the purpose of a
+	// sandboxed tool.
+	case "sudo", "doas", "su", "runas", "pkexec":
+		return true
+	// System-level control. Even a transient invocation like `shutdown
+	// -r now` can kill an unsaved session.
+	case "shutdown", "reboot", "halt", "poweroff", "init", "telinit":
+		return true
+	// Broad process termination. `killall sshd` is the shape we want
+	// to refuse; narrow-scope `kill PID` is allowed because it's the
+	// normal way to signal a specific process.
+	case "killall", "pkill":
+		return true
+	}
+	return false
+}
+
+// checkBlockedArgSequences catches destructive invocations of
+// legitimate binaries. Token-based to avoid the substring false
+// positives of the old pattern-list approach.
+func checkBlockedArgSequences(binary string, args []string) error {
+	switch binary {
+	case "git":
+		// git reset --hard, git clean -fd/-fdx, git checkout --,
+		// git restore --source, git push --force / --force-with-lease.
+		if hasArgSequence(args, "reset", "--hard") ||
+			hasArgSequence(args, "clean", "-fd") ||
+			hasArgSequence(args, "clean", "-fdx") ||
+			hasArgSequence(args, "clean", "-fx") ||
+			hasArgSequence(args, "checkout", "--") ||
+			hasArgSequence(args, "restore", "--source") ||
+			hasArgSequence(args, "push", "--force") ||
+			hasArgSequence(args, "push", "-f") ||
+			hasArgSequence(args, "push", "--force-with-lease") {
+			return fmt.Errorf("command blocked by policy: git %s", strings.Join(args, " "))
+		}
+	}
+	return nil
 }
 
 func hasArgSequence(args []string, seq ...string) bool {

