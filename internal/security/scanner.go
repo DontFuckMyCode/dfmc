@@ -82,6 +82,7 @@ func (s *Scanner) ScanContent(path string, content []byte) ([]SecretFinding, []V
 	var secrets []SecretFinding
 	var vulns []VulnerabilityFinding
 
+	lang := detectLanguageFromPath(path)
 	scanner := bufio.NewScanner(bytes.NewReader(content))
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	lineNo := 0
@@ -90,6 +91,13 @@ func (s *Scanner) ScanContent(path string, content []byte) ([]SecretFinding, []V
 		line := scanner.Text()
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
+			continue
+		}
+		// Skip pure line comments so a doc comment quoting a sink
+		// ("// `exec.Command(\"git\", ...)` is safe because ...")
+		// doesn't land as a CWE-78 finding. Block comments are harder
+		// to track at line granularity; this handles the 95% case.
+		if lang != "" && isCommentLine(trimmed, lang) {
 			continue
 		}
 		if isPatternDefinitionLine(trimmed) {
@@ -230,9 +238,31 @@ func shouldSkipFile(path string) bool {
 	return false
 }
 
+// isPatternDefinitionLine recognises the scanner's OWN rule-definition
+// lines so the security scanner doesn't fire against itself. The rule
+// bodies naturally contain the very literals they look for — e.g.
+// `strings.Contains(ctx.Trimmed, "md5.New")` has "md5.New" sitting in
+// the source, which the CWE-327 rule would then flag.
+//
+// We match on two shapes:
+//   1. Explicit rule registration (regexp.MustCompile, Pattern:, Match:)
+//   2. Rule bodies that reference the scanner's per-line context
+//      (ctx.Trimmed, ctx.RecentJoin, ctx.Line) — a near-perfect tell
+//      that this is scanner machinery, not application code. No real
+//      vulnerability lives inside a rule matcher body.
 func isPatternDefinitionLine(line string) bool {
 	l := strings.ToLower(line)
-	if strings.Contains(l, "regexp.mustcompile(") || strings.Contains(l, "pattern:") {
+	if strings.Contains(l, "regexp.mustcompile(") ||
+		strings.Contains(l, "pattern:") ||
+		strings.Contains(l, "match:") {
+		return true
+	}
+	// Scanner-internal: the rule matchers operate on scanLineCtx,
+	// which exposes these three fields. Any line touching them is a
+	// rule body, not code under review.
+	if strings.Contains(l, "ctx.trimmed") ||
+		strings.Contains(l, "ctx.recentjoin") ||
+		strings.Contains(l, "ctx.line") {
 		return true
 	}
 	return false

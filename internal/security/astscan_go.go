@@ -75,39 +75,7 @@ func goASTRules() []astRule {
 			CWE:      "CWE-798",
 			OWASP:    "A07:2021 Identification and Authentication Failures",
 			Langs:    []string{"go"},
-			Match: func(ctx *scanLineCtx) bool {
-				// `[]byte("fixed-key")` or `= "fixed-key"` assigned to
-				// a variable whose name screams "key" / "secret".
-				lower := strings.ToLower(ctx.Trimmed)
-				if !(strings.Contains(lower, "key") ||
-					strings.Contains(lower, "secret") ||
-					strings.Contains(lower, "password")) {
-					return false
-				}
-				// Must be an assignment of a plain string literal.
-				if !strings.Contains(ctx.Trimmed, `"`) {
-					return false
-				}
-				if !(strings.Contains(ctx.Trimmed, ":=") || strings.Contains(ctx.Trimmed, "=")) {
-					return false
-				}
-				// Don't flag env lookups or config reads — they're
-				// the FIX, not the bug.
-				if strings.Contains(lower, "getenv") ||
-					strings.Contains(lower, "os.env") ||
-					strings.Contains(lower, "config.") ||
-					strings.Contains(lower, "viper.") {
-					return false
-				}
-				// Require the literal to be long enough to look like
-				// a real key, not a flag name.
-				q1 := strings.Index(ctx.Trimmed, `"`)
-				q2 := strings.LastIndex(ctx.Trimmed, `"`)
-				if q1 < 0 || q2 <= q1+8 {
-					return false
-				}
-				return true
-			},
+			Match:    hardcodedCredentialMatcher,
 		},
 		{
 			Name:     "Weak cryptographic hash (md5 / sha1)",
