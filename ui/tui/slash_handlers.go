@@ -20,7 +20,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/dontfuckmycode/dfmc/internal/commands"
+	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -561,4 +563,308 @@ func suggestSlashCommand(token string) string {
 		}
 	}
 	return ""
+}
+
+// promptSlash exposes the merged prompt-template catalog (embedded
+// defaults + ~/.dfmc/prompts + .dfmc/prompts) in chat. Supports:
+//
+//	/prompt                      → first page of templates (alias: /prompt list)
+//	/prompt list [query]         → all templates, optionally filtered by substring
+//	/prompt show <id>            → full body of a single template
+//	/prompt recommend [question] → engine recommendation for a task
+//	/prompt render <id>          → render the template with sample vars
+//
+// Runs purely off the local catalog — no provider call — so it's safe
+// on the offline/placeholder router.
+func (m Model) promptSlash(args []string) string {
+	sub := "list"
+	rest := args
+	if len(args) > 0 {
+		sub = strings.ToLower(strings.TrimSpace(args[0]))
+		rest = args[1:]
+	}
+	lib := promptlib.New()
+	if m.eng != nil {
+		// LoadOverrides is a no-op when the project root is blank; safe
+		// to call in degraded-startup.
+		_ = lib.LoadOverrides(m.eng.ProjectRoot)
+	}
+	templates := lib.List()
+
+	switch sub {
+	case "", "list", "ls":
+		query := strings.TrimSpace(strings.Join(rest, " "))
+		return formatPromptSlashList(templates, query)
+	case "show", "cat", "body":
+		if len(rest) == 0 {
+			return "Usage: /prompt show <id> — pass a template id from /prompt list."
+		}
+		target := strings.TrimSpace(rest[0])
+		for _, t := range templates {
+			if strings.EqualFold(strings.TrimSpace(t.ID), target) {
+				return formatPromptSlashShow(t)
+			}
+		}
+		return fmt.Sprintf("No prompt template with id %q. Run /prompt list to see available ids.", target)
+	case "recommend", "suggest":
+		if m.eng == nil {
+			return "Engine unavailable."
+		}
+		question := strings.TrimSpace(strings.Join(rest, " "))
+		if question == "" {
+			question = "Summarise the project"
+		}
+		rec := m.eng.PromptRecommendation(question)
+		return fmt.Sprintf("Prompt recommendation for %q:\n  profile:    %s\n  role:       %s\n  task:       %s\n  budget:     %d tokens\n  tool_style: %s",
+			question,
+			nonEmpty(rec.Profile, "-"),
+			nonEmpty(rec.Role, "-"),
+			nonEmpty(rec.Task, "-"),
+			rec.PromptBudgetTokens,
+			nonEmpty(rec.ToolStyle, "-"),
+		)
+	case "render":
+		if len(rest) == 0 {
+			return "Usage: /prompt render <id> [query...] — renders the template with the sample query."
+		}
+		target := strings.TrimSpace(rest[0])
+		var picked *promptlib.Template
+		for i := range templates {
+			if strings.EqualFold(strings.TrimSpace(templates[i].ID), target) {
+				picked = &templates[i]
+				break
+			}
+		}
+		if picked == nil {
+			return fmt.Sprintf("No prompt template with id %q.", target)
+		}
+		query := strings.TrimSpace(strings.Join(rest[1:], " "))
+		if query == "" {
+			query = "Example query for template preview."
+		}
+		req := promptlib.RenderRequest{
+			Task:     picked.Task,
+			Role:     picked.Role,
+			Language: picked.Language,
+			Profile:  picked.Profile,
+			Vars:     map[string]string{"query": query, "task": picked.Task},
+		}
+		body := lib.Render(req)
+		if strings.TrimSpace(body) == "" {
+			body = "(empty render — template has no body after overlay composition)"
+		}
+		return fmt.Sprintf("Render of %s:\n%s", picked.ID, truncateCommandBlock(body, 4000))
+	default:
+		return "prompt: unknown subcommand. Try: list [query] | show <id> | recommend [question] | render <id> [query]"
+	}
+}
+
+func formatPromptSlashList(templates []promptlib.Template, query string) string {
+	filtered := filteredPrompts(templates, query)
+	if len(filtered) == 0 {
+		if query == "" {
+			return "No prompt templates registered."
+		}
+		return fmt.Sprintf("No prompt templates match %q.", query)
+	}
+	var b strings.Builder
+	if query == "" {
+		fmt.Fprintf(&b, "Prompt templates (%d):\n", len(filtered))
+	} else {
+		fmt.Fprintf(&b, "Prompt templates matching %q (%d):\n", query, len(filtered))
+	}
+	for i, t := range filtered {
+		if i >= 30 {
+			fmt.Fprintf(&b, "  +%d more — narrow with /prompt list <query>\n", len(filtered)-i)
+			break
+		}
+		axes := []string{}
+		if t.Task != "" {
+			axes = append(axes, "task="+t.Task)
+		}
+		if t.Role != "" {
+			axes = append(axes, "role="+t.Role)
+		}
+		if t.Language != "" {
+			axes = append(axes, "lang="+t.Language)
+		}
+		if t.Profile != "" {
+			axes = append(axes, "profile="+t.Profile)
+		}
+		suffix := ""
+		if len(axes) > 0 {
+			suffix = "  (" + strings.Join(axes, " ") + ")"
+		}
+		fmt.Fprintf(&b, "  %s%s\n", t.ID, suffix)
+	}
+	b.WriteString("Show one with: /prompt show <id>")
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func formatPromptSlashShow(t promptlib.Template) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "▸ %s", t.ID)
+	if t.Type != "" {
+		fmt.Fprintf(&b, "  [%s]", t.Type)
+	}
+	b.WriteString("\n")
+	if t.Description != "" {
+		fmt.Fprintf(&b, "  description: %s\n", t.Description)
+	}
+	if t.Task != "" {
+		fmt.Fprintf(&b, "  task:        %s\n", t.Task)
+	}
+	if t.Role != "" {
+		fmt.Fprintf(&b, "  role:        %s\n", t.Role)
+	}
+	if t.Language != "" {
+		fmt.Fprintf(&b, "  language:    %s\n", t.Language)
+	}
+	if t.Profile != "" {
+		fmt.Fprintf(&b, "  profile:     %s\n", t.Profile)
+	}
+	if t.Compose != "" {
+		fmt.Fprintf(&b, "  compose:     %s\n", t.Compose)
+	}
+	if t.Priority != 0 {
+		fmt.Fprintf(&b, "  priority:    %d\n", t.Priority)
+	}
+	b.WriteString("  body:\n")
+	b.WriteString(truncateCommandBlock(t.Body, 4000))
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// skillSlash lists and describes skills (built-in template-family verbs
+// plus YAML files in .dfmc/skills and ~/.dfmc/skills). Mirrors the
+// /api/v1/skills surface so the TUI carries its own view. Supports:
+//
+//	/skill                → list (alias: /skill list)
+//	/skill show <name>    → inline body for YAML skills
+//	/skill run <name>     → pointer to the template-slash that runs it
+func (m Model) skillSlash(args []string) string {
+	sub := "list"
+	rest := args
+	if len(args) > 0 {
+		sub = strings.ToLower(strings.TrimSpace(args[0]))
+		rest = args[1:]
+	}
+	skills := collectSkills(m.projectRoot())
+	switch sub {
+	case "", "list", "ls":
+		return formatSkillsList(skills)
+	case "show", "cat":
+		if len(rest) == 0 {
+			return "Usage: /skill show <name>"
+		}
+		name := strings.TrimSpace(rest[0])
+		for _, s := range skills {
+			if strings.EqualFold(s.Name, name) {
+				return formatSkillsShow(s)
+			}
+		}
+		return fmt.Sprintf("No skill with name %q. Run /skill list.", name)
+	case "run", "call":
+		if len(rest) == 0 {
+			return "Usage: /skill run <name> [args...]. For builtin skills prefer the dedicated slash (/review, /explain, /refactor, /test, /doc)."
+		}
+		name := strings.TrimSpace(rest[0])
+		lower := strings.ToLower(name)
+		switch lower {
+		case "review", "explain", "refactor", "test", "doc":
+			return fmt.Sprintf("Run the builtin skill directly: /%s %s", lower, strings.Join(rest[1:], " "))
+		}
+		return "YAML skill execution is CLI-only for now: dfmc skill run " + name + " " + strings.Join(rest[1:], " ")
+	default:
+		return "skill: unknown subcommand. Try: list | show <name> | run <name>"
+	}
+}
+
+// skillEntry captures one skill row — either a builtin template-family
+// verb or a YAML file discovered under .dfmc/skills / ~/.dfmc/skills.
+type skillEntry struct {
+	Name    string
+	Source  string // "builtin" / "project" / "global"
+	Path    string // "" for builtin
+	Summary string
+}
+
+func collectSkills(projectRoot string) []skillEntry {
+	builtins := []skillEntry{
+		{Name: "review", Source: "builtin", Summary: "Review a target for bugs, smells, and hazards."},
+		{Name: "explain", Source: "builtin", Summary: "Explain what a target does and why."},
+		{Name: "refactor", Source: "builtin", Summary: "Propose a scoped, reversible refactor."},
+		{Name: "test", Source: "builtin", Summary: "Draft tests for a target."},
+		{Name: "doc", Source: "builtin", Summary: "Draft or update documentation."},
+	}
+	out := make([]skillEntry, 0, len(builtins)+8)
+	out = append(out, builtins...)
+	seen := map[string]struct{}{}
+	for _, b := range builtins {
+		seen[strings.ToLower(b.Name)] = struct{}{}
+	}
+	roots := []struct {
+		path   string
+		source string
+	}{
+		{path: filepath.Join(projectRoot, ".dfmc", "skills"), source: "project"},
+		{path: filepath.Join(config.UserConfigDir(), "skills"), source: "global"},
+	}
+	for _, root := range roots {
+		if strings.TrimSpace(root.path) == "" {
+			continue
+		}
+		matches, _ := filepath.Glob(filepath.Join(root.path, "*.y*ml"))
+		for _, p := range matches {
+			name := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
+			key := strings.ToLower(strings.TrimSpace(name))
+			if key == "" {
+				continue
+			}
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, skillEntry{Name: name, Source: root.source, Path: p})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		// Builtins first, then by name.
+		if (out[i].Source == "builtin") != (out[j].Source == "builtin") {
+			return out[i].Source == "builtin"
+		}
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out
+}
+
+func formatSkillsList(skills []skillEntry) string {
+	if len(skills) == 0 {
+		return "No skills found. Place YAML files in .dfmc/skills/ or ~/.dfmc/skills/."
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Skills (%d):\n", len(skills))
+	for _, s := range skills {
+		if s.Summary != "" {
+			fmt.Fprintf(&b, "  %-12s [%s]  %s\n", s.Name, s.Source, s.Summary)
+		} else {
+			fmt.Fprintf(&b, "  %-12s [%s]\n", s.Name, s.Source)
+		}
+	}
+	b.WriteString("Show body: /skill show <name>  ·  Run builtin: /review /explain /refactor /test /doc")
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func formatSkillsShow(s skillEntry) string {
+	if s.Source == "builtin" {
+		return fmt.Sprintf("▸ %s (builtin)\n  %s\n  Run it with: /%s <target>", s.Name, s.Summary, s.Name)
+	}
+	if s.Path == "" {
+		return fmt.Sprintf("▸ %s [%s] — no path on disk", s.Name, s.Source)
+	}
+	data, err := os.ReadFile(s.Path)
+	if err != nil {
+		return fmt.Sprintf("▸ %s [%s]\n  path: %s\n  read error: %v", s.Name, s.Source, s.Path, err)
+	}
+	return fmt.Sprintf("▸ %s [%s]\n  path: %s\n  body:\n%s",
+		s.Name, s.Source, filepath.ToSlash(s.Path), truncateCommandBlock(string(data), 4000))
 }

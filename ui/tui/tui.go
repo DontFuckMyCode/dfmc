@@ -2979,6 +2979,28 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			return m.appendSystemMessage(m.contextCommandDetailedSummary()), nil, true
 		case "why", "reasons", "--why":
 			return m.appendSystemMessage(m.contextCommandWhySummary()), nil, true
+		case "show":
+			// Registry-documented subcommand — show the current context
+			// selection (same as the default summary so users who follow
+			// the `show` noun-first path don't hit a dead end).
+			return m.appendSystemMessage(m.contextCommandSummary()), nil, true
+		case "budget":
+			return m.appendSystemMessage(m.contextCommandDetailedSummary()), nil, true
+		case "recommend":
+			return m.appendSystemMessage(m.contextCommandWhySummary()), nil, true
+		case "brief":
+			// Dump the MAGIC_DOC-style project brief — reuse the same
+			// read path /magicdoc uses.
+			return m.appendSystemMessage(m.magicDocSlash(nil)), nil, true
+		case "add", "rm":
+			// Pinning isn't wired into config-mutation yet — point the
+			// user at the CLI flow instead of silently no-oping.
+			payload := strings.TrimSpace(strings.Join(args[1:], " "))
+			suffix := ""
+			if payload != "" {
+				suffix = " " + payload
+			}
+			return m.appendSystemMessage(fmt.Sprintf("/context %s is CLI-only right now. Run: dfmc context %s%s", mode, mode, suffix)), nil, true
 		default:
 			return m.appendSystemMessage(m.contextCommandSummary()), nil, true
 		}
@@ -3270,7 +3292,16 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 	case "memory":
 		m.input = ""
 		return m.appendSystemMessage(m.memorySlash(args)), nil, true
-	case "init", "completion", "man", "serve", "remote", "plugin", "skill", "prompt", "config":
+	case "prompt":
+		m.input = ""
+		return m.appendSystemMessage(m.promptSlash(args)), nil, true
+	case "skill":
+		m.input = ""
+		return m.appendSystemMessage(m.skillSlash(args)), nil, true
+	case "init", "completion", "man", "serve", "remote", "plugin", "config",
+		"debug", "generate", "onboard", "audit", "mcp", "update", "tui":
+		// CLI-only commands — surface a friendly pointer instead of
+		// the generic "Unknown command" fallback.
 		m.input = ""
 		m.notice = "/" + cmd + ": run from CLI (not available in TUI)."
 		return m.appendSystemMessage("/" + cmd + " is a CLI command. Run: dfmc " + cmd + (func() string {

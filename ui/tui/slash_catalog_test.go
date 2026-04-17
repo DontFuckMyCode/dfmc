@@ -18,9 +18,16 @@ var cliOnlySlashCommands = map[string]bool{
 	"serve":      true,
 	"remote":     true,
 	"plugin":     true,
-	"skill":      true,
-	"prompt":     true,
 	"config":     true,
+	// /prompt and /skill moved to TUI-native handlers — they list and
+	// describe their catalogs inline instead of punting to the CLI.
+	"debug":    true,
+	"generate": true,
+	"onboard":  true,
+	"audit":    true,
+	"mcp":      true,
+	"update":   true,
+	"tui":      true,
 }
 
 // TestEveryCatalogCommandDispatches walks the full slashCommandCatalog and
