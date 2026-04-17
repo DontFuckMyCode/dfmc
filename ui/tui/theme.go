@@ -26,8 +26,6 @@ var (
 	colorTitleFg     = lipgloss.Color("#041014")
 	colorMuted       = lipgloss.Color("#93A4BF")
 	colorTabActiveBg = lipgloss.Color("#1E3A8A")
-	colorTabActiveFg = lipgloss.Color("#E2EEFF")
-	colorTabIdleFg   = lipgloss.Color("#7D92B2")
 	colorStatusBg    = lipgloss.Color("#111A2A")
 	colorStatusFg    = lipgloss.Color("#D9E6FF")
 
@@ -48,12 +46,6 @@ var (
 // --- styles ---------------------------------------------------------------
 
 var (
-	docStyle = lipgloss.NewStyle().
-			Padding(1, 2).
-			Background(colorPanelBg).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorPanelBorder)
-
 	titleStyle = lipgloss.NewStyle().
 			Foreground(colorTitleFg).
 			Background(colorTitleBg).
@@ -66,16 +58,6 @@ var (
 	sectionTitleStyle = lipgloss.NewStyle().
 				Foreground(colorInfo).
 				Bold(true)
-
-	tabActiveStyle = lipgloss.NewStyle().
-			Padding(0, 2).
-			Background(colorTabActiveBg).
-			Foreground(colorTabActiveFg).
-			Bold(true)
-
-	tabInactiveStyle = lipgloss.NewStyle().
-				Padding(0, 2).
-				Foreground(colorTabIdleFg)
 
 	statusBarStyle = lipgloss.NewStyle().
 			Padding(0, 1).
@@ -876,21 +858,6 @@ func formatInputBoxContent(content string, limit int) string {
 		out = append(out, strings.Split(wrapped, "\n")...)
 	}
 	return strings.Join(out, "\n")
-}
-
-// renderBanner renders the top-of-app banner with a chunky ▌▐ accent.
-func renderBanner(title, subtitle string) string {
-	title = strings.TrimSpace(title)
-	if title == "" {
-		title = "DFMC"
-	}
-	accent := bannerStyle.Render("▌▌")
-	main := titleStyle.Render(" " + title + " ")
-	sub := ""
-	if s := strings.TrimSpace(subtitle); s != "" {
-		sub = "  " + subtleStyle.Render(s)
-	}
-	return accent + " " + main + sub
 }
 
 // --- chat header / empty-state / streaming -------------------------------

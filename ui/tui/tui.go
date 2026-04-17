@@ -5393,29 +5393,34 @@ func (m Model) View() string {
 		bodyWidth = width
 	}
 
-	tabs := make([]string, 0, len(m.tabs))
-	for i, tab := range m.tabs {
-		label := tab
-		if i == m.activeTab {
-			tabs = append(tabs, tabActiveStyle.Render("● "+label))
-		} else {
-			tabs = append(tabs, tabInactiveStyle.Render("  "+label))
-		}
+	// New header: a single dense strip with brand on the left, the
+	// active tab badge centered between its prev/next neighbours, and
+	// a navigation hint on the right. Replaces the old two-line
+	// banner + 15-tab row that wrapped on narrow terminals and made
+	// the active tab hard to spot. The "DFMC WORKBENCH" text is kept
+	// for tests and for users who grep their terminal scrollback.
+	planMode := m.planMode
+	tabName := ""
+	if m.activeTab >= 0 && m.activeTab < len(m.tabs) {
+		tabName = m.tabs[m.activeTab]
 	}
-
-	banner := renderBanner("DFMC WORKBENCH", "agentic coding cockpit · token-miser")
-	header := banner + "\n" + strings.Join(tabs, " ")
+	pal := paletteForTab(tabName, planMode)
+	strip := renderTopTabStrip(m.tabs, m.activeTab, planMode, width)
+	// Keep the canonical brand string in the rendered output so
+	// downstream tests / scrollback grep continue to work.
+	brandTag := subtleStyle.Render("DFMC WORKBENCH · " + tabName)
+	header := strip + "\n" + brandTag
 	footer := statusBarStyle.Width(width).Render(m.renderFooter(width))
 	bodyHeight := height - lipgloss.Height(header) - lipgloss.Height(footer)
 	if bodyHeight < 6 {
 		bodyHeight = 6
 	}
-	body := m.renderActiveView(bodyWidth, bodyHeight)
+	body := m.renderActiveView(bodyWidth, bodyHeight, pal)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
 
-func (m Model) renderActiveView(width int, height int) string {
+func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) string {
 	if height < 4 {
 		height = 4
 	}
@@ -5476,7 +5481,16 @@ func (m Model) renderActiveView(width int, height int) string {
 		}
 		content = body
 	}
-	return docStyle.Width(width).Height(height).Render(content)
+	// Per-tab outer border colour. docStyle's hardcoded #2F4F6A read
+	// as "always the same panel" regardless of which tab the user
+	// was on — a cheap and effective tell that the screen has
+	// changed is repainting the frame.
+	frame := lipgloss.NewStyle().
+		Padding(1, 2).
+		Background(colorPanelBg).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(pal.Border)
+	return frame.Width(width).Height(height).Render(content)
 }
 
 // fitChatBody lays out the chat view so the tail (input box + pickers)

@@ -23,9 +23,17 @@ func TestViewIncludesWorkbenchPanels(t *testing.T) {
 	m.width = 100
 
 	view := m.View()
-	for _, needle := range []string{"DFMC WORKBENCH", "Chat", "Status", "Files", "Patch", "Setup", "Tools"} {
+	// Brand line still names the workbench so users can grep their
+	// terminal scrollback for "DFMC WORKBENCH".
+	if !strings.Contains(view, "DFMC WORKBENCH") {
+		t.Fatalf("expected brand string in view:\n%s", view)
+	}
+	// New top strip surfaces the active tab as a badge plus its
+	// immediate neighbours by F-key. Default starts on Chat (idx 0)
+	// so prev wraps to Providers and next is Status.
+	for _, needle := range []string{"CHAT", "Status", "Providers", "F1", "F2"} {
 		if !strings.Contains(view, needle) {
-			t.Fatalf("expected view to contain %q, got:\n%s", needle, view)
+			t.Fatalf("expected new tab strip to contain %q, got:\n%s", needle, view)
 		}
 	}
 }

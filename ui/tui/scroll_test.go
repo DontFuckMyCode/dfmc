@@ -235,7 +235,7 @@ func TestRenderChatViewShowsScrollHintsWhenScrolledBack(t *testing.T) {
 
 	// fitChatBody is what decorates the scrollback hints; trigger through
 	// renderActiveView so the real layout path runs.
-	view := m.renderActiveView(120, 20)
+	view := m.renderActiveView(120, 20, paletteForTab("Chat", false))
 	if !strings.Contains(view, "earlier lines") {
 		t.Fatalf("expected scroll-up hint when scrolled back, got:\n%s", view)
 	}
