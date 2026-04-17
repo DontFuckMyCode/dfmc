@@ -802,11 +802,54 @@ func wrapBubbleLine(line string, limit int) []string {
 	if ansi.StringWidth(line) <= limit {
 		return []string{line}
 	}
-	wrapped := ansi.Wrap(line, limit, " 	,;:.!?")
+	// Break-after set covers natural sentence breaks (space/punct), code
+	// path separators (/, \), and common identifier boundaries (_, -, .)
+	// so snake_case/kebab-case/dotted.paths wrap at sub-word seams instead
+	// of overflowing in one ugly run.
+	wrapped := ansi.Wrap(line, limit, " 	,;:.!?/\\_-")
 	if wrapped == "" {
 		return []string{line}
 	}
-	return strings.Split(wrapped, "\n")
+	parts := strings.Split(wrapped, "\n")
+	// Hard-break stragglers — base64 blobs, URL-encoded tokens, etc.
+	// have no break char and ansi.Wrap leaves them as one long line.
+	// Without this they bleed past the bubble's right edge and the
+	// terminal silently clips them.
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if ansi.StringWidth(p) <= limit {
+			out = append(out, p)
+			continue
+		}
+		out = append(out, hardWrapByCells(p, limit)...)
+	}
+	return out
+}
+
+// hardWrapByCells slices `s` into chunks of <= `limit` display cells, ignoring
+// natural break chars. Used as a last-resort fallback after ansi.Wrap leaves
+// a line too long because no break char appears within `limit` cells.
+func hardWrapByCells(s string, limit int) []string {
+	if limit <= 0 || ansi.StringWidth(s) <= limit {
+		return []string{s}
+	}
+	out := []string{}
+	cur := strings.Builder{}
+	width := 0
+	for _, r := range s {
+		w := ansi.StringWidth(string(r))
+		if width+w > limit {
+			out = append(out, cur.String())
+			cur.Reset()
+			width = 0
+		}
+		cur.WriteRune(r)
+		width += w
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
 }
 
 // renderDivider returns a subtle horizontal rule.
@@ -850,12 +893,20 @@ func formatInputBoxContent(content string, limit int) string {
 			out = append(out, line)
 			continue
 		}
-		wrapped := ansi.Wrap(line, limit, " 	,;:.!?/")
+		// Match wrapBubbleLine's break set so input echo / pasted code
+		// folds at the same seams the rendered bubble will use.
+		wrapped := ansi.Wrap(line, limit, " 	,;:.!?/\\_-")
 		if wrapped == "" {
 			out = append(out, line)
 			continue
 		}
-		out = append(out, strings.Split(wrapped, "\n")...)
+		for _, p := range strings.Split(wrapped, "\n") {
+			if ansi.StringWidth(p) <= limit {
+				out = append(out, p)
+				continue
+			}
+			out = append(out, hardWrapByCells(p, limit)...)
+		}
 	}
 	return strings.Join(out, "\n")
 }
@@ -901,6 +952,11 @@ type chatHeaderInfo struct {
 	// ApprovalPending is set while a y/n prompt is on screen so the badge
 	// loudens ("awaiting y/n") and the user can't miss the block.
 	ApprovalPending bool
+	// SpinnerFrame is the live spinner counter (advanced by the spinner
+	// tick at ~8fps). Renderers use it to animate streaming/agent chips
+	// and progress bars so the panel feels alive while work is in flight.
+	// Pass m.spinnerFrame.
+	SpinnerFrame int
 }
 
 // renderChatHeader returns 1 pre-styled line summarising chat state.
@@ -982,18 +1038,22 @@ func renderChatHeader(info chatHeaderInfo, width int) string {
 // as a single lipgloss-styled string. Shared between the full and slim header
 // variants and the stats panel so the wording never drifts.
 func renderChatModeSegment(info chatHeaderInfo) string {
+	// Live braille glyph swaps in for the static ◉ when something is
+	// actually running so the panel reads as moving rather than frozen.
+	// Idle state keeps the static ● — animating "ready" would be noise.
+	glyph := spinnerFrame(info.SpinnerFrame)
 	switch {
 	case info.Streaming:
-		return infoStyle.Bold(true).Render("◉ streaming")
+		return infoStyle.Bold(true).Render(glyph + " streaming")
 	case info.AgentActive:
 		phase := blankFallback(strings.TrimSpace(info.AgentPhase), "working")
 		if info.AgentStep > 0 && info.AgentMax > 0 {
-			return accentStyle.Bold(true).Render(fmt.Sprintf("◉ agent %s · %d/%d", phase, info.AgentStep, info.AgentMax))
+			return accentStyle.Bold(true).Render(fmt.Sprintf("%s agent %s · %d/%d", glyph, phase, info.AgentStep, info.AgentMax))
 		}
 		if info.AgentStep > 0 {
-			return accentStyle.Bold(true).Render(fmt.Sprintf("◉ agent %s · step %d", phase, info.AgentStep))
+			return accentStyle.Bold(true).Render(fmt.Sprintf("%s agent %s · step %d", glyph, phase, info.AgentStep))
 		}
-		return accentStyle.Bold(true).Render("◉ agent " + phase)
+		return accentStyle.Bold(true).Render(glyph + " agent " + phase)
 	default:
 		return okStyle.Render("● ready")
 	}
@@ -1025,8 +1085,11 @@ func renderTokenMeter(used, max int) string {
 
 // renderStepBar draws a compact [████░░░░░░] step/max chip for the agent-loop
 // step budget. Green when there's room, yellow when nearing the cap, red when
-// within one step of parking. `cells` is the bar width in rune-cells.
-func renderStepBar(step, maxSteps, cells int) string {
+// within one step of parking. `cells` is the bar width in rune-cells. When
+// `frame` advances (passed by callers that subscribe to the spinner tick) the
+// trailing edge of the filled portion swaps between ▓ and █ so the bar
+// breathes — a static frame jumps out as a stalled loop.
+func renderStepBar(step, maxSteps, cells, frame int) string {
 	if cells < 4 {
 		cells = 4
 	}
@@ -1051,7 +1114,13 @@ func renderStepBar(step, maxSteps, cells int) string {
 	case remaining <= 3:
 		style = warnStyle
 	}
-	bar := style.Render(strings.Repeat("█", filled)) + subtleStyle.Render(strings.Repeat("░", cells-filled))
+	// Pulse the trailing filled cell while the loop is live so the bar
+	// reads as moving even when filled count hasn't changed yet.
+	filledStr := strings.Repeat("█", filled)
+	if filled > 0 && step < maxSteps && frame%2 == 1 {
+		filledStr = strings.Repeat("█", filled-1) + "▓"
+	}
+	bar := style.Render(filledStr) + subtleStyle.Render(strings.Repeat("░", cells-filled))
 	label := fmt.Sprintf(" %d/%d", step, maxSteps)
 	return "[" + bar + "]" + style.Bold(true).Render(label)
 }
@@ -1062,6 +1131,14 @@ func renderStepBar(step, maxSteps, cells int) string {
 // sensible default for the footer. When max is unknown it falls back to the
 // plain meter.
 func renderContextBar(used, max, cells int) string {
+	return renderContextBarFrame(used, max, cells, 0)
+}
+
+// renderContextBarFrame is the animated variant. `frame` is the spinner
+// counter; in warn/fail thresholds the trailing filled cell pulses
+// (▓ ↔ █) so the user sees pressure visually rather than scanning the
+// numeric percentage. Frame=0 reproduces the static look.
+func renderContextBarFrame(used, max, cells, frame int) string {
 	if cells < 4 {
 		cells = 4
 	}
@@ -1086,7 +1163,13 @@ func renderContextBar(used, max, cells int) string {
 	case pct >= 60:
 		style = warnStyle
 	}
-	bar := style.Render(strings.Repeat("█", filled)) + subtleStyle.Render(strings.Repeat("░", cells-filled))
+	filledStr := strings.Repeat("█", filled)
+	// Only animate when actually consuming (not full / not empty) so the
+	// bar reads as live pressure rather than decorative noise.
+	if filled > 0 && filled < cells && pct >= 60 && frame%2 == 1 {
+		filledStr = strings.Repeat("█", filled-1) + "▓"
+	}
+	bar := style.Render(filledStr) + subtleStyle.Render(strings.Repeat("░", cells-filled))
 	label := fmt.Sprintf("%s/%s (%d%%)", compactTokens(used), compactTokens(max), pct)
 	return "[" + bar + "] " + style.Bold(true).Render(label)
 }
@@ -1303,6 +1386,11 @@ type statsPanelInfo struct {
 	// aggregated across all tool:result events.
 	CompressionSavedChars int
 	CompressionRawChars   int
+	// SpinnerFrame is the live spinner counter (advanced by the spinner
+	// tick at ~8fps). The panel uses it to animate the agent chip, the
+	// step-bar leading edge, and the context-bar rightmost cell so a
+	// frozen frame is visually obvious from a moving frame.
+	SpinnerFrame int
 }
 
 // renderStatsPanel paints the right-hand "mission control" column for the
@@ -1338,6 +1426,20 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 		}
 	}
 
+	// Section icons swap to the live spinner glyph while work is in flight
+	// so the panel header reads as moving even before you scan the body.
+	// The mapping is intentional: PROVIDER pulses while the model is
+	// streaming, AGENT pulses while the tool loop is running. Idle state
+	// keeps the static glyph — animating "ready" would feel jittery.
+	providerIcon := "◉"
+	if info.Streaming {
+		providerIcon = spinnerFrame(info.SpinnerFrame)
+	}
+	agentIcon := "⚙"
+	if info.AgentActive {
+		agentIcon = spinnerFrame(info.SpinnerFrame + 3)
+	}
+
 	// PROVIDER -------------------------------------------------------------
 	providerTrim := strings.TrimSpace(info.Provider)
 	modelTrim := strings.TrimSpace(info.Model)
@@ -1360,10 +1462,10 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 			boldStyle.Render(blankFallback(modelTrim, "-")),
 		}
 	}
-	addSection("◉", "PROVIDER", providerBody)
+	addSection(providerIcon, "PROVIDER", providerBody)
 
 	// CONTEXT --------------------------------------------------------------
-	contextBody := []string{renderContextBar(info.ContextTokens, info.MaxContext, 10)}
+	contextBody := []string{renderContextBarFrame(info.ContextTokens, info.MaxContext, 10, info.SpinnerFrame)}
 	if info.MaxContext > 0 {
 		remaining := max(info.MaxContext-info.ContextTokens, 0)
 		contextBody = append(contextBody, subtleStyle.Render(fmt.Sprintf("%s free · %s used", compactTokens(remaining), compactTokens(info.ContextTokens))))
@@ -1372,14 +1474,15 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 
 	// AGENT ----------------------------------------------------------------
 	agentBody := []string{renderChatModeSegment(chatHeaderInfo{
-		Streaming:   info.Streaming,
-		AgentActive: info.AgentActive,
-		AgentPhase:  info.AgentPhase,
-		AgentStep:   info.AgentStep,
-		AgentMax:    info.AgentMaxSteps,
+		Streaming:    info.Streaming,
+		AgentActive:  info.AgentActive,
+		AgentPhase:   info.AgentPhase,
+		AgentStep:    info.AgentStep,
+		AgentMax:     info.AgentMaxSteps,
+		SpinnerFrame: info.SpinnerFrame,
 	})}
 	if info.AgentActive && info.AgentMaxSteps > 0 {
-		agentBody = append(agentBody, renderStepBar(info.AgentStep, info.AgentMaxSteps, 14))
+		agentBody = append(agentBody, renderStepBar(info.AgentStep, info.AgentMaxSteps, 14, info.SpinnerFrame))
 	}
 	if info.ToolRounds > 0 {
 		agentBody = append(agentBody, subtleStyle.Render(fmt.Sprintf("tool rounds: %d", info.ToolRounds)))
@@ -1404,7 +1507,7 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 	if info.PendingNotes > 0 {
 		agentBody = append(agentBody, infoStyle.Render(fmt.Sprintf("✎ btw %d", info.PendingNotes)))
 	}
-	addSection("⚙", "AGENT", agentBody)
+	addSection(agentIcon, "AGENT", agentBody)
 
 	// TOOLS ----------------------------------------------------------------
 	toolsBody := []string{}

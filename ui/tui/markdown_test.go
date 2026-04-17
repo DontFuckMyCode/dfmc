@@ -108,6 +108,40 @@ func TestWrapBubbleLine_ShortLinesPassThrough(t *testing.T) {
 	}
 }
 
+// TestWrapBubbleLine_BreaksOnPathAndIdentifierSeams — paths and snake/kebab
+// identifiers were previously treated as single tokens because the break set
+// only knew about whitespace + punctuation. Pin the new seam set so wrapping
+// of long file paths and identifiers stays clean.
+func TestWrapBubbleLine_BreaksOnPathAndIdentifierSeams(t *testing.T) {
+	line := "internal/engine/agent_loop_native.go contains a very_long_snake_case_function_name_here_too"
+	rows := wrapBubbleLine(line, 30)
+	if len(rows) < 2 {
+		t.Fatalf("expected wrap into multiple rows at width=30, got %d: %q", len(rows), rows)
+	}
+	for i, row := range rows {
+		if n := len(row); n > 30 {
+			t.Errorf("row %d width=%d exceeds 30: %q", i, n, row)
+		}
+	}
+}
+
+// TestWrapBubbleLine_HardBreaksRunawayTokens — a base64 blob or any
+// break-char-free token longer than the limit must hard-break by cells
+// instead of bleeding past the bubble's right edge.
+func TestWrapBubbleLine_HardBreaksRunawayTokens(t *testing.T) {
+	// 80 chars, no break chars at all
+	blob := strings.Repeat("A", 80)
+	rows := wrapBubbleLine(blob, 20)
+	if len(rows) < 4 {
+		t.Fatalf("expected at least 4 rows for 80-char blob at width=20, got %d", len(rows))
+	}
+	for i, row := range rows {
+		if n := len(row); n > 20 {
+			t.Errorf("row %d width=%d exceeds 20: %q", i, n, row)
+		}
+	}
+}
+
 // TestRenderMessageBubble_WrapsLongProse end-to-end — the bubble layer must
 // surface wrapping as multiple bar-prefixed rows, not one "…" cut.
 func TestRenderMessageBubble_WrapsLongProse(t *testing.T) {

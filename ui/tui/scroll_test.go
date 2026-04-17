@@ -131,8 +131,8 @@ func TestMouseWheelScrollsTranscriptOnChatTab(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after wheel up, got %T", next)
 	}
-	if mm.chatScrollback != 3 {
-		t.Fatalf("wheel up should scroll back 3 lines, got %d", mm.chatScrollback)
+	if mm.chatScrollback != mouseWheelStep {
+		t.Fatalf("wheel up should scroll back %d lines, got %d", mouseWheelStep, mm.chatScrollback)
 	}
 
 	next2, _ := mm.Update(tea.MouseMsg{
@@ -145,6 +145,27 @@ func TestMouseWheelScrollsTranscriptOnChatTab(t *testing.T) {
 	}
 	if mm2.chatScrollback != 0 {
 		t.Fatalf("wheel down should return toward latest, got %d", mm2.chatScrollback)
+	}
+}
+
+// Shift+wheel should jump a half-page, not a single tick. Pin so the
+// power-user shortcut survives a future "simplify mouse handler" pass.
+func TestShiftMouseWheelJumpsPage(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.transcript = makeTranscript(60)
+	m.activeTab = 0
+
+	next, _ := m.Update(tea.MouseMsg{
+		Button: tea.MouseButtonWheelUp,
+		Action: tea.MouseActionPress,
+		Shift:  true,
+	})
+	mm, ok := next.(Model)
+	if !ok {
+		t.Fatalf("expected Model after shift+wheel, got %T", next)
+	}
+	if mm.chatScrollback != mouseWheelPageStep {
+		t.Fatalf("shift+wheel should jump %d lines, got %d", mouseWheelPageStep, mm.chatScrollback)
 	}
 }
 

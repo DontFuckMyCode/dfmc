@@ -496,6 +496,16 @@ func heartbeatTickCmd() tea.Cmd {
 	return tea.Tick(heartbeatInterval, func(time.Time) tea.Msg { return heartbeatTickMsg{} })
 }
 
+// mouseWheelStep is the per-tick scroll distance for the chat transcript.
+// 5 lines feels responsive on a standard mouse without overshooting on a
+// high-DPI wheel; the input box stays pinned because fitChatBody clips
+// only the head, never the tail. mouseWheelPageStep applies on shift+wheel
+// for half-page jumps when traveling a long history.
+const (
+	mouseWheelStep     = 5
+	mouseWheelPageStep = 15
+)
+
 func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	if ctx == nil {
 		ctx = context.Background()
@@ -2168,6 +2178,7 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		Pinned:                head.Pinned,
 		CompressionSavedChars: m.compressionSavedChars,
 		CompressionRawChars:   m.compressionRawChars,
+		SpinnerFrame:          m.spinnerFrame,
 	}
 }
 

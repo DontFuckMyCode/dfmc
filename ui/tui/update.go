@@ -33,19 +33,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Mouse wheel scrolls the chat transcript on the Chat tab. We
 		// deliberately only react on press/release edges — bubbletea emits
 		// a press+release pair per wheel tick, so handling both would
-		// double-scroll. Ignore the other tabs (their content is static
-		// enough to fit in-panel).
+		// double-scroll. The input box (tail) stays pinned; only the
+		// transcript head clips. Shift+wheel jumps a half-page so power
+		// users can travel a long history quickly. Ignore the other tabs
+		// (their content is static enough to fit in-panel).
 		if m.tabs[m.activeTab] != "Chat" {
 			return m, nil
 		}
 		if msg.Action != tea.MouseActionPress {
 			return m, nil
 		}
+		step := mouseWheelStep
+		if msg.Shift {
+			step = mouseWheelPageStep
+		}
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
-			m.scrollTranscript(-3)
+			m.scrollTranscript(-step)
 		case tea.MouseButtonWheelDown:
-			m.scrollTranscript(3)
+			m.scrollTranscript(step)
 		}
 		return m, nil
 
