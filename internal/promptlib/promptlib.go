@@ -147,18 +147,49 @@ func (l *Library) Render(req RenderRequest) string {
 	}
 
 	appendParts := l.renderAppendParts(req)
-	if len(appendParts) == 0 {
+	rendered := make([]string, 0, len(appendParts))
+	for _, p := range appendParts {
+		if s := strings.TrimSpace(renderBody(p.Body, req.Vars)); s != "" {
+			rendered = append(rendered, s)
+		}
+	}
+	if len(rendered) == 0 {
 		return base
 	}
-	out := []string{base}
-	for _, p := range appendParts {
-		rendered := strings.TrimSpace(renderBody(p.Body, req.Vars))
-		if rendered == "" {
-			continue
-		}
-		out = append(out, rendered)
+	return spliceAppendBeforeCacheBreak(base, rendered)
+}
+
+// spliceAppendBeforeCacheBreak inserts task/role/profile overlays ahead
+// of the stable/dynamic boundary so they join the cacheable prefix
+// instead of being shunted into the per-request tail. Overlays are
+// stable per conversation (the task/profile rarely changes mid-thread)
+// so placing them in the cacheable region materially raises the share
+// that Anthropic's prompt caching amortises. Templates without a marker
+// keep the old behavior — the overlays are appended at the end, which
+// reads as "dynamic" to the catalog splitter but is the historical
+// layout we shouldn't regress away from silently.
+func spliceAppendBeforeCacheBreak(base string, overlays []string) string {
+	if len(overlays) == 0 {
+		return base
 	}
-	return strings.TrimSpace(strings.Join(out, "\n\n"))
+	overlaysText := strings.Join(overlays, "\n\n")
+	stable, dynamic, found := strings.Cut(base, CacheBreakMarker)
+	if !found {
+		return strings.TrimSpace(base + "\n\n" + overlaysText)
+	}
+	stable = strings.TrimRight(stable, "\n")
+	dynamic = strings.TrimLeft(dynamic, "\n")
+	var b strings.Builder
+	if s := strings.TrimSpace(stable); s != "" {
+		b.WriteString(s)
+		b.WriteString("\n\n")
+	}
+	b.WriteString(overlaysText)
+	b.WriteString("\n\n")
+	b.WriteString(CacheBreakMarker)
+	b.WriteString("\n\n")
+	b.WriteString(strings.TrimSpace(dynamic))
+	return strings.TrimSpace(b.String())
 }
 
 func (l *Library) upsert(t Template) {
