@@ -1049,6 +1049,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "alt+5":
 			m.activeTab = 4
+			m = m.snapSetupCursorToActive()
 			return m, nil
 		case "alt+6":
 			m.activeTab = 5
@@ -1067,6 +1068,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "f5":
 			m.activeTab = 4
+			m = m.snapSetupCursorToActive()
 			return m, nil
 		case "f6":
 			m.activeTab = 5
@@ -4583,6 +4585,29 @@ func (m Model) currentProvider() string {
 	return strings.TrimSpace(m.eng.Status().Provider)
 }
 
+// snapSetupCursorToActive lands the Setup-tab cursor on whichever
+// provider is currently in use. Invoked when the user opens the Setup
+// tab so the active row is highlighted instead of always starting at
+// index 0 — that "active provider invisible until you scroll" feel
+// confused users into thinking nothing was selected.
+func (m Model) snapSetupCursorToActive() Model {
+	providers := m.availableProviders()
+	if len(providers) == 0 {
+		return m
+	}
+	active := strings.TrimSpace(m.currentProvider())
+	if active == "" {
+		return m
+	}
+	for i, name := range providers {
+		if strings.EqualFold(name, active) {
+			m.setupIndex = i
+			return m
+		}
+	}
+	return m
+}
+
 func (m Model) currentModel() string {
 	if model := strings.TrimSpace(m.status.Model); model != "" {
 		return model
@@ -6053,21 +6078,25 @@ func (m Model) renderFilesViewSized(width, height int) string {
 }
 
 func (m Model) renderPatchView(width int) string {
-	diffPreview := truncateForPanel(strings.TrimSpace(m.diff), width)
-	if diffPreview == "" {
-		diffPreview = subtleStyle.Render("Working tree is clean — nothing to review.")
+	// Worktree diff and the assistant's pending hunk both render as
+	// side-by-side (before | after) so the eye can visually pair a
+	// removed line with the line that replaced it. The unified-text
+	// stack we used before forced the user to scroll between `-` and
+	// `+` halves of the same change. 18-row cap each pane mirrors
+	// the previous truncateForPanel budget.
+	diffSide := renderDiffSideBySide(strings.TrimSpace(m.diff), width, 18)
+	patchSide := renderDiffSideBySide(m.patchPreviewText(), width, 18)
+	if strings.TrimSpace(m.patchPreviewText()) == "" {
+		patchSide = subtleStyle.Render("No assistant patch yet. Ask DFMC to refactor, fix, or rewrite a file in Chat — the generated diff lands here.")
 	}
-	patchPreview := truncateForPanel(m.patchPreviewText(), width)
-	if patchPreview == "" {
-		patchPreview = subtleStyle.Render("No assistant patch yet. Ask DFMC to refactor, fix, or rewrite a file in Chat — the generated diff lands here.")
-	}
+
 	changed := "(none)"
 	if len(m.changed) > 0 {
 		changed = strings.Join(m.changed, ", ")
 	}
 	parts := []string{
 		sectionHeader("◈", "Patch Lab"),
-		subtleStyle.Render("a apply · u undo · c check · ctrl+h keys"),
+		subtleStyle.Render("a apply · u undo · c check · ctrl+h keys · side-by-side: red=removed, green=added"),
 		renderDivider(min(width, 100)),
 		"",
 		"Changed:      " + truncateForPanel(changed, width),
@@ -6076,10 +6105,10 @@ func (m Model) renderPatchView(width int) string {
 		"Focus hunk:   " + truncateForPanel(m.patchHunkSummary(), width),
 		"",
 		sectionHeader("⇄", "Worktree Diff"),
-		diffPreview,
+		diffSide,
 		"",
 		sectionHeader("◇", "Current Hunk"),
-		patchPreview,
+		patchSide,
 	}
 	if info := m.patchFocusSummary(); info != "" {
 		parts = append(parts, "", subtleStyle.Render(info))
@@ -6226,15 +6255,40 @@ func (m Model) renderToolsView(width int) string {
 		detailLines = append(detailLines, subtleStyle.Render("Tool engine unavailable."))
 	} else {
 		selected := tools[m.toolIndex]
+		// Pull the rich spec (summary, purpose, risk, args with types/
+		// defaults/enums, returns, examples, tags, cost hint) instead of
+		// the prior 3-line "Name / Description / Params" digest. This is
+		// the same shape as `dfmc tool show NAME` / `/tool show NAME` so
+		// users see one canonical description per tool across surfaces.
+		if m.eng != nil && m.eng.Tools != nil {
+			if spec, ok := m.eng.Tools.Spec(selected); ok {
+				detailLines = append(detailLines,
+					highlightToolSpecLines(formatToolSpec(spec), detailWidth)...,
+				)
+			} else {
+				detailLines = append(detailLines,
+					fmt.Sprintf("Name:        %s", selected),
+					subtleStyle.Render("(no spec registered)"),
+				)
+			}
+		} else {
+			detailLines = append(detailLines,
+				fmt.Sprintf("Name:        %s", selected),
+				fmt.Sprintf("Description: %s", truncateForPanel(m.toolDescription(selected), detailWidth)),
+			)
+		}
+		// Show the user's current parameter override (or default preset)
+		// — the spec describes the schema; this line shows what would
+		// actually be sent on enter.
 		detailLines = append(detailLines,
-			fmt.Sprintf("Name:        %s", selected),
-			fmt.Sprintf("Description: %s", truncateForPanel(m.toolDescription(selected), detailWidth)),
-			fmt.Sprintf("Params:      %s", truncateForPanel(m.toolPresetSummary(selected), detailWidth)),
+			"",
+			subtleStyle.Render("Effective params"),
+			truncateForPanelSized(m.toolPresetSummary(selected), detailWidth, 6),
 			"",
 		)
 		if selected == "run_command" {
 			if suggestions := m.runCommandSuggestions(); len(suggestions) > 0 {
-				detailLines = append(detailLines, subtleStyle.Render("Suggested Presets"))
+				detailLines = append(detailLines, subtleStyle.Render("Suggested presets"))
 				for _, suggestion := range suggestions {
 					detailLines = append(detailLines, truncateForPanel("- "+suggestion, detailWidth))
 				}

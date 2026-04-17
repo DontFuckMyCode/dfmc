@@ -2839,11 +2839,14 @@ func TestRenderToolsViewShowsToolDetails(t *testing.T) {
 	if !strings.Contains(view, "Tools") || !strings.Contains(view, "Tool Detail") {
 		t.Fatalf("expected tools headings, got:\n%s", view)
 	}
-	if !strings.Contains(view, "Description: Read a text file") {
-		t.Fatalf("expected tool description in tools view, got:\n%s", view)
+	// Tools panel now renders the full ToolSpec (summary, risk, args)
+	// instead of the prior 3-line digest. Assert on the spec header
+	// shape so future refactors of formatToolSpec stay visible.
+	if !strings.Contains(view, "read_file") || !strings.Contains(view, "summary:") {
+		t.Fatalf("expected rich spec (read_file + summary:) in tools view, got:\n%s", view)
 	}
-	if !strings.Contains(view, "Params:") || !strings.Contains(view, "Last Result") || !strings.Contains(view, "package main") {
-		t.Fatalf("expected tool output in tools view, got:\n%s", view)
+	if !strings.Contains(view, "Effective params") || !strings.Contains(view, "Last Result") || !strings.Contains(view, "package main") {
+		t.Fatalf("expected effective-params + last-result sections in tools view, got:\n%s", view)
 	}
 }
 

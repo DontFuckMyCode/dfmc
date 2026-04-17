@@ -65,6 +65,49 @@ func (m Model) describeToolSpec(name string) string {
 	return formatToolSpec(spec)
 }
 
+// highlightToolSpecLines wraps formatToolSpec output for the Tools panel:
+// it splits on newlines, applies subtle styling to label prefixes, accent
+// to risk/cost/tags lines, and width-truncates each row so the right
+// column of the panel doesn't blow up. Returns a slice ready to splice
+// into the panel's detailLines.
+func highlightToolSpecLines(text string, width int) []string {
+	if text == "" {
+		return nil
+	}
+	raw := strings.Split(text, "\n")
+	out := make([]string, 0, len(raw))
+	for _, line := range raw {
+		styled := line
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "summary:"),
+			strings.HasPrefix(trimmed, "purpose:"),
+			strings.HasPrefix(trimmed, "returns:"):
+			styled = subtleStyle.Render(line)
+		case strings.HasPrefix(trimmed, "risk:"):
+			styled = warnStyle.Render(line)
+		case strings.HasPrefix(trimmed, "tags:"),
+			strings.HasPrefix(trimmed, "deprecated:"):
+			styled = accentStyle.Render(line)
+		case strings.HasPrefix(trimmed, "args:"),
+			strings.HasPrefix(trimmed, "examples:"):
+			styled = sectionTitleStyle.Render(line)
+		case strings.HasPrefix(trimmed, "- "):
+			styled = boldStyle.Render(line)
+		}
+		// Truncate after styling so we keep ANSI codes intact for the
+		// short rows; only over-long rows lose their colour, which is
+		// acceptable since they were going to wrap anyway.
+		if width > 0 && len([]rune(line)) > width {
+			runes := []rune(line)
+			cut := max(width-12, 0)
+			styled = string(runes[:cut]) + " ... [trimmed]"
+		}
+		out = append(out, styled)
+	}
+	return out
+}
+
 func formatToolSpec(spec tools.ToolSpec) string {
 	var b strings.Builder
 
