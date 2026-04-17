@@ -3579,6 +3579,12 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		port := fs.Int("ws-port", eng.Config.Remote.WSPort, "bind ws/http port")
 		auth := fs.String("auth", eng.Config.Remote.Auth, "none|token")
 		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token (for auth=token)")
+		// Parallel to runServe: --insecure acknowledges the risk of
+		// serving without auth on a non-loopback host. Remote defaults
+		// to auth=token so this is mostly a safety net for users who
+		// explicitly pass --auth=none for a one-off localhost test and
+		// then reuse the command with a wider --host.
+		insecure := fs.Bool("insecure", false, "allow --auth=none on non-loopback hosts (exposes tools/files to the network)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
 		}
@@ -3591,6 +3597,18 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		if mode == "token" && strings.TrimSpace(*token) == "" {
 			fmt.Fprintln(os.Stderr, "remote token auth requires --token or DFMC_REMOTE_TOKEN")
 			return 2
+		}
+		if mode == "none" && !isLoopbackBindHost(*host) && !*insecure {
+			fmt.Fprintf(os.Stderr,
+				"refusing to start remote server with --auth=none on non-loopback host %q: the API exposes file/tool/shell endpoints. "+
+					"Pass --auth=token (with --token or DFMC_REMOTE_TOKEN) to require a bearer token, or add --insecure to accept the risk explicitly.\n",
+				*host)
+			return 2
+		}
+		if mode == "none" && !isLoopbackBindHost(*host) && *insecure {
+			fmt.Fprintf(os.Stderr,
+				"WARNING: --auth=none on non-loopback host %q — all API endpoints (file read/write, tool invocation, shell) are reachable without authentication.\n",
+				*host)
 		}
 
 		base := web.New(eng, *host, *port)

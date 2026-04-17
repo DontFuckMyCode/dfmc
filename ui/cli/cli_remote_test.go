@@ -717,3 +717,37 @@ func TestRunServe_RefusesNoAuthOffLoopback(t *testing.T) {
 		t.Fatalf("stderr missing clear guidance, got: %q", msg)
 	}
 }
+
+// Same guard applies to `dfmc remote start` — the attack surface is
+// identical (both mount the web API), so the parallel test pins the
+// parallel behaviour.
+func TestRunRemoteStart_RefusesNoAuthOffLoopback(t *testing.T) {
+	stub := &engine.Engine{Config: config.DefaultConfig()}
+
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+
+	code := runRemote(context.Background(), stub, []string{
+		"start",
+		"--host", "0.0.0.0",
+		"--ws-port", "0",
+		"--auth", "none",
+	}, true)
+
+	_ = w.Close()
+	os.Stderr = origStderr
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	msg := string(buf[:n])
+
+	if code != 2 {
+		t.Fatalf("want exit code 2 (refuse), got %d; stderr=%q", code, msg)
+	}
+	if !strings.Contains(msg, "refusing") || !strings.Contains(msg, "--insecure") {
+		t.Fatalf("stderr missing clear guidance, got: %q", msg)
+	}
+}
