@@ -67,6 +67,11 @@ const (
 	// the cost is already burned. 1/7 is cheap, empirical, and
 	// prevents the overshoot without starving small budgets.
 	budgetHeadroomDivisor = 7
+	// toolResultDedupStubBytes is the threshold below which a prior
+	// tool_result message is considered already-trimmed and we don't
+	// bother replacing it with the dedup stub. Anything above this
+	// (a real, full payload) gets replaced with a one-liner.
+	toolResultDedupStubBytes = 160
 )
 
 // agentLimits is the resolved runtime budget for a single agent loop.
@@ -315,7 +320,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			}
 		}
 
-		if compacted, report := e.maybeCompactNativeLoopHistory(msgs, systemPrompt, chunks); report != nil {
+		if compacted, report := e.maybeCompactNativeLoopHistoryForBudget(msgs, systemPrompt, chunks, lim.MaxTokens); report != nil {
 			msgs = compacted
 			e.publishAgentLoopEvent("context:lifecycle:compacted", map[string]any{
 				"step":             step,
@@ -560,6 +565,22 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		}
 		results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize)
 
+		// When we're already deep in the budget, halve the per-tool
+		// char caps so new round results don't accelerate the bloat.
+		// This kicks in once we've consumed 50% of MaxTokens — the
+		// point where previous rounds are already carrying substantial
+		// weight into every subsequent request.
+		effectiveMaxResult := lim.MaxResultChars
+		effectiveMaxData := lim.MaxDataChars
+		if lim.MaxTokens > 0 && totalTokens*2 >= lim.MaxTokens {
+			if effectiveMaxResult > 0 {
+				effectiveMaxResult /= 2
+			}
+			if effectiveMaxData > 0 {
+				effectiveMaxData /= 2
+			}
+		}
+
 		// Rejoin results in original call order for message append /
 		// trace accumulation. Doing this in a second pass (after
 		// executeToolCallsParallel returns in-order) keeps the message
@@ -573,12 +594,28 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 				trace.Result = r.Result
 			}
 
-			content, isErr := formatNativeToolResultPayloadWithLimits(r.Result, r.Err, lim.MaxResultChars, lim.MaxDataChars)
+			content, isErr := formatNativeToolResultPayloadWithLimits(r.Result, r.Err, effectiveMaxResult, effectiveMaxData)
 			// Publish after formatting so we can attach RTK compression
 			// stats (raw→payload bytes) to the event for the TUI stats
 			// panel. Publication order matches issue order.
 			e.publishNativeToolResultWithPayload(trace, content)
 			traces = append(traces, trace)
+
+			// Cross-round dedup: if the model already invoked this exact
+			// (name, input) combination and we kept the full payload in
+			// history, replace the older result with a one-line stub.
+			// The model always has the most-recent read in the live
+			// round, so the older one just bloats context. We never
+			// remove the message — ToolCallID chains must stay intact
+			// for provider APIs — only shrink its Content.
+			if prev := findPriorIdenticalToolResult(msgs, call, call.ID); prev >= 0 {
+				if len(msgs[prev].Content) > toolResultDedupStubBytes {
+					msgs[prev].Content = fmt.Sprintf(
+						"[deduped — identical %s call appears again in a later round; see that result for the current payload]",
+						call.Name,
+					)
+				}
+			}
 
 			msgs = append(msgs, provider.Message{
 				Role:       types.RoleUser,
@@ -840,6 +877,76 @@ func metaToolNames(descs []provider.ToolDescriptor) []string {
 		names = append(names, d.Name)
 	}
 	return names
+}
+
+// findPriorIdenticalToolResult walks msgs backward looking for a
+// user-role tool_result whose originating assistant call had the
+// same tool name AND the same input payload as `current`. Returns
+// the index in msgs (or -1 when no duplicate exists). Identity is
+// decided by the tool name plus a canonical JSON encoding of the
+// input — models sometimes reorder map keys, so string-compare on
+// the raw input is unreliable. `skipID` lets the caller exclude
+// the current call (its own ID is usually not yet in msgs, but the
+// arg exists defensively).
+func findPriorIdenticalToolResult(msgs []provider.Message, current provider.ToolCall, skipID string) int {
+	currentKey, ok := canonicalToolCallKey(current)
+	if !ok {
+		return -1
+	}
+	// Map ToolCallID → index of its tool_result in msgs so we don't
+	// re-scan for each candidate.
+	resultIdx := make(map[string]int, len(msgs))
+	for i, m := range msgs {
+		if m.Role == types.RoleUser && strings.TrimSpace(m.ToolCallID) != "" {
+			resultIdx[m.ToolCallID] = i
+		}
+	}
+	// Walk assistant turns (most recent first) so when multiple
+	// duplicates exist we stub the NEWEST of the priors — the older
+	// ones are usually already stubbed from an earlier pass.
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role != types.RoleAssistant || len(m.ToolCalls) == 0 {
+			continue
+		}
+		for _, tc := range m.ToolCalls {
+			if tc.ID == skipID {
+				continue
+			}
+			key, ok := canonicalToolCallKey(tc)
+			if !ok || key != currentKey {
+				continue
+			}
+			idx, found := resultIdx[tc.ID]
+			if !found {
+				continue
+			}
+			return idx
+		}
+	}
+	return -1
+}
+
+// canonicalToolCallKey builds a stable hash key from a ToolCall's
+// name + input. Returns ("", false) for empty calls so the caller
+// can skip them.
+func canonicalToolCallKey(tc provider.ToolCall) (string, bool) {
+	name := strings.TrimSpace(tc.Name)
+	if name == "" {
+		return "", false
+	}
+	if tc.Input == nil {
+		return name + "|", true
+	}
+	// json.Marshal on a map uses lexicographic key order, which is
+	// exactly what we need for canonicalisation. Errors are ignored
+	// — a map with a non-serialisable value just produces "null"
+	// and we fall back to name-only comparison.
+	raw, err := json.Marshal(tc.Input)
+	if err != nil {
+		return name + "|", true
+	}
+	return name + "|" + string(raw), true
 }
 
 // formatNativeToolResultPayloadWithLimits turns a tools.Result + error into

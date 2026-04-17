@@ -38,7 +38,12 @@ func (e *Engine) resolveContextLifecycle() config.ContextLifecycleConfig {
 	out := config.ContextLifecycleConfig{
 		Enabled:                   true,
 		AutoCompactThresholdRatio: 0.7,
-		KeepRecentRounds:          3,
+		// Keep the most-recent round verbatim; older rounds become a
+		// one-line summary. Was 3 — dropped to 2 after real sessions
+		// showed per-round tool_result payloads dominating the budget.
+		// Two is still enough for the model to see what it just did
+		// plus the setup round before it.
+		KeepRecentRounds:          2,
 		HandoffBriefMaxTokens:     500,
 		AutoHandoffThresholdRatio: 0.9,
 	}
@@ -73,6 +78,22 @@ func (e *Engine) maybeCompactNativeLoopHistory(
 	systemPrompt string,
 	chunks []types.ContextChunk,
 ) ([]provider.Message, *compactionReport) {
+	return e.maybeCompactNativeLoopHistoryForBudget(msgs, systemPrompt, chunks, 0)
+}
+
+// maybeCompactNativeLoopHistoryForBudget is the budget-aware variant.
+// The compact threshold must sit BELOW the ceiling that actually parks
+// the loop; otherwise we silently let the history drift until the
+// park gate trips and it's too late. Callers pass the effective tool
+// budget (cfg.Agent.MaxToolTokens or the elastic-scaled equivalent);
+// compaction then fires at 0.7 × min(providerLimit, budget) — the
+// binding constraint, not just the provider's hard window.
+func (e *Engine) maybeCompactNativeLoopHistoryForBudget(
+	msgs []provider.Message,
+	systemPrompt string,
+	chunks []types.ContextChunk,
+	budgetTokens int,
+) ([]provider.Message, *compactionReport) {
 	lifecycle := e.resolveContextLifecycle()
 	if !lifecycle.Enabled {
 		return msgs, nil
@@ -82,7 +103,16 @@ func (e *Engine) maybeCompactNativeLoopHistory(
 	if providerLimit <= 0 {
 		providerLimit = defaultProviderContextTokens
 	}
-	threshold := int(float64(providerLimit) * lifecycle.AutoCompactThresholdRatio)
+	// Reference is the smaller of the provider window and the tool
+	// budget. With defaults (128k provider, 120k budget) this barely
+	// shifts the threshold, but on a 1M-window provider with a 120k
+	// tool budget the threshold was firing at 700k — past parking —
+	// before this change.
+	reference := providerLimit
+	if budgetTokens > 0 && budgetTokens < reference {
+		reference = budgetTokens
+	}
+	threshold := int(float64(reference) * lifecycle.AutoCompactThresholdRatio)
 	if threshold <= 0 {
 		return msgs, nil
 	}
