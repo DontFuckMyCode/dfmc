@@ -18,6 +18,7 @@ package hooks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -159,8 +160,21 @@ func (d *Dispatcher) Fire(ctx context.Context, event Event, payload Payload) int
 	return ran
 }
 
+// hookOutputCap is the maximum bytes captured per stream from a single
+// hook. cmd.CombinedOutput's old behaviour was unbounded — a runaway
+// hook (a `tail -f` mistake, a stuck binary writing infinite progress
+// dots, an attacker-controlled hook writing /dev/urandom) could grow
+// the buffer until DFMC OOM'd. 1 MiB per stream is generous for any
+// real hook output and bounded for safety.
+const hookOutputCap = 1 << 20 // 1 MiB
+
 // runOne executes a single hook with timeout + env projection. All
 // errors are captured in the Report — we never panic the caller.
+//
+// Output is captured into bounded buffers so a misbehaving hook can't
+// drive memory growth. When a stream hits the cap we keep the head
+// (the bit a human would actually read) and drop the rest with a
+// truncation marker so the report stays parseable.
 func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, payload Payload) Report {
 	to := h.timeout
 	if to <= 0 {
@@ -172,8 +186,13 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 	cmd := shellCommand(runCtx, h.command)
 	cmd.Env = append(os.Environ(), hookEnv(event, payload)...)
 
+	stdoutBuf := newBoundedBuffer(hookOutputCap)
+	stderrBuf := newBoundedBuffer(hookOutputCap)
+	cmd.Stdout = stdoutBuf
+	cmd.Stderr = stderrBuf
+
 	start := time.Now()
-	out, err := cmd.CombinedOutput()
+	err := cmd.Run()
 	dur := time.Since(start)
 
 	report := Report{
@@ -181,13 +200,14 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 		Name:     h.name,
 		Command:  h.command,
 		Duration: dur,
-		Stdout:   string(out),
+		Stdout:   stdoutBuf.String(),
+		Stderr:   stderrBuf.String(),
 	}
 	if err != nil {
 		report.Err = err
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			report.ExitCode = exitErr.ExitCode()
-			report.Stderr = string(exitErr.Stderr)
 		} else {
 			report.ExitCode = -1
 		}
