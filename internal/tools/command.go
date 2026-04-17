@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +10,13 @@ import (
 	"strings"
 	"time"
 )
+
+// runCommandOutputCap bounds stdout + stderr capture per invocation.
+// 4 MiB covers a verbose `cargo build`, `npm install`, or full
+// `pytest` run with traces; beyond that the agent gets the head plus
+// a truncation marker, which is more useful than crashing the parent
+// on a runaway producer.
+const runCommandOutputCap = 4 << 20 // 4 MiB
 
 type RunCommandTool struct {
 	cfg runCommandConfig
@@ -69,9 +75,16 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 	beforeChanged, _ := gitChangedFilesSnapshot(req.ProjectRoot)
 	cmd := exec.CommandContext(runCtx, execPath, args...)
 	cmd.Dir = workDir
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// Bounded capture: stdout + stderr each cap at runCommandOutputCap
+	// so an LLM-issued `cargo build --verbose` against a giant
+	// workspace, or `cat huge.log`, can't grow the parent heap to
+	// gigabytes. The agent already truncates downstream tool output,
+	// but that truncation runs AFTER everything is in memory — too
+	// late to save us if the producer is a firehose.
+	stdout := newBoundedBuffer(runCommandOutputCap)
+	stderr := newBoundedBuffer(runCommandOutputCap)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	err = cmd.Run()
 	afterChanged, _ := gitChangedFilesSnapshot(req.ProjectRoot)
 
