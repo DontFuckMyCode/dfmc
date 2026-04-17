@@ -211,6 +211,45 @@ func TestApplyPatchAppliesAndRejects(t *testing.T) {
 	}
 }
 
+// A CRLF-ended source file must still match context lines in a
+// LF-formatted unified diff — failure here leaves Windows users
+// unable to apply patches generated on a LF machine.
+func TestApplyPatchHandlesCRLFSource(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "hello.txt")
+	// Source uses CRLF line endings — common on Windows editors and
+	// default for some tools that don't set core.autocrlf = input.
+	if err := os.WriteFile(target, []byte("one\r\ntwo\r\nthree\r\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	// Diff uses LF (the canonical form git emits on every platform
+	// when no binary-translation is in effect).
+	patch := `--- a/hello.txt
++++ b/hello.txt
+@@ -1,3 +1,3 @@
+ one
+-two
++TWO
+ three
+`
+	eng := New(*config.DefaultConfig())
+	res, err := eng.Execute(context.Background(), "apply_patch", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"patch": patch},
+	})
+	if err != nil {
+		t.Fatalf("apply_patch: %v", err)
+	}
+	if !strings.Contains(res.Output, "1/1 hunks") {
+		t.Fatalf("expected 1/1 hunks applied against CRLF source, got:\n%s", res.Output)
+	}
+	// The patched content preserves the original's byte identity for
+	// unchanged lines (CRLF stays CRLF) and swaps the replaced line.
+	// We don't assert the exact reassembled CR/LF layout of the
+	// replacement line here — the key guarantee is "hunk matched and
+	// applied," which the applied/rejected count above confirms.
+}
+
 func TestApplyPatchNewFile(t *testing.T) {
 	tmp := t.TempDir()
 	patch := `--- /dev/null

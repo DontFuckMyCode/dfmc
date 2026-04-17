@@ -401,15 +401,18 @@ func findHunkAnchor(lines, want []string, hint int) int {
 	if len(want) == 0 {
 		return hint
 	}
-	// Normalize comparison: strip trailing newline.
-	trim := func(s string) string { return strings.TrimRight(s, "\n") }
+	// Normalize both sides: drop trailing CR+LF so CRLF-ended source
+	// files match against LF-normalized hunks (and vice-versa). Without
+	// the \r strip, `foo\r\n` trimmed to `foo\r` would never equal a
+	// hunk's `foo` — a silent "all hunks rejected" on Windows files.
+	trim := func(s string) string { return strings.TrimRight(s, "\r\n") }
 
 	match := func(at int) bool {
 		if at < 0 || at+len(want) > len(lines) {
 			return false
 		}
 		for i, w := range want {
-			if trim(lines[at+i]) != w {
+			if trim(lines[at+i]) != trim(w) {
 				return false
 			}
 		}
