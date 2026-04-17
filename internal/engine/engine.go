@@ -378,6 +378,7 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 			if reason == "" {
 				reason = "user denied"
 			}
+			e.recordDenial(name, source, reason)
 			e.EventBus.Publish(Event{
 				Type:   "tool:denied",
 				Source: "engine",

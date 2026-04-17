@@ -22,6 +22,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ApprovalRequest is the structured ask handed to an Approver.
@@ -131,4 +132,62 @@ func (e *Engine) askToolApproval(ctx context.Context, name string, params map[st
 	}
 	decision := ap.RequestApproval(ctx, req)
 	return decision
+}
+
+// RecentDenial captures a single gated-call rejection for diagnostic
+// surfacing. Sized to keep memory trivial; the engine stores the last
+// recentDenialsCapacity entries only.
+type RecentDenial struct {
+	Tool   string
+	Source string
+	Reason string
+	At     time.Time
+}
+
+const recentDenialsCapacity = 8
+
+var (
+	denialsMu         sync.RWMutex
+	denialsPerEngine  = map[*Engine][]RecentDenial{}
+)
+
+// recordDenial appends a RecentDenial to this engine's ring buffer.
+// Called from executeToolWithLifecycle after the Approver returns
+// Approved=false. Out-of-band storage (per-engine map) keeps the Engine
+// struct layout stable.
+func (e *Engine) recordDenial(name, source, reason string) {
+	if e == nil {
+		return
+	}
+	denialsMu.Lock()
+	defer denialsMu.Unlock()
+	entries := denialsPerEngine[e]
+	entries = append(entries, RecentDenial{
+		Tool:   name,
+		Source: source,
+		Reason: reason,
+		At:     time.Now(),
+	})
+	if len(entries) > recentDenialsCapacity {
+		// Drop oldest entries so we never grow unbounded.
+		entries = entries[len(entries)-recentDenialsCapacity:]
+	}
+	denialsPerEngine[e] = entries
+}
+
+// RecentDenials returns a copy of the current denial log, oldest first.
+// Nil when nothing has been denied yet. Safe to call from any goroutine.
+func (e *Engine) RecentDenials() []RecentDenial {
+	if e == nil {
+		return nil
+	}
+	denialsMu.RLock()
+	defer denialsMu.RUnlock()
+	entries := denialsPerEngine[e]
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]RecentDenial, len(entries))
+	copy(out, entries)
+	return out
 }

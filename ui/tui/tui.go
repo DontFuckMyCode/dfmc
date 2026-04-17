@@ -3374,6 +3374,21 @@ func (m Model) describeApprovalGate() string {
 	} else {
 		lines = append(lines, "  pending:  none")
 	}
+	if m.eng != nil {
+		denials := m.eng.RecentDenials()
+		if len(denials) == 0 {
+			lines = append(lines, "  recent:   no denials this session")
+		} else {
+			lines = append(lines, fmt.Sprintf("  recent:   %d denial(s) — newest first", len(denials)))
+			// Walk oldest-first storage in reverse so the newest denial
+			// is the first line the user reads.
+			for i := len(denials) - 1; i >= 0; i-- {
+				d := denials[i]
+				age := time.Since(d.At).Round(time.Second)
+				lines = append(lines, fmt.Sprintf("    · %s (%s, %s ago) — %s", d.Tool, d.Source, age, d.Reason))
+			}
+		}
+	}
 	return strings.Join(lines, "\n")
 }
 

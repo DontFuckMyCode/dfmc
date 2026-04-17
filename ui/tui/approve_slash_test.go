@@ -77,6 +77,19 @@ func TestSlashApprove_ShowsPendingRequest(t *testing.T) {
 	}
 }
 
+func TestSlashApprove_NoRecentDenialsShowsCleanLog(t *testing.T) {
+	m := newApproveTestModel(t, []string{"write_file"}, nil)
+	next, _, _ := m.executeChatCommand("/approve")
+	nm := next.(Model)
+	last := nm.transcript[len(nm.transcript)-1].Content
+	if !strings.Contains(last, "recent:") {
+		t.Fatalf("should show a recent line even when empty, got:\n%s", last)
+	}
+	if !strings.Contains(last, "no denials") {
+		t.Fatalf("empty denial log should say so, got:\n%s", last)
+	}
+}
+
 func TestSlashApprove_PermissionsAlias(t *testing.T) {
 	// /permissions is the Claude-Code-familiar spelling; must route to the
 	// same handler so users discover it either way.
