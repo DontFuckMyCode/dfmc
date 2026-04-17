@@ -3024,6 +3024,18 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			m = m.startCommandPicker("tool", "", false)
 			return m, nil, true
 		}
+		// `/tool show NAME` (and aliases) prints the ToolSpec without
+		// running the tool — parity with `dfmc tool show` so operators
+		// can see the arg shape inside the TUI session too.
+		first := strings.TrimSpace(args[0])
+		switch strings.ToLower(first) {
+		case "show", "describe", "inspect", "help":
+			if len(args) < 2 {
+				return m.appendSystemMessage("Usage: /tool show NAME"), nil, true
+			}
+			m.input = ""
+			return m.appendSystemMessage(m.describeToolSpec(strings.TrimSpace(args[1]))), nil, true
+		}
 		name := strings.TrimSpace(args[0])
 		if !containsStringFold(m.availableTools(), name) {
 			m = m.startCommandPicker("tool", name, false)
