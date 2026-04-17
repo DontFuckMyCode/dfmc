@@ -2444,20 +2444,29 @@ func (e *Engine) collectSourceFiles(root string) ([]string, error) {
 }
 
 func (e *Engine) detectDeadCode(ctx context.Context, paths []string) ([]DeadCodeItem, error) {
+	// Each symbol is keyed by (path, name, line) so two packages that
+	// happen to export the same identifier don't collide — the old
+	// `map[name]` version silently dropped duplicates, losing one of
+	// the two from the final report.
 	type symbolRef struct {
+		Name string
 		File string
 		Line int
 		Kind string
 	}
-	symbols := map[string]symbolRef{}
-	contents := map[string]string{}
+	var symbols []symbolRef
+	codeContents := map[string]string{} // comments + string literals stripped
 	for _, path := range paths {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
 		text := string(content)
-		contents[path] = text
+		// Strip strings + comments before counting occurrences. Without
+		// this a symbol merely mentioned in `// TODO: replace foo` looks
+		// "used" and the detector gives it a pass — a real source of
+		// false negatives noted in audits.
+		codeContents[path] = stripStringsAndComments(text, filepath.Ext(path))
 		if e.AST == nil {
 			continue
 		}
@@ -2466,42 +2475,57 @@ func (e *Engine) detectDeadCode(ctx context.Context, paths []string) ([]DeadCode
 			continue
 		}
 		for _, sym := range res.Symbols {
-			key := sym.Name
-			if key == "" {
+			if strings.TrimSpace(sym.Name) == "" {
 				continue
 			}
-			if _, exists := symbols[key]; !exists {
-				symbols[key] = symbolRef{
-					File: path,
-					Line: sym.Line,
-					Kind: string(sym.Kind),
-				}
-			}
+			symbols = append(symbols, symbolRef{
+				Name: sym.Name,
+				File: path,
+				Line: sym.Line,
+				Kind: string(sym.Kind),
+			})
 		}
 	}
 
-	wordCount := map[string]int{}
-	for name := range symbols {
-		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`)
-		total := 0
-		for _, content := range contents {
-			total += len(re.FindAllStringIndex(content, -1))
+	// Compile one regex per distinct name (names often repeat across
+	// packages; dedupe to save on compile cost).
+	nameRegexes := map[string]*regexp.Regexp{}
+	for _, s := range symbols {
+		if _, ok := nameRegexes[s.Name]; ok {
+			continue
 		}
-		wordCount[name] = total
+		nameRegexes[s.Name] = regexp.MustCompile(`\b` + regexp.QuoteMeta(s.Name) + `\b`)
 	}
 
 	out := make([]DeadCodeItem, 0)
-	for name, meta := range symbols {
-		n := wordCount[name]
-		if n <= 1 && !looksEntrypoint(name, meta.File) {
-			out = append(out, DeadCodeItem{
-				Name:        name,
-				Kind:        meta.Kind,
-				File:        filepath.ToSlash(meta.File),
-				Line:        meta.Line,
-				Occurrences: n,
-			})
+	for _, s := range symbols {
+		if looksEntrypoint(s.Name, s.File) {
+			continue
 		}
+		if goExportedEntrypoint(s.Name, s.File) {
+			continue
+		}
+		if isTestingIdentifier(s.Name) {
+			continue
+		}
+		re := nameRegexes[s.Name]
+		total := 0
+		for _, c := range codeContents {
+			total += len(re.FindAllStringIndex(c, -1))
+		}
+		// n counts ALL occurrences in the stripped code (including
+		// the definition line itself). <= 1 means "defined but
+		// nothing else references it."
+		if total > 1 {
+			continue
+		}
+		out = append(out, DeadCodeItem{
+			Name:        s.Name,
+			Kind:        s.Kind,
+			File:        filepath.ToSlash(s.File),
+			Line:        s.Line,
+			Occurrences: total,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Occurrences == out[j].Occurrences {
@@ -2516,6 +2540,193 @@ func (e *Engine) detectDeadCode(ctx context.Context, paths []string) ([]DeadCode
 		out = out[:100]
 	}
 	return out, nil
+}
+
+// goExportedEntrypoint reports whether a Go symbol is potentially
+// consumed by another package (uppercase first letter is Go's
+// export marker). A package-private lowercase symbol with no uses
+// is a strong dead-code candidate; an exported Public one could
+// legitimately be called by a downstream importer we can't see, so
+// we skip it. Language check is path-based because types.Symbol
+// carries language only via the ParseResult, not the symbol itself.
+func goExportedEntrypoint(name, file string) bool {
+	if !strings.HasSuffix(strings.ToLower(file), ".go") {
+		return false
+	}
+	if name == "" {
+		return false
+	}
+	first := name[0]
+	return first >= 'A' && first <= 'Z'
+}
+
+// isTestingIdentifier recognises Go / Python / JS testing entrypoints
+// that the runtime discovers by name. TestX, BenchmarkX, ExampleX in
+// Go; test_X / Test class methods in Python; describe / it / test in
+// JS. These are called by the test runner, not by other code, so
+// zero-references isn't dead code.
+func isTestingIdentifier(name string) bool {
+	switch {
+	case strings.HasPrefix(name, "Test"),
+		strings.HasPrefix(name, "Benchmark"),
+		strings.HasPrefix(name, "Example"),
+		strings.HasPrefix(name, "Fuzz"):
+		return true
+	case strings.HasPrefix(name, "test_"),
+		strings.HasPrefix(name, "setUp"),
+		strings.HasPrefix(name, "tearDown"):
+		return true
+	}
+	return false
+}
+
+// stripStringsAndComments removes string literals and comments from
+// source so a symbol's name occurring inside them does not inflate
+// the "looks used" count. Extension-keyed language heuristics:
+//
+//   - .go / .js / .jsx / .ts / .tsx / .java / .c / .cpp / .cs: `//`
+//     line comments, `/* ... */` block comments (cross-line),
+//     double-quoted strings with `\` escapes, single-quoted runes,
+//     backtick raw strings.
+//   - .py: `#` line comments, `"""..."""` / `'''...'''` triple-quoted
+//     docstrings (cross-line), single-line "..." and '...' strings.
+//   - others: no stripping — a conservative choice that may leave
+//     false-usage mentions for unknown languages.
+//
+// Replaced characters become spaces so line numbers and whitespace
+// alignment stay intact for any downstream line-oriented analysis.
+func stripStringsAndComments(text, ext string) string {
+	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
+	case "go", "js", "jsx", "mjs", "cjs", "ts", "tsx",
+		"java", "c", "cpp", "cc", "h", "hpp", "cs", "rs":
+		return stripCFamily(text)
+	case "py", "pyw":
+		return stripPython(text)
+	}
+	return text
+}
+
+func stripCFamily(text string) string {
+	b := []byte(text)
+	out := make([]byte, len(b))
+	copy(out, b)
+	i := 0
+	for i < len(out) {
+		c := out[i]
+		// Line comment
+		if c == '/' && i+1 < len(out) && out[i+1] == '/' {
+			for i < len(out) && out[i] != '\n' {
+				out[i] = ' '
+				i++
+			}
+			continue
+		}
+		// Block comment
+		if c == '/' && i+1 < len(out) && out[i+1] == '*' {
+			for i < len(out) {
+				if out[i] == '*' && i+1 < len(out) && out[i+1] == '/' {
+					out[i] = ' '
+					out[i+1] = ' '
+					i += 2
+					break
+				}
+				if out[i] != '\n' {
+					out[i] = ' '
+				}
+				i++
+			}
+			continue
+		}
+		// String / rune / raw-string literal
+		if c == '"' || c == '\'' || c == '`' {
+			quote := c
+			out[i] = ' '
+			i++
+			for i < len(out) {
+				if quote != '`' && out[i] == '\\' && i+1 < len(out) {
+					out[i] = ' '
+					out[i+1] = ' '
+					i += 2
+					continue
+				}
+				if out[i] == quote {
+					out[i] = ' '
+					i++
+					break
+				}
+				if out[i] != '\n' {
+					out[i] = ' '
+				}
+				i++
+			}
+			continue
+		}
+		i++
+	}
+	return string(out)
+}
+
+func stripPython(text string) string {
+	b := []byte(text)
+	out := make([]byte, len(b))
+	copy(out, b)
+	i := 0
+	for i < len(out) {
+		c := out[i]
+		if c == '#' {
+			for i < len(out) && out[i] != '\n' {
+				out[i] = ' '
+				i++
+			}
+			continue
+		}
+		// Triple-quoted docstrings.
+		if (c == '"' || c == '\'') && i+2 < len(out) && out[i+1] == c && out[i+2] == c {
+			quote := c
+			out[i] = ' '
+			out[i+1] = ' '
+			out[i+2] = ' '
+			i += 3
+			for i < len(out) {
+				if i+2 < len(out) && out[i] == quote && out[i+1] == quote && out[i+2] == quote {
+					out[i] = ' '
+					out[i+1] = ' '
+					out[i+2] = ' '
+					i += 3
+					break
+				}
+				if out[i] != '\n' {
+					out[i] = ' '
+				}
+				i++
+			}
+			continue
+		}
+		// Single-quoted / double-quoted strings (single-line).
+		if c == '"' || c == '\'' {
+			quote := c
+			out[i] = ' '
+			i++
+			for i < len(out) && out[i] != '\n' {
+				if out[i] == '\\' && i+1 < len(out) {
+					out[i] = ' '
+					out[i+1] = ' '
+					i += 2
+					continue
+				}
+				if out[i] == quote {
+					out[i] = ' '
+					i++
+					break
+				}
+				out[i] = ' '
+				i++
+			}
+			continue
+		}
+		i++
+	}
+	return string(out)
 }
 
 func (e *Engine) computeComplexity(ctx context.Context, paths []string) (ComplexityReport, error) {
@@ -2554,7 +2765,7 @@ func (e *Engine) computeComplexity(ctx context.Context, paths []string) (Complex
 		}
 		totalSymbols += len(res.Symbols)
 		lines := strings.Split(text, "\n")
-		for i, sym := range res.Symbols {
+		for _, sym := range res.Symbols {
 			kind := strings.ToLower(string(sym.Kind))
 			if kind != "function" && kind != "method" {
 				continue
@@ -2564,13 +2775,11 @@ func (e *Engine) computeComplexity(ctx context.Context, paths []string) (Complex
 			if start < 0 || start >= len(lines) {
 				continue
 			}
-			end := len(lines)
-			for j := i + 1; j < len(res.Symbols); j++ {
-				if res.Symbols[j].Line > sym.Line {
-					end = res.Symbols[j].Line - 1
-					break
-				}
-			}
+			// Slice the function body by tracking brace depth from the
+			// declaration line. Works for Go, C, JS/TS, Java. Python
+			// (indent-based) falls back to the next-symbol heuristic
+			// via endByNextSymbol because Python has no '{'.
+			end := endOfFunctionBody(lines, start, res.Language)
 			if end <= start {
 				end = start + 1
 			}
@@ -2605,20 +2814,178 @@ func (e *Engine) computeComplexity(ctx context.Context, paths []string) (Complex
 	return report, nil
 }
 
+// complexityScore approximates McCabe cyclomatic complexity. It counts
+// decision points using word-boundary regex so the scorer catches
+// `if(x)` (no trailing space), tab-indented `\tif`, `}else if{`, etc.
+// — all of which the previous space-padded substring variant missed.
+// False positives from identifiers containing keyword substrings (e.g.
+// `verifyUser`) are avoided by anchoring on `\b`.
+//
+// The score is language-agnostic: any branch/loop/jump keyword in any
+// of the supported languages contributes +1. A function with zero
+// branches returns 1 (the single entry path).
 func complexityScore(text string) int {
+	if text == "" {
+		return 1
+	}
 	score := 1
-	score += strings.Count(text, " if ")
-	score += strings.Count(text, " for ")
-	score += strings.Count(text, " switch ")
-	score += strings.Count(text, " case ")
-	score += strings.Count(text, " && ")
-	score += strings.Count(text, " || ")
-	score += strings.Count(text, " else if ")
-	score += strings.Count(text, " catch ")
-	score += strings.Count(text, " except ")
-	score += strings.Count(text, " ? ")
+	for _, re := range complexityBranchRegexes {
+		score += len(re.FindAllStringIndex(text, -1))
+	}
 	return score
 }
+
+// endOfFunctionBody returns the (0-indexed) line AFTER the closing
+// delimiter of the function that STARTS at `start`. For brace-based
+// languages it tracks `{` / `}` depth while respecting strings, runes,
+// and line/block comments. For Python (indent-based) it walks until a
+// non-blank line's indentation drops to or below the function's own
+// indent. If neither strategy finds a clean end, returns `len(lines)`
+// so the caller still gets a sensible segment (whole rest of file).
+func endOfFunctionBody(lines []string, start int, language string) int {
+	if start < 0 || start >= len(lines) {
+		return len(lines)
+	}
+	lang := strings.ToLower(strings.TrimSpace(language))
+	if lang == "python" {
+		return endOfPythonBody(lines, start)
+	}
+	return endOfBraceBody(lines, start)
+}
+
+// endOfBraceBody walks lines from `start`, counting balanced braces
+// outside strings/comments. Stops one line past the line where depth
+// returns to zero AFTER having been positive at least once. This is
+// resilient to nested closures — the body of an outer function
+// legitimately contains many `{}` pairs and only the outermost match
+// closes it.
+func endOfBraceBody(lines []string, start int) int {
+	depth := 0
+	opened := false
+	inBlockComment := false
+	for i := start; i < len(lines); i++ {
+		line := lines[i]
+		j := 0
+		for j < len(line) {
+			if inBlockComment {
+				if j+1 < len(line) && line[j] == '*' && line[j+1] == '/' {
+					inBlockComment = false
+					j += 2
+					continue
+				}
+				j++
+				continue
+			}
+			// Line comment — rest of the line is not code.
+			if j+1 < len(line) && line[j] == '/' && line[j+1] == '/' {
+				break
+			}
+			// Block comment start.
+			if j+1 < len(line) && line[j] == '/' && line[j+1] == '*' {
+				inBlockComment = true
+				j += 2
+				continue
+			}
+			// Skip string / rune literals so their braces don't count.
+			if c := line[j]; c == '"' || c == '\'' || c == '`' {
+				j = skipStringLiteral(line, j)
+				continue
+			}
+			if line[j] == '{' {
+				depth++
+				opened = true
+			} else if line[j] == '}' {
+				depth--
+				if opened && depth <= 0 {
+					return i + 1
+				}
+			}
+			j++
+		}
+	}
+	return len(lines)
+}
+
+// skipStringLiteral returns the index of the character AFTER the
+// closing quote of a string/rune/backtick literal starting at
+// `line[start]`. Respects escape sequences for "" and ''. Backtick
+// (raw) strings don't honour escapes in Go. If the literal doesn't
+// close on this line (multi-line raw strings), returns len(line).
+func skipStringLiteral(line string, start int) int {
+	if start >= len(line) {
+		return start
+	}
+	quote := line[start]
+	j := start + 1
+	for j < len(line) {
+		c := line[j]
+		if quote != '`' && c == '\\' {
+			j += 2
+			continue
+		}
+		if c == quote {
+			return j + 1
+		}
+		j++
+	}
+	return len(line)
+}
+
+// endOfPythonBody walks until a non-blank line whose indentation is
+// ≤ the def's indentation. That line belongs to the enclosing scope,
+// so the function ends the line before.
+func endOfPythonBody(lines []string, start int) int {
+	defIndent := leadingWhitespaceLen(lines[start])
+	for i := start + 1; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if leadingWhitespaceLen(line) <= defIndent {
+			return i
+		}
+	}
+	return len(lines)
+}
+
+func leadingWhitespaceLen(s string) int {
+	n := 0
+	for n < len(s) && (s[n] == ' ' || s[n] == '\t') {
+		n++
+	}
+	return n
+}
+
+// complexityBranchRegexes is compiled once and reused; compiling per
+// call is expensive and shows up in profiles for big codebases. Each
+// regex is word-boundary-anchored on the keyword side and loose on
+// the delimiter side (accepts space / paren / brace / line end).
+var complexityBranchRegexes = func() []*regexp.Regexp {
+	keywords := []string{
+		"if", "else if", "elif",
+		"for", "while", "do",
+		"switch", "case",
+		"catch", "except", "rescue", "finally",
+		"goto",
+	}
+	out := make([]*regexp.Regexp, 0, len(keywords)+3)
+	for _, kw := range keywords {
+		// Keyword must be preceded by non-word OR start-of-string,
+		// and followed by a space/paren/brace/colon. `\b...\b` alone
+		// would match inside identifiers when followed by whitespace
+		// only, which is why we also require the trailing-char class.
+		out = append(out, regexp.MustCompile(`(^|\W)`+regexp.QuoteMeta(kw)+`[\s(:{]`))
+	}
+	// Short-circuit boolean operators — one decision per && / ||.
+	out = append(out,
+		regexp.MustCompile(`&&`),
+		regexp.MustCompile(`\|\|`),
+	)
+	// Ternary: match `?` followed by non-punct so we don't count
+	// `foo?.bar` (JS optional chaining) or `type?` annotations.
+	out = append(out, regexp.MustCompile(`\?\s`))
+	return out
+}()
 
 func looksEntrypoint(name, file string) bool {
 	n := strings.ToLower(strings.TrimSpace(name))
