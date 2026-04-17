@@ -261,28 +261,45 @@ func renderMarkdownBlocks(text string) []string {
 	return out
 }
 
-// isTableHeader reports whether a line looks like a pipe-table header
-// row: starts with `|` (after optional whitespace) and contains at
-// least one additional pipe separator. Keeps the detection tight so
-// code fragments that happen to contain | don't get mis-classified.
-func isTableHeader(line string) bool {
+// tableDelim is either the ASCII pipe `|` or the box-drawing light
+// vertical `│` (U+2502). Models often emit the latter when they pre-
+// render tables themselves; we accept both and re-align either way.
+// Whichever delimiter the header uses must also appear in the body
+// rows we consume — mixing delimiters in one table is rejected.
+func tableDelim(line string) (rune, bool) {
 	t := strings.TrimSpace(line)
-	if !strings.HasPrefix(t, "|") {
-		return false
+	switch {
+	case strings.HasPrefix(t, "|") && strings.Count(t, "|") >= 3:
+		return '|', true
+	case strings.HasPrefix(t, "│") && strings.Count(t, "│") >= 3:
+		return '│', true
 	}
-	// Must have at least one internal separator beyond the bookend pipes.
-	return strings.Count(t, "|") >= 3
+	return 0, false
 }
 
-// isTableSeparator detects the `|---|---|` line that separates the
-// header row from body rows in a pipe table. Alignment markers
-// (`:---`, `---:`, `:---:`) are accepted too.
+// isTableHeader reports whether a line looks like a table header row.
+// Accepts both markdown (`|` bookends) and box-drawing (`│`) styles.
+func isTableHeader(line string) bool {
+	_, ok := tableDelim(line)
+	return ok
+}
+
+// isTableSeparator detects the row that divides header from body.
+// Markdown uses `|---|---|` (hyphens, optional `:` alignment markers);
+// box-drawing uses `─────┼─────` or `────┼────` with U+2500/U+253C.
+// Accepts either as long as the cells are separator-only.
 func isTableSeparator(line string) bool {
 	t := strings.TrimSpace(line)
-	if !strings.HasPrefix(t, "|") {
-		return false
+	switch {
+	case strings.HasPrefix(t, "|"):
+		return isMarkdownSeparator(t)
+	case containsBoxSeparator(t):
+		return true
 	}
-	// Strip the outer pipes and check each cell.
+	return false
+}
+
+func isMarkdownSeparator(t string) bool {
 	body := strings.Trim(t, "|")
 	for _, cell := range strings.Split(body, "|") {
 		c := strings.TrimSpace(cell)
@@ -295,6 +312,28 @@ func isTableSeparator(line string) bool {
 	return true
 }
 
+// containsBoxSeparator recognises a box-drawing separator row. The
+// row is a run of ─ characters with ┼ / ┤ / ├ junctions — and
+// critically no letters or digits, since those would signal a real
+// content row that happens to include a box character.
+func containsBoxSeparator(t string) bool {
+	if t == "" {
+		return false
+	}
+	hasDash := false
+	for _, r := range t {
+		switch r {
+		case '─', '┼', '┤', '├', '┬', '┴', '│', '|', '-', ' ':
+			if r == '─' || r == '-' {
+				hasDash = true
+			}
+		default:
+			return false
+		}
+	}
+	return hasDash
+}
+
 // renderMarkdownTable consumes a pipe-table block starting at lines[0]
 // and returns (linesConsumed, renderedLines). The renderer pads cells
 // to the per-column max width so columns align; the header row is
@@ -303,6 +342,10 @@ func isTableSeparator(line string) bool {
 // line wrapping and will fold anything over the bubble width.
 func renderMarkdownTable(lines []string) (int, []string) {
 	if len(lines) < 2 {
+		return 0, nil
+	}
+	delim, ok := tableDelim(lines[0])
+	if !ok {
 		return 0, nil
 	}
 
@@ -315,10 +358,10 @@ func renderMarkdownTable(lines []string) (int, []string) {
 			consumed = i + 1
 			continue
 		}
-		if !strings.HasPrefix(strings.TrimSpace(line), "|") {
+		if !strings.HasPrefix(strings.TrimSpace(line), string(delim)) {
 			break
 		}
-		cells := splitTableRow(line)
+		cells := splitTableRow(line, delim)
 		if len(cells) == 0 {
 			break
 		}
@@ -377,17 +420,20 @@ func renderMarkdownTable(lines []string) (int, []string) {
 	return consumed, out
 }
 
-// splitTableRow parses a pipe-table row into trimmed cells. Leading
-// and trailing pipes are stripped; inner pipes serve as separators.
-// Empty lines or lines lacking a pipe return nil so the caller can
-// stop consuming the table block.
-func splitTableRow(line string) []string {
+// splitTableRow parses a table row into trimmed cells. Leading and
+// trailing delimiters are stripped; inner delimiters serve as
+// separators. `delim` is either `|` (markdown pipe table) or `│`
+// (box-drawing vertical — used when models pre-render tables).
+// Lines that don't start with the chosen delimiter return nil so the
+// caller can stop consuming the table block.
+func splitTableRow(line string, delim rune) []string {
 	t := strings.TrimSpace(line)
-	if !strings.HasPrefix(t, "|") {
+	ds := string(delim)
+	if !strings.HasPrefix(t, ds) {
 		return nil
 	}
-	t = strings.Trim(t, "|")
-	cells := strings.Split(t, "|")
+	t = strings.Trim(t, ds)
+	cells := strings.Split(t, ds)
 	out := make([]string, 0, len(cells))
 	for _, c := range cells {
 		out = append(out, strings.TrimSpace(c))

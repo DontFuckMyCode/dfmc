@@ -106,6 +106,99 @@ func TestRenderMarkdownBlocks_NonTablePipesPassThrough(t *testing.T) {
 	}
 }
 
+// Models that pre-render tables emit box-drawing glyphs (│ ─ ┼)
+// instead of ASCII pipes. Before this fix those passed through the
+// markdown renderer verbatim and the widths were whatever the model
+// happened to compute — usually wrong. The renderer now recognises
+// box-drawing delimiters and realigns the columns itself.
+func TestIsTableHeader_AcceptsBoxDrawingRows(t *testing.T) {
+	cases := []string{
+		"│ Col A │ Col B │",
+		"  │ Dosya │ Satır │ Sorumluluk │",
+	}
+	for _, in := range cases {
+		if !isTableHeader(in) {
+			t.Fatalf("%q should be recognized as a box-drawing table header", in)
+		}
+	}
+}
+
+func TestIsTableSeparator_AcceptsBoxDrawingRuns(t *testing.T) {
+	cases := []string{
+		"─────┼─────┼─────",
+		"──────────┼──────────",
+		"  ────┼────┼────",
+	}
+	for _, in := range cases {
+		if !isTableSeparator(in) {
+			t.Fatalf("%q should be a valid box-drawing separator", in)
+		}
+	}
+}
+
+func TestIsTableSeparator_RejectsBoxRowsWithText(t *testing.T) {
+	if isTableSeparator("── foo ┼── bar ──") {
+		t.Fatal("content cells must not be treated as a separator")
+	}
+}
+
+func TestRenderMarkdownBlocks_AlignsBoxDrawingTable(t *testing.T) {
+	// Input mimics what a model emits when it pre-renders a table —
+	// notice the column widths are inconsistent between header (wider)
+	// and body (narrower). The renderer must recompute widths and
+	// produce rows where every body delimiter lines up.
+	src := strings.Join([]string{
+		"│ Dosya            │ Satır │ Durum    │",
+		"─────────────────┼───────┼──────────",
+		"│ graph.go       │ 260   │ Tam      │",
+		"│ algorithms.go  │ 75    │ Tam      │",
+	}, "\n")
+
+	blocks := renderMarkdownBlocks(src)
+	if len(blocks) < 4 {
+		t.Fatalf("expected 4+ output lines, got %d:\n%v", len(blocks), blocks)
+	}
+
+	// After alignment, every non-separator row's delimiter positions
+	// must match the header's. Use ASCII "│" (U+2502) as the anchor.
+	plain := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		plain = append(plain, stripANSI(b))
+	}
+	anchors := pipePositions(plain[0])
+	if len(anchors) < 2 {
+		t.Fatalf("header must contain at least 2 delimiters, got %q", plain[0])
+	}
+	for i, row := range plain[2:] { // skip header + underline
+		got := pipePositions(row)
+		if len(got) != len(anchors) {
+			t.Fatalf("body row %d delimiter count = %d, want %d\nrow: %q\nheader: %q",
+				i, len(got), len(anchors), row, plain[0])
+		}
+		for j := range got {
+			if got[j] != anchors[j] {
+				t.Fatalf("body row %d delim %d at col %d, want %d\nrow:    %q\nheader: %q",
+					i, j, got[j], anchors[j], row, plain[0])
+			}
+		}
+	}
+}
+
+// pipePositions returns the 0-indexed column where each │ glyph lives
+// in a rendered row (after ANSI stripping). Used to verify that body
+// rows line up with the header in box-drawing tables.
+func pipePositions(line string) []int {
+	var out []int
+	col := 0
+	for _, r := range line {
+		if r == '│' {
+			out = append(out, col)
+		}
+		col++
+	}
+	return out
+}
+
 func TestRenderMarkdownBlocks_TableFollowedByProseKeepsBoth(t *testing.T) {
 	src := strings.Join([]string{
 		"| A | B |",
