@@ -8,7 +8,6 @@ package tools
 // handled for you.
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -45,9 +44,16 @@ func runGit(ctx context.Context, projectRoot string, timeout time.Duration, args
 
 	cmd := exec.CommandContext(runCtx, "git", args...)
 	cmd.Dir = projectRoot
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// Bounded capture — same reasoning as run_command. `git log -p`
+	// across a large repo, `git diff main..feature` over a sweeping
+	// refactor, `git show <huge-commit>`: all can produce tens of MB
+	// of patch output. Capping at 4 MiB per stream keeps the parent
+	// heap bounded; the agent gets the head + a truncation marker
+	// instead of an OOM.
+	stdout := newBoundedBuffer(runCommandOutputCap)
+	stderr := newBoundedBuffer(runCommandOutputCap)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	err := cmd.Run()
 	exitCode := 0
 	var exitErr *exec.ExitError
