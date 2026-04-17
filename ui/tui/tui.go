@@ -130,6 +130,12 @@ type Model struct {
 	// stop the provider call and surface a friendly cancellation notice
 	// without tearing down the whole TUI context.
 	streamCancel context.CancelFunc
+	// userCancelledStream tracks whether the most recent stream
+	// termination was initiated by the user (Esc) rather than a
+	// network error or provider fault. The chatErrMsg handler reads
+	// this to render a friendly notice + transcript marker instead of
+	// the raw "context canceled" string.
+	userCancelledStream bool
 	// pendingQueue holds chat questions the user submitted while the engine
 	// was still busy. When the current stream finishes we dequeue the oldest
 	// entry and submit it — draining FIFO until the queue empties. The
@@ -846,6 +852,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clearStreamCancel()
 		m.resetAgentRuntime()
 		m.pendingNoteCount = 0
+		// Distinguish a user-driven cancel (esc) from a real provider or
+		// network error. Context cancellation that arrives without the
+		// userCancelledStream flag set is still treated as an error (e.g.
+		// the process context got cancelled from above) — but the common
+		// flow is "user pressed esc", which deserves a calm message and a
+		// transcript marker so scrolling back makes it obvious the turn
+		// was aborted, not silently truncated.
+		wasCancelled := m.userCancelledStream || errors.Is(msg.err, context.Canceled)
+		m.userCancelledStream = false
+		if wasCancelled {
+			m.notice = "Turn cancelled (esc). Partial output kept in transcript; /retry reopens it."
+			m = m.appendSystemMessage("◦ Turn cancelled by user — partial assistant output above, if any, is what arrived before the cancel took effect.")
+			if len(m.pendingQueue) > 0 {
+				m.notice += fmt.Sprintf(" %d queued message(s) kept.", len(m.pendingQueue))
+			}
+			return m, nil
+		}
 		m.notice = "chat: " + msg.err.Error()
 		if len(m.pendingQueue) > 0 {
 			m.notice += fmt.Sprintf(" — %d queued message(s) kept.", len(m.pendingQueue))
@@ -9209,13 +9232,16 @@ func (m *Model) clearStreamCancel() {
 // cancelActiveStream aborts an in-flight chat stream if one is running.
 // Returns true if a cancel fired — the caller uses that to decide whether
 // to emit the "cancelled by user" notice vs. fall through to other esc
-// behavior like dismissing the parked-resume banner.
+// behavior like dismissing the parked-resume banner. The userCancelled
+// flag lets the chatErrMsg reader distinguish a clean user-driven stop
+// from a provider/network error so we can tailor the message.
 func (m *Model) cancelActiveStream() bool {
 	if m.streamCancel == nil {
 		return false
 	}
 	m.streamCancel()
 	m.streamCancel = nil
+	m.userCancelledStream = true
 	return true
 }
 
