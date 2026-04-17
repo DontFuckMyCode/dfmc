@@ -124,6 +124,12 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runSkillShortcut(ctx, eng, cmd, cmdArgs, opts.JSON)
 	case "remote":
 		return runRemote(ctx, eng, cmdArgs, opts.JSON)
+	case "provider":
+		return runProviderCLI(eng, cmdArgs, opts.JSON)
+	case "model":
+		return runModelCLI(eng, cmdArgs, opts.JSON)
+	case "providers":
+		return runProvidersList(eng, opts.JSON)
 	case "doctor":
 		return runDoctor(ctx, eng, cmdArgs, opts.JSON)
 	case "mcp":
@@ -139,7 +145,20 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", cmd)
 			return 2
 		}
-		// If command is not known, treat it as a one-shot question.
+		// Typo guard: if the first token looks like a misspelled verb
+		// (a single short word that's close to a known command), warn
+		// on stderr before routing to ask. Without this guard `dfmc
+		// docter` silently becomes an LLM question about 'docter',
+		// which is wasteful and confusing.
+		if looksLikeCommandTypo(cmd, rest) {
+			if suggestion := suggestCLICommand(cmd); suggestion != "" {
+				fmt.Fprintf(os.Stderr, "unknown command %q — did you mean %q?\n", cmd, suggestion)
+				fmt.Fprintln(os.Stderr, "Run `dfmc help` for the full command list, or quote the text to force a question: `dfmc ask "+strconv.Quote(cmd)+"`.")
+				return 2
+			}
+		}
+		// If command is not known and doesn't look like a typo, treat it
+		// as a one-shot question.
 		return runAsk(ctx, eng, rest, opts.JSON)
 	}
 }
