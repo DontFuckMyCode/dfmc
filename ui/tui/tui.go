@@ -136,6 +136,14 @@ type Model struct {
 	// this to render a friendly notice + transcript marker instead of
 	// the raw "context canceled" string.
 	userCancelledStream bool
+	// mouseCaptureEnabled mirrors the program's current mouse-capture
+	// mode so /mouse and status copy can report "on" vs. "off". We
+	// start from tui.mouse_capture config and flip on /mouse toggle.
+	mouseCaptureEnabled bool
+	// program is the live bubbletea program handle. Populated by Run()
+	// so runtime commands (e.g. /mouse) can call EnableMouse /
+	// DisableMouse without re-constructing the program.
+	program *tea.Program
 	// pendingQueue holds chat questions the user submitted while the engine
 	// was still busy. When the current stream finishes we dequeue the oldest
 	// entry and submit it — draining FIFO until the queue empties. The
@@ -491,16 +499,21 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 
 func Run(ctx context.Context, eng *engine.Engine, opts Options) error {
 	model := NewModel(ctx, eng)
-	programOpts := []tea.ProgramOption{
-		// Mouse wheel scrolls the chat transcript. Cell-motion is the
-		// lighter of the two mouse modes — we only care about wheel events,
-		// not drag, so we don't need all-motion tracking.
-		tea.WithMouseCellMotion(),
+	programOpts := []tea.ProgramOption{}
+	// Mouse capture is OFF by default so terminal drag-to-select / copy
+	// just works. Users who prefer wheel-scroll can flip tui.mouse_capture
+	// in their config — the TUI will read it below and enable cell-motion
+	// tracking. A runtime toggle (/mouse) lets you switch mid-session
+	// without restarting.
+	if eng != nil && eng.Config != nil && eng.Config.TUI.MouseCapture {
+		model.mouseCaptureEnabled = true
+		programOpts = append(programOpts, tea.WithMouseCellMotion())
 	}
 	if opts.AltScreen {
 		programOpts = append(programOpts, tea.WithAltScreen())
 	}
 	p := tea.NewProgram(model, programOpts...)
+	model.program = p
 
 	// Wire the tool-approval gate. SetApprover is a no-op when the engine
 	// has tools.require_approval empty, but registering it here is cheap
@@ -2988,6 +3001,24 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		}
 		m.notice = "Trajectory hints " + state + "."
 		return m.appendSystemMessage("Trajectory coach hints between rounds are now " + state + ". Toggle again with /hints."), nil, true
+	case "mouse":
+		// Toggle bubbletea's mouse-event capture at runtime. With
+		// capture ON the wheel scrolls the transcript natively but
+		// terminal drag-to-select / right-click-copy is disabled. With
+		// capture OFF you get the terminal's native selection — most
+		// terminals also let Shift+drag bypass capture when it's on.
+		m.input = ""
+		var cmd tea.Cmd
+		if m.mouseCaptureEnabled {
+			m.mouseCaptureEnabled = false
+			cmd = tea.DisableMouse
+			m.notice = "Mouse capture off — drag to select / copy text directly."
+		} else {
+			m.mouseCaptureEnabled = true
+			cmd = tea.EnableMouseCellMotion
+			m.notice = "Mouse capture on — wheel scrolls transcript. Shift+drag bypasses capture in most terminals."
+		}
+		return m.appendSystemMessage("Mouse capture toggled. /mouse to flip again; set tui.mouse_capture in .dfmc/config.yaml for the default."), cmd, true
 	case "status":
 		m.input = ""
 		return m.appendSystemMessage(m.statusCommandSummary()), loadStatusCmd(m.eng), true

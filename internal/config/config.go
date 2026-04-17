@@ -238,6 +238,13 @@ type TUIConfig struct {
 	Theme      string `yaml:"theme"`
 	VimKeys    bool   `yaml:"vim_keys"`
 	ShowTokens bool   `yaml:"show_tokens"`
+	// MouseCapture toggles bubbletea's mouse-event capture. When true
+	// the wheel scrolls the transcript natively but the terminal's
+	// drag-to-select / right-click-copy is disabled — most terminals
+	// let Shift+drag bypass this. Default is false so copy/paste
+	// "just works" out of the box; users who prefer wheel scroll can
+	// opt in.
+	MouseCapture bool `yaml:"mouse_capture"`
 }
 
 type WebConfig struct {

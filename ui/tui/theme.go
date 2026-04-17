@@ -219,7 +219,8 @@ func renderMarkdownBlocks(text string) []string {
 	rawLines := strings.Split(text, "\n")
 	out := make([]string, 0, len(rawLines))
 	inFence := false
-	for _, line := range rawLines {
+	for i := 0; i < len(rawLines); i++ {
+		line := rawLines[i]
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") {
 			inFence = !inFence
@@ -237,6 +238,15 @@ func renderMarkdownBlocks(text string) []string {
 			out = append(out, codeStyle.Render("  │ "+line))
 			continue
 		}
+		// GitHub-style pipe table: header row, a |---| separator, then N
+		// body rows. Render as aligned columns instead of raw pipes so
+		// the wall-of-| that the model emits actually reads as a table.
+		if isTableHeader(line) && i+1 < len(rawLines) && isTableSeparator(rawLines[i+1]) {
+			consumed, rendered := renderMarkdownTable(rawLines[i:])
+			out = append(out, rendered...)
+			i += consumed - 1 // for-loop will increment
+			continue
+		}
 		if h := headerLevel(trimmed); h > 0 {
 			label := strings.TrimSpace(trimmed[h:])
 			out = append(out, boldStyle.Render(accentStyle.Render(strings.Repeat("#", h)+" "+label)))
@@ -249,6 +259,147 @@ func renderMarkdownBlocks(text string) []string {
 		out = append(out, renderMarkdownLite(line))
 	}
 	return out
+}
+
+// isTableHeader reports whether a line looks like a pipe-table header
+// row: starts with `|` (after optional whitespace) and contains at
+// least one additional pipe separator. Keeps the detection tight so
+// code fragments that happen to contain | don't get mis-classified.
+func isTableHeader(line string) bool {
+	t := strings.TrimSpace(line)
+	if !strings.HasPrefix(t, "|") {
+		return false
+	}
+	// Must have at least one internal separator beyond the bookend pipes.
+	return strings.Count(t, "|") >= 3
+}
+
+// isTableSeparator detects the `|---|---|` line that separates the
+// header row from body rows in a pipe table. Alignment markers
+// (`:---`, `---:`, `:---:`) are accepted too.
+func isTableSeparator(line string) bool {
+	t := strings.TrimSpace(line)
+	if !strings.HasPrefix(t, "|") {
+		return false
+	}
+	// Strip the outer pipes and check each cell.
+	body := strings.Trim(t, "|")
+	for _, cell := range strings.Split(body, "|") {
+		c := strings.TrimSpace(cell)
+		c = strings.TrimPrefix(c, ":")
+		c = strings.TrimSuffix(c, ":")
+		if c == "" || strings.Trim(c, "-") != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// renderMarkdownTable consumes a pipe-table block starting at lines[0]
+// and returns (linesConsumed, renderedLines). The renderer pads cells
+// to the per-column max width so columns align; the header row is
+// bold + accented and an underline row separates header from body.
+// Wide tables are not further wrapped here — renderMessageBubble owns
+// line wrapping and will fold anything over the bubble width.
+func renderMarkdownTable(lines []string) (int, []string) {
+	if len(lines) < 2 {
+		return 0, nil
+	}
+
+	rows := make([][]string, 0, 8)
+	consumed := 0
+	headerParsed := false
+	for i, line := range lines {
+		if i == 1 {
+			// Separator row — recorded for completeness, not rendered.
+			consumed = i + 1
+			continue
+		}
+		if !strings.HasPrefix(strings.TrimSpace(line), "|") {
+			break
+		}
+		cells := splitTableRow(line)
+		if len(cells) == 0 {
+			break
+		}
+		rows = append(rows, cells)
+		consumed = i + 1
+		if i == 0 {
+			headerParsed = true
+		}
+	}
+	if !headerParsed || len(rows) == 0 {
+		return 0, nil
+	}
+
+	// Column widths: max of every row's cell widths for that column.
+	colWidths := make([]int, 0, len(rows[0]))
+	for _, row := range rows {
+		for ci, cell := range row {
+			w := lipgloss.Width(cell)
+			if ci >= len(colWidths) {
+				colWidths = append(colWidths, w)
+				continue
+			}
+			if w > colWidths[ci] {
+				colWidths[ci] = w
+			}
+		}
+	}
+
+	out := make([]string, 0, len(rows)+1)
+	for ri, row := range rows {
+		parts := make([]string, 0, len(row))
+		for ci, cell := range row {
+			pad := 0
+			if ci < len(colWidths) {
+				pad = colWidths[ci] - lipgloss.Width(cell)
+			}
+			padded := cell + strings.Repeat(" ", max0(pad))
+			if ri == 0 {
+				padded = boldStyle.Render(accentStyle.Render(padded))
+			} else {
+				padded = renderMarkdownLite(padded)
+			}
+			parts = append(parts, padded)
+		}
+		rendered := "  " + strings.Join(parts, subtleStyle.Render("  │  "))
+		out = append(out, rendered)
+		if ri == 0 {
+			// Underline separator — subtle, single dash run per column.
+			sepParts := make([]string, 0, len(colWidths))
+			for _, w := range colWidths {
+				sepParts = append(sepParts, strings.Repeat("─", w))
+			}
+			out = append(out, subtleStyle.Render("  "+strings.Join(sepParts, "──┼──")))
+		}
+	}
+	return consumed, out
+}
+
+// splitTableRow parses a pipe-table row into trimmed cells. Leading
+// and trailing pipes are stripped; inner pipes serve as separators.
+// Empty lines or lines lacking a pipe return nil so the caller can
+// stop consuming the table block.
+func splitTableRow(line string) []string {
+	t := strings.TrimSpace(line)
+	if !strings.HasPrefix(t, "|") {
+		return nil
+	}
+	t = strings.Trim(t, "|")
+	cells := strings.Split(t, "|")
+	out := make([]string, 0, len(cells))
+	for _, c := range cells {
+		out = append(out, strings.TrimSpace(c))
+	}
+	return out
+}
+
+func max0(v int) int {
+	if v < 0 {
+		return 0
+	}
+	return v
 }
 
 // headerLevel returns 1, 2, or 3 for `# `, `## `, `### ` prefixes and 0
