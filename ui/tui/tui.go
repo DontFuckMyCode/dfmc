@@ -2862,6 +2862,36 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.planMode = false
 		m.notice = "Plan mode OFF — prompts can now modify files."
 		return m.appendSystemMessage("▸ Plan mode OFF. Write/update prompts will now route through mutating tools (apply_patch, edit_file, write_file)."), nil, true
+	case "compact":
+		// Collapse older transcript entries into a single summary line so
+		// long sessions stay scannable. Purely a view-layer operation —
+		// engine memory, conversation history, and in-loop provider
+		// messages are untouched. Runs offline (no LLM call).
+		//
+		// Default keeps the most recent 6 lines (configurable: /compact 4).
+		// A single system line replaces the older tail with counts + a
+		// pointer to the Conversations panel for full-fidelity recall.
+		m.input = ""
+		if m.sending {
+			m.notice = "Cannot /compact while a turn is streaming."
+			return m.appendSystemMessage("A turn is streaming — press esc to cancel it first, then /compact."), nil, true
+		}
+		keep := 6
+		if len(args) > 0 {
+			if n, err := strconv.Atoi(strings.TrimSpace(args[0])); err == nil && n > 0 && n < 200 {
+				keep = n
+			}
+		}
+		collapsed, collapsedCount, ok := compactTranscript(m.transcript, keep)
+		if !ok {
+			m.notice = "Nothing to compact yet."
+			return m.appendSystemMessage(fmt.Sprintf("Transcript has %d lines — below keep=%d, nothing to compact.", len(m.transcript), keep)), nil, true
+		}
+		m.transcript = collapsed
+		m.chatScrollback = 0
+		note := fmt.Sprintf("Compacted %d older transcript lines. Full history lives in the Conversations panel.", collapsedCount)
+		m.notice = fmt.Sprintf("Compacted %d lines (keep=%d).", collapsedCount, keep)
+		return m.appendSystemMessage(note), nil, true
 	case "keylog":
 		// Toggle key-event dump into m.notice. Used to diagnose Turkish-
 		// keyboard AltGr delivery and similar terminal-specific weirdness
@@ -3224,6 +3254,73 @@ func (m Model) appendSystemMessage(text string) Model {
 	m.transcript = append(m.transcript, newChatLine("system", strings.TrimSpace(text)))
 	m.chatScrollback = 0
 	return m
+}
+
+// compactTranscript collapses all transcript entries older than the last
+// `keep` into a single system-role summary line so a long session stays
+// scannable. Purely a view-layer operation — the engine's own memory and
+// conversation store are untouched.
+//
+// Returns the new transcript, the number of lines that were collapsed,
+// and ok=true iff there was actually something to compact. We compact
+// only when there are older lines AND they include at least one user or
+// assistant turn — summarising a tail of system/tool chatter gains
+// nothing and just inflates the notice.
+func compactTranscript(lines []chatLine, keep int) ([]chatLine, int, bool) {
+	if keep <= 0 {
+		keep = 1
+	}
+	if len(lines) <= keep {
+		return lines, 0, false
+	}
+	head := lines[:len(lines)-keep]
+	tail := lines[len(lines)-keep:]
+
+	// Count by role so the summary carries a useful one-glance fingerprint
+	// ("5 user turns, 5 assistant replies, 12 tool events, 2 system notes").
+	users, assistants, tools, systems, other := 0, 0, 0, 0, 0
+	for _, ln := range head {
+		switch strings.ToLower(strings.TrimSpace(ln.Role)) {
+		case "user":
+			users++
+		case "assistant":
+			assistants++
+		case "tool":
+			tools++
+		case "system":
+			systems++
+		default:
+			other++
+		}
+	}
+	if users == 0 && assistants == 0 && tools == 0 {
+		// Only a run of system lines to collapse — not worth a summary.
+		return lines, 0, false
+	}
+	fingerprint := make([]string, 0, 5)
+	if users > 0 {
+		fingerprint = append(fingerprint, fmt.Sprintf("%d user", users))
+	}
+	if assistants > 0 {
+		fingerprint = append(fingerprint, fmt.Sprintf("%d assistant", assistants))
+	}
+	if tools > 0 {
+		fingerprint = append(fingerprint, fmt.Sprintf("%d tool", tools))
+	}
+	if systems > 0 {
+		fingerprint = append(fingerprint, fmt.Sprintf("%d system", systems))
+	}
+	if other > 0 {
+		fingerprint = append(fingerprint, fmt.Sprintf("%d other", other))
+	}
+	summary := newChatLine("system",
+		fmt.Sprintf("▸ Transcript compacted — %s collapsed. Full history kept in Conversations panel.",
+			strings.Join(fingerprint, ", ")))
+
+	out := make([]chatLine, 0, 1+keep)
+	out = append(out, summary)
+	out = append(out, tail...)
+	return out, len(head), true
 }
 
 // appendToolEventMessage inserts a tool-tagged transcript line so tool calls
@@ -8265,6 +8362,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 	extras := []slashCommandItem{
 		{Command: "reload", Template: "/reload", Description: "reload config + env"},
 		{Command: "clear", Template: "/clear", Description: "clear transcript (memory untouched)"},
+		{Command: "compact", Template: "/compact", Description: "collapse older transcript into a summary (keeps last 6; /compact N for custom)"},
 		{Command: "quit", Template: "/quit", Description: "exit DFMC"},
 		{Command: "providers", Template: "/providers", Description: "list configured providers"},
 		{Command: "models", Template: "/models", Description: "show configured model"},
@@ -9408,6 +9506,7 @@ func renderTUIHelp() string {
 		"TUI-only shortcuts:",
 		"    /reload                      Reload engine configuration",
 		"    /clear                       Clear transcript (memory untouched)",
+		"    /compact [N]                 Collapse older transcript into a summary (keeps last N; default 6)",
 		"    /quit                        Exit DFMC",
 		"    /coach                       Mute or unmute background coach notes",
 		"    /hints                       Show or hide between-round trajectory hints",
