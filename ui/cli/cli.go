@@ -1918,8 +1918,35 @@ func runTool(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 		return 0
 	}
 
+	// `dfmc tool show NAME` — print the ToolSpec so operators can see
+	// the parameter shape before invoking `dfmc tool run` blind. This
+	// fills the gap where previously you had to grep the source to
+	// discover what args a tool accepts.
+	if args[0] == "show" || args[0] == "describe" || args[0] == "inspect" {
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: dfmc tool show <name>")
+			return 2
+		}
+		name := strings.TrimSpace(args[1])
+		if eng.Tools == nil {
+			fmt.Fprintln(os.Stderr, "tools engine not initialized")
+			return 1
+		}
+		spec, ok := eng.Tools.Spec(name)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown tool: %s\n", name)
+			return 1
+		}
+		if jsonMode {
+			_ = printJSON(spec)
+			return 0
+		}
+		printToolSpec(spec)
+		return 0
+	}
+
 	if args[0] != "run" {
-		fmt.Fprintln(os.Stderr, "usage: dfmc tool [list|run <name> [--key value ...]]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc tool [list|show <name>|run <name> [--key value ...]]")
 		return 2
 	}
 	if len(args) < 2 {
