@@ -26,6 +26,43 @@ import (
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
+// parkPhase distinguishes the two contexts in which the loop reaches
+// the budget-exhausted park notice. "before" runs in the preflight
+// gate — we know we WOULD overflow if we ran the next round, so the
+// notice mentions the headroom we needed but didn't have. "after"
+// runs once we've already executed and seen the totalTokens go past
+// MaxTokens; headroom is moot at that point.
+type parkPhase int
+
+const (
+	parkPhaseBefore parkPhase = iota
+	parkPhaseAfter
+)
+
+// formatBudgetExhaustedNotice renders the "Agent loop parked … tool
+// budget exhausted" message that the engine emits when the native
+// loop can't run another tool round without busting MaxTokens. The
+// same string template appeared in 4 places (preflight headroom-fail
+// happy path, preflight headroom-fail catch-all, post-step compact-
+// failed path, post-step no-compact path) — fixing the wording in
+// one without the others was a regression magnet flagged in the
+// REPORT.md walk. headroom is ignored when phase == parkPhaseAfter.
+func formatBudgetExhaustedNotice(phase parkPhase, step, tokens, maxTokens, headroom, rounds int) string {
+	suffix := "Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file."
+	switch phase {
+	case parkPhaseBefore:
+		return fmt.Sprintf(
+			"Agent loop parked before step %d — tool budget exhausted (~%d/%d tokens, need ~%d headroom, %d rounds). %s",
+			step, tokens, maxTokens, headroom, rounds, suffix,
+		)
+	default:
+		return fmt.Sprintf(
+			"Agent loop parked after step %d — tool budget exhausted (~%d/%d tokens, %d rounds). %s",
+			step, tokens, maxTokens, rounds, suffix,
+		)
+	}
+}
+
 // Defaults used when agent config is unset *and* the provider exposes no
 // context window. They act as a safety floor — the real runtime budget is
 // elastic and scales with `provider.MaxContext()` so a 1M-token window gets
@@ -417,19 +454,11 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 						// Fall through — the next iteration re-checks the gate
 						// with the zeroed budget and runs the round normally.
 					} else {
-						notice := fmt.Sprintf(
-							"Agent loop parked before step %d — tool budget exhausted (~%d/%d tokens, need ~%d headroom, %d rounds). "+
-								"Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file.",
-							step, totalTokens, lim.MaxTokens, headroom, len(traces),
-						)
+						notice := formatBudgetExhaustedNotice(parkPhaseBefore, step, totalTokens, lim.MaxTokens, headroom, len(traces))
 						return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
 					}
 				} else {
-					notice := fmt.Sprintf(
-						"Agent loop parked before step %d — tool budget exhausted (~%d/%d tokens, need ~%d headroom, %d rounds). "+
-							"Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file.",
-						step, totalTokens, lim.MaxTokens, headroom, len(traces),
-					)
+					notice := formatBudgetExhaustedNotice(parkPhaseBefore, step, totalTokens, lim.MaxTokens, headroom, len(traces))
 					return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
 				}
 			}
@@ -727,19 +756,11 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 					// history and a zeroed budget.
 				} else {
 					// Nothing to compact — park. Same behaviour as before.
-					notice := fmt.Sprintf(
-						"Agent loop parked after step %d — tool budget exhausted (~%d/%d tokens, %d rounds). "+
-							"Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file.",
-						step, totalTokens, lim.MaxTokens, len(traces),
-					)
+					notice := formatBudgetExhaustedNotice(parkPhaseAfter, step, totalTokens, lim.MaxTokens, 0, len(traces))
 					return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
 				}
 			} else {
-				notice := fmt.Sprintf(
-					"Agent loop parked after step %d — tool budget exhausted (~%d/%d tokens, %d rounds). "+
-						"Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file.",
-					step, totalTokens, lim.MaxTokens, len(traces),
-				)
+				notice := formatBudgetExhaustedNotice(parkPhaseAfter, step, totalTokens, lim.MaxTokens, 0, len(traces))
 				return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, "budget_exhausted"), nil
 			}
 		}

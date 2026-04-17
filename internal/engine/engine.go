@@ -296,12 +296,19 @@ func (e *Engine) executeToolWithPanicGuard(ctx context.Context, name string, par
 // recovered tool panic doesn't bloat the conversation JSONL with a
 // 10 KiB Go runtime dump for every retry. The head frames are the
 // useful bit anyway — they point at the panic site.
+//
+// The constant is named maxStackLen rather than `cap` because `cap`
+// shadows the built-in cap() — a later refactor that introduced
+// `cap(slice)` anywhere in this function (or any function inheriting
+// the const via package scope, since this was at package level) would
+// silently bind to the const and either fail to compile or, worse,
+// type-check as int and produce wrong values.
 func truncateStackForError(stack []byte) string {
-	const cap = 2048
-	if len(stack) <= cap {
+	const maxStackLen = 2048
+	if len(stack) <= maxStackLen {
 		return string(stack)
 	}
-	return string(stack[:cap]) + "\n[stack truncated]"
+	return string(stack[:maxStackLen]) + "\n[stack truncated]"
 }
 
 func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, params map[string]any, source string) (tools.Result, error) {
@@ -1949,7 +1956,47 @@ func (e *Engine) buildSystemPrompt(question string, chunks []types.ContextChunk)
 		e.ListTools(),
 		e.promptRuntime(),
 	)
-	return bundleToSystemBlocks(bundle)
+	text, blocks := bundleToSystemBlocks(bundle)
+	// L2 (REPORT.md): when the persistent memory store failed to load
+	// at Init, callers of Memory.Search/Recall silently get empty
+	// results. Without telling the model explicitly, it'll conclude
+	// "this project has no memory yet" and start writing fresh notes —
+	// which evaporate the moment the next session can't read them
+	// back. Surface the gate explicitly so the model knows recall is
+	// offline (not empty) and avoids relying on it.
+	if e.memoryDegraded {
+		notice := memoryDegradedSystemNotice(e.memoryLoadErr)
+		if text != "" {
+			text = text + "\n\n" + notice
+		} else {
+			text = notice
+		}
+		// Non-cacheable: the notice can flip on/off across sessions
+		// (Memory may load successfully on next start), so we don't
+		// want it baked into Anthropic's prompt cache.
+		blocks = append(blocks, provider.SystemBlock{
+			Label:     "memory-degraded",
+			Text:      notice,
+			Cacheable: false,
+		})
+	}
+	return text, blocks
+}
+
+// memoryDegradedSystemNotice formats the user-invisible system-prompt
+// hint that warns the model recall is offline. Lives next to its only
+// caller so future tweaks (wording, label) stay obvious. The reason
+// is included verbatim so the model can decide whether the failure is
+// recoverable (e.g. "database locked" → suggest /doctor) or terminal
+// (corrupt store → fall back to project-only context).
+func memoryDegradedSystemNotice(reason string) string {
+	r := strings.TrimSpace(reason)
+	if r == "" {
+		r = "store unavailable"
+	}
+	return "[Memory store is offline — do not rely on historical recall. " +
+		"Memory.Search/Recall will return empty results regardless of what was " +
+		"learned in prior sessions. Reason: " + r + "]"
 }
 
 // bundleToSystemBlocks converts a PromptBundle into the paired (flat text,

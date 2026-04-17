@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/provider"
@@ -83,13 +84,39 @@ func (e *Engine) historyBudgetForRequestWithTail(question string, chunks []types
 
 func trimToolPayload(raw string, maxChars int) string {
 	trimmed := strings.TrimSpace(raw)
-	if maxChars <= 0 || len(trimmed) <= maxChars {
+	if maxChars <= 0 {
 		return trimmed
 	}
-	if maxChars <= 12 {
-		return trimmed[:maxChars]
+	// Rune-based slicing — the parameter is "max characters" but the
+	// previous implementation byte-sliced, which split multi-byte
+	// UTF-8 sequences (CJK, emoji, accented Latin) at the boundary
+	// and produced invalid UTF-8 that downstream JSON serializers
+	// silently mangled. compactToolPayload in the same file always
+	// did this correctly; trimToolPayload was the inconsistent one.
+	return truncateRunesWithMarker(trimmed, maxChars, "\n...[truncated]")
+}
+
+// truncateRunesWithMarker caps `s` at `maxRunes` runes, appending the
+// trailing marker (e.g. "...") when truncation actually fires. The
+// marker is reserved out of the budget so the final output stays
+// within `maxRunes` runes — this is what makes it safe to feed into
+// downstream length-bounded buffers.
+func truncateRunesWithMarker(s string, maxRunes int, marker string) string {
+	if maxRunes <= 0 {
+		return s
 	}
-	return strings.TrimSpace(trimmed[:maxChars-12]) + "\n...[truncated]"
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	mr := []rune(marker)
+	// Tiny budget: not enough room for marker — fall back to a hard
+	// rune cap so we never expand beyond the requested cap.
+	if maxRunes <= len(mr) {
+		return string(r[:maxRunes])
+	}
+	cut := maxRunes - len(mr)
+	return strings.TrimSpace(string(r[:cut])) + marker
 }
 
 func (e *Engine) publishProviderComplete(providerName, model string, tokenCount int) {
@@ -166,23 +193,18 @@ func compactToolPayload(raw string, maxChars int) string {
 		}
 		text = first + " ..."
 	}
-	if maxChars <= 0 {
-		return text
-	}
-	if len([]rune(text)) <= maxChars {
-		return text
-	}
-	runes := []rune(text)
-	if maxChars <= 3 {
-		return string(runes[:maxChars])
-	}
-	return string(runes[:maxChars-3]) + "..."
+	return truncateRunesWithMarker(text, maxChars, "...")
 }
 
+// strconvQuote is a thin alias over strconv.Quote so call sites read
+// in the agent-loop file's local vocabulary. The previous hand-rolled
+// version only escaped backslash and double quote, which produced
+// broken JSON / TUI-line previews for any tool param containing
+// newlines, tabs, or other control characters (the model often emits
+// multi-line param values for write_file / edit_file). strconv.Quote
+// handles every C-style escape plus all `< 0x20` control bytes.
 func strconvQuote(s string) string {
-	escaped := strings.ReplaceAll(s, "\\", "\\\\")
-	escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
-	return "\"" + escaped + "\""
+	return strconv.Quote(s)
 }
 
 func streamAnswerText(ctx context.Context, answer string) <-chan provider.StreamEvent {
