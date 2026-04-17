@@ -214,23 +214,25 @@ type PromptRecommendationInfo struct {
 }
 
 type AnalyzeReport struct {
-	ProjectRoot string            `json:"project_root"`
-	Files       int               `json:"files"`
-	Nodes       int               `json:"nodes"`
-	Edges       int               `json:"edges"`
-	Cycles      int               `json:"cycles"`
-	HotSpots    []codemap.Node    `json:"hotspots"`
-	Security    *security.Report  `json:"security,omitempty"`
-	DeadCode    []DeadCodeItem    `json:"dead_code,omitempty"`
-	Complexity  *ComplexityReport `json:"complexity,omitempty"`
+	ProjectRoot string             `json:"project_root"`
+	Files       int                `json:"files"`
+	Nodes       int                `json:"nodes"`
+	Edges       int                `json:"edges"`
+	Cycles      int                `json:"cycles"`
+	HotSpots    []codemap.Node     `json:"hotspots"`
+	Security    *security.Report   `json:"security,omitempty"`
+	DeadCode    []DeadCodeItem     `json:"dead_code,omitempty"`
+	Complexity  *ComplexityReport  `json:"complexity,omitempty"`
+	Duplication *DuplicationReport `json:"duplication,omitempty"`
 }
 
 type AnalyzeOptions struct {
-	Path       string
-	Full       bool
-	Security   bool
-	DeadCode   bool
-	Complexity bool
+	Path        string
+	Full        bool
+	Security    bool
+	DeadCode    bool
+	Complexity  bool
+	Duplication bool
 }
 
 type DeadCodeItem struct {
@@ -256,6 +258,30 @@ type ComplexityReport struct {
 	TopFiles      []FunctionComplexity `json:"top_files,omitempty"`
 	TotalSymbols  int                  `json:"total_symbols"`
 	ScannedSymbol int                  `json:"scanned_symbols"`
+}
+
+// DuplicationLocation marks where one copy of a duplicate block sits.
+type DuplicationLocation struct {
+	File      string `json:"file"`
+	StartLine int    `json:"start_line"`
+	EndLine   int    `json:"end_line"`
+}
+
+// DuplicationGroup clusters all locations that share the same
+// normalized window of code. Length is the number of non-blank
+// normalized lines in the window — NOT raw end-start+1, because
+// blanks + comments are stripped before matching.
+type DuplicationGroup struct {
+	Length    int                   `json:"length"`
+	Locations []DuplicationLocation `json:"locations"`
+}
+
+type DuplicationReport struct {
+	MinLines        int                `json:"min_lines"`
+	FilesScanned    int                `json:"files_scanned"`
+	WindowsHashed   int                `json:"windows_hashed"`
+	Groups          []DuplicationGroup `json:"groups,omitempty"`
+	DuplicatedLines int                `json:"duplicated_lines"`
 }
 
 func New(cfg *config.Config) (*Engine, error) {
@@ -2373,6 +2399,7 @@ func (e *Engine) AnalyzeWithOptions(ctx context.Context, opts AnalyzeOptions) (A
 	runSecurity := opts.Full || opts.Security
 	runDeadCode := opts.Full || opts.DeadCode
 	runComplexity := opts.Full || opts.Complexity
+	runDuplication := opts.Full || opts.Duplication
 
 	if runSecurity && e.Security != nil {
 		secReport, err := e.Security.ScanPaths(paths)
@@ -2394,6 +2421,10 @@ func (e *Engine) AnalyzeWithOptions(ctx context.Context, opts AnalyzeOptions) (A
 			return report, err
 		}
 		report.Complexity = &cx
+	}
+	if runDuplication {
+		dup := detectDuplication(paths, duplicationMinLines)
+		report.Duplication = &dup
 	}
 
 	return report, nil

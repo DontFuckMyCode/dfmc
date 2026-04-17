@@ -1734,6 +1734,7 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 	var security bool
 	var complexity bool
 	var deadCode bool
+	var duplication bool
 	var deps bool
 	var magicDoc bool
 	var magicDocPath string
@@ -1746,6 +1747,7 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 	fs.BoolVar(&security, "security", false, "run security analysis")
 	fs.BoolVar(&complexity, "complexity", false, "run complexity analysis")
 	fs.BoolVar(&deadCode, "dead-code", false, "run dead code analysis")
+	fs.BoolVar(&duplication, "duplication", false, "run code duplication analysis")
 	fs.BoolVar(&deps, "deps", false, "run dependency analysis summary")
 	fs.BoolVar(&magicDoc, "magicdoc", false, "update .dfmc/magic/MAGIC_DOC.md after analyze")
 	fs.StringVar(&magicDocPath, "magicdoc-path", "", "custom magic doc path")
@@ -1763,11 +1765,12 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		path = fs.Args()[0]
 	}
 	report, err := eng.AnalyzeWithOptions(ctx, engine.AnalyzeOptions{
-		Path:       path,
-		Full:       full,
-		Security:   security,
-		Complexity: complexity,
-		DeadCode:   deadCode,
+		Path:        path,
+		Full:        full,
+		Security:    security,
+		Complexity:  complexity,
+		DeadCode:    deadCode,
+		Duplication: duplication,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "analyze failed: %v\n", err)
@@ -1853,6 +1856,31 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 	}
 	if len(report.DeadCode) > 0 {
 		fmt.Printf("Dead code candidates: %d\n", len(report.DeadCode))
+	}
+	if report.Duplication != nil {
+		d := report.Duplication
+		fmt.Printf("Duplication: groups=%d duplicated_lines=%d (min=%d)\n",
+			len(d.Groups), d.DuplicatedLines, d.MinLines)
+		for i, g := range d.Groups {
+			if i >= 5 {
+				remaining := len(d.Groups) - 5
+				if remaining > 0 {
+					fmt.Printf("  … %d more groups (use --json for the full list)\n", remaining)
+				}
+				break
+			}
+			fmt.Printf("  - %d lines x %d locations\n", g.Length, len(g.Locations))
+			for j, loc := range g.Locations {
+				if j >= 3 {
+					remaining := len(g.Locations) - 3
+					if remaining > 0 {
+						fmt.Printf("      … %d more locations\n", remaining)
+					}
+					break
+				}
+				fmt.Printf("      %s:%d-%d\n", loc.File, loc.StartLine, loc.EndLine)
+			}
+		}
 	}
 	if deps || full {
 		fmt.Printf("Dependencies: %d\n", len(depSummary))
