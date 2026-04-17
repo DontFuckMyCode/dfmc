@@ -22,6 +22,14 @@ import (
 // a fallback) and decides which heuristic pipeline to run. Matches the
 // `Task: <name>` stamp the engine writes in system.base, with keyword
 // fallbacks so a raw `/review this file` in chat still routes correctly.
+//
+// Slash-command markers are anchored at the start of a line (after
+// optional leading whitespace). The previous unanchored
+// strings.Contains check would fire on `/explain` inside a doc
+// comment, `/plan` inside a path like `tests/plans/`, or `/debug`
+// inside an `// XXX: debug me` note — and `/debug` was checked
+// before `/review` so the order also mattered. Anchored matching
+// makes the trigger position-determined rather than soup-like.
 func detectOfflineTask(systemPrompt, question string) string {
 	s := strings.ToLower(systemPrompt + "\n" + question)
 	// system.base emits "Task: review" etc. Prefer that marker first.
@@ -34,24 +42,55 @@ func detectOfflineTask(systemPrompt, question string) string {
 			}
 		}
 	}
+	// Slash command anchored at line-start (with optional leading
+	// whitespace). Bound by \b so /review-team isn't mistaken for
+	// /review.
+	if cmd := offlineLeadingSlashTask.FindStringSubmatch(s); len(cmd) >= 2 {
+		switch cmd[1] {
+		case "security":
+			return "security"
+		case "review":
+			return "review"
+		case "refactor":
+			return "refactor"
+		case "debug":
+			return "debug"
+		case "test":
+			return "test"
+		case "explain":
+			return "explain"
+		case "plan":
+			return "planning"
+		case "doc":
+			return "doc"
+		}
+	}
+	// Natural-language fallbacks — phrases unlikely to occur as
+	// stray substrings in source code or paths. The "explain" trigger
+	// is gated on a leading space so it doesn't match `/explain`
+	// (already covered by the slash branch above) or identifiers
+	// like `explain_results`.
 	switch {
-	case strings.Contains(s, "/security") || strings.Contains(s, "security audit") || strings.Contains(s, "vulnerab"):
+	case strings.Contains(s, "security audit"), strings.Contains(s, "vulnerab"):
 		return "security"
-	case strings.Contains(s, "/review") || strings.Contains(s, "code review"):
+	case strings.Contains(s, "code review"):
 		return "review"
-	case strings.Contains(s, "/refactor"):
-		return "refactor"
-	case strings.Contains(s, "/debug") || strings.Contains(s, "root cause"):
+	case strings.Contains(s, "root cause"):
 		return "debug"
-	case strings.Contains(s, "/test"):
-		return "test"
-	case strings.Contains(s, "/explain") || strings.Contains(s, "walk me through") || strings.Contains(s, "explain "):
+	case strings.Contains(s, "walk me through"),
+		strings.HasPrefix(s, "explain "), strings.Contains(s, " explain "):
 		return "explain"
-	case strings.Contains(s, "/plan") || strings.Contains(s, "plan for"):
+	case strings.Contains(s, "plan for"):
 		return "planning"
 	}
 	return "general"
 }
+
+// Anchored at line start (with optional leading spaces) so we ignore
+// `/review` mentions inside paths, comments, code blocks, or quoted
+// strings. Multiline mode lets a multi-paragraph system prompt still
+// match if the slash command starts a new line.
+var offlineLeadingSlashTask = regexp.MustCompile(`(?m)^\s*/(security|review|refactor|debug|test|explain|plan|doc)\b`)
 
 // analyzeOffline is the entry point used by OfflineProvider.Complete when
 // it has context chunks to work with. Routes to a task-specific analyzer

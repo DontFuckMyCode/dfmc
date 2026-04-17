@@ -45,6 +45,30 @@ type Options struct {
 	AltScreen bool
 }
 
+// pendingQueueCap bounds how many "while-streaming" messages the user
+// can stack up. Without a cap, holding Enter while a long reply is in
+// flight grows []string memory unboundedly — a cheap DOS / oops vector
+// when somebody walks away from the keyboard with a key held. 64 is
+// enough for "ask three follow-ups in a row" without becoming a leak.
+const pendingQueueCap = 64
+
+// chatLineRole canonicalises the strings that go into chatLine.Role.
+// The field stays a plain string for backwards compatibility with
+// ~100 existing call sites and tests, but new code should reference
+// these constants so typos like "asistant" surface at compile time
+// (or via grep) instead of silently mis-routing a render branch.
+//
+// Mirrors pkg/types.MessageRole values exactly. "coach" is TUI-only
+// (a system-style hint addressed to the user, separate from the
+// LLM's "system" role).
+const (
+	chatRoleUser      = "user"
+	chatRoleAssistant = "assistant"
+	chatRoleSystem    = "system"
+	chatRoleTool      = "tool"
+	chatRoleCoach     = "coach"
+)
+
 type chatLine struct {
 	Role          string
 	Content       string
@@ -1576,9 +1600,18 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.sending {
+			// Cap the queue so a user spamming Enter while a long stream
+			// is in flight can't grow unbounded memory. 64 is enough
+			// headroom for normal "ask three follow-ups in a row" flow
+			// without becoming a DOS vector.
+			if len(m.pendingQueue) >= pendingQueueCap {
+				m.notice = fmt.Sprintf("Queue full (%d max) — wait for the current reply, then send again.", pendingQueueCap)
+				m.setChatInput("")
+				return m, nil
+			}
 			m.pendingQueue = append(m.pendingQueue, raw)
 			m.setChatInput("")
-			m.notice = fmt.Sprintf("Queued (%d) — will send after the current reply finishes.", len(m.pendingQueue))
+			m.notice = fmt.Sprintf("Queued (%d/%d) — will send after the current reply finishes.", len(m.pendingQueue), pendingQueueCap)
 			m = m.appendSystemMessage(fmt.Sprintf("▸ queued #%d: %s", len(m.pendingQueue), raw))
 			return m, nil
 		}

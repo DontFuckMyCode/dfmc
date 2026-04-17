@@ -10,13 +10,57 @@ import (
 
 func TestDetectOfflineTaskFromSystemStamp(t *testing.T) {
 	cases := map[string]string{
-		"You are DFMC.\nTask: review\nLanguage: go":            "review",
-		"You are DFMC.\nTask: security · Language: go":         "security",
-		"Task: explain this":                                   "explain",
-		"something unrelated":                                  "general",
-		"please run a /security audit on internal/auth":        "security",
-		"/review the tui panel":                                "review",
-		"can you explain how the agent loop works":             "explain",
+		"You are DFMC.\nTask: review\nLanguage: go":     "review",
+		"You are DFMC.\nTask: security · Language: go":  "security",
+		"Task: explain this":                            "explain",
+		"something unrelated":                           "general",
+		"please run a /security audit on internal/auth": "security",
+		"/review the tui panel":                         "review",
+		"can you explain how the agent loop works":      "explain",
+	}
+	for in, want := range cases {
+		if got := detectOfflineTask(in, ""); got != want {
+			t.Fatalf("detectOfflineTask(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// Regression for the report's "fragile task detection" finding: slash
+// commands embedded inside paths, comments, or quoted strings must NOT
+// promote the task. Anchoring the regex at line-start (after optional
+// whitespace) is what enforces this — the previous strings.Contains
+// check happily matched `/explain` inside a docstring or `/plan`
+// inside `/plans/`.
+func TestDetectOfflineTask_IgnoresSlashInsidePathsAndComments(t *testing.T) {
+	cases := map[string]string{
+		// Path-like contexts.
+		"please look at tests/plans/golden_test.go":     "general",
+		"open the file at internal/security/audit.go":   "general",
+		"refactor /home/user/code/project/main.go":      "general",
+		// Slash command embedded in a sentence (not at line start).
+		"the comment said // /review but it's stale":    "general",
+		"a docstring with /* /explain markers */ inline": "general",
+		// Quoted string holding a slash command.
+		"the message body was \"please /debug it\"":      "general",
+	}
+	for in, want := range cases {
+		if got := detectOfflineTask(in, ""); got != want {
+			t.Fatalf("detectOfflineTask(%q) = %q, want %q (unanchored slash should not trigger)", in, got, want)
+		}
+	}
+}
+
+// Slash command at line-start (with optional indent) MUST trigger,
+// since that's the canonical user-typed shape.
+func TestDetectOfflineTask_AnchoredSlashTriggers(t *testing.T) {
+	cases := map[string]string{
+		"/review main.go":                "review",
+		"  /security audit auth/":        "security",
+		"/refactor the engine struct":    "refactor",
+		"/debug the panic":               "debug",
+		"/test the patch flow":           "test",
+		"/plan the migration":            "planning",
+		"line one\n/explain main.go":     "explain",
 	}
 	for in, want := range cases {
 		if got := detectOfflineTask(in, ""); got != want {

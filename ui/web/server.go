@@ -332,44 +332,48 @@ func (s *Server) handleCodeMap(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *Server) handleContextBudget(w http.ResponseWriter, r *http.Request) {
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	runtimeHints := s.engine.PromptRuntime()
-	if p := strings.TrimSpace(r.URL.Query().Get("runtime_provider")); p != "" {
-		runtimeHints.Provider = p
+// runtimeHintsFromQuery overlays the four runtime_* query parameters
+// (runtime_provider, runtime_model, runtime_tool_style,
+// runtime_max_context) onto the engine's default PromptRuntime. Three
+// handlers used to inline this 13-line block; drift between copies is
+// the kind of bug that hides in plain sight (one handler accepted a
+// hint that the other silently dropped). Centralising it keeps the
+// HTTP surface honest about which knobs every endpoint accepts.
+func (s *Server) runtimeHintsFromQuery(q map[string][]string) ctxmgr.PromptRuntime {
+	hints := s.engine.PromptRuntime()
+	get := func(key string) string {
+		if v, ok := q[key]; ok && len(v) > 0 {
+			return strings.TrimSpace(v[0])
+		}
+		return ""
 	}
-	if m := strings.TrimSpace(r.URL.Query().Get("runtime_model")); m != "" {
-		runtimeHints.Model = m
+	if p := get("runtime_provider"); p != "" {
+		hints.Provider = p
 	}
-	if ts := strings.TrimSpace(r.URL.Query().Get("runtime_tool_style")); ts != "" {
-		runtimeHints.ToolStyle = ts
+	if m := get("runtime_model"); m != "" {
+		hints.Model = m
 	}
-	if raw := strings.TrimSpace(r.URL.Query().Get("runtime_max_context")); raw != "" {
+	if ts := get("runtime_tool_style"); ts != "" {
+		hints.ToolStyle = ts
+	}
+	if raw := get("runtime_max_context"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-			runtimeHints.MaxContext = n
+			hints.MaxContext = n
 		}
 	}
+	return hints
+}
+
+func (s *Server) handleContextBudget(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	runtimeHints := s.runtimeHintsFromQuery(r.URL.Query())
 	preview := s.engine.ContextBudgetPreviewWithRuntime(query, runtimeHints)
 	writeJSON(w, http.StatusOK, preview)
 }
 
 func (s *Server) handleContextRecommend(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	runtimeHints := s.engine.PromptRuntime()
-	if p := strings.TrimSpace(r.URL.Query().Get("runtime_provider")); p != "" {
-		runtimeHints.Provider = p
-	}
-	if m := strings.TrimSpace(r.URL.Query().Get("runtime_model")); m != "" {
-		runtimeHints.Model = m
-	}
-	if ts := strings.TrimSpace(r.URL.Query().Get("runtime_tool_style")); ts != "" {
-		runtimeHints.ToolStyle = ts
-	}
-	if raw := strings.TrimSpace(r.URL.Query().Get("runtime_max_context")); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-			runtimeHints.MaxContext = n
-		}
-	}
+	runtimeHints := s.runtimeHintsFromQuery(r.URL.Query())
 	preview := s.engine.ContextBudgetPreviewWithRuntime(query, runtimeHints)
 	recs := s.engine.ContextRecommendationsWithRuntime(query, runtimeHints)
 	tuning := s.engine.ContextTuningSuggestionsWithRuntime(query, runtimeHints)
@@ -855,21 +859,7 @@ func (s *Server) handlePromptStats(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePromptRecommend(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	runtimeHints := s.engine.PromptRuntime()
-	if p := strings.TrimSpace(r.URL.Query().Get("runtime_provider")); p != "" {
-		runtimeHints.Provider = p
-	}
-	if m := strings.TrimSpace(r.URL.Query().Get("runtime_model")); m != "" {
-		runtimeHints.Model = m
-	}
-	if ts := strings.TrimSpace(r.URL.Query().Get("runtime_tool_style")); ts != "" {
-		runtimeHints.ToolStyle = ts
-	}
-	if raw := strings.TrimSpace(r.URL.Query().Get("runtime_max_context")); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-			runtimeHints.MaxContext = n
-		}
-	}
+	runtimeHints := s.runtimeHintsFromQuery(r.URL.Query())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"query":          query,
 		"recommendation": s.engine.PromptRecommendationWithRuntime(query, runtimeHints),

@@ -54,8 +54,8 @@ func TestEnterWhileSendingQueuesMessage(t *testing.T) {
 	if strings.TrimSpace(mm.input) != "" {
 		t.Fatalf("composer should clear after queueing, got %q", mm.input)
 	}
-	if !strings.Contains(mm.notice, "Queued (1)") {
-		t.Fatalf("expected Queued (1) notice, got %q", mm.notice)
+	if !strings.Contains(mm.notice, "Queued (1/") {
+		t.Fatalf("expected Queued (1/N) notice, got %q", mm.notice)
 	}
 }
 
