@@ -648,6 +648,19 @@ func maxInt(a, b int) int {
 	return b
 }
 
+// EnsureWithinRoot resolves `path` relative to `root` and refuses
+// anything that escapes. Resistance comes from two layers:
+//
+//  1. Syntactic: filepath.Abs + filepath.Rel; any `..` prefix means
+//     the path walks out of the root tree.
+//  2. Symbolic: once the lexical check passes, resolve symlinks on
+//     both `root` and `absPath` (via filepath.EvalSymlinks) and
+//     re-check. This stops a committed symlink like
+//     `project/evil -> /etc/passwd` from being reachable through the
+//     tool API. If the target doesn't exist yet (e.g. write_file
+//     creating a new file), we resolve the nearest existing ancestor
+//     instead and re-run the containment check on that, so new-file
+//     writes under a sanitary tree still work.
 func EnsureWithinRoot(root, path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", fmt.Errorf("path is required")
@@ -664,12 +677,67 @@ func EnsureWithinRoot(root, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rel, err := filepath.Rel(absRoot, absPath)
-	if err != nil {
-		return "", err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if !isPathWithin(absRoot, absPath) {
 		return "", fmt.Errorf("path escapes project root: %s", path)
 	}
+	// Symlink check. Evaluate both sides so a root that is itself
+	// /var/task (symlinked from /opt) still matches a path resolved
+	// through the same symlink.
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		// Root should exist; if EvalSymlinks fails we just skip the
+		// symbolic check. Better to accept a path that passed the
+		// lexical check than refuse every call on a weird filesystem.
+		return absPath, nil
+	}
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		// Target doesn't exist yet (write_file creating new file) or
+		// a dangling symlink. Walk up until we find an existing
+		// ancestor and resolve that — any escape through a symlink
+		// in the existing ancestor chain still gets caught.
+		resolvedPath, err = resolveExistingAncestor(absPath)
+		if err != nil {
+			return absPath, nil
+		}
+	}
+	if !isPathWithin(resolvedRoot, resolvedPath) {
+		return "", fmt.Errorf("path escapes project root via symlink: %s", path)
+	}
 	return absPath, nil
+}
+
+// isPathWithin reports whether target is at or under root using Rel —
+// so it handles trailing-slash and case-insensitive-FS oddities via
+// the same primitive the old check used.
+func isPathWithin(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return true
+}
+
+// resolveExistingAncestor walks upward from `absPath` until it finds
+// a directory that exists, then returns its symlink-resolved form.
+// This is the fallback used when the target of a write_file call
+// doesn't exist yet — we still want to catch an attempt to write
+// through `projectRoot/symlink-to-etc/newfile`.
+func resolveExistingAncestor(absPath string) (string, error) {
+	current := absPath
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Reached filesystem root without finding anything that
+			// exists — unusual but not exploitable.
+			return "", fmt.Errorf("no existing ancestor")
+		}
+		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+			return resolved, nil
+		}
+		current = parent
+	}
 }
