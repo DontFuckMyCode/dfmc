@@ -221,6 +221,139 @@ func TestDetectDuplication_ShortFilesSkippedSafely(t *testing.T) {
 	}
 }
 
+// --- test-file exclusion + low-signal filter -----------------------
+
+func TestDetectDuplication_TestFilesExcluded(t *testing.T) {
+	tmp := t.TempDir()
+	block := strings.Repeat("process(x)\n", 8)
+	testA := writeTempFile(t, tmp, "foo_test.go", "package a\nfunc TestA(t *testing.T) {\n"+block+"}\n")
+	testB := writeTempFile(t, tmp, "bar_test.go", "package a\nfunc TestB(t *testing.T) {\n"+block+"}\n")
+
+	rep := detectDuplication([]string{testA, testB}, 6)
+	if rep.FilesScanned != 0 {
+		t.Fatalf("test files should be skipped entirely, got FilesScanned=%d", rep.FilesScanned)
+	}
+	if len(rep.Groups) > 0 {
+		t.Fatalf("test-file content must not produce duplication groups, got %+v", rep.Groups)
+	}
+}
+
+func TestIsTestFilePath(t *testing.T) {
+	yes := []string{
+		"a/foo_test.go", "pkg/bar_test.go",
+		"tests/suite.py", "myproj/test_thing.py", "m/foo_test.py",
+		"ui/button.spec.tsx", "api/handler.test.ts",
+		"src/test/helpers.js",
+	}
+	for _, p := range yes {
+		if !isTestFilePath(p) {
+			t.Errorf("expected %q to be recognised as a test file", p)
+		}
+	}
+	no := []string{"foo.go", "internal/engine/engine.go", "server.go",
+		"scripts/deploy.py", "ui/tui/tui.go"}
+	for _, p := range no {
+		if isTestFilePath(p) {
+			t.Errorf("expected %q NOT to be a test file", p)
+		}
+	}
+}
+
+func TestIsStructuralLine(t *testing.T) {
+	yes := []string{
+		"}", "})", "});", "]", ")", ",",
+		"return", "return nil", "return err",
+		"break", "continue", "else", "} else {",
+		"if err != nil {",
+	}
+	for _, s := range yes {
+		if !isStructuralLine(s) {
+			t.Errorf("expected %q to be structural", s)
+		}
+	}
+	no := []string{
+		"doSomething()",
+		"x := compute(a, b)",
+		`fmt.Println("hi")`,
+		"return fmt.Errorf(\"boom\")",
+	}
+	for _, s := range no {
+		if isStructuralLine(s) {
+			t.Errorf("expected %q NOT to be structural", s)
+		}
+	}
+}
+
+// Import blocks across two Go files used to register as a clone
+// because every non-blank line is identical scaffolding: `package X`,
+// `import (`, `"context"`, `"fmt"`, etc. The extended structural
+// filter treats package/import lines and bare string-literal lines
+// as signal-free so only functional code contributes to a match.
+func TestDetectDuplication_ImportBlocksNotFlagged(t *testing.T) {
+	tmp := t.TempDir()
+	shared := `package demo
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+`
+	a := writeTempFile(t, tmp, "a.go", shared+"func AlphaDoThing() {}\n")
+	b := writeTempFile(t, tmp, "b.go", shared+"func BetaRunThing() {}\n")
+
+	rep := detectDuplication([]string{a, b}, 6)
+	if len(rep.Groups) > 0 {
+		t.Fatalf("shared import block must not produce a duplication group, got %+v", rep.Groups)
+	}
+}
+
+func TestIsBareStringLine(t *testing.T) {
+	yes := []string{`"context"`, `"encoding/json",`, `'react'`, `'react';`, "`foo`"}
+	for _, s := range yes {
+		if !isBareStringLine(s) {
+			t.Errorf("expected %q to be bare-string", s)
+		}
+	}
+	no := []string{
+		`s := "foo"`,          // code before quote
+		`"hello" + "world"`,   // concatenation
+		`return "ok"`,         // prefixed by keyword
+		`"unterminated`,       // no closing quote
+	}
+	for _, s := range no {
+		if isBareStringLine(s) {
+			t.Errorf("expected %q NOT to be bare-string", s)
+		}
+	}
+}
+
+// A six-line window of pure scaffolding must be filtered out even
+// when two files have it verbatim. The signal filter prevents
+// closing-brace runs and error-check idioms from showing up as
+// "copy-paste".
+func TestDetectDuplication_LowSignalWindowsDropped(t *testing.T) {
+	tmp := t.TempDir()
+	block := `}
+}
+return err
+if err != nil {
+}
+}
+`
+	a := writeTempFile(t, tmp, "a.go", "package a\nfunc A() error {\n"+block+"}\n")
+	b := writeTempFile(t, tmp, "b.go", "package b\nfunc B() error {\n"+block+"}\n")
+
+	rep := detectDuplication([]string{a, b}, 6)
+	if len(rep.Groups) > 0 {
+		t.Fatalf("pure-scaffolding window must not count as duplication, got %+v", rep.Groups)
+	}
+}
+
 // --- End-to-end: Engine AnalyzeWithOptions surfaces Duplication ----
 
 func TestAnalyzeWithOptions_DuplicationPassReaches(t *testing.T) {
