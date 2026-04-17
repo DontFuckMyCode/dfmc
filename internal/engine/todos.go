@@ -42,13 +42,16 @@ const (
 	todoItemsLimit = 200
 )
 
-// todoMarkerPattern matches the common English conventions. Case
-// sensitivity is deliberate — we want `TODO:` to fire but not
-// `todo:` in sentences like "remember to do..." that happen to share
-// letters. The trailing `[:\s(]` guard rules out words that merely
-// start with the prefix (`TODOS`, `HACKY`, `NOTES_ARE`).
+// todoMarkerPattern matches the common English conventions at the
+// START of a comment body. The `^` anchor rules out prose mentions
+// of the marker words inside a sentence. The trailing `[:\s(]`
+// guard rules out words that merely begin with the prefix (TODOS,
+// HACKY, NOTES_ARE). Case is strict — only ALL-CAPS markers are
+// conventions; lowercase appears in ordinary prose too often to be
+// reliable. See collectTodoMarkers for the matching flow and the
+// tests in todos_test.go for the positive/negative cases.
 var todoMarkerPattern = regexp.MustCompile(
-	`\b(TODO|FIXME|HACK|XXX|NOTE)[:\s(]`,
+	`^(TODO|FIXME|HACK|XXX|NOTE)[:\s(]`,
 )
 
 // collectTodoMarkers walks `paths` and returns a TodoReport. Only
@@ -84,13 +87,17 @@ func collectTodoMarkers(paths []string) TodoReport {
 			if !isLineCommentLang(trimmed, lang) {
 				continue
 			}
-			loc := todoMarkerPattern.FindStringIndex(trimmed)
-			if loc == nil {
+			// Strip the comment prefix and any immediate whitespace so
+			// the regex's ^-anchor matches against the comment BODY,
+			// not the prefix. "// TODO:" → "TODO:" which starts with
+			// the marker. "// Unit tests for the TODO/FIXME collector"
+			// → "Unit tests for ..." which does NOT start with a
+			// marker, so it won't fire.
+			body := stripLineCommentPrefix(trimmed, lang)
+			match := todoMarkerPattern.FindString(body)
+			if match == "" {
 				continue
 			}
-			// Extract kind by matching the captured word. FindString
-			// runs the same regex but returns the matched substring.
-			match := todoMarkerPattern.FindString(trimmed)
 			kind := strings.TrimRight(match, ":\t (")
 			kind = strings.TrimSpace(kind)
 			if kind == "" {
@@ -149,6 +156,20 @@ func isLineCommentLang(trimmed, lang string) bool {
 		return strings.HasPrefix(trimmed, "#")
 	}
 	return false
+}
+
+// stripLineCommentPrefix drops the comment marker and any immediate
+// whitespace so the downstream regex can anchor on the comment BODY.
+// The caller has already verified the line IS a comment via
+// isLineCommentLang, so the dispatch here is a pure-text operation.
+func stripLineCommentPrefix(trimmed, lang string) string {
+	switch lang {
+	case "c-family":
+		return strings.TrimLeft(strings.TrimPrefix(trimmed, "//"), " \t")
+	case "python", "hash":
+		return strings.TrimLeft(strings.TrimPrefix(trimmed, "#"), " \t")
+	}
+	return trimmed
 }
 
 func todoSnippet(s string, max int) string {

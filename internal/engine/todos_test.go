@@ -93,6 +93,27 @@ func TestCollectTodoMarkers_LowercaseDoesNotTrigger(t *testing.T) {
 	}
 }
 
+// Prose mentions of the marker words inside a comment's body must
+// NOT fire. The project's own docs and tests quote "TODO" / "FIXME"
+// while explaining the collector — if those lines matched, the tool
+// would be drowning in false self-referential findings. Regression
+// guard for the ^-anchored regex.
+func TestCollectTodoMarkers_ProseMentionsDoNotFire(t *testing.T) {
+	tmp := t.TempDir()
+	src := `package demo
+// Unit tests for the TODO/FIXME marker collector.
+// TodoItem is one marker hit: the kind (TODO / FIXME / HACK / NOTE).
+// The trailing regex guard rules out words like TODOS and HACKY.
+// Replaces the TODO: prefix with a normalized label.
+func f() {}
+`
+	p := writeTodoFile(t, tmp, "prose.go", src)
+	rep := collectTodoMarkers([]string{p})
+	if rep.Total != 0 {
+		t.Fatalf("prose mentions must not fire, got %d: %+v", rep.Total, rep.Items)
+	}
+}
+
 func TestCollectTodoMarkers_CaptureTextAndLineNumbers(t *testing.T) {
 	tmp := t.TempDir()
 	src := "package demo\n" +
