@@ -29,6 +29,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/hooks"
 	"github.com/dontfuckmycode/dfmc/internal/planning"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
@@ -2901,6 +2902,13 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.input = ""
 		m.notice = "Approval gate state shown below."
 		return m.appendSystemMessage(m.describeApprovalGate()), nil, true
+	case "hooks":
+		// List every lifecycle hook registered with the dispatcher —
+		// event → name(condition) command. Counterpart to /approve for
+		// the other half of the tool-lifecycle surface.
+		m.input = ""
+		m.notice = "Lifecycle hooks listed below."
+		return m.appendSystemMessage(m.describeHooks()), nil, true
 	case "keylog":
 		// Toggle key-event dump into m.notice. Used to diagnose Turkish-
 		// keyboard AltGr delivery and similar terminal-specific weirdness
@@ -3263,6 +3271,74 @@ func (m Model) appendSystemMessage(text string) Model {
 	m.transcript = append(m.transcript, newChatLine("system", strings.TrimSpace(text)))
 	m.chatScrollback = 0
 	return m
+}
+
+// describeHooks renders a snapshot of every lifecycle hook registered
+// with the engine's dispatcher, grouped by event. Paired with /approve
+// so the user can see the whole tool-lifecycle surface without digging
+// through config.yaml. Returns a single multi-line string suitable for
+// appendSystemMessage.
+func (m Model) describeHooks() string {
+	var dispatcher *hooks.Dispatcher
+	if m.eng != nil {
+		dispatcher = m.eng.Hooks
+	}
+	inventory := dispatcher.Inventory()
+	lines := []string{"▸ Lifecycle hooks"}
+	if len(inventory) == 0 {
+		lines = append(lines,
+			"  state:  none registered",
+			"  enable: add entries under `hooks:` in .dfmc/config.yaml",
+			"  events: user_prompt_submit, pre_tool, post_tool, session_start, session_end",
+		)
+		return strings.Join(lines, "\n")
+	}
+	// Render events in a stable order so repeated /hooks doesn't
+	// reshuffle the output and confuse the reader.
+	eventOrder := []hooks.Event{
+		hooks.EventSessionStart,
+		hooks.EventUserPromptSubmit,
+		hooks.EventPreTool,
+		hooks.EventPostTool,
+		hooks.EventSessionEnd,
+	}
+	seen := make(map[hooks.Event]bool, len(eventOrder))
+	for _, ev := range eventOrder {
+		if entries, ok := inventory[ev]; ok {
+			seen[ev] = true
+			lines = append(lines, formatHookEvent(ev, entries)...)
+		}
+	}
+	// Fold in any unknown events the dispatcher happened to register
+	// (plugins, future additions) so nothing silently disappears.
+	for ev, entries := range inventory {
+		if seen[ev] {
+			continue
+		}
+		lines = append(lines, formatHookEvent(ev, entries)...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// formatHookEvent emits a header line per event plus one line per hook.
+// "cond=..." is only shown when the entry carries a condition expression
+// — otherwise it adds noise.
+func formatHookEvent(ev hooks.Event, entries []hooks.HookInventoryEntry) []string {
+	out := make([]string, 0, 1+len(entries))
+	out = append(out, fmt.Sprintf("  %s (%d)", ev, len(entries)))
+	for _, h := range entries {
+		name := strings.TrimSpace(h.Name)
+		if name == "" {
+			name = "(unnamed)"
+		}
+		cmd := truncateSingleLine(h.Command, 80)
+		if cond := strings.TrimSpace(h.Condition); cond != "" {
+			out = append(out, fmt.Sprintf("    · %s [cond: %s] → %s", name, cond, cmd))
+		} else {
+			out = append(out, fmt.Sprintf("    · %s → %s", name, cmd))
+		}
+	}
+	return out
 }
 
 // describeApprovalGate returns a human-readable snapshot of the current
@@ -8415,6 +8491,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "clear", Template: "/clear", Description: "clear transcript (memory untouched)"},
 		{Command: "compact", Template: "/compact", Description: "collapse older transcript into a summary (keeps last 6; /compact N for custom)"},
 		{Command: "approve", Template: "/approve", Description: "show the tool-approval gate state (which tools prompt agent calls)"},
+		{Command: "hooks", Template: "/hooks", Description: "list lifecycle hooks registered per event (pre_tool, post_tool, user_prompt_submit, …)"},
 		{Command: "quit", Template: "/quit", Description: "exit DFMC"},
 		{Command: "providers", Template: "/providers", Description: "list configured providers"},
 		{Command: "models", Template: "/models", Description: "show configured model"},
@@ -9560,6 +9637,7 @@ func renderTUIHelp() string {
 		"    /clear                       Clear transcript (memory untouched)",
 		"    /compact [N]                 Collapse older transcript into a summary (keeps last N; default 6)",
 		"    /approve                     Show tool-approval gate state (which tools prompt agent calls)",
+		"    /hooks                       List lifecycle hooks registered per event",
 		"    /quit                        Exit DFMC",
 		"    /coach                       Mute or unmute background coach notes",
 		"    /hints                       Show or hide between-round trajectory hints",

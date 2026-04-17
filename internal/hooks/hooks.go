@@ -287,6 +287,44 @@ func (d *Dispatcher) Count(event Event) int {
 	return len(d.entries[event])
 }
 
+// HookInventoryEntry is a read-only snapshot of one registered hook.
+// Returned by Inventory() so UI layers can render their own view over
+// the dispatcher state without reaching into internals.
+type HookInventoryEntry struct {
+	Name      string
+	Command   string
+	Condition string
+	Timeout   time.Duration
+}
+
+// Inventory returns every registered hook grouped by event, in the order
+// they were loaded. Nil dispatcher yields a nil map — callers treat that
+// as "no hooks".
+func (d *Dispatcher) Inventory() map[Event][]HookInventoryEntry {
+	if d == nil {
+		return nil
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if len(d.entries) == 0 {
+		return nil
+	}
+	out := make(map[Event][]HookInventoryEntry, len(d.entries))
+	for event, hooks := range d.entries {
+		entries := make([]HookInventoryEntry, 0, len(hooks))
+		for _, h := range hooks {
+			entries = append(entries, HookInventoryEntry{
+				Name:      h.name,
+				Command:   h.command,
+				Condition: h.condition,
+				Timeout:   h.timeout,
+			})
+		}
+		out[event] = entries
+	}
+	return out
+}
+
 // Describe returns a human-readable summary of what's registered. Used
 // by `dfmc doctor` / status displays.
 func (d *Dispatcher) Describe() string {
