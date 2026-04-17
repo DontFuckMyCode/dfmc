@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -128,19 +129,44 @@ func (s *Store) SaveConversationLog(convID string, messages []types.Message) err
 	}
 
 	path := filepath.Join(dir, convID+".jsonl")
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("create conversation file: %w", err)
-	}
-	defer f.Close()
 
-	enc := json.NewEncoder(f)
+	// Encode in-memory first, then atomically rename into place. The
+	// previous os.Create approach truncated the existing file up-front
+	// — a crash or signal mid-write would leave the user's conversation
+	// history truncated (or zero-length, if nothing had been flushed).
+	// Buffering + temp-then-rename guarantees the on-disk file is
+	// either the old full log OR the new full log, never a torn
+	// in-between state.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
 	for _, msg := range messages {
 		if err := enc.Encode(msg); err != nil {
 			return fmt.Errorf("encode message: %w", err)
 		}
 	}
-
+	tmp, err := os.CreateTemp(dir, "."+convID+".jsonl.dfmc-tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp for conversation: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("write temp conversation: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("sync temp conversation: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close temp conversation: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename temp conversation: %w", err)
+	}
 	return nil
 }
 
@@ -158,6 +184,15 @@ func (s *Store) LoadConversationLog(convID string) ([]types.Message, error) {
 
 	var messages []types.Message
 	sc := bufio.NewScanner(f)
+	// bufio.Scanner's default line limit is 64 KiB (MaxScanTokenSize).
+	// A single tool-output message — a long `run_command` stdout, a
+	// pasted patch, a big code block — easily exceeds that and used to
+	// fail the whole load with "token too long". 8 MiB covers
+	// essentially any realistic message while still capping the
+	// per-line memory grab so a corrupted file can't pull unbounded
+	// RAM.
+	const maxLineBytes = 8 * 1024 * 1024
+	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(line) == 0 {
