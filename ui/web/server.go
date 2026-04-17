@@ -2126,6 +2126,8 @@ textarea {
 			<div class="metric"><strong>Files</strong><span id="metric-files">-</span></div>
 			<div class="metric"><strong>CodeMap</strong><span id="metric-codemap">-</span></div>
 			<div class="metric"><strong>Context</strong><span id="metric-context">-</span></div>
+			<div class="metric"><strong>Gate</strong><span id="metric-gate" title="Tool approval gate">-</span></div>
+			<div class="metric"><strong>Hooks</strong><span id="metric-hooks" title="Lifecycle hooks registered">-</span></div>
 		</div>
 	</section>
 
@@ -2324,6 +2326,35 @@ async function loadStatus() {
 	const astLanguages = Array.isArray(data.ast_languages) ? data.ast_languages.slice(0, 4).map(item => item.language + "=" + item.active) : [];
 	setText("runtime-context", data.context_budget ? (data.context_budget.task + " / " + data.context_budget.max_files + " files") : "-");
 	setText("runtime-note", astLanguages.length ? ("AST matrix: " + astLanguages.join(", ")) : "No AST capability data yet.");
+
+	const gate = data.approval_gate || {};
+	let gateLabel;
+	if (gate.wildcard) {
+		gateLabel = "on (*)";
+	} else if (gate.active) {
+		const tools = Array.isArray(gate.tools) ? gate.tools : [];
+		const preview = tools.slice(0, 3).join(", ");
+		gateLabel = tools.length > 3
+			? (gate.count + ": " + preview + ", …")
+			: (gate.count + ": " + preview);
+	} else {
+		gateLabel = "off";
+	}
+	const denials = Number(data.recent_denials || 0);
+	if (denials > 0) {
+		gateLabel += " · " + denials + " denied";
+	}
+	setText("metric-gate", gateLabel);
+
+	const hooks = data.hooks || { total: 0, per_event: {} };
+	if (!hooks.total) {
+		setText("metric-hooks", "none");
+	} else {
+		const perEvent = hooks.per_event || {};
+		const keys = Object.keys(perEvent).sort();
+		const parts = keys.map(k => k + "=" + perEvent[k]);
+		setText("metric-hooks", hooks.total + " (" + parts.slice(0, 3).join(", ") + (keys.length > 3 ? ", …" : "") + ")");
+	}
 }
 
 async function loadProvidersAndSkills() {

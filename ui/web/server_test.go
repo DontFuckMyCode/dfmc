@@ -168,6 +168,12 @@ func TestIndexWorkbench(t *testing.T) {
 	if !strings.Contains(html, `id="activity-log"`) {
 		t.Fatalf("expected activity log container, got: %s", html)
 	}
+	if !strings.Contains(html, `id="metric-gate"`) {
+		t.Fatalf("expected gate metric placeholder, got: %s", html)
+	}
+	if !strings.Contains(html, `id="metric-hooks"`) {
+		t.Fatalf("expected hooks metric placeholder, got: %s", html)
+	}
 	if !strings.Contains(html, "function classifyActivityEvent") {
 		t.Fatalf("activity classifier not inlined: %s", html)
 	}
