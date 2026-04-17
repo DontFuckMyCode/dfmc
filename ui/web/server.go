@@ -174,11 +174,36 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) Start() error {
 	fmt.Printf("DFMC Web API listening on http://%s\n", s.addr)
-	return http.ListenAndServe(s.addr, s.mux)
+	return http.ListenAndServe(s.addr, s.Handler())
 }
 
+// Handler returns the server's root http.Handler with every request
+// wrapped in a body-size limiter. Callers that front the server with
+// additional middleware (bearer-token auth in the CLI's `dfmc serve`)
+// keep composing on top of this — the limiter sits at the bottom so
+// huge bodies can never slip past before auth decisions are made.
 func (s *Server) Handler() http.Handler {
-	return s.mux
+	return limitRequestBodySize(s.mux, maxRequestBodyBytes)
+}
+
+// maxRequestBodyBytes caps the size of a single POST/PUT/PATCH body.
+// 4 MiB is generous for any chat message or workspace patch the CLI
+// would ever send (typical is < 100 KB); the cap exists so a
+// malicious or buggy client can't exhaust memory streaming endless
+// JSON into a single Decode call. Overflow surfaces as 413 from the
+// stdlib's http.MaxBytesReader automatically.
+const maxRequestBodyBytes int64 = 4 * 1024 * 1024
+
+func limitRequestBodySize(h http.Handler, max int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			switch r.Method {
+			case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+				r.Body = http.MaxBytesReader(w, r.Body, max)
+			}
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
@@ -1562,14 +1587,25 @@ func trimWordsForWeb(text string, maxWords int) string {
 	return strings.Join(words[:maxWords], " ")
 }
 
+// resolveMagicDocPath resolves a user-supplied magic-doc path inside
+// the project root. An absolute path is only honoured if it's still
+// inside the root, so an HTTP caller can't coax the web server into
+// reading or writing /etc/passwd by passing `path=/etc/passwd`. A
+// blank path falls back to the default .dfmc/magic/MAGIC_DOC.md.
+// When the caller passes a path that escapes the root, the default
+// location is returned instead — callers treat the surfaced path as
+// read-only view data; downstream writers (updateMagicDoc) also stat
+// the returned path, so a benign fallback is safer than a 500.
 func resolveMagicDocPath(projectRoot, pathFlag string) string {
+	def := filepath.Join(projectRoot, ".dfmc", "magic", "MAGIC_DOC.md")
 	if strings.TrimSpace(pathFlag) == "" {
-		return filepath.Join(projectRoot, ".dfmc", "magic", "MAGIC_DOC.md")
+		return def
 	}
-	if filepath.IsAbs(pathFlag) {
-		return pathFlag
+	resolved, err := resolvePathWithinRoot(projectRoot, pathFlag)
+	if err != nil {
+		return def
 	}
-	return filepath.Join(projectRoot, pathFlag)
+	return resolved
 }
 
 type webDepStat struct {
