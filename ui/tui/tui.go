@@ -358,6 +358,13 @@ type Model struct {
 	activeSubagentCount  int
 
 	notice string
+
+	// pendingApproval holds the current tool-approval prompt awaiting a
+	// y/n keystroke. Non-nil value draws a modal over the chat tab and
+	// captures y/n/Esc until resolved. Only one prompt is queued at a
+	// time — the agent loop is sequential, and subagents are fed from
+	// the same Approver, so there's no concurrent-approval scenario.
+	pendingApproval *pendingApproval
 }
 
 type statusLoadedMsg struct {
@@ -487,6 +494,15 @@ func Run(ctx context.Context, eng *engine.Engine, opts Options) error {
 		programOpts = append(programOpts, tea.WithAltScreen())
 	}
 	p := tea.NewProgram(model, programOpts...)
+
+	// Wire the tool-approval gate. SetApprover is a no-op when the engine
+	// has tools.require_approval empty, but registering it here is cheap
+	// and means flipping the config flag at runtime doesn't need a restart.
+	approver := newTeaApprover()
+	approver.bindProgram(p)
+	eng.SetApprover(approver)
+	defer eng.SetApprover(nil)
+
 	_, err := p.Run()
 	return err
 }
@@ -845,7 +861,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next, drainCmd := m.drainPendingQueue()
 		return next, drainCmd
 
+	case approvalRequestedMsg:
+		// Only surface one prompt at a time. If a second request sneaks in
+		// (shouldn't happen — agent loop is sequential) we deny it
+		// immediately so the engine keeps moving instead of deadlocking.
+		if m.pendingApproval != nil && msg.Pending != nil {
+			msg.Pending.resolve(engine.ApprovalDecision{
+				Approved: false,
+				Reason:   "another approval in progress",
+			})
+			return m, nil
+		}
+		m.pendingApproval = msg.Pending
+		// Snap to the Chat tab so the modal is actually visible — if the
+		// user was browsing the Files panel when an agent step asked for
+		// approval they need to see the prompt.
+		if len(m.tabs) > 0 {
+			m.activeTab = 0
+		}
+		return m, nil
+
 	case tea.KeyMsg:
+		// Approval modal steals all keys while active. We intercept before
+		// anything else so a hasty tab-switch or ctrl+c doesn't leak a
+		// decision into unrelated handlers or leave the agent loop hung.
+		// ctrl+c still quits because a ragequit with an unanswered modal
+		// must not wedge the agent — the deferred SetApprover(nil) + the
+		// approver's own context cancellation take care of the rest.
+		if m.pendingApproval != nil {
+			switch msg.String() {
+			case "ctrl+c", "ctrl+q":
+				m.pendingApproval.resolve(engine.ApprovalDecision{
+					Approved: false,
+					Reason:   "tui quit",
+				})
+				m.pendingApproval = nil
+				return m, tea.Quit
+			case "y", "Y", "enter":
+				pending := m.pendingApproval
+				m.pendingApproval = nil
+				pending.resolve(engine.ApprovalDecision{Approved: true})
+				m.notice = "Approved " + pending.Req.Tool + "."
+				return m, nil
+			case "n", "N", "esc":
+				pending := m.pendingApproval
+				m.pendingApproval = nil
+				pending.resolve(engine.ApprovalDecision{
+					Approved: false,
+					Reason:   "user denied",
+				})
+				m.notice = "Denied " + pending.Req.Tool + "."
+				return m, nil
+			default:
+				// Swallow every other key while a prompt is pending so the
+				// user doesn't accidentally drop noise into the composer.
+				return m, nil
+			}
+		}
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
 			return m, tea.Quit
@@ -4861,6 +4933,14 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 	inputLine := renderChatInputLine(m.input, m.chatCursor, m.chatCursorManual, m.chatCursorInput, m.sending)
 	tailLines = append(tailLines, "", sectionHeader("›", "Input"), renderInputBox(inputLine, min(width, 100)))
 
+	// Approval modal — highest priority: if the agent has asked for
+	// permission to run a gated tool we draw a blocking card right below
+	// the composer, and suppress every other picker/strip until the user
+	// resolves it. Rendered before pickers so it always wins real estate.
+	if m.pendingApproval != nil {
+		tailLines = append(tailLines, "", renderApprovalModal(m.pendingApproval, min(width-2, 110)))
+	}
+
 	// Picker priority: when @ or / picker is active, it must be the dominant
 	// thing below the composer. Earlier versions rendered the context strip,
 	// slashAssistHints and quickActions first, pushing the @ modal off-screen
@@ -4868,7 +4948,7 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 	// fact it was rendering below the fold. Now the active picker owns the
 	// real estate directly under the input and all other tail decoration is
 	// suppressed until the user dismisses or commits it.
-	pickerActive := suggestions.mentionActive || suggestions.slashMenuActive || m.commandPickerActive
+	pickerActive := m.pendingApproval != nil || suggestions.mentionActive || suggestions.slashMenuActive || m.commandPickerActive
 	if suggestions.mentionActive {
 		tailLines = append(tailLines, "", renderMentionPickerModal(suggestions, m.mentionIndex, len(m.files), min(width-2, 110)))
 	} else if suggestions.slashMenuActive {
