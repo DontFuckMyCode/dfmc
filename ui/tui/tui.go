@@ -3496,6 +3496,24 @@ func (m Model) describeStats() string {
 		if denials := m.eng.RecentDenials(); len(denials) > 0 {
 			lines = append(lines, fmt.Sprintf("  denials:     %d blocked agent tool call(s) — see /approve", len(denials)))
 		}
+
+		// Prompt cache split — how much of the rendered system prompt
+		// Anthropic can cache. Only visible when a sensible breakdown is
+		// available; otherwise silent to keep the card tight.
+		lastQuery := ""
+		for i := len(m.transcript) - 1; i >= 0; i-- {
+			if strings.EqualFold(m.transcript[i].Role, "user") {
+				lastQuery = strings.TrimSpace(m.transcript[i].Content)
+				break
+			}
+		}
+		rec := m.eng.PromptRecommendation(lastQuery)
+		if rec.CacheableTokens+rec.DynamicTokens > 0 {
+			lines = append(lines, fmt.Sprintf("  cache split: %d%% stable · %s cacheable / %s dynamic",
+				rec.CacheablePercent,
+				formatThousands(rec.CacheableTokens),
+				formatThousands(rec.DynamicTokens)))
+		}
 	}
 
 	return strings.Join(lines, "\n")

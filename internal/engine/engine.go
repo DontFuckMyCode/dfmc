@@ -202,6 +202,14 @@ type PromptRecommendationInfo struct {
 	InjectedTokens     int `json:"injected_tokens"`
 	ProjectBriefTokens int `json:"project_brief_tokens"`
 
+	// Cache boundary metrics — how the rendered bundle splits across
+	// the stable/dynamic boundary declared by <<DFMC_CACHE_BREAK>>.
+	// CacheablePercent is the cacheable share rounded to an integer
+	// percentage so it fits a status line without losing meaning.
+	CacheableTokens  int `json:"cacheable_tokens"`
+	DynamicTokens    int `json:"dynamic_tokens"`
+	CacheablePercent int `json:"cacheable_percent"`
+
 	Hints []ContextRecommendation `json:"hints"`
 }
 
@@ -704,6 +712,12 @@ func (e *Engine) PromptRecommendationWithRuntime(question string, overrides ctxm
 		add("info", "prompt_budget_balanced", "Prompt profile and budget look balanced for this query.")
 	}
 
+	cacheable, dynamic := e.promptCacheTokens(query, overrides)
+	percent := 0
+	if total := cacheable + dynamic; total > 0 {
+		percent = (cacheable * 100) / total
+	}
+
 	return PromptRecommendationInfo{
 		Provider: runtime.Provider,
 		Model:    runtime.Model,
@@ -726,8 +740,29 @@ func (e *Engine) PromptRecommendationWithRuntime(question string, overrides ctxm
 		InjectedTokens:     renderBudget.InjectedTokens,
 		ProjectBriefTokens: renderBudget.ProjectBriefTokens,
 
+		CacheableTokens:  cacheable,
+		DynamicTokens:    dynamic,
+		CacheablePercent: percent,
+
 		Hints: hints,
 	}
+}
+
+// promptCacheTokens renders the system prompt bundle for the given query
+// and returns (cacheable_tokens, dynamic_tokens). No injected context is
+// built beyond what BuildSystemPromptBundle already assembles, so the
+// call is diagnostic-safe — callable from status endpoints without side
+// effects. Returns zeros when the context manager isn't wired up.
+func (e *Engine) promptCacheTokens(query string, overrides ctxmgr.PromptRuntime) (int, int) {
+	if e == nil || e.Context == nil {
+		return 0, 0
+	}
+	runtime := e.promptRuntimeWithOverrides(overrides)
+	bundle := e.Context.BuildSystemPromptBundle(e.ProjectRoot, query, nil, e.ListTools(), runtime)
+	if bundle == nil {
+		return 0, 0
+	}
+	return tokens.Estimate(bundle.CacheableText()), tokens.Estimate(bundle.DynamicText())
 }
 
 func (e *Engine) SetProviderModel(provider, model string) {

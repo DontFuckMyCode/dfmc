@@ -352,6 +352,13 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 		promptRecommendation.PromptBudgetTokens,
 		promptRecommendation.ToolStyle,
 	)
+	if promptRecommendation.CacheableTokens+promptRecommendation.DynamicTokens > 0 {
+		fmt.Printf("prompt cache: %d%% stable (cacheable=%d, dynamic=%d tokens)\n",
+			promptRecommendation.CacheablePercent,
+			promptRecommendation.CacheableTokens,
+			promptRecommendation.DynamicTokens,
+		)
+	}
 	if len(contextTuning) > 0 {
 		fmt.Printf("context tuning suggestions: %d\n", len(contextTuning))
 	}
