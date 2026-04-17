@@ -1912,8 +1912,26 @@ func runTool(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 			_ = printJSON(map[string]any{"tools": tools})
 			return 0
 		}
+		// Show one line per tool with a short summary pulled from its
+		// ToolSpec. Keeps text mode readable without requiring a follow-
+		// up `dfmc tool show NAME` just to learn what each verb does.
+		var specs map[string]string
+		if eng.Tools != nil {
+			specs = map[string]string{}
+			for _, s := range eng.Tools.Specs() {
+				specs[s.Name] = strings.TrimSpace(s.Summary)
+			}
+		}
 		for _, t := range tools {
-			fmt.Println(t)
+			summary := ""
+			if specs != nil {
+				summary = specs[t]
+			}
+			if summary != "" {
+				fmt.Printf("%-18s %s\n", t, summary)
+			} else {
+				fmt.Println(t)
+			}
 		}
 		return 0
 	}

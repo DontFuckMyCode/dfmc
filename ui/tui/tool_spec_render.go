@@ -11,6 +11,41 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
+// describeToolsList renders the registered tool surface with a one-line
+// summary per tool so users can triage `/tools` output without having
+// to run `/tool show NAME` for every entry. Tools with no Specer fall
+// back to just the name; the Specer synthesizer in internal/tools
+// already populates Summary from Description() so most tools render
+// with a useful line.
+func (m Model) describeToolsList(names []string) string {
+	if len(names) == 0 {
+		return "No tools registered."
+	}
+	var b strings.Builder
+	b.WriteString("Tools (")
+	fmt.Fprintf(&b, "%d)\n", len(names))
+	var specs map[string]string
+	if m.eng != nil && m.eng.Tools != nil {
+		specs = map[string]string{}
+		for _, spec := range m.eng.Tools.Specs() {
+			specs[spec.Name] = strings.TrimSpace(spec.Summary)
+		}
+	}
+	for _, name := range names {
+		summary := ""
+		if specs != nil {
+			summary = specs[name]
+		}
+		if summary != "" {
+			fmt.Fprintf(&b, "  %-18s %s\n", name, summary)
+		} else {
+			fmt.Fprintf(&b, "  %s\n", name)
+		}
+	}
+	b.WriteString("\n/tool show NAME for parameter shape · F6 for the Tools panel · /tool NAME for one-shot execution.")
+	return b.String()
+}
+
 // describeToolSpec returns a multi-line string describing the named
 // tool. Returns an error-ish message (not an actual error) when the
 // tool is unknown or the engine has no tool registry — the caller

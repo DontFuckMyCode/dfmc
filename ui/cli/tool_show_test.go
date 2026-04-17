@@ -63,6 +63,34 @@ func TestRunTool_ShowWithoutNameExits2(t *testing.T) {
 	}
 }
 
+func TestRunTool_ListIncludesSummariesInTextMode(t *testing.T) {
+	eng := newCLITestEngine(t)
+	out := captureStdout(t, func() {
+		if rc := runTool(context.Background(), eng, nil, false); rc != 0 {
+			t.Fatalf("tool list exit=%d", rc)
+		}
+	})
+	// Every shipped tool has a summary in builtin_specs.go; regression
+	// here would mean the text mode dropped back to the old name-only
+	// behavior.
+	if !strings.Contains(out, "read_file") {
+		t.Fatalf("expected read_file in output, got:\n%s", out)
+	}
+	// The read_file spec summary starts with "Read a segment" — checking
+	// the word segments avoids coupling to the exact summary wording.
+	lines := strings.Split(out, "\n")
+	sawSummarized := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "read_file") && len(strings.Fields(line)) > 1 {
+			sawSummarized = true
+			break
+		}
+	}
+	if !sawSummarized {
+		t.Fatalf("expected read_file line to include a summary, got:\n%s", out)
+	}
+}
+
 func TestRunTool_ShowAliases(t *testing.T) {
 	eng := newCLITestEngine(t)
 	for _, alias := range []string{"describe", "inspect"} {

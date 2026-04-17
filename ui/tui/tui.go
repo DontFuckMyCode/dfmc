@@ -3018,7 +3018,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		if len(tools) == 0 {
 			return m.appendSystemMessage("No tools registered."), nil, true
 		}
-		return m.appendSystemMessage("Tools: " + strings.Join(tools, ", ") + "\nOpen the Tools panel with F6 for preset runs."), nil, true
+		return m.appendSystemMessage(m.describeToolsList(tools)), nil, true
 	case "tool":
 		if len(args) == 0 {
 			m = m.startCommandPicker("tool", "", false)
@@ -9992,6 +9992,7 @@ func renderTUIHelp() string {
 		"    /coach                       Mute or unmute background coach notes",
 		"    /hints                       Show or hide between-round trajectory hints",
 		"    /tools                       Show tool surface",
+		"    /tool show NAME              Print the spec for NAME (args, risk, examples)",
 		"    /diff                        Show staged patch diff",
 		"    /patch                       Open the patch panel",
 		"    /apply [--check]             Apply (or dry-run) the staged patch",
