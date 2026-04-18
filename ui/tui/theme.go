@@ -533,6 +533,13 @@ type toolChip struct {
 	// head so the user can see WHAT each batched call did instead of just
 	// the count summary. Empty for non-batch tools.
 	InnerLines []string
+	// Reason is the model's self-narration for this tool call — a short
+	// "why am I calling this now" string the model put in the optional
+	// `_reason` field (stripped before dispatch by tools.Engine.Execute,
+	// republished as a tool:reasoning event). Rendered above Verb on the
+	// chip with a `↳` glyph so the user sees the WHY before the WHAT.
+	// Empty when the model didn't supply one.
+	Reason string
 }
 
 func renderToolChip(chip toolChip, width int) string {
@@ -541,7 +548,17 @@ func renderToolChip(chip toolChip, width int) string {
 	if name == "" {
 		name = "tool"
 	}
-	head := styleFor.Render(icon + " " + name)
+	// Sub-agent calls (delegate_task / orchestrate / status==subagent-*)
+	// get a SUBAGENT badge in front of the name so fan-out is visible
+	// at a glance without having to remember which tool name implies a
+	// sub-agent. The badge uses accent color regardless of ok/fail
+	// status — it's a routing marker, not a severity marker.
+	var head string
+	if isSubagentToolChip(chip) {
+		head = styleFor.Render(icon+" ") + accentStyle.Render("SUBAGENT") + " " + styleFor.Render(name)
+	} else {
+		head = styleFor.Render(icon + " " + name)
+	}
 	meta := []string{}
 	if chip.Step > 0 {
 		meta = append(meta, fmt.Sprintf("step %d", chip.Step))
@@ -573,6 +590,13 @@ func renderToolChip(chip toolChip, width int) string {
 	}
 	verb := strings.TrimSpace(chip.Verb)
 	preview := strings.TrimSpace(chip.Preview)
+	reason := strings.TrimSpace(chip.Reason)
+	// Reason gets a `↳` prefix so it scans as "the model's voice"
+	// rather than a tool param — paired down hard at 140 chars so a
+	// chatty model can't blow up the chip height.
+	if len(reason) > 140 {
+		reason = reason[:137] + "..."
+	}
 	// When the chip carries a Verb (params action line) AND a Preview
 	// (result excerpt), render a 3-line card by default — a richer
 	// shape the user explicitly asked for so each tool call reads like
@@ -584,6 +608,10 @@ func renderToolChip(chip toolChip, width int) string {
 	if verb != "" && preview != "" {
 		out := strings.Builder{}
 		out.WriteString(truncateSingleLine(head1, width))
+		if reason != "" {
+			out.WriteString("\n  ")
+			out.WriteString(subtleStyle.Render(truncateSingleLine("↳ "+reason, innerWidth)))
+		}
 		out.WriteString("\n  ")
 		out.WriteString(subtleStyle.Render(truncateSingleLine(verb, innerWidth)))
 		out.WriteString("\n  ")
@@ -595,11 +623,15 @@ func renderToolChip(chip toolChip, width int) string {
 	// the user can see WHAT the model just dispatched while it runs.
 	if verb != "" {
 		single := head1 + " " + subtleStyle.Render("· "+verb)
-		if ansi.StringWidth(single) <= width && len(chip.InnerLines) == 0 {
+		if reason == "" && ansi.StringWidth(single) <= width && len(chip.InnerLines) == 0 {
 			return single
 		}
 		out := strings.Builder{}
 		out.WriteString(truncateSingleLine(head1, width))
+		if reason != "" {
+			out.WriteString("\n  ")
+			out.WriteString(subtleStyle.Render(truncateSingleLine("↳ "+reason, innerWidth)))
+		}
 		out.WriteString("\n  ")
 		out.WriteString(subtleStyle.Render(truncateSingleLine(verb, innerWidth)))
 		appendInnerLines(&out, chip.InnerLines, innerWidth)
@@ -608,14 +640,21 @@ func renderToolChip(chip toolChip, width int) string {
 	headRendered := head1
 	if preview != "" {
 		single := head1 + " " + subtleStyle.Render("· "+preview)
-		if ansi.StringWidth(single) <= width && len(chip.InnerLines) == 0 {
+		if reason == "" && ansi.StringWidth(single) <= width && len(chip.InnerLines) == 0 {
 			return single
 		}
-		// Preview won't fit on one line — render head, then indented preview.
-		// Inner lines (if any) are appended below.
-		headRendered = truncateSingleLine(head1, width) + "\n  " + subtleStyle.Render(truncateSingleLine(preview, innerWidth))
+		// Preview won't fit on one line OR a reason line is present —
+		// render head, then optionally reason, then indented preview.
+		headRendered = truncateSingleLine(head1, width)
+		if reason != "" {
+			headRendered += "\n  " + subtleStyle.Render(truncateSingleLine("↳ "+reason, innerWidth))
+		}
+		headRendered += "\n  " + subtleStyle.Render(truncateSingleLine(preview, innerWidth))
 	} else {
 		headRendered = truncateSingleLine(head1, width)
+		if reason != "" {
+			headRendered += "\n  " + subtleStyle.Render(truncateSingleLine("↳ "+reason, innerWidth))
+		}
 	}
 	if len(chip.InnerLines) == 0 {
 		return headRendered
@@ -683,6 +722,128 @@ func renderInlineToolChips(chips []toolChip, width int) string {
 	return b.String()
 }
 
+// renderInlineToolChipsSummary collapses a chip list into a one-line
+// table-style summary — what the user usually wants to glance at instead
+// of scrolling 15 chips of detail. Format:
+//
+//	▸ 7 tool calls · 5 ok · 1 fail · 1 running · ~5.8k tok · 234ms
+//	  read_file ×3, edit_file ×2, grep_codebase ×1, run_command ×1 — /tools to expand
+//
+// Sub-agent calls (delegate_task / orchestrate) get an extra `· 2 sub-agents`
+// segment so the user can see at a glance whether work was farmed out.
+func renderInlineToolChipsSummary(chips []toolChip, width int) string {
+	if len(chips) == 0 {
+		return ""
+	}
+	if width < 20 {
+		width = 20
+	}
+	indent := "    "
+	inner := width - len(indent)
+	if inner < 24 {
+		inner = 24
+	}
+
+	var ok, fail, running, subagents int
+	var totalMs int64
+	var totalTok int
+	counts := map[string]int{}
+	order := []string{} // preserve first-seen order so the names list reads top-down
+
+	for _, c := range chips {
+		switch strings.ToLower(strings.TrimSpace(c.Status)) {
+		case "ok", "success", "done":
+			ok++
+		case "failed", "error", "fail":
+			fail++
+		case "running", "pending":
+			running++
+		}
+		if c.DurationMs > 0 {
+			totalMs += int64(c.DurationMs)
+		}
+		if c.OutputTokens > 0 {
+			totalTok += c.OutputTokens
+		}
+		name := strings.TrimSpace(c.Name)
+		if name == "" {
+			name = "tool"
+		}
+		if name == "delegate_task" || name == "orchestrate" || strings.HasPrefix(name, "subagent") {
+			subagents++
+		}
+		if _, seen := counts[name]; !seen {
+			order = append(order, name)
+		}
+		counts[name]++
+	}
+
+	// Headline: counts + totals.
+	parts := []string{fmt.Sprintf("%d tool call%s", len(chips), plural(len(chips)))}
+	if ok > 0 {
+		parts = append(parts, fmt.Sprintf("%s ok", okStyle.Render(fmt.Sprintf("%d", ok))))
+	}
+	if fail > 0 {
+		parts = append(parts, fmt.Sprintf("%s fail", failStyle.Render(fmt.Sprintf("%d", fail))))
+	}
+	if running > 0 {
+		parts = append(parts, fmt.Sprintf("%d running", running))
+	}
+	if subagents > 0 {
+		parts = append(parts, fmt.Sprintf("%d sub-agent%s", subagents, plural(subagents)))
+	}
+	if totalTok > 0 {
+		parts = append(parts, fmt.Sprintf("~%s tok", formatToolTokenCount(totalTok)))
+	}
+	if totalMs > 0 {
+		parts = append(parts, fmt.Sprintf("%dms", totalMs))
+	}
+	headline := subtleStyle.Render("▸ tools · " + strings.Join(parts, " · "))
+
+	// Tool-name breakdown line — what kinds of calls happened, in
+	// first-seen order so the timeline reads naturally.
+	breakdown := []string{}
+	for _, name := range order {
+		n := counts[name]
+		if n == 1 {
+			breakdown = append(breakdown, name)
+		} else {
+			breakdown = append(breakdown, fmt.Sprintf("%s ×%d", name, n))
+		}
+	}
+	hint := subtleStyle.Render("— /tools to expand")
+	body := strings.Join(breakdown, ", ")
+	bodyLine := subtleStyle.Render("  ") + truncateSingleLine(body+" "+hint, inner)
+
+	var b strings.Builder
+	b.WriteString(indent)
+	b.WriteString(truncateSingleLine(headline, inner))
+	b.WriteByte('\n')
+	b.WriteString(indent)
+	b.WriteString(bodyLine)
+	return b.String()
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+// isSubagentToolChip recognises the chip flavours produced by the
+// engine's sub-agent surface (delegate_task, orchestrate, or any chip
+// whose status is one of the subagent-* values published by the
+// agent loop). Drives the SUBAGENT badge in renderToolChip and the
+// per-row sub-agent count in the collapsed summary.
+func isSubagentToolChip(chip toolChip) bool {
+	name := strings.ToLower(strings.TrimSpace(chip.Name))
+	if name == "delegate_task" || name == "orchestrate" || strings.HasPrefix(name, "subagent") {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(chip.Status)), "subagent-")
+}
+
 func chipIconStyle(status string) (string, lipgloss.Style) {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "ok", "success", "done":
@@ -706,6 +867,68 @@ func chipIconStyle(status string) (string, lipgloss.Style) {
 	default:
 		return "•", subtleStyle
 	}
+}
+
+// renderTodoStrip renders a one-line summary of the agent's todo_write
+// state — done/doing/pending counts, plus the active item's text when
+// one is in progress so the user can see WHAT the model is on. Empty
+// when there are no todos (no strip, no noise). Indent matches the
+// runtime card so they read as one block.
+//
+// Example output:
+//
+//	▸ TODOs · 3 done · 1 doing · 2 pending → Building tool strip collapse
+type todoStripItem struct {
+	Content    string
+	Status     string
+	ActiveForm string
+}
+
+func renderTodoStrip(items []todoStripItem, width int) string {
+	if len(items) == 0 {
+		return ""
+	}
+	if width < 24 {
+		width = 24
+	}
+
+	var done, doing, pending int
+	var activeText string
+	for _, it := range items {
+		switch strings.ToLower(strings.TrimSpace(it.Status)) {
+		case "completed", "done":
+			done++
+		case "in_progress", "active", "doing":
+			doing++
+			if activeText == "" {
+				activeText = strings.TrimSpace(it.ActiveForm)
+				if activeText == "" {
+					activeText = strings.TrimSpace(it.Content)
+				}
+			}
+		default:
+			pending++
+		}
+	}
+	if done == 0 && doing == 0 && pending == 0 {
+		return ""
+	}
+
+	parts := []string{}
+	if done > 0 {
+		parts = append(parts, okStyle.Render(fmt.Sprintf("%d done", done)))
+	}
+	if doing > 0 {
+		parts = append(parts, accentStyle.Render(fmt.Sprintf("%d doing", doing)))
+	}
+	if pending > 0 {
+		parts = append(parts, fmt.Sprintf("%d pending", pending))
+	}
+	headline := subtleStyle.Render("▸ TODOs · " + strings.Join(parts, " · "))
+	if activeText != "" {
+		headline += " " + subtleStyle.Render("→ "+truncateSingleLine(activeText, width-30))
+	}
+	return "    " + truncateSingleLine(headline, width-4)
 }
 
 // runtimeSummary is the compact one-line summary of the agent loop state.
@@ -1029,6 +1252,15 @@ type chatHeaderInfo struct {
 	// yet this session or only fell back. Drives a small "intent ✓"
 	// chip so the user can confirm the layer is alive without /intent show.
 	IntentLast string
+	// Drive* fields populate the at-a-glance "drive run X/Y in
+	// progress" header chip. Empty DriveRunID = no active run; the
+	// chip is suppressed. Updated by the drive:* event handlers in
+	// engine_events.go and cleared on drive:run:done/stopped/failed.
+	DriveRunID    string // short prefix is fine; the chip uses what we pass
+	DriveTodoID   string // ID of the TODO currently in flight (if any)
+	DriveDone     int    // count of completed TODOs so far
+	DriveTotal    int    // total TODOs in the run
+	DriveBlocked  int    // count of blocked TODOs (loud-warns the chip when >0)
 }
 
 // renderChatHeader returns 1 pre-styled line summarising chat state.
@@ -1099,6 +1331,23 @@ func renderChatHeader(info chatHeaderInfo, width int) string {
 	}
 	if last := strings.TrimSpace(info.IntentLast); last != "" {
 		segments = append(segments, subtleStyle.Render("⚙ intent "+last))
+	}
+	// Drive chip: only when a run is active. Format is intentionally
+	// terse to fit alongside the other badges:
+	//   ▸ drive 3/12 · T5
+	// Blocked > 0 flips the style to warn so the user notices a TODO
+	// in trouble without expanding the activity panel.
+	if strings.TrimSpace(info.DriveRunID) != "" {
+		label := fmt.Sprintf("▸ drive %d/%d", info.DriveDone, info.DriveTotal)
+		if id := strings.TrimSpace(info.DriveTodoID); id != "" {
+			label += " · " + id
+		}
+		if info.DriveBlocked > 0 {
+			label += fmt.Sprintf(" (blocked %d)", info.DriveBlocked)
+			segments = append(segments, warnStyle.Bold(true).Render(label))
+		} else {
+			segments = append(segments, accentStyle.Bold(true).Render(label))
+		}
 	}
 	sep := subtleStyle.Render("  ·  ")
 	head := truncateSingleLine(strings.Join(segments, sep), width)

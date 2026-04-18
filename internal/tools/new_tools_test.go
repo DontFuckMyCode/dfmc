@@ -153,6 +153,164 @@ func TestActionableMissingParamErrors(t *testing.T) {
 	}
 }
 
+// TestGitToolsRejectFlagInjectionInUserValues pins the 2026-04-18
+// security fix: every user-supplied ref / revision / branch / path that
+// flows into a git argv slot is checked for a leading `-`. Without this,
+// a model passing revision="--upload-pack=/tmp/pwn.sh" would have git
+// parse it as a flag and execute the pack-override (CVE-2018-17456
+// shape). Static flags we add ourselves (--no-color, --cached) are
+// unaffected — only USER-SUPPLIED values get the check.
+func TestGitToolsRejectFlagInjectionInUserValues(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	cases := []struct {
+		tool     string
+		params   map[string]any
+		fieldHit string // which field name should appear in the error
+	}{
+		{tool: "git_diff", params: map[string]any{"revision": "--upload-pack=/tmp/pwn.sh"}, fieldHit: "revision"},
+		{tool: "git_diff", params: map[string]any{"path": "--exec=foo"}, fieldHit: "path"},
+		{tool: "git_diff", params: map[string]any{"paths": []any{"-rOoops"}}, fieldHit: "path"},
+		{tool: "git_log", params: map[string]any{"revision": "--upload-pack=foo"}, fieldHit: "revision"},
+		{tool: "git_log", params: map[string]any{"path": "--exec=foo"}, fieldHit: "path"},
+		{tool: "git_blame", params: map[string]any{"path": "-rOoops"}, fieldHit: "path"},
+		{tool: "git_blame", params: map[string]any{"path": "ok.go", "revision": "--upload-pack=foo"}, fieldHit: "revision"},
+		{tool: "git_worktree_add", params: map[string]any{"path": "ok", "ref": "--upload-pack=foo"}, fieldHit: "ref"},
+		// new_branch hits the pre-existing blockedBranchName check first
+		// (which already rejects names with `-`/`..`/etc) — defence in
+		// depth means the flag-injection guard sits behind it. Either
+		// rejection is fine for the purposes of this test, so we just
+		// assert SOME refusal lands and skip the flag-injection-specific
+		// substring assertion below for this one row.
+		{tool: "git_worktree_add", params: map[string]any{"path": "ok", "new_branch": "-rOoops"}, fieldHit: "branch"},
+		{tool: "git_worktree_remove", params: map[string]any{"path": "--force"}, fieldHit: "path"},
+		{tool: "git_commit", params: map[string]any{"message": "msg", "paths": []any{"--exec=foo"}}, fieldHit: "path"},
+	}
+	for _, c := range cases {
+		t.Run(c.tool+"/"+c.fieldHit, func(t *testing.T) {
+			_, err := eng.Execute(context.Background(), c.tool, Request{ProjectRoot: tmp, Params: c.params})
+			if err == nil {
+				t.Fatalf("%s with `-`-prefix %s must error", c.tool, c.fieldHit)
+			}
+			msg := err.Error()
+			// new_branch is gated by an EARLIER blockedBranchName check
+			// (which already rejects names with `-`/`..`/etc); the
+			// flag-injection guard sits behind it as defence in depth.
+			// For that one case any rejection is acceptable.
+			if c.tool == "git_worktree_add" && c.fieldHit == "branch" {
+				if !strings.Contains(msg, "blocked by policy") && !strings.Contains(msg, "flag injection") {
+					t.Fatalf("git_worktree_add/branch should be rejected by policy or flag-injection guard, got: %s", msg)
+				}
+				return
+			}
+			for _, want := range []string{
+				"flag injection", // names the threat class
+				"CVE-2018-17456", // points at the canonical CVE
+				c.fieldHit,       // names the offending field
+				"refused",        // confirms the action
+			} {
+				if !strings.Contains(msg, want) {
+					t.Fatalf("%s/%s error should contain %q, got: %s", c.tool, c.fieldHit, want, msg)
+				}
+			}
+		})
+	}
+}
+
+// TestApplyPatchRefusesUnreadFile pins the 2026-04-18 security fix:
+// apply_patch joined edit_file/write_file under the per-target
+// read-before-mutate gate. Without a prior read_file the engine
+// refuses the patch — even if the diff is well-formed and the target
+// exists. New files in the diff are exempt (no prior content to
+// snapshot).
+func TestApplyPatchRefusesUnreadFile(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "secret.go")
+	if err := os.WriteFile(target, []byte("package x\n// existing\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	patch := "--- a/secret.go\n+++ b/secret.go\n@@ -1,2 +1,2 @@\n package x\n-// existing\n+// hijacked\n"
+
+	eng := New(*config.DefaultConfig())
+	_, err := eng.Execute(context.Background(), "apply_patch", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"patch": patch},
+	})
+	if err == nil {
+		t.Fatal("apply_patch on an unread file must error — silent overwrite is the gap this guard plugs")
+	}
+	if !strings.Contains(err.Error(), "prior read_file") {
+		t.Fatalf("error should name the missing prior read_file, got: %v", err)
+	}
+	// File on disk must be unchanged.
+	data, _ := os.ReadFile(target)
+	if string(data) != "package x\n// existing\n" {
+		t.Fatalf("file was modified despite refused patch: %s", data)
+	}
+
+	// After a real read_file the patch goes through.
+	if _, rerr := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "secret.go"},
+	}); rerr != nil {
+		t.Fatalf("read_file: %v", rerr)
+	}
+	if _, perr := eng.Execute(context.Background(), "apply_patch", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"patch": patch},
+	}); perr != nil {
+		t.Fatalf("apply_patch after read should succeed: %v", perr)
+	}
+	data, _ = os.ReadFile(target)
+	if !strings.Contains(string(data), "// hijacked") {
+		t.Fatalf("expected patch to apply after prior read, got: %s", data)
+	}
+}
+
+// TestFileToolsReturnRelativePathInData pins the token-leak fix: read,
+// write, and edit file tools now surface a project-relative path in
+// Data["path"] instead of the absolute host-FS prefix. Pre-fix the
+// model saw `C:\Users\...` / `/home/ersin/...` on every call, which
+// then leaked into episodic memory + transcripts.
+func TestFileToolsReturnRelativePathInData(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "sub", "file.txt")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("hi\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	eng := New(*config.DefaultConfig())
+
+	res, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "sub/file.txt"},
+	})
+	if err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	gotPath, _ := res.Data["path"].(string)
+	if gotPath != "sub/file.txt" {
+		t.Fatalf("read_file Data[path] should be project-relative `sub/file.txt`, got: %q", gotPath)
+	}
+	if strings.Contains(gotPath, tmp) {
+		t.Fatalf("read_file Data[path] must NOT include the absolute host prefix %q, got: %q", tmp, gotPath)
+	}
+
+	wres, err := eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "sub/new.txt", "content": "x"},
+	})
+	if err != nil {
+		t.Fatalf("write_file: %v", err)
+	}
+	if wp, _ := wres.Data["path"].(string); wp != "sub/new.txt" {
+		t.Fatalf("write_file Data[path] should be project-relative, got: %q", wp)
+	}
+}
+
 // TestActionableMissingParamErrors_SecondWave covers the audit's
 // remaining bare-error tools (apply_patch, run_command, web_fetch,
 // web_search, tool_search, git_blame, git_worktree_add,
@@ -347,27 +505,38 @@ func TestTodoWriteToolSetListClear(t *testing.T) {
 }
 
 func TestWebFetchAgainstLocalServer(t *testing.T) {
+	// SSRF guard intentionally blocks loopback / private / link-local
+	// addresses, so the standard httptest server (always 127.0.0.1) can't
+	// be exercised end-to-end. Verify the rejection contract here, and
+	// cover the HTML-to-text pipeline directly via TestHTMLToTextStripsScriptsAndTags.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<html><body><h1>Hello</h1><script>alert(1)</script><p>Welcome to DFMC</p></body></html>`))
+		_, _ = w.Write([]byte(`<html><body><p>should never reach this</p></body></html>`))
 	}))
 	defer ts.Close()
 
 	eng := New(*config.DefaultConfig())
-	res, err := eng.Execute(context.Background(), "web_fetch", Request{
+	_, err := eng.Execute(context.Background(), "web_fetch", Request{
 		Params: map[string]any{"url": ts.URL},
 	})
-	if err != nil {
-		t.Fatalf("web_fetch: %v", err)
+	if err == nil {
+		t.Fatalf("expected SSRF guard to reject loopback URL, got nil")
 	}
-	if !strings.Contains(res.Output, "Welcome to DFMC") {
-		t.Fatalf("expected extracted text, got:\n%s", res.Output)
+	if !strings.Contains(err.Error(), "SSRF protection") {
+		t.Fatalf("expected SSRF protection error, got: %v", err)
 	}
-	if strings.Contains(res.Output, "alert(1)") {
-		t.Fatalf("script content leaked into output:\n%s", res.Output)
+}
+
+// TestHTMLToTextStripsScriptsAndTags exercises the html-to-text pipeline
+// without needing a server (the SSRF guard blocks httptest endpoints).
+func TestHTMLToTextStripsScriptsAndTags(t *testing.T) {
+	in := `<html><body><h1>Hello</h1><script>alert(1)</script><p>Welcome to DFMC</p></body></html>`
+	out := htmlToText(in)
+	if !strings.Contains(out, "Welcome to DFMC") {
+		t.Fatalf("expected extracted text, got: %q", out)
 	}
-	if status, _ := res.Data["status"].(int); status != 200 {
-		t.Fatalf("expected status 200, got %v", res.Data["status"])
+	if strings.Contains(out, "alert(1)") {
+		t.Fatalf("script content leaked into output: %q", out)
 	}
 }
 
@@ -397,6 +566,17 @@ func TestApplyPatchAppliesAndRejects(t *testing.T) {
  three
 `
 	eng := New(*config.DefaultConfig())
+	// 2026-04-18: apply_patch now flows through the per-target
+	// read-before-mutate gate (same guard that edit_file/write_file
+	// have always had). Read the target first so the snapshot map is
+	// populated; without this the patch is refused with "modifying
+	// existing file requires prior read_file" — by design.
+	if _, rerr := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "hello.txt"},
+	}); rerr != nil {
+		t.Fatalf("read_file setup: %v", rerr)
+	}
 	res, err := eng.Execute(context.Background(), "apply_patch", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"patch": patch},
@@ -412,7 +592,15 @@ func TestApplyPatchAppliesAndRejects(t *testing.T) {
 		t.Fatalf("unexpected file content:\n%s", data)
 	}
 
-	// Dry-run does not touch the file.
+	// Dry-run does not touch the file. The mutation just above
+	// invalidated the read snapshot — re-read so the guard accepts
+	// this second patch attempt.
+	if _, rerr := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "hello.txt"},
+	}); rerr != nil {
+		t.Fatalf("re-read setup: %v", rerr)
+	}
 	dry := `--- a/hello.txt
 +++ b/hello.txt
 @@ -1,3 +1,3 @@
@@ -456,6 +644,15 @@ func TestApplyPatchHandlesCRLFSource(t *testing.T) {
  three
 `
 	eng := New(*config.DefaultConfig())
+	// Read first to satisfy the per-target read-before-mutate guard
+	// (apply_patch joined edit_file/write_file under that gate on
+	// 2026-04-18 — see audit Top-7 #7).
+	if _, rerr := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "hello.txt"},
+	}); rerr != nil {
+		t.Fatalf("read_file setup: %v", rerr)
+	}
 	res, err := eng.Execute(context.Background(), "apply_patch", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"patch": patch},

@@ -78,6 +78,26 @@ func blockedGitArg(arg string) bool {
 	return false
 }
 
+// rejectGitFlagInjection refuses any user-supplied value that looks like
+// a git option (prefixed with `-`). git treats `--upload-pack=cmd`,
+// `--exec=cmd`, etc. as flags rather than refs, which is the shape of
+// CVE-2018-17456 — a malicious or confused model passing
+// revision="--upload-pack=/tmp/x.sh" would have git execute that path.
+// Path args ARE separated with `--` everywhere, but ref/revision/branch
+// values land in argv before any separator, so we have to reject at
+// the callsite. Empty values are allowed (caller is expected to skip
+// them); the check fires only on non-empty `-`-prefix strings.
+func rejectGitFlagInjection(kind, value string) error {
+	if value == "" || !strings.HasPrefix(value, "-") {
+		return nil
+	}
+	return fmt.Errorf(
+		"git: %s value %q starts with `-`; refused to prevent flag injection (CVE-2018-17456 class). "+
+			"git would parse this as a command-line option, not as a %s. "+
+			"If the value is legitimate, rename it or invoke git via run_command with explicit `--` quoting.",
+		kind, value, kind)
+}
+
 // resolveGitTimeout reads the optional per-call timeout param (seconds or
 // duration string).
 func resolveGitTimeout(params map[string]any) time.Duration {
@@ -202,12 +222,23 @@ func (t *GitDiffTool) Execute(ctx context.Context, req Request) (Result, error) 
 		args = append(args, "--stat")
 	}
 	if rev := strings.TrimSpace(asString(req.Params, "revision", "")); rev != "" {
+		if err := rejectGitFlagInjection("revision", rev); err != nil {
+			return Result{}, err
+		}
 		args = append(args, rev)
 	}
 	if paths := stringSliceArg(req.Params["paths"]); len(paths) > 0 {
+		for _, p := range paths {
+			if err := rejectGitFlagInjection("path", p); err != nil {
+				return Result{}, err
+			}
+		}
 		args = append(args, "--")
 		args = append(args, paths...)
 	} else if p := strings.TrimSpace(asString(req.Params, "path", "")); p != "" {
+		if err := rejectGitFlagInjection("path", p); err != nil {
+			return Result{}, err
+		}
 		args = append(args, "--", p)
 	}
 	stdout, stderr, exit, err := runGit(ctx, req.ProjectRoot, timeout, args...)
@@ -345,9 +376,15 @@ func (t *GitLogTool) Execute(ctx context.Context, req Request) (Result, error) {
 	format := fmt.Sprintf("--pretty=format:%%H%s%%an%s%%s%s", sep, sep, rec)
 	args := []string{"log", fmt.Sprintf("-n%d", limit), format, "--date=iso", "--no-color"}
 	if rev := strings.TrimSpace(asString(req.Params, "revision", "")); rev != "" {
+		if err := rejectGitFlagInjection("revision", rev); err != nil {
+			return Result{}, err
+		}
 		args = append(args, rev)
 	}
 	if p := strings.TrimSpace(asString(req.Params, "path", "")); p != "" {
+		if err := rejectGitFlagInjection("path", p); err != nil {
+			return Result{}, err
+		}
 		args = append(args, "--", p)
 	}
 	stdout, stderr, exit, err := runGit(ctx, req.ProjectRoot, timeout, args...)
@@ -471,7 +508,13 @@ func (t *GitBlameTool) Execute(ctx context.Context, req Request) (Result, error)
 	}
 
 	if rev := strings.TrimSpace(asString(req.Params, "revision", "")); rev != "" {
+		if err := rejectGitFlagInjection("revision", rev); err != nil {
+			return Result{}, err
+		}
 		args = append(args, rev)
+	}
+	if err := rejectGitFlagInjection("path", path); err != nil {
+		return Result{}, err
 	}
 
 	args = append(args, "--", path)
@@ -730,10 +773,16 @@ func (t *GitWorktreeAddTool) Execute(ctx context.Context, req Request) (Result, 
 		if blockedBranchName(branch) {
 			return Result{}, fmt.Errorf("branch name blocked by policy: %s", branch)
 		}
+		if err := rejectGitFlagInjection("new_branch", branch); err != nil {
+			return Result{}, err
+		}
 		args = append(args, "-b", branch)
 	}
 	args = append(args, absPath)
 	if ref := strings.TrimSpace(asString(req.Params, "ref", "")); ref != "" {
+		if err := rejectGitFlagInjection("ref", ref); err != nil {
+			return Result{}, err
+		}
 		args = append(args, ref)
 	}
 
@@ -790,6 +839,9 @@ func (t *GitWorktreeRemoveTool) Execute(ctx context.Context, req Request) (Resul
 		return Result{}, missingParamError("git_worktree_remove", "path", req.Params,
 			`{"path":"../wt-feature"} or {"path":"../wt-feature","force":true}`,
 			`path is the worktree directory to remove (use git_worktree_list to see what exists). Pass force=true to remove a worktree with uncommitted changes — destructive, use sparingly.`)
+	}
+	if err := rejectGitFlagInjection("path", path); err != nil {
+		return Result{}, err
 	}
 	// Worktrees may live outside the project root if the user created them
 	// that way — but we still require the caller to pass a path we can
@@ -865,6 +917,9 @@ func (t *GitCommitTool) Execute(ctx context.Context, req Request) (Result, error
 	for _, p := range paths {
 		if strings.TrimSpace(p) == "" || p == "-A" || p == "." || p == "*" {
 			return Result{}, fmt.Errorf("invalid commit path %q — use explicit file paths, not wildcards", p)
+		}
+		if err := rejectGitFlagInjection("path", p); err != nil {
+			return Result{}, err
 		}
 		if _, err := EnsureWithinRoot(req.ProjectRoot, p); err != nil {
 			return Result{}, err

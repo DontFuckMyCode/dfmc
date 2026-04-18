@@ -82,9 +82,12 @@ func (p *GoogleProvider) Complete(ctx context.Context, req CompletionRequest) (*
 		return nil, err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
+	raw, truncated, err := readBoundedBody(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+	if truncated {
+		return nil, fmt.Errorf("google response exceeded %d bytes — refusing to decode (likely a misbehaving proxy or hostile endpoint)", maxProviderResponseBytes)
 	}
 	if resp.StatusCode >= 400 {
 		if isThrottleStatus(resp.StatusCode) {

@@ -111,6 +111,8 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runSkillShortcut(ctx, eng, cmd, cmdArgs, opts.JSON)
 	case "remote":
 		return runRemote(ctx, eng, cmdArgs, opts.JSON)
+	case "drive":
+		return runDrive(ctx, eng, cmdArgs, opts.JSON)
 	case "provider":
 		return runProviderCLI(eng, cmdArgs, opts.JSON)
 	case "model":

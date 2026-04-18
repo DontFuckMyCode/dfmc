@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"go.etcd.io/bbolt"
@@ -119,8 +120,8 @@ func (s *Store) ArtifactsDir() string {
 }
 
 func (s *Store) SaveConversationLog(convID string, messages []types.Message) error {
-	if convID == "" {
-		return fmt.Errorf("conversation id is required")
+	if err := validateConvID(convID); err != nil {
+		return err
 	}
 
 	dir := filepath.Join(s.artifactDir, "conversations")
@@ -171,8 +172,8 @@ func (s *Store) SaveConversationLog(convID string, messages []types.Message) err
 }
 
 func (s *Store) LoadConversationLog(convID string) ([]types.Message, error) {
-	if convID == "" {
-		return nil, fmt.Errorf("conversation id is required")
+	if err := validateConvID(convID); err != nil {
+		return nil, err
 	}
 
 	path := filepath.Join(s.artifactDir, "conversations", convID+".jsonl")
@@ -209,4 +210,37 @@ func (s *Store) LoadConversationLog(convID string) ([]types.Message, error) {
 	}
 
 	return messages, nil
+}
+
+// validateConvID rejects conversation IDs that would escape the
+// artifactDir/conversations directory when concatenated into a path.
+// Pre-fix the IDs were joined raw, so a `convID="../../etc/passwd"`
+// would write/read outside the project's artifact tree — a path
+// traversal flagged as C1 in the 2026-04-17 review. Conversation IDs
+// are allowed to contain dashes, dots, alphanumerics, and underscores
+// only; anything else is treated as a synthetic / hostile value.
+func validateConvID(id string) error {
+	if id == "" {
+		return fmt.Errorf("conversation id is required")
+	}
+	if filepath.IsAbs(id) {
+		return fmt.Errorf("invalid conversation id %q: must be a relative basename", id)
+	}
+	// `..` segments and any path separator make the value capable of
+	// escaping the artifact dir. Both POSIX `/` and Windows `\` count.
+	if strings.ContainsAny(id, "/\\") {
+		return fmt.Errorf("invalid conversation id %q: must not contain path separators", id)
+	}
+	if id == "." || id == ".." || strings.Contains(id, "..") {
+		return fmt.Errorf("invalid conversation id %q: must not contain `..`", id)
+	}
+	// Reject control bytes and the NUL byte — these can split paths on
+	// some filesystems and they're never legitimate in a conversation
+	// identifier we generate ourselves.
+	for _, r := range id {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("invalid conversation id: contains control character")
+		}
+	}
+	return nil
 }

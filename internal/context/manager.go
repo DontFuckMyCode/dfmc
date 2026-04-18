@@ -595,8 +595,8 @@ func extractInjectedContext(projectRoot, query string, maxBlocks, maxLines int) 
 				lang = "text"
 			}
 			blocks = append(blocks,
-				fmt.Sprintf("[[file:%s#L%d-L%d]]\n```%s\n%s\n```",
-					filepath.ToSlash(rel), lineStart, lineEnd, lang, snippet))
+				fmt.Sprintf("%s%s#L%d-L%d%s\n```%s\n%s\n```",
+					types.FileMarkerPrefix, filepath.ToSlash(rel), lineStart, lineEnd, types.FileMarkerSuffix, lang, snippet))
 		}
 	}
 	if len(blocks) < maxBlocks {

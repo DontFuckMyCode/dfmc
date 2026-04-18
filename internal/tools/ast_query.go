@@ -109,7 +109,7 @@ func (t *ASTQueryTool) Execute(ctx context.Context, req Request) (Result, error)
 	return Result{
 		Output: strings.Join(lines, "\n"),
 		Data: map[string]any{
-			"path":     abs,
+			"path":     PathRelativeToRoot(req.ProjectRoot, abs),
 			"language": result.Language,
 			"symbols":  symbols,
 			"imports":  imports,

@@ -8,8 +8,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// mkLine is a test-only helper that lets tests pass role string literals
+// like "user"/"assistant" without typing the chatRole conversion at every
+// call site. Production code goes through the typed newChatLine directly.
 func mkLine(role, content string) chatLine {
-	return newChatLine(role, content)
+	return newChatLine(chatRole(role), content)
 }
 
 func TestCompactTranscript_ShortTranscriptNotCompacted(t *testing.T) {

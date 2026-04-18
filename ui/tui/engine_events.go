@@ -267,7 +267,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		if strings.TrimSpace(text) == "" {
 			return m
 		}
-		severity := payloadString(payload, "severity", "info")
+		severity := coachSeverityFromWire(payloadString(payload, "severity", "info"))
 		origin := payloadString(payload, "origin", "")
 		m = m.appendCoachMessage(text, severity, origin)
 		return m
@@ -296,7 +296,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		if m.intent.verbose && source == "llm" && raw != "" && enriched != "" && raw != enriched {
 			m = m.appendCoachMessage(
 				fmt.Sprintf("intent[%s]: %s → %s", intentName, truncateSingleLine(raw, 60), truncateSingleLine(enriched, 80)),
-				"info",
+				coachSeverityInfo,
 				"intent",
 			)
 		}
@@ -308,7 +308,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		hints, _ := payload["hints"].([]any)
 		for _, h := range hints {
 			if s, ok := h.(string); ok && strings.TrimSpace(s) != "" {
-				m = m.appendCoachMessage("→ "+s, "info", "trajectory")
+				m = m.appendCoachMessage("→ "+s, coachSeverityInfo, "trajectory")
 			}
 		}
 		return m
@@ -318,6 +318,19 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			line = "Tool error: " + strings.TrimSpace(payload)
 		default:
 			line = "Tool error occurred."
+		}
+	case "tool:reasoning":
+		// Self-narration: backfill the most recent running chip for
+		// this tool with the model's `_reason` text. Fires AFTER
+		// tool:call (which created the chip) and BEFORE tool:result
+		// (which finalises it), so the running chip catches it; if
+		// timing is racy and the chip already finished, we still write
+		// to it so the finished card shows the why.
+		toolName := payloadString(payload, "tool", "")
+		reason := payloadString(payload, "reason", "")
+		if toolName != "" && reason != "" {
+			m.attachReasonToLastChip(toolName, reason)
+			line = fmt.Sprintf("%s · %s", toolName, truncateForLine(reason, 90))
 		}
 	case "agent:subagent:start":
 		task := payloadString(payload, "task", "task")
@@ -519,6 +532,82 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		} else {
 			line = fmt.Sprintf("Auto-new-session: fresh conversation seeded (%d→%d tokens).", historyTokens, briefTokens)
 		}
+	case "drive:run:start":
+		task := payloadString(payload, "task", "")
+		runID := payloadString(payload, "run_id", "")
+		m.telemetry.driveRunID = shortID(runID)
+		m.telemetry.driveTodoID = ""
+		m.telemetry.driveDone = 0
+		m.telemetry.driveTotal = 0
+		m.telemetry.driveBlocked = 0
+		if resumed := payloadBool(payload, "resumed", false); resumed {
+			line = fmt.Sprintf("Drive: resumed %s (task: %s)", shortID(runID), truncateForLine(task, 80))
+		} else {
+			line = fmt.Sprintf("Drive: started %s — %s", shortID(runID), truncateForLine(task, 80))
+		}
+	case "drive:plan:done":
+		count := payloadInt(payload, "todo_count", 0)
+		m.telemetry.driveTotal = count
+		line = fmt.Sprintf("Drive: plan ready — %d TODOs queued", count)
+	case "drive:plan:failed":
+		errStr := payloadString(payload, "error", "")
+		warning := payloadString(payload, "warning", "")
+		if warning != "" {
+			line = fmt.Sprintf("Drive: plan warning — %s", warning)
+		} else {
+			line = fmt.Sprintf("Drive: plan failed — %s", truncateForLine(errStr, 200))
+		}
+	case "drive:todo:start":
+		id := payloadString(payload, "todo_id", "")
+		title := payloadString(payload, "title", "")
+		attempt := payloadInt(payload, "attempt", 1)
+		m.telemetry.driveTodoID = id
+		if attempt > 1 {
+			line = fmt.Sprintf("Drive: ▶ %s (attempt %d) — %s", id, attempt, truncateForLine(title, 80))
+		} else {
+			line = fmt.Sprintf("Drive: ▶ %s — %s", id, truncateForLine(title, 80))
+		}
+	case "drive:todo:done":
+		id := payloadString(payload, "todo_id", "")
+		dur := payloadInt(payload, "duration_ms", 0)
+		tools := payloadInt(payload, "tool_calls", 0)
+		m.telemetry.driveDone++
+		if m.telemetry.driveTodoID == id {
+			m.telemetry.driveTodoID = ""
+		}
+		line = fmt.Sprintf("Drive: ✓ %s done (%dms, %d tool calls)", id, dur, tools)
+	case "drive:todo:blocked":
+		id := payloadString(payload, "todo_id", "")
+		errStr := payloadString(payload, "error", "")
+		m.telemetry.driveBlocked++
+		if m.telemetry.driveTodoID == id {
+			m.telemetry.driveTodoID = ""
+		}
+		line = fmt.Sprintf("Drive: ✗ %s blocked — %s", id, truncateForLine(errStr, 160))
+	case "drive:todo:skipped":
+		id := payloadString(payload, "todo_id", "")
+		reason := payloadString(payload, "reason", "")
+		line = fmt.Sprintf("Drive: ↷ %s skipped — %s", id, reason)
+	case "drive:todo:retry":
+		id := payloadString(payload, "todo_id", "")
+		attempt := payloadInt(payload, "attempt", 0)
+		line = fmt.Sprintf("Drive: ↻ %s retry (attempt %d)", id, attempt)
+	case "drive:run:done", "drive:run:stopped", "drive:run:failed":
+		status := payloadString(payload, "status", "")
+		done := payloadInt(payload, "done", 0)
+		blocked := payloadInt(payload, "blocked", 0)
+		skipped := payloadInt(payload, "skipped", 0)
+		dur := payloadInt(payload, "duration_ms", 0)
+		reason := payloadString(payload, "reason", "")
+		// Clear the header chip — the run is over.
+		m.telemetry.driveRunID = ""
+		m.telemetry.driveTodoID = ""
+		base := fmt.Sprintf("Drive: %s — %d done, %d blocked, %d skipped (%dms)", status, done, blocked, skipped, dur)
+		if reason != "" {
+			line = base + " · " + reason
+		} else {
+			line = base
+		}
 	}
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -683,6 +772,37 @@ func (m *Model) appendActivity(line string) {
 
 const maxToolTimelineChips = 18
 
+// attachReasonToLastChip backfills the model's self-narration text onto
+// the most recent chip whose Name matches `toolName`. Walks both the
+// rolling toolTimeline and the streaming-message chip strip so the
+// reason shows in both places. Falls through silently when no chip
+// matches — that happens for racy ordering or when the call originated
+// from a path that didn't pre-create a chip (e.g. user-initiated
+// CallTool from CLI).
+func (m *Model) attachReasonToLastChip(toolName, reason string) {
+	toolName = strings.TrimSpace(toolName)
+	reason = strings.TrimSpace(reason)
+	if toolName == "" || reason == "" {
+		return
+	}
+	for i := len(m.agentLoop.toolTimeline) - 1; i >= 0; i-- {
+		if strings.EqualFold(m.agentLoop.toolTimeline[i].Name, toolName) {
+			m.agentLoop.toolTimeline[i].Reason = reason
+			break
+		}
+	}
+	if m.chat.streamIndex < 0 || m.chat.streamIndex >= len(m.chat.transcript) {
+		return
+	}
+	line := &m.chat.transcript[m.chat.streamIndex]
+	for i := len(line.ToolChips) - 1; i >= 0; i-- {
+		if strings.EqualFold(line.ToolChips[i].Name, toolName) {
+			line.ToolChips[i].Reason = reason
+			return
+		}
+	}
+}
+
 // pushToolChip appends a new chip (typically a running tool call) to the
 // rolling timeline and trims old entries.
 func (m *Model) pushToolChip(chip toolChip) {
@@ -761,6 +881,8 @@ func (m *Model) finishStreamingMessageToolChip(chip toolChip) {
 		if chip.Step > merged.Step {
 			merged.Step = chip.Step
 		}
+		// Reason carries over from the running chip; never overwritten by
+		// the finish merge (the result event has no _reason knowledge).
 		if chip.OutputTokens > 0 {
 			merged.OutputTokens = chip.OutputTokens
 		}
@@ -821,6 +943,8 @@ func (m *Model) finishToolChip(chip toolChip) {
 		if chip.Step > merged.Step {
 			merged.Step = chip.Step
 		}
+		// Reason carries over from the running chip; never overwritten by
+		// the finish merge (the result event has no _reason knowledge).
 		if chip.OutputTokens > 0 {
 			merged.OutputTokens = chip.OutputTokens
 		}
@@ -839,6 +963,28 @@ func (m *Model) finishToolChip(chip toolChip) {
 		return
 	}
 	m.pushToolChip(chip)
+}
+
+// shortID trims a drive run ID to a UI-friendly prefix. Drive IDs are
+// `drv-<unix>-<rand>` (~20 chars); the chip line gets unreadable past
+// the first 12.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
+// truncateForLine flattens newlines and caps length so a single
+// transcript/notice line stays scannable. Mirrors cli's truncateLine
+// but lives here to keep ui/tui self-contained.
+func truncateForLine(s string, n int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.TrimSpace(s)
+	if n <= 0 || len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 func (m *Model) resetAgentRuntime() {

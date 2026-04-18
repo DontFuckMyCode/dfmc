@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -10,15 +11,45 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	xhtml "golang.org/x/net/html"
 )
 
 // userAgent identifies DFMC when fetching URLs. Real UA string so servers
 // don't rate-limit us as a bot.
 const userAgent = "DFMC/1.0 (+https://github.com/dontfuckmycode/dfmc)"
 
+// safeTransport dials with an IP-level SSRF guard. The resolved IP is
+// checked at connect time (not before), closing the DNS rebinding window.
+var safeTransport = &http.Transport{
+	DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid address %q: %w", addr, err)
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %q: %w", host, err)
+		}
+		for _, ip := range ips {
+			if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() || ip.IP.IsLinkLocalMulticast() {
+				return nil, fmt.Errorf("blocked IP for %q: %s (SSRF guard)", host, ip.IP)
+			}
+		}
+		for _, ip := range ips {
+			conn, err := net.DialTimeout(network, net.JoinHostPort(ip.IP.String(), port), 10*time.Second)
+			if err == nil {
+				return conn, nil
+			}
+		}
+		return nil, fmt.Errorf("no reachable IP for %q", host)
+	},
+}
+
 // httpClient is shared across web tools so connection pooling works.
 var httpClient = &http.Client{
-	Timeout: 20 * time.Second,
+	Timeout:   20 * time.Second,
+	Transport: safeTransport,
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return fmt.Errorf("stopped after 5 redirects")
@@ -69,7 +100,16 @@ func (t *WebFetchTool) Execute(ctx context.Context, req Request) (Result, error)
 	}
 	u, err := url.Parse(raw)
 	if err != nil || !(u.Scheme == "http" || u.Scheme == "https") {
-		return Result{}, fmt.Errorf("url must be http(s)")
+		scheme := ""
+		if u != nil {
+			scheme = u.Scheme
+		}
+		return Result{}, fmt.Errorf(
+			"web_fetch: url must be a full http(s) URL, got %q (scheme=%q). "+
+				"Use the absolute form: %s. "+
+				"file://, ftp://, data:, javascript:, and bare hostnames without a scheme are rejected.",
+			raw, scheme,
+			`{"name":"web_fetch","args":{"url":"https://example.com/path"}}`)
 	}
 	if isBlockedHost(u.Host) {
 		return Result{}, fmt.Errorf("url resolves to a blocked (private/loopback/link-local) address — SSRF protection")
@@ -127,52 +167,143 @@ func (t *WebFetchTool) Execute(ctx context.Context, req Request) (Result, error)
 	}, nil
 }
 
-// HTML-to-text stripping. Regex-based because pulling in a full HTML parser
-// is overkill for "give the model a readable excerpt". Drops <script>/<style>
-// bodies, replaces tags with spaces, collapses whitespace, decodes common
-// entities.
+// HTML-to-text stripping. Tokenizer-based via golang.org/x/net/html so
+// nested / malformed input doesn't break extraction. The previous regex
+// chain produced corrupted text on real-world pages where <script> bodies
+// contained `>` characters in template literals, or where tag attributes
+// embedded the same. The tokenizer handles all of that correctly.
+//
+// Strategy:
+//   - Walk the token stream once.
+//   - When entering <script>/<style>/<nav>/<header>/<footer>/<noscript>,
+//     drop everything until the matching close — same intent as the old
+//     code, but tracked via a depth counter so nested elements work.
+//   - Block-level open/close tags emit a newline so paragraph structure
+//     survives the strip.
+//   - <br> emits a newline.
+//   - Inline content is appended verbatim; the tokenizer has already
+//     decoded HTML entities (&#8217;, &amp;, etc.).
+//
+// After tokenization, collapse runs of whitespace and limit blank-line
+// runs to 2 — same final shape the old code produced.
 var (
-	reScript = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
-	reStyle  = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
-	reNav    = regexp.MustCompile(`(?is)<nav[^>]*>.*?</nav>`)
-	reHeader = regexp.MustCompile(`(?is)<header[^>]*>.*?</header>`)
-	reFooter = regexp.MustCompile(`(?is)<footer[^>]*>.*?</footer>`)
-	reTag    = regexp.MustCompile(`<[^>]+>`)
-	reWS     = regexp.MustCompile(`[ \t]+`)
-	reNL     = regexp.MustCompile(`\n{3,}`)
+	reWS = regexp.MustCompile(`[ \t]+`)
+	reNL = regexp.MustCompile(`\n{3,}`)
 )
 
+// dropTags lists elements whose entire body is discarded — boilerplate
+// chrome and non-content surfaces that just add noise to LLM input.
+var dropTags = map[string]bool{
+	"script":   true,
+	"style":    true,
+	"nav":      true,
+	"header":   true,
+	"footer":   true,
+	"noscript": true,
+	"svg":      true,
+	"iframe":   true,
+}
+
+// blockTags emit a newline on open OR close so block-level structure
+// survives the strip. Listed inline because a map lookup would dominate
+// the cost of the tokenizer step on small pages.
+var blockTags = map[string]bool{
+	"p":          true,
+	"div":        true,
+	"li":         true,
+	"h1":         true,
+	"h2":         true,
+	"h3":         true,
+	"h4":         true,
+	"h5":         true,
+	"h6":         true,
+	"tr":         true,
+	"table":      true,
+	"ul":         true,
+	"ol":         true,
+	"section":    true,
+	"article":    true,
+	"blockquote": true,
+	"pre":        true,
+}
+
 func htmlToText(s string) string {
-	s = reScript.ReplaceAllString(s, " ")
-	s = reStyle.ReplaceAllString(s, " ")
-	s = reNav.ReplaceAllString(s, " ")
-	s = reHeader.ReplaceAllString(s, " ")
-	s = reFooter.ReplaceAllString(s, " ")
-	// Convert block-level closers to newlines so structure survives.
-	for _, tag := range []string{"p", "div", "li", "br", "h1", "h2", "h3", "h4", "h5", "tr"} {
-		s = strings.ReplaceAll(s, "</"+tag+">", "\n")
-		s = strings.ReplaceAll(s, "<"+tag+">", "\n")
-		s = strings.ReplaceAll(s, "<"+tag+" ", "\n<"+tag+" ")
+	z := xhtml.NewTokenizer(strings.NewReader(s))
+	var out strings.Builder
+	out.Grow(len(s))
+	// drop tracks how deep we are inside a dropTags element. Skip text
+	// emission while drop > 0; entering a nested drop element bumps it
+	// (e.g. <noscript><script>...</script></noscript>).
+	drop := 0
+	// dropName is the tag name we're currently dropping for. Tracked so
+	// we can decrement on the matching end-tag and not on an unrelated
+	// inner end-tag (real-world HTML has plenty of tag soup).
+	var dropStack []string
+	for {
+		tt := z.Next()
+		switch tt {
+		case xhtml.ErrorToken:
+			return finalizeStrippedText(out.String())
+		case xhtml.TextToken:
+			if drop > 0 {
+				continue
+			}
+			out.Write(z.Text())
+		case xhtml.StartTagToken, xhtml.SelfClosingTagToken:
+			name, _ := z.TagName()
+			tag := strings.ToLower(string(name))
+			if dropTags[tag] {
+				if tt == xhtml.StartTagToken {
+					drop++
+					dropStack = append(dropStack, tag)
+				}
+				continue
+			}
+			if drop > 0 {
+				continue
+			}
+			if tag == "br" {
+				out.WriteByte('\n')
+				continue
+			}
+			if blockTags[tag] {
+				out.WriteByte('\n')
+			}
+		case xhtml.EndTagToken:
+			name, _ := z.TagName()
+			tag := strings.ToLower(string(name))
+			if drop > 0 && len(dropStack) > 0 && dropStack[len(dropStack)-1] == tag {
+				dropStack = dropStack[:len(dropStack)-1]
+				drop--
+				continue
+			}
+			if drop > 0 {
+				continue
+			}
+			if blockTags[tag] {
+				out.WriteByte('\n')
+			}
+		case xhtml.CommentToken, xhtml.DoctypeToken:
+			// silently dropped — neither carries useful content.
+		}
 	}
-	s = reTag.ReplaceAllString(s, "")
-	s = decodeHTMLEntities(s)
+}
+
+// finalizeStrippedText collapses runs of whitespace and caps blank-line
+// runs at 2, matching the old shape. Lives separately so unit tests can
+// hit it directly without driving the whole tokenizer.
+func finalizeStrippedText(s string) string {
 	s = reWS.ReplaceAllString(s, " ")
 	s = reNL.ReplaceAllString(s, "\n\n")
 	return strings.TrimSpace(s)
 }
 
-func decodeHTMLEntities(s string) string {
-	replacements := []struct{ from, to string }{
-		{"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"},
-		{"&quot;", `"`}, {"&#39;", "'"}, {"&apos;", "'"},
-		{"&nbsp;", " "}, {"&ndash;", "–"}, {"&mdash;", "—"},
-		{"&hellip;", "…"}, {"&laquo;", "«"}, {"&raquo;", "»"},
-	}
-	for _, r := range replacements {
-		s = strings.ReplaceAll(s, r.from, r.to)
-	}
-	return s
-}
+// decodeHTMLEntities was the entity-decoder used by the regex stripper.
+// The tokenizer in htmlToText now decodes entities natively, so this
+// helper is unused — kept commented as a breadcrumb for anyone hunting
+// for the old surface.
+// func decodeHTMLEntities(s string) string { return html.UnescapeString(s) }
+var _ = html.UnescapeString // keep the html import live for future use
 
 // WebSearchTool queries DuckDuckGo's HTML endpoint (html.duckduckgo.com/html)
 // and extracts result title/url/snippet triples. Zero API keys, zero JS.
@@ -231,11 +362,22 @@ func (t *WebSearchTool) Execute(ctx context.Context, req Request) (Result, error
 	matches := reDDGResult.FindAllStringSubmatch(body, -1)
 	results := make([]map[string]any, 0, limit)
 	var lines []string
-	for i, m := range matches {
-		if i >= limit {
+	filtered := 0
+	for _, m := range matches {
+		if len(results) >= limit {
 			break
 		}
 		href := decodeDuckRedirect(m[1])
+		// L3: filter result URLs that resolve to private/loopback IPs.
+		// web_fetch's safeTransport already prevents the actual SSRF, but
+		// emitting the URL into the model's context lets a confused
+		// follow-up step (e.g. user asks "open the third result") still
+		// reach an internal resource via copy-paste outside the tool
+		// guard. Drop the result before it becomes an attractive nuisance.
+		if isResultURLBlocked(href) {
+			filtered++
+			continue
+		}
 		title := stripTags(m[2])
 		snippet := stripTags(m[3])
 		results = append(results, map[string]any{
@@ -243,20 +385,42 @@ func (t *WebSearchTool) Execute(ctx context.Context, req Request) (Result, error
 			"url":     href,
 			"snippet": snippet,
 		})
-		lines = append(lines, fmt.Sprintf("%d. %s\n   %s\n   %s", i+1, title, href, snippet))
+		lines = append(lines, fmt.Sprintf("%d. %s\n   %s\n   %s", len(results), title, href, snippet))
 	}
 	output := strings.Join(lines, "\n\n")
 	if output == "" {
 		output = "(no results)"
 	}
-	return Result{
-		Output: output,
-		Data: map[string]any{
-			"query":   query,
-			"count":   len(results),
-			"results": results,
-		},
-	}, nil
+	resultData := map[string]any{
+		"query":   query,
+		"count":   len(results),
+		"results": results,
+	}
+	if filtered > 0 {
+		resultData["filtered_blocked_urls"] = filtered
+	}
+	return Result{Output: output, Data: resultData}, nil
+}
+
+// isResultURLBlocked tests whether a search-result URL points at a
+// host we don't want surfaced to the model. Best-effort: parses the
+// URL, then runs the same private/loopback/link-local check used by
+// web_fetch's pre-flight guard. Bare strings that don't parse are
+// rejected to avoid emitting suspicious junk.
+func isResultURLBlocked(href string) bool {
+	u, err := url.Parse(strings.TrimSpace(href))
+	if err != nil || u == nil {
+		return true
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		// non-http(s) results aren't directly fetchable by web_fetch
+		// anyway; emitting them just adds clutter.
+		return true
+	}
+	if u.Host == "" {
+		return true
+	}
+	return isBlockedHost(u.Host)
 }
 
 // DuckDuckGo's HTML results go through an /l/?uddg= redirect wrapper. Unwrap
@@ -280,9 +444,10 @@ func decodeDuckRedirect(href string) string {
 	return href
 }
 
+// stripTags removes HTML markup from a single fragment (used by the
+// DuckDuckGo result extractor on title/snippet snippets). Reuses the
+// tokenizer-based htmlToText so nested/malformed input is handled the
+// same way as the full web_fetch pipeline.
 func stripTags(s string) string {
-	s = reTag.ReplaceAllString(s, "")
-	s = decodeHTMLEntities(s)
-	s = reWS.ReplaceAllString(s, " ")
-	return strings.TrimSpace(s)
+	return htmlToText(s)
 }

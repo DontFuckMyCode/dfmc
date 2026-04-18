@@ -166,6 +166,13 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/doctor", s.handleDoctor)
 	s.mux.HandleFunc("GET /api/v1/hooks", s.handleHooks)
 	s.mux.HandleFunc("GET /api/v1/config", s.handleConfigGet)
+	s.mux.HandleFunc("POST /api/v1/drive", s.handleDriveStart)
+	s.mux.HandleFunc("GET /api/v1/drive", s.handleDriveList)
+	s.mux.HandleFunc("GET /api/v1/drive/{id}", s.handleDriveShow)
+	s.mux.HandleFunc("POST /api/v1/drive/{id}/resume", s.handleDriveResume)
+	s.mux.HandleFunc("POST /api/v1/drive/{id}/stop", s.handleDriveStop)
+	s.mux.HandleFunc("GET /api/v1/drive/active", s.handleDriveActive)
+	s.mux.HandleFunc("DELETE /api/v1/drive/{id}", s.handleDriveDelete)
 	s.mux.HandleFunc("GET /ws", s.handleWebSocket)
 }
 

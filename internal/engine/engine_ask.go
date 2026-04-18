@@ -621,7 +621,18 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 			if ev.Type == provider.StreamDelta {
 				acc.WriteString(ev.Delta)
 			}
-			out <- ev
+			// Pre-fix this was a bare `out <- ev` with no ctx.Done()
+			// guard — if the HTTP/SSE consumer walked away mid-stream,
+			// the upstream provider channel kept producing, this
+			// goroutine kept blocking on a full buffered out chan, and
+			// the upstream stream never got drained. Result: leaked
+			// goroutine + upstream HTTP connection held open until the
+			// provider's own timeout fired.
+			select {
+			case out <- ev:
+			case <-ctx.Done():
+				return
+			}
 			if ev.Type == provider.StreamError {
 				return
 			}

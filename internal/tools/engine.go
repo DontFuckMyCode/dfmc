@@ -36,6 +36,11 @@ type Tool interface {
 	Execute(ctx context.Context, req Request) (Result, error)
 }
 
+const (
+	maxReadSnapshots  = 256
+	maxRecentFailures = 256
+)
+
 type Engine struct {
 	mu             sync.RWMutex
 	registry       map[string]Tool
@@ -46,6 +51,31 @@ type Engine struct {
 	readSnapshots  map[string]string
 	delegateTool    *DelegateTaskTool
 	orchestrateTool *OrchestrateTool
+
+	// reasoningPublisher is the optional callback the higher-level engine
+	// installs at construction to receive tool self-narration. Execute()
+	// strips the virtual `_reason` arg from every params map and, when
+	// non-empty, calls this with (toolName, reason). Nil-safe: when no
+	// publisher is installed (tests, embedded use), the field is just
+	// stripped silently. Atomic via the mu lock.
+	reasoningPublisher ReasoningPublisher
+}
+
+// ReasoningPublisher is the callback shape the higher-level engine wires
+// into tools.Engine to surface tool-call self-narration. The engine
+// translates these into `tool:reasoning` events on its EventBus so TUI/
+// web/CLI can render the why above each tool result. Kept as a function
+// type (not an interface) so the tools package doesn't import the
+// engine package — that would create a cycle.
+type ReasoningPublisher func(toolName, reason string)
+
+// SetReasoningPublisher installs the self-narration callback. Safe to
+// call before or after registration; the publisher is consulted on
+// every Execute(). Pass nil to disable.
+func (e *Engine) SetReasoningPublisher(pub ReasoningPublisher) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.reasoningPublisher = pub
 }
 
 func New(cfg config.Config) *Engine {
@@ -67,7 +97,10 @@ func New(cfg config.Config) *Engine {
 	e.Register(NewWebSearchTool())
 	e.Register(NewASTQueryTool())
 	e.Register(NewFindSymbolTool())
-	e.Register(NewApplyPatchTool())
+	e.Register(NewCodemapTool())
+	apTool := NewApplyPatchTool()
+	apTool.SetEngine(e)
+	e.Register(apTool)
 	e.Register(NewGitStatusTool())
 	e.Register(NewGitDiffTool())
 	e.Register(NewGitBranchTool())
@@ -256,7 +289,12 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 	start := time.Now()
 	tool, ok := e.Get(name)
 	if !ok {
-		return Result{}, fmt.Errorf("tool not found: %s", name)
+		return Result{}, fmt.Errorf(
+			"tool not found: %q. "+
+				"Discover the right name with tool_search: "+
+				`{"name":"tool_search","args":{"query":"%s"}}. `+
+				"Common backend tools: read_file, write_file, edit_file, list_dir, grep_codebase, glob, find_symbol, codemap, ast_query, run_command, web_fetch, todo_write.",
+			name, name)
 	}
 
 	projectRoot := strings.TrimSpace(req.ProjectRoot)
@@ -270,6 +308,18 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 	}
 	req.ProjectRoot = absRoot
 	req.Params = normalizeToolParams(name, req.Params)
+	// Self-narration: peel off the optional `_reason` virtual field and
+	// publish it before the call so UIs can render the why before the
+	// tool result appears. We strip even when no publisher is installed
+	// so tools never see the field as unexpected input.
+	if reason, ok := ExtractReason(req.Params); ok {
+		e.mu.RLock()
+		pub := e.reasoningPublisher
+		e.mu.RUnlock()
+		if pub != nil {
+			pub(name, reason)
+		}
+	}
 	if requiresReadBeforeMutation(name) {
 		path := asString(req.Params, "path", "")
 		absPath, err := EnsureWithinRoot(req.ProjectRoot, path)
@@ -292,7 +342,7 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 	}
 	e.clearFailure(failureKey)
 	res = e.compressToolOutput(req, res)
-	e.recordReadSnapshot(name, req.Params, res)
+	e.recordReadSnapshot(name, req.ProjectRoot, req.Params, res)
 	res.Success = true
 	return res, nil
 }
@@ -304,6 +354,16 @@ func requiresReadBeforeMutation(name string) bool {
 	default:
 		return false
 	}
+}
+
+// EnsureReadBeforeMutation exposes the per-file read-before-mutate gate
+// for tools that mutate multiple files in one call (e.g. apply_patch).
+// The per-`path` dispatch in Execute() only handles single-target tools;
+// multi-target ones must thread each path through this method explicitly
+// so a fabricated diff can't bypass the read snapshot check that
+// edit_file / write_file already enforce.
+func (e *Engine) EnsureReadBeforeMutation(absPath string) error {
+	return e.ensureReadBeforeMutation(absPath)
 }
 
 func (e *Engine) ensureReadBeforeMutation(absPath string) error {
@@ -323,18 +383,62 @@ func (e *Engine) ensureReadBeforeMutation(absPath string) error {
 	defer e.readMu.Unlock()
 	lastReadHash, ok := e.readSnapshots[absPath]
 	if !ok {
-		return fmt.Errorf("modifying existing file requires prior read_file: %s", absPath)
+		return readGuardError(absPath, "missing", "")
 	}
 	if lastReadHash != hash {
-		return fmt.Errorf("file changed since last read_file; read again before modifying: %s", absPath)
+		return readGuardError(absPath, "drift", "")
 	}
 	return nil
+}
+
+// readGuardError builds the actionable refusal returned by the read-
+// before-mutate gate. Pre-2026-04-18 the error was a bare "modifying
+// existing file requires prior read_file: PATH" or "file changed since
+// last read_file; read again before modifying: PATH". Models that
+// hadn't seen the snapshot rule before just retried the same edit and
+// looped — the screenshots from this session caught it on real
+// sessions. Post-fix the message embeds the literal recovery tool_call
+// the model can emit verbatim, so the next round self-corrects in one
+// step instead of N. `kind` is "missing" (no prior read at all) or
+// "drift" (file modified between read and edit).
+func readGuardError(absPath, kind, _ string) error {
+	relHint := absPath
+	if cwd, err := os.Getwd(); err == nil {
+		if rel, err2 := filepath.Rel(cwd, absPath); err2 == nil && !strings.HasPrefix(rel, "..") {
+			relHint = filepath.ToSlash(rel)
+		}
+	}
+	example := fmt.Sprintf(`{"name":"read_file","args":{"path":%q}}`, relHint)
+	switch kind {
+	case "drift":
+		return fmt.Errorf(
+			"edit refused: %s changed on disk since your last read_file (an editor, formatter, "+
+				"or another tool wrote to it). The snapshot you held is now stale — apply the diff "+
+				"against the current bytes by re-reading first: %s. Then retry your edit/apply_patch "+
+				"with the same arguments.",
+			relHint, example)
+	default:
+		return fmt.Errorf(
+			"edit refused: %s has no prior read_file snapshot in this session. The engine requires "+
+				"you to read a file before mutating it (so the model is editing what's actually on "+
+				"disk, not a guess). Recover by calling: %s. Then retry your edit/apply_patch.",
+			relHint, example)
+	}
 }
 
 func (e *Engine) trackFailure(key string) int {
 	e.failureMu.Lock()
 	defer e.failureMu.Unlock()
 	e.recentFailures[key]++
+	// M3: evict oldest entries when map grows too large.
+	if len(e.recentFailures) > maxRecentFailures {
+		for k := range e.recentFailures {
+			delete(e.recentFailures, k)
+			if len(e.recentFailures) <= maxRecentFailures/2 {
+				break
+			}
+		}
+	}
 	return e.recentFailures[key]
 }
 
@@ -392,6 +496,39 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 		if timeoutMs > 0 {
 			params["timeout_ms"] = timeoutMs
 		}
+	case "edit_file":
+		// Common typo trap: weaker models often emit `old`/`new` instead
+		// of `old_string`/`new_string` (the JS/Python edit-tool conventions
+		// they were trained on). Pre-fix the call hard-failed with the
+		// self-teaching error, but the model often took 1-2 wasted rounds
+		// to correct. Aliasing at the param-normalization layer means the
+		// canonical names are always set when Execute runs — zero retries.
+		// Only aliases — never overwrite an explicit canonical value.
+		if _, ok := params["old_string"]; !ok {
+			if v, alt := params["old"]; alt {
+				params["old_string"] = v
+				delete(params, "old")
+			}
+		}
+		if _, ok := params["new_string"]; !ok {
+			if v, alt := params["new"]; alt {
+				params["new_string"] = v
+				delete(params, "new")
+			}
+		}
+	case "write_file":
+		// Same family of typo: `content` vs `text`/`body`. Aliases keep
+		// non-canonical names from looping the model on a missing-field
+		// error.
+		if _, ok := params["content"]; !ok {
+			for _, alt := range []string{"text", "body", "data"} {
+				if v, found := params[alt]; found {
+					params["content"] = v
+					delete(params, alt)
+					break
+				}
+			}
+		}
 	}
 	return params
 }
@@ -413,40 +550,51 @@ func toolFailureKey(name string, params map[string]any) string {
 	return b.String()
 }
 
-func (e *Engine) recordReadSnapshot(name string, params map[string]any, res Result) {
+func (e *Engine) recordReadSnapshot(name, projectRoot string, params map[string]any, res Result) {
 	toolName := strings.ToLower(strings.TrimSpace(name))
 	switch toolName {
-	case "read_file":
-		p := strings.TrimSpace(asString(res.Data, "path", ""))
-		if p == "" {
-			p = strings.TrimSpace(asString(params, "path", ""))
-		}
-		if p == "" {
-			return
-		}
-		hash, err := fileContentHash(p)
-		if err != nil {
-			return
-		}
-		e.readMu.Lock()
-		e.readSnapshots[p] = hash
-		e.readMu.Unlock()
-	case "write_file", "edit_file":
-		p := strings.TrimSpace(asString(res.Data, "path", ""))
-		if p == "" {
-			p = strings.TrimSpace(asString(params, "path", ""))
-		}
-		if p == "" {
-			return
-		}
-		hash, err := fileContentHash(p)
-		if err != nil {
-			return
-		}
-		e.readMu.Lock()
-		e.readSnapshots[p] = hash
-		e.readMu.Unlock()
+	case "read_file", "write_file", "edit_file":
+	default:
+		return
 	}
+	p := strings.TrimSpace(asString(res.Data, "path", ""))
+	if p == "" {
+		p = strings.TrimSpace(asString(params, "path", ""))
+	}
+	if p == "" {
+		return
+	}
+	abs, err := EnsureWithinRoot(projectRoot, p)
+	if err != nil {
+		return
+	}
+
+	// H1 fix: for read_file, hash the content already in memory to avoid
+	// TOCTOU race and double I/O (M1). For write/edit, the file on disk
+	// IS authoritative, so hash from disk.
+	var hash string
+	if toolName == "read_file" {
+		sum := sha256.Sum256([]byte(res.Output))
+		hash = hex.EncodeToString(sum[:])
+	} else {
+		hash, err = fileContentHash(abs)
+		if err != nil {
+			return
+		}
+	}
+
+	e.readMu.Lock()
+	// M2: cap readSnapshots to prevent unbounded growth.
+	if len(e.readSnapshots) > maxReadSnapshots {
+		for k := range e.readSnapshots {
+			delete(e.readSnapshots, k)
+			if len(e.readSnapshots) <= maxReadSnapshots/2 {
+				break
+			}
+		}
+	}
+	e.readSnapshots[abs] = hash
+	e.readMu.Unlock()
 }
 
 func fileContentHash(path string) (string, error) {
@@ -600,9 +748,6 @@ func compressOutput(output string, limit int, terms []string) (string, bool, int
 	if len([]byte(compressed)) > limit {
 		compressed = truncateUTF8ByBytes(compressed, limit)
 	}
-	if len([]byte(compressed)) > limit {
-		compressed = string([]byte(compressed)[:limit])
-	}
 	return compressed, true, omitted
 }
 
@@ -663,6 +808,30 @@ func maxInt(a, b int) int {
 //     creating a new file), we resolve the nearest existing ancestor
 //     instead and re-run the containment check on that, so new-file
 //     writes under a sanitary tree still work.
+// PathRelativeToRoot turns an absolute path into a project-root-relative
+// one for surfacing in tool Output / Data fields. Pre-2026-04-18 every
+// read/write/edit_file leaked the host's full filesystem prefix
+// (`C:\Users\...`, `/home/...`) into Data["path"], which then flowed
+// into conversation logs, episodic memory, and any downstream
+// transcript. The model never needs the absolute path — it operates in
+// project-relative space. Falls back to the absolute path (slash-
+// normalized) when filepath.Rel can't compute a relative form (e.g.
+// different volume on Windows), so the model always gets SOME path.
+func PathRelativeToRoot(root, abs string) string {
+	if strings.TrimSpace(abs) == "" {
+		return ""
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return filepath.ToSlash(abs)
+	}
+	rel, err := filepath.Rel(absRoot, abs)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(abs)
+	}
+	return filepath.ToSlash(rel)
+}
+
 func EnsureWithinRoot(root, path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", fmt.Errorf("path is required")

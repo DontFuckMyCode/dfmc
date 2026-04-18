@@ -185,6 +185,15 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 
 	cmd := shellCommand(runCtx, h.command)
 	cmd.Env = append(os.Environ(), hookEnv(event, payload)...)
+	// Process-group isolation: when the hook spawns child processes
+	// (`sleep 60 &`, `npm install &`, an orphaned background daemon),
+	// exec.CommandContext's default SIGKILL on timeout only reaches the
+	// shell — children survive and may run forever. Setpgid (Unix) or
+	// the Windows equivalent groups everything together so the post-
+	// timeout cleanup below can kill the whole tree at once. Falls
+	// back to default behaviour on platforms we don't special-case
+	// (current support: Linux/Darwin/Windows).
+	applyProcessGroupIsolation(cmd)
 
 	stdoutBuf := newBoundedBuffer(hookOutputCap)
 	stderrBuf := newBoundedBuffer(hookOutputCap)
@@ -194,6 +203,12 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 	start := time.Now()
 	err := cmd.Run()
 	dur := time.Since(start)
+	// On context-cancel timeout, kill the whole process group so any
+	// child the hook spawned doesn't outlive the parent. No-op when
+	// the hook completed cleanly.
+	if runCtx.Err() != nil && cmd.Process != nil {
+		killProcessGroup(cmd.Process.Pid)
+	}
 
 	report := Report{
 		Event:    event,

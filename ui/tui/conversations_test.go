@@ -198,6 +198,9 @@ func TestConversationsSearchInputFlow(t *testing.T) {
 // must tell the user that Manager.Load has side-effect activated the
 // conversation, not stay silent. Users were complaining that the Chat
 // history changed out from under them after they 'just previewed'.
+// Post-H2 fix: LoadReadOnly is genuinely read-only, so the notice must
+// reflect "previewed, NOT loaded" — the previous "Loaded conversation"
+// + "switch to Chat to resume" wording lied about what happened.
 func TestConversationPreviewMsgSetsLoadedNotice(t *testing.T) {
 	m := newConversationsTestModel()
 	next, _ := m.Update(conversationPreviewMsg{
@@ -208,28 +211,32 @@ func TestConversationPreviewMsgSetsLoadedNotice(t *testing.T) {
 	if mm.conversations.previewID != "2026-04-16-auth-flow" {
 		t.Fatalf("preview id not stored, got %q", mm.conversations.previewID)
 	}
-	if !strings.Contains(mm.notice, "Loaded conversation") {
-		t.Fatalf("notice should announce load, got %q", mm.notice)
+	if !strings.Contains(mm.notice, "Previewed conversation") {
+		t.Fatalf("notice should announce a read-only preview, got %q", mm.notice)
 	}
 	if !strings.Contains(mm.notice, "2026-04-16-auth-flow") {
 		t.Fatalf("notice should include the conversation id, got %q", mm.notice)
 	}
-	if !strings.Contains(mm.notice, "Chat") {
-		t.Fatalf("notice should point user back to the Chat tab, got %q", mm.notice)
+	if !strings.Contains(mm.notice, "read-only") {
+		t.Fatalf("notice must make read-only contract explicit, got %q", mm.notice)
 	}
 }
 
-// TestRenderConversationsViewAnnouncesActiveOnPreview — the preview header
-// must make the 'loaded as active' side-effect visible inline, so users see
-// the state change on the same panel instead of discovering it later.
-func TestRenderConversationsViewAnnouncesActiveOnPreview(t *testing.T) {
+// TestRenderConversationsViewAnnouncesReadOnlyPreview — H2 fix: the
+// preview header must NOT claim "loaded as active" because LoadReadOnly
+// no longer mutates active state. It must surface the read-only contract
+// so users don't expect Chat to switch.
+func TestRenderConversationsViewAnnouncesReadOnlyPreview(t *testing.T) {
 	m := newConversationsTestModel()
 	m.conversations.entries = sampleConversationSummaries()
 	m.conversations.previewID = "2026-04-16-auth-flow"
 	m.conversations.preview = []types.Message{{Role: "user", Content: "hi"}}
 	out := m.renderConversationsView(160)
-	if !strings.Contains(out, "loaded as active") {
-		t.Fatalf("preview header should surface the active-load side-effect, got:\n%s", out)
+	if !strings.Contains(out, "read-only") {
+		t.Fatalf("preview header must mark itself as read-only, got:\n%s", out)
+	}
+	if strings.Contains(out, "loaded as active") {
+		t.Fatalf("preview header must NOT claim 'loaded as active' — that side-effect was removed in H2, got:\n%s", out)
 	}
 }
 

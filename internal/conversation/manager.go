@@ -277,10 +277,32 @@ func (m *Manager) SaveActive() error {
 }
 
 func (m *Manager) Load(id string) (*Conversation, error) {
-	// Same pattern as SaveActive: do the disk I/O outside the manager lock.
-	// The store handles its own concurrency, and holding m.mu across
-	// LoadConversationLog would block every reader for the duration of the
-	// scan (potentially many MB of history).
+	c, err := m.loadFromStore(id)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	m.active = c
+	m.mu.Unlock()
+	return cloneConversation(c), nil
+}
+
+// LoadReadOnly returns a conversation without setting it as active.
+// Use this for previews / inspection surfaces (e.g. the TUI Conversations
+// tab highlighting an entry) where mutating the active conversation would
+// silently switch the user's chat history out from under them.
+func (m *Manager) LoadReadOnly(id string) (*Conversation, error) {
+	c, err := m.loadFromStore(id)
+	if err != nil {
+		return nil, err
+	}
+	return cloneConversation(c), nil
+}
+
+// loadFromStore is the shared scaffolding behind Load and LoadReadOnly.
+// Disk I/O happens outside m.mu (the store handles its own concurrency)
+// so a long history scan can't block readers.
+func (m *Manager) loadFromStore(id string) (*Conversation, error) {
 	m.mu.RLock()
 	store := m.store
 	m.mu.RUnlock()
@@ -291,8 +313,7 @@ func (m *Manager) Load(id string) (*Conversation, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	c := &Conversation{
+	return &Conversation{
 		ID:        id,
 		Provider:  "unknown",
 		Model:     "unknown",
@@ -302,12 +323,7 @@ func (m *Manager) Load(id string) (*Conversation, error) {
 			"main": msgs,
 		},
 		Metadata: map[string]string{},
-	}
-
-	m.mu.Lock()
-	m.active = c
-	m.mu.Unlock()
-	return cloneConversation(c), nil
+	}, nil
 }
 
 func (m *Manager) List() ([]Summary, error) {

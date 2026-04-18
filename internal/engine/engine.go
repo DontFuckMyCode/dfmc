@@ -45,6 +45,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/internal/storage"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
+	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 type EngineState int
@@ -143,16 +144,51 @@ func (e *Engine) Init(ctx context.Context) error {
 	e.setState(StateInitializing)
 	e.EventBus.Publish(Event{Type: "engine:initializing", Source: "engine"})
 
+	// Wire SafeGo's panic observer so background-goroutine panics that
+	// would otherwise be log-only land on the EventBus as runtime:panic.
+	// The TUI activity log + web /ws stream + remote subscribers can
+	// then surface them instead of users only seeing a quiet log line.
+	// Stack is truncated via the same helper as tool panics so a 10 KiB
+	// runtime dump doesn't bloat the activity feed.
+	types.SetSafeGoPanicObserver(func(name string, recovered any, stack []byte) {
+		e.EventBus.Publish(Event{
+			Type:   "runtime:panic",
+			Source: "safego",
+			Payload: map[string]any{
+				"name":  name,
+				"panic": fmt.Sprintf("%v", recovered),
+				"stack": truncateStackForError(stack),
+			},
+		})
+	})
+
 	store, err := storage.Open(e.Config.DataDir())
 	if err != nil {
 		return fmt.Errorf("storage init failed: %w", err)
 	}
 	e.Storage = store
-	e.AST = ast.New()
+	e.AST = ast.NewWithCacheSize(e.Config.AST.CacheSize)
 	e.CodeMap = codemap.New(e.AST)
 	e.Context = ctxmgr.New(e.CodeMap)
 	e.Tools = tools.New(*e.Config)
 	e.Tools.SetSubagentRunner(e)
+	// Wire tool self-narration: the tools.Engine strips the optional
+	// `_reason` virtual field from every params map before dispatch and
+	// hands the text to this callback. We translate that into a
+	// tool:reasoning event so TUI/web/CLI surfaces can render the WHY
+	// above each tool result. Disabled when agent.tool_reasoning="off".
+	if e.toolReasoningEnabled() {
+		e.Tools.SetReasoningPublisher(func(toolName, reason string) {
+			e.EventBus.Publish(Event{
+				Type:   "tool:reasoning",
+				Source: "engine",
+				Payload: map[string]any{
+					"tool":   toolName,
+					"reason": reason,
+				},
+			})
+		})
+	}
 	e.Memory = memory.New(e.Storage)
 	// Memory.Load failure is non-fatal — a corrupt or missing memory
 	// db must not stop the user from running dfmc. But silently

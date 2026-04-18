@@ -199,10 +199,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.conversations.previewID = msg.id
 		m.conversations.preview = msg.msgs
-		// Manager.Load sets the conversation as active as a side-effect,
-		// so pressing enter here is effectively "load + preview". Surface
-		// that so users aren't surprised when Chat history rolls over.
-		m.notice = fmt.Sprintf("Loaded conversation %s (%d messages) — switch to Chat (f1/alt+1) to resume.", msg.id, len(msg.msgs))
+		// LoadReadOnly does NOT change the active conversation — Chat
+		// keeps whatever was running. The notice has to make that
+		// explicit so users don't assume f1 will jump them into the
+		// previewed history.
+		m.notice = fmt.Sprintf("Previewed conversation %s (%d messages) — read-only; Chat keeps the current session.", msg.id, len(msg.msgs))
 		return m, nil
 
 	case promptsLoadedMsg:

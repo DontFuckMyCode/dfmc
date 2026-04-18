@@ -58,7 +58,10 @@ func loadConversationPreviewCmd(eng *engine.Engine, id string) tea.Cmd {
 		if eng == nil || eng.Conversation == nil || strings.TrimSpace(id) == "" {
 			return conversationPreviewMsg{id: id}
 		}
-		conv, err := eng.Conversation.Load(id)
+		// Read-only load — we only need msgs[] for the preview pane and
+		// must NOT silently switch the user's active conversation while
+		// they're scrolling the Conversations tab.
+		conv, err := eng.Conversation.LoadReadOnly(id)
 		if err != nil {
 			return conversationPreviewMsg{id: id, err: err}
 		}
@@ -150,7 +153,7 @@ func formatConversationPreview(msgs []types.Message, width int) []string {
 
 func (m Model) renderConversationsView(width int) string {
 	width = clampInt(width, 24, 1000)
-	hint := subtleStyle.Render("j/k scroll · enter preview (loads as active) · / search · r refresh · c clear search")
+	hint := subtleStyle.Render("j/k scroll · enter preview (read-only) · / search · r refresh · c clear search")
 	header := sectionHeader("⎔", "Conversations")
 	queryLine := subtleStyle.Render("query: ")
 	if strings.TrimSpace(m.conversations.query) != "" {
@@ -200,11 +203,11 @@ func (m Model) renderConversationsView(width int) string {
 		selectedID = filtered[m.conversations.scroll].ID
 	}
 	if selectedID != "" && selectedID == m.conversations.previewID {
-		// Manager.Load sets the preview target as the active conversation
-		// as a side-effect of reading messages — make that visible so users
-		// don't wonder why the Chat history switched out from under them.
+		// Preview is read-only — Manager.LoadReadOnly does NOT change the
+		// active conversation. The chat tab keeps whatever was running
+		// before; switching tabs back to Chat shows the original session.
 		lines = append(lines, "",
-			subtleStyle.Render("preview · "+selectedID+" · ")+okStyle.Render("loaded as active")+subtleStyle.Render(" — f1/alt+1 to resume in Chat"),
+			subtleStyle.Render("preview · "+selectedID+" · read-only"),
 		)
 		lines = append(lines, formatConversationPreview(m.conversations.preview, width-2)...)
 	}

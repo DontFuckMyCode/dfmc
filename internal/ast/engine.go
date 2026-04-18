@@ -29,6 +29,11 @@ type ParseResult struct {
 	Hash     uint64         `json:"hash"`
 	ParsedAt time.Time      `json:"parsed_at"`
 	Duration time.Duration  `json:"duration"`
+	// Backend records which extractor produced the symbols: "tree-sitter"
+	// when the CGO bindings parsed the file cleanly, or "regex" when we
+	// fell back (CGO disabled, parse failed, or language stub). Callers
+	// surface this so consumers know when results are best-effort.
+	Backend string `json:"backend,omitempty"`
 }
 
 type Engine struct {
@@ -37,10 +42,32 @@ type Engine struct {
 	metrics   *parseMetricsTracker
 }
 
+// defaultParseCacheSize is the LRU capacity used when the caller does
+// not explicitly size the cache. ~10K entries fits a medium-large
+// monorepo's hot working set without unbounded growth on a long-running
+// `dfmc serve` process. Tunable per-engine via NewWithCacheSize and
+// at runtime via the AST cache config knob (config.AST.CacheSize).
+const defaultParseCacheSize = 10000
+
+// New constructs an AST engine with the default parse-cache capacity.
+// Most call sites (tests, ad-hoc tools) want this; the long-running
+// engine wires NewWithCacheSize so operators can override the cap from
+// config without rebuilding.
 func New() *Engine {
+	return NewWithCacheSize(defaultParseCacheSize)
+}
+
+// NewWithCacheSize constructs an AST engine with an explicit LRU
+// capacity. A non-positive value falls back to defaultParseCacheSize so
+// a misconfigured `ast.cache_size: 0` doesn't disable parse caching
+// (which would silently 100x the AST CPU cost on every codemap rebuild).
+func NewWithCacheSize(cacheSize int) *Engine {
+	if cacheSize <= 0 {
+		cacheSize = defaultParseCacheSize
+	}
 	return &Engine{
 		extToLang: extensionLanguageMap(),
-		cache:     newParseCache(10000),
+		cache:     newParseCache(cacheSize),
 		metrics:   newParseMetricsTracker(),
 	}
 }
@@ -92,6 +119,7 @@ func (e *Engine) ParseContent(ctx context.Context, path string, content []byte) 
 		Hash:     hash,
 		ParsedAt: time.Now(),
 		Duration: time.Since(start),
+		Backend:  backend,
 	}
 
 	e.cache.Set(path, res)

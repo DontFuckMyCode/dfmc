@@ -11,11 +11,23 @@ func (t *ReadFileTool) Spec() ToolSpec {
 		Title:   "Read file",
 		Summary: "Read a text file, optionally scoped to a line range.",
 		Purpose: "Fetch file contents for analysis. Prefer narrow line ranges for large files.",
-		Prompt: `Use this instead of ` + "`cat`/`head`/`tail`" + ` via run_command — it's cheaper, cached, and participates in the read-before-mutation guard.
+		Prompt: `Foundation reader for the context-gathering stack. Use this instead of ` + "`cat`/`head`/`tail`" + ` via run_command — it's cheaper, cached, and participates in the read-before-mutation guard.
+
+# When to use which read tool
+
+DFMC has four read-side tools, ordered by precision (and cost):
+
+1. ` + "`grep_codebase`" + ` — discovery. "Where does string X appear?" Returns ` + "`file:line:text`" + ` lines. Cheapest first probe when you don't know where to look.
+2. ` + "`codemap`" + ` — orientation. Project-level signatures-only outline. "What's the shape of this codebase?" before diving in.
+3. ` + "`find_symbol`" + ` — semantic locate. "Where is function/class NAME and show me its body." AST-driven, returns the full scope. Use when you know WHAT but not WHERE.
+4. ` + "`read_file`" + ` (this tool) — exact byte/line fetch. Use when you have a known path + line range, or need to see imports/headers/whole-file context that the other layers don't preserve.
+
+The pattern is grep → find_symbol/codemap → read_file. Skipping straight to read_file on a guessed path costs more tokens than starting with discovery.
 
 Rules:
 - Prefer a tight line range (line_start/line_end). The default window is 200 lines; avoid reading the whole file when a 40-line slice is enough.
 - Required before edit_file or write_file on an existing file — the engine rejects mutations that aren't preceded by a read of the current contents.
+- The result includes ` + "`total_lines`" + `, ` + "`returned_lines`" + `, ` + "`truncated`" + `, and ` + "`language`" + ` — use ` + "`truncated`" + ` to decide whether to ask for the next slice instead of guessing.
 - For structure-only questions ("what symbols does this file export?") prefer ast_query — it returns a dense outline without the full body.
 - When you need many files at once, send multiple read_file calls in a single tool_batch_call rather than round-tripping.`,
 		Risk: RiskRead,
@@ -25,7 +37,7 @@ Rules:
 			{Name: "line_start", Type: ArgInteger, Description: "1-indexed start line (default 1).", Default: 1},
 			{Name: "line_end", Type: ArgInteger, Description: "1-indexed end line (inclusive).", Default: 200},
 		},
-		Returns:    "Text segment of the file plus {path, line_start, line_end, line_count}.",
+		Returns:    "Text segment of the file plus {path, line_start, line_end, line_count, total_lines, returned_lines, truncated, language}. truncated=true means the file is longer than the returned slice — request more lines if you didn't already specify a tight range.",
 		Examples:   []string{`{"path":"main.go","line_start":1,"line_end":80}`},
 		Idempotent: true,
 		CostHint:   "cheap",
@@ -128,6 +140,17 @@ func (t *GrepCodebaseTool) Spec() ToolSpec {
 		Purpose: "Locate symbols, patterns, or call sites. Always prefer a tight regex over broad queries.",
 		Prompt: `Use this instead of shelling out to grep/rg via run_command. It respects project ignore rules and returns file:line:text directly.
 
+# When to pick grep_codebase vs the neighbors
+
+This is the cheapest discovery layer in the read stack. Use it FIRST when you don't know where to look.
+
+- "Where does string X live?" → grep_codebase (this tool). Cheap, pattern-based, returns file:line:text.
+- "What's the shape of the project?" → ` + "`codemap`" + `. Signatures-only outline.
+- "Show me the function/class NAMED X with its body" → ` + "`find_symbol`" + `. Semantic; returns the full scope.
+- "Show me file Y around line N" → ` + "`read_file`" + `. Use this once grep tells you where.
+
+A common pattern is: ` + "`grep_codebase`" + ` to locate hits → ` + "`find_symbol`" + ` for the named scope → ` + "`read_file`" + ` for surrounding context. Don't read whole files speculatively when grep can pinpoint the relevant 3 lines.
+
 # Regex syntax — Go RE2, NOT PCRE/Perl
 
 DO NOT use these (they will reject with "invalid Perl syntax"):
@@ -146,14 +169,29 @@ DO use:
 - Anchor the query as tightly as you can — ` + "`func FooBar`" + ` or ` + "`import \"pkg/foo\"`" + ` rather than just ` + "`FooBar`" + `. Broad patterns waste tokens and miss the actual call site.
 - If you need file listings not content, use glob instead — cheaper and returns paths directly.
 - For symbol lookup inside a known file, ast_query is better: it returns structured symbols with kinds.
-- If a result is truncated, narrow the regex or raise max_results — don't retry the same call expecting different output.`,
+- If a result is truncated, narrow the regex or raise max_results — don't retry the same call expecting different output.
+
+# Filtering and shaping output
+
+- ` + "`include`" + ` / ` + "`exclude`" + ` accept globs (array or comma-string). Use ` + "`include:[\"**/*.go\"]`" + ` to confine the search rather than walking every file in the tree, then matching, then dropping non-Go hits — much cheaper.
+- ` + "`case_sensitive: false`" + ` is equivalent to ` + "`(?i)`" + ` at the start of the pattern; pick one, not both.
+- ` + "`context: 3`" + ` (or ` + "`before` + `after`" + ` per side, capped at 50) wraps each hit in surrounding lines. Output switches to ripgrep-style blocks separated by ` + "`--`" + `: match lines use ` + "`path:line:text`" + `, context lines use ` + "`path-line-text`" + `. Use this when you need to see what calls a symbol or what an error message neighbors — saves a follow-up ` + "`view`" + ` round-trip.
+- ` + "`respect_gitignore: false`" + ` searches inside generated/vendored dirs the project would normally hide. Default is true.`,
 		Risk: RiskRead,
 		Tags: []string{"search", "read", "code", "grep"},
 		Args: []Arg{
 			{Name: "pattern", Type: ArgString, Required: true, Description: "Go regexp (RE2) pattern."},
+			{Name: "path", Type: ArgString, Description: "Restrict search to a subdirectory of the project root."},
+			{Name: "case_sensitive", Type: ArgBoolean, Default: true, Description: "When false, prefixes the pattern with (?i) for a case-insensitive match."},
+			{Name: "context", Type: ArgInteger, Default: 0, Description: "Lines of context to include before AND after each match (cap 50). Override per-side with `before` / `after`."},
+			{Name: "before", Type: ArgInteger, Description: "Override of `context` for lines before the match."},
+			{Name: "after", Type: ArgInteger, Description: "Override of `context` for lines after the match."},
+			{Name: "include", Type: ArgString, Description: `Glob(s) to keep. Array ["**/*.go","internal/**"] or comma-string "**/*.go,**/*.md". Doublestar supported.`},
+			{Name: "exclude", Type: ArgString, Description: `Glob(s) to skip in addition to the hardcoded ignore set. Same shape as include.`},
+			{Name: "respect_gitignore", Type: ArgBoolean, Default: true, Description: "When true (default), reads top-level .gitignore and skips matching paths. Negation patterns (!) and per-subdir .gitignore are NOT honoured."},
 			{Name: "max_results", Type: ArgInteger, Default: 80, Description: "Cap on matches (<=500)."},
 		},
-		Returns:    "{pattern, matches[] (file:line:text), count}.",
+		Returns:    "{pattern, matches[] (file:line:text or context blocks separated by `--`), count, case_sensitive, context_before?, context_after?, include?, exclude?}.",
 		Idempotent: true,
 		CostHint:   "io-bound",
 	}

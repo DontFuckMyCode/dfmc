@@ -1753,6 +1753,10 @@ func TestToolCallsMirrorOntoStreamingAssistantMessage(t *testing.T) {
 		t.Fatalf("expected token delta + truncated flag on chip, got %#v", chip)
 	}
 
+	// Force-expand the tool strip — collapsed-by-default (the new UX
+	// default) only renders an aggregated summary that omits the per-
+	// chip "+1.3k tok" delta this regression test pins.
+	m.ui.toolStripExpanded = true
 	view := m.renderChatView(140)
 	if !strings.Contains(view, "list_dir") || !strings.Contains(view, "73ms") {
 		t.Fatalf("assistant bubble should render the tool chip strip inline; got:\n%s", view)

@@ -371,20 +371,17 @@ func (m Model) runPickerItems() []commandPickerItem {
 		if err != nil {
 			continue
 		}
-		command := strings.TrimSpace(fmt.Sprint(params["command"]))
-		args := strings.TrimSpace(fmt.Sprint(params["args"]))
-		if strings.EqualFold(args, "<nil>") {
-			args = ""
-		}
+		command := paramStr(params, "command")
+		args := paramStr(params, "args")
 		value := command
 		if args != "" {
 			value += " " + args
 		}
 		metaParts := []string{}
-		if dir := strings.TrimSpace(fmt.Sprint(params["dir"])); dir != "" && !strings.EqualFold(dir, "<nil>") {
+		if dir := paramStr(params, "dir"); dir != "" {
 			metaParts = append(metaParts, "dir="+dir)
 		}
-		if timeout := strings.TrimSpace(fmt.Sprint(params["timeout_ms"])); timeout != "" && !strings.EqualFold(timeout, "<nil>") {
+		if timeout := paramStr(params, "timeout_ms"); timeout != "" {
 			metaParts = append(metaParts, "timeout="+timeout)
 		}
 		items = append(items, commandPickerItem{

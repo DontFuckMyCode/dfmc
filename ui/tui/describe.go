@@ -471,7 +471,7 @@ func compactTranscript(lines []chatLine, keep int) ([]chatLine, int, bool) {
 	if other > 0 {
 		fingerprint = append(fingerprint, fmt.Sprintf("%d other", other))
 	}
-	summary := newChatLine("system",
+	summary := newChatLine(chatRoleSystem,
 		fmt.Sprintf("▸ Transcript compacted — %s collapsed. Full history kept in Conversations panel.",
 			strings.Join(fingerprint, ", ")))
 

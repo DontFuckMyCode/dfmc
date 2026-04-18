@@ -16,15 +16,36 @@ import (
 // Scope: single-purpose, deliberately narrow. Use for surgical LLM-generated
 // edits where edit_file would require awkward string-matching. For broader
 // refactors, prefer a sequence of edit_file calls.
-type ApplyPatchTool struct{}
+type ApplyPatchTool struct {
+	// engine is set at registration time so apply_patch can call the
+	// per-target read-before-mutate gate. Without this, a fabricated
+	// diff could overwrite arbitrary files inside the project root with
+	// no prior read_file — a silent gap in the safety model that
+	// edit_file and write_file both already plug.
+	engine *Engine
+}
 
-func NewApplyPatchTool() *ApplyPatchTool    { return &ApplyPatchTool{} }
-func (t *ApplyPatchTool) Name() string      { return "apply_patch" }
+func NewApplyPatchTool() *ApplyPatchTool { return &ApplyPatchTool{} }
+func (t *ApplyPatchTool) Name() string   { return "apply_patch" }
 func (t *ApplyPatchTool) Description() string {
 	return "Apply a unified-diff patch to one or more files."
 }
 
+// SetEngine wires the engine reference for the read-before-mutate
+// check. Called once at registration time (see tools.New).
+func (t *ApplyPatchTool) SetEngine(e *Engine) {
+	t.engine = e
+}
+
 func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error) {
+	// C2: refuse when ProjectRoot is unset. Without a root, EnsureWithinRoot
+	// resolves relative targets against the current working directory,
+	// which means a fabricated patch could touch any file the dfmc
+	// process can write to. Better to fail loudly here than silently
+	// honour an attacker-controlled path.
+	if strings.TrimSpace(req.ProjectRoot) == "" {
+		return Result{}, fmt.Errorf("apply_patch: project root is not set — refusing to apply patch with no path anchor")
+	}
 	patch := asString(req.Params, "patch", "")
 	if strings.TrimSpace(patch) == "" {
 		return Result{}, missingParamError("apply_patch", "patch", req.Params,
@@ -38,7 +59,11 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 		return Result{}, err
 	}
 	if len(files) == 0 {
-		return Result{}, fmt.Errorf("patch contained no file diffs")
+		return Result{}, fmt.Errorf(
+			"apply_patch: patch parsed but contained no file diffs. " +
+				"A unified diff must have at least one `--- a/path` / `+++ b/path` header followed by `@@ ... @@` hunks. " +
+				"Example: `--- a/foo.go\\n+++ b/foo.go\\n@@ -1,3 +1,3 @@\\n-old\\n+new\\n unchanged\\n`. " +
+				"For a single-line replacement, prefer edit_file (no diff format needed).")
 	}
 
 	var applied []map[string]any
@@ -49,11 +74,32 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 			targetPath = f.OldPath
 		}
 		if targetPath == "" {
-			return Result{}, fmt.Errorf("diff entry has no target path")
+			return Result{}, fmt.Errorf(
+				"apply_patch: diff entry has no target path — both `--- a/<path>` and `+++ b/<path>` headers are missing. " +
+					"Each file diff in the patch must have at least one of those headers naming the file relative to the project root.")
+		}
+		// C2: normalize before EnsureWithinRoot. filepath.Clean collapses
+		// `a/../b` and adjacent slashes so a hostile diff that wrote
+		// `--- a/../../etc/passwd` can't bypass the root check via a
+		// non-canonical form. Absolute paths are also refused — every
+		// patch target must be relative to the project root.
+		targetPath = filepath.Clean(targetPath)
+		if filepath.IsAbs(targetPath) {
+			return Result{}, fmt.Errorf("apply_patch %s: absolute paths are not allowed — patches must target paths relative to the project root", targetPath)
 		}
 		abs, err := EnsureWithinRoot(req.ProjectRoot, targetPath)
 		if err != nil {
 			return Result{}, err
+		}
+		// Per-target read-before-mutate. New files are exempt (matches
+		// the write_file behaviour); deletes and modifies must have a
+		// prior read_file snapshot or the engine refuses. Without this
+		// check apply_patch is the silent backdoor in the safety model
+		// — flagged in the 2026-04-18 audit.
+		if !f.IsNew && t.engine != nil {
+			if guardErr := t.engine.EnsureReadBeforeMutation(abs); guardErr != nil {
+				return Result{}, fmt.Errorf("apply_patch %s: %w (read the file first via read_file, then retry)", targetPath, guardErr)
+			}
 		}
 
 		entry := map[string]any{
@@ -424,19 +470,21 @@ func findHunkAnchor(lines, want []string, hint int) int {
 	if match(hint) {
 		return hint
 	}
-	// Fuzzy anchor search: expand outward up to 200 lines.
-	for delta := 1; delta < 200; delta++ {
+	// Fuzzy anchor search: expand outward a small window around the hint.
+	// Previously we expanded ±200 lines and then linear-scanned the whole
+	// file as a last resort — that turned a stale-context patch into a
+	// silently-misplaced edit far from the intended site (REPORT H1, the
+	// "patch landed in the wrong function" class of bug). A tight window
+	// keeps the fuzz forgiving for normal drift (a few intervening edits)
+	// while letting truly stale hunks fail loudly so the caller re-reads
+	// the file.
+	const maxFuzz = 10
+	for delta := 1; delta <= maxFuzz; delta++ {
 		if match(hint + delta) {
 			return hint + delta
 		}
 		if match(hint - delta) {
 			return hint - delta
-		}
-	}
-	// Last resort: linear scan from the top.
-	for i := 0; i+len(want) <= len(lines); i++ {
-		if match(i) {
-			return i
 		}
 	}
 	return -1

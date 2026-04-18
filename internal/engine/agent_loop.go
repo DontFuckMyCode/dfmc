@@ -398,6 +398,22 @@ func strconvQuote(s string) string {
 	return strconv.Quote(s)
 }
 
+// streamAnswerText replays a complete answer string as line-granular
+// StreamDelta events on a fresh channel, then a final StreamDone.
+//
+// LIFECYCLE CONTRACT — IMPORTANT for callers:
+//   - The producer goroutine writes to a buffered channel (cap 16) and
+//     only escapes on `ctx.Done()`. There is NO `default:` drop arm —
+//     dropping deltas silently was strictly worse than blocking (the
+//     user got a truncated answer with no error, M1 review caught this).
+//   - Consumers MUST cancel `ctx` if they stop reading before draining
+//     the channel. Closing the SSE connection / TUI tab / web client
+//     without canceling will leak the goroutine forever once the buffer
+//     fills (one big answer ≈ a handful of lines past 16).
+//   - For HTTP/SSE handlers, derive `ctx` from the request context so
+//     the runtime cancels automatically on client disconnect.
+//   - For TUI consumers, cancel when navigating away or starting a new
+//     stream so the prior one's goroutine exits.
 func streamAnswerText(ctx context.Context, answer string) <-chan provider.StreamEvent {
 	ch := make(chan provider.StreamEvent, 16)
 	go func() {
@@ -416,13 +432,15 @@ func streamAnswerText(ctx context.Context, answer string) <-chan provider.Stream
 			case <-ctx.Done():
 				ch <- provider.StreamEvent{Type: provider.StreamError, Err: ctx.Err()}
 				return
-			case ch <- provider.StreamEvent{Type: provider.StreamDelta, Delta: delta}: // try send
-			default:
-				// buffer full — consumer slow; skip this delta to avoid
-				// blocking the producer goroutine indefinitely.
+			case ch <- provider.StreamEvent{Type: provider.StreamDelta, Delta: delta}:
 			}
 		}
-		ch <- provider.StreamEvent{Type: provider.StreamDone}
+		select {
+		case <-ctx.Done():
+			ch <- provider.StreamEvent{Type: provider.StreamError, Err: ctx.Err()}
+			return
+		case ch <- provider.StreamEvent{Type: provider.StreamDone}:
+		}
 	}()
 	return ch
 }

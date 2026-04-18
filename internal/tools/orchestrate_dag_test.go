@@ -339,7 +339,7 @@ func TestOrchestrateDAGMalformedStagesRejected(t *testing.T) {
 		stages any
 		want   string
 	}{
-		{"not-array", "stage1,stage2", "must be an array"},
+		{"not-array", "stage1,stage2", "must be a JSON array"},
 		{"missing-task", dagStagesParam(map[string]any{"id": "A"}), "task is required"},
 		{"missing-id", dagStagesParam(map[string]any{"task": "do thing"}), "id is required"},
 		{"bad-deps-shape", dagStagesParam(map[string]any{"id": "A", "task": "t", "depends_on": "B,C"}), "must be an array"},

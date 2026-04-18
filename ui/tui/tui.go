@@ -31,6 +31,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	toolruntime "github.com/dontfuckmycode/dfmc/internal/tools"
+	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 type Options struct {
@@ -72,6 +73,70 @@ const (
 // strings.EqualFold(item.Role, "literal") sites.
 func (c chatRole) Eq(other chatRole) bool {
 	return strings.EqualFold(string(c), string(other))
+}
+
+// coachSeverity tags a coach note's tone — drives the leading marker the
+// renderer puts on the transcript line. Pre-fix the parameter was a bare
+// `string` and the dispatcher did `strings.ToLower(...) == "warn"` — a
+// caller typo ("warning" instead of "warn") silently fell through to the
+// no-marker path. Typing it makes every call site name a constant the
+// compiler validates.
+type coachSeverity string
+
+const (
+	coachSeverityInfo      coachSeverity = "info"
+	coachSeverityWarn      coachSeverity = "warn"
+	coachSeverityCelebrate coachSeverity = "celebrate"
+)
+
+// coachSeverityFromWire normalises a severity string arriving over an
+// engine event payload (where it's still typeless). Unknown values
+// degrade to coachSeverityInfo rather than erroring — the wire is
+// untrusted input and a future engine adding "fyi" shouldn't crash old
+// TUIs.
+func coachSeverityFromWire(s string) coachSeverity {
+	switch coachSeverity(strings.ToLower(strings.TrimSpace(s))) {
+	case coachSeverityWarn:
+		return coachSeverityWarn
+	case coachSeverityCelebrate:
+		return coachSeverityCelebrate
+	default:
+		return coachSeverityInfo
+	}
+}
+
+// paramStr extracts a tool-param value as a trimmed string, handling the
+// JSON-decoded type fan-out (string / int / int64 / float64 / bool) that
+// would otherwise force every caller into `fmt.Sprint(params[k])` plus a
+// `strings.EqualFold(s, "<nil>")` workaround for the way fmt prints nil
+// interfaces. Pre-fix that pattern was duplicated 16× across tui.go,
+// command_picker.go, slash_picker.go and missed typed-nil edge cases —
+// the H1 review item. Returns "" for missing keys, nil values, or
+// whitespace-only strings.
+func paramStr(params map[string]any, key string) string {
+	if params == nil {
+		return ""
+	}
+	v, ok := params[key]
+	if !ok || v == nil {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t)
+	case int:
+		return strconv.Itoa(t)
+	case int32:
+		return strconv.Itoa(int(t))
+	case int64:
+		return strconv.FormatInt(t, 10)
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(t)
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
 }
 
 type chatLine struct {
@@ -580,55 +645,115 @@ func quickActionPreparedInput(name string, params map[string]any) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	switch name {
 	case "read_file":
-		path := strings.TrimSpace(fmt.Sprint(params["path"]))
-		if path == "" || strings.EqualFold(path, "<nil>") {
+		path := paramStr(params, "path")
+		if path == "" {
 			return ""
 		}
-		start := strings.TrimSpace(fmt.Sprint(params["line_start"]))
-		end := strings.TrimSpace(fmt.Sprint(params["line_end"]))
 		parts := []string{"/read", formatSlashArgToken(path)}
-		if start != "" && !strings.EqualFold(start, "<nil>") {
+		if start := paramStr(params, "line_start"); start != "" {
 			parts = append(parts, start)
 		}
-		if end != "" && !strings.EqualFold(end, "<nil>") {
+		if end := paramStr(params, "line_end"); end != "" {
 			parts = append(parts, end)
 		}
 		return strings.Join(parts, " ")
 	case "list_dir":
-		path := strings.TrimSpace(fmt.Sprint(params["path"]))
-		if path == "" || strings.EqualFold(path, "<nil>") {
+		path := paramStr(params, "path")
+		if path == "" {
 			path = "."
 		}
 		parts := []string{"/ls", formatSlashArgToken(path)}
 		if recursive, ok := params["recursive"].(bool); ok && recursive {
 			parts = append(parts, "--recursive")
 		}
-		if maxEntries := strings.TrimSpace(fmt.Sprint(params["max_entries"])); maxEntries != "" && !strings.EqualFold(maxEntries, "<nil>") {
+		if maxEntries := paramStr(params, "max_entries"); maxEntries != "" {
 			parts = append(parts, "--max", maxEntries)
 		}
 		return strings.Join(parts, " ")
 	case "grep_codebase":
-		pattern := strings.TrimSpace(fmt.Sprint(params["pattern"]))
-		if pattern == "" || strings.EqualFold(pattern, "<nil>") {
+		pattern := paramStr(params, "pattern")
+		if pattern == "" {
 			return ""
 		}
 		return "/grep " + formatSlashArgToken(pattern)
 	case "run_command":
-		command := strings.TrimSpace(fmt.Sprint(params["command"]))
-		if command == "" || strings.EqualFold(command, "<nil>") {
+		command := paramStr(params, "command")
+		if command == "" {
 			return ""
 		}
-		args := strings.TrimSpace(fmt.Sprint(params["args"]))
-		if strings.EqualFold(args, "<nil>") {
-			args = ""
-		}
+		args := paramStr(params, "args")
 		if args == "" {
 			return "/run " + command
 		}
-		return "/run " + command + " " + args
+		// H3: tokens with whitespace must be quoted so `/run cmd "arg with spaces"`
+		// survives the slash-handler's whitespace tokenizer. Without this,
+		// `git commit -m "fix bug"` gets split on every space and the model's
+		// suggested command becomes nonsense.
+		return "/run " + command + " " + formatRunArgList(args)
 	default:
 		return ""
 	}
+}
+
+// formatRunArgList walks the args string token-by-token and re-quotes any
+// whitespace-bearing piece using formatSlashArgToken. Bare alphanumeric
+// flags like `-m` pass through untouched. Pre-fix the args string was
+// concatenated raw, so any quoted argument the underlying tool spec
+// contained (e.g. `git commit -m "fix"`) would be re-tokenized by the
+// slash dispatcher and lose its quoting — the H3 review caught this.
+func formatRunArgList(args string) string {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return ""
+	}
+	tokens := splitRespectingQuotes(args)
+	formatted := make([]string, len(tokens))
+	for i, tok := range tokens {
+		formatted[i] = formatSlashArgToken(tok)
+	}
+	return strings.Join(formatted, " ")
+}
+
+// splitRespectingQuotes splits on whitespace but keeps quoted segments
+// (single or double) atomic. Backslash escapes the next char inside the
+// quote. Tokens are returned without surrounding quotes; the formatter
+// re-applies them only when the token contains whitespace.
+func splitRespectingQuotes(s string) []string {
+	var out []string
+	var cur strings.Builder
+	quote := byte(0)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			if c == '\\' && i+1 < len(s) {
+				cur.WriteByte(s[i+1])
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+				continue
+			}
+			cur.WriteByte(c)
+			continue
+		}
+		if c == '"' || c == '\'' {
+			quote = c
+			continue
+		}
+		if c == ' ' || c == '\t' {
+			if cur.Len() > 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			}
+			continue
+		}
+		cur.WriteByte(c)
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
 }
 
 // Slash-command picker (handleCommandPickerKey, startCommandPicker,
@@ -706,7 +831,7 @@ done:
 // executeChatCommand (the slash-command dispatcher) lives in chat_commands.go.
 
 func (m Model) appendSystemMessage(text string) Model {
-	m.chat.transcript = append(m.chat.transcript, newChatLine("system", strings.TrimSpace(text)))
+	m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleSystem, strings.TrimSpace(text)))
 	m.chat.scrollback = 0
 	return m
 }
@@ -720,7 +845,7 @@ func (m Model) appendSystemMessage(text string) Model {
 // the chat feel like a unified conversation — the events sit where they
 // actually fired instead of being relegated to a separate side panel.
 func (m Model) appendToolEventMessage(text string) Model {
-	m.chat.transcript = append(m.chat.transcript, newChatLine("tool", strings.TrimSpace(text)))
+	m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleTool, strings.TrimSpace(text)))
 	m.chat.scrollback = 0
 	return m
 }
@@ -732,23 +857,23 @@ func (m Model) appendToolEventMessage(text string) Model {
 // fired (useful for giving feedback like "quiet the mutation_unvalidated
 // rule"). Notes always land in the transcript — they're the user-facing
 // surface of the tiny-touches coach, not ephemeral chatter.
-func (m Model) appendCoachMessage(text, severity, origin string) Model {
+func (m Model) appendCoachMessage(text string, severity coachSeverity, origin string) Model {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return m
 	}
 	marker := ""
-	switch strings.ToLower(strings.TrimSpace(severity)) {
-	case "warn":
+	switch severity {
+	case coachSeverityWarn:
 		marker = warnStyle.Render("⚠") + " "
-	case "celebrate":
+	case coachSeverityCelebrate:
 		marker = okStyle.Render("✓") + " "
 	}
 	body := marker + text
 	if origin = strings.TrimSpace(origin); origin != "" {
 		body += " " + subtleStyle.Render("["+origin+"]")
 	}
-	m.chat.transcript = append(m.chat.transcript, newChatLine("coach", body))
+	m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleCoach, body))
 	m.chat.scrollback = 0
 	m.appendActivity("coach: " + text)
 	m.notice = text
@@ -847,20 +972,20 @@ func (m Model) submitChatQuestion(question string, quickActions []quickActionSug
 	}
 	if len(quickActions) > 0 {
 		selected := quickActions[clampIndex(m.slashMenu.quickAction, len(quickActions))]
-		m.chat.transcript = append(m.chat.transcript, newChatLine("user", question))
+		m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleUser, question))
 		m = m.appendSystemMessage("Auto action: " + selected.Reason)
 		m = m.startChatToolCommand(selected.Tool, selected.Params)
 		return m, runToolCmd(m.eng, selected.Tool, selected.Params)
 	}
 	if name, params, reason, ok := m.autoToolIntentFromQuestion(question); ok {
-		m.chat.transcript = append(m.chat.transcript, newChatLine("user", question))
+		m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleUser, question))
 		m = m.appendSystemMessage("Auto action: " + reason)
 		m = m.startChatToolCommand(name, params)
 		return m, runToolCmd(m.eng, name, params)
 	}
 	m.chat.transcript = append(m.chat.transcript,
-		newChatLine("user", question),
-		newChatLine("assistant", ""),
+		newChatLine(chatRoleUser, question),
+		newChatLine(chatRoleAssistant, ""),
 	)
 	m.chat.streamIndex = len(m.chat.transcript) - 1
 	m.chat.sending = true
@@ -921,7 +1046,7 @@ func (m Model) startChatResume(note string) (Model, tea.Cmd) {
 		banner += " with note: " + note
 	}
 	m = m.appendSystemMessage(banner + "...")
-	m.chat.transcript = append(m.chat.transcript, newChatLine("assistant", ""))
+	m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleAssistant, ""))
 	m.chat.streamIndex = len(m.chat.transcript) - 1
 	m.chat.sending = true
 	m.chat.streamStartedAt = time.Now()
@@ -930,9 +1055,14 @@ func (m Model) startChatResume(note string) (Model, tea.Cmd) {
 	return m, tea.Batch(waitForStreamMsg(m.chat.streamMessages), m.ensureSpinnerTick())
 }
 
-func newChatLine(role, content string) chatLine {
+// newChatLine constructs a chatLine with a typed role. Pre-fix the role
+// was a bare string and call sites used literals like "system" / "user"
+// — a typo ("asistant") compiled clean and silently routed to the wrong
+// renderer branch. Forcing chatRole here means every call site goes
+// through one of the chatRole* constants and the compiler catches typos.
+func newChatLine(role chatRole, content string) chatLine {
 	return chatLine{
-		Role:      chatRole(strings.TrimSpace(role)),
+		Role:      role,
 		Content:   content,
 		Preview:   chatDigest(content),
 		Timestamp: time.Now(),
@@ -1742,8 +1872,20 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 		content := chatBubbleContent(item, m.chat.streamIndex == i && m.chat.sending)
 		lines = append(lines, renderMessageBubble(string(item.Role), content, hdr, width))
 		if item.Role.Eq(chatRoleAssistant) {
-			if strip := renderInlineToolChips(item.ToolChips, width); strip != "" {
-				lines = append(lines, strip)
+			if len(item.ToolChips) > 0 {
+				// Default-collapsed strip — the user explicitly asked
+				// for the long answer not to be drowned in 15 chips of
+				// tool noise. /tools (or ctrl+y) flips toolStripExpanded
+				// for the whole transcript.
+				if m.ui.toolStripExpanded {
+					if strip := renderInlineToolChips(item.ToolChips, width); strip != "" {
+						lines = append(lines, strip)
+					}
+				} else {
+					if strip := renderInlineToolChipsSummary(item.ToolChips, width); strip != "" {
+						lines = append(lines, strip)
+					}
+				}
 			}
 			if summary := m.chatPatchSummary(item); summary != "" {
 				lines = append(lines, subtleStyle.Render("    "+summary))
@@ -1773,6 +1915,28 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 		}
 		if scope := strings.TrimSpace(m.agentLoop.contextScope); scope != "" {
 			lines = append(lines, subtleStyle.Render(truncateSingleLine("  "+scope, width)))
+		}
+	}
+
+	// TODO strip — renders one line per *active session* showing the
+	// model's plan progress (done/doing/pending counts + the active
+	// item's text). Always evaluated, even when the agent loop isn't
+	// active, so the user can see lingering open todos at the bottom of
+	// the chat tab between turns.
+	if m.eng != nil && m.eng.Tools != nil {
+		raw := m.eng.Tools.TodoSnapshot()
+		if len(raw) > 0 {
+			stripItems := make([]todoStripItem, 0, len(raw))
+			for _, it := range raw {
+				stripItems = append(stripItems, todoStripItem{
+					Content:    it.Content,
+					Status:     it.Status,
+					ActiveForm: it.ActiveForm,
+				})
+			}
+			if line := renderTodoStrip(stripItems, min(width, 120)); line != "" {
+				lines = append(lines, line)
+			}
 		}
 	}
 
@@ -1984,6 +2148,11 @@ func (m Model) chatHeaderInfo() chatHeaderInfo {
 		ApprovalGated:   gated,
 		ApprovalPending: m.pendingApproval != nil,
 		IntentLast:      intentChipLabel(m.intent),
+		DriveRunID:      m.telemetry.driveRunID,
+		DriveTodoID:     m.telemetry.driveTodoID,
+		DriveDone:       m.telemetry.driveDone,
+		DriveTotal:      m.telemetry.driveTotal,
+		DriveBlocked:    m.telemetry.driveBlocked,
 	}
 }
 
@@ -3475,14 +3644,15 @@ func fileMarker(rel string) string {
 // fileMarkerRange emits the context-manager marker with an optional line
 // range suffix (`#L10` or `#L10-L50`). The context manager's regex only
 // accepts `#L<start>[-L?<end>]`, so callers must pass a pre-normalized
-// suffix (see splitMentionToken).
+// suffix (see splitMentionToken). Uses types.FileMarkerPrefix/Suffix so
+// the wire shape stays in sync with the parser.
 func fileMarkerRange(rel, rangeSuffix string) string {
 	rel = filepath.ToSlash(strings.TrimSpace(rel))
 	if rel == "" {
 		return ""
 	}
 	rangeSuffix = strings.TrimSpace(rangeSuffix)
-	return "[[file:" + rel + rangeSuffix + "]]"
+	return types.FileMarkerPrefix + rel + rangeSuffix + types.FileMarkerSuffix
 }
 
 func (m Model) recommendedRunCommandPreset() string {

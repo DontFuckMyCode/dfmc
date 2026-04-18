@@ -254,7 +254,33 @@ func (e *Engine) buildSystemPrompt(question string, chunks []types.ContextChunk)
 		Text:      osNotice,
 		Cacheable: true,
 	})
+	// Tool self-narration nudge — only when the surface is active. The
+	// engine strips `_reason` before dispatch, so omitting it never
+	// breaks anything; the nudge just teaches models that don't
+	// otherwise volunteer the field.
+	if e.toolReasoningEnabled() {
+		reasonNotice := toolReasoningSystemNotice()
+		text = appendSystemNoticeText(text, reasonNotice)
+		blocks = append(blocks, provider.SystemBlock{
+			Label:     "tool-reasoning",
+			Text:      reasonNotice,
+			Cacheable: true,
+		})
+	}
 	return text, blocks
+}
+
+// toolReasoningSystemNotice is the cacheable system-prompt block that
+// nudges the model to fill the optional `_reason` virtual field on every
+// tool call. Kept short (one sentence + an example) so the prompt cost
+// stays under ~40 tokens — the UI win comes from clearer surfaces, not
+// from chatty self-narration.
+func toolReasoningSystemNotice() string {
+	return "[Tool self-narration: every tool's schema accepts an optional `_reason` string. " +
+		"Fill it with one short sentence (≤140 chars) saying WHY you're calling this tool now — " +
+		"the UI shows it above the result. Example: " +
+		`{"name":"read_file","args":{"path":"server.go","_reason":"checking how the SSE handler closes the stream"}}.` +
+		" The field is stripped before dispatch and never reaches the tool implementation.]"
 }
 
 // hostOSSystemNotice returns the runtime.GOOS-aware reminder injected

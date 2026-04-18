@@ -32,7 +32,7 @@ func runMCP(ctx context.Context, eng *engine.Engine, args []string, version stri
 		return 1
 	}
 
-	bridge := &engineMCPBridge{eng: eng}
+	bridge := &engineMCPBridge{eng: eng, drive: &driveMCPHandler{eng: eng}}
 	srv := mcp.NewServer(os.Stdin, os.Stdout, bridge, mcp.ServerInfo{
 		Name:    "dfmc",
 		Version: version,
@@ -74,7 +74,8 @@ Example Claude Desktop config snippet:
 // invocation would crash the dfmc mcp process and the IDE host would see
 // a broken stdio transport instead of a tool_result with isError=true.
 type engineMCPBridge struct {
-	eng *engine.Engine
+	eng   *engine.Engine
+	drive *driveMCPHandler
 }
 
 func (b *engineMCPBridge) List() []mcp.ToolDescriptor {
@@ -86,7 +87,7 @@ func (b *engineMCPBridge) List() []mcp.ToolDescriptor {
 		return nil
 	}
 	specs := b.eng.Tools.BackendSpecs()
-	out := make([]mcp.ToolDescriptor, 0, len(specs))
+	out := make([]mcp.ToolDescriptor, 0, len(specs)+6)
 	for _, s := range specs {
 		out = append(out, mcp.ToolDescriptor{
 			Name:        s.Name,
@@ -94,12 +95,25 @@ func (b *engineMCPBridge) List() []mcp.ToolDescriptor {
 			InputSchema: s.JSONSchema(),
 		})
 	}
+	// Append synthetic drive tools last — keeps the regular catalog
+	// stable on top so a host that lists alphabetically still ranks
+	// fundamentals (read_file, grep_codebase) above autonomous-control
+	// affordances.
+	if b.drive != nil {
+		out = append(out, b.drive.Tools()...)
+	}
 	return out
 }
 
 func (b *engineMCPBridge) Call(ctx context.Context, name string, rawArgs []byte) (mcp.CallToolResult, error) {
 	if b.eng == nil {
 		return mcp.CallToolResult{}, fmt.Errorf("engine not initialized")
+	}
+	// Route synthetic drive tools to their dedicated handler before the
+	// regular registry path. Keeping them off engine.CallTool means the
+	// approval gate / hooks dispatch don't need to special-case them.
+	if b.drive != nil && b.drive.Handles(name) {
+		return b.drive.Call(ctx, name, rawArgs)
 	}
 	params := map[string]any{}
 	if len(rawArgs) > 0 {

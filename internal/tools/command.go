@@ -56,10 +56,22 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 		// shell line — because it assumed run_command shells out.
 		// It does not. Fail with a message that names the offender
 		// and shows the right shape so the next tool call self-corrects.
+		// Detect the very common `cd <dir> && <real cmd>` shape and
+		// rewrite the example to use the `dir` parameter (which exists
+		// precisely for this case) — that's the recovery the model
+		// should learn, not "issue two tool calls".
+		if hint := suggestRunCommandRecovery(command); hint != "" {
+			return Result{}, fmt.Errorf(
+				"run_command does not invoke a shell — `command` must be a single binary, not a shell line. "+
+					"Found shell syntax %q in command. Recover by calling: %s. "+
+					"`dir` sets the working directory (no `cd` needed); for sequential steps issue separate tool_calls.",
+				token, hint)
+		}
 		return Result{}, fmt.Errorf(
 			"run_command does not invoke a shell — `command` must be a single binary, not a shell line. "+
 				"Found shell syntax %q in command. Pass the binary in `command` and arguments in `args`, e.g. "+
 				`{"command":"go","args":["build","./..."]}. `+
+				"To run in a subdirectory, use the `dir` parameter (not `cd`). "+
 				"For dependent steps, issue separate tool_calls (the engine runs them in order).",
 			token)
 	}
@@ -67,6 +79,21 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 	args, err := commandArgs(req.Params["args"])
 	if err != nil {
 		return Result{}, err
+	}
+	// Catch the second-most-common LLM packing mistake: `command:"go build ./..."`
+	// with no `args` set. That's not shell syntax (so detectShellMetacharacter
+	// passes), but the binary slot has been stuffed with bin+args. exec.LookPath
+	// would just say "executable file not found" — useless feedback. Catch it
+	// here and show the split shape. Skip the check when `args` is non-empty
+	// (the model already split things; trust it) or when command looks like
+	// a path (Windows "Program Files\foo.exe" is legitimate).
+	if len(args) == 0 {
+		if bin, rest, packed := detectBinaryArgsPacking(command); packed {
+			return Result{}, fmt.Errorf(
+				"run_command: `command` looks like binary+arguments packed together (%q). "+
+					"`command` is argv[0] only — the binary name. Move the rest to `args`. Recover by calling: %s",
+				command, suggestSplitRunCommand(bin, rest))
+		}
 	}
 	if err := ensureCommandAllowed(command, args, t.cfg.blocked); err != nil {
 		return Result{}, err
@@ -403,6 +430,118 @@ func detectShellMetacharacter(command string) string {
 		return "cd "
 	}
 	return ""
+}
+
+// suggestRunCommandRecovery turns a shell-line command that the model
+// fed into `command` into a copy-pasteable recovery tool_call shape.
+// We focus on the single most common case caught in real sessions:
+// `cd <dir> && <real command>` (and the `;` variant). When that
+// pattern matches we extract the directory and the trailing command
+// so the model sees exactly which tokens go into `command`, `args`,
+// and `dir`. For anything else we return "" and the caller emits the
+// generic example. Keep this conservative — a wrong-looking suggestion
+// is worse than the generic one.
+func suggestRunCommandRecovery(command string) string {
+	cmd := strings.TrimSpace(command)
+	if cmd == "" {
+		return ""
+	}
+	if !strings.HasPrefix(strings.ToLower(cmd), "cd ") {
+		return ""
+	}
+	// Find the first `&&` or `;` separator after `cd <dir>`.
+	rest := cmd[3:]
+	sepIdx, sepLen := -1, 0
+	if i := strings.Index(rest, "&&"); i >= 0 {
+		sepIdx, sepLen = i, 2
+	}
+	if i := strings.Index(rest, ";"); i >= 0 && (sepIdx == -1 || i < sepIdx) {
+		sepIdx, sepLen = i, 1
+	}
+	if sepIdx < 0 {
+		return ""
+	}
+	dir := strings.TrimSpace(rest[:sepIdx])
+	tail := strings.TrimSpace(rest[sepIdx+sepLen:])
+	if dir == "" || tail == "" {
+		return ""
+	}
+	// Strip surrounding quotes from dir, normalize separators.
+	dir = strings.Trim(dir, `"'`)
+	dir = filepath.ToSlash(dir)
+	// Split tail into binary + args using whitespace; keep it simple
+	// (no quote-aware tokenization) since the goal is a hint, not an
+	// exec.
+	parts := strings.Fields(tail)
+	if len(parts) == 0 {
+		return ""
+	}
+	bin := parts[0]
+	rawArgs := parts[1:]
+	// JSON-encode args array with %q-style quoting on each element.
+	argLits := make([]string, 0, len(rawArgs))
+	for _, a := range rawArgs {
+		argLits = append(argLits, fmt.Sprintf("%q", a))
+	}
+	return fmt.Sprintf(
+		`{"name":"run_command","args":{"command":%q,"args":[%s],"dir":%q}}`,
+		bin, strings.Join(argLits, ","), dir,
+	)
+}
+
+// detectBinaryArgsPacking flags the `command:"go build ./..."` shape:
+// no shell syntax (so detectShellMetacharacter passed), but the binary
+// slot has whitespace-separated tokens — almost certainly bin+args
+// packed together. Returns (bin, rest, true) when the pattern matches,
+// otherwise zero+false. Conservative on purpose: we skip anything that
+// looks like a real path (Windows "Program Files\foo.exe", Unix
+// "/usr/local/bin/my prog", etc.) so legitimate quoted paths with
+// spaces aren't false-positived.
+func detectBinaryArgsPacking(command string) (string, string, bool) {
+	cmd := strings.TrimSpace(command)
+	if cmd == "" {
+		return "", "", false
+	}
+	// Quoted command (`"foo bar.exe" --flag`) — leave it alone; the model
+	// is being explicit about the path.
+	if strings.HasPrefix(cmd, `"`) || strings.HasPrefix(cmd, `'`) {
+		return "", "", false
+	}
+	idx := strings.IndexAny(cmd, " \t")
+	if idx <= 0 {
+		return "", "", false
+	}
+	bin := cmd[:idx]
+	rest := strings.TrimSpace(cmd[idx+1:])
+	if rest == "" {
+		return "", "", false
+	}
+	// If the binary token itself has a path separator, treat the whole
+	// thing as a path with embedded spaces (rare but legitimate). Same
+	// for ".exe" without separators — could still be a packed call, so
+	// we let the path-separator check be the discriminator.
+	if strings.ContainsAny(bin, "/\\") {
+		return "", "", false
+	}
+	return bin, rest, true
+}
+
+// suggestSplitRunCommand renders the recovery shape for the binary+args
+// packing case: split the offender on whitespace and JSON-encode each
+// token into the `args` array. Same conservative tokenization as
+// suggestRunCommandRecovery — if the model packed clever quoting
+// nonsense, the hint will at least show the right *shape* even if the
+// exact tokens need adjustment.
+func suggestSplitRunCommand(bin, rest string) string {
+	parts := strings.Fields(rest)
+	argLits := make([]string, 0, len(parts))
+	for _, p := range parts {
+		argLits = append(argLits, fmt.Sprintf("%q", p))
+	}
+	return fmt.Sprintf(
+		`{"name":"run_command","args":{"command":%q,"args":[%s]}}`,
+		bin, strings.Join(argLits, ","),
+	)
 }
 
 func isBlockedShellInterpreter(command string) bool {

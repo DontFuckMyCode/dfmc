@@ -182,6 +182,44 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.ui.planMode = false
 		m.notice = "Plan mode OFF — prompts can now modify files."
 		return m.appendSystemMessage("▸ Plan mode OFF. Write/update prompts will now route through mutating tools (apply_patch, edit_file, write_file)."), nil, true
+	case "drive":
+		// `/drive` is overloaded: plain task starts a new run, but
+		// subcommands `stop`, `list`, `active`, `resume` mirror the
+		// CLI surface so the user doesn't need to leave the TUI to
+		// manage runs. Dispatched on args[0]; everything else is
+		// treated as the task body.
+		m.chat.input = ""
+		if m.eng == nil {
+			return m.appendSystemMessage("/drive: engine is not initialized."), nil, true
+		}
+		if len(args) > 0 {
+			switch strings.ToLower(args[0]) {
+			case "stop", "cancel":
+				return m.handleDriveStopSlash(args[1:])
+			case "active":
+				return m.handleDriveActiveSlash()
+			case "list":
+				return m.handleDriveListSlash()
+			case "resume":
+				if len(args) < 2 {
+					return m.appendSystemMessage("/drive resume <id> — pass a run ID to resume."), nil, true
+				}
+				go runDriveResumeAsync(m.eng, args[1])
+				return m.appendSystemMessage("▸ Drive resume requested: " + args[1]), nil, true
+			}
+		}
+		task := strings.TrimSpace(strings.Join(args, " "))
+		if task == "" {
+			return m.appendSystemMessage("/drive usage:\n" +
+				"  /drive <task>          — start a new run\n" +
+				"  /drive stop [id]       — cancel an active run\n" +
+				"  /drive active          — list runs currently running in this process\n" +
+				"  /drive list            — list every persisted run\n" +
+				"  /drive resume <id>     — resume a stopped run"), nil, true
+		}
+		go runDriveAsync(m.eng, task)
+		m.notice = "Drive started — watch the activity panel for plan + per-TODO progress."
+		return m.appendSystemMessage("▸ Drive started: " + truncateForLine(task, 100) + "\n   Plan and per-TODO progress stream into the activity panel below."), nil, true
 	case "compact":
 		// Collapse older transcript entries into a single summary line so
 		// long sessions stay scannable. Purely a view-layer operation —
@@ -355,12 +393,34 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			return m.appendSystemMessage(m.contextCommandSummary()), nil, true
 		}
 	case "tools":
+		// Two modes:
+		//   /tools             — toggle the per-message tool-call strip
+		//                        between the one-line summary (default)
+		//                        and the full chip breakdown. The user
+		//                        explicitly asked for the strip to be
+		//                        collapsed by default so long answers
+		//                        aren't drowned in tool noise.
+		//   /tools list        — print the registered backend tool catalog
+		//                        (the previous bare-/tools behaviour).
 		m.chat.input = ""
-		tools := m.availableTools()
-		if len(tools) == 0 {
-			return m.appendSystemMessage("No tools registered."), nil, true
+		sub := ""
+		if len(args) > 0 {
+			sub = strings.ToLower(strings.TrimSpace(args[0]))
 		}
-		return m.appendSystemMessage(m.describeToolsList(tools)), nil, true
+		if sub == "list" || sub == "ls" || sub == "show" {
+			tools := m.availableTools()
+			if len(tools) == 0 {
+				return m.appendSystemMessage("No tools registered."), nil, true
+			}
+			return m.appendSystemMessage(m.describeToolsList(tools)), nil, true
+		}
+		m.ui.toolStripExpanded = !m.ui.toolStripExpanded
+		state := "collapsed (one-line summary)"
+		if m.ui.toolStripExpanded {
+			state = "expanded (full chip breakdown)"
+		}
+		m.notice = "Tool strip " + state + "."
+		return m.appendSystemMessage("Tool-call strip is now " + state + ". Toggle again with /tools, or `/tools list` for the registered catalog."), nil, true
 	case "tool":
 		if len(args) == 0 {
 			m = m.startCommandPicker("tool", "", false)

@@ -31,16 +31,48 @@ import (
 // before `/review` so the order also mattered. Anchored matching
 // makes the trigger position-determined rather than soup-like.
 func detectOfflineTask(systemPrompt, question string) string {
-	s := strings.ToLower(systemPrompt + "\n" + question)
-	// system.base emits "Task: review" etc. Prefer that marker first.
-	if idx := strings.Index(s, "task:"); idx >= 0 {
-		tail := s[idx+len("task:"):]
-		tail = strings.TrimSpace(tail)
+	// M2 fix: don't lowercase + concatenate the whole system prompt
+	// on every offline query. System prompts routinely run to several
+	// KB (templates + project brief + tool catalog + injected context);
+	// pre-fix `strings.ToLower(systemPrompt + "\n" + question)` paid
+	// the full alloc twice on every call. Now we (a) check the question
+	// (small, cheap) first, then (b) lowercase only a bounded prefix of
+	// the system prompt — enough to catch the "Task:" header stamp and
+	// any slash command typed at the top, while leaving the bulk of a
+	// long brief untouched.
+	qLower := strings.ToLower(strings.TrimSpace(question))
+	if t := offlineTaskFromText(qLower); t != "" {
+		return t
+	}
+	const sysScanWindow = 1024
+	prefix := systemPrompt
+	if len(prefix) > sysScanWindow {
+		prefix = prefix[:sysScanWindow]
+	}
+	pLower := strings.ToLower(prefix)
+	// system.base writes "Task: <name>" near the top of the prompt;
+	// canonical fast path.
+	if idx := strings.Index(pLower, "task:"); idx >= 0 {
+		tail := strings.TrimSpace(pLower[idx+len("task:"):])
 		for _, cand := range []string{"security", "review", "planning", "refactor", "debug", "test", "doc", "explain"} {
 			if strings.HasPrefix(tail, cand) {
 				return cand
 			}
 		}
+	}
+	if t := offlineTaskFromText(pLower); t != "" {
+		return t
+	}
+	return "general"
+}
+
+// offlineTaskFromText runs the slash-command + natural-language triggers
+// against an already-lowercased input. Pulled out of detectOfflineTask
+// so the question and system-prompt-prefix paths share the same logic
+// without re-allocating a combined string.
+func offlineTaskFromText(s string) string {
+	if s == "" {
+		return ""
 	}
 	// Slash command anchored at line-start (with optional leading
 	// whitespace). Bound by \b so /review-team isn't mistaken for
@@ -83,7 +115,7 @@ func detectOfflineTask(systemPrompt, question string) string {
 	case strings.Contains(s, "plan for"):
 		return "planning"
 	}
-	return "general"
+	return ""
 }
 
 // Anchored at line start (with optional leading spaces) so we ignore

@@ -34,6 +34,8 @@ var parallelSafeTools = map[string]struct{}{
 	"list_dir":      {},
 	"grep_codebase": {},
 	"glob":          {},
+	"find_symbol":   {}, // pure read walker, same shape as grep_codebase
+	"ast_query":     {}, // ParseFile + cache, no fs writes
 	"web_fetch":     {},
 	"web_search":    {},
 	"think":         {},

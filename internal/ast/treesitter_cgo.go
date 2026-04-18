@@ -17,6 +17,20 @@ import (
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
+// Per-language tree-sitter parser pools.
+//
+// INVARIANT: each language gets its OWN sync.Pool. Cross-language
+// reuse is unsafe — a parser carries its grammar binding (Go grammar
+// vs Python grammar etc.), and Put-ing a Go parser into a pool that a
+// Python caller later Get-s would either parse with the wrong grammar
+// (silent corruption) or panic in tree-sitter's ParseCtx. The map
+// scope (`map[string]*sync.Pool` keyed by lang name) enforces this
+// architecturally; do NOT collapse to a single shared pool.
+//
+// finalizeTreeSitterParser is the only legitimate Put path; if the
+// parser failed mid-parse it must be Close()d instead of returned to
+// the pool, otherwise a corrupt parser will infect the next caller
+// of the same language.
 var (
 	treeSitterParserPoolsMu sync.Mutex
 	treeSitterParserPools   = map[string]*sync.Pool{}

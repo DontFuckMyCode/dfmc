@@ -114,9 +114,12 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 	}
 	defer resp.Body.Close()
 
-	raw, err := io.ReadAll(resp.Body)
+	raw, truncated, err := readBoundedBody(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+	if truncated {
+		return nil, fmt.Errorf("%s response exceeded %d bytes — refusing to decode (likely a misbehaving proxy or hostile endpoint)", p.name, maxProviderResponseBytes)
 	}
 	if resp.StatusCode >= 400 {
 		if isThrottleStatus(resp.StatusCode) {

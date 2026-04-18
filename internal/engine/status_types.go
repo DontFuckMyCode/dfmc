@@ -37,6 +37,30 @@ type Status struct {
 	// TUI/web surfaces can render this next to the chat header.
 	MemoryDegraded bool   `json:"memory_degraded,omitempty"`
 	MemoryLoadErr  string `json:"memory_load_err,omitempty"`
+
+	// ActiveDrives lists drive runs currently executing in this
+	// process. Empty (omitted from JSON) when no run is in flight.
+	// TUI/web/CLI status surfaces use this to render an "in flight"
+	// badge alongside provider/model.
+	ActiveDrives []ActiveDriveStatus `json:"active_drives,omitempty"`
+
+	// EventsDropped is the cumulative number of bus events the engine
+	// has had to discard because some subscriber's channel was full
+	// when Publish ran. Non-zero means the TUI / web client may have
+	// missed activity-feed entries — the agent itself is unaffected,
+	// but operators should investigate before assuming the loop is
+	// hung. Increments are monotonic for the lifetime of the process.
+	EventsDropped uint64 `json:"events_dropped,omitempty"`
+}
+
+// ActiveDriveStatus is the status-surface projection of a single
+// in-flight drive run. Mirrors drive.ActiveRun but lives here so
+// the engine package's Status() doesn't import internal/drive
+// (it does — drive_adapter.go — but the type lives here so
+// downstream JSON consumers don't have to chase imports either).
+type ActiveDriveStatus struct {
+	RunID string `json:"run_id"`
+	Task  string `json:"task,omitempty"`
 }
 
 type ContextInStatus struct {

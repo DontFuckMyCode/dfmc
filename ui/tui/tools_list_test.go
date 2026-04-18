@@ -10,9 +10,12 @@ func TestSlashTools_ListsWithSummaries(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
 
-	next, _, handled := m.executeChatCommand("/tools")
+	// /tools (no args) now toggles the tool-strip collapse flag — the
+	// catalog moved to `/tools list` to match the user-requested
+	// collapse-by-default UX.
+	next, _, handled := m.executeChatCommand("/tools list")
 	if !handled {
-		t.Fatal("/tools must be handled")
+		t.Fatal("/tools list must be handled")
 	}
 	nm := next.(Model)
 	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content

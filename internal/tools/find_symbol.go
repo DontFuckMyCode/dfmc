@@ -32,6 +32,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -39,6 +40,11 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
+
+// goReceiverRE pulls the receiver type out of a Go method signature like
+// `func (s *Server) Start(...)` or `func (Server) Start(...)`. Group 1 is
+// the type name with leading `*` stripped.
+var goReceiverRE = regexp.MustCompile(`^\s*func\s*\(\s*(?:[A-Za-z_]\w*\s+)?\*?([A-Za-z_]\w*)`)
 
 // FindSymbolTool implements the locate-by-name tool. Holds a lazily-init
 // ast.Engine; the parse cache lets repeat lookups against the same files
@@ -63,7 +69,16 @@ func (t *FindSymbolTool) Spec() ToolSpec {
 		Title:   "Find symbol with scope",
 		Summary: "Locate a function/class/method/HTML id/class/tag by name and return its full lexical scope.",
 		Purpose: "Use when you know WHAT you want but not WHERE. Returns code with brace/indent/tag-balanced bodies — no need to grep then read_file then guess line ranges.",
-		Prompt: `Single-call symbol locator. Pipeline:
+		Prompt: `Single-call symbol locator. Layer 3 of the read stack — sits between ` + "`grep_codebase`" + ` (cheapest discovery, line-stripped) and ` + "`read_file`" + ` (raw fetch, no semantics).
+
+# When to pick find_symbol vs the neighbors
+
+- "Where does the string X appear?" → ` + "`grep_codebase`" + `. Cheaper. Run this first when you only have a hunch.
+- "What's the shape of this whole project?" → ` + "`codemap`" + `. Signatures-only outline, no bodies.
+- "Show me the function/class NAMED X with its body" → this tool. AST-aware, returns the full scope.
+- "Show me lines 200–260 of file Y" → ` + "`read_file`" + `. Cheaper when you already know the path and range.
+
+Pipeline:
 1. Walks the project tree (skips .git, node_modules, vendor, bin, dist, .dfmc, .venv).
 2. For source files (Go, JS/TS/JSX/TSX, Python, Java, Rust, C/C++, C#, PHP, Swift, Kotlin, Scala, Ruby) — parses the AST, filters symbols by name (and kind if given), then extracts the full scope using brace balance (C-family) or indent (Python).
 3. For HTML/XML — scans for ` + "`id=\"NAME\"`" + `, ` + "`class=\"NAME\"`" + `, or ` + "`<NAME`" + ` opening tags and extracts the balanced tag block.
@@ -72,12 +87,16 @@ func (t *FindSymbolTool) Spec() ToolSpec {
 Args:
 - name (required): symbol name. Use match=exact|prefix|contains to widen.
 - kind (optional): function | method | class | interface | type | variable | constant | html_id | html_class | tag. Default: any AST symbol.
+- parent (optional): disambiguate by enclosing scope. Receiver type for Go (` + "`(s *Server) Start`" + ` → parent="Server"); enclosing class for Python/JS/TS/Java/Rust. Drops matches whose parent doesn't equal this value — use it when several types share a method name.
 - path (optional): restrict to a subdirectory of the project root.
 - language (optional): filter to one language (e.g. "go", "python"). Default: auto.
 - match (optional): exact (default) | prefix | contains.
 - max_results (optional, default 5, ceiling 20).
 - body_max_lines (optional, default 200, ceiling 1000).
 - include_body (optional, default true). False → metadata only (path/line/kind/signature).
+
+Output flags worth knowing:
+- ` + "`fallback: true`" + ` on a match means tree-sitter could not parse that file and a regex extractor produced the symbols. Results are best-effort — broken syntax, partial code, or unsupported language stubs trip this. Verify with read_file before acting on it.
 
 When to use:
 - "Find the aliveli function" — exact symbol lookup, returns the body.
@@ -94,6 +113,7 @@ When NOT to use:
 		Args: []Arg{
 			{Name: "name", Type: ArgString, Required: true, Description: "Symbol name to locate."},
 			{Name: "kind", Type: ArgString, Description: "function | method | class | interface | type | variable | constant | html_id | html_class | tag."},
+			{Name: "parent", Type: ArgString, Description: `Disambiguate by enclosing scope: receiver type for Go ("Server"), enclosing class for Python/JS/TS/Java ("UserService"). Drops matches whose parent doesn't equal this value.`},
 			{Name: "path", Type: ArgString, Description: "Restrict search to a subdirectory."},
 			{Name: "language", Type: ArgString, Description: `Filter to one language (e.g. "go", "python", "html").`},
 			{Name: "match", Type: ArgString, Default: "exact", Description: "exact | prefix | contains."},
@@ -101,7 +121,7 @@ When NOT to use:
 			{Name: "body_max_lines", Type: ArgInteger, Default: 200, Description: "Cap on lines per match (<=1000)."},
 			{Name: "include_body", Type: ArgBoolean, Default: true, Description: "When false, omit the code body — return metadata only."},
 		},
-		Returns: "{name, count, matches:[{path, language, name, kind, start_line, end_line, signature?, body?, truncated}]}.",
+		Returns: "{name, count, matches:[{path, language, name, kind, start_line, end_line, parent?, signature?, body?, truncated, fallback?}]}. fallback=true means tree-sitter couldn't parse the file and a regex extractor was used — results are best-effort.",
 		Examples: []string{
 			`{"name":"aliveli"}`,
 			`{"name":"render","kind":"method","max_results":20}`,
@@ -133,6 +153,7 @@ func (t *FindSymbolTool) Execute(ctx context.Context, req Request) (Result, erro
 
 	kind := strings.ToLower(strings.TrimSpace(asString(req.Params, "kind", "")))
 	wantLang := strings.ToLower(strings.TrimSpace(asString(req.Params, "language", "")))
+	wantParent := strings.TrimSpace(asString(req.Params, "parent", ""))
 	matchMode := strings.ToLower(strings.TrimSpace(asString(req.Params, "match", "exact")))
 	switch matchMode {
 	case "exact", "prefix", "contains":
@@ -222,8 +243,14 @@ func (t *FindSymbolTool) Execute(ctx context.Context, req Request) (Result, erro
 			return nil
 		}
 		lines := strings.Split(string(content), "\n")
+		fallback := parsed.Backend == "regex"
 		for _, sym := range hits {
 			m := buildScopeMatch(path, parsed.Language, sym, lines, bodyMaxLines, includeBody)
+			m.Parent = detectParent(parsed.Language, sym, lines)
+			if wantParent != "" && !parentMatches(m.Parent, wantParent) {
+				continue
+			}
+			m.Fallback = fallback
 			matches = append(matches, m)
 			if len(matches) >= maxResults {
 				return fs.SkipAll
@@ -240,6 +267,9 @@ func (t *FindSymbolTool) Execute(ctx context.Context, req Request) (Result, erro
 		filters := []string{fmt.Sprintf("name=%q", name)}
 		if kind != "" {
 			filters = append(filters, "kind="+kind)
+		}
+		if wantParent != "" {
+			filters = append(filters, "parent="+wantParent)
 		}
 		if wantLang != "" {
 			filters = append(filters, "language="+wantLang)
@@ -272,11 +302,17 @@ func (t *FindSymbolTool) Execute(ctx context.Context, req Request) (Result, erro
 			"end_line":   m.EndLine,
 			"truncated":  m.Truncated,
 		}
+		if m.Parent != "" {
+			entry["parent"] = m.Parent
+		}
 		if m.Signature != "" {
 			entry["signature"] = m.Signature
 		}
 		if includeBody && m.Body != "" {
 			entry["body"] = m.Body
+		}
+		if m.Fallback {
+			entry["fallback"] = true
 		}
 		dataMatches = append(dataMatches, entry)
 	}
@@ -299,11 +335,17 @@ type symbolMatch struct {
 	Language  string
 	Name      string
 	Kind      string
+	Parent    string
 	StartLine int
 	EndLine   int
 	Signature string
 	Body      string
 	Truncated bool
+	// Fallback is true when the file's symbols came from the regex
+	// extractor instead of tree-sitter — broken syntax, CGO-disabled
+	// build, or a stub language. The model treats these results as
+	// best-effort and verifies before acting.
+	Fallback bool
 }
 
 func appendCapped(dst, src []symbolMatch, cap int) []symbolMatch {
@@ -428,6 +470,125 @@ func sliceBody(lines []string, start, end, maxLines int) (string, bool) {
 	elided := len(span) - keep
 	head := span[:keep]
 	return strings.Join(head, "\n") + fmt.Sprintf("\n// … (%d lines elided — raise body_max_lines to see the rest)", elided), true
+}
+
+// detectParent returns the enclosing-scope name for a symbol — receiver
+// type for Go methods, enclosing class for class-shaped languages
+// (Python/JS/TS/Java/C#/Kotlin/Scala/Swift/PHP/Ruby/Rust impl). Returns
+// "" when the symbol is top-level or the language doesn't carry a parent
+// notion that we recognise. Best-effort: regex-based, no AST traversal.
+func detectParent(language string, sym types.Symbol, lines []string) string {
+	if sym.Kind != types.SymbolMethod && sym.Kind != types.SymbolFunction {
+		return ""
+	}
+	switch language {
+	case "go":
+		if m := goReceiverRE.FindStringSubmatch(sym.Signature); len(m) > 1 {
+			return m[1]
+		}
+		// Signature may be empty (regex fallback) — peek at the symbol's
+		// header line directly.
+		if sym.Line >= 1 && sym.Line <= len(lines) {
+			if m := goReceiverRE.FindStringSubmatch(lines[sym.Line-1]); len(m) > 1 {
+				return m[1]
+			}
+		}
+		return ""
+	case "python":
+		return enclosingByIndent(lines, sym.Line, `^\s*class\s+([A-Za-z_]\w*)`)
+	case "javascript", "typescript", "tsx", "jsx":
+		return enclosingByBraces(lines, sym.Line, `^\s*(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)`)
+	case "java", "csharp", "kotlin", "scala", "swift":
+		return enclosingByBraces(lines, sym.Line, `^\s*(?:public\s+|private\s+|protected\s+|internal\s+|abstract\s+|final\s+|static\s+|sealed\s+|open\s+)*(?:class|interface|object|trait|struct|enum)\s+([A-Za-z_]\w*)`)
+	case "rust":
+		// Rust methods live in `impl X { ... }` or `impl Trait for X { ... }`.
+		// Pick the type after `for` if present, otherwise the type after `impl`.
+		return enclosingByBraces(lines, sym.Line, `^\s*impl(?:<[^>]*>)?\s+(?:[\w:<>,\s']+for\s+)?([A-Za-z_]\w*)`)
+	case "php", "ruby":
+		return enclosingByIndent(lines, sym.Line, `^\s*class\s+([A-Za-z_]\w*)`)
+	case "cpp", "c++", "c":
+		return enclosingByBraces(lines, sym.Line, `^\s*(?:class|struct)\s+([A-Za-z_]\w*)`)
+	}
+	return ""
+}
+
+// parentMatches reports whether `have` is the enclosing scope the caller
+// asked for. Match is exact and case-sensitive — receiver/class names are
+// canonical identifiers, not free text.
+func parentMatches(have, want string) bool {
+	if want == "" {
+		return true
+	}
+	return have == want
+}
+
+// enclosingByIndent walks backward from line `at` to find the most recent
+// header that matches `pattern` AND has a smaller leading indent than the
+// symbol itself. Used for indent-scoped languages (Python, Ruby).
+func enclosingByIndent(lines []string, at int, pattern string) string {
+	if at < 1 || at > len(lines) {
+		return ""
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return ""
+	}
+	symIndent := leadingIndent(lines[at-1])
+	for i := at - 2; i >= 0; i-- {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		indent := leadingIndent(line)
+		if indent >= symIndent {
+			continue
+		}
+		if m := re.FindStringSubmatch(line); len(m) > 1 {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+// enclosingByBraces walks backward from line `at` looking for a header
+// line that matches `pattern` whose `{` block still encloses the symbol.
+// The brace count is computed from the candidate line through `at` — if
+// it ends > 0 the candidate's block is still open at `at`. Best-effort:
+// strings/comments are not stripped, so weird literal braces in between
+// can mislead the count, but the common case (one class per file, methods
+// inside it) is handled correctly.
+func enclosingByBraces(lines []string, at int, pattern string) string {
+	if at < 1 || at > len(lines) {
+		return ""
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return ""
+	}
+	for i := at - 2; i >= 0; i-- {
+		m := re.FindStringSubmatch(lines[i])
+		if len(m) <= 1 {
+			continue
+		}
+		// Count braces from this header through the symbol's line.
+		depth := 0
+		seenOpen := false
+		for j := i; j < at && j < len(lines); j++ {
+			for _, c := range lines[j] {
+				switch c {
+				case '{':
+					depth++
+					seenOpen = true
+				case '}':
+					depth--
+				}
+			}
+		}
+		if seenOpen && depth > 0 {
+			return m[1]
+		}
+	}
+	return ""
 }
 
 // extractScopeEnd picks a per-language scope strategy. Falls back to
@@ -826,12 +987,19 @@ func renderSymbolMatches(query string, matches []symbolMatch, includeBody bool) 
 		if i > 0 {
 			b.WriteString("\n\n")
 		}
-		header := fmt.Sprintf("%d. %s:%d-%d  %s  %s", i+1, m.Path, m.StartLine, m.EndLine, m.Kind, m.Name)
+		display := m.Name
+		if m.Parent != "" {
+			display = m.Parent + "." + m.Name
+		}
+		header := fmt.Sprintf("%d. %s:%d-%d  %s  %s", i+1, m.Path, m.StartLine, m.EndLine, m.Kind, display)
 		if m.Signature != "" && m.Signature != m.Name {
 			header += "  " + m.Signature
 		}
 		if m.Truncated {
 			header += "  [truncated]"
+		}
+		if m.Fallback {
+			header += "  [regex-fallback]"
 		}
 		b.WriteString(header)
 		if includeBody && m.Body != "" {

@@ -202,11 +202,41 @@ func (r *Registry) Register(cmd Command) error {
 	return nil
 }
 
+// RegistrationError wraps the underlying Register error with the
+// command name that triggered it so a recovering caller (e.g. a test
+// that intentionally probes duplicate registration) can surface a
+// readable diagnostic instead of a bare string. Implements `Unwrap` so
+// errors.Is / errors.As work transparently.
+type RegistrationError struct {
+	CommandName string
+	Err         error
+}
+
+func (e *RegistrationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("commands: failed to register %q: %v", e.CommandName, e.Err)
+}
+
+func (e *RegistrationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 // MustRegister is the panic-on-error variant — useful in package init or
-// tests where a registration failure is a programmer bug.
+// tests where a registration failure is a programmer bug. The panic
+// value is a *RegistrationError so a recovering caller can pull the
+// command name and root cause out for a readable crash report instead
+// of a bare string.
 func (r *Registry) MustRegister(cmd Command) {
 	if err := r.Register(cmd); err != nil {
-		panic(err)
+		panic(&RegistrationError{
+			CommandName: strings.ToLower(strings.TrimSpace(cmd.Name)),
+			Err:         err,
+		})
 	}
 }
 

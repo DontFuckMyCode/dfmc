@@ -158,3 +158,15 @@ type ToolResultRecord struct {
 	Timestamp time.Time         `json:"timestamp"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 }
+
+// File-mention marker tokens used by the user-facing prompt pipeline.
+// `[[file:path/to/file.go]]` and `[[file:path#L10-L80]]` markers in any
+// query are resolved by internal/context's manager and injected as
+// compressed snippets. Centralised here so producers (TUI composer,
+// CLI flag parser) and consumers (context manager, symbol expander)
+// share one source of truth — a stray `"[[file:"` literal in a future
+// edit would silently desync from the regex parser.
+const (
+	FileMarkerPrefix = "[[file:"
+	FileMarkerSuffix = "]]"
+)

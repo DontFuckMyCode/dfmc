@@ -56,9 +56,13 @@ func parseOrchestrateStages(raw any) ([]orchestrateStage, error) {
 	if raw == nil {
 		return nil, nil
 	}
+	example := `{"stages":[{"id":"plan","task":"sketch the api"},{"id":"impl","task":"implement it","depends_on":["plan"]}]}`
 	list, ok := raw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("stages must be an array, got %T", raw)
+		return nil, fmt.Errorf(
+			"orchestrate: stages must be a JSON array of {id, task, depends_on?, model?, race?} objects, got %T. "+
+				"Correct shape: %s",
+			raw, example)
 	}
 	if len(list) == 0 {
 		return nil, nil
@@ -67,15 +71,21 @@ func parseOrchestrateStages(raw any) ([]orchestrateStage, error) {
 	for i, item := range list {
 		m, ok := item.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("stages[%d] must be an object, got %T", i, item)
+			return nil, fmt.Errorf(
+				"orchestrate: stages[%d] must be an object {id, task, ...}, got %T. Full shape: %s",
+				i, item, example)
 		}
 		id := strings.TrimSpace(asString(m, "id", ""))
 		if id == "" {
-			return nil, fmt.Errorf("stages[%d].id is required", i)
+			return nil, fmt.Errorf(
+				"orchestrate: stages[%d].id is required (used as the dependency reference). Full shape: %s",
+				i, example)
 		}
 		task := strings.TrimSpace(asString(m, "task", ""))
 		if task == "" {
-			return nil, fmt.Errorf("stages[%d].task is required", i)
+			return nil, fmt.Errorf(
+				"orchestrate: stages[%d].task is required (the prompt the sub-agent will run). Full shape: %s",
+				i, example)
 		}
 		deps, err := parseDepsList(m["depends_on"])
 		if err != nil {

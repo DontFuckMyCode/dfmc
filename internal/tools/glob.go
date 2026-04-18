@@ -84,9 +84,12 @@ func (t *GlobTool) Execute(_ context.Context, req Request) (Result, error) {
 		Output: strings.Join(matches, "\n"),
 		Data: map[string]any{
 			"pattern": pattern,
-			"root":    req.ProjectRoot,
 			"count":   len(matches),
-			"matches": matches,
+			// `matches` was duplicated here AND in Output. The native loop
+			// re-encodes Data into the model's tool_result, doubling
+			// every glob hit on the wire. Output is the canonical
+			// surface; Data keeps just metadata. `root` was the absolute
+			// project root — same FS-leak pattern fixed in builtin.go.
 		},
 		Truncated: len(matches) >= limit,
 	}, nil

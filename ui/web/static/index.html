@@ -317,8 +317,136 @@ textarea {
 	70% { box-shadow: 0 0 0 12px rgba(41,199,172,0); }
 	100% { box-shadow: 0 0 0 0 rgba(41,199,172,0); }
 }
+/* Drive panel — autonomous run cockpit. Mirrors the TUI layout:
+	 active runs at top with a stop button, recent runs below, then a
+	 detail view showing the selected run's TODO ladder. Status pills
+	 use the same color logic as the chip in the TUI header. */
+.drive-grid {
+	display: grid;
+	grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.6fr);
+	gap: 14px;
+	margin-top: 12px;
+}
+.drive-side { display: grid; gap: 14px; align-content: start; }
+.drive-section-title {
+	font: 700 11px var(--font-mono);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--muted);
+	margin: 4px 0 6px;
+}
+.drive-item {
+	padding: 10px 12px;
+	border-radius: 12px;
+	background: rgba(255,255,255,0.03);
+	border: 1px solid rgba(255,255,255,0.08);
+	cursor: pointer;
+	display: grid;
+	gap: 4px;
+}
+.drive-item:hover, .drive-item.active {
+	border-color: rgba(102,179,255,0.32);
+	background: rgba(102,179,255,0.08);
+}
+.drive-item-id {
+	font: 600 12px var(--font-mono);
+	color: var(--accent-3);
+}
+.drive-item-task {
+	font-size: 13px;
+	color: var(--text);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.drive-item-meta {
+	font: 500 11px var(--font-mono);
+	color: var(--muted);
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.drive-pill {
+	display: inline-block;
+	padding: 2px 8px;
+	border-radius: 999px;
+	font: 700 10px var(--font-mono);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	border: 1px solid transparent;
+}
+.drive-pill.planning, .drive-pill.running {
+	color: var(--accent-3);
+	background: rgba(102,179,255,0.12);
+	border-color: rgba(102,179,255,0.28);
+}
+.drive-pill.done {
+	color: var(--accent-2);
+	background: rgba(41,199,172,0.12);
+	border-color: rgba(41,199,172,0.28);
+}
+.drive-pill.failed {
+	color: var(--accent);
+	background: rgba(242,95,92,0.14);
+	border-color: rgba(242,95,92,0.30);
+}
+.drive-pill.stopped {
+	color: var(--warn);
+	background: rgba(255,203,107,0.14);
+	border-color: rgba(255,203,107,0.30);
+}
+.drive-pill.pending, .drive-pill.skipped, .drive-pill.blocked {
+	color: var(--muted);
+	background: rgba(255,255,255,0.05);
+	border-color: rgba(255,255,255,0.10);
+}
+.drive-detail {
+	padding: 14px;
+	border-radius: 14px;
+	background: rgba(5, 10, 18, 0.55);
+	border: 1px solid rgba(255,255,255,0.08);
+	display: grid;
+	gap: 10px;
+	min-height: 240px;
+}
+.drive-detail-empty {
+	color: var(--muted);
+	font-size: 13px;
+	text-align: center;
+	padding: 32px 12px;
+}
+.drive-todo {
+	display: grid;
+	grid-template-columns: 22px 1fr auto;
+	gap: 10px;
+	padding: 8px 10px;
+	border-radius: 10px;
+	background: rgba(255,255,255,0.03);
+	border: 1px solid rgba(255,255,255,0.06);
+	align-items: baseline;
+}
+.drive-todo .marker { font: 700 14px var(--font-mono); }
+.drive-todo.done .marker { color: var(--accent-2); }
+.drive-todo.failed .marker, .drive-todo.blocked .marker { color: var(--accent); }
+.drive-todo.skipped .marker { color: var(--muted); }
+.drive-todo.running .marker { color: var(--accent-3); }
+.drive-todo .body { display: grid; gap: 4px; }
+.drive-todo .title { font: 600 13px var(--font-mono); }
+.drive-todo .detail { font-size: 12px; color: var(--muted); }
+.drive-todo .brief, .drive-todo .err {
+	margin-top: 4px;
+	font: 500 12px/1.5 var(--font-mono);
+	padding: 6px 8px;
+	border-radius: 8px;
+}
+.drive-todo .brief { background: rgba(41,199,172,0.07); color: #a8e9da; }
+.drive-todo .err { background: rgba(242,95,92,0.10); color: #ffb8b6; }
+.drive-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.drive-controls textarea { min-height: 64px; }
+
 @media (max-width: 1200px) {
 	.hero, .workspace { grid-template-columns: 1fr; }
+	.drive-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 720px) {
 	body { padding: 14px; }
@@ -485,6 +613,43 @@ textarea {
 					</div>
 					<div class="codebox" id="cap-tools">Loading tool catalog...</div>
 					<div class="footer-note">This is the bridge toward a full TUI: one shared operator model, multiple frontends.</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="panel" style="grid-column: 1 / -1;">
+			<div class="pane-header">
+				<div>
+					<div class="pane-title">Drive Cockpit</div>
+					<div class="pane-subtitle">Hand DFMC a goal; it plans, executes, and reports — you watch.</div>
+				</div>
+				<div class="pulse" id="drive-status">idle</div>
+			</div>
+			<div class="pane-body">
+				<div class="drive-controls">
+					<textarea id="drive-task" placeholder="Describe the autonomous task. Example: add CSV export to the dashboard, with tests."></textarea>
+				</div>
+				<div class="drive-controls">
+					<button id="drive-start" type="button">Start drive</button>
+					<button id="drive-refresh" class="secondary" type="button">Refresh</button>
+					<input id="drive-max-parallel" type="number" min="1" max="10" value="1" aria-label="max parallel" title="Max parallel TODOs (default 1, sequential)" style="max-width: 90px;">
+					<input id="drive-max-todos" type="number" min="1" max="100" value="20" aria-label="max todos" title="Max TODOs the planner may emit" style="max-width: 90px;">
+					<span class="inline-note" id="drive-summary">No drive run loaded.</span>
+				</div>
+				<div class="drive-grid">
+					<div class="drive-side">
+						<div>
+							<div class="drive-section-title">Active in this process</div>
+							<div class="list" id="drive-active-list"></div>
+						</div>
+						<div>
+							<div class="drive-section-title">Recent runs</div>
+							<div class="list" id="drive-list"></div>
+						</div>
+					</div>
+					<div class="drive-detail" id="drive-detail">
+						<div class="drive-detail-empty">Select a run to inspect its TODO ladder, or start a new one.</div>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -822,7 +987,7 @@ async function sendChat() {
 
 async function boot() {
 	try {
-		await Promise.all([loadStatus(), loadProvidersAndSkills(), loadFiles(), loadCodeMap(), loadWorkspaceDiff()]);
+		await Promise.all([loadStatus(), loadProvidersAndSkills(), loadFiles(), loadCodeMap(), loadWorkspaceDiff(), refreshDrivePanels()]);
 	} catch (err) {
 		addMessage("system", "Workbench load error: " + (err && err.message ? err.message : String(err)));
 	}
@@ -874,6 +1039,12 @@ function classifyActivityEvent(ev) {
 			return { kind: "error", icon: "\u2717",
 				text: "tool failed \u00b7 " + (payload.tool || "tool") + " " + (payload.error || "") };
 		}
+		if (type === "tool:reasoning") {
+			// Self-narration from the model — surface the WHY before the
+			// tool result lands. Glyph mirrors the TUI chip's `↳` shape.
+			return { kind: "tool", icon: "\u21b3",
+				text: (payload.tool || "tool") + " \u00b7 " + (payload.reason || "") };
+		}
 	}
 	if (type.startsWith("context:") || type.startsWith("ctx:")) {
 		if (type === "context:lifecycle:compacted") {
@@ -886,6 +1057,41 @@ function classifyActivityEvent(ev) {
 		if (type === "index:done") return { kind: "index", icon: "\u25a4", text: "index done \u00b7 " + (payload.files || 0) + " files" };
 		if (type === "index:error") return { kind: "error", icon: "\u2717", text: "index error \u00b7 " + (payload.error || "") };
 		return { kind: "index", icon: "\u25a4", text: type };
+	}
+	if (type.startsWith("drive:")) {
+		const rid = payload.run_id ? String(payload.run_id).slice(-8) : "";
+		if (type === "drive:run:start") {
+			return { kind: "agent", icon: "\u25b8", text: "drive start \u00b7 " + rid + " \u00b7 " + (payload.task || "") };
+		}
+		if (type === "drive:plan:start") {
+			return { kind: "agent", icon: "\u25b8", text: "drive plan start \u00b7 " + rid };
+		}
+		if (type === "drive:plan:done") {
+			return { kind: "agent", icon: "\u25b8", text: "drive plan \u00b7 " + (payload.todo_count || 0) + " todos" };
+		}
+		if (type === "drive:plan:failed") {
+			return { kind: "error", icon: "\u2717", text: "drive plan failed \u00b7 " + (payload.error || "") };
+		}
+		if (type === "drive:todo:start") {
+			return { kind: "tool", icon: "\u25b8", text: "drive todo " + (payload.todo_id || "?") + " \u00b7 " + (payload.title || "") };
+		}
+		if (type === "drive:todo:done") {
+			return { kind: "tool", icon: "\u25b8", text: "drive done " + (payload.todo_id || "?") + (payload.duration_ms ? (" (" + payload.duration_ms + "ms)") : "") };
+		}
+		if (type === "drive:todo:retry") {
+			return { kind: "tool", icon: "\u25b8", text: "drive retry " + (payload.todo_id || "?") + " \u00b7 attempt " + (payload.attempt || "?") };
+		}
+		if (type === "drive:todo:blocked") {
+			return { kind: "error", icon: "\u2717", text: "drive blocked " + (payload.todo_id || "?") + (payload.error ? (" \u00b7 " + payload.error) : "") };
+		}
+		if (type === "drive:todo:skipped") {
+			return { kind: "error", icon: "\u25b8", text: "drive skipped " + (payload.todo_id || "?") + (payload.reason ? (" \u00b7 " + payload.reason) : "") };
+		}
+		if (type === "drive:run:done" || type === "drive:run:failed" || type === "drive:run:stopped") {
+			const tail = payload.reason || payload.status || "";
+			return { kind: "agent", icon: "\u25b8", text: type + " \u00b7 " + rid + (tail ? (" \u00b7 " + tail) : "") };
+		}
+		return { kind: "agent", icon: "\u25b8", text: type };
 	}
 	if (type.startsWith("stream:")) return { kind: "stream", icon: "\u21e2", text: type };
 	if (type.includes("error") || type.includes("fail")) {
@@ -957,6 +1163,8 @@ function connectActivityStream() {
 				const data = JSON.parse(msg.data);
 				if (!data || data.type !== "event") return;
 				pushActivityEntry(classifyActivityEvent(data));
+				const evType = String(data.event || "").toLowerCase();
+				if (evType.startsWith("drive:")) scheduleDriveRefresh();
 			} catch (err) { /* swallow malformed frames */ }
 		};
 		es.onerror = () => {
@@ -980,6 +1188,368 @@ function clearActivityLog() {
 	renderActivityLog();
 }
 
+// Drive cockpit — autonomous run controller. Mirrors `dfmc drive ...`
+// over /api/v1/drive. Live updates piggyback on the activity SSE
+// stream: any drive:* event triggers a debounced refresh of the
+// active list + selected run detail. We never poll on a timer.
+const driveState = {
+	activeRuns: [],
+	recentRuns: [],
+	selectedID: "",
+	refreshTimer: null,
+};
+
+function shortDriveID(id) {
+	if (!id) return "-";
+	const s = String(id);
+	return s.length <= 14 ? s : s.slice(0, 14) + "\u2026";
+}
+
+function pillFor(status) {
+	const s = String(status || "").toLowerCase();
+	const span = document.createElement("span");
+	span.className = "drive-pill " + s;
+	span.textContent = s || "?";
+	return span;
+}
+
+function renderDriveActive() {
+	const list = document.getElementById("drive-active-list");
+	list.replaceChildren();
+	if (!driveState.activeRuns.length) {
+		const empty = document.createElement("div");
+		empty.className = "list-item";
+		empty.style.cursor = "default";
+		empty.textContent = "No active runs.";
+		list.appendChild(empty);
+		return;
+	}
+	for (const run of driveState.activeRuns) {
+		const item = document.createElement("div");
+		item.className = "drive-item" + (run.run_id === driveState.selectedID ? " active" : "");
+		const id = document.createElement("div"); id.className = "drive-item-id"; id.textContent = shortDriveID(run.run_id);
+		const task = document.createElement("div"); task.className = "drive-item-task"; task.textContent = run.task || "(no task)";
+		const meta = document.createElement("div"); meta.className = "drive-item-meta";
+		meta.appendChild(pillFor("running"));
+		const stop = document.createElement("button");
+		stop.type = "button";
+		stop.className = "secondary";
+		stop.style.padding = "4px 10px";
+		stop.style.fontSize = "11px";
+		stop.textContent = "Stop";
+		stop.addEventListener("click", (ev) => { ev.stopPropagation(); stopDrive(run.run_id); });
+		meta.appendChild(stop);
+		item.appendChild(id);
+		item.appendChild(task);
+		item.appendChild(meta);
+		item.addEventListener("click", () => selectDrive(run.run_id));
+		list.appendChild(item);
+	}
+}
+
+function renderDriveList() {
+	const list = document.getElementById("drive-list");
+	list.replaceChildren();
+	if (!driveState.recentRuns.length) {
+		const empty = document.createElement("div");
+		empty.className = "list-item";
+		empty.style.cursor = "default";
+		empty.textContent = "No drive runs yet.";
+		list.appendChild(empty);
+		return;
+	}
+	const sorted = driveState.recentRuns.slice().sort((a, b) => {
+		const ta = Date.parse(a.created_at || a.CreatedAt || "") || 0;
+		const tb = Date.parse(b.created_at || b.CreatedAt || "") || 0;
+		return tb - ta;
+	}).slice(0, 12);
+	for (const run of sorted) {
+		const item = document.createElement("div");
+		item.className = "drive-item" + (run.id === driveState.selectedID ? " active" : "");
+		const id = document.createElement("div"); id.className = "drive-item-id"; id.textContent = shortDriveID(run.id);
+		const task = document.createElement("div"); task.className = "drive-item-task"; task.textContent = run.task || "(no task)";
+		const meta = document.createElement("div"); meta.className = "drive-item-meta";
+		meta.appendChild(pillFor(run.status));
+		const todos = Array.isArray(run.todos) ? run.todos : [];
+		if (todos.length) {
+			const counts = todos.reduce((acc, t) => { acc[t.status] = (acc[t.status] || 0) + 1; return acc; }, {});
+			const done = counts.done || 0;
+			const span = document.createElement("span");
+			span.textContent = done + "/" + todos.length;
+			meta.appendChild(span);
+		}
+		item.appendChild(id);
+		item.appendChild(task);
+		item.appendChild(meta);
+		item.addEventListener("click", () => selectDrive(run.id));
+		list.appendChild(item);
+	}
+}
+
+function renderDriveDetail(run) {
+	const detail = document.getElementById("drive-detail");
+	detail.replaceChildren();
+	if (!run) {
+		const empty = document.createElement("div");
+		empty.className = "drive-detail-empty";
+		empty.textContent = "Select a run to inspect its TODO ladder, or start a new one.";
+		detail.appendChild(empty);
+		return;
+	}
+	const head = document.createElement("div");
+	head.style.display = "flex";
+	head.style.gap = "10px";
+	head.style.flexWrap = "wrap";
+	head.style.alignItems = "center";
+	const title = document.createElement("div");
+	title.style.flex = "1 1 auto";
+	title.style.minWidth = "200px";
+	const idLine = document.createElement("div"); idLine.className = "drive-item-id"; idLine.textContent = run.id;
+	const taskLine = document.createElement("div");
+	taskLine.style.color = "var(--text)";
+	taskLine.style.fontSize = "14px";
+	taskLine.style.marginTop = "4px";
+	taskLine.textContent = run.task || "(no task)";
+	title.appendChild(idLine);
+	title.appendChild(taskLine);
+	head.appendChild(title);
+	head.appendChild(pillFor(run.status));
+	const todos = Array.isArray(run.todos) ? run.todos : [];
+	const counts = todos.reduce((acc, t) => { acc[t.status] = (acc[t.status] || 0) + 1; return acc; }, {});
+	const summary = document.createElement("span");
+	summary.className = "inline-note";
+	summary.style.margin = "0";
+	summary.textContent = (counts.done || 0) + "/" + todos.length + " done"
+		+ (counts.failed || counts.blocked ? " \u00b7 " + ((counts.failed || 0) + (counts.blocked || 0)) + " blocked" : "")
+		+ (counts.skipped ? " \u00b7 " + counts.skipped + " skipped" : "");
+	head.appendChild(summary);
+	if (run.status === "stopped" || run.status === "planning" || run.status === "running") {
+		const resume = document.createElement("button");
+		resume.type = "button";
+		resume.className = "secondary";
+		resume.textContent = "Resume";
+		resume.addEventListener("click", () => resumeDrive(run.id));
+		head.appendChild(resume);
+	}
+	if (run.status !== "running" && run.status !== "planning") {
+		const del = document.createElement("button");
+		del.type = "button";
+		del.className = "secondary";
+		del.textContent = "Delete";
+		del.addEventListener("click", () => deleteDrive(run.id));
+		head.appendChild(del);
+	}
+	detail.appendChild(head);
+
+	if (run.reason) {
+		const reason = document.createElement("div");
+		reason.className = "inline-note";
+		reason.textContent = "Reason: " + run.reason;
+		detail.appendChild(reason);
+	}
+
+	if (!todos.length) {
+		const empty = document.createElement("div");
+		empty.className = "drive-detail-empty";
+		empty.textContent = run.status === "planning" ? "Planner is still drafting TODOs..." : "No TODOs were emitted.";
+		detail.appendChild(empty);
+		return;
+	}
+
+	for (const todo of todos) {
+		const row = document.createElement("div");
+		row.className = "drive-todo " + (todo.status || "pending");
+		const marker = document.createElement("div");
+		marker.className = "marker";
+		marker.textContent = todoMarker(todo.status);
+		const body = document.createElement("div");
+		body.className = "body";
+		const titleRow = document.createElement("div");
+		titleRow.className = "title";
+		titleRow.textContent = todo.id + " \u00b7 " + (todo.title || "(untitled)");
+		body.appendChild(titleRow);
+		if (todo.detail) {
+			const det = document.createElement("div");
+			det.className = "detail";
+			det.textContent = todo.detail;
+			body.appendChild(det);
+		}
+		const meta = [];
+		if (todo.attempts) meta.push("attempts=" + todo.attempts);
+		if (Array.isArray(todo.depends_on) && todo.depends_on.length) meta.push("deps=" + todo.depends_on.join(","));
+		if (Array.isArray(todo.file_scope) && todo.file_scope.length) meta.push("scope=" + todo.file_scope.join(","));
+		if (todo.provider_tag) meta.push("@" + todo.provider_tag);
+		if (meta.length) {
+			const m = document.createElement("div");
+			m.className = "drive-item-meta";
+			m.textContent = meta.join(" \u00b7 ");
+			body.appendChild(m);
+		}
+		if (todo.brief) {
+			const brief = document.createElement("div");
+			brief.className = "brief";
+			brief.textContent = todo.brief;
+			body.appendChild(brief);
+		}
+		if (todo.error) {
+			const err = document.createElement("div");
+			err.className = "err";
+			err.textContent = todo.error;
+			body.appendChild(err);
+		}
+		row.appendChild(marker);
+		row.appendChild(body);
+		row.appendChild(pillFor(todo.status));
+		detail.appendChild(row);
+	}
+}
+
+function todoMarker(status) {
+	switch ((status || "").toLowerCase()) {
+		case "done": return "\u2713";
+		case "failed": case "blocked": return "\u2717";
+		case "running": return "\u25b8";
+		case "skipped": return "\u00b7";
+		default: return "\u25cb";
+	}
+}
+
+async function loadDriveActive() {
+	try {
+		const data = await fetchJSON("/api/v1/drive/active");
+		driveState.activeRuns = Array.isArray(data) ? data : [];
+		renderDriveActive();
+		setText("drive-status", driveState.activeRuns.length ? (driveState.activeRuns.length + " active") : "idle");
+	} catch (err) {
+		setText("drive-status", "load error");
+	}
+}
+
+async function loadDriveList() {
+	try {
+		const data = await fetchJSON("/api/v1/drive");
+		driveState.recentRuns = Array.isArray(data) ? data : [];
+		renderDriveList();
+	} catch (err) {
+		// list errors are non-fatal — the panel still works for new runs
+	}
+}
+
+async function loadDriveDetail(id) {
+	if (!id) { renderDriveDetail(null); return; }
+	try {
+		const run = await fetchJSON("/api/v1/drive/" + encodeURIComponent(id));
+		renderDriveDetail(run);
+		const counts = (run.todos || []).reduce((acc, t) => { acc[t.status] = (acc[t.status] || 0) + 1; return acc; }, {});
+		setText("drive-summary", run.id + " \u00b7 " + run.status + " \u00b7 " + (counts.done || 0) + "/" + (run.todos || []).length + " done");
+	} catch (err) {
+		const detail = document.getElementById("drive-detail");
+		detail.replaceChildren();
+		const empty = document.createElement("div");
+		empty.className = "drive-detail-empty";
+		empty.textContent = "Could not load run: " + (err.message || String(err));
+		detail.appendChild(empty);
+	}
+}
+
+function selectDrive(id) {
+	driveState.selectedID = id;
+	renderDriveActive();
+	renderDriveList();
+	loadDriveDetail(id);
+}
+
+async function startDrive() {
+	const task = document.getElementById("drive-task").value.trim();
+	if (!task) {
+		setText("drive-summary", "Enter a task before starting.");
+		return;
+	}
+	const maxParallel = parseInt(document.getElementById("drive-max-parallel").value, 10) || 0;
+	const maxTodos = parseInt(document.getElementById("drive-max-todos").value, 10) || 0;
+	const button = document.getElementById("drive-start");
+	button.disabled = true;
+	setText("drive-status", "starting...");
+	try {
+		const body = { task };
+		if (maxParallel > 0) body.max_parallel = maxParallel;
+		if (maxTodos > 0) body.max_todos = maxTodos;
+		const resp = await authedFetch("/api/v1/drive", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		if (resp.status !== 202 && resp.status !== 200) {
+			const text = await resp.text();
+			throw new Error(text || ("HTTP " + resp.status));
+		}
+		document.getElementById("drive-task").value = "";
+		setText("drive-summary", "Drive started \u2014 watch for drive:* events.");
+		// Give the planner a beat to register, then refresh.
+		setTimeout(refreshDrivePanels, 400);
+	} catch (err) {
+		setText("drive-summary", "Start failed: " + (err.message || String(err)));
+		setText("drive-status", "error");
+	} finally {
+		button.disabled = false;
+	}
+}
+
+async function stopDrive(id) {
+	if (!id) return;
+	try {
+		const resp = await authedFetch("/api/v1/drive/" + encodeURIComponent(id) + "/stop", { method: "POST" });
+		if (!resp.ok) throw new Error(await resp.text() || ("HTTP " + resp.status));
+		setText("drive-summary", "Stop signal sent for " + shortDriveID(id) + ".");
+		setTimeout(refreshDrivePanels, 300);
+	} catch (err) {
+		setText("drive-summary", "Stop failed: " + (err.message || String(err)));
+	}
+}
+
+async function resumeDrive(id) {
+	if (!id) return;
+	try {
+		const resp = await authedFetch("/api/v1/drive/" + encodeURIComponent(id) + "/resume", { method: "POST" });
+		if (!resp.ok) throw new Error(await resp.text() || ("HTTP " + resp.status));
+		setText("drive-summary", "Resume requested for " + shortDriveID(id) + ".");
+		setTimeout(refreshDrivePanels, 400);
+	} catch (err) {
+		setText("drive-summary", "Resume failed: " + (err.message || String(err)));
+	}
+}
+
+async function deleteDrive(id) {
+	if (!id) return;
+	if (!window.confirm("Delete drive run " + id + "?")) return;
+	try {
+		const resp = await authedFetch("/api/v1/drive/" + encodeURIComponent(id), { method: "DELETE" });
+		if (!resp.ok) throw new Error(await resp.text() || ("HTTP " + resp.status));
+		if (driveState.selectedID === id) driveState.selectedID = "";
+		setText("drive-summary", "Deleted " + shortDriveID(id) + ".");
+		await refreshDrivePanels();
+		renderDriveDetail(null);
+	} catch (err) {
+		setText("drive-summary", "Delete failed: " + (err.message || String(err)));
+	}
+}
+
+async function refreshDrivePanels() {
+	await Promise.all([loadDriveActive(), loadDriveList()]);
+	if (driveState.selectedID) await loadDriveDetail(driveState.selectedID);
+}
+
+// Debounce drive:* event refreshes — events fire densely during a
+// run (one per todo start/done plus periodic plan updates), and we
+// don't want to hammer the API. 250ms catches the burst.
+function scheduleDriveRefresh() {
+	if (driveState.refreshTimer) return;
+	driveState.refreshTimer = setTimeout(() => {
+		driveState.refreshTimer = null;
+		refreshDrivePanels();
+	}, 250);
+}
+
 document.getElementById("chat-send").addEventListener("click", sendChat);
 document.getElementById("chat-status-refresh").addEventListener("click", () => Promise.all([loadStatus(), loadProvidersAndSkills()]));
 document.getElementById("refresh-files").addEventListener("click", loadFiles);
@@ -995,6 +1565,14 @@ document.getElementById("chat-input").addEventListener("keydown", event => {
 	if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
 		event.preventDefault();
 		sendChat();
+	}
+});
+document.getElementById("drive-start").addEventListener("click", startDrive);
+document.getElementById("drive-refresh").addEventListener("click", refreshDrivePanels);
+document.getElementById("drive-task").addEventListener("keydown", event => {
+	if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+		event.preventDefault();
+		startDrive();
 	}
 });
 boot();

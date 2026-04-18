@@ -130,6 +130,16 @@ func listFiles(root string, limit int) ([]string, error) {
 	return out, nil
 }
 
+// resolvePathWithinRoot resolves `rel` against `root` and returns the
+// absolute path, refusing anything that escapes the root via `..` or
+// symlink traversal. Pre-2026-04-18 it called EvalSymlinks on `target`
+// directly — which fails for paths the caller is about to *create*
+// (e.g. /api/v1/admin/magicdoc writing a fresh `docs/brief.md`). The
+// active TestResolveMagicDocPath_HonoursRelativeInsideRoot has been
+// red on main because of this. Post-fix we walk back to the deepest
+// existing ancestor, EvalSymlinks THAT, then re-attach the remaining
+// (non-existent) tail. Same containment check still applies, so
+// symlink-escapes can't sneak through a not-yet-created leaf.
 func resolvePathWithinRoot(root, rel string) (string, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -143,10 +153,17 @@ func resolvePathWithinRoot(root, rel string) (string, error) {
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(absRoot, rel)
 	}
-	absTarget, err := filepath.EvalSymlinks(target)
+	target = filepath.Clean(target)
+
+	resolvedAncestor, tail, err := resolveDeepestExistingAncestor(target)
 	if err != nil {
 		return "", fmt.Errorf("path resolution failed: %w", err)
 	}
+	absTarget := resolvedAncestor
+	if tail != "" {
+		absTarget = filepath.Join(resolvedAncestor, tail)
+	}
+
 	relPath, err := filepath.Rel(absRoot, absTarget)
 	if err != nil {
 		return "", err
@@ -154,5 +171,36 @@ func resolvePathWithinRoot(root, rel string) (string, error) {
 	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path escapes project root")
 	}
+	// Belt-and-braces: even if the lexical Rel says we're inside the
+	// root, the RESOLVED ancestor must also be — catches a symlink in
+	// the middle of the path that points outside.
+	if ancestorRel, aerr := filepath.Rel(absRoot, resolvedAncestor); aerr == nil {
+		if ancestorRel == ".." || strings.HasPrefix(ancestorRel, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("path escapes project root via symlink")
+		}
+	}
 	return absTarget, nil
+}
+
+// resolveDeepestExistingAncestor walks `target` upward until EvalSymlinks
+// succeeds, then returns (resolved-ancestor, joined-tail). If the full
+// path already exists, tail is "". This lets resolvePathWithinRoot keep
+// its symlink-safety guarantees for paths the caller is about to create.
+func resolveDeepestExistingAncestor(target string) (string, string, error) {
+	current := target
+	var tail []string
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			return resolved, filepath.Join(tail...), nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Reached the volume root and still couldn't resolve — give
+			// up cleanly so the caller surfaces a real error.
+			return "", "", err
+		}
+		tail = append([]string{filepath.Base(current)}, tail...)
+		current = parent
+	}
 }

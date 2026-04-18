@@ -191,6 +191,13 @@ type uiToggles struct {
 	coachMuted          bool // /coach: hide coach:note transcript lines
 	hintsVerbose        bool // /hints: surface model-facing trajectory hints
 	mouseCaptureEnabled bool // /mouse: cell-motion mouse tracking on/off
+	// toolStripExpanded controls whether the per-message tool-call
+	// strip renders as a one-line summary table (default, false) or as
+	// the full per-call chip block (when true). Default is collapsed
+	// because long sessions otherwise drown the actual answer in tool
+	// noise — the user can /tools (or ctrl+y) to flip it for a session
+	// when they want the breakdown.
+	toolStripExpanded bool
 }
 
 // activityPanelState — Activity tab state. `entries` is the timestamped
@@ -212,6 +219,18 @@ type sessionTelemetry struct {
 	compressionRawChars   int
 	activeToolCount       int
 	activeSubagentCount   int
+
+	// drive* fields track the most recently active drive run so the
+	// chat header can show "▸ drive 3/12 · T5" while the run is in
+	// flight. Reset on drive:run:done/stopped/failed so the chip
+	// disappears when the run is over. Concurrent drive runs are
+	// uncommon; the last one to publish "wins" the chip — tracking
+	// only the latest matches what users actually want to see.
+	driveRunID   string
+	driveTodoID  string
+	driveDone    int
+	driveTotal   int
+	driveBlocked int
 }
 
 // patchViewState — Patch tab state plus the workspace-diff snapshot that

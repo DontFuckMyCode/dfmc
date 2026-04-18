@@ -91,6 +91,13 @@ type Specer interface {
 // JSONSchema returns a JSON-Schema object for this spec's arguments. Provider
 // serializers use this as-is (Anthropic tool_use.input_schema, OpenAI
 // tool.parameters).
+//
+// Every schema gets a virtual `_reason` (optional string) field. The model is
+// nudged in the system prompt to fill it with a one-sentence justification
+// for the call ("reading config to find the API key location"); the engine
+// strips it before dispatch and republishes it as a tool:reasoning event so
+// UIs can render the why above each tool result. Optional means models that
+// don't supply it cost us nothing.
 func (s ToolSpec) JSONSchema() map[string]any {
 	properties := map[string]any{}
 	required := []string{}
@@ -100,6 +107,10 @@ func (s ToolSpec) JSONSchema() map[string]any {
 			required = append(required, arg.Name)
 		}
 	}
+	properties[ReasonField] = map[string]any{
+		"type":        "string",
+		"description": "Optional one-sentence explanation of WHY this tool is being called now. Surfaced in the UI; never sent to the tool implementation. Keep under ~140 chars.",
+	}
 	schema := map[string]any{
 		"type":       "object",
 		"properties": properties,
@@ -108,6 +119,42 @@ func (s ToolSpec) JSONSchema() map[string]any {
 		schema["required"] = required
 	}
 	return schema
+}
+
+// ReasonField is the virtual parameter name used for self-narration. Defined
+// as a constant so the engine's strip path and the schema injector stay in
+// sync — renaming it in one place wouldn't break call sites silently.
+const ReasonField = "_reason"
+
+// ExtractReason peels the optional self-narration field out of a tool's
+// param map and returns its trimmed string value. Mutates `params` to
+// remove the key so the tool implementation never sees it.
+//
+// Behaviour:
+//   - missing field           → ("", false)
+//   - non-string field        → stripped, returned as ("", false). The schema
+//     declares string only; non-string values are model bugs we silently
+//     correct rather than failing the call.
+//   - empty / whitespace only → stripped, returned as ("", false)
+//   - normal string           → stripped, trimmed value returned with true.
+func ExtractReason(params map[string]any) (string, bool) {
+	if params == nil {
+		return "", false
+	}
+	raw, ok := params[ReasonField]
+	if !ok {
+		return "", false
+	}
+	delete(params, ReasonField)
+	str, ok := raw.(string)
+	if !ok {
+		return "", false
+	}
+	str = strings.TrimSpace(str)
+	if str == "" {
+		return "", false
+	}
+	return str, true
 }
 
 func argToSchema(a Arg) map[string]any {

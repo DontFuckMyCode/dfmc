@@ -83,9 +83,12 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 	}
 	defer resp.Body.Close()
 
-	raw, err := io.ReadAll(resp.Body)
+	raw, truncated, err := readBoundedBody(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+	if truncated {
+		return nil, fmt.Errorf("anthropic response exceeded %d bytes — refusing to decode (likely a misbehaving proxy or hostile endpoint)", maxProviderResponseBytes)
 	}
 	if resp.StatusCode >= 400 {
 		if isThrottleStatus(resp.StatusCode) {
@@ -323,6 +326,33 @@ func normalizeAnthropicBaseURL(baseURL string) string {
 		return b + "/v1"
 	}
 	return b
+}
+
+// maxProviderResponseBytes caps how much we read off ANY provider HTTP
+// body. Real Claude/OpenAI/Gemini completions max out in the low MB
+// range; anything larger is a misbehaving proxy or a malicious endpoint
+// trying to OOM the host. Pre-fix every provider used a bare
+// io.ReadAll(resp.Body) — a 4 GB body would crash the process before
+// JSON decode even fired. 32 MiB sits comfortably above legitimate
+// envelopes (full reasoning trace + tool_use blocks) but well under any
+// practical OOM threshold. Apply via readBoundedBody (below).
+const maxProviderResponseBytes = 32 << 20 // 32 MiB
+
+// readBoundedBody is the standard "read the whole body but stop at
+// maxProviderResponseBytes" helper. Returns the truncated bytes plus an
+// indicator the caller can use to surface a clearer error than
+// "unexpected end of JSON input". Use everywhere a provider read
+// happens.
+func readBoundedBody(body io.Reader) ([]byte, bool, error) {
+	limited := io.LimitReader(body, maxProviderResponseBytes+1)
+	raw, err := io.ReadAll(limited)
+	if err != nil {
+		return raw, false, err
+	}
+	if len(raw) > maxProviderResponseBytes {
+		return raw[:maxProviderResponseBytes], true, nil
+	}
+	return raw, false, nil
 }
 
 func parseCommonProviderError(raw []byte) string {

@@ -38,6 +38,20 @@ type Config struct {
 	Project   ProjectConfig   `yaml:"project"`
 	Coach     CoachConfig     `yaml:"coach"`
 	Intent    IntentConfig    `yaml:"intent"`
+	AST       ASTConfig       `yaml:"ast"`
+}
+
+// ASTConfig holds runtime knobs for the AST engine. Today only the
+// parse-cache capacity is exposed — large monorepos may want to raise
+// it (the working set can easily exceed the 10K default once codemap
+// rebuilds + on-demand find_symbol lookups overlap), and embedded
+// deployments may want to lower it to keep RSS predictable.
+type ASTConfig struct {
+	// CacheSize bounds the LRU parse cache (entries). Zero falls back
+	// to the package default. Values <= 0 are treated as "use default"
+	// rather than "disable", since disabling caching would make codemap
+	// rebuilds 100x slower without warning.
+	CacheSize int `yaml:"cache_size"`
 }
 
 // CoachConfig governs the background "tiny-touches" observer that publishes
@@ -117,6 +131,19 @@ type AgentConfig struct {
 	// per-project (e.g. 30) for unattended overnight runs; tighten to 1
 	// or 2 in CI environments that must hard-stop after one budget.
 	ResumeMaxMultiplier int `yaml:"resume_max_multiplier"`
+
+	// ToolReasoning controls the per-tool-call self-narration surface:
+	// every tool's JSON schema gets an optional virtual `_reason` field
+	// the model can fill with a one-sentence why ("reading config to
+	// locate the API key"). The engine strips it before dispatch and
+	// publishes a tool:reasoning event so UIs can render the why above
+	// each tool result.
+	//
+	// Values: "auto" / "on" / "" / "true" → enabled. "off" / "false" /
+	// "no" / "0" → disabled (no event publish; the schema still includes
+	// the field as a no-op so models that already learned the convention
+	// don't fail). Default "auto" = on.
+	ToolReasoning string `yaml:"tool_reasoning"`
 
 	// AutonomousResume controls whether a budget-exhausted park triggers
 	// an automatic compact-and-resume from inside the same Ask call —

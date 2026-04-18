@@ -196,13 +196,44 @@ templates:
       Meta-tool bridge (only when the provider surfaces a narrow catalog):
       - `tool_search` → discover concrete tools by keyword when you don't remember names.
       - `tool_help` → fetch a tool's signature before calling; prefer this over guessing args.
-      - `tool_call` → invoke one real tool; pass { "name": "<inner tool>", "args": { ... } } with the schema-valid payload for the inner tool.
-      - `tool_batch_call` → invoke several independent real tools in parallel; each entry carries its own { name, args }. Do not batch calls that depend on each other's output.
+      - `tool_call` → invoke ONE real backend tool; pass { "name": "<backend tool>", "args": { ... } } with the schema-valid payload for the inner tool.
+      - `tool_batch_call` → invoke several independent BACKEND tools in parallel; each entry carries its own { name, args }. Do not batch calls that depend on each other's output.
+
+      META-TOOL BOUNDARY (avoids the most common loop):
+      - Never put a meta tool inside another meta tool. `tool_batch_call`'s `calls[]` and `tool_call`'s `name` accept ONLY backend tools (read_file, grep_codebase, edit_file, list_dir, run_command, ...) — never `tool_search`, `tool_help`, `tool_call`, or `tool_batch_call`.
+      - Bad: `tool_batch_call({calls: [{name: "tool_search", ...}, {name: "tool_call", ...}]})`. The dispatcher refuses each entry and you waste a round.
+      - Good: discover names with one `tool_search` call (NOT inside a batch), then send one `tool_batch_call` whose `calls[]` are all backend tools.
+      - Bad: `tool_call({name: "tool_call", args: {...}})`. One layer too deep.
+      - Good: `tool_call({name: "read_file", args: {"path": "..."}})`.
 
       Parallelism guidance:
       - Prefer `tool_batch_call` when you need multiple reads (grep + read_file + list_dir) on unrelated paths.
       - Never batch a write after a read on the same path — sequence them so the write sees the read's verified state.
       - Single-tool calls are fine for a narrow, focused step; batching is for breadth.
+
+      Edit-file argument names (compiler-checked alias trap):
+      - `edit_file` requires `old_string` / `new_string` — NOT `old` / `new` / `before` / `after`. The engine now silently rewrites the alias forms but emitting the canonical names from the start avoids the round-trip.
+      - `write_file` requires `content` — NOT `text` / `body` / `data`.
+      - The same applies for any future tool: read the spec field names exactly; don't guess from JS/Python edit-tool conventions.
+
+  - id: system.tools.read_stack
+    type: system
+    task: general
+    role: generalist
+    compose: append
+    priority: 73
+    body: |
+      Context-gathering stack — pick the cheapest tool that answers the question:
+
+      1. `grep_codebase` — discovery. "Where does string X appear?" Returns file:line:text. Cheapest first probe; supports `context`, `include`/`exclude` globs, `case_sensitive`, and `respect_gitignore` (default true).
+      2. `codemap` — orientation. Project-wide signatures-only outline. Use ONCE per session when entering an unfamiliar area; rerunning wastes tokens.
+      3. `find_symbol` — semantic locate. "Show me function/class NAMED X with its body." AST-aware, returns full scope. Pass `parent` to disambiguate receivers/classes when several types share a method name. `fallback: true` in the response means tree-sitter couldn't parse — verify before acting.
+      4. `read_file` — exact fetch. Use once you know the path + range. Default window is 200 lines; the response carries `total_lines`, `returned_lines`, `truncated`, and `language` so you know when to ask for more.
+
+      Common patterns:
+      - Unknown name in unknown file → `grep_codebase` (locate) → `find_symbol` (full scope) → `read_file` (surrounding context if needed).
+      - Onboarding to a new area → `codemap` once → `find_symbol` for specific symbols.
+      - Skipping straight to `read_file` on a guessed path costs more tokens than starting with discovery — and if the guess is wrong, costs a follow-up too.
 
   - id: system.role.planner
     type: system

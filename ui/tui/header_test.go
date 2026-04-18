@@ -10,6 +10,52 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
+// TestRenderChatHeader_DriveChipShownWhenRunActive: when telemetry
+// has a non-empty DriveRunID, the header must render a "▸ drive
+// X/Y · Tn" chip. When DriveRunID is empty the chip must NOT
+// appear (no stale "▸ drive 0/0" leftover).
+func TestRenderChatHeader_DriveChipShownWhenRunActive(t *testing.T) {
+	active := renderChatHeader(chatHeaderInfo{
+		Provider:    "anthropic",
+		Model:       "sonnet",
+		DriveRunID:  "drv-abc",
+		DriveTodoID: "T5",
+		DriveDone:   3,
+		DriveTotal:  12,
+	}, 200)
+	if !strings.Contains(active, "drive 3/12") {
+		t.Fatalf("active drive chip missing: %q", active)
+	}
+	if !strings.Contains(active, "T5") {
+		t.Fatalf("active drive chip should name in-flight TODO: %q", active)
+	}
+
+	idle := renderChatHeader(chatHeaderInfo{
+		Provider: "anthropic",
+		Model:    "sonnet",
+	}, 200)
+	if strings.Contains(idle, "drive") {
+		t.Fatalf("idle header must NOT show drive chip: %q", idle)
+	}
+}
+
+// TestRenderChatHeader_DriveChipWarnsWhenBlockedNonZero: blocked > 0
+// flips the chip to a warn style and surfaces "(blocked N)" so the
+// user sees trouble at a glance.
+func TestRenderChatHeader_DriveChipWarnsWhenBlockedNonZero(t *testing.T) {
+	out := renderChatHeader(chatHeaderInfo{
+		Provider:     "anthropic",
+		Model:        "sonnet",
+		DriveRunID:   "drv-x",
+		DriveDone:    2,
+		DriveTotal:   8,
+		DriveBlocked: 1,
+	}, 200)
+	if !strings.Contains(out, "blocked 1") {
+		t.Fatalf("blocked-count chip missing: %q", out)
+	}
+}
+
 func TestFormatThousandsGroupsDigits(t *testing.T) {
 	cases := map[int]string{
 		0:       "0",

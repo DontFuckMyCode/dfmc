@@ -73,6 +73,79 @@ func (g *Graph) AddEdge(edge Edge) {
 	g.incoming[edge.To][edgeKey{Node: edge.From, Type: edge.Type}] = edge
 }
 
+// RemoveEdge deletes one specific (from, to, type) triple from both
+// the outgoing and incoming adjacency maps. Returns true when at least
+// one side held the edge. No-op when neither side does (idempotent —
+// safe to call repeatedly during a partial-rebuild sweep). Empty
+// adjacency sub-maps are dropped so Counts() and HotSpots() don't keep
+// counting a node's degree based on stale empty buckets.
+func (g *Graph) RemoveEdge(edge Edge) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	removed := false
+	outKey := edgeKey{Node: edge.To, Type: edge.Type}
+	if outs, ok := g.outgoing[edge.From]; ok {
+		if _, has := outs[outKey]; has {
+			delete(outs, outKey)
+			removed = true
+			if len(outs) == 0 {
+				delete(g.outgoing, edge.From)
+			}
+		}
+	}
+	inKey := edgeKey{Node: edge.From, Type: edge.Type}
+	if ins, ok := g.incoming[edge.To]; ok {
+		if _, has := ins[inKey]; has {
+			delete(ins, inKey)
+			removed = true
+			if len(ins) == 0 {
+				delete(g.incoming, edge.To)
+			}
+		}
+	}
+	return removed
+}
+
+// RemoveNode deletes a node and every edge that touches it. Returns
+// true when the node existed. Used by incremental rebuilds: when a
+// file is deleted from the project, the codemap layer prunes the file
+// node and all symbol nodes that lived in it; without this method the
+// graph kept growing across rebuilds until process restart, polluting
+// HotSpots() and Orphans() with phantom IDs (REPORT.md L2).
+func (g *Graph) RemoveNode(id string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if _, ok := g.nodes[id]; !ok {
+		return false
+	}
+	// Drop reverse pointers first: every outgoing edge from `id` has
+	// an incoming entry on the other side that needs to go too, and
+	// vice versa. Doing it before deleting g.outgoing[id] /
+	// g.incoming[id] keeps the loop reading from the same map snapshot.
+	for k := range g.outgoing[id] {
+		if ins, ok := g.incoming[k.Node]; ok {
+			delete(ins, edgeKey{Node: id, Type: k.Type})
+			if len(ins) == 0 {
+				delete(g.incoming, k.Node)
+			}
+		}
+	}
+	for k := range g.incoming[id] {
+		if outs, ok := g.outgoing[k.Node]; ok {
+			delete(outs, edgeKey{Node: id, Type: k.Type})
+			if len(outs) == 0 {
+				delete(g.outgoing, k.Node)
+			}
+		}
+	}
+	delete(g.outgoing, id)
+	delete(g.incoming, id)
+	delete(g.nodes, id)
+	return true
+}
+
 func (g *Graph) GetNode(id string) (Node, bool) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()

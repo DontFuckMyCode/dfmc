@@ -56,7 +56,18 @@ func (t *ReadFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	lines := strings.Split(text, "\n")
 
 	start := asInt(req.Params, "line_start", 1)
-	end := asInt(req.Params, "line_end", len(lines))
+	// Default end caps the window at 200 lines from `start` so a bare
+	// {"path":"X"} call doesn't dump a 5000-line file into the model's
+	// context. The Spec advertises this default and the spec's `view`
+	// contract relies on `truncated:true` firing when the cap kicks in;
+	// without the cap, truncated was dead code. Callers that genuinely
+	// want the whole file can pass line_end explicitly.
+	const defaultWindow = 200
+	defaultEnd := start + defaultWindow - 1
+	if defaultEnd > len(lines) {
+		defaultEnd = len(lines)
+	}
+	end := asInt(req.Params, "line_end", defaultEnd)
 	if start < 1 {
 		start = 1
 	}
@@ -71,15 +82,85 @@ func (t *ReadFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	}
 
 	segment := strings.Join(lines[start-1:end], "\n")
+	// Returned-vs-total telemetry — mirrors the spec's `view` contract:
+	// the model gets `total_lines` so it can decide whether to widen the
+	// range, and `truncated` so a partial read is loud, not silent.
+	totalLines := len(lines)
+	returnedLines := end - start + 1
+	if returnedLines < 0 {
+		returnedLines = 0
+	}
+	// truncated means "the file extends past what you got" — always set
+	// when returned < total. We can't reliably distinguish "caller asked
+	// for a slice" from "engine clamped to default 200" here because the
+	// engine's normalizeToolParams injects default line_start/line_end
+	// before Execute runs, so the caller-intent signal is gone by this
+	// point. Honest answer: tell the model whether it got everything.
+	truncated := returnedLines < totalLines
 	return Result{
 		Output: segment,
 		Data: map[string]any{
-			"path":       absPath,
-			"line_start": start,
-			"line_end":   end,
-			"line_count": len(lines),
+			"path":           PathRelativeToRoot(req.ProjectRoot, absPath),
+			"line_start":     start,
+			"line_end":       end,
+			"line_count":     totalLines, // legacy field name
+			"total_lines":    totalLines, // spec-aligned alias
+			"returned_lines": returnedLines,
+			"truncated":      truncated,
+			"language":       detectLanguageFromExt(absPath),
 		},
+		Truncated: truncated,
 	}, nil
+}
+
+// detectLanguageFromExt maps a file path to a short language tag the
+// model can use for syntax-highlighting hints. Mirrors the AST engine's
+// extension table; centralised here as a small lookup so read_file
+// doesn't pull in the full AST stack just for a string label.
+func detectLanguageFromExt(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".go":
+		return "go"
+	case ".py":
+		return "python"
+	case ".js", ".jsx":
+		return "javascript"
+	case ".ts", ".tsx":
+		return "typescript"
+	case ".java":
+		return "java"
+	case ".rs":
+		return "rust"
+	case ".c", ".h":
+		return "c"
+	case ".cc", ".cpp", ".cxx", ".hpp":
+		return "cpp"
+	case ".cs":
+		return "csharp"
+	case ".swift":
+		return "swift"
+	case ".kt", ".kts":
+		return "kotlin"
+	case ".scala":
+		return "scala"
+	case ".php":
+		return "php"
+	case ".rb":
+		return "ruby"
+	case ".lua":
+		return "lua"
+	case ".md", ".markdown":
+		return "markdown"
+	case ".yml", ".yaml":
+		return "yaml"
+	case ".json":
+		return "json"
+	case ".toml":
+		return "toml"
+	case ".sh", ".bash":
+		return "bash"
+	}
+	return ""
 }
 
 type WriteFileTool struct{}
@@ -106,7 +187,13 @@ func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) 
 	}
 	if !overwrite {
 		if _, err := os.Stat(absPath); err == nil {
-			return Result{}, fmt.Errorf("file already exists: %s", absPath)
+			rel := PathRelativeToRoot(req.ProjectRoot, absPath)
+			return Result{}, fmt.Errorf(
+				"write_file refused: %s already exists. "+
+					"To replace it intentionally, set overwrite=true (and read it first via read_file so the engine knows the prior contents). "+
+					"To make a small edit, use edit_file instead — it only needs old_string/new_string and preserves the rest. "+
+					`Recover (overwrite shape): {"name":"write_file","args":{"path":%q,"content":"...","overwrite":true}}.`,
+				rel, rel)
 		}
 	}
 	if err := writeFileAtomic(absPath, []byte(content), 0o644); err != nil {
@@ -115,7 +202,7 @@ func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) 
 	return Result{
 		Output: "file written",
 		Data: map[string]any{
-			"path":  absPath,
+			"path":  PathRelativeToRoot(req.ProjectRoot, absPath),
 			"bytes": len([]byte(content)),
 		},
 	}, nil
@@ -197,7 +284,7 @@ func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	return Result{
 		Output: fmt.Sprintf("file edited (%d replacement%s)", replacedN, plural(replacedN)),
 		Data: map[string]any{
-			"path":         absPath,
+			"path":         PathRelativeToRoot(req.ProjectRoot, absPath),
 			"replacements": replacedN,
 		},
 	}, nil
@@ -347,9 +434,13 @@ func (t *ListDirTool) Execute(_ context.Context, req Request) (Result, error) {
 
 	return Result{
 		Data: map[string]any{
-			"path":    absPath,
-			"entries": out,
-			"count":   len(out),
+			"path":  PathRelativeToRoot(req.ProjectRoot, absPath),
+			"count": len(out),
+			// `entries` was duplicated in Output (joined newline blob) AND
+			// here as a JSON array — the model received every name twice
+			// per list_dir call. Output is the canonical surface; Data
+			// keeps just the count so the model can branch on emptiness
+			// without re-reading the list.
 		},
 		Output: strings.Join(out, "\n"),
 	}, nil
@@ -471,17 +562,72 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 			`{"pattern":"func\\s+NewEngine"} or {"pattern":"TODO","path":"internal"}`,
 			hint)
 	}
-	re, err := regexp.Compile(pattern)
+
+	caseSensitive := asBool(req.Params, "case_sensitive", true)
+	compilePattern := pattern
+	// case_sensitive=false short-circuits to a (?i) prefix so the model
+	// doesn't have to know about RE2 inline flags. Honour an explicit
+	// (?i) the model wrote — don't double-prefix.
+	if !caseSensitive && !strings.HasPrefix(strings.TrimSpace(compilePattern), "(?i)") {
+		compilePattern = "(?i)" + compilePattern
+	}
+	re, err := regexp.Compile(compilePattern)
 	if err != nil {
 		return Result{}, formatGrepRegexError(pattern, err)
 	}
+
 	maxResults := asInt(req.Params, "max_results", 100)
 	if maxResults <= 0 {
 		maxResults = 100
 	}
 
-	var matches []string
-	err = filepath.WalkDir(req.ProjectRoot, func(path string, d fs.DirEntry, err error) error {
+	// Search root: optional sub-path; falls back to project root.
+	base := req.ProjectRoot
+	if rootArg := strings.TrimSpace(asString(req.Params, "path", "")); rootArg != "" {
+		p, perr := EnsureWithinRoot(req.ProjectRoot, rootArg)
+		if perr != nil {
+			return Result{}, perr
+		}
+		base = p
+	}
+
+	// Context window for each match. `context` sets symmetric N before/after;
+	// `before` / `after` override per side. Capped at 50 lines per side so a
+	// runaway value can't blow the result budget.
+	contextLines := asInt(req.Params, "context", 0)
+	beforeLines := asInt(req.Params, "before", contextLines)
+	afterLines := asInt(req.Params, "after", contextLines)
+	if beforeLines < 0 {
+		beforeLines = 0
+	}
+	if afterLines < 0 {
+		afterLines = 0
+	}
+	if beforeLines > 50 {
+		beforeLines = 50
+	}
+	if afterLines > 50 {
+		afterLines = 50
+	}
+
+	includeGlobs := splitGlobList(req.Params, "include")
+	excludeGlobs := splitGlobList(req.Params, "exclude")
+
+	respectGitignore := asBool(req.Params, "respect_gitignore", true)
+	var ignoreMatcher *gitignoreMatcher
+	if respectGitignore {
+		ignoreMatcher = loadGitignore(req.ProjectRoot)
+	}
+
+	type matchHit struct {
+		Rel  string
+		Line int
+		Text string
+	}
+	var hits []matchHit
+	var blocks []string
+
+	err = filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -490,21 +636,47 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 			case ".git", ".dfmc", "node_modules", "vendor", "bin", "dist":
 				return fs.SkipDir
 			}
+			if ignoreMatcher != nil {
+				rel, _ := filepath.Rel(req.ProjectRoot, path)
+				relSlash := filepath.ToSlash(rel)
+				if relSlash != "." && ignoreMatcher.matchDir(relSlash) {
+					return fs.SkipDir
+				}
+			}
+			return nil
+		}
+		rel, _ := filepath.Rel(req.ProjectRoot, path)
+		relSlash := filepath.ToSlash(rel)
+
+		if ignoreMatcher != nil && ignoreMatcher.matchFile(relSlash) {
+			return nil
+		}
+		if len(includeGlobs) > 0 && !anyGlobMatches(includeGlobs, relSlash) {
+			return nil
+		}
+		if len(excludeGlobs) > 0 && anyGlobMatches(excludeGlobs, relSlash) {
 			return nil
 		}
 
-		content, err := os.ReadFile(path)
-		if err != nil {
+		content, rerr := os.ReadFile(path)
+		if rerr != nil {
 			return nil
 		}
 		lines := strings.Split(string(content), "\n")
 		for i, line := range lines {
-			if re.MatchString(line) {
-				rel, _ := filepath.Rel(req.ProjectRoot, path)
-				matches = append(matches, fmt.Sprintf("%s:%d:%s", filepath.ToSlash(rel), i+1, strings.TrimSpace(line)))
-				if len(matches) >= maxResults {
-					return fs.SkipAll
-				}
+			if !re.MatchString(line) {
+				continue
+			}
+			hits = append(hits, matchHit{Rel: relSlash, Line: i + 1, Text: strings.TrimSpace(line)})
+			if beforeLines == 0 && afterLines == 0 {
+				// No-context output stays compatible with the original
+				// `path:line:text` shape so existing tests / consumers
+				// don't have to special-case context-less calls.
+			} else {
+				blocks = append(blocks, formatGrepBlock(relSlash, lines, i, beforeLines, afterLines))
+			}
+			if len(hits) >= maxResults {
+				return fs.SkipAll
 			}
 		}
 		return nil
@@ -513,15 +685,221 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 		return Result{}, err
 	}
 
+	var output string
+	if beforeLines == 0 && afterLines == 0 {
+		simple := make([]string, 0, len(hits))
+		for _, h := range hits {
+			simple = append(simple, fmt.Sprintf("%s:%d:%s", h.Rel, h.Line, h.Text))
+		}
+		output = strings.Join(simple, "\n")
+	} else {
+		output = strings.Join(blocks, "\n--\n")
+	}
+
+	data := map[string]any{
+		"pattern":        pattern,
+		"count":          len(hits),
+		"case_sensitive": caseSensitive,
+	}
+	if beforeLines > 0 || afterLines > 0 {
+		data["context_before"] = beforeLines
+		data["context_after"] = afterLines
+	}
+	if len(includeGlobs) > 0 {
+		data["include"] = includeGlobs
+	}
+	if len(excludeGlobs) > 0 {
+		data["exclude"] = excludeGlobs
+	}
+
 	return Result{
-		Output: strings.Join(matches, "\n"),
-		Data: map[string]any{
-			"pattern": pattern,
-			"matches": matches,
-			"count":   len(matches),
-		},
-		Truncated: len(matches) >= maxResults,
+		Output:    output,
+		Data:      data,
+		Truncated: len(hits) >= maxResults,
 	}, nil
+}
+
+// splitGlobList accepts either ["pattern1","pattern2"] (preferred) or a
+// comma-separated string ("**/*.go,internal/**"). Empty/whitespace
+// entries are dropped. The model often guesses one shape per language so
+// we accept both rather than rejecting the call.
+func splitGlobList(params map[string]any, key string) []string {
+	if params == nil {
+		return nil
+	}
+	v, ok := params[key]
+	if !ok || v == nil {
+		return nil
+	}
+	switch vv := v.(type) {
+	case []any:
+		out := make([]string, 0, len(vv))
+		for _, item := range vv {
+			if s := strings.TrimSpace(fmt.Sprint(item)); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []string:
+		out := make([]string, 0, len(vv))
+		for _, item := range vv {
+			if s := strings.TrimSpace(item); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		out := []string{}
+		for _, part := range strings.Split(vv, ",") {
+			if s := strings.TrimSpace(part); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// anyGlobMatches returns true when any glob in `patterns` matches the
+// project-relative `relSlash` (forward-slash). Matches doublestar via
+// the same helper glob.go uses, plus a basename fallback so `*.go`
+// catches Go files at any depth.
+func anyGlobMatches(patterns []string, relSlash string) bool {
+	base := filepath.Base(relSlash)
+	for _, raw := range patterns {
+		p := filepath.ToSlash(raw)
+		doublestar := strings.Contains(p, "**")
+		if globMatch(p, relSlash, doublestar) {
+			return true
+		}
+		if !doublestar {
+			if ok, _ := filepath.Match(p, base); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// formatGrepBlock renders a single match with context lines. The format
+// is `path:line:text` for the match line and `path-line-text` for context
+// lines (matches ripgrep's rendering — the dash vs colon distinguishes
+// context from a real hit at a glance). Lines are 1-indexed.
+func formatGrepBlock(rel string, lines []string, idx, before, after int) string {
+	start := idx - before
+	if start < 0 {
+		start = 0
+	}
+	end := idx + after
+	if end >= len(lines) {
+		end = len(lines) - 1
+	}
+	var b strings.Builder
+	for j := start; j <= end; j++ {
+		sep := "-"
+		if j == idx {
+			sep = ":"
+		}
+		fmt.Fprintf(&b, "%s%s%d%s%s", rel, sep, j+1, sep, strings.TrimRight(lines[j], "\r"))
+		if j != end {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
+// gitignoreMatcher is a small, top-level-only `.gitignore` reader. It
+// handles the common shapes: blank/comment lines skipped, trailing `/`
+// flags directory-only patterns, leading `/` anchors to the root, `**`
+// for any-depth, and a basename match for bare patterns. Negation (`!`)
+// and per-subdir `.gitignore` files are NOT handled — the cost of a full
+// gitignore implementation isn't worth it for an LLM grep helper. The
+// hardcoded skip set (.git, node_modules, vendor, bin, dist) catches the
+// 90% case anyway; this layer adds project-specific ignores on top.
+type gitignoreMatcher struct {
+	dirPatterns  []string
+	filePatterns []string
+}
+
+func loadGitignore(root string) *gitignoreMatcher {
+	data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		return nil
+	}
+	m := &gitignoreMatcher{}
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "!") {
+			// Negation — skip; full gitignore semantics aren't worth
+			// implementing for the LLM grep path.
+			continue
+		}
+		dirOnly := strings.HasSuffix(line, "/")
+		line = strings.TrimSuffix(line, "/")
+		if line == "" {
+			continue
+		}
+		// Strip leading `/` (anchored) — we always match from the project
+		// root anyway, so the anchor doesn't change behaviour for our
+		// use case.
+		line = strings.TrimPrefix(line, "/")
+		if dirOnly {
+			m.dirPatterns = append(m.dirPatterns, line)
+		} else {
+			m.filePatterns = append(m.filePatterns, line)
+		}
+	}
+	return m
+}
+
+func (m *gitignoreMatcher) matchDir(relSlash string) bool {
+	if m == nil {
+		return false
+	}
+	base := filepath.Base(relSlash)
+	for _, p := range m.dirPatterns {
+		if matchGitignorePattern(p, relSlash, base) {
+			return true
+		}
+	}
+	for _, p := range m.filePatterns {
+		// Bare patterns also catch directories with the same name.
+		if matchGitignorePattern(p, relSlash, base) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *gitignoreMatcher) matchFile(relSlash string) bool {
+	if m == nil {
+		return false
+	}
+	base := filepath.Base(relSlash)
+	for _, p := range m.filePatterns {
+		if matchGitignorePattern(p, relSlash, base) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchGitignorePattern(pattern, relSlash, base string) bool {
+	pattern = filepath.ToSlash(pattern)
+	doublestar := strings.Contains(pattern, "**")
+	if globMatch(pattern, relSlash, doublestar) {
+		return true
+	}
+	if !strings.Contains(pattern, "/") {
+		// Bare basename pattern matches anywhere in the tree.
+		if ok, _ := filepath.Match(pattern, base); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func asString(m map[string]any, key, fallback string) string {

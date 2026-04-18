@@ -15,6 +15,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
+	"github.com/dontfuckmycode/dfmc/internal/drive"
 	"github.com/dontfuckmycode/dfmc/internal/memory"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
@@ -57,7 +58,25 @@ func (e *Engine) Status() Status {
 		CodeMap:         codemapMetrics,
 		MemoryDegraded:  e.memoryDegraded,
 		MemoryLoadErr:   e.memoryLoadErr,
+		ActiveDrives:    activeDriveStatuses(),
+		EventsDropped:   e.EventBus.DroppedCount(),
 	}
+}
+
+// activeDriveStatuses asks the drive package for currently-running
+// runs and projects them into the status type. Lives here (not in
+// drive_adapter.go) because Status() is the canonical aggregator
+// and keeping the lookup inline avoids a per-field method indirection.
+func activeDriveStatuses() []ActiveDriveStatus {
+	active := drive.ListActive()
+	if len(active) == 0 {
+		return nil
+	}
+	out := make([]ActiveDriveStatus, 0, len(active))
+	for _, a := range active {
+		out = append(out, ActiveDriveStatus{RunID: a.RunID, Task: a.Task})
+	}
+	return out
 }
 
 func cloneContextInStatus(src ContextInStatus) *ContextInStatus {
@@ -103,6 +122,24 @@ func (e *Engine) ReloadConfig(cwd string) error {
 	e.Tools = newTools
 	e.mu.Unlock()
 	return nil
+}
+
+// toolReasoningEnabled reports whether the per-tool-call self-narration
+// surface (tool:reasoning events + the virtual `_reason` field on every
+// tool's JSON schema) is active. Mirrors the AutonomousResume parser:
+// "off"/"false"/"no"/"0" disable; any other value (including "" and
+// "auto") enables. Centralised here so the publisher wiring at Init
+// and any future schema gate read the same source of truth.
+func (e *Engine) toolReasoningEnabled() bool {
+	if e == nil || e.Config == nil {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(e.Config.Agent.ToolReasoning)) {
+	case "off", "false", "no", "0", "disabled":
+		return false
+	default:
+		return true
+	}
 }
 
 func (e *Engine) provider() string {
@@ -241,6 +278,17 @@ func (e *Engine) ConversationLoad(id string) (*conversation.Conversation, error)
 		return nil, fmt.Errorf("conversation manager is not initialized")
 	}
 	return e.Conversation.Load(id)
+}
+
+// ConversationLoadReadOnly returns a conversation without making it the
+// active one. Used by preview / inspection surfaces (e.g. the TUI
+// Conversations tab) where loading a row to peek must not silently
+// swap the user's chat session.
+func (e *Engine) ConversationLoadReadOnly(id string) (*conversation.Conversation, error) {
+	if e.Conversation == nil {
+		return nil, fmt.Errorf("conversation manager is not initialized")
+	}
+	return e.Conversation.LoadReadOnly(id)
 }
 
 func (e *Engine) ConversationList() ([]conversation.Summary, error) {

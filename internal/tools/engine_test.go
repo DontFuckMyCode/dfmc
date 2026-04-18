@@ -315,8 +315,17 @@ func TestWriteFileRequiresPriorReadForExistingFile(t *testing.T) {
 			"content": "new",
 		},
 	})
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "requires prior read_file") {
-		t.Fatalf("expected prior-read guard error, got: %v", err)
+	if err == nil {
+		t.Fatalf("expected prior-read guard error, got nil")
+	}
+	{
+		msg := err.Error()
+		if !strings.Contains(msg, "no prior read_file snapshot") {
+			t.Fatalf("expected 'no prior read_file snapshot' in error, got: %v", err)
+		}
+		if !strings.Contains(msg, `{"name":"read_file","args":{"path":`) {
+			t.Fatalf("expected actionable read_file recovery example in error, got: %v", err)
+		}
 	}
 
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
@@ -384,8 +393,17 @@ func TestEditFileRequiresReadAndUniqueness(t *testing.T) {
 			"new_string": "var y",
 		},
 	})
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "requires prior read_file") {
-		t.Fatalf("expected prior-read guard error, got: %v", err)
+	if err == nil {
+		t.Fatalf("expected prior-read guard error, got nil")
+	}
+	{
+		msg := err.Error()
+		if !strings.Contains(msg, "no prior read_file snapshot") {
+			t.Fatalf("expected 'no prior read_file snapshot' in error, got: %v", err)
+		}
+		if !strings.Contains(msg, `{"name":"read_file","args":{"path":`) {
+			t.Fatalf("expected actionable read_file recovery example in error, got: %v", err)
+		}
 	}
 
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
@@ -451,8 +469,17 @@ func TestEditFileFailsIfChangedSinceRead(t *testing.T) {
 			"new_string": "gamma",
 		},
 	})
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "changed since last read_file") {
-		t.Fatalf("expected changed-since-read guard error, got: %v", err)
+	if err == nil {
+		t.Fatalf("expected changed-since-read guard error, got nil")
+	}
+	{
+		msg := err.Error()
+		if !strings.Contains(msg, "changed on disk since your last read_file") {
+			t.Fatalf("expected 'changed on disk since your last read_file' in error, got: %v", err)
+		}
+		if !strings.Contains(msg, `{"name":"read_file","args":{"path":`) {
+			t.Fatalf("expected actionable read_file recovery example in error, got: %v", err)
+		}
 	}
 }
 
@@ -532,6 +559,146 @@ func TestRunCommandToolRejectsShellSyntaxWithActionableError(t *testing.T) {
 				t.Fatalf("error should show the {command,args} example; got %q", msg)
 			}
 		})
+	}
+}
+
+// TestRunCommandShellSyntaxSuggestsDirRecovery pins the targeted recovery
+// hint for the `cd <dir> && <cmd>` footgun. The model passed an entire
+// shell line into `command` because `dir` wasn't surfaced as the actual
+// fix. The error must now show the literal {command, args, dir} shape so
+// the next round self-corrects in one step instead of looping on the
+// generic "use args" hint.
+func TestRunCommandShellSyntaxSuggestsDirRecovery(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	cases := []struct {
+		name     string
+		command  string
+		wantBin  string
+		wantArg  string // first arg, must appear in args array
+		wantDir  string // unquoted directory after `cd `
+		wantSep  string // shell separator that should be reported
+		dirParam string // the `dir` value as it should appear in the JSON example (forward slashes)
+	}{
+		{"and-chain-windows-path", `cd D:\Codebox\PROJECTS\DFMC && go vet ./internal/tools/...`, "go", "vet", `D:\Codebox\PROJECTS\DFMC`, "&&", "D:/Codebox/PROJECTS/DFMC"},
+		{"semicolon-unix-path", `cd /repo/sub ; npm test`, "npm", "test", `/repo/sub`, ";", "/repo/sub"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := eng.Execute(context.Background(), "run_command", Request{
+				ProjectRoot: tmp,
+				Params:      map[string]any{"command": c.command},
+			})
+			if err == nil {
+				t.Fatalf("expected rejection of %q", c.command)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, c.wantSep) {
+				t.Fatalf("error must name the separator %q; got %q", c.wantSep, msg)
+			}
+			// The JSON example must use the dir parameter and split bin/args.
+			wantCmd := `"command":"` + c.wantBin + `"`
+			if !strings.Contains(msg, wantCmd) {
+				t.Fatalf("error must contain %s; got %q", wantCmd, msg)
+			}
+			wantArgs := `"args":["` + c.wantArg + `"`
+			if !strings.Contains(msg, wantArgs) {
+				t.Fatalf("error must contain %s; got %q", wantArgs, msg)
+			}
+			wantDir := `"dir":"` + c.dirParam + `"`
+			if !strings.Contains(msg, wantDir) {
+				t.Fatalf("error must contain %s; got %q", wantDir, msg)
+			}
+		})
+	}
+}
+
+// TestRunCommandRejectsBinaryArgsPacking pins the second LLM packing
+// footgun: passing `command:"go build ./..."` with no `args`. That has
+// no shell metas (so the shell-syntax detector lets it through) but
+// becomes a bogus argv[0] that exec rejects with a useless "executable
+// not found". The error must teach the split shape so the next round
+// self-corrects in one step.
+func TestRunCommandRejectsBinaryArgsPacking(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	cases := []struct {
+		name        string
+		command     string
+		wantBin     string
+		wantArg     string // first arg in the example
+		wantInError string // substring that must appear
+	}{
+		{"go-build-pack", "go build ./...", "go", "build", `"command":"go"`},
+		{"npm-test-pack", "npm test --watch=false", "npm", "test", `"command":"npm"`},
+		{"git-log-pack", "git log -n 5", "git", "log", `"command":"git"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := eng.Execute(context.Background(), "run_command", Request{
+				ProjectRoot: tmp,
+				Params:      map[string]any{"command": c.command},
+			})
+			if err == nil {
+				t.Fatalf("expected rejection of packed command %q", c.command)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "binary+arguments packed together") {
+				t.Fatalf("error must explain the packing problem; got: %v", err)
+			}
+			if !strings.Contains(msg, c.wantInError) {
+				t.Fatalf("error must include %s; got: %v", c.wantInError, err)
+			}
+			wantArgs := `"args":["` + c.wantArg + `"`
+			if !strings.Contains(msg, wantArgs) {
+				t.Fatalf("error must contain %s; got: %v", wantArgs, err)
+			}
+		})
+	}
+}
+
+// TestRunCommandAllowsLegitimateSpacedPaths makes sure the packing
+// detector does not false-positive on quoted paths or paths containing
+// path separators (Windows `C:\Program Files\...\foo.exe`, Unix
+// `/usr/local/my dir/bin`). When `args` is provided we also trust the
+// model. The point is to detect *only* the bin+args-in-one-string case.
+func TestRunCommandAllowsLegitimateSpacedPaths(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	// Quoted command — packing detector must skip it. Will fail later
+	// in execution because the binary doesn't exist, but NOT with the
+	// "binary+arguments packed together" error.
+	_, err := eng.Execute(context.Background(), "run_command", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"command": `"foo bar.exe"`},
+	})
+	if err != nil && strings.Contains(err.Error(), "binary+arguments packed together") {
+		t.Fatalf("quoted command must not be flagged as packed: %v", err)
+	}
+
+	// Path-with-spaces — packing detector must skip when the binary
+	// token contains a separator.
+	_, err = eng.Execute(context.Background(), "run_command", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"command": `C:\Program Files\Go\bin\go.exe version`},
+	})
+	if err != nil && strings.Contains(err.Error(), "binary+arguments packed together") {
+		t.Fatalf("path-with-spaces command must not be flagged as packed: %v", err)
+	}
+
+	// args is set — even with whitespace in command, trust the caller.
+	_, err = eng.Execute(context.Background(), "run_command", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"command": "go test",
+			"args":    "./...",
+		},
+	})
+	if err != nil && strings.Contains(err.Error(), "binary+arguments packed together") {
+		t.Fatalf("when args is set, command should not be flagged as packed: %v", err)
 	}
 }
 

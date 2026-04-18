@@ -24,7 +24,6 @@ package tui
 //                        feeders)
 
 import (
-	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -451,12 +450,12 @@ func suggestionToRunCommandInput(suggestion string) string {
 	if err != nil {
 		return "go test ./..."
 	}
-	command := strings.TrimSpace(fmt.Sprint(params["command"]))
+	command := paramStr(params, "command")
 	if command == "" {
 		command = "go"
 	}
-	args := strings.TrimSpace(fmt.Sprint(params["args"]))
-	if args == "" || strings.EqualFold(args, "<nil>") {
+	args := paramStr(params, "args")
+	if args == "" {
 		return command
 	}
 	return command + " " + args
@@ -618,8 +617,8 @@ func (m Model) runCommandNameSuggestions() []string {
 		if err != nil {
 			continue
 		}
-		command := strings.TrimSpace(fmt.Sprint(params["command"]))
-		if command == "" || strings.EqualFold(command, "<nil>") {
+		command := paramStr(params, "command")
+		if command == "" {
 			continue
 		}
 		lower := strings.ToLower(command)
@@ -647,8 +646,8 @@ func (m Model) runCommandArgSuggestions() []string {
 		if err != nil {
 			continue
 		}
-		args := strings.TrimSpace(fmt.Sprint(params["args"]))
-		if args == "" || strings.EqualFold(args, "<nil>") {
+		args := paramStr(params, "args")
+		if args == "" {
 			continue
 		}
 		lower := strings.ToLower(args)
