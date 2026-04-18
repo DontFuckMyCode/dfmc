@@ -43,12 +43,12 @@ func TestChatBubbleContentShowsThinkingPlaceholderBeforeFirstDelta(t *testing.T)
 
 func TestRenderChatView_StreamingBubbleShowsFullContentAndCaret(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.sending = true
-	m.transcript = []chatLine{
+	m.chat.sending = true
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "what happens next?"},
 		{Role: "assistant", Content: "Here is line one.\nAnd line two."},
 	}
-	m.streamIndex = 1
+	m.chat.streamIndex = 1
 
 	view := m.renderChatView(120)
 	for _, want := range []string{"Here is line one.", "And line two.", "▎"} {
@@ -60,9 +60,9 @@ func TestRenderChatView_StreamingBubbleShowsFullContentAndCaret(t *testing.T) {
 
 func TestRenderChatView_CompletedBubbleHasNoCaret(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.sending = false
-	m.streamIndex = -1
-	m.transcript = []chatLine{
+	m.chat.sending = false
+	m.chat.streamIndex = -1
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "question"},
 		{Role: "assistant", Content: "full multi-line\nanswer"},
 	}

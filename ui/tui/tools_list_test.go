@@ -15,7 +15,7 @@ func TestSlashTools_ListsWithSummaries(t *testing.T) {
 		t.Fatal("/tools must be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "Tools (") {
 		t.Fatalf("expected heading 'Tools (N)', got:\n%s", last)
 	}

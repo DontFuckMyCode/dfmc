@@ -10,6 +10,8 @@ package conversation
 
 import (
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"strings"
 	"testing"
 	"time"
@@ -220,4 +222,63 @@ func sortStrs(in []string) []string {
 		}
 	}
 	return out
+}
+
+// TestSaveActive_DoesNotBlockConcurrentAddMessage pins H4: SaveActive
+// must release the manager mutex before doing the disk write so a slow
+// fsync doesn't pile up every concurrent writer behind it. We hammer
+// SaveActive in one goroutine while another goroutine appends messages,
+// and assert the appender's progress is steady — not stalled by the I/O.
+//
+// The previous implementation held m.mu (RLock) across SaveConversationLog,
+// which on Windows + indexer noise could stall writers for >100ms per save.
+// This test would have failed there because the appender's per-iteration
+// observed progress would have correlated with save completions instead of
+// running freely.
+func TestSaveActive_DoesNotBlockConcurrentAddMessage(t *testing.T) {
+	mgr := New(openConvStore(t))
+	mgr.Start("offline", "offline-v1")
+	// Seed a non-empty branch so SaveActive actually writes.
+	mgr.AddMessage("offline", "offline-v1", types.Message{
+		Role: types.RoleUser, Content: "seed", Timestamp: time.Now(),
+	})
+
+	const totalAppends = 200
+	var (
+		wg         sync.WaitGroup
+		appended   atomic.Int64
+		stopSaving atomic.Bool
+	)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for !stopSaving.Load() {
+			_ = mgr.SaveActive()
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < totalAppends; i++ {
+			mgr.AddMessage("offline", "offline-v1", types.Message{
+				Role: types.RoleUser, Content: "msg", Timestamp: time.Now(),
+			})
+			appended.Add(1)
+		}
+		stopSaving.Store(true)
+	}()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("save-while-appending stalled: appended=%d/%d (deadlock or severe lock contention)", appended.Load(), totalAppends)
+	}
+
+	if got := appended.Load(); got != totalAppends {
+		t.Fatalf("appender did not finish under concurrent SaveActive; got=%d want=%d", got, totalAppends)
+	}
 }

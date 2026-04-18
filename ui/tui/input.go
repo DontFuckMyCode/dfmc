@@ -5,7 +5,7 @@ package tui
 // Lifted out of the 10K-line tui.go god file (REPORT.md C1) so the
 // "what does typing do" surface lives in one obvious place. Every
 // function here is either:
-//   - a Model receiver mutating m.input / m.chatCursor / history fields, or
+//   - a Model receiver mutating m.chat.input / m.chat.cursor / history fields, or
 //   - a pure helper that takes a []rune and returns a new index.
 //
 // All methods continue to live on `Model` — no behaviour change, no
@@ -20,29 +20,29 @@ import "strings"
 // it (arrow keys, Home/End, etc.) — autocomplete / setChatInput /
 // history recall reset it back to end-of-input.
 func (m *Model) syncChatCursor() {
-	max := len([]rune(m.input))
-	if m.chatCursorManual && m.chatCursorInput != m.input {
-		m.chatCursorManual = false
+	max := len([]rune(m.chat.input))
+	if m.chat.cursorManual && m.chat.cursorInput != m.chat.input {
+		m.chat.cursorManual = false
 	}
-	if !m.chatCursorManual {
-		m.chatCursor = max
-		m.chatCursorInput = m.input
+	if !m.chat.cursorManual {
+		m.chat.cursor = max
+		m.chat.cursorInput = m.chat.input
 		return
 	}
-	if m.chatCursor < 0 {
-		m.chatCursor = 0
+	if m.chat.cursor < 0 {
+		m.chat.cursor = 0
 	}
-	if m.chatCursor > max {
-		m.chatCursor = max
+	if m.chat.cursor > max {
+		m.chat.cursor = max
 	}
-	m.chatCursorInput = m.input
+	m.chat.cursorInput = m.chat.input
 }
 
 func (m *Model) setChatInput(text string) {
-	m.input = text
-	m.chatCursorManual = false
-	m.chatCursor = len([]rune(text))
-	m.chatCursorInput = text
+	m.chat.input = text
+	m.chat.cursorManual = false
+	m.chat.cursor = len([]rune(text))
+	m.chat.cursorInput = text
 }
 
 func (m *Model) insertInputText(text string) {
@@ -50,8 +50,8 @@ func (m *Model) insertInputText(text string) {
 		return
 	}
 	m.syncChatCursor()
-	runes := []rune(m.input)
-	cursor := m.chatCursor
+	runes := []rune(m.chat.input)
+	cursor := m.chat.cursor
 	if cursor < 0 {
 		cursor = 0
 	}
@@ -63,37 +63,37 @@ func (m *Model) insertInputText(text string) {
 	updated = append(updated, runes[:cursor]...)
 	updated = append(updated, insert...)
 	updated = append(updated, runes[cursor:]...)
-	m.input = string(updated)
-	m.chatCursor = cursor + len(insert)
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.input = string(updated)
+	m.chat.cursor = cursor + len(insert)
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 }
 
 func (m *Model) deleteInputBeforeCursor() {
 	m.syncChatCursor()
-	runes := []rune(m.input)
-	if len(runes) == 0 || m.chatCursor <= 0 {
+	runes := []rune(m.chat.input)
+	if len(runes) == 0 || m.chat.cursor <= 0 {
 		return
 	}
-	cursor := m.chatCursor
+	cursor := m.chat.cursor
 	if cursor > len(runes) {
 		cursor = len(runes)
 	}
 	updated := append([]rune(nil), runes[:cursor-1]...)
 	updated = append(updated, runes[cursor:]...)
-	m.input = string(updated)
-	m.chatCursor = cursor - 1
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.input = string(updated)
+	m.chat.cursor = cursor - 1
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 }
 
 func (m *Model) deleteInputAtCursor() {
 	m.syncChatCursor()
-	runes := []rune(m.input)
+	runes := []rune(m.chat.input)
 	if len(runes) == 0 {
 		return
 	}
-	cursor := m.chatCursor
+	cursor := m.chat.cursor
 	if cursor < 0 {
 		cursor = 0
 	}
@@ -102,25 +102,25 @@ func (m *Model) deleteInputAtCursor() {
 	}
 	updated := append([]rune(nil), runes[:cursor]...)
 	updated = append(updated, runes[cursor+1:]...)
-	m.input = string(updated)
-	m.chatCursor = cursor
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.input = string(updated)
+	m.chat.cursor = cursor
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 }
 
 func (m *Model) moveChatCursor(delta int) {
 	m.syncChatCursor()
-	cursor := m.chatCursor + delta
+	cursor := m.chat.cursor + delta
 	if cursor < 0 {
 		cursor = 0
 	}
-	max := len([]rune(m.input))
+	max := len([]rune(m.chat.input))
 	if cursor > max {
 		cursor = max
 	}
-	m.chatCursor = cursor
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.cursor = cursor
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 }
 
 // moveChatCursorHome — Home / Ctrl+A: jump to the start of the current
@@ -129,9 +129,9 @@ func (m *Model) moveChatCursor(delta int) {
 // composition it matches every text editor the user has ever used.
 func (m *Model) moveChatCursorHome() {
 	m.syncChatCursor()
-	m.chatCursor = chatInputLineHome([]rune(m.input), m.chatCursor)
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.cursor = chatInputLineHome([]rune(m.chat.input), m.chat.cursor)
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 }
 
 // moveChatCursorEnd — End / Ctrl+E: jump to the end of the current logical
@@ -139,9 +139,9 @@ func (m *Model) moveChatCursorHome() {
 // correctly stops at the next `\n` when there are.
 func (m *Model) moveChatCursorEnd() {
 	m.syncChatCursor()
-	m.chatCursor = chatInputLineEnd([]rune(m.input), m.chatCursor)
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.cursor = chatInputLineEnd([]rune(m.chat.input), m.chat.cursor)
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 }
 
 // chatInputLineHome returns the rune index of the start of the logical
@@ -182,8 +182,8 @@ func chatInputLineEnd(runes []rune, cursor int) int {
 // Up normally does (history navigation, picker move).
 func (m *Model) moveChatCursorRowUp() bool {
 	m.syncChatCursor()
-	runes := []rune(m.input)
-	cursor := m.chatCursor
+	runes := []rune(m.chat.input)
+	cursor := m.chat.cursor
 	home := chatInputLineHome(runes, cursor)
 	if home == 0 {
 		return false
@@ -195,9 +195,9 @@ func (m *Model) moveChatCursorRowUp() bool {
 	if col > prevLen {
 		col = prevLen
 	}
-	m.chatCursor = prevHome + col
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.cursor = prevHome + col
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 	return true
 }
 
@@ -205,8 +205,8 @@ func (m *Model) moveChatCursorRowUp() bool {
 // when there's no next row.
 func (m *Model) moveChatCursorRowDown() bool {
 	m.syncChatCursor()
-	runes := []rune(m.input)
-	cursor := m.chatCursor
+	runes := []rune(m.chat.input)
+	cursor := m.chat.cursor
 	home := chatInputLineHome(runes, cursor)
 	end := chatInputLineEnd(runes, cursor)
 	if end >= len(runes) {
@@ -219,9 +219,9 @@ func (m *Model) moveChatCursorRowDown() bool {
 	if col > nextLen {
 		col = nextLen
 	}
-	m.chatCursor = nextHome + col
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.cursor = nextHome + col
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 	return true
 }
 
@@ -280,55 +280,55 @@ func isInputWordSeparator(r rune) bool {
 
 func (m *Model) moveChatCursorWordLeft() {
 	m.syncChatCursor()
-	m.chatCursor = chatInputWordBoundaryLeft([]rune(m.input), m.chatCursor)
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.cursor = chatInputWordBoundaryLeft([]rune(m.chat.input), m.chat.cursor)
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 }
 
 func (m *Model) moveChatCursorWordRight() {
 	m.syncChatCursor()
-	m.chatCursor = chatInputWordBoundaryRight([]rune(m.input), m.chatCursor)
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.cursor = chatInputWordBoundaryRight([]rune(m.chat.input), m.chat.cursor)
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 }
 
 // deleteInputWordBeforeCursor implements Ctrl+W: kill the word to the
 // left of the cursor. Idempotent at the start of the line.
 func (m *Model) deleteInputWordBeforeCursor() {
 	m.syncChatCursor()
-	runes := []rune(m.input)
-	if m.chatCursor <= 0 || len(runes) == 0 {
+	runes := []rune(m.chat.input)
+	if m.chat.cursor <= 0 || len(runes) == 0 {
 		return
 	}
-	cursor := m.chatCursor
+	cursor := m.chat.cursor
 	if cursor > len(runes) {
 		cursor = len(runes)
 	}
 	start := chatInputWordBoundaryLeft(runes, cursor)
 	updated := append([]rune(nil), runes[:start]...)
 	updated = append(updated, runes[cursor:]...)
-	m.input = string(updated)
-	m.chatCursor = start
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.input = string(updated)
+	m.chat.cursor = start
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 }
 
 // deleteInputToEndOfLine implements Ctrl+K: kill text from the cursor to
 // the end of the input. Idempotent when already at the end.
 func (m *Model) deleteInputToEndOfLine() {
 	m.syncChatCursor()
-	runes := []rune(m.input)
-	cursor := m.chatCursor
+	runes := []rune(m.chat.input)
+	cursor := m.chat.cursor
 	if cursor < 0 {
 		cursor = 0
 	}
 	if cursor >= len(runes) {
 		return
 	}
-	m.input = string(runes[:cursor])
-	m.chatCursor = cursor
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.input = string(runes[:cursor])
+	m.chat.cursor = cursor
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 }
 
 func (m *Model) pushInputHistory(raw string) {
@@ -336,54 +336,54 @@ func (m *Model) pushInputHistory(raw string) {
 	if raw == "" {
 		return
 	}
-	if n := len(m.inputHistory); n > 0 && strings.EqualFold(strings.TrimSpace(m.inputHistory[n-1]), raw) {
-		m.inputHistoryIndex = -1
-		m.inputHistoryDraft = ""
+	if n := len(m.inputHistory.history); n > 0 && strings.EqualFold(strings.TrimSpace(m.inputHistory.history[n-1]), raw) {
+		m.inputHistory.index = -1
+		m.inputHistory.draft = ""
 		return
 	}
-	m.inputHistory = append(m.inputHistory, raw)
-	if len(m.inputHistory) > 80 {
-		drop := len(m.inputHistory) - 80
-		m.inputHistory = m.inputHistory[drop:]
+	m.inputHistory.history = append(m.inputHistory.history, raw)
+	if len(m.inputHistory.history) > 80 {
+		drop := len(m.inputHistory.history) - 80
+		m.inputHistory.history = m.inputHistory.history[drop:]
 	}
-	m.inputHistoryIndex = -1
-	m.inputHistoryDraft = ""
+	m.inputHistory.index = -1
+	m.inputHistory.draft = ""
 }
 
 func (m *Model) recallInputHistoryPrev() bool {
-	if len(m.inputHistory) == 0 {
+	if len(m.inputHistory.history) == 0 {
 		return false
 	}
-	if m.inputHistoryIndex < 0 {
-		m.inputHistoryDraft = m.input
-		m.inputHistoryIndex = len(m.inputHistory) - 1
-	} else if m.inputHistoryIndex > 0 {
-		m.inputHistoryIndex--
+	if m.inputHistory.index < 0 {
+		m.inputHistory.draft = m.chat.input
+		m.inputHistory.index = len(m.inputHistory.history) - 1
+	} else if m.inputHistory.index > 0 {
+		m.inputHistory.index--
 	}
-	m.setChatInput(m.inputHistory[m.inputHistoryIndex])
+	m.setChatInput(m.inputHistory.history[m.inputHistory.index])
 	return true
 }
 
 func (m *Model) recallInputHistoryNext() bool {
-	if len(m.inputHistory) == 0 || m.inputHistoryIndex < 0 {
+	if len(m.inputHistory.history) == 0 || m.inputHistory.index < 0 {
 		return false
 	}
-	if m.inputHistoryIndex < len(m.inputHistory)-1 {
-		m.inputHistoryIndex++
-		m.setChatInput(m.inputHistory[m.inputHistoryIndex])
+	if m.inputHistory.index < len(m.inputHistory.history)-1 {
+		m.inputHistory.index++
+		m.setChatInput(m.inputHistory.history[m.inputHistory.index])
 		return true
 	}
-	draft := m.inputHistoryDraft
-	m.inputHistoryIndex = -1
-	m.inputHistoryDraft = ""
+	draft := m.inputHistory.draft
+	m.inputHistory.index = -1
+	m.inputHistory.draft = ""
 	m.setChatInput(draft)
 	return true
 }
 
 func (m *Model) exitInputHistoryNavigation() {
-	if m.inputHistoryIndex < 0 {
+	if m.inputHistory.index < 0 {
 		return
 	}
-	m.inputHistoryIndex = -1
-	m.inputHistoryDraft = ""
+	m.inputHistory.index = -1
+	m.inputHistory.draft = ""
 }

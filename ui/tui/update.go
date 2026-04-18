@@ -82,8 +82,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "workspace: " + msg.err.Error()
 			return m, nil
 		}
-		m.diff = msg.diff
-		m.changed = msg.changed
+		m.patchView.diff = msg.diff
+		m.patchView.changed = msg.changed
 		if strings.TrimSpace(msg.diff) == "" {
 			m.notice = "Working tree is clean."
 		} else if len(msg.changed) > 0 {
@@ -92,14 +92,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case latestPatchLoadedMsg:
-		m.latestPatch = msg.patch
-		m.patchSet = parseUnifiedDiffSections(msg.patch)
-		m.patchFiles = patchSectionPaths(m.patchSet)
-		if len(m.patchFiles) == 0 {
-			m.patchFiles = extractPatchedFiles(msg.patch)
+		m.patchView.latestPatch = msg.patch
+		m.patchView.set = parseUnifiedDiffSections(msg.patch)
+		m.patchView.files = patchSectionPaths(m.patchView.set)
+		if len(m.patchView.files) == 0 {
+			m.patchView.files = extractPatchedFiles(msg.patch)
 		}
-		m.patchIndex = m.bestPatchIndex()
-		m.patchHunk = 0
+		m.patchView.index = m.bestPatchIndex()
+		m.patchView.hunk = 0
 		m.markLatestPatchInTranscript(msg.patch)
 		if strings.TrimSpace(msg.patch) == "" {
 			m.notice = "No assistant patch found yet."
@@ -113,26 +113,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "files: " + msg.err.Error()
 			return m, nil
 		}
-		m.files = msg.files
-		if len(m.files) == 0 {
-			m.fileIndex = 0
-			m.filePath = ""
-			m.filePreview = ""
-			m.fileSize = 0
+		m.filesView.entries = msg.files
+		if len(m.filesView.entries) == 0 {
+			m.filesView.index = 0
+			m.filesView.path = ""
+			m.filesView.preview = ""
+			m.filesView.size = 0
 			m.notice = "No project files found."
 			return m, nil
 		}
 		selected := m.selectedFile()
 		nextIndex := 0
 		if selected != "" {
-			for i, path := range m.files {
+			for i, path := range m.filesView.entries {
 				if path == selected {
 					nextIndex = i
 					break
 				}
 			}
 		}
-		m.fileIndex = nextIndex
+		m.filesView.index = nextIndex
 		return m, loadFilePreviewCmd(m.eng, m.selectedFile())
 
 	case filePreviewLoadedMsg:
@@ -140,55 +140,55 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "preview: " + msg.err.Error()
 			return m, nil
 		}
-		m.filePath = msg.path
-		m.filePreview = msg.content
-		m.fileSize = msg.size
+		m.filesView.path = msg.path
+		m.filesView.preview = msg.content
+		m.filesView.size = msg.size
 		if strings.TrimSpace(msg.path) != "" {
 			m.notice = fmt.Sprintf("Previewing %s (%d bytes)", msg.path, msg.size)
 		}
 		return m, nil
 
 	case memoryLoadedMsg:
-		m.memoryLoading = false
+		m.memory.loading = false
 		if msg.err != nil {
-			m.memoryErr = msg.err.Error()
+			m.memory.err = msg.err.Error()
 			return m, nil
 		}
-		m.memoryErr = ""
-		m.memoryEntries = msg.entries
+		m.memory.err = ""
+		m.memory.entries = msg.entries
 		if msg.tier != "" {
-			m.memoryTier = msg.tier
+			m.memory.tier = msg.tier
 		}
-		if m.memoryScroll >= len(m.memoryEntries) {
-			m.memoryScroll = 0
+		if m.memory.scroll >= len(m.memory.entries) {
+			m.memory.scroll = 0
 		}
 		return m, nil
 
 	case codemapLoadedMsg:
-		m.codemapLoading = false
-		m.codemapLoaded = true
+		m.codemap.loading = false
+		m.codemap.loaded = true
 		if msg.err != nil {
-			m.codemapErr = msg.err.Error()
+			m.codemap.err = msg.err.Error()
 			return m, nil
 		}
-		m.codemapErr = ""
-		m.codemapSnap = msg.snap
-		if m.codemapScroll >= codemapViewRowCount(m.codemapView, m.codemapSnap) {
-			m.codemapScroll = 0
+		m.codemap.err = ""
+		m.codemap.snap = msg.snap
+		if m.codemap.scroll >= codemapViewRowCount(m.codemap.view, m.codemap.snap) {
+			m.codemap.scroll = 0
 		}
 		return m, nil
 
 	case conversationsLoadedMsg:
-		m.conversationsLoading = false
-		m.conversationsLoaded = true
+		m.conversations.loading = false
+		m.conversations.loaded = true
 		if msg.err != nil {
-			m.conversationsErr = msg.err.Error()
+			m.conversations.err = msg.err.Error()
 			return m, nil
 		}
-		m.conversationsErr = ""
-		m.conversationsEntries = msg.entries
-		if m.conversationsScroll >= len(m.conversationsEntries) {
-			m.conversationsScroll = 0
+		m.conversations.err = ""
+		m.conversations.entries = msg.entries
+		if m.conversations.scroll >= len(m.conversations.entries) {
+			m.conversations.scroll = 0
 		}
 		return m, nil
 
@@ -197,8 +197,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "conversations: " + msg.err.Error()
 			return m, nil
 		}
-		m.conversationsPreviewID = msg.id
-		m.conversationsPreview = msg.msgs
+		m.conversations.previewID = msg.id
+		m.conversations.preview = msg.msgs
 		// Manager.Load sets the conversation as active as a side-effect,
 		// so pressing enter here is effectively "load + preview". Surface
 		// that so users aren't surprised when Chat history rolls over.
@@ -206,29 +206,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case promptsLoadedMsg:
-		m.promptsLoading = false
-		m.promptsLoaded = true
+		m.prompts.loading = false
+		m.prompts.loaded = true
 		if msg.err != nil {
-			m.promptsErr = msg.err.Error()
+			m.prompts.err = msg.err.Error()
 			return m, nil
 		}
-		m.promptsErr = ""
-		m.promptsTemplates = msg.templates
-		if m.promptsScroll >= len(m.promptsTemplates) {
-			m.promptsScroll = 0
+		m.prompts.err = ""
+		m.prompts.templates = msg.templates
+		if m.prompts.scroll >= len(m.prompts.templates) {
+			m.prompts.scroll = 0
 		}
 		return m, nil
 
 	case securityLoadedMsg:
-		m.securityLoading = false
-		m.securityLoaded = true
+		m.security.loading = false
+		m.security.loaded = true
 		if msg.err != nil {
-			m.securityErr = msg.err.Error()
+			m.security.err = msg.err.Error()
 			return m, nil
 		}
-		m.securityErr = ""
-		m.securityReport = msg.report
-		m.securityScroll = 0
+		m.security.err = ""
+		m.security.report = msg.report
+		m.security.scroll = 0
 		return m, nil
 
 	case patchApplyMsg:
@@ -263,32 +263,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case toolRunMsg:
 		if msg.err != nil {
 			m.notice = "tool: " + msg.err.Error()
-			m.toolOutput = formatToolErrorForPanel(msg.name, msg.params, msg.result, msg.err)
-			if m.chatToolPending && strings.EqualFold(strings.TrimSpace(msg.name), strings.TrimSpace(m.chatToolName)) {
+			m.toolView.output = formatToolErrorForPanel(msg.name, msg.params, msg.result, msg.err)
+			if m.chat.toolPending && strings.EqualFold(strings.TrimSpace(msg.name), strings.TrimSpace(m.chat.toolName)) {
 				m = m.appendSystemMessage(formatToolResultForChat(msg.name, msg.params, msg.result, msg.err))
-				m.chatToolPending = false
-				m.chatToolName = ""
+				m.chat.toolPending = false
+				m.chat.toolName = ""
 			}
 			if toolResultWorkspaceChanged(msg.result) {
 				m = m.refreshToolMutationState("")
 			}
 			return m, nil
 		}
-		m.toolOutput = formatToolResultForPanel(msg.name, msg.params, msg.result)
+		m.toolView.output = formatToolResultForPanel(msg.name, msg.params, msg.result)
 		m.notice = fmt.Sprintf("Tool ran: %s (%dms)", msg.name, msg.result.DurationMs)
-		if m.chatToolPending && strings.EqualFold(strings.TrimSpace(msg.name), strings.TrimSpace(m.chatToolName)) {
+		if m.chat.toolPending && strings.EqualFold(strings.TrimSpace(msg.name), strings.TrimSpace(m.chat.toolName)) {
 			m = m.appendSystemMessage(formatToolResultForChat(msg.name, msg.params, msg.result, nil))
-			m.chatToolPending = false
-			m.chatToolName = ""
+			m.chat.toolPending = false
+			m.chat.toolName = ""
 		}
 		if path := toolResultRelativePath(m.eng, msg.result); path != "" {
-			m.filePath = path
-			if idx := indexOfString(m.files, path); idx >= 0 {
-				m.fileIndex = idx
+			m.filesView.path = path
+			if idx := indexOfString(m.filesView.entries, path); idx >= 0 {
+				m.filesView.index = idx
 			}
 			if msg.name == "read_file" {
-				m.filePreview = msg.result.Output
-				m.fileSize = len([]byte(msg.result.Output))
+				m.filesView.preview = msg.result.Output
+				m.filesView.size = len([]byte(msg.result.Output))
 			}
 			if isMutationTool(msg.name) || toolResultWorkspaceChanged(msg.result) {
 				m = m.refreshToolMutationState(path)
@@ -299,18 +299,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case chatDeltaMsg:
-		if m.streamIndex >= 0 && m.streamIndex < len(m.transcript) {
-			m.transcript[m.streamIndex].Content += msg.delta
-			m.transcript[m.streamIndex].Preview = chatDigest(m.transcript[m.streamIndex].Content)
+		if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) {
+			m.chat.transcript[m.chat.streamIndex].Content += msg.delta
+			m.chat.transcript[m.chat.streamIndex].Preview = chatDigest(m.chat.transcript[m.chat.streamIndex].Content)
 		}
-		return m, waitForStreamMsg(m.streamMessages)
+		return m, waitForStreamMsg(m.chat.streamMessages)
 
 	case spinnerTickMsg:
-		m.spinnerFrame++
-		if m.sending || m.agentLoopActive {
+		m.chat.spinnerFrame++
+		if m.chat.sending || m.agentLoop.active {
 			return m, spinnerTickCmd()
 		}
-		m.spinnerTicking = false
+		m.chat.spinnerTicking = false
 		return m, nil
 
 	case heartbeatTickMsg:
@@ -320,18 +320,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, heartbeatTickCmd()
 
 	case chatDoneMsg:
-		m.annotateAssistantPatch(m.streamIndex)
-		m.annotateAssistantToolUsage(m.streamIndex)
-		if m.streamIndex >= 0 && m.streamIndex < len(m.transcript) && !m.streamStartedAt.IsZero() {
-			m.transcript[m.streamIndex].DurationMs = int(time.Since(m.streamStartedAt).Milliseconds())
+		m.annotateAssistantPatch(m.chat.streamIndex)
+		m.annotateAssistantToolUsage(m.chat.streamIndex)
+		if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) && !m.chat.streamStartedAt.IsZero() {
+			m.chat.transcript[m.chat.streamIndex].DurationMs = int(time.Since(m.chat.streamStartedAt).Milliseconds())
 		}
-		m.streamStartedAt = time.Time{}
-		m.sending = false
-		m.streamMessages = nil
-		m.streamIndex = -1
+		m.chat.streamStartedAt = time.Time{}
+		m.chat.sending = false
+		m.chat.streamMessages = nil
+		m.chat.streamIndex = -1
 		m.clearStreamCancel()
 		m.resetAgentRuntime()
-		m.pendingNoteCount = 0
+		m.chat.pendingNoteCount = 0
 		m.notice = "" // happy-path completion narrates itself via the transcript; no need to park a banner in the footer
 		next, drainCmd := m.drainPendingQueue()
 		return next, tea.Batch(loadStatusCmd(m.eng), loadLatestPatchCmd(m.eng), loadGitInfoCmd(m.projectRoot()), drainCmd)
@@ -341,12 +341,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case chatErrMsg:
-		m.sending = false
-		m.streamMessages = nil
-		m.streamIndex = -1
+		m.chat.sending = false
+		m.chat.streamMessages = nil
+		m.chat.streamIndex = -1
 		m.clearStreamCancel()
 		m.resetAgentRuntime()
-		m.pendingNoteCount = 0
+		m.chat.pendingNoteCount = 0
 		// Distinguish a user-driven cancel (esc) from a real provider or
 		// network error. Context cancellation that arrives without the
 		// userCancelledStream flag set is still treated as an error (e.g.
@@ -354,29 +354,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// flow is "user pressed esc", which deserves a calm message and a
 		// transcript marker so scrolling back makes it obvious the turn
 		// was aborted, not silently truncated.
-		wasCancelled := m.userCancelledStream || errors.Is(msg.err, context.Canceled)
-		m.userCancelledStream = false
+		wasCancelled := m.chat.userCancelledStream || errors.Is(msg.err, context.Canceled)
+		m.chat.userCancelledStream = false
 		if wasCancelled {
 			m.notice = "Turn cancelled (esc). Partial output kept in transcript; /retry reopens it."
 			m = m.appendSystemMessage("◦ Turn cancelled by user — partial assistant output above, if any, is what arrived before the cancel took effect.")
-			if len(m.pendingQueue) > 0 {
-				m.notice += fmt.Sprintf(" %d queued message(s) kept.", len(m.pendingQueue))
+			if len(m.chat.pendingQueue) > 0 {
+				m.notice += fmt.Sprintf(" %d queued message(s) kept.", len(m.chat.pendingQueue))
 			}
 			return m, nil
 		}
 		m.notice = "chat: " + msg.err.Error()
-		if len(m.pendingQueue) > 0 {
-			m.notice += fmt.Sprintf(" — %d queued message(s) kept.", len(m.pendingQueue))
+		if len(m.chat.pendingQueue) > 0 {
+			m.notice += fmt.Sprintf(" — %d queued message(s) kept.", len(m.chat.pendingQueue))
 		}
 		return m, nil
 
 	case streamClosedMsg:
-		m.sending = false
-		m.streamMessages = nil
-		m.streamIndex = -1
+		m.chat.sending = false
+		m.chat.streamMessages = nil
+		m.chat.streamIndex = -1
 		m.clearStreamCancel()
 		m.resetAgentRuntime()
-		m.pendingNoteCount = 0
+		m.chat.pendingNoteCount = 0
 		next, drainCmd := m.drainPendingQueue()
 		return next, drainCmd
 
@@ -445,26 +445,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Chat tab — other panels don't have a live composer.
 			if m.activeTab == 0 {
 				m.setChatInput("")
-				m.chatCursor = 0
-				m.mentionIndex = 0
-				m.slashIndex = 0
-				m.slashArgIndex = 0
-				m.quickActionIndex = 0
+				m.chat.cursor = 0
+				m.slashMenu.mention = 0
+				m.slashMenu.command = 0
+				m.slashMenu.commandArg = 0
+				m.slashMenu.quickAction = 0
 				m.notice = "Input cleared."
 				return m, nil
 			}
 		case "ctrl+h":
-			m.showHelpOverlay = !m.showHelpOverlay
+			m.ui.showHelpOverlay = !m.ui.showHelpOverlay
 			return m, nil
 		case "ctrl+s":
-			m.showStatsPanel = !m.showStatsPanel
+			m.ui.showStatsPanel = !m.ui.showStatsPanel
 			return m, nil
 		case "ctrl+p":
 			m.activeTab = 0
 			m.setChatInput("/")
-			m.slashIndex = 0
-			m.slashArgIndex = 0
-			m.mentionIndex = 0
+			m.slashMenu.command = 0
+			m.slashMenu.commandArg = 0
+			m.slashMenu.mention = 0
 			return m, nil
 		case "tab":
 			if m.tabs[m.activeTab] != "Chat" {
@@ -525,29 +525,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "f8", "alt+8":
 			m.activeTab = 7
-			if m.memoryEntries == nil && !m.memoryLoading {
-				m.memoryLoading = true
-				return m, loadMemoryCmd(m.eng, m.memoryTier)
+			if m.memory.entries == nil && !m.memory.loading {
+				m.memory.loading = true
+				return m, loadMemoryCmd(m.eng, m.memory.tier)
 			}
 			return m, nil
 		case "f9", "alt+9":
 			m.activeTab = 8
-			if !m.codemapLoaded && !m.codemapLoading {
-				m.codemapLoading = true
+			if !m.codemap.loaded && !m.codemap.loading {
+				m.codemap.loading = true
 				return m, loadCodemapCmd(m.eng)
 			}
 			return m, nil
 		case "f10", "alt+0":
 			m.activeTab = 9
-			if !m.conversationsLoaded && !m.conversationsLoading {
-				m.conversationsLoading = true
+			if !m.conversations.loaded && !m.conversations.loading {
+				m.conversations.loading = true
 				return m, loadConversationsCmd(m.eng)
 			}
 			return m, nil
 		case "f11", "alt+t":
 			m.activeTab = 10
-			if !m.promptsLoaded && !m.promptsLoading {
-				m.promptsLoading = true
+			if !m.prompts.loaded && !m.prompts.loading {
+				m.prompts.loading = true
 				return m, loadPromptsCmd(m.eng)
 			}
 			return m, nil
@@ -573,7 +573,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// and cheap, so we populate on first activation rather than
 			// dispatching a tea.Cmd.
 			m.activeTab = 14
-			if len(m.providersRows) == 0 && m.providersErr == "" {
+			if len(m.providers.rows) == 0 && m.providers.err == "" {
 				m = m.refreshProvidersRows()
 			}
 			return m, nil
@@ -605,9 +605,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "f", "alt+f":
 				return m.focusPatchFile()
 			case "c", "alt+c":
-				return m, applyPatchCmd(m.eng, m.latestPatch, true)
+				return m, applyPatchCmd(m.eng, m.patchView.latestPatch, true)
 			case "a", "alt+a":
-				return m, applyPatchCmd(m.eng, m.latestPatch, false)
+				return m, applyPatchCmd(m.eng, m.patchView.latestPatch, false)
 			case "u", "alt+u":
 				return m, undoConversationCmd(m.eng)
 			}

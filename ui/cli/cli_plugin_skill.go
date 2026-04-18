@@ -1140,7 +1140,7 @@ func builtinSkills() []skillInfo {
 			Prompt: `You are running the REVIEW skill. Review the changed code for correctness, risk, and test coverage — not style nits.
 
 Playbook:
-1. Scope. Identify exactly what changed: use git_diff / read_file on the target paths. If the target is "recent changes" with no path, read git_log and diff the most recent non-trivial commit.
+1. Scope. Identify exactly what changed: use git_diff / read_file on the target paths. If the target is "recent changes" with no path, read git_log and diff the most recent non-trivial commit. For a suspect line in a long file, git_blame on a narrow line range tells you which commit shaped it — useful when the change touches code with a non-obvious history.
 2. Correctness. For each change, answer: does it do what the commit message / PR claims? Trace the happy path AND at least one error path. Name any branch that's unreachable or any condition that's always true/false.
 3. Behavioral risk. Look for changes that quietly alter: public API, on-disk format, error types, side-effect ordering, concurrency semantics, allocation patterns. Flag each with file:line and the exact risk.
 4. Tests. Check whether the changed code is exercised by an existing test. If not, say which test SHOULD exist (name it) and why the gap matters. Do not demand tests for trivial code.
@@ -1201,7 +1201,7 @@ Request:
 
 Playbook:
 1. Reproduce. Turn the report into a minimal command or test that fails. If you cannot reproduce, stop and say so — guessing is worse than nothing.
-2. Bisect. Use git_log / git_diff, read_file, grep_codebase to narrow the failure to a specific function, commit, or config value. Name the exact line that produces the wrong behavior.
+2. Bisect. Use git_log / git_diff / git_blame, read_file, grep_codebase to narrow the failure to a specific function, commit, or config value. git_blame on a suspect line tells you which commit introduced the current behavior — pull that commit's diff next. Name the exact line that produces the wrong behavior.
 3. Explain the mechanism. Write one paragraph that traces inputs through the code to the bad output. If the explanation hand-waves ("probably a race", "might be cache"), keep digging.
 4. Fix at the root. Prefer the smallest change that removes the cause. Do NOT add try/except that just swallows the error. Do NOT add a feature flag to bypass the path.
 5. Regression test. Add a test that fails without the fix and passes with it. Name the file and the test function.
@@ -1285,7 +1285,7 @@ Request:
 Playbook:
 1. Frame the surface. What inputs does this code trust (user, network, filesystem, env)? What secrets does it handle? What does it delegate to (subprocess, SQL, template engine)? State the boundary you're auditing.
 2. Run the obvious checks. Use grep_codebase for dangerous patterns matched to the language: path traversal (filepath.Join without cleanroot, os.Open on user input), command injection (exec with shell, os/exec with interpolated strings), SSRF (http.Get on user URLs), deserialization (json/yaml into map[string]any with reflection), SQL (string concatenation, fmt.Sprintf into DB query), secrets (ENV, .env, hardcoded tokens, credentials in logs), weak crypto (md5, sha1, random without crypto/rand).
-3. Confirm each hit. Follow the taint: is the dangerous sink actually reachable from an untrusted source? A grep hit on exec.Command inside a test fixture is not a finding. A grep hit on exec.Command with user-controlled args is.
+3. Confirm each hit. Follow the taint: is the dangerous sink actually reachable from an untrusted source? A grep hit on exec.Command inside a test fixture is not a finding. A grep hit on exec.Command with user-controlled args is. When triaging, git_blame on the suspect line surfaces who introduced it and when — useful for prioritising recent additions over code that's been battle-tested for years.
 4. Triage. For each real finding: CRITICAL (remote code exec, auth bypass), HIGH (data exfiltration, privilege escalation), MEDIUM (information disclosure, DoS), LOW (defense-in-depth, non-default configs). If you find nothing, say so clearly.
 5. Fix direction. Each finding gets one concrete remediation: the specific check to add, the safer API to use, or the design change required. Do NOT just say "sanitize input".
 6. Report. Ordered by severity, with file_path:line, exploit sketch, fix direction. Separate section for "reviewed and not a finding" if you checked something notable.

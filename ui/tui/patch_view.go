@@ -42,15 +42,15 @@ func (m Model) renderPatchView(width int) string {
 	// stack we used before forced the user to scroll between `-` and
 	// `+` halves of the same change. 18-row cap each pane mirrors
 	// the previous truncateForPanel budget.
-	diffSide := renderDiffSideBySide(strings.TrimSpace(m.diff), width, 18)
+	diffSide := renderDiffSideBySide(strings.TrimSpace(m.patchView.diff), width, 18)
 	patchSide := renderDiffSideBySide(m.patchPreviewText(), width, 18)
 	if strings.TrimSpace(m.patchPreviewText()) == "" {
 		patchSide = subtleStyle.Render("No assistant patch yet. Ask DFMC to refactor, fix, or rewrite a file in Chat — the generated diff lands here.")
 	}
 
 	changed := "(none)"
-	if len(m.changed) > 0 {
-		changed = strings.Join(m.changed, ", ")
+	if len(m.patchView.changed) > 0 {
+		changed = strings.Join(m.patchView.changed, ", ")
 	}
 	parts := []string{
 		sectionHeader("◈", "Patch Lab"),
@@ -121,9 +121,9 @@ func (m Model) focusPatchFile() (tea.Model, tea.Cmd) {
 		m.notice = "No patched file to focus."
 		return m, nil
 	}
-	for i, path := range m.files {
+	for i, path := range m.filesView.entries {
 		if strings.EqualFold(strings.TrimSpace(path), target) {
-			m.fileIndex = i
+			m.filesView.index = i
 			m.activeTab = 2
 			m.notice = "Focused patched file " + target
 			return m, loadFilePreviewCmd(m.eng, target)
@@ -134,12 +134,12 @@ func (m Model) focusPatchFile() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) shiftPatchTarget(delta int) (tea.Model, tea.Cmd) {
-	if len(m.patchSet) == 0 {
+	if len(m.patchView.set) == 0 {
 		m.notice = "No patched file to navigate."
 		return m, nil
 	}
-	m.patchIndex = (m.patchIndex + delta + len(m.patchSet)) % len(m.patchSet)
-	m.patchHunk = 0
+	m.patchView.index = (m.patchView.index + delta + len(m.patchView.set)) % len(m.patchView.set)
+	m.patchView.hunk = 0
 	m.notice = "Viewing patch for " + m.currentPatchPath()
 	return m, nil
 }
@@ -150,16 +150,16 @@ func (m Model) shiftPatchHunk(delta int) (tea.Model, tea.Cmd) {
 		m.notice = "No patch hunk to navigate."
 		return m, nil
 	}
-	m.patchHunk = (m.patchHunk + delta + len(section.Hunks)) % len(section.Hunks)
+	m.patchView.hunk = (m.patchView.hunk + delta + len(section.Hunks)) % len(section.Hunks)
 	m.notice = "Viewing hunk " + m.patchHunkSummary()
 	return m, nil
 }
 
 func (m Model) patchFilesOrNone() []string {
-	if len(m.patchFiles) == 0 {
+	if len(m.patchView.files) == 0 {
 		return []string{"(none)"}
 	}
-	return append([]string(nil), m.patchFiles...)
+	return append([]string(nil), m.patchView.files...)
 }
 
 func (m Model) patchFocusSummary() string {
@@ -167,42 +167,42 @@ func (m Model) patchFocusSummary() string {
 	if current := strings.TrimSpace(m.currentPatchPath()); current != "" {
 		parts = append(parts, "Viewing "+current+".")
 	}
-	if pinned := strings.TrimSpace(m.pinnedFile); pinned != "" && containsStringFold(m.patchFiles, pinned) {
+	if pinned := strings.TrimSpace(m.filesView.pinned); pinned != "" && containsStringFold(m.patchView.files, pinned) {
 		parts = append(parts, "Pinned file is touched by latest patch.")
 	}
-	if selected := strings.TrimSpace(m.selectedFile()); selected != "" && containsStringFold(m.patchFiles, selected) {
+	if selected := strings.TrimSpace(m.selectedFile()); selected != "" && containsStringFold(m.patchView.files, selected) {
 		parts = append(parts, "Selected file is touched by latest patch.")
 	}
 	return strings.Join(parts, " ")
 }
 
 func (m Model) bestPatchFileTarget() string {
-	if len(m.patchFiles) == 0 {
+	if len(m.patchView.files) == 0 {
 		return ""
 	}
-	if pinned := strings.TrimSpace(m.pinnedFile); pinned != "" && containsStringFold(m.patchFiles, pinned) {
+	if pinned := strings.TrimSpace(m.filesView.pinned); pinned != "" && containsStringFold(m.patchView.files, pinned) {
 		return pinned
 	}
-	if selected := strings.TrimSpace(m.selectedFile()); selected != "" && containsStringFold(m.patchFiles, selected) {
+	if selected := strings.TrimSpace(m.selectedFile()); selected != "" && containsStringFold(m.patchView.files, selected) {
 		return selected
 	}
-	return strings.TrimSpace(m.patchFiles[0])
+	return strings.TrimSpace(m.patchView.files[0])
 }
 
 func (m Model) bestPatchIndex() int {
-	if len(m.patchSet) == 0 {
+	if len(m.patchView.set) == 0 {
 		return 0
 	}
 	candidates := []string{
 		m.currentPatchPath(),
-		strings.TrimSpace(m.pinnedFile),
+		strings.TrimSpace(m.filesView.pinned),
 		strings.TrimSpace(m.selectedFile()),
 	}
 	for _, target := range candidates {
 		if target == "" {
 			continue
 		}
-		for i, item := range m.patchSet {
+		for i, item := range m.patchView.set {
 			if strings.EqualFold(strings.TrimSpace(item.Path), target) {
 				return i
 			}
@@ -220,10 +220,10 @@ func (m Model) currentPatchPath() string {
 }
 
 func (m Model) currentPatchSection() *patchSection {
-	if m.patchIndex < 0 || m.patchIndex >= len(m.patchSet) {
+	if m.patchView.index < 0 || m.patchView.index >= len(m.patchView.set) {
 		return nil
 	}
-	return &m.patchSet[m.patchIndex]
+	return &m.patchView.set[m.patchView.index]
 }
 
 func (m Model) patchTargetSummary() string {
@@ -231,7 +231,7 @@ func (m Model) patchTargetSummary() string {
 	if section == nil {
 		return "(none)"
 	}
-	return fmt.Sprintf("%s (%d/%d, hunks=%d)", section.Path, m.patchIndex+1, len(m.patchSet), section.HunkCount)
+	return fmt.Sprintf("%s (%d/%d, hunks=%d)", section.Path, m.patchView.index+1, len(m.patchView.set), section.HunkCount)
 }
 
 func (m Model) patchHunkSummary() string {
@@ -239,7 +239,7 @@ func (m Model) patchHunkSummary() string {
 	if section == nil || len(section.Hunks) == 0 {
 		return "(none)"
 	}
-	index := m.patchHunk
+	index := m.patchView.hunk
 	if index < 0 || index >= len(section.Hunks) {
 		index = 0
 	}
@@ -253,12 +253,12 @@ func (m Model) patchHunkSummary() string {
 func (m Model) patchPreviewText() string {
 	section := m.currentPatchSection()
 	if section == nil {
-		return strings.TrimSpace(m.latestPatch)
+		return strings.TrimSpace(m.patchView.latestPatch)
 	}
 	if len(section.Hunks) == 0 {
 		return strings.TrimSpace(section.Content)
 	}
-	index := m.patchHunk
+	index := m.patchView.hunk
 	if index < 0 || index >= len(section.Hunks) {
 		index = 0
 	}
@@ -323,30 +323,30 @@ func (m Model) chatPatchSummary(item chatLine) string {
 }
 
 func (m *Model) annotateAssistantPatch(index int) {
-	if index < 0 || index >= len(m.transcript) {
+	if index < 0 || index >= len(m.chat.transcript) {
 		return
 	}
-	if m.transcript[index].Role != "assistant" {
+	if m.chat.transcript[index].Role != "assistant" {
 		return
 	}
-	sections := parseUnifiedDiffSections(m.transcript[index].Content)
-	m.transcript[index].PatchFiles = patchSectionPaths(sections)
-	m.transcript[index].PatchHunks = totalPatchHunks(sections)
+	sections := parseUnifiedDiffSections(m.chat.transcript[index].Content)
+	m.chat.transcript[index].PatchFiles = patchSectionPaths(sections)
+	m.chat.transcript[index].PatchHunks = totalPatchHunks(sections)
 }
 
 func (m *Model) annotateAssistantToolUsage(index int) {
-	if index < 0 || index >= len(m.transcript) {
+	if index < 0 || index >= len(m.chat.transcript) {
 		return
 	}
-	if m.transcript[index].Role != "assistant" || m.eng == nil || m.eng.Conversation == nil {
+	if m.chat.transcript[index].Role != "assistant" || m.eng == nil || m.eng.Conversation == nil {
 		return
 	}
-	msg, ok := m.matchAssistantConversationMessage(m.transcript[index].Content)
+	msg, ok := m.matchAssistantConversationMessage(m.chat.transcript[index].Content)
 	if !ok {
 		return
 	}
-	m.transcript[index].ToolCalls = len(msg.ToolCalls)
-	m.transcript[index].ToolFailures = 0
+	m.chat.transcript[index].ToolCalls = len(msg.ToolCalls)
+	m.chat.transcript[index].ToolFailures = 0
 	if len(msg.ToolCalls) == 0 && len(msg.Results) == 0 {
 		return
 	}
@@ -365,7 +365,7 @@ func (m *Model) annotateAssistantToolUsage(index int) {
 	}
 	for _, result := range msg.Results {
 		if !result.Success {
-			m.transcript[index].ToolFailures++
+			m.chat.transcript[index].ToolFailures++
 		}
 		if name := strings.TrimSpace(result.Name); name != "" {
 			if _, ok := seen[name]; !ok {
@@ -374,7 +374,7 @@ func (m *Model) annotateAssistantToolUsage(index int) {
 			}
 		}
 	}
-	m.transcript[index].ToolNames = names
+	m.chat.transcript[index].ToolNames = names
 }
 
 func (m Model) matchAssistantConversationMessage(content string) (types.Message, bool) {
@@ -409,20 +409,20 @@ func (m Model) matchAssistantConversationMessage(content string) (types.Message,
 }
 
 func (m *Model) markLatestPatchInTranscript(patch string) {
-	for i := range m.transcript {
-		m.transcript[i].IsLatestPatch = false
+	for i := range m.chat.transcript {
+		m.chat.transcript[i].IsLatestPatch = false
 	}
 	patch = strings.TrimSpace(strings.ReplaceAll(patch, "\r\n", "\n"))
 	if patch == "" {
 		return
 	}
-	for i := len(m.transcript) - 1; i >= 0; i-- {
-		if m.transcript[i].Role != "assistant" {
+	for i := len(m.chat.transcript) - 1; i >= 0; i-- {
+		if m.chat.transcript[i].Role != "assistant" {
 			continue
 		}
-		if strings.TrimSpace(extractUnifiedDiff(m.transcript[i].Content)) == patch {
-			m.transcript[i].IsLatestPatch = true
-			if len(m.transcript[i].PatchFiles) == 0 {
+		if strings.TrimSpace(extractUnifiedDiff(m.chat.transcript[i].Content)) == patch {
+			m.chat.transcript[i].IsLatestPatch = true
+			if len(m.chat.transcript[i].PatchFiles) == 0 {
 				m.annotateAssistantPatch(i)
 			}
 			return

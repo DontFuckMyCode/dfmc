@@ -101,23 +101,23 @@ func (m Model) renderPlansView(width int) string {
 
 	// Query line: mirror the search-style "typing" badge from other panels.
 	queryLine := subtleStyle.Render("task: ")
-	if strings.TrimSpace(m.plansQuery) != "" {
-		queryLine += m.plansQuery
+	if strings.TrimSpace(m.plans.query) != "" {
+		queryLine += m.plans.query
 	} else {
 		queryLine += subtleStyle.Render("(none — press e to enter a task)")
 	}
-	if m.plansInputActive {
+	if m.plans.inputActive {
 		queryLine += subtleStyle.Render("  · typing, enter to run")
 	}
 
 	lines := []string{header, hint, queryLine, renderDivider(width - 2)}
 
-	if m.plansErr != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.plansErr))
+	if m.plans.err != "" {
+		lines = append(lines, "", warnStyle.Render("error · "+m.plans.err))
 		return strings.Join(lines, "\n")
 	}
 
-	if m.plansPlan == nil {
+	if m.plans.plan == nil {
 		lines = append(lines,
 			"",
 			subtleStyle.Render("Offline task decomposer. Paste a query and press enter."),
@@ -127,7 +127,7 @@ func (m Model) renderPlansView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	plan := m.plansPlan
+	plan := m.plans.plan
 	parallelTag := "serial"
 	if plan.Parallel {
 		parallelTag = "parallel"
@@ -151,16 +151,16 @@ func (m Model) renderPlansView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	scroll := clampScroll(m.plansScroll, len(plan.Subtasks))
+	scroll := clampScroll(m.plans.scroll, len(plan.Subtasks))
 	for i, s := range plan.Subtasks[scroll:] {
 		idx := scroll + i
-		selected := idx == m.plansScroll
+		selected := idx == m.plans.scroll
 		lines = append(lines, formatPlansSubtaskRow(idx, s, selected, width-2))
 	}
 
-	if m.plansScroll >= 0 && m.plansScroll < len(plan.Subtasks) {
-		lines = append(lines, "", subtleStyle.Render(fmt.Sprintf("subtask #%d", m.plansScroll+1)))
-		lines = append(lines, formatPlansPreview(plan.Subtasks[m.plansScroll], width-2)...)
+	if m.plans.scroll >= 0 && m.plans.scroll < len(plan.Subtasks) {
+		lines = append(lines, "", subtleStyle.Render(fmt.Sprintf("subtask #%d", m.plans.scroll+1)))
+		lines = append(lines, formatPlansPreview(plan.Subtasks[m.plans.scroll], width-2)...)
 	}
 
 	if !plan.Parallel && len(plan.Subtasks) > 1 {
@@ -175,70 +175,70 @@ func (m Model) renderPlansView(width int) string {
 // runPlansSplit computes the plan for the current query and stamps it
 // into the model. Pure function — no engine round-trip.
 func (m Model) runPlansSplit() Model {
-	q := strings.TrimSpace(m.plansQuery)
+	q := strings.TrimSpace(m.plans.query)
 	if q == "" {
-		m.plansPlan = nil
-		m.plansErr = "task is empty"
+		m.plans.plan = nil
+		m.plans.err = "task is empty"
 		return m
 	}
-	m.plansErr = ""
+	m.plans.err = ""
 	p := planning.SplitTask(q)
-	m.plansPlan = &p
-	m.plansScroll = 0
+	m.plans.plan = &p
+	m.plans.scroll = 0
 	return m
 }
 
 func (m Model) handlePlansKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.plansInputActive {
+	if m.plans.inputActive {
 		return m.handlePlansInputKey(msg)
 	}
 	total := 0
-	if m.plansPlan != nil {
-		total = len(m.plansPlan.Subtasks)
+	if m.plans.plan != nil {
+		total = len(m.plans.plan.Subtasks)
 	}
 	step := 1
 	pageStep := 10
 	switch msg.String() {
 	case "e":
-		m.plansInputActive = true
+		m.plans.inputActive = true
 		return m, nil
 	case "j", "down":
-		if m.plansScroll+step < total {
-			m.plansScroll += step
+		if m.plans.scroll+step < total {
+			m.plans.scroll += step
 		}
 	case "k", "up":
-		if m.plansScroll >= step {
-			m.plansScroll -= step
+		if m.plans.scroll >= step {
+			m.plans.scroll -= step
 		} else {
-			m.plansScroll = 0
+			m.plans.scroll = 0
 		}
 	case "pgdown":
-		if m.plansScroll+pageStep < total {
-			m.plansScroll += pageStep
+		if m.plans.scroll+pageStep < total {
+			m.plans.scroll += pageStep
 		} else if total > 0 {
-			m.plansScroll = total - 1
+			m.plans.scroll = total - 1
 		}
 	case "pgup":
-		if m.plansScroll >= pageStep {
-			m.plansScroll -= pageStep
+		if m.plans.scroll >= pageStep {
+			m.plans.scroll -= pageStep
 		} else {
-			m.plansScroll = 0
+			m.plans.scroll = 0
 		}
 	case "g":
-		m.plansScroll = 0
+		m.plans.scroll = 0
 	case "G":
 		if total > 0 {
-			m.plansScroll = total - 1
+			m.plans.scroll = total - 1
 		}
 	case "c":
-		m.plansQuery = ""
-		m.plansPlan = nil
-		m.plansErr = ""
-		m.plansScroll = 0
+		m.plans.query = ""
+		m.plans.plan = nil
+		m.plans.err = ""
+		m.plans.scroll = 0
 	case "enter":
 		// Re-run with the current query — cheap, and gives the user a
 		// way to reload without editing.
-		if strings.TrimSpace(m.plansQuery) != "" {
+		if strings.TrimSpace(m.plans.query) != "" {
 			m = m.runPlansSplit()
 		}
 	}
@@ -248,19 +248,19 @@ func (m Model) handlePlansKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handlePlansInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
-		m.plansInputActive = false
+		m.plans.inputActive = false
 		m = m.runPlansSplit()
 		return m, nil
 	case tea.KeyEsc:
-		m.plansInputActive = false
+		m.plans.inputActive = false
 		return m, nil
 	case tea.KeyBackspace:
-		if r := []rune(m.plansQuery); len(r) > 0 {
-			m.plansQuery = string(r[:len(r)-1])
+		if r := []rune(m.plans.query); len(r) > 0 {
+			m.plans.query = string(r[:len(r)-1])
 		}
 		return m, nil
 	case tea.KeyRunes, tea.KeySpace:
-		m.plansQuery += msg.String()
+		m.plans.query += msg.String()
 		return m, nil
 	}
 	return m, nil

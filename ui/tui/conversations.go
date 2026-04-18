@@ -153,26 +153,26 @@ func (m Model) renderConversationsView(width int) string {
 	hint := subtleStyle.Render("j/k scroll · enter preview (loads as active) · / search · r refresh · c clear search")
 	header := sectionHeader("⎔", "Conversations")
 	queryLine := subtleStyle.Render("query: ")
-	if strings.TrimSpace(m.conversationsQuery) != "" {
-		queryLine += m.conversationsQuery
+	if strings.TrimSpace(m.conversations.query) != "" {
+		queryLine += m.conversations.query
 	} else {
 		queryLine += subtleStyle.Render("(none)")
 	}
-	if m.conversationsSearchActive {
+	if m.conversations.searchActive {
 		queryLine += subtleStyle.Render("  · typing, enter to commit")
 	}
 	lines := []string{header, hint, queryLine, renderDivider(width - 2)}
 
-	if m.conversationsErr != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.conversationsErr))
+	if m.conversations.err != "" {
+		lines = append(lines, "", warnStyle.Render("error · "+m.conversations.err))
 		return strings.Join(lines, "\n")
 	}
-	if m.conversationsLoading {
+	if m.conversations.loading {
 		lines = append(lines, "", subtleStyle.Render("loading..."))
 		return strings.Join(lines, "\n")
 	}
 
-	filtered := filteredConversations(m.conversationsEntries, m.conversationsQuery)
+	filtered := filteredConversations(m.conversations.entries, m.conversations.query)
 	if len(filtered) == 0 {
 		lines = append(lines, "",
 			subtleStyle.Render("No conversations persisted yet."),
@@ -181,7 +181,7 @@ func (m Model) renderConversationsView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	scroll := m.conversationsScroll
+	scroll := m.conversations.scroll
 	if scroll < 0 {
 		scroll = 0
 	}
@@ -190,28 +190,28 @@ func (m Model) renderConversationsView(width int) string {
 	}
 
 	for i, s := range filtered[scroll:] {
-		selected := (scroll + i) == m.conversationsScroll
+		selected := (scroll + i) == m.conversations.scroll
 		lines = append(lines, formatConversationRow(s, selected, width-2))
 	}
 
 	// Preview pane (only when the highlighted entry's preview is loaded).
 	selectedID := ""
-	if m.conversationsScroll >= 0 && m.conversationsScroll < len(filtered) {
-		selectedID = filtered[m.conversationsScroll].ID
+	if m.conversations.scroll >= 0 && m.conversations.scroll < len(filtered) {
+		selectedID = filtered[m.conversations.scroll].ID
 	}
-	if selectedID != "" && selectedID == m.conversationsPreviewID {
+	if selectedID != "" && selectedID == m.conversations.previewID {
 		// Manager.Load sets the preview target as the active conversation
 		// as a side-effect of reading messages — make that visible so users
 		// don't wonder why the Chat history switched out from under them.
 		lines = append(lines, "",
 			subtleStyle.Render("preview · "+selectedID+" · ")+okStyle.Render("loaded as active")+subtleStyle.Render(" — f1/alt+1 to resume in Chat"),
 		)
-		lines = append(lines, formatConversationPreview(m.conversationsPreview, width-2)...)
+		lines = append(lines, formatConversationPreview(m.conversations.preview, width-2)...)
 	}
 
 	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
 		"%d shown · %d loaded",
-		len(filtered), len(m.conversationsEntries),
+		len(filtered), len(m.conversations.entries),
 	)))
 	return strings.Join(lines, "\n")
 }
@@ -219,62 +219,62 @@ func (m Model) renderConversationsView(width int) string {
 // handleConversationsKey dispatches panel keys. Search mode consumes the
 // keyboard while active.
 func (m Model) handleConversationsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.conversationsSearchActive {
+	if m.conversations.searchActive {
 		return m.handleConversationsSearchKey(msg)
 	}
-	total := len(filteredConversations(m.conversationsEntries, m.conversationsQuery))
+	total := len(filteredConversations(m.conversations.entries, m.conversations.query))
 	step := 1
 	pageStep := 10
 	switch msg.String() {
 	case "j", "down":
-		if m.conversationsScroll+step < total {
-			m.conversationsScroll += step
+		if m.conversations.scroll+step < total {
+			m.conversations.scroll += step
 		}
 	case "k", "up":
-		if m.conversationsScroll >= step {
-			m.conversationsScroll -= step
+		if m.conversations.scroll >= step {
+			m.conversations.scroll -= step
 		} else {
-			m.conversationsScroll = 0
+			m.conversations.scroll = 0
 		}
 	case "pgdown":
-		if m.conversationsScroll+pageStep < total {
-			m.conversationsScroll += pageStep
+		if m.conversations.scroll+pageStep < total {
+			m.conversations.scroll += pageStep
 		} else if total > 0 {
-			m.conversationsScroll = total - 1
+			m.conversations.scroll = total - 1
 		}
 	case "pgup":
-		if m.conversationsScroll >= pageStep {
-			m.conversationsScroll -= pageStep
+		if m.conversations.scroll >= pageStep {
+			m.conversations.scroll -= pageStep
 		} else {
-			m.conversationsScroll = 0
+			m.conversations.scroll = 0
 		}
 	case "g":
-		m.conversationsScroll = 0
+		m.conversations.scroll = 0
 	case "G":
 		if total > 0 {
-			m.conversationsScroll = total - 1
+			m.conversations.scroll = total - 1
 		}
 	case "enter":
 		// Load the preview for the currently highlighted entry.
-		filtered := filteredConversations(m.conversationsEntries, m.conversationsQuery)
-		if len(filtered) == 0 || m.conversationsScroll < 0 || m.conversationsScroll >= len(filtered) {
+		filtered := filteredConversations(m.conversations.entries, m.conversations.query)
+		if len(filtered) == 0 || m.conversations.scroll < 0 || m.conversations.scroll >= len(filtered) {
 			return m, nil
 		}
-		id := filtered[m.conversationsScroll].ID
-		if id == "" || id == m.conversationsPreviewID {
+		id := filtered[m.conversations.scroll].ID
+		if id == "" || id == m.conversations.previewID {
 			return m, nil
 		}
 		return m, loadConversationPreviewCmd(m.eng, id)
 	case "r":
-		m.conversationsLoading = true
-		m.conversationsErr = ""
+		m.conversations.loading = true
+		m.conversations.err = ""
 		return m, loadConversationsCmd(m.eng)
 	case "/":
-		m.conversationsSearchActive = true
+		m.conversations.searchActive = true
 		return m, nil
 	case "c":
-		m.conversationsQuery = ""
-		m.conversationsScroll = 0
+		m.conversations.query = ""
+		m.conversations.scroll = 0
 	}
 	return m, nil
 }
@@ -282,19 +282,19 @@ func (m Model) handleConversationsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleConversationsSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
-		m.conversationsSearchActive = false
-		m.conversationsScroll = 0
+		m.conversations.searchActive = false
+		m.conversations.scroll = 0
 		return m, nil
 	case tea.KeyEsc:
-		m.conversationsSearchActive = false
+		m.conversations.searchActive = false
 		return m, nil
 	case tea.KeyBackspace:
-		if r := []rune(m.conversationsQuery); len(r) > 0 {
-			m.conversationsQuery = string(r[:len(r)-1])
+		if r := []rune(m.conversations.query); len(r) > 0 {
+			m.conversations.query = string(r[:len(r)-1])
 		}
 		return m, nil
 	case tea.KeyRunes, tea.KeySpace:
-		m.conversationsQuery += msg.String()
+		m.conversations.query += msg.String()
 		return m, nil
 	}
 	return m, nil

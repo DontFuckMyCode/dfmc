@@ -249,28 +249,49 @@ func (m *Manager) UndoLast() (int, error) {
 }
 
 func (m *Manager) SaveActive() error {
+	// Snapshot id + a defensive copy of the message slice under the lock,
+	// then release before doing the disk write. Holding m.mu across
+	// SaveConversationLog (atomic-rename + fsync, often tens to hundreds
+	// of ms) would block every concurrent AddMessage / Branch* / UndoLast
+	// call for the entire write — and is a classic footgun for re-entrant
+	// deadlocks if the store ever calls back through anything that takes
+	// m.mu (event hooks, error reporters, etc.). The snapshot copy is
+	// cheap relative to the fsync cost.
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	if m.active == nil || m.store == nil {
+		m.mu.RUnlock()
 		return nil
 	}
 	msgs := m.active.Branches[m.active.Branch]
 	if len(msgs) == 0 {
+		m.mu.RUnlock()
 		return nil
 	}
-	return m.store.SaveConversationLog(m.active.ID, msgs)
+	id := m.active.ID
+	snapshot := make([]types.Message, len(msgs))
+	copy(snapshot, msgs)
+	store := m.store
+	m.mu.RUnlock()
+
+	return store.SaveConversationLog(id, snapshot)
 }
 
 func (m *Manager) Load(id string) (*Conversation, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.store == nil {
+	// Same pattern as SaveActive: do the disk I/O outside the manager lock.
+	// The store handles its own concurrency, and holding m.mu across
+	// LoadConversationLog would block every reader for the duration of the
+	// scan (potentially many MB of history).
+	m.mu.RLock()
+	store := m.store
+	m.mu.RUnlock()
+	if store == nil {
 		return nil, fmt.Errorf("store not available")
 	}
-	msgs, err := m.store.LoadConversationLog(id)
+	msgs, err := store.LoadConversationLog(id)
 	if err != nil {
 		return nil, err
 	}
+
 	c := &Conversation{
 		ID:        id,
 		Provider:  "unknown",
@@ -282,17 +303,27 @@ func (m *Manager) Load(id string) (*Conversation, error) {
 		},
 		Metadata: map[string]string{},
 	}
+
+	m.mu.Lock()
 	m.active = c
+	m.mu.Unlock()
 	return cloneConversation(c), nil
 }
 
 func (m *Manager) List() ([]Summary, error) {
+	// Snapshot the immutable refs we need (baseDir, store), release the
+	// lock, then do the directory scan + per-file loads. The previous
+	// version held m.mu for the whole crawl which scaled with conversation
+	// count and starved every concurrent reader.
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if strings.TrimSpace(m.baseDir) == "" {
+	baseDir := m.baseDir
+	store := m.store
+	m.mu.RUnlock()
+
+	if strings.TrimSpace(baseDir) == "" {
 		return nil, nil
 	}
-	entries, err := os.ReadDir(m.baseDir)
+	entries, err := os.ReadDir(baseDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -305,7 +336,7 @@ func (m *Manager) List() ([]Summary, error) {
 			continue
 		}
 		id := strings.TrimSuffix(e.Name(), ".jsonl")
-		msgs, err := m.store.LoadConversationLog(id)
+		msgs, err := store.LoadConversationLog(id)
 		if err != nil {
 			continue
 		}

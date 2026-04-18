@@ -519,8 +519,83 @@ function addMessage(role, content) {
 	return wrapper.querySelector("pre");
 }
 
+// Token-auth glue. When `dfmc serve --auth=token` is in effect every API
+// call needs an Authorization: Bearer <token> header, and the /ws SSE stream
+// needs ?token=<token> in its URL because EventSource can't set headers.
+//
+// The token is resolved (in order): URL hash (#token=...), localStorage,
+// or a one-shot prompt. Once known it's cached in localStorage and stripped
+// from the URL so a copy/paste of the address bar doesn't leak it. Bootstrap
+// makes a probing call to /api/v1/status; a 401 forces a re-prompt and a
+// retry. With --auth=none this whole layer is a no-op since the probe
+// succeeds without a token.
+const dfmcAuth = (function () {
+	const STORAGE_KEY = "dfmcWebToken";
+	let token = "";
+
+	function readFromHash() {
+		const m = (window.location.hash || "").match(/[#&]token=([^&]+)/);
+		if (!m) return "";
+		try { return decodeURIComponent(m[1]); } catch (_) { return m[1]; }
+	}
+	function clearHashToken() {
+		if (!window.location.hash) return;
+		const cleaned = window.location.hash.replace(/[#&]token=[^&]*/, "");
+		const next = cleaned === "#" ? "" : cleaned;
+		try { history.replaceState(null, "", window.location.pathname + window.location.search + next); } catch (_) {}
+	}
+	function readFromStorage() {
+		try { return window.localStorage.getItem(STORAGE_KEY) || ""; } catch (_) { return ""; }
+	}
+	function persist(value) {
+		try {
+			if (value) window.localStorage.setItem(STORAGE_KEY, value);
+			else window.localStorage.removeItem(STORAGE_KEY);
+		} catch (_) {}
+	}
+
+	const fromHash = readFromHash();
+	if (fromHash) {
+		token = fromHash.trim();
+		persist(token);
+		clearHashToken();
+	} else {
+		token = readFromStorage().trim();
+	}
+
+	return {
+		get: () => token,
+		set: (value) => { token = (value || "").trim(); persist(token); },
+		clear: () => { token = ""; persist(""); },
+		applyToHeaders: (headers) => {
+			const h = new Headers(headers || {});
+			if (token && !h.has("Authorization")) h.set("Authorization", "Bearer " + token);
+			return h;
+		},
+		applyToURL: (url) => {
+			if (!token) return url;
+			const sep = url.indexOf("?") === -1 ? "?" : "&";
+			return url + sep + "token=" + encodeURIComponent(token);
+		},
+	};
+})();
+
+async function authedFetch(url, options) {
+	const opts = Object.assign({}, options || {});
+	opts.headers = dfmcAuth.applyToHeaders(opts.headers);
+	return fetch(url, opts);
+}
+
 async function fetchJSON(url, options) {
-	const resp = await fetch(url, options);
+	const resp = await authedFetch(url, options);
+	if (resp.status === 401) {
+		const provided = window.prompt("DFMC server requires a token (set via DFMC_WEB_TOKEN). Enter token:");
+		if (provided && provided.trim()) {
+			dfmcAuth.set(provided);
+			return fetchJSON(url, options);
+		}
+		dfmcAuth.clear();
+	}
 	if (!resp.ok) {
 		const text = await resp.text();
 		throw new Error(text || ("HTTP " + resp.status));
@@ -707,7 +782,7 @@ async function sendChat() {
 	setText("chat-status", "streaming");
 
 	try {
-		const resp = await fetch("/api/v1/chat", {
+		const resp = await authedFetch("/api/v1/chat", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: raw }),
@@ -871,7 +946,10 @@ function setActivityStatus(text) {
 function connectActivityStream() {
 	if (activityState.eventSource) return;
 	try {
-		const es = new EventSource("/ws");
+		// EventSource cannot set custom headers, so the token rides on the
+		// query string. The bearer middleware accepts ?token= as an
+		// alternative to Authorization for exactly this reason.
+		const es = new EventSource(dfmcAuth.applyToURL("/ws"));
 		activityState.eventSource = es;
 		setActivityStatus("connected");
 		es.onmessage = (msg) => {

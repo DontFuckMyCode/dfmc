@@ -11,9 +11,9 @@ import (
 
 func newSecurityTestModel() Model {
 	return Model{
-		tabs:         []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security"},
-		activeTab:    11,
-		securityView: securityViewSecrets,
+		tabs:      []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security"},
+		activeTab: 11,
+		security:  securityPanelState{view: securityViewSecrets},
 	}
 }
 
@@ -138,7 +138,7 @@ func TestRenderSecurityViewNeedsScanCopy(t *testing.T) {
 
 func TestRenderSecurityViewCleanResult(t *testing.T) {
 	m := newSecurityTestModel()
-	m.securityReport = &security.Report{FilesScanned: 20}
+	m.security.report = &security.Report{FilesScanned: 20}
 	out := m.renderSecurityView(100)
 	if !strings.Contains(out, "scanned 20 files") {
 		t.Fatalf("summary line missing: %s", out)
@@ -150,7 +150,7 @@ func TestRenderSecurityViewCleanResult(t *testing.T) {
 
 func TestRenderSecurityViewWithFindings(t *testing.T) {
 	m := newSecurityTestModel()
-	m.securityReport = sampleSecurityReport()
+	m.security.report = sampleSecurityReport()
 	out := m.renderSecurityView(160)
 	if !strings.Contains(out, "3 secrets") {
 		t.Fatalf("summary line missing: %s", out)
@@ -165,8 +165,8 @@ func TestRenderSecurityViewWithFindings(t *testing.T) {
 
 func TestRenderSecurityViewVulnsToggle(t *testing.T) {
 	m := newSecurityTestModel()
-	m.securityReport = sampleSecurityReport()
-	m.securityView = securityViewVulns
+	m.security.report = sampleSecurityReport()
+	m.security.view = securityViewVulns
 	out := m.renderSecurityView(200)
 	if !strings.Contains(out, "pkg/db.go:22") {
 		t.Fatalf("vuln row missing: %s", out)
@@ -181,7 +181,7 @@ func TestRenderSecurityViewVulnsToggle(t *testing.T) {
 
 func TestRenderSecurityViewErrorBanner(t *testing.T) {
 	m := newSecurityTestModel()
-	m.securityErr = "scan failed"
+	m.security.err = "scan failed"
 	out := m.renderSecurityView(80)
 	if !strings.Contains(out, "error · scan failed") {
 		t.Fatalf("error banner missing: %s", out)
@@ -190,53 +190,53 @@ func TestRenderSecurityViewErrorBanner(t *testing.T) {
 
 func TestSecurityViewToggleBinding(t *testing.T) {
 	m := newSecurityTestModel()
-	m.securityReport = sampleSecurityReport()
-	m.securityScroll = 2
+	m.security.report = sampleSecurityReport()
+	m.security.scroll = 2
 
 	m2, _ := m.handleSecurityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
 	m = m2.(Model)
-	if m.securityView != securityViewVulns {
-		t.Fatalf("v should flip to vulns, got %q", m.securityView)
+	if m.security.view != securityViewVulns {
+		t.Fatalf("v should flip to vulns, got %q", m.security.view)
 	}
-	if m.securityScroll != 0 {
-		t.Fatalf("view toggle should reset scroll, got %d", m.securityScroll)
+	if m.security.scroll != 0 {
+		t.Fatalf("view toggle should reset scroll, got %d", m.security.scroll)
 	}
 
 	m2, _ = m.handleSecurityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
 	m = m2.(Model)
-	if m.securityView != securityViewSecrets {
-		t.Fatalf("second v should flip back to secrets, got %q", m.securityView)
+	if m.security.view != securityViewSecrets {
+		t.Fatalf("second v should flip back to secrets, got %q", m.security.view)
 	}
 }
 
 func TestSecurityScrollBindings(t *testing.T) {
 	m := newSecurityTestModel()
-	m.securityReport = sampleSecurityReport()
+	m.security.report = sampleSecurityReport()
 
 	m2, _ := m.handleSecurityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	m = m2.(Model)
-	if m.securityScroll != 1 {
-		t.Fatalf("j should advance, got %d", m.securityScroll)
+	if m.security.scroll != 1 {
+		t.Fatalf("j should advance, got %d", m.security.scroll)
 	}
 	m2, _ = m.handleSecurityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
 	m = m2.(Model)
-	if m.securityScroll != 2 {
-		t.Fatalf("G should jump to last, got %d", m.securityScroll)
+	if m.security.scroll != 2 {
+		t.Fatalf("G should jump to last, got %d", m.security.scroll)
 	}
 	m2, _ = m.handleSecurityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
 	m = m2.(Model)
-	if m.securityScroll != 0 {
-		t.Fatalf("g should jump to top, got %d", m.securityScroll)
+	if m.security.scroll != 0 {
+		t.Fatalf("g should jump to top, got %d", m.security.scroll)
 	}
 }
 
 func TestSecuritySearchInputFlow(t *testing.T) {
 	m := newSecurityTestModel()
-	m.securityReport = sampleSecurityReport()
+	m.security.report = sampleSecurityReport()
 
 	m2, _ := m.handleSecurityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	m = m2.(Model)
-	if !m.securitySearchActive {
+	if !m.security.searchActive {
 		t.Fatalf("search mode should activate on /")
 	}
 
@@ -244,33 +244,33 @@ func TestSecuritySearchInputFlow(t *testing.T) {
 		m2, _ = m.handleSecurityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = m2.(Model)
 	}
-	if m.securityQuery != "aws" {
-		t.Fatalf("want query=aws, got %q", m.securityQuery)
+	if m.security.query != "aws" {
+		t.Fatalf("want query=aws, got %q", m.security.query)
 	}
 
 	m2, _ = m.handleSecurityKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = m2.(Model)
-	if m.securitySearchActive {
+	if m.security.searchActive {
 		t.Fatalf("enter should exit search mode")
 	}
 
 	m2, _ = m.handleSecurityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	m = m2.(Model)
-	if m.securityQuery != "" {
-		t.Fatalf("c should clear query, got %q", m.securityQuery)
+	if m.security.query != "" {
+		t.Fatalf("c should clear query, got %q", m.security.query)
 	}
 }
 
 func TestSecurityRefreshSetsLoading(t *testing.T) {
 	m := newSecurityTestModel()
-	m.securityErr = "stale"
+	m.security.err = "stale"
 	m2, _ := m.handleSecurityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	m = m2.(Model)
-	if !m.securityLoading {
+	if !m.security.loading {
 		t.Fatalf("r should set loading=true")
 	}
-	if m.securityErr != "" {
-		t.Fatalf("r should clear error, got %q", m.securityErr)
+	if m.security.err != "" {
+		t.Fatalf("r should clear error, got %q", m.security.err)
 	}
 }
 

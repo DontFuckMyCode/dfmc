@@ -20,7 +20,7 @@ func newExportTestModel(t *testing.T, lines []chatLine) Model {
 	// is needed since export doesn't touch bbolt/providers/tools.
 	eng := &engine.Engine{ProjectRoot: tmp}
 	m := NewModel(context.Background(), eng)
-	m.transcript = lines
+	m.chat.transcript = lines
 	return m
 }
 
@@ -31,7 +31,7 @@ func TestSlashExport_EmptyTranscriptRefuses(t *testing.T) {
 		t.Fatalf("/export must be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(strings.ToLower(last), "nothing to export") {
 		t.Fatalf("empty transcript should decline; got:\n%s", last)
 	}
@@ -71,7 +71,7 @@ func TestSlashExport_DefaultPathWritesToProjectDotDfmcExports(t *testing.T) {
 		t.Fatalf("export should carry message content, got:\n%s", content)
 	}
 
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "exported") && !strings.Contains(last, "Exported") {
 		t.Fatalf("confirmation system line should say 'exported', got:\n%s", last)
 	}
@@ -108,7 +108,7 @@ func TestSlashExport_SaveAlias(t *testing.T) {
 		t.Fatalf("/save alias must be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "exported") && !strings.Contains(last, "Exported") {
 		t.Fatalf("/save alias should produce an export confirmation, got:\n%s", last)
 	}

@@ -174,7 +174,7 @@ func (m Model) renderProvidersView(width int) string {
 	hint := subtleStyle.Render("j/k scroll · r refresh · g/G top/bottom")
 	header := sectionHeader("⚑", "Providers")
 
-	rows := m.providersRows
+	rows := m.providers.rows
 	order := resolveProviderOrder(m.eng)
 
 	lines := []string{header, hint}
@@ -185,8 +185,8 @@ func (m Model) renderProvidersView(width int) string {
 	}
 	lines = append(lines, renderDivider(width-2))
 
-	if m.providersErr != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.providersErr))
+	if m.providers.err != "" {
+		lines = append(lines, "", warnStyle.Render("error · "+m.providers.err))
 		return strings.Join(lines, "\n")
 	}
 
@@ -212,7 +212,7 @@ func (m Model) renderProvidersView(width int) string {
 	summary := fmt.Sprintf("%d providers · %d ready · %d missing keys", len(rows), readyCount, noKeyCount)
 	lines = append(lines, subtleStyle.Render(summary), "")
 
-	scroll := clampScroll(m.providersScroll, len(rows))
+	scroll := clampScroll(m.providers.scroll, len(rows))
 	for i, row := range rows {
 		selected := i == scroll
 		lines = append(lines, formatProviderRow(row, selected, width-2))
@@ -231,50 +231,50 @@ func (m Model) renderProvidersView(width int) string {
 // first-activation path.
 func (m Model) refreshProvidersRows() Model {
 	rows := collectProviderRows(m.eng)
-	m.providersRows = rows
+	m.providers.rows = rows
 	if m.eng == nil {
-		m.providersErr = "engine not ready (degraded startup)"
+		m.providers.err = "engine not ready (degraded startup)"
 	} else if len(rows) == 0 {
-		m.providersErr = "router has no providers"
+		m.providers.err = "router has no providers"
 	} else {
-		m.providersErr = ""
+		m.providers.err = ""
 	}
-	m.providersScroll = clampScroll(m.providersScroll, len(rows))
+	m.providers.scroll = clampScroll(m.providers.scroll, len(rows))
 	return m
 }
 
 func (m Model) handleProvidersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	total := len(m.providersRows)
+	total := len(m.providers.rows)
 	step := 1
 	pageStep := 10
 	switch msg.String() {
 	case "j", "down":
-		if m.providersScroll+step < total {
-			m.providersScroll += step
+		if m.providers.scroll+step < total {
+			m.providers.scroll += step
 		}
 	case "k", "up":
-		if m.providersScroll >= step {
-			m.providersScroll -= step
+		if m.providers.scroll >= step {
+			m.providers.scroll -= step
 		} else {
-			m.providersScroll = 0
+			m.providers.scroll = 0
 		}
 	case "pgdown":
-		if m.providersScroll+pageStep < total {
-			m.providersScroll += pageStep
+		if m.providers.scroll+pageStep < total {
+			m.providers.scroll += pageStep
 		} else if total > 0 {
-			m.providersScroll = total - 1
+			m.providers.scroll = total - 1
 		}
 	case "pgup":
-		if m.providersScroll >= pageStep {
-			m.providersScroll -= pageStep
+		if m.providers.scroll >= pageStep {
+			m.providers.scroll -= pageStep
 		} else {
-			m.providersScroll = 0
+			m.providers.scroll = 0
 		}
 	case "g":
-		m.providersScroll = 0
+		m.providers.scroll = 0
 	case "G":
 		if total > 0 {
-			m.providersScroll = total - 1
+			m.providers.scroll = total - 1
 		}
 	case "r":
 		m = m.refreshProvidersRows()

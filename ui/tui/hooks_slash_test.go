@@ -31,7 +31,7 @@ func TestSlashHooks_NoneRegisteredShowsGuidance(t *testing.T) {
 		t.Fatalf("/hooks must be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "none registered") {
 		t.Fatalf("empty dispatcher should say 'none registered', got:\n%s", last)
 	}
@@ -52,7 +52,7 @@ func TestSlashHooks_ListsEventsAndEntries(t *testing.T) {
 	})
 	next, _, _ := m.executeChatCommand("/hooks")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 
 	if !strings.Contains(last, "pre_tool (2)") {
 		t.Fatalf("should summarise pre_tool count, got:\n%s", last)

@@ -65,10 +65,10 @@ func TestEveryCatalogCommandDispatches(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected Model, got %T", next)
 			}
-			if len(mm.transcript) == 0 {
+			if len(mm.chat.transcript) == 0 {
 				return
 			}
-			last := mm.transcript[len(mm.transcript)-1].Content
+			last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 			if strings.HasPrefix(last, "Unknown command:") || strings.HasPrefix(last, "Unknown chat command:") {
 				t.Fatalf("catalog entry %q fell through to unknown-command branch: %q", input, last)
 			}
@@ -88,10 +88,10 @@ func TestCatalogCliOnlyCommandsEmitHelpfulHint(t *testing.T) {
 				t.Fatalf("/%s should be handled (even as a CLI-only stub)", name)
 			}
 			mm := next.(Model)
-			if len(mm.transcript) == 0 {
+			if len(mm.chat.transcript) == 0 {
 				t.Fatalf("/%s should emit a transcript line explaining the CLI route", name)
 			}
-			last := mm.transcript[len(mm.transcript)-1].Content
+			last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 			if !strings.Contains(last, "CLI command") || !strings.Contains(last, "dfmc "+name) {
 				t.Fatalf("/%s should tell the user to run `dfmc %s`, got:\n%s", name, name, last)
 			}
@@ -109,10 +109,10 @@ func TestSuggestSlashCommand_SuggestsClosestOnTypo(t *testing.T) {
 		t.Fatalf("unknown commands still return handled=true")
 	}
 	mm := next.(Model)
-	if len(mm.transcript) == 0 {
+	if len(mm.chat.transcript) == 0 {
 		t.Fatalf("unknown command should emit a transcript hint")
 	}
-	last := mm.transcript[len(mm.transcript)-1].Content
+	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 	if !strings.Contains(last, "review") {
 		t.Fatalf("typo /revieww should suggest /review, got:\n%s", last)
 	}
@@ -124,7 +124,7 @@ func TestSuggestSlashCommand_SuggestsClosestOnTypo(t *testing.T) {
 // the inline strip was a real picker; the box makes the affordance obvious.
 func TestSlashPickerIsBorderedModal(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.input = "/re"
+	m.chat.input = "/re"
 	view := m.renderChatView(160)
 	if !strings.ContainsAny(view, "╭╮╰╯") {
 		t.Fatalf("slash picker should render inside a bordered modal, got:\n%s", view)
@@ -161,10 +161,10 @@ func TestStarterPromptsAllDispatch(t *testing.T) {
 				t.Fatalf("starter %q (Cmd=%q) did not dispatch", s.Key, s.Cmd)
 			}
 			mm := next.(Model)
-			if len(mm.transcript) == 0 {
+			if len(mm.chat.transcript) == 0 {
 				return
 			}
-			last := mm.transcript[len(mm.transcript)-1].Content
+			last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 			if strings.HasPrefix(last, "Unknown command:") || strings.HasPrefix(last, "Unknown chat command:") {
 				t.Fatalf("starter %q (Cmd=%q) fell through to unknown-command branch: %q", s.Key, s.Cmd, last)
 			}
@@ -177,7 +177,7 @@ func TestStarterPromptsAllDispatch(t *testing.T) {
 // user has a durable breadcrumb of the mode change.
 func TestPlanModeTogglesViaSlashCommands(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	if m.planMode {
+	if m.ui.planMode {
 		t.Fatalf("default state must be planMode=false")
 	}
 
@@ -187,10 +187,10 @@ func TestPlanModeTogglesViaSlashCommands(t *testing.T) {
 		t.Fatalf("/plan must be handled=true")
 	}
 	mm := next.(Model)
-	if !mm.planMode {
+	if !mm.ui.planMode {
 		t.Fatalf("/plan must flip planMode on")
 	}
-	last := mm.transcript[len(mm.transcript)-1].Content
+	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 	if !strings.Contains(last, "Plan mode ON") {
 		t.Fatalf("/plan system message should announce ON, got:\n%s", last)
 	}
@@ -198,10 +198,10 @@ func TestPlanModeTogglesViaSlashCommands(t *testing.T) {
 	// /plan while already on is idempotent and says so.
 	next2, _, _ := mm.executeChatCommand("/plan")
 	mm2 := next2.(Model)
-	if !mm2.planMode {
+	if !mm2.ui.planMode {
 		t.Fatalf("idempotent /plan must keep planMode=true")
 	}
-	last = mm2.transcript[len(mm2.transcript)-1].Content
+	last = mm2.chat.transcript[len(mm2.chat.transcript)-1].Content
 	if !strings.Contains(last, "already ON") {
 		t.Fatalf("idempotent /plan should acknowledge already-on, got:\n%s", last)
 	}
@@ -209,10 +209,10 @@ func TestPlanModeTogglesViaSlashCommands(t *testing.T) {
 	// /code exits plan mode.
 	next3, _, _ := mm2.executeChatCommand("/code")
 	mm3 := next3.(Model)
-	if mm3.planMode {
+	if mm3.ui.planMode {
 		t.Fatalf("/code must flip planMode off")
 	}
-	last = mm3.transcript[len(mm3.transcript)-1].Content
+	last = mm3.chat.transcript[len(mm3.chat.transcript)-1].Content
 	if !strings.Contains(last, "Plan mode OFF") {
 		t.Fatalf("/code should announce OFF, got:\n%s", last)
 	}
@@ -240,7 +240,7 @@ func TestSubmitChatQuestionInjectsPlanDirectiveInPlanMode(t *testing.T) {
 	// Now simulate plan mode's pure-directive branch. The branch is in
 	// submitChatQuestion itself; we test that the directive string shape
 	// is recognizable so future refactors don't silently drop it.
-	m.planMode = true
+	m.ui.planMode = true
 	// The branch is: question = trim + "\n\n[DFMC plan mode] ..." — we
 	// assert that the documented shape is detectable by substring.
 	expectedMarker := "[DFMC plan mode]"
@@ -285,10 +285,10 @@ func TestEditWithoutPriorUserMessage(t *testing.T) {
 		t.Fatalf("/edit must be handled=true")
 	}
 	mm := next.(Model)
-	if len(mm.transcript) == 0 {
+	if len(mm.chat.transcript) == 0 {
 		t.Fatalf("/edit on empty transcript should emit a transcript line")
 	}
-	last := mm.transcript[len(mm.transcript)-1].Content
+	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 	if !strings.Contains(strings.ToLower(last), "no prior user message") {
 		t.Fatalf("/edit on empty transcript should say 'no prior user message', got:\n%s", last)
 	}
@@ -299,7 +299,7 @@ func TestEditWithoutPriorUserMessage(t *testing.T) {
 // the end, and nothing is sent yet. User can now amend and press enter.
 func TestEditPullsLastUserMessageIntoComposer(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = []chatLine{
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "explain the auth flow"},
 		{Role: "assistant", Content: "some stale answer we want to iterate on"},
 	}
@@ -308,16 +308,16 @@ func TestEditPullsLastUserMessageIntoComposer(t *testing.T) {
 		t.Fatalf("/edit must be handled=true")
 	}
 	mm := next.(Model)
-	if mm.input != "explain the auth flow" {
-		t.Fatalf("composer must load the previous user message verbatim, got %q", mm.input)
+	if mm.chat.input != "explain the auth flow" {
+		t.Fatalf("composer must load the previous user message verbatim, got %q", mm.chat.input)
 	}
-	if len(mm.transcript) != 0 {
-		t.Fatalf("user+assistant turn must be dropped when /edit pulls it back, got %d transcript lines: %+v", len(mm.transcript), mm.transcript)
+	if len(mm.chat.transcript) != 0 {
+		t.Fatalf("user+assistant turn must be dropped when /edit pulls it back, got %d transcript lines: %+v", len(mm.chat.transcript), mm.chat.transcript)
 	}
-	if mm.chatCursor != len([]rune("explain the auth flow")) {
-		t.Fatalf("cursor must sit at the end of the loaded text, got %d", mm.chatCursor)
+	if mm.chat.cursor != len([]rune("explain the auth flow")) {
+		t.Fatalf("cursor must sit at the end of the loaded text, got %d", mm.chat.cursor)
 	}
-	if mm.sending {
+	if mm.chat.sending {
 		t.Fatalf("/edit must NOT trigger a send; user must press enter to resubmit")
 	}
 	if !strings.Contains(strings.ToLower(mm.notice), "editing last message") {
@@ -328,17 +328,17 @@ func TestEditPullsLastUserMessageIntoComposer(t *testing.T) {
 // TestEditBlockedWhileStreaming — same guard as /retry.
 func TestEditBlockedWhileStreaming(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = []chatLine{
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "x"},
 		{Role: "assistant", Content: "partial"},
 	}
-	m.sending = true
+	m.chat.sending = true
 	next, _, _ := m.executeChatCommand("/edit")
 	mm := next.(Model)
-	if mm.input != "" {
-		t.Fatalf("/edit must not load composer while streaming, got %q", mm.input)
+	if mm.chat.input != "" {
+		t.Fatalf("/edit must not load composer while streaming, got %q", mm.chat.input)
 	}
-	last := mm.transcript[len(mm.transcript)-1].Content
+	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 	if !strings.Contains(strings.ToLower(last), "already streaming") {
 		t.Fatalf("guard message should mention streaming, got:\n%s", last)
 	}
@@ -354,14 +354,14 @@ func TestRetryWithoutPriorUserMessage(t *testing.T) {
 		t.Fatalf("/retry must always be handled=true")
 	}
 	mm := next.(Model)
-	if len(mm.transcript) == 0 {
+	if len(mm.chat.transcript) == 0 {
 		t.Fatalf("/retry should emit a transcript line")
 	}
-	last := mm.transcript[len(mm.transcript)-1].Content
+	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 	if !strings.Contains(strings.ToLower(last), "no prior user message") {
 		t.Fatalf("/retry on empty transcript should say 'no prior user message', got:\n%s", last)
 	}
-	if mm.sending {
+	if mm.chat.sending {
 		t.Fatalf("/retry with nothing to retry must not flip sending=true")
 	}
 }
@@ -371,7 +371,7 @@ func TestRetryWithoutPriorUserMessage(t *testing.T) {
 // dropped; the user's question is resubmitted so the stream re-opens it.
 func TestRetryDropsAssistantReplyAndRequeuesLastUserMessage(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = []chatLine{
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "what is 2+2?"},
 		{Role: "assistant", Content: "4 (but with more words than needed)"},
 		{Role: "tool", Content: "tool blob"},
@@ -382,16 +382,16 @@ func TestRetryDropsAssistantReplyAndRequeuesLastUserMessage(t *testing.T) {
 	}
 	mm := next.(Model)
 	// Transcript must hold the user line + fresh empty assistant placeholder.
-	if len(mm.transcript) != 2 {
-		t.Fatalf("after /retry expected 2 transcript lines (user + empty assistant), got %d: %+v", len(mm.transcript), mm.transcript)
+	if len(mm.chat.transcript) != 2 {
+		t.Fatalf("after /retry expected 2 transcript lines (user + empty assistant), got %d: %+v", len(mm.chat.transcript), mm.chat.transcript)
 	}
-	if !strings.EqualFold(mm.transcript[0].Role, "user") || mm.transcript[0].Content != "what is 2+2?" {
-		t.Fatalf("user line must survive /retry, got %+v", mm.transcript[0])
+	if !mm.chat.transcript[0].Role.Eq(chatRoleUser) || mm.chat.transcript[0].Content != "what is 2+2?" {
+		t.Fatalf("user line must survive /retry, got %+v", mm.chat.transcript[0])
 	}
-	if !strings.EqualFold(mm.transcript[1].Role, "assistant") || mm.transcript[1].Content != "" {
-		t.Fatalf("fresh assistant placeholder must appear, got %+v", mm.transcript[1])
+	if !mm.chat.transcript[1].Role.Eq(chatRoleAssistant) || mm.chat.transcript[1].Content != "" {
+		t.Fatalf("fresh assistant placeholder must appear, got %+v", mm.chat.transcript[1])
 	}
-	if !mm.sending {
+	if !mm.chat.sending {
 		t.Fatalf("/retry must flip sending=true to re-open the stream")
 	}
 }
@@ -400,11 +400,11 @@ func TestRetryDropsAssistantReplyAndRequeuesLastUserMessage(t *testing.T) {
 // is already streaming must not kick off a second turn.
 func TestRetryBlockedWhileStreaming(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = []chatLine{
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "a long question"},
 		{Role: "assistant", Content: "partial streaming reply so far"},
 	}
-	m.sending = true
+	m.chat.sending = true
 	next, _, handled := m.executeChatCommand("/retry")
 	if !handled {
 		t.Fatalf("/retry must always be handled")
@@ -412,10 +412,10 @@ func TestRetryBlockedWhileStreaming(t *testing.T) {
 	mm := next.(Model)
 	// Transcript must be unchanged beyond the system notice appended for
 	// the guard message.
-	if len(mm.transcript) < 3 {
-		t.Fatalf("expected guard message appended, got %d lines", len(mm.transcript))
+	if len(mm.chat.transcript) < 3 {
+		t.Fatalf("expected guard message appended, got %d lines", len(mm.chat.transcript))
 	}
-	last := mm.transcript[len(mm.transcript)-1].Content
+	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 	if !strings.Contains(strings.ToLower(last), "already streaming") {
 		t.Fatalf("guard message should explain the streaming block, got:\n%s", last)
 	}
@@ -431,10 +431,10 @@ func TestUnknownSlashCommandEmitsHelpPointer(t *testing.T) {
 		t.Fatalf("unknown commands are still handled (by definition)")
 	}
 	mm := next.(Model)
-	if len(mm.transcript) == 0 {
+	if len(mm.chat.transcript) == 0 {
 		t.Fatalf("unknown slash should emit a transcript line")
 	}
-	last := mm.transcript[len(mm.transcript)-1].Content
+	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 	if !strings.Contains(last, "/help") {
 		t.Fatalf("unknown slash with no suggestion should point at /help, got:\n%s", last)
 	}

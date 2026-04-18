@@ -38,7 +38,7 @@ func (m Model) runTemplateSlash(verb string, args []string, raw string) (Model, 
 	_ = raw
 	payload := strings.TrimSpace(strings.Join(args, " "))
 	targets, tail := splitTargetsAndTail(args)
-	pinned := strings.TrimSpace(m.pinnedFile)
+	pinned := strings.TrimSpace(m.filesView.pinned)
 	if len(targets) == 0 && pinned != "" {
 		targets = []string{pinned}
 	}
@@ -65,7 +65,7 @@ func (m Model) runTemplateSlash(verb string, args []string, raw string) (Model, 
 		m.notice = "/" + verb + " needs a file or topic."
 		return m.appendSystemMessage("Usage: /" + verb + " <path|topic>"), nil, true
 	}
-	m.input = ""
+	m.chat.input = ""
 	m = m.appendSystemMessage(fmt.Sprintf("/%s → submitting as chat: %s", verb, truncateSingleLine(prompt, 120)))
 	next, cmdOut := m.submitChatQuestion(prompt, nil)
 	return next, cmdOut, true

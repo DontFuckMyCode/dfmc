@@ -149,7 +149,7 @@ func TestRenderPromptsViewEmptyState(t *testing.T) {
 
 func TestRenderPromptsViewErrorBanner(t *testing.T) {
 	m := newPromptsTestModel()
-	m.promptsErr = "bad yaml"
+	m.prompts.err = "bad yaml"
 	out := m.renderPromptsView(80)
 	if !strings.Contains(out, "error · bad yaml") {
 		t.Fatalf("error banner missing: %s", out)
@@ -158,7 +158,7 @@ func TestRenderPromptsViewErrorBanner(t *testing.T) {
 
 func TestRenderPromptsViewWithTemplates(t *testing.T) {
 	m := newPromptsTestModel()
-	m.promptsTemplates = samplePromptTemplates()
+	m.prompts.templates = samplePromptTemplates()
 	out := m.renderPromptsView(140)
 	if !strings.Contains(out, "3 shown · 3 loaded") {
 		t.Fatalf("footer count wrong: %s", out)
@@ -170,32 +170,32 @@ func TestRenderPromptsViewWithTemplates(t *testing.T) {
 
 func TestPromptsScrollBindings(t *testing.T) {
 	m := newPromptsTestModel()
-	m.promptsTemplates = samplePromptTemplates()
+	m.prompts.templates = samplePromptTemplates()
 
 	m2, _ := m.handlePromptsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	m = m2.(Model)
-	if m.promptsScroll != 1 {
-		t.Fatalf("j should advance, got %d", m.promptsScroll)
+	if m.prompts.scroll != 1 {
+		t.Fatalf("j should advance, got %d", m.prompts.scroll)
 	}
 	m2, _ = m.handlePromptsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
 	m = m2.(Model)
-	if m.promptsScroll != len(m.promptsTemplates)-1 {
-		t.Fatalf("G should jump to last, got %d", m.promptsScroll)
+	if m.prompts.scroll != len(m.prompts.templates)-1 {
+		t.Fatalf("G should jump to last, got %d", m.prompts.scroll)
 	}
 	m2, _ = m.handlePromptsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
 	m = m2.(Model)
-	if m.promptsScroll != 0 {
-		t.Fatalf("g should jump to top, got %d", m.promptsScroll)
+	if m.prompts.scroll != 0 {
+		t.Fatalf("g should jump to top, got %d", m.prompts.scroll)
 	}
 }
 
 func TestPromptsSearchInputFlow(t *testing.T) {
 	m := newPromptsTestModel()
-	m.promptsTemplates = samplePromptTemplates()
+	m.prompts.templates = samplePromptTemplates()
 
 	m2, _ := m.handlePromptsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	m = m2.(Model)
-	if !m.promptsSearchActive {
+	if !m.prompts.searchActive {
 		t.Fatalf("search mode should activate on /")
 	}
 
@@ -203,29 +203,29 @@ func TestPromptsSearchInputFlow(t *testing.T) {
 		m2, _ = m.handlePromptsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = m2.(Model)
 	}
-	if m.promptsQuery != "explain" {
-		t.Fatalf("want query=explain, got %q", m.promptsQuery)
+	if m.prompts.query != "explain" {
+		t.Fatalf("want query=explain, got %q", m.prompts.query)
 	}
 
 	m2, _ = m.handlePromptsKey(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = m2.(Model)
-	if m.promptsQuery != "explai" {
-		t.Fatalf("backspace should trim, got %q", m.promptsQuery)
+	if m.prompts.query != "explai" {
+		t.Fatalf("backspace should trim, got %q", m.prompts.query)
 	}
 
 	m2, _ = m.handlePromptsKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = m2.(Model)
-	if m.promptsSearchActive {
+	if m.prompts.searchActive {
 		t.Fatalf("enter should exit search mode")
 	}
-	if m.promptsScroll != 0 {
-		t.Fatalf("enter should reset scroll, got %d", m.promptsScroll)
+	if m.prompts.scroll != 0 {
+		t.Fatalf("enter should reset scroll, got %d", m.prompts.scroll)
 	}
 
 	m2, _ = m.handlePromptsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	m = m2.(Model)
-	if m.promptsQuery != "" {
-		t.Fatalf("c should clear query, got %q", m.promptsQuery)
+	if m.prompts.query != "" {
+		t.Fatalf("c should clear query, got %q", m.prompts.query)
 	}
 }
 
@@ -233,20 +233,20 @@ func TestPromptsRefreshSetsLoading(t *testing.T) {
 	m := newPromptsTestModel()
 	m2, _ := m.handlePromptsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	m = m2.(Model)
-	if !m.promptsLoading {
+	if !m.prompts.loading {
 		t.Fatalf("r should set loading=true")
 	}
-	if m.promptsErr != "" {
-		t.Fatalf("r should clear error, got %q", m.promptsErr)
+	if m.prompts.err != "" {
+		t.Fatalf("r should clear error, got %q", m.prompts.err)
 	}
 }
 
 func TestPromptsEnterSetsPreviewID(t *testing.T) {
 	m := newPromptsTestModel()
-	m.promptsTemplates = samplePromptTemplates()
+	m.prompts.templates = samplePromptTemplates()
 	m2, _ := m.handlePromptsKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = m2.(Model)
-	if m.promptsPreviewID != "review.base" {
-		t.Fatalf("enter should stamp preview id of highlighted row, got %q", m.promptsPreviewID)
+	if m.prompts.previewID != "review.base" {
+		t.Fatalf("enter should stamp preview id of highlighted row, got %q", m.prompts.previewID)
 	}
 }

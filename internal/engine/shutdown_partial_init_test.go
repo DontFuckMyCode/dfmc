@@ -9,7 +9,10 @@
 package engine
 
 import (
+	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 )
@@ -47,4 +50,41 @@ func TestShutdown_IsIdempotent(t *testing.T) {
 	}()
 	eng.Shutdown()
 	eng.Shutdown()
+}
+
+// Pin: Shutdown-stage failures must publish engine:shutdown_error
+// events so live observers (TUI status, web /ws stream) can surface the
+// data-loss instead of letting it die in stderr only. Drives the C2
+// review fix — used to be `_ = err`, now wraps each persist call.
+func TestShutdown_ErrorPublishesEvent(t *testing.T) {
+	cfg := config.DefaultConfig()
+	eng, err := New(cfg)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	defer eng.Shutdown()
+
+	sub := eng.EventBus.Subscribe("engine:shutdown_error")
+	defer eng.EventBus.Unsubscribe("engine:shutdown_error", sub)
+
+	// Drive the helper directly — fault-injecting the real persist
+	// pipeline would couple this test to internal/conversation +
+	// internal/memory implementation details. The contract we care
+	// about is "every reported error reaches the bus".
+	eng.reportShutdownError("save_conversation", errors.New("disk full"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	select {
+	case ev := <-sub:
+		payload, _ := ev.Payload.(map[string]any)
+		if got, _ := payload["stage"].(string); got != "save_conversation" {
+			t.Fatalf("expected stage=save_conversation; got %q", got)
+		}
+		if got, _ := payload["error"].(string); got != "disk full" {
+			t.Fatalf("expected error=disk full; got %q", got)
+		}
+	case <-ctx.Done():
+		t.Fatalf("expected engine:shutdown_error event within 1s")
+	}
 }

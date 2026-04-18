@@ -111,11 +111,11 @@ func TestApprovalModal_UnrelatedKeysSwallowed(t *testing.T) {
 
 	// Typing "a" (a real rune) while the modal is up must neither land
 	// in the composer nor resolve the approval.
-	before := m.input
+	before := m.chat.input
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	nm := next.(Model)
-	if nm.input != before {
-		t.Fatalf("stray runes should not reach the composer while approval modal is open; input=%q", nm.input)
+	if nm.chat.input != before {
+		t.Fatalf("stray runes should not reach the composer while approval modal is open; input=%q", nm.chat.input)
 	}
 	if nm.pendingApproval == nil {
 		t.Fatalf("approval should still be pending after a stray keystroke")

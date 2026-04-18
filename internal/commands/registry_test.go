@@ -13,6 +13,22 @@ func TestDefaultRegistry_BootsWithoutPanic(t *testing.T) {
 	}
 }
 
+// TestDefaultRegistry_NoDupes pins that the shipped catalog contains no
+// duplicate names or alias collisions. Runtime now log-and-skips on conflicts
+// (so dfmc doctor keeps working even if the catalog is broken), so this CI
+// gate is what catches a programmer bug introducing a dupe.
+func TestDefaultRegistry_NoDupes(t *testing.T) {
+	r := NewRegistry()
+	for _, cmd := range defaultCommands() {
+		if err := r.Register(cmd); err != nil {
+			t.Fatalf("default catalog has a registration error on %q: %v", cmd.Name, err)
+		}
+	}
+	if len(r.All()) != len(defaultCommands()) {
+		t.Fatalf("registered count (%d) != catalog count (%d) — a dupe was silently dropped", len(r.All()), len(defaultCommands()))
+	}
+}
+
 func TestRegister_RejectsDuplicateName(t *testing.T) {
 	r := NewRegistry()
 	if err := r.Register(Command{Name: "ask", Summary: "first", Surfaces: SurfaceCLI}); err != nil {

@@ -60,22 +60,22 @@ func (m *Model) recordActivityEvent(ev engine.Event) {
 	}
 	// Dedupe consecutive identical events — streaming deltas can flood the
 	// feed otherwise. We only dedupe when the event id and text both match.
-	if n := len(m.activityEntries); n > 0 {
-		last := m.activityEntries[n-1]
+	if n := len(m.activity.entries); n > 0 {
+		last := m.activity.entries[n-1]
 		if last.EventID == entry.EventID && last.Text == entry.Text {
 			return
 		}
 	}
-	m.activityEntries = append(m.activityEntries, entry)
-	if len(m.activityEntries) > maxActivityEntries {
-		drop := len(m.activityEntries) - maxActivityEntries
-		m.activityEntries = m.activityEntries[drop:]
+	m.activity.entries = append(m.activity.entries, entry)
+	if len(m.activity.entries) > maxActivityEntries {
+		drop := len(m.activity.entries) - maxActivityEntries
+		m.activity.entries = m.activity.entries[drop:]
 	}
 	// Follow-tail: when the user is pinned to the bottom (the default) the
 	// view should scroll as new entries arrive. Any manual scroll unsets
 	// activityFollow, pinning the view until the user presses G or c.
-	if m.activityFollow {
-		m.activityScroll = 0
+	if m.activity.follow {
+		m.activity.scroll = 0
 	}
 }
 
@@ -212,11 +212,11 @@ func (m Model) renderActivityView(width int) string {
 	width = clampInt(width, 24, 1000)
 	lines := []string{
 		sectionHeader("⚡", "Activity"),
-		subtleStyle.Render("j/k scroll · g/G top/bottom · c clear · p "+followHint(m.activityFollow)),
+		subtleStyle.Render("j/k scroll · g/G top/bottom · c clear · p "+followHint(m.activity.follow)),
 		renderDivider(width - 2),
 	}
 
-	if len(m.activityEntries) == 0 {
+	if len(m.activity.entries) == 0 {
 		lines = append(lines, "",
 			subtleStyle.Render("No events yet."),
 			subtleStyle.Render("Agent calls, tool use, context compaction, and index runs stream in here live."),
@@ -227,9 +227,9 @@ func (m Model) renderActivityView(width int) string {
 	// Window: show the tail minus activityScroll. Scroll=0 means follow-tail.
 	// We render last (viewport) lines, clipped to the available height in
 	// the caller via fitPanelContentHeight.
-	visible := m.activityEntries
-	if m.activityScroll > 0 && m.activityScroll < len(m.activityEntries) {
-		visible = m.activityEntries[:len(m.activityEntries)-m.activityScroll]
+	visible := m.activity.entries
+	if m.activity.scroll > 0 && m.activity.scroll < len(m.activity.entries) {
+		visible = m.activity.entries[:len(m.activity.entries)-m.activity.scroll]
 	}
 
 	for _, entry := range visible {
@@ -238,18 +238,18 @@ func (m Model) renderActivityView(width int) string {
 
 	// Footer summary: totals by kind.
 	counts := map[activityKind]int{}
-	for _, e := range m.activityEntries {
+	for _, e := range m.activity.entries {
 		counts[e.Kind]++
 	}
 	summary := fmt.Sprintf("%d events · tool=%d agent=%d err=%d ctx=%d",
-		len(m.activityEntries),
+		len(m.activity.entries),
 		counts[activityKindTool],
 		counts[activityKindAgent],
 		counts[activityKindError],
 		counts[activityKindCtx],
 	)
 	lines = append(lines, "", subtleStyle.Render(summary))
-	if !m.activityFollow {
+	if !m.activity.follow {
 		lines = append(lines, warnStyle.Render("paused · press G to jump to tail and resume follow"))
 	}
 	return strings.Join(lines, "\n")
@@ -266,53 +266,53 @@ func followHint(follow bool) string {
 // model unchanged when the key doesn't match a known binding, so the
 // outer dispatcher can still fall through.
 func (m Model) handleActivityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	total := len(m.activityEntries)
+	total := len(m.activity.entries)
 	step := 1
 	pageStep := 10
 	switch msg.String() {
 	case "j", "down":
-		if m.activityScroll >= step {
-			m.activityScroll -= step
+		if m.activity.scroll >= step {
+			m.activity.scroll -= step
 		} else {
-			m.activityScroll = 0
+			m.activity.scroll = 0
 		}
-		m.activityFollow = m.activityScroll == 0
+		m.activity.follow = m.activity.scroll == 0
 	case "k", "up":
-		if m.activityScroll+step < total {
-			m.activityScroll += step
-			m.activityFollow = false
+		if m.activity.scroll+step < total {
+			m.activity.scroll += step
+			m.activity.follow = false
 		}
 	case "pgdown":
-		if m.activityScroll >= pageStep {
-			m.activityScroll -= pageStep
+		if m.activity.scroll >= pageStep {
+			m.activity.scroll -= pageStep
 		} else {
-			m.activityScroll = 0
+			m.activity.scroll = 0
 		}
-		m.activityFollow = m.activityScroll == 0
+		m.activity.follow = m.activity.scroll == 0
 	case "pgup":
-		if m.activityScroll+pageStep <= total {
-			m.activityScroll += pageStep
+		if m.activity.scroll+pageStep <= total {
+			m.activity.scroll += pageStep
 		} else {
-			m.activityScroll = total
+			m.activity.scroll = total
 		}
-		m.activityFollow = false
+		m.activity.follow = false
 	case "g":
 		// g = jump to oldest (top of buffer).
 		if total > 0 {
-			m.activityScroll = total - 1
+			m.activity.scroll = total - 1
 		}
-		m.activityFollow = false
+		m.activity.follow = false
 	case "G":
-		m.activityScroll = 0
-		m.activityFollow = true
+		m.activity.scroll = 0
+		m.activity.follow = true
 	case "c":
-		m.activityEntries = nil
-		m.activityScroll = 0
-		m.activityFollow = true
+		m.activity.entries = nil
+		m.activity.scroll = 0
+		m.activity.follow = true
 	case "p":
-		m.activityFollow = !m.activityFollow
-		if m.activityFollow {
-			m.activityScroll = 0
+		m.activity.follow = !m.activity.follow
+		if m.activity.follow {
+			m.activity.scroll = 0
 		}
 	}
 	return m, nil

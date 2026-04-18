@@ -368,7 +368,7 @@ func (m Model) detectReferencedFile(question string) string {
 	markerRe := regexp.MustCompile(`\[\[file:([^\]]+)\]\]`)
 	if matches := markerRe.FindStringSubmatch(question); len(matches) == 2 {
 		target := filepath.ToSlash(strings.TrimSpace(matches[1]))
-		if target != "" && containsStringFold(m.files, target) {
+		if target != "" && containsStringFold(m.filesView.entries, target) {
 			return target
 		}
 	}
@@ -384,7 +384,7 @@ func (m Model) detectReferencedFile(question string) string {
 		if token == "" {
 			continue
 		}
-		if containsStringFold(m.files, token) {
+		if containsStringFold(m.filesView.entries, token) {
 			return token
 		}
 		if strings.Contains(token, "/") || strings.Contains(token, ".") {

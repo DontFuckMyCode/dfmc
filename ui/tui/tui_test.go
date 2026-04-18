@@ -95,7 +95,7 @@ func TestAltNumberSwitchesTabs(t *testing.T) {
 func TestCtrlPOpensChatCommandPalette(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 3
-	m.input = "old"
+	m.chat.input = "old"
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
 	next, ok := nextModel.(Model)
@@ -105,8 +105,8 @@ func TestCtrlPOpensChatCommandPalette(t *testing.T) {
 	if next.activeTab != 0 {
 		t.Fatalf("expected chat tab after ctrl+p, got %d", next.activeTab)
 	}
-	if next.input != "/" {
-		t.Fatalf("expected slash command palette seed, got %q", next.input)
+	if next.chat.input != "/" {
+		t.Fatalf("expected slash command palette seed, got %q", next.chat.input)
 	}
 }
 
@@ -119,8 +119,8 @@ func TestChatAllowsTypingQAndCtrlCStillQuits(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after q key, got %T", typedModel)
 	}
-	if typed.input != "q" {
-		t.Fatalf("expected q to be inserted into chat input, got %q", typed.input)
+	if typed.chat.input != "q" {
+		t.Fatalf("expected q to be inserted into chat input, got %q", typed.chat.input)
 	}
 	if cmd != nil {
 		t.Fatalf("expected q key not to trigger quit command")
@@ -140,7 +140,7 @@ func TestChatSlashProviderAndModelCommands(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/provider openai"
+	m.chat.input = "/provider openai"
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
@@ -150,11 +150,11 @@ func TestChatSlashProviderAndModelCommands(t *testing.T) {
 	if next.currentProvider() != "openai" {
 		t.Fatalf("expected provider override openai, got %q", next.currentProvider())
 	}
-	if len(next.transcript) == 0 || next.transcript[len(next.transcript)-1].Role != "system" {
-		t.Fatalf("expected system transcript entry after provider command, got %#v", next.transcript)
+	if len(next.chat.transcript) == 0 || next.chat.transcript[len(next.chat.transcript)-1].Role != "system" {
+		t.Fatalf("expected system transcript entry after provider command, got %#v", next.chat.transcript)
 	}
 
-	next.input = "/model gpt-5.4"
+	next.chat.input = "/model gpt-5.4"
 	updatedModel, _ := next.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	updated, ok := updatedModel.(Model)
 	if !ok {
@@ -173,7 +173,7 @@ func TestChatSlashProviderPersistWritesProjectConfig(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/provider openai gpt-5.4 --persist"
+	m.chat.input = "/provider openai gpt-5.4 --persist"
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
@@ -218,15 +218,15 @@ func TestChatSlashMenuTabCompletesAndRunsCommand(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/prov"
+	m.chat.input = "/prov"
 
 	completedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	completed, ok := completedModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after tab completion, got %T", completedModel)
 	}
-	if completed.input != "/providers" {
-		t.Fatalf("expected slash completion to /providers, got %q", completed.input)
+	if completed.chat.input != "/providers" {
+		t.Fatalf("expected slash completion to /providers, got %q", completed.chat.input)
 	}
 
 	finalModel, _ := completed.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -234,11 +234,11 @@ func TestChatSlashMenuTabCompletesAndRunsCommand(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after enter on slash command, got %T", finalModel)
 	}
-	if len(final.transcript) == 0 || final.transcript[len(final.transcript)-1].Role != "system" {
-		t.Fatalf("expected system transcript entry after /providers, got %#v", final.transcript)
+	if len(final.chat.transcript) == 0 || final.chat.transcript[len(final.chat.transcript)-1].Role != "system" {
+		t.Fatalf("expected system transcript entry after /providers, got %#v", final.chat.transcript)
 	}
-	if !strings.Contains(final.transcript[len(final.transcript)-1].Content, "Providers:") {
-		t.Fatalf("expected providers output in transcript, got %#v", final.transcript[len(final.transcript)-1])
+	if !strings.Contains(final.chat.transcript[len(final.chat.transcript)-1].Content, "Providers:") {
+		t.Fatalf("expected providers output in transcript, got %#v", final.chat.transcript[len(final.chat.transcript)-1])
 	}
 }
 
@@ -252,15 +252,15 @@ func TestChatSlashProviderArgTabCompletesProviderName(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/provider op"
+	m.chat.input = "/provider op"
 
 	completedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	completed, ok := completedModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after provider arg tab completion, got %T", completedModel)
 	}
-	if completed.input != "/provider openai" {
-		t.Fatalf("expected /provider openai completion, got %q", completed.input)
+	if completed.chat.input != "/provider openai" {
+		t.Fatalf("expected /provider openai completion, got %q", completed.chat.input)
 	}
 }
 
@@ -274,15 +274,15 @@ func TestChatSlashProviderArgDownThenTabSelectsSecondSuggestion(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/provider "
+	m.chat.input = "/provider "
 
 	downModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	down, ok := downModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after provider arg down, got %T", downModel)
 	}
-	if down.slashArgIndex != 1 {
-		t.Fatalf("expected arg index 1 after down, got %d", down.slashArgIndex)
+	if down.slashMenu.commandArg != 1 {
+		t.Fatalf("expected arg index 1 after down, got %d", down.slashMenu.commandArg)
 	}
 
 	completedModel, _ := down.Update(tea.KeyMsg{Type: tea.KeyTab})
@@ -290,8 +290,8 @@ func TestChatSlashProviderArgDownThenTabSelectsSecondSuggestion(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after provider arg tab, got %T", completedModel)
 	}
-	if completed.input != "/provider openai" {
-		t.Fatalf("expected second provider completion to /provider openai, got %q", completed.input)
+	if completed.chat.input != "/provider openai" {
+		t.Fatalf("expected second provider completion to /provider openai, got %q", completed.chat.input)
 	}
 }
 
@@ -300,15 +300,15 @@ func TestChatSlashToolArgTabCompletesToolName(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/tool re"
+	m.chat.input = "/tool re"
 
 	completedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	completed, ok := completedModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after tool arg tab completion, got %T", completedModel)
 	}
-	if completed.input != "/tool read_file" {
-		t.Fatalf("expected /tool read_file completion, got %q", completed.input)
+	if completed.chat.input != "/tool read_file" {
+		t.Fatalf("expected /tool read_file completion, got %q", completed.chat.input)
 	}
 }
 
@@ -321,8 +321,8 @@ func TestRenderChatViewShowsQuickActionsForNaturalLanguage(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.files = []string{"note.txt"}
-	m.input = "read note.txt"
+	m.filesView.entries = []string{"note.txt"}
+	m.chat.input = "read note.txt"
 
 	view := m.renderChatView(120)
 	if !strings.Contains(view, "Quick actions") || !strings.Contains(view, "/read note.txt 1 200") {
@@ -342,16 +342,16 @@ func TestChatTabPreparesQuickActionFromNaturalLanguage(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.files = []string{"note.txt"}
-	m.input = "read note.txt"
+	m.filesView.entries = []string{"note.txt"}
+	m.chat.input = "read note.txt"
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after quick-action tab, got %T", nextModel)
 	}
-	if next.input != "/read note.txt 1 200" {
-		t.Fatalf("expected quick action to prepare slash command, got %q", next.input)
+	if next.chat.input != "/read note.txt 1 200" {
+		t.Fatalf("expected quick action to prepare slash command, got %q", next.chat.input)
 	}
 }
 
@@ -364,16 +364,16 @@ func TestChatDownThenTabPreparesSecondQuickAction(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.files = []string{"note.txt"}
-	m.input = "read note.txt"
+	m.filesView.entries = []string{"note.txt"}
+	m.chat.input = "read note.txt"
 
 	downModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	down, ok := downModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after quick-action down, got %T", downModel)
 	}
-	if down.quickActionIndex != 1 {
-		t.Fatalf("expected quick action index 1 after down, got %d", down.quickActionIndex)
+	if down.slashMenu.quickAction != 1 {
+		t.Fatalf("expected quick action index 1 after down, got %d", down.slashMenu.quickAction)
 	}
 
 	nextModel, _ := down.Update(tea.KeyMsg{Type: tea.KeyTab})
@@ -381,8 +381,8 @@ func TestChatDownThenTabPreparesSecondQuickAction(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after quick-action tab, got %T", nextModel)
 	}
-	if !strings.HasPrefix(next.input, "/grep ") {
-		t.Fatalf("expected second quick action to prepare grep command, got %q", next.input)
+	if !strings.HasPrefix(next.chat.input, "/grep ") {
+		t.Fatalf("expected second quick action to prepare grep command, got %q", next.chat.input)
 	}
 }
 
@@ -395,8 +395,8 @@ func TestChatEnterRunsSelectedQuickAction(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.files = []string{"note.txt"}
-	m.input = "read note.txt"
+	m.filesView.entries = []string{"note.txt"}
+	m.chat.input = "read note.txt"
 
 	downModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	down, ok := downModel.(Model)
@@ -412,8 +412,8 @@ func TestChatEnterRunsSelectedQuickAction(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected tool command from selected quick action")
 	}
-	if !next.chatToolPending || next.chatToolName != "grep_codebase" {
-		t.Fatalf("expected selected quick action grep_codebase to run, got pending=%v name=%q", next.chatToolPending, next.chatToolName)
+	if !next.chat.toolPending || next.chat.toolName != "grep_codebase" {
+		t.Fatalf("expected selected quick action grep_codebase to run, got pending=%v name=%q", next.chat.toolPending, next.chat.toolName)
 	}
 }
 
@@ -426,7 +426,7 @@ func TestChatSlashReadRunsToolAndAppendsResult(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/read note.txt 1 1"
+	m.chat.input = "/read note.txt 1 1"
 
 	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
@@ -436,8 +436,8 @@ func TestChatSlashReadRunsToolAndAppendsResult(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected tool command from /read")
 	}
-	if !next.chatToolPending || next.chatToolName != "read_file" {
-		t.Fatalf("expected pending chat tool read_file, got pending=%v name=%q", next.chatToolPending, next.chatToolName)
+	if !next.chat.toolPending || next.chat.toolName != "read_file" {
+		t.Fatalf("expected pending chat tool read_file, got pending=%v name=%q", next.chat.toolPending, next.chat.toolName)
 	}
 
 	finalModel, _ := next.Update(cmd())
@@ -445,13 +445,13 @@ func TestChatSlashReadRunsToolAndAppendsResult(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after read_file tool result, got %T", finalModel)
 	}
-	if final.chatToolPending {
+	if final.chat.toolPending {
 		t.Fatal("expected chat tool pending to clear after result")
 	}
-	if len(final.transcript) == 0 {
+	if len(final.chat.transcript) == 0 {
 		t.Fatal("expected transcript entries after /read flow")
 	}
-	last := final.transcript[len(final.transcript)-1]
+	last := final.chat.transcript[len(final.chat.transcript)-1]
 	if last.Role != "system" || !strings.Contains(last.Content, "Tool result: read_file success") || !strings.Contains(last.Content, "line-1") {
 		t.Fatalf("expected read tool result in system transcript, got %#v", last)
 	}
@@ -464,7 +464,7 @@ func TestChatSlashRunCommandStreamsToolResultToTranscript(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/run go version"
+	m.chat.input = "/run go version"
 
 	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
@@ -479,10 +479,10 @@ func TestChatSlashRunCommandStreamsToolResultToTranscript(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after run_command result, got %T", finalModel)
 	}
-	if len(final.transcript) == 0 {
+	if len(final.chat.transcript) == 0 {
 		t.Fatal("expected transcript entries after /run flow")
 	}
-	last := final.transcript[len(final.transcript)-1]
+	last := final.chat.transcript[len(final.chat.transcript)-1]
 	if last.Role != "system" || !strings.Contains(last.Content, "Tool result: run_command") {
 		t.Fatalf("expected run_command result in transcript, got %#v", last)
 	}
@@ -513,7 +513,7 @@ func TestChatSlashReadSupportsQuotedPath(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = `/read "note file.txt" 1 1`
+	m.chat.input = `/read "note file.txt" 1 1`
 
 	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
@@ -528,10 +528,10 @@ func TestChatSlashReadSupportsQuotedPath(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after quoted read_file result, got %T", finalModel)
 	}
-	if len(final.transcript) == 0 {
+	if len(final.chat.transcript) == 0 {
 		t.Fatal("expected transcript entries after quoted /read")
 	}
-	last := final.transcript[len(final.transcript)-1]
+	last := final.chat.transcript[len(final.chat.transcript)-1]
 	if last.Role != "system" || !strings.Contains(last.Content, "Tool result: read_file success") || !strings.Contains(last.Content, "line-a") {
 		t.Fatalf("expected quoted read_file result in transcript, got %#v", last)
 	}
@@ -540,16 +540,16 @@ func TestChatSlashReadSupportsQuotedPath(t *testing.T) {
 func TestChatSlashReadArgTabCompletionQuotesPath(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	m.files = []string{"note file.txt", "README.md"}
-	m.input = "/read note"
+	m.filesView.entries = []string{"note file.txt", "README.md"}
+	m.chat.input = "/read note"
 
 	completedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	completed, ok := completedModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after read arg tab completion, got %T", completedModel)
 	}
-	if completed.input != `/read "note file.txt"` {
-		t.Fatalf("expected quoted read path completion, got %q", completed.input)
+	if completed.chat.input != `/read "note file.txt"` {
+		t.Fatalf("expected quoted read path completion, got %q", completed.chat.input)
 	}
 }
 
@@ -562,7 +562,7 @@ func TestChatSlashToolSupportsQuotedParams(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = `/tool read_file path="note file.txt" line_start=1 line_end=1`
+	m.chat.input = `/tool read_file path="note file.txt" line_start=1 line_end=1`
 
 	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
@@ -577,10 +577,10 @@ func TestChatSlashToolSupportsQuotedParams(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after /tool result, got %T", finalModel)
 	}
-	if len(final.transcript) == 0 {
+	if len(final.chat.transcript) == 0 {
 		t.Fatal("expected transcript entries after /tool")
 	}
-	last := final.transcript[len(final.transcript)-1]
+	last := final.chat.transcript[len(final.chat.transcript)-1]
 	if last.Role != "system" || !strings.Contains(last.Content, "Tool result: read_file success") || !strings.Contains(last.Content, "tool-line") {
 		t.Fatalf("expected read_file tool result in transcript, got %#v", last)
 	}
@@ -591,15 +591,15 @@ func TestChatSlashToolParamKeyTabCompletion(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/tool read_file p"
+	m.chat.input = "/tool read_file p"
 
 	completedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	completed, ok := completedModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after tool param key tab completion, got %T", completedModel)
 	}
-	if completed.input != "/tool read_file path=" {
-		t.Fatalf("expected /tool read_file path= completion, got %q", completed.input)
+	if completed.chat.input != "/tool read_file path=" {
+		t.Fatalf("expected /tool read_file path= completion, got %q", completed.chat.input)
 	}
 }
 
@@ -608,23 +608,23 @@ func TestChatSlashToolParamValueTabCompletionQuotesPath(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.files = []string{"note file.txt", "README.md"}
-	m.input = "/tool read_file path=no"
+	m.filesView.entries = []string{"note file.txt", "README.md"}
+	m.chat.input = "/tool read_file path=no"
 
 	completedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	completed, ok := completedModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after tool param value tab completion, got %T", completedModel)
 	}
-	if completed.input != `/tool read_file path="note file.txt"` {
-		t.Fatalf("expected quoted /tool path completion, got %q", completed.input)
+	if completed.chat.input != `/tool read_file path="note file.txt"` {
+		t.Fatalf("expected quoted /tool path completion, got %q", completed.chat.input)
 	}
 }
 
 func TestChatSlashCommandParseErrorRemainsLocal(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	m.input = `/read "broken`
+	m.chat.input = `/read "broken`
 
 	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
@@ -634,11 +634,11 @@ func TestChatSlashCommandParseErrorRemainsLocal(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected no tool/stream command on parse error, got %#v", cmd)
 	}
-	if next.sending {
+	if next.chat.sending {
 		t.Fatal("expected parse-error slash input to stay local and not stream")
 	}
-	if len(next.transcript) == 0 || next.transcript[len(next.transcript)-1].Role != "system" || !strings.Contains(next.transcript[len(next.transcript)-1].Content, "Command parse error:") {
-		t.Fatalf("expected local parse error transcript message, got %#v", next.transcript)
+	if len(next.chat.transcript) == 0 || next.chat.transcript[len(next.chat.transcript)-1].Role != "system" || !strings.Contains(next.chat.transcript[len(next.chat.transcript)-1].Content, "Command parse error:") {
+		t.Fatalf("expected local parse error transcript message, got %#v", next.chat.transcript)
 	}
 }
 
@@ -651,7 +651,7 @@ func TestChatNaturalReadIntentTriggersTool(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "read note.txt"
+	m.chat.input = "read note.txt"
 
 	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
@@ -661,17 +661,17 @@ func TestChatNaturalReadIntentTriggersTool(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected tool cmd from natural read intent")
 	}
-	if next.sending {
+	if next.chat.sending {
 		t.Fatal("expected natural read intent to run tool first instead of stream send")
 	}
-	if !next.chatToolPending || next.chatToolName != "read_file" {
-		t.Fatalf("expected pending read_file tool, got pending=%v name=%q", next.chatToolPending, next.chatToolName)
+	if !next.chat.toolPending || next.chat.toolName != "read_file" {
+		t.Fatalf("expected pending read_file tool, got pending=%v name=%q", next.chat.toolPending, next.chat.toolName)
 	}
-	if len(next.transcript) < 2 || next.transcript[0].Role != "user" || !strings.Contains(next.transcript[0].Content, "read note.txt") {
-		t.Fatalf("expected user transcript entry before auto tool run, got %#v", next.transcript)
+	if len(next.chat.transcript) < 2 || next.chat.transcript[0].Role != "user" || !strings.Contains(next.chat.transcript[0].Content, "read note.txt") {
+		t.Fatalf("expected user transcript entry before auto tool run, got %#v", next.chat.transcript)
 	}
-	if !strings.Contains(next.transcript[1].Content, "Auto action: detected file read intent") {
-		t.Fatalf("expected auto action transcript note, got %#v", next.transcript[1])
+	if !strings.Contains(next.chat.transcript[1].Content, "Auto action: detected file read intent") {
+		t.Fatalf("expected auto action transcript note, got %#v", next.chat.transcript[1])
 	}
 
 	finalModel, _ := next.Update(cmd())
@@ -679,7 +679,7 @@ func TestChatNaturalReadIntentTriggersTool(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after natural read tool result, got %T", finalModel)
 	}
-	last := final.transcript[len(final.transcript)-1]
+	last := final.chat.transcript[len(final.chat.transcript)-1]
 	if last.Role != "system" || !strings.Contains(last.Content, "Tool result: read_file") || !strings.Contains(last.Content, "hello") {
 		t.Fatalf("expected read_file result message, got %#v", last)
 	}
@@ -688,7 +688,7 @@ func TestChatNaturalReadIntentTriggersTool(t *testing.T) {
 func TestChatNaturalPromptWithoutIntentStillStreams(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	m.input = "please explain this architecture"
+	m.chat.input = "please explain this architecture"
 
 	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
@@ -698,10 +698,10 @@ func TestChatNaturalPromptWithoutIntentStillStreams(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected stream wait command for normal prompt")
 	}
-	if !next.sending {
+	if !next.chat.sending {
 		t.Fatal("expected normal prompt to enter streaming state")
 	}
-	if next.chatToolPending {
+	if next.chat.toolPending {
 		t.Fatal("did not expect auto tool pending for normal prompt")
 	}
 }
@@ -731,12 +731,12 @@ func TestHandleEngineEventToolCallUpdatesActivityWithoutTranscriptNoise(t *testi
 	// runtime card, but must not flood the transcript with narration — the
 	// transcript is reserved for real state changes (errors, parks, compactions).
 	m := NewModel(context.Background(), nil)
-	m.sending = true
-	m.transcript = []chatLine{
+	m.chat.sending = true
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "scan"},
 		{Role: "assistant", Content: ""},
 	}
-	m.streamIndex = 1
+	m.chat.streamIndex = 1
 
 	next := m.handleEngineEvent(engine.Event{
 		Type: "tool:call",
@@ -749,8 +749,8 @@ func TestHandleEngineEventToolCallUpdatesActivityWithoutTranscriptNoise(t *testi
 	if len(next.activityLog) == 0 || !strings.Contains(next.activityLog[len(next.activityLog)-1], "read_file") {
 		t.Fatalf("expected activity log update, got %#v", next.activityLog)
 	}
-	if len(next.transcript) != 2 {
-		t.Fatalf("expected transcript untouched by tool:call, got %#v", next.transcript)
+	if len(next.chat.transcript) != 2 {
+		t.Fatalf("expected transcript untouched by tool:call, got %#v", next.chat.transcript)
 	}
 }
 
@@ -761,9 +761,9 @@ func TestHandleEngineEventToolCallUpdatesActivityWithoutTranscriptNoise(t *testi
 func TestEscCancelsStreamingTurn(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	m.sending = true
+	m.chat.sending = true
 	cancelled := false
-	m.streamCancel = func() { cancelled = true }
+	m.chat.streamCancel = func() { cancelled = true }
 
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	mm, ok := out.(Model)
@@ -773,7 +773,7 @@ func TestEscCancelsStreamingTurn(t *testing.T) {
 	if !cancelled {
 		t.Fatalf("esc during streaming should fire the stream cancel func")
 	}
-	if mm.streamCancel != nil {
+	if mm.chat.streamCancel != nil {
 		t.Fatalf("cancel func must be cleared after firing, got non-nil")
 	}
 	if !strings.Contains(strings.ToLower(mm.notice), "cancel") {
@@ -787,12 +787,12 @@ func TestEscCancelsStreamingTurn(t *testing.T) {
 func TestEscWhenNotStreamingDismissesParkedBanner(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	m.sending = false
-	m.resumePromptActive = true
+	m.chat.sending = false
+	m.ui.resumePromptActive = true
 
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	mm := out.(Model)
-	if mm.resumePromptActive {
+	if mm.ui.resumePromptActive {
 		t.Fatalf("esc should dismiss the resume banner, got still active")
 	}
 }
@@ -807,11 +807,11 @@ func TestCtrlUClearsChatInput(t *testing.T) {
 
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
 	mm := out.(Model)
-	if mm.input != "" {
-		t.Fatalf("ctrl+u should wipe the input, got %q", mm.input)
+	if mm.chat.input != "" {
+		t.Fatalf("ctrl+u should wipe the input, got %q", mm.chat.input)
 	}
-	if mm.chatCursor != 0 {
-		t.Fatalf("cursor must snap to 0, got %d", mm.chatCursor)
+	if mm.chat.cursor != 0 {
+		t.Fatalf("cursor must snap to 0, got %d", mm.chat.cursor)
 	}
 	if !strings.Contains(strings.ToLower(mm.notice), "cleared") {
 		t.Fatalf("expected clear notice, got %q", mm.notice)
@@ -850,21 +850,21 @@ func TestHomeKeyIsLineAwareInMultiLineInput(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
 	m.setChatInput("first\nsecond line here")
-	m.chatCursor = 10 // inside "second"
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.cursor = 10 // inside "second"
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyHome})
 	mm := out.(Model)
-	if mm.chatCursor != 6 {
-		t.Fatalf("Home on row 1 should land at index 6 (start of 'second'), got %d", mm.chatCursor)
+	if mm.chat.cursor != 6 {
+		t.Fatalf("Home on row 1 should land at index 6 (start of 'second'), got %d", mm.chat.cursor)
 	}
 	// End should land just before the buffer end (no trailing \n here, so
 	// it's the buffer length).
 	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyEnd})
 	mm = out.(Model)
-	if mm.chatCursor != len([]rune(mm.input)) {
-		t.Fatalf("End on last row should land at len=%d, got %d", len([]rune(mm.input)), mm.chatCursor)
+	if mm.chat.cursor != len([]rune(mm.chat.input)) {
+		t.Fatalf("End on last row should land at len=%d, got %d", len([]rune(mm.chat.input)), mm.chat.cursor)
 	}
 }
 
@@ -875,25 +875,25 @@ func TestArrowUpInMultiLineNavigatesRowsNotHistory(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
 	m.setChatInput("first\nsecond")
-	m.chatCursor = 12 // end of "second"
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.cursor = 12 // end of "second"
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	mm := out.(Model)
 	// Column 6 from row 1; "first" has length 5, so clamp to 5.
-	if mm.chatCursor != 5 {
-		t.Fatalf("KeyUp should move cursor up to 'first' row at col 5 (clamped), got %d", mm.chatCursor)
+	if mm.chat.cursor != 5 {
+		t.Fatalf("KeyUp should move cursor up to 'first' row at col 5 (clamped), got %d", mm.chat.cursor)
 	}
 	// Input must be unchanged — we moved the cursor, not the buffer.
-	if mm.input != "first\nsecond" {
-		t.Fatalf("row nav must not mutate the buffer, got %q", mm.input)
+	if mm.chat.input != "first\nsecond" {
+		t.Fatalf("row nav must not mutate the buffer, got %q", mm.chat.input)
 	}
 	// Pressing Up again from row 0 falls through to history. The history
 	// is empty here so nothing changes, but sending must not fire.
 	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyUp})
 	mm = out.(Model)
-	if mm.sending {
+	if mm.chat.sending {
 		t.Fatalf("row-nav overflow must not trigger send")
 	}
 }
@@ -903,15 +903,15 @@ func TestArrowDownInMultiLineMovesDownARow(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
 	m.setChatInput("alpha\nbeta\ngamma")
-	m.chatCursor = 3 // in "alpha"
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.cursor = 3 // in "alpha"
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	mm := out.(Model)
 	// Expected: col 3 carried to "beta" → index 6 + 3 = 9 (within "beta").
-	if mm.chatCursor != 9 {
-		t.Fatalf("KeyDown should land in 'beta' at col 3 (index 9), got %d", mm.chatCursor)
+	if mm.chat.cursor != 9 {
+		t.Fatalf("KeyDown should land in 'beta' at col 3 (index 9), got %d", mm.chat.cursor)
 	}
 }
 
@@ -1025,14 +1025,14 @@ func TestCtrlJInsertsNewline(t *testing.T) {
 	m.setChatInput("first line")
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
 	mm := out.(Model)
-	if mm.input != "first line\n" {
-		t.Fatalf("ctrl+j should append a newline to the buffer, got %q", mm.input)
+	if mm.chat.input != "first line\n" {
+		t.Fatalf("ctrl+j should append a newline to the buffer, got %q", mm.chat.input)
 	}
 	// Typing continues on the fresh logical row.
 	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("second")})
 	mm = out.(Model)
-	if mm.input != "first line\nsecond" {
-		t.Fatalf("runes after ctrl+j should land on the new row, got %q", mm.input)
+	if mm.chat.input != "first line\nsecond" {
+		t.Fatalf("runes after ctrl+j should land on the new row, got %q", mm.chat.input)
 	}
 }
 
@@ -1045,10 +1045,10 @@ func TestAltEnterInsertsNewline(t *testing.T) {
 	m.setChatInput("paragraph one")
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
 	mm := out.(Model)
-	if mm.input != "paragraph one\n" {
-		t.Fatalf("alt+enter should insert a newline, not submit; got %q", mm.input)
+	if mm.chat.input != "paragraph one\n" {
+		t.Fatalf("alt+enter should insert a newline, not submit; got %q", mm.chat.input)
 	}
-	if mm.sending {
+	if mm.chat.sending {
 		t.Fatalf("alt+enter must not flip sending=true")
 	}
 }
@@ -1158,15 +1158,15 @@ func TestCtrlWDeletesPreviousWord(t *testing.T) {
 	// Park cursor at end and nuke "please".
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
 	mm := out.(Model)
-	if mm.input != "explain @internal/auth/token.go " {
-		t.Fatalf("ctrl+w should kill the trailing word, got %q", mm.input)
+	if mm.chat.input != "explain @internal/auth/token.go " {
+		t.Fatalf("ctrl+w should kill the trailing word, got %q", mm.chat.input)
 	}
 	// Fire again — the whole path is one "word" (whitespace separator),
 	// so the entire @mention goes in a single stroke.
 	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
 	mm = out.(Model)
-	if mm.input != "explain " {
-		t.Fatalf("ctrl+w should kill the @path atomically, got %q", mm.input)
+	if mm.chat.input != "explain " {
+		t.Fatalf("ctrl+w should kill the @path atomically, got %q", mm.chat.input)
 	}
 }
 
@@ -1177,17 +1177,17 @@ func TestCtrlKDeletesToEndOfLine(t *testing.T) {
 	m.activeTab = 0
 	m.setChatInput("hello world and more")
 	// Move cursor to position 5 ("hello|")
-	m.chatCursor = 5
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.cursor = 5
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
 	mm := out.(Model)
-	if mm.input != "hello" {
-		t.Fatalf("ctrl+k should kill everything from cursor to end, got %q", mm.input)
+	if mm.chat.input != "hello" {
+		t.Fatalf("ctrl+k should kill everything from cursor to end, got %q", mm.chat.input)
 	}
-	if mm.chatCursor != 5 {
-		t.Fatalf("cursor should stay at the kill point, got %d", mm.chatCursor)
+	if mm.chat.cursor != 5 {
+		t.Fatalf("cursor should stay at the kill point, got %d", mm.chat.cursor)
 	}
 }
 
@@ -1200,27 +1200,27 @@ func TestCtrlLeftRightMovesByWord(t *testing.T) {
 	// Cursor at end (16). Ctrl+Left → 11 (start of "gamma").
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlLeft})
 	mm := out.(Model)
-	if mm.chatCursor != 11 {
-		t.Fatalf("ctrl+left should land on 'gamma' start, got cursor=%d", mm.chatCursor)
+	if mm.chat.cursor != 11 {
+		t.Fatalf("ctrl+left should land on 'gamma' start, got cursor=%d", mm.chat.cursor)
 	}
 	// Again → 6 (start of "beta").
 	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyCtrlLeft})
 	mm = out.(Model)
-	if mm.chatCursor != 6 {
-		t.Fatalf("ctrl+left should land on 'beta' start, got cursor=%d", mm.chatCursor)
+	if mm.chat.cursor != 6 {
+		t.Fatalf("ctrl+left should land on 'beta' start, got cursor=%d", mm.chat.cursor)
 	}
 	// Ctrl+Right → 10 (end of "beta"): readline convention lands at the
 	// end of the word you're currently inside, not the start of the next.
 	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyCtrlRight})
 	mm = out.(Model)
-	if mm.chatCursor != 10 {
-		t.Fatalf("ctrl+right should land on 'beta' end, got cursor=%d", mm.chatCursor)
+	if mm.chat.cursor != 10 {
+		t.Fatalf("ctrl+right should land on 'beta' end, got cursor=%d", mm.chat.cursor)
 	}
 	// Again → 16 (end of "gamma"): cross the space, consume "gamma".
 	out, _ = mm.Update(tea.KeyMsg{Type: tea.KeyCtrlRight})
 	mm = out.(Model)
-	if mm.chatCursor != 16 {
-		t.Fatalf("ctrl+right should land on 'gamma' end, got cursor=%d", mm.chatCursor)
+	if mm.chat.cursor != 16 {
+		t.Fatalf("ctrl+right should land on 'gamma' end, got cursor=%d", mm.chat.cursor)
 	}
 }
 
@@ -1230,12 +1230,12 @@ func TestCtrlLeftRightMovesByWord(t *testing.T) {
 // it even after the user leaves the Activity panel.
 func TestHandleEngineEventToolResultFailureMirrorsToTranscript(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.sending = true
-	m.transcript = []chatLine{
+	m.chat.sending = true
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "apply the patch"},
 		{Role: "assistant", Content: ""},
 	}
-	m.streamIndex = 1
+	m.chat.streamIndex = 1
 
 	next := m.handleEngineEvent(engine.Event{
 		Type: "tool:result",
@@ -1246,10 +1246,10 @@ func TestHandleEngineEventToolResultFailureMirrorsToTranscript(t *testing.T) {
 			"error":      "patch conflict at engine.go:42",
 		},
 	})
-	if len(next.transcript) != 3 {
-		t.Fatalf("tool failure should append a transcript line, got %d entries", len(next.transcript))
+	if len(next.chat.transcript) != 3 {
+		t.Fatalf("tool failure should append a transcript line, got %d entries", len(next.chat.transcript))
 	}
-	last := next.transcript[len(next.transcript)-1]
+	last := next.chat.transcript[len(next.chat.transcript)-1]
 	if last.Role != "tool" {
 		t.Fatalf("failure message should be tool-tagged, got role=%q", last.Role)
 	}
@@ -1266,12 +1266,12 @@ func TestHandleEngineEventToolResultFailureMirrorsToTranscript(t *testing.T) {
 // strip already handles successful progress.
 func TestHandleEngineEventToolResultSuccessSkipsTranscript(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.sending = true
-	m.transcript = []chatLine{
+	m.chat.sending = true
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "read"},
 		{Role: "assistant", Content: ""},
 	}
-	m.streamIndex = 1
+	m.chat.streamIndex = 1
 
 	next := m.handleEngineEvent(engine.Event{
 		Type: "tool:result",
@@ -1281,14 +1281,14 @@ func TestHandleEngineEventToolResultSuccessSkipsTranscript(t *testing.T) {
 			"durationMs": 12,
 		},
 	})
-	if len(next.transcript) != 2 {
-		t.Fatalf("successful tool should not append transcript, got %d entries: %+v", len(next.transcript), next.transcript)
+	if len(next.chat.transcript) != 2 {
+		t.Fatalf("successful tool should not append transcript, got %d entries: %+v", len(next.chat.transcript), next.chat.transcript)
 	}
 }
 
 func TestHandleEngineEventToolResultUpdatesActivityWithoutTranscriptWhenIdle(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.sending = false
+	m.chat.sending = false
 
 	next := m.handleEngineEvent(engine.Event{
 		Type: "tool:result",
@@ -1301,8 +1301,8 @@ func TestHandleEngineEventToolResultUpdatesActivityWithoutTranscriptWhenIdle(t *
 	if len(next.activityLog) == 0 || !strings.Contains(next.activityLog[0], "grep_codebase") {
 		t.Fatalf("expected activity line for tool result, got %#v", next.activityLog)
 	}
-	if len(next.transcript) != 0 {
-		t.Fatalf("expected no transcript update while idle, got %#v", next.transcript)
+	if len(next.chat.transcript) != 0 {
+		t.Fatalf("expected no transcript update while idle, got %#v", next.chat.transcript)
 	}
 }
 
@@ -1311,12 +1311,12 @@ func TestRenderChatViewSurfacesToolEventsViaRuntimeCard(t *testing.T) {
 	// not in the transcript. Legacy side panels (Live Activity / Tool Timeline)
 	// are gone, and the transcript no longer echoes every call.
 	m := NewModel(context.Background(), nil)
-	m.sending = true
-	m.transcript = []chatLine{
+	m.chat.sending = true
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "scan"},
 		{Role: "assistant", Content: ""},
 	}
-	m.streamIndex = 1
+	m.chat.streamIndex = 1
 	m = m.handleEngineEvent(engine.Event{
 		Type: "tool:call",
 		Payload: map[string]any{
@@ -1343,7 +1343,7 @@ func TestRenderChatViewShowsSlashAssistForProviderCommand(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/provider "
+	m.chat.input = "/provider "
 
 	view := m.renderChatView(120)
 	if !strings.Contains(view, "Slash Assist") || !strings.Contains(view, "Usage: /provider NAME [MODEL] [--persist]") {
@@ -1361,7 +1361,7 @@ func TestRenderChatViewShowsCommandArgSuggestions(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/provider op"
+	m.chat.input = "/provider op"
 
 	view := m.renderChatView(120)
 	if !strings.Contains(view, "Command args") || !strings.Contains(view, "openai") {
@@ -1374,7 +1374,7 @@ func TestRenderChatViewShowsToolCommandArgSuggestions(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/tool read_file p"
+	m.chat.input = "/tool read_file p"
 
 	view := m.renderChatView(120)
 	if !strings.Contains(view, "Command args") || !strings.Contains(view, "path=") {
@@ -1429,15 +1429,15 @@ func TestChatSlashToolWithoutArgsOpensToolPicker(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/tool"
+	m.chat.input = "/tool"
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after /tool, got %T", nextModel)
 	}
-	if !next.commandPickerActive || next.commandPickerKind != "tool" {
-		t.Fatalf("expected tool picker to open, got active=%v kind=%q", next.commandPickerActive, next.commandPickerKind)
+	if !next.commandPicker.active || next.commandPicker.kind != "tool" {
+		t.Fatalf("expected tool picker to open, got active=%v kind=%q", next.commandPicker.active, next.commandPicker.kind)
 	}
 }
 
@@ -1446,16 +1446,16 @@ func TestChatSlashReadWithoutArgsOpensReadPicker(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.files = []string{"README.md", "internal/engine/engine.go"}
-	m.input = "/read"
+	m.filesView.entries = []string{"README.md", "internal/engine/engine.go"}
+	m.chat.input = "/read"
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after /read, got %T", nextModel)
 	}
-	if !next.commandPickerActive || next.commandPickerKind != "read" {
-		t.Fatalf("expected read picker to open, got active=%v kind=%q", next.commandPickerActive, next.commandPickerKind)
+	if !next.commandPicker.active || next.commandPicker.kind != "read" {
+		t.Fatalf("expected read picker to open, got active=%v kind=%q", next.commandPicker.active, next.commandPicker.kind)
 	}
 }
 
@@ -1471,11 +1471,11 @@ func TestToolPickerEnterPreparesToolCommand(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after tool picker enter, got %T", nextModel)
 	}
-	if next.commandPickerActive {
+	if next.commandPicker.active {
 		t.Fatal("expected tool picker to close after enter")
 	}
-	if next.input != "/tool read_file " {
-		t.Fatalf("expected prepared tool command, got %q", next.input)
+	if next.chat.input != "/tool read_file " {
+		t.Fatalf("expected prepared tool command, got %q", next.chat.input)
 	}
 }
 
@@ -1484,7 +1484,7 @@ func TestReadPickerEnterPreparesReadCommand(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.files = []string{"README.md", "docs/My File.md"}
+	m.filesView.entries = []string{"README.md", "docs/My File.md"}
 	m = m.startCommandPicker("read", "docs/My File.md", false)
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1492,11 +1492,11 @@ func TestReadPickerEnterPreparesReadCommand(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after read picker enter, got %T", nextModel)
 	}
-	if next.commandPickerActive {
+	if next.commandPicker.active {
 		t.Fatal("expected read picker to close after enter")
 	}
-	if next.input != "/read \"docs/My File.md\" " {
-		t.Fatalf("expected prepared quoted read command, got %q", next.input)
+	if next.chat.input != "/read \"docs/My File.md\" " {
+		t.Fatalf("expected prepared quoted read command, got %q", next.chat.input)
 	}
 }
 
@@ -1505,16 +1505,16 @@ func TestChatSlashRunWithoutArgsOpensRunPicker(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.files = []string{"go.mod"}
-	m.input = "/run"
+	m.filesView.entries = []string{"go.mod"}
+	m.chat.input = "/run"
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after /run, got %T", nextModel)
 	}
-	if !next.commandPickerActive || next.commandPickerKind != "run" {
-		t.Fatalf("expected run picker to open, got active=%v kind=%q", next.commandPickerActive, next.commandPickerKind)
+	if !next.commandPicker.active || next.commandPicker.kind != "run" {
+		t.Fatalf("expected run picker to open, got active=%v kind=%q", next.commandPicker.active, next.commandPicker.kind)
 	}
 }
 
@@ -1523,16 +1523,16 @@ func TestChatSlashGrepWithoutArgsOpensGrepPicker(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.files = []string{"internal/engine/engine.go"}
-	m.input = "/grep"
+	m.filesView.entries = []string{"internal/engine/engine.go"}
+	m.chat.input = "/grep"
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after /grep, got %T", nextModel)
 	}
-	if !next.commandPickerActive || next.commandPickerKind != "grep" {
-		t.Fatalf("expected grep picker to open, got active=%v kind=%q", next.commandPickerActive, next.commandPickerKind)
+	if !next.commandPicker.active || next.commandPicker.kind != "grep" {
+		t.Fatalf("expected grep picker to open, got active=%v kind=%q", next.commandPicker.active, next.commandPicker.kind)
 	}
 }
 
@@ -1548,8 +1548,8 @@ func TestRunPickerEnterPreparesRunCommand(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after run picker enter, got %T", nextModel)
 	}
-	if !strings.HasPrefix(next.input, "/run go test ./...") {
-		t.Fatalf("expected prepared run command, got %q", next.input)
+	if !strings.HasPrefix(next.chat.input, "/run go test ./...") {
+		t.Fatalf("expected prepared run command, got %q", next.chat.input)
 	}
 }
 
@@ -1565,8 +1565,8 @@ func TestGrepPickerEnterPreparesGrepCommand(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after grep picker enter, got %T", nextModel)
 	}
-	if next.input != "/grep TODO" {
-		t.Fatalf("expected prepared grep command, got %q", next.input)
+	if next.chat.input != "/grep TODO" {
+		t.Fatalf("expected prepared grep command, got %q", next.chat.input)
 	}
 }
 
@@ -1603,7 +1603,7 @@ func TestHandleEngineEventAgentLoopLifecycle(t *testing.T) {
 			"context_tokens": 900,
 		},
 	})
-	if !started.agentLoopActive || started.agentLoopMaxToolStep != 6 || started.agentLoopPhase != "starting" {
+	if !started.agentLoop.active || started.agentLoop.maxToolStep != 6 || started.agentLoop.phase != "starting" {
 		t.Fatalf("expected active runtime after loop start, got %#v", started)
 	}
 
@@ -1615,7 +1615,7 @@ func TestHandleEngineEventAgentLoopLifecycle(t *testing.T) {
 			"tool_rounds":    1,
 		},
 	})
-	if !thinking.agentLoopActive || thinking.agentLoopStep != 2 || thinking.agentLoopToolRounds != 1 || thinking.agentLoopPhase != "thinking" {
+	if !thinking.agentLoop.active || thinking.agentLoop.step != 2 || thinking.agentLoop.toolRounds != 1 || thinking.agentLoop.phase != "thinking" {
 		t.Fatalf("expected thinking state update, got %#v", thinking)
 	}
 
@@ -1627,7 +1627,7 @@ func TestHandleEngineEventAgentLoopLifecycle(t *testing.T) {
 			"tokens":   1234,
 		},
 	})
-	if completed.agentLoopActive {
+	if completed.agentLoop.active {
 		t.Fatalf("expected runtime to finish on provider complete, got %#v", completed)
 	}
 	if len(completed.activityLog) == 0 || !strings.Contains(completed.activityLog[len(completed.activityLog)-1], "Provider complete") {
@@ -1641,16 +1641,16 @@ func TestRenderChatViewShowsAgentRuntimeCard(t *testing.T) {
 	// the last tool's status/duration.
 	m := NewModel(context.Background(), nil)
 	m.status = engine.Status{Provider: "openai", Model: "gpt-5.4"}
-	m.agentLoopActive = true
-	m.agentLoopPhase = "tool-result"
-	m.agentLoopStep = 2
-	m.agentLoopMaxToolStep = 6
-	m.agentLoopToolRounds = 2
-	m.agentLoopProvider = "openai"
-	m.agentLoopModel = "gpt-5.4"
-	m.agentLoopLastTool = "read_file"
-	m.agentLoopLastStatus = "ok"
-	m.agentLoopLastDuration = 42
+	m.agentLoop.active = true
+	m.agentLoop.phase = "tool-result"
+	m.agentLoop.step = 2
+	m.agentLoop.maxToolStep = 6
+	m.agentLoop.toolRounds = 2
+	m.agentLoop.provider = "openai"
+	m.agentLoop.model = "gpt-5.4"
+	m.agentLoop.lastTool = "read_file"
+	m.agentLoop.lastStatus = "ok"
+	m.agentLoop.lastDuration = 42
 
 	view := m.renderChatView(140)
 	// Header surfaces phase + step + provider/model.
@@ -1678,8 +1678,8 @@ func TestToolTimelineChipsTrackCallAndResult(t *testing.T) {
 			"params_preview": "path=note.txt",
 		},
 	})
-	if len(m.toolTimeline) != 1 || m.toolTimeline[0].Status != "running" {
-		t.Fatalf("expected running chip after tool:call, got %#v", m.toolTimeline)
+	if len(m.agentLoop.toolTimeline) != 1 || m.agentLoop.toolTimeline[0].Status != "running" {
+		t.Fatalf("expected running chip after tool:call, got %#v", m.agentLoop.toolTimeline)
 	}
 
 	m = m.handleEngineEvent(engine.Event{
@@ -1692,10 +1692,10 @@ func TestToolTimelineChipsTrackCallAndResult(t *testing.T) {
 			"output_preview": "alpha",
 		},
 	})
-	if len(m.toolTimeline) != 1 {
-		t.Fatalf("expected chip to be merged, got %#v", m.toolTimeline)
+	if len(m.agentLoop.toolTimeline) != 1 {
+		t.Fatalf("expected chip to be merged, got %#v", m.agentLoop.toolTimeline)
 	}
-	chip := m.toolTimeline[0]
+	chip := m.agentLoop.toolTimeline[0]
 	if chip.Status != "ok" || chip.DurationMs != 42 {
 		t.Fatalf("expected ok chip with duration, got %#v", chip)
 	}
@@ -1709,12 +1709,12 @@ func TestToolTimelineChipsTrackCallAndResult(t *testing.T) {
 func TestToolCallsMirrorOntoStreamingAssistantMessage(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.status = engine.Status{Provider: "anthropic", Model: "claude-opus-4-6"}
-	m.sending = true
-	m.transcript = []chatLine{
+	m.chat.sending = true
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "list dir"},
 		{Role: "assistant", Content: ""},
 	}
-	m.streamIndex = 1
+	m.chat.streamIndex = 1
 
 	m = m.handleEngineEvent(engine.Event{
 		Type: "tool:call",
@@ -1724,10 +1724,10 @@ func TestToolCallsMirrorOntoStreamingAssistantMessage(t *testing.T) {
 			"params_preview": "path=.",
 		},
 	})
-	if got := len(m.transcript[1].ToolChips); got != 1 {
+	if got := len(m.chat.transcript[1].ToolChips); got != 1 {
 		t.Fatalf("expected tool:call to push chip onto streaming assistant line, got %d", got)
 	}
-	if chip := m.transcript[1].ToolChips[0]; chip.Status != "running" || chip.Name != "list_dir" {
+	if chip := m.chat.transcript[1].ToolChips[0]; chip.Status != "running" || chip.Name != "list_dir" {
 		t.Fatalf("expected running list_dir chip, got %#v", chip)
 	}
 
@@ -1742,10 +1742,10 @@ func TestToolCallsMirrorOntoStreamingAssistantMessage(t *testing.T) {
 			"truncated":     true,
 		},
 	})
-	if got := len(m.transcript[1].ToolChips); got != 1 {
+	if got := len(m.chat.transcript[1].ToolChips); got != 1 {
 		t.Fatalf("tool:result should merge into the running chip, got %d", got)
 	}
-	chip := m.transcript[1].ToolChips[0]
+	chip := m.chat.transcript[1].ToolChips[0]
 	if chip.Status != "ok" || chip.DurationMs != 73 {
 		t.Fatalf("expected merged ok chip with duration, got %#v", chip)
 	}
@@ -1765,16 +1765,16 @@ func TestToolCallsMirrorOntoStreamingAssistantMessage(t *testing.T) {
 func TestChatMentionNavigationAndTabCompletion(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	m.files = []string{"internal/api/server.go", "internal/app/service.go", "README.md"}
-	m.input = "@internal/"
+	m.filesView.entries = []string{"internal/api/server.go", "internal/app/service.go", "README.md"}
+	m.chat.input = "@internal/"
 
 	downModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	down, ok := downModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after mention down key, got %T", downModel)
 	}
-	if down.mentionIndex != 1 {
-		t.Fatalf("expected mention index to move to 1, got %d", down.mentionIndex)
+	if down.slashMenu.mention != 1 {
+		t.Fatalf("expected mention index to move to 1, got %d", down.slashMenu.mention)
 	}
 
 	completedModel, _ := down.Update(tea.KeyMsg{Type: tea.KeyTab})
@@ -1782,30 +1782,30 @@ func TestChatMentionNavigationAndTabCompletion(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after mention tab completion, got %T", completedModel)
 	}
-	if !strings.Contains(completed.input, "[[file:internal/app/service.go]]") {
-		t.Fatalf("expected second mention suggestion selected, got %q", completed.input)
+	if !strings.Contains(completed.chat.input, "[[file:internal/app/service.go]]") {
+		t.Fatalf("expected second mention suggestion selected, got %q", completed.chat.input)
 	}
 }
 
 func TestChatMentionEnterCompletesBeforeSending(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	m.files = []string{"internal/api/server.go"}
-	m.input = "Review @internal/api/ser"
+	m.filesView.entries = []string{"internal/api/server.go"}
+	m.chat.input = "Review @internal/api/ser"
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after mention enter completion, got %T", nextModel)
 	}
-	if !strings.Contains(next.input, "[[file:internal/api/server.go]]") {
-		t.Fatalf("expected mention replacement on enter, got %q", next.input)
+	if !strings.Contains(next.chat.input, "[[file:internal/api/server.go]]") {
+		t.Fatalf("expected mention replacement on enter, got %q", next.chat.input)
 	}
-	if next.sending {
+	if next.chat.sending {
 		t.Fatal("expected enter on active mention to complete mention before sending")
 	}
-	if len(next.transcript) != 0 {
-		t.Fatalf("expected no transcript append while mention is being completed, got %#v", next.transcript)
+	if len(next.chat.transcript) != 0 {
+		t.Fatalf("expected no transcript append while mention is being completed, got %#v", next.chat.transcript)
 	}
 }
 
@@ -1830,11 +1830,11 @@ func TestChatInputCursorCanEditInMiddle(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after middle insert, got %T", typedModel)
 	}
-	if typed.input != "abXcd" {
-		t.Fatalf("expected middle insertion result abXcd, got %q", typed.input)
+	if typed.chat.input != "abXcd" {
+		t.Fatalf("expected middle insertion result abXcd, got %q", typed.chat.input)
 	}
-	if typed.chatCursor != 3 {
-		t.Fatalf("expected cursor at 3 after insertion, got %d", typed.chatCursor)
+	if typed.chat.cursor != 3 {
+		t.Fatalf("expected cursor at 3 after insertion, got %d", typed.chat.cursor)
 	}
 }
 
@@ -1862,8 +1862,8 @@ func TestChatInputHistoryUpDownNavigation(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after first history up, got %T", up1Model)
 	}
-	if up1.input != "/context" {
-		t.Fatalf("expected latest history command /context, got %q", up1.input)
+	if up1.chat.input != "/context" {
+		t.Fatalf("expected latest history command /context, got %q", up1.chat.input)
 	}
 
 	up2Model, _ := up1.Update(tea.KeyMsg{Type: tea.KeyUp})
@@ -1871,8 +1871,8 @@ func TestChatInputHistoryUpDownNavigation(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after second history up, got %T", up2Model)
 	}
-	if up2.input != "/help" {
-		t.Fatalf("expected previous history command /help, got %q", up2.input)
+	if up2.chat.input != "/help" {
+		t.Fatalf("expected previous history command /help, got %q", up2.chat.input)
 	}
 
 	down1Model, _ := up2.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -1880,8 +1880,8 @@ func TestChatInputHistoryUpDownNavigation(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after first history down, got %T", down1Model)
 	}
-	if down1.input != "/context" {
-		t.Fatalf("expected next history command /context, got %q", down1.input)
+	if down1.chat.input != "/context" {
+		t.Fatalf("expected next history command /context, got %q", down1.chat.input)
 	}
 
 	down2Model, _ := down1.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -1889,8 +1889,8 @@ func TestChatInputHistoryUpDownNavigation(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after second history down, got %T", down2Model)
 	}
-	if down2.input != "" {
-		t.Fatalf("expected restored draft input after history down, got %q", down2.input)
+	if down2.chat.input != "" {
+		t.Fatalf("expected restored draft input after history down, got %q", down2.chat.input)
 	}
 }
 
@@ -1899,9 +1899,9 @@ func TestChatSlashOperationalCommands(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.latestPatch = "--- a/demo.txt\n+++ b/demo.txt\n@@ -1 +1 @@\n-old\n+new\n"
-	m.patchFiles = []string{"demo.txt"}
-	m.patchSet = []patchSection{
+	m.patchView.latestPatch = "--- a/demo.txt\n+++ b/demo.txt\n@@ -1 +1 @@\n-old\n+new\n"
+	m.patchView.files = []string{"demo.txt"}
+	m.patchView.set = []patchSection{
 		{
 			Path:      "demo.txt",
 			HunkCount: 1,
@@ -1910,14 +1910,14 @@ func TestChatSlashOperationalCommands(t *testing.T) {
 	}
 
 	for _, input := range []string{"/status", "/reload", "/context", "/tools", "/patch"} {
-		m.input = input
+		m.chat.input = input
 		nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		next, ok := nextModel.(Model)
 		if !ok {
 			t.Fatalf("expected Model after %s, got %T", input, nextModel)
 		}
-		if len(next.transcript) == 0 || next.transcript[len(next.transcript)-1].Role != "system" {
-			t.Fatalf("expected system transcript entry after %s, got %#v", input, next.transcript)
+		if len(next.chat.transcript) == 0 || next.chat.transcript[len(next.chat.transcript)-1].Role != "system" {
+			t.Fatalf("expected system transcript entry after %s, got %#v", input, next.chat.transcript)
 		}
 		m = next
 	}
@@ -1932,15 +1932,15 @@ func TestChatSlashUndoCommand(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
 	m.status = eng.Status()
-	m.input = "/undo"
+	m.chat.input = "/undo"
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after /undo, got %T", nextModel)
 	}
-	if len(next.transcript) == 0 || !strings.Contains(next.transcript[len(next.transcript)-1].Content, "Undone messages: 2") {
-		t.Fatalf("expected undo message in transcript, got %#v", next.transcript)
+	if len(next.chat.transcript) == 0 || !strings.Contains(next.chat.transcript[len(next.chat.transcript)-1].Content, "Undone messages: 2") {
+		t.Fatalf("expected undo message in transcript, got %#v", next.chat.transcript)
 	}
 }
 
@@ -1965,7 +1965,7 @@ func TestContextCommandSummaryIncludesContextInReport(t *testing.T) {
 			},
 		},
 	}
-	m.pinnedFile = "internal/engine/engine.go"
+	m.filesView.pinned = "internal/engine/engine.go"
 
 	summary := m.contextCommandSummary()
 	if !strings.Contains(summary, "Last Context In:") {
@@ -2007,17 +2007,17 @@ func TestChatSlashContextFullIncludesDetailedFileEvidence(t *testing.T) {
 			},
 		},
 	}
-	m.input = "/context full"
+	m.chat.input = "/context full"
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after /context full, got %T", nextModel)
 	}
-	if len(next.transcript) == 0 {
-		t.Fatalf("expected system transcript after /context full, got %#v", next.transcript)
+	if len(next.chat.transcript) == 0 {
+		t.Fatalf("expected system transcript after /context full, got %#v", next.chat.transcript)
 	}
-	last := next.transcript[len(next.transcript)-1]
+	last := next.chat.transcript[len(next.chat.transcript)-1]
 	if last.Role != "system" {
 		t.Fatalf("expected system transcript entry, got %#v", last)
 	}
@@ -2045,7 +2045,7 @@ func TestSetupTabAppliesProviderSelection(t *testing.T) {
 			break
 		}
 	}
-	m.setupIndex = targetIndex
+	m.setupWizard.index = targetIndex
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
@@ -2055,8 +2055,8 @@ func TestSetupTabAppliesProviderSelection(t *testing.T) {
 	if next.currentProvider() != providers[targetIndex] {
 		t.Fatalf("expected setup to apply provider %q, got %q", providers[targetIndex], next.currentProvider())
 	}
-	if len(next.transcript) == 0 || next.transcript[len(next.transcript)-1].Role != "system" {
-		t.Fatalf("expected setup apply to append system transcript, got %#v", next.transcript)
+	if len(next.chat.transcript) == 0 || next.chat.transcript[len(next.chat.transcript)-1].Role != "system" {
+		t.Fatalf("expected setup apply to append system transcript, got %#v", next.chat.transcript)
 	}
 }
 
@@ -2079,14 +2079,14 @@ func TestSetupTabEditModelAndSave(t *testing.T) {
 			break
 		}
 	}
-	m.setupIndex = targetIndex
+	m.setupWizard.index = targetIndex
 
 	editModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
 	editing, ok := editModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after setup edit key, got %T", editModel)
 	}
-	if !editing.setupEditing {
+	if !editing.setupWizard.editing {
 		t.Fatal("expected setup editing mode")
 	}
 
@@ -2180,10 +2180,10 @@ func TestToolsTabRunsReadFilePreset(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 5
 	m.status = eng.Status()
-	m.files = []string{"demo.txt"}
-	m.fileIndex = 0
-	m.toolIndex = indexOfString(m.availableTools(), "read_file")
-	if m.toolIndex < 0 {
+	m.filesView.entries = []string{"demo.txt"}
+	m.filesView.index = 0
+	m.toolView.index = indexOfString(m.availableTools(), "read_file")
+	if m.toolView.index < 0 {
 		t.Fatal("expected read_file tool to be registered")
 	}
 
@@ -2202,11 +2202,11 @@ func TestToolsTabRunsReadFilePreset(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after tool result, got %T", finalModel)
 	}
-	if !strings.Contains(final.toolOutput, "alpha") {
-		t.Fatalf("expected tool output to contain file content, got:\n%s", final.toolOutput)
+	if !strings.Contains(final.toolView.output, "alpha") {
+		t.Fatalf("expected tool output to contain file content, got:\n%s", final.toolView.output)
 	}
-	if final.filePath != "demo.txt" {
-		t.Fatalf("expected file path to follow tool target, got %q", final.filePath)
+	if final.filesView.path != "demo.txt" {
+		t.Fatalf("expected file path to follow tool target, got %q", final.filesView.path)
 	}
 }
 
@@ -2214,8 +2214,8 @@ func TestToolsTabCanEditAndResetParams(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 5
-	m.toolIndex = indexOfString(m.availableTools(), "write_file")
-	if m.toolIndex < 0 {
+	m.toolView.index = indexOfString(m.availableTools(), "write_file")
+	if m.toolView.index < 0 {
 		t.Fatal("expected write_file tool to be registered")
 	}
 
@@ -2224,17 +2224,17 @@ func TestToolsTabCanEditAndResetParams(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after e key, got %T", editingModel)
 	}
-	if !editing.toolEditing {
+	if !editing.toolView.editing {
 		t.Fatal("expected tool editor to open")
 	}
 
-	editing.toolDraft = `path=tmp/custom.txt content="hello world" overwrite=true`
+	editing.toolView.draft = `path=tmp/custom.txt content="hello world" overwrite=true`
 	savedModel, _ := editing.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	saved, ok := savedModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after saving tool params, got %T", savedModel)
 	}
-	if saved.toolEditing {
+	if saved.toolView.editing {
 		t.Fatal("expected tool editor to close after enter")
 	}
 	if got := saved.toolOverride(saved.selectedTool()); got != `path=tmp/custom.txt content="hello world" overwrite=true` {
@@ -2255,8 +2255,8 @@ func TestToolsTabAltShortcutOpensEditor(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 5
-	m.toolIndex = indexOfString(m.availableTools(), "write_file")
-	if m.toolIndex < 0 {
+	m.toolView.index = indexOfString(m.availableTools(), "write_file")
+	if m.toolView.index < 0 {
 		t.Fatal("expected write_file tool to be registered")
 	}
 
@@ -2265,7 +2265,7 @@ func TestToolsTabAltShortcutOpensEditor(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after alt+e key, got %T", editingModel)
 	}
-	if !editing.toolEditing {
+	if !editing.toolView.editing {
 		t.Fatal("expected tool editor to open with alt+e")
 	}
 }
@@ -2292,13 +2292,13 @@ func TestMutationToolRefreshesPatchAndPreview(t *testing.T) {
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 5
 	m.status = eng.Status()
-	m.files = []string{"demo.txt"}
-	m.fileIndex = 0
-	m.toolIndex = indexOfString(m.availableTools(), "edit_file")
-	if m.toolIndex < 0 {
+	m.filesView.entries = []string{"demo.txt"}
+	m.filesView.index = 0
+	m.toolView.index = indexOfString(m.availableTools(), "edit_file")
+	if m.toolView.index < 0 {
 		t.Fatal("expected edit_file tool to be registered")
 	}
-	m.toolOverrides["edit_file"] = `path=demo.txt old_string="old value" new_string="new value" replace_all=false`
+	m.toolView.overrides["edit_file"] = `path=demo.txt old_string="old value" new_string="new value" replace_all=false`
 
 	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next, ok := nextModel.(Model)
@@ -2318,17 +2318,17 @@ func TestMutationToolRefreshesPatchAndPreview(t *testing.T) {
 	if final.activeTab != 3 {
 		t.Fatalf("expected mutation tool to switch to Patch tab, got %d", final.activeTab)
 	}
-	if final.filePath != "demo.txt" {
-		t.Fatalf("expected focused file path demo.txt, got %q", final.filePath)
+	if final.filesView.path != "demo.txt" {
+		t.Fatalf("expected focused file path demo.txt, got %q", final.filesView.path)
 	}
-	if !strings.Contains(final.filePreview, "new value") {
-		t.Fatalf("expected preview to refresh edited content, got %q", final.filePreview)
+	if !strings.Contains(final.filesView.preview, "new value") {
+		t.Fatalf("expected preview to refresh edited content, got %q", final.filesView.preview)
 	}
-	if !containsStringFold(final.changed, "demo.txt") {
-		t.Fatalf("expected changed files to include demo.txt, got %#v", final.changed)
+	if !containsStringFold(final.patchView.changed, "demo.txt") {
+		t.Fatalf("expected changed files to include demo.txt, got %#v", final.patchView.changed)
 	}
-	if !strings.Contains(final.diff, "+new value") {
-		t.Fatalf("expected worktree diff to refresh edited hunk, got:\n%s", final.diff)
+	if !strings.Contains(final.patchView.diff, "+new value") {
+		t.Fatalf("expected worktree diff to refresh edited hunk, got:\n%s", final.patchView.diff)
 	}
 }
 
@@ -2336,8 +2336,8 @@ func TestToolsTabRunsCommandPreset(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 5
-	m.toolIndex = indexOfString(m.availableTools(), "run_command")
-	if m.toolIndex < 0 {
+	m.toolView.index = indexOfString(m.availableTools(), "run_command")
+	if m.toolView.index < 0 {
 		t.Fatal("expected run_command tool to be registered")
 	}
 
@@ -2356,8 +2356,8 @@ func TestToolsTabRunsCommandPreset(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after run_command result, got %T", finalModel)
 	}
-	if !strings.Contains(strings.ToLower(final.toolOutput), "go version") {
-		t.Fatalf("expected command output in tools panel, got:\n%s", final.toolOutput)
+	if !strings.Contains(strings.ToLower(final.toolView.output), "go version") {
+		t.Fatalf("expected command output in tools panel, got:\n%s", final.toolView.output)
 	}
 }
 
@@ -2369,8 +2369,8 @@ func TestRunCommandSuggestionsPreferGoProjectTargets(t *testing.T) {
 	eng := newTUITestEngine(t)
 	eng.ProjectRoot = root
 	m := NewModel(context.Background(), eng)
-	m.files = []string{"go.mod", "internal/engine/engine.go"}
-	m.fileIndex = 1
+	m.filesView.entries = []string{"go.mod", "internal/engine/engine.go"}
+	m.filesView.index = 1
 
 	suggestions := m.runCommandSuggestions()
 	if len(suggestions) == 0 {
@@ -2481,15 +2481,15 @@ func TestExtractPatchHunks(t *testing.T) {
 func TestFilesTabNavigation(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 2
-	m.files = []string{"a.go", "b.go", "c.go"}
+	m.filesView.entries = []string{"a.go", "b.go", "c.go"}
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after j key, got %T", nextModel)
 	}
-	if next.fileIndex != 1 {
-		t.Fatalf("expected file index 1 after j, got %d", next.fileIndex)
+	if next.filesView.index != 1 {
+		t.Fatalf("expected file index 1 after j, got %d", next.filesView.index)
 	}
 
 	prevModel, _ := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
@@ -2497,17 +2497,17 @@ func TestFilesTabNavigation(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after k key, got %T", prevModel)
 	}
-	if prev.fileIndex != 0 {
-		t.Fatalf("expected file index 0 after k, got %d", prev.fileIndex)
+	if prev.filesView.index != 0 {
+		t.Fatalf("expected file index 0 after k, got %d", prev.filesView.index)
 	}
 }
 
 func TestFilesTabInsertSelectedFileMarker(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 2
-	m.files = []string{"a.go", "b.go"}
-	m.fileIndex = 1
-	m.input = "please inspect"
+	m.filesView.entries = []string{"a.go", "b.go"}
+	m.filesView.index = 1
+	m.chat.input = "please inspect"
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
 	next, ok := nextModel.(Model)
@@ -2517,24 +2517,24 @@ func TestFilesTabInsertSelectedFileMarker(t *testing.T) {
 	if next.activeTab != 0 {
 		t.Fatalf("expected active tab 0 after insert, got %d", next.activeTab)
 	}
-	if !strings.Contains(next.input, "[[file:b.go]]") {
-		t.Fatalf("expected input to include selected file marker, got %q", next.input)
+	if !strings.Contains(next.chat.input, "[[file:b.go]]") {
+		t.Fatalf("expected input to include selected file marker, got %q", next.chat.input)
 	}
 }
 
 func TestFilesTabTogglePinnedFile(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 2
-	m.files = []string{"a.go", "b.go"}
-	m.fileIndex = 1
+	m.filesView.entries = []string{"a.go", "b.go"}
+	m.filesView.index = 1
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after p key, got %T", nextModel)
 	}
-	if next.pinnedFile != "b.go" {
-		t.Fatalf("expected pinned file b.go, got %q", next.pinnedFile)
+	if next.filesView.pinned != "b.go" {
+		t.Fatalf("expected pinned file b.go, got %q", next.filesView.pinned)
 	}
 
 	clearedModel, _ := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
@@ -2542,31 +2542,31 @@ func TestFilesTabTogglePinnedFile(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after second p key, got %T", clearedModel)
 	}
-	if cleared.pinnedFile != "" {
-		t.Fatalf("expected pinned file to clear, got %q", cleared.pinnedFile)
+	if cleared.filesView.pinned != "" {
+		t.Fatalf("expected pinned file to clear, got %q", cleared.filesView.pinned)
 	}
 }
 
 func TestFilesTabAltShortcutTogglePinnedFile(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 2
-	m.files = []string{"a.go", "b.go"}
-	m.fileIndex = 1
+	m.filesView.entries = []string{"a.go", "b.go"}
+	m.filesView.index = 1
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Alt: true, Runes: []rune("p")})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after alt+p key, got %T", nextModel)
 	}
-	if next.pinnedFile != "b.go" {
-		t.Fatalf("expected pinned file b.go via alt+p, got %q", next.pinnedFile)
+	if next.filesView.pinned != "b.go" {
+		t.Fatalf("expected pinned file b.go via alt+p, got %q", next.filesView.pinned)
 	}
 }
 
 func TestFilesTabPrepareExplainAndReviewPrompts(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 2
-	m.files = []string{"internal/auth/service.go"}
+	m.filesView.entries = []string{"internal/auth/service.go"}
 
 	explainModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
 	explain, ok := explainModel.(Model)
@@ -2576,8 +2576,8 @@ func TestFilesTabPrepareExplainAndReviewPrompts(t *testing.T) {
 	if explain.activeTab != 0 {
 		t.Fatalf("expected active tab 0 after explain prompt, got %d", explain.activeTab)
 	}
-	if !strings.Contains(explain.input, "Explain [[file:internal/auth/service.go]]") {
-		t.Fatalf("expected explain prompt to target selected file, got %q", explain.input)
+	if !strings.Contains(explain.chat.input, "Explain [[file:internal/auth/service.go]]") {
+		t.Fatalf("expected explain prompt to target selected file, got %q", explain.chat.input)
 	}
 
 	m.activeTab = 2
@@ -2586,8 +2586,8 @@ func TestFilesTabPrepareExplainAndReviewPrompts(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after v key, got %T", reviewModel)
 	}
-	if !strings.Contains(review.input, "Review [[file:internal/auth/service.go]]") {
-		t.Fatalf("expected review prompt to target selected file, got %q", review.input)
+	if !strings.Contains(review.chat.input, "Review [[file:internal/auth/service.go]]") {
+		t.Fatalf("expected review prompt to target selected file, got %q", review.chat.input)
 	}
 }
 
@@ -2753,10 +2753,10 @@ func TestRenderFooterShowsStateAndTabHints(t *testing.T) {
 
 func TestHelpOverlayShowsTabKeysWhenToggled(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	if m.showHelpOverlay {
+	if m.ui.showHelpOverlay {
 		t.Fatal("help overlay should default to off")
 	}
-	m.showHelpOverlay = true
+	m.ui.showHelpOverlay = true
 	out := m.renderHelpOverlay(120)
 	if !strings.Contains(out, "enter send") || !strings.Contains(out, "ctrl+p palette") {
 		t.Fatalf("expected chat hints in help overlay, got:\n%s", out)
@@ -2840,8 +2840,8 @@ func TestRenderToolsViewShowsToolDetails(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 5
-	m.toolIndex = indexOfString(m.availableTools(), "read_file")
-	m.toolOutput = "Tool: read_file\nSuccess: true\n\npackage main"
+	m.toolView.index = indexOfString(m.availableTools(), "read_file")
+	m.toolView.output = "Tool: read_file\nSuccess: true\n\npackage main"
 
 	view := m.renderToolsView(100)
 	if !strings.Contains(view, "Tools") || !strings.Contains(view, "Tool Detail") {
@@ -2886,8 +2886,8 @@ func TestComposeChatPromptAvoidsDuplicateFileMarkers(t *testing.T) {
 
 func TestChatPromptIncludesPinnedFileMarker(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.input = "Please inspect auth flow"
-	m.pinnedFile = "internal/auth/service.go"
+	m.chat.input = "Please inspect auth flow"
+	m.filesView.pinned = "internal/auth/service.go"
 
 	got := m.chatPrompt()
 	if !strings.Contains(got, "[[file:internal/auth/service.go]]") {
@@ -2897,8 +2897,8 @@ func TestChatPromptIncludesPinnedFileMarker(t *testing.T) {
 
 func TestChatPromptExpandsAtMentions(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.input = "Check @internal/config/conf"
-	m.files = []string{"internal/config/config.go", "README.md"}
+	m.chat.input = "Check @internal/config/conf"
+	m.filesView.entries = []string{"internal/config/config.go", "README.md"}
 
 	got := m.chatPrompt()
 	if !strings.Contains(got, "[[file:internal/config/config.go]]") {
@@ -2908,28 +2908,28 @@ func TestChatPromptExpandsAtMentions(t *testing.T) {
 
 func TestFocusChangedFilesPrefersPinnedFile(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.files = []string{"a.go", "b.go", "c.go"}
-	m.fileIndex = 0
-	m.pinnedFile = "b.go"
+	m.filesView.entries = []string{"a.go", "b.go", "c.go"}
+	m.filesView.index = 0
+	m.filesView.pinned = "b.go"
 
 	next := m.focusChangedFiles([]string{"c.go", "b.go"})
-	if next.fileIndex != 1 {
-		t.Fatalf("expected focus to move to pinned changed file, got index %d", next.fileIndex)
+	if next.filesView.index != 1 {
+		t.Fatalf("expected focus to move to pinned changed file, got index %d", next.filesView.index)
 	}
 
 	next = m.focusChangedFiles([]string{"c.go"})
-	if next.fileIndex != 2 {
-		t.Fatalf("expected focus to move to first changed file when pinned file missing, got index %d", next.fileIndex)
+	if next.filesView.index != 2 {
+		t.Fatalf("expected focus to move to first changed file when pinned file missing, got index %d", next.filesView.index)
 	}
 }
 
 func TestRenderChatAndFilesViewShowPinnedFile(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.width = 100
-	m.pinnedFile = "internal/auth/service.go"
-	m.filePath = "internal/auth/service.go"
-	m.filePreview = "package auth"
-	m.files = []string{"internal/auth/service.go"}
+	m.filesView.pinned = "internal/auth/service.go"
+	m.filesView.path = "internal/auth/service.go"
+	m.filesView.preview = "package auth"
+	m.filesView.entries = []string{"internal/auth/service.go"}
 
 	chatView := m.renderChatView(80)
 	if !strings.Contains(chatView, "pinned: [[file:internal/auth/service.go]]") {
@@ -2944,22 +2944,22 @@ func TestRenderChatAndFilesViewShowPinnedFile(t *testing.T) {
 
 func TestAnnotateAssistantPatchAndMarkLatestInTranscript(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = []chatLine{
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "patch this"},
 		{Role: "assistant", Content: "```diff\n--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-old\n+new\n```\n"},
 	}
 
 	m.annotateAssistantPatch(1)
-	if len(m.transcript[1].PatchFiles) != 1 || m.transcript[1].PatchFiles[0] != "a.go" {
-		t.Fatalf("expected assistant transcript patch files, got %#v", m.transcript[1])
+	if len(m.chat.transcript[1].PatchFiles) != 1 || m.chat.transcript[1].PatchFiles[0] != "a.go" {
+		t.Fatalf("expected assistant transcript patch files, got %#v", m.chat.transcript[1])
 	}
-	if m.transcript[1].PatchHunks != 1 {
-		t.Fatalf("expected assistant transcript patch hunks, got %#v", m.transcript[1])
+	if m.chat.transcript[1].PatchHunks != 1 {
+		t.Fatalf("expected assistant transcript patch hunks, got %#v", m.chat.transcript[1])
 	}
 
 	m.markLatestPatchInTranscript("--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-old\n+new")
-	if !m.transcript[1].IsLatestPatch {
-		t.Fatalf("expected assistant transcript line to be marked latest: %#v", m.transcript[1])
+	if !m.chat.transcript[1].IsLatestPatch {
+		t.Fatalf("expected assistant transcript line to be marked latest: %#v", m.chat.transcript[1])
 	}
 }
 
@@ -2984,36 +2984,36 @@ func TestAnnotateAssistantToolUsageFromConversation(t *testing.T) {
 	})
 
 	m := NewModel(context.Background(), eng)
-	m.transcript = []chatLine{
+	m.chat.transcript = []chatLine{
 		{Role: "assistant", Content: "I inspected the file and ran checks."},
 	}
 
 	m.annotateAssistantToolUsage(0)
-	if m.transcript[0].ToolCalls != 2 {
-		t.Fatalf("expected 2 tool calls, got %#v", m.transcript[0])
+	if m.chat.transcript[0].ToolCalls != 2 {
+		t.Fatalf("expected 2 tool calls, got %#v", m.chat.transcript[0])
 	}
-	if m.transcript[0].ToolFailures != 1 {
-		t.Fatalf("expected 1 tool failure, got %#v", m.transcript[0])
+	if m.chat.transcript[0].ToolFailures != 1 {
+		t.Fatalf("expected 1 tool failure, got %#v", m.chat.transcript[0])
 	}
-	if !containsStringFold(m.transcript[0].ToolNames, "read_file") || !containsStringFold(m.transcript[0].ToolNames, "run_command") {
-		t.Fatalf("expected tool names in transcript, got %#v", m.transcript[0])
+	if !containsStringFold(m.chat.transcript[0].ToolNames, "read_file") || !containsStringFold(m.chat.transcript[0].ToolNames, "run_command") {
+		t.Fatalf("expected tool names in transcript, got %#v", m.chat.transcript[0])
 	}
-	if summary := m.chatPatchSummary(m.transcript[0]); !strings.Contains(summary, "tools=2") || !strings.Contains(summary, "failures=1") {
+	if summary := m.chatPatchSummary(m.chat.transcript[0]); !strings.Contains(summary, "tools=2") || !strings.Contains(summary, "failures=1") {
 		t.Fatalf("expected tool summary in chat summary, got %q", summary)
 	}
 }
 
 func TestPatchFocusSummaryAndBestTarget(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.files = []string{"a.go", "b.go", "c.go"}
-	m.fileIndex = 2
-	m.pinnedFile = "b.go"
-	m.patchFiles = []string{"a.go", "b.go"}
-	m.patchSet = []patchSection{
+	m.filesView.entries = []string{"a.go", "b.go", "c.go"}
+	m.filesView.index = 2
+	m.filesView.pinned = "b.go"
+	m.patchView.files = []string{"a.go", "b.go"}
+	m.patchView.set = []patchSection{
 		{Path: "a.go", HunkCount: 1},
 		{Path: "b.go", HunkCount: 2},
 	}
-	m.patchIndex = 1
+	m.patchView.index = 1
 
 	if got := m.bestPatchFileTarget(); got != "b.go" {
 		t.Fatalf("expected pinned patch target, got %q", got)
@@ -3027,15 +3027,15 @@ func TestPatchFocusSummaryAndBestTarget(t *testing.T) {
 func TestFocusPatchFileUsesBestTarget(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 3
-	m.files = []string{"a.go", "b.go", "c.go"}
-	m.fileIndex = 0
-	m.pinnedFile = "b.go"
-	m.patchFiles = []string{"a.go", "b.go"}
-	m.patchSet = []patchSection{
+	m.filesView.entries = []string{"a.go", "b.go", "c.go"}
+	m.filesView.index = 0
+	m.filesView.pinned = "b.go"
+	m.patchView.files = []string{"a.go", "b.go"}
+	m.patchView.set = []patchSection{
 		{Path: "a.go", HunkCount: 1},
 		{Path: "b.go", HunkCount: 1},
 	}
-	m.patchIndex = 1
+	m.patchView.index = 1
 
 	nextModel, cmd := m.focusPatchFile()
 	next, ok := nextModel.(Model)
@@ -3045,8 +3045,8 @@ func TestFocusPatchFileUsesBestTarget(t *testing.T) {
 	if next.activeTab != 2 {
 		t.Fatalf("expected focusPatchFile to switch to Files tab, got %d", next.activeTab)
 	}
-	if next.fileIndex != 1 {
-		t.Fatalf("expected focusPatchFile to move to pinned patched file, got index %d", next.fileIndex)
+	if next.filesView.index != 1 {
+		t.Fatalf("expected focusPatchFile to move to pinned patched file, got index %d", next.filesView.index)
 	}
 	if cmd == nil {
 		t.Fatal("expected preview reload command from focusPatchFile")
@@ -3055,10 +3055,10 @@ func TestFocusPatchFileUsesBestTarget(t *testing.T) {
 
 func TestRenderPatchViewShowsPatchFiles(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.patchFiles = []string{"internal/auth/service.go"}
-	m.pinnedFile = "internal/auth/service.go"
-	m.latestPatch = "--- a/internal/auth/service.go\n+++ b/internal/auth/service.go\n@@ -1 +1 @@\n-old\n+new\n"
-	m.patchSet = []patchSection{
+	m.patchView.files = []string{"internal/auth/service.go"}
+	m.filesView.pinned = "internal/auth/service.go"
+	m.patchView.latestPatch = "--- a/internal/auth/service.go\n+++ b/internal/auth/service.go\n@@ -1 +1 @@\n-old\n+new\n"
+	m.patchView.set = []patchSection{
 		{
 			Path:      "internal/auth/service.go",
 			HunkCount: 1,
@@ -3078,8 +3078,8 @@ func TestRenderPatchViewShowsPatchFiles(t *testing.T) {
 func TestShiftPatchTargetAndRenderPatchViewUsesCurrentSection(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 3
-	m.patchFiles = []string{"a.go", "b.go"}
-	m.patchSet = []patchSection{
+	m.patchView.files = []string{"a.go", "b.go"}
+	m.patchView.set = []patchSection{
 		{
 			Path:      "a.go",
 			HunkCount: 1,
@@ -3099,8 +3099,8 @@ func TestShiftPatchTargetAndRenderPatchViewUsesCurrentSection(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after n key, got %T", nextModel)
 	}
-	if next.patchIndex != 1 {
-		t.Fatalf("expected patch index 1 after navigation, got %d", next.patchIndex)
+	if next.patchView.index != 1 {
+		t.Fatalf("expected patch index 1 after navigation, got %d", next.patchView.index)
 	}
 
 	view := next.renderPatchView(100)
@@ -3118,7 +3118,7 @@ func TestShiftPatchTargetAndRenderPatchViewUsesCurrentSection(t *testing.T) {
 func TestShiftPatchHunkAndReviewHints(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 3
-	m.patchSet = []patchSection{
+	m.patchView.set = []patchSection{
 		{
 			Path:      "internal/auth/service.go",
 			HunkCount: 2,
@@ -3128,15 +3128,15 @@ func TestShiftPatchHunkAndReviewHints(t *testing.T) {
 			},
 		},
 	}
-	m.patchFiles = []string{"internal/auth/service.go"}
+	m.patchView.files = []string{"internal/auth/service.go"}
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after j key, got %T", nextModel)
 	}
-	if next.patchHunk != 1 {
-		t.Fatalf("expected patch hunk 1 after navigation, got %d", next.patchHunk)
+	if next.patchView.hunk != 1 {
+		t.Fatalf("expected patch hunk 1 after navigation, got %d", next.patchView.hunk)
 	}
 
 	view := next.renderPatchView(100)
@@ -3151,9 +3151,9 @@ func TestShiftPatchHunkAndReviewHints(t *testing.T) {
 func TestRenderChatViewShowsPatchSummary(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.width = 100
-	m.patchSet = []patchSection{{Path: "internal/auth/service.go", HunkCount: 1}}
-	m.patchFiles = []string{"internal/auth/service.go"}
-	m.transcript = []chatLine{
+	m.patchView.set = []patchSection{{Path: "internal/auth/service.go", HunkCount: 1}}
+	m.patchView.files = []string{"internal/auth/service.go"}
+	m.chat.transcript = []chatLine{
 		{
 			Role:          "assistant",
 			Content:       "Applied the fix.",
@@ -3301,17 +3301,17 @@ func TestRenderStatsPanelUnconfiguredShowsGuidance(t *testing.T) {
 
 func TestCtrlSTogglesStatsPanel(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	if !m.showStatsPanel {
+	if !m.ui.showStatsPanel {
 		t.Fatalf("stats panel should default to visible")
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	mm := next.(Model)
-	if mm.showStatsPanel {
+	if mm.ui.showStatsPanel {
 		t.Fatalf("ctrl+s should toggle stats panel off")
 	}
 	next2, _ := mm.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	mm2 := next2.(Model)
-	if !mm2.showStatsPanel {
+	if !mm2.ui.showStatsPanel {
 		t.Fatalf("ctrl+s should toggle stats panel back on")
 	}
 }
@@ -3325,7 +3325,7 @@ func TestStatsPanelHiddenBelowWidthThreshold(t *testing.T) {
 	if !m.statsPanelVisible(statsPanelMinContentWidth) {
 		t.Fatalf("panel should show at width threshold")
 	}
-	m.showStatsPanel = false
+	m.ui.showStatsPanel = false
 	if m.statsPanelVisible(statsPanelMinContentWidth + 40) {
 		t.Fatalf("panel must respect the ctrl+s toggle when disabled")
 	}
@@ -3371,10 +3371,10 @@ func TestSlashSplitDecomposesBroadQuery(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model from Update, got %T", out)
 	}
-	if len(mm.transcript) == 0 {
+	if len(mm.chat.transcript) == 0 {
 		t.Fatalf("/split should emit a system message, got empty transcript")
 	}
-	last := mm.transcript[len(mm.transcript)-1].Content
+	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 	if !strings.Contains(last, "/split") {
 		t.Fatalf("expected /split header in output, got:\n%s", last)
 	}
@@ -3401,10 +3401,10 @@ func TestSlashSplitWithoutArgExplains(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model from Update, got %T", out)
 	}
-	if len(mm.transcript) == 0 {
+	if len(mm.chat.transcript) == 0 {
 		t.Fatalf("/split without args should surface a usage line")
 	}
-	last := mm.transcript[len(mm.transcript)-1].Content
+	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 	if !strings.Contains(last, "Usage: /split") {
 		t.Fatalf("expected usage hint, got:\n%s", last)
 	}
@@ -3421,7 +3421,7 @@ func TestSlashSplitAtomicExplainsNoDecomposition(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model from Update, got %T", out)
 	}
-	last := mm.transcript[len(mm.transcript)-1].Content
+	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 	if !strings.Contains(last, "atomic") {
 		t.Fatalf("expected atomic-task message, got:\n%s", last)
 	}
@@ -3511,18 +3511,18 @@ func TestToolResultAccumulatesCompressionStats(t *testing.T) {
 			"compression_ratio":       0.40,
 		},
 	})
-	if len(m.toolTimeline) != 1 {
-		t.Fatalf("expected merged chip, got %d", len(m.toolTimeline))
+	if len(m.agentLoop.toolTimeline) != 1 {
+		t.Fatalf("expected merged chip, got %d", len(m.agentLoop.toolTimeline))
 	}
-	chip := m.toolTimeline[0]
+	chip := m.agentLoop.toolTimeline[0]
 	if chip.SavedChars != 600 || chip.CompressedChars != 400 {
 		t.Fatalf("chip should carry saved/compressed counts, got %#v", chip)
 	}
 	if chip.CompressionPct != 60 {
 		t.Fatalf("compression pct should be 60, got %d", chip.CompressionPct)
 	}
-	if m.compressionSavedChars != 600 || m.compressionRawChars != 1000 {
-		t.Fatalf("session totals not accumulated, got saved=%d raw=%d", m.compressionSavedChars, m.compressionRawChars)
+	if m.telemetry.compressionSavedChars != 600 || m.telemetry.compressionRawChars != 1000 {
+		t.Fatalf("session totals not accumulated, got saved=%d raw=%d", m.telemetry.compressionSavedChars, m.telemetry.compressionRawChars)
 	}
 
 	// A second result doubles the running totals.
@@ -3545,8 +3545,8 @@ func TestToolResultAccumulatesCompressionStats(t *testing.T) {
 			"compression_ratio":       0.40,
 		},
 	})
-	if m.compressionSavedChars != 1200 || m.compressionRawChars != 2000 {
-		t.Fatalf("totals should accumulate across events, got saved=%d raw=%d", m.compressionSavedChars, m.compressionRawChars)
+	if m.telemetry.compressionSavedChars != 1200 || m.telemetry.compressionRawChars != 2000 {
+		t.Fatalf("totals should accumulate across events, got saved=%d raw=%d", m.telemetry.compressionSavedChars, m.telemetry.compressionRawChars)
 	}
 
 	// And the stats panel must surface them.
@@ -3570,8 +3570,8 @@ func TestToolCounterTracksConcurrentCalls(t *testing.T) {
 		Type:    "tool:call",
 		Payload: map[string]any{"tool": "grep_codebase", "step": 2},
 	})
-	if m.activeToolCount != 2 {
-		t.Fatalf("expected 2 concurrent tools, got %d", m.activeToolCount)
+	if m.telemetry.activeToolCount != 2 {
+		t.Fatalf("expected 2 concurrent tools, got %d", m.telemetry.activeToolCount)
 	}
 	if head := m.chatHeaderInfo(); head.ActiveTools != 2 {
 		t.Fatalf("chatHeaderInfo should forward ActiveTools=2, got %d", head.ActiveTools)
@@ -3581,23 +3581,23 @@ func TestToolCounterTracksConcurrentCalls(t *testing.T) {
 		Type:    "tool:result",
 		Payload: map[string]any{"tool": "read_file", "step": 1, "success": true},
 	})
-	if m.activeToolCount != 1 {
-		t.Fatalf("expected 1 remaining tool, got %d", m.activeToolCount)
+	if m.telemetry.activeToolCount != 1 {
+		t.Fatalf("expected 1 remaining tool, got %d", m.telemetry.activeToolCount)
 	}
 	m = m.handleEngineEvent(engine.Event{
 		Type:    "tool:result",
 		Payload: map[string]any{"tool": "grep_codebase", "step": 2, "success": true},
 	})
-	if m.activeToolCount != 0 {
-		t.Fatalf("expected counter back to 0, got %d", m.activeToolCount)
+	if m.telemetry.activeToolCount != 0 {
+		t.Fatalf("expected counter back to 0, got %d", m.telemetry.activeToolCount)
 	}
 	// Rogue extra tool:result must not drive the counter negative.
 	m = m.handleEngineEvent(engine.Event{
 		Type:    "tool:result",
 		Payload: map[string]any{"tool": "ghost", "step": 99, "success": true},
 	})
-	if m.activeToolCount != 0 {
-		t.Fatalf("counter should clamp to 0 on unmatched result, got %d", m.activeToolCount)
+	if m.telemetry.activeToolCount != 0 {
+		t.Fatalf("counter should clamp to 0 on unmatched result, got %d", m.telemetry.activeToolCount)
 	}
 }
 
@@ -3614,13 +3614,13 @@ func TestSubagentEventsDriveChipsAndCounter(t *testing.T) {
 			"role": "coder",
 		},
 	})
-	if m.activeSubagentCount != 1 {
-		t.Fatalf("expected activeSubagentCount=1 after start, got %d", m.activeSubagentCount)
+	if m.telemetry.activeSubagentCount != 1 {
+		t.Fatalf("expected activeSubagentCount=1 after start, got %d", m.telemetry.activeSubagentCount)
 	}
-	if len(m.toolTimeline) == 0 {
+	if len(m.agentLoop.toolTimeline) == 0 {
 		t.Fatalf("expected subagent chip appended to timeline")
 	}
-	chip := m.toolTimeline[len(m.toolTimeline)-1]
+	chip := m.agentLoop.toolTimeline[len(m.agentLoop.toolTimeline)-1]
 	if chip.Status != "subagent-running" {
 		t.Fatalf("expected subagent-running chip, got status=%q", chip.Status)
 	}
@@ -3641,17 +3641,17 @@ func TestSubagentEventsDriveChipsAndCounter(t *testing.T) {
 			"err":         "",
 		},
 	})
-	if m.activeSubagentCount != 0 {
-		t.Fatalf("expected activeSubagentCount=0 after done, got %d", m.activeSubagentCount)
+	if m.telemetry.activeSubagentCount != 0 {
+		t.Fatalf("expected activeSubagentCount=0 after done, got %d", m.telemetry.activeSubagentCount)
 	}
 	// The running chip should have been merged, not duplicated.
-	for _, c := range m.toolTimeline {
+	for _, c := range m.agentLoop.toolTimeline {
 		if c.Status == "subagent-running" {
 			t.Fatalf("subagent-running chip should have been merged to ok/failed, still running: %#v", c)
 		}
 	}
 	found := false
-	for _, c := range m.toolTimeline {
+	for _, c := range m.agentLoop.toolTimeline {
 		if c.Status == "subagent-ok" && strings.Contains(c.Name, "coder") {
 			found = true
 			if c.DurationMs != 1234 {
@@ -3660,7 +3660,7 @@ func TestSubagentEventsDriveChipsAndCounter(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("expected subagent-ok chip after done, timeline=%#v", m.toolTimeline)
+		t.Fatalf("expected subagent-ok chip after done, timeline=%#v", m.agentLoop.toolTimeline)
 	}
 }
 
@@ -3681,7 +3681,7 @@ func TestSubagentFailureSurfacesError(t *testing.T) {
 		},
 	})
 	found := false
-	for _, c := range m.toolTimeline {
+	for _, c := range m.agentLoop.toolTimeline {
 		if c.Status == "subagent-failed" {
 			found = true
 			if !strings.Contains(c.Preview, "provider timeout") {
@@ -3690,7 +3690,7 @@ func TestSubagentFailureSurfacesError(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("expected subagent-failed chip, got timeline=%#v", m.toolTimeline)
+		t.Fatalf("expected subagent-failed chip, got timeline=%#v", m.agentLoop.toolTimeline)
 	}
 }
 
@@ -3716,10 +3716,10 @@ func TestBatchFanoutSurfacesInChipPreview(t *testing.T) {
 			"batch_fail":     1,
 		},
 	})
-	if len(m.toolTimeline) == 0 {
+	if len(m.agentLoop.toolTimeline) == 0 {
 		t.Fatalf("expected batch chip")
 	}
-	chip := m.toolTimeline[len(m.toolTimeline)-1]
+	chip := m.agentLoop.toolTimeline[len(m.agentLoop.toolTimeline)-1]
 	for _, want := range []string{"4 calls", "4 parallel", "3 ok", "1 fail"} {
 		if !strings.Contains(chip.Preview, want) {
 			t.Fatalf("batch chip preview missing %q, got %q", want, chip.Preview)

@@ -26,44 +26,65 @@ import (
 	"github.com/mattn/go-isatty"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
 // stdinApprover reads y/n from the terminal. A sync.Mutex serializes
 // concurrent asks from concurrent subagents so overlapping prompts
 // don't interleave on stderr.
 type stdinApprover struct {
-	mu       sync.Mutex
-	reader   *bufio.Reader
-	in       io.Reader
-	out      io.Writer
-	isTTY    bool
-	autoYes  bool
-	autoNo   bool
-	verbose  bool
+	mu                 sync.Mutex
+	reader             *bufio.Reader
+	in                 io.Reader
+	out                io.Writer
+	isTTY              bool
+	autoYes            bool
+	autoNo             bool
+	autoYesDestructive bool
+	verbose            bool
 }
 
-// newStdinApprover builds an approver that respects two env flags for
+// newStdinApprover builds an approver that respects three env flags for
 // headless use:
-//   - DFMC_APPROVE=yes      — auto-approve every ask (CI / scripted runs
-//                             where the operator wants the gate off).
-//   - DFMC_APPROVE=no       — auto-deny every ask (strict mode).
-//   - unset + non-TTY stdin — auto-deny with a reason string.
-//   - unset + TTY          — interactive prompt.
+//   - DFMC_APPROVE=yes              — auto-approve every NON-destructive ask
+//                                     (read_file, list_dir, etc.). Destructive
+//                                     tools (write_file, run_command, …) still
+//                                     require the second knob below; a leaked
+//                                     CI env var alone can't grant write-shell.
+//   - DFMC_APPROVE_DESTRUCTIVE=yes  — combined with DFMC_APPROVE=yes, also
+//                                     auto-approves destructive tools. Two
+//                                     knobs by design — flipping one opts you
+//                                     into reads only, flipping both opts in
+//                                     to writes / shell.
+//   - DFMC_APPROVE=no               — auto-deny every ask (strict mode).
+//   - unset + non-TTY stdin         — auto-deny with a reason string.
+//   - unset + TTY                   — interactive prompt.
 func newStdinApprover() *stdinApprover {
 	env := strings.ToLower(strings.TrimSpace(os.Getenv("DFMC_APPROVE")))
+	envDestructive := strings.ToLower(strings.TrimSpace(os.Getenv("DFMC_APPROVE_DESTRUCTIVE")))
 	return &stdinApprover{
-		reader:  bufio.NewReader(os.Stdin),
-		in:      os.Stdin,
-		out:     os.Stderr,
-		isTTY:   isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd()),
-		autoYes: env == "yes" || env == "y" || env == "1" || env == "true",
-		autoNo:  env == "no" || env == "n" || env == "0" || env == "false",
+		reader:             bufio.NewReader(os.Stdin),
+		in:                 os.Stdin,
+		out:                os.Stderr,
+		isTTY:              isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd()),
+		autoYes:            env == "yes" || env == "y" || env == "1" || env == "true",
+		autoNo:             env == "no" || env == "n" || env == "0" || env == "false",
+		autoYesDestructive: envDestructive == "yes" || envDestructive == "y" || envDestructive == "1" || envDestructive == "true",
 	}
 }
 
 // RequestApproval implements engine.Approver.
 func (a *stdinApprover) RequestApproval(ctx context.Context, req engine.ApprovalRequest) engine.ApprovalDecision {
 	if a.autoYes {
+		// Two-knob gate: DFMC_APPROVE=yes auto-approves only non-destructive
+		// tools. Destructive ones (writes / shell) require the operator to
+		// also set DFMC_APPROVE_DESTRUCTIVE=yes — see H3 in the review.
+		if tools.IsDestructive(req.Tool) && !a.autoYesDestructive {
+			return engine.ApprovalDecision{
+				Approved: false,
+				Reason:   "DFMC_APPROVE=yes only auto-approves read-only tools; set DFMC_APPROVE_DESTRUCTIVE=yes to also auto-approve writes/shell",
+			}
+		}
 		return engine.ApprovalDecision{Approved: true, Reason: "DFMC_APPROVE=yes"}
 	}
 	if a.autoNo {

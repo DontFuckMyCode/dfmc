@@ -30,7 +30,7 @@ func TestSlashApprove_ShowsOffWhenListIsEmpty(t *testing.T) {
 		t.Fatalf("/approve must be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(strings.ToLower(last), "state:    off") {
 		t.Fatalf("empty list should show state:off, got:\n%s", last)
 	}
@@ -46,7 +46,7 @@ func TestSlashApprove_ShowsGatedListWhenConfigured(t *testing.T) {
 		t.Fatalf("/approve must be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "state:    ON") {
 		t.Fatalf("populated list should show state:ON, got:\n%s", last)
 	}
@@ -68,7 +68,7 @@ func TestSlashApprove_ShowsPendingRequest(t *testing.T) {
 	m := newApproveTestModel(t, []string{"write_file"}, pending)
 	next, _, _ := m.executeChatCommand("/approve")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "pending:") {
 		t.Fatalf("should surface pending line, got:\n%s", last)
 	}
@@ -81,7 +81,7 @@ func TestSlashApprove_NoRecentDenialsShowsCleanLog(t *testing.T) {
 	m := newApproveTestModel(t, []string{"write_file"}, nil)
 	next, _, _ := m.executeChatCommand("/approve")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "recent:") {
 		t.Fatalf("should show a recent line even when empty, got:\n%s", last)
 	}
@@ -99,7 +99,7 @@ func TestSlashApprove_PermissionsAlias(t *testing.T) {
 		t.Fatalf("/permissions must be handled as alias for /approve")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "Tool approval gate") {
 		t.Fatalf("/permissions alias should show the same gate snapshot, got:\n%s", last)
 	}

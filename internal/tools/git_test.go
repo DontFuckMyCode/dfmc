@@ -119,6 +119,105 @@ func TestGitLog_ReturnsInitialCommit(t *testing.T) {
 	}
 }
 
+func TestGitBlame_AttributesInitialCommit(t *testing.T) {
+	dir := initTempRepo(t)
+	res, err := NewGitBlameTool().Execute(context.Background(), Request{
+		ProjectRoot: dir,
+		Params:      map[string]any{"path": "seed.txt"},
+	})
+	if err != nil {
+		t.Fatalf("git_blame: %v", err)
+	}
+	lines, _ := res.Data["lines"].([]map[string]any)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line for seed.txt, got %d (raw=%q)", len(lines), res.Output)
+	}
+	got := lines[0]
+	if got["content"] != "hello" {
+		t.Fatalf("expected content 'hello', got %v", got["content"])
+	}
+	if author, _ := got["author"].(string); author != "DFMC Test" {
+		t.Fatalf("expected author 'DFMC Test', got %q", author)
+	}
+	if hash, _ := got["hash"].(string); len(hash) < 7 {
+		t.Fatalf("expected non-empty hash, got %q", hash)
+	}
+	if got["line"] != 1 {
+		t.Fatalf("expected line=1, got %v", got["line"])
+	}
+}
+
+func TestGitBlame_RespectsLineRange(t *testing.T) {
+	dir := initTempRepo(t)
+	// Append more lines so a range request is meaningful.
+	multiline := "alpha\nbeta\ngamma\ndelta\n"
+	if err := os.WriteFile(filepath.Join(dir, "multi.txt"), []byte(multiline), 0o644); err != nil {
+		t.Fatalf("write multi: %v", err)
+	}
+	gitRun := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	gitRun("add", "multi.txt")
+	gitRun("commit", "--quiet", "-m", "add multi")
+
+	res, err := NewGitBlameTool().Execute(context.Background(), Request{
+		ProjectRoot: dir,
+		Params: map[string]any{
+			"path":       "multi.txt",
+			"line_start": 2,
+			"line_end":   3,
+		},
+	})
+	if err != nil {
+		t.Fatalf("git_blame: %v", err)
+	}
+	lines, _ := res.Data["lines"].([]map[string]any)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines for range [2,3], got %d", len(lines))
+	}
+	if lines[0]["content"] != "beta" || lines[1]["content"] != "gamma" {
+		t.Fatalf("range slice wrong, got %q / %q", lines[0]["content"], lines[1]["content"])
+	}
+}
+
+func TestGitBlame_RequiresPath(t *testing.T) {
+	dir := initTempRepo(t)
+	_, err := NewGitBlameTool().Execute(context.Background(), Request{ProjectRoot: dir})
+	if err == nil || !strings.Contains(err.Error(), "path is required") {
+		t.Fatalf("expected 'path is required' error, got %v", err)
+	}
+}
+
+func TestGitBlame_RejectsPathOutsideRoot(t *testing.T) {
+	dir := initTempRepo(t)
+	_, err := NewGitBlameTool().Execute(context.Background(), Request{
+		ProjectRoot: dir,
+		Params:      map[string]any{"path": "../escape.txt"},
+	})
+	if err == nil {
+		t.Fatalf("expected an out-of-root rejection")
+	}
+}
+
+func TestGitBlame_RejectsInvertedRange(t *testing.T) {
+	dir := initTempRepo(t)
+	_, err := NewGitBlameTool().Execute(context.Background(), Request{
+		ProjectRoot: dir,
+		Params: map[string]any{
+			"path":       "seed.txt",
+			"line_start": 5,
+			"line_end":   2,
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "line_end") {
+		t.Fatalf("expected line_end>=line_start error, got %v", err)
+	}
+}
+
 func TestGitCommit_RejectsWildcardPaths(t *testing.T) {
 	dir := initTempRepo(t)
 	_, err := NewGitCommitTool().Execute(context.Background(), Request{

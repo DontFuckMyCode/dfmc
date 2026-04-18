@@ -142,7 +142,7 @@ func truncateCyclePath(path []string, limit int) []string {
 
 func (m Model) renderCodemapView(width int) string {
 	width = clampInt(width, 24, 1000)
-	view := m.codemapView
+	view := m.codemap.view
 	if view == "" {
 		view = codemapViewOverview
 	}
@@ -151,16 +151,16 @@ func (m Model) renderCodemapView(width int) string {
 	viewLine := subtleStyle.Render("view: ") + accentStyle.Render(view)
 	lines := []string{header, hint, viewLine, renderDivider(width - 2)}
 
-	if m.codemapErr != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.codemapErr))
+	if m.codemap.err != "" {
+		lines = append(lines, "", warnStyle.Render("error · "+m.codemap.err))
 		return strings.Join(lines, "\n")
 	}
-	if m.codemapLoading {
+	if m.codemap.loading {
 		lines = append(lines, "", subtleStyle.Render("loading..."))
 		return strings.Join(lines, "\n")
 	}
 
-	snap := m.codemapSnap
+	snap := m.codemap.snap
 	if snap.Nodes == 0 {
 		lines = append(lines, "",
 			subtleStyle.Render("CodeMap is empty."),
@@ -169,7 +169,7 @@ func (m Model) renderCodemapView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	body := renderCodemapBody(view, snap, m.codemapScroll, width-2)
+	body := renderCodemapBody(view, snap, m.codemap.scroll, width-2)
 	lines = append(lines, body...)
 	summary := fmt.Sprintf(
 		"%d nodes · %d edges · %d cycles · %d orphans",
@@ -308,44 +308,44 @@ func nextCodemapView(current string) string {
 
 func (m Model) handleCodemapKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Total for scroll clamping depends on active view.
-	total := codemapViewRowCount(m.codemapView, m.codemapSnap)
+	total := codemapViewRowCount(m.codemap.view, m.codemap.snap)
 	step := 1
 	pageStep := 10
 	switch msg.String() {
 	case "j", "down":
-		if m.codemapScroll+step < total {
-			m.codemapScroll += step
+		if m.codemap.scroll+step < total {
+			m.codemap.scroll += step
 		}
 	case "k", "up":
-		if m.codemapScroll >= step {
-			m.codemapScroll -= step
+		if m.codemap.scroll >= step {
+			m.codemap.scroll -= step
 		} else {
-			m.codemapScroll = 0
+			m.codemap.scroll = 0
 		}
 	case "pgdown":
-		if m.codemapScroll+pageStep < total {
-			m.codemapScroll += pageStep
+		if m.codemap.scroll+pageStep < total {
+			m.codemap.scroll += pageStep
 		} else if total > 0 {
-			m.codemapScroll = total - 1
+			m.codemap.scroll = total - 1
 		}
 	case "pgup":
-		if m.codemapScroll >= pageStep {
-			m.codemapScroll -= pageStep
+		if m.codemap.scroll >= pageStep {
+			m.codemap.scroll -= pageStep
 		} else {
-			m.codemapScroll = 0
+			m.codemap.scroll = 0
 		}
 	case "g":
-		m.codemapScroll = 0
+		m.codemap.scroll = 0
 	case "G":
 		if total > 0 {
-			m.codemapScroll = total - 1
+			m.codemap.scroll = total - 1
 		}
 	case "v":
-		m.codemapView = nextCodemapView(m.codemapView)
-		m.codemapScroll = 0
+		m.codemap.view = nextCodemapView(m.codemap.view)
+		m.codemap.scroll = 0
 	case "r":
-		m.codemapLoading = true
-		m.codemapErr = ""
+		m.codemap.loading = true
+		m.codemap.err = ""
 		return m, loadCodemapCmd(m.eng)
 	}
 	return m, nil

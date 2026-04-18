@@ -211,8 +211,8 @@ func TestActiveMentionQuery_ReturnsRangeSuffix(t *testing.T) {
 
 func TestBuildChatSuggestionState_MentionActiveEvenWithoutFiles(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.input = "please read @"
-	m.files = nil
+	m.chat.input = "please read @"
+	m.filesView.entries = nil
 	state := m.buildChatSuggestionState()
 	if !state.mentionActive {
 		t.Fatalf("mentionActive should be true when input has trailing @, regardless of file index")
@@ -224,8 +224,8 @@ func TestBuildChatSuggestionState_MentionActiveEvenWithoutFiles(t *testing.T) {
 
 func TestRenderChatView_MentionPicker_ShowsIndexingHintWhenFilesEmpty(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.input = "please read @auth"
-	m.files = nil
+	m.chat.input = "please read @auth"
+	m.filesView.entries = nil
 	view := m.renderChatView(120)
 	if !strings.Contains(view, "File Picker") {
 		t.Fatalf("expected File Picker modal header when @ active, got:\n%s", view)
@@ -237,8 +237,8 @@ func TestRenderChatView_MentionPicker_ShowsIndexingHintWhenFilesEmpty(t *testing
 
 func TestRenderChatView_MentionPicker_ShowsNoMatchCopyWhenQueryHasNoHit(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.input = "skim @nothingmatchesthis"
-	m.files = []string{"internal/auth/token.go", "ui/cli/cli.go"}
+	m.chat.input = "skim @nothingmatchesthis"
+	m.filesView.entries = []string{"internal/auth/token.go", "ui/cli/cli.go"}
 	view := m.renderChatView(120)
 	if !strings.Contains(view, "File Picker") {
 		t.Fatalf("expected File Picker modal header, got:\n%s", view)
@@ -254,8 +254,8 @@ func TestRenderChatView_MentionPicker_ShowsNoMatchCopyWhenQueryHasNoHit(t *testi
 // commit to; the box sells "this is the file picker, drive it or esc out".
 func TestRenderChatView_MentionPicker_IsBorderedModal(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.input = "review @"
-	m.files = []string{"internal/auth/token.go", "ui/cli/cli.go"}
+	m.chat.input = "review @"
+	m.filesView.entries = []string{"internal/auth/token.go", "ui/cli/cli.go"}
 	view := m.renderChatView(160)
 	// Bordered box — rounded unicode corners are the cheapest proof.
 	if !strings.ContainsAny(view, "╭╮╰╯") {
@@ -272,8 +272,8 @@ func TestRenderChatView_MentionPicker_IsBorderedModal(t *testing.T) {
 
 func TestRenderChatView_MentionPicker_ListsMatches(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.input = "please read @token"
-	m.files = []string{"internal/auth/token.go", "ui/cli/cli.go"}
+	m.chat.input = "please read @token"
+	m.filesView.entries = []string{"internal/auth/token.go", "ui/cli/cli.go"}
 	view := m.renderChatView(160)
 	if !strings.Contains(view, "token.go") {
 		t.Fatalf("mention picker should list the match, got:\n%s", view)
@@ -294,9 +294,9 @@ func TestRenderChatView_MentionPicker_ListsMatches(t *testing.T) {
 // under the Input box.
 func TestRenderChatView_MentionPickerOwnsTailRealEstate(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.pinnedFile = "internal/auth/token.go" // would normally surface in context strip
-	m.input = "review @"
-	m.files = []string{"internal/auth/token.go", "ui/cli/cli.go"}
+	m.filesView.pinned = "internal/auth/token.go" // would normally surface in context strip
+	m.chat.input = "review @"
+	m.filesView.entries = []string{"internal/auth/token.go", "ui/cli/cli.go"}
 	view := m.renderChatView(160)
 
 	if !strings.Contains(view, "◆ File Picker") {
@@ -326,8 +326,8 @@ func TestRenderChatView_MentionPickerOwnsTailRealEstate(t *testing.T) {
 // test fails on purpose.
 func TestRenderChatView_MentionPickerSitsUnderInputBox(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.input = "hi @"
-	m.files = []string{"internal/auth/token.go"}
+	m.chat.input = "hi @"
+	m.filesView.entries = []string{"internal/auth/token.go"}
 	view := m.renderChatView(160)
 
 	inputIdx := strings.Index(view, "› Input")
@@ -365,7 +365,7 @@ func TestRenderContextStrip_HiddenWhenComposerEmpty(t *testing.T) {
 // Inline [[file:...]] markers, fenced blocks, and @refs should each show up.
 func TestRenderContextStrip_ShowsMarkersAndFences(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.input = "Review [[file:a.go]] and [[file:b.go#L10-L50]] plus @c.go\n" +
+	m.chat.input = "Review [[file:a.go]] and [[file:b.go#L10-L50]] plus @c.go\n" +
 		"```go\nfunc main(){}\n```"
 	got := m.renderContextStrip(160)
 	if !strings.Contains(got, "markers:") {
@@ -390,14 +390,14 @@ func TestRenderContextStrip_ShowsMarkersAndFences(t *testing.T) {
 func TestCtrlTOpensFilePicker(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	m.files = []string{"internal/auth/token.go", "ui/tui/tui.go"}
+	m.filesView.entries = []string{"internal/auth/token.go", "ui/tui/tui.go"}
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 	mm := out.(Model)
-	if !strings.Contains(mm.input, "@") {
-		t.Fatalf("ctrl+t must put '@' at the cursor; got input=%q", mm.input)
+	if !strings.Contains(mm.chat.input, "@") {
+		t.Fatalf("ctrl+t must put '@' at the cursor; got input=%q", mm.chat.input)
 	}
-	if mm.chatCursor != len([]rune(mm.input)) {
-		t.Fatalf("cursor must sit after the inserted '@', got %d (input len=%d)", mm.chatCursor, len([]rune(mm.input)))
+	if mm.chat.cursor != len([]rune(mm.chat.input)) {
+		t.Fatalf("cursor must sit after the inserted '@', got %d (input len=%d)", mm.chat.cursor, len([]rune(mm.chat.input)))
 	}
 	view := mm.renderChatView(120)
 	if !strings.Contains(view, "◆ File Picker") {
@@ -414,8 +414,8 @@ func TestCtrlTPrependsSpaceMidWord(t *testing.T) {
 	m.setChatInput("hello")
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 	mm := out.(Model)
-	if mm.input != "hello @" {
-		t.Fatalf("ctrl+t after a word should prepend a space, got %q", mm.input)
+	if mm.chat.input != "hello @" {
+		t.Fatalf("ctrl+t after a word should prepend a space, got %q", mm.chat.input)
 	}
 }
 
@@ -423,14 +423,14 @@ func TestCtrlTPrependsSpaceMidWord(t *testing.T) {
 // and Ctrl+T. Useful if neither key is available on the user's terminal.
 func TestSlashFileOpensPicker(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.files = []string{"internal/auth/token.go"}
+	m.filesView.entries = []string{"internal/auth/token.go"}
 	next, _, handled := m.executeChatCommand("/file")
 	if !handled {
 		t.Fatalf("/file must be handled=true")
 	}
 	mm := next.(Model)
-	if mm.input != "@" {
-		t.Fatalf("/file should leave composer primed with '@', got %q", mm.input)
+	if mm.chat.input != "@" {
+		t.Fatalf("/file should leave composer primed with '@', got %q", mm.chat.input)
 	}
 	view := mm.renderChatView(120)
 	if !strings.Contains(view, "◆ File Picker") {
@@ -457,11 +457,11 @@ func TestAtKeyWithNonRunesKeyType_StillInsertsAt(t *testing.T) {
 		Alt:   true,
 	})
 	mm := out.(Model)
-	if !strings.Contains(mm.input, "@") {
-		t.Fatalf("@ rune must reach the input buffer even when Type is not KeyRunes, got %q", mm.input)
+	if !strings.Contains(mm.chat.input, "@") {
+		t.Fatalf("@ rune must reach the input buffer even when Type is not KeyRunes, got %q", mm.chat.input)
 	}
 	// And the full render must show the file picker now that the @ is in.
-	mm.files = []string{"ui/tui/tui.go"}
+	mm.filesView.entries = []string{"ui/tui/tui.go"}
 	view := mm.renderChatView(120)
 	if !strings.Contains(view, "◆ File Picker") {
 		t.Fatalf("mention picker must render after @ arrives via fallback, got:\n%s", view)
@@ -474,11 +474,11 @@ func TestAtKeyWithNonRunesKeyType_StillInsertsAt(t *testing.T) {
 func TestControlKeyWithNoRunesIsIgnored(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	before := m.input
+	before := m.chat.input
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlQ})
 	mm := out.(Model)
-	if mm.input != before {
-		t.Fatalf("control key with empty Runes must not mutate input, got %q", mm.input)
+	if mm.chat.input != before {
+		t.Fatalf("control key with empty Runes must not mutate input, got %q", mm.chat.input)
 	}
 }
 
@@ -488,7 +488,7 @@ func TestControlKeyWithNoRunesIsIgnored(t *testing.T) {
 // feedback, not just char count.
 func TestRenderContextStrip_ShowsTokenEstimate(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.input = "Explain the auth flow in this project and propose improvements."
+	m.chat.input = "Explain the auth flow in this project and propose improvements."
 	got := m.renderContextStrip(160)
 	if !strings.Contains(got, "tokens:") {
 		t.Fatalf("expected tokens count in strip, got %q", got)
@@ -505,7 +505,7 @@ func TestRenderContextStrip_ShowsTokenEstimate(t *testing.T) {
 // limit at a glance.
 func TestRenderContextStrip_TokenBudgetPercentWhenProviderKnown(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.input = "short question"
+	m.chat.input = "short question"
 	m.status.ProviderProfile.MaxContext = 200000
 	got := m.renderContextStrip(200)
 	if !strings.Contains(got, "% of 200000") {
@@ -517,7 +517,7 @@ func TestRenderContextStrip_TokenBudgetPercentWhenProviderKnown(t *testing.T) {
 // piece of context and must surface even when nothing else is attached.
 func TestRenderContextStrip_ShowsPinned(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.pinnedFile = "internal/auth/token.go"
+	m.filesView.pinned = "internal/auth/token.go"
 	got := m.renderContextStrip(120)
 	if !strings.Contains(got, "pinned:") || !strings.Contains(got, "internal/auth/token.go") {
 		t.Fatalf("expected pinned file in strip, got %q", got)
@@ -554,7 +554,7 @@ func TestCountHelpers(t *testing.T) {
 func TestMentionFlow_EndToEnd(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	m.files = []string{
+	m.filesView.entries = []string{
 		"internal/auth/token.go",
 		"internal/auth/session.go",
 		"ui/cli/cli.go",
@@ -595,11 +595,11 @@ func TestMentionFlow_EndToEnd(t *testing.T) {
 	// Step 3: press tab — marker must replace @token in the input.
 	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = out.(Model)
-	if !strings.Contains(m.input, "[[file:internal/auth/token.go]]") {
-		t.Fatalf("tab should rewrite @token to a file marker, got input=%q", m.input)
+	if !strings.Contains(m.chat.input, "[[file:internal/auth/token.go]]") {
+		t.Fatalf("tab should rewrite @token to a file marker, got input=%q", m.chat.input)
 	}
-	if strings.Contains(m.input, "@token") {
-		t.Fatalf("after commit, the raw @token should be gone, got input=%q", m.input)
+	if strings.Contains(m.chat.input, "@token") {
+		t.Fatalf("after commit, the raw @token should be gone, got input=%q", m.chat.input)
 	}
 
 	// Step 4: picker should no longer be active.
@@ -615,7 +615,7 @@ func TestMentionFlow_EndToEnd(t *testing.T) {
 func TestMentionFlow_EnterCommitsSelection(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	m.files = []string{"internal/auth/token.go", "ui/cli/cli.go"}
+	m.filesView.entries = []string{"internal/auth/token.go", "ui/cli/cli.go"}
 
 	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'@'}})
 	m = out.(Model)
@@ -625,12 +625,12 @@ func TestMentionFlow_EnterCommitsSelection(t *testing.T) {
 	}
 	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = out.(Model)
-	if !strings.Contains(m.input, "[[file:internal/auth/token.go]]") {
-		t.Fatalf("enter should also commit the selection, got input=%q", m.input)
+	if !strings.Contains(m.chat.input, "[[file:internal/auth/token.go]]") {
+		t.Fatalf("enter should also commit the selection, got input=%q", m.chat.input)
 	}
 	// Enter must NOT have sent the message (turn is still unsent).
-	if m.sending {
-		t.Fatalf("enter during mention-active state should insert, not submit; got m.sending=true")
+	if m.chat.sending {
+		t.Fatalf("enter during mention-active state should insert, not submit; got m.chat.sending=true")
 	}
 }
 
@@ -639,7 +639,7 @@ func TestMentionFlow_EnterCommitsSelection(t *testing.T) {
 func TestMentionFlow_PickerNavigation(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	m.files = []string{
+	m.filesView.entries = []string{
 		"internal/auth/token.go",
 		"internal/auth/session.go",
 		"internal/auth/middleware.go",
@@ -659,8 +659,8 @@ func TestMentionFlow_PickerNavigation(t *testing.T) {
 
 	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = out.(Model)
-	if m.mentionIndex != 1 {
-		t.Fatalf("KeyDown should advance mentionIndex to 1, got %d", m.mentionIndex)
+	if m.slashMenu.mention != 1 {
+		t.Fatalf("KeyDown should advance mentionIndex to 1, got %d", m.slashMenu.mention)
 	}
 
 	out, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
@@ -671,8 +671,8 @@ func TestMentionFlow_PickerNavigation(t *testing.T) {
 	_ = secondPath
 	// After commit, input contains [[file:<picked>]]. Verify the picked path
 	// isn't firstPath (proving navigation took effect).
-	if strings.Contains(m.input, "[[file:"+firstPath+"]]") {
-		t.Fatalf("after KeyDown+Tab, expected picker to commit the SECOND row, but got first row %q in input %q", firstPath, m.input)
+	if strings.Contains(m.chat.input, "[[file:"+firstPath+"]]") {
+		t.Fatalf("after KeyDown+Tab, expected picker to commit the SECOND row, but got first row %q in input %q", firstPath, m.chat.input)
 	}
 }
 
@@ -683,7 +683,7 @@ func TestHandleChatKey_AtTriggersFileReloadWhenIndexEmpty(t *testing.T) {
 	// non-nil — is covered by the integration suite.
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0 // Chat tab
-	m.files = nil
+	m.filesView.entries = nil
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'@'}})
 	if cmd != nil {
 		// Only expected when eng != nil, which we didn't provide.

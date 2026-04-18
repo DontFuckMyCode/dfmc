@@ -25,11 +25,11 @@ func itoaSmall(i int) string {
 
 func TestScrollTranscriptClampsAndPages(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = makeTranscript(40)
+	m.chat.transcript = makeTranscript(40)
 
 	m.scrollTranscript(-8)
-	if m.chatScrollback != 8 {
-		t.Fatalf("PageUp once should scroll 8, got %d", m.chatScrollback)
+	if m.chat.scrollback != 8 {
+		t.Fatalf("PageUp once should scroll 8, got %d", m.chat.scrollback)
 	}
 
 	// scrollTranscript uses a line-based ceiling now — each 1-line message
@@ -40,41 +40,41 @@ func TestScrollTranscriptClampsAndPages(t *testing.T) {
 	for i := 0; i < 15; i++ {
 		m.scrollTranscript(-8)
 	}
-	if m.chatScrollback == 0 {
+	if m.chat.scrollback == 0 {
 		t.Fatalf("expected chatScrollback > 0 after many PageUps, got 0")
 	}
-	ceiling := estimateTranscriptLines(m.transcript)
-	if m.chatScrollback > ceiling {
-		t.Fatalf("scrollback %d should not exceed estimate ceiling %d", m.chatScrollback, ceiling)
+	ceiling := estimateTranscriptLines(m.chat.transcript)
+	if m.chat.scrollback > ceiling {
+		t.Fatalf("scrollback %d should not exceed estimate ceiling %d", m.chat.scrollback, ceiling)
 	}
 
 	// Further PageUps clamp at the top — notice should say so.
-	before := m.chatScrollback
+	before := m.chat.scrollback
 	m.scrollTranscript(-8)
-	if m.chatScrollback != before {
-		t.Fatalf("already at top, further PageUp should not change scrollback, got %d (was %d)", m.chatScrollback, before)
+	if m.chat.scrollback != before {
+		t.Fatalf("already at top, further PageUp should not change scrollback, got %d (was %d)", m.chat.scrollback, before)
 	}
 	if !strings.Contains(m.notice, "top") {
 		t.Fatalf("expected top-of-history notice, got %q", m.notice)
 	}
 
 	m.scrollTranscript(8)
-	if m.chatScrollback != before-8 {
-		t.Fatalf("PageDown should subtract 8, got %d (was %d)", m.chatScrollback, before)
+	if m.chat.scrollback != before-8 {
+		t.Fatalf("PageDown should subtract 8, got %d (was %d)", m.chat.scrollback, before)
 	}
 }
 
 func TestPageUpPageDownKeysScrollTranscript(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = makeTranscript(30)
+	m.chat.transcript = makeTranscript(30)
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 	mm, ok := next.(Model)
 	if !ok {
 		t.Fatalf("expected Model after PageUp, got %T", next)
 	}
-	if mm.chatScrollback != 8 {
-		t.Fatalf("PageUp should scroll 8 back, got %d", mm.chatScrollback)
+	if mm.chat.scrollback != 8 {
+		t.Fatalf("PageUp should scroll 8 back, got %d", mm.chat.scrollback)
 	}
 
 	next2, _ := mm.Update(tea.KeyMsg{Type: tea.KeyPgDown})
@@ -82,14 +82,14 @@ func TestPageUpPageDownKeysScrollTranscript(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after PageDown, got %T", next2)
 	}
-	if mm2.chatScrollback != 0 {
-		t.Fatalf("PageDown should return to latest, got %d", mm2.chatScrollback)
+	if mm2.chat.scrollback != 0 {
+		t.Fatalf("PageDown should return to latest, got %d", mm2.chat.scrollback)
 	}
 }
 
 func TestShiftAndCtrlArrowKeysScrollTranscript(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = makeTranscript(30)
+	m.chat.transcript = makeTranscript(30)
 
 	for _, keyType := range []tea.KeyType{tea.KeyShiftUp, tea.KeyCtrlUp} {
 		next, _ := m.Update(tea.KeyMsg{Type: keyType})
@@ -97,31 +97,31 @@ func TestShiftAndCtrlArrowKeysScrollTranscript(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected Model, got %T", next)
 		}
-		if mm.chatScrollback != 3 {
-			t.Fatalf("%v should scroll back 3 lines, got %d", keyType, mm.chatScrollback)
+		if mm.chat.scrollback != 3 {
+			t.Fatalf("%v should scroll back 3 lines, got %d", keyType, mm.chat.scrollback)
 		}
 		// Reset for next iteration.
-		m.chatScrollback = 0
+		m.chat.scrollback = 0
 	}
 
 	// Now scroll back then test the "down" variants bring us forward.
-	m.chatScrollback = 9
+	m.chat.scrollback = 9
 	for _, keyType := range []tea.KeyType{tea.KeyShiftDown, tea.KeyCtrlDown} {
-		m.chatScrollback = 9
+		m.chat.scrollback = 9
 		next, _ := m.Update(tea.KeyMsg{Type: keyType})
 		mm, ok := next.(Model)
 		if !ok {
 			t.Fatalf("expected Model, got %T", next)
 		}
-		if mm.chatScrollback != 6 {
-			t.Fatalf("%v should scroll forward 3 lines, got %d", keyType, mm.chatScrollback)
+		if mm.chat.scrollback != 6 {
+			t.Fatalf("%v should scroll forward 3 lines, got %d", keyType, mm.chat.scrollback)
 		}
 	}
 }
 
 func TestMouseWheelScrollsTranscriptOnChatTab(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = makeTranscript(30)
+	m.chat.transcript = makeTranscript(30)
 
 	next, _ := m.Update(tea.MouseMsg{
 		Button: tea.MouseButtonWheelUp,
@@ -131,8 +131,8 @@ func TestMouseWheelScrollsTranscriptOnChatTab(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after wheel up, got %T", next)
 	}
-	if mm.chatScrollback != mouseWheelStep {
-		t.Fatalf("wheel up should scroll back %d lines, got %d", mouseWheelStep, mm.chatScrollback)
+	if mm.chat.scrollback != mouseWheelStep {
+		t.Fatalf("wheel up should scroll back %d lines, got %d", mouseWheelStep, mm.chat.scrollback)
 	}
 
 	next2, _ := mm.Update(tea.MouseMsg{
@@ -143,8 +143,8 @@ func TestMouseWheelScrollsTranscriptOnChatTab(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after wheel down, got %T", next2)
 	}
-	if mm2.chatScrollback != 0 {
-		t.Fatalf("wheel down should return toward latest, got %d", mm2.chatScrollback)
+	if mm2.chat.scrollback != 0 {
+		t.Fatalf("wheel down should return toward latest, got %d", mm2.chat.scrollback)
 	}
 }
 
@@ -152,7 +152,7 @@ func TestMouseWheelScrollsTranscriptOnChatTab(t *testing.T) {
 // power-user shortcut survives a future "simplify mouse handler" pass.
 func TestShiftMouseWheelJumpsPage(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = makeTranscript(60)
+	m.chat.transcript = makeTranscript(60)
 	m.activeTab = 0
 
 	next, _ := m.Update(tea.MouseMsg{
@@ -164,14 +164,14 @@ func TestShiftMouseWheelJumpsPage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after shift+wheel, got %T", next)
 	}
-	if mm.chatScrollback != mouseWheelPageStep {
-		t.Fatalf("shift+wheel should jump %d lines, got %d", mouseWheelPageStep, mm.chatScrollback)
+	if mm.chat.scrollback != mouseWheelPageStep {
+		t.Fatalf("shift+wheel should jump %d lines, got %d", mouseWheelPageStep, mm.chat.scrollback)
 	}
 }
 
 func TestMouseWheelIgnoredOffChatTab(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = makeTranscript(30)
+	m.chat.transcript = makeTranscript(30)
 	m.activeTab = 1 // Status
 
 	next, _ := m.Update(tea.MouseMsg{
@@ -182,19 +182,19 @@ func TestMouseWheelIgnoredOffChatTab(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model, got %T", next)
 	}
-	if mm.chatScrollback != 0 {
-		t.Fatalf("wheel events should be ignored off the chat tab, got %d", mm.chatScrollback)
+	if mm.chat.scrollback != 0 {
+		t.Fatalf("wheel events should be ignored off the chat tab, got %d", mm.chat.scrollback)
 	}
 }
 
 func TestNewMessageSnapsScrollbackToZero(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = makeTranscript(30)
-	m.chatScrollback = 10
+	m.chat.transcript = makeTranscript(30)
+	m.chat.scrollback = 10
 
 	m = m.appendSystemMessage("system event")
-	if m.chatScrollback != 0 {
-		t.Fatalf("new message should snap scrollback to 0, got %d", m.chatScrollback)
+	if m.chat.scrollback != 0 {
+		t.Fatalf("new message should snap scrollback to 0, got %d", m.chat.scrollback)
 	}
 }
 
@@ -249,8 +249,8 @@ func TestFitChatBodyScrollbackShiftsWindow(t *testing.T) {
 
 func TestRenderChatViewShowsScrollHintsWhenScrolledBack(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = makeTranscript(30)
-	m.chatScrollback = 10
+	m.chat.transcript = makeTranscript(30)
+	m.chat.scrollback = 10
 	m.width = 120
 	m.height = 20
 
@@ -264,15 +264,15 @@ func TestRenderChatViewShowsScrollHintsWhenScrolledBack(t *testing.T) {
 
 func TestEndKeyJumpsToLatestWhenScrolledBack(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = makeTranscript(30)
-	m.chatScrollback = 10
+	m.chat.transcript = makeTranscript(30)
+	m.chat.scrollback = 10
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnd})
 	mm, ok := next.(Model)
 	if !ok {
 		t.Fatalf("expected Model, got %T", next)
 	}
-	if mm.chatScrollback != 0 {
-		t.Fatalf("End should snap scrollback to 0 first, got %d", mm.chatScrollback)
+	if mm.chat.scrollback != 0 {
+		t.Fatalf("End should snap scrollback to 0 first, got %d", mm.chat.scrollback)
 	}
 }

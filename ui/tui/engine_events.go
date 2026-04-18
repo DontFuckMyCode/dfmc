@@ -47,56 +47,56 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 	payload, _ := toStringAnyMap(event.Payload)
 	switch eventType {
 	case "agent:loop:start":
-		m.agentLoopActive = true
-		m.agentLoopPhase = "starting"
-		m.agentLoopStep = 0
-		m.agentLoopMaxToolStep = payloadInt(payload, "max_tool_steps", m.agentLoopMaxToolStep)
-		m.agentLoopToolRounds = payloadInt(payload, "tool_rounds", 0)
-		m.agentLoopProvider = payloadString(payload, "provider", m.agentLoopProvider)
-		m.agentLoopModel = payloadString(payload, "model", m.agentLoopModel)
+		m.agentLoop.active = true
+		m.agentLoop.phase = "starting"
+		m.agentLoop.step = 0
+		m.agentLoop.maxToolStep = payloadInt(payload, "max_tool_steps", m.agentLoop.maxToolStep)
+		m.agentLoop.toolRounds = payloadInt(payload, "tool_rounds", 0)
+		m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
+		m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
 		// A fresh loop start means any previously parked banner is obsolete.
-		m.resumePromptActive = false
+		m.ui.resumePromptActive = false
 		files := payloadInt(payload, "context_files", 0)
 		tokens := payloadInt(payload, "context_tokens", 0)
-		line = fmt.Sprintf("Agent loop started: max_tools=%d context=%df/%dtok", m.agentLoopMaxToolStep, files, tokens)
+		line = fmt.Sprintf("Agent loop started: max_tools=%d context=%df/%dtok", m.agentLoop.maxToolStep, files, tokens)
 	case "agent:loop:thinking":
-		m.agentLoopActive = true
-		m.agentLoopPhase = "thinking"
+		m.agentLoop.active = true
+		m.agentLoop.phase = "thinking"
 		step := payloadInt(payload, "step", 0)
 		if step > 0 {
-			m.agentLoopStep = step
+			m.agentLoop.step = step
 		}
 		maxSteps := payloadInt(payload, "max_tool_steps", 0)
 		if maxSteps > 0 {
-			m.agentLoopMaxToolStep = maxSteps
+			m.agentLoop.maxToolStep = maxSteps
 		}
 		rounds := payloadInt(payload, "tool_rounds", 0)
 		if rounds >= 0 {
-			m.agentLoopToolRounds = rounds
+			m.agentLoop.toolRounds = rounds
 		}
-		m.agentLoopProvider = payloadString(payload, "provider", m.agentLoopProvider)
-		m.agentLoopModel = payloadString(payload, "model", m.agentLoopModel)
-		if m.agentLoopStep > 0 && m.agentLoopMaxToolStep > 0 {
-			line = fmt.Sprintf("Agent thinking: step %d/%d", m.agentLoopStep, m.agentLoopMaxToolStep)
+		m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
+		m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
+		if m.agentLoop.step > 0 && m.agentLoop.maxToolStep > 0 {
+			line = fmt.Sprintf("Agent thinking: step %d/%d", m.agentLoop.step, m.agentLoop.maxToolStep)
 		} else {
 			line = "Agent thinking..."
 		}
 	case "tool:call":
-		m.agentLoopActive = true
-		m.agentLoopPhase = "tool-call"
+		m.agentLoop.active = true
+		m.agentLoop.phase = "tool-call"
 		toolName := payloadString(payload, "tool", "tool")
 		step := payloadInt(payload, "step", 0)
-		m.agentLoopLastTool = toolName
-		m.agentLoopLastStatus = "running"
-		m.agentLoopLastDuration = 0
+		m.agentLoop.lastTool = toolName
+		m.agentLoop.lastStatus = "running"
+		m.agentLoop.lastDuration = 0
 		if step > 0 {
-			m.agentLoopStep = step
+			m.agentLoop.step = step
 		}
 		if rounds := payloadInt(payload, "tool_rounds", 0); rounds > 0 {
-			m.agentLoopToolRounds = rounds
+			m.agentLoop.toolRounds = rounds
 		}
-		m.agentLoopProvider = payloadString(payload, "provider", m.agentLoopProvider)
-		m.agentLoopModel = payloadString(payload, "model", m.agentLoopModel)
+		m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
+		m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
 		paramsPreview := payloadString(payload, "params_preview", "")
 		toolCallChip := toolChip{
 			Name:    toolName,
@@ -106,7 +106,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		}
 		m.pushToolChip(toolCallChip)
 		m.pushStreamingMessageToolChip(toolCallChip)
-		m.activeToolCount++
+		m.telemetry.activeToolCount++
 		if step > 0 {
 			line = fmt.Sprintf("Agent tool call: %s (step %d)", toolName, step)
 		} else {
@@ -116,8 +116,8 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			line += " " + paramsPreview
 		}
 	case "tool:result":
-		m.agentLoopActive = true
-		m.agentLoopPhase = "tool-result"
+		m.agentLoop.active = true
+		m.agentLoop.phase = "tool-result"
 		toolName := payloadString(payload, "tool", "tool")
 		duration := payloadInt(payload, "durationMs", 0)
 		success := payloadBool(payload, "success", true)
@@ -125,22 +125,22 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		if !success {
 			status = "failed"
 		}
-		m.agentLoopLastTool = toolName
-		m.agentLoopLastStatus = status
-		m.agentLoopLastDuration = duration
+		m.agentLoop.lastTool = toolName
+		m.agentLoop.lastStatus = status
+		m.agentLoop.lastDuration = duration
 		preview := payloadString(payload, "output_preview", "")
 		if preview != "" {
-			m.agentLoopLastOutput = preview
+			m.agentLoop.lastOutput = preview
 		}
 		step := payloadInt(payload, "step", 0)
 		if step > 0 {
-			m.agentLoopStep = step
-			if step > m.agentLoopToolRounds {
-				m.agentLoopToolRounds = step
+			m.agentLoop.step = step
+			if step > m.agentLoop.toolRounds {
+				m.agentLoop.toolRounds = step
 			}
 		}
-		m.agentLoopProvider = payloadString(payload, "provider", m.agentLoopProvider)
-		m.agentLoopModel = payloadString(payload, "model", m.agentLoopModel)
+		m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
+		m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
 		chipPreview := preview
 		if chipPreview == "" && !success {
 			chipPreview = payloadString(payload, "error", "")
@@ -169,8 +169,8 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			compressionPct = int((int64(savedChars) * 100) / int64(rawChars))
 		}
 		if savedChars > 0 && rawChars > 0 {
-			m.compressionSavedChars += savedChars
-			m.compressionRawChars += rawChars
+			m.telemetry.compressionSavedChars += savedChars
+			m.telemetry.compressionRawChars += rawChars
 		}
 		finishedChip := toolChip{
 			Name:            toolName,
@@ -186,8 +186,8 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		}
 		m.finishToolChip(finishedChip)
 		m.finishStreamingMessageToolChip(finishedChip)
-		if m.activeToolCount > 0 {
-			m.activeToolCount--
+		if m.telemetry.activeToolCount > 0 {
+			m.telemetry.activeToolCount--
 		}
 		if duration > 0 {
 			line = fmt.Sprintf("Agent tool result: %s (%s, %dms)", toolName, status, duration)
@@ -202,35 +202,35 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			}
 		}
 	case "agent:loop:final":
-		m.agentLoopPhase = "finalizing"
+		m.agentLoop.phase = "finalizing"
 		if rounds := payloadInt(payload, "tool_rounds", 0); rounds >= 0 {
-			m.agentLoopToolRounds = rounds
+			m.agentLoop.toolRounds = rounds
 		}
 		if step := payloadInt(payload, "step", 0); step > 0 {
-			m.agentLoopStep = step
+			m.agentLoop.step = step
 		}
-		line = fmt.Sprintf("Agent loop finalizing answer after %d tool call(s).", m.agentLoopToolRounds)
+		line = fmt.Sprintf("Agent loop finalizing answer after %d tool call(s).", m.agentLoop.toolRounds)
 	case "agent:loop:max_steps":
-		m.agentLoopPhase = "max-steps"
-		maxSteps := payloadInt(payload, "max_tool_steps", m.agentLoopMaxToolStep)
+		m.agentLoop.phase = "max-steps"
+		maxSteps := payloadInt(payload, "max_tool_steps", m.agentLoop.maxToolStep)
 		if maxSteps > 0 {
-			m.agentLoopMaxToolStep = maxSteps
+			m.agentLoop.maxToolStep = maxSteps
 		}
-		line = fmt.Sprintf("Agent loop reached max tool steps (%d).", m.agentLoopMaxToolStep)
+		line = fmt.Sprintf("Agent loop reached max tool steps (%d).", m.agentLoop.maxToolStep)
 	case "agent:loop:error":
-		m.agentLoopPhase = "error"
+		m.agentLoop.phase = "error"
 		errText := payloadString(payload, "error", "unknown error")
 		line = "Agent loop error: " + errText
 	case "agent:loop:parked":
-		m.agentLoopPhase = "parked"
-		m.agentLoopActive = false
-		step := payloadInt(payload, "step", m.agentLoopStep)
-		maxSteps := payloadInt(payload, "max_tool_steps", m.agentLoopMaxToolStep)
-		m.agentLoopStep = step
+		m.agentLoop.phase = "parked"
+		m.agentLoop.active = false
+		step := payloadInt(payload, "step", m.agentLoop.step)
+		maxSteps := payloadInt(payload, "max_tool_steps", m.agentLoop.maxToolStep)
+		m.agentLoop.step = step
 		if maxSteps > 0 {
-			m.agentLoopMaxToolStep = maxSteps
+			m.agentLoop.maxToolStep = maxSteps
 		}
-		m.resumePromptActive = true
+		m.ui.resumePromptActive = true
 		// budget_exhausted already surfaces its own "exhausted %d/%d"
 		// transcript line with token counts; suppress the generic parked
 		// line in that case so the scrollback reads once, not twice.
@@ -239,7 +239,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		}
 		line = fmt.Sprintf("Agent loop parked at step %d/%d — press Enter to resume, Esc to dismiss.", step, maxSteps)
 	case "coach:note":
-		if m.coachMuted {
+		if m.ui.coachMuted {
 			return m
 		}
 		text := payloadString(payload, "text", "")
@@ -251,7 +251,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		m = m.appendCoachMessage(text, severity, origin)
 		return m
 	case "agent:coach:hint":
-		if !m.hintsVerbose {
+		if !m.ui.hintsVerbose {
 			return m
 		}
 		hints, _ := payload["hints"].([]any)
@@ -271,7 +271,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 	case "agent:subagent:start":
 		task := payloadString(payload, "task", "task")
 		role := payloadString(payload, "role", "")
-		m.activeSubagentCount++
+		m.telemetry.activeSubagentCount++
 		chipName := "subagent"
 		if role != "" {
 			chipName = "subagent/" + role
@@ -290,8 +290,8 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			line = "Subagent started: " + preview
 		}
 	case "agent:subagent:done":
-		if m.activeSubagentCount > 0 {
-			m.activeSubagentCount--
+		if m.telemetry.activeSubagentCount > 0 {
+			m.telemetry.activeSubagentCount--
 		}
 		duration := payloadInt(payload, "duration_ms", 0)
 		rounds := payloadInt(payload, "tool_rounds", 0)
@@ -334,12 +334,12 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		comp := payloadString(payload, "compression", "-")
 		line = fmt.Sprintf("Context built: %d files, %d tokens (%s, %s)", files, tokens, task, comp)
 	case "provider:complete":
-		if m.agentLoopActive {
-			m.agentLoopPhase = "complete"
-			m.agentLoopActive = false
+		if m.agentLoop.active {
+			m.agentLoop.phase = "complete"
+			m.agentLoop.active = false
 			tokens := payloadInt(payload, "tokens", 0)
-			providerName := payloadString(payload, "provider", m.agentLoopProvider)
-			modelName := payloadString(payload, "model", m.agentLoopModel)
+			providerName := payloadString(payload, "provider", m.agentLoop.provider)
+			modelName := payloadString(payload, "model", m.agentLoop.model)
 			line = fmt.Sprintf("Provider complete: %s/%s (%dtok)", providerName, modelName, tokens)
 		}
 	case "context:lifecycle:compacted":
@@ -359,7 +359,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			line = fmt.Sprintf("Context auto-compacted: %d→%d tokens.", before, after)
 		}
 	case "agent:loop:budget_exhausted":
-		m.agentLoopPhase = "budget-exhausted"
+		m.agentLoop.phase = "budget-exhausted"
 		used := payloadInt(payload, "tokens_used", 0)
 		budget := payloadInt(payload, "max_tool_tokens", 0)
 		m.pushToolChip(toolChip{
@@ -444,7 +444,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 	if !mirror && eventType == "tool:result" && !payloadBool(payload, "success", true) {
 		mirror = true
 	}
-	if m.sending && mirror {
+	if m.chat.sending && mirror {
 		m = m.appendToolEventMessage(line)
 	}
 	return m
@@ -566,10 +566,10 @@ func (m *Model) pushToolChip(chip toolChip) {
 	if chip.Name == "" {
 		return
 	}
-	m.toolTimeline = append(m.toolTimeline, chip)
-	if len(m.toolTimeline) > maxToolTimelineChips {
-		drop := len(m.toolTimeline) - maxToolTimelineChips
-		m.toolTimeline = m.toolTimeline[drop:]
+	m.agentLoop.toolTimeline = append(m.agentLoop.toolTimeline, chip)
+	if len(m.agentLoop.toolTimeline) > maxToolTimelineChips {
+		drop := len(m.agentLoop.toolTimeline) - maxToolTimelineChips
+		m.agentLoop.toolTimeline = m.agentLoop.toolTimeline[drop:]
 	}
 }
 
@@ -582,11 +582,11 @@ func (m *Model) pushStreamingMessageToolChip(chip toolChip) {
 	if chip.Name == "" {
 		return
 	}
-	if m.streamIndex < 0 || m.streamIndex >= len(m.transcript) {
+	if m.chat.streamIndex < 0 || m.chat.streamIndex >= len(m.chat.transcript) {
 		return
 	}
 	const maxPerMessage = 32
-	line := &m.transcript[m.streamIndex]
+	line := &m.chat.transcript[m.chat.streamIndex]
 	line.ToolChips = append(line.ToolChips, chip)
 	if len(line.ToolChips) > maxPerMessage {
 		drop := len(line.ToolChips) - maxPerMessage
@@ -601,14 +601,14 @@ func (m *Model) finishStreamingMessageToolChip(chip toolChip) {
 	if chip.Name == "" {
 		return
 	}
-	if m.streamIndex < 0 || m.streamIndex >= len(m.transcript) {
+	if m.chat.streamIndex < 0 || m.chat.streamIndex >= len(m.chat.transcript) {
 		return
 	}
 	wantRunning := "running"
 	if strings.HasPrefix(strings.ToLower(chip.Status), "subagent-") {
 		wantRunning = "subagent-running"
 	}
-	line := &m.transcript[m.streamIndex]
+	line := &m.chat.transcript[m.chat.streamIndex]
 	for i := len(line.ToolChips) - 1; i >= 0; i-- {
 		existing := line.ToolChips[i]
 		if existing.Status != wantRunning {
@@ -658,8 +658,8 @@ func (m *Model) finishToolChip(chip toolChip) {
 	if strings.HasPrefix(strings.ToLower(chip.Status), "subagent-") {
 		wantRunning = "subagent-running"
 	}
-	for i := len(m.toolTimeline) - 1; i >= 0; i-- {
-		existing := m.toolTimeline[i]
+	for i := len(m.agentLoop.toolTimeline) - 1; i >= 0; i-- {
+		existing := m.agentLoop.toolTimeline[i]
 		if existing.Status != wantRunning {
 			continue
 		}
@@ -689,24 +689,24 @@ func (m *Model) finishToolChip(chip toolChip) {
 			merged.CompressedChars = chip.CompressedChars
 			merged.CompressionPct = chip.CompressionPct
 		}
-		m.toolTimeline[i] = merged
+		m.agentLoop.toolTimeline[i] = merged
 		return
 	}
 	m.pushToolChip(chip)
 }
 
 func (m *Model) resetAgentRuntime() {
-	m.agentLoopActive = false
-	m.agentLoopStep = 0
-	m.agentLoopMaxToolStep = 0
-	m.agentLoopToolRounds = 0
-	m.agentLoopPhase = ""
-	m.agentLoopProvider = ""
-	m.agentLoopModel = ""
-	m.agentLoopLastTool = ""
-	m.agentLoopLastStatus = ""
-	m.agentLoopLastDuration = 0
-	m.agentLoopLastOutput = ""
-	m.agentLoopContextScope = ""
+	m.agentLoop.active = false
+	m.agentLoop.step = 0
+	m.agentLoop.maxToolStep = 0
+	m.agentLoop.toolRounds = 0
+	m.agentLoop.phase = ""
+	m.agentLoop.provider = ""
+	m.agentLoop.model = ""
+	m.agentLoop.lastTool = ""
+	m.agentLoop.lastStatus = ""
+	m.agentLoop.lastDuration = 0
+	m.agentLoop.lastOutput = ""
+	m.agentLoop.contextScope = ""
 }
 

@@ -16,7 +16,7 @@ func TestSlashMouse_TogglesFromOffToOn(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
 	// Default is off (tui.mouse_capture defaults to false).
-	if m.mouseCaptureEnabled {
+	if m.ui.mouseCaptureEnabled {
 		t.Fatal("mouse capture should start off by default")
 	}
 	next, _, handled := m.executeChatCommand("/mouse")
@@ -24,7 +24,7 @@ func TestSlashMouse_TogglesFromOffToOn(t *testing.T) {
 		t.Fatal("/mouse must be handled")
 	}
 	nm := next.(Model)
-	if !nm.mouseCaptureEnabled {
+	if !nm.ui.mouseCaptureEnabled {
 		t.Fatal("first /mouse should turn capture on")
 	}
 	if !strings.Contains(strings.ToLower(nm.notice), "on") {
@@ -35,11 +35,11 @@ func TestSlashMouse_TogglesFromOffToOn(t *testing.T) {
 func TestSlashMouse_TogglesBackOff(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
-	m.mouseCaptureEnabled = true
+	m.ui.mouseCaptureEnabled = true
 
 	next, _, _ := m.executeChatCommand("/mouse")
 	nm := next.(Model)
-	if nm.mouseCaptureEnabled {
+	if nm.ui.mouseCaptureEnabled {
 		t.Fatal("/mouse on a capture-on model should flip it off")
 	}
 	if !strings.Contains(strings.ToLower(nm.notice), "off") {

@@ -30,7 +30,7 @@ func TestSlashStats_BaseCardFields(t *testing.T) {
 		t.Fatalf("/stats must be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	for _, needle := range []string{"Session stats", "elapsed:", "messages:", "context in:", "agent:", "rtk savings:"} {
 		if !strings.Contains(last, needle) {
 			t.Fatalf("stats card missing %q, got:\n%s", needle, last)
@@ -46,7 +46,7 @@ func TestSlashStats_TokensAndCostAreAliases(t *testing.T) {
 			t.Fatalf("%s must route to /stats", alias)
 		}
 		nm := next.(Model)
-		last := nm.transcript[len(nm.transcript)-1].Content
+		last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 		if !strings.Contains(last, "Session stats") {
 			t.Fatalf("%s should share the stats card output, got:\n%s", alias, last)
 		}
@@ -55,12 +55,12 @@ func TestSlashStats_TokensAndCostAreAliases(t *testing.T) {
 
 func TestSlashStats_SurfacesCompressionWhenPresent(t *testing.T) {
 	m := newStatsTestModel(t, func(mm *Model) {
-		mm.compressionRawChars = 10_000
-		mm.compressionSavedChars = 7_500
+		mm.telemetry.compressionRawChars = 10_000
+		mm.telemetry.compressionSavedChars = 7_500
 	})
 	next, _, _ := m.executeChatCommand("/stats")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "75%") {
 		t.Fatalf("compression ratio should be 75%%, got:\n%s", last)
 	}
@@ -71,17 +71,17 @@ func TestSlashStats_SurfacesCompressionWhenPresent(t *testing.T) {
 
 func TestSlashStats_ShowsAgentProgressWhenActive(t *testing.T) {
 	m := newStatsTestModel(t, func(mm *Model) {
-		mm.agentLoopStep = 3
-		mm.agentLoopMaxToolStep = 10
-		mm.agentLoopToolRounds = 3
-		mm.agentLoopPhase = "tools"
-		mm.agentLoopLastTool = "read_file"
-		mm.agentLoopLastStatus = "ok"
-		mm.agentLoopLastDuration = 142
+		mm.agentLoop.step = 3
+		mm.agentLoop.maxToolStep = 10
+		mm.agentLoop.toolRounds = 3
+		mm.agentLoop.phase = "tools"
+		mm.agentLoop.lastTool = "read_file"
+		mm.agentLoop.lastStatus = "ok"
+		mm.agentLoop.lastDuration = 142
 	})
 	next, _, _ := m.executeChatCommand("/stats")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "step 3/10") {
 		t.Fatalf("agent progress line should show step 3/10, got:\n%s", last)
 	}

@@ -186,26 +186,26 @@ func (m Model) renderPromptsView(width int) string {
 	hint := subtleStyle.Render("j/k scroll · enter preview · / search · r refresh · c clear search")
 	header := sectionHeader("✎", "Prompts")
 	queryLine := subtleStyle.Render("query: ")
-	if strings.TrimSpace(m.promptsQuery) != "" {
-		queryLine += m.promptsQuery
+	if strings.TrimSpace(m.prompts.query) != "" {
+		queryLine += m.prompts.query
 	} else {
 		queryLine += subtleStyle.Render("(none)")
 	}
-	if m.promptsSearchActive {
+	if m.prompts.searchActive {
 		queryLine += subtleStyle.Render("  · typing, enter to commit")
 	}
 	lines := []string{header, hint, queryLine, renderDivider(width - 2)}
 
-	if m.promptsErr != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.promptsErr))
+	if m.prompts.err != "" {
+		lines = append(lines, "", warnStyle.Render("error · "+m.prompts.err))
 		return strings.Join(lines, "\n")
 	}
-	if m.promptsLoading {
+	if m.prompts.loading {
 		lines = append(lines, "", subtleStyle.Render("loading..."))
 		return strings.Join(lines, "\n")
 	}
 
-	filtered := filteredPrompts(m.promptsTemplates, m.promptsQuery)
+	filtered := filteredPrompts(m.prompts.templates, m.prompts.query)
 	if len(filtered) == 0 {
 		lines = append(lines, "",
 			subtleStyle.Render("No prompt templates loaded."),
@@ -214,7 +214,7 @@ func (m Model) renderPromptsView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	scroll := m.promptsScroll
+	scroll := m.prompts.scroll
 	if scroll < 0 {
 		scroll = 0
 	}
@@ -223,78 +223,78 @@ func (m Model) renderPromptsView(width int) string {
 	}
 
 	for i, t := range filtered[scroll:] {
-		selected := (scroll + i) == m.promptsScroll
+		selected := (scroll + i) == m.prompts.scroll
 		lines = append(lines, formatPromptRow(t, selected, width-2))
 	}
 
 	// Preview pane for the selected row (only when explicitly loaded).
-	if m.promptsPreviewID != "" && m.promptsScroll >= 0 && m.promptsScroll < len(filtered) {
-		if filtered[m.promptsScroll].ID == m.promptsPreviewID {
-			lines = append(lines, "", subtleStyle.Render("preview · "+m.promptsPreviewID))
-			lines = append(lines, formatPromptPreview(filtered[m.promptsScroll], width-2)...)
+	if m.prompts.previewID != "" && m.prompts.scroll >= 0 && m.prompts.scroll < len(filtered) {
+		if filtered[m.prompts.scroll].ID == m.prompts.previewID {
+			lines = append(lines, "", subtleStyle.Render("preview · "+m.prompts.previewID))
+			lines = append(lines, formatPromptPreview(filtered[m.prompts.scroll], width-2)...)
 		}
 	}
 
 	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
 		"%d shown · %d loaded",
-		len(filtered), len(m.promptsTemplates),
+		len(filtered), len(m.prompts.templates),
 	)))
 	return strings.Join(lines, "\n")
 }
 
 func (m Model) handlePromptsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.promptsSearchActive {
+	if m.prompts.searchActive {
 		return m.handlePromptsSearchKey(msg)
 	}
-	total := len(filteredPrompts(m.promptsTemplates, m.promptsQuery))
+	total := len(filteredPrompts(m.prompts.templates, m.prompts.query))
 	step := 1
 	pageStep := 10
 	switch msg.String() {
 	case "j", "down":
-		if m.promptsScroll+step < total {
-			m.promptsScroll += step
+		if m.prompts.scroll+step < total {
+			m.prompts.scroll += step
 		}
 	case "k", "up":
-		if m.promptsScroll >= step {
-			m.promptsScroll -= step
+		if m.prompts.scroll >= step {
+			m.prompts.scroll -= step
 		} else {
-			m.promptsScroll = 0
+			m.prompts.scroll = 0
 		}
 	case "pgdown":
-		if m.promptsScroll+pageStep < total {
-			m.promptsScroll += pageStep
+		if m.prompts.scroll+pageStep < total {
+			m.prompts.scroll += pageStep
 		} else if total > 0 {
-			m.promptsScroll = total - 1
+			m.prompts.scroll = total - 1
 		}
 	case "pgup":
-		if m.promptsScroll >= pageStep {
-			m.promptsScroll -= pageStep
+		if m.prompts.scroll >= pageStep {
+			m.prompts.scroll -= pageStep
 		} else {
-			m.promptsScroll = 0
+			m.prompts.scroll = 0
 		}
 	case "g":
-		m.promptsScroll = 0
+		m.prompts.scroll = 0
 	case "G":
 		if total > 0 {
-			m.promptsScroll = total - 1
+			m.prompts.scroll = total - 1
 		}
 	case "enter":
-		filtered := filteredPrompts(m.promptsTemplates, m.promptsQuery)
-		if len(filtered) == 0 || m.promptsScroll < 0 || m.promptsScroll >= len(filtered) {
+		filtered := filteredPrompts(m.prompts.templates, m.prompts.query)
+		if len(filtered) == 0 || m.prompts.scroll < 0 || m.prompts.scroll >= len(filtered) {
 			return m, nil
 		}
-		m.promptsPreviewID = filtered[m.promptsScroll].ID
+		m.prompts.previewID = filtered[m.prompts.scroll].ID
 		return m, nil
 	case "r":
-		m.promptsLoading = true
-		m.promptsErr = ""
+		m.prompts.loading = true
+		m.prompts.err = ""
 		return m, loadPromptsCmd(m.eng)
 	case "/":
-		m.promptsSearchActive = true
+		m.prompts.searchActive = true
 		return m, nil
 	case "c":
-		m.promptsQuery = ""
-		m.promptsScroll = 0
+		m.prompts.query = ""
+		m.prompts.scroll = 0
 	}
 	return m, nil
 }
@@ -302,19 +302,19 @@ func (m Model) handlePromptsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handlePromptsSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
-		m.promptsSearchActive = false
-		m.promptsScroll = 0
+		m.prompts.searchActive = false
+		m.prompts.scroll = 0
 		return m, nil
 	case tea.KeyEsc:
-		m.promptsSearchActive = false
+		m.prompts.searchActive = false
 		return m, nil
 	case tea.KeyBackspace:
-		if r := []rune(m.promptsQuery); len(r) > 0 {
-			m.promptsQuery = string(r[:len(r)-1])
+		if r := []rune(m.prompts.query); len(r) > 0 {
+			m.prompts.query = string(r[:len(r)-1])
 		}
 		return m, nil
 	case tea.KeyRunes, tea.KeySpace:
-		m.promptsQuery += msg.String()
+		m.prompts.query += msg.String()
 		return m, nil
 	}
 	return m, nil

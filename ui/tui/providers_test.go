@@ -136,7 +136,7 @@ func TestRenderProvidersViewEmptyState(t *testing.T) {
 
 func TestRenderProvidersViewWithRows(t *testing.T) {
 	m := newProvidersTestModel()
-	m.providersRows = sampleProviderRows()
+	m.providers.rows = sampleProviderRows()
 	out := m.renderProvidersView(200)
 	for _, want := range []string{"anthropic", "deepseek", "offline", "3 providers", "1 ready", "1 missing keys"} {
 		if !strings.Contains(out, want) {
@@ -147,8 +147,8 @@ func TestRenderProvidersViewWithRows(t *testing.T) {
 
 func TestRenderProvidersViewShowsDetailForSelection(t *testing.T) {
 	m := newProvidersTestModel()
-	m.providersRows = sampleProviderRows()
-	m.providersScroll = 1 // deepseek
+	m.providers.rows = sampleProviderRows()
+	m.providers.scroll = 1 // deepseek
 	out := m.renderProvidersView(200)
 	if !strings.Contains(out, "missing API key") {
 		t.Fatalf("selecting no-key row should show warn copy: %s", out)
@@ -157,7 +157,7 @@ func TestRenderProvidersViewShowsDetailForSelection(t *testing.T) {
 
 func TestRenderProvidersViewErrorBanner(t *testing.T) {
 	m := newProvidersTestModel()
-	m.providersErr = "router has no providers"
+	m.providers.err = "router has no providers"
 	out := m.renderProvidersView(80)
 	if !strings.Contains(out, "error · router has no providers") {
 		t.Fatalf("error banner missing: %s", out)
@@ -167,48 +167,48 @@ func TestRenderProvidersViewErrorBanner(t *testing.T) {
 func TestRefreshProvidersRowsNilEngineSetsError(t *testing.T) {
 	m := newProvidersTestModel()
 	m = m.refreshProvidersRows()
-	if m.providersErr == "" {
+	if m.providers.err == "" {
 		t.Fatalf("nil engine should set error")
 	}
-	if m.providersRows != nil {
-		t.Fatalf("nil engine should leave rows nil, got %v", m.providersRows)
+	if m.providers.rows != nil {
+		t.Fatalf("nil engine should leave rows nil, got %v", m.providers.rows)
 	}
 }
 
 func TestProvidersScrollBindings(t *testing.T) {
 	m := newProvidersTestModel()
-	m.providersRows = sampleProviderRows()
+	m.providers.rows = sampleProviderRows()
 
 	m2, _ := m.handleProvidersKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	m = m2.(Model)
-	if m.providersScroll != 1 {
-		t.Fatalf("j should advance, got %d", m.providersScroll)
+	if m.providers.scroll != 1 {
+		t.Fatalf("j should advance, got %d", m.providers.scroll)
 	}
 	m2, _ = m.handleProvidersKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
 	m = m2.(Model)
-	if m.providersScroll != 2 {
-		t.Fatalf("G should jump to last, got %d", m.providersScroll)
+	if m.providers.scroll != 2 {
+		t.Fatalf("G should jump to last, got %d", m.providers.scroll)
 	}
 	m2, _ = m.handleProvidersKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
 	m = m2.(Model)
-	if m.providersScroll != 0 {
-		t.Fatalf("g should jump to top, got %d", m.providersScroll)
+	if m.providers.scroll != 0 {
+		t.Fatalf("g should jump to top, got %d", m.providers.scroll)
 	}
 	m2, _ = m.handleProvidersKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
 	m = m2.(Model)
-	if m.providersScroll != 0 {
-		t.Fatalf("k at top should clamp to 0, got %d", m.providersScroll)
+	if m.providers.scroll != 0 {
+		t.Fatalf("k at top should clamp to 0, got %d", m.providers.scroll)
 	}
 }
 
 func TestProvidersRefreshKeyResetsError(t *testing.T) {
 	m := newProvidersTestModel()
-	m.providersErr = "stale"
+	m.providers.err = "stale"
 	m2, _ := m.handleProvidersKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	m = m2.(Model)
 	// nil engine keeps an error, but the specific message should be the
 	// "engine not ready" one, not "stale".
-	if m.providersErr == "stale" {
+	if m.providers.err == "stale" {
 		t.Fatalf("r should re-derive error, not preserve previous text")
 	}
 }

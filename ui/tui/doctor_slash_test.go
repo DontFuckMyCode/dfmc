@@ -30,7 +30,7 @@ func TestSlashDoctor_RunsAndIncludesSignature(t *testing.T) {
 		t.Fatalf("/doctor must be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "health snapshot") {
 		t.Fatalf("should carry header 'health snapshot', got:\n%s", last)
 	}
@@ -48,7 +48,7 @@ func TestSlashDoctor_HealthAlias(t *testing.T) {
 		t.Fatalf("/health must be handled as alias")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "health snapshot") {
 		t.Fatalf("/health alias should show the same snapshot, got:\n%s", last)
 	}
@@ -59,7 +59,7 @@ func TestSlashDoctor_WarnsWhenProviderMisconfigured(t *testing.T) {
 	// status has empty Provider — the "no provider selected" branch.
 	next, _, _ := m.executeChatCommand("/doctor")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "no provider") {
 		t.Fatalf("missing-provider path should flag it, got:\n%s", last)
 	}
@@ -70,7 +70,7 @@ func TestSlashDoctor_WarnsOnRegexAST(t *testing.T) {
 	m.status.ASTBackend = "regex"
 	next, _, _ := m.executeChatCommand("/doctor")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "regex fallback") {
 		t.Fatalf("regex backend should get a warning, got:\n%s", last)
 	}
@@ -82,7 +82,7 @@ func TestSlashDoctor_ShowsGateOnWhenConfigured(t *testing.T) {
 	})
 	next, _, _ := m.executeChatCommand("/doctor")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "gate:     ON") {
 		t.Fatalf("gate should report ON with 2 tools, got:\n%s", last)
 	}
@@ -105,7 +105,7 @@ func TestSlashDoctor_CountsRegisteredHooks(t *testing.T) {
 	})
 	next, _, _ := m.executeChatCommand("/doctor")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "3 registered") {
 		t.Fatalf("should count 3 hooks total, got:\n%s", last)
 	}

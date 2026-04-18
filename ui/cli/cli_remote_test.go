@@ -56,6 +56,54 @@ func TestBearerTokenMiddleware(t *testing.T) {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
 	})
+
+	// GET / is the workbench HTML — the operator needs to load it to enter
+	// their token in the browser. Gating it would create a chicken-and-egg
+	// lockout where the only way to log in is via the page they can't load.
+	t.Run("root html bypasses auth", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET / must be reachable without a token (got %d)", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "ok") {
+			t.Fatalf("expected handler body to flow through, got %q", rec.Body.String())
+		}
+	})
+
+	// EventSource cannot set custom headers, so /ws (the SSE activity stream)
+	// would 401 forever in token mode if we only accepted the Authorization
+	// header. The query-param fallback is the documented workaround.
+	t.Run("query param token authorizes", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/ws?token=secret-token", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("query-param token should authorize (got %d)", rec.Code)
+		}
+	})
+
+	t.Run("wrong query param token rejected", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/ws?token=nope", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("bad query token must 401 (got %d)", rec.Code)
+		}
+	})
+
+	// POST / (or any other method on /) is NOT the static-HTML bypass and
+	// must still require auth — the bypass is scoped to GET only so a
+	// crafted POST against the root can't slip past the gate.
+	t.Run("non-GET root still gated", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("POST / must require auth (got %d)", rec.Code)
+		}
+	})
 }
 
 // The "refuse --auth=none when bound off-loopback" guard in runServe

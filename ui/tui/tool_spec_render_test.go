@@ -15,7 +15,7 @@ func TestSlashTool_ShowDescribesReadFileSpec(t *testing.T) {
 			t.Fatalf("%q should be handled", verb)
 		}
 		nm := next.(Model)
-		last := nm.transcript[len(nm.transcript)-1].Content
+		last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 		for _, needle := range []string{"read_file", "risk:", "args:"} {
 			if !strings.Contains(last, needle) {
 				t.Fatalf("%q missing %q, got:\n%s", verb, needle, last)
@@ -32,7 +32,7 @@ func TestSlashTool_ShowWithoutNameShowsUsage(t *testing.T) {
 		t.Fatal("/tool show should always be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(strings.ToLower(last), "usage") {
 		t.Fatalf("expected usage hint, got:\n%s", last)
 	}
@@ -46,7 +46,7 @@ func TestSlashTool_ShowUnknownToolReportsIt(t *testing.T) {
 		t.Fatal("/tool show should always be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(strings.ToLower(last), "unknown tool") {
 		t.Fatalf("expected 'Unknown tool' message, got:\n%s", last)
 	}

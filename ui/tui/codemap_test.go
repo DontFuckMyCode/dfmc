@@ -11,9 +11,9 @@ import (
 
 func newCodemapTestModel() Model {
 	return Model{
-		tabs:        []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap"},
-		activeTab:   8,
-		codemapView: codemapViewOverview,
+		tabs:      []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap"},
+		activeTab: 8,
+		codemap:   codemapPanelState{view: codemapViewOverview},
 	}
 }
 
@@ -146,7 +146,7 @@ func TestRenderCodemapViewEmptyState(t *testing.T) {
 
 func TestRenderCodemapViewErrorBanner(t *testing.T) {
 	m := newCodemapTestModel()
-	m.codemapErr = "graph read failed"
+	m.codemap.err = "graph read failed"
 	out := m.renderCodemapView(80)
 	if !strings.Contains(out, "error · graph read failed") {
 		t.Fatalf("error banner missing:\n%s", out)
@@ -155,7 +155,7 @@ func TestRenderCodemapViewErrorBanner(t *testing.T) {
 
 func TestRenderCodemapViewWithSnapShowsSummary(t *testing.T) {
 	m := newCodemapTestModel()
-	m.codemapSnap = sampleCodemapSnap()
+	m.codemap.snap = sampleCodemapSnap()
 	out := m.renderCodemapView(120)
 	if !strings.Contains(out, "4 nodes · 3 edges · 1 cycles · 1 orphans") {
 		t.Fatalf("footer summary missing or wrong:\n%s", out)
@@ -168,45 +168,45 @@ func TestRenderCodemapViewWithSnapShowsSummary(t *testing.T) {
 
 func TestHandleCodemapKeyCyclesViewAndResetsScroll(t *testing.T) {
 	m := newCodemapTestModel()
-	m.codemapSnap = sampleCodemapSnap()
-	m.codemapView = codemapViewHotspots
-	m.codemapScroll = 1
+	m.codemap.snap = sampleCodemapSnap()
+	m.codemap.view = codemapViewHotspots
+	m.codemap.scroll = 1
 
 	m2, _ := m.handleCodemapKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
 	m = m2.(Model)
-	if m.codemapView != codemapViewOrphans {
-		t.Fatalf("v should advance view, got %q", m.codemapView)
+	if m.codemap.view != codemapViewOrphans {
+		t.Fatalf("v should advance view, got %q", m.codemap.view)
 	}
-	if m.codemapScroll != 0 {
-		t.Fatalf("v should reset scroll, got %d", m.codemapScroll)
+	if m.codemap.scroll != 0 {
+		t.Fatalf("v should reset scroll, got %d", m.codemap.scroll)
 	}
 }
 
 func TestHandleCodemapKeyScrollBindings(t *testing.T) {
 	m := newCodemapTestModel()
-	m.codemapSnap = sampleCodemapSnap()
-	m.codemapView = codemapViewHotspots // 2 rows
+	m.codemap.snap = sampleCodemapSnap()
+	m.codemap.view = codemapViewHotspots // 2 rows
 
 	m2, _ := m.handleCodemapKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	m = m2.(Model)
-	if m.codemapScroll != 1 {
-		t.Fatalf("j should advance, got %d", m.codemapScroll)
+	if m.codemap.scroll != 1 {
+		t.Fatalf("j should advance, got %d", m.codemap.scroll)
 	}
 	// j at tail is clamped (total=2, scroll=1 already).
 	m2, _ = m.handleCodemapKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	m = m2.(Model)
-	if m.codemapScroll != 1 {
-		t.Fatalf("j at tail should clamp, got %d", m.codemapScroll)
+	if m.codemap.scroll != 1 {
+		t.Fatalf("j at tail should clamp, got %d", m.codemap.scroll)
 	}
 	m2, _ = m.handleCodemapKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
 	m = m2.(Model)
-	if m.codemapScroll != 0 {
-		t.Fatalf("g should jump to top, got %d", m.codemapScroll)
+	if m.codemap.scroll != 0 {
+		t.Fatalf("g should jump to top, got %d", m.codemap.scroll)
 	}
 	m2, _ = m.handleCodemapKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
 	m = m2.(Model)
-	if m.codemapScroll != 1 {
-		t.Fatalf("G should jump to last, got %d", m.codemapScroll)
+	if m.codemap.scroll != 1 {
+		t.Fatalf("G should jump to last, got %d", m.codemap.scroll)
 	}
 }
 
@@ -214,10 +214,10 @@ func TestHandleCodemapKeyRefreshSetsLoading(t *testing.T) {
 	m := newCodemapTestModel()
 	m2, _ := m.handleCodemapKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	m = m2.(Model)
-	if !m.codemapLoading {
+	if !m.codemap.loading {
 		t.Fatalf("r should set loading=true")
 	}
-	if m.codemapErr != "" {
-		t.Fatalf("r should clear error, got %q", m.codemapErr)
+	if m.codemap.err != "" {
+		t.Fatalf("r should clear error, got %q", m.codemap.err)
 	}
 }

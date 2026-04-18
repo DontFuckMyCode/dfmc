@@ -11,9 +11,9 @@ import (
 
 func newActivityTestModel() Model {
 	return Model{
-		tabs:           []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity"},
-		activeTab:      6,
-		activityFollow: true,
+		tabs:      []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity"},
+		activeTab: 6,
+		activity:  activityPanelState{follow: true},
 	}
 }
 
@@ -26,10 +26,10 @@ func TestRecordActivityCapturesToolCall(t *testing.T) {
 			"step": 3,
 		},
 	})
-	if len(m.activityEntries) != 1 {
-		t.Fatalf("want 1 entry, got %d", len(m.activityEntries))
+	if len(m.activity.entries) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(m.activity.entries))
 	}
-	e := m.activityEntries[0]
+	e := m.activity.entries[0]
 	if e.Kind != activityKindTool {
 		t.Fatalf("kind=%s want tool", e.Kind)
 	}
@@ -46,8 +46,8 @@ func TestRecordActivityDedupesConsecutiveIdentical(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		m.recordActivityEvent(engine.Event{Type: "stream:delta"})
 	}
-	if len(m.activityEntries) != 1 {
-		t.Fatalf("want dedupe, got %d entries", len(m.activityEntries))
+	if len(m.activity.entries) != 1 {
+		t.Fatalf("want dedupe, got %d entries", len(m.activity.entries))
 	}
 }
 
@@ -60,8 +60,8 @@ func TestRecordActivityRingBufferCap(t *testing.T) {
 			Payload: map[string]any{"tool": "t", "step": i + 1},
 		})
 	}
-	if len(m.activityEntries) != maxActivityEntries {
-		t.Fatalf("want cap=%d, got %d", maxActivityEntries, len(m.activityEntries))
+	if len(m.activity.entries) != maxActivityEntries {
+		t.Fatalf("want cap=%d, got %d", maxActivityEntries, len(m.activity.entries))
 	}
 }
 
@@ -75,10 +75,10 @@ func TestRecordActivityClassifiesErrorEvents(t *testing.T) {
 		Type:    "index:error",
 		Payload: map[string]any{"error": "parse failed"},
 	})
-	if len(m.activityEntries) != 2 {
-		t.Fatalf("want 2 entries, got %d", len(m.activityEntries))
+	if len(m.activity.entries) != 2 {
+		t.Fatalf("want 2 entries, got %d", len(m.activity.entries))
 	}
-	for _, e := range m.activityEntries {
+	for _, e := range m.activity.entries {
 		if e.Kind != activityKindError {
 			t.Errorf("event %q not classified as error: kind=%s", e.EventID, e.Kind)
 		}
@@ -93,28 +93,28 @@ func TestActivityFollowScrollBehavior(t *testing.T) {
 			Payload: map[string]any{"tool": "t", "step": i + 1},
 		})
 	}
-	if m.activityScroll != 0 {
-		t.Fatalf("follow-on should pin to tail, scroll=%d", m.activityScroll)
+	if m.activity.scroll != 0 {
+		t.Fatalf("follow-on should pin to tail, scroll=%d", m.activity.scroll)
 	}
 	// k moves up (older), unsets follow.
 	m2, _ := m.handleActivityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
 	m = m2.(Model)
-	if m.activityScroll != 1 || m.activityFollow {
-		t.Fatalf("k should scroll up and pause follow: scroll=%d follow=%v", m.activityScroll, m.activityFollow)
+	if m.activity.scroll != 1 || m.activity.follow {
+		t.Fatalf("k should scroll up and pause follow: scroll=%d follow=%v", m.activity.scroll, m.activity.follow)
 	}
 	// Adding a new event while paused must NOT auto-jump to tail.
 	m.recordActivityEvent(engine.Event{
 		Type:    "tool:call",
 		Payload: map[string]any{"tool": "t", "step": 999},
 	})
-	if m.activityScroll == 0 {
+	if m.activity.scroll == 0 {
 		t.Fatalf("paused view jumped to tail after new event")
 	}
 	// G jumps to tail and resumes follow.
 	m2, _ = m.handleActivityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
 	m = m2.(Model)
-	if m.activityScroll != 0 || !m.activityFollow {
-		t.Fatalf("G should resume follow: scroll=%d follow=%v", m.activityScroll, m.activityFollow)
+	if m.activity.scroll != 0 || !m.activity.follow {
+		t.Fatalf("G should resume follow: scroll=%d follow=%v", m.activity.scroll, m.activity.follow)
 	}
 }
 
@@ -128,10 +128,10 @@ func TestActivityClearResets(t *testing.T) {
 	}
 	m2, _ := m.handleActivityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	m = m2.(Model)
-	if len(m.activityEntries) != 0 {
-		t.Fatalf("c should clear entries, got %d", len(m.activityEntries))
+	if len(m.activity.entries) != 0 {
+		t.Fatalf("c should clear entries, got %d", len(m.activity.entries))
 	}
-	if !m.activityFollow {
+	if !m.activity.follow {
 		t.Fatalf("c should restore follow")
 	}
 }
@@ -155,8 +155,8 @@ func TestRenderActivityViewPausedBanner(t *testing.T) {
 			Payload: map[string]any{"tool": "t", "step": i + 1},
 		})
 	}
-	m.activityFollow = false
-	m.activityScroll = 1
+	m.activity.follow = false
+	m.activity.scroll = 1
 	out := m.renderActivityView(80)
 	if !strings.Contains(out, "paused") {
 		t.Fatalf("paused banner missing when follow=false:\n%s", out)

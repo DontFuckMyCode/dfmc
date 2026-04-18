@@ -22,7 +22,7 @@ import (
 // /copy must skip non-assistant rows and handle empty content cleanly.
 func newCopyModel() Model {
 	m := NewModel(context.Background(), nil)
-	m.transcript = []chatLine{
+	m.chat.transcript = []chatLine{
 		{Role: "user", Content: "first question"},
 		{Role: "assistant", Content: "first answer"},
 		{Role: "user", Content: "second question"},
@@ -179,7 +179,7 @@ func TestCopySlash_CodeDefaultGrabsLatestFencedBlock(t *testing.T) {
 
 func TestCopySlash_CodeWithNoneFound(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = []chatLine{
+	m.chat.transcript = []chatLine{
 		{Role: "assistant", Content: "just prose, no fences at all"},
 	}
 	next, cmd, _ := m.handleCopySlash([]string{"code"})

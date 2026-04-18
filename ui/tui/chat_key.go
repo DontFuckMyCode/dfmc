@@ -19,70 +19,70 @@ import (
 )
 
 func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.commandPickerActive {
+	if m.commandPicker.active {
 		return m.handleCommandPickerKey(msg)
 	}
 	// Dump the incoming key so we can see what bubbletea delivered. We
 	// intentionally dump BEFORE the switch: the notice reflects the
 	// arrival, then the render re-runs and shows the picker/input state
-	// the user should compare against. Combined with m.input always being
+	// the user should compare against. Combined with m.chat.input always being
 	// rendered in the input box, this tells us both the event and its
 	// effect.
-	if m.keyLogEnabled {
+	if m.ui.keyLogEnabled {
 		m.notice = fmt.Sprintf("key: %s · type=%d · runes=%q · alt=%t · input-before=%q",
-			msg.String(), msg.Type, string(msg.Runes), msg.Alt, m.input)
+			msg.String(), msg.Type, string(msg.Runes), msg.Alt, m.chat.input)
 	}
 	m.syncChatCursor()
 	switch msg.Type {
 	case tea.KeyRunes:
-		if len(msg.Runes) == 1 && strings.TrimSpace(m.input) == "" && len(m.transcript) == 0 && !m.sending {
+		if len(msg.Runes) == 1 && strings.TrimSpace(m.chat.input) == "" && len(m.chat.transcript) == 0 && !m.chat.sending {
 			if template, ok := starterTemplateForDigit(msg.Runes[0]); ok {
 				m.exitInputHistoryNavigation()
-				m.input = template
-				m.chatCursor = len([]rune(template))
+				m.chat.input = template
+				m.chat.cursor = len([]rune(template))
 				return m, nil
 			}
 		}
 		m.exitInputHistoryNavigation()
 		m.insertInputText(string(msg.Runes))
-		m.slashIndex = 0
-		m.slashArgIndex = 0
-		m.mentionIndex = 0
-		m.quickActionIndex = 0
-		if m.keyLogEnabled {
-			m.notice = fmt.Sprintf("KeyRunes inserted %q → input=%q", string(msg.Runes), m.input)
+		m.slashMenu.command = 0
+		m.slashMenu.commandArg = 0
+		m.slashMenu.mention = 0
+		m.slashMenu.quickAction = 0
+		if m.ui.keyLogEnabled {
+			m.notice = fmt.Sprintf("KeyRunes inserted %q → input=%q", string(msg.Runes), m.chat.input)
 		}
 		// When the user starts an @-mention but the project file index
 		// hasn't landed yet (startup race, or the walk failed silently),
 		// kick a refresh so the picker populates on the next frame
 		// instead of leaving a dead empty-state.
-		if strings.ContainsRune(string(msg.Runes), '@') && len(m.files) == 0 && m.eng != nil {
+		if strings.ContainsRune(string(msg.Runes), '@') && len(m.filesView.entries) == 0 && m.eng != nil {
 			return m, loadFilesCmd(m.eng)
 		}
 		return m, nil
 	case tea.KeySpace:
 		m.exitInputHistoryNavigation()
 		m.insertInputText(" ")
-		m.slashIndex = 0
-		m.slashArgIndex = 0
-		m.mentionIndex = 0
-		m.quickActionIndex = 0
+		m.slashMenu.command = 0
+		m.slashMenu.commandArg = 0
+		m.slashMenu.mention = 0
+		m.slashMenu.quickAction = 0
 		return m, nil
 	case tea.KeyBackspace, tea.KeyCtrlH:
 		m.exitInputHistoryNavigation()
 		m.deleteInputBeforeCursor()
-		m.slashIndex = 0
-		m.slashArgIndex = 0
-		m.mentionIndex = 0
-		m.quickActionIndex = 0
+		m.slashMenu.command = 0
+		m.slashMenu.commandArg = 0
+		m.slashMenu.mention = 0
+		m.slashMenu.quickAction = 0
 		return m, nil
 	case tea.KeyDelete:
 		m.exitInputHistoryNavigation()
 		m.deleteInputAtCursor()
-		m.slashIndex = 0
-		m.slashArgIndex = 0
-		m.mentionIndex = 0
-		m.quickActionIndex = 0
+		m.slashMenu.command = 0
+		m.slashMenu.commandArg = 0
+		m.slashMenu.mention = 0
+		m.slashMenu.quickAction = 0
 		return m, nil
 	case tea.KeyLeft:
 		m.moveChatCursor(-1)
@@ -94,8 +94,8 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveChatCursorHome()
 		return m, nil
 	case tea.KeyEnd, tea.KeyCtrlE:
-		if m.chatScrollback > 0 {
-			m.chatScrollback = 0
+		if m.chat.scrollback > 0 {
+			m.chat.scrollback = 0
 			m.notice = "Transcript: jumped to latest"
 			return m, nil
 		}
@@ -117,26 +117,26 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// alternative — identical to typing '@' mid-composer except it
 		// inserts a leading space when needed so the trailing token
 		// becomes exactly '@', which is what activeMentionQuery checks.
-		if !m.sending {
+		if !m.chat.sending {
 			m.exitInputHistoryNavigation()
 			// Ensure the '@' we insert is the start of a fresh mention
 			// token. If the cursor is mid-word (e.g. "helloX|") prepend
 			// a space so we get "helloX @|" rather than "helloX@|"
 			// (which would treat the whole word as the mention).
 			m.syncChatCursor()
-			runes := []rune(m.input)
-			needSpace := m.chatCursor > 0 && m.chatCursor <= len(runes) &&
-				!unicode.IsSpace(runes[m.chatCursor-1])
+			runes := []rune(m.chat.input)
+			needSpace := m.chat.cursor > 0 && m.chat.cursor <= len(runes) &&
+				!unicode.IsSpace(runes[m.chat.cursor-1])
 			if needSpace {
 				m.insertInputText(" @")
 			} else {
 				m.insertInputText("@")
 			}
-			m.mentionIndex = 0
+			m.slashMenu.mention = 0
 			m.notice = "File picker open — type to filter, tab/enter inserts, esc cancels."
 			// Kick a refresh if the index is empty, same as the typed-@
 			// path does, so the picker isn't stuck on "Indexing…".
-			if len(m.files) == 0 && m.eng != nil {
+			if len(m.filesView.entries) == 0 && m.eng != nil {
 				return m, loadFilesCmd(m.eng)
 			}
 			return m, nil
@@ -147,20 +147,20 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// keeps @mentions and [[file:...]] markers atomic.
 		m.exitInputHistoryNavigation()
 		m.deleteInputWordBeforeCursor()
-		m.slashIndex = 0
-		m.slashArgIndex = 0
-		m.mentionIndex = 0
-		m.quickActionIndex = 0
+		m.slashMenu.command = 0
+		m.slashMenu.commandArg = 0
+		m.slashMenu.mention = 0
+		m.slashMenu.quickAction = 0
 		return m, nil
 	case tea.KeyCtrlK:
 		// Ctrl+K — kill to end of line. Pairs with Ctrl+U (kill whole
 		// line) so editors coming from bash/emacs feel at home.
 		m.exitInputHistoryNavigation()
 		m.deleteInputToEndOfLine()
-		m.slashIndex = 0
-		m.slashArgIndex = 0
-		m.mentionIndex = 0
-		m.quickActionIndex = 0
+		m.slashMenu.command = 0
+		m.slashMenu.commandArg = 0
+		m.slashMenu.mention = 0
+		m.slashMenu.quickAction = 0
 		return m, nil
 	case tea.KeyPgUp:
 		m.scrollTranscript(-8)
@@ -173,14 +173,14 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// in startChatStream races ctx.Done against the next token and
 		// emits chatDoneMsg/chatErrMsg, which clears sending state; we just
 		// fire the cancel and surface an immediate notice.
-		if m.sending && m.cancelActiveStream() {
+		if m.chat.sending && m.cancelActiveStream() {
 			m.notice = "Cancelling current turn… (provider may still finish the in-flight tool before stopping)"
 			return m, nil
 		}
 		// Esc dismisses the parked-resume banner without tearing down the
 		// parked state in the engine — the user can still /continue later.
-		if m.resumePromptActive {
-			m.resumePromptActive = false
+		if m.ui.resumePromptActive {
+			m.ui.resumePromptActive = false
 			m.notice = "Resume prompt dismissed — parked loop kept; /continue re-opens it."
 			return m, nil
 		}
@@ -196,51 +196,51 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyUp:
 		suggestions := m.buildChatSuggestionState()
-		if !m.sending && m.inputHistoryIndex >= 0 && m.recallInputHistoryPrev() {
-			m.slashIndex = 0
-			m.slashArgIndex = 0
-			m.mentionIndex = 0
+		if !m.chat.sending && m.inputHistory.index >= 0 && m.recallInputHistoryPrev() {
+			m.slashMenu.command = 0
+			m.slashMenu.commandArg = 0
+			m.slashMenu.mention = 0
 			m.notice = "History: previous input"
 			return m, nil
 		}
 		if suggestions.slashMenuActive {
 			items := suggestions.slashCommands
 			if len(items) > 0 {
-				idx := clampIndex(m.slashIndex, len(items))
+				idx := clampIndex(m.slashMenu.command, len(items))
 				if idx > 0 {
 					idx--
 				}
-				m.slashIndex = idx
-				m.notice = "Command: " + items[m.slashIndex].Template
+				m.slashMenu.command = idx
+				m.notice = "Command: " + items[m.slashMenu.command].Template
 			}
 			return m, nil
 		}
 		if len(suggestions.slashArgSuggestions) > 0 {
-			idx := clampIndex(m.slashArgIndex, len(suggestions.slashArgSuggestions))
+			idx := clampIndex(m.slashMenu.commandArg, len(suggestions.slashArgSuggestions))
 			if idx > 0 {
 				idx--
 			}
-			m.slashArgIndex = idx
-			m.notice = "Arg: " + suggestions.slashArgSuggestions[m.slashArgIndex]
+			m.slashMenu.commandArg = idx
+			m.notice = "Arg: " + suggestions.slashArgSuggestions[m.slashMenu.commandArg]
 			return m, nil
 		}
 		if len(suggestions.mentionSuggestions) > 0 {
 			if len(suggestions.mentionSuggestions) > 0 {
-				idx := clampIndex(m.mentionIndex, len(suggestions.mentionSuggestions))
+				idx := clampIndex(m.slashMenu.mention, len(suggestions.mentionSuggestions))
 				if idx > 0 {
 					idx--
 				}
-				m.mentionIndex = idx
-				m.notice = "Mention: " + suggestions.mentionSuggestions[m.mentionIndex].Path
+				m.slashMenu.mention = idx
+				m.notice = "Mention: " + suggestions.mentionSuggestions[m.slashMenu.mention].Path
 			}
 			return m, nil
 		}
 		if len(suggestions.quickActions) > 0 {
-			idx := clampIndex(m.quickActionIndex, len(suggestions.quickActions))
+			idx := clampIndex(m.slashMenu.quickAction, len(suggestions.quickActions))
 			if idx > 0 {
 				idx--
 			}
-			m.quickActionIndex = idx
+			m.slashMenu.quickAction = idx
 			m.notice = "Quick action: " + suggestions.quickActions[idx].PreparedInput
 			return m, nil
 		}
@@ -248,98 +248,98 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// the buffer and only falls through to history navigation when the
 		// cursor is already on the first row. Single-line input skips this
 		// and goes straight to history, preserving the old behavior.
-		if !m.sending && strings.ContainsRune(m.input, '\n') {
+		if !m.chat.sending && strings.ContainsRune(m.chat.input, '\n') {
 			if m.moveChatCursorRowUp() {
 				return m, nil
 			}
 		}
-		if !m.sending && m.recallInputHistoryPrev() {
-			m.slashIndex = 0
-			m.slashArgIndex = 0
-			m.mentionIndex = 0
-			m.quickActionIndex = 0
+		if !m.chat.sending && m.recallInputHistoryPrev() {
+			m.slashMenu.command = 0
+			m.slashMenu.commandArg = 0
+			m.slashMenu.mention = 0
+			m.slashMenu.quickAction = 0
 			m.notice = "History: previous input"
 			return m, nil
 		}
 		return m, nil
 	case tea.KeyDown:
 		suggestions := m.buildChatSuggestionState()
-		if !m.sending && m.inputHistoryIndex >= 0 && m.recallInputHistoryNext() {
-			m.slashIndex = 0
-			m.slashArgIndex = 0
-			m.mentionIndex = 0
+		if !m.chat.sending && m.inputHistory.index >= 0 && m.recallInputHistoryNext() {
+			m.slashMenu.command = 0
+			m.slashMenu.commandArg = 0
+			m.slashMenu.mention = 0
 			m.notice = "History: next input"
 			return m, nil
 		}
 		if suggestions.slashMenuActive {
 			items := suggestions.slashCommands
 			if len(items) > 0 {
-				idx := clampIndex(m.slashIndex, len(items))
+				idx := clampIndex(m.slashMenu.command, len(items))
 				if idx < len(items)-1 {
 					idx++
 				}
-				m.slashIndex = idx
-				m.notice = "Command: " + items[m.slashIndex].Template
+				m.slashMenu.command = idx
+				m.notice = "Command: " + items[m.slashMenu.command].Template
 			}
 			return m, nil
 		}
 		if len(suggestions.slashArgSuggestions) > 0 {
-			idx := clampIndex(m.slashArgIndex, len(suggestions.slashArgSuggestions))
+			idx := clampIndex(m.slashMenu.commandArg, len(suggestions.slashArgSuggestions))
 			if idx < len(suggestions.slashArgSuggestions)-1 {
 				idx++
 			}
-			m.slashArgIndex = idx
-			m.notice = "Arg: " + suggestions.slashArgSuggestions[m.slashArgIndex]
+			m.slashMenu.commandArg = idx
+			m.notice = "Arg: " + suggestions.slashArgSuggestions[m.slashMenu.commandArg]
 			return m, nil
 		}
 		if len(suggestions.mentionSuggestions) > 0 {
 			if len(suggestions.mentionSuggestions) > 0 {
-				idx := clampIndex(m.mentionIndex, len(suggestions.mentionSuggestions))
+				idx := clampIndex(m.slashMenu.mention, len(suggestions.mentionSuggestions))
 				if idx < len(suggestions.mentionSuggestions)-1 {
 					idx++
 				}
-				m.mentionIndex = idx
-				m.notice = "Mention: " + suggestions.mentionSuggestions[m.mentionIndex].Path
+				m.slashMenu.mention = idx
+				m.notice = "Mention: " + suggestions.mentionSuggestions[m.slashMenu.mention].Path
 			}
 			return m, nil
 		}
 		if len(suggestions.quickActions) > 0 {
-			idx := clampIndex(m.quickActionIndex, len(suggestions.quickActions))
+			idx := clampIndex(m.slashMenu.quickAction, len(suggestions.quickActions))
 			if idx < len(suggestions.quickActions)-1 {
 				idx++
 			}
-			m.quickActionIndex = idx
+			m.slashMenu.quickAction = idx
 			m.notice = "Quick action: " + suggestions.quickActions[idx].PreparedInput
 			return m, nil
 		}
 		// Symmetric to KeyUp — buffer row navigation when input has \n.
-		if !m.sending && strings.ContainsRune(m.input, '\n') {
+		if !m.chat.sending && strings.ContainsRune(m.chat.input, '\n') {
 			if m.moveChatCursorRowDown() {
 				return m, nil
 			}
 		}
-		if !m.sending && m.recallInputHistoryNext() {
-			m.slashIndex = 0
-			m.slashArgIndex = 0
-			m.mentionIndex = 0
-			m.quickActionIndex = 0
+		if !m.chat.sending && m.recallInputHistoryNext() {
+			m.slashMenu.command = 0
+			m.slashMenu.commandArg = 0
+			m.slashMenu.mention = 0
+			m.slashMenu.quickAction = 0
 			m.notice = "History: next input"
 			return m, nil
 		}
 		return m, nil
 	case tea.KeyTab:
-		if !m.sending {
+		if !m.chat.sending {
 			suggestions := m.buildChatSuggestionState()
 			// Autocomplete outcomes are already visible in the input box —
 			// no need to echo them into the footer notice slot.
-			if next, ok := autocompleteMentionSelectionFromSuggestions(m.input, m.mentionIndex, suggestions.mentionSuggestions); ok {
+			if next, ok := autocompleteMentionSelectionFromSuggestions(m.chat.input, m.slashMenu.mention, suggestions.mentionSuggestions); ok {
 				m.setChatInput(next)
-				m.mentionIndex = 0
+				m.slashMenu.mention = 0
 				return m, nil
 			}
 			if next, ok := m.autocompleteSlashArg(); ok {
 				m.setChatInput(next)
-				m.slashArgIndex = 0
+				m.slashMenu.commandArg = 0
 				return m, nil
 			}
 			if next, ok := m.autocompleteSlashCommand(); ok {
@@ -347,7 +347,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if len(suggestions.quickActions) > 0 {
-				selected := suggestions.quickActions[clampIndex(m.quickActionIndex, len(suggestions.quickActions))]
+				selected := suggestions.quickActions[clampIndex(m.slashMenu.quickAction, len(suggestions.quickActions))]
 				m.setChatInput(selected.PreparedInput)
 				return m, nil
 			}
@@ -361,10 +361,10 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// branch below by checking msg.Alt.
 		m.exitInputHistoryNavigation()
 		m.insertInputText("\n")
-		m.slashIndex = 0
-		m.slashArgIndex = 0
-		m.mentionIndex = 0
-		m.quickActionIndex = 0
+		m.slashMenu.command = 0
+		m.slashMenu.commandArg = 0
+		m.slashMenu.mention = 0
+		m.slashMenu.quickAction = 0
 		return m, nil
 	case tea.KeyEnter:
 		// Alt+Enter also inserts a newline rather than submitting — some
@@ -374,45 +374,45 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.Alt {
 			m.exitInputHistoryNavigation()
 			m.insertInputText("\n")
-			m.slashIndex = 0
-			m.slashArgIndex = 0
-			m.mentionIndex = 0
-			m.quickActionIndex = 0
+			m.slashMenu.command = 0
+			m.slashMenu.commandArg = 0
+			m.slashMenu.mention = 0
+			m.slashMenu.quickAction = 0
 			return m, nil
 		}
 		suggestions := m.buildChatSuggestionState()
-		if !m.sending && len(suggestions.mentionSuggestions) > 0 {
-			if next, ok := autocompleteMentionSelectionFromSuggestions(m.input, m.mentionIndex, suggestions.mentionSuggestions); ok {
+		if !m.chat.sending && len(suggestions.mentionSuggestions) > 0 {
+			if next, ok := autocompleteMentionSelectionFromSuggestions(m.chat.input, m.slashMenu.mention, suggestions.mentionSuggestions); ok {
 				m.setChatInput(next)
-				m.mentionIndex = 0
+				m.slashMenu.mention = 0
 				return m, nil
 			}
 		}
-		raw := strings.TrimSpace(m.input)
+		raw := strings.TrimSpace(m.chat.input)
 		// Parked-resume affordance. When the loop is parked, a bare Enter
 		// resumes; any typed text is forwarded to the resumed loop as a
 		// /btw-style note so the user can redirect the continuation.
-		if !m.sending && m.resumePromptActive && m.eng != nil && m.eng.HasParkedAgent() {
+		if !m.chat.sending && m.ui.resumePromptActive && m.eng != nil && m.eng.HasParkedAgent() {
 			m.setChatInput("")
 			return m.startChatResume(raw)
 		}
 		if raw == "" {
 			return m, nil
 		}
-		if m.sending {
+		if m.chat.sending {
 			// Cap the queue so a user spamming Enter while a long stream
 			// is in flight can't grow unbounded memory. 64 is enough
 			// headroom for normal "ask three follow-ups in a row" flow
 			// without becoming a DOS vector.
-			if len(m.pendingQueue) >= pendingQueueCap {
+			if len(m.chat.pendingQueue) >= pendingQueueCap {
 				m.notice = fmt.Sprintf("Queue full (%d max) — wait for the current reply, then send again.", pendingQueueCap)
 				m.setChatInput("")
 				return m, nil
 			}
-			m.pendingQueue = append(m.pendingQueue, raw)
+			m.chat.pendingQueue = append(m.chat.pendingQueue, raw)
 			m.setChatInput("")
-			m.notice = fmt.Sprintf("Queued (%d/%d) — will send after the current reply finishes.", len(m.pendingQueue), pendingQueueCap)
-			m = m.appendSystemMessage(fmt.Sprintf("▸ queued #%d: %s", len(m.pendingQueue), raw))
+			m.notice = fmt.Sprintf("Queued (%d/%d) — will send after the current reply finishes.", len(m.chat.pendingQueue), pendingQueueCap)
+			m = m.appendSystemMessage(fmt.Sprintf("▸ queued #%d: %s", len(m.chat.pendingQueue), raw))
 			return m, nil
 		}
 		if expanded, ok := m.expandSlashSelection(raw); ok {
@@ -448,14 +448,14 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if printable {
 			m.exitInputHistoryNavigation()
 			m.insertInputText(string(msg.Runes))
-			m.slashIndex = 0
-			m.slashArgIndex = 0
-			m.mentionIndex = 0
-			m.quickActionIndex = 0
-			if m.keyLogEnabled {
-				m.notice = fmt.Sprintf("FALLBACK inserted %q → input=%q", string(msg.Runes), m.input)
+			m.slashMenu.command = 0
+			m.slashMenu.commandArg = 0
+			m.slashMenu.mention = 0
+			m.slashMenu.quickAction = 0
+			if m.ui.keyLogEnabled {
+				m.notice = fmt.Sprintf("FALLBACK inserted %q → input=%q", string(msg.Runes), m.chat.input)
 			}
-			if strings.ContainsRune(string(msg.Runes), '@') && len(m.files) == 0 && m.eng != nil {
+			if strings.ContainsRune(string(msg.Runes), '@') && len(m.filesView.entries) == 0 && m.eng != nil {
 				return m, loadFilesCmd(m.eng)
 			}
 			return m, nil

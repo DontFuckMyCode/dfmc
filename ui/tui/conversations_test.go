@@ -114,7 +114,7 @@ func TestRenderConversationsViewEmptyState(t *testing.T) {
 
 func TestRenderConversationsViewErrorBanner(t *testing.T) {
 	m := newConversationsTestModel()
-	m.conversationsErr = "store locked"
+	m.conversations.err = "store locked"
 	out := m.renderConversationsView(80)
 	if !strings.Contains(out, "error · store locked") {
 		t.Fatalf("error banner missing:\n%s", out)
@@ -123,7 +123,7 @@ func TestRenderConversationsViewErrorBanner(t *testing.T) {
 
 func TestRenderConversationsViewWithEntries(t *testing.T) {
 	m := newConversationsTestModel()
-	m.conversationsEntries = sampleConversationSummaries()
+	m.conversations.entries = sampleConversationSummaries()
 	out := m.renderConversationsView(120)
 	if !strings.Contains(out, "3 shown · 3 loaded") {
 		t.Fatalf("footer count wrong:\n%s", out)
@@ -135,32 +135,32 @@ func TestRenderConversationsViewWithEntries(t *testing.T) {
 
 func TestConversationsScrollBindings(t *testing.T) {
 	m := newConversationsTestModel()
-	m.conversationsEntries = sampleConversationSummaries()
+	m.conversations.entries = sampleConversationSummaries()
 
 	m2, _ := m.handleConversationsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	m = m2.(Model)
-	if m.conversationsScroll != 1 {
-		t.Fatalf("j should advance, got %d", m.conversationsScroll)
+	if m.conversations.scroll != 1 {
+		t.Fatalf("j should advance, got %d", m.conversations.scroll)
 	}
 	m2, _ = m.handleConversationsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
 	m = m2.(Model)
-	if m.conversationsScroll != len(m.conversationsEntries)-1 {
-		t.Fatalf("G should jump to last, got %d", m.conversationsScroll)
+	if m.conversations.scroll != len(m.conversations.entries)-1 {
+		t.Fatalf("G should jump to last, got %d", m.conversations.scroll)
 	}
 	m2, _ = m.handleConversationsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
 	m = m2.(Model)
-	if m.conversationsScroll != 0 {
-		t.Fatalf("g should jump to top, got %d", m.conversationsScroll)
+	if m.conversations.scroll != 0 {
+		t.Fatalf("g should jump to top, got %d", m.conversations.scroll)
 	}
 }
 
 func TestConversationsSearchInputFlow(t *testing.T) {
 	m := newConversationsTestModel()
-	m.conversationsEntries = sampleConversationSummaries()
+	m.conversations.entries = sampleConversationSummaries()
 
 	m2, _ := m.handleConversationsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	m = m2.(Model)
-	if !m.conversationsSearchActive {
+	if !m.conversations.searchActive {
 		t.Fatalf("search mode should activate on /")
 	}
 
@@ -168,29 +168,29 @@ func TestConversationsSearchInputFlow(t *testing.T) {
 		m2, _ = m.handleConversationsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = m2.(Model)
 	}
-	if m.conversationsQuery != "auth" {
-		t.Fatalf("want query=auth, got %q", m.conversationsQuery)
+	if m.conversations.query != "auth" {
+		t.Fatalf("want query=auth, got %q", m.conversations.query)
 	}
 
 	m2, _ = m.handleConversationsKey(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = m2.(Model)
-	if m.conversationsQuery != "aut" {
-		t.Fatalf("backspace should trim, got %q", m.conversationsQuery)
+	if m.conversations.query != "aut" {
+		t.Fatalf("backspace should trim, got %q", m.conversations.query)
 	}
 
 	m2, _ = m.handleConversationsKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = m2.(Model)
-	if m.conversationsSearchActive {
+	if m.conversations.searchActive {
 		t.Fatalf("enter should exit search mode")
 	}
-	if m.conversationsScroll != 0 {
-		t.Fatalf("enter should reset scroll, got %d", m.conversationsScroll)
+	if m.conversations.scroll != 0 {
+		t.Fatalf("enter should reset scroll, got %d", m.conversations.scroll)
 	}
 
 	m2, _ = m.handleConversationsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	m = m2.(Model)
-	if m.conversationsQuery != "" {
-		t.Fatalf("c should clear query, got %q", m.conversationsQuery)
+	if m.conversations.query != "" {
+		t.Fatalf("c should clear query, got %q", m.conversations.query)
 	}
 }
 
@@ -205,8 +205,8 @@ func TestConversationPreviewMsgSetsLoadedNotice(t *testing.T) {
 		msgs: []types.Message{{Role: "user", Content: "hi"}, {Role: "assistant", Content: "hello"}},
 	})
 	mm := next.(Model)
-	if mm.conversationsPreviewID != "2026-04-16-auth-flow" {
-		t.Fatalf("preview id not stored, got %q", mm.conversationsPreviewID)
+	if mm.conversations.previewID != "2026-04-16-auth-flow" {
+		t.Fatalf("preview id not stored, got %q", mm.conversations.previewID)
 	}
 	if !strings.Contains(mm.notice, "Loaded conversation") {
 		t.Fatalf("notice should announce load, got %q", mm.notice)
@@ -224,9 +224,9 @@ func TestConversationPreviewMsgSetsLoadedNotice(t *testing.T) {
 // the state change on the same panel instead of discovering it later.
 func TestRenderConversationsViewAnnouncesActiveOnPreview(t *testing.T) {
 	m := newConversationsTestModel()
-	m.conversationsEntries = sampleConversationSummaries()
-	m.conversationsPreviewID = "2026-04-16-auth-flow"
-	m.conversationsPreview = []types.Message{{Role: "user", Content: "hi"}}
+	m.conversations.entries = sampleConversationSummaries()
+	m.conversations.previewID = "2026-04-16-auth-flow"
+	m.conversations.preview = []types.Message{{Role: "user", Content: "hi"}}
 	out := m.renderConversationsView(160)
 	if !strings.Contains(out, "loaded as active") {
 		t.Fatalf("preview header should surface the active-load side-effect, got:\n%s", out)
@@ -237,10 +237,10 @@ func TestConversationsRefreshSetsLoading(t *testing.T) {
 	m := newConversationsTestModel()
 	m2, _ := m.handleConversationsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	m = m2.(Model)
-	if !m.conversationsLoading {
+	if !m.conversations.loading {
 		t.Fatalf("r should set loading=true")
 	}
-	if m.conversationsErr != "" {
-		t.Fatalf("r should clear error, got %q", m.conversationsErr)
+	if m.conversations.err != "" {
+		t.Fatalf("r should clear error, got %q", m.conversations.err)
 	}
 }

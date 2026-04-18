@@ -138,28 +138,28 @@ func oneLine(s string) string {
 
 func (m Model) renderMemoryView(width int) string {
 	width = clampInt(width, 24, 1000)
-	tier := m.memoryTier
+	tier := m.memory.tier
 	if tier == "" {
 		tier = memoryTierAll
 	}
 	hint := subtleStyle.Render("j/k scroll · t toggle tier · / search · r refresh · c clear search")
 	header := sectionHeader("◈", "Memory")
 	tierLine := subtleStyle.Render("tier: ") + accentStyle.Render(tier)
-	if strings.TrimSpace(m.memoryQuery) != "" {
-		tierLine += subtleStyle.Render("  query: ") + m.memoryQuery
+	if strings.TrimSpace(m.memory.query) != "" {
+		tierLine += subtleStyle.Render("  query: ") + m.memory.query
 	}
 	lines := []string{header, hint, tierLine, renderDivider(width - 2)}
 
-	if m.memoryErr != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.memoryErr))
+	if m.memory.err != "" {
+		lines = append(lines, "", warnStyle.Render("error · "+m.memory.err))
 		return strings.Join(lines, "\n")
 	}
-	if m.memoryLoading {
+	if m.memory.loading {
 		lines = append(lines, "", subtleStyle.Render("loading..."))
 		return strings.Join(lines, "\n")
 	}
 
-	filtered := filteredMemoryEntries(m.memoryEntries, m.memoryQuery)
+	filtered := filteredMemoryEntries(m.memory.entries, m.memory.query)
 	if len(filtered) == 0 {
 		lines = append(lines, "",
 			subtleStyle.Render("No memory entries in this view."),
@@ -169,7 +169,7 @@ func (m Model) renderMemoryView(width int) string {
 	}
 
 	// Scroll window: clamp offset into range, then show up to the rest.
-	scroll := m.memoryScroll
+	scroll := m.memory.scroll
 	if scroll < 0 {
 		scroll = 0
 	}
@@ -182,7 +182,7 @@ func (m Model) renderMemoryView(width int) string {
 
 	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
 		"%d shown · %d loaded · tier=%s",
-		len(filtered), len(m.memoryEntries), tier,
+		len(filtered), len(m.memory.entries), tier,
 	)))
 	return strings.Join(lines, "\n")
 }
@@ -190,60 +190,60 @@ func (m Model) renderMemoryView(width int) string {
 // handleMemoryKey drives the Memory panel. The search input mode owns
 // the keyboard while active; returning Cmd(nil) keeps the model as-is.
 func (m Model) handleMemoryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.memorySearchActive {
+	if m.memory.searchActive {
 		return m.handleMemorySearchKey(msg)
 	}
-	total := len(filteredMemoryEntries(m.memoryEntries, m.memoryQuery))
+	total := len(filteredMemoryEntries(m.memory.entries, m.memory.query))
 	step := 1
 	pageStep := 10
 	switch msg.String() {
 	case "j", "down":
-		if m.memoryScroll+step < total {
-			m.memoryScroll += step
+		if m.memory.scroll+step < total {
+			m.memory.scroll += step
 		}
 	case "k", "up":
-		if m.memoryScroll >= step {
-			m.memoryScroll -= step
+		if m.memory.scroll >= step {
+			m.memory.scroll -= step
 		} else {
-			m.memoryScroll = 0
+			m.memory.scroll = 0
 		}
 	case "pgdown":
-		if m.memoryScroll+pageStep < total {
-			m.memoryScroll += pageStep
+		if m.memory.scroll+pageStep < total {
+			m.memory.scroll += pageStep
 		} else if total > 0 {
-			m.memoryScroll = total - 1
+			m.memory.scroll = total - 1
 		}
 	case "pgup":
-		if m.memoryScroll >= pageStep {
-			m.memoryScroll -= pageStep
+		if m.memory.scroll >= pageStep {
+			m.memory.scroll -= pageStep
 		} else {
-			m.memoryScroll = 0
+			m.memory.scroll = 0
 		}
 	case "g":
-		m.memoryScroll = 0
+		m.memory.scroll = 0
 	case "G":
 		if total > 0 {
-			m.memoryScroll = total - 1
+			m.memory.scroll = total - 1
 		}
 	case "t":
 		// Cycle all → episodic → semantic → all.
-		m.memoryTier = nextMemoryTier(m.memoryTier)
-		m.memoryScroll = 0
-		m.memoryLoading = true
-		m.memoryErr = ""
-		return m, loadMemoryCmd(m.eng, m.memoryTier)
+		m.memory.tier = nextMemoryTier(m.memory.tier)
+		m.memory.scroll = 0
+		m.memory.loading = true
+		m.memory.err = ""
+		return m, loadMemoryCmd(m.eng, m.memory.tier)
 	case "r":
-		m.memoryLoading = true
-		m.memoryErr = ""
-		return m, loadMemoryCmd(m.eng, m.memoryTier)
+		m.memory.loading = true
+		m.memory.err = ""
+		return m, loadMemoryCmd(m.eng, m.memory.tier)
 	case "/":
-		m.memorySearchActive = true
+		m.memory.searchActive = true
 		// Preserve previous query so the user can refine rather than
 		// starting blank each time.
 		return m, nil
 	case "c":
-		m.memoryQuery = ""
-		m.memoryScroll = 0
+		m.memory.query = ""
+		m.memory.scroll = 0
 	}
 	return m, nil
 }
@@ -255,19 +255,19 @@ func (m Model) handleMemoryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleMemorySearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
-		m.memorySearchActive = false
-		m.memoryScroll = 0
+		m.memory.searchActive = false
+		m.memory.scroll = 0
 		return m, nil
 	case tea.KeyEsc:
-		m.memorySearchActive = false
+		m.memory.searchActive = false
 		return m, nil
 	case tea.KeyBackspace:
-		if r := []rune(m.memoryQuery); len(r) > 0 {
-			m.memoryQuery = string(r[:len(r)-1])
+		if r := []rune(m.memory.query); len(r) > 0 {
+			m.memory.query = string(r[:len(r)-1])
 		}
 		return m, nil
 	case tea.KeyRunes, tea.KeySpace:
-		m.memoryQuery += msg.String()
+		m.memory.query += msg.String()
 		return m, nil
 	}
 	return m, nil

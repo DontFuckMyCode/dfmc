@@ -18,7 +18,7 @@ import (
 func TestDebugMentionPicker_LiteralDump(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	m.files = []string{
+	m.filesView.entries = []string{
 		"internal/auth/token.go",
 		"internal/auth/session.go",
 		"internal/engine/engine.go",
@@ -26,10 +26,10 @@ func TestDebugMentionPicker_LiteralDump(t *testing.T) {
 	}
 	// Simulate exactly what a user sees when they just typed '@' on an
 	// empty composer: trailing token is '@', mentionActive should be true.
-	m.input = "@"
-	m.chatCursor = 1
-	m.chatCursorManual = true
-	m.chatCursorInput = m.input
+	m.chat.input = "@"
+	m.chat.cursor = 1
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
 
 	view := m.renderChatView(120)
 	t.Logf("\n================= LITERAL VIEW =================\n%s\n================= END VIEW =====================", view)

@@ -60,9 +60,9 @@ func (m Model) handleCopySlash(args []string) (tea.Model, tea.Cmd, bool) {
 // assistant response, in order. Used to translate a 1-based (or
 // negative) argument into a concrete slot.
 func (m Model) assistantIndices() []int {
-	out := make([]int, 0, len(m.transcript))
-	for i, item := range m.transcript {
-		if strings.EqualFold(item.Role, "assistant") {
+	out := make([]int, 0, len(m.chat.transcript))
+	for i, item := range m.chat.transcript {
+		if item.Role.Eq(chatRoleAssistant) {
 			out = append(out, i)
 		}
 	}
@@ -99,7 +99,7 @@ func (m Model) copyAssistantResponseAt(n int) (tea.Model, tea.Cmd, bool) {
 		slot = idxs[from]
 	}
 
-	content := strings.TrimSpace(m.transcript[slot].Content)
+	content := strings.TrimSpace(m.chat.transcript[slot].Content)
 	if content == "" {
 		m.notice = "Selected response is empty."
 		return m, nil, true
@@ -128,7 +128,7 @@ func (m Model) copyAllAssistantResponses() (tea.Model, tea.Cmd, bool) {
 	}
 	parts := make([]string, 0, len(idxs))
 	for _, idx := range idxs {
-		c := strings.TrimSpace(m.transcript[idx].Content)
+		c := strings.TrimSpace(m.chat.transcript[idx].Content)
 		if c != "" {
 			parts = append(parts, c)
 		}
@@ -162,7 +162,7 @@ func (m Model) copyLastCodeBlock(which int) (tea.Model, tea.Cmd, bool) {
 	}
 	var blocks []block
 	for i := len(idxs) - 1; i >= 0; i-- {
-		content := m.transcript[idxs[i]].Content
+		content := m.chat.transcript[idxs[i]].Content
 		found := extractFencedBlocks(content)
 		label := fmt.Sprintf("#%d", i+1)
 		for bi, b := range found {

@@ -20,7 +20,7 @@ func TestPendingQueueIsBoundedAtCap(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	// Force the "queue, don't send" branch by lying that a stream is
 	// already in flight.
-	m.sending = true
+	m.chat.sending = true
 
 	// Push way past the cap. Each Enter feeds one entry through the
 	// chat-key handler.
@@ -34,7 +34,7 @@ func TestPendingQueueIsBoundedAtCap(t *testing.T) {
 		}
 		m = nm
 	}
-	if got := len(m.pendingQueue); got != pendingQueueCap {
+	if got := len(m.chat.pendingQueue); got != pendingQueueCap {
 		t.Fatalf("pendingQueue must cap at %d entries, got %d (memory leak vector)", pendingQueueCap, got)
 	}
 	// Excess pushes must surface a notice so the user knows their
@@ -62,7 +62,7 @@ func TestCancelActiveStream_NoPanicWhenAlreadyNil(t *testing.T) {
 func TestCancelActiveStream_FiresAndClears(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	called := false
-	m.streamCancel = func() { called = true }
+	m.chat.streamCancel = func() { called = true }
 
 	if !m.cancelActiveStream() {
 		t.Fatal("cancelActiveStream must return true when a cancel was stored")
@@ -70,10 +70,10 @@ func TestCancelActiveStream_FiresAndClears(t *testing.T) {
 	if !called {
 		t.Fatal("the stored cancel func must actually fire")
 	}
-	if m.streamCancel != nil {
+	if m.chat.streamCancel != nil {
 		t.Fatal("streamCancel must be cleared after firing so a second Esc is a no-op")
 	}
-	if !m.userCancelledStream {
+	if !m.chat.userCancelledStream {
 		t.Fatal("userCancelledStream flag must be set so the err handler tailors the notice")
 	}
 	// Calling again must be safe — the race between two Esc presses

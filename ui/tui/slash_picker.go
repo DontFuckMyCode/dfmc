@@ -33,7 +33,7 @@ import (
 )
 
 func (m Model) slashMenuActive() bool {
-	raw := strings.TrimLeft(m.input, " \t\r\n")
+	raw := strings.TrimLeft(m.chat.input, " \t\r\n")
 	if !strings.HasPrefix(raw, "/") {
 		return false
 	}
@@ -45,7 +45,7 @@ func (m Model) slashMenuActive() bool {
 }
 
 func (m Model) activeSlashArgSuggestions() []string {
-	raw := strings.TrimLeft(m.input, " \t\r\n")
+	raw := strings.TrimLeft(m.chat.input, " \t\r\n")
 	if raw == "" || !strings.HasPrefix(raw, "/") || m.slashMenuActive() {
 		return nil
 	}
@@ -88,7 +88,7 @@ func (m Model) activeSlashArgSuggestions() []string {
 		}
 		return models
 	case "read":
-		files := m.files
+		files := m.filesView.entries
 		if len(files) == 0 {
 			return nil
 		}
@@ -141,7 +141,7 @@ func (m Model) activeSlashArgSuggestions() []string {
 }
 
 func (m Model) autocompleteSlashArg() (string, bool) {
-	raw := strings.TrimLeft(m.input, " \t\r\n")
+	raw := strings.TrimLeft(m.chat.input, " \t\r\n")
 	if raw == "" || !strings.HasPrefix(raw, "/") || m.slashMenuActive() {
 		return "", false
 	}
@@ -153,7 +153,7 @@ func (m Model) autocompleteSlashArg() (string, bool) {
 	if len(suggestions) == 0 {
 		return "", false
 	}
-	selected := suggestions[clampIndex(m.slashArgIndex, len(suggestions))]
+	selected := suggestions[clampIndex(m.slashMenu.commandArg, len(suggestions))]
 	trailingSpace := hasTrailingWhitespace(raw)
 	switch cmd {
 	case "provider":
@@ -213,8 +213,8 @@ func (m Model) autocompleteSlashArg() (string, bool) {
 }
 
 func (m Model) slashAssistHints() []string {
-	raw := strings.TrimSpace(m.input)
-	if raw == "" || !strings.HasPrefix(raw, "/") || m.commandPickerActive {
+	raw := strings.TrimSpace(m.chat.input)
+	if raw == "" || !strings.HasPrefix(raw, "/") || m.commandPicker.active {
 		return nil
 	}
 	cmd, args, _, err := parseChatCommandInput(raw)
@@ -381,7 +381,7 @@ func (m Model) autocompleteSlashCommand() (string, bool) {
 	if len(items) == 0 {
 		return "", false
 	}
-	idx := clampIndex(m.slashIndex, len(items))
+	idx := clampIndex(m.slashMenu.command, len(items))
 	return items[idx].Template, true
 }
 
@@ -402,12 +402,12 @@ func (m Model) expandSlashSelection(raw string) (string, bool) {
 	if len(items) == 0 {
 		return "", false
 	}
-	idx := clampIndex(m.slashIndex, len(items))
+	idx := clampIndex(m.slashMenu.command, len(items))
 	return items[idx].Template, true
 }
 
 func (m Model) filteredSlashCommands() []slashCommandItem {
-	query := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(m.input)), "/")
+	query := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(m.chat.input)), "/")
 	catalog := m.slashCommandCatalog()
 	if query == "" {
 		return catalog
@@ -546,7 +546,7 @@ func (m Model) toolValueTokenSuggestions(toolName, key, valuePrefix string) []st
 	valuePrefix = strings.TrimSpace(valuePrefix)
 	switch key {
 	case "path":
-		candidates := m.files
+		candidates := m.filesView.entries
 		if strings.EqualFold(strings.TrimSpace(toolName), "list_dir") {
 			candidates = m.projectDirSuggestions()
 		}
@@ -672,7 +672,7 @@ func (m Model) projectDirSuggestions() []string {
 	if dir := strings.TrimSpace(m.toolTargetDir()); dir != "" {
 		set[strings.ToLower(dir)] = dir
 	}
-	for _, file := range m.files {
+	for _, file := range m.filesView.entries {
 		file = filepath.ToSlash(strings.TrimSpace(file))
 		if file == "" {
 			continue
@@ -766,11 +766,11 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 	// `/provider`), the TUI-friendly plural form wins — that matches the
 	// established pre-registry behavior users built muscle memory around.
 	coachLabel := "mute"
-	if m.coachMuted {
+	if m.ui.coachMuted {
 		coachLabel = "unmute"
 	}
 	hintsLabel := "show"
-	if m.hintsVerbose {
+	if m.ui.hintsVerbose {
 		hintsLabel = "hide"
 	}
 	extras := []slashCommandItem{

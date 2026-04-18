@@ -28,13 +28,32 @@ import (
 	"github.com/dontfuckmycode/dfmc/ui/web"
 )
 
+// addRemoteTokenFlag wires the standard `--token` flag onto fs with its
+// default sourced from the DFMC_REMOTE_TOKEN env var. Used by every
+// `dfmc remote *` client subcommand. addServeTokenFlag does the same
+// for `dfmc serve` but reads DFMC_WEB_TOKEN instead so an operator can
+// run a serve and a client side-by-side with separate creds without
+// either subcommand stomping on the other's env.
+//
+// Centralising the flag declaration kills the H1 review finding —
+// the line was duplicated 18 times across this file, so a future
+// rename of the env var or the flag description had to be repeated
+// 18 times or it would silently drift.
+func addRemoteTokenFlag(fs *flag.FlagSet) *string {
+	return fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+}
+
+func addServeTokenFlag(fs *flag.FlagSet) *string {
+	return fs.String("token", strings.TrimSpace(os.Getenv("DFMC_WEB_TOKEN")), "api token (for auth=token)")
+}
+
 func runServe(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	host := fs.String("host", eng.Config.Web.Host, "host")
 	port := fs.Int("port", eng.Config.Web.Port, "port")
 	auth := fs.String("auth", eng.Config.Web.Auth, "none|token")
-	token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_WEB_TOKEN")), "api token (for auth=token)")
+	token := addServeTokenFlag(fs)
 	openBrowser := fs.Bool("open-browser", eng.Config.Web.OpenBrowser, "open default browser")
 	// --insecure is the explicit opt-out for the non-loopback-without-
 	// auth guard below. Without it, we refuse to start a server that
@@ -115,7 +134,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		live := fs.Bool("live", false, "query remote server status instead of local config")
 		baseURL := fs.String("url", defaultURL, "remote base URL (for --live)")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 10*time.Second, "request timeout")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
@@ -170,7 +189,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 3*time.Second, "request timeout")
 		endpointsRaw := fs.String("endpoints", "/healthz,/api/v1/status,/api/v1/providers", "comma-separated endpoint paths")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -227,7 +246,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		eventType := fs.String("type", "*", "event type filter")
 		timeout := fs.Duration("timeout", 20*time.Second, "stream timeout")
 		maxEvents := fs.Int("max", 100, "max events to collect before stopping")
@@ -272,7 +291,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 60*time.Second, "request timeout")
 		message := fs.String("message", "", "question/message to send")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -317,7 +336,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
 		var paramsRaw multiStringFlag
 		fs.Var(&paramsRaw, "param", "tool param in key=value format (repeatable)")
@@ -361,7 +380,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 60*time.Second, "request timeout")
 		input := fs.String("input", "", "skill input text")
 		if err := fs.Parse(args[2:]); err != nil {
@@ -397,7 +416,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 60*time.Second, "request timeout")
 		path := fs.String("path", "", "target path")
 		full := fs.Bool("full", false, "run full analysis")
@@ -457,7 +476,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
 		query := fs.String("query", "", "query for task-aware budget simulation")
 		runtimeProvider := fs.String("runtime-provider", "", "runtime provider override for context simulation")
@@ -569,7 +588,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
 		limit := fs.Int("limit", 500, "max files for list")
 		if err := fs.Parse(args[2:]); err != nil {
@@ -636,7 +655,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
 		tier := fs.String("tier", "episodic", "working|episodic|semantic")
 		if err := fs.Parse(args[2:]); err != nil {
@@ -692,7 +711,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
 		limit := fs.Int("limit", 20, "max results")
 		query := fs.String("query", "", "search query")
@@ -857,7 +876,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
 		format := fs.String("format", "json", "json|dot|svg|ascii")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -896,7 +915,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
@@ -915,7 +934,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
@@ -943,7 +962,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
 		typ := fs.String("type", "system", "prompt type")
 		task := fs.String("task", "auto", "prompt task")
@@ -1076,7 +1095,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		fs.SetOutput(os.Stderr)
 		defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 		baseURL := fs.String("url", defaultURL, "remote base URL")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
+		token := addRemoteTokenFlag(fs)
 		timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
 		path := fs.String("path", "", "target magic doc path")
 		title := fs.String("title", "DFMC Project Brief", "magic doc title")
@@ -1134,7 +1153,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		grpcPort := fs.Int("grpc-port", eng.Config.Remote.GRPCPort, "bind grpc port")
 		port := fs.Int("ws-port", eng.Config.Remote.WSPort, "bind ws/http port")
 		auth := fs.String("auth", eng.Config.Remote.Auth, "none|token")
-		token := fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token (for auth=token)")
+		token := addRemoteTokenFlag(fs)
 		// Parallel to runServe: --insecure acknowledges the risk of
 		// serving without auth on a non-loopback host. Remote defaults
 		// to auth=token so this is mostly a safety net for users who
@@ -1599,18 +1618,35 @@ func isLoopbackBindHost(host string) bool {
 }
 
 func bearerTokenMiddleware(next http.Handler, token string) http.Handler {
-	expected := "Bearer " + strings.TrimSpace(token)
+	rawToken := strings.TrimSpace(token)
+	expected := "Bearer " + rawToken
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			writeRemoteJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 			return
 		}
-		got := strings.TrimSpace(r.Header.Get("Authorization"))
-		if got != expected {
-			writeRemoteJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		// The workbench HTML at GET / is the entry shell — it contains no
+		// secrets and the operator needs to load it to enter their token in
+		// the browser. Gating it would create a chicken-and-egg lockout.
+		// Every API path under /api/v1/ and /ws still requires the token.
+		if r.Method == http.MethodGet && r.URL.Path == "/" {
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		// Accept the token via Authorization header (preferred) OR ?token=
+		// query param. The query-param fallback exists because EventSource
+		// (used by the workbench's /ws activity stream) doesn't support
+		// custom headers — without this, the live event panel would 401
+		// even after the operator entered a valid token in the UI.
+		if got := strings.TrimSpace(r.Header.Get("Authorization")); got == expected {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if rawToken != "" && r.URL.Query().Get("token") == rawToken {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeRemoteJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 	})
 }
 

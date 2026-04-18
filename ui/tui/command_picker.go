@@ -7,7 +7,7 @@ package tui
 // "user is hunting through a list" surface lives in one obvious place.
 // Every method continues to live on `Model` — no behaviour change, no
 // new abstractions. Update/handleChatKey still routes keystrokes here
-// via handleCommandPickerKey when m.commandPickerActive is set.
+// via handleCommandPickerKey when m.commandPicker.active is set.
 //
 // Vocabulary:
 //   - kind         — which slash command opened the picker
@@ -38,8 +38,8 @@ func (m Model) handleCommandPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.notice = "Command picker closed."
 		return m, nil
 	case tea.KeyCtrlS:
-		m.commandPickerPersist = !m.commandPickerPersist
-		if m.commandPickerPersist {
+		m.commandPicker.persist = !m.commandPicker.persist
+		if m.commandPicker.persist {
 			m.notice = "Picker apply mode: persist to .dfmc/config.yaml"
 		} else {
 			m.notice = "Picker apply mode: session only"
@@ -50,11 +50,11 @@ func (m Model) handleCommandPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(items) == 0 {
 			return m, nil
 		}
-		idx := clampIndex(m.commandPickerIndex, len(items))
+		idx := clampIndex(m.commandPicker.index, len(items))
 		if idx > 0 {
 			idx--
 		}
-		m.commandPickerIndex = idx
+		m.commandPicker.index = idx
 		m.notice = "Select: " + items[idx].Value
 		return m, nil
 	case tea.KeyDown:
@@ -62,11 +62,11 @@ func (m Model) handleCommandPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(items) == 0 {
 			return m, nil
 		}
-		idx := clampIndex(m.commandPickerIndex, len(items))
+		idx := clampIndex(m.commandPicker.index, len(items))
 		if idx < len(items)-1 {
 			idx++
 		}
-		m.commandPickerIndex = idx
+		m.commandPicker.index = idx
 		m.notice = "Select: " + items[idx].Value
 		return m, nil
 	case tea.KeyTab:
@@ -74,27 +74,27 @@ func (m Model) handleCommandPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(items) == 0 {
 			return m, nil
 		}
-		idx := clampIndex(m.commandPickerIndex, len(items))
-		m.commandPickerQuery = items[idx].Value
-		m.commandPickerIndex = 0
+		idx := clampIndex(m.commandPicker.index, len(items))
+		m.commandPicker.query = items[idx].Value
+		m.commandPicker.index = 0
 		m.syncInputWithCommandPicker()
 		return m, nil
 	case tea.KeyEnter:
 		items := m.filteredCommandPickerItems()
 		if len(items) == 0 {
-			kind := strings.ToLower(strings.TrimSpace(m.commandPickerKind))
-			if strings.EqualFold(kind, "model") && strings.TrimSpace(m.commandPickerQuery) != "" {
-				return m.applyCommandPickerModel(strings.TrimSpace(m.commandPickerQuery))
+			kind := strings.ToLower(strings.TrimSpace(m.commandPicker.kind))
+			if strings.EqualFold(kind, "model") && strings.TrimSpace(m.commandPicker.query) != "" {
+				return m.applyCommandPickerModel(strings.TrimSpace(m.commandPicker.query))
 			}
-			if (strings.EqualFold(kind, "tool") || strings.EqualFold(kind, "read") || strings.EqualFold(kind, "run") || strings.EqualFold(kind, "grep")) && strings.TrimSpace(m.commandPickerQuery) != "" {
-				return m.applyCommandPickerPreparedInput(strings.TrimSpace(m.commandPickerQuery))
+			if (strings.EqualFold(kind, "tool") || strings.EqualFold(kind, "read") || strings.EqualFold(kind, "run") || strings.EqualFold(kind, "grep")) && strings.TrimSpace(m.commandPicker.query) != "" {
+				return m.applyCommandPickerPreparedInput(strings.TrimSpace(m.commandPicker.query))
 			}
 			m.notice = "No selectable item."
 			return m, nil
 		}
-		idx := clampIndex(m.commandPickerIndex, len(items))
+		idx := clampIndex(m.commandPicker.index, len(items))
 		selected := strings.TrimSpace(items[idx].Value)
-		switch strings.ToLower(strings.TrimSpace(m.commandPickerKind)) {
+		switch strings.ToLower(strings.TrimSpace(m.commandPicker.kind)) {
 		case "provider":
 			return m.applyCommandPickerProvider(selected)
 		case "model":
@@ -106,21 +106,21 @@ func (m Model) handleCommandPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case tea.KeyBackspace, tea.KeyCtrlH:
-		if len(m.commandPickerQuery) > 0 {
-			runes := []rune(m.commandPickerQuery)
-			m.commandPickerQuery = string(runes[:len(runes)-1])
-			m.commandPickerIndex = 0
+		if len(m.commandPicker.query) > 0 {
+			runes := []rune(m.commandPicker.query)
+			m.commandPicker.query = string(runes[:len(runes)-1])
+			m.commandPicker.index = 0
 			m.syncInputWithCommandPicker()
 		}
 		return m, nil
 	case tea.KeySpace:
-		m.commandPickerQuery += " "
-		m.commandPickerIndex = 0
+		m.commandPicker.query += " "
+		m.commandPicker.index = 0
 		m.syncInputWithCommandPicker()
 		return m, nil
 	case tea.KeyRunes:
-		m.commandPickerQuery += string(msg.Runes)
-		m.commandPickerIndex = 0
+		m.commandPicker.query += string(msg.Runes)
+		m.commandPicker.index = 0
 		m.syncInputWithCommandPicker()
 		return m, nil
 	default:
@@ -131,12 +131,12 @@ func (m Model) handleCommandPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) startCommandPicker(kind, query string, persist bool) Model {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	query = strings.TrimSpace(query)
-	m.commandPickerActive = true
-	m.commandPickerKind = kind
-	m.commandPickerPersist = persist
-	m.commandPickerQuery = query
-	m.commandPickerIndex = 0
-	m.commandPickerAll = m.commandPickerBaseItems(kind)
+	m.commandPicker.active = true
+	m.commandPicker.kind = kind
+	m.commandPicker.persist = persist
+	m.commandPicker.query = query
+	m.commandPicker.index = 0
+	m.commandPicker.all = m.commandPickerBaseItems(kind)
 	m.syncInputWithCommandPicker()
 	label := strings.TrimSpace(kind)
 	if label != "" {
@@ -150,22 +150,22 @@ func (m Model) startCommandPicker(kind, query string, persist bool) Model {
 }
 
 func (m Model) closeCommandPicker() Model {
-	m.commandPickerActive = false
-	m.commandPickerKind = ""
-	m.commandPickerQuery = ""
-	m.commandPickerIndex = 0
-	m.commandPickerPersist = false
-	m.commandPickerAll = nil
+	m.commandPicker.active = false
+	m.commandPicker.kind = ""
+	m.commandPicker.query = ""
+	m.commandPicker.index = 0
+	m.commandPicker.persist = false
+	m.commandPicker.all = nil
 	m.setChatInput("")
 	return m
 }
 
 func (m *Model) syncInputWithCommandPicker() {
-	if !m.commandPickerActive {
+	if !m.commandPicker.active {
 		return
 	}
-	query := strings.TrimSpace(m.commandPickerQuery)
-	switch strings.ToLower(strings.TrimSpace(m.commandPickerKind)) {
+	query := strings.TrimSpace(m.commandPicker.query)
+	switch strings.ToLower(strings.TrimSpace(m.commandPicker.kind)) {
 	case "provider":
 		if query == "" {
 			m.setChatInput("/provider ")
@@ -225,11 +225,11 @@ func (m Model) commandPickerBaseItems(kind string) []commandPickerItem {
 }
 
 func (m Model) filteredCommandPickerItems() []commandPickerItem {
-	items := append([]commandPickerItem(nil), m.commandPickerAll...)
+	items := append([]commandPickerItem(nil), m.commandPicker.all...)
 	if len(items) == 0 {
 		return nil
 	}
-	query := strings.ToLower(strings.TrimSpace(m.commandPickerQuery))
+	query := strings.ToLower(strings.TrimSpace(m.commandPicker.query))
 	if query == "" {
 		return items
 	}
@@ -334,12 +334,12 @@ func (m Model) toolPickerItems() []commandPickerItem {
 }
 
 func (m Model) readPickerItems() []commandPickerItem {
-	if len(m.files) == 0 {
+	if len(m.filesView.entries) == 0 {
 		return nil
 	}
-	items := make([]commandPickerItem, 0, len(m.files))
+	items := make([]commandPickerItem, 0, len(m.filesView.entries))
 	target := strings.TrimSpace(m.toolTargetFile())
-	for _, path := range m.files {
+	for _, path := range m.filesView.entries {
 		path = filepath.ToSlash(strings.TrimSpace(path))
 		if path == "" {
 			continue
@@ -348,7 +348,7 @@ func (m Model) readPickerItems() []commandPickerItem {
 		if strings.EqualFold(path, target) {
 			metaParts = append(metaParts, "current")
 		}
-		if strings.EqualFold(path, strings.TrimSpace(m.pinnedFile)) {
+		if strings.EqualFold(path, strings.TrimSpace(m.filesView.pinned)) {
 			metaParts = append(metaParts, "pinned")
 		}
 		items = append(items, commandPickerItem{
@@ -439,7 +439,7 @@ func (m Model) applyCommandPickerProvider(selected string) (tea.Model, tea.Cmd) 
 	}
 	model := m.defaultModelForProvider(selected)
 	m = m.applyProviderModelSelection(selected, model)
-	persist := m.commandPickerPersist
+	persist := m.commandPicker.persist
 	m = m.closeCommandPicker()
 	if persist {
 		path, err := m.persistProviderModelProjectConfig(selected, model)
@@ -462,7 +462,7 @@ func (m Model) applyCommandPickerModel(selected string) (tea.Model, tea.Cmd) {
 	}
 	providerName := m.currentProvider()
 	m = m.applyProviderModelSelection(providerName, selected)
-	persist := m.commandPickerPersist
+	persist := m.commandPicker.persist
 	m = m.closeCommandPicker()
 	if persist {
 		path, err := m.persistProviderModelProjectConfig(providerName, selected)
@@ -483,7 +483,7 @@ func (m Model) applyCommandPickerPreparedInput(selected string) (tea.Model, tea.
 		m.notice = "Selection is empty."
 		return m, nil
 	}
-	kind := strings.ToLower(strings.TrimSpace(m.commandPickerKind))
+	kind := strings.ToLower(strings.TrimSpace(m.commandPicker.kind))
 	switch kind {
 	case "tool":
 		m = m.closeCommandPicker()

@@ -102,11 +102,11 @@ func TestRenderPlansViewEmptyState(t *testing.T) {
 
 func TestRenderPlansViewNumberedSplit(t *testing.T) {
 	m := newPlansTestModel()
-	m.plansQuery = "do three things: 1) survey the tool registry 2) map the provider router 3) document context manager"
+	m.plans.query = "do three things: 1) survey the tool registry 2) map the provider router 3) document context manager"
 	m = m.runPlansSplit()
 	out := m.renderPlansView(160)
-	if m.plansPlan == nil || len(m.plansPlan.Subtasks) != 3 {
-		t.Fatalf("expected 3 subtasks, got plan=%+v", m.plansPlan)
+	if m.plans.plan == nil || len(m.plans.plan.Subtasks) != 3 {
+		t.Fatalf("expected 3 subtasks, got plan=%+v", m.plans.plan)
 	}
 	if !strings.Contains(out, "3 subtasks") {
 		t.Fatalf("summary line missing: %s", out)
@@ -124,7 +124,7 @@ func TestRenderPlansViewNumberedSplit(t *testing.T) {
 
 func TestRenderPlansViewStagesAreSerial(t *testing.T) {
 	m := newPlansTestModel()
-	m.plansQuery = "first run the tests, then inspect the failures, then write the fix"
+	m.plans.query = "first run the tests, then inspect the failures, then write the fix"
 	m = m.runPlansSplit()
 	out := m.renderPlansView(140)
 	if !strings.Contains(out, "serial") {
@@ -140,7 +140,7 @@ func TestRenderPlansViewStagesAreSerial(t *testing.T) {
 
 func TestRenderPlansViewSingleTaskBanner(t *testing.T) {
 	m := newPlansTestModel()
-	m.plansQuery = "fix the parser"
+	m.plans.query = "fix the parser"
 	m = m.runPlansSplit()
 	out := m.renderPlansView(100)
 	if !strings.Contains(out, "single") {
@@ -150,12 +150,12 @@ func TestRenderPlansViewSingleTaskBanner(t *testing.T) {
 
 func TestRunPlansSplitRejectsEmpty(t *testing.T) {
 	m := newPlansTestModel()
-	m.plansQuery = "   "
+	m.plans.query = "   "
 	m = m.runPlansSplit()
-	if m.plansPlan != nil {
+	if m.plans.plan != nil {
 		t.Fatalf("empty query should not produce a plan")
 	}
-	if m.plansErr == "" {
+	if m.plans.err == "" {
 		t.Fatalf("empty query should set an error")
 	}
 }
@@ -165,7 +165,7 @@ func TestPlansEditFlowCommitsOnEnter(t *testing.T) {
 
 	m2, _ := m.handlePlansKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
 	m = m2.(Model)
-	if !m.plansInputActive {
+	if !m.plans.inputActive {
 		t.Fatalf("e should activate input mode")
 	}
 
@@ -173,16 +173,16 @@ func TestPlansEditFlowCommitsOnEnter(t *testing.T) {
 		m2, _ = m.handlePlansKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = m2.(Model)
 	}
-	if m.plansQuery != "fix A" {
-		t.Fatalf("typed query mismatch: %q", m.plansQuery)
+	if m.plans.query != "fix A" {
+		t.Fatalf("typed query mismatch: %q", m.plans.query)
 	}
 
 	m2, _ = m.handlePlansKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = m2.(Model)
-	if m.plansInputActive {
+	if m.plans.inputActive {
 		t.Fatalf("enter should exit input mode")
 	}
-	if m.plansPlan == nil {
+	if m.plans.plan == nil {
 		t.Fatalf("enter should run the split")
 	}
 }
@@ -193,64 +193,64 @@ func TestPlansEditEscCancels(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.handlePlansKey(tea.KeyMsg{Type: tea.KeyEsc})
 	m = m2.(Model)
-	if m.plansInputActive {
+	if m.plans.inputActive {
 		t.Fatalf("esc should exit input mode")
 	}
-	if m.plansPlan != nil {
+	if m.plans.plan != nil {
 		t.Fatalf("esc should not trigger a split")
 	}
 }
 
 func TestPlansEditBackspaceTrims(t *testing.T) {
 	m := newPlansTestModel()
-	m.plansQuery = "abc"
-	m.plansInputActive = true
+	m.plans.query = "abc"
+	m.plans.inputActive = true
 	m2, _ := m.handlePlansKey(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = m2.(Model)
-	if m.plansQuery != "ab" {
-		t.Fatalf("backspace should trim last rune, got %q", m.plansQuery)
+	if m.plans.query != "ab" {
+		t.Fatalf("backspace should trim last rune, got %q", m.plans.query)
 	}
 }
 
 func TestPlansScrollBindings(t *testing.T) {
 	m := newPlansTestModel()
-	m.plansQuery = "survey engine.go, and map the router, and document the manager"
+	m.plans.query = "survey engine.go, and map the router, and document the manager"
 	m = m.runPlansSplit()
-	if m.plansPlan == nil || len(m.plansPlan.Subtasks) < 2 {
-		t.Fatalf("sanity: multi-conjunction should split, got %+v", m.plansPlan)
+	if m.plans.plan == nil || len(m.plans.plan.Subtasks) < 2 {
+		t.Fatalf("sanity: multi-conjunction should split, got %+v", m.plans.plan)
 	}
 
 	m2, _ := m.handlePlansKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	m = m2.(Model)
-	if m.plansScroll != 1 {
-		t.Fatalf("j should advance scroll, got %d", m.plansScroll)
+	if m.plans.scroll != 1 {
+		t.Fatalf("j should advance scroll, got %d", m.plans.scroll)
 	}
 	m2, _ = m.handlePlansKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
 	m = m2.(Model)
-	if m.plansScroll != len(m.plansPlan.Subtasks)-1 {
-		t.Fatalf("G should jump to last, got %d", m.plansScroll)
+	if m.plans.scroll != len(m.plans.plan.Subtasks)-1 {
+		t.Fatalf("G should jump to last, got %d", m.plans.scroll)
 	}
 	m2, _ = m.handlePlansKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
 	m = m2.(Model)
-	if m.plansScroll != 0 {
-		t.Fatalf("g should jump to top, got %d", m.plansScroll)
+	if m.plans.scroll != 0 {
+		t.Fatalf("g should jump to top, got %d", m.plans.scroll)
 	}
 }
 
 func TestPlansClearResetsAll(t *testing.T) {
 	m := newPlansTestModel()
-	m.plansQuery = "something"
+	m.plans.query = "something"
 	m = m.runPlansSplit()
-	m.plansScroll = 0
+	m.plans.scroll = 0
 	m2, _ := m.handlePlansKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	m = m2.(Model)
-	if m.plansQuery != "" {
-		t.Fatalf("c should clear query, got %q", m.plansQuery)
+	if m.plans.query != "" {
+		t.Fatalf("c should clear query, got %q", m.plans.query)
 	}
-	if m.plansPlan != nil {
+	if m.plans.plan != nil {
 		t.Fatalf("c should drop the plan")
 	}
-	if m.plansErr != "" {
+	if m.plans.err != "" {
 		t.Fatalf("c should clear the error")
 	}
 }

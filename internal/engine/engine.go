@@ -29,6 +29,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -256,18 +257,50 @@ func (e *Engine) Shutdown() {
 		cancel()
 	}
 
+	// Persist and close in stage order. We deliberately keep this method
+	// void because main.go's `defer eng.Shutdown()` shouldn't have to
+	// branch on an error — but we can't silently swallow failures here
+	// either. Disk-full / permission-denied during conversation save or
+	// memory persist used to vanish into _ = err. Now each stage that
+	// fails publishes an event AND prints to stderr so the user sees the
+	// data-loss before the process exits.
 	if e.Conversation != nil {
-		_ = e.Conversation.SaveActive()
+		if err := e.Conversation.SaveActive(); err != nil {
+			e.reportShutdownError("save_conversation", err)
+		}
 	}
 	if e.Memory != nil {
-		_ = e.Memory.Persist()
+		if err := e.Memory.Persist(); err != nil {
+			e.reportShutdownError("persist_memory", err)
+		}
 	}
 	if e.Storage != nil {
-		_ = e.Storage.Close()
+		if err := e.Storage.Close(); err != nil {
+			e.reportShutdownError("close_storage", err)
+		}
 	}
 
 	e.setState(StateStopped)
 	e.EventBus.Publish(Event{Type: "engine:stopped", Source: "engine"})
+}
+
+// reportShutdownError surfaces a Shutdown-stage failure on both the
+// EventBus (so live observers like the TUI and web /ws stream see it)
+// and stderr (so the operator sees it after the process exits, even if
+// the bus is no longer being read by then).
+func (e *Engine) reportShutdownError(stage string, err error) {
+	if err == nil {
+		return
+	}
+	e.EventBus.Publish(Event{
+		Type:   "engine:shutdown_error",
+		Source: "engine",
+		Payload: map[string]any{
+			"stage": stage,
+			"error": err.Error(),
+		},
+	})
+	fmt.Fprintf(os.Stderr, "dfmc: shutdown %s failed: %v\n", stage, err)
 }
 
 func (e *Engine) State() EngineState {

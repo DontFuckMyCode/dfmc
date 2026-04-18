@@ -49,7 +49,7 @@ func TestCompactTranscript_CollapsesOlderLines(t *testing.T) {
 	if len(out) != 4 {
 		t.Fatalf("output length=%d, want 4", len(out))
 	}
-	if !strings.EqualFold(out[0].Role, "system") {
+	if !out[0].Role.Eq(chatRoleSystem) {
 		t.Fatalf("first line should be a system summary, got role=%q", out[0].Role)
 	}
 	if !strings.Contains(out[0].Content, "user") || !strings.Contains(out[0].Content, "assistant") || !strings.Contains(out[0].Content, "tool") {
@@ -105,7 +105,7 @@ func TestCompactTranscript_ZeroKeepTreatedAsOne(t *testing.T) {
 // actually mutates the model.
 func TestSlashCompact_CollapsesTranscriptAndLeavesSummary(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = []chatLine{
+	m.chat.transcript = []chatLine{
 		mkLine("user", "q1"),
 		mkLine("assistant", "a1"),
 		mkLine("user", "q2"),
@@ -123,11 +123,11 @@ func TestSlashCompact_CollapsesTranscriptAndLeavesSummary(t *testing.T) {
 	nm := next.(Model)
 	// Expected: summary + last 4 lines + a fresh system notice appended
 	// by the slash handler = 6 lines total.
-	if got := len(nm.transcript); got != 6 {
+	if got := len(nm.chat.transcript); got != 6 {
 		t.Fatalf("/compact 4 should leave 6 lines (summary + 4 tail + notice); got %d", got)
 	}
-	if !strings.EqualFold(nm.transcript[0].Role, "system") {
-		t.Fatalf("first line after compact should be summary; got role=%q", nm.transcript[0].Role)
+	if !nm.chat.transcript[0].Role.Eq(chatRoleSystem) {
+		t.Fatalf("first line after compact should be summary; got role=%q", nm.chat.transcript[0].Role)
 	}
 	if !strings.Contains(nm.notice, "Compacted") {
 		t.Fatalf("notice should confirm compaction; got %q", nm.notice)
@@ -136,7 +136,7 @@ func TestSlashCompact_CollapsesTranscriptAndLeavesSummary(t *testing.T) {
 
 func TestSlashCompact_NothingToCompactOnShortTranscript(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = []chatLine{
+	m.chat.transcript = []chatLine{
 		mkLine("user", "hi"),
 		mkLine("assistant", "hello"),
 	}
@@ -151,7 +151,7 @@ func TestSlashCompact_NothingToCompactOnShortTranscript(t *testing.T) {
 
 func TestSlashCompact_BlockedWhileStreaming(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.transcript = []chatLine{
+	m.chat.transcript = []chatLine{
 		mkLine("user", "q1"),
 		mkLine("assistant", "a1"),
 		mkLine("user", "q2"),
@@ -161,21 +161,21 @@ func TestSlashCompact_BlockedWhileStreaming(t *testing.T) {
 		mkLine("user", "q4"),
 		mkLine("assistant", "a4"),
 	}
-	m.sending = true
+	m.chat.sending = true
 
 	next, _, handled := m.executeChatCommand("/compact")
 	if !handled {
 		t.Fatalf("/compact must always be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(strings.ToLower(last), "streaming") {
 		t.Fatalf("guard message should mention streaming, got:\n%s", last)
 	}
 	// Actual compaction must not have happened — the four original user turns must still be there.
 	userSeen := 0
-	for _, ln := range nm.transcript {
-		if strings.EqualFold(ln.Role, "user") {
+	for _, ln := range nm.chat.transcript {
+		if ln.Role.Eq(chatRoleUser) {
 			userSeen++
 		}
 	}

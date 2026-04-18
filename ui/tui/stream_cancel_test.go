@@ -18,7 +18,7 @@ import (
 func TestStreamCancel_SetsFlagAndClearsCancel(t *testing.T) {
 	m := Model{}
 	fired := false
-	m.streamCancel = func() { fired = true }
+	m.chat.streamCancel = func() { fired = true }
 
 	if !m.cancelActiveStream() {
 		t.Fatal("cancelActiveStream should report true when a cancel fires")
@@ -26,10 +26,10 @@ func TestStreamCancel_SetsFlagAndClearsCancel(t *testing.T) {
 	if !fired {
 		t.Fatal("cancelActiveStream must invoke the stored CancelFunc")
 	}
-	if m.streamCancel != nil {
+	if m.chat.streamCancel != nil {
 		t.Fatal("streamCancel must be cleared after firing to avoid stale double-cancel")
 	}
-	if !m.userCancelledStream {
+	if !m.chat.userCancelledStream {
 		t.Fatal("userCancelledStream must be set so chatErrMsg can tailor its message")
 	}
 }
@@ -39,7 +39,7 @@ func TestStreamCancel_NoOpWhenNothingStreaming(t *testing.T) {
 	if m.cancelActiveStream() {
 		t.Fatal("cancelActiveStream with no active stream should return false")
 	}
-	if m.userCancelledStream {
+	if m.chat.userCancelledStream {
 		t.Fatal("userCancelledStream must stay false when no cancel fired")
 	}
 }
@@ -47,16 +47,16 @@ func TestStreamCancel_NoOpWhenNothingStreaming(t *testing.T) {
 func TestChatErrMsg_UserCancelEmitsFriendlyNoticeAndMarker(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
-	m.sending = true
-	m.userCancelledStream = true
+	m.chat.sending = true
+	m.chat.userCancelledStream = true
 
 	next, _ := m.Update(chatErrMsg{err: context.Canceled})
 	nm := next.(Model)
 
-	if nm.sending {
+	if nm.chat.sending {
 		t.Fatal("sending flag must be cleared after chatErrMsg")
 	}
-	if nm.userCancelledStream {
+	if nm.chat.userCancelledStream {
 		t.Fatal("userCancelledStream must be reset after the message is consumed")
 	}
 	if !strings.Contains(strings.ToLower(nm.notice), "cancel") {
@@ -67,10 +67,10 @@ func TestChatErrMsg_UserCancelEmitsFriendlyNoticeAndMarker(t *testing.T) {
 	}
 	// Transcript must carry an unambiguous marker so a user scrolling
 	// back can tell where the turn was aborted.
-	if len(nm.transcript) == 0 {
+	if len(nm.chat.transcript) == 0 {
 		t.Fatal("transcript should gain a cancellation marker line")
 	}
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(strings.ToLower(last), "cancel") {
 		t.Fatalf("expected transcript marker to mention cancel, got: %q", last)
 	}
@@ -82,7 +82,7 @@ func TestChatErrMsg_ContextCanceledTreatedAsUserCancel(t *testing.T) {
 	// "chat: context canceled" — degrade to the friendly message.
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
-	m.sending = true
+	m.chat.sending = true
 
 	next, _ := m.Update(chatErrMsg{err: errors.New("wrapped: context canceled")})
 	nm := next.(Model)
@@ -100,7 +100,7 @@ func TestChatErrMsg_ProviderErrorKeepsOriginalWording(t *testing.T) {
 	// mistaken for a cancel. The user needs to see the actual reason.
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
-	m.sending = true
+	m.chat.sending = true
 
 	next, _ := m.Update(chatErrMsg{err: errors.New("401 unauthorized")})
 	nm := next.(Model)
@@ -119,9 +119,9 @@ func TestChatErrMsg_ProviderErrorKeepsOriginalWording(t *testing.T) {
 func TestEsc_DuringStream_FiresCancel(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
-	m.sending = true
+	m.chat.sending = true
 	fired := false
-	m.streamCancel = func() { fired = true }
+	m.chat.streamCancel = func() { fired = true }
 
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 

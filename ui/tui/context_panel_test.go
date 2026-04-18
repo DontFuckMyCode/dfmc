@@ -139,10 +139,10 @@ func TestRenderContextViewEmptyState(t *testing.T) {
 
 func TestRenderContextViewWithPreview(t *testing.T) {
 	m := newContextTestModel()
-	m.contextQuery = "review the router"
+	m.contextPanel.query = "review the router"
 	info := sampleContextBudgetInfo()
-	m.contextPreview = &info
-	m.contextHints = []engine.ContextRecommendation{
+	m.contextPanel.preview = &info
+	m.contextPanel.hints = []engine.ContextRecommendation{
 		{Severity: "warn", Code: "TIGHT", Message: "reserve is 25% of window"},
 	}
 	out := m.renderContextView(160)
@@ -162,9 +162,9 @@ func TestRenderContextViewWithPreview(t *testing.T) {
 
 func TestRenderContextViewNoHintsCopy(t *testing.T) {
 	m := newContextTestModel()
-	m.contextQuery = "review"
+	m.contextPanel.query = "review"
 	info := sampleContextBudgetInfo()
-	m.contextPreview = &info
+	m.contextPanel.preview = &info
 	out := m.renderContextView(140)
 	if !strings.Contains(out, "hints: none") {
 		t.Fatalf("no-hints copy missing: %s", out)
@@ -173,7 +173,7 @@ func TestRenderContextViewNoHintsCopy(t *testing.T) {
 
 func TestRenderContextViewErrorBanner(t *testing.T) {
 	m := newContextTestModel()
-	m.contextErr = "engine not ready"
+	m.contextPanel.err = "engine not ready"
 	out := m.renderContextView(80)
 	if !strings.Contains(out, "error · engine not ready") {
 		t.Fatalf("error banner missing: %s", out)
@@ -182,26 +182,26 @@ func TestRenderContextViewErrorBanner(t *testing.T) {
 
 func TestRunContextPreviewRejectsEmpty(t *testing.T) {
 	m := newContextTestModel()
-	m.contextQuery = "   "
+	m.contextPanel.query = "   "
 	m = m.runContextPreview()
-	if m.contextPreview != nil {
+	if m.contextPanel.preview != nil {
 		t.Fatalf("empty query should not produce a preview")
 	}
-	if m.contextErr == "" {
+	if m.contextPanel.err == "" {
 		t.Fatalf("empty query should set an error")
 	}
 }
 
 func TestRunContextPreviewRequiresEngine(t *testing.T) {
 	m := newContextTestModel()
-	m.contextQuery = "something"
+	m.contextPanel.query = "something"
 	m.eng = nil
 	m = m.runContextPreview()
-	if m.contextPreview != nil {
+	if m.contextPanel.preview != nil {
 		t.Fatalf("nil engine should not produce a preview")
 	}
-	if !strings.Contains(m.contextErr, "engine") {
-		t.Fatalf("nil engine should set engine-related error, got %q", m.contextErr)
+	if !strings.Contains(m.contextPanel.err, "engine") {
+		t.Fatalf("nil engine should set engine-related error, got %q", m.contextPanel.err)
 	}
 }
 
@@ -210,7 +210,7 @@ func TestContextEditFlowCommitsOnEnter(t *testing.T) {
 
 	m2, _ := m.handleContextKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
 	m = m2.(Model)
-	if !m.contextInputActive {
+	if !m.contextPanel.inputActive {
 		t.Fatalf("e should activate input mode")
 	}
 
@@ -218,17 +218,17 @@ func TestContextEditFlowCommitsOnEnter(t *testing.T) {
 		m2, _ = m.handleContextKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = m2.(Model)
 	}
-	if m.contextQuery != "hello" {
-		t.Fatalf("typed query mismatch: %q", m.contextQuery)
+	if m.contextPanel.query != "hello" {
+		t.Fatalf("typed query mismatch: %q", m.contextPanel.query)
 	}
 
 	m2, _ = m.handleContextKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = m2.(Model)
-	if m.contextInputActive {
+	if m.contextPanel.inputActive {
 		t.Fatalf("enter should exit input mode")
 	}
 	// eng is nil — preview stays nil, error set instead.
-	if m.contextErr == "" {
+	if m.contextPanel.err == "" {
 		t.Fatalf("nil engine path should surface an error")
 	}
 }
@@ -239,44 +239,44 @@ func TestContextEditEscCancels(t *testing.T) {
 	m = m2.(Model)
 	m2, _ = m.handleContextKey(tea.KeyMsg{Type: tea.KeyEsc})
 	m = m2.(Model)
-	if m.contextInputActive {
+	if m.contextPanel.inputActive {
 		t.Fatalf("esc should exit input mode")
 	}
-	if m.contextPreview != nil {
+	if m.contextPanel.preview != nil {
 		t.Fatalf("esc should not trigger a preview")
 	}
 }
 
 func TestContextEditBackspaceTrims(t *testing.T) {
 	m := newContextTestModel()
-	m.contextQuery = "abc"
-	m.contextInputActive = true
+	m.contextPanel.query = "abc"
+	m.contextPanel.inputActive = true
 	m2, _ := m.handleContextKey(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = m2.(Model)
-	if m.contextQuery != "ab" {
-		t.Fatalf("backspace should trim last rune, got %q", m.contextQuery)
+	if m.contextPanel.query != "ab" {
+		t.Fatalf("backspace should trim last rune, got %q", m.contextPanel.query)
 	}
 }
 
 func TestContextClearResetsAll(t *testing.T) {
 	m := newContextTestModel()
-	m.contextQuery = "something"
+	m.contextPanel.query = "something"
 	info := sampleContextBudgetInfo()
-	m.contextPreview = &info
-	m.contextHints = []engine.ContextRecommendation{{Severity: "info", Code: "X", Message: "Y"}}
-	m.contextErr = "stale"
+	m.contextPanel.preview = &info
+	m.contextPanel.hints = []engine.ContextRecommendation{{Severity: "info", Code: "X", Message: "Y"}}
+	m.contextPanel.err = "stale"
 	m2, _ := m.handleContextKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	m = m2.(Model)
-	if m.contextQuery != "" {
-		t.Fatalf("c should clear query, got %q", m.contextQuery)
+	if m.contextPanel.query != "" {
+		t.Fatalf("c should clear query, got %q", m.contextPanel.query)
 	}
-	if m.contextPreview != nil {
+	if m.contextPanel.preview != nil {
 		t.Fatalf("c should drop the preview")
 	}
-	if m.contextHints != nil {
+	if m.contextPanel.hints != nil {
 		t.Fatalf("c should drop hints")
 	}
-	if m.contextErr != "" {
+	if m.contextPanel.err != "" {
 		t.Fatalf("c should clear error")
 	}
 }

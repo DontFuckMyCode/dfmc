@@ -25,15 +25,51 @@ func newTestStdinApprover(stdin io.Reader, stdout io.Writer, autoYes, autoNo boo
 	}
 }
 
-func TestStdinApprover_AutoYes(t *testing.T) {
+func TestStdinApprover_AutoYes_NonDestructive(t *testing.T) {
+	// DFMC_APPROVE=yes alone auto-approves only read-only tools; write/shell
+	// require the second knob (see TestStdinApprover_AutoYes_DestructiveDeniedWithoutSecondKnob).
 	var out bytes.Buffer
 	ap := newTestStdinApprover(strings.NewReader(""), &out, true, false)
-	decision := ap.RequestApproval(context.Background(), engine.ApprovalRequest{Tool: "write_file"})
+	decision := ap.RequestApproval(context.Background(), engine.ApprovalRequest{Tool: "read_file"})
 	if !decision.Approved {
-		t.Fatalf("DFMC_APPROVE=yes should auto-approve, got %+v", decision)
+		t.Fatalf("DFMC_APPROVE=yes should auto-approve read_file, got %+v", decision)
 	}
 	if out.Len() != 0 {
 		t.Fatalf("auto-yes path should not prompt, got output: %q", out.String())
+	}
+}
+
+// TestStdinApprover_AutoYes_DestructiveDeniedWithoutSecondKnob pins the
+// two-knob gate: a leaked DFMC_APPROVE=yes in CI must not be enough to
+// silently grant write/shell access. Operators have to also set
+// DFMC_APPROVE_DESTRUCTIVE=yes — the deny reason explains how.
+func TestStdinApprover_AutoYes_DestructiveDeniedWithoutSecondKnob(t *testing.T) {
+	var out bytes.Buffer
+	ap := newTestStdinApprover(strings.NewReader(""), &out, true, false)
+	for _, tool := range []string{"write_file", "edit_file", "apply_patch", "run_command", "delegate_task"} {
+		decision := ap.RequestApproval(context.Background(), engine.ApprovalRequest{Tool: tool})
+		if decision.Approved {
+			t.Fatalf("DFMC_APPROVE=yes must NOT auto-approve %s without DFMC_APPROVE_DESTRUCTIVE=yes; got %+v", tool, decision)
+		}
+		if !strings.Contains(decision.Reason, "DFMC_APPROVE_DESTRUCTIVE") {
+			t.Fatalf("deny reason for %s should explain the second knob, got %q", tool, decision.Reason)
+		}
+	}
+}
+
+// TestStdinApprover_AutoYes_DestructiveAllowedWithSecondKnob pins the
+// other half: with both knobs set, every tool — including writes/shell
+// — is auto-approved. This is the explicit "I know what I'm doing"
+// configuration.
+func TestStdinApprover_AutoYes_DestructiveAllowedWithSecondKnob(t *testing.T) {
+	var out bytes.Buffer
+	ap := newTestStdinApprover(strings.NewReader(""), &out, true, false)
+	ap.autoYesDestructive = true
+	for _, tool := range []string{"write_file", "run_command"} {
+		decision := ap.RequestApproval(context.Background(), engine.ApprovalRequest{Tool: tool})
+		if !decision.Approved {
+			t.Fatalf("both knobs set must auto-approve %s, got %+v", tool, decision)
+		}
 	}
 }
 

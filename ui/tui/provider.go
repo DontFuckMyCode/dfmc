@@ -70,7 +70,7 @@ func (m Model) snapSetupCursorToActive() Model {
 	}
 	for i, name := range providers {
 		if strings.EqualFold(name, active) {
-			m.setupIndex = i
+			m.setupWizard.index = i
 			return m
 		}
 	}

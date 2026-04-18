@@ -11,9 +11,9 @@ import (
 
 func newMemoryTestModel() Model {
 	return Model{
-		tabs:       []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory"},
-		activeTab:  7,
-		memoryTier: memoryTierAll,
+		tabs:      []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory"},
+		activeTab: 7,
+		memory:    memoryPanelState{tier: memoryTierAll},
 	}
 }
 
@@ -89,33 +89,33 @@ func TestNextMemoryTierCycles(t *testing.T) {
 
 func TestMemoryScrollBindings(t *testing.T) {
 	m := newMemoryTestModel()
-	m.memoryEntries = sampleMemoryEntries()
+	m.memory.entries = sampleMemoryEntries()
 
 	m2, _ := m.handleMemoryKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	m = m2.(Model)
-	if m.memoryScroll != 1 {
-		t.Fatalf("j should advance scroll, got %d", m.memoryScroll)
+	if m.memory.scroll != 1 {
+		t.Fatalf("j should advance scroll, got %d", m.memory.scroll)
 	}
 	m2, _ = m.handleMemoryKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
 	m = m2.(Model)
-	if m.memoryScroll != len(m.memoryEntries)-1 {
-		t.Fatalf("G should jump to last, got %d", m.memoryScroll)
+	if m.memory.scroll != len(m.memory.entries)-1 {
+		t.Fatalf("G should jump to last, got %d", m.memory.scroll)
 	}
 	m2, _ = m.handleMemoryKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
 	m = m2.(Model)
-	if m.memoryScroll != 0 {
-		t.Fatalf("g should jump to top, got %d", m.memoryScroll)
+	if m.memory.scroll != 0 {
+		t.Fatalf("g should jump to top, got %d", m.memory.scroll)
 	}
 }
 
 func TestMemorySearchInputFlow(t *testing.T) {
 	m := newMemoryTestModel()
-	m.memoryEntries = sampleMemoryEntries()
+	m.memory.entries = sampleMemoryEntries()
 
 	// `/` enters search mode.
 	m2, _ := m.handleMemoryKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	m = m2.(Model)
-	if !m.memorySearchActive {
+	if !m.memory.searchActive {
 		t.Fatalf("search mode should activate on /")
 	}
 
@@ -124,32 +124,32 @@ func TestMemorySearchInputFlow(t *testing.T) {
 		m2, _ = m.handleMemoryKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = m2.(Model)
 	}
-	if m.memoryQuery != "auth" {
-		t.Fatalf("want query=auth, got %q", m.memoryQuery)
+	if m.memory.query != "auth" {
+		t.Fatalf("want query=auth, got %q", m.memory.query)
 	}
 
 	// Backspace trims one rune.
 	m2, _ = m.handleMemoryKey(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = m2.(Model)
-	if m.memoryQuery != "aut" {
-		t.Fatalf("backspace should trim, got %q", m.memoryQuery)
+	if m.memory.query != "aut" {
+		t.Fatalf("backspace should trim, got %q", m.memory.query)
 	}
 
 	// Enter commits; search mode exits.
 	m2, _ = m.handleMemoryKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = m2.(Model)
-	if m.memorySearchActive {
+	if m.memory.searchActive {
 		t.Fatalf("enter should exit search mode")
 	}
-	if m.memoryScroll != 0 {
-		t.Fatalf("enter should reset scroll, got %d", m.memoryScroll)
+	if m.memory.scroll != 0 {
+		t.Fatalf("enter should reset scroll, got %d", m.memory.scroll)
 	}
 
 	// `c` clears the committed query.
 	m2, _ = m.handleMemoryKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	m = m2.(Model)
-	if m.memoryQuery != "" {
-		t.Fatalf("c should clear query, got %q", m.memoryQuery)
+	if m.memory.query != "" {
+		t.Fatalf("c should clear query, got %q", m.memory.query)
 	}
 }
 
@@ -166,7 +166,7 @@ func TestRenderMemoryViewEmptyState(t *testing.T) {
 
 func TestRenderMemoryViewWithEntries(t *testing.T) {
 	m := newMemoryTestModel()
-	m.memoryEntries = sampleMemoryEntries()
+	m.memory.entries = sampleMemoryEntries()
 	out := m.renderMemoryView(100)
 	if !strings.Contains(out, "3 shown · 3 loaded") {
 		t.Fatalf("footer count wrong:\n%s", out)
@@ -178,7 +178,7 @@ func TestRenderMemoryViewWithEntries(t *testing.T) {
 
 func TestRenderMemoryViewErrorBanner(t *testing.T) {
 	m := newMemoryTestModel()
-	m.memoryErr = "db locked"
+	m.memory.err = "db locked"
 	out := m.renderMemoryView(80)
 	if !strings.Contains(out, "error · db locked") {
 		t.Fatalf("error banner missing:\n%s", out)
@@ -189,10 +189,10 @@ func TestMemoryTierToggleRequestsReload(t *testing.T) {
 	m := newMemoryTestModel()
 	m2, cmd := m.handleMemoryKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
 	m = m2.(Model)
-	if m.memoryTier != string(types.MemoryEpisodic) {
-		t.Fatalf("first toggle should land on episodic, got %q", m.memoryTier)
+	if m.memory.tier != string(types.MemoryEpisodic) {
+		t.Fatalf("first toggle should land on episodic, got %q", m.memory.tier)
 	}
-	if !m.memoryLoading {
+	if !m.memory.loading {
 		t.Fatalf("toggle should request reload (set loading)")
 	}
 	// cmd is nil when eng is nil — we're asserting the intent, not the

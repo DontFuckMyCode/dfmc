@@ -1,5 +1,10 @@
 package commands
 
+import (
+	"fmt"
+	"os"
+)
+
 // defaults.go — the shipped command catalog. Every DFMC verb is described
 // exactly once here and then consulted by the CLI help renderer, the TUI
 // `/help` output, and the web `/api/v1/commands` discovery endpoint.
@@ -16,12 +21,18 @@ package commands
 //   * Aliases never include the canonical name; Register() rejects dupes.
 
 // DefaultRegistry returns a Registry pre-populated with the complete shipped
-// command catalog. Panics on internal registration errors (those are
-// programmer bugs in this file, not a user-visible condition).
+// command catalog. A duplicate name or alias collision in the catalog is a
+// programmer bug — but it must not kill the binary. The degraded-startup
+// commands in main.go (help, version, doctor, completion, man) need to keep
+// running even when something is wrong with the catalog so the operator can
+// diagnose. We log loudly to stderr and skip the offending entry; CI catches
+// this via TestDefaultRegistry_BootsWithoutPanic + TestDefaultRegistry_NoDupes.
 func DefaultRegistry() *Registry {
 	r := NewRegistry()
 	for _, cmd := range defaultCommands() {
-		r.MustRegister(cmd)
+		if err := r.Register(cmd); err != nil {
+			fmt.Fprintf(os.Stderr, "dfmc: command catalog: skipping %q: %v\n", cmd.Name, err)
+		}
 	}
 	return r
 }

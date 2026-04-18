@@ -152,23 +152,23 @@ func (m Model) renderContextView(width int) string {
 	header := sectionHeader("⚖", "Context")
 
 	queryLine := subtleStyle.Render("query: ")
-	if strings.TrimSpace(m.contextQuery) != "" {
-		queryLine += m.contextQuery
+	if strings.TrimSpace(m.contextPanel.query) != "" {
+		queryLine += m.contextPanel.query
 	} else {
 		queryLine += subtleStyle.Render("(none — press e to enter a query)")
 	}
-	if m.contextInputActive {
+	if m.contextPanel.inputActive {
 		queryLine += subtleStyle.Render("  · typing, enter to preview")
 	}
 
 	lines := []string{header, hint, queryLine, renderDivider(width - 2)}
 
-	if m.contextErr != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.contextErr))
+	if m.contextPanel.err != "" {
+		lines = append(lines, "", warnStyle.Render("error · "+m.contextPanel.err))
 		return strings.Join(lines, "\n")
 	}
 
-	if m.contextPreview == nil {
+	if m.contextPanel.preview == nil {
 		lines = append(lines,
 			"",
 			subtleStyle.Render("Shows how DFMC would budget context for a query."),
@@ -179,11 +179,11 @@ func (m Model) renderContextView(width int) string {
 	}
 
 	lines = append(lines, "", subtleStyle.Render("budget"))
-	lines = append(lines, renderContextBudgetBlock(*m.contextPreview, width)...)
+	lines = append(lines, renderContextBudgetBlock(*m.contextPanel.preview, width)...)
 
-	if len(m.contextHints) > 0 {
+	if len(m.contextPanel.hints) > 0 {
 		lines = append(lines, "", subtleStyle.Render("hints"))
-		for _, h := range m.contextHints {
+		for _, h := range m.contextPanel.hints {
 			lines = append(lines, formatContextHintRow(h, width-2))
 		}
 	} else {
@@ -197,44 +197,44 @@ func (m Model) renderContextView(width int) string {
 // query. Pure (no goroutines) — engine.ContextBudgetPreview only reads
 // config, so we don't need a tea.Cmd.
 func (m Model) runContextPreview() Model {
-	q := strings.TrimSpace(m.contextQuery)
+	q := strings.TrimSpace(m.contextPanel.query)
 	if q == "" {
-		m.contextPreview = nil
-		m.contextHints = nil
-		m.contextErr = "query is empty"
+		m.contextPanel.preview = nil
+		m.contextPanel.hints = nil
+		m.contextPanel.err = "query is empty"
 		return m
 	}
 	if m.eng == nil {
-		m.contextPreview = nil
-		m.contextHints = nil
-		m.contextErr = "engine not ready (degraded startup)"
+		m.contextPanel.preview = nil
+		m.contextPanel.hints = nil
+		m.contextPanel.err = "engine not ready (degraded startup)"
 		return m
 	}
-	m.contextErr = ""
+	m.contextPanel.err = ""
 	preview := m.eng.ContextBudgetPreview(q)
-	m.contextPreview = &preview
-	m.contextHints = m.eng.ContextRecommendations(q)
+	m.contextPanel.preview = &preview
+	m.contextPanel.hints = m.eng.ContextRecommendations(q)
 	return m
 }
 
 func (m Model) handleContextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.contextInputActive {
+	if m.contextPanel.inputActive {
 		return m.handleContextInputKey(msg)
 	}
 	switch msg.String() {
 	case "e":
-		m.contextInputActive = true
+		m.contextPanel.inputActive = true
 		return m, nil
 	case "enter":
-		if strings.TrimSpace(m.contextQuery) != "" {
+		if strings.TrimSpace(m.contextPanel.query) != "" {
 			m = m.runContextPreview()
 		}
 		return m, nil
 	case "c":
-		m.contextQuery = ""
-		m.contextPreview = nil
-		m.contextHints = nil
-		m.contextErr = ""
+		m.contextPanel.query = ""
+		m.contextPanel.preview = nil
+		m.contextPanel.hints = nil
+		m.contextPanel.err = ""
 		return m, nil
 	}
 	return m, nil
@@ -243,19 +243,19 @@ func (m Model) handleContextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleContextInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
-		m.contextInputActive = false
+		m.contextPanel.inputActive = false
 		m = m.runContextPreview()
 		return m, nil
 	case tea.KeyEsc:
-		m.contextInputActive = false
+		m.contextPanel.inputActive = false
 		return m, nil
 	case tea.KeyBackspace:
-		if r := []rune(m.contextQuery); len(r) > 0 {
-			m.contextQuery = string(r[:len(r)-1])
+		if r := []rune(m.contextPanel.query); len(r) > 0 {
+			m.contextPanel.query = string(r[:len(r)-1])
 		}
 		return m, nil
 	case tea.KeyRunes, tea.KeySpace:
-		m.contextQuery += msg.String()
+		m.contextPanel.query += msg.String()
 		return m, nil
 	}
 	return m, nil

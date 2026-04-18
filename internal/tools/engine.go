@@ -71,6 +71,7 @@ func New(cfg config.Config) *Engine {
 	e.Register(NewGitDiffTool())
 	e.Register(NewGitBranchTool())
 	e.Register(NewGitLogTool())
+	e.Register(NewGitBlameTool())
 	e.Register(NewGitWorktreeListTool())
 	e.Register(NewGitWorktreeAddTool())
 	e.Register(NewGitWorktreeRemoveTool())

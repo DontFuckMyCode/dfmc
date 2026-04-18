@@ -955,7 +955,7 @@ type chatHeaderInfo struct {
 	// SpinnerFrame is the live spinner counter (advanced by the spinner
 	// tick at ~8fps). Renderers use it to animate streaming/agent chips
 	// and progress bars so the panel feels alive while work is in flight.
-	// Pass m.spinnerFrame.
+	// Pass m.chat.spinnerFrame.
 	SpinnerFrame int
 }
 

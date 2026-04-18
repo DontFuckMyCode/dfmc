@@ -170,7 +170,7 @@ func TestRenderChatViewUsesStarterPromptsWhenEmpty(t *testing.T) {
 func TestRenderChatViewShowsStreamingIndicatorWhileSending(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.status = engine.Status{Provider: "anthropic", Model: "claude-opus-4-6"}
-	m.sending = true
+	m.chat.sending = true
 	view := m.renderChatView(120)
 	if !strings.Contains(view, "drafting reply") && !strings.Contains(view, "streaming") {
 		t.Fatalf("streaming state should surface a phase indicator, got:\n%s", view)
@@ -186,11 +186,11 @@ func TestStarterDigitHotkeyLoadsTemplateOnEmptyChat(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model, got %T", next)
 	}
-	if mm.input != "/review" {
-		t.Fatalf("digit 1 should load /review, got %q", mm.input)
+	if mm.chat.input != "/review" {
+		t.Fatalf("digit 1 should load /review, got %q", mm.chat.input)
 	}
-	if mm.chatCursor != len([]rune("/review")) {
-		t.Fatalf("cursor should sit at end of loaded template, got %d", mm.chatCursor)
+	if mm.chat.cursor != len([]rune("/review")) {
+		t.Fatalf("cursor should sit at end of loaded template, got %d", mm.chat.cursor)
 	}
 
 	next2, _ := mm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
@@ -200,23 +200,23 @@ func TestStarterDigitHotkeyLoadsTemplateOnEmptyChat(t *testing.T) {
 	}
 	// With a non-empty composer the digit is treated as plain typed input,
 	// so it appends rather than replacing the loaded starter.
-	if mm2.input != "/review4" {
-		t.Fatalf("digit on non-empty composer should append, got %q", mm2.input)
+	if mm2.chat.input != "/review4" {
+		t.Fatalf("digit on non-empty composer should append, got %q", mm2.chat.input)
 	}
 }
 
 func TestStarterDigitHotkeyIgnoredWhenTranscriptNonEmpty(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.status = engine.Status{Provider: "anthropic", Model: "claude-opus-4-6"}
-	m.transcript = []chatLine{{Role: "user", Content: "hi"}}
+	m.chat.transcript = []chatLine{{Role: "user", Content: "hi"}}
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	mm, ok := next.(Model)
 	if !ok {
 		t.Fatalf("expected Model, got %T", next)
 	}
-	if mm.input != "1" {
-		t.Fatalf("digit should be typed literally once transcript has content, got %q", mm.input)
+	if mm.chat.input != "1" {
+		t.Fatalf("digit should be typed literally once transcript has content, got %q", mm.chat.input)
 	}
 }
 
@@ -278,11 +278,11 @@ func TestParkedEventSetsResumePromptAndEnterResumes(t *testing.T) {
 			"max_tool_steps": 25,
 		},
 	})
-	if !m.resumePromptActive {
+	if !m.ui.resumePromptActive {
 		t.Fatalf("parked event should turn resumePromptActive on")
 	}
-	if m.agentLoopMaxToolStep != 25 || m.agentLoopStep != 25 {
-		t.Fatalf("parked event should record step/max, got %d/%d", m.agentLoopStep, m.agentLoopMaxToolStep)
+	if m.agentLoop.maxToolStep != 25 || m.agentLoop.step != 25 {
+		t.Fatalf("parked event should record step/max, got %d/%d", m.agentLoop.step, m.agentLoop.maxToolStep)
 	}
 
 	// Banner must render in the tail above the input.
@@ -300,8 +300,8 @@ func TestParkedEventSetsResumePromptAndEnterResumes(t *testing.T) {
 func TestParkedEventBudgetReasonArmsResumeWithoutDuplicateLine(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.status = engine.Status{Provider: "anthropic", Model: "claude-opus-4-6"}
-	m.sending = true
-	beforeMsgs := len(m.transcript)
+	m.chat.sending = true
+	beforeMsgs := len(m.chat.transcript)
 
 	m = m.handleEngineEvent(engine.Event{
 		Type: "agent:loop:parked",
@@ -311,26 +311,26 @@ func TestParkedEventBudgetReasonArmsResumeWithoutDuplicateLine(t *testing.T) {
 			"reason":         "budget_exhausted",
 		},
 	})
-	if !m.resumePromptActive {
+	if !m.ui.resumePromptActive {
 		t.Fatal("budget-park should still arm the resume banner")
 	}
-	if m.agentLoopPhase != "parked" {
-		t.Fatalf("phase should flip to parked, got %q", m.agentLoopPhase)
+	if m.agentLoop.phase != "parked" {
+		t.Fatalf("phase should flip to parked, got %q", m.agentLoop.phase)
 	}
-	if len(m.transcript) != beforeMsgs {
-		t.Fatalf("budget-park should suppress the transcript line, got %d new msgs", len(m.transcript)-beforeMsgs)
+	if len(m.chat.transcript) != beforeMsgs {
+		t.Fatalf("budget-park should suppress the transcript line, got %d new msgs", len(m.chat.transcript)-beforeMsgs)
 	}
 }
 
 func TestEscDismissesResumePromptWithoutClearingEngineState(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.resumePromptActive = true
+	m.ui.resumePromptActive = true
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	mm, ok := next.(Model)
 	if !ok {
 		t.Fatalf("expected Model, got %T", next)
 	}
-	if mm.resumePromptActive {
+	if mm.ui.resumePromptActive {
 		t.Fatalf("esc should clear resumePromptActive")
 	}
 }

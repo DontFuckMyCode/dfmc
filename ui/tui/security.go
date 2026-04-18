@@ -216,32 +216,32 @@ func (m Model) renderSecurityView(width int) string {
 	hint := subtleStyle.Render("j/k scroll · v toggle secrets/vulns · / search · r rescan · c clear search")
 	header := sectionHeader("⚠", "Security")
 	viewLabel := "secrets"
-	if m.securityView == securityViewVulns {
+	if m.security.view == securityViewVulns {
 		viewLabel = "vulns"
 	}
 	viewLine := subtleStyle.Render("view: ") + accentStyle.Render(viewLabel)
 
 	queryLine := subtleStyle.Render("query: ")
-	if strings.TrimSpace(m.securityQuery) != "" {
-		queryLine += m.securityQuery
+	if strings.TrimSpace(m.security.query) != "" {
+		queryLine += m.security.query
 	} else {
 		queryLine += subtleStyle.Render("(none)")
 	}
-	if m.securitySearchActive {
+	if m.security.searchActive {
 		queryLine += subtleStyle.Render("  · typing, enter to commit")
 	}
 
 	lines := []string{header, hint, viewLine, queryLine, renderDivider(width - 2)}
 
-	if m.securityErr != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.securityErr))
+	if m.security.err != "" {
+		lines = append(lines, "", warnStyle.Render("error · "+m.security.err))
 		return strings.Join(lines, "\n")
 	}
-	if m.securityLoading {
+	if m.security.loading {
 		lines = append(lines, "", subtleStyle.Render("scanning..."))
 		return strings.Join(lines, "\n")
 	}
-	if m.securityReport == nil {
+	if m.security.report == nil {
 		lines = append(lines, "", subtleStyle.Render("Press r to run a security scan."))
 		return strings.Join(lines, "\n")
 	}
@@ -249,15 +249,15 @@ func (m Model) renderSecurityView(width int) string {
 	// Always-present summary line so the user knows the scan actually ran.
 	summary := fmt.Sprintf(
 		"scanned %d files · %d secrets · %d vulnerabilities",
-		m.securityReport.FilesScanned,
-		len(m.securityReport.Secrets),
-		len(m.securityReport.Vulnerabilities),
+		m.security.report.FilesScanned,
+		len(m.security.report.Secrets),
+		len(m.security.report.Vulnerabilities),
 	)
 	lines = append(lines, subtleStyle.Render(summary), "")
 
-	if m.securityView == securityViewVulns {
-		all := sortVulns(m.securityReport.Vulnerabilities)
-		filtered := filterVulns(all, m.securityQuery)
+	if m.security.view == securityViewVulns {
+		all := sortVulns(m.security.report.Vulnerabilities)
+		filtered := filterVulns(all, m.security.query)
 		if len(filtered) == 0 {
 			if len(all) == 0 {
 				lines = append(lines, subtleStyle.Render("No vulnerabilities found. Codebase looks clean on heuristic rules."))
@@ -266,9 +266,9 @@ func (m Model) renderSecurityView(width int) string {
 			}
 			return strings.Join(lines, "\n")
 		}
-		scroll := clampScroll(m.securityScroll, len(filtered))
+		scroll := clampScroll(m.security.scroll, len(filtered))
 		for i, v := range filtered[scroll:] {
-			selected := (scroll + i) == m.securityScroll
+			selected := (scroll + i) == m.security.scroll
 			lines = append(lines, formatVulnRow(v, selected, width-2))
 		}
 		lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
@@ -278,8 +278,8 @@ func (m Model) renderSecurityView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	all := sortSecrets(m.securityReport.Secrets)
-	filtered := filterSecrets(all, m.securityQuery)
+	all := sortSecrets(m.security.report.Secrets)
+	filtered := filterSecrets(all, m.security.query)
 	if len(filtered) == 0 {
 		if len(all) == 0 {
 			lines = append(lines, subtleStyle.Render("No secrets detected. Commit with confidence."))
@@ -288,9 +288,9 @@ func (m Model) renderSecurityView(width int) string {
 		}
 		return strings.Join(lines, "\n")
 	}
-	scroll := clampScroll(m.securityScroll, len(filtered))
+	scroll := clampScroll(m.security.scroll, len(filtered))
 	for i, s := range filtered[scroll:] {
-		selected := (scroll + i) == m.securityScroll
+		selected := (scroll + i) == m.security.scroll
 		lines = append(lines, formatSecretRow(s, selected, width-2))
 	}
 	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
@@ -318,17 +318,17 @@ func clampScroll(scroll, total int) int {
 // securityViewTotal returns the count of items in the currently
 // selected view after filtering, used for scroll-bound maths.
 func (m Model) securityViewTotal() int {
-	if m.securityReport == nil {
+	if m.security.report == nil {
 		return 0
 	}
-	if m.securityView == securityViewVulns {
-		return len(filterVulns(m.securityReport.Vulnerabilities, m.securityQuery))
+	if m.security.view == securityViewVulns {
+		return len(filterVulns(m.security.report.Vulnerabilities, m.security.query))
 	}
-	return len(filterSecrets(m.securityReport.Secrets, m.securityQuery))
+	return len(filterSecrets(m.security.report.Secrets, m.security.query))
 }
 
 func (m Model) handleSecurityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.securitySearchActive {
+	if m.security.searchActive {
 		return m.handleSecuritySearchKey(msg)
 	}
 	total := m.securityViewTotal()
@@ -336,51 +336,51 @@ func (m Model) handleSecurityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	pageStep := 10
 	switch msg.String() {
 	case "j", "down":
-		if m.securityScroll+step < total {
-			m.securityScroll += step
+		if m.security.scroll+step < total {
+			m.security.scroll += step
 		}
 	case "k", "up":
-		if m.securityScroll >= step {
-			m.securityScroll -= step
+		if m.security.scroll >= step {
+			m.security.scroll -= step
 		} else {
-			m.securityScroll = 0
+			m.security.scroll = 0
 		}
 	case "pgdown":
-		if m.securityScroll+pageStep < total {
-			m.securityScroll += pageStep
+		if m.security.scroll+pageStep < total {
+			m.security.scroll += pageStep
 		} else if total > 0 {
-			m.securityScroll = total - 1
+			m.security.scroll = total - 1
 		}
 	case "pgup":
-		if m.securityScroll >= pageStep {
-			m.securityScroll -= pageStep
+		if m.security.scroll >= pageStep {
+			m.security.scroll -= pageStep
 		} else {
-			m.securityScroll = 0
+			m.security.scroll = 0
 		}
 	case "g":
-		m.securityScroll = 0
+		m.security.scroll = 0
 	case "G":
 		if total > 0 {
-			m.securityScroll = total - 1
+			m.security.scroll = total - 1
 		}
 	case "v":
 		// Toggle view — reset scroll so we don't land past the new bounds.
-		if m.securityView == securityViewVulns {
-			m.securityView = securityViewSecrets
+		if m.security.view == securityViewVulns {
+			m.security.view = securityViewSecrets
 		} else {
-			m.securityView = securityViewVulns
+			m.security.view = securityViewVulns
 		}
-		m.securityScroll = 0
+		m.security.scroll = 0
 	case "r":
-		m.securityLoading = true
-		m.securityErr = ""
+		m.security.loading = true
+		m.security.err = ""
 		return m, loadSecurityCmd(m.eng)
 	case "/":
-		m.securitySearchActive = true
+		m.security.searchActive = true
 		return m, nil
 	case "c":
-		m.securityQuery = ""
-		m.securityScroll = 0
+		m.security.query = ""
+		m.security.scroll = 0
 	}
 	return m, nil
 }
@@ -388,19 +388,19 @@ func (m Model) handleSecurityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleSecuritySearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
-		m.securitySearchActive = false
-		m.securityScroll = 0
+		m.security.searchActive = false
+		m.security.scroll = 0
 		return m, nil
 	case tea.KeyEsc:
-		m.securitySearchActive = false
+		m.security.searchActive = false
 		return m, nil
 	case tea.KeyBackspace:
-		if r := []rune(m.securityQuery); len(r) > 0 {
-			m.securityQuery = string(r[:len(r)-1])
+		if r := []rune(m.security.query); len(r) > 0 {
+			m.security.query = string(r[:len(r)-1])
 		}
 		return m, nil
 	case tea.KeyRunes, tea.KeySpace:
-		m.securityQuery += msg.String()
+		m.security.query += msg.String()
 		return m, nil
 	}
 	return m, nil

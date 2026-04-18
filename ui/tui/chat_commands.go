@@ -43,19 +43,19 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 
 	switch cmd {
 	case "help":
-		m.input = ""
+		m.chat.input = ""
 		if len(args) > 0 {
 			return m.appendSystemMessage(renderTUICommandHelp(args[0])), nil, true
 		}
 		return m.appendSystemMessage(renderTUIHelp()), nil, true
 	case "quit", "exit", "q":
-		m.input = ""
+		m.chat.input = ""
 		m.notice = "Goodbye."
 		return m.appendSystemMessage("Exiting DFMC — goodbye."), tea.Quit, true
 	case "clear":
-		m.input = ""
-		m.transcript = nil
-		m.chatScrollback = 0
+		m.chat.input = ""
+		m.chat.transcript = nil
+		m.chat.scrollback = 0
 		m.notice = "Transcript cleared."
 		return m.appendSystemMessage("Transcript cleared. Memory and conversation history are untouched."), nil, true
 	case "export", "save":
@@ -63,8 +63,8 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		// root (or to the path given as /export path.md). Writes locally,
 		// no network, no engine state touched — purely a view-layer save
 		// for users who want to share a session out of DFMC.
-		m.input = ""
-		if len(m.transcript) == 0 {
+		m.chat.input = ""
+		if len(m.chat.transcript) == 0 {
 			m.notice = "Nothing to export yet."
 			return m.appendSystemMessage("Transcript is empty; nothing to export."), nil, true
 		}
@@ -75,21 +75,21 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			return m.appendSystemMessage("Export failed: " + err.Error()), nil, true
 		}
 		m.notice = "Exported transcript → " + path
-		return m.appendSystemMessage("▸ Transcript exported → " + path + " (" + fmt.Sprintf("%d lines", len(m.transcript)) + ")."), nil, true
+		return m.appendSystemMessage("▸ Transcript exported → " + path + " (" + fmt.Sprintf("%d lines", len(m.chat.transcript)) + ")."), nil, true
 	case "retry":
 		// Regenerate the most recent assistant reply by resending the latest
 		// user message. Trailing assistant/tool/system lines after that user
 		// turn are dropped — the resend reopens that turn, it doesn't append
 		// a fresh one. If nothing to retry, tell the user rather than
 		// silently doing nothing.
-		m.input = ""
-		if m.sending {
+		m.chat.input = ""
+		if m.chat.sending {
 			m.notice = "Cannot /retry while a turn is already streaming."
 			return m.appendSystemMessage("A turn is already streaming — press esc to cancel it first, then /retry."), nil, true
 		}
 		lastUser := -1
-		for i := len(m.transcript) - 1; i >= 0; i-- {
-			if strings.EqualFold(m.transcript[i].Role, "user") {
+		for i := len(m.chat.transcript) - 1; i >= 0; i-- {
+			if m.chat.transcript[i].Role.Eq(chatRoleUser) {
 				lastUser = i
 				break
 			}
@@ -98,7 +98,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			m.notice = "Nothing to retry yet."
 			return m.appendSystemMessage("No prior user message in this transcript to retry. Type a question first."), nil, true
 		}
-		question := strings.TrimSpace(m.transcript[lastUser].Content)
+		question := strings.TrimSpace(m.chat.transcript[lastUser].Content)
 		if question == "" {
 			m.notice = "Last user message was empty."
 			return m.appendSystemMessage("The last user message was empty; nothing to regenerate."), nil, true
@@ -107,7 +107,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		// re-appends the user line plus a fresh assistant placeholder. Retries
 		// that left the old reply visible confused users into thinking they'd
 		// accidentally double-sent.
-		m.transcript = m.transcript[:lastUser]
+		m.chat.transcript = m.chat.transcript[:lastUser]
 		m.notice = "Retrying last question…"
 		next, cmd := m.submitChatQuestion(question, nil)
 		return next, cmd, true
@@ -118,28 +118,28 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		// pair is dropped on the edit so the user doesn't end up with two
 		// near-identical user messages stacked when they send the amended
 		// version.
-		if m.sending {
+		if m.chat.sending {
 			m.notice = "Cannot /edit while a turn is already streaming."
 			return m.appendSystemMessage("A turn is already streaming — press esc to cancel it first, then /edit."), nil, true
 		}
 		lastUserIdx := -1
-		for i := len(m.transcript) - 1; i >= 0; i-- {
-			if strings.EqualFold(m.transcript[i].Role, "user") {
+		for i := len(m.chat.transcript) - 1; i >= 0; i-- {
+			if m.chat.transcript[i].Role.Eq(chatRoleUser) {
 				lastUserIdx = i
 				break
 			}
 		}
 		if lastUserIdx < 0 {
-			m.input = ""
+			m.chat.input = ""
 			m.notice = "Nothing to edit yet."
 			return m.appendSystemMessage("No prior user message to edit. Type a question first."), nil, true
 		}
-		prior := m.transcript[lastUserIdx].Content
-		m.transcript = m.transcript[:lastUserIdx]
+		prior := m.chat.transcript[lastUserIdx].Content
+		m.chat.transcript = m.chat.transcript[:lastUserIdx]
 		m.setChatInput(prior)
-		m.chatCursor = len([]rune(prior))
-		m.chatCursorManual = true
-		m.chatCursorInput = prior
+		m.chat.cursor = len([]rune(prior))
+		m.chat.cursorManual = true
+		m.chat.cursorInput = prior
 		m.notice = "Editing last message — press enter to resend."
 		return m, nil, true
 	case "file", "files":
@@ -147,15 +147,15 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		// Ctrl+T: insert a leading "@" so the existing mention-picker
 		// machinery takes over. Particularly useful for users whose
 		// keyboard layout makes Ctrl+T awkward too.
-		m.input = ""
-		if m.sending {
+		m.chat.input = ""
+		if m.chat.sending {
 			m.notice = "Cannot open file picker while a turn is streaming."
 			return m.appendSystemMessage("A turn is streaming — esc to cancel first."), nil, true
 		}
 		m.setChatInput("@")
-		m.mentionIndex = 0
+		m.slashMenu.mention = 0
 		m.notice = "File picker open — type to filter, tab/enter inserts, esc cancels."
-		if len(m.files) == 0 && m.eng != nil {
+		if len(m.filesView.entries) == 0 && m.eng != nil {
 			return m, loadFilesCmd(m.eng), true
 		}
 		return m, nil, true
@@ -164,22 +164,22 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		// plan for the user to approve. Complements /retry and /edit:
 		// users who want to survey before mutating finally get a first-
 		// class switch instead of relying on prompt discipline.
-		m.input = ""
-		if m.planMode {
+		m.chat.input = ""
+		if m.ui.planMode {
 			m.notice = "Already in plan mode — type your question, or /code to exit."
 			return m.appendSystemMessage("Plan mode is already ON. Your next prompt will investigate without modifying files. Use /code to exit."), nil, true
 		}
-		m.planMode = true
+		m.ui.planMode = true
 		m.notice = "Plan mode ON — investigate-only, no file writes. /code exits."
 		return m.appendSystemMessage("▸ Plan mode ON. The agent will investigate with read-only tools (read_file, grep_codebase, ast_query, list_dir, glob, git_status, git_diff) and propose changes as a plan. Type /code to exit plan mode when you're ready to apply."), nil, true
 	case "code":
 		// Exit plan mode — subsequent prompts are free to mutate.
-		m.input = ""
-		if !m.planMode {
+		m.chat.input = ""
+		if !m.ui.planMode {
 			m.notice = "Already in code mode — plan mode was not active."
 			return m.appendSystemMessage("Not in plan mode. Prompts already allow file modifications."), nil, true
 		}
-		m.planMode = false
+		m.ui.planMode = false
 		m.notice = "Plan mode OFF — prompts can now modify files."
 		return m.appendSystemMessage("▸ Plan mode OFF. Write/update prompts will now route through mutating tools (apply_patch, edit_file, write_file)."), nil, true
 	case "compact":
@@ -191,8 +191,8 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		// Default keeps the most recent 6 lines (configurable: /compact 4).
 		// A single system line replaces the older tail with counts + a
 		// pointer to the Conversations panel for full-fidelity recall.
-		m.input = ""
-		if m.sending {
+		m.chat.input = ""
+		if m.chat.sending {
 			m.notice = "Cannot /compact while a turn is streaming."
 			return m.appendSystemMessage("A turn is streaming — press esc to cancel it first, then /compact."), nil, true
 		}
@@ -202,13 +202,13 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 				keep = n
 			}
 		}
-		collapsed, collapsedCount, ok := compactTranscript(m.transcript, keep)
+		collapsed, collapsedCount, ok := compactTranscript(m.chat.transcript, keep)
 		if !ok {
 			m.notice = "Nothing to compact yet."
-			return m.appendSystemMessage(fmt.Sprintf("Transcript has %d lines — below keep=%d, nothing to compact.", len(m.transcript), keep)), nil, true
+			return m.appendSystemMessage(fmt.Sprintf("Transcript has %d lines — below keep=%d, nothing to compact.", len(m.chat.transcript), keep)), nil, true
 		}
-		m.transcript = collapsed
-		m.chatScrollback = 0
+		m.chat.transcript = collapsed
+		m.chat.scrollback = 0
 		note := fmt.Sprintf("Compacted %d older transcript lines. Full history lives in the Conversations panel.", collapsedCount)
 		m.notice = fmt.Sprintf("Compacted %d lines (keep=%d).", collapsedCount, keep)
 		return m.appendSystemMessage(note), nil, true
@@ -218,14 +218,14 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		// currently pending. Read-only — editing the gate requires a
 		// config change (opt-in by design; we don't want runtime slash
 		// commands silently widening the attack surface).
-		m.input = ""
+		m.chat.input = ""
 		m.notice = "Approval gate state shown below."
 		return m.appendSystemMessage(m.describeApprovalGate()), nil, true
 	case "hooks":
 		// List every lifecycle hook registered with the dispatcher —
 		// event → name(condition) command. Counterpart to /approve for
 		// the other half of the tool-lifecycle surface.
-		m.input = ""
+		m.chat.input = ""
 		m.notice = "Lifecycle hooks listed below."
 		return m.appendSystemMessage(m.describeHooks()), nil, true
 	case "stats", "tokens", "cost":
@@ -233,41 +233,41 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		// savings, context-window fill, agent loop progress. This makes
 		// the 'token miser' thesis tangible — users should be able to
 		// see how much they're saving, not just trust the claim.
-		m.input = ""
+		m.chat.input = ""
 		m.notice = "Session stats below."
 		return m.appendSystemMessage(m.describeStats()), nil, true
 	case "keylog":
 		// Toggle key-event dump into m.notice. Used to diagnose Turkish-
 		// keyboard AltGr delivery and similar terminal-specific weirdness
 		// without needing a side logfile.
-		m.input = ""
-		m.keyLogEnabled = !m.keyLogEnabled
+		m.chat.input = ""
+		m.ui.keyLogEnabled = !m.ui.keyLogEnabled
 		state := "off"
-		if m.keyLogEnabled {
+		if m.ui.keyLogEnabled {
 			state = "on — press any key and read the footer"
 		}
 		m.notice = "Key log " + state
 		return m.appendSystemMessage("Key event dump is " + state + ". Toggle again with /keylog."), nil, true
 	case "coach":
-		m.input = ""
-		m.coachMuted = !m.coachMuted
+		m.chat.input = ""
+		m.ui.coachMuted = !m.ui.coachMuted
 		state := "on"
-		if m.coachMuted {
+		if m.ui.coachMuted {
 			state = "muted"
 		}
 		m.notice = "Coach " + state + "."
 		return m.appendSystemMessage("Coach notes are now " + state + " for this session. Toggle again with /coach."), nil, true
 	case "hints":
-		m.input = ""
-		m.hintsVerbose = !m.hintsVerbose
+		m.chat.input = ""
+		m.ui.hintsVerbose = !m.ui.hintsVerbose
 		state := "hidden"
-		if m.hintsVerbose {
+		if m.ui.hintsVerbose {
 			state = "visible"
 		}
 		m.notice = "Trajectory hints " + state + "."
 		return m.appendSystemMessage("Trajectory coach hints between rounds are now " + state + ". Toggle again with /hints."), nil, true
 	case "copy", "yank":
-		m.input = ""
+		m.chat.input = ""
 		return m.handleCopySlash(args)
 	case "mouse":
 		// Toggle bubbletea's mouse-event capture at runtime. With
@@ -275,23 +275,23 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		// terminal drag-to-select / right-click-copy is disabled. With
 		// capture OFF you get the terminal's native selection — most
 		// terminals also let Shift+drag bypass capture when it's on.
-		m.input = ""
+		m.chat.input = ""
 		var cmd tea.Cmd
-		if m.mouseCaptureEnabled {
-			m.mouseCaptureEnabled = false
+		if m.ui.mouseCaptureEnabled {
+			m.ui.mouseCaptureEnabled = false
 			cmd = tea.DisableMouse
 			m.notice = "Mouse capture off — drag to select / copy text directly."
 		} else {
-			m.mouseCaptureEnabled = true
+			m.ui.mouseCaptureEnabled = true
 			cmd = tea.EnableMouseCellMotion
 			m.notice = "Mouse capture on — wheel scrolls transcript. Shift+drag bypasses capture in most terminals."
 		}
 		return m.appendSystemMessage("Mouse capture toggled. /mouse to flip again; set tui.mouse_capture in .dfmc/config.yaml for the default."), cmd, true
 	case "status":
-		m.input = ""
+		m.chat.input = ""
 		return m.appendSystemMessage(m.statusCommandSummary()), loadStatusCmd(m.eng), true
 	case "reload":
-		m.input = ""
+		m.chat.input = ""
 		if err := m.reloadEngineConfig(); err != nil {
 			m.notice = "reload: " + err.Error()
 			return m.appendSystemMessage("Runtime reload failed: " + err.Error()), nil, true
@@ -299,7 +299,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		st := m.status
 		return m.appendSystemMessage(fmt.Sprintf("Runtime reloaded.\nProvider/Model: %s / %s", blankFallback(st.Provider, "-"), blankFallback(st.Model, "-"))), loadStatusCmd(m.eng), true
 	case "context":
-		m.input = ""
+		m.chat.input = ""
 		mode := ""
 		if len(args) > 0 {
 			mode = strings.ToLower(strings.TrimSpace(args[0]))
@@ -335,7 +335,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			return m.appendSystemMessage(m.contextCommandSummary()), nil, true
 		}
 	case "tools":
-		m.input = ""
+		m.chat.input = ""
 		tools := m.availableTools()
 		if len(tools) == 0 {
 			return m.appendSystemMessage("No tools registered."), nil, true
@@ -355,7 +355,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			if len(args) < 2 {
 				return m.appendSystemMessage("Usage: /tool show NAME"), nil, true
 			}
-			m.input = ""
+			m.chat.input = ""
 			return m.appendSystemMessage(m.describeToolSpec(strings.TrimSpace(args[1]))), nil, true
 		}
 		name := strings.TrimSpace(args[0])
@@ -388,7 +388,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			m = m.startCommandPicker("read", "", false)
 			return m, nil, true
 		}
-		if target := strings.TrimSpace(args[0]); target != "" && !m.projectHasFile(target) && !containsStringFold(m.files, target) {
+		if target := strings.TrimSpace(args[0]); target != "" && !m.projectHasFile(target) && !containsStringFold(m.filesView.entries, target) {
 			m = m.startCommandPicker("read", target, false)
 			return m, nil, true
 		}
@@ -418,7 +418,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		}
 		return m.startChatToolCommand("run_command", params), runToolCmd(m.eng, "run_command", params), true
 	case "diff":
-		m.input = ""
+		m.chat.input = ""
 		root := "."
 		if m.eng != nil {
 			root = strings.TrimSpace(m.eng.Status().ProjectRoot)
@@ -437,13 +437,13 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.notice = "Loaded worktree diff."
 		return m.appendSystemMessage("Worktree diff:\n" + truncateCommandBlock(diff, 1600)), loadWorkspaceCmd(m.eng), true
 	case "patch":
-		m.input = ""
-		if strings.TrimSpace(m.latestPatch) == "" {
+		m.chat.input = ""
+		if strings.TrimSpace(m.patchView.latestPatch) == "" {
 			return m.appendSystemMessage("No assistant patch available."), nil, true
 		}
 		return m.appendSystemMessage(m.patchCommandSummary()), nil, true
 	case "undo":
-		m.input = ""
+		m.chat.input = ""
 		if m.eng == nil {
 			return m.appendSystemMessage("Undo unavailable: engine is nil."), nil, true
 		}
@@ -455,14 +455,14 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.notice = fmt.Sprintf("Undone messages: %d", removed)
 		return m.appendSystemMessage(fmt.Sprintf("Undone messages: %d", removed)), tea.Batch(loadLatestPatchCmd(m.eng), loadWorkspaceCmd(m.eng)), true
 	case "apply":
-		m.input = ""
+		m.chat.input = ""
 		checkOnly := false
 		for _, arg := range args {
 			if strings.EqualFold(strings.TrimSpace(arg), "--check") {
 				checkOnly = true
 			}
 		}
-		if strings.TrimSpace(m.latestPatch) == "" {
+		if strings.TrimSpace(m.patchView.latestPatch) == "" {
 			return m.appendSystemMessage("No assistant patch available."), nil, true
 		}
 		root := "."
@@ -472,7 +472,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 				root = "."
 			}
 		}
-		if err := applyUnifiedDiff(root, m.latestPatch, checkOnly); err != nil {
+		if err := applyUnifiedDiff(root, m.patchView.latestPatch, checkOnly); err != nil {
 			m.notice = "patch: " + err.Error()
 			return m.appendSystemMessage("Patch error: " + err.Error()), nil, true
 		}
@@ -482,7 +482,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		}
 		changed, err := gitChangedFiles(root, 12)
 		if err == nil {
-			m.changed = changed
+			m.patchView.changed = changed
 			m = m.focusChangedFiles(changed)
 		}
 		m.notice = "Patch applied."
@@ -493,7 +493,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			m.notice = "No providers configured."
 			return m.appendSystemMessage("No providers configured."), nil, true
 		}
-		m.input = ""
+		m.chat.input = ""
 		return m.appendSystemMessage("Providers: " + strings.Join(names, ", ")), loadStatusCmd(m.eng), true
 	case "provider":
 		parts, persist := parseArgsWithPersist(args)
@@ -511,7 +511,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			model = m.defaultModelForProvider(name)
 		}
 		m = m.applyProviderModelSelection(name, model)
-		m.input = ""
+		m.chat.input = ""
 		if persist {
 			path, err := m.persistProviderModelProjectConfig(name, model)
 			if err != nil {
@@ -534,7 +534,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		if len(choices) > 0 {
 			message += "\nKnown models: " + strings.Join(choices, ", ")
 		}
-		m.input = ""
+		m.chat.input = ""
 		return m.appendSystemMessage(message), nil, true
 	case "model":
 		providerName := m.currentProvider()
@@ -548,7 +548,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		m = m.applyProviderModelSelection(providerName, model)
-		m.input = ""
+		m.chat.input = ""
 		if persist {
 			path, err := m.persistProviderModelProjectConfig(providerName, model)
 			if err != nil {
@@ -561,7 +561,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.notice = fmt.Sprintf("Model set to %s (%s)", model, blankFallback(providerName, "-"))
 		return m.appendSystemMessage(fmt.Sprintf("Model set to %s (%s)", model, blankFallback(providerName, "-"))), loadStatusCmd(m.eng), true
 	case "ask":
-		m.input = ""
+		m.chat.input = ""
 		payload := strings.TrimSpace(strings.Join(args, " "))
 		if payload == "" {
 			m.notice = "/ask needs a question."
@@ -570,11 +570,11 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		next, cmdOut := m.submitChatQuestion(payload, nil)
 		return next, cmdOut, true
 	case "chat":
-		m.input = ""
+		m.chat.input = ""
 		m.notice = "Already in chat. Just type your message."
 		return m.appendSystemMessage("You're already in the chat tab — type your message and press enter."), nil, true
 	case "continue", "resume":
-		m.input = ""
+		m.chat.input = ""
 		if m.eng == nil || !m.eng.HasParkedAgent() {
 			m.notice = "Nothing to resume — no parked agent loop."
 			return m.appendSystemMessage("No parked agent loop. /continue only works after the loop pauses at its step cap."), nil, true
@@ -583,7 +583,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		next, cmdOut := m.startChatResume(note)
 		return next, cmdOut, true
 	case "split":
-		m.input = ""
+		m.chat.input = ""
 		query := strings.TrimSpace(strings.Join(args, " "))
 		if query == "" {
 			m.notice = "/split needs a task to decompose."
@@ -591,7 +591,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		}
 		return m.appendSystemMessage(renderSplitPlan(planning.SplitTask(query))), nil, true
 	case "btw":
-		m.input = ""
+		m.chat.input = ""
 		note := strings.TrimSpace(strings.Join(args, " "))
 		if note == "" {
 			m.notice = "/btw needs a note."
@@ -602,49 +602,49 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			return m.appendSystemMessage("/btw: engine is not initialized."), nil, true
 		}
 		m.eng.QueueAgentNote(note)
-		m.pendingNoteCount++
+		m.chat.pendingNoteCount++
 		return m.appendSystemMessage("/btw queued: " + note + "\nIt will land as a user note before the next tool-loop step."), nil, true
 	case "review", "explain", "refactor", "test", "doc":
 		return m.runTemplateSlash(cmd, args, raw)
 	case "analyze":
-		m.input = ""
+		m.chat.input = ""
 		return m.runAnalyzeSlash(args, false), nil, true
 	case "scan":
-		m.input = ""
+		m.chat.input = ""
 		return m.runAnalyzeSlash(args, true), nil, true
 	case "map":
-		m.input = ""
+		m.chat.input = ""
 		return m.appendSystemMessage(m.codemapSummary()), nil, true
 	case "version":
-		m.input = ""
+		m.chat.input = ""
 		return m.appendSystemMessage(m.versionSummary()), nil, true
 	case "doctor", "health":
 		// Lightweight health snapshot that covers provider readiness, AST
 		// backend, approval gate, hooks, and recent denials in one card.
 		// Full `dfmc doctor` does network checks and --fix; this is the
 		// in-chat version so users can sanity-check without leaving TUI.
-		m.input = ""
+		m.chat.input = ""
 		return m.appendSystemMessage(m.describeHealth()), loadStatusCmd(m.eng), true
 	case "magicdoc", "magic":
-		m.input = ""
+		m.chat.input = ""
 		return m.appendSystemMessage(m.magicDocSlash(args)), nil, true
 	case "conversation", "conv":
-		m.input = ""
+		m.chat.input = ""
 		return m.appendSystemMessage(m.conversationSlash(args)), nil, true
 	case "memory":
-		m.input = ""
+		m.chat.input = ""
 		return m.appendSystemMessage(m.memorySlash(args)), nil, true
 	case "prompt":
-		m.input = ""
+		m.chat.input = ""
 		return m.appendSystemMessage(m.promptSlash(args)), nil, true
 	case "skill":
-		m.input = ""
+		m.chat.input = ""
 		return m.appendSystemMessage(m.skillSlash(args)), nil, true
 	case "init", "completion", "man", "serve", "remote", "plugin", "config",
 		"debug", "generate", "onboard", "audit", "mcp", "update", "tui":
 		// CLI-only commands — surface a friendly pointer instead of
 		// the generic "Unknown command" fallback.
-		m.input = ""
+		m.chat.input = ""
 		m.notice = "/" + cmd + ": run from CLI (not available in TUI)."
 		return m.appendSystemMessage("/" + cmd + " is a CLI command. Run: dfmc " + cmd + (func() string {
 			if len(args) > 0 {

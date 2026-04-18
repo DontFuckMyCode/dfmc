@@ -22,7 +22,7 @@ import (
 )
 
 func (m Model) exportTranscript(target string) (string, error) {
-	if len(m.transcript) == 0 {
+	if len(m.chat.transcript) == 0 {
 		return "", fmt.Errorf("transcript is empty")
 	}
 	projectRoot := strings.TrimSpace(m.projectRoot())
@@ -56,8 +56,8 @@ func (m Model) exportTranscript(target string) (string, error) {
 		}
 		buf.WriteString("\n\n")
 	}
-	for _, line := range m.transcript {
-		role := strings.ToLower(strings.TrimSpace(line.Role))
+	for _, line := range m.chat.transcript {
+		role := strings.ToLower(strings.TrimSpace(string(line.Role)))
 		content := strings.TrimRight(line.Content, "\n")
 		if strings.TrimSpace(content) == "" {
 			continue
@@ -94,7 +94,7 @@ func (m Model) describeStats() string {
 		elapsed = time.Since(m.sessionStart).Round(time.Second)
 	}
 	lines = append(lines, fmt.Sprintf("  elapsed:     %s", elapsed))
-	lines = append(lines, fmt.Sprintf("  messages:    %d transcript line(s)", len(m.transcript)))
+	lines = append(lines, fmt.Sprintf("  messages:    %d transcript line(s)", len(m.chat.transcript)))
 
 	// Token budget. ContextIn carries the last computed budget if a turn
 	// has run; otherwise fall back to the provider's MaxContext only.
@@ -118,35 +118,35 @@ func (m Model) describeStats() string {
 	}
 
 	// Agent loop progress (cumulative across turns).
-	if m.agentLoopToolRounds > 0 || m.agentLoopStep > 0 {
-		phase := strings.TrimSpace(m.agentLoopPhase)
+	if m.agentLoop.toolRounds > 0 || m.agentLoop.step > 0 {
+		phase := strings.TrimSpace(m.agentLoop.phase)
 		if phase == "" {
 			phase = "idle"
 		}
-		if m.agentLoopMaxToolStep > 0 {
+		if m.agentLoop.maxToolStep > 0 {
 			lines = append(lines, fmt.Sprintf("  agent:       %s · step %d/%d · %d tool round(s)",
-				phase, m.agentLoopStep, m.agentLoopMaxToolStep, m.agentLoopToolRounds))
+				phase, m.agentLoop.step, m.agentLoop.maxToolStep, m.agentLoop.toolRounds))
 		} else {
 			lines = append(lines, fmt.Sprintf("  agent:       %s · step %d · %d tool round(s)",
-				phase, m.agentLoopStep, m.agentLoopToolRounds))
+				phase, m.agentLoop.step, m.agentLoop.toolRounds))
 		}
-		if last := strings.TrimSpace(m.agentLoopLastTool); last != "" {
+		if last := strings.TrimSpace(m.agentLoop.lastTool); last != "" {
 			lines = append(lines, fmt.Sprintf("  last tool:   %s (%s, %dms)",
-				last, blankFallback(m.agentLoopLastStatus, "?"), m.agentLoopLastDuration))
+				last, blankFallback(m.agentLoop.lastStatus, "?"), m.agentLoop.lastDuration))
 		}
 	} else {
 		lines = append(lines, "  agent:       no tool rounds this session yet")
 	}
 
 	// Fan-out live counters.
-	if m.activeToolCount > 0 || m.activeSubagentCount > 0 {
-		lines = append(lines, fmt.Sprintf("  in-flight:   %d tool(s), %d subagent(s)", m.activeToolCount, m.activeSubagentCount))
+	if m.telemetry.activeToolCount > 0 || m.telemetry.activeSubagentCount > 0 {
+		lines = append(lines, fmt.Sprintf("  in-flight:   %d tool(s), %d subagent(s)", m.telemetry.activeToolCount, m.telemetry.activeSubagentCount))
 	}
 
 	// RTK-style compression wins — the headline token-miser metric.
-	if m.compressionRawChars > 0 {
-		saved := m.compressionSavedChars
-		raw := m.compressionRawChars
+	if m.telemetry.compressionRawChars > 0 {
+		saved := m.telemetry.compressionSavedChars
+		raw := m.telemetry.compressionRawChars
 		pct := 0
 		if raw > 0 {
 			pct = int(float64(saved) / float64(raw) * 100)
@@ -167,9 +167,9 @@ func (m Model) describeStats() string {
 		// Anthropic can cache. Only visible when a sensible breakdown is
 		// available; otherwise silent to keep the card tight.
 		lastQuery := ""
-		for i := len(m.transcript) - 1; i >= 0; i-- {
-			if strings.EqualFold(m.transcript[i].Role, "user") {
-				lastQuery = strings.TrimSpace(m.transcript[i].Content)
+		for i := len(m.chat.transcript) - 1; i >= 0; i-- {
+			if m.chat.transcript[i].Role.Eq(chatRoleUser) {
+				lastQuery = strings.TrimSpace(m.chat.transcript[i].Content)
 				break
 			}
 		}
@@ -438,7 +438,7 @@ func compactTranscript(lines []chatLine, keep int) ([]chatLine, int, bool) {
 	// ("5 user turns, 5 assistant replies, 12 tool events, 2 system notes").
 	users, assistants, tools, systems, other := 0, 0, 0, 0, 0
 	for _, ln := range head {
-		switch strings.ToLower(strings.TrimSpace(ln.Role)) {
+		switch strings.ToLower(strings.TrimSpace(string(ln.Role))) {
 		case "user":
 			users++
 		case "assistant":

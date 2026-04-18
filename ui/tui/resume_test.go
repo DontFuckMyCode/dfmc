@@ -40,7 +40,7 @@ func TestChatHeaderShowsParkedBadge(t *testing.T) {
 
 func TestEnterWhileSendingQueuesMessage(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.sending = true
+	m.chat.sending = true
 	m.setChatInput("follow-up question")
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -48,11 +48,11 @@ func TestEnterWhileSendingQueuesMessage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model, got %T", next)
 	}
-	if len(mm.pendingQueue) != 1 || mm.pendingQueue[0] != "follow-up question" {
-		t.Fatalf("expected one queued message, got %#v", mm.pendingQueue)
+	if len(mm.chat.pendingQueue) != 1 || mm.chat.pendingQueue[0] != "follow-up question" {
+		t.Fatalf("expected one queued message, got %#v", mm.chat.pendingQueue)
 	}
-	if strings.TrimSpace(mm.input) != "" {
-		t.Fatalf("composer should clear after queueing, got %q", mm.input)
+	if strings.TrimSpace(mm.chat.input) != "" {
+		t.Fatalf("composer should clear after queueing, got %q", mm.chat.input)
 	}
 	if !strings.Contains(mm.notice, "Queued (1/") {
 		t.Fatalf("expected Queued (1/N) notice, got %q", mm.notice)
@@ -61,21 +61,21 @@ func TestEnterWhileSendingQueuesMessage(t *testing.T) {
 
 func TestTypingStaysEnabledWhileSending(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.sending = true
+	m.chat.sending = true
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	mm, ok := next.(Model)
 	if !ok {
 		t.Fatalf("expected Model, got %T", next)
 	}
-	if mm.input != "h" {
-		t.Fatalf("expected typing to work while sending, got %q", mm.input)
+	if mm.chat.input != "h" {
+		t.Fatalf("expected typing to work while sending, got %q", mm.chat.input)
 	}
 
 	next2, _ := mm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
 	mm2, _ := next2.(Model)
-	if mm2.input != "hi" {
-		t.Fatalf("expected composer to accept multiple keystrokes, got %q", mm2.input)
+	if mm2.chat.input != "hi" {
+		t.Fatalf("expected composer to accept multiple keystrokes, got %q", mm2.chat.input)
 	}
 }
 
@@ -94,8 +94,8 @@ func TestBtwSlashCommandQueuesNoteAndUpdatesBadge(t *testing.T) {
 	}
 	// Without an engine the /btw handler warns the user; the composer should
 	// still have been cleared and the notice should explain.
-	if strings.TrimSpace(mm.input) != "" {
-		t.Fatalf("composer should clear after /btw, got %q", mm.input)
+	if strings.TrimSpace(mm.chat.input) != "" {
+		t.Fatalf("composer should clear after /btw, got %q", mm.chat.input)
 	}
 	if !strings.Contains(mm.notice, "/btw") && !strings.Contains(strings.ToLower(mm.notice), "engine") {
 		t.Fatalf("expected /btw-related notice, got %q", mm.notice)

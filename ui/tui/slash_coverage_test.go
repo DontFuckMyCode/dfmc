@@ -76,13 +76,13 @@ func TestSlashCoverage_AllAdvertisedCommandsHandled(t *testing.T) {
 			unhandled = append(unhandled, entry+" (model cast failed)")
 			continue
 		}
-		if len(nm.transcript) == 0 {
+		if len(nm.chat.transcript) == 0 {
 			// Handler returned without appending anything — that's fine
 			// for picker-opening commands (tool/read/grep/run/provider/model)
 			// which switch to a command-picker state.
 			continue
 		}
-		last := nm.transcript[len(nm.transcript)-1].Content
+		last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 		if strings.Contains(last, "Unknown chat command") {
 			unhandled = append(unhandled, entry+" → fell into 'Unknown chat command' fallback")
 		}
@@ -148,11 +148,11 @@ func TestSlashCoverage_CLIRedirectsMentionCLI(t *testing.T) {
 			continue
 		}
 		nm := next.(Model)
-		if len(nm.transcript) == 0 {
+		if len(nm.chat.transcript) == 0 {
 			t.Errorf("%s should append a system message", r)
 			continue
 		}
-		last := nm.transcript[len(nm.transcript)-1].Content
+		last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 		if !strings.Contains(strings.ToLower(last), "dfmc ") {
 			t.Errorf("%s redirect should mention the `dfmc` CLI; got:\n%s", r, last)
 		}
@@ -166,7 +166,7 @@ func TestSlashPrompt_ListsTemplates(t *testing.T) {
 		t.Fatalf("/prompt must be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "Prompt templates") {
 		t.Fatalf("/prompt list should show template header, got:\n%s", last)
 	}
@@ -176,7 +176,7 @@ func TestSlashPrompt_ShowUnknownIDExplains(t *testing.T) {
 	m := newCoverageModel(t)
 	next, _, _ := m.executeChatCommand("/prompt show does_not_exist")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "No prompt template") {
 		t.Fatalf("unknown id should get a friendly message, got:\n%s", last)
 	}
@@ -186,7 +186,7 @@ func TestSlashPrompt_UnknownSubcommand(t *testing.T) {
 	m := newCoverageModel(t)
 	next, _, _ := m.executeChatCommand("/prompt wat")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(strings.ToLower(last), "unknown subcommand") {
 		t.Fatalf("unknown subcommand should tell the user; got:\n%s", last)
 	}
@@ -199,7 +199,7 @@ func TestSlashSkill_ListsBuiltinsAtLeast(t *testing.T) {
 		t.Fatalf("/skill must be handled")
 	}
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	for _, want := range []string{"review", "explain", "refactor", "test", "doc"} {
 		if !strings.Contains(last, want) {
 			t.Fatalf("/skill list should include builtin %q, got:\n%s", want, last)
@@ -211,7 +211,7 @@ func TestSlashSkill_ShowBuiltinRedirectsToSlash(t *testing.T) {
 	m := newCoverageModel(t)
 	next, _, _ := m.executeChatCommand("/skill show review")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "/review") {
 		t.Fatalf("/skill show review should point at /review, got:\n%s", last)
 	}
@@ -221,7 +221,7 @@ func TestSlashSkill_RunBuiltinNudgesToTemplateSlash(t *testing.T) {
 	m := newCoverageModel(t)
 	next, _, _ := m.executeChatCommand("/skill run refactor readme.md")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	if !strings.Contains(last, "/refactor") {
 		t.Fatalf("/skill run <builtin> should redirect to the dedicated slash, got:\n%s", last)
 	}
@@ -231,7 +231,7 @@ func TestSlashContext_BriefReadsMagicDoc(t *testing.T) {
 	m := newCoverageModel(t)
 	next, _, _ := m.executeChatCommand("/context brief")
 	nm := next.(Model)
-	last := nm.transcript[len(nm.transcript)-1].Content
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
 	// With no magic doc present the handler should explain, not crash.
 	if strings.TrimSpace(last) == "" {
 		t.Fatalf("/context brief should produce some output")
