@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -324,6 +325,62 @@ func (t *ListDirTool) Execute(_ context.Context, req Request) (Result, error) {
 	}, nil
 }
 
+// missingParamError builds the actionable "<param> is required" reply
+// for built-in tools. Pre-fix the error was just "pattern is required" —
+// the model couldn't tell whether it had passed the wrong key, sent the
+// path AS the pattern, or just forgotten the field. The 2026-04-18
+// screenshot caught this exactly: the model hammered grep_codebase /
+// glob with only `path: "D:/Codebox/PROJECTS/DFMC"` six times in a row
+// because every reply just said "pattern is required" again.
+//
+// Post-fix we list the keys it ACTUALLY sent + the canonical example +
+// (when applicable) the most likely confusion, so the next call can
+// self-correct in one round instead of looping with the same bug.
+//
+// `confusionHint` is appended verbatim when non-empty; pass "" to skip.
+func missingParamError(toolName, paramName string, params map[string]any, example, confusionHint string) error {
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	got := "(empty)"
+	if len(keys) > 0 {
+		got = "[" + strings.Join(keys, ", ") + "]"
+	}
+	msg := fmt.Sprintf(
+		"%s requires a `%s` field. Got params keys %s but no `%s`. Correct shape: %s",
+		toolName, paramName, got, paramName, example)
+	if hint := strings.TrimSpace(confusionHint); hint != "" {
+		msg += " " + hint
+	}
+	return fmt.Errorf("%s", msg)
+}
+
+// valueLooksLikePath reports whether `s` is shaped like a filesystem
+// path the model might have meant to put in `path` rather than
+// `pattern`. Used to add a sharper "you put the path where the pattern
+// goes" hint to the missing-pattern error — that was the exact mistake
+// in the 2026-04-18 screenshot. Distinct from command.go's looksLikePath
+// (which gates run_command's binary slot) because the heuristics differ:
+// here a glob meta-char means it's a pattern, not a path.
+func valueLooksLikePath(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	if strings.ContainsAny(s, "*?[") {
+		return false
+	}
+	if len(s) >= 2 && s[1] == ':' {
+		return true
+	}
+	if strings.ContainsAny(s, "/\\") {
+		return true
+	}
+	return false
+}
+
 // formatGrepRegexError turns Go's bare RE2 compile error into an
 // actionable message. The model often reaches for Perl/PCRE syntax
 // (`\d`, `(?P<name>)`, `(?<=...)`, `\b` lookbehind, possessive `*+`)
@@ -376,7 +433,13 @@ func (t *GrepCodebaseTool) Description() string {
 func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, error) {
 	pattern := asString(req.Params, "pattern", "")
 	if strings.TrimSpace(pattern) == "" {
-		return Result{}, fmt.Errorf("pattern is required")
+		hint := ""
+		if p := strings.TrimSpace(asString(req.Params, "path", "")); valueLooksLikePath(p) {
+			hint = fmt.Sprintf(`Looks like you put the directory %q in "path" but forgot the regex. grep_codebase searches CONTENT — pass the regex as "pattern" and (optionally) restrict the search with "path". To list files matching a glob instead, use the glob tool.`, p)
+		}
+		return Result{}, missingParamError("grep_codebase", "pattern", req.Params,
+			`{"pattern":"func\\s+NewEngine"} or {"pattern":"TODO","path":"internal"}`,
+			hint)
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {

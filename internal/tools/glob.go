@@ -21,7 +21,13 @@ func (t *GlobTool) Description() string  { return "Match file paths against a gl
 func (t *GlobTool) Execute(_ context.Context, req Request) (Result, error) {
 	pattern := strings.TrimSpace(asString(req.Params, "pattern", ""))
 	if pattern == "" {
-		return Result{}, fmt.Errorf("pattern is required")
+		hint := ""
+		if p := strings.TrimSpace(asString(req.Params, "path", "")); valueLooksLikePath(p) {
+			hint = fmt.Sprintf(`Looks like you put the directory %q in "path" but forgot the glob. glob matches files BY NAME — pass a glob like "**/*.go" as "pattern" and (optionally) keep "path" to restrict the search root. To list everything in a directory use list_dir; to search content use grep_codebase.`, p)
+		}
+		return Result{}, missingParamError("glob", "pattern", req.Params,
+			`{"pattern":"**/*.go"} or {"pattern":"*_test.go","path":"internal"}`,
+			hint)
 	}
 	root := strings.TrimSpace(asString(req.Params, "path", ""))
 	base := req.ProjectRoot
@@ -153,7 +159,9 @@ func (t *ThinkTool) Description() string  { return "Record a reasoning step for 
 func (t *ThinkTool) Execute(_ context.Context, req Request) (Result, error) {
 	thought := strings.TrimSpace(asString(req.Params, "thought", ""))
 	if thought == "" {
-		return Result{}, fmt.Errorf("thought is required")
+		return Result{}, missingParamError("think", "thought", req.Params,
+			`{"thought":"plan: read engine.go, then patch run loop"}`,
+			`think is a scratch-pad — pass your reasoning step as the "thought" string. No side effects, just trace logging.`)
 	}
 	// Truncate very long thoughts so the trace stays readable. The LLM can
 	// break its reasoning into multiple think calls if needed.
@@ -205,7 +213,9 @@ func (t *TodoWriteTool) Execute(_ context.Context, req Request) (Result, error) 
 	case "set", "replace", "update":
 		raw, ok := req.Params["todos"]
 		if !ok || raw == nil {
-			return Result{}, fmt.Errorf("todos is required when action=set")
+			return Result{}, missingParamError("todo_write", "todos", req.Params,
+				`{"action":"set","todos":[{"content":"Read engine.go","status":"pending"},{"content":"Patch run loop","status":"in_progress"}]}`,
+				`todos must be an array of {content, status} objects. Use status "pending" | "in_progress" | "completed".`)
 		}
 		items, err := parseTodoList(raw)
 		if err != nil {
@@ -214,7 +224,7 @@ func (t *TodoWriteTool) Execute(_ context.Context, req Request) (Result, error) 
 		t.state.items = items
 		return t.render(), nil
 	default:
-		return Result{}, fmt.Errorf("unknown action %q (want set|list|clear)", action)
+		return Result{}, fmt.Errorf("todo_write: unknown action %q. Allowed: set | list | clear (aliases: replace/update for set; show for list; reset for clear). Example: {\"action\":\"set\",\"todos\":[...]}", action)
 	}
 }
 
@@ -275,17 +285,17 @@ func (t *TodoWriteTool) Snapshot() []TodoItem {
 func parseTodoList(raw any) ([]todoItem, error) {
 	arr, ok := raw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("todos must be an array")
+		return nil, fmt.Errorf(`todos must be a JSON array of {content, status} objects, got %T. Example: [{"content":"Read engine.go","status":"pending"}]`, raw)
 	}
 	out := make([]todoItem, 0, len(arr))
 	for i, entry := range arr {
 		m, ok := entry.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("todos[%d] must be an object with {content,status}", i)
+			return nil, fmt.Errorf(`todos[%d] must be an object like {"content":"...","status":"pending"}, got %T`, i, entry)
 		}
 		content := strings.TrimSpace(asString(m, "content", ""))
 		if content == "" {
-			return nil, fmt.Errorf("todos[%d].content is required", i)
+			return nil, fmt.Errorf(`todos[%d].content is required (a non-empty string describing the task). Example entry: {"content":"Read engine.go","status":"pending"}`, i)
 		}
 		status := strings.ToLower(strings.TrimSpace(asString(m, "status", "pending")))
 		if status == "" {

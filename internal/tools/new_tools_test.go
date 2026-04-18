@@ -55,6 +55,157 @@ func TestGlobToolBasicAndDoublestar(t *testing.T) {
 	}
 }
 
+// TestGlobAndGrepMissingPatternErrorIsActionable pins the 2026-04-18
+// fix for the "✗ glob D:/Codebox/PROJECTS/DFMC — pattern is required"
+// loop the user caught on screen. The bare "pattern is required" error
+// gave the model nothing to recover from, so it called the same broken
+// shape six times in a row. Post-fix the error must:
+//   - name the missing field
+//   - list the keys the model DID send
+//   - include a canonical example
+//   - call out the path↔pattern confusion when the model put a real
+//     directory in `path` (the actual mistake from the screenshot)
+func TestGlobAndGrepMissingPatternErrorIsActionable(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	for _, tool := range []string{"glob", "grep_codebase"} {
+		_, err := eng.Execute(context.Background(), tool, Request{
+			ProjectRoot: tmp,
+			Params:      map[string]any{"path": "D:/Codebox/PROJECTS/DFMC"},
+		})
+		if err == nil {
+			t.Fatalf("%s with only path must error", tool)
+		}
+		msg := err.Error()
+		for _, want := range []string{
+			"pattern",                  // names the missing field
+			"params keys",              // surfaces what was actually sent
+			"path",                     // confirms the user's key shows up in the list
+			"Correct shape:",           // points at the canonical example
+			"D:/Codebox/PROJECTS/DFMC", // echoes the misplaced value
+			"Looks like you put",       // path↔pattern confusion hint fired
+		} {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("%s missing-pattern error should contain %q, got: %s", tool, want, msg)
+			}
+		}
+	}
+
+	// Inverse: an empty params map gets the actionable error WITHOUT the
+	// path-confusion hint (there's no value to call out).
+	_, err := eng.Execute(context.Background(), "glob", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{},
+	})
+	if err == nil {
+		t.Fatal("glob with empty params must error")
+	}
+	if !strings.Contains(err.Error(), "(empty)") {
+		t.Fatalf("empty-params error should advertise '(empty)' keys list, got: %s", err)
+	}
+	if strings.Contains(err.Error(), "Looks like you put") {
+		t.Fatalf("empty-params error must NOT include the path-confusion hint, got: %s", err)
+	}
+}
+
+// TestActionableMissingParamErrors covers the 2026-04-18 audit sweep:
+// every tool with a required field must reject the empty call with a
+// message that names the field, lists the params keys actually sent,
+// and includes a canonical example. Bare "X is required" errors caused
+// the model to loop on the same broken shape (caught on screen for
+// grep_codebase, glob, ast_query — same pattern lurked across the rest).
+func TestActionableMissingParamErrors(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	cases := []struct {
+		tool       string
+		params     map[string]any
+		wantField  string
+		wantHints  []string
+	}{
+		{tool: "think", params: map[string]any{}, wantField: "thought", wantHints: []string{"scratch-pad", "Correct shape:"}},
+		{tool: "todo_write", params: map[string]any{"action": "set"}, wantField: "todos", wantHints: []string{"array of {content, status}", "Correct shape:"}},
+		{tool: "delegate_task", params: map[string]any{"role": "reviewer"}, wantField: "task", wantHints: []string{"sub-agent", "role", "Correct shape:"}},
+		{tool: "task_split", params: map[string]any{}, wantField: "task", wantHints: []string{"decompose", "Correct shape:"}},
+		{tool: "ast_query", params: map[string]any{"kind": "function"}, wantField: "path", wantHints: []string{"single source file", "Correct shape:"}},
+	}
+	for _, c := range cases {
+		t.Run(c.tool, func(t *testing.T) {
+			_, err := eng.Execute(context.Background(), c.tool, Request{ProjectRoot: tmp, Params: c.params})
+			if err == nil {
+				t.Fatalf("%s with missing %q must error", c.tool, c.wantField)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, c.wantField) {
+				t.Fatalf("%s error should name the missing field %q, got: %s", c.tool, c.wantField, msg)
+			}
+			if !strings.Contains(msg, "params keys") {
+				t.Fatalf("%s error should list received keys, got: %s", c.tool, msg)
+			}
+			for _, want := range c.wantHints {
+				if !strings.Contains(msg, want) {
+					t.Fatalf("%s error should contain %q, got: %s", c.tool, want, msg)
+				}
+			}
+		})
+	}
+}
+
+// TestASTQueryRejectsDirectoryWithToolHint pins the screenshot fix: when
+// the model passes a folder where ast_query expects a file, the error
+// must call out the mistake AND suggest the glob+ast_query pattern
+// instead of bubbling Go's bare "read file <dir>" / "is a directory"
+// noise up to the model.
+func TestASTQueryRejectsDirectoryWithToolHint(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "internal", "tools"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	eng := New(*config.DefaultConfig())
+	_, err := eng.Execute(context.Background(), "ast_query", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "internal/tools"},
+	})
+	if err == nil {
+		t.Fatal("ast_query on a directory must error")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"FILE path",          // names the actual problem
+		"is a folder",        // confirms what was passed
+		"glob first",         // suggests the right tool
+		"internal/tools",     // echoes the user's value
+		"list_dir",           // alternative for plain listings
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("ast_query directory error should contain %q, got: %s", want, msg)
+		}
+	}
+}
+
+// TestOrchestrateRejectsEmptyCallWithBothShapes pins the orchestrate
+// branch: neither `task` nor `stages` was passed → error must mention
+// both shapes so the model knows it has two ways to fix the call.
+func TestOrchestrateRejectsEmptyCallWithBothShapes(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+	_, err := eng.Execute(context.Background(), "orchestrate", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"max_parallel": 4},
+	})
+	if err == nil {
+		t.Fatal("orchestrate with no task/stages must error")
+	}
+	msg := err.Error()
+	for _, want := range []string{"task", "stages", "Correct shape:", "depends_on", "mutually exclusive"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("orchestrate empty-call error should mention %q, got: %s", want, msg)
+		}
+	}
+}
+
 func TestThinkToolRecordsThought(t *testing.T) {
 	eng := New(*config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "think", Request{

@@ -22,7 +22,9 @@ func (t *TaskSplitTool) Description() string { return "Decompose a free-text tas
 func (t *TaskSplitTool) Execute(_ context.Context, req Request) (Result, error) {
 	query := strings.TrimSpace(asString(req.Params, "task", ""))
 	if query == "" {
-		return Result{}, fmt.Errorf("task is required")
+		return Result{}, missingParamError("task_split", "task", req.Params,
+			`{"task":"survey engine.go, map the router, and document the manager"}`,
+			`task is the free-text request to decompose. Returns {subtasks[], parallel, confidence, count}. Offline — no LLM round-trip.`)
 	}
 	plan := planning.SplitTask(query)
 	subs := make([]map[string]string, 0, len(plan.Subtasks))

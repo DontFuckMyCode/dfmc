@@ -331,6 +331,79 @@ func TestNativeToolLoop_AutonomousResumeChainsThroughBudgetParks(t *testing.T) {
 	}
 }
 
+// TestNativeToolLoop_BudgetParkAdvertisesAutonomousPending pins the TUI
+// contract added 2026-04-18: a budget-exhausted park MUST stamp
+// `autonomous_pending: true` on the parked event when the engine has
+// autonomous resume enabled, so the TUI can suppress the "press Enter to
+// resume" prompt while the wrapper immediately re-enters the loop.
+// Without the flag the TUI flashes a parked banner that the user can
+// act on before the wrapper clears the park, producing the "No parked
+// agent loop" /continue race the screenshot caught.
+func TestNativeToolLoop_BudgetParkAdvertisesAutonomousPending(t *testing.T) {
+	eng, _, evCh := buildGuardTestEngine(t, 70, 20, []scriptedResponse{
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("ap1")}},
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("ap2")}}, // parks
+		{Text: "done"},
+	})
+	eng.Config.Agent.AutonomousResume = "auto"
+	eng.Config.Agent.ResumeMaxMultiplier = 10
+
+	if _, err := eng.AskWithMetadata(context.Background(), "park flag check"); err != nil {
+		t.Fatalf("Ask must not error: %v", err)
+	}
+	events := collectRecentEvents(evCh, 256, 200*time.Millisecond)
+	var sawFlaggedPark bool
+	for _, e := range events {
+		if e.Type != "agent:loop:parked" {
+			continue
+		}
+		payload, _ := e.Payload.(map[string]any)
+		if payload == nil {
+			continue
+		}
+		if reason, _ := payload["reason"].(string); reason != "budget_exhausted" {
+			continue
+		}
+		flag, _ := payload["autonomous_pending"].(bool)
+		if flag {
+			sawFlaggedPark = true
+			break
+		}
+	}
+	if !sawFlaggedPark {
+		t.Fatalf("budget park under autonomous mode must set autonomous_pending=true; events: %v", eventTypes(events))
+	}
+}
+
+// Conversely, when autonomous_resume is off the parked event must NOT
+// advertise autonomous_pending — the user IS the resume mechanism and
+// the TUI should arm its prompt as usual.
+func TestNativeToolLoop_BudgetParkSkipsAutonomousPendingWhenDisabled(t *testing.T) {
+	eng, _, evCh := buildGuardTestEngine(t, 70, 20, []scriptedResponse{
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("ap-off-1")}},
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("ap-off-2")}},
+		{Text: "never reached"},
+	})
+	eng.Config.Agent.AutonomousResume = "off"
+
+	if _, err := eng.AskWithMetadata(context.Background(), "park flag off check"); err != nil {
+		t.Fatalf("Ask must not error: %v", err)
+	}
+	events := collectRecentEvents(evCh, 256, 200*time.Millisecond)
+	for _, e := range events {
+		if e.Type != "agent:loop:parked" {
+			continue
+		}
+		payload, _ := e.Payload.(map[string]any)
+		if payload == nil {
+			continue
+		}
+		if flag, _ := payload["autonomous_pending"].(bool); flag {
+			t.Fatalf("autonomous-disabled park must NOT set autonomous_pending; payload=%v", payload)
+		}
+	}
+}
+
 // Inverse: when AutonomousResume is "off", the loop reverts to the old
 // park-and-wait behaviour so CI / cost-sensitive contexts can hard-stop
 // after one budget without manual config gymnastics.

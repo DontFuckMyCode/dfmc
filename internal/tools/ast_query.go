@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -34,11 +35,26 @@ func (t *ASTQueryTool) getEngine() *ast.Engine {
 func (t *ASTQueryTool) Execute(ctx context.Context, req Request) (Result, error) {
 	path := strings.TrimSpace(asString(req.Params, "path", ""))
 	if path == "" {
-		return Result{}, fmt.Errorf("path is required")
+		return Result{}, missingParamError("ast_query", "path", req.Params,
+			`{"path":"internal/engine/engine.go"} or {"path":"main.go","kind":"function"}`,
+			`ast_query parses ONE file at a time — name a single source file in "path".`)
 	}
 	abs, err := EnsureWithinRoot(req.ProjectRoot, path)
 	if err != nil {
 		return Result{}, err
+	}
+	// Reject directory paths up-front with a tool-shaped suggestion. The
+	// 2026-04-18 screenshot caught the model passing
+	// `internal/tools` here and getting Go's bare "read file ...
+	// Access is denied." back — opaque, so it tried it again on a sibling
+	// directory. ast_query parses ONE file; for a whole tree the model
+	// should glob first then ast_query each match.
+	if info, statErr := os.Stat(abs); statErr == nil && info.IsDir() {
+		return Result{}, fmt.Errorf(
+			"ast_query needs a FILE path, not a directory (%q is a folder). "+
+				"Use glob first to discover files (e.g. {\"pattern\":\"%s/**/*.go\"}), "+
+				"then call ast_query on each match. For a quick directory listing use list_dir.",
+			path, strings.TrimRight(path, "/\\"))
 	}
 	result, err := t.getEngine().ParseFile(ctx, abs)
 	if err != nil {

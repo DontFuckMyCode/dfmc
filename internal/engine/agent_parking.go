@@ -209,14 +209,24 @@ func (e *Engine) parkNativeToolLoop(
 			"surface":         "native",
 		})
 	}
+	// autonomous_pending tells the TUI whether the autonomous-resume wrapper
+	// is about to immediately re-enter the loop. When true, the TUI should
+	// NOT flip into the "parked, press Enter to resume" UI state — doing so
+	// flashes a misleading prompt the user might act on before the wrapper
+	// gets to the next round, producing the "No parked agent loop" race the
+	// 2026-04-18 screenshot caught. Only budget-exhausted parks under an
+	// enabled autonomous policy qualify; step-cap and shutdown parks always
+	// surface to the user.
+	autonomousPending := reason == ParkReasonBudgetExhausted && e.autonomousResumeEnabled()
 	e.publishAgentLoopEvent("agent:loop:parked", map[string]any{
-		"step":            step,
-		"max_tool_steps":  lim.MaxSteps,
-		"max_tool_tokens": lim.MaxTokens,
-		"tool_rounds":     len(traces),
-		"tokens_used":     totalTokens,
-		"reason":          string(reason),
-		"surface":         "native",
+		"step":               step,
+		"max_tool_steps":     lim.MaxSteps,
+		"max_tool_tokens":    lim.MaxTokens,
+		"tool_rounds":        len(traces),
+		"tokens_used":        totalTokens,
+		"reason":             string(reason),
+		"surface":            "native",
+		"autonomous_pending": autonomousPending,
 	})
 	return nativeToolCompletion{
 		Answer:       notice,

@@ -99,11 +99,15 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
 		m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
 		paramsPreview := payloadString(payload, "params_preview", "")
+		// Verb carries the action line (e.g. "Read foo.go (lines N-M)")
+		// separately from Preview so the result-side merge can keep both
+		// on the finished chip's two-line shape — Preview becomes the
+		// result excerpt, Verb stays the params action.
 		toolCallChip := toolChip{
-			Name:    toolName,
-			Status:  "running",
-			Step:    step,
-			Preview: paramsPreview,
+			Name:   toolName,
+			Status: "running",
+			Step:   step,
+			Verb:   paramsPreview,
 		}
 		m.pushToolChip(toolCallChip)
 		m.pushStreamingMessageToolChip(toolCallChip)
@@ -228,6 +232,17 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		errText := payloadString(payload, "error", "unknown error")
 		line = "Agent loop error: " + errText
 	case "agent:loop:parked":
+		// autonomous_pending=true means the autonomous-resume wrapper will
+		// immediately re-enter the loop after this park. In that case we
+		// MUST NOT flip into the parked UI (no phase change, no resume
+		// prompt) — otherwise the "press Enter to resume" affordance and
+		// the spinner-stop flash through, the user types /continue, and by
+		// the time it lands the wrapper has already cleared the park
+		// state. The 2026-04-18 screenshot ("No parked agent loop"
+		// immediately after a budget exhaust) was exactly this race.
+		if payloadBool(payload, "autonomous_pending", false) {
+			return m
+		}
 		m.agentLoop.phase = "parked"
 		m.agentLoop.active = false
 		step := payloadInt(payload, "step", m.agentLoop.step)
@@ -410,6 +425,12 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		// "park / SYS resume / park" sequence — the user wanted
 		// hands-off continuation, so we make the continuation feel
 		// like one fluent thought rather than three interrupting ones.
+		// Belt-and-braces: clear any resume affordance the parked event
+		// might have flipped on (it now suppresses itself when
+		// autonomous_pending is set, but older engines or out-of-order
+		// events shouldn't leave a stale prompt sitting on screen).
+		m.ui.resumePromptActive = false
+		m.agentLoop.active = true
 		m.agentLoop.phase = "auto-resuming"
 		cumSteps := payloadInt(payload, "cumulative_steps", 0)
 		stepCeiling := payloadInt(payload, "step_ceiling", 0)
@@ -729,6 +750,14 @@ func (m *Model) finishStreamingMessageToolChip(chip toolChip) {
 		if strings.TrimSpace(chip.Preview) != "" {
 			merged.Preview = chip.Preview
 		}
+		// Preserve the params Verb across the finish merge — the
+		// running chip carried the action line ("Read foo.go (lines
+		// N-M)") and we want it to remain visible on the finished
+		// card's second line. The result emit may include a fresh Verb
+		// (rare); accept it only if non-empty.
+		if strings.TrimSpace(chip.Verb) != "" {
+			merged.Verb = chip.Verb
+		}
 		if chip.Step > merged.Step {
 			merged.Step = chip.Step
 		}
@@ -742,6 +771,9 @@ func (m *Model) finishStreamingMessageToolChip(chip toolChip) {
 			merged.SavedChars = chip.SavedChars
 			merged.CompressedChars = chip.CompressedChars
 			merged.CompressionPct = chip.CompressionPct
+		}
+		if len(chip.InnerLines) > 0 {
+			merged.InnerLines = chip.InnerLines
 		}
 		line.ToolChips[i] = merged
 		return
@@ -778,6 +810,14 @@ func (m *Model) finishToolChip(chip toolChip) {
 		if strings.TrimSpace(chip.Preview) != "" {
 			merged.Preview = chip.Preview
 		}
+		// Preserve the params Verb across the finish merge — the
+		// running chip carried the action line ("Read foo.go (lines
+		// N-M)") and we want it to remain visible on the finished
+		// card's second line. The result emit may include a fresh Verb
+		// (rare); accept it only if non-empty.
+		if strings.TrimSpace(chip.Verb) != "" {
+			merged.Verb = chip.Verb
+		}
 		if chip.Step > merged.Step {
 			merged.Step = chip.Step
 		}
@@ -791,6 +831,9 @@ func (m *Model) finishToolChip(chip toolChip) {
 			merged.SavedChars = chip.SavedChars
 			merged.CompressedChars = chip.CompressedChars
 			merged.CompressionPct = chip.CompressionPct
+		}
+		if len(chip.InnerLines) > 0 {
+			merged.InnerLines = chip.InnerLines
 		}
 		m.agentLoop.toolTimeline[i] = merged
 		return

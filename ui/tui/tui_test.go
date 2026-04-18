@@ -3427,6 +3427,52 @@ func TestSlashSplitAtomicExplainsNoDecomposition(t *testing.T) {
 	}
 }
 
+// TestRenderToolChipVerbAndPreviewProducesThreeLineCard pins the
+// 2026-04-18 UX upgrade: when a finished chip carries BOTH a Verb (the
+// params action line emitted by tool:start) AND a Preview (the result
+// excerpt from tool:result), the chip renders as a 3-line Claude-Code
+// style card — head with telemetry, what was attempted, what came
+// back. Single-line collapse only fires when one of the two halves is
+// missing.
+func TestRenderToolChipVerbAndPreviewProducesThreeLineCard(t *testing.T) {
+	out := renderToolChip(toolChip{
+		Name:       "read_file",
+		Status:     "ok",
+		Step:       3,
+		DurationMs: 28,
+		Verb:       "Read internal/engine/agent_loop.go (lines 100-200)",
+		Preview:    "100 lines · 4.2 KB · top-level Engine type + run loop",
+	}, 120)
+	parts := strings.Split(out, "\n")
+	if len(parts) != 3 {
+		t.Fatalf("verb+preview should produce a 3-line card, got %d lines:\n%s", len(parts), out)
+	}
+	if !strings.Contains(parts[0], "read_file") || !strings.Contains(parts[0], "step 3") {
+		t.Fatalf("first line should hold head + step/duration, got: %q", parts[0])
+	}
+	if !strings.Contains(parts[1], "Read internal/engine/agent_loop.go") {
+		t.Fatalf("second line should hold the params verb, got: %q", parts[1])
+	}
+	if !strings.Contains(parts[2], "→") || !strings.Contains(parts[2], "100 lines") {
+		t.Fatalf("third line should hold the result excerpt with → marker, got: %q", parts[2])
+	}
+
+	// Verb only (running, no result yet): collapses to one line when it
+	// fits, expands to two when it doesn't.
+	short := renderToolChip(toolChip{Name: "list_dir", Status: "running", Verb: "List ."}, 80)
+	if strings.Contains(short, "\n") {
+		t.Fatalf("short verb-only chip should stay on one line, got:\n%s", short)
+	}
+	wide := renderToolChip(toolChip{
+		Name:   "grep_codebase",
+		Status: "running",
+		Verb:   "Search 'autonomousResumeEnabled' in internal/engine/**/*.go (regex, max 200 hits)",
+	}, 50)
+	if !strings.Contains(wide, "\n") {
+		t.Fatalf("long verb-only chip should wrap to two lines, got: %q", wide)
+	}
+}
+
 // TestRenderToolChipShowsRTKCompression guards the per-chip compression
 // badge: when a tool:result carries RTK-style savings, the chip appends a
 // "rtk −<saved> (<pct>%)" chunk so the user can see the win right next to

@@ -58,7 +58,9 @@ func (t *DelegateTaskTool) SetRunner(r SubagentRunner) {
 func (t *DelegateTaskTool) Execute(ctx context.Context, req Request) (Result, error) {
 	task := strings.TrimSpace(asString(req.Params, "task", ""))
 	if task == "" {
-		return Result{}, fmt.Errorf("task is required")
+		return Result{}, missingParamError("delegate_task", "task", req.Params,
+			`{"task":"Audit ./internal/provider/ for unbounded retries","role":"reviewer","max_steps":12}`,
+			`task is the natural-language brief the sub-agent will run. Optional: role (e.g. "reviewer", "fixer"), allowed_tools (string[] or comma-list), max_steps (1-40), model.`)
 	}
 	t.mu.RLock()
 	runner := t.runner

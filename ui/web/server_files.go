@@ -135,13 +135,17 @@ func resolvePathWithinRoot(root, rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	absRoot, err = filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return "", fmt.Errorf("eval root symlinks: %w", err)
+	}
 	target := rel
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(absRoot, rel)
 	}
-	absTarget, err := filepath.Abs(target)
+	absTarget, err := filepath.EvalSymlinks(target)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("path resolution failed: %w", err)
 	}
 	relPath, err := filepath.Rel(absRoot, absTarget)
 	if err != nil {

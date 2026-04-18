@@ -101,6 +101,18 @@ When NOT to use:
 func (t *OrchestrateTool) Execute(ctx context.Context, req Request) (Result, error) {
 	task := strings.TrimSpace(asString(req.Params, "task", ""))
 
+	// Reject the empty call up-front (before runner check) so the model
+	// gets the param-shape feedback even on engines without a sub-agent
+	// runner wired. Either `task` (for the deterministic splitter) or
+	// `stages` (for the explicit DAG) is mandatory; everything else is
+	// optional and clamped.
+	_, hasStages := req.Params["stages"]
+	if task == "" && !hasStages {
+		return Result{}, missingParamError("orchestrate", "task` or `stages", req.Params,
+			`{"task":"Survey engine.go, audit router, document manager"} or {"stages":[{"id":"a","task":"..."},{"id":"b","task":"...","depends_on":["a"]}]}`,
+			`Pass "task" (string) for the auto-splitter, OR "stages" (array of {id,task,depends_on?}) for an explicit DAG. The two are mutually exclusive — stages wins when both are set.`)
+	}
+
 	t.mu.RLock()
 	runner := t.runner
 	ceiling := t.maxParallelCeiling
@@ -139,10 +151,6 @@ func (t *OrchestrateTool) Execute(ctx context.Context, req Request) (Result, err
 			stageResults := t.runDAG(ctx, runner, stages, layers, role, subSteps, parallel)
 			return assembleDAGResult(task, stages, layers, stageResults, parallel), firstStageError(stageResults)
 		}
-	}
-
-	if task == "" {
-		return Result{}, fmt.Errorf("task or stages is required")
 	}
 
 	plan := planning.SplitTask(task)

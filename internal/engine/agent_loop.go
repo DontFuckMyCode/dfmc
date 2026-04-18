@@ -416,7 +416,10 @@ func streamAnswerText(ctx context.Context, answer string) <-chan provider.Stream
 			case <-ctx.Done():
 				ch <- provider.StreamEvent{Type: provider.StreamError, Err: ctx.Err()}
 				return
-			case ch <- provider.StreamEvent{Type: provider.StreamDelta, Delta: delta}:
+			case ch <- provider.StreamEvent{Type: provider.StreamDelta, Delta: delta}: // try send
+			default:
+				// buffer full — consumer slow; skip this delta to avoid
+				// blocking the producer goroutine indefinitely.
 			}
 		}
 		ch <- provider.StreamEvent{Type: provider.StreamDone}

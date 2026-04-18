@@ -515,6 +515,13 @@ type toolChip struct {
 	Step         int
 	OutputTokens int // estimated tokens returned by the tool (0 when unknown)
 	Truncated    bool
+	// Verb is the Claude-Code style action line derived from the tool
+	// arguments — e.g. "Read internal/engine/agent_loop.go (lines 100-200)"
+	// or "$ go build ./...". Comes from the `params_preview` field on
+	// `tool:start` and survives the result merge so the finished card
+	// still shows WHAT was attempted, not just the result excerpt.
+	// Rendered as the second line of the multi-line chip when present.
+	Verb string
 	// RTK-style output compression stats (0 when unknown). CompressedChars
 	// is the model-bound payload size after compression; SavedChars is the
 	// number of characters dropped from the raw tool output.
@@ -564,7 +571,40 @@ func renderToolChip(chip toolChip, width int) string {
 	if len(meta) > 0 {
 		head1 += " " + subtleStyle.Render("· "+strings.Join(meta, " · "))
 	}
+	verb := strings.TrimSpace(chip.Verb)
 	preview := strings.TrimSpace(chip.Preview)
+	// When the chip carries a Verb (params action line) AND a Preview
+	// (result excerpt), render a 3-line card by default — a richer
+	// shape the user explicitly asked for so each tool call reads like
+	// a Claude-Code action: head with telemetry, what was attempted,
+	// what came back. Falls through to the older 1/2-line shapes when
+	// only one of Verb/Preview is set, so existing chip emitters stay
+	// compatible.
+	innerWidth := max(width-2, 16)
+	if verb != "" && preview != "" {
+		out := strings.Builder{}
+		out.WriteString(truncateSingleLine(head1, width))
+		out.WriteString("\n  ")
+		out.WriteString(subtleStyle.Render(truncateSingleLine(verb, innerWidth)))
+		out.WriteString("\n  ")
+		out.WriteString(subtleStyle.Render(truncateSingleLine("→ "+preview, innerWidth)))
+		appendInnerLines(&out, chip.InnerLines, innerWidth)
+		return out.String()
+	}
+	// No result yet (running) — show head + verb on a second line so
+	// the user can see WHAT the model just dispatched while it runs.
+	if verb != "" {
+		single := head1 + " " + subtleStyle.Render("· "+verb)
+		if ansi.StringWidth(single) <= width && len(chip.InnerLines) == 0 {
+			return single
+		}
+		out := strings.Builder{}
+		out.WriteString(truncateSingleLine(head1, width))
+		out.WriteString("\n  ")
+		out.WriteString(subtleStyle.Render(truncateSingleLine(verb, innerWidth)))
+		appendInnerLines(&out, chip.InnerLines, innerWidth)
+		return out.String()
+	}
 	headRendered := head1
 	if preview != "" {
 		single := head1 + " " + subtleStyle.Render("· "+preview)
@@ -573,21 +613,24 @@ func renderToolChip(chip toolChip, width int) string {
 		}
 		// Preview won't fit on one line — render head, then indented preview.
 		// Inner lines (if any) are appended below.
-		second := max(width-2, 16)
-		headRendered = truncateSingleLine(head1, width) + "\n  " + subtleStyle.Render(truncateSingleLine(preview, second))
+		headRendered = truncateSingleLine(head1, width) + "\n  " + subtleStyle.Render(truncateSingleLine(preview, innerWidth))
 	} else {
 		headRendered = truncateSingleLine(head1, width)
 	}
 	if len(chip.InnerLines) == 0 {
 		return headRendered
 	}
-	// Per-call breakdown for tool_batch_call. Indented two spaces so it
-	// hangs visually under the chip head; each line truncated to fit so a
-	// long path or error tail can't push the layout sideways.
-	innerWidth := max(width-2, 16)
 	out := strings.Builder{}
 	out.WriteString(headRendered)
-	for _, ln := range chip.InnerLines {
+	appendInnerLines(&out, chip.InnerLines, innerWidth)
+	return out.String()
+}
+
+// appendInnerLines writes the per-call breakdown (used by tool_batch_call)
+// indented two spaces under whatever was rendered above. Empty lines are
+// skipped, each line truncated so a long path can't push layout sideways.
+func appendInnerLines(out *strings.Builder, lines []string, innerWidth int) {
+	for _, ln := range lines {
 		ln = strings.TrimSpace(ln)
 		if ln == "" {
 			continue
@@ -595,7 +638,6 @@ func renderToolChip(chip toolChip, width int) string {
 		out.WriteString("\n  ")
 		out.WriteString(subtleStyle.Render(truncateSingleLine(ln, innerWidth)))
 	}
-	return out.String()
 }
 
 // formatToolTokenCount renders a tool's output token estimate in the chip

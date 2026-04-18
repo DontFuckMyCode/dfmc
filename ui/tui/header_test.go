@@ -322,6 +322,63 @@ func TestParkedEventBudgetReasonArmsResumeWithoutDuplicateLine(t *testing.T) {
 	}
 }
 
+// TestParkedEventAutonomousPendingSuppressesUIFlip pins the fix for the
+// 2026-04-18 race: when the autonomous-resume wrapper will immediately
+// re-enter the loop after a budget-exhausted park, the parked event must
+// NOT flip the TUI into the parked UI state. Doing so flashed a "press
+// Enter to resume" prompt the user could act on before the wrapper got
+// to the next round, producing the "No parked agent loop" /continue race.
+func TestParkedEventAutonomousPendingSuppressesUIFlip(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.status = engine.Status{Provider: "anthropic", Model: "claude-opus-4-6"}
+	m.agentLoop.active = true
+	m.agentLoop.phase = "running-tools"
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:parked",
+		Payload: map[string]any{
+			"step":               12,
+			"max_tool_steps":     25,
+			"reason":             "budget_exhausted",
+			"autonomous_pending": true,
+		},
+	})
+	if m.ui.resumePromptActive {
+		t.Fatal("autonomous_pending park MUST NOT arm the resume banner")
+	}
+	if m.agentLoop.phase == "parked" {
+		t.Fatalf("autonomous_pending park MUST NOT flip phase to parked, got %q", m.agentLoop.phase)
+	}
+}
+
+// TestAutoResumeEventClearsStaleResumePrompt is belt-and-braces: even if
+// an old engine emits parked-without-autonomous_pending, the moment
+// auto_resume fires the prompt must clear so the user doesn't see "press
+// Enter to resume" sitting under an actively-running loop.
+func TestAutoResumeEventClearsStaleResumePrompt(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.ui.resumePromptActive = true
+	m.agentLoop.active = false
+	m.agentLoop.phase = "parked"
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:auto_resume",
+		Payload: map[string]any{
+			"cumulative_steps": 30,
+			"step_ceiling":     600,
+		},
+	})
+	if m.ui.resumePromptActive {
+		t.Fatal("auto_resume must clear resumePromptActive")
+	}
+	if !m.agentLoop.active {
+		t.Fatal("auto_resume must mark agent loop active again")
+	}
+	if m.agentLoop.phase != "auto-resuming" {
+		t.Fatalf("phase should flip to auto-resuming, got %q", m.agentLoop.phase)
+	}
+}
+
 func TestEscDismissesResumePromptWithoutClearingEngineState(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.ui.resumePromptActive = true
