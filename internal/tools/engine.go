@@ -66,6 +66,7 @@ func New(cfg config.Config) *Engine {
 	e.Register(NewWebFetchTool())
 	e.Register(NewWebSearchTool())
 	e.Register(NewASTQueryTool())
+	e.Register(NewFindSymbolTool())
 	e.Register(NewApplyPatchTool())
 	e.Register(NewGitStatusTool())
 	e.Register(NewGitDiffTool())

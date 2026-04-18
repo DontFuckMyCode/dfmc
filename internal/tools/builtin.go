@@ -25,9 +25,32 @@ func (t *ReadFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return Result{}, err
+	}
+	const maxFileSize = 10 << 20 // 10 MB
+	if info.Size() > maxFileSize {
+		return Result{}, fmt.Errorf("file too large (%d bytes, limit %d) \u2014 use line_start/line_end to read a segment", info.Size(), maxFileSize)
+	}
+
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return Result{}, err
+	}
+
+	// Reject binary files: if the first 512 bytes contain a NUL, this is
+	// almost certainly not text. Reading the whole binary into memory is a
+	// waste and produces garbage output for the model.
+	checkLen := len(data)
+	if checkLen > 512 {
+		checkLen = 512
+	}
+	for i := 0; i < checkLen; i++ {
+		if data[i] == 0 {
+			return Result{}, fmt.Errorf("file appears to be binary (NUL byte at offset %d) \u2014 read_file only supports text files", i)
+		}
 	}
 	text := string(data)
 	lines := strings.Split(text, "\n")
@@ -112,10 +135,17 @@ func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	replaceAll := asBool(req.Params, "replace_all", false)
 
 	if strings.TrimSpace(oldStr) == "" {
-		return Result{}, fmt.Errorf("old_string is required")
+		return Result{}, missingParamError("edit_file", "old_string", req.Params,
+			`{"path":"main.go","old_string":"return nil","new_string":"return ctx.Err()"}`,
+			`old_string must be the EXACT text already in the file (whitespace, indentation, line endings included). Read the file first, then copy the unique anchor you want to replace.`)
+	}
+	if strings.TrimSpace(path) == "" {
+		return Result{}, missingParamError("edit_file", "path", req.Params,
+			`{"path":"internal/engine/engine.go","old_string":"<exact match>","new_string":"<replacement>"}`,
+			`path is the file to edit (relative to project root).`)
 	}
 	if oldStr == newStr {
-		return Result{}, fmt.Errorf("old_string and new_string are identical — nothing to do")
+		return Result{}, fmt.Errorf(`edit_file: old_string and new_string are identical — nothing to do. Either change new_string, or use read_file if you only wanted to view the section.`)
 	}
 
 	absPath, err := EnsureWithinRoot(req.ProjectRoot, path)

@@ -153,6 +153,78 @@ func TestActionableMissingParamErrors(t *testing.T) {
 	}
 }
 
+// TestActionableMissingParamErrors_SecondWave covers the audit's
+// remaining bare-error tools (apply_patch, run_command, web_fetch,
+// web_search, tool_search, git_blame, git_worktree_add,
+// git_worktree_remove, git_commit). Each must follow the same
+// missingParamError shape: name the field, list received keys, give a
+// canonical example, and add a context hint.
+func TestActionableMissingParamErrors_SecondWave(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := *config.DefaultConfig()
+	// run_command needs allow_shell=true to even reach the param check.
+	cfg.Security.Sandbox.AllowShell = true
+	eng := New(cfg)
+
+	cases := []struct {
+		tool      string
+		params    map[string]any
+		wantField string
+		wantHints []string
+	}{
+		{tool: "apply_patch", params: map[string]any{"dry_run": true}, wantField: "patch", wantHints: []string{"unified-diff", "hunks", "Correct shape:"}},
+		{tool: "run_command", params: map[string]any{"args": []any{"build"}}, wantField: "command", wantHints: []string{"binary to execute", "shell line", "Correct shape:"}},
+		{tool: "web_fetch", params: map[string]any{"max_bytes": 1024}, wantField: "url", wantHints: []string{"http(s)", "SSRF", "Correct shape:"}},
+		{tool: "web_search", params: map[string]any{"limit": 5}, wantField: "query", wantHints: []string{"DuckDuckGo", "limit", "Correct shape:"}},
+		{tool: "tool_search", params: map[string]any{"limit": 3}, wantField: "query", wantHints: []string{"backend tools", "Correct shape:"}},
+		{tool: "git_blame", params: map[string]any{}, wantField: "path", wantHints: []string{"file to blame", "line_start", "Correct shape:"}},
+		{tool: "git_worktree_add", params: map[string]any{"branch": "feat/x"}, wantField: "path", wantHints: []string{"worktree directory", "Correct shape:"}},
+		{tool: "git_worktree_remove", params: map[string]any{"force": true}, wantField: "path", wantHints: []string{"worktree directory", "force", "Correct shape:"}},
+		{tool: "git_commit", params: map[string]any{"paths": []any{"main.go"}}, wantField: "message", wantHints: []string{"subject", "paths", "Correct shape:"}},
+	}
+	for _, c := range cases {
+		t.Run(c.tool, func(t *testing.T) {
+			_, err := eng.Execute(context.Background(), c.tool, Request{ProjectRoot: tmp, Params: c.params})
+			if err == nil {
+				t.Fatalf("%s with missing %q must error", c.tool, c.wantField)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, c.wantField) {
+				t.Fatalf("%s error should name the missing field %q, got: %s", c.tool, c.wantField, msg)
+			}
+			if !strings.Contains(msg, "params keys") {
+				t.Fatalf("%s error should list received keys, got: %s", c.tool, msg)
+			}
+			for _, want := range c.wantHints {
+				if !strings.Contains(msg, want) {
+					t.Fatalf("%s error should contain %q, got: %s", c.tool, want, msg)
+				}
+			}
+		})
+	}
+}
+
+// TestToolBatchCallEmptyCallsErrorIsActionable covers the meta tool's
+// non-missingParamError path: when calls is an empty array (not absent),
+// the error must still steer the model to the correct shape and point
+// at tool_call as the single-call alternative.
+func TestToolBatchCallEmptyCallsErrorIsActionable(t *testing.T) {
+	eng := New(*config.DefaultConfig())
+	_, err := eng.Execute(context.Background(), "tool_batch_call", Request{
+		ProjectRoot: t.TempDir(),
+		Params:      map[string]any{"calls": []any{}},
+	})
+	if err == nil {
+		t.Fatal("empty calls array must error")
+	}
+	msg := err.Error()
+	for _, want := range []string{"calls is empty", "tool_call directly", `{"calls":[`} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("empty-calls error should mention %q, got: %s", want, msg)
+		}
+	}
+}
+
 // TestASTQueryRejectsDirectoryWithToolHint pins the screenshot fix: when
 // the model passes a folder where ast_query expects a file, the error
 // must call out the mistake AND suggest the glob+ast_query pattern

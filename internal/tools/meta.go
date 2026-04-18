@@ -73,7 +73,9 @@ func (t *toolSearchTool) Spec() ToolSpec {
 func (t *toolSearchTool) Execute(_ context.Context, req Request) (Result, error) {
 	query := strings.TrimSpace(asString(req.Params, "query", ""))
 	if query == "" {
-		return Result{}, fmt.Errorf("query is required")
+		return Result{}, missingParamError("tool_search", "query", req.Params,
+			`{"query":"grep"} or {"query":"write files","limit":5}`,
+			`query is a free-text search across tool names + descriptions. Returns the top backend tools (meta tools are filtered out — call them directly, not via tool_search).`)
 	}
 	limit := asInt(req.Params, "limit", defaultSearchLimit)
 	if limit <= 0 {
@@ -192,8 +194,44 @@ func (t *toolCallTool) Execute(ctx context.Context, req Request) (Result, error)
 		return Result{}, missingNameError("tool_call", req.Params,
 			`{"name":"read_file","args":{"path":"main.go","line_start":1,"line_end":40}}`)
 	}
+	// Auto-unwrap double-wrap: the model invoked tool_call with
+	// {name:"tool_call", args:{name:"read_file", args:{...}}} —
+	// canonical shape but one layer too deep. Pre-fix this returned
+	// "cannot invoke meta tools (got tool_call)" and the model just
+	// looped on the same wrap. Post-fix we peel one layer, dispatch
+	// the inner call, and prepend a one-line hint so the model learns
+	// to drop the wrapper next round. Hard cap at one unwrap so a
+	// truly broken {name:tool_call, args:{name:tool_call, args:{...}}}
+	// chain trips a real error instead of recursing forever.
+	if name == "tool_call" {
+		inner, ierr := extractArgsObject(req.Params, "args")
+		if ierr != nil {
+			return Result{}, fmt.Errorf("tool_call double-wrap: %w", ierr)
+		}
+		innerName := pickToolName(inner)
+		if innerName == "" || innerName == "tool_call" {
+			return Result{}, fmt.Errorf(
+				`tool_call was invoked with name="tool_call" — that's a double-wrap. Drop the outer wrapper and call the backend tool directly: {"name":"<tool>","args":{...}}. Got nested args=%v`,
+				inner)
+		}
+		if isMetaTool(innerName) {
+			return Result{}, fmt.Errorf("tool_call cannot invoke meta tools even via unwrap (got nested %q)", innerName)
+		}
+		innerArgs, aerr := extractArgsObject(inner, "args")
+		if aerr != nil {
+			return Result{}, aerr
+		}
+		sub := Request{ProjectRoot: req.ProjectRoot, Params: innerArgs}
+		res, err := t.engine.Execute(ctx, innerName, sub)
+		hint := fmt.Sprintf("[tool_call: auto-unwrapped redundant outer tool_call → dispatched %s. Next time call %s directly: {\"name\":%q,\"args\":{...}}]\n", innerName, innerName, innerName)
+		if err != nil {
+			return res, fmt.Errorf("%s%s: %w", hint, innerName, err)
+		}
+		res.Output = hint + res.Output
+		return res, nil
+	}
 	if isMetaTool(name) {
-		return Result{}, fmt.Errorf("tool_call cannot invoke meta tools (got %q)", name)
+		return Result{}, fmt.Errorf("tool_call cannot invoke meta tools (got %q). Call the backend tool directly: {\"name\":\"read_file\",\"args\":{...}}. Meta tools (tool_call, tool_batch_call, tool_search, tool_help) are dispatched by the agent loop, not by each other", name)
 	}
 	args, err := extractArgsObject(req.Params, "args")
 	if err != nil {
@@ -241,7 +279,10 @@ func (t *toolBatchCallTool) Execute(ctx context.Context, req Request) (Result, e
 		return Result{}, err
 	}
 	if len(calls) == 0 {
-		return Result{}, fmt.Errorf("calls is empty")
+		return Result{}, fmt.Errorf(
+			`tool_batch_call: calls is empty. Pass at least one {name, args} object: ` +
+				`{"calls":[{"name":"read_file","args":{"path":"a.go"}},{"name":"read_file","args":{"path":"b.go"}}]}. ` +
+				`For a single call, use tool_call directly — batch is for parallel fan-out.`)
 	}
 
 	limit := 1

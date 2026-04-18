@@ -27,7 +27,9 @@ func (t *ApplyPatchTool) Description() string {
 func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error) {
 	patch := asString(req.Params, "patch", "")
 	if strings.TrimSpace(patch) == "" {
-		return Result{}, fmt.Errorf("patch is required")
+		return Result{}, missingParamError("apply_patch", "patch", req.Params,
+			`{"patch":"--- a/foo.go\n+++ b/foo.go\n@@ -1,3 +1,3 @@\n-old line\n+new line\n unchanged\n"}`,
+			`patch is a unified-diff string. Each file diff starts with --- a/path / +++ b/path then @@ hunks. Use dry_run=true first to validate without writing. For single-line replacements prefer edit_file — apply_patch shines when changing multiple non-adjacent regions.`)
 	}
 	dryRun := asBool(req.Params, "dry_run", false)
 

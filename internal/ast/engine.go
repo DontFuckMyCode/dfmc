@@ -371,12 +371,21 @@ func (c *parseCache) Set(path string, res *ParseResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if _, ok := c.entries[path]; !ok {
+	if _, ok := c.entries[path]; ok {
+		// Move existing entry to end of order (LRU: most recently used last)
+		for i, p := range c.order {
+			if p == path {
+				c.order = append(c.order[:i], c.order[i+1:]...)
+				break
+			}
+		}
+		c.order = append(c.order, path)
+	} else {
 		c.order = append(c.order, path)
 	}
 	c.entries[path] = &cacheEntry{result: res, hash: res.Hash}
 
-	if len(c.entries) > c.maxSize {
+	for len(c.entries) > c.maxSize {
 		oldest := c.order[0]
 		c.order = c.order[1:]
 		delete(c.entries, oldest)

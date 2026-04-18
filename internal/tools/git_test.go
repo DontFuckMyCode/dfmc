@@ -187,8 +187,18 @@ func TestGitBlame_RespectsLineRange(t *testing.T) {
 func TestGitBlame_RequiresPath(t *testing.T) {
 	dir := initTempRepo(t)
 	_, err := NewGitBlameTool().Execute(context.Background(), Request{ProjectRoot: dir})
-	if err == nil || !strings.Contains(err.Error(), "path is required") {
-		t.Fatalf("expected 'path is required' error, got %v", err)
+	if err == nil {
+		t.Fatal("expected an error when path is missing")
+	}
+	msg := err.Error()
+	// Post-2026-04-18 the error follows the actionable missingParamError
+	// shape: names the field, lists received keys, and includes the
+	// canonical example. Pre-fix it was a bare "path is required" — the
+	// model just retried the same broken shape.
+	for _, want := range []string{"path", "params keys", "Correct shape:"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected actionable missing-path error to contain %q, got: %s", want, msg)
+		}
 	}
 }
 

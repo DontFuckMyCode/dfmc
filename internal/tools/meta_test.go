@@ -177,6 +177,66 @@ func TestToolCallRefusesMetaTarget(t *testing.T) {
 	}
 }
 
+// TestToolCallAutoUnwrapsDoubleWrap pins the 2026-04-18 fix for the
+// "tool_call cannot invoke meta tools (got tool_call)" loop. When the
+// model emits {name:"tool_call", args:{name:"read_file", args:{...}}}
+// — one canonical wrap too many — the dispatcher must peel one layer,
+// dispatch the inner call, AND prepend a one-line hint so the model
+// learns to drop the redundant wrapper next round. Without the unwrap
+// the model just retries the same broken shape.
+func TestToolCallAutoUnwrapsDoubleWrap(t *testing.T) {
+	eng, tmp := newTestEngine(t)
+	res, err := eng.Execute(context.Background(), "tool_call", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"name": "tool_call",
+			"args": map[string]any{
+				"name": "read_file",
+				"args": map[string]any{"path": "hello.go"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("auto-unwrap should succeed, got error: %v", err)
+	}
+	if !strings.Contains(res.Output, "auto-unwrapped") {
+		t.Fatalf("output must carry the unwrap hint so model learns, got: %s", res.Output)
+	}
+	if !strings.Contains(res.Output, "read_file") {
+		t.Fatalf("hint must name the dispatched tool, got: %s", res.Output)
+	}
+	// The actual file contents must still be in the output (proves the
+	// inner read_file ran end-to-end).
+	if !strings.Contains(res.Output, "package main") {
+		t.Fatalf("expected actual file contents after the hint, got: %s", res.Output)
+	}
+}
+
+// TestToolCallTripleWrapStillRejected guards the safety bound: a
+// {name:"tool_call",args:{name:"tool_call",args:{...}}} chain must NOT
+// recurse forever — one unwrap is the limit. Otherwise the bug would
+// shift from "loops on the wrong call" to "stack-overflows on a really
+// confused call".
+func TestToolCallTripleWrapStillRejected(t *testing.T) {
+	eng, tmp := newTestEngine(t)
+	_, err := eng.Execute(context.Background(), "tool_call", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"name": "tool_call",
+			"args": map[string]any{
+				"name": "tool_call",
+				"args": map[string]any{"name": "read_file", "args": map[string]any{"path": "hello.go"}},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("triple-wrap must error — recursion is bounded to 1 unwrap")
+	}
+	if !strings.Contains(err.Error(), "double-wrap") {
+		t.Fatalf("triple-wrap error should mention double-wrap, got: %v", err)
+	}
+}
+
 func TestToolCallAcceptsStringifiedArgs(t *testing.T) {
 	eng, tmp := newTestEngine(t)
 	argsJSON, _ := json.Marshal(map[string]any{"path": "hello.go"})

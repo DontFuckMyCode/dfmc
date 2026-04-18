@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -26,6 +27,28 @@ var httpClient = &http.Client{
 	},
 }
 
+// isBlockedHost resolves the host and returns true if it points to a
+// loopback, link-local, or private IP address. This prevents SSRF attacks
+// where an LLM-generated URL could reach cloud metadata endpoints
+// (169.254.169.254), localhost services, or internal networks.
+func isBlockedHost(host string) bool {
+	h := host
+	if strings.Contains(h, ":") {
+		h, _, _ = net.SplitHostPort(h)
+	}
+	ips, err := net.LookupIP(h)
+	if err != nil {
+		// If we can't resolve, block to avoid racing with DNS rebinding.
+		return true
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
+			return true
+		}
+	}
+	return false
+}
+
 // WebFetchTool does an HTTP GET, converts HTML to text, and returns a
 // token-budgeted excerpt. Not a full browser — skips JavaScript, follows up
 // to 5 redirects.
@@ -40,11 +63,16 @@ func (t *WebFetchTool) Description() string {
 func (t *WebFetchTool) Execute(ctx context.Context, req Request) (Result, error) {
 	raw := strings.TrimSpace(asString(req.Params, "url", ""))
 	if raw == "" {
-		return Result{}, fmt.Errorf("url is required")
+		return Result{}, missingParamError("web_fetch", "url", req.Params,
+			`{"url":"https://example.com/docs/api"} or {"url":"https://...","max_bytes":524288}`,
+			`url must be a full http(s) URL. Returns text content with HTML stripped. Loopback / private / link-local addresses are blocked (SSRF guard). Cap raw bytes with max_bytes (128KB-1MB).`)
 	}
 	u, err := url.Parse(raw)
 	if err != nil || !(u.Scheme == "http" || u.Scheme == "https") {
 		return Result{}, fmt.Errorf("url must be http(s)")
+	}
+	if isBlockedHost(u.Host) {
+		return Result{}, fmt.Errorf("url resolves to a blocked (private/loopback/link-local) address — SSRF protection")
 	}
 	maxBytes := asInt(req.Params, "max_bytes", 128*1024)
 	if maxBytes <= 0 {
@@ -165,7 +193,9 @@ var (
 func (t *WebSearchTool) Execute(ctx context.Context, req Request) (Result, error) {
 	query := strings.TrimSpace(asString(req.Params, "query", ""))
 	if query == "" {
-		return Result{}, fmt.Errorf("query is required")
+		return Result{}, missingParamError("web_search", "query", req.Params,
+			`{"query":"go context cancellation pattern"} or {"query":"...","limit":5}`,
+			`query is the search string sent to DuckDuckGo HTML. Returns up to limit results (1-25, default 8) with title/snippet/url. For docs you already have a URL for, use web_fetch directly.`)
 	}
 	limit := asInt(req.Params, "limit", 8)
 	if limit <= 0 {
@@ -179,6 +209,9 @@ func (t *WebSearchTool) Execute(ctx context.Context, req Request) (Result, error
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return Result{}, err
+	}
+	if isBlockedHost(httpReq.URL.Host) {
+		return Result{}, fmt.Errorf("url resolves to a blocked (private/loopback/link-local) address — SSRF protection")
 	}
 	httpReq.Header.Set("User-Agent", userAgent)
 	httpReq.Header.Set("Accept", "text/html")

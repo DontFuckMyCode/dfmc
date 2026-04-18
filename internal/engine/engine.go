@@ -269,10 +269,10 @@ func (e *Engine) Shutdown() {
 	// legitimately read conversation/memory here.
 	if e.Hooks != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		e.Hooks.Fire(ctx, hooks.EventSessionEnd, hooks.Payload{
 			"project_root": e.ProjectRoot,
 		})
-		cancel()
 	}
 
 	// Persist and close in stage order. We deliberately keep this method

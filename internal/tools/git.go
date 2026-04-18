@@ -430,7 +430,9 @@ func (t *GitBlameTool) Execute(ctx context.Context, req Request) (Result, error)
 	timeout := resolveGitTimeout(req.Params)
 	path := strings.TrimSpace(asString(req.Params, "path", ""))
 	if path == "" {
-		return Result{}, fmt.Errorf("path is required")
+		return Result{}, missingParamError("git_blame", "path", req.Params,
+			`{"path":"internal/engine/engine.go"} or {"path":"main.go","line_start":40,"line_end":80}`,
+			`path is the file to blame (relative to project root). Optional line_start/line_end narrow output to a range — without them the whole file's blame is returned, which can be large for old files.`)
 	}
 	if _, err := EnsureWithinRoot(req.ProjectRoot, path); err != nil {
 		return Result{}, err
@@ -714,7 +716,9 @@ func (t *GitWorktreeAddTool) Execute(ctx context.Context, req Request) (Result, 
 	timeout := resolveGitTimeout(req.Params)
 	path := strings.TrimSpace(asString(req.Params, "path", ""))
 	if path == "" {
-		return Result{}, fmt.Errorf("path is required")
+		return Result{}, missingParamError("git_worktree_add", "path", req.Params,
+			`{"path":"../wt-feature","branch":"feature/x","ref":"main"} or {"path":"../wt-fix","ref":"HEAD~1"}`,
+			`path is the new worktree directory (relative to project root or absolute). Optional branch creates a new branch, ref selects the starting point (default HEAD). To remove a worktree later use git_worktree_remove.`)
 	}
 	absPath, err := EnsureWithinRoot(req.ProjectRoot, path)
 	if err != nil {
@@ -783,7 +787,9 @@ func (t *GitWorktreeRemoveTool) Execute(ctx context.Context, req Request) (Resul
 	timeout := resolveGitTimeout(req.Params)
 	path := strings.TrimSpace(asString(req.Params, "path", ""))
 	if path == "" {
-		return Result{}, fmt.Errorf("path is required")
+		return Result{}, missingParamError("git_worktree_remove", "path", req.Params,
+			`{"path":"../wt-feature"} or {"path":"../wt-feature","force":true}`,
+			`path is the worktree directory to remove (use git_worktree_list to see what exists). Pass force=true to remove a worktree with uncommitted changes — destructive, use sparingly.`)
 	}
 	// Worktrees may live outside the project root if the user created them
 	// that way — but we still require the caller to pass a path we can
@@ -842,7 +848,9 @@ func (t *GitCommitTool) Execute(ctx context.Context, req Request) (Result, error
 	timeout := resolveGitTimeout(req.Params)
 	message := strings.TrimSpace(asString(req.Params, "message", ""))
 	if message == "" {
-		return Result{}, fmt.Errorf("message is required")
+		return Result{}, missingParamError("git_commit", "message", req.Params,
+			`{"message":"feat(engine): add park-and-resume","paths":["internal/engine/agent_loop.go","internal/engine/agent_parking.go"]}`,
+			`message is the commit subject (and body, multi-line is fine). Optional paths is a string[] of files to stage; without it, only previously-staged changes are committed. To stage everything use {"paths":["."]}.`)
 	}
 
 	paths := stringSliceArg(req.Params["paths"])

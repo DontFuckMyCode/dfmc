@@ -42,7 +42,9 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 
 	command := strings.TrimSpace(asString(req.Params, "command", ""))
 	if command == "" {
-		return Result{}, fmt.Errorf("command is required")
+		return Result{}, missingParamError("run_command", "command", req.Params,
+			`{"command":"go","args":["build","./..."],"timeout_ms":60000}`,
+			`command is the binary to execute (e.g. "go", "npm", "pytest"). Pass arguments as args (string[] or whitespace-joined string). NOT a shell line — no &&, ||, |, >, &. For shell composition, run separate calls or invoke a script you write to disk first.`)
 	}
 	if isBlockedShellInterpreter(command) {
 		return Result{}, fmt.Errorf("shell interpreters are blocked for run_command: %s", command)
