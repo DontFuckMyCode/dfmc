@@ -122,7 +122,7 @@ func TestActivityClearResets(t *testing.T) {
 	m := newActivityTestModel()
 	for i := 0; i < 3; i++ {
 		m.recordActivityEvent(engine.Event{
-			Type: "agent:loop:thinking",
+			Type:    "agent:loop:thinking",
 			Payload: map[string]any{"step": i + 1, "max_tool_steps": 10},
 		})
 	}
@@ -177,5 +177,31 @@ func TestClassifyActivityStringPayloadAppended(t *testing.T) {
 	_, text := classifyActivity(engine.Event{Type: "coach:note", Payload: "watch the context budget"})
 	if !strings.Contains(text, "coach:note") || !strings.Contains(text, "watch") {
 		t.Fatalf("text=%q should include type + string payload", text)
+	}
+}
+
+func TestClassifyActivityContextCompactedAcceptsCanonicalPayloadKeys(t *testing.T) {
+	_, text := classifyActivity(engine.Event{
+		Type: "context:lifecycle:compacted",
+		Payload: map[string]any{
+			"before_tokens": 1200,
+			"after_tokens":  450,
+		},
+	})
+	if !strings.Contains(text, "1200") || !strings.Contains(text, "450") {
+		t.Fatalf("expected canonical token keys in text, got %q", text)
+	}
+}
+
+func TestClassifyActivityToolResultAcceptsCamelCaseDuration(t *testing.T) {
+	_, text := classifyActivity(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":       "read_file",
+			"durationMs": 77,
+		},
+	})
+	if !strings.Contains(text, "77ms") {
+		t.Fatalf("expected camelCase duration in text, got %q", text)
 	}
 }

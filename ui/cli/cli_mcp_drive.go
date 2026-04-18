@@ -210,55 +210,21 @@ func (h *driveMCPHandler) callStart(_ context.Context, rawArgs []byte) (mcp.Call
 		h.eng.PublishDriveEvent(typ, payload)
 	})
 	driver := drive.NewDriver(runner, store, publisher, cfg)
-
-	runIDCh := make(chan string, 1)
-	h.eng.StartBackgroundTask("mcp.drive.run", func(ctx context.Context) {
-		run, _ := driver.Run(ctx, task)
-		if run != nil {
-			select {
-			case runIDCh <- run.ID:
-			default:
-			}
-		} else {
-			close(runIDCh)
-		}
-	})
-
-	// We need to return a run_id to the host, but driver.Run doesn't
-	// hand one out until the planner kicks off. Wait briefly — long
-	// enough for the registry to record the run, short enough not to
-	// block the MCP loop on a slow planner. If we time out, return a
-	// hint that the run is in flight and the host should poll active.
-	select {
-	case id, ok := <-runIDCh:
-		if !ok || id == "" {
-			return okResult(map[string]any{
-				"started": true,
-				"hint":    "driver returned without a run id — check dfmc_drive_active",
-			})
-		}
-		return okResult(map[string]any{
-			"started": true,
-			"run_id":  id,
-			"hint":    "poll dfmc_drive_status with this run_id, or call dfmc_drive_stop to cancel",
-		})
-	case <-time.After(200 * time.Millisecond):
-		// Planner hasn't returned yet; surface what we know.
-		active := drive.ListActive()
-		hint := "planner is still warming up — call dfmc_drive_active in a moment for the run_id"
-		if len(active) > 0 {
-			return okResult(map[string]any{
-				"started":      true,
-				"run_id":       active[len(active)-1].RunID,
-				"hint":         hint,
-				"active_count": len(active),
-			})
-		}
-		return okResult(map[string]any{
-			"started": true,
-			"hint":    hint,
-		})
+	run, err := drive.NewRun(task)
+	if err != nil {
+		return errResult(err.Error())
 	}
+	if err := store.Save(run); err != nil {
+		return errResult("persist run: " + err.Error())
+	}
+	h.eng.StartBackgroundTask("mcp.drive.run", func(ctx context.Context) {
+		_, _ = driver.RunPrepared(ctx, run)
+	})
+	return okResult(map[string]any{
+		"started": true,
+		"run_id":  run.ID,
+		"hint":    "poll dfmc_drive_status with this run_id, or call dfmc_drive_stop to cancel",
+	})
 }
 
 func (h *driveMCPHandler) callStatus(rawArgs []byte) (mcp.CallToolResult, error) {
@@ -352,6 +318,9 @@ func (h *driveMCPHandler) callResume(_ context.Context, rawArgs []byte) (mcp.Cal
 	}
 	if existing == nil {
 		return errResult("run " + id + " not found")
+	}
+	if drive.IsActive(id) {
+		return errResult("run " + id + " is already active in this process - cannot resume it again")
 	}
 	if existing.Status == drive.RunDone || existing.Status == drive.RunFailed {
 		return errResult("run " + id + " already terminal (" + string(existing.Status) + ") — cannot resume")

@@ -65,6 +65,49 @@ func TestDriveStartRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestDriveStartReturnsRunID(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/api/v1/drive", "application/json",
+		strings.NewReader(`{"task":"add smoke test"}`))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202 for valid task, got %d", resp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	runID := strings.TrimSpace(toTestString(payload["run_id"]))
+	if runID == "" {
+		t.Fatalf("expected run_id in response, got %#v", payload)
+	}
+	store, err := drive.NewStore(eng.Storage.DB())
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	run, err := store.Load(runID)
+	if err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run == nil {
+		t.Fatalf("expected persisted run %q", runID)
+	}
+}
+
+func toTestString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
 // TestDriveListEmptyReturnsArrayNotNull: a fresh project has no
 // runs; the list endpoint must emit `[]` not `null` so the workbench
 // frontend can iterate without a typeof check.

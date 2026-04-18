@@ -27,60 +27,101 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
-// runDriveAsync constructs the driver and runs it in a goroutine.
-// Safe to call from a bubbletea handler — never blocks. Each call is
-// independent: there's no global state preventing two drive runs
-// from executing concurrently (though the engine.RunSubagent path
-// serializes them via the parked-state lock). Cancellation is via
-// `/drive stop` which calls drive.Cancel(runID).
-func runDriveAsync(eng *engine.Engine, task string) {
-	driver := buildTUIDriver(eng)
-	if driver == nil {
-		return
+type tuiDriveResources struct {
+	driver *drive.Driver
+	store  *drive.Store
+}
+
+// runDriveAsync constructs the driver, persists the planning stub, and runs
+// it in a goroutine. Returns the run ID immediately so the TUI can print a
+// stable handle in the transcript instead of telling the user to go hunting
+// through the activity panel.
+func runDriveAsync(eng *engine.Engine, task string) (string, error) {
+	resources, err := buildTUIDriver(eng)
+	if err != nil {
+		return "", err
+	}
+	run, err := drive.NewRun(task)
+	if err != nil {
+		return "", err
+	}
+	if err := resources.store.Save(run); err != nil {
+		return "", fmt.Errorf("persist drive run: %w", err)
 	}
 	eng.StartBackgroundTask("tui.drive.run", func(ctx context.Context) {
-		_, _ = driver.Run(ctx, task)
+		_, _ = resources.driver.RunPrepared(ctx, run)
 	})
+	return run.ID, nil
 }
 
 // runDriveResumeAsync re-enters a stopped/in-progress run. Same
 // fire-and-forget pattern as runDriveAsync.
-func runDriveResumeAsync(eng *engine.Engine, runID string) {
-	driver := buildTUIDriver(eng)
-	if driver == nil {
-		return
+func runDriveResumeAsync(eng *engine.Engine, runID string) (string, error) {
+	resources, err := buildTUIDriver(eng)
+	if err != nil {
+		return "", err
+	}
+	id := strings.TrimSpace(runID)
+	if id == "" {
+		return "", fmt.Errorf("run ID is required")
+	}
+	existing, err := resources.store.Load(id)
+	if err != nil {
+		return "", fmt.Errorf("load drive run: %w", err)
+	}
+	if existing == nil {
+		return "", fmt.Errorf("drive run %q not found", id)
+	}
+	if drive.IsActive(id) {
+		return "", fmt.Errorf("drive run %q is already active in this process", id)
+	}
+	if existing.Status == drive.RunDone || existing.Status == drive.RunFailed {
+		return "", fmt.Errorf("drive run %q is already terminal (%s)", id, existing.Status)
 	}
 	eng.StartBackgroundTask("tui.drive.resume", func(ctx context.Context) {
-		_, _ = driver.Resume(ctx, runID)
+		_, _ = resources.driver.Resume(ctx, id)
 	})
+	return id, nil
 }
 
 // buildTUIDriver collapses the runner/store/publisher wiring shared
 // by runDriveAsync and runDriveResumeAsync. Returns nil + publishes a
 // failure event when the engine isn't usable so the caller doesn't
 // have to repeat the guard.
-func buildTUIDriver(eng *engine.Engine) *drive.Driver {
+func buildTUIDriver(eng *engine.Engine) (*tuiDriveResources, error) {
 	if eng == nil {
-		return nil
+		return nil, fmt.Errorf("engine is not initialized")
 	}
 	runner := eng.NewDriveRunner()
 	if runner == nil {
+		err := fmt.Errorf("engine.NewDriveRunner returned nil — providers not initialized")
 		eng.PublishDriveEvent(drive.EventRunFailed, map[string]any{
-			"reason": "engine.NewDriveRunner returned nil — providers not initialized",
+			"reason": err.Error(),
 		})
-		return nil
+		return nil, err
+	}
+	if eng.Storage == nil {
+		err := fmt.Errorf("engine storage is not initialized")
+		eng.PublishDriveEvent(drive.EventRunFailed, map[string]any{
+			"reason": err.Error(),
+		})
+		return nil, err
 	}
 	store, err := drive.NewStore(eng.Storage.DB())
 	if err != nil {
+		wrapped := fmt.Errorf("drive store init failed: %w", err)
 		eng.PublishDriveEvent(drive.EventRunFailed, map[string]any{
-			"reason": "drive store init failed: " + err.Error(),
+			"reason": wrapped.Error(),
 		})
-		return nil
+		return nil, wrapped
 	}
 	publisher := drive.Publisher(func(typ string, payload map[string]any) {
 		eng.PublishDriveEvent(typ, payload)
 	})
-	return drive.NewDriver(runner, store, publisher, drive.Config{})
+	return &tuiDriveResources{
+		driver: drive.NewDriver(runner, store, publisher, drive.Config{}),
+		store:  store,
+	}, nil
 }
 
 // handleDriveStopSlash powers `/drive stop [id]`. Without an ID,

@@ -6,14 +6,16 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/muesli/cancelreader"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
 // newTestStdinApprover skips the real stdin-is-tty detection and wires
-// in plumbable reader/writer — tests drive the approver deterministically
-// instead of relying on whatever the CI runner considers a terminal.
+// in plumbable reader/writer so tests drive the approver deterministically.
 func newTestStdinApprover(stdin io.Reader, stdout io.Writer, autoYes, autoNo bool) *stdinApprover {
 	return &stdinApprover{
 		reader:  bufio.NewReader(stdin),
@@ -26,8 +28,6 @@ func newTestStdinApprover(stdin io.Reader, stdout io.Writer, autoYes, autoNo boo
 }
 
 func TestStdinApprover_AutoYes_NonDestructive(t *testing.T) {
-	// DFMC_APPROVE=yes alone auto-approves only read-only tools; write/shell
-	// require the second knob (see TestStdinApprover_AutoYes_DestructiveDeniedWithoutSecondKnob).
 	var out bytes.Buffer
 	ap := newTestStdinApprover(strings.NewReader(""), &out, true, false)
 	decision := ap.RequestApproval(context.Background(), engine.ApprovalRequest{Tool: "read_file"})
@@ -39,10 +39,6 @@ func TestStdinApprover_AutoYes_NonDestructive(t *testing.T) {
 	}
 }
 
-// TestStdinApprover_AutoYes_DestructiveDeniedWithoutSecondKnob pins the
-// two-knob gate: a leaked DFMC_APPROVE=yes in CI must not be enough to
-// silently grant write/shell access. Operators have to also set
-// DFMC_APPROVE_DESTRUCTIVE=yes — the deny reason explains how.
 func TestStdinApprover_AutoYes_DestructiveDeniedWithoutSecondKnob(t *testing.T) {
 	var out bytes.Buffer
 	ap := newTestStdinApprover(strings.NewReader(""), &out, true, false)
@@ -57,10 +53,6 @@ func TestStdinApprover_AutoYes_DestructiveDeniedWithoutSecondKnob(t *testing.T) 
 	}
 }
 
-// TestStdinApprover_AutoYes_DestructiveAllowedWithSecondKnob pins the
-// other half: with both knobs set, every tool — including writes/shell
-// — is auto-approved. This is the explicit "I know what I'm doing"
-// configuration.
 func TestStdinApprover_AutoYes_DestructiveAllowedWithSecondKnob(t *testing.T) {
 	var out bytes.Buffer
 	ap := newTestStdinApprover(strings.NewReader(""), &out, true, false)
@@ -117,8 +109,6 @@ func TestStdinApprover_YesOnTTY(t *testing.T) {
 }
 
 func TestStdinApprover_EmptyLineDenies(t *testing.T) {
-	// A blank Enter must default to deny so a careless keystroke doesn't
-	// greenlight a destructive tool.
 	var out bytes.Buffer
 	ap := newTestStdinApprover(strings.NewReader("\n"), &out, false, false)
 	decision := ap.RequestApproval(context.Background(), engine.ApprovalRequest{Tool: "write_file"})
@@ -138,8 +128,6 @@ func TestStdinApprover_ExplicitNoDenies(t *testing.T) {
 
 func TestStdinApprover_ContextCancel(t *testing.T) {
 	var out bytes.Buffer
-	// An empty reader that would block forever on ReadString. Cancelling
-	// the context must surface a deny without hanging the test.
 	ap := newTestStdinApprover(blockingReader{}, &out, false, false)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -152,12 +140,106 @@ func TestStdinApprover_ContextCancel(t *testing.T) {
 	}
 }
 
-// blockingReader blocks forever on Read — mimics a stdin with nothing
-// coming. Used to drive the ctx.Done path in the approver.
+func TestStdinApprover_CancelsBlockingRead(t *testing.T) {
+	var out bytes.Buffer
+	reader := &stubCancelReader{}
+	ap := &stdinApprover{
+		reader:       bufio.NewReader(reader),
+		in:           reader,
+		out:          &out,
+		cancelReader: reader,
+		isTTY:        true,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan engine.ApprovalDecision, 1)
+	go func() {
+		done <- ap.RequestApproval(ctx, engine.ApprovalRequest{Tool: "write_file"})
+	}()
+
+	reader.waitForReadStart(t)
+	cancel()
+
+	decision := <-done
+	if decision.Approved {
+		t.Fatalf("canceled context must deny")
+	}
+	if !strings.Contains(decision.Reason, "canceled") {
+		t.Fatalf("deny reason should mention cancellation: %q", decision.Reason)
+	}
+	if got := reader.cancelCount(); got != 1 {
+		t.Fatalf("Cancel should be called exactly once, got %d", got)
+	}
+}
+
 type blockingReader struct{}
 
 func (blockingReader) Read(p []byte) (int, error) {
 	select {}
+}
+
+type stubCancelReader struct {
+	mu        sync.Mutex
+	started   chan struct{}
+	canceled  chan struct{}
+	cancelled bool
+}
+
+func (r *stubCancelReader) ensure() {
+	if r.started == nil {
+		r.started = make(chan struct{})
+	}
+	if r.canceled == nil {
+		r.canceled = make(chan struct{})
+	}
+}
+
+func (r *stubCancelReader) Read(p []byte) (int, error) {
+	r.mu.Lock()
+	r.ensure()
+	started := r.started
+	canceled := r.canceled
+	r.mu.Unlock()
+
+	select {
+	case <-started:
+	default:
+		close(started)
+	}
+	<-canceled
+	return 0, cancelreader.ErrCanceled
+}
+
+func (r *stubCancelReader) Close() error { return nil }
+
+func (r *stubCancelReader) Cancel() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ensure()
+	if r.cancelled {
+		return false
+	}
+	r.cancelled = true
+	close(r.canceled)
+	return true
+}
+
+func (r *stubCancelReader) waitForReadStart(t *testing.T) {
+	t.Helper()
+	r.mu.Lock()
+	r.ensure()
+	started := r.started
+	r.mu.Unlock()
+	<-started
+}
+
+func (r *stubCancelReader) cancelCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cancelled {
+		return 1
+	}
+	return 0
 }
 
 func TestCompactJSONParams_TruncatesLongValues(t *testing.T) {
@@ -166,7 +248,7 @@ func TestCompactJSONParams_TruncatesLongValues(t *testing.T) {
 	if len(out) > 120 {
 		t.Fatalf("compactJSONParams must respect max (got len=%d): %s", len(out), out)
 	}
-	if !strings.HasSuffix(out, "…") {
+	if !strings.HasSuffix(out, "...") {
 		t.Fatalf("truncated output should end with ellipsis, got %q", out[len(out)-10:])
 	}
 }

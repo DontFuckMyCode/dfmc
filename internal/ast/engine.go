@@ -269,8 +269,8 @@ func extractSymbols(path, lang string, content []byte) []types.Symbol {
 				add(types.SymbolType, m[1], i+1, strings.TrimSpace(line))
 			case reJSEnum.MatchString(line):
 				m := reJSEnum.FindStringSubmatch(line)
-			name := ""
-			for _, candidate := range m[1:] {
+				name := ""
+				for _, candidate := range m[1:] {
 					if strings.TrimSpace(candidate) != "" {
 						name = candidate
 						break
@@ -278,7 +278,7 @@ func extractSymbols(path, lang string, content []byte) []types.Symbol {
 				}
 				add(types.SymbolEnum, name, i+1, strings.TrimSpace(line))
 			case reJSConstArrow.MatchString(line):
-			m := reJSConstArrow.FindStringSubmatch(line)
+				m := reJSConstArrow.FindStringSubmatch(line)
 				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
 			}
 		}
@@ -398,8 +398,8 @@ func newParseCache(maxSize int) *parseCache {
 }
 
 func (c *parseCache) Get(path string, hash uint64) *ParseResult {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	entry, ok := c.entries[path]
 	if !ok || entry.hash != hash {

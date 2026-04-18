@@ -201,13 +201,17 @@ func (t *CodemapTool) Execute(ctx context.Context, req Request) (Result, error) 
 		if !codemapInterestingFile(d.Name()) {
 			return nil
 		}
+		safePath, serr := EnsureWithinRoot(req.ProjectRoot, path)
+		if serr != nil {
+			return nil
+		}
 		if filesSeen >= maxFiles {
 			truncated = true
 			return fs.SkipAll
 		}
 		filesSeen++
 
-		parseRes, perr := t.getEngine().ParseFile(ctx, path)
+		parseRes, perr := t.getEngine().ParseFile(ctx, safePath)
 		if perr != nil || parseRes == nil {
 			parseErrors++
 			return nil
@@ -218,9 +222,9 @@ func (t *CodemapTool) Execute(ctx context.Context, req Request) (Result, error) 
 		if len(parseRes.Symbols) == 0 {
 			return nil
 		}
-		rel, err := filepath.Rel(req.ProjectRoot, path)
+		rel, err := filepath.Rel(req.ProjectRoot, safePath)
 		if err != nil {
-			rel = path
+			rel = safePath
 		}
 		entries = append(entries, codemapFileEntry{
 			path:     filepath.ToSlash(rel),

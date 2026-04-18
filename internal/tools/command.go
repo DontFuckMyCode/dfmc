@@ -424,12 +424,33 @@ func detectShellMetacharacter(command string) string {
 			return op
 		}
 	}
+	if hasStandaloneShellAmpersand(cmd) {
+		return "&"
+	}
 	// `cd ` at the start is the other classic LLM tell — the model is
 	// trying to chdir-then-run inside one command. Treat it as shell-y.
 	if strings.HasPrefix(strings.ToLower(cmd), "cd ") {
 		return "cd "
 	}
 	return ""
+}
+
+func hasStandaloneShellAmpersand(cmd string) bool {
+	for i, r := range cmd {
+		if r != '&' {
+			continue
+		}
+		prevWS := i == 0 || isShellWhitespace(rune(cmd[i-1]))
+		nextWS := i == len(cmd)-1 || isShellWhitespace(rune(cmd[i+1]))
+		if prevWS || nextWS {
+			return true
+		}
+	}
+	return false
+}
+
+func isShellWhitespace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r'
 }
 
 // suggestRunCommandRecovery turns a shell-line command that the model

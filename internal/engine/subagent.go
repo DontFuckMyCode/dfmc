@@ -34,6 +34,14 @@ func (e *Engine) RunSubagent(ctx context.Context, req tools.SubagentRequest) (to
 	if !e.shouldUseNativeToolLoop() {
 		return tools.SubagentResult{}, fmt.Errorf("sub-agent requires a provider with tool support (current: %s)", e.provider())
 	}
+	if override := strings.TrimSpace(req.Model); override != "" {
+		if e.Config == nil || e.Config.Providers.Profiles == nil {
+			return tools.SubagentResult{}, fmt.Errorf("unknown sub-agent model/profile override %q", override)
+		}
+		if _, ok := e.Config.Providers.Profiles[override]; !ok {
+			return tools.SubagentResult{}, fmt.Errorf("unknown sub-agent model/profile override %q", override)
+		}
+	}
 
 	// Preserve parent's parked state across this (and any concurrent
 	// sibling) sub-agent runs. enterSubagent uses a reference counter so

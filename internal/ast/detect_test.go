@@ -9,6 +9,7 @@ package ast
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -170,6 +171,52 @@ func TestParseContent_CacheHitOnSecondCall(t *testing.T) {
 	m := e.metrics.snapshot()
 	if m.CacheHits == 0 {
 		t.Fatalf("expected cache hit recorded after re-parse; got %+v", m)
+	}
+}
+
+func TestParseContent_ConcurrentCacheHitsRemainSafe(t *testing.T) {
+	e := New()
+	body := []byte("package main\n\nfunc Hello() string { return \"hi\" }\n")
+	ctx := context.Background()
+
+	if _, err := e.ParseContent(ctx, "hello.go", body); err != nil {
+		t.Fatalf("warm cache: %v", err)
+	}
+
+	const goroutines = 16
+	const iterations = 25
+	var wg sync.WaitGroup
+	errCh := make(chan error, goroutines*iterations)
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				res, err := e.ParseContent(ctx, "hello.go", body)
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if res == nil || res.Hash == 0 {
+					errCh <- context.Canceled
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("concurrent cache hit failed: %v", err)
+		}
+	}
+
+	m := e.metrics.snapshot()
+	if m.CacheHits < goroutines*iterations {
+		t.Fatalf("expected at least %d cache hits after concurrent reads, got %+v", goroutines*iterations, m)
 	}
 }
 

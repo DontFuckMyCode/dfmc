@@ -1,13 +1,13 @@
 package tui
 
-// activity.go — the Activity panel is a timestamped firehose of engine
+// activity.go - the Activity panel is a timestamped firehose of engine
 // events. Other panels (Status, Chat footer, stats) show curated state;
-// Activity shows *everything* so the user can trust what the agent is
+// Activity shows everything so the user can trust what the agent is
 // actually doing.
 //
 // Shape: a ring buffer of activityEntry, plus a scroll offset and a
 // follow-tail toggle. Writes go through recordActivityEvent, which is
-// called from handleEngineEvent on every event — the only filtering is
+// called from handleEngineEvent on every event - the only filtering is
 // truncation of giant payload strings.
 
 import (
@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
@@ -58,7 +58,7 @@ func (m *Model) recordActivityEvent(ev engine.Event) {
 		EventID: strings.TrimSpace(ev.Type),
 		Text:    truncateActivityText(text, 200),
 	}
-	// Dedupe consecutive identical events — streaming deltas can flood the
+	// Dedupe consecutive identical events - streaming deltas can flood the
 	// feed otherwise. We only dedupe when the event id and text both match.
 	if n := len(m.activity.entries); n > 0 {
 		last := m.activity.entries[n-1]
@@ -107,47 +107,47 @@ func classifyActivity(ev engine.Event) (activityKind, string) {
 		name := payloadString(payload, "tool", "tool")
 		step := payloadInt(payload, "step", 0)
 		if step > 0 {
-			text = fmt.Sprintf("tool call · %s (step %d)", name, step)
+			text = fmt.Sprintf("tool call - %s (step %d)", name, step)
 		} else {
-			text = "tool call · " + name
+			text = "tool call - " + name
 		}
 	case "tool:result":
 		name := payloadString(payload, "tool", "tool")
-		dur := payloadInt(payload, "duration_ms", 0)
-		text = fmt.Sprintf("tool done · %s (%dms)", name, dur)
+		dur := payloadIntAny(payload, 0, "duration_ms", "durationMs")
+		text = fmt.Sprintf("tool done - %s (%dms)", name, dur)
 	case "tool:error":
 		name := payloadString(payload, "tool", "tool")
 		err := payloadString(payload, "error", "")
-		text = fmt.Sprintf("tool failed · %s %s", name, err)
+		text = fmt.Sprintf("tool failed - %s %s", name, err)
 		kind = activityKindError
 	case "agent:loop:start":
 		prov := payloadString(payload, "provider", "")
 		model := payloadString(payload, "model", "")
 		max := payloadInt(payload, "max_tool_steps", 0)
-		text = fmt.Sprintf("agent start · %s/%s max=%d", prov, model, max)
+		text = fmt.Sprintf("agent start - %s/%s max=%d", prov, model, max)
 	case "agent:loop:thinking":
 		step := payloadInt(payload, "step", 0)
 		max := payloadInt(payload, "max_tool_steps", 0)
-		text = fmt.Sprintf("agent thinking · %d/%d", step, max)
+		text = fmt.Sprintf("agent thinking - %d/%d", step, max)
 	case "agent:loop:end":
 		reason := payloadString(payload, "reason", "done")
-		text = "agent end · " + reason
+		text = "agent end - " + reason
 	case "agent:loop:error":
-		text = "agent error · " + payloadString(payload, "error", "")
+		text = "agent error - " + payloadString(payload, "error", "")
 		kind = activityKindError
 	case "context:lifecycle:compacted":
-		before := payloadInt(payload, "tokens_before", 0)
-		after := payloadInt(payload, "tokens_after", 0)
-		text = fmt.Sprintf("context compacted · %d → %d tok", before, after)
+		before := payloadIntAny(payload, 0, "before_tokens", "tokens_before")
+		after := payloadIntAny(payload, 0, "after_tokens", "tokens_after")
+		text = fmt.Sprintf("context compacted - %d -> %d tok", before, after)
 	case "context:lifecycle:handoff":
 		text = "context handoff"
 	case "index:start":
 		text = "index start"
 	case "index:done":
 		files := payloadInt(payload, "files", 0)
-		text = fmt.Sprintf("index done · %d files", files)
+		text = fmt.Sprintf("index done - %d files", files)
 	case "index:error":
-		text = "index error · " + payloadString(payload, "error", "")
+		text = "index error - " + payloadString(payload, "error", "")
 		kind = activityKindError
 	case "engine:initializing", "engine:ready", "engine:serving", "engine:shutdown", "engine:stopped":
 		text = strings.TrimPrefix(t, "engine:")
@@ -160,7 +160,7 @@ func classifyActivity(ev engine.Event) (activityKind, string) {
 		text = "stream done"
 	default:
 		if s, ok := ev.Payload.(string); ok && s != "" {
-			text = t + " · " + s
+			text = t + " - " + s
 		}
 	}
 	return kind, text
@@ -174,30 +174,43 @@ func truncateActivityText(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// kindIcon returns a coloured pictograph for the severity/category slot.
+func payloadIntAny(data map[string]any, fallback int, keys ...string) int {
+	if data == nil {
+		return fallback
+	}
+	for _, key := range keys {
+		if _, ok := data[key]; !ok {
+			continue
+		}
+		return payloadInt(data, key, fallback)
+	}
+	return fallback
+}
+
+// kindIcon returns a colored indicator for the severity/category slot.
 // The icons stay single-cell so column alignment holds under all fonts.
 func kindIcon(kind activityKind) string {
 	switch kind {
 	case activityKindError:
-		return warnStyle.Render("✗")
+		return warnStyle.Render("!")
 	case activityKindTool:
-		return accentStyle.Render("◌")
+		return accentStyle.Render("*")
 	case activityKindAgent:
-		return accentStyle.Render("◉")
+		return accentStyle.Render("@")
 	case activityKindStream:
-		return infoStyle.Render("⇢")
+		return infoStyle.Render(">")
 	case activityKindCtx:
-		return infoStyle.Render("◈")
+		return infoStyle.Render("#")
 	case activityKindIndex:
-		return subtleStyle.Render("▤")
+		return subtleStyle.Render("=")
 	default:
-		return subtleStyle.Render("·")
+		return subtleStyle.Render(".")
 	}
 }
 
 // formatActivityLine renders a single entry into a fixed-layout row:
 //
-//	HH:MM:SS  ● kind  text
+//	HH:MM:SS  . kind  text
 func formatActivityLine(entry activityEntry, width int) string {
 	ts := entry.At.Format("15:04:05")
 	icon := kindIcon(entry.Kind)
@@ -211,8 +224,8 @@ func formatActivityLine(entry activityEntry, width int) string {
 func (m Model) renderActivityView(width int) string {
 	width = clampInt(width, 24, 1000)
 	lines := []string{
-		sectionHeader("⚡", "Activity"),
-		subtleStyle.Render("j/k scroll · g/G top/bottom · c clear · p "+followHint(m.activity.follow)),
+		sectionHeader("*", "Activity"),
+		subtleStyle.Render("j/k scroll - g/G top/bottom - c clear - p " + followHint(m.activity.follow)),
 		renderDivider(width - 2),
 	}
 
@@ -241,7 +254,7 @@ func (m Model) renderActivityView(width int) string {
 	for _, e := range m.activity.entries {
 		counts[e.Kind]++
 	}
-	summary := fmt.Sprintf("%d events · tool=%d agent=%d err=%d ctx=%d",
+	summary := fmt.Sprintf("%d events - tool=%d agent=%d err=%d ctx=%d",
 		len(m.activity.entries),
 		counts[activityKindTool],
 		counts[activityKindAgent],
@@ -250,7 +263,7 @@ func (m Model) renderActivityView(width int) string {
 	)
 	lines = append(lines, "", subtleStyle.Render(summary))
 	if !m.activity.follow {
-		lines = append(lines, warnStyle.Render("paused · press G to jump to tail and resume follow"))
+		lines = append(lines, warnStyle.Render("paused - press G to jump to tail and resume follow"))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -330,5 +343,5 @@ func clampInt(v, lo, hi int) int {
 }
 
 // lipgloss import kept explicit even when unused directly so future edits
-// have the namespace ready for inline colour tweaks.
+// have the namespace ready for inline color tweaks.
 var _ = lipgloss.NewStyle

@@ -55,6 +55,68 @@ func TestGlobToolBasicAndDoublestar(t *testing.T) {
 	}
 }
 
+func TestListDirSkipsIgnoredDirsAndClampsMaxEntries(t *testing.T) {
+	tmp := t.TempDir()
+	must := func(p, c string) {
+		full := filepath.Join(tmp, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(c), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	must(".git/config", "[core]\n")
+	must("node_modules/pkg/index.js", "module.exports = 1\n")
+	must("vendor/lib/file.go", "package lib\n")
+	must("bin/tool", "binary\n")
+	must("dist/app.js", "console.log('x')\n")
+	must("keep/a.txt", "a\n")
+	must("keep/b.txt", "b\n")
+	must("keep/c.txt", "c\n")
+
+	eng := New(*config.DefaultConfig())
+
+	res, err := eng.Execute(context.Background(), "list_dir", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":        ".",
+			"recursive":   true,
+			"max_entries": 9999,
+		},
+	})
+	if err != nil {
+		t.Fatalf("list_dir recursive: %v", err)
+	}
+	for _, banned := range []string{".git", "node_modules", "vendor", "bin", "dist"} {
+		if strings.Contains(res.Output, banned) {
+			t.Fatalf("recursive list_dir should skip %q, got:\n%s", banned, res.Output)
+		}
+	}
+	if !strings.Contains(res.Output, "keep/a.txt") {
+		t.Fatalf("expected kept files in output, got:\n%s", res.Output)
+	}
+	if got, _ := res.Data["count"].(int); got > 500 {
+		t.Fatalf("expected count to respect max_entries clamp <= 500, got %d", got)
+	}
+
+	res, err = eng.Execute(context.Background(), "list_dir", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "."},
+	})
+	if err != nil {
+		t.Fatalf("list_dir non-recursive: %v", err)
+	}
+	for _, banned := range []string{".git/", "node_modules/", "vendor/", "bin/", "dist/"} {
+		if strings.Contains(res.Output, banned) {
+			t.Fatalf("non-recursive list_dir should skip %q, got:\n%s", banned, res.Output)
+		}
+	}
+	if !strings.Contains(res.Output, "keep/") {
+		t.Fatalf("expected keep/ in non-recursive output, got:\n%s", res.Output)
+	}
+}
+
 // TestGlobAndGrepMissingPatternErrorIsActionable pins the 2026-04-18
 // fix for the "✗ glob D:/Codebox/PROJECTS/DFMC — pattern is required"
 // loop the user caught on screen. The bare "pattern is required" error
@@ -120,10 +182,10 @@ func TestActionableMissingParamErrors(t *testing.T) {
 	eng := New(*config.DefaultConfig())
 
 	cases := []struct {
-		tool       string
-		params     map[string]any
-		wantField  string
-		wantHints  []string
+		tool      string
+		params    map[string]any
+		wantField string
+		wantHints []string
 	}{
 		{tool: "think", params: map[string]any{}, wantField: "thought", wantHints: []string{"scratch-pad", "Correct shape:"}},
 		{tool: "todo_write", params: map[string]any{"action": "set"}, wantField: "todos", wantHints: []string{"array of {content, status}", "Correct shape:"}},
@@ -311,6 +373,53 @@ func TestFileToolsReturnRelativePathInData(t *testing.T) {
 	}
 }
 
+func TestWriteFileExistingFileRequiresExplicitOverwrite(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "existing.txt")
+	if err := os.WriteFile(target, []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	eng := New(*config.DefaultConfig())
+
+	_, err := eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "existing.txt", "content": "new\n"},
+	})
+	if err == nil {
+		t.Fatal("write_file should refuse existing files unless overwrite=true is explicit")
+	}
+	if !strings.Contains(err.Error(), "no prior read_file snapshot") {
+		t.Fatalf("expected prior-read guidance before overwrite check, got: %v", err)
+	}
+
+	if _, rerr := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "existing.txt"},
+	}); rerr != nil {
+		t.Fatalf("read_file: %v", rerr)
+	}
+	_, err = eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "existing.txt", "content": "new\n"},
+	})
+	if err == nil {
+		t.Fatal("write_file without overwrite=true must still refuse after read_file")
+	}
+	if !strings.Contains(err.Error(), "overwrite=true") {
+		t.Fatalf("expected overwrite guidance, got: %v", err)
+	}
+	if _, werr := eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "existing.txt", "content": "new\n", "overwrite": true},
+	}); werr != nil {
+		t.Fatalf("explicit overwrite should succeed after read_file: %v", werr)
+	}
+	data, _ := os.ReadFile(target)
+	if string(data) != "new\n" {
+		t.Fatalf("unexpected final content: %q", string(data))
+	}
+}
+
 // TestActionableMissingParamErrors_SecondWave covers the audit's
 // remaining bare-error tools (apply_patch, run_command, web_fetch,
 // web_search, tool_search, git_blame, git_worktree_add,
@@ -403,11 +512,11 @@ func TestASTQueryRejectsDirectoryWithToolHint(t *testing.T) {
 	}
 	msg := err.Error()
 	for _, want := range []string{
-		"FILE path",          // names the actual problem
-		"is a folder",        // confirms what was passed
-		"glob first",         // suggests the right tool
-		"internal/tools",     // echoes the user's value
-		"list_dir",           // alternative for plain listings
+		"FILE path",      // names the actual problem
+		"is a folder",    // confirms what was passed
+		"glob first",     // suggests the right tool
+		"internal/tools", // echoes the user's value
+		"list_dir",       // alternative for plain listings
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("ast_query directory error should contain %q, got: %s", want, msg)

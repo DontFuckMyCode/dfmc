@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 )
 
@@ -62,6 +63,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "streaming not supported"})
 		return
 	}
+	clearStreamingWriteDeadline(w)
 
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -117,6 +119,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "streaming not supported"})
 		return
 	}
+	clearStreamingWriteDeadline(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -126,8 +129,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if t := strings.TrimSpace(r.URL.Query().Get("type")); t != "" {
 		eventType = t
 	}
-	ch := s.engine.EventBus.Subscribe(eventType)
-	defer s.engine.EventBus.Unsubscribe(eventType, ch)
+	ch := make(chan engine.Event, 128)
+	unsubscribe := s.engine.EventBus.SubscribeFunc(eventType, func(ev engine.Event) {
+		select {
+		case ch <- ev:
+		default:
+		}
+	})
+	defer unsubscribe()
 
 	writeSSE(w, flusher, map[string]any{
 		"type": "connected",
@@ -141,10 +150,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case ev, ok := <-ch:
-			if !ok {
-				return
-			}
+		case ev := <-ch:
 			writeSSE(w, flusher, map[string]any{
 				"type":    "event",
 				"event":   ev.Type,
@@ -165,6 +171,10 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, payload any) {
 	data, _ := json.Marshal(payload)
 	_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 	flusher.Flush()
+}
+
+func clearStreamingWriteDeadline(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 }
 
 func writeJSON(w http.ResponseWriter, code int, payload any) {

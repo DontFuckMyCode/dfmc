@@ -106,6 +106,32 @@ func TestDriveMCPCallStartRejectsBlankTask(t *testing.T) {
 	}
 }
 
+func TestDriveMCPCallStartReturnsRunID(t *testing.T) {
+	h := &driveMCPHandler{eng: newCLITestEngine(t)}
+	res, err := h.Call(context.Background(), "dfmc_drive_start", []byte(`{"task":"add smoke test"}`))
+	if err != nil {
+		t.Fatalf("transport error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %s", res.Content[0].Text)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(res.Content[0].Text), &payload); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	runID := strings.TrimSpace(toTestString(payload["run_id"]))
+	if runID == "" {
+		t.Fatalf("expected run_id in result, got %#v", payload)
+	}
+}
+
+func toTestString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
 // TestDriveMCPCallStatusRequiresRunID: status with no run_id surfaces
 // the canonical "run_id is required" hint with the example shape.
 func TestDriveMCPCallStatusRequiresRunID(t *testing.T) {

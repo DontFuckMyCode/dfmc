@@ -20,11 +20,16 @@ import (
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
+const (
+	historySummaryBudgetDivisor = 6
+	historyBudgetDivisor        = 16
+)
+
 func (e *Engine) buildRequestMessages(question string, chunks []types.ContextChunk, systemPrompt string) []provider.Message {
 	historyBudget := e.historyBudgetForRequest(question, chunks, systemPrompt)
 	summaryBudget := 0
 	if historyBudget >= 64 {
-		summaryBudget = clampInt(historyBudget/6, minHistorySummaryTokens, maxHistorySummaryTokens)
+		summaryBudget = clampInt(historyBudget/historySummaryBudgetDivisor, minHistorySummaryTokens, maxHistorySummaryTokens)
 	}
 	mainBudget := historyBudget - summaryBudget
 	if mainBudget < minHistorySummaryTokens {
@@ -55,7 +60,7 @@ func (e *Engine) conversationHistoryBudget() int {
 		if limit <= 0 {
 			limit = defaultProviderContextTokens
 		}
-		budget = limit / 16
+		budget = limit / historyBudgetDivisor
 		if budget <= 0 {
 			budget = defaultHistoryBudgetTokens
 		}
@@ -409,6 +414,9 @@ func (e *Engine) Ask(ctx context.Context, question string) (string, error) {
 // no coordination. For multi-turn tool work, use Ask/Chat normally; race is
 // for single-shot Q&A where latency or reliability matters more than cost.
 func (e *Engine) AskRaced(ctx context.Context, question string, candidates []string) (string, string, error) {
+	if err := e.requireReady("ask"); err != nil {
+		return "", "", err
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -465,6 +473,9 @@ func (e *Engine) AskRaced(ctx context.Context, question string, candidates []str
 // and returns both the flat text form (for providers that ignore caching)
 // and the structured SystemBlocks (for Anthropic's prompt caching). Returns
 func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, error) {
+	if err := e.requireReady("ask"); err != nil {
+		return "", err
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -542,6 +553,9 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 }
 
 func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provider.StreamEvent, error) {
+	if err := e.requireReady("stream ask"); err != nil {
+		return nil, err
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -617,9 +631,16 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 	go func() {
 		defer close(out)
 		var acc strings.Builder
+		draining := false
 		for ev := range stream {
 			if ev.Type == provider.StreamDelta {
 				acc.WriteString(ev.Delta)
+			}
+			if draining {
+				if ev.Type == provider.StreamError || ev.Type == provider.StreamDone {
+					return
+				}
+				continue
 			}
 			// Pre-fix this was a bare `out <- ev` with no ctx.Done()
 			// guard — if the HTTP/SSE consumer walked away mid-stream,
@@ -631,7 +652,11 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 			select {
 			case out <- ev:
 			case <-ctx.Done():
-				return
+				draining = true
+				if ev.Type == provider.StreamError || ev.Type == provider.StreamDone {
+					return
+				}
+				continue
 			}
 			if ev.Type == provider.StreamError {
 				return

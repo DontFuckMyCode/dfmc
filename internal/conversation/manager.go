@@ -59,6 +59,16 @@ type Manager struct {
 	baseDir string
 }
 
+type persistedConversation struct {
+	ID        string                     `json:"id"`
+	Provider  string                     `json:"provider"`
+	Model     string                     `json:"model"`
+	StartedAt time.Time                  `json:"started_at"`
+	Branch    string                     `json:"branch"`
+	Branches  map[string][]types.Message `json:"branches"`
+	Metadata  map[string]string          `json:"metadata,omitempty"`
+}
+
 func New(store *storage.Store) *Manager {
 	baseDir := ""
 	if store != nil {
@@ -270,18 +280,23 @@ func (m *Manager) SaveActive() error {
 		m.mu.RUnlock()
 		return nil
 	}
-	msgs := m.active.Branches[m.active.Branch]
-	if len(msgs) == 0 {
-		m.mu.RUnlock()
-		return nil
-	}
-	id := m.active.ID
-	snapshot := make([]types.Message, len(msgs))
-	copy(snapshot, msgs)
+	snapshot := cloneConversation(m.active)
 	store := m.store
 	m.mu.RUnlock()
 
-	return store.SaveConversationLog(id, snapshot)
+	state := persistedConversation{
+		ID:        snapshot.ID,
+		Provider:  snapshot.Provider,
+		Model:     snapshot.Model,
+		StartedAt: snapshot.StartedAt,
+		Branch:    snapshot.Branch,
+		Branches:  snapshot.Branches,
+		Metadata:  snapshot.Metadata,
+	}
+	if err := store.SaveConversationState(snapshot.ID, state); err != nil {
+		return err
+	}
+	return store.SaveConversationLog(snapshot.ID, snapshot.Branches[snapshot.Branch])
 }
 
 func (m *Manager) Load(id string) (*Conversation, error) {
@@ -317,21 +332,36 @@ func (m *Manager) loadFromStore(id string) (*Conversation, error) {
 	if store == nil {
 		return nil, fmt.Errorf("store not available")
 	}
+	var state persistedConversation
+	if err := store.LoadConversationState(id, &state); err == nil {
+		return normalizeConversation(&Conversation{
+			ID:        state.ID,
+			Provider:  state.Provider,
+			Model:     state.Model,
+			StartedAt: state.StartedAt,
+			Branch:    state.Branch,
+			Branches:  state.Branches,
+			Metadata:  state.Metadata,
+		}), nil
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
 	msgs, err := store.LoadConversationLog(id)
 	if err != nil {
 		return nil, err
 	}
-	return &Conversation{
+	startedAt := legacyConversationStartedAt(store, id)
+	return normalizeConversation(&Conversation{
 		ID:        id,
 		Provider:  "unknown",
 		Model:     "unknown",
-		StartedAt: time.Now(),
+		StartedAt: startedAt,
 		Branch:    "main",
 		Branches: map[string][]types.Message{
 			"main": msgs,
 		},
 		Metadata: map[string]string{},
-	}, nil
+	}), nil
 }
 
 func (m *Manager) List() ([]Summary, error) {
@@ -341,7 +371,6 @@ func (m *Manager) List() ([]Summary, error) {
 	// count and starved every concurrent reader.
 	m.mu.RLock()
 	baseDir := m.baseDir
-	store := m.store
 	m.mu.RUnlock()
 
 	if strings.TrimSpace(baseDir) == "" {
@@ -355,26 +384,47 @@ func (m *Manager) List() ([]Summary, error) {
 		return nil, err
 	}
 	out := make([]Summary, 0, len(entries))
+	seenIDs := make(map[string]struct{}, len(entries))
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if e.IsDir() {
 			continue
 		}
-		id := strings.TrimSuffix(e.Name(), ".jsonl")
-		msgs, err := store.LoadConversationLog(id)
+		name := e.Name()
+		id := ""
+		switch {
+		case strings.HasSuffix(name, ".json"):
+			id = strings.TrimSuffix(name, ".json")
+		case strings.HasSuffix(name, ".jsonl"):
+			id = strings.TrimSuffix(name, ".jsonl")
+		default:
+			continue
+		}
+		if id == "" {
+			continue
+		}
+		if _, seen := seenIDs[id]; seen {
+			continue
+		}
+		seenIDs[id] = struct{}{}
+		conv, err := m.loadFromStore(id)
 		if err != nil {
 			continue
 		}
-		if len(msgs) == 0 {
-			continue
-		}
+		msgCount := totalMessageCount(conv)
 		mod := time.Time{}
 		if info, e2 := e.Info(); e2 == nil {
 			mod = info.ModTime()
 		}
+		startedAt := conv.StartedAt
+		if startedAt.IsZero() {
+			startedAt = mod
+		}
 		out = append(out, Summary{
 			ID:        id,
-			StartedAt: mod,
-			MessageN:  len(msgs),
+			StartedAt: startedAt,
+			MessageN:  msgCount,
+			Provider:  conv.Provider,
+			Model:     conv.Model,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -397,14 +447,19 @@ func (m *Manager) Search(query string, limit int) ([]Summary, error) {
 	}
 	out := make([]Summary, 0, min(limit, len(all)))
 	for _, item := range all {
-		msgs, err := m.store.LoadConversationLog(item.ID)
+		conv, err := m.loadFromStore(item.ID)
 		if err != nil {
 			continue
 		}
 		found := false
-		for _, msg := range msgs {
-			if strings.Contains(strings.ToLower(msg.Content), query) {
-				found = true
+		for _, msgs := range conv.Branches {
+			for _, msg := range msgs {
+				if strings.Contains(strings.ToLower(msg.Content), query) {
+					found = true
+					break
+				}
+			}
+			if found {
 				break
 			}
 		}
@@ -442,6 +497,56 @@ func cloneMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+func legacyConversationStartedAt(store *storage.Store, id string) time.Time {
+	if store == nil {
+		return time.Time{}
+	}
+	info, err := os.Stat(filepath.Join(store.ArtifactsDir(), "conversations", id+".jsonl"))
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
+}
+
+func normalizeConversation(c *Conversation) *Conversation {
+	if c == nil {
+		return nil
+	}
+	if c.Branches == nil {
+		c.Branches = map[string][]types.Message{}
+	}
+	if strings.TrimSpace(c.Branch) == "" {
+		c.Branch = "main"
+	}
+	if _, ok := c.Branches[c.Branch]; !ok {
+		c.Branches[c.Branch] = []types.Message{}
+	}
+	if c.Metadata == nil {
+		c.Metadata = map[string]string{}
+	}
+	if c.Provider == "" {
+		c.Provider = "unknown"
+	}
+	if c.Model == "" {
+		c.Model = "unknown"
+	}
+	if c.StartedAt.IsZero() {
+		c.StartedAt = time.Now()
+	}
+	return c
+}
+
+func totalMessageCount(c *Conversation) int {
+	if c == nil {
+		return 0
+	}
+	total := 0
+	for _, msgs := range c.Branches {
+		total += len(msgs)
+	}
+	return total
 }
 
 func min(a, b int) int {

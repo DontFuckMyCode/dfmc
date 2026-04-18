@@ -37,6 +37,7 @@ import (
 // fallback) without letting a single tool call fan out N sub-agents across
 // 6-provider catalogs.
 const maxRaceCandidates = 3
+const maxOrchestrateDAGStages = 16
 
 type orchestrateStage struct {
 	ID        string
@@ -66,6 +67,9 @@ func parseOrchestrateStages(raw any) ([]orchestrateStage, error) {
 	}
 	if len(list) == 0 {
 		return nil, nil
+	}
+	if len(list) > maxOrchestrateDAGStages {
+		return nil, fmt.Errorf("stages has %d entries; cap is %d. Split the workflow into smaller DAGs or use text task splitting for broad surveys", len(list), maxOrchestrateDAGStages)
 	}
 	out := make([]orchestrateStage, 0, len(list))
 	for i, item := range list {

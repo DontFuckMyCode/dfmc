@@ -28,14 +28,19 @@ const (
 // list. Empty projectRoot falls back to the process CWD, consistent with the
 // rest of the tool registry.
 func runGit(ctx context.Context, projectRoot string, timeout time.Duration, args ...string) (string, string, int, error) {
+	return runGitWithAllowedBlockedArgs(ctx, projectRoot, timeout, nil, args...)
+}
+
+func runGitWithAllowedBlockedArgs(ctx context.Context, projectRoot string, timeout time.Duration, allowed map[string]struct{}, args ...string) (string, string, int, error) {
 	if timeout <= 0 {
 		timeout = gitDefaultTimeout
 	}
 	if timeout > gitMaxTimeout {
 		timeout = gitMaxTimeout
 	}
+	allowed = normalizeBlockedGitAllowlist(allowed)
 	for _, a := range args {
-		if blockedGitArg(a) {
+		if blockedGitArg(a, allowed) {
 			return "", "", 0, fmt.Errorf("git argument blocked by policy: %s", a)
 		}
 	}
@@ -69,13 +74,32 @@ func runGit(ctx context.Context, projectRoot string, timeout time.Duration, args
 // blockedGitArg enforces the safety rules from CLAUDE.md's git-safety
 // protocol for anything that lands in these tools. Destructive flags route
 // users back to explicit shell approval via run_command.
-func blockedGitArg(arg string) bool {
+func blockedGitArg(arg string, allowed map[string]struct{}) bool {
 	a := strings.ToLower(strings.TrimSpace(arg))
+	if _, ok := allowed[a]; ok {
+		return false
+	}
 	switch a {
-	case "--no-verify", "--no-gpg-sign", "--amend", "-i", "--interactive":
+	case "--no-verify", "--no-gpg-sign", "--amend", "-i", "--interactive", "--force", "-f", "--hard", "--no-checkout":
 		return true
 	}
+	for _, prefix := range []string{"--exec=", "--receive-pack=", "--upload-pack="} {
+		if strings.HasPrefix(a, prefix) {
+			return true
+		}
+	}
 	return false
+}
+
+func normalizeBlockedGitAllowlist(allowed map[string]struct{}) map[string]struct{} {
+	if len(allowed) == 0 {
+		return nil
+	}
+	normalized := make(map[string]struct{}, len(allowed))
+	for key := range allowed {
+		normalized[strings.ToLower(strings.TrimSpace(key))] = struct{}{}
+	}
+	return normalized
 }
 
 // rejectGitFlagInjection refuses any user-supplied value that looks like
@@ -118,14 +142,20 @@ func resolveGitTimeout(params map[string]any) time.Duration {
 
 type GitStatusTool struct{}
 
-func NewGitStatusTool() *GitStatusTool         { return &GitStatusTool{} }
-func (t *GitStatusTool) Name() string          { return "git_status" }
-func (t *GitStatusTool) Description() string   { return "Show the working tree status in porcelain form." }
+func NewGitStatusTool() *GitStatusTool { return &GitStatusTool{} }
+func (t *GitStatusTool) Name() string  { return "git_status" }
+func (t *GitStatusTool) Description() string {
+	return "Show the working tree status in porcelain form."
+}
 
 func (t *GitStatusTool) Execute(ctx context.Context, req Request) (Result, error) {
 	timeout := resolveGitTimeout(req.Params)
 	args := []string{"status", "--porcelain=v1", "--branch"}
-	stdout, stderr, exit, err := runGit(ctx, req.ProjectRoot, timeout, args...)
+	allowed := map[string]struct{}{}
+	if asBool(req.Params, "force", false) {
+		allowed["--force"] = struct{}{}
+	}
+	stdout, stderr, exit, err := runGitWithAllowedBlockedArgs(ctx, req.ProjectRoot, timeout, allowed, args...)
 	if err != nil {
 		return Result{Output: joinGitOutput(stdout, stderr), Data: map[string]any{"exit_code": exit}}, err
 	}
@@ -165,10 +195,11 @@ Rules:
 
 // parseGitStatus reads `git status --porcelain=v1 --branch` output.
 // Lines look like:
-//   ## main...origin/main [ahead 1]
-//   M  path/to/staged.go
-//    M path/to/modified.go
-//   ?? path/to/untracked.go
+//
+//	## main...origin/main [ahead 1]
+//	M  path/to/staged.go
+//	 M path/to/modified.go
+//	?? path/to/untracked.go
 func parseGitStatus(raw string) (branch string, staged, modified, untracked []string) {
 	staged = []string{}
 	modified = []string{}
@@ -208,9 +239,11 @@ func parseGitStatus(raw string) (branch string, staged, modified, untracked []st
 
 type GitDiffTool struct{}
 
-func NewGitDiffTool() *GitDiffTool         { return &GitDiffTool{} }
-func (t *GitDiffTool) Name() string        { return "git_diff" }
-func (t *GitDiffTool) Description() string { return "Show a unified diff for the working tree or a revision." }
+func NewGitDiffTool() *GitDiffTool  { return &GitDiffTool{} }
+func (t *GitDiffTool) Name() string { return "git_diff" }
+func (t *GitDiffTool) Description() string {
+	return "Show a unified diff for the working tree or a revision."
+}
 
 func (t *GitDiffTool) Execute(ctx context.Context, req Request) (Result, error) {
 	timeout := resolveGitTimeout(req.Params)
@@ -267,8 +300,8 @@ Rules:
 - ` + "`empty=true`" + ` in the data means no differences — do not hallucinate hunks.
 - Pass ` + "`revision`" + ` to diff against a ref (e.g. ` + "`HEAD~1`" + `, ` + "`main..HEAD`" + `).
 - For per-file context, use ` + "`path`" + ` or ` + "`paths[]`" + ` to scope the output.`,
-		Risk:       RiskRead,
-		Tags:       []string{"git", "vcs", "diff", "read"},
+		Risk: RiskRead,
+		Tags: []string{"git", "vcs", "diff", "read"},
 		Args: []Arg{
 			{Name: "staged", Type: ArgBoolean, Description: "Diff the staging area instead of the working tree.", Default: false},
 			{Name: "stat", Type: ArgBoolean, Description: "Show --stat summary line.", Default: false},
@@ -288,9 +321,11 @@ Rules:
 
 type GitBranchTool struct{}
 
-func NewGitBranchTool() *GitBranchTool       { return &GitBranchTool{} }
-func (t *GitBranchTool) Name() string        { return "git_branch" }
-func (t *GitBranchTool) Description() string { return "List local branches and report the current branch." }
+func NewGitBranchTool() *GitBranchTool { return &GitBranchTool{} }
+func (t *GitBranchTool) Name() string  { return "git_branch" }
+func (t *GitBranchTool) Description() string {
+	return "List local branches and report the current branch."
+}
 
 func (t *GitBranchTool) Execute(ctx context.Context, req Request) (Result, error) {
 	timeout := resolveGitTimeout(req.Params)
@@ -459,9 +494,11 @@ Rules:
 
 type GitBlameTool struct{}
 
-func NewGitBlameTool() *GitBlameTool        { return &GitBlameTool{} }
-func (t *GitBlameTool) Name() string        { return "git_blame" }
-func (t *GitBlameTool) Description() string { return "Show line-by-line authorship for a file via git blame." }
+func NewGitBlameTool() *GitBlameTool { return &GitBlameTool{} }
+func (t *GitBlameTool) Name() string { return "git_blame" }
+func (t *GitBlameTool) Description() string {
+	return "Show line-by-line authorship for a file via git blame."
+}
 
 func (t *GitBlameTool) Execute(ctx context.Context, req Request) (Result, error) {
 	timeout := resolveGitTimeout(req.Params)
@@ -892,9 +929,11 @@ Rules:
 
 type GitCommitTool struct{}
 
-func NewGitCommitTool() *GitCommitTool       { return &GitCommitTool{} }
-func (t *GitCommitTool) Name() string        { return "git_commit" }
-func (t *GitCommitTool) Description() string { return "Stage explicit paths and create a commit with the given message." }
+func NewGitCommitTool() *GitCommitTool { return &GitCommitTool{} }
+func (t *GitCommitTool) Name() string  { return "git_commit" }
+func (t *GitCommitTool) Description() string {
+	return "Stage explicit paths and create a commit with the given message."
+}
 
 func (t *GitCommitTool) Execute(ctx context.Context, req Request) (Result, error) {
 	timeout := resolveGitTimeout(req.Params)

@@ -2,10 +2,12 @@ package tools
 
 import (
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 )
@@ -70,6 +72,79 @@ func TestReadFileToolOutOfRangeLineStartDoesNotPanic(t *testing.T) {
 	if strings.TrimSpace(res.Output) != "" {
 		t.Fatalf("expected empty segment for out-of-range line_start, got: %q", res.Output)
 	}
+}
+
+func TestReadFileTool_BinaryHeuristicMetadataAndLateNUL(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "late-nul.txt")
+	data := append([]byte(strings.Repeat("a", readFileBinaryCheckBytes+32)), 0)
+	data = append(data, []byte("\ntrailer\n")...)
+	if err := os.WriteFile(file, data, 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	res, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "late-nul.txt"},
+	})
+	if err != nil {
+		t.Fatalf("late NUL beyond heuristic window should not be rejected, got: %v", err)
+	}
+	if got, _ := res.Data["binary_heuristic"].(string); got != "nul-in-first-window" {
+		t.Fatalf("unexpected binary heuristic metadata: %#v", res.Data["binary_heuristic"])
+	}
+	if got, _ := res.Data["binary_check_bytes"].(int); got != readFileBinaryCheckBytes {
+		t.Fatalf("expected binary_check_bytes=%d, got %#v", readFileBinaryCheckBytes, res.Data["binary_check_bytes"])
+	}
+}
+
+func TestReadFileTool_UTF16WithBOMIsReadAsText(t *testing.T) {
+	t.Run("utf16le", func(t *testing.T) {
+		testReadFileToolUTF16WithBOM(t, binary.LittleEndian, []byte{0xFF, 0xFE}, readFileEncodingUTF16LEBOM)
+	})
+	t.Run("utf16be", func(t *testing.T) {
+		testReadFileToolUTF16WithBOM(t, binary.BigEndian, []byte{0xFE, 0xFF}, readFileEncodingUTF16BEBOM)
+	})
+}
+
+func testReadFileToolUTF16WithBOM(t *testing.T, order binary.ByteOrder, bom []byte, wantEncoding string) {
+	t.Helper()
+
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "utf16.txt")
+	payload := append([]byte{}, bom...)
+	payload = append(payload, encodeUTF16StringForTest(order, "line1\nline2\n")...)
+	if err := os.WriteFile(file, payload, 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	res, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "utf16.txt"},
+	})
+	if err != nil {
+		t.Fatalf("utf16 read_file should succeed, got: %v", err)
+	}
+	if !strings.Contains(res.Output, "line2") {
+		t.Fatalf("expected decoded UTF-16 text in output, got: %q", res.Output)
+	}
+	if got, _ := res.Data["encoding"].(string); got != wantEncoding {
+		t.Fatalf("expected encoding=%q, got %#v", wantEncoding, res.Data["encoding"])
+	}
+	if got, _ := res.Data["binary_heuristic"].(string); got != "nul-in-first-window" {
+		t.Fatalf("unexpected binary heuristic metadata: %#v", res.Data["binary_heuristic"])
+	}
+}
+
+func encodeUTF16StringForTest(order binary.ByteOrder, s string) []byte {
+	units := utf16.Encode([]rune(s))
+	buf := make([]byte, len(units)*2)
+	for i, unit := range units {
+		order.PutUint16(buf[i*2:], unit)
+	}
+	return buf
 }
 
 func TestGrepTool(t *testing.T) {
@@ -339,8 +414,9 @@ func TestWriteFileRequiresPriorReadForExistingFile(t *testing.T) {
 	if _, err := eng.Execute(context.Background(), "write_file", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
-			"path":    "a.txt",
-			"content": "new",
+			"path":      "a.txt",
+			"content":   "new",
+			"overwrite": true,
 		},
 	}); err != nil {
 		t.Fatalf("write_file after read should succeed: %v", err)
@@ -351,6 +427,43 @@ func TestWriteFileRequiresPriorReadForExistingFile(t *testing.T) {
 	}
 	if string(got) != "new" {
 		t.Fatalf("unexpected file content: %q", string(got))
+	}
+}
+
+func TestWriteFileOverwriteReturnsPreviousHashMetadata(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "a.txt")
+	oldContent := "old value\n"
+	if err := os.WriteFile(file, []byte(oldContent), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	if _, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "a.txt"},
+	}); err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	res, err := eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":      "a.txt",
+			"content":   "new value\n",
+			"overwrite": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("write_file overwrite: %v", err)
+	}
+	if overwrote, _ := res.Data["overwrote_existing"].(bool); !overwrote {
+		t.Fatalf("expected overwrote_existing=true, got %#v", res.Data["overwrote_existing"])
+	}
+	if prevHash, _ := res.Data["previous_hash"].(string); len(prevHash) != 64 {
+		t.Fatalf("expected 64-char previous_hash, got %#v", res.Data["previous_hash"])
+	}
+	if prevBytes, _ := res.Data["previous_bytes"].(int); prevBytes != len([]byte(oldContent)) {
+		t.Fatalf("expected previous_bytes=%d, got %#v", len([]byte(oldContent)), res.Data["previous_bytes"])
 	}
 }
 
@@ -527,6 +640,7 @@ func TestRunCommandToolRejectsShellSyntaxWithActionableError(t *testing.T) {
 		wantInError string // substring that MUST appear in error
 	}{
 		{"and-chain", `cd D:\repo && go build ./...`, "&&"},
+		{"background-chain", `go test & echo done`, "&"},
 		{"or-chain", `go build || true`, "||"},
 		{"semicolon", `go vet; go test`, ";"},
 		{"pipe", `go test | grep FAIL`, "|"},

@@ -93,8 +93,10 @@ type Dispatcher struct {
 type compiledHook struct {
 	name      string
 	command   string
+	args      []string
 	condition string
 	timeout   time.Duration
+	useShell  bool
 }
 
 // New builds a dispatcher from config. An empty config yields a no-op
@@ -117,11 +119,19 @@ func New(cfg config.HooksConfig, observer Observer) *Dispatcher {
 			if cmd == "" {
 				continue
 			}
+			useShell := true
+			if entry.Shell != nil {
+				useShell = *entry.Shell
+			} else if len(entry.Args) > 0 {
+				useShell = false
+			}
 			d.entries[event] = append(d.entries[event], compiledHook{
 				name:      strings.TrimSpace(entry.Name),
 				command:   cmd,
+				args:      append([]string(nil), entry.Args...),
 				condition: strings.TrimSpace(entry.Condition),
 				timeout:   d.defaultTO,
+				useShell:  useShell,
 			})
 		}
 	}
@@ -183,7 +193,7 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 	runCtx, cancel := context.WithTimeout(ctx, to)
 	defer cancel()
 
-	cmd := shellCommand(runCtx, h.command)
+	cmd := hookCommand(runCtx, h)
 	cmd.Env = append(os.Environ(), hookEnv(event, payload)...)
 	// Process-group isolation: when the hook spawns child processes
 	// (`sleep 60 &`, `npm install &`, an orphaned background daemon),
@@ -228,6 +238,16 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 		}
 	}
 	return report
+}
+
+// hookCommand preserves the historical shell-wrapped command mode while also
+// supporting shell-free argv hooks (`command` + `args`) for payload-safe
+// dispatches that avoid shell metacharacter expansion entirely.
+func hookCommand(ctx context.Context, h compiledHook) *exec.Cmd {
+	if !h.useShell {
+		return exec.CommandContext(ctx, h.command, h.args...)
+	}
+	return shellCommand(ctx, h.command)
 }
 
 // shellCommand wraps the user's command string in the platform's default

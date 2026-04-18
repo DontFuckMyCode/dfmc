@@ -263,3 +263,29 @@ func TestOrchestrateRespectsMaxParallelCeiling(t *testing.T) {
 		t.Fatalf("parallelism exceeded engine ceiling: peak=%d, ceiling=2", got)
 	}
 }
+
+func TestOrchestrateAutoSplitCapsSubtaskFanOut(t *testing.T) {
+	cfg := *config.DefaultConfig()
+	cfg.Agent.ParallelBatchSize = 8
+	eng := New(cfg)
+	runner := &recordingRunner{failAtCall: -1}
+	eng.SetSubagentRunner(runner)
+
+	res, err := eng.Execute(context.Background(), "orchestrate", Request{
+		Params: map[string]any{
+			"task": "do ten things: 1) a 2) b 3) c 4) d 5) e 6) f 7) g 8) h 9) i 10) j",
+		},
+	})
+	if err != nil {
+		t.Fatalf("orchestrate capped split: %v", err)
+	}
+	if len(runner.calls) != maxOrchestrateAutoSubtasks {
+		t.Fatalf("expected only %d sub-agent calls after cap, got %d", maxOrchestrateAutoSubtasks, len(runner.calls))
+	}
+	if omitted, _ := res.Data["omitted_subtasks"].(int); omitted != 2 {
+		t.Fatalf("omitted_subtasks=%v, want 2", res.Data["omitted_subtasks"])
+	}
+	if !strings.Contains(res.Output, "omitted 2 additional subtasks") {
+		t.Fatalf("expected output cap notice, got %q", res.Output)
+	}
+}

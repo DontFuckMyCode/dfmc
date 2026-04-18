@@ -213,6 +213,14 @@ func TestChatSlashProviderPersistWritesProjectConfig(t *testing.T) {
 	}
 }
 
+func withToolStripExpanded(t *testing.T, m *Model) {
+	t.Helper()
+	m.ui.toolStripExpanded = true
+	if !m.ui.toolStripExpanded {
+		t.Fatal("toolStripExpanded helper failed to enable chip rendering")
+	}
+}
+
 func TestChatSlashMenuTabCompletesAndRunsCommand(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
@@ -1756,7 +1764,7 @@ func TestToolCallsMirrorOntoStreamingAssistantMessage(t *testing.T) {
 	// Force-expand the tool strip — collapsed-by-default (the new UX
 	// default) only renders an aggregated summary that omits the per-
 	// chip "+1.3k tok" delta this regression test pins.
-	m.ui.toolStripExpanded = true
+	withToolStripExpanded(t, &m)
 	view := m.renderChatView(140)
 	if !strings.Contains(view, "list_dir") || !strings.Contains(view, "73ms") {
 		t.Fatalf("assistant bubble should render the tool chip strip inline; got:\n%s", view)

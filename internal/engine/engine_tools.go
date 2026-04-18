@@ -23,6 +23,9 @@ func (e *Engine) ListTools() []string {
 }
 
 func (e *Engine) CallTool(ctx context.Context, name string, params map[string]any) (tools.Result, error) {
+	if err := e.requireReady("tool call"); err != nil {
+		return tools.Result{}, err
+	}
 	res, err := e.executeToolWithLifecycle(ctx, name, params, "user")
 	if err != nil {
 		e.EventBus.Publish(Event{

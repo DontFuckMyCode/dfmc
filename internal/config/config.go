@@ -121,6 +121,16 @@ type AgentConfig struct {
 	// before each round starts so the post-round gate can't lose budget
 	// races. 0 falls back to 7 (~14% headroom).
 	BudgetHeadroomDivisor int `yaml:"budget_headroom_divisor"`
+	// ElasticToolTokensRatio is the share of provider_max_context the native
+	// tool loop may spend across the whole run when the provider exposes a
+	// context window. 0 falls back to 0.60.
+	ElasticToolTokensRatio float64 `yaml:"elastic_tool_tokens_ratio"`
+	// ElasticToolResultCharsRatio caps a single tool_result text payload as a
+	// share of provider_max_context. 0 falls back to 1/40 (~2.5%).
+	ElasticToolResultCharsRatio float64 `yaml:"elastic_tool_result_chars_ratio"`
+	// ElasticToolDataCharsRatio caps the JSON sidecar of a single tool_result
+	// as a share of provider_max_context. 0 falls back to 1/100 (1%).
+	ElasticToolDataCharsRatio float64 `yaml:"elastic_tool_data_chars_ratio"`
 
 	// ResumeMaxMultiplier caps cumulative agent work across every
 	// /continue (or natural-language "devam") of a single root ask. Each
@@ -324,7 +334,16 @@ type HooksConfig struct {
 type HookEntry struct {
 	Name      string `yaml:"name"`
 	Condition string `yaml:"condition,omitempty"`
-	Command   string `yaml:"command"`
+	// Command is either the full shell command (legacy/default mode) or the
+	// executable path/name when Args or Shell=false are set.
+	Command string `yaml:"command"`
+	// Args enables shell-free hook execution. When non-empty, DFMC invokes
+	// Command directly as argv instead of routing through sh/cmd unless
+	// Shell=true is set explicitly for backwards compatibility.
+	Args []string `yaml:"args,omitempty"`
+	// Shell controls whether DFMC wraps Command in the platform shell.
+	// Nil preserves the historical default (true unless Args are present).
+	Shell *bool `yaml:"shell,omitempty"`
 }
 
 type PluginsConfig struct {
@@ -411,8 +430,11 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 		}
 	}
 
-	loadDotEnv(projectRoot)
-	cfg.applyEnv()
+	dotEnv, err := loadDotEnv(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	cfg.applyEnv(dotEnv)
 	cfg.Providers.Profiles = MergeProviderProfilesFromModelsDev(cfg.Providers.Profiles, nil, ModelsDevMergeOptions{})
 	if catalog, err := LoadModelsDevCatalog(ModelsDevCachePath()); err == nil {
 		cfg.Providers.Profiles = MergeProviderProfilesFromModelsDev(cfg.Providers.Profiles, catalog, ModelsDevMergeOptions{})
@@ -451,16 +473,20 @@ func loadYAML(path string, out *Config) error {
 	return nil
 }
 
-func loadDotEnv(root string) {
+func loadDotEnv(root string) (map[string]string, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
-		return
+		return nil, nil
 	}
 	path := filepath.Join(root, ".env")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	values := map[string]string{}
 	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
 	for i, raw := range lines {
 		line := strings.TrimSpace(raw)
@@ -481,12 +507,9 @@ func loadDotEnv(root string) {
 		if key == "" {
 			continue
 		}
-		if _, exists := os.LookupEnv(key); exists {
-			continue
-		}
-		value = parseDotEnvValue(value)
-		_ = os.Setenv(key, value)
+		values[key] = parseDotEnvValue(value)
 	}
+	return values, nil
 }
 
 func parseDotEnvValue(raw string) string {
@@ -543,12 +566,19 @@ func EnvVarForProvider(name string) string {
 	return canonical[key]
 }
 
-func (c *Config) applyEnv() {
+func (c *Config) applyEnv(dotEnv map[string]string) {
 	if c.Providers.Profiles == nil {
 		c.Providers.Profiles = map[string]ModelConfig{}
 	}
 	for envName, providerName := range providerAPIEnvVars {
-		val := strings.TrimSpace(os.Getenv(envName))
+		val, ok := os.LookupEnv(envName)
+		if ok && strings.TrimSpace(val) != "" {
+			prof := c.Providers.Profiles[providerName]
+			prof.APIKey = strings.TrimSpace(val)
+			c.Providers.Profiles[providerName] = prof
+			continue
+		}
+		val = strings.TrimSpace(dotEnv[envName])
 		if val == "" {
 			continue
 		}

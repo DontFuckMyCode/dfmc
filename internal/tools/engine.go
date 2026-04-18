@@ -42,13 +42,13 @@ const (
 )
 
 type Engine struct {
-	mu             sync.RWMutex
-	registry       map[string]Tool
-	cfg            config.Config
-	failureMu      sync.Mutex
-	recentFailures map[string]int
-	readMu         sync.Mutex
-	readSnapshots  map[string]string
+	mu              sync.RWMutex
+	registry        map[string]Tool
+	cfg             config.Config
+	failureMu       sync.Mutex
+	recentFailures  map[string]int
+	readMu          sync.RWMutex
+	readSnapshots   map[string]string
 	delegateTool    *DelegateTaskTool
 	orchestrateTool *OrchestrateTool
 
@@ -379,8 +379,8 @@ func (e *Engine) ensureReadBeforeMutation(absPath string) error {
 		return err
 	}
 
-	e.readMu.Lock()
-	defer e.readMu.Unlock()
+	e.readMu.RLock()
+	defer e.readMu.RUnlock()
 	lastReadHash, ok := e.readSnapshots[absPath]
 	if !ok {
 		return readGuardError(absPath, "missing", "")

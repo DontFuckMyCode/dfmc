@@ -129,7 +129,7 @@ func (s *Store) SaveConversationLog(convID string, messages []types.Message) err
 		return fmt.Errorf("create conversation dir: %w", err)
 	}
 
-	path := filepath.Join(dir, convID+".jsonl")
+	path := conversationLogPath(dir, convID)
 
 	// Encode in-memory first, then atomically rename into place. The
 	// previous os.Create approach truncated the existing file up-front
@@ -145,28 +145,77 @@ func (s *Store) SaveConversationLog(convID string, messages []types.Message) err
 			return fmt.Errorf("encode message: %w", err)
 		}
 	}
-	tmp, err := os.CreateTemp(dir, "."+convID+".jsonl.dfmc-tmp-*")
+	if err := writeFileAtomic(path, buf.Bytes(), "."+convID+".jsonl.dfmc-tmp-*"); err != nil {
+		return fmt.Errorf("save conversation log: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) SaveConversationState(convID string, state any) error {
+	if err := validateConvID(convID); err != nil {
+		return err
+	}
+	dir := filepath.Join(s.artifactDir, "conversations")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create conversation dir: %w", err)
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		return fmt.Errorf("create temp for conversation: %w", err)
+		return fmt.Errorf("encode conversation state: %w", err)
+	}
+	if err := writeFileAtomic(conversationStatePath(dir, convID), data, "."+convID+".json.dfmc-tmp-*"); err != nil {
+		return fmt.Errorf("save conversation state: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) LoadConversationState(convID string, dst any) error {
+	if err := validateConvID(convID); err != nil {
+		return err
+	}
+	if dst == nil {
+		return fmt.Errorf("conversation state destination is nil")
+	}
+	path := conversationStatePath(filepath.Join(s.artifactDir, "conversations"), convID)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, dst); err != nil {
+		return fmt.Errorf("decode conversation state: %w", err)
+	}
+	return nil
+}
+
+func writeFileAtomic(path string, data []byte, pattern string) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
-	if _, err := tmp.Write(buf.Bytes()); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("write temp conversation: %w", err)
+		return fmt.Errorf("write temp file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("sync temp conversation: %w", err)
+		return fmt.Errorf("sync temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close temp conversation: %w", err)
+		return fmt.Errorf("close temp file: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rename temp conversation: %w", err)
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+	// Best-effort durability: flush the parent directory entry after the
+	// rename so a sudden power loss is less likely to lose the new name.
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("sync parent dir: %w", err)
 	}
 	return nil
 }
@@ -176,7 +225,7 @@ func (s *Store) LoadConversationLog(convID string) ([]types.Message, error) {
 		return nil, err
 	}
 
-	path := filepath.Join(s.artifactDir, "conversations", convID+".jsonl")
+	path := conversationLogPath(filepath.Join(s.artifactDir, "conversations"), convID)
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -210,6 +259,28 @@ func (s *Store) LoadConversationLog(convID string) ([]types.Message, error) {
 	}
 
 	return messages, nil
+}
+
+func conversationLogPath(dir, convID string) string {
+	return filepath.Join(dir, convID+".jsonl")
+}
+
+func conversationStatePath(dir, convID string) string {
+	return filepath.Join(dir, convID+".json")
+}
+
+func syncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := f.Sync(); err != nil {
+		// Some filesystems do not support directory sync. The rename still
+		// gave us atomic replacement, so do not fail persistence outright.
+		return nil
+	}
+	return nil
 }
 
 // validateConvID rejects conversation IDs that would escape the

@@ -96,16 +96,14 @@ func runServe(ctx context.Context, eng *engine.Engine, args []string, jsonMode b
 	}
 
 	srv := web.New(eng, *host, *port)
+	srv.SetBearerToken(*token)
 	handler := srv.Handler()
 	if mode == "token" {
 		handler = bearerTokenMiddleware(handler, *token)
 	}
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)
-	server := &http.Server{
-		Addr:    addr,
-		Handler: handler,
-	}
+	server := web.NewHTTPServer(addr, handler)
 	fmt.Printf("DFMC Web API listening on http://%s\n", addr)
 	if *openBrowser {
 		target := "http://" + addr
@@ -1187,16 +1185,14 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 
 		base := web.New(eng, *host, *port)
+		base.SetBearerToken(*token)
 		handler := base.Handler()
 		if mode == "token" {
 			handler = bearerTokenMiddleware(handler, *token)
 		}
 
 		addr := fmt.Sprintf("%s:%d", *host, *port)
-		server := &http.Server{
-			Addr:    addr,
-			Handler: handler,
-		}
+		server := web.NewHTTPServer(addr, handler)
 
 		if jsonMode {
 			_ = printJSON(map[string]any{
@@ -1234,11 +1230,11 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 // runRemoteDrive is the `dfmc remote drive ...` client. Wraps the
 // /api/v1/drive endpoints. Subcommands mirror the local CLI:
 //
-//   dfmc remote drive "task..."       start (POST /api/v1/drive)
-//   dfmc remote drive list            GET  /api/v1/drive
-//   dfmc remote drive show <id>       GET  /api/v1/drive/{id}
-//   dfmc remote drive resume <id>     POST /api/v1/drive/{id}/resume
-//   dfmc remote drive delete <id>     DELETE /api/v1/drive/{id}
+//	dfmc remote drive "task..."       start (POST /api/v1/drive)
+//	dfmc remote drive list            GET  /api/v1/drive
+//	dfmc remote drive show <id>       GET  /api/v1/drive/{id}
+//	dfmc remote drive resume <id>     POST /api/v1/drive/{id}/resume
+//	dfmc remote drive delete <id>     DELETE /api/v1/drive/{id}
 //
 // Live event stream on the remote: use `dfmc remote events --filter drive:`
 // to tail drive:* events from the same process.
@@ -1391,15 +1387,15 @@ func remoteDriveStart(defaultURL string, args []string, jsonMode bool) int {
 		routingStr[k] = fmt.Sprint(v)
 	}
 	body := map[string]any{
-		"task":           task,
-		"max_todos":      *maxTodos,
+		"task":             task,
+		"max_todos":        *maxTodos,
 		"max_failed_todos": *maxFailed,
 		"max_wall_time_ms": maxWall.Milliseconds(),
-		"retries":        *retries,
-		"max_parallel":   *maxParallel,
-		"planner_model":  *planner,
-		"routing":        routingStr,
-		"auto_approve":   parseAutoApproveFlag(*autoApprove),
+		"retries":          *retries,
+		"max_parallel":     *maxParallel,
+		"planner_model":    *planner,
+		"routing":          routingStr,
+		"auto_approve":     parseAutoApproveFlag(*autoApprove),
 	}
 	payload, status, err := remoteJSONRequest(http.MethodPost,
 		strings.TrimRight(*baseURL, "/")+"/api/v1/drive",
@@ -1962,16 +1958,14 @@ func bearerTokenMiddleware(next http.Handler, token string) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Accept the token via Authorization header (preferred) OR ?token=
-		// query param. The query-param fallback exists because EventSource
-		// (used by the workbench's /ws activity stream) doesn't support
-		// custom headers — without this, the live event panel would 401
-		// even after the operator entered a valid token in the UI.
+		// Accept the token via Authorization header everywhere. A query-
+		// param fallback is allowed ONLY for /ws because EventSource
+		// cannot set custom headers.
 		if got := strings.TrimSpace(r.Header.Get("Authorization")); got == expected {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if rawToken != "" && r.URL.Query().Get("token") == rawToken {
+		if rawToken != "" && r.URL.Path == "/ws" && r.URL.Query().Get("token") == rawToken {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1984,4 +1978,3 @@ func writeRemoteJSON(w http.ResponseWriter, code int, payload any) {
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(payload)
 }
-

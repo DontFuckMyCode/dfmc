@@ -30,6 +30,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -411,6 +412,27 @@ func (e *Engine) setState(state EngineState) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.state = state
+}
+
+func (e *Engine) requireReady(op string) error {
+	if e == nil {
+		return fmt.Errorf("engine is nil")
+	}
+	state := e.State()
+	switch state {
+	case StateReady, StateServing, StateShuttingDown:
+		return nil
+	default:
+		if state == StateCreated || state == StateInitializing {
+			if e.Tools != nil || e.Providers != nil || e.Conversation != nil || e.Memory != nil || e.AST != nil || e.CodeMap != nil {
+				return nil
+			}
+		}
+		if strings.TrimSpace(op) == "" {
+			op = "operation"
+		}
+		return fmt.Errorf("engine not initialized for %s (state=%v)", op, state)
+	}
 }
 
 // BackgroundContext returns the engine-owned lifecycle context for

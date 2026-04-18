@@ -84,6 +84,15 @@ func TestBearerTokenMiddleware(t *testing.T) {
 		}
 	})
 
+	t.Run("query param token rejected on api routes", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/status?token=secret-token", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("query-param token must stay scoped to /ws (got %d)", rec.Code)
+		}
+	})
+
 	t.Run("wrong query param token rejected", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/ws?token=nope", nil)
 		rec := httptest.NewRecorder()

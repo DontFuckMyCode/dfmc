@@ -58,10 +58,10 @@ var httpClient = &http.Client{
 	},
 }
 
-// isBlockedHost resolves the host and returns true if it points to a
-// loopback, link-local, or private IP address. This prevents SSRF attacks
-// where an LLM-generated URL could reach cloud metadata endpoints
-// (169.254.169.254), localhost services, or internal networks.
+// isBlockedHost is a best-effort resolver used only for filtering search
+// results before they are shown to the model. Unlike web_fetch, this is not
+// a security boundary by itself — the actual SSRF guard lives in
+// safeTransport.DialContext at connect time.
 func isBlockedHost(host string) bool {
 	h := host
 	if strings.Contains(h, ":") {
@@ -69,7 +69,6 @@ func isBlockedHost(host string) bool {
 	}
 	ips, err := net.LookupIP(h)
 	if err != nil {
-		// If we can't resolve, block to avoid racing with DNS rebinding.
 		return true
 	}
 	for _, ip := range ips {
@@ -85,8 +84,8 @@ func isBlockedHost(host string) bool {
 // to 5 redirects.
 type WebFetchTool struct{}
 
-func NewWebFetchTool() *WebFetchTool     { return &WebFetchTool{} }
-func (t *WebFetchTool) Name() string     { return "web_fetch" }
+func NewWebFetchTool() *WebFetchTool { return &WebFetchTool{} }
+func (t *WebFetchTool) Name() string { return "web_fetch" }
 func (t *WebFetchTool) Description() string {
 	return "Fetch a URL and return its text content (HTML stripped)."
 }
@@ -111,9 +110,6 @@ func (t *WebFetchTool) Execute(ctx context.Context, req Request) (Result, error)
 			raw, scheme,
 			`{"name":"web_fetch","args":{"url":"https://example.com/path"}}`)
 	}
-	if isBlockedHost(u.Host) {
-		return Result{}, fmt.Errorf("url resolves to a blocked (private/loopback/link-local) address — SSRF protection")
-	}
 	maxBytes := asInt(req.Params, "max_bytes", 128*1024)
 	if maxBytes <= 0 {
 		maxBytes = 128 * 1024
@@ -133,6 +129,9 @@ func (t *WebFetchTool) Execute(ctx context.Context, req Request) (Result, error)
 
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
+		if isSSRFFetchError(err) {
+			return Result{}, fmt.Errorf("url resolves to a blocked (private/loopback/link-local) address — SSRF protection")
+		}
 		return Result{}, fmt.Errorf("fetch failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -289,6 +288,14 @@ func htmlToText(s string) string {
 	}
 }
 
+func isSSRFFetchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "ssrf guard") || strings.Contains(msg, "blocked ip")
+}
+
 // finalizeStrippedText collapses runs of whitespace and caps blank-line
 // runs at 2, matching the old shape. Lives separately so unit tests can
 // hit it directly without driving the whole tokenizer.
@@ -311,8 +318,8 @@ var _ = html.UnescapeString // keep the html import live for future use
 // external resources.
 type WebSearchTool struct{}
 
-func NewWebSearchTool() *WebSearchTool    { return &WebSearchTool{} }
-func (t *WebSearchTool) Name() string     { return "web_search" }
+func NewWebSearchTool() *WebSearchTool { return &WebSearchTool{} }
+func (t *WebSearchTool) Name() string  { return "web_search" }
 func (t *WebSearchTool) Description() string {
 	return "Search the web (DuckDuckGo) and return top N title/url/snippet results."
 }

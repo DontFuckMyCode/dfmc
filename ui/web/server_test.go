@@ -656,8 +656,11 @@ func TestFileContentAndToolExecEndpoints(t *testing.T) {
 		t.Fatalf("decode tool payload: %v", err)
 	}
 	output, _ := toolPayload["output"].(string)
-	if strings.TrimSpace(output) != "world" {
+	if !strings.Contains(output, "world") {
 		t.Fatalf("unexpected tool output: %q", output)
+	}
+	if !strings.Contains(output, "[truncated -") {
+		t.Fatalf("expected visible truncation marker in tool output, got: %q", output)
 	}
 }
 

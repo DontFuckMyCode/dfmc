@@ -33,7 +33,10 @@ import (
 
 // defaultOrchestrateParallel is the fallback concurrency ceiling. Low on
 // purpose — the default config has ParallelBatchSize=4 and we want to match.
-const defaultOrchestrateParallel = 4
+const (
+	defaultOrchestrateParallel = 4
+	maxOrchestrateAutoSubtasks = 8
+)
 
 // OrchestrateTool runs the split/fan-out/aggregate pipeline in one call.
 type OrchestrateTool struct {
@@ -44,8 +47,8 @@ type OrchestrateTool struct {
 	maxParallelCeiling int
 }
 
-func NewOrchestrateTool() *OrchestrateTool    { return &OrchestrateTool{} }
-func (t *OrchestrateTool) Name() string       { return "orchestrate" }
+func NewOrchestrateTool() *OrchestrateTool { return &OrchestrateTool{} }
+func (t *OrchestrateTool) Name() string    { return "orchestrate" }
 func (t *OrchestrateTool) Description() string {
 	return "Decompose a task, fan out sub-agents (parallel or sequential), and aggregate their summaries."
 }
@@ -154,6 +157,11 @@ func (t *OrchestrateTool) Execute(ctx context.Context, req Request) (Result, err
 	}
 
 	plan := planning.SplitTask(task)
+	omittedSubtasks := 0
+	if len(plan.Subtasks) > maxOrchestrateAutoSubtasks {
+		omittedSubtasks = len(plan.Subtasks) - maxOrchestrateAutoSubtasks
+		plan.Subtasks = append([]planning.Subtask(nil), plan.Subtasks[:maxOrchestrateAutoSubtasks]...)
+	}
 
 	// Degenerate case: nothing to fan out. Run a single sub-agent so the
 	// tool is always safe to call and still provides a context-isolated
@@ -166,12 +174,12 @@ func (t *OrchestrateTool) Execute(ctx context.Context, req Request) (Result, err
 		return Result{
 			Output: stageSummaryLine(stage),
 			Data: map[string]any{
-				"task":           task,
-				"mode":           "single",
-				"subtask_count":  1,
-				"stages":         stages,
-				"aggregated":     stage["summary"],
-				"split_reason":   fmt.Sprintf("count=%d confidence=%.2f", len(plan.Subtasks), plan.Confidence),
+				"task":          task,
+				"mode":          "single",
+				"subtask_count": 1,
+				"stages":        stages,
+				"aggregated":    stage["summary"],
+				"split_reason":  fmt.Sprintf("count=%d confidence=%.2f", len(plan.Subtasks), plan.Confidence),
 			},
 		}, err
 	}
@@ -179,11 +187,11 @@ func (t *OrchestrateTool) Execute(ctx context.Context, req Request) (Result, err
 	parallel := plan.Parallel && !forceSequential
 	if parallel {
 		stages := t.runParallel(ctx, runner, plan, role, subSteps, maxParallel)
-		return assembleResult(task, "parallel", plan, stages, maxParallel), firstStageError(stages)
+		return assembleResult(task, "parallel", plan, stages, maxParallel, omittedSubtasks), firstStageError(stages)
 	}
 
 	stages := t.runSequential(ctx, runner, plan, role, subSteps)
-	return assembleResult(task, "sequential", plan, stages, 1), firstStageError(stages)
+	return assembleResult(task, "sequential", plan, stages, 1, omittedSubtasks), firstStageError(stages)
 }
 
 // runParallel fans the plan's subtasks out to concurrent sub-agents. Bounded
@@ -304,7 +312,7 @@ func subagentPromptFor(sub planning.Subtask, priorSummaries []string) string {
 // assembleResult collects stage maps into a Result, with a compact Output
 // line per stage for the model's tool_result content and the full detail
 // in Data.
-func assembleResult(task, mode string, plan planning.Plan, stages []map[string]any, parallel int) Result {
+func assembleResult(task, mode string, plan planning.Plan, stages []map[string]any, parallel int, omittedSubtasks int) Result {
 	lines := make([]string, 0, len(stages))
 	aggregated := make([]string, 0, len(stages))
 	for i, stage := range stages {
@@ -318,16 +326,20 @@ func assembleResult(task, mode string, plan planning.Plan, stages []map[string]a
 			aggregated = append(aggregated, fmt.Sprintf("### %s\n%s", header, summary))
 		}
 	}
+	if omittedSubtasks > 0 {
+		lines = append(lines, fmt.Sprintf("[orchestrate capped auto-split at %d stages; omitted %d additional subtasks]", maxOrchestrateAutoSubtasks, omittedSubtasks))
+	}
 	return Result{
 		Output: strings.Join(lines, "\n"),
 		Data: map[string]any{
-			"task":          task,
-			"mode":          mode,
-			"subtask_count": len(stages),
-			"parallel":      parallel,
-			"confidence":    plan.Confidence,
-			"stages":        stages,
-			"aggregated":    strings.Join(aggregated, "\n\n"),
+			"task":             task,
+			"mode":             mode,
+			"subtask_count":    len(stages),
+			"parallel":         parallel,
+			"confidence":       plan.Confidence,
+			"stages":           stages,
+			"aggregated":       strings.Join(aggregated, "\n\n"),
+			"omitted_subtasks": omittedSubtasks,
 		},
 	}
 }

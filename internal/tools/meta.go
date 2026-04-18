@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // defaultSearchLimit caps the search result count. Default is low on purpose:
@@ -43,6 +44,62 @@ const defaultSearchLimit = 10
 // (typical batches are 2–8) — anything larger should be split into
 // sequential sub-batches so the loop can compact in between.
 const maxBatchCalls = 32
+
+// Meta-tool cumulative budget across a single agent turn. Seeded once at the
+// agent-loop boundary so repeated tool_call / tool_batch_call expansion shares
+// one counter instead of getting a fresh allowance per dispatch.
+const (
+	defaultMetaCallBudget = 64
+	defaultMetaDepthLimit = 4
+)
+
+type metaBudgetKey struct{}
+
+type metaBudgetState struct {
+	depth atomic.Int32
+	used  atomic.Int32
+}
+
+// SeedMetaToolBudget ensures ctx carries the shared meta-tool execution budget
+// for a whole agent turn. Calling it repeatedly is cheap and idempotent.
+func SeedMetaToolBudget(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Value(metaBudgetKey{}).(*metaBudgetState); ok {
+		return ctx
+	}
+	return context.WithValue(ctx, metaBudgetKey{}, &metaBudgetState{})
+}
+
+func enterMetaBudget(ctx context.Context, calls int) (context.Context, func(), error) {
+	ctx = SeedMetaToolBudget(ctx)
+	state, _ := ctx.Value(metaBudgetKey{}).(*metaBudgetState)
+	if state == nil {
+		return ctx, func() {}, nil
+	}
+	if calls <= 0 {
+		calls = 1
+	}
+	depth := state.depth.Add(1)
+	if depth > defaultMetaDepthLimit {
+		state.depth.Add(-1)
+		return ctx, nil, fmt.Errorf(
+			"meta tool nesting exceeded depth limit (%d > %d). Split the work across separate rounds instead of recursively chaining tool_call/tool_batch_call",
+			depth, defaultMetaDepthLimit)
+	}
+	used := state.used.Add(int32(calls))
+	if used > defaultMetaCallBudget {
+		state.depth.Add(-1)
+		state.used.Add(-int32(calls))
+		return ctx, nil, fmt.Errorf(
+			"meta tool budget exhausted (%d > %d backend calls planned in one turn). Split the work into smaller batches or let the agent answer before fanning out again",
+			used, defaultMetaCallBudget)
+	}
+	return ctx, func() {
+		state.depth.Add(-1)
+	}, nil
+}
 
 // RegisterMetaTools registers the 4 meta tools against the given Engine. Call
 // this once during Engine construction. The meta tools hold a reference to
@@ -182,6 +239,8 @@ func (t *toolHelpTool) Execute(_ context.Context, req Request) (Result, error) {
 
 type toolCallTool struct{ engine *Engine }
 
+const maxToolCallUnwrapDepth = 4
+
 func (t *toolCallTool) Name() string { return "tool_call" }
 func (t *toolCallTool) Description() string {
 	return "Execute a single backend tool by name with arguments."
@@ -208,6 +267,26 @@ func (t *toolCallTool) Execute(ctx context.Context, req Request) (Result, error)
 	if name == "" {
 		return Result{}, missingNameError("tool_call", req.Params,
 			`{"name":"read_file","args":{"path":"main.go","line_start":1,"line_end":40}}`)
+	}
+	ctx, release, budgetErr := enterMetaBudget(ctx, 1)
+	if budgetErr != nil {
+		return Result{}, budgetErr
+	}
+	defer release()
+	unwrapDepth := 0
+	for name == "tool_call" {
+		if unwrapDepth >= maxToolCallUnwrapDepth {
+			return Result{}, fmt.Errorf(
+				`tool_call nesting exceeded max unwrap depth (%d). Drop the wrapper and call the backend tool directly: {"name":"<tool>","args":{...}}`,
+				maxToolCallUnwrapDepth)
+		}
+		inner, ierr := extractArgsObject(req.Params, "args")
+		if ierr != nil {
+			return Result{}, fmt.Errorf("tool_call double-wrap: %w", ierr)
+		}
+		req.Params = inner
+		name = pickToolName(req.Params)
+		unwrapDepth++
 	}
 	// Auto-unwrap double-wrap: the model invoked tool_call with
 	// {name:"tool_call", args:{name:"read_file", args:{...}}} —
@@ -255,7 +334,15 @@ func (t *toolCallTool) Execute(ctx context.Context, req Request) (Result, error)
 	sub := Request{ProjectRoot: req.ProjectRoot, Params: args}
 	res, err := t.engine.Execute(ctx, name, sub)
 	if err != nil {
+		if unwrapDepth > 0 {
+			hint := fmt.Sprintf("[tool_call: auto-unwrapped %d redundant tool_call layer(s) -> dispatched %s. Next time call %s directly: {\"name\":%q,\"args\":{...}}]\n", unwrapDepth, name, name, name)
+			return res, fmt.Errorf("%s%s: %w", hint, name, err)
+		}
 		return res, fmt.Errorf("%s: %w", name, err)
+	}
+	if unwrapDepth > 0 {
+		hint := fmt.Sprintf("[tool_call: auto-unwrapped %d redundant tool_call layer(s) -> dispatched %s. Next time call %s directly: {\"name\":%q,\"args\":{...}}]\n", unwrapDepth, name, name, name)
+		res.Output = hint + res.Output
 	}
 	return res, nil
 }
@@ -300,7 +387,7 @@ func (t *toolBatchCallTool) Spec() ToolSpec {
 			{
 				Name: "calls", Type: ArgArray, Required: true,
 				Description: "Array of {name, args} objects.",
-				Items: &Arg{Type: ArgObject, Description: "{name:string, args:object}"},
+				Items:       &Arg{Type: ArgObject, Description: "{name:string, args:object}"},
 			},
 		},
 		Returns:  "{count, results:[{name, success, output, data, error, duration_ms}]}",
@@ -326,6 +413,11 @@ func (t *toolBatchCallTool) Execute(ctx context.Context, req Request) (Result, e
 				"Typical healthy fan-out is 2-8 calls; anything in the dozens usually means the planner is doing inside one round what should be spread across rounds.",
 			len(calls), maxBatchCalls, maxBatchCalls)
 	}
+	ctx, release, budgetErr := enterMetaBudget(ctx, len(calls))
+	if budgetErr != nil {
+		return Result{}, budgetErr
+	}
+	defer release()
 
 	limit := 1
 	if t.engine != nil {

@@ -20,6 +20,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
 // --- M4: nil EventBus guards -------------------------------------
@@ -53,6 +54,16 @@ func TestEventBus_NilUnsubscribeDoesNotPanic(t *testing.T) {
 	eb.Unsubscribe("x", make(chan Event))
 }
 
+func TestEventBus_PublishToExternallyClosedChannelDoesNotPanic(t *testing.T) {
+	eb := NewEventBus()
+	ch := eb.Subscribe("probe")
+	close(ch)
+	eb.Publish(Event{Type: "probe"})
+	if eb.DroppedCount() == 0 {
+		t.Fatal("expected dropped count to increase when publishing to a closed subscriber channel")
+	}
+}
+
 // --- C1: Status surfaces memory-degraded flag --------------------
 
 // The Status copy-in must include the degraded flag verbatim, so the
@@ -75,6 +86,28 @@ func TestStatus_ExposesMemoryDegradedFlag(t *testing.T) {
 	}
 	if s.MemoryLoadErr != "bolt: database not open" {
 		t.Fatalf("MemoryLoadErr not surfaced: %q", s.MemoryLoadErr)
+	}
+}
+
+func TestAskBeforeInitReturnsDescriptiveError(t *testing.T) {
+	cfg := config.DefaultConfig()
+	eng, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if _, err := eng.Ask(context.Background(), "hello"); err == nil || !strings.Contains(err.Error(), "engine not initialized") {
+		t.Fatalf("expected pre-init ask error, got %v", err)
+	}
+}
+
+func TestCallToolBeforeInitReturnsDescriptiveError(t *testing.T) {
+	cfg := config.DefaultConfig()
+	eng, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if _, err := eng.CallTool(context.Background(), "read_file", map[string]any{"path": "go.mod"}); err == nil || !strings.Contains(err.Error(), "engine not initialized") {
+		t.Fatalf("expected pre-init tool error, got %v", err)
 	}
 }
 
@@ -153,6 +186,20 @@ func TestResumeAgent_NoParkedStateStillErrors(t *testing.T) {
 	_, err := eng.ResumeAgent(context.Background(), "")
 	if err == nil || !strings.Contains(err.Error(), "no parked agent") {
 		t.Fatalf("want 'no parked agent' error, got %v", err)
+	}
+}
+
+func TestRunSubagentRejectsUnknownProfileOverride(t *testing.T) {
+	eng, _, _ := buildGuardTestEngine(t, 0, 2, []scriptedResponse{{Text: "unused"}})
+	_, err := eng.RunSubagent(context.Background(), tools.SubagentRequest{
+		Task:  "inspect note.txt",
+		Model: "does-not-exist",
+	})
+	if err == nil {
+		t.Fatal("unknown sub-agent profile override must error")
+	}
+	if !strings.Contains(err.Error(), "unknown sub-agent model/profile override") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

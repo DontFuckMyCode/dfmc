@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"go.etcd.io/bbolt"
 )
 
 // fakeRunner is the test double for drive.Runner. PlanFunc and
@@ -416,9 +418,100 @@ func TestPlannerStripsCodeFences(t *testing.T) {
 	}
 }
 
+func TestDriverRunPreparedRejectsNilContext(t *testing.T) {
+	runner := &fakeRunner{}
+	d := NewDriver(runner, nil, nil, Config{})
+	run, err := d.RunPrepared(nil, &Run{ID: "r1", Task: "test"})
+	if err == nil {
+		t.Fatal("expected nil-context error")
+	}
+	if run != nil {
+		t.Fatalf("expected nil run on error, got %#v", run)
+	}
+	if !strings.Contains(err.Error(), "context must not be nil") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDriverResumeRejectsNilContext(t *testing.T) {
+	d := NewDriver(&fakeRunner{}, nil, nil, Config{})
+	run, err := d.Resume(nil, "run-1")
+	if err == nil {
+		t.Fatal("expected nil-context error")
+	}
+	if run != nil {
+		t.Fatalf("expected nil run on error, got %#v", run)
+	}
+	if !strings.Contains(err.Error(), "context must not be nil") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDriverResumeRejectsAlreadyActiveRun(t *testing.T) {
+	runner := &fakeRunner{}
+	store := newTestStore(t)
+	run := &Run{
+		ID:        "drv-active",
+		Task:      "active task",
+		Status:    RunRunning,
+		CreatedAt: time.Now(),
+		Todos:     []Todo{{ID: "T1", Title: "one", Status: TodoRunning}},
+	}
+	if err := store.Save(run); err != nil {
+		t.Fatalf("save run: %v", err)
+	}
+	_, cancel := context.WithCancel(context.Background())
+	register(run.ID, run.Task, cancel)
+	defer unregister(run.ID)
+	defer cancel()
+
+	d := NewDriver(runner, store, nil, Config{})
+	got, err := d.Resume(context.Background(), run.ID)
+	if err == nil {
+		t.Fatal("expected active-run error")
+	}
+	if got == nil || got.ID != run.ID {
+		t.Fatalf("expected loaded run in error path, got %#v", got)
+	}
+	if !strings.Contains(err.Error(), "already active") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPlannerPicksFirstValidEnvelopeFromMultipleJSONObjects(t *testing.T) {
+	runner := &fakeRunner{
+		PlanFunc: func(_ PlannerRequest) (string, error) {
+			return `{"thoughts":"draft"} {"todos":[{"id":"T1","title":"read","detail":"inspect files"}]}`, nil
+		},
+	}
+	d := NewDriver(runner, nil, nil, Config{})
+	run, err := d.Run(context.Background(), "task")
+	if err != nil {
+		t.Fatalf("expected second JSON object to parse, got %v", err)
+	}
+	if len(run.Todos) != 1 || run.Todos[0].ID != "T1" {
+		t.Fatalf("unexpected todos: %+v", run.Todos)
+	}
+}
+
 func safeIdx(s []string, i int) string {
 	if i < 0 || i >= len(s) {
 		return "<missing>"
 	}
 	return s[i]
+}
+
+func newTestStore(t *testing.T) *Store {
+	t.Helper()
+	dir := t.TempDir()
+	db, err := bbolt.Open(dir+"/drive.db", 0o600, nil)
+	if err != nil {
+		t.Fatalf("open bbolt: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	return store
 }

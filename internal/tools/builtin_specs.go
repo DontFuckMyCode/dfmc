@@ -64,7 +64,7 @@ Rules:
 			{Name: "path", Type: ArgString, Required: true, Description: "Relative path inside the project."},
 			{Name: "content", Type: ArgString, Required: true, Description: "Full file contents."},
 			{Name: "create_dirs", Type: ArgBoolean, Default: true, Description: "Create parent directories if missing."},
-			{Name: "overwrite", Type: ArgBoolean, Default: true, Description: "Allow overwriting existing files."},
+			{Name: "overwrite", Type: ArgBoolean, Default: false, Description: "Allow overwriting existing files."},
 		},
 		Returns:  "{path, bytes} on success.",
 		CostHint: "io-bound",

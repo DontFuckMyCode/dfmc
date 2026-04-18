@@ -16,6 +16,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -401,6 +402,37 @@ func TestNativeToolLoop_BudgetParkSkipsAutonomousPendingWhenDisabled(t *testing.
 		if flag, _ := payload["autonomous_pending"].(bool); flag {
 			t.Fatalf("autonomous-disabled park must NOT set autonomous_pending; payload=%v", payload)
 		}
+	}
+}
+
+func TestNativeToolLoop_SafetyBoundPublishesEvent(t *testing.T) {
+	responses := make([]scriptedResponse, 0, 130)
+	for i := 0; i < 130; i++ {
+		responses = append(responses, scriptedResponse{
+			ToolCalls: []provider.ToolCall{loopingReadToolCall(fmt.Sprintf("sb%03d", i))},
+		})
+	}
+
+	eng, _, evCh := buildGuardTestEngine(t, 70, 20, responses)
+	eng.Config.Agent.AutonomousResume = "auto"
+	eng.Config.Agent.ResumeMaxMultiplier = 100
+
+	answer, err := eng.AskWithMetadata(context.Background(), "safety bound check")
+	if err != nil {
+		t.Fatalf("Ask must return a graceful park, got err: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(answer), "budget exhausted") {
+		t.Fatalf("expected parked budget notice after safety bound, got %q", answer)
+	}
+
+	events := collectRecentEvents(evCh, 1024, 400*time.Millisecond)
+	ev, ok := findEventByType(events, "agent:loop:safety_bound")
+	if !ok {
+		t.Fatalf("want agent:loop:safety_bound event, got %v", eventTypes(events))
+	}
+	payload, _ := ev.Payload.(map[string]any)
+	if got, _ := payload["safety_bound"].(int); got != 64 {
+		t.Fatalf("safety_bound payload = %v, want 64", payload["safety_bound"])
 	}
 }
 

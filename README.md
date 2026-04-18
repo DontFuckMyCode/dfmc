@@ -511,6 +511,22 @@ context:
   include_docs: true
 ```
 
+Hook safety:
+
+- Project-local hooks are disabled by default; enable them explicitly with `hooks.allow_project: true` in your global config if you trust the repo.
+- Prefer shell-free hooks for payload-safe automation:
+
+```yaml
+hooks:
+  pre_tool:
+    - name: audit
+      command: go
+      args: ["env", "GOOS"]
+      shell: false
+```
+
+- Legacy `command: "echo hi && other"` hook entries still work through the platform shell, but treat them as trusted shell scripts. Avoid interpolating untrusted payload into shell syntax; use env vars or `args` instead.
+
 ## Project Structure
 
 ```text

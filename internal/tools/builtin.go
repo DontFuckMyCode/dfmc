@@ -1,18 +1,50 @@
 package tools
 
 import (
+	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 )
 
 type ReadFileTool struct{}
+
+const readFileBinaryCheckBytes = 512
+
+const (
+	maxGrepFileSize           = 10 << 20
+	maxGrepMatchesPerFile     = 50
+	maxGrepOutputBytes        = 64 << 10
+	defaultGrepScannerBufSize = 64 << 10
+)
+
+const (
+	maxIntValue = int(^uint(0) >> 1)
+	minIntValue = -maxIntValue - 1
+)
+
+type matchHit struct {
+	Rel  string
+	Line int
+	Text string
+}
+
+const (
+	readFileEncodingUTF8       = "utf-8"
+	readFileEncodingUTF16LEBOM = "utf-16le-bom"
+	readFileEncodingUTF16BEBOM = "utf-16be-bom"
+)
 
 func NewReadFileTool() *ReadFileTool { return &ReadFileTool{} }
 func (t *ReadFileTool) Name() string { return "read_file" }
@@ -40,19 +72,15 @@ func (t *ReadFileTool) Execute(_ context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	// Reject binary files: if the first 512 bytes contain a NUL, this is
-	// almost certainly not text. Reading the whole binary into memory is a
-	// waste and produces garbage output for the model.
-	checkLen := len(data)
-	if checkLen > 512 {
-		checkLen = 512
+	text, encoding, checkLen, err := decodeReadFileText(data)
+	if err != nil {
+		return Result{}, err
 	}
-	for i := 0; i < checkLen; i++ {
-		if data[i] == 0 {
-			return Result{}, fmt.Errorf("file appears to be binary (NUL byte at offset %d) \u2014 read_file only supports text files", i)
-		}
-	}
-	text := string(data)
+
+	// Reject binary files using a cheap text heuristic: if the first 512
+	// bytes contain a NUL, this is almost certainly not text. We surface the
+	// window size in Result.Data for successful reads too, so callers know
+	// exactly what "binary-safe" means here.
 	lines := strings.Split(text, "\n")
 
 	start := asInt(req.Params, "line_start", 1)
@@ -97,20 +125,60 @@ func (t *ReadFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	// before Execute runs, so the caller-intent signal is gone by this
 	// point. Honest answer: tell the model whether it got everything.
 	truncated := returnedLines < totalLines
+	if truncated {
+		segment = appendReadFileTruncationMarker(segment, start, end, totalLines)
+	}
 	return Result{
 		Output: segment,
 		Data: map[string]any{
-			"path":           PathRelativeToRoot(req.ProjectRoot, absPath),
-			"line_start":     start,
-			"line_end":       end,
-			"line_count":     totalLines, // legacy field name
-			"total_lines":    totalLines, // spec-aligned alias
-			"returned_lines": returnedLines,
-			"truncated":      truncated,
-			"language":       detectLanguageFromExt(absPath),
+			"path":               PathRelativeToRoot(req.ProjectRoot, absPath),
+			"line_start":         start,
+			"line_end":           end,
+			"line_count":         totalLines, // legacy field name
+			"total_lines":        totalLines, // spec-aligned alias
+			"returned_lines":     returnedLines,
+			"truncated":          truncated,
+			"language":           detectLanguageFromExt(absPath),
+			"encoding":           encoding,
+			"binary_check_bytes": checkLen,
+			"binary_heuristic":   "nul-in-first-window",
 		},
 		Truncated: truncated,
 	}, nil
+}
+
+func decodeReadFileText(data []byte) (string, string, int, error) {
+	checkLen := len(data)
+	if checkLen > readFileBinaryCheckBytes {
+		checkLen = readFileBinaryCheckBytes
+	}
+	if len(data) >= 2 {
+		switch {
+		case data[0] == 0xFF && data[1] == 0xFE:
+			text, err := decodeUTF16WithBOM(data[2:], binary.LittleEndian)
+			return text, readFileEncodingUTF16LEBOM, checkLen, err
+		case data[0] == 0xFE && data[1] == 0xFF:
+			text, err := decodeUTF16WithBOM(data[2:], binary.BigEndian)
+			return text, readFileEncodingUTF16BEBOM, checkLen, err
+		}
+	}
+	for i := 0; i < checkLen; i++ {
+		if data[i] == 0 {
+			return "", "", checkLen, fmt.Errorf("file appears to be binary (NUL byte at offset %d) \u2014 read_file only supports text files", i)
+		}
+	}
+	return string(data), readFileEncodingUTF8, checkLen, nil
+}
+
+func decodeUTF16WithBOM(data []byte, order binary.ByteOrder) (string, error) {
+	if len(data)%2 != 0 {
+		return "", fmt.Errorf("file appears to be malformed UTF-16 text (odd payload length after BOM)")
+	}
+	units := make([]uint16, 0, len(data)/2)
+	for i := 0; i < len(data); i += 2 {
+		units = append(units, order.Uint16(data[i:i+2]))
+	}
+	return string(utf16.Decode(units)), nil
 }
 
 // detectLanguageFromExt maps a file path to a short language tag the
@@ -174,7 +242,7 @@ func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) 
 	path := asString(req.Params, "path", "")
 	content := asString(req.Params, "content", "")
 	createDirs := asBool(req.Params, "create_dirs", true)
-	overwrite := asBool(req.Params, "overwrite", true)
+	overwrite := asBool(req.Params, "overwrite", false)
 
 	absPath, err := EnsureWithinRoot(req.ProjectRoot, path)
 	if err != nil {
@@ -196,15 +264,25 @@ func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) 
 				rel, rel)
 		}
 	}
+	data := map[string]any{
+		"path":               PathRelativeToRoot(req.ProjectRoot, absPath),
+		"bytes":              len([]byte(content)),
+		"overwrote_existing": false,
+	}
+	if overwrite {
+		if oldContent, err := os.ReadFile(absPath); err == nil {
+			sum := sha256.Sum256(oldContent)
+			data["overwrote_existing"] = true
+			data["previous_hash"] = hex.EncodeToString(sum[:])
+			data["previous_bytes"] = len(oldContent)
+		}
+	}
 	if err := writeFileAtomic(absPath, []byte(content), 0o644); err != nil {
 		return Result{}, err
 	}
 	return Result{
 		Output: "file written",
-		Data: map[string]any{
-			"path":  PathRelativeToRoot(req.ProjectRoot, absPath),
-			"bytes": len([]byte(content)),
-		},
+		Data:   data,
 	}, nil
 }
 
@@ -383,6 +461,14 @@ func plural(n int) string {
 
 type ListDirTool struct{}
 
+var listDirSkippedDirs = map[string]bool{
+	".git":         true,
+	"node_modules": true,
+	"vendor":       true,
+	"bin":          true,
+	"dist":         true,
+}
+
 func NewListDirTool() *ListDirTool  { return &ListDirTool{} }
 func (t *ListDirTool) Name() string { return "list_dir" }
 func (t *ListDirTool) Description() string {
@@ -395,6 +481,9 @@ func (t *ListDirTool) Execute(_ context.Context, req Request) (Result, error) {
 	if maxEntries <= 0 {
 		maxEntries = 200
 	}
+	if maxEntries > 500 {
+		maxEntries = 500
+	}
 
 	absPath, err := EnsureWithinRoot(req.ProjectRoot, path)
 	if err != nil {
@@ -406,6 +495,9 @@ func (t *ListDirTool) Execute(_ context.Context, req Request) (Result, error) {
 		_ = filepath.WalkDir(absPath, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return nil
+			}
+			if d.IsDir() && p != absPath && listDirSkippedDirs[d.Name()] {
+				return fs.SkipDir
 			}
 			rel, _ := filepath.Rel(req.ProjectRoot, p)
 			out = append(out, filepath.ToSlash(rel))
@@ -420,6 +512,9 @@ func (t *ListDirTool) Execute(_ context.Context, req Request) (Result, error) {
 			return Result{}, err
 		}
 		for _, e := range entries {
+			if listDirSkippedDirs[e.Name()] {
+				continue
+			}
 			rel, _ := filepath.Rel(req.ProjectRoot, filepath.Join(absPath, e.Name()))
 			name := filepath.ToSlash(rel)
 			if e.IsDir() {
@@ -619,11 +714,6 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 		ignoreMatcher = loadGitignore(req.ProjectRoot)
 	}
 
-	type matchHit struct {
-		Rel  string
-		Line int
-		Text string
-	}
 	var hits []matchHit
 	var blocks []string
 
@@ -658,26 +748,22 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 			return nil
 		}
 
-		content, rerr := os.ReadFile(path)
-		if rerr != nil {
+		safePath, serr := EnsureWithinRoot(req.ProjectRoot, path)
+		if serr != nil {
 			return nil
 		}
-		lines := strings.Split(string(content), "\n")
-		for i, line := range lines {
-			if !re.MatchString(line) {
-				continue
-			}
-			hits = append(hits, matchHit{Rel: relSlash, Line: i + 1, Text: strings.TrimSpace(line)})
-			if beforeLines == 0 && afterLines == 0 {
-				// No-context output stays compatible with the original
-				// `path:line:text` shape so existing tests / consumers
-				// don't have to special-case context-less calls.
-			} else {
-				blocks = append(blocks, formatGrepBlock(relSlash, lines, i, beforeLines, afterLines))
-			}
-			if len(hits) >= maxResults {
-				return fs.SkipAll
-			}
+		info, statErr := os.Stat(safePath)
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() > maxGrepFileSize {
+			return nil
+		}
+		fileHits, fileBlocks, truncated, grepErr := grepFileMatches(safePath, relSlash, re, beforeLines, afterLines, maxResults-len(hits))
+		if grepErr != nil {
+			return nil
+		}
+		hits = append(hits, fileHits...)
+		blocks = append(blocks, fileBlocks...)
+		if len(hits) >= maxResults || truncated {
+			return fs.SkipAll
 		}
 		return nil
 	})
@@ -695,6 +781,11 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 	} else {
 		output = strings.Join(blocks, "\n--\n")
 	}
+	outputTruncated := false
+	if len([]byte(output)) > maxGrepOutputBytes {
+		output = truncateToolTextWithMarker(output, maxGrepOutputBytes, "\n... [grep output truncated - refine pattern or narrow path]")
+		outputTruncated = true
+	}
 
 	data := map[string]any{
 		"pattern":        pattern,
@@ -711,11 +802,14 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 	if len(excludeGlobs) > 0 {
 		data["exclude"] = excludeGlobs
 	}
+	if outputTruncated {
+		data["output_truncated"] = true
+	}
 
 	return Result{
 		Output:    output,
 		Data:      data,
-		Truncated: len(hits) >= maxResults,
+		Truncated: len(hits) >= maxResults || outputTruncated,
 	}, nil
 }
 
@@ -933,6 +1027,12 @@ func asInt(m map[string]any, key string, fallback int) int {
 	case int64:
 		return int(vv)
 	case float64:
+		if math.IsNaN(vv) || math.IsInf(vv, 0) || vv != math.Trunc(vv) {
+			return fallback
+		}
+		if vv < float64(minIntValue) || vv > float64(maxIntValue) {
+			return fallback
+		}
 		return int(vv)
 	case string:
 		n, err := strconv.Atoi(strings.TrimSpace(vv))
@@ -958,4 +1058,127 @@ func asBool(m map[string]any, key string, fallback bool) bool {
 		return strings.EqualFold(vv, "true") || vv == "1"
 	}
 	return fallback
+}
+
+func appendReadFileTruncationMarker(segment string, start, end, totalLines int) string {
+	if end < start {
+		return segment
+	}
+	beforeOmitted := start - 1
+	afterOmitted := totalLines - end
+	if afterOmitted < 0 {
+		afterOmitted = 0
+	}
+	if beforeOmitted < 0 {
+		beforeOmitted = 0
+	}
+	msg := ""
+	switch {
+	case beforeOmitted > 0 && afterOmitted > 0:
+		msg = fmt.Sprintf("... [truncated - %d lines omitted before, %d after]", beforeOmitted, afterOmitted)
+	case beforeOmitted > 0:
+		msg = fmt.Sprintf("... [truncated - %d lines omitted before]", beforeOmitted)
+	case afterOmitted > 0:
+		msg = fmt.Sprintf("... [truncated - %d more lines omitted]", afterOmitted)
+	default:
+		return segment
+	}
+	if strings.TrimSpace(segment) == "" {
+		return msg
+	}
+	return strings.TrimRight(segment, "\n") + "\n" + msg
+}
+
+func truncateToolTextWithMarker(s string, maxBytes int, marker string) string {
+	if maxBytes <= 0 {
+		return marker
+	}
+	if len([]byte(s)) <= maxBytes {
+		return s
+	}
+	markerBytes := len([]byte(marker))
+	limit := maxBytes - markerBytes
+	if limit < 0 {
+		limit = 0
+	}
+	body := truncateUTF8ByBytes(s, limit)
+	body = strings.TrimSuffix(body, "\n... [truncated]")
+	body = strings.TrimRight(body, "\n")
+	if body == "" {
+		return marker
+	}
+	return body + marker
+}
+
+func grepFileMatches(path, rel string, re *regexp.Regexp, beforeLines, afterLines, remaining int) ([]matchHit, []string, bool, error) {
+	if remaining <= 0 {
+		return nil, nil, true, nil
+	}
+	if beforeLines > 0 || afterLines > 0 {
+		return grepFileMatchesWithContext(path, rel, re, beforeLines, afterLines, remaining)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	bufSize := defaultGrepScannerBufSize
+	if bufSize > maxGrepFileSize {
+		bufSize = maxGrepFileSize
+	}
+	scanner.Buffer(make([]byte, 0, bufSize), maxGrepFileSize)
+
+	lines := make([]string, 0, 128)
+	lineNo := 0
+	hits := make([]matchHit, 0, 4)
+	blocks := make([]string, 0, 4)
+	perFileMatches := 0
+	truncated := false
+
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimRight(scanner.Text(), "\r")
+		lines = append(lines, line)
+		if !re.MatchString(line) {
+			continue
+		}
+		hits = append(hits, matchHit{Rel: rel, Line: lineNo, Text: strings.TrimSpace(line)})
+		if beforeLines > 0 || afterLines > 0 {
+			blocks = append(blocks, formatGrepBlock(rel, lines, len(lines)-1, beforeLines, afterLines))
+		}
+		perFileMatches++
+		if len(hits) >= remaining || perFileMatches >= maxGrepMatchesPerFile {
+			truncated = true
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, nil, false, err
+	}
+	return hits, blocks, truncated, nil
+}
+
+func grepFileMatchesWithContext(path, rel string, re *regexp.Regexp, beforeLines, afterLines, remaining int) ([]matchHit, []string, bool, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	lines := strings.Split(string(content), "\n")
+	hits := make([]matchHit, 0, 4)
+	blocks := make([]string, 0, 4)
+	perFileMatches := 0
+	for i, line := range lines {
+		if !re.MatchString(line) {
+			continue
+		}
+		hits = append(hits, matchHit{Rel: rel, Line: i + 1, Text: strings.TrimSpace(strings.TrimRight(line, "\r"))})
+		blocks = append(blocks, formatGrepBlock(rel, lines, i, beforeLines, afterLines))
+		perFileMatches++
+		if len(hits) >= remaining || perFileMatches >= maxGrepMatchesPerFile {
+			return hits, blocks, true, nil
+		}
+	}
+	return hits, blocks, false, nil
 }

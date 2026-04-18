@@ -97,9 +97,12 @@ type agentLimits struct {
 	// Config promotion landed. They sit in agentLimits so a single resolve
 	// step at loop start carries every budget dial — the loop body never
 	// re-reads cfg mid-iteration and tests can stub the whole struct.
-	RoundSoftCap          int
-	RoundHardCap          int
-	BudgetHeadroomDivisor int
+	RoundSoftCap            int
+	RoundHardCap            int
+	BudgetHeadroomDivisor   int
+	ElasticTokensRatio      float64
+	ElasticResultCharsRatio float64
+	ElasticDataCharsRatio   float64
 }
 
 // agentLimits resolves the runtime budget. Rule: cfg.Agent values are a
@@ -108,13 +111,16 @@ type agentLimits struct {
 // by defaults meant for 128k windows. Cfg=0 means "fully elastic".
 func (e *Engine) agentLimits() agentLimits {
 	lim := agentLimits{
-		MaxSteps:              defaultMaxNativeToolSteps,
-		MaxTokens:             defaultMaxNativeToolTokens,
-		MaxResultChars:        defaultMaxNativeToolResultChars,
-		MaxDataChars:          defaultMaxNativeToolDataChars,
-		RoundSoftCap:          toolRoundSoftCap,
-		RoundHardCap:          toolRoundHardCap,
-		BudgetHeadroomDivisor: budgetHeadroomDivisor,
+		MaxSteps:                defaultMaxNativeToolSteps,
+		MaxTokens:               defaultMaxNativeToolTokens,
+		MaxResultChars:          defaultMaxNativeToolResultChars,
+		MaxDataChars:            defaultMaxNativeToolDataChars,
+		RoundSoftCap:            toolRoundSoftCap,
+		RoundHardCap:            toolRoundHardCap,
+		BudgetHeadroomDivisor:   budgetHeadroomDivisor,
+		ElasticTokensRatio:      elasticToolTokensRatio,
+		ElasticResultCharsRatio: elasticToolResultCharsRatio,
+		ElasticDataCharsRatio:   elasticToolDataCharsRatio,
 	}
 	if e == nil || e.Config == nil {
 		return lim
@@ -141,19 +147,28 @@ func (e *Engine) agentLimits() agentLimits {
 	if cfg.BudgetHeadroomDivisor > 0 {
 		lim.BudgetHeadroomDivisor = cfg.BudgetHeadroomDivisor
 	}
+	if cfg.ElasticToolTokensRatio > 0 {
+		lim.ElasticTokensRatio = cfg.ElasticToolTokensRatio
+	}
+	if cfg.ElasticToolResultCharsRatio > 0 {
+		lim.ElasticResultCharsRatio = cfg.ElasticToolResultCharsRatio
+	}
+	if cfg.ElasticToolDataCharsRatio > 0 {
+		lim.ElasticDataCharsRatio = cfg.ElasticToolDataCharsRatio
+	}
 
 	window := e.providerMaxContext()
 	if window <= 0 {
 		return lim
 	}
 
-	if scaled := int(float64(window) * elasticToolTokensRatio); scaled > lim.MaxTokens {
+	if scaled := int(float64(window) * lim.ElasticTokensRatio); scaled > lim.MaxTokens {
 		lim.MaxTokens = scaled
 	}
-	if scaled := int(float64(window) * elasticToolResultCharsRatio); scaled > lim.MaxResultChars {
+	if scaled := int(float64(window) * lim.ElasticResultCharsRatio); scaled > lim.MaxResultChars {
 		lim.MaxResultChars = scaled
 	}
-	if scaled := int(float64(window) * elasticToolDataCharsRatio); scaled > lim.MaxDataChars {
+	if scaled := int(float64(window) * lim.ElasticDataCharsRatio); scaled > lim.MaxDataChars {
 		lim.MaxDataChars = scaled
 	}
 	return lim
@@ -291,6 +306,13 @@ func (e *Engine) runNativeToolLoopAutonomous(ctx context.Context, seed *parkedAg
 	// Hit the safety bound — extremely unlikely given the cumulative
 	// ceiling kicks in well before this. Park whatever's current so the
 	// user can /continue manually if they want.
+	e.publishAgentLoopEvent("agent:loop:safety_bound", map[string]any{
+		"safety_bound": safetyBound,
+		"source":       source,
+		"surface":      "native",
+		"provider":     seed.LastProvider,
+		"model":        seed.LastModel,
+	})
 	res, err := e.runNativeToolLoop(ctx, seed, lim)
 	return res, err
 }
@@ -376,17 +398,17 @@ func (e *Engine) attemptAutoResume(source string) (*parkedAgentState, bool) {
 	}
 
 	e.publishAgentLoopEvent("agent:loop:auto_resume", map[string]any{
-		"resumed_from_step":   seed.Step,
-		"prior_tokens":        priorTokens,
-		"messages_before":     beforeMsgs,
-		"messages_after":      len(seed.Messages),
-		"cumulative_steps":    seed.CumulativeSteps,
-		"cumulative_tokens":   seed.CumulativeTokens,
-		"step_ceiling":        stepCeiling,
-		"token_ceiling":       tokenCeiling,
-		"resumes_remaining":   stepCeiling - seed.CumulativeSteps,
-		"source":              source,
-		"surface":             "native",
+		"resumed_from_step": seed.Step,
+		"prior_tokens":      priorTokens,
+		"messages_before":   beforeMsgs,
+		"messages_after":    len(seed.Messages),
+		"cumulative_steps":  seed.CumulativeSteps,
+		"cumulative_tokens": seed.CumulativeTokens,
+		"step_ceiling":      stepCeiling,
+		"token_ceiling":     tokenCeiling,
+		"resumes_remaining": stepCeiling - seed.CumulativeSteps,
+		"source":            source,
+		"surface":           "native",
 	})
 
 	seed.Step = 0
@@ -534,6 +556,7 @@ func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolComple
 const maxBudgetAutoRecoveries = 1
 
 func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, lim agentLimits) (nativeToolCompletion, error) {
+	ctx = tools.SeedMetaToolBudget(ctx)
 	msgs := seed.Messages
 	traces := seed.Traces
 	if traces == nil {

@@ -63,14 +63,17 @@ func DefaultConfig() *Config {
 			// again" stopped halfway. Modern context windows + provider
 			// pricing easily support the higher numbers below; users on
 			// tight budgets can override per-project in .dfmc/config.yaml.
-			MaxToolSteps:           60,
-			MaxToolTokens:          250000,
-			MaxToolResultChars:     3200,
-			MaxToolResultDataChars: 1200,
-			ParallelBatchSize:      4,
-			ToolRoundSoftCap:       15,
-			ToolRoundHardCap:       30,
-			BudgetHeadroomDivisor:  7,
+			MaxToolSteps:                60,
+			MaxToolTokens:               250000,
+			MaxToolResultChars:          3200,
+			MaxToolResultDataChars:      1200,
+			ParallelBatchSize:           4,
+			ToolRoundSoftCap:            15,
+			ToolRoundHardCap:            30,
+			BudgetHeadroomDivisor:       7,
+			ElasticToolTokensRatio:      0.60,
+			ElasticToolResultCharsRatio: 1.0 / 40.0,
+			ElasticToolDataCharsRatio:   1.0 / 100.0,
 			// "auto" = autonomous park→compact→resume inside the same Ask
 			// call. The cumulative ResumeMaxMultiplier ceiling still bounds
 			// total work. Set to "off" in CI / cost-sensitive contexts to

@@ -67,15 +67,20 @@ func (g *Graph) Cycles() [][]string {
 			continue
 		}
 		id := comp[0]
-		// A self-loop counts as a cycle regardless of edge type.
-		// Multi-edge map: scan all edges out of `id` for any whose
-		// other endpoint is `id` itself.
-		for k := range g.outgoing[id] {
-			if k.Node == id {
-				out = append(out, comp)
-				break
-			}
+		if g.hasSelfLoop(id) {
+			out = append(out, comp)
 		}
 	}
 	return out
+}
+
+func (g *Graph) hasSelfLoop(id string) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	for k := range g.outgoing[id] {
+		if k.Node == id {
+			return true
+		}
+	}
+	return false
 }

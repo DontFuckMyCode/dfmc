@@ -14,6 +14,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,9 @@ func TestReadFile_NewMetadataFields(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "small.go"), []byte(body), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	cfg := *config.DefaultConfig()
+	cfg.Security.Sandbox.MaxOutput = "1MB"
+	eng := New(cfg)
 
 	res, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
@@ -88,6 +91,9 @@ func TestReadFile_TruncatedFlagOnLargeFile(t *testing.T) {
 	}
 	if returned >= total {
 		t.Fatalf("returned_lines (%d) must be < total_lines (%d) when truncated", returned, total)
+	}
+	if !strings.Contains(res.Output, "[truncated -") {
+		t.Fatalf("truncated read output should carry a visible marker, got: %q", res.Output)
 	}
 }
 
@@ -338,6 +344,92 @@ func TestGrepCodebase_RespectsGitignore(t *testing.T) {
 	}
 }
 
+func TestGrepCodebase_SkipsSymlinkEscapeTargets(t *testing.T) {
+	tmp := t.TempDir()
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outside, []byte("SECRET-OUTSIDE\n"), 0o644); err != nil {
+		t.Fatalf("seed outside: %v", err)
+	}
+	link := filepath.Join(tmp, "leak.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unsupported in this environment: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"pattern": "SECRET-OUTSIDE"},
+	})
+	if err != nil {
+		t.Fatalf("grep symlink escape: %v", err)
+	}
+	if got := dataInt(res.Data, "count"); got != 0 {
+		t.Fatalf("symlinked outside-root file should be skipped, got count=%d output=%q", got, res.Output)
+	}
+}
+
+func TestGrepCodebase_SkipsOversizeFiles(t *testing.T) {
+	tmp := t.TempDir()
+	large := filepath.Join(tmp, "large.log")
+	small := filepath.Join(tmp, "small.txt")
+	if err := os.WriteFile(large, []byte(strings.Repeat("A", (10<<20)+1024)+"MATCHME"), 0o644); err != nil {
+		t.Fatalf("seed large: %v", err)
+	}
+	if err := os.WriteFile(small, []byte("MATCHME\n"), 0o644); err != nil {
+		t.Fatalf("seed small: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"pattern": "MATCHME"},
+	})
+	if err != nil {
+		t.Fatalf("grep oversize skip: %v", err)
+	}
+	if strings.Contains(res.Output, "large.log") {
+		t.Fatalf("oversize file should be skipped, got output: %s", res.Output)
+	}
+	if !strings.Contains(res.Output, "small.txt:1:MATCHME") {
+		t.Fatalf("expected small file match to remain visible, got: %s", res.Output)
+	}
+}
+
+func TestGrepCodebase_TruncatesOversizeOutput(t *testing.T) {
+	tmp := t.TempDir()
+	line := "MATCH " + strings.Repeat("filler-", 32) + "for truncation coverage\n"
+	body := strings.Repeat(line, maxGrepMatchesPerFile)
+	for i := 0; i < 12; i++ {
+		file := filepath.Join(tmp, fmt.Sprintf("huge_%02d.txt", i))
+		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+			t.Fatalf("seed huge grep file %d: %v", i, err)
+		}
+	}
+
+	eng := New(*config.DefaultConfig())
+	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"pattern":     "MATCH",
+			"max_results": 250,
+			"context":     2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("grep truncated output: %v", err)
+	}
+	if !res.Truncated {
+		t.Fatal("expected grep result to mark truncated when output cap kicks in")
+	}
+	if !strings.Contains(res.Output, "[grep output truncated - refine pattern or narrow path]") {
+		t.Fatalf("expected grep truncation marker, got: %q", res.Output)
+	}
+	if got, _ := res.Data["output_truncated"].(bool); !got {
+		t.Fatalf("expected output_truncated metadata, got: %+v", res.Data)
+	}
+}
+
 // TestCodemap_Basic verifies the Layer-4 wrapper renders a markdown
 // outline grouped by file with line numbers, and that the Data carries
 // the file/symbol/duration metadata the spec requires.
@@ -394,6 +486,46 @@ func (w *Widget) Render() string {
 	}
 }
 
+func TestCodemap_SkipsSymlinkEscapeFiles(t *testing.T) {
+	skipIfNoSymlink(t)
+
+	tmp := t.TempDir()
+	outside := t.TempDir()
+	insideSrc := `package inside
+
+func Visible() {}
+`
+	outsideSrc := `package outside
+
+func ShouldNotLeak() {}
+`
+	if err := os.WriteFile(filepath.Join(tmp, "inside.go"), []byte(insideSrc), 0o644); err != nil {
+		t.Fatalf("seed inside: %v", err)
+	}
+	outsideFile := filepath.Join(outside, "outside.go")
+	if err := os.WriteFile(outsideFile, []byte(outsideSrc), 0o644); err != nil {
+		t.Fatalf("seed outside: %v", err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(tmp, "escape.go")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	res, err := eng.Execute(context.Background(), "codemap", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("codemap: %v", err)
+	}
+	if !strings.Contains(res.Output, "Visible") {
+		t.Fatalf("expected in-root symbol in codemap output, got: %s", res.Output)
+	}
+	if strings.Contains(res.Output, "ShouldNotLeak") || strings.Contains(res.Output, "escape.go") {
+		t.Fatalf("codemap should skip symlink escapes, got: %s", res.Output)
+	}
+}
+
 // dataInt safely extracts an int from a Result.Data map, accepting either
 // the raw int (typical for our tools) or float64 (when JSON-roundtripped).
 // Returns 0 when missing or wrong-typed — tests treat that as a failure.
@@ -412,4 +544,17 @@ func dataInt(d map[string]any, key string) int {
 		return int(v)
 	}
 	return 0
+}
+
+func TestAsIntRejectsFractionalFloat(t *testing.T) {
+	params := map[string]any{
+		"whole":      42.0,
+		"fractional": 1.5,
+	}
+	if got := asInt(params, "whole", 7); got != 42 {
+		t.Fatalf("whole float should coerce to 42, got %d", got)
+	}
+	if got := asInt(params, "fractional", 7); got != 7 {
+		t.Fatalf("fractional float should fall back, got %d", got)
+	}
 }

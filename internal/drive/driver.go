@@ -52,6 +52,23 @@ func NewDriver(runner Runner, store *Store, publisher Publisher, cfg Config) *Dr
 	}
 }
 
+// NewRun allocates the persisted record for a brand-new drive invocation.
+// Callers that need to hand a run ID back immediately can create and save
+// the run first, then pass it to RunPrepared for execution.
+func NewRun(task string) (*Run, error) {
+	task = strings.TrimSpace(task)
+	if task == "" {
+		return nil, fmt.Errorf("drive.Driver: task is empty")
+	}
+	return &Run{
+		ID:        newRunID(),
+		Task:      task,
+		Status:    RunPlanning,
+		CreatedAt: time.Now(),
+		Todos:     []Todo{},
+	}, nil
+}
+
 // Run executes a complete drive: plan, then execute every TODO until
 // the run reaches a terminal state. Returns the final Run record.
 //
@@ -65,21 +82,44 @@ func NewDriver(runner Runner, store *Store, publisher Publisher, cfg Config) *Dr
 // The returned Run is always non-nil even on error; check Run.Status
 // for the outcome and Run.Reason for the human-readable cause.
 func (d *Driver) Run(ctx context.Context, task string) (*Run, error) {
+	run, err := NewRun(task)
+	if err != nil {
+		return nil, err
+	}
+	return d.RunPrepared(ctx, run)
+}
+
+// RunPrepared executes a run record that has already been created (and
+// optionally saved) by the caller. This lets HTTP/MCP surfaces return a
+// stable run ID before the planner starts.
+func (d *Driver) RunPrepared(ctx context.Context, run *Run) (*Run, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, fmt.Errorf("drive.Driver: context must not be nil")
 	}
 	if d.runner == nil {
 		return nil, fmt.Errorf("drive.Driver: runner is nil")
 	}
-	if strings.TrimSpace(task) == "" {
+	if run == nil {
+		return nil, fmt.Errorf("drive.Driver: run is nil")
+	}
+	run.Task = strings.TrimSpace(run.Task)
+	if run.Task == "" {
 		return nil, fmt.Errorf("drive.Driver: task is empty")
 	}
-
-	run := &Run{
-		ID:        newRunID(),
-		Task:      strings.TrimSpace(task),
-		Status:    RunPlanning,
-		CreatedAt: time.Now(),
+	if strings.TrimSpace(run.ID) == "" {
+		run.ID = newRunID()
+	}
+	if IsActive(run.ID) {
+		return run, fmt.Errorf("run %q already active in this process", run.ID)
+	}
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = time.Now()
+	}
+	run.Status = RunPlanning
+	run.Reason = ""
+	run.EndedAt = time.Time{}
+	if run.Todos == nil {
+		run.Todos = []Todo{}
 	}
 	d.persist(run)
 
@@ -439,6 +479,9 @@ graceDrain:
 // Returns ErrRunFinished if the run is already in a terminal state —
 // callers should distinguish that from a real load failure.
 func (d *Driver) Resume(ctx context.Context, runID string) (*Run, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("drive.Driver: context must not be nil")
+	}
 	if d.store == nil {
 		return nil, fmt.Errorf("drive.Resume: persistence is disabled (no store)")
 	}
@@ -448,6 +491,9 @@ func (d *Driver) Resume(ctx context.Context, runID string) (*Run, error) {
 	}
 	if run == nil {
 		return nil, fmt.Errorf("run %q not found", runID)
+	}
+	if IsActive(runID) {
+		return run, fmt.Errorf("run %q already active in this process", runID)
 	}
 	switch run.Status {
 	case RunDone, RunFailed:

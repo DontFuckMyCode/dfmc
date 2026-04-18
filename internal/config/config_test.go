@@ -151,6 +151,36 @@ func TestLoadWithOptions_ProcessEnvOverridesDotEnv(t *testing.T) {
 	}
 }
 
+func TestLoadWithOptions_DotEnvDoesNotMutateProcessEnv(t *testing.T) {
+	os.Unsetenv("OPENAI_API_KEY")
+	tmp := t.TempDir()
+	projectRoot := filepath.Join(tmp, "project")
+	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, ".env"), []byte("OPENAI_API_KEY=dotenv-openai-key\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		ProjectPath: projectPath,
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got := cfg.Providers.Profiles["openai"].APIKey; got != "dotenv-openai-key" {
+		t.Fatalf("expected openai key from .env, got %q", got)
+	}
+	if got := os.Getenv("OPENAI_API_KEY"); got != "" {
+		t.Fatalf(".env load must not mutate process env, got %q", got)
+	}
+}
+
 func TestLoadWithOptions_StripsProjectHooksByDefault(t *testing.T) {
 	tmp := t.TempDir()
 	globalPath := filepath.Join(tmp, "global.yaml")

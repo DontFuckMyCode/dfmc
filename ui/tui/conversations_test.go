@@ -110,6 +110,9 @@ func TestRenderConversationsViewEmptyState(t *testing.T) {
 	if !strings.Contains(out, "No conversations persisted yet") {
 		t.Fatalf("empty copy missing:\n%s", out)
 	}
+	if !strings.Contains(out, ".dfmc/conversations/") {
+		t.Fatalf("empty state should point at the conversations directory, got:\n%s", out)
+	}
 }
 
 func TestRenderConversationsViewErrorBanner(t *testing.T) {

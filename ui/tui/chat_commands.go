@@ -204,8 +204,12 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 				if len(args) < 2 {
 					return m.appendSystemMessage("/drive resume <id> — pass a run ID to resume."), nil, true
 				}
-				runDriveResumeAsync(m.eng, args[1])
-				return m.appendSystemMessage("▸ Drive resume requested: " + args[1]), nil, true
+				runID, err := runDriveResumeAsync(m.eng, args[1])
+				if err != nil {
+					return m.appendSystemMessage("/drive resume error: " + err.Error()), nil, true
+				}
+				m.notice = "Drive resumed — watch the activity panel for resumed TODO progress."
+				return m.appendSystemMessage("▸ Drive resume requested: " + runID + "\n   Progress will continue in the activity panel below."), nil, true
 			}
 		}
 		task := strings.TrimSpace(strings.Join(args, " "))
@@ -217,9 +221,12 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 				"  /drive list            — list every persisted run\n" +
 				"  /drive resume <id>     — resume a stopped run"), nil, true
 		}
-		runDriveAsync(m.eng, task)
+		runID, err := runDriveAsync(m.eng, task)
+		if err != nil {
+			return m.appendSystemMessage("/drive error: " + err.Error()), nil, true
+		}
 		m.notice = "Drive started — watch the activity panel for plan + per-TODO progress."
-		return m.appendSystemMessage("▸ Drive started: " + truncateForLine(task, 100) + "\n   Plan and per-TODO progress stream into the activity panel below."), nil, true
+		return m.appendSystemMessage("▸ Drive started: " + truncateForLine(task, 100) + "\n   run_id: " + runID + "\n   Plan and per-TODO progress stream into the activity panel below."), nil, true
 	case "compact":
 		// Collapse older transcript entries into a single summary line so
 		// long sessions stay scannable. Purely a view-layer operation —

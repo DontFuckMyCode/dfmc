@@ -15,9 +15,8 @@
 // (status=planning) and runs the driver in a goroutine. The caller
 // polls GET /drive/{id} or subscribes to /ws for live updates.
 //
-// Auth: there is none at this layer. The CLI's `dfmc serve` is
-// expected to run on localhost or behind a reverse proxy that
-// handles auth; documented in CLAUDE.md.
+// Auth: the package-level Handler can wrap these routes in bearer-token
+// auth when web.auth=token is configured by the host surface.
 
 package web
 
@@ -47,11 +46,10 @@ type DriveStartRequest struct {
 }
 
 // handleDriveStart accepts a task, builds a Driver against the
-// engine, and runs it in a background goroutine. Returns the
-// initial Run record (status=planning, no TODOs yet) immediately so
-// the caller knows the run ID and can subscribe / poll. Validation
-// errors return 400 with a specific message; engine wiring failures
-// return 500.
+// engine, and runs it in a background goroutine. Returns the run ID
+// immediately after persisting the planning stub so the caller can poll
+// or subscribe before the planner finishes. Validation errors return
+// 400 with a specific message; engine wiring failures return 500.
 func (s *Server) handleDriveStart(w http.ResponseWriter, r *http.Request) {
 	var req DriveStartRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -93,18 +91,27 @@ func (s *Server) handleDriveStart(w http.ResponseWriter, r *http.Request) {
 		s.engine.PublishDriveEvent(typ, payload)
 	})
 	driver := drive.NewDriver(runner, store, publisher, cfg)
+	run, err := drive.NewRun(req.Task)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := store.Save(run); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "persist run: " + err.Error()})
+		return
+	}
 
 	// Fire-and-forget off the request path, but keep the run tied to the
 	// engine lifecycle so Shutdown cancels it before Storage is closed.
 	s.engine.StartBackgroundTask("web.drive.run", func(ctx context.Context) {
-		_, _ = driver.Run(ctx, req.Task)
+		_, _ = driver.RunPrepared(ctx, run)
 	})
 
-	// Return a "started" stub so the client has the run ID for
-	// polling/subscribing. We do NOT wait for the planner to finish
-	// — that can take seconds under slow providers.
+	// Return a persisted planning stub immediately. We do NOT wait for the
+	// planner to finish — that can take seconds under slow providers.
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"started": true,
+		"run_id":  run.ID,
 		"hint":    "subscribe to /ws for drive:* events, or poll GET /api/v1/drive for the run record once the planner publishes drive:plan:done",
 	})
 }
@@ -197,6 +204,13 @@ func (s *Server) handleDriveResume(w http.ResponseWriter, r *http.Request) {
 	}
 	if existing == nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "run " + id + " not found"})
+		return
+	}
+	if drive.IsActive(id) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":  "run already active",
+			"status": string(existing.Status),
+		})
 		return
 	}
 	if existing.Status == drive.RunDone || existing.Status == drive.RunFailed {

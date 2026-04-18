@@ -217,9 +217,9 @@ func TestToolCallAutoUnwrapsDoubleWrap(t *testing.T) {
 // recurse forever — one unwrap is the limit. Otherwise the bug would
 // shift from "loops on the wrong call" to "stack-overflows on a really
 // confused call".
-func TestToolCallTripleWrapStillRejected(t *testing.T) {
+func TestToolCallTripleWrapAutoUnwraps(t *testing.T) {
 	eng, tmp := newTestEngine(t)
-	_, err := eng.Execute(context.Background(), "tool_call", Request{
+	res, err := eng.Execute(context.Background(), "tool_call", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
 			"name": "tool_call",
@@ -229,6 +229,16 @@ func TestToolCallTripleWrapStillRejected(t *testing.T) {
 			},
 		},
 	})
+	if err != nil {
+		t.Fatalf("triple-wrap should auto-unwrap successfully, got %v", err)
+	}
+	if !strings.Contains(res.Output, "auto-unwrapped 2 redundant tool_call layer") {
+		t.Fatalf("expected unwrap hint to mention depth, got %q", res.Output)
+	}
+	if !strings.Contains(res.Output, "package main") {
+		t.Fatalf("expected actual file contents after triple unwrap, got %q", res.Output)
+	}
+	return
 	if err == nil {
 		t.Fatal("triple-wrap must error — recursion is bounded to 1 unwrap")
 	}
@@ -708,5 +718,39 @@ func TestToolHelp_MissingNameReturnsActionableError(t *testing.T) {
 	}
 	if !strings.Contains(msg, `"name":"grep_codebase"`) {
 		t.Fatalf("error should show the tool_help example, got %q", msg)
+	}
+}
+
+func TestToolBatchCall_UsesCumulativeMetaBudgetPerTurn(t *testing.T) {
+	eng, tmp := newTestEngine(t)
+	ctx := SeedMetaToolBudget(context.Background())
+
+	makeCalls := func(n int) []any {
+		out := make([]any, 0, n)
+		for i := 0; i < n; i++ {
+			out = append(out, map[string]any{
+				"name": "read_file",
+				"args": map[string]any{"path": "hello.go"},
+			})
+		}
+		return out
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := eng.Execute(ctx, "tool_batch_call", Request{
+			ProjectRoot: tmp,
+			Params:      map[string]any{"calls": makeCalls(32)},
+		}); err != nil {
+			t.Fatalf("batch %d should fit within the shared meta budget: %v", i+1, err)
+		}
+	}
+	if _, err := eng.Execute(ctx, "tool_call", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"name": "read_file",
+			"args": map[string]any{"path": "hello.go"},
+		},
+	}); err == nil || !strings.Contains(err.Error(), "meta tool budget exhausted") {
+		t.Fatalf("expected cumulative budget exhaustion on the 65th planned call, got %v", err)
 	}
 }

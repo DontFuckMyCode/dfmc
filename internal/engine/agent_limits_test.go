@@ -94,3 +94,21 @@ func TestAgentLimits_ElasticScalesResultCharsWithWindow(t *testing.T) {
 		t.Fatalf("MaxDataChars should scale with 1M window, want %d got %d", wantData, lim.MaxDataChars)
 	}
 }
+
+func TestAgentLimits_ElasticRatiosCanBeConfigured(t *testing.T) {
+	eng := newEngineWithWindow(t, 1_000_000)
+	eng.Config.Agent.ElasticToolTokensRatio = 0.25
+	eng.Config.Agent.ElasticToolResultCharsRatio = 1.0 / 80.0
+	eng.Config.Agent.ElasticToolDataCharsRatio = 1.0 / 200.0
+
+	lim := eng.agentLimits()
+	if want := int(1_000_000 * 0.25); lim.MaxTokens != want {
+		t.Fatalf("configured token ratio should win, want %d got %d", want, lim.MaxTokens)
+	}
+	if want := int(1_000_000 * (1.0 / 80.0)); lim.MaxResultChars != want {
+		t.Fatalf("configured result-char ratio should win, want %d got %d", want, lim.MaxResultChars)
+	}
+	if want := int(1_000_000 * (1.0 / 200.0)); lim.MaxDataChars != want {
+		t.Fatalf("configured data-char ratio should win, want %d got %d", want, lim.MaxDataChars)
+	}
+}

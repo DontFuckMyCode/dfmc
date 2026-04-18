@@ -1,6 +1,6 @@
 package tui
 
-// conversations.go — the Conversations panel surfaces the JSONL-persisted
+// conversations.go — the Conversations panel surfaces the persisted
 // conversations that internal/conversation.Manager maintains per project.
 // It's a read-only list view with substring search; selecting an entry
 // shows a short preview of the first few messages so the user can find an
@@ -107,7 +107,7 @@ func formatConversationRow(s conversation.Summary, selected bool, width int) str
 	if s.Provider != "" && s.Provider != "unknown" {
 		tail = "  " + accentStyle.Render(s.Provider)
 		if s.Model != "" && s.Model != "unknown" {
-			tail += subtleStyle.Render("/"+s.Model)
+			tail += subtleStyle.Render("/" + s.Model)
 		}
 	}
 	id := "  " + subtleStyle.Render(s.ID)
@@ -179,7 +179,7 @@ func (m Model) renderConversationsView(width int) string {
 	if len(filtered) == 0 {
 		lines = append(lines, "",
 			subtleStyle.Render("No conversations persisted yet."),
-			subtleStyle.Render("Start a chat and DFMC will save it as .dfmc/conversations/<id>.jsonl."),
+			subtleStyle.Render("Start a chat and DFMC will persist it under .dfmc/conversations/."),
 		)
 		return strings.Join(lines, "\n")
 	}
@@ -302,4 +302,3 @@ func (m Model) handleConversationsSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd)
 	}
 	return m, nil
 }
-

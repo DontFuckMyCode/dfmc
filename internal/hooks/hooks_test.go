@@ -73,6 +73,31 @@ func TestFire_RunsRegisteredHook(t *testing.T) {
 	}
 }
 
+func TestFire_RunsArgvHookWithoutShell(t *testing.T) {
+	var reports []Report
+	d := New(config.HooksConfig{Entries: map[string][]config.HookEntry{
+		"pre_tool": {{
+			Name:    "argv-smoke",
+			Command: "go",
+			Args:    []string{"env", "GOOS"},
+		}},
+	}}, func(r Report) { reports = append(reports, r) })
+
+	ran := d.Fire(context.Background(), EventPreTool, nil)
+	if ran != 1 {
+		t.Fatalf("expected 1 argv hook fired, got %d", ran)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("observer got %d reports, want 1", len(reports))
+	}
+	if reports[0].Err != nil {
+		t.Fatalf("argv hook reported error: %v (stderr=%q)", reports[0].Err, reports[0].Stderr)
+	}
+	if strings.TrimSpace(reports[0].Stdout) == "" {
+		t.Fatal("expected argv hook to capture stdout")
+	}
+}
+
 // TestFire_ConditionFilter — a condition that doesn't match skips the
 // hook entirely. The observer receives nothing in that case.
 func TestFire_ConditionFilter(t *testing.T) {
@@ -186,8 +211,8 @@ func TestDescribe(t *testing.T) {
 		t.Errorf("empty Describe should say none registered, got %q", got)
 	}
 	d = New(config.HooksConfig{Entries: map[string][]config.HookEntry{
-		"pre_tool":            {{Name: "a", Command: "echo"}},
-		"user_prompt_submit":  {{Name: "b", Command: "echo"}, {Name: "c", Command: "echo"}},
+		"pre_tool":           {{Name: "a", Command: "echo"}},
+		"user_prompt_submit": {{Name: "b", Command: "echo"}, {Name: "c", Command: "echo"}},
 	}}, nil)
 	got := d.Describe()
 	if !strings.Contains(got, "pre_tool(1)") || !strings.Contains(got, "user_prompt_submit(2)") {

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,7 @@ type EventBus struct {
 // ~16KB per subscriber for the channel header (events themselves stay
 // references on the publishers' stack until consumed).
 const defaultEventBusBuffer = 1024
+const eventBusDropWarnEvery = 100
 
 func NewEventBus() *EventBus {
 	return &EventBus{
@@ -74,19 +76,11 @@ func (eb *EventBus) Publish(event Event) {
 	defer eb.mu.RUnlock()
 
 	for _, ch := range eb.subscribers[event.Type] {
-		select {
-		case ch <- event:
-		default:
-			atomic.AddUint64(&eb.dropped, 1)
-		}
+		eb.publishToChannel(ch, event)
 	}
 
 	for _, ch := range eb.subscribers["*"] {
-		select {
-		case ch <- event:
-		default:
-			atomic.AddUint64(&eb.dropped, 1)
-		}
+		eb.publishToChannel(ch, event)
 	}
 }
 
@@ -104,6 +98,34 @@ func (eb *EventBus) Subscribe(eventType string) chan Event {
 	ch := make(chan Event, eb.bufferSize)
 	eb.subscribers[eventType] = append(eb.subscribers[eventType], ch)
 	return ch
+}
+
+// SubscribeFunc registers a callback-style subscriber and returns an
+// unsubscribe function. The callback runs on its own goroutine and is
+// recover-guarded per event, so one buggy subscriber handler cannot take
+// down the whole process or permanently kill its own subscription loop.
+//
+// Internally this is a thin wrapper over the channel API so Publish keeps
+// the same non-blocking drop semantics and buffer sizing.
+func (eb *EventBus) SubscribeFunc(eventType string, fn func(Event)) func() {
+	if eb == nil || fn == nil {
+		return func() {}
+	}
+	ch := eb.Subscribe(eventType)
+	var once sync.Once
+	go func() {
+		for ev := range ch {
+			func() {
+				defer func() { _ = recover() }()
+				fn(ev)
+			}()
+		}
+	}()
+	return func() {
+		once.Do(func() {
+			eb.Unsubscribe(eventType, ch)
+		})
+	}
 }
 
 // Unsubscribe removes ch from the bus and closes it. Two ways callers
@@ -131,7 +153,9 @@ func (eb *EventBus) Unsubscribe(eventType string, ch chan Event) {
 		subs := eb.subscribers[key]
 		for i := range subs {
 			if subs[i] == ch {
-				eb.subscribers[key] = append(subs[:i], subs[i+1:]...)
+				next := append([]chan Event(nil), subs[:i]...)
+				next = append(next, subs[i+1:]...)
+				eb.subscribers[key] = next
 				return true
 			}
 		}
@@ -167,5 +191,28 @@ func (eb *EventBus) Unsubscribe(eventType string, ch chan Event) {
 		// process down.
 		defer func() { _ = recover() }()
 		close(ch)
+	}
+}
+
+func (eb *EventBus) publishToChannel(ch chan Event, event Event) {
+	defer func() {
+		if recover() != nil {
+			eb.noteDroppedEvent()
+		}
+	}()
+	select {
+	case ch <- event:
+	default:
+		eb.noteDroppedEvent()
+	}
+}
+
+func (eb *EventBus) noteDroppedEvent() {
+	if eb == nil {
+		return
+	}
+	total := atomic.AddUint64(&eb.dropped, 1)
+	if total%eventBusDropWarnEvery == 0 {
+		log.Printf("dfmc: event bus dropped %d events so far; a subscriber is lagging", total)
 	}
 }

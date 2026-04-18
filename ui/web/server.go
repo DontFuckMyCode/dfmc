@@ -21,6 +21,9 @@ import (
 	_ "embed"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
@@ -29,6 +32,8 @@ type Server struct {
 	engine *engine.Engine
 	mux    *http.ServeMux
 	addr   string
+	auth   string
+	token  string
 }
 
 type ChatRequest struct {
@@ -119,10 +124,16 @@ func securityHeaders(h http.Handler) http.Handler {
 }
 
 func New(eng *engine.Engine, host string, port int) *Server {
+	authMode := "none"
+	if eng != nil && eng.Config != nil {
+		authMode = strings.ToLower(strings.TrimSpace(eng.Config.Web.Auth))
+	}
 	s := &Server{
 		engine: eng,
 		mux:    http.NewServeMux(),
 		addr:   fmt.Sprintf("%s:%d", host, port),
+		auth:   authMode,
+		token:  strings.TrimSpace(os.Getenv("DFMC_WEB_TOKEN")),
 	}
 	// Register a deny-by-default approver so a publicly-reachable serve
 	// doesn't silently run gated tools; DFMC_APPROVE=yes|no lets the
@@ -130,6 +141,13 @@ func New(eng *engine.Engine, host string, port int) *Server {
 	eng.SetApprover(newWebApprover())
 	s.setupRoutes()
 	return s
+}
+
+func (s *Server) SetBearerToken(token string) {
+	if s == nil {
+		return
+	}
+	s.token = strings.TrimSpace(token)
 }
 
 func (s *Server) setupRoutes() {
@@ -194,7 +212,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) Start() error {
 	fmt.Printf("DFMC Web API listening on http://%s\n", s.addr)
-	return http.ListenAndServe(s.addr, s.Handler())
+	return NewHTTPServer(s.addr, s.Handler()).ListenAndServe()
 }
 
 // Handler returns the server's root http.Handler with every request
@@ -203,7 +221,35 @@ func (s *Server) Start() error {
 // keep composing on top of this — the limiter sits at the bottom so
 // huge bodies can never slip past before auth decisions are made.
 func (s *Server) Handler() http.Handler {
-	return limitRequestBodySize(s.mux, maxRequestBodyBytes)
+	handler := limitRequestBodySize(s.mux, maxRequestBodyBytes)
+	handler = securityHeaders(handler)
+	if strings.EqualFold(strings.TrimSpace(s.auth), "token") {
+		handler = bearerTokenMiddleware(handler, s.token)
+	}
+	return handler
+}
+
+const (
+	serverReadHeaderTimeout = 5 * time.Second
+	serverReadTimeout       = 30 * time.Second
+	serverWriteTimeout      = 2 * time.Minute
+	serverIdleTimeout       = 2 * time.Minute
+	serverMaxHeaderBytes    = 1 << 20
+)
+
+// NewHTTPServer applies the timeout and header-size hardening we want on
+// every DFMC HTTP surface. Streaming handlers such as /ws clear the write
+// deadline explicitly so long-lived SSE connections still work.
+func NewHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		ReadTimeout:       serverReadTimeout,
+		WriteTimeout:      serverWriteTimeout,
+		IdleTimeout:       serverIdleTimeout,
+		MaxHeaderBytes:    serverMaxHeaderBytes,
+	}
 }
 
 // maxRequestBodyBytes caps the size of a single POST/PUT/PATCH body.
@@ -229,6 +275,30 @@ func limitRequestBodySize(h http.Handler, max int64) http.Handler {
 func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(renderWorkbenchHTML()))
+}
+
+func bearerTokenMiddleware(next http.Handler, token string) http.Handler {
+	rawToken := strings.TrimSpace(token)
+	expected := "Bearer " + rawToken
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if got := strings.TrimSpace(r.Header.Get("Authorization")); rawToken != "" && got == expected {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if rawToken != "" && r.URL.Path == "/ws" && r.URL.Query().Get("token") == rawToken {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+	})
 }
 
 //go:embed static/index.html

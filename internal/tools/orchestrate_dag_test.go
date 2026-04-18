@@ -163,6 +163,29 @@ func TestOrchestrateDAGDuplicateIDRejected(t *testing.T) {
 	}
 }
 
+func TestOrchestrateDAGRejectsOversizedStageList(t *testing.T) {
+	cfg := *config.DefaultConfig()
+	eng := New(cfg)
+	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
+
+	stages := make([]map[string]any, 0, maxOrchestrateDAGStages+1)
+	for i := 0; i < maxOrchestrateDAGStages+1; i++ {
+		stages = append(stages, map[string]any{
+			"id":   fmt.Sprintf("s%d", i),
+			"task": fmt.Sprintf("task %d", i),
+		})
+	}
+	_, err := eng.Execute(context.Background(), "orchestrate", Request{
+		Params: map[string]any{"stages": dagStagesParam(stages...)},
+	})
+	if err == nil {
+		t.Fatal("expected oversized stages list to be rejected")
+	}
+	if !strings.Contains(err.Error(), "cap is") {
+		t.Fatalf("expected cap guidance, got %v", err)
+	}
+}
+
 // TestOrchestrateDAGFailedDepSkipsDependents: when a stage errors, every
 // transitive dependent must be marked skipped with a pointer to the
 // offending dep — not run against empty input.

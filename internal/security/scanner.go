@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -35,9 +36,10 @@ type Report struct {
 }
 
 type secretPattern struct {
-	Name     string
-	Pattern  *regexp.Regexp
-	Severity string
+	Name       string
+	Pattern    *regexp.Regexp
+	Severity   string
+	MinEntropy float64
 }
 
 type vulnPattern struct {
@@ -107,6 +109,9 @@ func (s *Scanner) ScanContent(path string, content []byte) ([]SecretFinding, []V
 		for _, pat := range s.secrets {
 			if pat.Pattern.MatchString(line) {
 				match := pat.Pattern.FindString(line)
+				if shouldSuppressSecretFinding(path, pat, match) {
+					continue
+				}
 				secrets = append(secrets, SecretFinding{
 					Pattern:  pat.Name,
 					File:     toSlash(path),
@@ -152,19 +157,19 @@ func (s *Scanner) ScanContent(path string, content []byte) ([]SecretFinding, []V
 
 func defaultSecretPatterns() []secretPattern {
 	return []secretPattern{
-		{"AWS Access Key", regexp.MustCompile(`AKIA[0-9A-Z]{16}`), "critical"},
-		{"GitHub Token", regexp.MustCompile(`ghp_[A-Za-z0-9_]{36}`), "critical"},
-		{"GitHub OAuth", regexp.MustCompile(`gho_[A-Za-z0-9_]{36}`), "high"},
-		{"GitLab Token", regexp.MustCompile(`glpat-[A-Za-z0-9\-_]{20,}`), "critical"},
-		{"Private Key", regexp.MustCompile(`-----BEGIN (RSA|EC|DSA|OPENSSH) PRIVATE KEY-----`), "critical"},
-		{"JWT Token", regexp.MustCompile(`eyJ[A-Za-z0-9-_]+\.eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_.+/=]+`), "high"},
-		{"Generic API Key", regexp.MustCompile(`(?i)(api[_-]?key|apikey)\s*[:=]\s*["']?[A-Za-z0-9-_]{20,}["']?`), "high"},
-		{"Database URL", regexp.MustCompile(`(?i)(postgres|mysql|mongodb|redis)://[^\s]+@[^\s]+`), "critical"},
-		{"Slack Token", regexp.MustCompile(`xox[bpras]-[A-Za-z0-9-]+`), "high"},
-		{"Stripe Key", regexp.MustCompile(`sk_live_[A-Za-z0-9]{24,}`), "critical"},
-		{"Anthropic API Key", regexp.MustCompile(`sk-ant-[A-Za-z0-9-_]{40,}`), "critical"},
-		{"OpenAI API Key", regexp.MustCompile(`sk-[A-Za-z0-9]{20,}`), "critical"},
-		{"Google API Key", regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`), "high"},
+		{"AWS Access Key", regexp.MustCompile(`AKIA[0-9A-Z]{16}`), "critical", 0},
+		{"GitHub Token", regexp.MustCompile(`ghp_[A-Za-z0-9_]{36}`), "critical", 0},
+		{"GitHub OAuth", regexp.MustCompile(`gho_[A-Za-z0-9_]{36}`), "high", 0},
+		{"GitLab Token", regexp.MustCompile(`glpat-[A-Za-z0-9\-_]{20,}`), "critical", 0},
+		{"Private Key", regexp.MustCompile(`-----BEGIN (RSA|EC|DSA|OPENSSH) PRIVATE KEY-----`), "critical", 0},
+		{"JWT Token", regexp.MustCompile(`eyJ[A-Za-z0-9-_]+\.eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_.+/=]+`), "high", 0},
+		{"Generic API Key", regexp.MustCompile(`(?i)(api[_-]?key|apikey)\s*[:=]\s*["']?[A-Za-z0-9-_]{20,}["']?`), "high", 3.5},
+		{"Database URL", regexp.MustCompile(`(?i)(postgres|mysql|mongodb|redis)://[^\s]+@[^\s]+`), "critical", 0},
+		{"Slack Token", regexp.MustCompile(`xox[bpras]-[A-Za-z0-9-]+`), "high", 0},
+		{"Stripe Key", regexp.MustCompile(`sk_live_[A-Za-z0-9]{24,}`), "critical", 0},
+		{"Anthropic API Key", regexp.MustCompile(`sk-ant-[A-Za-z0-9-_]{40,}`), "critical", 0},
+		{"OpenAI API Key", regexp.MustCompile(`sk-[A-Za-z0-9]{20,}`), "critical", 0},
+		{"Google API Key", regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`), "high", 0},
 	}
 }
 
@@ -232,10 +237,69 @@ func shouldSkipFile(path string) bool {
 	if strings.Contains(p, "/vendor/") || strings.Contains(p, "/node_modules/") {
 		return true
 	}
+	if strings.Contains(p, "/testdata/") || strings.Contains(p, "/fixtures/") || strings.Contains(p, "/examples/") {
+		return true
+	}
 	if strings.HasSuffix(p, "_test.go") || strings.HasSuffix(p, "_test.py") || strings.HasSuffix(p, ".spec.ts") {
 		return true
 	}
 	return false
+}
+
+func shouldSuppressSecretFinding(path string, pat secretPattern, match string) bool {
+	p := strings.ToLower(filepath.ToSlash(path))
+	if strings.Contains(p, "/testdata/") || strings.Contains(p, "/fixtures/") || strings.Contains(p, "/examples/") {
+		return true
+	}
+	if pat.MinEntropy <= 0 {
+		return false
+	}
+	candidate := secretEntropyCandidate(match)
+	if len(candidate) == 0 {
+		return true
+	}
+	return shannonEntropy(candidate) < pat.MinEntropy
+}
+
+func secretEntropyCandidate(match string) string {
+	fields := strings.FieldsFunc(match, func(r rune) bool {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return false
+		case r >= 'A' && r <= 'Z':
+			return false
+		case r >= '0' && r <= '9':
+			return false
+		case r == '_' || r == '-':
+			return false
+		default:
+			return true
+		}
+	})
+	best := ""
+	for _, field := range fields {
+		if len(field) > len(best) {
+			best = field
+		}
+	}
+	return best
+}
+
+func shannonEntropy(s string) float64 {
+	if len(s) == 0 {
+		return 0
+	}
+	counts := make(map[rune]int, len(s))
+	for _, r := range s {
+		counts[r]++
+	}
+	total := float64(len(s))
+	var entropy float64
+	for _, count := range counts {
+		p := float64(count) / total
+		entropy -= p * math.Log2(p)
+	}
+	return entropy
 }
 
 // isPatternDefinitionLine recognises the scanner's OWN rule-definition
@@ -245,11 +309,11 @@ func shouldSkipFile(path string) bool {
 // the source, which the CWE-327 rule would then flag.
 //
 // We match on two shapes:
-//   1. Explicit rule registration (regexp.MustCompile, Pattern:, Match:)
-//   2. Rule bodies that reference the scanner's per-line context
-//      (ctx.Trimmed, ctx.RecentJoin, ctx.Line) — a near-perfect tell
-//      that this is scanner machinery, not application code. No real
-//      vulnerability lives inside a rule matcher body.
+//  1. Explicit rule registration (regexp.MustCompile, Pattern:, Match:)
+//  2. Rule bodies that reference the scanner's per-line context
+//     (ctx.Trimmed, ctx.RecentJoin, ctx.Line) — a near-perfect tell
+//     that this is scanner machinery, not application code. No real
+//     vulnerability lives inside a rule matcher body.
 func isPatternDefinitionLine(line string) bool {
 	l := strings.ToLower(line)
 	if strings.Contains(l, "regexp.mustcompile(") ||
