@@ -313,7 +313,12 @@ type ShellToolConfig struct {
 }
 
 type HooksConfig struct {
-	Entries map[string][]HookEntry `yaml:",inline"`
+	// AllowProject opts into loading hook entries from the project's
+	// `.dfmc/config.yaml`. Default false: repository-local shell hooks are
+	// treated as untrusted until the operator enables them from a global
+	// config they control.
+	AllowProject bool                   `yaml:"allow_project,omitempty"`
+	Entries      map[string][]HookEntry `yaml:",inline"`
 }
 
 type HookEntry struct {
@@ -385,6 +390,8 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	if err := loadYAML(globalPath, cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("load global config: %w", err)
 	}
+	globalHooks := cloneHooksConfig(cfg.Hooks)
+	allowProjectHooks := cfg.Hooks.AllowProject
 
 	projectPath := opts.ProjectPath
 	projectRoot := FindProjectRoot(opts.CWD)
@@ -399,6 +406,9 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 		if err := loadYAML(projectPath, cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("load project config: %w", err)
 		}
+		if !allowProjectHooks {
+			cfg.Hooks = globalHooks
+		}
 	}
 
 	loadDotEnv(projectRoot)
@@ -412,6 +422,19 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func cloneHooksConfig(in HooksConfig) HooksConfig {
+	out := HooksConfig{
+		AllowProject: in.AllowProject,
+		Entries:      map[string][]HookEntry{},
+	}
+	for event, entries := range in.Entries {
+		cp := make([]HookEntry, len(entries))
+		copy(cp, entries)
+		out.Entries[event] = cp
+	}
+	return out
 }
 
 func loadYAML(path string, out *Config) error {

@@ -214,6 +214,7 @@ func (g *Graph) Descendants(start string, depth int) []Node {
 
 	for len(queue) > 0 {
 		cur := queue[0]
+		queue[0] = item{} // clear ref for GC
 		queue = queue[1:]
 		if cur.level >= depth {
 			continue

@@ -145,6 +145,29 @@ func TestConfigEndpoint_RedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestScanEndpoint_RejectsParentTraversal(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/scan?path=../../../../../../../../etc")
+	if err != nil {
+		t.Fatalf("get scan: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 on parent traversal, got %d", resp.StatusCode)
+	}
+	body, err := readAllString(resp)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if !strings.Contains(body, "project root") {
+		t.Fatalf("rejection message should explain the constraint; got %q", body)
+	}
+}
+
 func readAllString(resp *http.Response) (string, error) {
 	var sb strings.Builder
 	buf := make([]byte, 4096)

@@ -277,6 +277,22 @@ func sanitizeEnvKey(raw string) string {
 	return b.String()
 }
 
+// CheckConfigPermissions warns if the DFMC config file is group or
+// world-writable, which would allow an attacker who can write to the
+// config to achieve arbitrary code execution via hook commands.
+func CheckConfigPermissions(configPath string) string {
+	info, err := os.Stat(configPath)
+	if err != nil {
+		return ""
+	}
+	mode := info.Mode().Perm()
+	if mode&0020 != 0 || mode&0002 != 0 {
+		return fmt.Sprintf("warning: %s is group/world-writable (mode %03o); "+
+			"hook commands run with full shell interpretation and should be treated as trusted", configPath, mode)
+	}
+	return ""
+}
+
 // conditionMatches implements the tiny condition grammar:
 //
 //	""                       → always match (no condition)

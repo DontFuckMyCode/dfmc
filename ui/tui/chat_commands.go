@@ -204,7 +204,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 				if len(args) < 2 {
 					return m.appendSystemMessage("/drive resume <id> — pass a run ID to resume."), nil, true
 				}
-				go runDriveResumeAsync(m.eng, args[1])
+				runDriveResumeAsync(m.eng, args[1])
 				return m.appendSystemMessage("▸ Drive resume requested: " + args[1]), nil, true
 			}
 		}
@@ -217,7 +217,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 				"  /drive list            — list every persisted run\n" +
 				"  /drive resume <id>     — resume a stopped run"), nil, true
 		}
-		go runDriveAsync(m.eng, task)
+		runDriveAsync(m.eng, task)
 		m.notice = "Drive started — watch the activity panel for plan + per-TODO progress."
 		return m.appendSystemMessage("▸ Drive started: " + truncateForLine(task, 100) + "\n   Plan and per-TODO progress stream into the activity panel below."), nil, true
 	case "compact":
@@ -456,13 +456,13 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			}
 			params = parsed
 		}
-		return m.startChatToolCommand(name, params), runToolCmd(m.eng, name, params), true
+		return m.startChatToolCommand(name, params), runToolCmd(m.ctx, m.eng, name, params), true
 	case "ls":
 		params, err := parseListDirChatArgs(args)
 		if err != nil {
 			return m.appendSystemMessage("Usage: /ls [PATH] [-r|--recursive] [--max N]"), nil, true
 		}
-		return m.startChatToolCommand("list_dir", params), runToolCmd(m.eng, "list_dir", params), true
+		return m.startChatToolCommand("list_dir", params), runToolCmd(m.ctx, m.eng, "list_dir", params), true
 	case "read":
 		if len(args) == 0 {
 			m = m.startCommandPicker("read", "", false)
@@ -476,7 +476,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		if err != nil {
 			return m.appendSystemMessage("Usage: /read PATH [LINE_START] [LINE_END]"), nil, true
 		}
-		return m.startChatToolCommand("read_file", params), runToolCmd(m.eng, "read_file", params), true
+		return m.startChatToolCommand("read_file", params), runToolCmd(m.ctx, m.eng, "read_file", params), true
 	case "grep":
 		if len(args) == 0 {
 			m = m.startCommandPicker("grep", "", false)
@@ -486,7 +486,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		if err != nil {
 			return m.appendSystemMessage("Usage: /grep PATTERN"), nil, true
 		}
-		return m.startChatToolCommand("grep_codebase", params), runToolCmd(m.eng, "grep_codebase", params), true
+		return m.startChatToolCommand("grep_codebase", params), runToolCmd(m.ctx, m.eng, "grep_codebase", params), true
 	case "run":
 		if len(args) == 0 {
 			m = m.startCommandPicker("run", "", false)
@@ -496,7 +496,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		if err != nil {
 			return m.appendSystemMessage("Usage: /run COMMAND [ARGS...]"), nil, true
 		}
-		return m.startChatToolCommand("run_command", params), runToolCmd(m.eng, "run_command", params), true
+		return m.startChatToolCommand("run_command", params), runToolCmd(m.ctx, m.eng, "run_command", params), true
 	case "diff":
 		m.chat.input = ""
 		root := "."

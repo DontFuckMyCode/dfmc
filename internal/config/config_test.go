@@ -17,7 +17,7 @@ func TestEnvVarForProvider(t *testing.T) {
 		"alibaba":   "ALIBABA_API_KEY",
 		"google":    "GOOGLE_AI_API_KEY",
 		"Anthropic": "ANTHROPIC_API_KEY", // case-insensitive
-		" openai ": "OPENAI_API_KEY",     // whitespace-tolerant
+		" openai ":  "OPENAI_API_KEY",    // whitespace-tolerant
 	}
 	for in, want := range cases {
 		if got := EnvVarForProvider(in); got != want {
@@ -148,6 +148,90 @@ func TestLoadWithOptions_ProcessEnvOverridesDotEnv(t *testing.T) {
 
 	if got := cfg.Providers.Profiles["zai"].APIKey; got != "process-zai-key" {
 		t.Fatalf("expected process env to win over .env, got %q", got)
+	}
+}
+
+func TestLoadWithOptions_StripsProjectHooksByDefault(t *testing.T) {
+	tmp := t.TempDir()
+	globalPath := filepath.Join(tmp, "global.yaml")
+	projectRoot := filepath.Join(tmp, "project")
+	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(globalPath, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+	projectYAML := []byte(`
+version: 1
+hooks:
+  session_start:
+    - name: repo-hook
+      command: echo from-project
+`)
+	if err := os.WriteFile(projectPath, projectYAML, 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		GlobalPath:  globalPath,
+		ProjectPath: projectPath,
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Hooks.AllowProject {
+		t.Fatal("project hooks should remain disabled by default")
+	}
+	if len(cfg.Hooks.Entries) != 0 {
+		t.Fatalf("expected project hooks to be stripped by default, got %#v", cfg.Hooks.Entries)
+	}
+}
+
+func TestLoadWithOptions_AllowsProjectHooksWhenGlobalOptIn(t *testing.T) {
+	tmp := t.TempDir()
+	globalPath := filepath.Join(tmp, "global.yaml")
+	projectRoot := filepath.Join(tmp, "project")
+	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	globalYAML := []byte(`
+version: 1
+hooks:
+  allow_project: true
+`)
+	if err := os.WriteFile(globalPath, globalYAML, 0o644); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+	projectYAML := []byte(`
+version: 1
+hooks:
+  session_start:
+    - name: repo-hook
+      command: echo from-project
+`)
+	if err := os.WriteFile(projectPath, projectYAML, 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		GlobalPath:  globalPath,
+		ProjectPath: projectPath,
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.Hooks.AllowProject {
+		t.Fatal("expected global opt-in to allow project hooks")
+	}
+	if got := len(cfg.Hooks.Entries["session_start"]); got != 1 {
+		t.Fatalf("expected 1 project hook after opt-in, got %d", got)
+	}
+	if got := cfg.Hooks.Entries["session_start"][0].Name; got != "repo-hook" {
+		t.Fatalf("expected repo-hook, got %q", got)
 	}
 }
 

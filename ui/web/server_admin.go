@@ -27,6 +27,15 @@ import (
 // script can wc -l the secrets array directly.
 func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	root := strings.TrimSpace(s.engine.Status().ProjectRoot)
+	if path != "" && root != "" {
+		if _, err := resolvePathWithinRoot(root, path); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": "path must be inside the configured project root",
+			})
+			return
+		}
+	}
 	report, err := s.engine.AnalyzeWithOptions(r.Context(), engine.AnalyzeOptions{
 		Path:     path,
 		Security: true,

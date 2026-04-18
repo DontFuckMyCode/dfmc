@@ -211,12 +211,9 @@ func (h *driveMCPHandler) callStart(_ context.Context, rawArgs []byte) (mcp.Call
 	})
 	driver := drive.NewDriver(runner, store, publisher, cfg)
 
-	// Fire-and-forget. context.Background is intentional — the run
-	// outlives the MCP request that started it. Cancellation is via
-	// dfmc_drive_stop or by terminating the dfmc process.
 	runIDCh := make(chan string, 1)
-	go func() {
-		run, _ := driver.Run(context.Background(), task)
+	h.eng.StartBackgroundTask("mcp.drive.run", func(ctx context.Context) {
+		run, _ := driver.Run(ctx, task)
 		if run != nil {
 			select {
 			case runIDCh <- run.ID:
@@ -225,7 +222,7 @@ func (h *driveMCPHandler) callStart(_ context.Context, rawArgs []byte) (mcp.Call
 		} else {
 			close(runIDCh)
 		}
-	}()
+	})
 
 	// We need to return a run_id to the host, but driver.Run doesn't
 	// hand one out until the planner kicks off. Wait briefly — long
@@ -363,9 +360,9 @@ func (h *driveMCPHandler) callResume(_ context.Context, rawArgs []byte) (mcp.Cal
 		h.eng.PublishDriveEvent(typ, payload)
 	})
 	driver := drive.NewDriver(runner, store, publisher, drive.Config{})
-	go func() {
-		_, _ = driver.Resume(context.Background(), id)
-	}()
+	h.eng.StartBackgroundTask("mcp.drive.resume", func(ctx context.Context) {
+		_, _ = driver.Resume(ctx, id)
+	})
 	return okResult(map[string]any{
 		"run_id":  id,
 		"resumed": true,

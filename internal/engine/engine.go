@@ -111,8 +111,10 @@ type Engine struct {
 	// goroutines) to finish before Shutdown tears down AST / CodeMap /
 	// Storage. Without these, Shutdown could race with a still-running
 	// indexer touching the CodeMap after it's been closed.
-	indexCancel context.CancelFunc
-	indexWG     sync.WaitGroup
+	backgroundCtx    context.Context
+	backgroundCancel context.CancelFunc
+	indexCancel      context.CancelFunc
+	indexWG          sync.WaitGroup
 
 	agentMu         sync.Mutex
 	agentParked     *parkedAgentState
@@ -141,6 +143,9 @@ func New(cfg *config.Config) (*Engine, error) {
 }
 
 func (e *Engine) Init(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	e.setState(StateInitializing)
 	e.EventBus.Publish(Event{Type: "engine:initializing", Source: "engine"})
 
@@ -215,6 +220,12 @@ func (e *Engine) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("provider router init failed: %w", err)
 	}
+
+	backgroundCtx, backgroundCancel := context.WithCancel(ctx)
+	e.mu.Lock()
+	e.backgroundCtx = backgroundCtx
+	e.backgroundCancel = backgroundCancel
+	e.mu.Unlock()
 
 	// Intent router runs a small classifier before each Ask to disambiguate
 	// resume vs. new vs. clarify and rewrite vague messages ("devam et",
@@ -292,9 +303,15 @@ func (e *Engine) Shutdown() {
 	// stores they're reading from. The indexer writes into CodeMap
 	// which in turn touches AST; closing Storage mid-write panics.
 	e.mu.Lock()
+	backgroundCancel := e.backgroundCancel
+	e.backgroundCancel = nil
+	e.backgroundCtx = nil
 	cancel := e.indexCancel
 	e.indexCancel = nil
 	e.mu.Unlock()
+	if backgroundCancel != nil {
+		backgroundCancel()
+	}
 	if cancel != nil {
 		cancel()
 	}
@@ -309,6 +326,9 @@ func (e *Engine) Shutdown() {
 		e.Hooks.Fire(ctx, hooks.EventSessionEnd, hooks.Payload{
 			"project_root": e.ProjectRoot,
 		})
+		if ctx.Err() == context.DeadlineExceeded {
+			fmt.Fprintf(os.Stderr, "dfmc: warning: session_end hook timed out after 5s\n")
+		}
 	}
 
 	// Persist and close in stage order. We deliberately keep this method
@@ -391,6 +411,35 @@ func (e *Engine) setState(state EngineState) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.state = state
+}
+
+// BackgroundContext returns the engine-owned lifecycle context for
+// long-lived work started from UI/API surfaces. It is cancelled during
+// Shutdown so callers can stop before Storage and other subsystems are
+// torn down.
+func (e *Engine) BackgroundContext() context.Context {
+	e.mu.RLock()
+	ctx := e.backgroundCtx
+	e.mu.RUnlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+// StartBackgroundTask runs fn under the engine's lifecycle context and
+// joins it during Shutdown via indexWG. The function should return
+// promptly when ctx is cancelled.
+func (e *Engine) StartBackgroundTask(name string, fn func(context.Context)) {
+	if fn == nil {
+		return
+	}
+	ctx := e.BackgroundContext()
+	e.indexWG.Add(1)
+	types.SafeGo(name, func() {
+		defer e.indexWG.Done()
+		fn(ctx)
+	})
 }
 
 // indexCodebase / Ask / AskRaced / AskWithMetadata / StreamAsk /

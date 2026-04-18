@@ -975,13 +975,13 @@ func (m Model) submitChatQuestion(question string, quickActions []quickActionSug
 		m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleUser, question))
 		m = m.appendSystemMessage("Auto action: " + selected.Reason)
 		m = m.startChatToolCommand(selected.Tool, selected.Params)
-		return m, runToolCmd(m.eng, selected.Tool, selected.Params)
+		return m, runToolCmd(m.ctx, m.eng, selected.Tool, selected.Params)
 	}
 	if name, params, reason, ok := m.autoToolIntentFromQuestion(question); ok {
 		m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleUser, question))
 		m = m.appendSystemMessage("Auto action: " + reason)
 		m = m.startChatToolCommand(name, params)
-		return m, runToolCmd(m.eng, name, params)
+		return m, runToolCmd(m.ctx, m.eng, name, params)
 	}
 	m.chat.transcript = append(m.chat.transcript,
 		newChatLine(chatRoleUser, question),
@@ -1628,7 +1628,7 @@ func (m Model) handleToolsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.notice = "Running tool: " + name
-		return m, runToolCmd(m.eng, name, params)
+		return m, runToolCmd(m.ctx, m.eng, name, params)
 	}
 	return m, nil
 }
@@ -2181,30 +2181,30 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		toolCount = len(m.availableTools())
 	}
 	return statsPanelInfo{
-		Provider:       head.Provider,
-		Model:          head.Model,
-		Configured:     head.Configured,
-		ContextTokens:  head.ContextTokens,
-		MaxContext:     head.MaxContext,
-		Streaming:      head.Streaming,
-		AgentActive:    head.AgentActive,
-		AgentPhase:     head.AgentPhase,
-		AgentStep:      head.AgentStep,
-		AgentMaxSteps:  head.AgentMax,
-		ToolRounds:     m.agentLoop.toolRounds,
-		LastTool:       m.agentLoop.lastTool,
-		LastStatus:     m.agentLoop.lastStatus,
-		LastDurationMs: m.agentLoop.lastDuration,
-		Parked:         head.Parked,
-		QueuedCount:    head.QueuedCount,
-		PendingNotes:   head.PendingNotes,
-		ToolsEnabled:   head.ToolsEnabled,
-		ToolCount:      toolCount,
-		Branch:         m.gitInfo.Branch,
-		Dirty:          m.gitInfo.Dirty,
-		Detached:       m.gitInfo.Detached,
-		Inserted:       m.gitInfo.Inserted,
-		Deleted:        m.gitInfo.Deleted,
+		Provider:              head.Provider,
+		Model:                 head.Model,
+		Configured:            head.Configured,
+		ContextTokens:         head.ContextTokens,
+		MaxContext:            head.MaxContext,
+		Streaming:             head.Streaming,
+		AgentActive:           head.AgentActive,
+		AgentPhase:            head.AgentPhase,
+		AgentStep:             head.AgentStep,
+		AgentMaxSteps:         head.AgentMax,
+		ToolRounds:            m.agentLoop.toolRounds,
+		LastTool:              m.agentLoop.lastTool,
+		LastStatus:            m.agentLoop.lastStatus,
+		LastDurationMs:        m.agentLoop.lastDuration,
+		Parked:                head.Parked,
+		QueuedCount:           head.QueuedCount,
+		PendingNotes:          head.PendingNotes,
+		ToolsEnabled:          head.ToolsEnabled,
+		ToolCount:             toolCount,
+		Branch:                m.gitInfo.Branch,
+		Dirty:                 m.gitInfo.Dirty,
+		Detached:              m.gitInfo.Detached,
+		Inserted:              m.gitInfo.Inserted,
+		Deleted:               m.gitInfo.Deleted,
 		SessionElapsed:        elapsed,
 		MessageCount:          len(m.chat.transcript),
 		Pinned:                head.Pinned,
@@ -2397,7 +2397,6 @@ func (m Model) renderFilesViewSized(width, height int) string {
 	right := lipgloss.NewStyle().Width(previewWidth).Render(strings.Join(previewLines, "\n"))
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, "   ", right)
 }
-
 
 func (m Model) renderSetupView(width int) string {
 	providers := m.availableProviders()
@@ -2664,7 +2663,7 @@ func (m Model) renderHelpOverlay(width int) string {
 	lines := []string{
 		titleStyle.Render(" Keys ") + subtleStyle.Render("  ctrl+h to close"),
 		"",
-		boldStyle.Render(tab+" tab"),
+		boldStyle.Render(tab + " tab"),
 	}
 	for _, hint := range helpOverlayTabHints(tab) {
 		lines = append(lines, "  "+hint)
@@ -2763,7 +2762,6 @@ func helpOverlayTabHints(tab string) []string {
 	}
 }
 
-
 func loadStatusCmd(eng *engine.Engine) tea.Cmd {
 	return func() tea.Msg {
 		if eng == nil {
@@ -2794,7 +2792,6 @@ func loadWorkspaceCmd(eng *engine.Engine) tea.Cmd {
 	}
 }
 
-
 func loadFilesCmd(eng *engine.Engine) tea.Cmd {
 	return func() tea.Msg {
 		if eng == nil {
@@ -2823,16 +2820,18 @@ func loadFilePreviewCmd(eng *engine.Engine, rel string) tea.Cmd {
 	}
 }
 
-func runToolCmd(eng *engine.Engine, name string, params map[string]any) tea.Cmd {
+func runToolCmd(ctx context.Context, eng *engine.Engine, name string, params map[string]any) tea.Cmd {
 	return func() tea.Msg {
 		if eng == nil {
 			return toolRunMsg{name: name, params: params, err: fmt.Errorf("engine is nil")}
 		}
-		res, err := eng.CallTool(context.Background(), name, params)
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		res, err := eng.CallTool(ctx, name, params)
 		return toolRunMsg{name: name, params: params, result: res, err: err}
 	}
 }
-
 
 func formatToolResultForPanel(name string, params map[string]any, res toolruntime.Result) string {
 	lines := []string{
@@ -3486,7 +3485,6 @@ func isMutationTool(name string) bool {
 	}
 }
 
-
 func (m Model) togglePinnedFile() (tea.Model, tea.Cmd) {
 	target := strings.TrimSpace(m.selectedFile())
 	if target == "" {
@@ -3583,7 +3581,6 @@ func (m Model) refreshToolMutationState(path string) Model {
 	}
 	return m
 }
-
 
 // Slash-command autocomplete (slashMenuActive,
 // activeSlashArgSuggestions, autocompleteSlashArg/Command,
@@ -3779,10 +3776,10 @@ func containsStringFold(items []string, target string) bool {
 
 // activeMentionQuery extracts the file query and optional range suffix from
 // the `@token` currently under the cursor. Returns (query, rangeSuffix, ok):
-// - query: the file path prefix to rank against, stripped of any range
-// - rangeSuffix: normalized `#L10[-L50]` form (empty when no range was typed)
-// - ok: true only when the current token starts with `@` and has at least
-//   one character of query body
+//   - query: the file path prefix to rank against, stripped of any range
+//   - rangeSuffix: normalized `#L10[-L50]` form (empty when no range was typed)
+//   - ok: true only when the current token starts with `@` and has at least
+//     one character of query body
 func activeMentionQuery(input string) (string, string, bool) {
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -3997,7 +3994,7 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 		subtleStyle.Render("  —  ") +
 		boldStyle.Render("@"+s.MentionQuery())
 	if s.MentionRange() != "" {
-		title += subtleStyle.Render(" · range "+s.MentionRange())
+		title += subtleStyle.Render(" · range " + s.MentionRange())
 	}
 
 	countLine := ""
@@ -4059,8 +4056,8 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 // other files. Keeping them as methods rather than exporting the fields lets
 // the render code remain in this file while tests can construct the state
 // directly via the unexported fields.
-func (s chatSuggestionState) MentionQuery() string          { return s.mentionQuery }
-func (s chatSuggestionState) MentionRange() string          { return s.mentionRange }
+func (s chatSuggestionState) MentionQuery() string { return s.mentionQuery }
+func (s chatSuggestionState) MentionRange() string { return s.mentionRange }
 func (s chatSuggestionState) MentionSuggestions() []mentionRow {
 	return s.mentionSuggestions
 }
@@ -4156,7 +4153,6 @@ func truncateCommandBlock(text string, max int) string {
 	return trimmed[:max] + "\n... [truncated]"
 }
 
-
 func (m Model) selectedFile() string {
 	if len(m.filesView.entries) == 0 {
 		return ""
@@ -4222,7 +4218,6 @@ func fitPanelContentHeight(content string, maxLines int) string {
 	}
 	return strings.Join(lines, "\n")
 }
-
 
 func gitChangedFiles(projectRoot string, limit int) ([]string, error) {
 	root := strings.TrimSpace(projectRoot)

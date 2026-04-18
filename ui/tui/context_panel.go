@@ -79,7 +79,7 @@ func renderContextBudgetBlock(info engine.ContextBudgetInfo, width int) []string
 	if info.Provider != "" || info.Model != "" {
 		head := accentStyle.Render(nonEmpty(info.Provider, "?"))
 		if info.Model != "" {
-			head += subtleStyle.Render("/"+info.Model)
+			head += subtleStyle.Render("/" + info.Model)
 		}
 		head += subtleStyle.Render(fmt.Sprintf("  max_context=%d", info.ProviderMaxContext))
 		out = append(out, "  "+head)
@@ -211,8 +211,14 @@ func (m Model) runContextPreview() Model {
 		return m
 	}
 	m.contextPanel.err = ""
-	preview := m.eng.ContextBudgetPreview(q)
-	m.contextPanel.preview = &preview
+	preview := func() *engine.ContextBudgetInfo {
+		if m.eng == nil {
+			return nil
+		}
+		info := m.eng.ContextBudgetPreview(q)
+		return &info
+	}()
+	m.contextPanel.preview = preview
 	m.contextPanel.hints = m.eng.ContextRecommendations(q)
 	return m
 }

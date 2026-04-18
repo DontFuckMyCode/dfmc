@@ -38,9 +38,9 @@ func runDriveAsync(eng *engine.Engine, task string) {
 	if driver == nil {
 		return
 	}
-	go func() {
-		_, _ = driver.Run(context.Background(), task)
-	}()
+	eng.StartBackgroundTask("tui.drive.run", func(ctx context.Context) {
+		_, _ = driver.Run(ctx, task)
+	})
 }
 
 // runDriveResumeAsync re-enters a stopped/in-progress run. Same
@@ -50,9 +50,9 @@ func runDriveResumeAsync(eng *engine.Engine, runID string) {
 	if driver == nil {
 		return
 	}
-	go func() {
-		_, _ = driver.Resume(context.Background(), runID)
-	}()
+	eng.StartBackgroundTask("tui.drive.resume", func(ctx context.Context) {
+		_, _ = driver.Resume(ctx, runID)
+	})
 }
 
 // buildTUIDriver collapses the runner/store/publisher wiring shared

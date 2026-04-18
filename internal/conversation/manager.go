@@ -53,6 +53,7 @@ type BranchComparison struct {
 
 type Manager struct {
 	mu      sync.RWMutex
+	saveMu  sync.Mutex // serializes saves so snapshots are never stale
 	store   *storage.Store
 	active  *Conversation
 	baseDir string
@@ -257,6 +258,13 @@ func (m *Manager) SaveActive() error {
 	// deadlocks if the store ever calls back through anything that takes
 	// m.mu (event hooks, error reporters, etc.). The snapshot copy is
 	// cheap relative to the fsync cost.
+	// saveMu serializes concurrent SaveActive calls so the snapshot taken
+	// by one is not invalidated by another goroutine's AddMessage between
+	// RUnlock and the disk write. The original comment about not holding
+	// m.mu across I/O still applies â we keep the RLock short.
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+
 	m.mu.RLock()
 	if m.active == nil || m.store == nil {
 		m.mu.RUnlock()

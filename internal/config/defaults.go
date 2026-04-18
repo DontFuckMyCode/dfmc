@@ -75,8 +75,8 @@ func DefaultConfig() *Config {
 			// call. The cumulative ResumeMaxMultiplier ceiling still bounds
 			// total work. Set to "off" in CI / cost-sensitive contexts to
 			// require an explicit /continue between budgets.
-			AutonomousResume:       "auto",
-			ToolReasoning:          "auto",
+			AutonomousResume: "auto",
+			ToolReasoning:    "auto",
 			ContextLifecycle: ContextLifecycleConfig{
 				Enabled:                   true,
 				AutoCompactThresholdRatio: 0.7,
@@ -85,7 +85,10 @@ func DefaultConfig() *Config {
 				AutoHandoffThresholdRatio: 0.9,
 			},
 		},
-		Hooks: HooksConfig{Entries: map[string][]HookEntry{}},
+		Hooks: HooksConfig{
+			AllowProject: false,
+			Entries:      map[string][]HookEntry{},
+		},
 		Plugins: PluginsConfig{
 			Directory: filepath.Join(UserConfigDir(), "plugins"),
 			Enabled:   []string{},

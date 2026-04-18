@@ -106,6 +106,18 @@ type MagicDocUpdateRequest struct {
 	Recent   int    `json:"recent"`
 }
 
+// securityHeaders adds browser-enforced security boundaries to every
+// response. The embedded workbench is self-contained, so we lock down
+// CSP to 'self' only and set standard hardening headers.
+func securityHeaders(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		h.ServeHTTP(w, r)
+	})
+}
+
 func New(eng *engine.Engine, host string, port int) *Server {
 	s := &Server{
 		engine: eng,

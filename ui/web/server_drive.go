@@ -94,13 +94,11 @@ func (s *Server) handleDriveStart(w http.ResponseWriter, r *http.Request) {
 	})
 	driver := drive.NewDriver(runner, store, publisher, cfg)
 
-	// Fire-and-forget. context.Background is intentional — the run
-	// outlives the HTTP request that started it. Cancellation is via
-	// a separate endpoint (TODO: POST /drive/{id}/stop in Phase 5)
-	// or by terminating the dfmc process.
-	go func() {
-		_, _ = driver.Run(context.Background(), req.Task)
-	}()
+	// Fire-and-forget off the request path, but keep the run tied to the
+	// engine lifecycle so Shutdown cancels it before Storage is closed.
+	s.engine.StartBackgroundTask("web.drive.run", func(ctx context.Context) {
+		_, _ = driver.Run(ctx, req.Task)
+	})
 
 	// Return a "started" stub so the client has the run ID for
 	// polling/subscribing. We do NOT wait for the planner to finish
@@ -212,9 +210,9 @@ func (s *Server) handleDriveResume(w http.ResponseWriter, r *http.Request) {
 		s.engine.PublishDriveEvent(typ, payload)
 	})
 	driver := drive.NewDriver(runner, store, publisher, drive.Config{})
-	go func() {
-		_, _ = driver.Resume(context.Background(), id)
-	}()
+	s.engine.StartBackgroundTask("web.drive.resume", func(ctx context.Context) {
+		_, _ = driver.Resume(ctx, id)
+	})
 	writeJSON(w, http.StatusAccepted, map[string]any{"resumed": id})
 }
 

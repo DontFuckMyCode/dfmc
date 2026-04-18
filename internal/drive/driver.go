@@ -274,15 +274,27 @@ func (d *Driver) dispatchTodo(ctx context.Context, run *Run, idx int, results ch
 		MaxSteps: 0,
 	}
 	go func(idx int, req ExecuteTodoRequest, started time.Time, attempt int) {
+		defer func() {
+			if r := recover(); r != nil {
+				results <- todoOutcome{
+					Idx:     idx,
+					TodoID:  req.TodoID,
+					Err:     fmt.Errorf("todo panic: %v", r),
+					Started: started,
+					Ended:   time.Now(),
+					Attempt: attempt,
+				}
+			}
+		}()
 		resp, err := d.runner.ExecuteTodo(ctx, req)
 		results <- todoOutcome{
-			Idx:        idx,
-			TodoID:     req.TodoID,
-			Resp:       resp,
-			Err:        err,
-			Started:    started,
-			Ended:      time.Now(),
-			Attempt:    attempt,
+			Idx:     idx,
+			TodoID:  req.TodoID,
+			Resp:    resp,
+			Err:     err,
+			Started: started,
+			Ended:   time.Now(),
+			Attempt: attempt,
 		}
 	}(idx, req, t.StartedAt, t.Attempts)
 }

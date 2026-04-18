@@ -341,6 +341,28 @@ func TestDriverDeadlineStopsRun(t *testing.T) {
 	}
 }
 
+func TestDriverPanicInExecuteTodoBecomesBlockedOutcome(t *testing.T) {
+	runner := &fakeRunner{
+		PlanFunc: func(_ PlannerRequest) (string, error) {
+			return `{"todos":[{"id":"T1","title":"panic","detail":"boom"}]}`, nil
+		},
+		ExecFunc: func(_ ExecuteTodoRequest) (ExecuteTodoResponse, error) {
+			panic("boom")
+		},
+	}
+	d := NewDriver(runner, nil, nil, Config{Retries: 0})
+	run, _ := d.Run(context.Background(), "panic task")
+	if len(run.Todos) != 1 {
+		t.Fatalf("expected 1 todo, got %d", len(run.Todos))
+	}
+	if run.Todos[0].Status != TodoBlocked {
+		t.Fatalf("expected blocked todo after panic, got %s", run.Todos[0].Status)
+	}
+	if !strings.Contains(run.Todos[0].Error, "todo panic") {
+		t.Fatalf("expected panic text in todo error, got %q", run.Todos[0].Error)
+	}
+}
+
 func TestPlannerRejectsCycles(t *testing.T) {
 	runner := &fakeRunner{
 		PlanFunc: func(_ PlannerRequest) (string, error) {

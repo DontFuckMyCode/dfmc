@@ -1,6 +1,7 @@
 package ast
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"hash/fnv"
@@ -48,6 +49,29 @@ type Engine struct {
 // `dfmc serve` process. Tunable per-engine via NewWithCacheSize and
 // at runtime via the AST cache config knob (config.AST.CacheSize).
 const defaultParseCacheSize = 10000
+
+// Pre-compiled regex patterns for extractSymbols â hoisted from function
+// scope to package level so they are compiled exactly once, not on every call.
+var (
+	// JavaScript / TypeScript patterns
+	reJSFunc       = regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?function\s+([A-Za-z_]\w*)\s*\(`)
+	reJSClass      = regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_]\w*)\b`)
+	reJSInterface  = regexp.MustCompile(`^\s*(?:export\s+)?interface\s+([A-Za-z_]\w*)\b`)
+	reJSType       = regexp.MustCompile(`^\s*(?:export\s+)?type\s+([A-Za-z_]\w*)\b`)
+	reJSEnum       = regexp.MustCompile(`^\s*(?:export\s+)?const\s+enum\s+([A-Za-z_]\w*)\b|^\s*(?:export\s+)?enum\s+([A-Za-z_]\w*)\b`)
+	reJSConstArrow = regexp.MustCompile(`^\s*(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_]\w*)\s*=>`)
+
+	// Python patterns
+	rePyAsyncFunc = regexp.MustCompile(`^\s*async\s+def\s+([A-Za-z_]\w*)\s*\(`)
+	rePyFunc      = regexp.MustCompile(`^\s*def\s+([A-Za-z_]\w*)\s*\(`)
+	rePyClass     = regexp.MustCompile(`^\s*class\s+([A-Za-z_]\w*)\s*[:(]`)
+
+	// Rust patterns
+	reRustFunc   = regexp.MustCompile(`^\s*(?:pub\s+)?fn\s+([A-Za-z_]\w*)\s*\(`)
+	reRustStruct = regexp.MustCompile(`^\s*(?:pub\s+)?struct\s+([A-Za-z_]\w*)\b`)
+	reRustEnum   = regexp.MustCompile(`^\s*(?:pub\s+)?enum\s+([A-Za-z_]\w*)\b`)
+	reRustTrait  = regexp.MustCompile(`^\s*(?:pub\s+)?trait\s+([A-Za-z_]\w*)\b`)
+)
 
 // New constructs an AST engine with the default parse-cache capacity.
 // Most call sites (tests, ad-hoc tools) want this; the long-running
@@ -229,77 +253,64 @@ func extractSymbols(path, lang string, content []byte) []types.Symbol {
 
 	switch lang {
 	case "typescript", "tsx", "javascript", "jsx":
-		reFunc := regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?function\s+([A-Za-z_]\w*)\s*\(`)
-		reClass := regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_]\w*)\b`)
-		reInterface := regexp.MustCompile(`^\s*(?:export\s+)?interface\s+([A-Za-z_]\w*)\b`)
-		reType := regexp.MustCompile(`^\s*(?:export\s+)?type\s+([A-Za-z_]\w*)\b`)
-		reEnum := regexp.MustCompile(`^\s*(?:export\s+)?const\s+enum\s+([A-Za-z_]\w*)\b|^\s*(?:export\s+)?enum\s+([A-Za-z_]\w*)\b`)
-		reConstArrow := regexp.MustCompile(`^\s*(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_]\w*)\s*=>`)
 		for i, line := range lines {
 			switch {
-			case reFunc.MatchString(line):
-				m := reFunc.FindStringSubmatch(line)
+			case reJSFunc.MatchString(line):
+				m := reJSFunc.FindStringSubmatch(line)
 				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
-			case reClass.MatchString(line):
-				m := reClass.FindStringSubmatch(line)
+			case reJSClass.MatchString(line):
+				m := reJSClass.FindStringSubmatch(line)
 				add(types.SymbolClass, m[1], i+1, strings.TrimSpace(line))
-			case reInterface.MatchString(line):
-				m := reInterface.FindStringSubmatch(line)
+			case reJSInterface.MatchString(line):
+				m := reJSInterface.FindStringSubmatch(line)
 				add(types.SymbolInterface, m[1], i+1, strings.TrimSpace(line))
-			case reType.MatchString(line):
-				m := reType.FindStringSubmatch(line)
+			case reJSType.MatchString(line):
+				m := reJSType.FindStringSubmatch(line)
 				add(types.SymbolType, m[1], i+1, strings.TrimSpace(line))
-			case reEnum.MatchString(line):
-				m := reEnum.FindStringSubmatch(line)
-				name := ""
-				for _, candidate := range m[1:] {
+			case reJSEnum.MatchString(line):
+				m := reJSEnum.FindStringSubmatch(line)
+			name := ""
+			for _, candidate := range m[1:] {
 					if strings.TrimSpace(candidate) != "" {
 						name = candidate
 						break
 					}
 				}
 				add(types.SymbolEnum, name, i+1, strings.TrimSpace(line))
-			case reConstArrow.MatchString(line):
-				m := reConstArrow.FindStringSubmatch(line)
+			case reJSConstArrow.MatchString(line):
+			m := reJSConstArrow.FindStringSubmatch(line)
 				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
 			}
 		}
 	case "python":
-		reAsyncFunc := regexp.MustCompile(`^\s*async\s+def\s+([A-Za-z_]\w*)\s*\(`)
-		reFunc := regexp.MustCompile(`^\s*def\s+([A-Za-z_]\w*)\s*\(`)
-		reClass := regexp.MustCompile(`^\s*class\s+([A-Za-z_]\w*)\s*[:(]`)
 		for i, line := range lines {
-			if m := reClass.FindStringSubmatch(line); len(m) > 1 {
+			if m := rePyClass.FindStringSubmatch(line); len(m) > 1 {
 				add(types.SymbolClass, m[1], i+1, strings.TrimSpace(line))
 				continue
 			}
-			if m := reAsyncFunc.FindStringSubmatch(line); len(m) > 1 {
+			if m := rePyAsyncFunc.FindStringSubmatch(line); len(m) > 1 {
 				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
 				continue
 			}
-			if m := reFunc.FindStringSubmatch(line); len(m) > 1 {
+			if m := rePyFunc.FindStringSubmatch(line); len(m) > 1 {
 				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
 				continue
 			}
 		}
 	case "rust":
-		reFunc := regexp.MustCompile(`^\s*(?:pub\s+)?fn\s+([A-Za-z_]\w*)\s*\(`)
-		reStruct := regexp.MustCompile(`^\s*(?:pub\s+)?struct\s+([A-Za-z_]\w*)\b`)
-		reEnum := regexp.MustCompile(`^\s*(?:pub\s+)?enum\s+([A-Za-z_]\w*)\b`)
-		reTrait := regexp.MustCompile(`^\s*(?:pub\s+)?trait\s+([A-Za-z_]\w*)\b`)
 		for i, line := range lines {
 			switch {
-			case reFunc.MatchString(line):
-				m := reFunc.FindStringSubmatch(line)
+			case reRustFunc.MatchString(line):
+				m := reRustFunc.FindStringSubmatch(line)
 				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
-			case reStruct.MatchString(line):
-				m := reStruct.FindStringSubmatch(line)
+			case reRustStruct.MatchString(line):
+				m := reRustStruct.FindStringSubmatch(line)
 				add(types.SymbolType, m[1], i+1, strings.TrimSpace(line))
-			case reEnum.MatchString(line):
-				m := reEnum.FindStringSubmatch(line)
+			case reRustEnum.MatchString(line):
+				m := reRustEnum.FindStringSubmatch(line)
 				add(types.SymbolEnum, m[1], i+1, strings.TrimSpace(line))
-			case reTrait.MatchString(line):
-				m := reTrait.FindStringSubmatch(line)
+			case reRustTrait.MatchString(line):
+				m := reRustTrait.FindStringSubmatch(line)
 				add(types.SymbolInterface, m[1], i+1, strings.TrimSpace(line))
 			}
 		}
@@ -368,7 +379,8 @@ type parseCache struct {
 	maxSize int
 	mu      sync.RWMutex
 	entries map[string]*cacheEntry
-	order   []string
+	order   *list.List
+	index   map[string]*list.Element
 }
 
 type cacheEntry struct {
@@ -380,7 +392,8 @@ func newParseCache(maxSize int) *parseCache {
 	return &parseCache{
 		maxSize: maxSize,
 		entries: map[string]*cacheEntry{},
-		order:   make([]string, 0, maxSize),
+		order:   list.New(),
+		index:   make(map[string]*list.Element, maxSize),
 	}
 }
 
@@ -392,6 +405,10 @@ func (c *parseCache) Get(path string, hash uint64) *ParseResult {
 	if !ok || entry.hash != hash {
 		return nil
 	}
+	// Move to back (most-recently-used) on hit
+	if elem, ok := c.index[path]; ok {
+		c.order.MoveToBack(elem)
+	}
 	return entry.result
 }
 
@@ -399,23 +416,19 @@ func (c *parseCache) Set(path string, res *ParseResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if _, ok := c.entries[path]; ok {
-		// Move existing entry to end of order (LRU: most recently used last)
-		for i, p := range c.order {
-			if p == path {
-				c.order = append(c.order[:i], c.order[i+1:]...)
-				break
-			}
-		}
-		c.order = append(c.order, path)
+	if elem, ok := c.index[path]; ok {
+		c.order.MoveToBack(elem)
 	} else {
-		c.order = append(c.order, path)
+		c.order.PushBack(path)
 	}
+	c.index[path] = c.order.Back()
 	c.entries[path] = &cacheEntry{result: res, hash: res.Hash}
 
 	for len(c.entries) > c.maxSize {
-		oldest := c.order[0]
-		c.order = c.order[1:]
+		oldestElem := c.order.Front()
+		oldest := oldestElem.Value.(string)
+		c.order.Remove(oldestElem)
 		delete(c.entries, oldest)
+		delete(c.index, oldest)
 	}
 }

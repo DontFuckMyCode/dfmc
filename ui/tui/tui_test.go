@@ -3211,6 +3211,29 @@ func newTUITestEngine(t *testing.T) *engine.Engine {
 	return eng
 }
 
+func TestRunToolCmdUsesProvidedContext(t *testing.T) {
+	eng := newTUITestEngine(t)
+	eng.ProjectRoot = t.TempDir()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	msg := runToolCmd(ctx, eng, "run_command", map[string]any{
+		"command": "go",
+		"args":    []any{"version"},
+	})()
+	got, ok := msg.(toolRunMsg)
+	if !ok {
+		t.Fatalf("expected toolRunMsg, got %T", msg)
+	}
+	if got.err == nil {
+		t.Fatal("expected canceled context error")
+	}
+	if !strings.Contains(strings.ToLower(got.err.Error()), "context canceled") {
+		t.Fatalf("expected context canceled error, got %v", got.err)
+	}
+}
+
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)

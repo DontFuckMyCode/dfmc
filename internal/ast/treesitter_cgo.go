@@ -433,6 +433,13 @@ func collectTreeSitterParseErrors(root *tree_sitter.Node) []ParseError {
 			Message: msg,
 		})
 	})
+	if len(errs) >= 8 {
+		errs = append(errs, ParseError{
+			Line:    -1,
+			Column:  -1,
+			Message: "...more errors omitted (showing first 8)",
+		})
+	}
 	if len(errs) == 0 {
 		errs = append(errs, ParseError{Line: 1, Column: 1, Message: "tree-sitter detected syntax errors"})
 	}
