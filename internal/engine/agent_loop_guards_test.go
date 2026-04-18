@@ -101,6 +101,10 @@ func TestNativeToolLoop_HeadroomGateParksBeforeOvershoot(t *testing.T) {
 		{ToolCalls: []provider.ToolCall{loopingReadToolCall("c3")}}, // would-overshoot
 		{Text: "should never reach final answer"},
 	})
+	// This test asserts the user-visible park notice contract — pin
+	// AutonomousResume off so the budget park surfaces instead of
+	// auto-progressing through the next attempt.
+	eng.Config.Agent.AutonomousResume = "off"
 
 	answer, err := eng.AskWithMetadata(context.Background(), "headroom gate check")
 	if err != nil {
@@ -148,6 +152,13 @@ func TestNativeToolLoop_SynthesisHintFiresOnceAtSoftCap(t *testing.T) {
 	responses = append(responses, scriptedResponse{Text: "synthesized answer"})
 
 	eng, _, evCh := buildGuardTestEngine(t, 0, 20, responses) // budget disabled
+	// Pin caps to the historical 5/7 so the scripted 7-round test still
+	// exercises the soft-cap path. DefaultConfig now ships 15/30 for
+	// sustained orchestration; rather than blow up the test fixture to
+	// 15+ scripted rounds, we narrow the engine to the cap shape this
+	// test is asserting on.
+	eng.Config.Agent.ToolRoundSoftCap = 5
+	eng.Config.Agent.ToolRoundHardCap = 7
 
 	answer, err := eng.AskWithMetadata(context.Background(), "soft cap hint check")
 	if err != nil {
@@ -184,6 +195,11 @@ func TestNativeToolLoop_HardCapForcesToolChoiceNone(t *testing.T) {
 	responses = append(responses, scriptedResponse{Text: "had to answer"})
 
 	eng, stub, evCh := buildGuardTestEngine(t, 0, 20, responses) // budget disabled
+	// Same narrowing as TestNativeToolLoop_SynthesisHintFiresOnceAtSoftCap:
+	// pin the engine to historical 5/7 caps so the scripted 7-round
+	// fixture continues to drive the hard-cap path.
+	eng.Config.Agent.ToolRoundSoftCap = 5
+	eng.Config.Agent.ToolRoundHardCap = 7
 
 	if _, err := eng.AskWithMetadata(context.Background(), "hard cap check"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -266,6 +282,119 @@ func TestNativeToolLoop_TwoEmptyResponsesSurfaceFailureNotice(t *testing.T) {
 	events := collectRecentEvents(evCh, 64, 150*time.Millisecond)
 	if _, ok := findEventByType(events, "agent:loop:empty_final"); !ok {
 		t.Fatalf("want agent:loop:empty_final event, got %v", eventTypes(events))
+	}
+}
+
+// User-visible regression (TUI 2026-04-18): every budget park forced
+// the user to type /continue or "devam" — the agent didn't progress
+// autonomously between budgets. Post-fix `runNativeToolLoopAutonomous`
+// catches `ParkReasonBudgetExhausted`, runs the same compact + cumulative
+// guard ResumeAgent does, and re-enters the loop without returning to
+// the caller. The user sees one continuous response instead of "park /
+// SYS resume / park / SYS resume / ...".
+//
+// Setup: budget=70, headroom=10, per-call ~30 tokens. First attempt
+// runs 2 rounds (0→30→60), then headroom gate at round 3 (60+10>=70)
+// parks with budget_exhausted. The autonomous wrapper must compact +
+// retry without user input. Second attempt picks up at scripted
+// response #3 (the final text), so the user sees the answer in one
+// continuous Ask call.
+func TestNativeToolLoop_AutonomousResumeChainsThroughBudgetParks(t *testing.T) {
+	eng, _, evCh := buildGuardTestEngine(t, 70, 20, []scriptedResponse{
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("auto1")}}, // attempt 1, round 1
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("auto2")}}, // attempt 1, round 2 → parks before round 3
+		{Text: "all done after auto-resumes"},                          // attempt 2, round 1 → finalises
+	})
+	eng.Config.Agent.AutonomousResume = "auto"
+	eng.Config.Agent.ResumeMaxMultiplier = 10
+
+	answer, err := eng.AskWithMetadata(context.Background(), "autonomous chain check")
+	if err != nil {
+		t.Fatalf("autonomous Ask must not error mid-chain: %v", err)
+	}
+	if !strings.Contains(answer, "all done after auto-resumes") {
+		t.Fatalf("autonomous chain should reach the final answer, got %q", answer)
+	}
+	if eng.HasParkedAgent() {
+		t.Fatal("after a clean finish there must be no parked state left")
+	}
+
+	events := collectRecentEvents(evCh, 256, 200*time.Millisecond)
+	autoResumes := 0
+	for _, e := range events {
+		if e.Type == "agent:loop:auto_resume" {
+			autoResumes++
+		}
+	}
+	if autoResumes < 1 {
+		t.Fatalf("expected at least one agent:loop:auto_resume event, got 0 in %v", eventTypes(events))
+	}
+}
+
+// Inverse: when AutonomousResume is "off", the loop reverts to the old
+// park-and-wait behaviour so CI / cost-sensitive contexts can hard-stop
+// after one budget without manual config gymnastics.
+func TestNativeToolLoop_AutonomousResumeDisabledLeavesParkForUser(t *testing.T) {
+	eng, _, _ := buildGuardTestEngine(t, 70, 20, []scriptedResponse{
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("manual1")}},
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("manual2")}}, // parks for budget after this
+		{Text: "should never reach this in disabled mode"},
+	})
+	eng.Config.Agent.AutonomousResume = "off"
+
+	answer, err := eng.AskWithMetadata(context.Background(), "manual resume gate")
+	if err != nil {
+		t.Fatalf("manual-resume mode should still return a graceful park notice: %v", err)
+	}
+	if !strings.Contains(answer, "tool budget exhausted") {
+		t.Fatalf("manual-resume mode should surface the park notice for the user, got %q", answer)
+	}
+	if !eng.HasParkedAgent() {
+		t.Fatal("manual-resume mode must leave the parked state for /continue")
+	}
+	if strings.Contains(answer, "all done") {
+		t.Fatal("disabled mode must not auto-progress past the first budget park")
+	}
+}
+
+// REPORT.md #9 regression: Engine.Shutdown() flips state to
+// StateShuttingDown before tearing storage down. An in-flight tool
+// loop that didn't notice would race bbolt close and either panic
+// or lose its parked state. The State() guard at the top of each
+// iteration must detect the transition and park with reason
+// "shutting_down".
+//
+// We exercise the guard at iteration 1 by pre-setting the state
+// before AskWithMetadata fires — the assertion is on the code
+// path, not on which iteration trips it.
+func TestNativeToolLoop_ShutdownStateParksMidLoop(t *testing.T) {
+	eng, _, evCh := buildGuardTestEngine(t, 0, 5, []scriptedResponse{
+		{Text: "should never produce a real answer"},
+	})
+	eng.setState(StateShuttingDown)
+
+	answer, err := eng.AskWithMetadata(context.Background(), "shutdown park check")
+	if err != nil {
+		t.Fatalf("shutdown park must return a graceful answer, got err: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(answer), "shutting down") {
+		t.Fatalf("park notice should mention shutting down, got %q", answer)
+	}
+	if !eng.HasParkedAgent() {
+		t.Fatal("shutdown park must save state so /continue works on a fresh boot")
+	}
+
+	events := collectRecentEvents(evCh, 64, 150*time.Millisecond)
+	if _, ok := findEventByType(events, "agent:loop:shutdown_parked"); !ok {
+		t.Fatalf("want agent:loop:shutdown_parked event, got %v", eventTypes(events))
+	}
+	ev, ok := findEventByType(events, "agent:loop:parked")
+	if !ok {
+		t.Fatalf("want agent:loop:parked event, got %v", eventTypes(events))
+	}
+	payload, _ := ev.Payload.(map[string]any)
+	if reason, _ := payload["reason"].(string); reason != "shutting_down" {
+		t.Fatalf("want reason=shutting_down, got %v", payload["reason"])
 	}
 }
 

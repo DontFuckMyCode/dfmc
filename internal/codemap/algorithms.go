@@ -22,7 +22,8 @@ func (g *Graph) StronglyConnectedComponents() [][]string {
 		stack = append(stack, v)
 		onStack[v] = true
 
-		for w := range g.outgoing[v] {
+		for k := range g.outgoing[v] {
+			w := k.Node
 			if _, seen := indices[w]; !seen {
 				strongConnect(w)
 				if lowlink[w] < lowlink[v] {
@@ -66,8 +67,14 @@ func (g *Graph) Cycles() [][]string {
 			continue
 		}
 		id := comp[0]
-		if _, self := g.outgoing[id][id]; self {
-			out = append(out, comp)
+		// A self-loop counts as a cycle regardless of edge type.
+		// Multi-edge map: scan all edges out of `id` for any whose
+		// other endpoint is `id` itself.
+		for k := range g.outgoing[id] {
+			if k.Node == id {
+				out = append(out, comp)
+				break
+			}
 		}
 	}
 	return out

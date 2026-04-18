@@ -96,6 +96,11 @@ func TestResumeAgent_RefusesAfterCumulativeStepsCeiling(t *testing.T) {
 		{ToolCalls: []provider.ToolCall{loopingReadToolCall("c3")}},
 		{ToolCalls: []provider.ToolCall{loopingReadToolCall("c4")}},
 	})
+	// Pin the historical 3x ceiling so this test still drives the
+	// "third resume refuses" assertion. The default ceiling is now 10x
+	// for sustained orchestration; without this override we'd need 11
+	// scripted resume rounds to reach the refusal path.
+	eng.Config.Agent.ResumeMaxMultiplier = 3
 
 	// Initial ask — this consumes the FIRST budget (MaxSteps=1) and
 	// parks, accumulating CumulativeSteps=1 after the next resume.

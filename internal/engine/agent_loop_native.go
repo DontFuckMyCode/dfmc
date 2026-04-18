@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
@@ -33,8 +34,17 @@ import (
 // elastic and scales with `provider.MaxContext()` so a 1M-token window gets
 // a commensurately bigger tool budget instead of being throttled to 120k.
 const (
-	defaultMaxNativeToolSteps       = 25
-	defaultMaxNativeToolTokens      = 120000
+	// Sustained-loop defaults — these are the safety floor used when both
+	// cfg.Agent.* AND the elastic provider-window scaling produce zero.
+	// They must agree with config.DefaultConfig().Agent.* (see
+	// internal/config/defaults.go); drifting these two sources apart
+	// silently halves the budget for engines built without a full
+	// DefaultConfig (rare in production, common in unit tests). The
+	// numbers were tuned for real refactor work — small enough that a
+	// runaway model can't burn through tokens unbounded, large enough
+	// to not interrupt a 30-step "read N files, edit M, verify, repeat".
+	defaultMaxNativeToolSteps       = 60
+	defaultMaxNativeToolTokens      = 250000
 	defaultMaxNativeToolResultChars = 3200
 	defaultMaxNativeToolDataChars   = 1200
 
@@ -50,18 +60,18 @@ const (
 	elasticToolDataCharsRatio = 1.0 / 100.0
 
 	// toolRoundSoftCap is the round count at which the loop injects a
-	// single synthesis nudge: "you have enough context, answer now."
-	// Tuned below the default step cap so a model that's stuck in a
-	// read-read-read loop gets one firm redirect before the hard cap
-	// takes away tool_use entirely. Real-world answers rarely need
-	// more than 5 rounds of gathering.
-	toolRoundSoftCap = 5
+	// single permission-to-continue checkpoint nudge. Tuned high enough
+	// for sustained orchestration (multi-file refactor, read-edit-verify
+	// chains) without the model getting prematurely told to stop.
+	// Smaller models may benefit from a lower soft cap via config; the
+	// default is generous on purpose so big-context models can do real
+	// work without the engine fighting them.
+	toolRoundSoftCap = 15
 	// toolRoundHardCap flips ToolChoice to "none" for every subsequent
-	// call, so the provider MUST emit natural-language text. This is
-	// what saves us from the observed 7-round pathology where the
-	// model keeps grepping past the budget. Spaced two rounds above
-	// the soft cap so the nudge has room to land.
-	toolRoundHardCap = 7
+	// call, so the provider MUST emit natural-language text. The hard
+	// cap is the last guardrail before the step cap trips; raised in
+	// lockstep with the soft cap to leave the same ~2x ratio.
+	toolRoundHardCap = 30
 	// budgetHeadroomDivisor reserves ~14% of MaxTokens as a safety
 	// margin before each round starts. Without it, the post-round
 	// gate can only detect exhaustion AFTER the round has consumed
@@ -237,19 +247,175 @@ func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativ
 		"context_tokens":  contextTokens,
 		"meta_tools":      metaToolNames(descriptors),
 	})
-	return e.runNativeToolLoop(ctx, seed, lim)
+	return e.runNativeToolLoopAutonomous(ctx, seed, lim, "ask")
 }
 
-// resumeMaxMultiplier is the outer ceiling on cumulative agent work
-// across every /continue of a single root ask. Each resume normally
-// gets a fresh MaxSteps budget (so /continue actually progresses
-// instead of instantly re-parking), but unbounded resumes let a
-// model that keeps parking burn tokens forever. A multiplier of 3
-// lets the user /continue twice past the initial run for a total of
-// 3 x MaxSteps before the engine refuses further resumes. Tune via
-// this constant, not per-call — the semantic is "how many agent
-// budgets is one user question worth, at most."
-const resumeMaxMultiplier = 3
+// runNativeToolLoopAutonomous wraps runNativeToolLoop with the
+// autonomous park→compact→resume cycle. When the loop parks for budget
+// reasons and autonomy is enabled (and the cumulative ceiling hasn't
+// been hit), we transparently re-enter the loop without returning to
+// the caller — the user sees one continuous response instead of having
+// to type /continue between every park. Step caps, shutdown parks, and
+// errors short-circuit the autonomy and return immediately so the
+// user can intervene.
+//
+// Source label ("ask" / "resume") is recorded on the auto_resume event
+// so observability can tell apart the autonomous progression from a
+// user-driven /continue chain.
+func (e *Engine) runNativeToolLoopAutonomous(ctx context.Context, seed *parkedAgentState, lim agentLimits, source string) (nativeToolCompletion, error) {
+	const safetyBound = 64 // belt-and-braces; cumulative ceiling is the real cap
+	for attempt := 0; attempt < safetyBound; attempt++ {
+		if ctx.Err() != nil {
+			return nativeToolCompletion{}, ctx.Err()
+		}
+		completion, err := e.runNativeToolLoop(ctx, seed, lim)
+		if err != nil || !completion.Parked {
+			return completion, err
+		}
+		if completion.ParkedReason != ParkReasonBudgetExhausted {
+			// Step cap and shutdown parks deliberately surface to the
+			// user — step cap means the model isn't converging, shutdown
+			// means the engine is going away. Auto-resume would mask
+			// both signals.
+			return completion, err
+		}
+		if !e.autonomousResumeEnabled() {
+			return completion, err
+		}
+		nextSeed, ok := e.attemptAutoResume(source)
+		if !ok {
+			return completion, err
+		}
+		seed = nextSeed
+	}
+	// Hit the safety bound — extremely unlikely given the cumulative
+	// ceiling kicks in well before this. Park whatever's current so the
+	// user can /continue manually if they want.
+	res, err := e.runNativeToolLoop(ctx, seed, lim)
+	return res, err
+}
+
+// autonomousResumeEnabled reports whether the engine's config opts in
+// to auto-resume on budget park. Default ON; explicit "off"/"false"/"no"/"0"
+// disables. The opt-out exists for CI runs that must hard-stop after one
+// budget without manual intervention.
+func (e *Engine) autonomousResumeEnabled() bool {
+	if e == nil || e.Config == nil {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(e.Config.Agent.AutonomousResume)) {
+	case "off", "false", "no", "0", "manual":
+		return false
+	}
+	return true
+}
+
+// attemptAutoResume runs the same preflight ResumeAgent does — claim
+// the parked state, accumulate cumulative counters, refuse on ceiling,
+// force-compact history, reset per-attempt counters — and returns the
+// fresh seed if and only if another loop attempt is allowed. When it
+// returns ok=false the caller must let the park stand: either the
+// cumulative ceiling hit (re-parked seed already saved by this fn) or
+// there's no parked state (race / cleared).
+//
+// Emits agent:loop:auto_resume so the TUI can render a one-line "↻
+// auto-resuming after compact" indicator instead of the disruptive
+// "park / SYS resume / park" trio that breaks the user's reading flow.
+func (e *Engine) attemptAutoResume(source string) (*parkedAgentState, bool) {
+	seed := e.takeParkedAgent()
+	if seed == nil {
+		return nil, false
+	}
+	lim := e.agentLimits()
+	seed.CumulativeSteps += seed.Step
+	seed.CumulativeTokens += seed.TotalTokens
+
+	mult := e.resumeMaxMultiplier()
+	stepCeiling := lim.MaxSteps * mult
+	tokenCeiling := lim.MaxTokens * mult
+	if lim.MaxSteps > 0 && seed.CumulativeSteps >= stepCeiling {
+		e.saveParkedAgent(seed)
+		e.publishAgentLoopEvent("agent:loop:auto_resume_refused", map[string]any{
+			"reason":            "cumulative_steps_ceiling",
+			"cumulative_steps":  seed.CumulativeSteps,
+			"ceiling":           stepCeiling,
+			"max_steps_per_run": lim.MaxSteps,
+			"multiplier":        mult,
+			"source":            source,
+		})
+		return nil, false
+	}
+	if lim.MaxTokens > 0 && seed.CumulativeTokens >= tokenCeiling {
+		e.saveParkedAgent(seed)
+		e.publishAgentLoopEvent("agent:loop:auto_resume_refused", map[string]any{
+			"reason":             "cumulative_tokens_ceiling",
+			"cumulative_tokens":  seed.CumulativeTokens,
+			"ceiling":            tokenCeiling,
+			"max_tokens_per_run": lim.MaxTokens,
+			"multiplier":         mult,
+			"source":             source,
+		})
+		return nil, false
+	}
+
+	priorTokens := seed.TotalTokens
+	beforeMsgs := len(seed.Messages)
+	if compacted, report := e.forceCompactNativeLoopHistory(seed.Messages, seed.SystemPrompt, seed.Chunks); report != nil {
+		seed.Messages = compacted
+		e.publishAgentLoopEvent("context:lifecycle:compacted", map[string]any{
+			"step":             0,
+			"before_tokens":    report.BeforeTokens,
+			"after_tokens":     report.AfterTokens,
+			"rounds_collapsed": report.RoundsCollapsed,
+			"messages_removed": report.MessagesRemoved,
+			"threshold_ratio":  report.ThresholdRatio,
+			"keep_recent":      report.KeepRecentRounds,
+			"surface":          "native",
+			"phase":            "auto_resume",
+		})
+	}
+
+	e.publishAgentLoopEvent("agent:loop:auto_resume", map[string]any{
+		"resumed_from_step":   seed.Step,
+		"prior_tokens":        priorTokens,
+		"messages_before":     beforeMsgs,
+		"messages_after":      len(seed.Messages),
+		"cumulative_steps":    seed.CumulativeSteps,
+		"cumulative_tokens":   seed.CumulativeTokens,
+		"step_ceiling":        stepCeiling,
+		"token_ceiling":       tokenCeiling,
+		"resumes_remaining":   stepCeiling - seed.CumulativeSteps,
+		"source":              source,
+		"surface":             "native",
+	})
+
+	seed.Step = 0
+	seed.TotalTokens = 0
+	return seed, true
+}
+
+// defaultResumeMaxMultiplier is the outer ceiling on cumulative agent
+// work across every /continue of a single root ask. Each resume gets a
+// fresh MaxSteps budget so /continue actually progresses instead of
+// instantly re-parking; this multiplier caps the total work one user
+// question can spawn. Bumped from 3→10 to support hours-long sustained
+// orchestration: with MaxToolSteps=60 default that's 600 cumulative
+// steps and ~2.5M cumulative tokens before the engine refuses, which
+// fits the "read-edit-verify, repeat for hours" workload without
+// letting a runaway model burn unbounded budget. Override per-project
+// via cfg.Agent.ResumeMaxMultiplier when even more headroom is needed.
+const defaultResumeMaxMultiplier = 10
+
+// resumeMaxMultiplier resolves the active ceiling. Cfg=0 falls back to
+// the default; explicit values let high-trust environments lift the cap
+// (e.g. an unattended overnight refactor) or tighten it (CI runs that
+// must hard-stop after 1 budget).
+func (e *Engine) resumeMaxMultiplier() int {
+	if e == nil || e.Config == nil || e.Config.Agent.ResumeMaxMultiplier <= 0 {
+		return defaultResumeMaxMultiplier
+	}
+	return e.Config.Agent.ResumeMaxMultiplier
+}
 
 // ResumeAgent re-enters the native tool loop from a previously parked state.
 // An optional note is appended as a user message before the next round-trip,
@@ -281,8 +447,9 @@ func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolComple
 	// Hard ceiling — refuse further resumes when the model has already
 	// burned resumeMaxMultiplier full budgets. We re-park so the user
 	// can still inspect the state, but we won't run another round.
-	stepCeiling := lim.MaxSteps * resumeMaxMultiplier
-	tokenCeiling := lim.MaxTokens * resumeMaxMultiplier
+	mult := e.resumeMaxMultiplier()
+	stepCeiling := lim.MaxSteps * mult
+	tokenCeiling := lim.MaxTokens * mult
 	if lim.MaxSteps > 0 && seed.CumulativeSteps >= stepCeiling {
 		e.saveParkedAgent(seed)
 		e.publishAgentLoopEvent("agent:loop:resume_refused", map[string]any{
@@ -290,11 +457,12 @@ func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolComple
 			"cumulative_steps":  seed.CumulativeSteps,
 			"ceiling":           stepCeiling,
 			"max_steps_per_run": lim.MaxSteps,
+			"multiplier":        mult,
 			"surface":           "native",
 		})
 		return nativeToolCompletion{}, fmt.Errorf(
-			"resume refused: cumulative agent steps %d hit ceiling %d (%d x MaxSteps=%d). The model has already had %d full budgets on this question — start a new ask with refined scope instead of continuing",
-			seed.CumulativeSteps, stepCeiling, resumeMaxMultiplier, lim.MaxSteps, resumeMaxMultiplier)
+			"resume refused: cumulative agent steps %d hit ceiling %d (%d x MaxSteps=%d). The model has already had %d full budgets on this question — start a new ask with refined scope, or raise agent.resume_max_multiplier in config",
+			seed.CumulativeSteps, stepCeiling, mult, lim.MaxSteps, mult)
 	}
 	if lim.MaxTokens > 0 && seed.CumulativeTokens >= tokenCeiling {
 		e.saveParkedAgent(seed)
@@ -303,11 +471,12 @@ func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolComple
 			"cumulative_tokens":  seed.CumulativeTokens,
 			"ceiling":            tokenCeiling,
 			"max_tokens_per_run": lim.MaxTokens,
+			"multiplier":         mult,
 			"surface":            "native",
 		})
 		return nativeToolCompletion{}, fmt.Errorf(
-			"resume refused: cumulative agent tokens %d hit ceiling %d (%d x MaxTokens=%d). The model has already spent %d full token budgets on this question — start a new ask",
-			seed.CumulativeTokens, tokenCeiling, resumeMaxMultiplier, lim.MaxTokens, resumeMaxMultiplier)
+			"resume refused: cumulative agent tokens %d hit ceiling %d (%d x MaxTokens=%d). The model has already spent %d full token budgets on this question — start a new ask, or raise agent.resume_max_multiplier in config",
+			seed.CumulativeTokens, tokenCeiling, mult, lim.MaxTokens, mult)
 	}
 
 	// Force-compact the parked history before the next provider round-trip.
@@ -349,7 +518,11 @@ func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolComple
 	// ceiling above still bounds the total.
 	seed.Step = 0
 	seed.TotalTokens = 0
-	return e.runNativeToolLoop(ctx, seed, lim)
+	// Use the autonomous wrapper so a /continue that itself parks for
+	// budget keeps progressing inside the same call instead of forcing
+	// the user to type /continue twice. The cumulative ceiling above
+	// still caps total work.
+	return e.runNativeToolLoopAutonomous(ctx, seed, lim, "resume")
 }
 
 // maxBudgetAutoRecoveries caps how many times a single agent-loop invocation
@@ -383,7 +556,36 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 	synthesizeHintInjected := len(traces) >= lim.RoundSoftCap
 	emptyRecoveryTried := false
 
+	// Per-loop tool result cache. Lives on seed so it persists across
+	// park/resume; lazy-init here on first run. The mutex guards
+	// concurrent access from the parallel batch dispatcher.
+	if seed.LoopFileCache == nil {
+		seed.LoopFileCache = make(map[string]string)
+	}
+	cacheMu := &sync.Mutex{}
+
 	for step := 1; step <= lim.MaxSteps; step++ {
+		// Engine.Shutdown() transitions through StateShuttingDown before
+		// closing storage / conversation. Without this guard an in-flight
+		// loop can start a new tool round AFTER shutdown begins, racing
+		// with bbolt close (panic) and leaving the parked-state save with
+		// nowhere to write. Park here so the user can /continue once a
+		// fresh engine boots, instead of erroring out mid-round.
+		// REPORT.md #9.
+		if state := e.State(); state >= StateShuttingDown {
+			headline := fmt.Sprintf(
+				"Parked at step %d — engine is shutting down (%d tool rounds, ~%d tokens).",
+				step, len(traces), totalTokens,
+			)
+			notice := composeParkedNotice(headline, traces,
+				`Restart dfmc and resume — your work is saved.`)
+			e.publishAgentLoopEvent("agent:loop:shutdown_parked", map[string]any{
+				"step":    step,
+				"state":   int(state),
+				"surface": "native",
+			})
+			return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonShuttingDown), nil
+		}
 		if notes := e.drainAgentNotes(); len(notes) > 0 {
 			for _, note := range notes {
 				msgs = append(msgs, provider.Message{
@@ -411,6 +613,27 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			})
 		}
 
+		// Proactive step-boundary compaction. Once we're past the soft
+		// round cap (15 by default), drop the threshold so old rounds get
+		// collapsed before headroom crashes. The reactive compactor above
+		// uses 0.7; this one uses 0.5 — fires earlier so a long sustained
+		// loop never has to pay an emergency park. No-op when the loop is
+		// short or the lifecycle is disabled.
+		if step > lim.RoundSoftCap {
+			if compacted, report := e.proactiveCompactNativeLoopHistory(msgs, systemPrompt, chunks, lim.MaxTokens); report != nil {
+				msgs = compacted
+				e.publishAgentLoopEvent("context:lifecycle:proactive_compacted", map[string]any{
+					"step":             step,
+					"before_tokens":    report.BeforeTokens,
+					"after_tokens":     report.AfterTokens,
+					"rounds_collapsed": report.RoundsCollapsed,
+					"messages_removed": report.MessagesRemoved,
+					"threshold_ratio":  proactiveCompactRatio,
+					"surface":          "native",
+				})
+			}
+		}
+
 		// Pre-flight budget gate (preflightBudget in agent_loop_phases.go).
 		// Park-or-recover before we burn another round's tokens.
 		var parked *nativeToolCompletion
@@ -428,9 +651,11 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			msgs = append(msgs, provider.Message{
 				Role: types.RoleUser,
 				Content: fmt.Sprintf(
-					"[system] You have completed %d rounds of tool calls and gathered substantial context. "+
-						"Please synthesize a natural-language answer now based on what you've learned. "+
-						"Only make further tool calls if strictly necessary — otherwise respond with your findings.",
+					"[system] Checkpoint: %d tool rounds in. If the original task is genuinely complete, "+
+						"share the result now. Otherwise keep working — read, edit, run, verify — until "+
+						"you've reached a real stopping point. The goal is sustained progress, not a "+
+						"premature wrap-up. When you do stop, end with a 2-3 sentence summary covering "+
+						"what you accomplished, what's still open, and the natural next step.",
 					len(traces),
 				),
 			})
@@ -534,7 +759,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		// agent_loop_phases.go), then layer trajectory-aware coach
 		// hints over the result before the next provider round.
 		var freshStart int
-		msgs, traces, freshStart = e.executeAndAppendToolBatch(ctx, resp, msgs, traces, lastProvider, lastModel, step, totalTokens, lim)
+		msgs, traces, freshStart = e.executeAndAppendToolBatch(ctx, resp, msgs, traces, lastProvider, lastModel, step, totalTokens, lim, seed.LoopFileCache, cacheMu)
 		msgs = e.injectTrajectoryHints(seed, msgs, traces, freshStart, step)
 
 		// Post-step budget gate (postStepBudget in agent_loop_phases.go).
@@ -544,11 +769,12 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		}
 
 		if step == lim.MaxSteps {
-			notice := fmt.Sprintf(
-				"Agent loop parked at step %d (%d tool rounds, ~%d tokens). "+
-					"Type /continue to resume, optionally with a note — e.g. /continue focus on the test file.",
+			headline := fmt.Sprintf(
+				"Parked at step %d — hit the configured ceiling (%d tool rounds, ~%d tokens).",
 				step, len(traces), totalTokens,
 			)
+			notice := composeParkedNotice(headline, traces,
+				`Type "devam" / "continue" or /continue to resume — add a note to redirect (e.g. "devam, focus on the test file").`)
 			return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonStepCap), nil
 		}
 	}
@@ -733,7 +959,35 @@ func canonicalToolCallKey(tc provider.ToolCall) (string, bool) {
 // the same call. maxOutput/maxData = 0 falls back to unbounded trim.
 func formatNativeToolResultPayloadWithLimits(res tools.Result, toolErr error, maxOutput, maxData int) (string, bool) {
 	if toolErr != nil {
-		return "ERROR: " + toolErr.Error(), true
+		// Critical: when a tool errors but ALSO produced output (the
+		// classic case is run_command exiting non-zero — exec.ExitError
+		// is wrapped while res.Output holds the captured stdout/stderr
+		// with the actual compiler / test failure lines), we must
+		// surface that output. Pre-fix the model only saw
+		// "ERROR: command exited with code 1" with zero diagnostic
+		// context and either retried blindly or apologised. Now the
+		// payload pairs the wrapped error with the captured output and
+		// any structured Data so the model can reason about WHY the
+		// command failed and pivot accordingly.
+		header := "ERROR: " + toolErr.Error()
+		output := compressToolResult(strings.TrimSpace(res.Output))
+		hasData := len(res.Data) > 0
+		if output == "" && !hasData {
+			return header, true
+		}
+		body := header
+		if output != "" {
+			body += "\n\nOUTPUT:\n" + trimToolPayload(output, maxOutput)
+		}
+		if hasData {
+			if raw, err := json.MarshalIndent(res.Data, "", "  "); err == nil {
+				body += "\n\nDATA:\n" + trimToolPayload(compressToolResult(string(raw)), maxData)
+			}
+		}
+		if res.Truncated {
+			body += "\n\n(output truncated by sandbox)"
+		}
+		return body, true
 	}
 	// RTK-style pass: strip ANSI, drop progress/spinner noise, collapse
 	// repeated lines. Runs before char-budget trimming so we don't waste
@@ -1007,20 +1261,83 @@ func batchFanoutSummary(toolName string, data map[string]any) map[string]any {
 		return nil
 	}
 	ok, fail := 0, 0
+	// inner is the per-call summary the TUI renders as indented sub-lines
+	// under the batch chip. One line per call; cap at a sane number so a
+	// 50-call fan-out doesn't explode the chip into a screenful.
+	const maxInnerLines = 12
+	inner := make([]string, 0, len(results))
 	for _, r := range results {
-		if succ, _ := r["success"].(bool); succ {
+		succ, _ := r["success"].(bool)
+		if succ {
 			ok++
 		} else {
 			fail++
 		}
+		if len(inner) < maxInnerLines {
+			inner = append(inner, formatBatchInnerLine(r, succ))
+		}
+	}
+	if extra := len(results) - len(inner); extra > 0 {
+		inner = append(inner, fmt.Sprintf("… +%d more", extra))
 	}
 	out := map[string]any{
 		"batch_count": len(results),
 		"batch_ok":    ok,
 		"batch_fail":  fail,
+		"batch_inner": inner,
 	}
 	if p, ok := data["parallel"].(int); ok && p > 0 {
 		out["batch_parallel"] = p
 	}
 	return out
+}
+
+// formatBatchInnerLine renders one inner-call line for the batch chip's
+// indented sub-list. Shape:
+//
+//	"✓ read_file foo.go (5ms)"
+//	"✗ run_command go build ./... — exit 1"
+//
+// Failures get the error tail so the model — and the user reading the
+// TUI — can see WHY without expanding the tool panel. Successes stay
+// short; the duration_ms gives a coarse perf signal.
+func formatBatchInnerLine(r map[string]any, success bool) string {
+	icon := "✗"
+	if success {
+		icon = "✓"
+	}
+	name, _ := r["name"].(string)
+	if name == "" {
+		name = "tool"
+	}
+	target, _ := r["target"].(string)
+	durMs := 0
+	if d, ok := r["duration_ms"].(int); ok {
+		durMs = d
+	} else if d, ok := r["duration_ms"].(int64); ok {
+		durMs = int(d)
+	} else if d, ok := r["duration_ms"].(float64); ok {
+		durMs = int(d)
+	}
+
+	body := icon + " " + name
+	if target != "" {
+		body += " " + target
+	}
+	if durMs > 0 {
+		body += fmt.Sprintf(" (%dms)", durMs)
+	}
+	if !success {
+		if errText, _ := r["error"].(string); errText != "" {
+			tail := strings.TrimSpace(errText)
+			if i := strings.IndexByte(tail, '\n'); i >= 0 {
+				tail = strings.TrimSpace(tail[:i])
+			}
+			if len(tail) > 80 {
+				tail = tail[:77] + "..."
+			}
+			body += " — " + tail
+		}
+	}
+	return body
 }

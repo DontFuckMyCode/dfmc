@@ -152,3 +152,74 @@ func TestExecuteToolWithLifecycle_UserSourceBypassesGate(t *testing.T) {
 		t.Fatalf("user-initiated call should bypass approval gate, got err: %v", err)
 	}
 }
+
+// TestShutdown_CleansApproverState locks down REPORT.md #1: the
+// per-engine approver and denial maps MUST drop their slot on
+// Shutdown so long-running hosts (web server, TUI host) don't leak
+// memory across many engine instances.
+func TestShutdown_CleansApproverState(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("HOME", tmp)
+	cfg := config.DefaultConfig()
+	eng, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := eng.Init(context.Background()); err != nil {
+		t.Fatalf("init engine: %v", err)
+	}
+
+	// Wire an approver and produce a denial so both global maps have a
+	// slot for this engine to clean up.
+	eng.SetApprover(ApproverFunc(func(_ context.Context, _ ApprovalRequest) ApprovalDecision {
+		return ApprovalDecision{Approved: false, Reason: "test deny"}
+	}))
+	eng.recordDenial("read_file", "agent", "test deny")
+
+	approverMu.RLock()
+	_, hadApprover := approverPerEngine[eng]
+	approverMu.RUnlock()
+	if !hadApprover {
+		t.Fatal("approverPerEngine should hold this engine before Shutdown")
+	}
+	denialsMu.RLock()
+	hadDenials := len(denialsPerEngine[eng]) > 0
+	denialsMu.RUnlock()
+	if !hadDenials {
+		t.Fatal("denialsPerEngine should hold this engine before Shutdown")
+	}
+
+	eng.Shutdown()
+
+	approverMu.RLock()
+	_, leakedApprover := approverPerEngine[eng]
+	approverMu.RUnlock()
+	if leakedApprover {
+		t.Fatal("approverPerEngine should drop this engine after Shutdown — leak risk")
+	}
+	denialsMu.RLock()
+	_, leakedDenials := denialsPerEngine[eng]
+	denialsMu.RUnlock()
+	if leakedDenials {
+		t.Fatal("denialsPerEngine should drop this engine after Shutdown — leak risk")
+	}
+}
+
+// TestCleanupApproverState_NilSafeAndIdempotent asserts the helper
+// can be called multiple times and on a nil receiver without
+// panicking — Shutdown may be invoked from defer in tests / the
+// degraded-startup allow-list, both of which can hit a partially-
+// constructed engine.
+func TestCleanupApproverState_NilSafeAndIdempotent(t *testing.T) {
+	var nilEng *Engine
+	nilEng.cleanupApproverState() // must not panic
+
+	cfg := config.DefaultConfig()
+	eng, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	eng.cleanupApproverState() // never had entries — still no-op
+	eng.cleanupApproverState() // second call also fine
+}

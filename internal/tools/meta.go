@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -143,7 +144,7 @@ func (t *toolHelpTool) Spec() ToolSpec {
 func (t *toolHelpTool) Execute(_ context.Context, req Request) (Result, error) {
 	name := strings.TrimSpace(asString(req.Params, "name", ""))
 	if name == "" {
-		return Result{}, fmt.Errorf("name is required")
+		return Result{}, missingNameError("tool_help", req.Params, `{"name":"grep_codebase"}`)
 	}
 	spec, ok := t.engine.Spec(name)
 	if !ok {
@@ -188,7 +189,8 @@ func (t *toolCallTool) Spec() ToolSpec {
 func (t *toolCallTool) Execute(ctx context.Context, req Request) (Result, error) {
 	name := pickToolName(req.Params)
 	if name == "" {
-		return Result{}, fmt.Errorf("name is required")
+		return Result{}, missingNameError("tool_call", req.Params,
+			`{"name":"read_file","args":{"path":"main.go","line_start":1,"line_end":40}}`)
 	}
 	if isMetaTool(name) {
 		return Result{}, fmt.Errorf("tool_call cannot invoke meta tools (got %q)", name)
@@ -259,7 +261,16 @@ func (t *toolBatchCallTool) Execute(ctx context.Context, req Request) (Result, e
 	var wg sync.WaitGroup
 
 	for i, call := range calls {
+		// target = one-line preview of the most identifying arg
+		// (path / pattern / command / ...). Lets downstream renderers
+		// show "✓ read_file foo.go" instead of an opaque "✓ read_file".
+		// Captured up front so the goroutine doesn't have to re-derive
+		// it from c.Args after the call returns.
+		target := previewBatchTarget(call.Args)
 		entry := map[string]any{"name": call.Name}
+		if target != "" {
+			entry["target"] = target
+		}
 		if isMetaTool(call.Name) {
 			entry["success"] = false
 			entry["error"] = "tool_batch_call cannot invoke meta tools"
@@ -369,6 +380,83 @@ func pickToolName(obj map[string]any) string {
 		return name
 	}
 	return strings.TrimSpace(asString(obj, "tool", ""))
+}
+
+// previewBatchTarget returns a one-line "what is this call about?" hint
+// derived from the call's args. Picks the first identifying key in a
+// deterministic priority order (path > pattern > query > command > dir
+// > url > name) so the TUI shows "✓ read_file foo.go" instead of just
+// "✓ read_file". Empty string when nothing identifying is present —
+// the caller skips the field rather than rendering "✓ read_file (no
+// args)".
+func previewBatchTarget(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	for _, key := range []string{"path", "pattern", "query", "command", "dir", "url", "name"} {
+		if raw, ok := args[key]; ok {
+			value := strings.TrimSpace(fmt.Sprint(raw))
+			if value == "" {
+				continue
+			}
+			// run_command stays useful when we surface command + first arg.
+			if key == "command" {
+				if rest := previewCommandArgs(args["args"]); rest != "" {
+					value = value + " " + rest
+				}
+			}
+			if len(value) > 64 {
+				value = value[:61] + "..."
+			}
+			return value
+		}
+	}
+	return ""
+}
+
+// previewCommandArgs renders a short, single-line preview of the args
+// that follow `command` for run_command-shaped calls. Accepts the
+// shapes commandArgs() accepts (string, []string, []any).
+func previewCommandArgs(raw any) string {
+	switch v := raw.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case []string:
+		return strings.Join(v, " ")
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			parts = append(parts, fmt.Sprint(item))
+		}
+		return strings.Join(parts, " ")
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
+// missingNameError builds the actionable "name is required" reply for
+// the meta tools. Pre-fix the error was just "name is required" — the
+// model couldn't tell whether it had passed the wrong key, sent args
+// at the wrong nesting level, or just forgotten the field. Listing the
+// keys it ACTUALLY sent + the canonical example lets the next call
+// self-correct in a single round instead of looping with the same bug.
+func missingNameError(toolName string, params map[string]any, example string) error {
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	got := "(empty)"
+	if len(keys) > 0 {
+		got = "[" + strings.Join(keys, ", ") + "]"
+	}
+	return fmt.Errorf(
+		"%s requires a `name` field naming the backend tool to invoke. "+
+			"Got params keys %s but no `name` (or alias `tool`). "+
+			"Correct shape: %s",
+		toolName, got, example)
 }
 
 type batchCall struct {

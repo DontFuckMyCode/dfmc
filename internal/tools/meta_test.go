@@ -544,3 +544,109 @@ func TestToolBatchCallFailureIsolation(t *testing.T) {
 		t.Fatalf("results[2] should succeed despite sibling failure, got %v", arr[2])
 	}
 }
+
+// Real-world failure (TUI 2026-04-18 session): the model called
+// `tool_call` with no `name` field — typically because it nested the
+// args wrong (e.g. {"tool":"...","args":{...}} with `tool` mistyped, or
+// passed only an `args` blob). The pre-fix error was the bare string
+// "name is required" which gave the model nothing to recover from, so
+// it looped with the same bug. Post-fix the error names the keys it
+// actually received and shows the canonical example so the next call
+// self-corrects in a single round.
+func TestToolCall_MissingNameReturnsActionableError(t *testing.T) {
+	eng := New(*config.DefaultConfig())
+
+	cases := []struct {
+		label  string
+		params map[string]any
+	}{
+		{"empty params", map[string]any{}},
+		{"only args, no name", map[string]any{"args": map[string]any{"path": "main.go"}}},
+		{"mistyped key", map[string]any{"toool": "read_file", "args": map[string]any{}}},
+	}
+	for _, c := range cases {
+		t.Run(c.label, func(t *testing.T) {
+			_, err := eng.Execute(context.Background(), "tool_call", Request{Params: c.params})
+			if err == nil {
+				t.Fatal("expected an error when name is missing")
+			}
+			msg := err.Error()
+			// Must call out the offending tool name so the model knows which
+			// meta-tool failed (vs. the underlying backend tool).
+			if !strings.Contains(msg, "tool_call") {
+				t.Fatalf("error should mention tool_call, got %q", msg)
+			}
+			// Must include the canonical example so the model can copy
+			// the right shape for the next call.
+			if !strings.Contains(msg, `"name":"read_file"`) {
+				t.Fatalf("error should show the canonical example, got %q", msg)
+			}
+			// Must show the keys the model ACTUALLY sent so it can
+			// see the mismatch.
+			if len(c.params) == 0 {
+				if !strings.Contains(msg, "(empty)") {
+					t.Fatalf("empty params should be reported as (empty), got %q", msg)
+				}
+			} else {
+				for k := range c.params {
+					if !strings.Contains(msg, k) {
+						t.Fatalf("error should list received key %q, got %q", k, msg)
+					}
+				}
+			}
+		})
+	}
+}
+
+// Real-world UX gap (TUI 2026-04-18): batched calls only showed
+// "5 calls · 4 parallel · 5 ok" — opaque about WHAT each call did.
+// previewBatchTarget pulls the most identifying arg out so downstream
+// renderers can show "✓ read_file foo.go" instead.
+func TestPreviewBatchTarget_PicksMostIdentifyingArg(t *testing.T) {
+	cases := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"read_file uses path", map[string]any{"path": "foo.go", "line_start": 1}, "foo.go"},
+		{"grep_codebase uses pattern", map[string]any{"pattern": "TODO", "glob": "*.go"}, "TODO"},
+		{"glob uses pattern", map[string]any{"pattern": "**/*.ts"}, "**/*.ts"},
+		{"run_command joins command + args (slice)", map[string]any{"command": "go", "args": []any{"build", "./..."}}, "go build ./..."},
+		{"run_command joins command + args (string)", map[string]any{"command": "git", "args": "status --short"}, "git status --short"},
+		{"empty args yields empty target", map[string]any{}, ""},
+		{"unknown args fall through to empty", map[string]any{"some_random": "thing"}, ""},
+		{"long path truncates", map[string]any{"path": strings.Repeat("a/", 50) + "deep.go"}, ""}, // sentinel — checked below
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := previewBatchTarget(c.args)
+			if c.name == "long path truncates" {
+				if !strings.HasSuffix(got, "...") {
+					t.Fatalf("expected truncation suffix on overlong target, got %q", got)
+				}
+				if len(got) > 64 {
+					t.Fatalf("truncated target should fit in 64 chars, got %d (%q)", len(got), got)
+				}
+				return
+			}
+			if got != c.want {
+				t.Fatalf("want %q, got %q", c.want, got)
+			}
+		})
+	}
+}
+
+func TestToolHelp_MissingNameReturnsActionableError(t *testing.T) {
+	eng := New(*config.DefaultConfig())
+	_, err := eng.Execute(context.Background(), "tool_help", Request{Params: map[string]any{}})
+	if err == nil {
+		t.Fatal("expected error when name is missing for tool_help")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "tool_help") {
+		t.Fatalf("error should mention tool_help, got %q", msg)
+	}
+	if !strings.Contains(msg, `"name":"grep_codebase"`) {
+		t.Fatalf("error should show the tool_help example, got %q", msg)
+	}
+}

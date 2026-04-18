@@ -257,6 +257,63 @@ func (e *Engine) ConversationSearch(query string, limit int) ([]conversation.Sum
 	return e.Conversation.Search(query, limit)
 }
 
+// RecentConversationContext walks the active conversation backwards and
+// extracts a compact view of the most recent activity: the last assistant
+// message text (truncated to maxAssistantChars) and the names of up to N
+// most recent tool calls. Returns zero values when the conversation is
+// empty or unavailable. Cheap (one slice scan); safe to call on every
+// user submit. Used by the intent layer to give its classifier just
+// enough state to disambiguate "fix it" / "do that for the others".
+type RecentConversation struct {
+	LastAssistant     string   // truncated to maxAssistantChars runes
+	LastAssistantRole string   // empty when no assistant turn exists yet
+	RecentToolNames   []string // newest first, capped at maxToolNames
+	UserTurnCount     int      // total user turns across the active branch
+}
+
+func (e *Engine) RecentConversationContext(maxAssistantChars, maxToolNames int) RecentConversation {
+	out := RecentConversation{}
+	if e == nil || e.Conversation == nil {
+		return out
+	}
+	active := e.Conversation.Active()
+	if active == nil {
+		return out
+	}
+	msgs := active.Messages()
+	if maxAssistantChars <= 0 {
+		maxAssistantChars = 500
+	}
+	if maxToolNames <= 0 {
+		maxToolNames = 5
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role == types.RoleUser {
+			out.UserTurnCount++
+		}
+		if out.LastAssistant == "" && m.Role == types.RoleAssistant {
+			out.LastAssistantRole = string(m.Role)
+			content := strings.TrimSpace(m.Content)
+			if r := []rune(content); len(r) > maxAssistantChars {
+				content = string(r[:maxAssistantChars]) + "..."
+			}
+			out.LastAssistant = content
+		}
+		if len(out.RecentToolNames) < maxToolNames {
+			for _, tc := range m.ToolCalls {
+				if name := strings.TrimSpace(tc.Name); name != "" {
+					out.RecentToolNames = append(out.RecentToolNames, name)
+					if len(out.RecentToolNames) >= maxToolNames {
+						break
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
 func (e *Engine) ConversationBranchCreate(name string) error {
 	if e.Conversation == nil {
 		return fmt.Errorf("conversation manager is not initialized")

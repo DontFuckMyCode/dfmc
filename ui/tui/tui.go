@@ -235,6 +235,13 @@ type Model struct {
 	// counts. See sessionTelemetry in panel_states.go.
 	telemetry sessionTelemetry
 
+	// Latest intent layer decision (engine pre-Ask normalizer). Engine
+	// publishes "intent:decision" events on every user submit; this
+	// struct caches the most recent so the header chip + /intent show
+	// can surface what the engine actually saw. See intentState in
+	// panel_states.go.
+	intent intentState
+
 	notice string
 
 	// pendingApproval holds the current tool-approval prompt awaiting a
@@ -1976,7 +1983,20 @@ func (m Model) chatHeaderInfo() chatHeaderInfo {
 		PlanMode:        m.ui.planMode,
 		ApprovalGated:   gated,
 		ApprovalPending: m.pendingApproval != nil,
+		IntentLast:      intentChipLabel(m.intent),
 	}
+}
+
+// intentChipLabel returns the short string the header chip shows for
+// the most recent intent decision. Empty when no decision has fired or
+// the layer fell back (we don't paint a chip for fallback because it
+// was a no-op — surfacing "intent: fallback" on every turn would just
+// be visual noise telling the user "the layer didn't do anything").
+func intentChipLabel(s intentState) string {
+	if s.lastDecisionAtMs == 0 || s.lastSource != "llm" {
+		return ""
+	}
+	return s.lastIntent
 }
 
 // statsPanelInfo folds every stat the right-hand panel needs into a single

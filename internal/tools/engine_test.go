@@ -95,6 +95,64 @@ func TestGrepTool(t *testing.T) {
 	}
 }
 
+// Real-world failure (TUI 2026-04-18 session): the model wrote a Perl
+// regex (lookbehind / backref / etc) and got the bare error
+// "invalid regex pattern: error parsing regexp: invalid or unsupported
+// Perl syntax" — useless for self-correction. Post-fix the error names
+// the offending construct + suggests the RE2 alternative so the next
+// call self-corrects in a single round.
+func TestGrepCodebase_PerlRegexErrorIsActionable(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "x.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	eng := New(*config.DefaultConfig())
+
+	cases := []struct {
+		name        string
+		pattern     string
+		wantInError []string // every substring must appear
+	}{
+		{
+			"lookbehind",
+			`(?<=func )Foo`,
+			[]string{`Lookbehind`, `NOT supported in RE2`, `(?<=func )Foo`},
+		},
+		{
+			"lookahead",
+			`Foo(?=Bar)`,
+			[]string{`Lookahead`, `NOT supported in RE2`, `Foo(?=Bar)`},
+		},
+		{
+			"backreference",
+			`(\w+)=\1`,
+			[]string{`Backreferences`, `NOT supported in RE2`, `linear-time matching`},
+		},
+		{
+			"unknown perl construct",
+			`\K`,
+			[]string{`invalid regex pattern`, `\K`},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := eng.Execute(context.Background(), "grep_codebase", Request{
+				ProjectRoot: tmp,
+				Params:      map[string]any{"pattern": c.pattern},
+			})
+			if err == nil {
+				t.Fatalf("Perl-syntax pattern %q must reject", c.pattern)
+			}
+			msg := err.Error()
+			for _, want := range c.wantInError {
+				if !strings.Contains(msg, want) {
+					t.Fatalf("error should mention %q\n  pattern: %q\n  got: %q", want, c.pattern, msg)
+				}
+			}
+		})
+	}
+}
+
 func TestToolOutputCompressionBySandboxLimit(t *testing.T) {
 	tmp := t.TempDir()
 	file := filepath.Join(tmp, "big.txt")
@@ -418,6 +476,62 @@ func TestRunCommandToolRunsDirectCommand(t *testing.T) {
 	}
 	if changed, _ := res.Data["workspace_changed"].(bool); changed {
 		t.Fatalf("expected go version to avoid workspace changes, got %#v", res.Data)
+	}
+}
+
+// Real-world failure mode (TUI 2026-04-18 session, glm-5.1): the model
+// packed a whole shell line into `command` —
+//
+//	{command: "cd D:\\repo && go build ./...", args: ""}
+//
+// — because the tool's prompt used to say "chain with `&&` inside a
+// SINGLE run_command". Pre-fix the executor treated the entire string
+// as a path (it contains `\`) and failed with the opaque "file does
+// not exist" — telling the model nothing about how to recover. The
+// new shell-syntax detector returns an actionable error naming the
+// offender and showing the correct command/args shape.
+func TestRunCommandToolRejectsShellSyntaxWithActionableError(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	cases := []struct {
+		name        string
+		command     string
+		wantInError string // substring that MUST appear in error
+	}{
+		{"and-chain", `cd D:\repo && go build ./...`, "&&"},
+		{"or-chain", `go build || true`, "||"},
+		{"semicolon", `go vet; go test`, ";"},
+		{"pipe", `go test | grep FAIL`, "|"},
+		{"redirect", `go test > out.log`, ">"},
+		{"stderr-merge", `go build 2>&1`, "2>&1"},
+		{"leading-cd", `cd subdir`, "cd "},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := eng.Execute(context.Background(), "run_command", Request{
+				ProjectRoot: tmp,
+				Params: map[string]any{
+					"command": c.command,
+				},
+			})
+			if err == nil {
+				t.Fatalf("shell-syntax %q must be rejected", c.command)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, c.wantInError) {
+				t.Fatalf("error should name the offender %q; got %q", c.wantInError, msg)
+			}
+			// The error must teach the model the right shape so the
+			// next tool call self-corrects. Minimum cues: that there's
+			// no shell, and the {command, args} JSON example.
+			if !strings.Contains(msg, "does not invoke a shell") {
+				t.Fatalf("error should explain there's no shell; got %q", msg)
+			}
+			if !strings.Contains(msg, `"command":"go"`) {
+				t.Fatalf("error should show the {command,args} example; got %q", msg)
+			}
+		})
 	}
 }
 

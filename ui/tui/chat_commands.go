@@ -266,6 +266,26 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		}
 		m.notice = "Trajectory hints " + state + "."
 		return m.appendSystemMessage("Trajectory coach hints between rounds are now " + state + ". Toggle again with /hints."), nil, true
+	case "intent":
+		// /intent has three sub-commands:
+		//   /intent           — toggle verbose (transcript pairs of raw → enriched)
+		//   /intent show      — print the most recent decision in full
+		//   /intent verbose   — alias of bare /intent
+		m.chat.input = ""
+		sub := ""
+		if len(args) > 0 {
+			sub = strings.ToLower(strings.TrimSpace(args[0]))
+		}
+		if sub == "show" {
+			return m.appendSystemMessage(m.describeLastIntent()), nil, true
+		}
+		m.intent.verbose = !m.intent.verbose
+		state := "hidden"
+		if m.intent.verbose {
+			state = "visible"
+		}
+		m.notice = "Intent rewrites " + state + "."
+		return m.appendSystemMessage("Intent layer rewrites are now " + state + " in the transcript. /intent show prints the last decision in full."), nil, true
 	case "copy", "yank":
 		m.chat.input = ""
 		return m.handleCopySlash(args)

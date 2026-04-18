@@ -39,6 +39,7 @@ import (
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/hooks"
+	"github.com/dontfuckmycode/dfmc/internal/intent"
 	"github.com/dontfuckmycode/dfmc/internal/memory"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/security"
@@ -74,6 +75,12 @@ type Engine struct {
 	// (user_prompt_submit, pre_tool, post_tool, session_start/end). A nil
 	// value is safe — Fire is a no-op on nil.
 	Hooks *hooks.Dispatcher
+
+	// Intent is the state-aware request normalizer that runs before each
+	// Ask. Built in Init from Config.Intent + Providers; nil-safe in
+	// every consumer (a nil router falls back to the raw input). See
+	// internal/intent for the routing semantics.
+	Intent *intent.Router
 
 	providerOverride string
 	modelOverride    string
@@ -172,6 +179,17 @@ func (e *Engine) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("provider router init failed: %w", err)
 	}
+
+	// Intent router runs a small classifier before each Ask to disambiguate
+	// resume vs. new vs. clarify and rewrite vague messages ("devam et",
+	// "fix it") into self-contained instructions for the main model.
+	// nil-safe in every consumer; fail-open by default.
+	e.Intent = intent.NewRouter(e.Config.Intent, func(name string) (provider.Provider, bool) {
+		if e.Providers == nil {
+			return nil, false
+		}
+		return e.Providers.Get(name)
+	})
 
 	// Hook dispatcher with observer that relays every hook outcome
 	// through the engine's event bus, so the TUI / Web UI / remote
@@ -279,6 +297,13 @@ func (e *Engine) Shutdown() {
 			e.reportShutdownError("close_storage", err)
 		}
 	}
+
+	// Drop *Engine-keyed slots from the package-level approver/denials
+	// maps so a host that creates/destroys engines (web server, TUI,
+	// integration tests) doesn't leak entries forever. Without this the
+	// pinned *Engine pointer also defeats GC of every object the engine
+	// transitively holds. See REPORT.md #1.
+	e.cleanupApproverState()
 
 	e.setState(StateStopped)
 	e.EventBus.Publish(Event{Type: "engine:stopped", Source: "engine"})

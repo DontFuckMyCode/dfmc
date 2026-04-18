@@ -324,6 +324,48 @@ func (t *ListDirTool) Execute(_ context.Context, req Request) (Result, error) {
 	}, nil
 }
 
+// formatGrepRegexError turns Go's bare RE2 compile error into an
+// actionable message. The model often reaches for Perl/PCRE syntax
+// (`\d`, `(?P<name>)`, `(?<=...)`, `\b` lookbehind, possessive `*+`)
+// because that's what most regex tutorials teach. Go's `regexp` is
+// pure RE2 — none of that works. Pre-fix the error was just
+// "invalid regex pattern: error parsing regexp: invalid or unsupported
+// Perl syntax" which gave the model nothing to recover from. Post-fix
+// the error names the offending construct AND suggests the RE2
+// equivalent so the next call self-corrects.
+func formatGrepRegexError(pattern string, err error) error {
+	original := err.Error()
+	hint := grepRE2Hint(pattern, original)
+	if hint == "" {
+		return fmt.Errorf("invalid regex pattern %q: %w. grep_codebase uses Go RE2 syntax (https://github.com/google/re2/wiki/Syntax) — Perl/PCRE features like lookbehind, backrefs, possessive quantifiers, and named groups `(?P<name>...)` are NOT supported", pattern, err)
+	}
+	return fmt.Errorf("invalid regex pattern %q: %w. %s", pattern, err, hint)
+}
+
+// grepRE2Hint maps the most common "model wrote PCRE" mistakes to a
+// one-line "use this RE2 form instead" suggestion. Empty when the
+// pattern doesn't match a known footgun — caller falls back to the
+// generic RE2 link.
+func grepRE2Hint(pattern, errMsg string) string {
+	switch {
+	case strings.Contains(pattern, "(?P<"):
+		return `RE2 uses (?P<name>...) the same way Python does — but if you're seeing this error you may have nested or unsupported group flags. Try the unnamed (...) form, then index by group number.`
+	case strings.Contains(pattern, "(?<=") || strings.Contains(pattern, "(?<!"):
+		return `Lookbehind ((?<=...) / (?<!...)) is NOT supported in RE2. Restructure: match the surrounding context with a capturing group instead, or filter the matches in a follow-up step.`
+	case strings.Contains(pattern, "(?=") || strings.Contains(pattern, "(?!"):
+		return `Lookahead ((?=...) / (?!...)) is NOT supported in RE2. Match the full sequence and post-filter, or use a non-capturing group (?:...) where you don't need consumption.`
+	case strings.Contains(pattern, `\1`) || strings.Contains(pattern, `\2`) || strings.Contains(pattern, `\3`):
+		return `Backreferences (\1, \2, ...) are NOT supported in RE2 — RE2 guarantees linear-time matching, which precludes them. Match the candidates and check equality in a follow-up.`
+	case strings.Contains(pattern, "*+") || strings.Contains(pattern, "++") || strings.Contains(pattern, "?+"):
+		return `Possessive quantifiers (*+, ++, ?+) are NOT supported in RE2. Use the regular greedy quantifier — RE2's matching algorithm doesn't backtrack so possessives are unnecessary.`
+	case strings.Contains(errMsg, "missing closing"):
+		return `An opening bracket / parenthesis is unclosed. Check that every (, [, {, "..." has a matching close.`
+	case strings.Contains(errMsg, "invalid character class") || strings.Contains(errMsg, "invalid escape sequence"):
+		return `An escape inside a character class or in the body is invalid. RE2 supports \d \w \s \b but not \K \z \Z \v in the same way as Perl. Stick to literals + \d \w \s [a-z] [^...] for portability.`
+	}
+	return ""
+}
+
 type GrepCodebaseTool struct{}
 
 func NewGrepCodebaseTool() *GrepCodebaseTool { return &GrepCodebaseTool{} }
@@ -338,7 +380,7 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		return Result{}, fmt.Errorf("invalid regex pattern: %w", err)
+		return Result{}, formatGrepRegexError(pattern, err)
 	}
 	maxResults := asInt(req.Params, "max_results", 100)
 	if maxResults <= 0 {

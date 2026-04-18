@@ -12,6 +12,8 @@ package engine
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -38,7 +40,74 @@ type ParkReason string
 const (
 	ParkReasonStepCap         ParkReason = "step_cap"
 	ParkReasonBudgetExhausted ParkReason = "budget_exhausted"
+	// ParkReasonShuttingDown fires when the loop detects the engine
+	// transitioned to StateShuttingDown (or beyond) between rounds.
+	// We park rather than racing teardown — bbolt close mid-write is a
+	// panic, and the user gets to /continue from a fresh boot.
+	// REPORT.md #9.
+	ParkReasonShuttingDown ParkReason = "shutting_down"
 )
+
+// summarizeTraces walks the parked loop's tool traces and produces a
+// short, signal-dense "Did:" line plus an "Open:" hint based on the
+// last tool that ran. The point is to give the user — staring at a
+// terse "parked at step N" notice — enough context to know whether to
+// /continue, redirect, or abandon. Pure derivation: no extra LLM call,
+// no events, just a scan of the in-memory traces we already have.
+//
+// Output shape (single line, joined with " · "):
+//
+//	"Did: read_file×4, edit_file×2, run_command×1 · Open: agent paused mid-edit_file"
+//
+// When traces is empty (loop parked before any tool ran — rare but
+// possible from preflight budget gates) returns an empty string so
+// the caller can skip the section without an awkward "Did: nothing".
+func summarizeTraces(traces []nativeToolTrace) string {
+	if len(traces) == 0 {
+		return ""
+	}
+	counts := map[string]int{}
+	for _, t := range traces {
+		name := strings.TrimSpace(t.Call.Name)
+		if name == "" {
+			name = "unknown"
+		}
+		counts[name]++
+	}
+	type kv struct {
+		name string
+		n    int
+	}
+	rows := make([]kv, 0, len(counts))
+	for k, v := range counts {
+		rows = append(rows, kv{k, v})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].n != rows[j].n {
+			return rows[i].n > rows[j].n
+		}
+		return rows[i].name < rows[j].name
+	})
+	parts := make([]string, 0, len(rows))
+	for i, r := range rows {
+		if i >= 4 {
+			parts = append(parts, fmt.Sprintf("+%d more", len(rows)-4))
+			break
+		}
+		if r.n == 1 {
+			parts = append(parts, r.name)
+		} else {
+			parts = append(parts, fmt.Sprintf("%s×%d", r.name, r.n))
+		}
+	}
+	did := "Did: " + strings.Join(parts, ", ")
+	last := strings.TrimSpace(traces[len(traces)-1].Call.Name)
+	open := "Open: paused after " + last
+	if last == "" {
+		open = "Open: paused after final tool call"
+	}
+	return did + " · " + open
+}
 
 // formatBudgetExhaustedNotice renders the "Agent loop parked … tool
 // budget exhausted" message that the engine emits when the native
@@ -49,19 +118,35 @@ const (
 // one without the others was a regression magnet flagged in the
 // REPORT.md walk. headroom is ignored when phase == parkPhaseAfter.
 func formatBudgetExhaustedNotice(phase parkPhase, step, tokens, maxTokens, headroom, rounds int) string {
-	suffix := "Type /continue to resume with fresh headroom, or add a note to narrow focus — e.g. /continue just finish the test file."
+	suffix := `Type "devam" / "continue" or /continue to resume — add a note to narrow focus (e.g. "devam, just finish the test file").`
 	switch phase {
 	case parkPhaseBefore:
 		return fmt.Sprintf(
-			"Agent loop parked before step %d — tool budget exhausted (~%d/%d tokens, need ~%d headroom, %d rounds). %s",
+			"Parked before step %d — tool budget exhausted (~%d/%d tokens, need ~%d headroom, %d rounds). %s",
 			step, tokens, maxTokens, headroom, rounds, suffix,
 		)
 	default:
 		return fmt.Sprintf(
-			"Agent loop parked after step %d — tool budget exhausted (~%d/%d tokens, %d rounds). %s",
+			"Parked after step %d — tool budget exhausted (~%d/%d tokens, %d rounds). %s",
 			step, tokens, maxTokens, rounds, suffix,
 		)
 	}
+}
+
+// composeParkedNotice glues a one-line headline ("Parked at step N…") to
+// the auto-derived trace summary ("Did: …") and a resume affordance.
+// Used by the step-cap park path; budget-exhausted goes through
+// formatBudgetExhaustedNotice but both end up calling this for the
+// summary tail so the wording stays consistent.
+func composeParkedNotice(headline string, traces []nativeToolTrace, resumeHint string) string {
+	parts := []string{strings.TrimSpace(headline)}
+	if summary := summarizeTraces(traces); summary != "" {
+		parts = append(parts, summary)
+	}
+	if hint := strings.TrimSpace(resumeHint); hint != "" {
+		parts = append(parts, hint)
+	}
+	return strings.Join(parts, "\n")
 }
 
 // parkNativeToolLoop freezes the running loop state under a `parkedAgentState`,

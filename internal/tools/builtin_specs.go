@@ -128,8 +128,21 @@ func (t *GrepCodebaseTool) Spec() ToolSpec {
 		Purpose: "Locate symbols, patterns, or call sites. Always prefer a tight regex over broad queries.",
 		Prompt: `Use this instead of shelling out to grep/rg via run_command. It respects project ignore rules and returns file:line:text directly.
 
-Rules:
-- Patterns are Go RE2, not PCRE. No lookbehind, no backreferences. Use (?i) for case-insensitive.
+# Regex syntax — Go RE2, NOT PCRE/Perl
+
+DO NOT use these (they will reject with "invalid Perl syntax"):
+- Lookbehind / lookahead: ` + "`(?<=...)`" + `, ` + "`(?<!...)`" + `, ` + "`(?=...)`" + `, ` + "`(?!...)`" + `
+- Backreferences: ` + "`\\1`" + `, ` + "`\\2`" + ` — match candidates and check equality in a follow-up call
+- Possessive quantifiers: ` + "`*+`" + `, ` + "`++`" + `, ` + "`?+`" + `
+
+DO use:
+- Standard char classes: ` + "`\\d \\w \\s \\b`" + `
+- Case-insensitive flag: ` + "`(?i)pattern`" + `
+- Non-capturing group: ` + "`(?:foo|bar)`" + `
+- Named capture: ` + "`(?P<name>...)`" + ` (Python-style; this IS supported)
+
+# Anchor your query
+
 - Anchor the query as tightly as you can — ` + "`func FooBar`" + ` or ` + "`import \"pkg/foo\"`" + ` rather than just ` + "`FooBar`" + `. Broad patterns waste tokens and miss the actual call site.
 - If you need file listings not content, use glob instead — cheaper and returns paths directly.
 - For symbol lookup inside a known file, ast_query is better: it returns structured symbols with kinds.
@@ -375,9 +388,17 @@ func (t *RunCommandTool) Spec() ToolSpec {
 	return ToolSpec{
 		Name:    "run_command",
 		Title:   "Run command",
-		Summary: "Execute a whitelisted shell command inside the project sandbox.",
+		Summary: "Execute one binary in the project sandbox. NO shell — pass the binary in `command`, the rest in `args`.",
 		Purpose: "Run build/test/lint commands. Blocked commands, timeouts, and output caps are enforced by config.",
-		Prompt: `Shell escape hatch. Every command runs in the project sandbox with a timeout, an output cap, and an allow/blocklist from ` + "`.dfmc/config.yaml`" + `.
+		Prompt: `Direct binary execution inside the project sandbox. There is **no shell**: ` + "`command`" + ` is argv[0] (the binary), ` + "`args`" + ` is the rest. ` + "`&&`" + `, ` + "`||`" + `, ` + "`;`" + `, ` + "`|`" + `, ` + "`>`" + `, redirects, and ` + "`cd `" + ` chains are NOT interpreted — pass them in ` + "`command`" + ` and you'll get a "shell syntax not supported" error.
+
+# Shape
+
+` + "```json" + `
+{"command": "go", "args": ["build", "./..."]}
+{"command": "go", "args": "version"}             // string also accepted, split on whitespace
+{"command": "git", "args": ["status", "--short"]}
+` + "```" + `
 
 # Prefer dedicated tools over the shell
 
@@ -392,12 +413,11 @@ DFMC has native tools that are cheaper, cached, and reviewable. Only reach for r
 
 Use run_command for: build, test, lint, typecheck, dependency management, git operations, anything without a DFMC-native equivalent.
 
-# Parallel vs sequential
+# Sequencing
 
 - Independent commands → send multiple tool_call invocations in ONE tool_batch_call; they run in the order given but you save round-trips.
-- Dependent commands (build before test) → chain with ` + "`&&`" + ` inside a SINGLE run_command. Don't split across calls.
-- ` + "`;`" + ` only when you explicitly want to continue after a failure.
-- Never split commands across newlines in the same string; the shell will misinterpret.
+- Dependent commands (build before test) → issue them as separate sequential tool_calls. The engine runs them in order and surfaces the failure if the first one breaks. Do NOT try to chain with ` + "`&&`" + ` — there is no shell to interpret it.
+- Want to keep going after a failure? Just send the next tool_call regardless of the previous result.
 
 # Git safety
 
@@ -427,7 +447,9 @@ Use run_command for: build, test, lint, typecheck, dependency management, git op
 		Risk: RiskExecute,
 		Tags: []string{"shell", "execute", "build", "test"},
 		Args: []Arg{
-			{Name: "command", Type: ArgString, Required: true, Description: "Command string (argv[0] must be allowed by the sandbox)."},
+			{Name: "command", Type: ArgString, Required: true, Description: `argv[0] only — a single binary name like "go", "git", "npm". NO shell syntax (&&, ||, ;, |, >, cd ...): the executor calls the binary directly and rejects shell-line packing with a clear error.`},
+			{Name: "args", Type: ArgString, Description: `Arguments for the binary. Either a JSON array (preferred: ["build","./..."]) or a single whitespace-separated string ("build ./...") — both are accepted.`},
+			{Name: "dir", Type: ArgString, Description: "Working directory relative to the project root. Defaults to the project root. Use this instead of `cd` (which is not interpreted)."},
 			{Name: "timeout_ms", Type: ArgInteger, Description: "Optional per-call timeout override in ms (<=120000)."},
 		},
 		Returns:  "stdout/stderr combined Output plus {exit_code, duration_ms}.",

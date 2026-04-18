@@ -157,6 +157,27 @@ type chatState struct {
 	toolName            string
 }
 
+// intentState — most recent decision from the engine's intent router,
+// plus a verbose flag that controls whether enrichments surface in the
+// chat transcript as gray "you said X / agent saw Y" pairs. The chip
+// in the chat header reads from active+source; the slash command
+// /intent show prints the full last decision via Recent.
+//
+// Engine publishes "intent:decision" events via EventBus; the TUI
+// handler pulls fields out of the payload and assigns into this
+// struct. Empty struct = "intent layer hasn't fired yet this session".
+type intentState struct {
+	verbose          bool   // /intent verbose toggles transcript pairs
+	lastIntent       string // "resume" | "new" | "clarify" | ""
+	lastSource       string // "llm" | "fallback" | ""
+	lastRaw          string
+	lastEnriched     string
+	lastReasoning    string
+	lastFollowUp     string
+	lastLatencyMs    int64
+	lastDecisionAtMs int64 // Unix millis; 0 when never fired
+}
+
 // uiToggles — runtime UI flags driven by /slash commands and ctrl-key
 // shortcuts. These are independent on/off knobs that don't share state,
 // but grouping them keeps the Model declaration from being half-flooded

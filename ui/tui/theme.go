@@ -521,6 +521,11 @@ type toolChip struct {
 	CompressedChars int
 	SavedChars      int
 	CompressionPct  int // 0–99, how much of the raw output was dropped
+	// InnerLines is the per-call breakdown for tool_batch_call results —
+	// e.g. "✓ read_file foo.go (5ms)". Rendered indented under the chip
+	// head so the user can see WHAT each batched call did instead of just
+	// the count summary. Empty for non-batch tools.
+	InnerLines []string
 }
 
 func renderToolChip(chip toolChip, width int) string {
@@ -560,17 +565,37 @@ func renderToolChip(chip toolChip, width int) string {
 		head1 += " " + subtleStyle.Render("· "+strings.Join(meta, " · "))
 	}
 	preview := strings.TrimSpace(chip.Preview)
-	if preview == "" {
-		return truncateSingleLine(head1, width)
+	headRendered := head1
+	if preview != "" {
+		single := head1 + " " + subtleStyle.Render("· "+preview)
+		if ansi.StringWidth(single) <= width && len(chip.InnerLines) == 0 {
+			return single
+		}
+		// Preview won't fit on one line — render head, then indented preview.
+		// Inner lines (if any) are appended below.
+		second := max(width-2, 16)
+		headRendered = truncateSingleLine(head1, width) + "\n  " + subtleStyle.Render(truncateSingleLine(preview, second))
+	} else {
+		headRendered = truncateSingleLine(head1, width)
 	}
-	single := head1 + " " + subtleStyle.Render("· "+preview)
-	if ansi.StringWidth(single) <= width {
-		return single
+	if len(chip.InnerLines) == 0 {
+		return headRendered
 	}
-	// Preview won't fit — render head on one line, indented preview below so
-	// nothing important gets silently clipped.
-	second := max(width-2, 16)
-	return truncateSingleLine(head1, width) + "\n  " + subtleStyle.Render(truncateSingleLine(preview, second))
+	// Per-call breakdown for tool_batch_call. Indented two spaces so it
+	// hangs visually under the chip head; each line truncated to fit so a
+	// long path or error tail can't push the layout sideways.
+	innerWidth := max(width-2, 16)
+	out := strings.Builder{}
+	out.WriteString(headRendered)
+	for _, ln := range chip.InnerLines {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		out.WriteString("\n  ")
+		out.WriteString(subtleStyle.Render(truncateSingleLine(ln, innerWidth)))
+	}
+	return out.String()
 }
 
 // formatToolTokenCount renders a tool's output token estimate in the chip
@@ -957,6 +982,11 @@ type chatHeaderInfo struct {
 	// and progress bars so the panel feels alive while work is in flight.
 	// Pass m.chat.spinnerFrame.
 	SpinnerFrame int
+	// IntentLast is the most recent intent-router decision name
+	// ("resume" | "new" | "clarify"); empty when the layer hasn't fired
+	// yet this session or only fell back. Drives a small "intent ✓"
+	// chip so the user can confirm the layer is alive without /intent show.
+	IntentLast string
 }
 
 // renderChatHeader returns 1 pre-styled line summarising chat state.
@@ -1024,6 +1054,9 @@ func renderChatHeader(info chatHeaderInfo, width int) string {
 	}
 	if info.PendingNotes > 0 {
 		segments = append(segments, infoStyle.Render(fmt.Sprintf("✎ btw %d", info.PendingNotes)))
+	}
+	if last := strings.TrimSpace(info.IntentLast); last != "" {
+		segments = append(segments, subtleStyle.Render("⚙ intent "+last))
 	}
 	sep := subtleStyle.Render("  ·  ")
 	head := truncateSingleLine(strings.Join(segments, sep), width)

@@ -47,6 +47,20 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 	if isBlockedShellInterpreter(command) {
 		return Result{}, fmt.Errorf("shell interpreters are blocked for run_command: %s", command)
 	}
+	if token := detectShellMetacharacter(command); token != "" {
+		// Bail out before path resolution turns a shell-line into a
+		// "file does not exist" mystery. The model passed something
+		// like `cd /repo && go build ./...` as `command` — an entire
+		// shell line — because it assumed run_command shells out.
+		// It does not. Fail with a message that names the offender
+		// and shows the right shape so the next tool call self-corrects.
+		return Result{}, fmt.Errorf(
+			"run_command does not invoke a shell — `command` must be a single binary, not a shell line. "+
+				"Found shell syntax %q in command. Pass the binary in `command` and arguments in `args`, e.g. "+
+				`{"command":"go","args":["build","./..."]}. `+
+				"For dependent steps, issue separate tool_calls (the engine runs them in order).",
+			token)
+	}
 
 	args, err := commandArgs(req.Params["args"])
 	if err != nil {
@@ -350,6 +364,43 @@ func commandWorkingDir(projectRoot, raw string) (string, error) {
 func looksLikePath(command string) bool {
 	command = strings.TrimSpace(command)
 	return strings.Contains(command, "/") || strings.Contains(command, "\\") || strings.HasPrefix(command, ".")
+}
+
+// detectShellMetacharacter scans `command` for syntax that only a shell
+// interpreter understands. We don't run a shell, so finding any of these
+// inside the binary slot is a sign the model packed a whole shell line
+// into `command` (e.g. `cd /repo && go build ./...`). Returns the first
+// offending token for use in the error message; empty string means the
+// command looks like a plain binary invocation.
+//
+// We deliberately scan only `command`, not `args` — putting `>` or `&&`
+// in args is fine because the binary just sees them as positional
+// arguments. The footgun is exclusively when shell syntax shows up in
+// the slot that becomes argv[0].
+func detectShellMetacharacter(command string) string {
+	cmd := strings.TrimSpace(command)
+	if cmd == "" {
+		return ""
+	}
+	// Multi-char operators first so e.g. `&&` doesn't get reported as `&`.
+	for _, op := range []string{"&&", "||", ">>", "2>&1", "2>", "<<"} {
+		if strings.Contains(cmd, op) {
+			return op
+		}
+	}
+	// Single-char shell operators. `|` last so we don't false-positive on
+	// the rare absolute path containing `|` (Windows reserves it).
+	for _, op := range []string{";", "|", ">", "<", "`", "$("} {
+		if strings.Contains(cmd, op) {
+			return op
+		}
+	}
+	// `cd ` at the start is the other classic LLM tell — the model is
+	// trying to chdir-then-run inside one command. Treat it as shell-y.
+	if strings.HasPrefix(strings.ToLower(cmd), "cd ") {
+		return "cd "
+	}
+	return ""
 }
 
 func isBlockedShellInterpreter(command string) bool {

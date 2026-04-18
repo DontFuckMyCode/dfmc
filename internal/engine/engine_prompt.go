@@ -7,6 +7,7 @@
 package engine
 
 import (
+	"runtime"
 	"strings"
 
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
@@ -241,7 +242,54 @@ func (e *Engine) buildSystemPrompt(question string, chunks []types.ContextChunk)
 			Cacheable: false,
 		})
 	}
+	// Host-OS notice — small but high-leverage. Without this the model
+	// emits Unix-shell patterns (`&&` chains, `2>&1`, `cd && ...`)
+	// against a Windows host, which run_command rejects because there's
+	// no shell. Telling it the OS up front lets it pick the right
+	// shape on the first call instead of learning from a failed round.
+	osNotice := hostOSSystemNotice()
+	text = appendSystemNoticeText(text, osNotice)
+	blocks = append(blocks, provider.SystemBlock{
+		Label:     "host-os",
+		Text:      osNotice,
+		Cacheable: true,
+	})
 	return text, blocks
+}
+
+// hostOSSystemNotice returns the runtime.GOOS-aware reminder injected
+// into every system prompt. Tells the model what host it's on, which
+// path separators are native, and — most importantly — that
+// run_command does not invoke a shell so chain operators and
+// redirects belong nowhere.
+func hostOSSystemNotice() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "[Host: Windows. run_command executes binaries directly (no cmd.exe / no PowerShell): " +
+			"`&&`, `||`, `;`, `|`, `>`, and `cd ...` chains are NOT interpreted. " +
+			"Pass {command, args, dir} separately. Forward slashes work fine for `go`, `git`, `npm`, etc.]"
+	case "darwin":
+		return "[Host: macOS (darwin). run_command executes binaries directly — no shell — so " +
+			"`&&`, `||`, `;`, `|`, `>`, redirects do NOT work. Use {command, args, dir} and " +
+			"sequence dependent steps as separate tool_calls.]"
+	default:
+		return "[Host: " + runtime.GOOS + " (Unix-like). run_command executes binaries directly — no shell — so " +
+			"`&&`, `||`, `;`, `|`, `>`, redirects do NOT work. Use {command, args, dir} and " +
+			"sequence dependent steps as separate tool_calls.]"
+	}
+}
+
+// appendSystemNoticeText is a tiny join helper that avoids leading
+// blank lines when the existing prompt is empty (rare but possible
+// when buildSystemPromptBundle returns an empty bundle).
+func appendSystemNoticeText(existing, notice string) string {
+	if strings.TrimSpace(notice) == "" {
+		return existing
+	}
+	if strings.TrimSpace(existing) == "" {
+		return notice
+	}
+	return existing + "\n\n" + notice
 }
 
 // memoryDegradedSystemNotice formats the user-invisible system-prompt

@@ -191,3 +191,28 @@ func (e *Engine) RecentDenials() []RecentDenial {
 	copy(out, entries)
 	return out
 }
+
+// cleanupApproverState removes this engine's slot from both global maps
+// keyed by *Engine pointer (approverPerEngine, denialsPerEngine). Called
+// from Engine.Shutdown so long-running processes (the web server, the
+// TUI host, integration test harnesses) that construct/destroy engines
+// don't leak map entries forever. Safe to call multiple times — the
+// delete on a missing key is a no-op.
+//
+// Without this hook the maps grow unbounded for the process lifetime
+// because *Engine slots are pinned by the map reference even after the
+// engine is otherwise unreachable, which also defeats GC of every
+// downstream object the engine pointer transitively holds (Approver
+// closure, denial entries, etc.). REPORT.md #1.
+func (e *Engine) cleanupApproverState() {
+	if e == nil {
+		return
+	}
+	approverMu.Lock()
+	delete(approverPerEngine, e)
+	approverMu.Unlock()
+
+	denialsMu.Lock()
+	delete(denialsPerEngine, e)
+	denialsMu.Unlock()
+}

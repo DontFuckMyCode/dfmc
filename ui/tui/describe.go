@@ -480,3 +480,54 @@ func compactTranscript(lines []chatLine, keep int) ([]chatLine, int, bool) {
 	out = append(out, tail...)
 	return out, len(head), true
 }
+
+// describeLastIntent prints the most recent intent-router decision in a
+// dense chat-system block. Surfaces the rewrite, the routing reason, the
+// classifier latency, and (when populated) the follow-up question. When
+// no decision has fired yet (fresh session, intent layer disabled, or
+// only fallbacks so far), the block explains why so the user can tell
+// "the layer ran" from "the layer is off".
+func (m Model) describeLastIntent() string {
+	lines := []string{"▸ Intent layer"}
+	if m.intent.lastDecisionAtMs == 0 {
+		lines = append(lines,
+			"  state:    no decisions yet this session",
+			"  hint:     send a message; the engine will publish intent:decision events on every submit",
+			"  toggles:  /intent (verbose), /intent show (this view)",
+		)
+		return strings.Join(lines, "\n")
+	}
+	when := time.UnixMilli(m.intent.lastDecisionAtMs)
+	age := time.Since(when).Round(time.Second)
+	lines = append(lines,
+		fmt.Sprintf("  intent:   %s (source=%s, %s ago, %dms)",
+			defaultStr(m.intent.lastIntent, "?"),
+			defaultStr(m.intent.lastSource, "?"),
+			age, m.intent.lastLatencyMs),
+	)
+	if m.intent.lastRaw != "" {
+		lines = append(lines, "  raw:      "+truncateSingleLine(m.intent.lastRaw, 120))
+	}
+	if m.intent.lastEnriched != "" && m.intent.lastEnriched != m.intent.lastRaw {
+		lines = append(lines, "  enriched: "+truncateSingleLine(m.intent.lastEnriched, 200))
+	}
+	if m.intent.lastReasoning != "" {
+		lines = append(lines, "  reason:   "+truncateSingleLine(m.intent.lastReasoning, 200))
+	}
+	if m.intent.lastFollowUp != "" {
+		lines = append(lines, "  follow:   "+truncateSingleLine(m.intent.lastFollowUp, 200))
+	}
+	verbose := "off"
+	if m.intent.verbose {
+		verbose = "on (transcript shows raw → enriched pairs)"
+	}
+	lines = append(lines, "  verbose:  "+verbose+" — toggle with /intent")
+	return strings.Join(lines, "\n")
+}
+
+func defaultStr(s, fallback string) string {
+	if strings.TrimSpace(s) == "" {
+		return fallback
+	}
+	return s
+}

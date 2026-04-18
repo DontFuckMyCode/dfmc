@@ -128,7 +128,7 @@ func TestExecuteToolCallsParallel_RunsConcurrently(t *testing.T) {
 	}
 
 	start := time.Now()
-	results := eng.executeToolCallsParallel(context.Background(), calls, 4)
+	results := eng.executeToolCallsParallel(context.Background(), calls, 4, nil, nil)
 	elapsed := time.Since(start)
 
 	if len(results) != 4 {
@@ -167,7 +167,7 @@ func TestExecuteToolCallsParallel_PreservesOrder(t *testing.T) {
 		{Name: "__test_slow", ID: "c", Input: map[string]any{"tag": "third-slow"}},
 	}
 
-	results := eng.executeToolCallsParallel(context.Background(), calls, 3)
+	results := eng.executeToolCallsParallel(context.Background(), calls, 3, nil, nil)
 	for i, r := range results {
 		if r.Index != i {
 			t.Fatalf("result[%d].Index = %d, expected %d", i, r.Index, i)
@@ -182,7 +182,7 @@ func TestExecuteToolCallsParallel_BatchSizeZeroFallsBackToSequential(t *testing.
 		{Name: "__test_sleep_seq", ID: "a"},
 		{Name: "__test_sleep_seq", ID: "b"},
 	}
-	results := eng.executeToolCallsParallel(context.Background(), calls, 0)
+	results := eng.executeToolCallsParallel(context.Background(), calls, 0, nil, nil)
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}

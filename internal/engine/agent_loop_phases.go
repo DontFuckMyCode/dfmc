@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
@@ -62,7 +63,8 @@ func (e *Engine) preflightBudget(
 			return compacted, 0, autoRecoveries, nil
 		}
 	}
-	notice := formatBudgetExhaustedNotice(parkPhaseBefore, step, totalTokens, lim.MaxTokens, headroom, len(traces))
+	headline := formatBudgetExhaustedNotice(parkPhaseBefore, step, totalTokens, lim.MaxTokens, headroom, len(traces))
+	notice := composeParkedNotice(headline, traces, "")
 	parked := e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonBudgetExhausted)
 	return msgs, totalTokens, autoRecoveries, &parked
 }
@@ -102,7 +104,8 @@ func (e *Engine) postStepBudget(
 			return compacted, 0, autoRecoveries, nil
 		}
 	}
-	notice := formatBudgetExhaustedNotice(parkPhaseAfter, step, totalTokens, lim.MaxTokens, 0, len(traces))
+	headline := formatBudgetExhaustedNotice(parkPhaseAfter, step, totalTokens, lim.MaxTokens, 0, len(traces))
+	notice := composeParkedNotice(headline, traces, "")
 	parked := e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonBudgetExhausted)
 	return msgs, totalTokens, autoRecoveries, &parked
 }
@@ -177,6 +180,8 @@ func (e *Engine) executeAndAppendToolBatch(
 	lastProvider, lastModel string,
 	step, totalTokens int,
 	lim agentLimits,
+	cache map[string]string,
+	cacheMu *sync.Mutex,
 ) ([]provider.Message, []nativeToolTrace, int) {
 	msgs = append(msgs, provider.Message{
 		Role:      types.RoleAssistant,
@@ -201,7 +206,7 @@ func (e *Engine) executeAndAppendToolBatch(
 	if allParallelSafe(resp.ToolCalls) {
 		batchSize = e.parallelBatchSize()
 	}
-	results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize)
+	results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize, cache, cacheMu)
 
 	// When we're already deep in the budget, halve the per-tool char
 	// caps so new results don't accelerate bloat.
@@ -230,13 +235,23 @@ func (e *Engine) executeAndAppendToolBatch(
 		traces = append(traces, trace)
 
 		// Cross-round dedup: replace any prior identical (name, input)
-		// tool_result with a one-line stub. ToolCallID chains must stay
-		// intact, so we shrink Content rather than removing the message.
+		// tool_result with a back-reference stub. ToolCallID chains
+		// must stay intact, so we shrink Content rather than removing
+		// the message.
+		//
+		// The stub names the re-call's target (path / pattern / etc)
+		// when we can derive one — pre-fix the bare "[deduped — see
+		// later result]" gave the model no anchor for what it had
+		// originally read; it had to scan forward to find the same
+		// call. With the target inlined the model recognises "this
+		// was the read of foo.go I did earlier; the current result
+		// is the same payload" without re-walking the transcript.
 		if prev := findPriorIdenticalToolResult(msgs, call, call.ID); prev >= 0 {
 			if len(msgs[prev].Content) > toolResultDedupStubBytes {
+				target := dedupTargetHint(call)
 				msgs[prev].Content = fmt.Sprintf(
-					"[deduped — identical %s call appears again in a later round; see that result for the current payload]",
-					call.Name,
+					"[deduped — same %s%s call below; payload moved to the latest result so reasoning stays current]",
+					call.Name, target,
 				)
 			}
 		}
@@ -251,6 +266,34 @@ func (e *Engine) executeAndAppendToolBatch(
 	}
 
 	return msgs, traces, freshStart
+}
+
+// dedupTargetHint returns " (target)" — a short, paren-wrapped
+// identifier for the deduped call so the back-reference stub can name
+// the file/pattern/command instead of the opaque tool name alone.
+// Reuses the same priority order as the live TUI batch-inner preview
+// for cross-surface consistency. Empty string when no identifying arg
+// is available — caller emits the bare tool name without parens.
+func dedupTargetHint(call provider.ToolCall) string {
+	input := call.Input
+	if name, _ := input["name"].(string); name != "" {
+		if inner, ok := input["args"].(map[string]any); ok {
+			input = inner
+		}
+	}
+	for _, key := range []string{"path", "pattern", "query", "command", "dir", "url"} {
+		if raw, ok := input[key]; ok {
+			value := strings.TrimSpace(fmt.Sprint(raw))
+			if value == "" {
+				continue
+			}
+			if len(value) > 60 {
+				value = value[:57] + "..."
+			}
+			return " (" + value + ")"
+		}
+	}
+	return ""
 }
 
 // injectTrajectoryHints derives coach hints from the just-run batch and

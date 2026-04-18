@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -115,6 +117,63 @@ func TestMaybeCompactNativeLoopHistory_FiresAndCollapses(t *testing.T) {
 	}
 	if tail[1].Role != types.RoleUser || tail[1].ToolCallID != "r4" || tail[1].Content != "small tail" {
 		t.Fatalf("expected tail tool_result for r4 intact, got %#v", tail[1])
+	}
+}
+
+// REPORT.md #8 regression: in the real YAML-merge path a partial
+// override that only tunes the ratio must NOT silently disable
+// compaction. DefaultConfig() pre-seeds Enabled=true, and YAML
+// preserves untouched fields when merging into a populated struct,
+// so a `auto_compact_threshold_ratio: 0.5` override with no
+// `enabled` key still resolves to Enabled=true.
+func TestResolveContextLifecycle_YAMLPartialOverridePreservesEnabled(t *testing.T) {
+	cfg := config.DefaultConfig()
+	yamlBlob := []byte(`agent:
+  context_lifecycle:
+    auto_compact_threshold_ratio: 0.5
+`)
+	if err := yaml.Unmarshal(yamlBlob, cfg); err != nil {
+		t.Fatalf("yaml unmarshal: %v", err)
+	}
+	eng := &Engine{Config: cfg}
+	got := eng.resolveContextLifecycle()
+	if !got.Enabled {
+		t.Fatal("YAML partial override (only ratio) must keep Enabled=true from defaults")
+	}
+	if got.AutoCompactThresholdRatio != 0.5 {
+		t.Fatalf("ratio override should take effect, got %.2f", got.AutoCompactThresholdRatio)
+	}
+}
+
+// Inverse of the above: an explicit YAML `enabled: false` MUST disable
+// compaction, even if other knobs are set. This is the user opt-out path.
+func TestResolveContextLifecycle_YAMLExplicitDisableHonoured(t *testing.T) {
+	cfg := config.DefaultConfig()
+	yamlBlob := []byte(`agent:
+  context_lifecycle:
+    enabled: false
+    auto_compact_threshold_ratio: 0.5
+`)
+	if err := yaml.Unmarshal(yamlBlob, cfg); err != nil {
+		t.Fatalf("yaml unmarshal: %v", err)
+	}
+	eng := &Engine{Config: cfg}
+	got := eng.resolveContextLifecycle()
+	if got.Enabled {
+		t.Fatal("explicit YAML enabled:false must disable compaction")
+	}
+}
+
+// Sanity: an empty/missing context_lifecycle block keeps every default.
+func TestResolveContextLifecycle_NoYAMLBlockKeepsAllDefaults(t *testing.T) {
+	cfg := config.DefaultConfig()
+	eng := &Engine{Config: cfg}
+	got := eng.resolveContextLifecycle()
+	if !got.Enabled {
+		t.Fatal("default config must have Enabled=true")
+	}
+	if got.AutoCompactThresholdRatio != 0.7 {
+		t.Fatalf("ratio default should be 0.7, got %.2f", got.AutoCompactThresholdRatio)
 	}
 }
 
@@ -284,6 +343,109 @@ func TestForceCompactNativeLoopHistory_IgnoresThreshold(t *testing.T) {
 	}
 	if len(rebuilt) >= len(msgs) {
 		t.Fatalf("rebuilt should be shorter than original, got %d vs %d", len(rebuilt), len(msgs))
+	}
+}
+
+// User-visible regression (2026-04-18): the model's "memory" of past
+// rounds collapsed to "round 5 · tools=read_file · ok=2 fail=0" —
+// useful as a count, useless for reasoning. Post-fix every collapsed
+// round emits one indented "↳ <tool> <target> → <result-head>" line
+// per call so the model retains a foggy but functional memory of
+// what it actually read / ran. This test pins the format because it's
+// the contract the model relies on after compaction kicks in.
+func TestSummariseSingleRound_PreservesPerCallTargetAndResultExcerpt(t *testing.T) {
+	round := toolRound{Messages: []provider.Message{
+		{
+			Role:    types.RoleAssistant,
+			Content: "checking the config loader",
+			ToolCalls: []provider.ToolCall{
+				{ID: "c1", Name: "read_file", Input: map[string]any{
+					"path": "internal/config/config.go", "line_start": 1, "line_end": 80,
+				}},
+				{ID: "c2", Name: "run_command", Input: map[string]any{
+					"command": "go", "args": []any{"build", "./..."},
+				}},
+			},
+		},
+		{Role: types.RoleUser, ToolCallID: "c1", ToolName: "read_file", Content: "package config\n\ntype Config struct {\n  Providers ProvidersConfig\n}\n"},
+		{Role: types.RoleUser, ToolCallID: "c2", ToolName: "run_command", ToolError: true, Content: "ERROR: command exited with code 1\n\nOUTPUT:\n./foo.go:12:5: undefined: SomeMissingSymbol"},
+	}}
+
+	got := summariseSingleRound(7, round)
+
+	// Header keeps the round number and the count summary so trajectory
+	// hints can still cite "round 7 · 2 calls · ok=1 fail=1".
+	if !strings.Contains(got, "round 7") {
+		t.Fatalf("header missing round index: %q", got)
+	}
+	if !strings.Contains(got, "2 call(s)") || !strings.Contains(got, "ok=1") || !strings.Contains(got, "fail=1") {
+		t.Fatalf("header missing call counts: %q", got)
+	}
+	// Narration line preserved so the model can recall "what was I
+	// thinking when I ran these calls".
+	if !strings.Contains(got, "checking the config loader") {
+		t.Fatalf("assistant narration dropped: %q", got)
+	}
+	// Per-call target is the lifeblood of the new format. read_file
+	// must name the path AND the line range so the model knows
+	// what slice of the file it has already seen.
+	if !strings.Contains(got, "↳ read_file path=internal/config/config.go (lines 1-80)") {
+		t.Fatalf("read_file target missing or misformatted: %q", got)
+	}
+	// Result excerpt — first non-empty line of the file body so the
+	// model gets a "foot in the door" memory of the content.
+	if !strings.Contains(got, "package config") {
+		t.Fatalf("read_file result excerpt missing: %q", got)
+	}
+	// run_command's target joins binary + first arg, exactly like
+	// the live TUI batch-inner preview.
+	if !strings.Contains(got, "↳ run_command command=go build ./...") {
+		t.Fatalf("run_command target missing or misformatted: %q", got)
+	}
+	// Failure tail surfaces the actionable error — the line the model
+	// needs to see to know WHY the build broke. ERROR: prefix
+	// stripped, FAIL marker prepended.
+	if !strings.Contains(got, "FAIL command exited with code 1") {
+		t.Fatalf("failed run_command should show error tail with FAIL marker: %q", got)
+	}
+}
+
+// Inverse: a pure reasoning turn (no tool_calls) keeps its narration
+// without collapsing into an empty "round N" stub.
+func TestSummariseSingleRound_ReasoningOnlyTurnKeepsNarration(t *testing.T) {
+	round := toolRound{Messages: []provider.Message{
+		{Role: types.RoleAssistant, Content: "I think we need to refactor the loader before touching the tests."},
+	}}
+	got := summariseSingleRound(3, round)
+	if !strings.Contains(got, "round 3") {
+		t.Fatalf("missing header: %q", got)
+	}
+	if !strings.Contains(got, "refactor the loader") {
+		t.Fatalf("reasoning narration dropped: %q", got)
+	}
+}
+
+// Cross-surface consistency: dedupTargetHint must use the same
+// priority order as the live previewBatchTarget so the user sees the
+// same identifiers in the live chip and in the deduped stub.
+func TestDedupTargetHint_NamesIdentifyingArg(t *testing.T) {
+	cases := []struct {
+		name string
+		call provider.ToolCall
+		want string
+	}{
+		{"read_file uses path", provider.ToolCall{Name: "read_file", Input: map[string]any{"path": "foo.go"}}, " (foo.go)"},
+		{"meta-tool unwraps inner args", provider.ToolCall{Name: "tool_call", Input: map[string]any{
+			"name": "read_file", "args": map[string]any{"path": "bar.go"},
+		}}, " (bar.go)"},
+		{"empty input → empty hint", provider.ToolCall{Name: "tool_call", Input: map[string]any{}}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := dedupTargetHint(c.call); got != c.want {
+				t.Fatalf("want %q, got %q", c.want, got)
+			}
+		})
 	}
 }
 

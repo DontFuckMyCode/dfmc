@@ -47,6 +47,15 @@ type parkedAgentState struct {
 	// so a model that keeps parking can't burn tokens forever.
 	CumulativeSteps  int
 	CumulativeTokens int
+	// LoopFileCache maps canonical tool-call signatures (read_file +
+	// path + range, list_dir + path) to the previously-returned tool
+	// output, so a long sustained loop that re-reads the same files
+	// across many rounds doesn't pay disk I/O and re-execution cost on
+	// every revisit. Strictly READ-class tools — never cache calls
+	// with side effects (write_file, edit_file, run_command). The
+	// cache survives park/resume because it lives on parkedAgentState;
+	// nil-safe (lazy-initialized when the first cache write happens).
+	LoopFileCache map[string]string
 }
 
 // HasParkedAgent reports whether a previous agent loop was parked (cap hit)
@@ -77,6 +86,51 @@ func (e *Engine) ParkedAgentSummary() string {
 		q = q[:77] + "..."
 	}
 	return "parked at step " + itoaInt(p.Step) + " — " + q
+}
+
+// ParkedAgentDetails returns a structured snapshot of the parked loop for
+// callers that need more than the freeform summary string (e.g. the intent
+// router needs the step count + last tool name to make a meaningful resume
+// vs. new-turn decision). Returns nil + false when nothing is parked. The
+// returned struct is a copy; mutating it is harmless.
+type ParkedAgentDetails struct {
+	Question         string
+	Step             int
+	CumulativeSteps  int
+	TotalTokens      int
+	CumulativeTokens int
+	ContextTokens    int
+	LastProvider     string
+	LastModel        string
+	LastToolName     string
+	ParkedAt         time.Time
+}
+
+func (e *Engine) ParkedAgentDetails() (*ParkedAgentDetails, bool) {
+	if e == nil {
+		return nil, false
+	}
+	e.agentMu.Lock()
+	defer e.agentMu.Unlock()
+	if e.agentParked == nil {
+		return nil, false
+	}
+	p := e.agentParked
+	d := &ParkedAgentDetails{
+		Question:         p.Question,
+		Step:             p.Step,
+		CumulativeSteps:  p.CumulativeSteps,
+		TotalTokens:      p.TotalTokens,
+		CumulativeTokens: p.CumulativeTokens,
+		ContextTokens:    p.ContextTokens,
+		LastProvider:     p.LastProvider,
+		LastModel:        p.LastModel,
+		ParkedAt:         p.ParkedAt,
+	}
+	if n := len(p.Traces); n > 0 {
+		d.LastToolName = p.Traces[n-1].Call.Name
+	}
+	return d, true
 }
 
 // ClearParkedAgent drops the parked state without resuming. Called e.g. when

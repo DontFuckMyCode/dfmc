@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
@@ -145,6 +146,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		if chipPreview == "" && !success {
 			chipPreview = payloadString(payload, "error", "")
 		}
+		var batchInner []string
 		if batchCount := payloadInt(payload, "batch_count", 0); batchCount > 0 {
 			batchParallel := payloadInt(payload, "batch_parallel", 0)
 			batchOK := payloadInt(payload, "batch_ok", 0)
@@ -158,6 +160,9 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 				parts = append(parts, fmt.Sprintf("%d fail", batchFail))
 			}
 			chipPreview = strings.Join(parts, " · ")
+			// Per-call breakdown emitted by batchFanoutSummary so the
+			// user sees WHAT each batched call did, not just the count.
+			batchInner = payloadStringSlice(payload, "batch_inner")
 		}
 		savedChars := payloadInt(payload, "compression_saved_chars", 0)
 		rawChars := payloadInt(payload, "output_chars", 0)
@@ -183,6 +188,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			CompressedChars: payloadChars,
 			SavedChars:      savedChars,
 			CompressionPct:  compressionPct,
+			InnerLines:      batchInner,
 		}
 		m.finishToolChip(finishedChip)
 		m.finishStreamingMessageToolChip(finishedChip)
@@ -249,6 +255,36 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		severity := payloadString(payload, "severity", "info")
 		origin := payloadString(payload, "origin", "")
 		m = m.appendCoachMessage(text, severity, origin)
+		return m
+	case "intent:decision":
+		// Engine's pre-Ask intent router fired. Cache the decision so
+		// the header chip + /intent show can surface what the engine
+		// actually saw. When verbose mode is on, also append a faint
+		// gray transcript line showing the rewrite — useful for
+		// debugging "why did it route to resume?" without reaching
+		// for the activity log.
+		intentName := payloadString(payload, "intent", "")
+		source := payloadString(payload, "source", "")
+		raw := payloadString(payload, "raw", "")
+		enriched := payloadString(payload, "enriched", "")
+		reasoning := payloadString(payload, "reasoning", "")
+		followUp := payloadString(payload, "follow_up", "")
+		latencyMs := int64(payloadInt(payload, "latency_ms", 0))
+		m.intent.lastIntent = intentName
+		m.intent.lastSource = source
+		m.intent.lastRaw = raw
+		m.intent.lastEnriched = enriched
+		m.intent.lastReasoning = reasoning
+		m.intent.lastFollowUp = followUp
+		m.intent.lastLatencyMs = latencyMs
+		m.intent.lastDecisionAtMs = time.Now().UnixMilli()
+		if m.intent.verbose && source == "llm" && raw != "" && enriched != "" && raw != enriched {
+			m = m.appendCoachMessage(
+				fmt.Sprintf("intent[%s]: %s → %s", intentName, truncateSingleLine(raw, 60), truncateSingleLine(enriched, 80)),
+				"info",
+				"intent",
+			)
+		}
 		return m
 	case "agent:coach:hint":
 		if !m.ui.hintsVerbose {
@@ -368,6 +404,38 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			Preview: fmt.Sprintf("%d/%d tok", used, budget),
 		})
 		line = fmt.Sprintf("Agent loop exhausted token budget (%d/%d).", used, budget)
+	case "agent:loop:auto_resume":
+		// Autonomous park→compact→resume inside the same Ask call. We
+		// render a compact in-flow chip instead of the disruptive
+		// "park / SYS resume / park" sequence — the user wanted
+		// hands-off continuation, so we make the continuation feel
+		// like one fluent thought rather than three interrupting ones.
+		m.agentLoop.phase = "auto-resuming"
+		cumSteps := payloadInt(payload, "cumulative_steps", 0)
+		stepCeiling := payloadInt(payload, "step_ceiling", 0)
+		preview := "compacted, continuing"
+		if stepCeiling > 0 {
+			preview = fmt.Sprintf("compacted, continuing · %d/%d steps", cumSteps, stepCeiling)
+		}
+		m.pushToolChip(toolChip{
+			Name:    "auto-resume",
+			Status:  "running",
+			Preview: preview,
+		})
+		// No transcript line — the chip is enough signal. A line in
+		// the chat would re-create the noisy "SYS resume" pattern the
+		// autonomous loop is supposed to eliminate.
+	case "agent:loop:auto_resume_refused":
+		// Cumulative ceiling hit during autonomy — surface this so the
+		// user knows the auto-progression bottomed out and a manual
+		// /continue (or scope refinement) is needed.
+		reason := payloadString(payload, "reason", "ceiling")
+		m.pushToolChip(toolChip{
+			Name:    "auto-resume",
+			Status:  "failed",
+			Preview: "ceiling: " + reason,
+		})
+		line = "Autonomous resume stopped — cumulative work ceiling reached. Type /continue to override or refine the question."
 	case "provider:race:complete":
 		winner := payloadString(payload, "winner", "?")
 		tokens := payloadInt(payload, "tokens", 0)
@@ -500,6 +568,41 @@ func payloadInt(data map[string]any, key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// payloadStringSlice extracts a string list from an event payload,
+// tolerant of how JSON / Go runtime may shape the value (events cross
+// goroutine + serialisation boundaries). Returns nil when the key is
+// missing or the value can't be coerced into strings — callers treat
+// nil as "no list to render" and skip.
+func payloadStringSlice(data map[string]any, key string) []string {
+	if data == nil {
+		return nil
+	}
+	raw, ok := data[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		out := make([]string, 0, len(v))
+		for _, s := range v {
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s := strings.TrimSpace(fmt.Sprint(item))
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func payloadBool(data map[string]any, key string, fallback bool) bool {

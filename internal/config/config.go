@@ -37,6 +37,7 @@ type Config struct {
 	Remote    RemoteConfig    `yaml:"remote"`
 	Project   ProjectConfig   `yaml:"project"`
 	Coach     CoachConfig     `yaml:"coach"`
+	Intent    IntentConfig    `yaml:"intent"`
 }
 
 // CoachConfig governs the background "tiny-touches" observer that publishes
@@ -46,6 +47,35 @@ type Config struct {
 type CoachConfig struct {
 	Enabled  bool `yaml:"enabled"`
 	MaxNotes int  `yaml:"max_notes"`
+}
+
+// IntentConfig governs the state-aware request normalizer that runs before
+// every Ask. Given a compact snapshot of engine state (parked? last tool?
+// last assistant turn?), a cheap LLM rewrites the user's raw input into an
+// unambiguous, fully contextualized prompt and decides whether to resume
+// the parked agent or start a fresh turn. Designed to be fail-open: any
+// timeout/error/missing provider falls back to passing the raw message
+// through, so a flaky intent layer never blocks the user.
+//
+// Provider/Model: when empty, the router picks the cheapest available
+// completion-capable provider in this priority order: anthropic (Haiku),
+// openai (gpt-4o-mini), gemini (flash), then anything else. If none of
+// those are configured the layer is silently disabled — better to skip
+// than to block on the offline placeholder.
+type IntentConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Provider  string `yaml:"provider"`
+	Model     string `yaml:"model"`
+	TimeoutMs int    `yaml:"timeout_ms"`
+	// FailOpen when true (default) lets the raw user message pass through
+	// the engine when the intent LLM errors or times out. Set false in
+	// hardened environments where you'd rather surface the failure than
+	// silently degrade — useful for debugging.
+	FailOpen bool `yaml:"fail_open"`
+	// MaxSnapshotChars caps the size of the engine-state snapshot string
+	// sent to the intent LLM. Larger snapshots give better context but cost
+	// more tokens per turn. 0 falls back to 2000 chars (~500 tokens).
+	MaxSnapshotChars int `yaml:"max_snapshot_chars"`
 }
 
 // AgentConfig bounds the native tool loop so a runaway model can't drain a
@@ -77,6 +107,28 @@ type AgentConfig struct {
 	// before each round starts so the post-round gate can't lose budget
 	// races. 0 falls back to 7 (~14% headroom).
 	BudgetHeadroomDivisor int `yaml:"budget_headroom_divisor"`
+
+	// ResumeMaxMultiplier caps cumulative agent work across every
+	// /continue (or natural-language "devam") of a single root ask. Each
+	// resume gets a fresh MaxToolSteps budget, but cumulative steps and
+	// tokens accumulate; once they pass MaxToolSteps × N (this value),
+	// further resumes are refused. 0 falls back to 10 — enough for a
+	// 600-step / ~2.5M-token sustained orchestration session. Raise
+	// per-project (e.g. 30) for unattended overnight runs; tighten to 1
+	// or 2 in CI environments that must hard-stop after one budget.
+	ResumeMaxMultiplier int `yaml:"resume_max_multiplier"`
+
+	// AutonomousResume controls whether a budget-exhausted park triggers
+	// an automatic compact-and-resume from inside the same Ask call —
+	// the user sees one continuous response instead of having to type
+	// /continue (or "devam") between every park. Bounded by the same
+	// ResumeMaxMultiplier ceiling so a runaway loop can't go forever.
+	// Set to "off" / "false" to require an explicit user resume each
+	// time. Empty / unset / "on" / "auto" all enable autonomy. Default
+	// is autonomous because the manual-resume UX bleeds the cache and
+	// breaks flow on every park; the cumulative ceiling already protects
+	// against cost runaway.
+	AutonomousResume string `yaml:"autonomous_resume"`
 
 	// ContextLifecycle governs offline auto-compaction of in-loop history so
 	// token spend stays flat even across many tool rounds. Strictly offline —

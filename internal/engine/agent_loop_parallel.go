@@ -76,11 +76,17 @@ type parallelToolResult struct {
 // executeToolCallsParallel fans out a batch of parallel-safe tool calls
 // under a bounded worker pool and returns the results in the same order
 // as the input. The batchSize argument is clamped: values <=1 collapse
-// to sequential execution (still via this function so callers have one
+// to sequential dispatch (still via this function so callers have one
 // code path), and very large values are capped at len(calls). Each tool
 // runs through executeToolWithLifecycle so approval gating and hooks
 // behave identically to the sequential path.
-func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.ToolCall, batchSize int) []parallelToolResult {
+//
+// When cache is non-nil, calls that match cacheableToolCallKey are
+// served from the cache on hit (no tool dispatch, no approval gate, no
+// network) and stored on miss. Cache writes are guarded by cacheMu so
+// the parallel branch is safe under fan-out. Cache lookups are O(1)
+// and can save tens of seconds per repeated read in long loops.
+func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.ToolCall, batchSize int, cache map[string]string, cacheMu *sync.Mutex) []parallelToolResult {
 	if len(calls) == 0 {
 		return nil
 	}
@@ -93,14 +99,28 @@ func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.
 
 	out := make([]parallelToolResult, len(calls))
 
+	dispatch := func(idx int, c provider.ToolCall) {
+		if hit, ok := lookupToolCache(c, cache, cacheMu); ok {
+			out[idx] = parallelToolResult{Index: idx, Result: hit}
+			e.publishAgentLoopEvent("agent:tool:cache_hit", map[string]any{
+				"name": c.Name,
+			})
+			return
+		}
+		res, err := e.executeToolWithLifecycle(ctx, c.Name, c.Input, "agent")
+		out[idx] = parallelToolResult{Index: idx, Result: res, Err: err}
+		if err == nil {
+			storeToolCache(c, res, cache, cacheMu)
+		}
+	}
+
 	if batchSize == 1 {
 		for i, call := range calls {
 			if ctx.Err() != nil {
 				out[i] = parallelToolResult{Index: i, Err: ctx.Err()}
 				continue
 			}
-			res, err := e.executeToolWithLifecycle(ctx, call.Name, call.Input, "agent")
-			out[i] = parallelToolResult{Index: i, Result: res, Err: err}
+			dispatch(i, call)
 		}
 		return out
 	}
@@ -119,12 +139,50 @@ func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.
 				<-sem
 				wg.Done()
 			}()
-			res, err := e.executeToolWithLifecycle(ctx, c.Name, c.Input, "agent")
-			out[idx] = parallelToolResult{Index: idx, Result: res, Err: err}
+			dispatch(idx, c)
 		}(i, call)
 	}
 	wg.Wait()
 	return out
+}
+
+// lookupToolCache returns the cached result for a cacheable read call,
+// or zero+false on miss / non-cacheable. Nil cache short-circuits to
+// miss so callers can always pass a cache pointer regardless of
+// whether per-loop caching is enabled.
+func lookupToolCache(call provider.ToolCall, cache map[string]string, mu *sync.Mutex) (tools.Result, bool) {
+	if cache == nil {
+		return tools.Result{}, false
+	}
+	key, ok := cacheableToolCallKey(call)
+	if !ok {
+		return tools.Result{}, false
+	}
+	mu.Lock()
+	output, hit := cache[key]
+	mu.Unlock()
+	if !hit {
+		return tools.Result{}, false
+	}
+	return tools.Result{Output: output}, true
+}
+
+// storeToolCache writes a successful tool result back into the cache.
+// Skips when the call isn't cacheable, when the result is empty, or
+// when the cache is nil. The map is created once per loop in the seed;
+// callers must pass a non-nil map to actually retain anything (this
+// helper does not lazy-init the slot).
+func storeToolCache(call provider.ToolCall, res tools.Result, cache map[string]string, mu *sync.Mutex) {
+	if cache == nil {
+		return
+	}
+	key, ok := cacheableToolCallKey(call)
+	if !ok || strings.TrimSpace(res.Output) == "" {
+		return
+	}
+	mu.Lock()
+	cache[key] = res.Output
+	mu.Unlock()
 }
 
 // parallelBatchSize returns the cfg-driven concurrency ceiling for a

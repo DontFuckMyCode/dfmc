@@ -20,11 +20,23 @@ type Edge struct {
 	Type string `json:"type"`
 }
 
+// edgeKey is the composite (other-endpoint, type) key used inside the
+// adjacency maps. Pre-fix the inner key was just the other endpoint, so
+// AddEdge silently overwrote prior entries when two edges shared the
+// From/To pair but differed in Type (e.g. "calls" and "imports" between
+// the same two nodes). With the composite key both edges coexist.
+// REPORT.md #4. For outgoing[from], `Node` holds the To id; for
+// incoming[to], `Node` holds the From id.
+type edgeKey struct {
+	Node string
+	Type string
+}
+
 type Graph struct {
 	mu       sync.RWMutex
 	nodes    map[string]Node
-	outgoing map[string]map[string]Edge
-	incoming map[string]map[string]Edge
+	outgoing map[string]map[edgeKey]Edge
+	incoming map[string]map[edgeKey]Edge
 }
 
 type Counts struct {
@@ -35,8 +47,8 @@ type Counts struct {
 func NewGraph() *Graph {
 	return &Graph{
 		nodes:    map[string]Node{},
-		outgoing: map[string]map[string]Edge{},
-		incoming: map[string]map[string]Edge{},
+		outgoing: map[string]map[edgeKey]Edge{},
+		incoming: map[string]map[edgeKey]Edge{},
 	}
 }
 
@@ -51,14 +63,14 @@ func (g *Graph) AddEdge(edge Edge) {
 	defer g.mu.Unlock()
 
 	if g.outgoing[edge.From] == nil {
-		g.outgoing[edge.From] = map[string]Edge{}
+		g.outgoing[edge.From] = map[edgeKey]Edge{}
 	}
-	g.outgoing[edge.From][edge.To] = edge
+	g.outgoing[edge.From][edgeKey{Node: edge.To, Type: edge.Type}] = edge
 
 	if g.incoming[edge.To] == nil {
-		g.incoming[edge.To] = map[string]Edge{}
+		g.incoming[edge.To] = map[edgeKey]Edge{}
 	}
-	g.incoming[edge.To][edge.From] = edge
+	g.incoming[edge.To][edgeKey{Node: edge.From, Type: edge.Type}] = edge
 }
 
 func (g *Graph) GetNode(id string) (Node, bool) {
@@ -133,7 +145,8 @@ func (g *Graph) Descendants(start string, depth int) []Node {
 		if cur.level >= depth {
 			continue
 		}
-		for to := range g.outgoing[cur.id] {
+		for k := range g.outgoing[cur.id] {
+			to := k.Node
 			if _, ok := seen[to]; ok {
 				continue
 			}
@@ -168,7 +181,8 @@ func (g *Graph) Ancestors(start string, depth int) []Node {
 		if cur.level >= depth {
 			continue
 		}
-		for from := range g.incoming[cur.id] {
+		for k := range g.incoming[cur.id] {
+			from := k.Node
 			if _, ok := seen[from]; ok {
 				continue
 			}
@@ -199,7 +213,8 @@ func (g *Graph) ShortestPathLength(fromID, toID string) int {
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		for to := range g.outgoing[cur.id] {
+		for k := range g.outgoing[cur.id] {
+			to := k.Node
 			if to == toID {
 				return cur.steps + 1
 			}

@@ -30,11 +30,14 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 
 	pool := treeSitterParserPool(lang)
 	parser := pool.Get().(*tree_sitter.Parser)
-	defer pool.Put(parser)
+	// healthy gates the pool return — see finalizeTreeSitterParser.
+	healthy := false
+	defer func() { finalizeTreeSitterParser(pool, parser, healthy) }()
 
 	if err := parser.SetLanguage(language); err != nil {
 		return nil, nil, nil, true, fmt.Errorf("tree-sitter %s language: %w", lang, err)
 	}
+	healthy = true
 
 	tree := parser.ParseCtx(ctx, content, nil)
 	if tree == nil {
@@ -62,6 +65,32 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 	default:
 		return nil, nil, nil, false, nil
 	}
+}
+
+// parserReturner is the slice of *sync.Pool we depend on for return.
+// Defined as an interface so tests can substitute a recording mock —
+// the production caller passes a *sync.Pool which satisfies it
+// implicitly (sync.Pool.Put has signature func(any)).
+type parserReturner interface {
+	Put(any)
+}
+
+// finalizeTreeSitterParser is the deferred return-to-pool / discard-and-close
+// branch. Pulled into a small helper so the unhealthy path can be tested
+// without engineering a real tree-sitter SetLanguage failure (which would
+// require fault-injection inside the bindings).
+//
+// healthy=true: parser is returned to the pool for reuse.
+// healthy=false: parser is closed and dropped — its language binding may
+// be in an indeterminate state (previous grammar still attached, or none),
+// and reusing it would leak the inconsistency to the next caller and could
+// panic ParseCtx or silently parse with the wrong grammar. REPORT.md #7.
+func finalizeTreeSitterParser(pool parserReturner, parser *tree_sitter.Parser, healthy bool) {
+	if healthy {
+		pool.Put(parser)
+		return
+	}
+	parser.Close()
 }
 
 func treeSitterParserPool(lang string) *sync.Pool {

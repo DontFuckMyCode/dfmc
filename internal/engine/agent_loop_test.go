@@ -470,7 +470,11 @@ func TestAskWithMetadata_NativeToolLoop_RespectsConfiguredMaxSteps(t *testing.T)
 	if err != nil {
 		t.Fatalf("expected parked completion (no error), got %v", err)
 	}
-	if !strings.Contains(answer, "parked at step 2") {
+	// New parked notice format leads with "Parked at step N — hit the
+	// configured ceiling…"; the assertion targets the canonical
+	// "Parked at step 2" prefix so wording tweaks downstream don't
+	// brittle the test.
+	if !strings.Contains(answer, "Parked at step 2") {
 		t.Fatalf("expected parked-at-step-2 notice, got %q", answer)
 	}
 	if !eng.HasParkedAgent() {
@@ -516,6 +520,10 @@ func TestAskWithMetadata_NativeToolLoop_RespectsTokenBudget(t *testing.T) {
 	}
 	cfg.Agent.MaxToolSteps = 8
 	cfg.Agent.MaxToolTokens = 25 // below scripted per-call usage of 30
+	// This test asserts the budget-park notice surfaces — pin
+	// AutonomousResume off so the autonomous wrapper doesn't transparently
+	// chain into the next attempt and mask the park.
+	cfg.Agent.AutonomousResume = "off"
 
 	router, err := provider.NewRouter(cfg.Providers)
 	if err != nil {
@@ -680,4 +688,94 @@ func findEventByType(events []Event, want string) (Event, bool) {
 		}
 	}
 	return Event{}, false
+}
+
+// User-visible regression (TUI 2026-04-18): the chat showed cryptic
+// dumps like `args="map[args:[build ./...] command:go timeout_ms:60000]"
+// name=run_command` under each tool chip — unreadable. Post-fix
+// formatToolParamsPreview emits Claude-Code-style verb lines that read
+// as a flowing transcript of agent actions: "$ go build ./...",
+// "Read foo.go (lines 1-80)", "Edit bar.go", "Search "loadDotEnv"".
+//
+// This test pins the verb format because it's the surface the user
+// reads to understand what the agent is doing in real time.
+func TestFormatToolParamsPreview_RendersClaudeCodeStyleVerbs(t *testing.T) {
+	cases := []struct {
+		name   string
+		params map[string]any
+		want   string
+	}{
+		{
+			"run_command via tool_call wrapper",
+			map[string]any{"name": "run_command", "args": map[string]any{"command": "go", "args": []any{"build", "./..."}}},
+			"$ go build ./...",
+		},
+		{
+			"run_command bare",
+			map[string]any{"command": "git", "args": "status --short"},
+			"",
+		},
+		{
+			"read_file with line range via wrapper",
+			map[string]any{"name": "read_file", "args": map[string]any{"path": "internal/config/config.go", "line_start": 1, "line_end": 80}},
+			"Read internal/config/config.go (lines 1-80)",
+		},
+		{
+			"read_file no range via wrapper",
+			map[string]any{"name": "read_file", "args": map[string]any{"path": "main.go"}},
+			"Read main.go",
+		},
+		{
+			"edit_file via wrapper",
+			map[string]any{"name": "edit_file", "args": map[string]any{"path": "internal/engine/engine.go"}},
+			"Edit internal/engine/engine.go",
+		},
+		{
+			"grep_codebase via wrapper",
+			map[string]any{"name": "grep_codebase", "args": map[string]any{"pattern": "loadDotEnv"}},
+			`Search "loadDotEnv"`,
+		},
+		{
+			"glob via wrapper",
+			map[string]any{"name": "glob", "args": map[string]any{"pattern": "**/*_test.go"}},
+			"Glob **/*_test.go",
+		},
+		{
+			"tool_search query",
+			map[string]any{"name": "tool_search", "args": map[string]any{"query": "edit"}},
+			"Lookup edit",
+		},
+		{
+			"tool_help name",
+			map[string]any{"name": "tool_help", "args": map[string]any{"name": "grep_codebase"}},
+			"Help grep_codebase",
+		},
+		{
+			"tool_batch_call counts duplicates",
+			map[string]any{"calls": []any{
+				map[string]any{"name": "read_file"},
+				map[string]any{"name": "read_file"},
+				map[string]any{"name": "read_file"},
+				map[string]any{"name": "grep_codebase"},
+			}},
+			"Batch [4: read_file ×3, grep_codebase]",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := formatToolParamsPreview(c.params, 200)
+			if c.want == "" {
+				// Empty want means the bare-call branch falls through
+				// to the legacy kv-dump — verify the output starts
+				// with `args=` to confirm the fallback path engaged.
+				if !strings.HasPrefix(got, "args=") && !strings.HasPrefix(got, "command=") {
+					t.Fatalf("bare-call shape should fall back to kv dump, got %q", got)
+				}
+				return
+			}
+			if got != c.want {
+				t.Fatalf("preview mismatch:\n  want: %q\n   got: %q", c.want, got)
+			}
+		})
+	}
 }

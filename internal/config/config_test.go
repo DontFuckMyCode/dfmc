@@ -85,6 +85,17 @@ web:
 }
 
 func TestLoadWithOptions_LoadsProjectDotEnv(t *testing.T) {
+	// Save and clear any pre-existing ZAI_API_KEY so .env is the sole source.
+	prevZAI, hadZAI := os.LookupEnv("ZAI_API_KEY")
+	os.Unsetenv("ZAI_API_KEY")
+	t.Cleanup(func() {
+		if hadZAI {
+			os.Setenv("ZAI_API_KEY", prevZAI)
+		} else {
+			os.Unsetenv("ZAI_API_KEY")
+		}
+	})
+
 	tmp := t.TempDir()
 	projectRoot := filepath.Join(tmp, "project")
 	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")

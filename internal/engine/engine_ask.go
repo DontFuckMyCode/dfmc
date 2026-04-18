@@ -474,9 +474,37 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 	if e.Providers == nil {
 		return "", fmt.Errorf("provider router is not initialized")
 	}
-	e.maybeAutoHandoff(question)
+
+	// Intent layer normalizes vague follow-ups ("devam et", "fix it") into
+	// self-contained instructions and decides whether this turn is a
+	// resume of a parked agent or a fresh ask. Fail-open: on any layer
+	// failure the raw question passes through and the path below is
+	// unchanged. Resume + clarify paths short-circuit to dedicated
+	// handlers so the main model isn't called when it doesn't need to be.
+	decision := e.routeIntent(ctx, question)
+	if decision.Intent == "resume" && e.HasParkedAgent() {
+		completion, err := e.ResumeAgent(ctx, question)
+		if err != nil {
+			return "", err
+		}
+		return completion.Answer, nil
+	}
+	if decision.Intent == "clarify" && decision.FollowUpQuestion != "" {
+		// Record the exchange so subsequent turns see what was asked.
+		// Provider/model are tagged "intent-layer" to make these turns
+		// distinguishable in conversation history (they didn't cost a
+		// main-model call).
+		e.recordInteraction(question, decision.FollowUpQuestion, "intent-layer", "clarify", 0, nil)
+		return decision.FollowUpQuestion, nil
+	}
+	prompt := decision.EnrichedRequest
+	if prompt == "" {
+		prompt = question
+	}
+
+	e.maybeAutoHandoff(prompt)
 	if e.shouldUseNativeToolLoop() {
-		completion, err := e.askWithNativeTools(ctx, question)
+		completion, err := e.askWithNativeTools(ctx, prompt)
 		if err != nil {
 			return "", err
 		}
@@ -484,13 +512,13 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 	}
 	e.ensureIndexed(ctx)
 
-	chunks := e.buildContextChunks(question)
+	chunks := e.buildContextChunks(prompt)
 
-	systemPrompt, systemBlocks := e.buildSystemPrompt(question, chunks)
+	systemPrompt, systemBlocks := e.buildSystemPrompt(prompt, chunks)
 	req := provider.CompletionRequest{
 		Provider:     e.provider(),
 		Model:        e.model(),
-		Messages:     e.buildRequestMessages(question, chunks, systemPrompt),
+		Messages:     e.buildRequestMessages(prompt, chunks, systemPrompt),
 		Context:      chunks,
 		System:       systemPrompt,
 		SystemBlocks: systemBlocks,
@@ -500,7 +528,7 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 	if err != nil {
 		return "", err
 	}
-	e.recordInteraction(question, resp.Text, usedProvider, resp.Model, resp.Usage.TotalTokens, chunks)
+	e.recordInteraction(prompt, resp.Text, usedProvider, resp.Model, resp.Usage.TotalTokens, chunks)
 	e.EventBus.Publish(Event{
 		Type:   "provider:complete",
 		Source: "engine",
@@ -536,9 +564,31 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 			"project_root": e.ProjectRoot,
 		})
 	}
-	e.maybeAutoHandoff(question)
+
+	// Intent layer (mirrors AskWithMetadata). Resume short-circuits to
+	// ResumeAgent (whose answer is then streamed to the consumer as a
+	// single chunk to keep the SSE protocol identical for callers).
+	// Clarify short-circuits to streaming the follow-up question text.
+	decision := e.routeIntent(ctx, question)
+	if decision.Intent == "resume" && e.HasParkedAgent() {
+		completion, err := e.ResumeAgent(ctx, question)
+		if err != nil {
+			return nil, err
+		}
+		return streamAnswerText(ctx, completion.Answer), nil
+	}
+	if decision.Intent == "clarify" && decision.FollowUpQuestion != "" {
+		e.recordInteraction(question, decision.FollowUpQuestion, "intent-layer", "clarify", 0, nil)
+		return streamAnswerText(ctx, decision.FollowUpQuestion), nil
+	}
+	prompt := decision.EnrichedRequest
+	if prompt == "" {
+		prompt = question
+	}
+
+	e.maybeAutoHandoff(prompt)
 	if e.shouldUseNativeToolLoop() {
-		completion, err := e.askWithNativeTools(ctx, question)
+		completion, err := e.askWithNativeTools(ctx, prompt)
 		if err != nil {
 			return nil, err
 		}
@@ -546,13 +596,13 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 	}
 	e.ensureIndexed(ctx)
 
-	chunks := e.buildContextChunks(question)
+	chunks := e.buildContextChunks(prompt)
 
-	systemPrompt, systemBlocks := e.buildSystemPrompt(question, chunks)
+	systemPrompt, systemBlocks := e.buildSystemPrompt(prompt, chunks)
 	req := provider.CompletionRequest{
 		Provider:     e.provider(),
 		Model:        e.model(),
-		Messages:     e.buildRequestMessages(question, chunks, systemPrompt),
+		Messages:     e.buildRequestMessages(prompt, chunks, systemPrompt),
 		Context:      chunks,
 		System:       systemPrompt,
 		SystemBlocks: systemBlocks,
@@ -578,8 +628,8 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 			if ev.Type == provider.StreamDone {
 				answer := acc.String()
 				if strings.TrimSpace(answer) != "" {
-					tokenEstimate := estimateTokens(question) + estimateTokens(answer)
-					e.recordInteraction(question, answer, usedProvider, req.Model, tokenEstimate, chunks)
+					tokenEstimate := estimateTokens(prompt) + estimateTokens(answer)
+					e.recordInteraction(prompt, answer, usedProvider, req.Model, tokenEstimate, chunks)
 					e.EventBus.Publish(Event{
 						Type:   "provider:complete",
 						Source: "engine",
