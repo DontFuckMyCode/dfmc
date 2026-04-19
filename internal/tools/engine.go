@@ -502,13 +502,9 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 		promoteFirstAlias(params, "line_start", "start", "from", "lineStart", "start_line")
 		promoteFirstAlias(params, "line_end", "end", "to", "lineEnd", "end_line")
 		start := asInt(params, "line_start", 1)
-		if start < 1 {
-			start = 1
-		}
+		start = max(1, start)
 		end := asInt(params, "line_end", start+199)
-		if end < start {
-			end = start
-		}
+		end = max(start, end)
 		if end-start+1 > 400 {
 			end = start + 399
 		}
@@ -562,12 +558,8 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 		promoteFirstAlias(params, "dir", "cwd", "workdir", "working_dir")
 		promoteFirstAlias(params, "timeout_ms", "timeoutMs", "timeout")
 		timeoutMs := asInt(params, "timeout_ms", 0)
-		if timeoutMs < 0 {
-			timeoutMs = 0
-		}
-		if timeoutMs > 120_000 {
-			timeoutMs = 120_000
-		}
+		timeoutMs = max(0, timeoutMs)
+		timeoutMs = min(timeoutMs, 120_000)
 		if timeoutMs > 0 {
 			params["timeout_ms"] = timeoutMs
 		}
@@ -719,9 +711,7 @@ func (e *Engine) touchReadSnapshotLocked(abs string) {
 		for len(e.readSnapshots) > target && len(e.readSnapshotLRU) > 0 {
 			evict := e.readSnapshotLRU[0]
 			e.readSnapshotLRU = e.readSnapshotLRU[1:]
-			if _, ok := e.readSnapshots[evict]; ok {
-				delete(e.readSnapshots, evict)
-			}
+			delete(e.readSnapshots, evict)
 		}
 	}
 	// Keep the snapshot map bounded even if the LRU drifted due to a
@@ -873,7 +863,7 @@ func compressOutput(output string, limit int, terms []string) (string, bool, int
 		if prev >= 0 && idx > prev+1 {
 			gap := idx - prev - 1
 			omitted += gap
-			b.WriteString(fmt.Sprintf("... [omitted %d lines]\n", gap))
+			fmt.Fprintf(&b, "... [omitted %d lines]\n", gap)
 		}
 		b.WriteString(lines[idx])
 		if idx < len(lines)-1 {

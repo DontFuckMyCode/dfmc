@@ -127,7 +127,10 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	beforeChanged, _ := gitChangedFilesSnapshot(req.ProjectRoot)
+	beforeChanged, err := gitChangedFilesSnapshot(req.ProjectRoot)
+	if err != nil {
+		beforeChanged = nil
+	}
 	cmd := exec.CommandContext(runCtx, execPath, args...)
 	cmd.Dir = workDir
 	// Bounded capture: stdout + stderr each cap at runCommandOutputCap
@@ -379,7 +382,7 @@ func hasArgSequence(args []string, seq ...string) bool {
 	if len(seq) == 0 || len(args) < len(seq) {
 		return false
 	}
-	for i := 0; i <= len(args)-len(seq); i++ {
+	for i := range len(args) - len(seq) + 1 {
 		match := true
 		for j := 0; j < len(seq); j++ {
 			if !strings.EqualFold(strings.TrimSpace(args[i+j]), seq[j]) {

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -198,7 +199,7 @@ func TestAlibabaStream_ThrottleWraps429(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected throttle error")
 	}
-	if !isThrottled(err) {
+	if !errors.Is(err, ErrProviderThrottled) {
 		t.Fatalf("expected throttled error, got %v", err)
 	}
 }
@@ -222,7 +223,7 @@ func TestAlibabaProviderComplete_WithTools(t *testing.T) {
 		Tools: []ToolDescriptor{{
 			Name:        "read_file",
 			Description: "Read a file",
-			Parameters:  map[string]any{"type": "object"},
+			InputSchema:  map[string]any{"type": "object"},
 		}},
 	})
 	if err != nil {
@@ -239,7 +240,7 @@ func TestAlibabaProviderComplete_WithTools(t *testing.T) {
 // --- Config: seed profile has correct Alibaba defaults ---
 
 func TestAlibabaSeedProfile(t *testing.T) {
-	profiles := modelsDevSeedProfiles()
+	profiles := config.ModelsDevSeedProfiles()
 	alibaba, ok := profiles["alibaba"]
 	if !ok {
 		t.Fatal("expected alibaba entry in seed profiles")

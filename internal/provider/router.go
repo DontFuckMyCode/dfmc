@@ -278,7 +278,10 @@ func (r *Router) completeWithThrottleRetry(ctx context.Context, p Provider, req 
 		case <-time.After(wait):
 		}
 	}
-	return nil, lastErr
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, ctx.Err()
 }
 
 // throttleWait prefers the upstream Retry-After hint when present,
@@ -331,7 +334,10 @@ func (r *Router) streamWithThrottleRetry(ctx context.Context, p Provider, req Co
 		case <-time.After(wait):
 		}
 	}
-	return nil, lastErr
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, ctx.Err()
 }
 
 // CompleteRaced issues req against every candidate concurrently and returns

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **DFMC** ("Don't Fuck My Code") — a code intelligence assistant distributed as a single Go binary. It combines local code analysis (AST + codemap + security heuristics) with a multi-provider LLM router that falls back to an offline provider when API keys are missing or calls fail. Three UIs (CLI, bubbletea TUI, embedded Web API) all drive the same `engine.Engine`.
 
-Module path: `github.com/dontfuckmycode/dfmc`. Go 1.24.
+Module path: `github.com/dontfuckmycode/dfmc`. Go 1.25.
 
 ## Build, test, lint
 

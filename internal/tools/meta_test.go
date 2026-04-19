@@ -238,13 +238,6 @@ func TestToolCallTripleWrapAutoUnwraps(t *testing.T) {
 	if !strings.Contains(res.Output, "package main") {
 		t.Fatalf("expected actual file contents after triple unwrap, got %q", res.Output)
 	}
-	return
-	if err == nil {
-		t.Fatal("triple-wrap must error — recursion is bounded to 1 unwrap")
-	}
-	if !strings.Contains(err.Error(), "double-wrap") {
-		t.Fatalf("triple-wrap error should mention double-wrap, got: %v", err)
-	}
 }
 
 func TestToolCallAcceptsStringifiedArgs(t *testing.T) {
@@ -727,7 +720,7 @@ func TestToolBatchCall_UsesCumulativeMetaBudgetPerTurn(t *testing.T) {
 
 	makeCalls := func(n int) []any {
 		out := make([]any, 0, n)
-		for i := 0; i < n; i++ {
+		for range n {
 			out = append(out, map[string]any{
 				"name": "read_file",
 				"args": map[string]any{"path": "hello.go"},
@@ -781,7 +774,7 @@ func TestEnterMetaBudget_ConcurrentCallsStayWithinBudget(t *testing.T) {
 	}
 
 	close(start)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		<-errs
 	}
 	remainingSuccesses := atomic.LoadInt32(&successes)

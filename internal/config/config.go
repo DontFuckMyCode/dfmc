@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -525,7 +526,7 @@ func loadDotEnv(root string) (map[string]string, error) {
 			continue
 		}
 		if strings.HasPrefix(line, "export ") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+			line = strings.TrimSpace(line[7:])
 		}
 		key, value, ok := strings.Cut(line, "=")
 		if !ok {
@@ -741,11 +742,8 @@ func SaveModelsDevCatalog(path string, catalog ModelsDevCatalog) error {
 }
 
 func MergeProviderProfilesFromModelsDev(existing map[string]ModelConfig, catalog ModelsDevCatalog, opts ModelsDevMergeOptions) map[string]ModelConfig {
-	out := map[string]ModelConfig{}
-	for name, prof := range existing {
-		out[name] = prof
-	}
-	for name, seed := range modelsDevSeedProfiles() {
+	out := maps.Clone(existing)
+	for name, seed := range ModelsDevSeedProfiles() {
 		prof := out[name]
 		if strings.TrimSpace(prof.APIKey) == "" {
 			prof.APIKey = seed.APIKey
@@ -814,7 +812,7 @@ func modelsDevProviderAliases() map[string]string {
 	}
 }
 
-func modelsDevSeedProfiles() map[string]ModelConfig {
+func ModelsDevSeedProfiles() map[string]ModelConfig {
 	return map[string]ModelConfig{
 		"anthropic": {Model: "claude-sonnet-4-6", MaxTokens: 64000, MaxContext: 1000000, Protocol: "anthropic"},
 		"openai":    {Model: "gpt-5.4", MaxTokens: 128000, MaxContext: 1050000, Protocol: "openai"},
@@ -846,7 +844,7 @@ func selectModelsDevModel(provider ModelsDevProvider, currentModel, providerName
 	if model, ok := lookupModelsDevModel(provider, currentModel); ok {
 		return model, true
 	}
-	if model, ok := lookupModelsDevModel(provider, modelsDevSeedProfiles()[providerName].Model); ok {
+	if model, ok := lookupModelsDevModel(provider, ModelsDevSeedProfiles()[providerName].Model); ok {
 		return model, true
 	}
 	candidates := make([]ModelsDevModel, 0, len(provider.Models))

@@ -3,7 +3,7 @@ package config
 import "path/filepath"
 
 func DefaultConfig() *Config {
-	profiles := modelsDevSeedProfiles()
+	profiles := ModelsDevSeedProfiles()
 	profiles["generic"] = ModelConfig{
 		Model:      "qwen3.5-coder",
 		BaseURL:    "http://localhost:11434/v1",
