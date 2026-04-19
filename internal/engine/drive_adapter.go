@@ -14,8 +14,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/drive"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
+	supervisorbridge "github.com/dontfuckmycode/dfmc/internal/supervisor/bridge"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -95,15 +97,23 @@ func (r *driveRunner) ExecuteTodo(ctx context.Context, req drive.ExecuteTodoRequ
 	if r.e == nil {
 		return drive.ExecuteTodoResponse{}, fmt.Errorf("engine not initialized")
 	}
+	req = supervisorbridge.NormalizeDriveExecution(req)
+	profiles := map[string]config.ModelConfig(nil)
+	if r.e.Config != nil {
+		profiles = r.e.Config.Providers.Profiles
+	}
+	req.ProfileCandidates = supervisorbridge.SelectDriveProfiles(req, profiles, r.e.provider(), 4)
+	req.Model = supervisorbridge.SelectDriveProfile(req, profiles, r.e.provider())
 	task := buildDriveTodoPrompt(req)
 	subReq := tools.SubagentRequest{
-		Task:         task,
-		Role:         "drive-executor",
+		Task:         decorateDriveTaskWithSkills(req.Skills, task),
+		Role:         driveExecutorRole(req.Role),
 		AllowedTools: req.AllowedTools,
 		MaxSteps:     req.MaxSteps,
 		Model:        req.Model,
+		ToolSource:   "drive",
 	}
-	res, err := r.e.RunSubagent(ctx, subReq)
+	res, err := r.e.runSubagentProfiles(ctx, subReq, req.ProfileCandidates)
 	if err != nil {
 		return drive.ExecuteTodoResponse{
 			DurationMs: res.DurationMs,
@@ -113,11 +123,34 @@ func (r *driveRunner) ExecuteTodo(ctx context.Context, req drive.ExecuteTodoRequ
 	if v, ok := res.Data["parked"].(bool); ok {
 		parked = v
 	}
+	attempts := 0
+	if v, ok := res.Data["attempts"].(int); ok {
+		attempts = v
+	}
+	fallbackUsed := false
+	if v, ok := res.Data["fallback_used"].(bool); ok {
+		fallbackUsed = v
+	}
+	fallbackFrom, _ := res.Data["fallback_from"].(string)
+	finalProvider, _ := res.Data["provider"].(string)
+	finalModel, _ := res.Data["model"].(string)
+	var chain []string
+	if raw, ok := res.Data["profiles_tried"].([]string); ok {
+		chain = append([]string(nil), raw...)
+	}
+	reasons := stringSliceFromAny(res.Data["fallback_reasons"])
 	return drive.ExecuteTodoResponse{
-		Summary:    res.Summary,
-		ToolCalls:  res.ToolCalls,
-		DurationMs: res.DurationMs,
-		Parked:     parked,
+		Summary:      res.Summary,
+		ToolCalls:    res.ToolCalls,
+		DurationMs:   res.DurationMs,
+		Parked:       parked,
+		Provider:     finalProvider,
+		Model:        finalModel,
+		Attempts:     attempts,
+		FallbackUsed: fallbackUsed,
+		FallbackFrom: fallbackFrom,
+		FallbackChain: chain,
+		FallbackReasons: reasons,
 	}, nil
 }
 
@@ -140,10 +173,87 @@ func buildDriveTodoPrompt(req drive.ExecuteTodoRequest) string {
 	b.WriteString(req.TodoID)
 	b.WriteString(": ")
 	b.WriteString(req.Title)
+	if role := strings.TrimSpace(req.Role); role != "" {
+		b.WriteString("\nWorker role: ")
+		b.WriteString(role)
+	}
+	if len(req.Labels) > 0 {
+		b.WriteString("\nLabels: ")
+		b.WriteString(strings.Join(req.Labels, ", "))
+	}
+	if strings.TrimSpace(req.Verification) != "" {
+		b.WriteString("\nVerification expectation: ")
+		b.WriteString(req.Verification)
+	}
 	b.WriteString("\n\nInstructions:\n")
 	b.WriteString(strings.TrimSpace(req.Detail))
+	if len(req.Skills) > 0 {
+		b.WriteString("\n\nSuggested runtime capabilities: ")
+		b.WriteString(strings.Join(req.Skills, ", "))
+		b.WriteString(". Use them if they sharpen the approach.")
+	}
 	b.WriteString("\n\nWhen finished, return a SHORT (under 200 tokens) brief covering: what you changed, which files, and how to verify. The brief is the only thing the next TODO will see from your work, so be concrete.")
+	b.WriteString("\nIf you discover truly necessary follow-up child tasks that are missing from the plan, append one final JSON object after the brief with this exact top-level key: {\"spawn_todos\":[...]}.")
+	b.WriteString("\nEach spawned todo should include title, detail, optional depends_on, file_scope, provider_tag, worker_class, skills, allowed_tools, labels, verification, and confidence. Keep spawned tasks to at most 4 and only emit them when the missing work is real.")
 	return b.String()
+}
+
+func decorateDriveTaskWithSkills(names []string, input string) string {
+	input = strings.TrimSpace(input)
+	if len(names) == 0 {
+		return input
+	}
+	out := input
+	seen := map[string]struct{}{}
+	for i := len(names) - 1; i >= 0; i-- {
+		name := strings.TrimSpace(names[i])
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if out == "" {
+			out = "[[skill:" + name + "]]"
+			continue
+		}
+		out = "[[skill:" + name + "]]\n" + out
+	}
+	return out
+}
+
+func driveExecutorRole(role string) string {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return "drive-executor"
+	}
+	return role
+}
+
+func stringSliceFromAny(raw any) []string {
+	switch v := raw.(type) {
+	case []string:
+		out := make([]string, 0, len(v))
+		for _, s := range v {
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s := strings.TrimSpace(fmt.Sprint(item))
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 // publishDriveEvent is the bridge from drive.Publisher (a generic
@@ -162,18 +272,10 @@ func (e *Engine) PublishDriveEvent(eventType string, payload map[string]any) {
 	})
 }
 
-// BeginAutoApprove activates a scoped auto-approval override for the
-// listed tools. The previous Approver is preserved and restored when
-// the returned release function is called. The wildcard "*" approves
-// every tool.
-//
-// Implementation note: SetApprover is process-wide for the engine,
-// so this override affects ALL agent calls (not just drive sub-
-// agents). That's deliberate — drive runs are foreground operations
-// the user kicked off; layering on a sub-agent-only approver gate
-// would require threading approval scope through SubagentRequest /
-// agent loop / tool dispatch, which is a much larger surface
-// change. Documented in the Runner.BeginAutoApprove contract.
+// BeginAutoApprove activates a scoped auto-approval override for
+// drive-owned tool calls. The previous Approver is preserved and
+// restored when the returned release function is called. The wildcard
+// "*" approves every drive-owned tool.
 //
 // Returns a no-op release when tools is empty so callers can always
 // `defer release()` regardless of config.
@@ -182,7 +284,7 @@ func (r *driveRunner) BeginAutoApprove(tools []string) func() {
 		return func() {}
 	}
 	prev := r.e.approver()
-	override := newDriveAutoApprover(prev, tools)
+	override := newDriveAutoApprover(prev, tools, "drive")
 	r.e.SetApprover(override)
 	return func() {
 		// Restore the previous approver. Nil prev correctly clears
@@ -199,13 +301,15 @@ func (r *driveRunner) BeginAutoApprove(tools []string) func() {
 type driveAutoApprover struct {
 	wrapped Approver
 	allow   map[string]struct{}
+	source  string
 	any     bool // true when "*" is in the allowlist
 }
 
-func newDriveAutoApprover(wrapped Approver, tools []string) *driveAutoApprover {
+func newDriveAutoApprover(wrapped Approver, tools []string, source string) *driveAutoApprover {
 	a := &driveAutoApprover{
 		wrapped: wrapped,
 		allow:   make(map[string]struct{}, len(tools)),
+		source:  strings.ToLower(strings.TrimSpace(source)),
 	}
 	for _, t := range tools {
 		t = strings.TrimSpace(t)
@@ -227,6 +331,13 @@ func newDriveAutoApprover(wrapped Approver, tools []string) *driveAutoApprover {
 // safe default in askToolApproval.
 func (a *driveAutoApprover) RequestApproval(ctx context.Context, req ApprovalRequest) ApprovalDecision {
 	name := strings.ToLower(strings.TrimSpace(req.Tool))
+	source := strings.ToLower(strings.TrimSpace(req.Source))
+	if a.source != "" && source != a.source {
+		if a.wrapped == nil {
+			return ApprovalDecision{Approved: false, Reason: "no approver registered"}
+		}
+		return a.wrapped.RequestApproval(ctx, req)
+	}
 	if a.any {
 		return ApprovalDecision{Approved: true, Reason: "drive auto-approve (*)"}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -47,8 +48,10 @@ type Engine struct {
 	cfg             config.Config
 	failureMu       sync.Mutex
 	recentFailures  map[string]int
+	recentFailOrder []string
 	readMu          sync.RWMutex
 	readSnapshots   map[string]string
+	readSnapshotLRU []string
 	delegateTool    *DelegateTaskTool
 	orchestrateTool *OrchestrateTool
 
@@ -80,10 +83,12 @@ func (e *Engine) SetReasoningPublisher(pub ReasoningPublisher) {
 
 func New(cfg config.Config) *Engine {
 	e := &Engine{
-		registry:       map[string]Tool{},
-		cfg:            cfg,
-		recentFailures: map[string]int{},
-		readSnapshots:  map[string]string{},
+		registry:        map[string]Tool{},
+		cfg:             cfg,
+		recentFailures:  map[string]int{},
+		recentFailOrder: []string{},
+		readSnapshots:   map[string]string{},
+		readSnapshotLRU: []string{},
 	}
 	e.Register(NewReadFileTool())
 	e.Register(NewWriteFileTool())
@@ -212,6 +217,34 @@ func (e *Engine) List() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+type toolCloser interface {
+	Close() error
+}
+
+// Close releases per-tool cached state held for the life of the tools engine.
+// Most tools are stateless, but AST-backed tools retain parse caches that can
+// otherwise live until process exit in long-running TUI/web sessions.
+func (e *Engine) Close() error {
+	e.mu.RLock()
+	// Registry is append-only at runtime; there is no Unregister path, so
+	// taking a snapshot of closers under the read lock is sufficient.
+	closers := make([]toolCloser, 0, len(e.registry))
+	for _, tool := range e.registry {
+		if closer, ok := tool.(toolCloser); ok {
+			closers = append(closers, closer)
+		}
+	}
+	e.mu.RUnlock()
+
+	var errs []error
+	for _, closer := range closers {
+		if err := closer.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Specs returns a stable-sorted slice of ToolSpec for every registered tool.
@@ -383,10 +416,10 @@ func (e *Engine) ensureReadBeforeMutation(absPath string) error {
 	defer e.readMu.RUnlock()
 	lastReadHash, ok := e.readSnapshots[absPath]
 	if !ok {
-		return readGuardError(absPath, "missing", "")
+		return readGuardError(absPath, "missing")
 	}
 	if lastReadHash != hash {
-		return readGuardError(absPath, "drift", "")
+		return readGuardError(absPath, "drift")
 	}
 	return nil
 }
@@ -401,7 +434,7 @@ func (e *Engine) ensureReadBeforeMutation(absPath string) error {
 // the model can emit verbatim, so the next round self-corrects in one
 // step instead of N. `kind` is "missing" (no prior read at all) or
 // "drift" (file modified between read and edit).
-func readGuardError(absPath, kind, _ string) error {
+func readGuardError(absPath, kind string) error {
 	relHint := absPath
 	if cwd, err := os.Getwd(); err == nil {
 		if rel, err2 := filepath.Rel(cwd, absPath); err2 == nil && !strings.HasPrefix(rel, "..") {
@@ -429,14 +462,19 @@ func readGuardError(absPath, kind, _ string) error {
 func (e *Engine) trackFailure(key string) int {
 	e.failureMu.Lock()
 	defer e.failureMu.Unlock()
+	if _, ok := e.recentFailures[key]; !ok {
+		e.recentFailOrder = append(e.recentFailOrder, key)
+	}
 	e.recentFailures[key]++
-	// M3: evict oldest entries when map grows too large.
+	// M3: evict oldest entries when the map grows too large. Map
+	// iteration order is randomized, so deleting arbitrary keys made the
+	// retry gate nondeterministic across identical runs.
 	if len(e.recentFailures) > maxRecentFailures {
-		for k := range e.recentFailures {
-			delete(e.recentFailures, k)
-			if len(e.recentFailures) <= maxRecentFailures/2 {
-				break
-			}
+		target := maxRecentFailures / 2
+		for len(e.recentFailures) > target && len(e.recentFailOrder) > 0 {
+			oldest := e.recentFailOrder[0]
+			e.recentFailOrder = e.recentFailOrder[1:]
+			delete(e.recentFailures, oldest)
 		}
 	}
 	return e.recentFailures[key]
@@ -446,6 +484,12 @@ func (e *Engine) clearFailure(key string) {
 	e.failureMu.Lock()
 	defer e.failureMu.Unlock()
 	delete(e.recentFailures, key)
+	for i, existing := range e.recentFailOrder {
+		if existing == key {
+			e.recentFailOrder = append(e.recentFailOrder[:i], e.recentFailOrder[i+1:]...)
+			break
+		}
+	}
 }
 
 func normalizeToolParams(name string, params map[string]any) map[string]any {
@@ -454,6 +498,9 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 	}
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "read_file":
+		promoteFirstAlias(params, "path", "file", "filepath", "target")
+		promoteFirstAlias(params, "line_start", "start", "from", "lineStart", "start_line")
+		promoteFirstAlias(params, "line_end", "end", "to", "lineEnd", "end_line")
 		start := asInt(params, "line_start", 1)
 		if start < 1 {
 			start = 1
@@ -468,6 +515,9 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 		params["line_start"] = start
 		params["line_end"] = end
 	case "list_dir":
+		promoteFirstAlias(params, "path", "dir", "directory", "target", "root")
+		promoteFirstAlias(params, "max_entries", "limit", "max", "maxEntries")
+		promoteFirstAlias(params, "recursive", "recurse")
 		maxEntries := asInt(params, "max_entries", 200)
 		if maxEntries <= 0 {
 			maxEntries = 200
@@ -477,6 +527,13 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 		}
 		params["max_entries"] = maxEntries
 	case "grep_codebase":
+		promoteFirstAlias(params, "pattern", "query", "regex", "text", "needle", "search")
+		promoteFirstAlias(params, "path", "dir", "directory", "root")
+		promoteFirstAlias(params, "max_results", "limit", "max", "maxResults")
+		promoteFirstAlias(params, "case_sensitive", "caseSensitive")
+		promoteFirstAlias(params, "context", "context_lines", "contextLines")
+		promoteFirstAlias(params, "before", "before_lines", "context_before")
+		promoteFirstAlias(params, "after", "after_lines", "context_after")
 		maxResults := asInt(params, "max_results", 80)
 		if maxResults <= 0 {
 			maxResults = 80
@@ -485,7 +542,25 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 			maxResults = 500
 		}
 		params["max_results"] = maxResults
+	case "glob":
+		promoteFirstAlias(params, "pattern", "glob", "query", "match")
+		promoteFirstAlias(params, "path", "dir", "directory", "root")
+		promoteFirstAlias(params, "max_results", "limit", "max", "maxResults")
+	case "ast_query":
+		promoteFirstAlias(params, "path", "file", "filepath", "target")
+		promoteFirstAlias(params, "kind", "type", "symbol_kind")
+		promoteFirstAlias(params, "name_contains", "name", "query", "filter", "contains")
+	case "find_symbol":
+		promoteFirstAlias(params, "name", "symbol", "query", "identifier")
+		promoteFirstAlias(params, "kind", "type", "symbol_kind")
+		promoteFirstAlias(params, "path", "dir", "directory", "file")
+		promoteFirstAlias(params, "max_results", "limit", "max", "maxResults")
+		promoteFirstAlias(params, "include_body", "body", "with_body")
 	case "run_command":
+		promoteFirstAlias(params, "command", "cmd", "program", "executable", "bin")
+		promoteFirstAlias(params, "args", "argv", "arguments", "command_args")
+		promoteFirstAlias(params, "dir", "cwd", "workdir", "working_dir")
+		promoteFirstAlias(params, "timeout_ms", "timeoutMs", "timeout")
 		timeoutMs := asInt(params, "timeout_ms", 0)
 		if timeoutMs < 0 {
 			timeoutMs = 0
@@ -497,6 +572,8 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 			params["timeout_ms"] = timeoutMs
 		}
 	case "edit_file":
+		promoteFirstAlias(params, "path", "file", "filepath", "target")
+		promoteFirstAlias(params, "replace_all", "replaceAll", "all", "global")
 		// Common typo trap: weaker models often emit `old`/`new` instead
 		// of `old_string`/`new_string` (the JS/Python edit-tool conventions
 		// they were trained on). Pre-fix the call hard-failed with the
@@ -517,6 +594,8 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 			}
 		}
 	case "write_file":
+		promoteFirstAlias(params, "path", "file", "filepath", "target")
+		promoteFirstAlias(params, "overwrite", "force", "replace", "allow_overwrite")
 		// Same family of typo: `content` vs `text`/`body`. Aliases keep
 		// non-canonical names from looping the model on a missing-field
 		// error.
@@ -533,6 +612,24 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 	return params
 }
 
+func promoteFirstAlias(params map[string]any, canonical string, aliases ...string) {
+	if params == nil {
+		return
+	}
+	// Canonical wins silently when both keys are present; we only promote
+	// from aliases when the canonical field is absent.
+	if _, ok := params[canonical]; ok {
+		return
+	}
+	for _, alt := range aliases {
+		if v, ok := params[alt]; ok {
+			params[canonical] = v
+			delete(params, alt)
+			return
+		}
+	}
+}
+
 func toolFailureKey(name string, params map[string]any) string {
 	keys := make([]string, 0, len(params))
 	for k := range params {
@@ -545,9 +642,23 @@ func toolFailureKey(name string, params map[string]any) string {
 		b.WriteString("|")
 		b.WriteString(strings.TrimSpace(k))
 		b.WriteString("=")
-		b.WriteString(strings.TrimSpace(fmt.Sprint(params[k])))
+		b.WriteString(canonicalToolFailureValue(params[k]))
 	}
 	return b.String()
+}
+
+func canonicalToolFailureValue(v any) string {
+	switch typed := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(typed)
+	}
+	raw, err := json.Marshal(v)
+	if err == nil {
+		return strings.TrimSpace(string(raw))
+	}
+	return strings.TrimSpace(fmt.Sprint(v))
 }
 
 func (e *Engine) recordReadSnapshot(name, projectRoot string, params map[string]any, res Result) {
@@ -584,17 +695,44 @@ func (e *Engine) recordReadSnapshot(name, projectRoot string, params map[string]
 	}
 
 	e.readMu.Lock()
-	// M2: cap readSnapshots to prevent unbounded growth.
+	e.readSnapshots[abs] = hash
+	e.touchReadSnapshotLocked(abs)
+	e.readMu.Unlock()
+}
+
+func (e *Engine) touchReadSnapshotLocked(abs string) {
+	if strings.TrimSpace(abs) == "" {
+		return
+	}
+	for i, existing := range e.readSnapshotLRU {
+		if existing == abs {
+			e.readSnapshotLRU = append(e.readSnapshotLRU[:i], e.readSnapshotLRU[i+1:]...)
+			break
+		}
+	}
+	e.readSnapshotLRU = append(e.readSnapshotLRU, abs)
 	if len(e.readSnapshots) > maxReadSnapshots {
-		for k := range e.readSnapshots {
-			delete(e.readSnapshots, k)
-			if len(e.readSnapshots) <= maxReadSnapshots/2 {
-				break
+		target := maxReadSnapshots / 2
+		if target <= 0 {
+			target = 1
+		}
+		for len(e.readSnapshots) > target && len(e.readSnapshotLRU) > 0 {
+			evict := e.readSnapshotLRU[0]
+			e.readSnapshotLRU = e.readSnapshotLRU[1:]
+			if _, ok := e.readSnapshots[evict]; ok {
+				delete(e.readSnapshots, evict)
 			}
 		}
 	}
-	e.readSnapshots[abs] = hash
-	e.readMu.Unlock()
+	// Keep the snapshot map bounded even if the LRU drifted due to a
+	// direct test mutation or a future cleanup path that removed map
+	// entries without touching the LRU order.
+	for len(e.readSnapshots) > maxReadSnapshots {
+		for key := range e.readSnapshots {
+			delete(e.readSnapshots, key)
+			break
+		}
+	}
 }
 
 func fileContentHash(path string) (string, error) {
@@ -808,6 +946,7 @@ func maxInt(a, b int) int {
 //     creating a new file), we resolve the nearest existing ancestor
 //     instead and re-run the containment check on that, so new-file
 //     writes under a sanitary tree still work.
+//
 // PathRelativeToRoot turns an absolute path into a project-root-relative
 // one for surfacing in tool Output / Data fields. Pre-2026-04-18 every
 // read/write/edit_file leaked the host's full filesystem prefix
@@ -856,10 +995,7 @@ func EnsureWithinRoot(root, path string) (string, error) {
 	// through the same symlink.
 	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
 	if err != nil {
-		// Root should exist; if EvalSymlinks fails we just skip the
-		// symbolic check. Better to accept a path that passed the
-		// lexical check than refuse every call on a weird filesystem.
-		return absPath, nil
+		return "", fmt.Errorf("resolve project root symlinks: %w", err)
 	}
 	resolvedPath, err := filepath.EvalSymlinks(absPath)
 	if err != nil {

@@ -228,19 +228,30 @@ func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativ
 	// Fresh question → abandon any stale parked loop.
 	e.ClearParkedAgent()
 
+	preflight := e.prepareAutonomyPreflight(ctx, question, "top_level", true)
 	chunks := e.buildContextChunks(question)
-	systemPrompt, systemBlocks := e.buildNativeToolSystemPromptBundle(question, chunks)
+	systemPrompt, systemBlocks := e.buildNativeToolSystemPromptBundle(question, chunks, preflight)
 	descriptors := metaSpecsToDescriptors(e.Tools.MetaSpecs())
+	lim := e.agentLimits()
+	kickoffTail, kickoffTraces := e.maybeAutoKickoffAutonomy(ctx, question, preflight, lim)
 
 	contextTokens := 0
 	for _, c := range chunks {
 		contextTokens += c.TokenCount
 	}
+	protocol := ""
+	baseURL := ""
+	if e.Config != nil {
+		if profile, ok := e.Config.Providers.Profiles[e.provider()]; ok {
+			protocol = strings.TrimSpace(profile.Protocol)
+			baseURL = strings.TrimSpace(profile.BaseURL)
+		}
+	}
 
 	seed := &parkedAgentState{
 		Question:      question,
-		Messages:      e.buildToolLoopRequestMessages(question, chunks, systemPrompt, nil),
-		Traces:        nil,
+		Messages:      e.buildToolLoopRequestMessages(question, chunks, systemPrompt, kickoffTail),
+		Traces:        kickoffTraces,
 		Chunks:        chunks,
 		SystemPrompt:  systemPrompt,
 		SystemBlocks:  systemBlocks,
@@ -251,10 +262,11 @@ func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativ
 		LastProvider:  e.provider(),
 		LastModel:     e.model(),
 	}
-	lim := e.agentLimits()
 	e.publishAgentLoopEvent("agent:loop:start", map[string]any{
 		"provider":        seed.LastProvider,
 		"model":           seed.LastModel,
+		"protocol":        protocol,
+		"base_url":        baseURL,
 		"max_tool_steps":  lim.MaxSteps,
 		"max_tool_tokens": lim.MaxTokens,
 		"surface":         "native",
@@ -713,9 +725,19 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			"surface":        "native",
 		})
 
+		reqProvider := strings.TrimSpace(lastProvider)
+		if reqProvider == "" {
+			reqProvider = e.provider()
+		}
+		reqModel := strings.TrimSpace(lastModel)
+		if reqModel == "" {
+			if selected, ok := e.Providers.Get(reqProvider); ok && selected != nil {
+				reqModel = strings.TrimSpace(selected.Model())
+			}
+		}
 		req := provider.CompletionRequest{
-			Provider:     e.provider(),
-			Model:        e.model(),
+			Provider:     reqProvider,
+			Model:        reqModel,
 			System:       systemPrompt,
 			SystemBlocks: systemBlocks,
 			Context:      chunks,
@@ -782,7 +804,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		// agent_loop_phases.go), then layer trajectory-aware coach
 		// hints over the result before the next provider round.
 		var freshStart int
-		msgs, traces, freshStart = e.executeAndAppendToolBatch(ctx, resp, msgs, traces, lastProvider, lastModel, step, totalTokens, lim, seed.LoopFileCache, cacheMu)
+		msgs, traces, freshStart = e.executeAndAppendToolBatch(ctx, resp, msgs, traces, seed.ToolSource, lastProvider, lastModel, step, totalTokens, lim, seed.LoopFileCache, cacheMu)
 		msgs = e.injectTrajectoryHints(seed, msgs, traces, freshStart, step)
 
 		// Post-step budget gate (postStepBudget in agent_loop_phases.go).
@@ -811,7 +833,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 // instruction stack (≈40 extra tokens) is eligible for Anthropic prompt
 // caching alongside the rest of the base template. Returns both the flat
 // text (for providers that ignore caching) and the structured SystemBlocks.
-func (e *Engine) buildNativeToolSystemPromptBundle(question string, chunks []types.ContextChunk) (string, []provider.SystemBlock) {
+func (e *Engine) buildNativeToolSystemPromptBundle(question string, chunks []types.ContextChunk, preflight *autonomyPreflight) (string, []provider.SystemBlock) {
 	var bundle *promptlib.PromptBundle
 	if e.Context != nil {
 		bundle = e.Context.BuildSystemPromptBundle(
@@ -824,7 +846,8 @@ func (e *Engine) buildNativeToolSystemPromptBundle(question string, chunks []typ
 	}
 	bridge := strings.TrimSpace(buildNativeMetaToolInstructions(e.Tools.BackendSpecs()))
 	if bridge == "" {
-		return bundleToSystemBlocks(bundle)
+		text, blocks := bundleToSystemBlocks(bundle)
+		return appendAutonomySystemSection(text, blocks, preflight)
 	}
 	bridgeText := "[DFMC native tool surface]\n" + bridge
 
@@ -832,7 +855,8 @@ func (e *Engine) buildNativeToolSystemPromptBundle(question string, chunks []typ
 		composed := &promptlib.PromptBundle{Sections: []promptlib.PromptSection{
 			{Label: "stable", Text: bridgeText, Cacheable: true},
 		}}
-		return bundleToSystemBlocks(composed)
+		text, blocks := bundleToSystemBlocks(composed)
+		return appendAutonomySystemSection(text, blocks, preflight)
 	}
 
 	sections := make([]promptlib.PromptSection, 0, len(bundle.Sections)+1)
@@ -853,7 +877,22 @@ func (e *Engine) buildNativeToolSystemPromptBundle(question string, chunks []typ
 			{Label: "stable", Text: bridgeText, Cacheable: true},
 		}, sections...)
 	}
-	return bundleToSystemBlocks(&promptlib.PromptBundle{Sections: sections})
+	text, blocks := bundleToSystemBlocks(&promptlib.PromptBundle{Sections: sections})
+	return appendAutonomySystemSection(text, blocks, preflight)
+}
+
+func appendAutonomySystemSection(text string, blocks []provider.SystemBlock, preflight *autonomyPreflight) (string, []provider.SystemBlock) {
+	block := buildAutonomySystemSection(preflight)
+	if block == nil {
+		return text, blocks
+	}
+	if strings.TrimSpace(text) == "" {
+		text = block.Text
+	} else {
+		text = strings.TrimSpace(text) + "\n\n" + block.Text
+	}
+	blocks = append(blocks, *block)
+	return text, blocks
 }
 
 func buildNativeMetaToolInstructions(backend []tools.ToolSpec) string {
@@ -864,6 +903,15 @@ func buildNativeMetaToolInstructions(backend []tools.ToolSpec) string {
 		"  - tool_call(name, args)      — execute a single backend tool",
 		"  - tool_batch_call(calls[])   — execute several backend tools in one round-trip",
 		"Discover before invoking. Cite evidence by file/line. Never dump raw tool output to the user.",
+		"Operate autonomously: keep going until the task is complete or you are truly blocked; do not stop after a single tool result when more reads, edits, verification, or research are still required.",
+		"For multi-step work, keep todo_write current early. When the request clearly decomposes, prefer orchestrate or delegate_task fan-out instead of forcing every subtask through one serial loop.",
+		"When choosing tools: grep_codebase for content discovery, glob for file-shape discovery, read_file for exact file slices, ast_query/find_symbol for structured symbol lookup, edit_file for small exact edits, apply_patch for multi-hunk edits, write_file for new files or full rewrites, run_command only for build/test/lint or when no native tool exists.",
+		"Before ANY mutation of an existing file, read it first. Then prefer edit_file for one focused replacement, apply_patch for several coordinated hunks, and write_file only when replacing most of the file or creating a new one.",
+		"Use tool_batch_call for independent read-only fan-out (for example several read_file / grep_codebase / glob calls). Do not batch dependent steps, and do not nest tool_call inside tool_batch_call unless you are correcting an existing malformed shape.",
+		"Common parameter shapes: read_file(path,line_start,line_end), grep_codebase(pattern,path?,max_results?), glob(pattern,path?), find_symbol(name,kind?,path?), ast_query(path,kind?,name_contains?), run_command(command,args,dir?,timeout_ms?).",
+		"run_command is NOT a shell. command is argv[0] only; put the rest in args. Never send &&, ||, ;, |, >, cd ..., $(...), or backticks.",
+		"If a tool fails, do not blindly retry the identical call. Read the error, fix the arg shape or choose a narrower tool. Missing-field errors usually mean you used the wrong parameter names or the wrong tool for the job.",
+		"Keep reads narrow: prefer focused patterns, exact symbols, and bounded line ranges over scanning whole files or broad recursive sweeps. Large broad reads should be the exception, not the default.",
 	}
 	if len(backend) > 0 {
 		preview := backend
@@ -1180,7 +1228,9 @@ func (e *Engine) recordNativeAgentInteraction(question string, completion native
 		// cost is one disk transaction per turn and any reader either
 		// sees the previous full log or the new full log — never a
 		// torn intermediate.
-		_ = e.Conversation.SaveActive()
+		e.saveActiveConversationWithWarning("turn_complete", map[string]any{
+			"question": truncateRunesWithMarker(question, 120, "..."),
+		})
 	}
 	if e.Memory != nil {
 		e.Memory.SetWorkingQuestionAnswer(question, completion.Answer)

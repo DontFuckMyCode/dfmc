@@ -1,17 +1,14 @@
 package tui
 
-// activity.go - the Activity panel is a timestamped firehose of engine
-// events. Other panels (Status, Chat footer, stats) show curated state;
-// Activity shows everything so the user can trust what the agent is
-// actually doing.
-//
-// Shape: a ring buffer of activityEntry, plus a scroll offset and a
-// follow-tail toggle. Writes go through recordActivityEvent, which is
-// called from handleEngineEvent on every event - the only filtering is
-// truncation of giant payload strings.
+// activity.go - the Activity panel is the TUI's mission-control surface:
+// a searchable, filterable event timeline with a detail inspector. Other
+// panels summarize state; this one answers "what just happened?" without
+// making the user leave the terminal.
 
 import (
 	"fmt"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,11 +18,15 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
-// maxActivityEntries caps memory use; at ~200 bytes per entry this is
-// ~0.5 MiB, comfortably small for an always-on panel.
+// maxActivityEntries caps memory use; at ~300 bytes per entry this still lands
+// comfortably under a megabyte while keeping plenty of live history.
 const maxActivityEntries = 2000
 
+const activityDefaultRenderHeight = 24
+
 type activityKind string
+type activityViewMode string
+type activityActionTarget string
 
 const (
 	activityKindInfo   activityKind = "info"
@@ -37,14 +38,55 @@ const (
 	activityKindIndex  activityKind = "index"
 )
 
+const (
+	activityViewAll      activityViewMode = "all"
+	activityViewTools    activityViewMode = "tools"
+	activityViewAgents   activityViewMode = "agents"
+	activityViewErrors   activityViewMode = "errors"
+	activityViewWorkflow activityViewMode = "workflow"
+	activityViewContext  activityViewMode = "context"
+)
+
+var activityViewModes = []activityViewMode{
+	activityViewAll,
+	activityViewTools,
+	activityViewAgents,
+	activityViewErrors,
+	activityViewWorkflow,
+	activityViewContext,
+}
+
+const (
+	activityTargetStatus    activityActionTarget = "status"
+	activityTargetFiles     activityActionTarget = "files"
+	activityTargetPatch     activityActionTarget = "patch"
+	activityTargetTools     activityActionTarget = "tools"
+	activityTargetPlans     activityActionTarget = "plans"
+	activityTargetContext   activityActionTarget = "context"
+	activityTargetCodeMap   activityActionTarget = "codemap"
+	activityTargetSecurity  activityActionTarget = "security"
+	activityTargetProviders activityActionTarget = "providers"
+)
+
 type activityEntry struct {
-	At      time.Time
-	Kind    activityKind
-	EventID string
-	Text    string
+	At       time.Time
+	Kind     activityKind
+	EventID  string
+	Source   string
+	Tool     string
+	Path     string
+	Provider string
+	Query    string
+	Text     string
+	Details  []string
+	Count    int
 }
 
 func (m *Model) recordActivityEvent(ev engine.Event) {
+	prevVisible := 0
+	if !m.activity.follow {
+		prevVisible = len(m.filteredActivityEntries())
+	}
 	kind, text := classifyActivity(ev)
 	if text == "" {
 		text = strings.TrimSpace(ev.Type)
@@ -52,30 +94,54 @@ func (m *Model) recordActivityEvent(ev engine.Event) {
 	if text == "" {
 		return
 	}
-	entry := activityEntry{
-		At:      time.Now(),
-		Kind:    kind,
-		EventID: strings.TrimSpace(ev.Type),
-		Text:    truncateActivityText(text, 200),
+	payload, _ := toStringAnyMap(ev.Payload)
+	at := ev.Timestamp
+	if at.IsZero() {
+		at = time.Now()
 	}
-	// Dedupe consecutive identical events - streaming deltas can flood the
-	// feed otherwise. We only dedupe when the event id and text both match.
+	entry := activityEntry{
+		At:       at,
+		Kind:     kind,
+		EventID:  strings.TrimSpace(ev.Type),
+		Source:   strings.TrimSpace(ev.Source),
+		Tool:     payloadString(payload, "tool", ""),
+		Path:     extractActivityPath(ev),
+		Provider: extractActivityProvider(ev),
+		Query:    extractActivityQuery(ev, text),
+		Text:     truncateActivityText(text, 200),
+		Details:  buildActivityDetailLines(ev, text),
+		Count:    1,
+	}
+
 	if n := len(m.activity.entries); n > 0 {
-		last := m.activity.entries[n-1]
+		last := &m.activity.entries[n-1]
 		if last.EventID == entry.EventID && last.Text == entry.Text {
+			last.Count++
+			last.At = entry.At
+			if last.Source == "" {
+				last.Source = entry.Source
+			}
+			if len(last.Details) == 0 {
+				last.Details = entry.Details
+			}
 			return
 		}
 	}
+
 	m.activity.entries = append(m.activity.entries, entry)
 	if len(m.activity.entries) > maxActivityEntries {
 		drop := len(m.activity.entries) - maxActivityEntries
 		m.activity.entries = m.activity.entries[drop:]
 	}
-	// Follow-tail: when the user is pinned to the bottom (the default) the
-	// view should scroll as new entries arrive. Any manual scroll unsets
-	// activityFollow, pinning the view until the user presses G or c.
 	if m.activity.follow {
 		m.activity.scroll = 0
+	} else {
+		// Hold the user's selected event in place only when the active
+		// filter/query actually gained visible rows.
+		if nextVisible := len(m.filteredActivityEntries()); nextVisible > prevVisible {
+			m.activity.scroll += nextVisible - prevVisible
+		}
+		m.activity.scroll = clampActivityOffset(m.activity.scroll, len(m.filteredActivityEntries()))
 	}
 }
 
@@ -123,17 +189,76 @@ func classifyActivity(ev engine.Event) (activityKind, string) {
 	case "agent:loop:start":
 		prov := payloadString(payload, "provider", "")
 		model := payloadString(payload, "model", "")
+		protocol := payloadString(payload, "protocol", "")
+		baseURL := payloadString(payload, "base_url", "")
+		host := ""
+		if parsed, err := url.Parse(baseURL); err == nil {
+			host = strings.TrimSpace(parsed.Host)
+		}
 		max := payloadInt(payload, "max_tool_steps", 0)
-		text = fmt.Sprintf("agent start - %s/%s max=%d", prov, model, max)
+		text = fmt.Sprintf("agent start - %s/%s", prov, model)
+		if protocol != "" {
+			text += " " + protocol
+		}
+		if host != "" {
+			text += " " + host
+		}
+		text += fmt.Sprintf(" max=%d", max)
 	case "agent:loop:thinking":
 		step := payloadInt(payload, "step", 0)
 		max := payloadInt(payload, "max_tool_steps", 0)
 		text = fmt.Sprintf("agent thinking - %d/%d", step, max)
+	case "agent:autonomy:plan":
+		count := payloadInt(payload, "subtask_count", 0)
+		confidence := 0.0
+		if raw, ok := payload["confidence"].(float64); ok {
+			confidence = raw
+		}
+		mode := "sequential"
+		if payloadBool(payload, "parallel", false) {
+			mode = "parallel"
+		}
+		scope := payloadString(payload, "scope", "")
+		text = fmt.Sprintf("autonomy preflight - %d subtasks %s %.2f", count, mode, confidence)
+		if scope != "" && scope != "top_level" {
+			text = fmt.Sprintf("autonomy preflight [%s] - %d subtasks %s %.2f", scope, count, mode, confidence)
+		}
+	case "agent:autonomy:kickoff":
+		toolName := payloadString(payload, "tool", "orchestrate")
+		count := payloadInt(payload, "subtask_count", 0)
+		confidence := 0.0
+		if raw, ok := payload["confidence"].(float64); ok {
+			confidence = raw
+		}
+		text = fmt.Sprintf("autonomy kickoff - %s %d subtasks %.2f", toolName, count, confidence)
 	case "agent:loop:end":
 		reason := payloadString(payload, "reason", "done")
 		text = "agent end - " + reason
 	case "agent:loop:error":
 		text = "agent error - " + payloadString(payload, "error", "")
+		kind = activityKindError
+	case "provider:throttle:retry":
+		prov := payloadString(payload, "provider", "?")
+		attempt := payloadInt(payload, "attempt", 0)
+		waitMs := payloadInt(payload, "wait_ms", 0)
+		mode := "request"
+		if payloadBool(payload, "stream", false) {
+			mode = "stream"
+		}
+		text = fmt.Sprintf("provider throttled - %s %s retry #%d in %dms", prov, mode, attempt, waitMs)
+		kind = activityKindError
+	case "config:reload:auto":
+		path := payloadString(payload, "path", "")
+		text = "config auto-reloaded"
+		if path != "" {
+			text += " - " + truncateSingleLine(path, 96)
+		}
+	case "config:reload:auto_failed":
+		errText := payloadString(payload, "error", "")
+		text = "config auto-reload failed"
+		if errText != "" {
+			text += " - " + truncateSingleLine(errText, 120)
+		}
 		kind = activityKindError
 	case "context:lifecycle:compacted":
 		before := payloadIntAny(payload, 0, "before_tokens", "tokens_before")
@@ -152,7 +277,6 @@ func classifyActivity(ev engine.Event) (activityKind, string) {
 	case "engine:initializing", "engine:ready", "engine:serving", "engine:shutdown", "engine:stopped":
 		text = strings.TrimPrefix(t, "engine:")
 	case "stream:delta":
-		// Too noisy to log verbatim; the dedupe pass already squashes runs.
 		text = "stream delta"
 	case "stream:start":
 		text = "stream start"
@@ -164,6 +288,129 @@ func classifyActivity(ev engine.Event) (activityKind, string) {
 		}
 	}
 	return kind, text
+}
+
+func buildActivityDetailLines(ev engine.Event, summary string) []string {
+	lines := []string{
+		"summary: " + truncateSingleLine(summary, 160),
+		"type: " + blankFallback(strings.TrimSpace(ev.Type), "(unknown)"),
+	}
+	if source := strings.TrimSpace(ev.Source); source != "" {
+		lines = append(lines, "source: "+source)
+	}
+	if !ev.Timestamp.IsZero() {
+		lines = append(lines, "event time: "+ev.Timestamp.Format(time.RFC3339))
+	}
+	lines = append(lines, summarizeActivityPayload(ev.Payload)...)
+	return lines
+}
+
+func summarizeActivityPayload(payload any) []string {
+	switch v := payload.(type) {
+	case nil:
+		return nil
+	case string:
+		if text := strings.TrimSpace(v); text != "" {
+			return []string{"payload: " + truncateSingleLine(text, 160)}
+		}
+	case map[string]any:
+		if len(v) == 0 {
+			return nil
+		}
+		return summarizeActivityPayloadMap(v)
+	default:
+		text := strings.TrimSpace(fmt.Sprint(v))
+		if text != "" && text != "<nil>" {
+			return []string{"payload: " + truncateSingleLine(text, 160)}
+		}
+	}
+	return nil
+}
+
+func summarizeActivityPayloadMap(payload map[string]any) []string {
+	if len(payload) == 0 {
+		return nil
+	}
+	keys := orderedActivityPayloadKeys(payload)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		value := strings.TrimSpace(fmt.Sprint(payload[key]))
+		if value == "" || value == "<nil>" {
+			continue
+		}
+		parts = append(parts, key+"="+truncateSingleLine(value, 42))
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, (len(parts)+2)/3)
+	for i := 0; i < len(parts); i += 3 {
+		end := i + 3
+		if end > len(parts) {
+			end = len(parts)
+		}
+		lines = append(lines, "payload: "+strings.Join(parts[i:end], " · "))
+	}
+	return lines
+}
+
+func extractActivityPath(ev engine.Event) string {
+	payload, _ := toStringAnyMap(ev.Payload)
+	if len(payload) == 0 {
+		return ""
+	}
+	for _, key := range []string{"path", "file", "filepath", "rel", "target", "config_path"} {
+		if path := strings.TrimSpace(payloadString(payload, key, "")); path != "" {
+			return path
+		}
+	}
+	return ""
+}
+
+func extractActivityProvider(ev engine.Event) string {
+	payload, _ := toStringAnyMap(ev.Payload)
+	if len(payload) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(payloadString(payload, "provider", ""))
+}
+
+func extractActivityQuery(ev engine.Event, summary string) string {
+	payload, _ := toStringAnyMap(ev.Payload)
+	for _, key := range []string{"query", "task", "title", "description", "prompt", "goal", "reason", "error"} {
+		if text := strings.TrimSpace(payloadString(payload, key, "")); text != "" {
+			return truncateSingleLine(text, 200)
+		}
+	}
+	_ = summary
+	return ""
+}
+
+func orderedActivityPayloadKeys(payload map[string]any) []string {
+	preferred := []string{
+		"tool", "provider", "model", "reason", "error", "status", "success",
+		"run_id", "todo_id", "title", "step", "attempt", "duration_ms",
+		"durationMs", "wait_ms", "files", "subtask_count", "scope", "parallel",
+		"before_tokens", "after_tokens", "tokens_before", "tokens_after", "path",
+	}
+	seen := map[string]struct{}{}
+	keys := make([]string, 0, len(payload))
+	for _, key := range preferred {
+		if _, ok := payload[key]; ok {
+			seen[key] = struct{}{}
+			keys = append(keys, key)
+		}
+	}
+	extra := make([]string, 0, len(payload)-len(keys))
+	for key := range payload {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		extra = append(extra, key)
+	}
+	sort.Strings(extra)
+	keys = append(keys, extra...)
+	return keys
 }
 
 func truncateActivityText(s string, n int) string {
@@ -187,8 +434,6 @@ func payloadIntAny(data map[string]any, fallback int, keys ...string) int {
 	return fallback
 }
 
-// kindIcon returns a colored indicator for the severity/category slot.
-// The icons stay single-cell so column alignment holds under all fonts.
 func kindIcon(kind activityKind) string {
 	switch kind {
 	case activityKindError:
@@ -208,60 +453,424 @@ func kindIcon(kind activityKind) string {
 	}
 }
 
-// formatActivityLine renders a single entry into a fixed-layout row:
-//
-//	HH:MM:SS  . kind  text
-func formatActivityLine(entry activityEntry, width int) string {
+func activityModeLabel(mode activityViewMode) string {
+	switch mode {
+	case activityViewTools:
+		return "tools"
+	case activityViewAgents:
+		return "agents"
+	case activityViewErrors:
+		return "errors"
+	case activityViewWorkflow:
+		return "workflow"
+	case activityViewContext:
+		return "context"
+	default:
+		return "all"
+	}
+}
+
+func nextActivityMode(current activityViewMode) activityViewMode {
+	for i, mode := range activityViewModes {
+		if mode == current {
+			return activityViewModes[(i+1)%len(activityViewModes)]
+		}
+	}
+	return activityViewAll
+}
+
+func activityModeShortcut(mode activityViewMode) string {
+	switch mode {
+	case activityViewAll:
+		return "1"
+	case activityViewTools:
+		return "2"
+	case activityViewAgents:
+		return "3"
+	case activityViewErrors:
+		return "4"
+	case activityViewWorkflow:
+		return "5"
+	case activityViewContext:
+		return "6"
+	default:
+		return "1"
+	}
+}
+
+func activityMatchesMode(entry activityEntry, mode activityViewMode) bool {
+	eventID := strings.ToLower(strings.TrimSpace(entry.EventID))
+	switch mode {
+	case activityViewTools:
+		return entry.Kind == activityKindTool
+	case activityViewAgents:
+		return entry.Kind == activityKindAgent
+	case activityViewErrors:
+		return entry.Kind == activityKindError
+	case activityViewWorkflow:
+		return strings.HasPrefix(eventID, "drive:") ||
+			strings.HasPrefix(eventID, "agent:autonomy:") ||
+			strings.HasPrefix(eventID, "agent:subagent:") ||
+			strings.HasPrefix(eventID, "provider:race:") ||
+			strings.HasPrefix(eventID, "provider:throttle:")
+	case activityViewContext:
+		return entry.Kind == activityKindCtx || entry.Kind == activityKindIndex
+	default:
+		return true
+	}
+}
+
+func activityMatchesQuery(entry activityEntry, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	if strings.Contains(strings.ToLower(entry.Text), query) ||
+		strings.Contains(strings.ToLower(entry.EventID), query) ||
+		strings.Contains(strings.ToLower(entry.Source), query) {
+		return true
+	}
+	for _, line := range entry.Details {
+		if strings.Contains(strings.ToLower(line), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) filteredActivityEntries() []activityEntry {
+	mode := m.activity.mode
+	if mode == "" {
+		mode = activityViewAll
+	}
+	query := strings.TrimSpace(m.activity.query)
+	filtered := make([]activityEntry, 0, len(m.activity.entries))
+	for _, entry := range m.activity.entries {
+		if !activityMatchesMode(entry, mode) || !activityMatchesQuery(entry, query) {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
+func clampActivityOffset(scroll, total int) int {
+	if total <= 0 {
+		return 0
+	}
+	if scroll < 0 {
+		return 0
+	}
+	if scroll >= total {
+		return total - 1
+	}
+	return scroll
+}
+
+func activitySelectedIndex(total, scroll int) int {
+	if total <= 0 {
+		return -1
+	}
+	scroll = clampActivityOffset(scroll, total)
+	return total - 1 - scroll
+}
+
+func formatActivityLine(entry activityEntry, width int, selected bool) string {
 	ts := entry.At.Format("15:04:05")
 	icon := kindIcon(entry.Kind)
-	head := subtleStyle.Render(ts) + " " + icon + " " + entry.Text
-	if width > 0 {
-		return truncateSingleLine(head, width)
+	count := ""
+	if entry.Count > 1 {
+		count = subtleStyle.Render(fmt.Sprintf(" x%d", entry.Count))
 	}
-	return head
+	prefix := "  "
+	if selected {
+		prefix = accentStyle.Render("› ")
+	}
+	line := prefix + subtleStyle.Render(ts) + " " + icon + " " + entry.Text + count
+	line = truncateSingleLine(line, width)
+	if selected {
+		line = lipgloss.NewStyle().
+			Foreground(colorTitleFg).
+			Background(colorAccent).
+			Bold(true).
+			Render(line)
+	}
+	return line
+}
+
+func renderActivityPane(title string, body []string, width, height int) string {
+	if height < 3 {
+		height = 3
+	}
+	lines := []string{
+		accentStyle.Bold(true).Render(title),
+		renderDivider(max(width-1, 1)),
+	}
+	lines = append(lines, body...)
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return lipgloss.NewStyle().Width(width).Height(height).Render(strings.Join(lines, "\n"))
+}
+
+func activityTargetForEntry(entry activityEntry) activityActionTarget {
+	eventID := strings.ToLower(strings.TrimSpace(entry.EventID))
+	text := strings.ToLower(strings.TrimSpace(entry.Text))
+	switch {
+	case strings.HasPrefix(eventID, "provider:"):
+		return activityTargetProviders
+	case strings.HasPrefix(eventID, "drive:"),
+		strings.HasPrefix(eventID, "agent:autonomy:"),
+		strings.HasPrefix(eventID, "agent:subagent:"):
+		return activityTargetPlans
+	case strings.HasPrefix(eventID, "security:"),
+		strings.Contains(eventID, "secret"),
+		strings.Contains(eventID, "vuln"),
+		strings.Contains(text, "secret"),
+		strings.Contains(text, "vulnerability"):
+		return activityTargetSecurity
+	case strings.HasPrefix(eventID, "context:"),
+		strings.HasPrefix(eventID, "ctx:"):
+		return activityTargetContext
+	case strings.HasPrefix(eventID, "index:"):
+		return activityTargetCodeMap
+	case strings.HasPrefix(eventID, "tool:") && isMutationTool(entry.Tool):
+		return activityTargetPatch
+	case strings.HasPrefix(eventID, "tool:") && strings.TrimSpace(entry.Path) != "":
+		return activityTargetFiles
+	case strings.HasPrefix(eventID, "tool:"):
+		return activityTargetTools
+	case strings.HasPrefix(eventID, "config:"),
+		strings.HasPrefix(eventID, "engine:"):
+		return activityTargetStatus
+	case strings.TrimSpace(entry.Path) != "":
+		return activityTargetFiles
+	default:
+		return activityTargetStatus
+	}
+}
+
+func activityTargetLabel(target activityActionTarget) string {
+	switch target {
+	case activityTargetFiles:
+		return "Files"
+	case activityTargetPatch:
+		return "Patch"
+	case activityTargetTools:
+		return "Tools"
+	case activityTargetPlans:
+		return "Plans"
+	case activityTargetContext:
+		return "Context"
+	case activityTargetCodeMap:
+		return "CodeMap"
+	case activityTargetSecurity:
+		return "Security"
+	case activityTargetProviders:
+		return "Providers"
+	default:
+		return "Status"
+	}
+}
+
+func activityTargetSupportsRefresh(target activityActionTarget) bool {
+	switch target {
+	case activityTargetStatus,
+		activityTargetPatch,
+		activityTargetPlans,
+		activityTargetContext,
+		activityTargetCodeMap,
+		activityTargetSecurity,
+		activityTargetProviders:
+		return true
+	default:
+		return false
+	}
+}
+
+func renderActivityInspector(entry activityEntry, width, height int) string {
+	target := activityTargetForEntry(entry)
+	body := []string{
+		boldStyle.Render(truncateSingleLine(entry.Text, width-2)),
+		subtleStyle.Render("event: " + blankFallback(strings.TrimSpace(entry.EventID), "(unknown)")),
+		subtleStyle.Render("kind: " + string(entry.Kind)),
+		subtleStyle.Render("time: " + entry.At.Format("15:04:05")),
+		subtleStyle.Render("open: enter/o -> " + activityTargetLabel(target)),
+	}
+	if source := strings.TrimSpace(entry.Source); source != "" {
+		body = append(body, subtleStyle.Render("source: "+source))
+	}
+	if provider := strings.TrimSpace(entry.Provider); provider != "" {
+		body = append(body, subtleStyle.Render("provider: "+provider))
+	}
+	if path := strings.TrimSpace(entry.Path); path != "" {
+		body = append(body, subtleStyle.Render("file: f -> "+truncateSingleLine(path, width-14)))
+	}
+	if activityTargetSupportsRefresh(target) {
+		body = append(body, subtleStyle.Render("refresh: r -> reopen target with fresh data"))
+	}
+	body = append(body, subtleStyle.Render("copy: y -> snapshot details to clipboard"))
+	if entry.Count > 1 {
+		body = append(body, subtleStyle.Render(fmt.Sprintf("repeats: %d consecutive", entry.Count)))
+	}
+	body = append(body, "")
+	for _, line := range entry.Details {
+		body = append(body, truncateSingleLine(line, width-2))
+	}
+	return renderActivityPane("INSPECTOR", body, width, height)
+}
+
+func renderActivityTimeline(entries []activityEntry, selected, width, height int) string {
+	if height < 4 {
+		height = 4
+	}
+	rowsHeight := height - 3
+	if rowsHeight < 1 {
+		rowsHeight = 1
+	}
+	if len(entries) == 0 {
+		return renderActivityPane("TIMELINE", []string{subtleStyle.Render("No matching events.")}, width, height)
+	}
+	end := selected + 1
+	if end < 1 {
+		end = 1
+	}
+	if end > len(entries) {
+		end = len(entries)
+	}
+	start := end - rowsHeight
+	if start < 0 {
+		start = 0
+	}
+	hiddenOlder := start
+	hiddenNewer := len(entries) - end
+
+	body := make([]string, 0, rowsHeight+1)
+	body = append(body, subtleStyle.Render(fmt.Sprintf(
+		"%d shown · selected %d/%d · older %d · newer %d",
+		len(entries), selected+1, len(entries), hiddenOlder, hiddenNewer,
+	)))
+	for idx := start; idx < end; idx++ {
+		body = append(body, formatActivityLine(entries[idx], width-2, idx == selected))
+	}
+	return renderActivityPane("TIMELINE", body, width, height)
+}
+
+func activityKindCounts(entries []activityEntry) map[activityKind]int {
+	counts := map[activityKind]int{}
+	for _, entry := range entries {
+		counts[entry.Kind] += entry.Count
+	}
+	return counts
 }
 
 func (m Model) renderActivityView(width int) string {
+	return m.renderActivityViewSized(width, activityDefaultRenderHeight)
+}
+
+func (m Model) renderActivityViewSized(width int, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = clampInt(height, 10, 1000)
+
+	mode := m.activity.mode
+	if mode == "" {
+		mode = activityViewAll
+	}
+	query := strings.TrimSpace(m.activity.query)
+	allCounts := activityKindCounts(m.activity.entries)
+	filtered := m.filteredActivityEntries()
+	scroll := clampActivityOffset(m.activity.scroll, len(filtered))
+	selected := activitySelectedIndex(len(filtered), scroll)
+	followState := okStyle.Render("live")
+	if !m.activity.follow {
+		followState = warnStyle.Render("paused")
+	}
+
+	hint := "j/k older-newer · pgup/pgdn page · enter/o open · r refresh · f file · y copy · 1-6 filter"
+	if m.activity.searchActive {
+		hint = "typing search · enter commit · esc stop · backspace delete"
+	}
+	queryLine := subtleStyle.Render("view: ") +
+		accentStyle.Render(activityModeLabel(mode)) +
+		subtleStyle.Render(" ["+activityModeShortcut(mode)+"] · query: ")
+	if query != "" {
+		queryLine += boldStyle.Render(query)
+	} else {
+		queryLine += subtleStyle.Render("(none)")
+	}
+	queryLine += subtleStyle.Render(" · follow: ") + followState
+
+	summary := fmt.Sprintf(
+		"%d total · %d shown · tool %d · agent %d · err %d · ctx %d",
+		len(m.activity.entries),
+		len(filtered),
+		allCounts[activityKindTool],
+		allCounts[activityKindAgent],
+		allCounts[activityKindError],
+		allCounts[activityKindCtx]+allCounts[activityKindIndex],
+	)
+
 	lines := []string{
-		sectionHeader("*", "Activity"),
-		subtleStyle.Render("j/k scroll - g/G top/bottom - c clear - p " + followHint(m.activity.follow)),
+		sectionHeader("✦", "Activity"),
+		subtleStyle.Render(hint),
+		queryLine,
+		subtleStyle.Render(summary),
 		renderDivider(width - 2),
 	}
 
 	if len(m.activity.entries) == 0 {
-		lines = append(lines, "",
+		lines = append(lines,
+			"",
 			subtleStyle.Render("No events yet."),
-			subtleStyle.Render("Agent calls, tool use, context compaction, and index runs stream in here live."),
+			subtleStyle.Render("Tool calls, subagent fan-out, drive progress, provider retries, and context lifecycle stream here live."),
+		)
+		return strings.Join(lines, "\n")
+	}
+	if len(filtered) == 0 {
+		lines = append(lines,
+			"",
+			warnStyle.Render("No events match this filter/query."),
+			subtleStyle.Render("Press c to clear the query or v / 1-6 to change the view."),
 		)
 		return strings.Join(lines, "\n")
 	}
 
-	// Window: show the tail minus activityScroll. Scroll=0 means follow-tail.
-	// We render last (viewport) lines, clipped to the available height in
-	// the caller via fitPanelContentHeight.
-	visible := m.activity.entries
-	if m.activity.scroll > 0 && m.activity.scroll < len(m.activity.entries) {
-		visible = m.activity.entries[:len(m.activity.entries)-m.activity.scroll]
+	remainingHeight := height - len(lines)
+	if remainingHeight < 4 {
+		remainingHeight = 4
 	}
 
-	for _, entry := range visible {
-		lines = append(lines, formatActivityLine(entry, width-2))
+	selectedEntry := filtered[selected]
+	if width >= 110 && remainingHeight >= 8 {
+		leftWidth := int(float64(width-2) * 0.58)
+		if leftWidth < 42 {
+			leftWidth = 42
+		}
+		rightWidth := width - 2 - leftWidth - 2
+		if rightWidth < 28 {
+			rightWidth = 28
+			leftWidth = width - 2 - rightWidth - 2
+		}
+		timeline := renderActivityTimeline(filtered, selected, leftWidth, remainingHeight)
+		inspector := renderActivityInspector(selectedEntry, rightWidth, remainingHeight)
+		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, timeline, "  ", inspector))
+	} else {
+		timelineHeight := remainingHeight / 2
+		if timelineHeight < 5 {
+			timelineHeight = 5
+		}
+		inspectorHeight := remainingHeight - timelineHeight - 1
+		if inspectorHeight < 4 {
+			inspectorHeight = 4
+		}
+		lines = append(lines, renderActivityTimeline(filtered, selected, width-2, timelineHeight))
+		lines = append(lines, renderDivider(width-2))
+		lines = append(lines, renderActivityInspector(selectedEntry, width-2, inspectorHeight))
 	}
 
-	// Footer summary: totals by kind.
-	counts := map[activityKind]int{}
-	for _, e := range m.activity.entries {
-		counts[e.Kind]++
-	}
-	summary := fmt.Sprintf("%d events - tool=%d agent=%d err=%d ctx=%d",
-		len(m.activity.entries),
-		counts[activityKindTool],
-		counts[activityKindAgent],
-		counts[activityKindError],
-		counts[activityKindCtx],
-	)
-	lines = append(lines, "", subtleStyle.Render(summary))
 	if !m.activity.follow {
 		lines = append(lines, warnStyle.Render("paused - press G to jump to tail and resume follow"))
 	}
@@ -275,14 +884,185 @@ func followHint(follow bool) string {
 	return "resume follow"
 }
 
-// handleActivityKey drives navigation for the Activity tab. Returns the
-// model unchanged when the key doesn't match a known binding, so the
-// outer dispatcher can still fall through.
+func (m Model) activitySelectedEntry() (activityEntry, bool) {
+	filtered := m.filteredActivityEntries()
+	if len(filtered) == 0 {
+		return activityEntry{}, false
+	}
+	scroll := clampActivityOffset(m.activity.scroll, len(filtered))
+	selected := activitySelectedIndex(len(filtered), scroll)
+	if selected < 0 || selected >= len(filtered) {
+		return activityEntry{}, false
+	}
+	return filtered[selected], true
+}
+
+func activityCopyPayload(entry activityEntry) string {
+	lines := []string{
+		"summary: " + strings.TrimSpace(entry.Text),
+		"event: " + strings.TrimSpace(entry.EventID),
+		"kind: " + string(entry.Kind),
+		"time: " + entry.At.Format(time.RFC3339),
+	}
+	if source := strings.TrimSpace(entry.Source); source != "" {
+		lines = append(lines, "source: "+source)
+	}
+	if provider := strings.TrimSpace(entry.Provider); provider != "" {
+		lines = append(lines, "provider: "+provider)
+	}
+	if path := strings.TrimSpace(entry.Path); path != "" {
+		lines = append(lines, "path: "+path)
+	}
+	if entry.Count > 1 {
+		lines = append(lines, fmt.Sprintf("repeats: %d", entry.Count))
+	}
+	lines = append(lines, entry.Details...)
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) activityTabIndex(name string) int {
+	for i, tab := range m.tabs {
+		if strings.EqualFold(strings.TrimSpace(tab), name) {
+			return i
+		}
+	}
+	return m.activeTab
+}
+
+func (m Model) activityOpenFile(path string) (tea.Model, tea.Cmd) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		m.notice = "Selected activity has no file path."
+		return m, nil
+	}
+	if idx := indexOfString(m.filesView.entries, path); idx >= 0 {
+		m.filesView.index = idx
+	} else {
+		m.filesView.entries = append(m.filesView.entries, path)
+		m.filesView.index = len(m.filesView.entries) - 1
+	}
+	m.filesView.path = path
+	m.activeTab = m.activityTabIndex("Files")
+	m.notice = "Focused file from Activity: " + path
+	return m, loadFilePreviewCmd(m.eng, path)
+}
+
+func activityPlanOrContextQuery(entry activityEntry) string {
+	if query := strings.TrimSpace(entry.Query); query != "" {
+		return query
+	}
+	return ""
+}
+
+func (m Model) activityFocusPatchPath(path string) Model {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return m
+	}
+	for i, section := range m.patchView.set {
+		if strings.EqualFold(strings.TrimSpace(section.Path), path) {
+			m.patchView.index = i
+			m.patchView.hunk = 0
+			return m
+		}
+	}
+	return m
+}
+
+func (m Model) activityCopySelection() (tea.Model, tea.Cmd) {
+	entry, ok := m.activitySelectedEntry()
+	if !ok {
+		m.notice = "No activity event selected."
+		return m, nil
+	}
+	cmd, res := copyToClipboardCmd(activityCopyPayload(entry))
+	m.notice = copyNotice("activity event", res)
+	return m, cmd
+}
+
+func (m Model) activityOpenSelection(refresh bool) (tea.Model, tea.Cmd) {
+	entry, ok := m.activitySelectedEntry()
+	if !ok {
+		m.notice = "No activity event selected."
+		return m, nil
+	}
+	target := activityTargetForEntry(entry)
+	switch target {
+	case activityTargetFiles:
+		return m.activityOpenFile(entry.Path)
+	case activityTargetPatch:
+		m = m.activityFocusPatchPath(entry.Path)
+		m.activeTab = m.activityTabIndex("Patch")
+		m.notice = "Opened Patch from Activity."
+		if refresh {
+			return m, tea.Batch(loadWorkspaceCmd(m.eng), loadLatestPatchCmd(m.eng))
+		}
+		return m, nil
+	case activityTargetTools:
+		m.activeTab = m.activityTabIndex("Tools")
+		m.notice = "Opened Tools from Activity."
+		return m, nil
+	case activityTargetPlans:
+		m = m.activatePlansPanel(activityPlanOrContextQuery(entry), refresh)
+		m.notice = "Opened Plans from Activity."
+		return m, nil
+	case activityTargetContext:
+		m = m.activateContextPanel(activityPlanOrContextQuery(entry), refresh)
+		m.notice = "Opened Context from Activity."
+		return m, nil
+	case activityTargetCodeMap:
+		m.activeTab = m.activityTabIndex("CodeMap")
+		m.notice = "Opened CodeMap from Activity."
+		if refresh {
+			return m, loadCodemapCmd(m.eng)
+		}
+		return m, nil
+	case activityTargetSecurity:
+		m.activeTab = m.activityTabIndex("Security")
+		m.notice = "Opened Security from Activity."
+		if refresh {
+			return m, loadSecurityCmd(m.eng)
+		}
+		return m, nil
+	case activityTargetProviders:
+		m = m.activateProvidersPanel(entry.Provider, refresh)
+		m.notice = "Opened Providers from Activity."
+		return m, nil
+	default:
+		m.activeTab = m.activityTabIndex("Status")
+		m.notice = "Opened Status from Activity."
+		if refresh {
+			return m, loadStatusCmd(m.eng)
+		}
+		return m, nil
+	}
+}
+
+func (m Model) activityFocusSelectionFile() (tea.Model, tea.Cmd) {
+	entry, ok := m.activitySelectedEntry()
+	if !ok {
+		m.notice = "No activity event selected."
+		return m, nil
+	}
+	return m.activityOpenFile(entry.Path)
+}
+
 func (m Model) handleActivityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	total := len(m.activity.entries)
+	if m.activity.searchActive {
+		return m.handleActivitySearchKey(msg)
+	}
+	total := len(m.filteredActivityEntries())
 	step := 1
 	pageStep := 10
 	switch msg.String() {
+	case "enter", "o":
+		return m.activityOpenSelection(false)
+	case "r":
+		return m.activityOpenSelection(true)
+	case "f":
+		return m.activityFocusSelectionFile()
+	case "y":
+		return m.activityCopySelection()
 	case "j", "down":
 		if m.activity.scroll >= step {
 			m.activity.scroll -= step
@@ -305,20 +1085,55 @@ func (m Model) handleActivityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "pgup":
 		if m.activity.scroll+pageStep <= total {
 			m.activity.scroll += pageStep
-		} else {
-			m.activity.scroll = total
+		} else if total > 0 {
+			m.activity.scroll = total - 1
 		}
 		m.activity.follow = false
-	case "g":
-		// g = jump to oldest (top of buffer).
+	case "g", "home":
 		if total > 0 {
 			m.activity.scroll = total - 1
 		}
 		m.activity.follow = false
-	case "G":
+	case "G", "end":
 		m.activity.scroll = 0
 		m.activity.follow = true
+	case "1":
+		m.activity.mode = activityViewAll
+		m.activity.scroll = 0
+		m.activity.follow = true
+	case "2":
+		m.activity.mode = activityViewTools
+		m.activity.scroll = 0
+		m.activity.follow = true
+	case "3":
+		m.activity.mode = activityViewAgents
+		m.activity.scroll = 0
+		m.activity.follow = true
+	case "4":
+		m.activity.mode = activityViewErrors
+		m.activity.scroll = 0
+		m.activity.follow = true
+	case "5":
+		m.activity.mode = activityViewWorkflow
+		m.activity.scroll = 0
+		m.activity.follow = true
+	case "6":
+		m.activity.mode = activityViewContext
+		m.activity.scroll = 0
+		m.activity.follow = true
+	case "v":
+		m.activity.mode = nextActivityMode(m.activity.mode)
+		m.activity.scroll = 0
+		m.activity.follow = true
+	case "/":
+		m.activity.searchActive = true
 	case "c":
+		if strings.TrimSpace(m.activity.query) != "" {
+			m.activity.query = ""
+			m.activity.scroll = 0
+			m.activity.follow = true
+			break
+		}
 		m.activity.entries = nil
 		m.activity.scroll = 0
 		m.activity.follow = true
@@ -328,10 +1143,32 @@ func (m Model) handleActivityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activity.scroll = 0
 		}
 	}
+	m.activity.scroll = clampActivityOffset(m.activity.scroll, len(m.filteredActivityEntries()))
 	return m, nil
 }
 
-// small utility to keep the file self-contained.
+func (m Model) handleActivitySearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.activity.searchActive = false
+		m.activity.scroll = 0
+		m.activity.follow = true
+		return m, nil
+	case tea.KeyEsc:
+		m.activity.searchActive = false
+		return m, nil
+	case tea.KeyBackspace:
+		if r := []rune(m.activity.query); len(r) > 0 {
+			m.activity.query = string(r[:len(r)-1])
+		}
+		return m, nil
+	case tea.KeyRunes, tea.KeySpace:
+		m.activity.query += msg.String()
+		return m, nil
+	}
+	return m, nil
+}
+
 func clampInt(v, lo, hi int) int {
 	if v < lo {
 		return lo
@@ -342,6 +1179,4 @@ func clampInt(v, lo, hi int) int {
 	return v
 }
 
-// lipgloss import kept explicit even when unused directly so future edits
-// have the namespace ready for inline color tweaks.
 var _ = lipgloss.NewStyle

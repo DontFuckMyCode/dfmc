@@ -28,7 +28,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
 
 // defaultSearchLimit caps the search result count. Default is low on purpose:
@@ -56,8 +55,9 @@ const (
 type metaBudgetKey struct{}
 
 type metaBudgetState struct {
-	depth atomic.Int32
-	used  atomic.Int32
+	mu    sync.Mutex
+	depth int
+	used  int
 }
 
 // SeedMetaToolBudget ensures ctx carries the shared meta-tool execution budget
@@ -81,23 +81,29 @@ func enterMetaBudget(ctx context.Context, calls int) (context.Context, func(), e
 	if calls <= 0 {
 		calls = 1
 	}
-	depth := state.depth.Add(1)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.depth++
+	depth := state.depth
 	if depth > defaultMetaDepthLimit {
-		state.depth.Add(-1)
+		state.depth--
 		return ctx, nil, fmt.Errorf(
 			"meta tool nesting exceeded depth limit (%d > %d). Split the work across separate rounds instead of recursively chaining tool_call/tool_batch_call",
 			depth, defaultMetaDepthLimit)
 	}
-	used := state.used.Add(int32(calls))
+	state.used += calls
+	used := state.used
 	if used > defaultMetaCallBudget {
-		state.depth.Add(-1)
-		state.used.Add(-int32(calls))
+		state.depth--
+		state.used -= calls
 		return ctx, nil, fmt.Errorf(
 			"meta tool budget exhausted (%d > %d backend calls planned in one turn). Split the work into smaller batches or let the agent answer before fanning out again",
 			used, defaultMetaCallBudget)
 	}
 	return ctx, func() {
-		state.depth.Add(-1)
+		state.mu.Lock()
+		state.depth--
+		state.mu.Unlock()
 	}, nil
 }
 

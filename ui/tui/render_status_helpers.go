@@ -204,7 +204,7 @@ func formatProviderProfileSummaryTUI(profile engine.ProviderProfileStatus) strin
 		return "unavailable"
 	}
 
-	parts := make([]string, 0, 6)
+	parts := make([]string, 0, 7)
 	if name != "" || model != "" {
 		parts = append(parts, fmt.Sprintf("%s/%s", blankFallback(name, "-"), blankFallback(model, "-")))
 	}
@@ -221,6 +221,9 @@ func formatProviderProfileSummaryTUI(profile engine.ProviderProfileStatus) strin
 		parts = append(parts, "endpoint="+baseURL)
 	}
 	parts = append(parts, "configured="+fmt.Sprintf("%t", profile.Configured))
+	if count := len(profile.Advisories); count > 0 {
+		parts = append(parts, fmt.Sprintf("advisories=%d", count))
+	}
 	return strings.Join(parts, " ")
 }
 

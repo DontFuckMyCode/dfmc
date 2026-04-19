@@ -12,15 +12,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/commands"
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/internal/skills"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
-	"gopkg.in/yaml.v3"
 )
 
 func (s *Server) handleCommands(w http.ResponseWriter, _ *http.Request) {
@@ -109,6 +107,9 @@ func (s *Server) handleProviders(w http.ResponseWriter, _ *http.Request) {
 		if prof, ok := s.engine.Config.Providers.Profiles[name]; ok {
 			item["model"] = prof.Model
 			item["configured"] = strings.TrimSpace(prof.APIKey) != "" || strings.TrimSpace(prof.BaseURL) != ""
+			if advisories := config.ProviderProfileAdvisories(name, prof); len(advisories) > 0 {
+				item["advisories"] = advisories
+			}
 		} else {
 			item["configured"] = name == "offline"
 		}
@@ -123,53 +124,9 @@ func (s *Server) handleProviders(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
-	items := []map[string]any{
-		{"name": "review", "source": "builtin", "builtin": true},
-		{"name": "explain", "source": "builtin", "builtin": true},
-		{"name": "refactor", "source": "builtin", "builtin": true},
-		{"name": "test", "source": "builtin", "builtin": true},
-		{"name": "doc", "source": "builtin", "builtin": true},
-	}
-	seen := map[string]struct{}{
-		"review":   {},
-		"explain":  {},
-		"refactor": {},
-		"test":     {},
-		"doc":      {},
-	}
-
-	roots := []struct {
-		path   string
-		source string
-	}{
-		{path: filepath.Join(s.engine.Status().ProjectRoot, ".dfmc", "skills"), source: "project"},
-		{path: filepath.Join(config.UserConfigDir(), "skills"), source: "global"},
-	}
-	for _, root := range roots {
-		files, _ := filepath.Glob(filepath.Join(root.path, "*.y*ml"))
-		for _, p := range files {
-			name := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
-			key := strings.ToLower(strings.TrimSpace(name))
-			if key == "" {
-				continue
-			}
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			items = append(items, map[string]any{
-				"name":    name,
-				"source":  root.source,
-				"builtin": false,
-				"path":    p,
-			})
-		}
-	}
-
-	sort.Slice(items, func(i, j int) bool {
-		return strings.ToLower(fmt.Sprint(items[i]["name"])) < strings.ToLower(fmt.Sprint(items[j]["name"]))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"skills": skills.Discover(s.engine.Status().ProjectRoot),
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"skills": items})
 }
 
 func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
@@ -234,95 +191,21 @@ func (s *Server) handleSkillExec(w http.ResponseWriter, r *http.Request) {
 		input = strings.TrimSpace(req.Message)
 	}
 
-	prompt, source, ok := s.resolveSkillPrompt(name, input)
+	item, ok := skills.Lookup(s.engine.Status().ProjectRoot, name)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": fmt.Sprintf("skill not found: %s", name)})
 		return
 	}
 
-	answer, err := s.engine.Ask(r.Context(), prompt)
+	answer, err := s.engine.Ask(r.Context(), skills.DecorateQuery(item.Name, input))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"skill":  name,
-		"source": source,
+		"skill":  item.Name,
+		"source": item.Source,
 		"input":  input,
 		"answer": answer,
 	})
-}
-
-func (s *Server) resolveSkillPrompt(name, input string) (prompt string, source string, ok bool) {
-	builtin := map[string]string{
-		"review":   "Perform a strict code review. Prioritize bugs, risks, behavioral regressions, and missing tests.\n\nRequest:\n{input}",
-		"explain":  "Explain the target code in a clear and structured way, including key flows and important caveats.\n\nRequest:\n{input}",
-		"refactor": "Provide a safe refactor plan and concrete edits with minimal regression risk.\n\nRequest:\n{input}",
-		"test":     "Create or improve automated tests for the target, including edge cases and failure paths.\n\nRequest:\n{input}",
-		"doc":      "Write practical documentation for the requested code or module.\n\nRequest:\n{input}",
-	}
-	key := strings.ToLower(strings.TrimSpace(name))
-	if tpl, exists := builtin[key]; exists {
-		return applySkillPromptTemplate(tpl, input), "builtin", true
-	}
-
-	roots := []string{
-		filepath.Join(s.engine.Status().ProjectRoot, ".dfmc", "skills"),
-		filepath.Join(config.UserConfigDir(), "skills"),
-	}
-	for _, root := range roots {
-		files, _ := filepath.Glob(filepath.Join(root, "*.y*ml"))
-		for _, path := range files {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				continue
-			}
-			raw := map[string]any{}
-			if err := yaml.Unmarshal(data, &raw); err != nil {
-				continue
-			}
-			skillName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-			if v, exists := raw["name"]; exists {
-				n := strings.TrimSpace(fmt.Sprint(v))
-				if n != "" {
-					skillName = n
-				}
-			}
-			if !strings.EqualFold(skillName, name) {
-				continue
-			}
-			tpl := ""
-			if v, exists := raw["prompt"]; exists {
-				tpl = strings.TrimSpace(fmt.Sprint(v))
-			}
-			if tpl == "" {
-				if v, exists := raw["template"]; exists {
-					tpl = strings.TrimSpace(fmt.Sprint(v))
-				}
-			}
-			if tpl == "" {
-				return "", "", false
-			}
-			src := "project"
-			if strings.Contains(strings.ToLower(path), strings.ToLower(filepath.Join(config.UserConfigDir(), "skills"))) {
-				src = "global"
-			}
-			return applySkillPromptTemplate(tpl, input), src, true
-		}
-	}
-	return "", "", false
-}
-
-func applySkillPromptTemplate(tpl, input string) string {
-	p := strings.TrimSpace(tpl)
-	if strings.Contains(p, "{input}") {
-		return strings.ReplaceAll(p, "{input}", input)
-	}
-	if strings.TrimSpace(input) == "" {
-		return p
-	}
-	if p == "" {
-		return input
-	}
-	return p + "\n\nUser request:\n" + input
 }

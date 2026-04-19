@@ -243,6 +243,20 @@ func (m Model) refreshProvidersRows() Model {
 	return m
 }
 
+func (m Model) focusProviderRow(provider string) Model {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return m
+	}
+	for i, row := range m.providers.rows {
+		if strings.EqualFold(strings.TrimSpace(row.Name), provider) {
+			m.providers.scroll = i
+			return m
+		}
+	}
+	return m
+}
+
 func (m Model) handleProvidersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	total := len(m.providers.rows)
 	step := 1

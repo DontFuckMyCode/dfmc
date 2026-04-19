@@ -139,7 +139,7 @@ func TestExecuteToolCallsParallel_CacheHitSkipsExecution(t *testing.T) {
 	}
 
 	// First run: cache miss → tool fires once, result cached.
-	results := eng.executeToolCallsParallel(context.Background(), []provider.ToolCall{call}, 1, cache, mu)
+	results := eng.executeToolCallsParallel(context.Background(), []provider.ToolCall{call}, 1, "agent", cache, mu)
 	if len(results) != 1 || results[0].Err != nil {
 		t.Fatalf("first call should succeed, got %+v", results)
 	}
@@ -151,7 +151,7 @@ func TestExecuteToolCallsParallel_CacheHitSkipsExecution(t *testing.T) {
 	}
 
 	// Second run with the SAME canonical input: cache hit → tool NOT fired.
-	results = eng.executeToolCallsParallel(context.Background(), []provider.ToolCall{call}, 1, cache, mu)
+	results = eng.executeToolCallsParallel(context.Background(), []provider.ToolCall{call}, 1, "agent", cache, mu)
 	if len(results) != 1 || results[0].Err != nil {
 		t.Fatalf("cached call should succeed, got %+v", results)
 	}
@@ -171,7 +171,7 @@ func TestExecuteToolCallsParallel_NilCacheStillExecutes(t *testing.T) {
 		Input: map[string]any{"x": 1},
 	}
 	// Nil cache: execution proceeds normally (no panic, counter bumps).
-	results := eng.executeToolCallsParallel(context.Background(), []provider.ToolCall{call}, 1, nil, nil)
+	results := eng.executeToolCallsParallel(context.Background(), []provider.ToolCall{call}, 1, "agent", nil, nil)
 	if len(results) != 1 {
 		t.Fatalf("expected one result, got %d", len(results))
 	}

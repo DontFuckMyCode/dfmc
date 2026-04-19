@@ -112,6 +112,48 @@ func TestRunDoctorProvidersOnly(t *testing.T) {
 	}
 }
 
+func TestRunDoctorWarnsOnZAIAnthropicStyleConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	cfg := config.DefaultConfig()
+	zai := cfg.Providers.Profiles["zai"]
+	zai.Protocol = "anthropic"
+	zai.BaseURL = "https://api.z.ai/api/anthropic"
+	cfg.Providers.Profiles["zai"] = zai
+
+	eng, err := engine.New(cfg)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	if err := eng.Init(context.Background()); err != nil {
+		t.Fatalf("eng.Init: %v", err)
+	}
+	t.Cleanup(func() { eng.Shutdown() })
+
+	out := captureStdout(t, func() {
+		code := runDoctor(context.Background(), eng, []string{"--network=false"}, true)
+		if code != 0 {
+			t.Fatalf("expected doctor exit code 0 on advisory-only config, got %d", code)
+		}
+	})
+
+	var payload struct {
+		Status string        `json:"status"`
+		Checks []doctorCheck `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("unmarshal doctor json: %v\n%s", err, out)
+	}
+	if payload.Status != "warn" {
+		t.Fatalf("expected overall warn status for advisory-only config, got %q", payload.Status)
+	}
+	if !hasDoctorCheck(payload.Checks, "provider.zai.advisory") {
+		t.Fatalf("expected ZAI advisory check in doctor payload: %#v", payload.Checks)
+	}
+}
+
 func TestRunDoctorFixRepairsProjectConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -176,6 +218,69 @@ func TestRunDoctorFixRepairsProjectConfig(t *testing.T) {
 	}
 	if reloaded.Remote.Auth != "none" && reloaded.Remote.Auth != "token" && reloaded.Remote.Auth != "mtls" {
 		t.Fatalf("remote.auth was not fixed: %s", reloaded.Remote.Auth)
+	}
+}
+
+func TestRunDoctorFixRewritesZAIAnthropicStyleProfile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	project := t.TempDir()
+	dfmcDir := filepath.Join(project, ".dfmc")
+	if err := os.MkdirAll(dfmcDir, 0o755); err != nil {
+		t.Fatalf("mkdir .dfmc: %v", err)
+	}
+	cfgText := "" +
+		"version: 1\n" +
+		"providers:\n" +
+		"  primary: zai\n" +
+		"  profiles:\n" +
+		"    zai:\n" +
+		"      api_key: test-zai-key\n" +
+		"      base_url: https://api.z.ai/api/anthropic\n" +
+		"      model: glm-5.1\n" +
+		"      max_tokens: 131072\n" +
+		"      max_context: 200000\n" +
+		"      protocol: anthropic\n"
+	if err := os.WriteFile(filepath.Join(dfmcDir, "config.yaml"), []byte(cfgText), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(project); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWd) }()
+
+	cfg := config.DefaultConfig()
+	eng, err := engine.New(cfg)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	if err := eng.Init(context.Background()); err != nil {
+		t.Fatalf("eng.Init: %v", err)
+	}
+	t.Cleanup(func() { eng.Shutdown() })
+
+	code := runDoctor(context.Background(), eng, []string{"--fix"}, true)
+	if code != 0 {
+		t.Fatalf("expected doctor exit code 0 after fix, got %d", code)
+	}
+
+	reloaded, err := config.LoadWithOptions(config.LoadOptions{CWD: project})
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	prof := reloaded.Providers.Profiles["zai"]
+	if prof.Protocol != "openai-compatible" {
+		t.Fatalf("expected ZAI protocol to be rewritten, got %q", prof.Protocol)
+	}
+	if prof.BaseURL != "https://api.z.ai/api/paas/v4" {
+		t.Fatalf("expected ZAI base_url to be rewritten, got %q", prof.BaseURL)
 	}
 }
 

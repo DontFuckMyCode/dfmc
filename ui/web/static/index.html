@@ -685,8 +685,8 @@ function addMessage(role, content) {
 }
 
 // Token-auth glue. When `dfmc serve --auth=token` is in effect every API
-// call needs an Authorization: Bearer <token> header, and the /ws SSE stream
-// needs ?token=<token> in its URL because EventSource can't set headers.
+// call needs an Authorization: Bearer <token> header. The /ws SSE stream
+// is also fetched with Authorization so tokens never leak into URLs.
 //
 // The token is resolved (in order): URL hash (#token=...), localStorage,
 // or a one-shot prompt. Once known it's cached in localStorage and stripped
@@ -736,11 +736,6 @@ const dfmcAuth = (function () {
 			const h = new Headers(headers || {});
 			if (token && !h.has("Authorization")) h.set("Authorization", "Bearer " + token);
 			return h;
-		},
-		applyToURL: (url) => {
-			if (!token) return url;
-			const sep = url.indexOf("?") === -1 ? "?" : "&";
-			return url + sep + "token=" + encodeURIComponent(token);
 		},
 	};
 })();
@@ -1081,6 +1076,9 @@ function classifyActivityEvent(ev) {
 		if (type === "drive:todo:retry") {
 			return { kind: "tool", icon: "\u25b8", text: "drive retry " + (payload.todo_id || "?") + " \u00b7 attempt " + (payload.attempt || "?") };
 		}
+		if (type === "drive:run:warning") {
+			return { kind: "error", icon: "\u26a0", text: "drive warning \u00b7 " + (payload.error || "") };
+		}
 		if (type === "drive:todo:blocked") {
 			return { kind: "error", icon: "\u2717", text: "drive blocked " + (payload.todo_id || "?") + (payload.error ? (" \u00b7 " + payload.error) : "") };
 		}
@@ -1151,29 +1149,64 @@ function setActivityStatus(text) {
 
 function connectActivityStream() {
 	if (activityState.eventSource) return;
-	try {
-		// EventSource cannot set custom headers, so the token rides on the
-		// query string. The bearer middleware accepts ?token= as an
-		// alternative to Authorization for exactly this reason.
-		const es = new EventSource(dfmcAuth.applyToURL("/ws"));
-		activityState.eventSource = es;
-		setActivityStatus("connected");
-		es.onmessage = (msg) => {
-			try {
-				const data = JSON.parse(msg.data);
-				if (!data || data.type !== "event") return;
-				pushActivityEntry(classifyActivityEvent(data));
-				const evType = String(data.event || "").toLowerCase();
-				if (evType.startsWith("drive:")) scheduleDriveRefresh();
-			} catch (err) { /* swallow malformed frames */ }
-		};
-		es.onerror = () => {
+	const controller = new AbortController();
+	activityState.eventSource = controller;
+	setActivityStatus("connecting...");
+
+	(async () => {
+		try {
+			const resp = await authedFetch("/ws", {
+				headers: { "Accept": "text/event-stream" },
+				signal: controller.signal,
+			});
+			if (resp.status === 401) {
+				const provided = window.prompt("DFMC event stream requires a token. Enter token:");
+				activityState.eventSource = null;
+				if (provided && provided.trim()) {
+					dfmcAuth.set(provided);
+					connectActivityStream();
+					return;
+				}
+				dfmcAuth.clear();
+				setActivityStatus("auth required");
+				return;
+			}
+			if (!resp.ok || !resp.body) {
+				throw new Error(await resp.text() || ("HTTP " + resp.status));
+			}
+			setActivityStatus("connected");
+			const reader = resp.body.getReader();
+			const decoder = new TextDecoder();
+			let buffer = "";
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) break;
+				buffer += decoder.decode(value, { stream: true });
+				const frames = buffer.split("\n\n");
+				buffer = frames.pop() || "";
+				for (const frame of frames) {
+					const line = frame.split("\n").find(item => item.startsWith("data: "));
+					if (!line) continue;
+					try {
+						const data = JSON.parse(line.slice(6));
+						if (!data || data.type !== "event") continue;
+						pushActivityEntry(classifyActivityEvent(data));
+						const evType = String(data.event || "").toLowerCase();
+						if (evType.startsWith("drive:")) scheduleDriveRefresh();
+					} catch (_) { /* swallow malformed frames */ }
+				}
+			}
 			setActivityStatus("retrying...");
-			if (es.readyState === 2) { activityState.eventSource = null; }
-		};
-	} catch (err) {
-		setActivityStatus("unavailable");
-	}
+		} catch (err) {
+			if (controller.signal.aborted) return;
+			setActivityStatus("retrying...");
+		} finally {
+			if (activityState.eventSource === controller) {
+				activityState.eventSource = null;
+				window.setTimeout(connectActivityStream, 1500);
+			}
+		}
+	})();
 }
 
 function toggleActivityFollow() {

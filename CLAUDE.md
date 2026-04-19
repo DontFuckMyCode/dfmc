@@ -132,7 +132,7 @@ Drive events (`drive:*`) flow through the same `engine.EventBus` as `agent:*` an
 ```
 drive:run:start          drive:plan:start | drive:plan:done | drive:plan:failed
 drive:todo:start         drive:todo:done | drive:todo:blocked | drive:todo:skipped | drive:todo:retry
-drive:run:done           drive:run:stopped | drive:run:failed
+drive:run:warning        drive:run:done | drive:run:stopped | drive:run:failed
 ```
 
 TUI subscribes via [engine_events.go](ui/tui/engine_events.go); CLI prints them to stderr inline and renders a final summary on stdout. The web workbench (`/` from `dfmc serve`) renders a Drive Cockpit panel that mirrors the same surface — start runs, watch the active list, drill into a run's TODO ladder; live updates piggyback on the existing `/ws` SSE stream by debouncing on any `drive:*` event.

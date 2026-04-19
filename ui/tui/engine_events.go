@@ -204,6 +204,9 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		} else {
 			line = fmt.Sprintf("Agent tool result: %s (%s)", toolName, status)
 		}
+		if success && strings.EqualFold(strings.TrimSpace(toolName), "todo_write") {
+			m.autoActivateStatsPanelMode(statsPanelModeTodos, "todos")
+		}
 		if preview != "" {
 			line += " -> " + preview
 		} else if !success {
@@ -212,6 +215,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			}
 		}
 	case "agent:loop:final":
+		m.agentLoop.active = false
 		m.agentLoop.phase = "finalizing"
 		if rounds := payloadInt(payload, "tool_rounds", 0); rounds >= 0 {
 			m.agentLoop.toolRounds = rounds
@@ -221,6 +225,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		}
 		line = fmt.Sprintf("Agent loop finalizing answer after %d tool call(s).", m.agentLoop.toolRounds)
 	case "agent:loop:max_steps":
+		m.agentLoop.active = false
 		m.agentLoop.phase = "max-steps"
 		maxSteps := payloadInt(payload, "max_tool_steps", m.agentLoop.maxToolStep)
 		if maxSteps > 0 {
@@ -228,6 +233,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		}
 		line = fmt.Sprintf("Agent loop reached max tool steps (%d).", m.agentLoop.maxToolStep)
 	case "agent:loop:error":
+		m.agentLoop.active = false
 		m.agentLoop.phase = "error"
 		errText := payloadString(payload, "error", "unknown error")
 		line = "Agent loop error: " + errText
@@ -258,7 +264,35 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		if payloadString(payload, "reason", "") == "budget_exhausted" {
 			return m
 		}
-		line = fmt.Sprintf("Agent loop parked at step %d/%d — press Enter to resume, Esc to dismiss.", step, maxSteps)
+		line = fmt.Sprintf("Agent loop parked at step %d/%d - press Enter to resume, Esc to dismiss.", step, maxSteps)
+	case "agent:autonomy:plan":
+		m.autoActivateStatsPanelMode(statsPanelModeTasks, "tasks")
+		count := payloadInt(payload, "subtask_count", 0)
+		confidence := 0.0
+		if raw, ok := payload["confidence"].(float64); ok {
+			confidence = raw
+		}
+		mode := "sequential"
+		if payloadBool(payload, "parallel", false) {
+			mode = "parallel"
+		}
+		scope := payloadString(payload, "scope", "")
+		line = fmt.Sprintf("Autonomy preflight: %d subtasks (%s, %.2f confidence).", count, mode, confidence)
+		if scope != "" && scope != "top_level" {
+			line = fmt.Sprintf("Autonomy preflight [%s]: %d subtasks (%s, %.2f confidence).", scope, count, mode, confidence)
+		}
+		if payloadBool(payload, "todo_seeded", false) {
+			line += " Todos seeded."
+		}
+	case "agent:autonomy:kickoff":
+		m.autoActivateStatsPanelMode(statsPanelModeTasks, "tasks")
+		toolName := payloadString(payload, "tool", "orchestrate")
+		count := payloadInt(payload, "subtask_count", 0)
+		confidence := 0.0
+		if raw, ok := payload["confidence"].(float64); ok {
+			confidence = raw
+		}
+		line = fmt.Sprintf("Autonomy kickoff: %s launched for %d subtasks (%.2f confidence).", toolName, count, confidence)
 	case "coach:note":
 		if m.ui.coachMuted {
 			return m
@@ -269,7 +303,8 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		}
 		severity := coachSeverityFromWire(payloadString(payload, "severity", "info"))
 		origin := payloadString(payload, "origin", "")
-		m = m.appendCoachMessage(text, severity, origin)
+		action := payloadString(payload, "action", "")
+		m = m.appendCoachMessage(text, severity, origin, action)
 		return m
 	case "intent:decision":
 		// Engine's pre-Ask intent router fired. Cache the decision so
@@ -298,6 +333,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 				fmt.Sprintf("intent[%s]: %s → %s", intentName, truncateSingleLine(raw, 60), truncateSingleLine(enriched, 80)),
 				coachSeverityInfo,
 				"intent",
+				"",
 			)
 		}
 		return m
@@ -308,7 +344,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		hints, _ := payload["hints"].([]any)
 		for _, h := range hints {
 			if s, ok := h.(string); ok && strings.TrimSpace(s) != "" {
-				m = m.appendCoachMessage("→ "+s, coachSeverityInfo, "trajectory")
+				m = m.appendCoachMessage("→ "+s, coachSeverityInfo, "trajectory", "")
 			}
 		}
 		return m
@@ -333,8 +369,15 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			line = fmt.Sprintf("%s · %s", toolName, truncateForLine(reason, 90))
 		}
 	case "agent:subagent:start":
+		m.autoActivateStatsPanelMode(statsPanelModeSubagents, "subagents")
 		task := payloadString(payload, "task", "task")
 		role := payloadString(payload, "role", "")
+		candidates := payloadStringSlice(payload, "provider_candidates")
+		targetLabel := subagentProviderLabel(
+			payloadString(payload, "provider", ""),
+			payloadString(payload, "model", ""),
+		)
+		chainLabel := subagentProfileChain(candidates)
 		m.telemetry.activeSubagentCount++
 		chipName := "subagent"
 		if role != "" {
@@ -346,12 +389,57 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			Status:  "subagent-running",
 			Preview: preview,
 		}
+		if chainLabel != "" {
+			chip.Verb = chainLabel
+		} else if targetLabel != "" {
+			chip.Verb = targetLabel
+		}
 		m.pushToolChip(chip)
 		m.pushStreamingMessageToolChip(chip)
 		if role != "" {
 			line = fmt.Sprintf("Subagent (%s) started: %s", role, preview)
 		} else {
 			line = "Subagent started: " + preview
+		}
+		if chainLabel != "" {
+			line += " [" + chainLabel + "]"
+		} else if targetLabel != "" {
+			line += " [" + targetLabel + "]"
+		}
+	case "agent:subagent:fallback":
+		role := payloadString(payload, "role", "")
+		attempt := payloadInt(payload, "attempt", 0)
+		fromProfile := payloadString(payload, "from_profile", "")
+		toProfile := payloadString(payload, "to_profile", "")
+		errText := payloadString(payload, "error", "")
+		reasons := payloadStringSlice(payload, "fallback_reasons")
+		if errText == "" && len(reasons) > 0 {
+			errText = reasons[len(reasons)-1]
+		}
+		chipName := "subagent"
+		if role != "" {
+			chipName = "subagent/" + role
+		}
+		preview := subagentProfileTransition(fromProfile, toProfile)
+		if preview == "" {
+			preview = "provider fallback"
+		}
+		chip := toolChip{
+			Name:    chipName,
+			Status:  "subagent-fallback",
+			Preview: preview,
+		}
+		if errText != "" {
+			chip.Verb = truncateSingleLine(errText, 72)
+		}
+		m.pushToolChip(chip)
+		if attempt > 0 {
+			line = fmt.Sprintf("Subagent fallback #%d: %s", attempt, preview)
+		} else {
+			line = "Subagent fallback: " + preview
+		}
+		if errText != "" {
+			line += " - " + truncateSingleLine(errText, 120)
 		}
 	case "agent:subagent:done":
 		if m.telemetry.activeSubagentCount > 0 {
@@ -362,8 +450,23 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		parked := payloadBool(payload, "parked", false)
 		errText := payloadString(payload, "err", "")
 		role := payloadString(payload, "role", "")
+		attempts := payloadInt(payload, "attempts", 0)
+		fallbackUsed := payloadBool(payload, "fallback_used", false)
+		providerLabel := subagentProviderLabel(
+			payloadString(payload, "provider", ""),
+			payloadString(payload, "model", ""),
+		)
 		status := "subagent-ok"
 		chipPreview := fmt.Sprintf("%d rounds", rounds)
+		if providerLabel != "" {
+			chipPreview += " · " + providerLabel
+		}
+		if attempts > 1 {
+			chipPreview += fmt.Sprintf(" · %d attempts", attempts)
+		}
+		if fallbackUsed {
+			chipPreview += " · fallback"
+		}
 		if parked {
 			chipPreview += " · parked"
 		}
@@ -391,6 +494,12 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		default:
 			line = fmt.Sprintf("Subagent done: %d rounds (%dms).", rounds, duration)
 		}
+		if errText == "" && providerLabel != "" {
+			line += " via " + providerLabel
+		}
+		if errText == "" && fallbackUsed && attempts > 1 {
+			line += fmt.Sprintf(" after %d attempts", attempts)
+		}
 	case "context:built":
 		files := payloadInt(payload, "files", 0)
 		tokens := payloadInt(payload, "tokens", 0)
@@ -405,6 +514,32 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			providerName := payloadString(payload, "provider", m.agentLoop.provider)
 			modelName := payloadString(payload, "model", m.agentLoop.model)
 			line = fmt.Sprintf("Provider complete: %s/%s (%dtok)", providerName, modelName, tokens)
+		}
+	case "provider:throttle:retry":
+		providerName := payloadString(payload, "provider", "?")
+		attempt := payloadInt(payload, "attempt", 0)
+		waitMs := payloadInt(payload, "wait_ms", 0)
+		streaming := payloadBool(payload, "stream", false)
+		label := "request"
+		if streaming {
+			label = "stream"
+		}
+		waitText := "immediately"
+		if waitMs > 0 {
+			waitText = fmt.Sprintf("in %s", (time.Duration(waitMs) * time.Millisecond).Round(100*time.Millisecond))
+		}
+		line = fmt.Sprintf("Provider throttled: %s %s retry #%d %s.", providerName, label, attempt, waitText)
+	case "config:reload:auto":
+		path := payloadString(payload, "path", "")
+		line = "Config auto-reloaded."
+		if path != "" {
+			line = fmt.Sprintf("Config auto-reloaded from %s.", truncateSingleLine(path, 96))
+		}
+	case "config:reload:auto_failed":
+		errText := payloadString(payload, "error", "")
+		line = "Config auto-reload failed."
+		if errText != "" {
+			line = fmt.Sprintf("Config auto-reload failed: %s", truncateSingleLine(errText, 120))
 		}
 	case "context:lifecycle:compacted":
 		before := payloadInt(payload, "before_tokens", 0)
@@ -561,21 +696,41 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		id := payloadString(payload, "todo_id", "")
 		title := payloadString(payload, "title", "")
 		attempt := payloadInt(payload, "attempt", 1)
+		workerClass := payloadString(payload, "worker_class", "")
 		m.telemetry.driveTodoID = id
 		if attempt > 1 {
 			line = fmt.Sprintf("Drive: ▶ %s (attempt %d) — %s", id, attempt, truncateForLine(title, 80))
 		} else {
 			line = fmt.Sprintf("Drive: ▶ %s — %s", id, truncateForLine(title, 80))
 		}
+		if workerClass != "" {
+			line += " [" + workerClass + "]"
+		}
 	case "drive:todo:done":
 		id := payloadString(payload, "todo_id", "")
 		dur := payloadInt(payload, "duration_ms", 0)
 		tools := payloadInt(payload, "tool_calls", 0)
+		providerLabel := subagentProviderLabel(
+			payloadString(payload, "provider", ""),
+			payloadString(payload, "model", ""),
+		)
+		attempts := payloadInt(payload, "attempts", 0)
+		fallbackUsed := payloadBool(payload, "fallback", false)
+		fallbackReasons := payloadStringSlice(payload, "fallback_reasons")
 		m.telemetry.driveDone++
 		if m.telemetry.driveTodoID == id {
 			m.telemetry.driveTodoID = ""
 		}
 		line = fmt.Sprintf("Drive: ✓ %s done (%dms, %d tool calls)", id, dur, tools)
+		if providerLabel != "" {
+			line += " via " + providerLabel
+		}
+		if fallbackUsed && attempts > 1 {
+			line += fmt.Sprintf(" after %d attempts", attempts)
+			if len(fallbackReasons) > 0 {
+				line += " - " + truncateForLine(fallbackReasons[len(fallbackReasons)-1], 120)
+			}
+		}
 	case "drive:todo:blocked":
 		id := payloadString(payload, "todo_id", "")
 		errStr := payloadString(payload, "error", "")
@@ -592,6 +747,9 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		id := payloadString(payload, "todo_id", "")
 		attempt := payloadInt(payload, "attempt", 0)
 		line = fmt.Sprintf("Drive: ↻ %s retry (attempt %d)", id, attempt)
+	case "drive:run:warning":
+		errStr := payloadString(payload, "error", "")
+		line = fmt.Sprintf("Drive: warning — %s", truncateForLine(errStr, 200))
 	case "drive:run:done", "drive:run:stopped", "drive:run:failed":
 		status := payloadString(payload, "status", "")
 		done := payloadInt(payload, "done", 0)
@@ -746,7 +904,7 @@ func payloadBool(data map[string]any, key string, fallback bool) bool {
 func shouldMirrorEventToTranscript(eventType string) bool {
 	switch strings.TrimSpace(strings.ToLower(eventType)) {
 	case "agent:loop:error", "agent:loop:max_steps", "agent:loop:parked",
-		"agent:loop:budget_exhausted",
+		"agent:loop:budget_exhausted", "provider:throttle:retry",
 		"context:lifecycle:compacted", "context:lifecycle:handoff",
 		"coach:note":
 		return true
@@ -987,6 +1145,54 @@ func truncateForLine(s string, n int) string {
 	return s[:n] + "…"
 }
 
+func subagentProviderLabel(providerName, modelName string) string {
+	providerName = strings.TrimSpace(providerName)
+	modelName = strings.TrimSpace(modelName)
+	switch {
+	case providerName != "" && modelName != "":
+		return providerName + "/" + modelName
+	case providerName != "":
+		return providerName
+	case modelName != "":
+		return modelName
+	default:
+		return ""
+	}
+}
+
+func subagentProfileChain(candidates []string) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	trimmed := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			trimmed = append(trimmed, candidate)
+		}
+	}
+	if len(trimmed) == 0 {
+		return ""
+	}
+	if len(trimmed) > 4 {
+		return strings.Join(trimmed[:4], " -> ") + " -> ..."
+	}
+	return strings.Join(trimmed, " -> ")
+}
+
+func subagentProfileTransition(fromProfile, toProfile string) string {
+	fromProfile = strings.TrimSpace(fromProfile)
+	toProfile = strings.TrimSpace(toProfile)
+	switch {
+	case fromProfile != "" && toProfile != "":
+		return fromProfile + " -> " + toProfile
+	case toProfile != "":
+		return "fallback -> " + toProfile
+	default:
+		return fromProfile
+	}
+}
+
 func (m *Model) resetAgentRuntime() {
 	m.agentLoop.active = false
 	m.agentLoop.step = 0
@@ -1001,4 +1207,3 @@ func (m *Model) resetAgentRuntime() {
 	m.agentLoop.lastOutput = ""
 	m.agentLoop.contextScope = ""
 }
-

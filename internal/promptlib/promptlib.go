@@ -3,6 +3,7 @@ package promptlib
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -81,6 +82,7 @@ func (l *Library) loadEmbeddedDefaults() {
 }
 
 func (l *Library) LoadOverrides(projectRoot string) error {
+	var loadErrs []error
 	roots := []string{
 		filepath.Join(config.UserConfigDir(), "prompts"),
 	}
@@ -110,13 +112,15 @@ func (l *Library) LoadOverrides(projectRoot string) error {
 			for _, t := range entries {
 				l.upsert(t)
 			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			loadErrs = append(loadErrs, fmt.Errorf("%s: %w", abs, err))
 		}
 
 		l.mu.Lock()
 		l.loadedRoots[abs] = struct{}{}
 		l.mu.Unlock()
 	}
-	return nil
+	return errors.Join(loadErrs...)
 }
 
 func (l *Library) List() []Template {

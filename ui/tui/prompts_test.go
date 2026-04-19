@@ -11,8 +11,9 @@ import (
 
 func newPromptsTestModel() Model {
 	return Model{
-		tabs:      []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts"},
-		activeTab: 10,
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts"},
+		activeTab:             10,
+		diagnosticPanelsState: newDiagnosticPanelsState(),
 	}
 }
 

@@ -2,11 +2,13 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -80,6 +82,32 @@ func TestOpenAICompatibleProviderStream(t *testing.T) {
 	}
 	if got := out.String(); got != "hello stream" {
 		t.Fatalf("unexpected stream text: %q", got)
+	}
+}
+
+func TestOpenAICompatibleProviderStream_ThrottleWraps429(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, `{"error":{"code":"1302","message":"Rate limit reached for requests"}}`, http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	p := NewOpenAICompatibleProvider("zai", "glm-5.1", "test-key", srv.URL+"/v1", 128000, 1050000)
+	_, err := p.Stream(context.Background(), CompletionRequest{
+		Messages: []Message{{Role: types.RoleUser, Content: "say hello"}},
+	})
+	if err == nil {
+		t.Fatal("expected throttle error")
+	}
+	if !errors.Is(err, ErrProviderThrottled) {
+		t.Fatalf("expected ErrProviderThrottled, got %v", err)
+	}
+	var te *ThrottledError
+	if !errors.As(err, &te) {
+		t.Fatalf("expected ThrottledError, got %T", err)
+	}
+	if te.RetryAfter != time.Second {
+		t.Fatalf("expected Retry-After=1s, got %s", te.RetryAfter)
 	}
 }
 

@@ -164,6 +164,11 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 	if summary := formatProviderProfileSummary(st.ProviderProfile); summary != "" {
 		fmt.Printf("provider profile: %s\n", summary)
 	}
+	for _, advisory := range st.ProviderProfile.Advisories {
+		if msg := strings.TrimSpace(advisory); msg != "" {
+			fmt.Printf("provider advisory: %s\n", msg)
+		}
+	}
 	if summary := formatModelsDevCacheSummary(st.ModelsDevCache); summary != "" {
 		fmt.Printf("models.dev cache: %s\n", summary)
 	}
@@ -387,7 +392,7 @@ func formatProviderProfileSummary(profile engine.ProviderProfileStatus) string {
 		return ""
 	}
 
-	parts := make([]string, 0, 6)
+	parts := make([]string, 0, 7)
 	if name != "" || model != "" {
 		parts = append(parts, fmt.Sprintf("%s/%s", blankFallback(name, "-"), blankFallback(model, "-")))
 	}
@@ -404,6 +409,9 @@ func formatProviderProfileSummary(profile engine.ProviderProfileStatus) string {
 		parts = append(parts, "endpoint="+baseURL)
 	}
 	parts = append(parts, "configured="+strconv.FormatBool(profile.Configured))
+	if count := len(profile.Advisories); count > 0 {
+		parts = append(parts, fmt.Sprintf("advisories=%d", count))
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -986,6 +994,9 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			} else {
 				add("provider."+name+".configured", "warn", "missing api_key or required endpoint")
 			}
+			for _, advisory := range config.ProviderProfileAdvisories(name, prof) {
+				add("provider."+name+".advisory", "warn", advisory)
+			}
 			if *network && configured {
 				status, details := providerReachabilityStatus(name, prof, *timeout)
 				add("provider."+name+".network", status, details)
@@ -1125,6 +1136,18 @@ func applyDoctorFixes(eng *engine.Engine, global bool) (string, error) {
 		if auth != "none" && auth != "token" && auth != "mtls" {
 			if err := setConfigPath(currentMap, "remote.auth", "token"); err != nil {
 				return "", err
+			}
+		}
+	}
+	if raw, ok := getConfigPath(currentMap, "providers.profiles.zai"); ok {
+		if profileMap, ok := raw.(map[string]any); ok {
+			modelCfg := modelConfigFromAny(profileMap)
+			if advisories := config.ProviderProfileAdvisories("zai", modelCfg); len(advisories) > 0 {
+				profileMap["protocol"] = "openai-compatible"
+				profileMap["base_url"] = "https://api.z.ai/api/paas/v4"
+				if err := setConfigPath(currentMap, "providers.profiles.zai", profileMap); err != nil {
+					return "", err
+				}
 			}
 		}
 	}
@@ -1901,4 +1924,3 @@ func isSensitivePath(path string) bool {
 	}
 	return strings.HasSuffix(key, "_token")
 }
-

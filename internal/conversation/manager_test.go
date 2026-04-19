@@ -214,6 +214,56 @@ func TestConversationLoadFallsBackToLegacyJSONL(t *testing.T) {
 	}
 }
 
+func TestConversationCopiesAreDeepEnoughToPreventMutationLeak(t *testing.T) {
+	mgr := New(openConvStore(t))
+	mgr.Start("offline", "offline-v1")
+	msg := types.Message{
+		Role:      types.RoleAssistant,
+		Content:   "hello",
+		Timestamp: time.Now(),
+		Metadata:  map[string]string{"source": "seed"},
+		ToolCalls: []types.ToolCallRecord{{
+			Name:      "read_file",
+			Params:    map[string]any{"path": "a.txt"},
+			Timestamp: time.Now(),
+			Metadata:  map[string]string{"kind": "read"},
+		}},
+		Results: []types.ToolResultRecord{{
+			Name:      "read_file",
+			Output:    "ok",
+			Success:   true,
+			Timestamp: time.Now(),
+			Metadata:  map[string]string{"status": "ok"},
+		}},
+	}
+	mgr.AddMessage("offline", "offline-v1", msg)
+
+	active := mgr.Active()
+	if active == nil {
+		t.Fatal("expected active conversation")
+	}
+	got := active.Messages()
+	got[0].Metadata["source"] = "mutated"
+	got[0].ToolCalls[0].Params["path"] = "b.txt"
+	got[0].ToolCalls[0].Metadata["kind"] = "changed"
+	got[0].Results[0].Metadata["status"] = "changed"
+
+	fresh := mgr.Active()
+	msgs := fresh.Messages()
+	if msgs[0].Metadata["source"] != "seed" {
+		t.Fatalf("message metadata leaked through clone: %#v", msgs[0].Metadata)
+	}
+	if msgs[0].ToolCalls[0].Params["path"] != "a.txt" {
+		t.Fatalf("tool call params leaked through clone: %#v", msgs[0].ToolCalls[0].Params)
+	}
+	if msgs[0].ToolCalls[0].Metadata["kind"] != "read" {
+		t.Fatalf("tool call metadata leaked through clone: %#v", msgs[0].ToolCalls[0].Metadata)
+	}
+	if msgs[0].Results[0].Metadata["status"] != "ok" {
+		t.Fatalf("result metadata leaked through clone: %#v", msgs[0].Results[0].Metadata)
+	}
+}
+
 func TestConversationListUsesLegacyLogModTimeForStartedAt(t *testing.T) {
 	dir := t.TempDir()
 	store, err := storage.Open(filepath.Join(dir, "data"))

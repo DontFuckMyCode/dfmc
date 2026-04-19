@@ -9,8 +9,9 @@ import (
 
 func newProvidersTestModel() Model {
 	return Model{
-		tabs:      []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers"},
-		activeTab: 14,
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers"},
+		activeTab:             14,
+		diagnosticPanelsState: newDiagnosticPanelsState(),
 	}
 }
 

@@ -973,6 +973,78 @@ func renderRuntimeCard(rs runtimeSummary, width int) string {
 	return truncateSingleLine(strings.Join(parts, "  ·  "), width)
 }
 
+func renderChatWorkflowFocusCard(info statsPanelInfo, width int) string {
+	if width < 36 {
+		width = 36
+	}
+	mode := info.Mode
+	if mode == "" || mode == statsPanelModeOverview {
+		return ""
+	}
+	title := "Workflow Focus"
+	switch mode {
+	case statsPanelModeTodos:
+		title += " · TODOS"
+	case statsPanelModeTasks:
+		title += " · TASKS"
+	case statsPanelModeSubagents:
+		title += " · SUBAGENTS"
+	}
+	lines := []string{sectionHeader("»", title)}
+	if status := strings.TrimSpace(info.WorkflowStatus); status != "" {
+		lines = append(lines, "  "+truncateSingleLine(status, width))
+	}
+	if meter := strings.TrimSpace(info.WorkflowMeter); meter != "" {
+		lines = append(lines, "  "+truncateSingleLine(meter, width))
+	}
+	if execution := strings.TrimSpace(info.WorkflowExecution); execution != "" {
+		lines = append(lines, "  "+accentStyle.Render(truncateSingleLine(execution, width)))
+	}
+	appendBlock := func(items []string, fallback string) {
+		if len(items) == 0 {
+			if fallback != "" {
+				lines = append(lines, "  "+truncateSingleLine(fallback, width))
+			}
+			return
+		}
+		for i, line := range items {
+			if i >= 4 {
+				lines = append(lines, "  ...")
+				break
+			}
+			lines = append(lines, "  "+truncateSingleLine(line, width))
+		}
+	}
+	switch mode {
+	case statsPanelModeTodos:
+		appendBlock(info.TodoLines, "No shared todo list yet.")
+	case statsPanelModeTasks:
+		appendBlock(info.TaskLines, "No active task graph yet.")
+	case statsPanelModeSubagents:
+		appendBlock(info.SubagentLines, "No subagent activity yet.")
+	}
+	if len(info.WorkflowTimeline) > 0 {
+		lines = append(lines, "  live log:")
+		for i, line := range info.WorkflowTimeline {
+			if i >= 4 {
+				lines = append(lines, "    ...")
+				break
+			}
+			lines = append(lines, "    "+truncateSingleLine(line, width-2))
+		}
+	}
+	if len(info.WorkflowRecent) > 0 {
+		lines = append(lines, "  recent:")
+		for i, line := range info.WorkflowRecent {
+			if i >= 2 {
+				break
+			}
+			lines = append(lines, "    "+truncateSingleLine(line, width-2))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // --- message card --------------------------------------------------------
 
 // messageHeaderInfo is the per-message metadata rendered above each bubble.
@@ -1256,11 +1328,11 @@ type chatHeaderInfo struct {
 	// progress" header chip. Empty DriveRunID = no active run; the
 	// chip is suppressed. Updated by the drive:* event handlers in
 	// engine_events.go and cleared on drive:run:done/stopped/failed.
-	DriveRunID    string // short prefix is fine; the chip uses what we pass
-	DriveTodoID   string // ID of the TODO currently in flight (if any)
-	DriveDone     int    // count of completed TODOs so far
-	DriveTotal    int    // total TODOs in the run
-	DriveBlocked  int    // count of blocked TODOs (loud-warns the chip when >0)
+	DriveRunID   string // short prefix is fine; the chip uses what we pass
+	DriveTodoID  string // ID of the TODO currently in flight (if any)
+	DriveDone    int    // count of completed TODOs so far
+	DriveTotal   int    // total TODOs in the run
+	DriveBlocked int    // count of blocked TODOs (loud-warns the chip when >0)
 }
 
 // renderChatHeader returns 1 pre-styled line summarising chat state.
@@ -1358,7 +1430,7 @@ func renderChatHeader(info chatHeaderInfo, width int) string {
 	return head
 }
 
-// renderChatModeSegment returns the mode chip (ready/streaming/agent phase+step)
+// renderChatModeSegment returns the mode chip (ready/streaming/tool-loop phase+step)
 // as a single lipgloss-styled string. Shared between the full and slim header
 // variants and the stats panel so the wording never drifts.
 func renderChatModeSegment(info chatHeaderInfo) string {
@@ -1372,12 +1444,12 @@ func renderChatModeSegment(info chatHeaderInfo) string {
 	case info.AgentActive:
 		phase := blankFallback(strings.TrimSpace(info.AgentPhase), "working")
 		if info.AgentStep > 0 && info.AgentMax > 0 {
-			return accentStyle.Bold(true).Render(fmt.Sprintf("%s agent %s · %d/%d", glyph, phase, info.AgentStep, info.AgentMax))
+			return accentStyle.Bold(true).Render(fmt.Sprintf("%s tool loop %s - %d/%d", glyph, phase, info.AgentStep, info.AgentMax))
 		}
 		if info.AgentStep > 0 {
-			return accentStyle.Bold(true).Render(fmt.Sprintf("%s agent %s · step %d", glyph, phase, info.AgentStep))
+			return accentStyle.Bold(true).Render(fmt.Sprintf("%s tool loop %s - step %d", glyph, phase, info.AgentStep))
 		}
-		return accentStyle.Bold(true).Render(glyph + " agent " + phase)
+		return accentStyle.Bold(true).Render(glyph + " tool loop " + phase)
 	default:
 		return okStyle.Render("● ready")
 	}
@@ -1640,7 +1712,7 @@ func renderStreamingIndicator(phase string, frame int) string {
 	return infoStyle.Bold(true).Render(glyph+" "+phase) + " " + subtleStyle.Render("· esc cancels · tokens stream live")
 }
 
-// renderResumeBanner paints the yellow-accented "agent parked" prompt shown
+// renderResumeBanner paints the yellow-accented "tool loop parked" prompt shown
 // above the composer when the tool loop has hit its step cap. The user can
 // Enter to resume, Esc to dismiss, or type a note first to steer the
 // continuation.
@@ -1648,7 +1720,7 @@ func renderResumeBanner(step, maxSteps, width int) string {
 	if width < 20 {
 		width = 20
 	}
-	title := warnStyle.Bold(true).Render("⏸ Agent loop parked")
+	title := warnStyle.Bold(true).Render("⏸ Tool loop parked")
 	progress := ""
 	if maxSteps > 0 {
 		progress = subtleStyle.Render(fmt.Sprintf(" at step %d/%d", step, maxSteps))
@@ -1670,6 +1742,16 @@ func renderResumeBanner(step, maxSteps, width int) string {
 // labels fit on a line without clipping.
 const statsPanelWidth = 38
 
+// statsPanelBoostWidthMin is the temporary expanded width used after an
+// explicit alt+a/s/d/f mode switch so the panel reads more like a workspace
+// than a narrow sidebar on medium screens.
+const statsPanelBoostWidthMin = 48
+
+// statsPanelBoostMinContentWidth is the lower content-width threshold that
+// still allows the temporarily expanded panel to appear after an explicit
+// mode switch.
+const statsPanelBoostMinContentWidth = 96
+
 // statsPanelMinContentWidth is the threshold below which the stats panel is
 // suppressed entirely — a chat viewport narrower than ~80 columns would be
 // unreadable if the panel stole another 38. The caller (renderActiveView)
@@ -1679,6 +1761,7 @@ const statsPanelMinContentWidth = 120
 // statsPanelInfo is the full snapshot the panel needs each frame. The model
 // assembles it from status / git / agent loop / session state.
 type statsPanelInfo struct {
+	Mode           statsPanelMode
 	Provider       string
 	Model          string
 	Configured     bool
@@ -1710,6 +1793,30 @@ type statsPanelInfo struct {
 	// aggregated across all tool:result events.
 	CompressionSavedChars int
 	CompressionRawChars   int
+	TodoTotal             int
+	TodoPending           int
+	TodoDoing             int
+	TodoDone              int
+	TodoActive            string
+	TodoLines             []string
+	TaskLines             []string
+	WorkflowStatus        string
+	WorkflowMeter         string
+	WorkflowExecution     string
+	WorkflowTimeline      []string
+	WorkflowRecent        []string
+	Boosted               bool
+	BoostSeconds          int
+	FocusLocked           bool
+	SubagentLines         []string
+	ActiveSubagents       int
+	DriveRunID            string
+	DriveDone             int
+	DriveTotal            int
+	DriveBlocked          int
+	PlanSubtasks          int
+	PlanParallel          bool
+	PlanConfidence        float64
 	// SpinnerFrame is the live spinner counter (advanced by the spinner
 	// tick at ~8fps). The panel uses it to animate the agent chip, the
 	// step-bar leading edge, and the context-bar rightmost cell so a
@@ -1717,20 +1824,39 @@ type statsPanelInfo struct {
 	SpinnerFrame int
 }
 
-// renderStatsPanel paints the right-hand "mission control" column for the
-// chat tab. Fixed width, height set by the caller so it tiles nicely next to
-// the chat body. Sections: PROVIDER · CONTEXT · AGENT · TOOLS · GIT · SESSION.
-// Each section prints a bold title followed by 1–3 indented value lines.
+// renderStatsPanel paints the right-hand mission-control column for the chat
+// tab. In overview mode it keeps the broad snapshot; in focused modes it turns
+// the same space into a mini workspace for todos, tasks, or subagents.
 func renderStatsPanel(info statsPanelInfo, height int) string {
+	return renderStatsPanelSized(info, height, statsPanelWidth)
+}
+
+func renderStatsPanelSized(info statsPanelInfo, height int, panelWidth int) string {
 	if height < 6 {
 		height = 6
 	}
-	inner := statsPanelWidth - 4
+	if panelWidth < statsPanelWidth {
+		panelWidth = statsPanelWidth
+	}
+	inner := panelWidth - 4
 	if inner < 16 {
 		inner = 16
 	}
+	mode := info.Mode
+	if mode == "" {
+		mode = statsPanelModeOverview
+	}
 
-	lines := []string{}
+	lines := []string{renderStatsPanelModeTabs(mode, inner)}
+	if info.Boosted {
+		label := "FOCUS MODE · expanded"
+		if info.FocusLocked {
+			label = "FOCUS MODE · locked"
+		} else if info.BoostSeconds > 0 {
+			label = fmt.Sprintf("%s · %ds", label, info.BoostSeconds)
+		}
+		lines = append(lines, accentStyle.Bold(true).Render(label))
+	}
 	divider := dividerStyle.Render(strings.Repeat("─", inner))
 	addSection := func(icon, title string, body []string) {
 		if len(body) == 0 {
@@ -1750,11 +1876,6 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 		}
 	}
 
-	// Section icons swap to the live spinner glyph while work is in flight
-	// so the panel header reads as moving even before you scan the body.
-	// The mapping is intentional: PROVIDER pulses while the model is
-	// streaming, AGENT pulses while the tool loop is running. Idle state
-	// keeps the static glyph — animating "ready" would feel jittery.
 	providerIcon := "◉"
 	if info.Streaming {
 		providerIcon = spinnerFrame(info.SpinnerFrame)
@@ -1764,7 +1885,6 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 		agentIcon = spinnerFrame(info.SpinnerFrame + 3)
 	}
 
-	// PROVIDER -------------------------------------------------------------
 	providerTrim := strings.TrimSpace(info.Provider)
 	modelTrim := strings.TrimSpace(info.Model)
 	var providerBody []string
@@ -1786,17 +1906,13 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 			boldStyle.Render(blankFallback(modelTrim, "-")),
 		}
 	}
-	addSection(providerIcon, "PROVIDER", providerBody)
 
-	// CONTEXT --------------------------------------------------------------
 	contextBody := []string{renderContextBarFrame(info.ContextTokens, info.MaxContext, 10, info.SpinnerFrame)}
 	if info.MaxContext > 0 {
 		remaining := max(info.MaxContext-info.ContextTokens, 0)
 		contextBody = append(contextBody, subtleStyle.Render(fmt.Sprintf("%s free · %s used", compactTokens(remaining), compactTokens(info.ContextTokens))))
 	}
-	addSection("▦", "CONTEXT", contextBody)
 
-	// AGENT ----------------------------------------------------------------
 	agentBody := []string{renderChatModeSegment(chatHeaderInfo{
 		Streaming:    info.Streaming,
 		AgentActive:  info.AgentActive,
@@ -1806,6 +1922,7 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 		SpinnerFrame: info.SpinnerFrame,
 	})}
 	if info.AgentActive && info.AgentMaxSteps > 0 {
+		agentBody = append(agentBody, subtleStyle.Render(fmt.Sprintf("call budget %d/%d", info.AgentStep, info.AgentMaxSteps)))
 		agentBody = append(agentBody, renderStepBar(info.AgentStep, info.AgentMaxSteps, 14, info.SpinnerFrame))
 	}
 	if info.ToolRounds > 0 {
@@ -1831,9 +1948,7 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 	if info.PendingNotes > 0 {
 		agentBody = append(agentBody, infoStyle.Render(fmt.Sprintf("✎ btw %d", info.PendingNotes)))
 	}
-	addSection(agentIcon, "AGENT", agentBody)
 
-	// TOOLS ----------------------------------------------------------------
 	toolsBody := []string{}
 	if info.ToolsEnabled {
 		line := okStyle.Render("enabled")
@@ -1855,10 +1970,45 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 		}
 		toolsBody = append(toolsBody, okStyle.Render(label))
 	}
-	addSection("⚒", "TOOLS", toolsBody)
 
-	// GIT ------------------------------------------------------------------
+	workflowBody := []string{}
+	if status := strings.TrimSpace(info.WorkflowStatus); status != "" {
+		workflowBody = append(workflowBody, accentStyle.Bold(true).Render(status))
+	}
+	if meter := strings.TrimSpace(info.WorkflowMeter); meter != "" {
+		workflowBody = append(workflowBody, meter)
+	}
+	if info.TodoTotal > 0 {
+		todoLine := fmt.Sprintf("todos %d · %d done · %d doing · %d pending", info.TodoTotal, info.TodoDone, info.TodoDoing, info.TodoPending)
+		workflowBody = append(workflowBody, accentStyle.Render(todoLine))
+		if active := strings.TrimSpace(info.TodoActive); active != "" {
+			workflowBody = append(workflowBody, infoStyle.Render("active: "+truncateSingleLine(active, inner-10)))
+		}
+	}
+	if info.ActiveSubagents > 0 {
+		workflowBody = append(workflowBody, accentStyle.Bold(true).Render(fmt.Sprintf("subagents %d active", info.ActiveSubagents)))
+	}
+	if strings.TrimSpace(info.DriveRunID) != "" && info.DriveTotal > 0 {
+		driveLine := fmt.Sprintf("drive %d/%d", info.DriveDone, info.DriveTotal)
+		if info.DriveBlocked > 0 {
+			driveLine += fmt.Sprintf(" · %d blocked", info.DriveBlocked)
+		}
+		workflowBody = append(workflowBody, infoStyle.Render(driveLine))
+	}
+	if info.PlanSubtasks > 0 {
+		planMode := "serial"
+		if info.PlanParallel {
+			planMode = "parallel"
+		}
+		workflowBody = append(workflowBody, subtleStyle.Render(fmt.Sprintf("plan %d tasks · %s · %.2f", info.PlanSubtasks, planMode, info.PlanConfidence)))
+	}
+
+	for _, line := range info.WorkflowRecent {
+		workflowBody = append(workflowBody, subtleStyle.Render("recent: "+truncateSingleLine(line, inner-10)))
+	}
+
 	branch := strings.TrimSpace(info.Branch)
+	gitBody := []string{}
 	if branch != "" {
 		chip := boldStyle.Render(branch)
 		if info.Dirty {
@@ -1867,17 +2017,15 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 		if info.Detached {
 			chip += subtleStyle.Render(" (detached)")
 		}
-		gitBody := []string{chip}
+		gitBody = append(gitBody, chip)
 		if info.Inserted > 0 || info.Deleted > 0 {
 			churn := okStyle.Render(fmt.Sprintf("+%d", info.Inserted)) +
 				subtleStyle.Render(" / ") +
 				failStyle.Render(fmt.Sprintf("-%d", info.Deleted))
 			gitBody = append(gitBody, churn)
 		}
-		addSection("⎇", "GIT", gitBody)
 	}
 
-	// SESSION --------------------------------------------------------------
 	sessionHead := boldStyle.Render(formatSessionDuration(info.SessionElapsed))
 	if info.MessageCount > 0 {
 		sessionHead += subtleStyle.Render(fmt.Sprintf(" · %d msgs", info.MessageCount))
@@ -1886,16 +2034,107 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 	if pinned := strings.TrimSpace(info.Pinned); pinned != "" {
 		sessionBody = append(sessionBody, accentStyle.Render("◆ ")+boldStyle.Render(fileMarker(pinned)))
 	}
-	addSection("⏱", "SESSION", sessionBody)
 
-	// Footer hint so users discover the toggle without grepping for ctrl+s.
-	lines = append(lines, divider, subtleStyle.Render("  ctrl+s hide · ctrl+h keys"))
-
-	// Pad to requested height so vertical join aligns cleanly. If content is
-	// taller than available height we truncate from the bottom (hint line
-	// goes last so it's what gets cut first — preferable to hiding live state).
+	switch mode {
+	case statsPanelModeTodos:
+		addSection(providerIcon, "PROVIDER", providerBody)
+		addSection("▦", "CONTEXT", contextBody)
+		addSection(agentIcon, "TOOL LOOP", agentBody)
+		body := []string{fmt.Sprintf("%d total · %d done · %d doing · %d pending", info.TodoTotal, info.TodoDone, info.TodoDoing, info.TodoPending)}
+		if status := strings.TrimSpace(info.WorkflowStatus); status != "" {
+			body = append(body, status)
+		}
+		if meter := strings.TrimSpace(info.WorkflowMeter); meter != "" {
+			body = append(body, meter)
+		}
+		if active := strings.TrimSpace(info.TodoActive); active != "" {
+			body = append(body, "active: "+active)
+		}
+		if len(info.TodoLines) == 0 {
+			body = append(body, "No shared todo list yet.")
+			body = append(body, "It appears after todo_write or when autonomy preflight seeds one for a broad task.")
+			body = append(body, "Try a multi-step ask, /split, or /todos after the tool loop gets going.")
+		} else {
+			body = append(body, info.TodoLines...)
+		}
+		for _, line := range info.WorkflowRecent {
+			body = append(body, "recent: "+line)
+		}
+		addSection("☑", "TODOS", body)
+	case statsPanelModeTasks:
+		addSection(providerIcon, "PROVIDER", providerBody)
+		addSection("▦", "CONTEXT", contextBody)
+		addSection(agentIcon, "TOOL LOOP", agentBody)
+		body := []string{}
+		if status := strings.TrimSpace(info.WorkflowStatus); status != "" {
+			body = append(body, status)
+		}
+		if meter := strings.TrimSpace(info.WorkflowMeter); meter != "" {
+			body = append(body, meter)
+		}
+		if len(info.TaskLines) == 0 {
+			body = append(body, "No active task graph yet.")
+			body = append(body, "This fills from autonomy preflight, /split, or drive planning.")
+			body = append(body, "Broad asks are more likely to create task breakdowns than tiny one-shot prompts.")
+		} else {
+			body = append(body, info.TaskLines...)
+		}
+		for _, line := range info.WorkflowRecent {
+			body = append(body, "recent: "+line)
+		}
+		addSection("◈", "TASKS", body)
+	case statsPanelModeSubagents:
+		addSection(providerIcon, "PROVIDER", providerBody)
+		addSection("?", "CONTEXT", contextBody)
+		addSection(agentIcon, "TOOL LOOP", agentBody)
+		body := []string{}
+		if len(info.SubagentLines) == 0 || (len(info.SubagentLines) == 1 && strings.EqualFold(strings.TrimSpace(info.SubagentLines[0]), "idle")) {
+			body = append(body, "No subagent activity yet.")
+			body = append(body, "Subagents appear only when the model uses delegate_task or orchestrate fan-out.")
+			body = append(body, "Most short asks stay inside one tool loop and never spawn workers.")
+		} else {
+			body = append(body, info.SubagentLines...)
+		}
+		addSection("?", "SUBAGENTS", body)
+	default:
+		addSection(providerIcon, "PROVIDER", providerBody)
+		addSection("?", "CONTEXT", contextBody)
+		addSection(agentIcon, "TOOL LOOP", agentBody)
+		addSection("?", "TOOLS", toolsBody)
+		if len(workflowBody) == 0 {
+			workflowBody = append(workflowBody, "No workflow state yet.")
+			workflowBody = append(workflowBody, "This fills from todo_write, autonomy plans, drive runs, and subagent fan-out.")
+			workflowBody = append(workflowBody, "Use alt+s for todos, alt+d for tasks, alt+f for subagents.")
+		}
+		addSection("?", "WORKFLOW", workflowBody)
+		if len(gitBody) > 0 {
+			addSection("?", "GIT", gitBody)
+		}
+		addSection("?", "SESSION", sessionBody)
+	}
+	footerText := "  ctrl+s hide ? alt+a/s/d/f switch ? ctrl+h keys"
+	if info.FocusLocked {
+		footerText = "  esc unlock ? ctrl+s hide ? alt+a/s/d/f retarget ? ctrl+h keys"
+	} else if info.Boosted {
+		footerText = "  alt+a/s/d/f again locks ? ctrl+s hide ? ctrl+h keys"
+	}
+	footer := subtleStyle.Render(footerText)
+	lines = append(lines, divider, footer)
 	if len(lines) > height {
-		lines = lines[:height]
+		reserve := 2
+		if height < 2 {
+			reserve = 0
+		}
+		if reserve > 0 {
+			keep := height - reserve
+			if keep < 0 {
+				keep = 0
+			}
+			head := append([]string{}, lines[:keep]...)
+			lines = append(head, divider, footer)
+		} else {
+			lines = lines[:height]
+		}
 	}
 	for len(lines) < height {
 		lines = append(lines, "")
@@ -1906,7 +2145,30 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorPanelBorder).
 		Padding(0, 1).
-		Width(statsPanelWidth).
+		Width(panelWidth).
 		Height(height)
 	return box.Render(body)
+}
+
+func renderStatsPanelModeTabs(mode statsPanelMode, width int) string {
+	items := []struct {
+		key   string
+		label string
+		mode  statsPanelMode
+	}{
+		{key: "A", label: "overview", mode: statsPanelModeOverview},
+		{key: "S", label: "todos", mode: statsPanelModeTodos},
+		{key: "D", label: "tasks", mode: statsPanelModeTasks},
+		{key: "F", label: "subagents", mode: statsPanelModeSubagents},
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		label := item.key + " " + item.label
+		if mode == item.mode {
+			parts = append(parts, titleStyle.Render(" "+strings.ToUpper(label)+" "))
+			continue
+		}
+		parts = append(parts, subtleStyle.Render(label))
+	}
+	return truncateSingleLine(strings.Join(parts, "  "), width)
 }

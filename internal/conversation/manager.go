@@ -27,10 +27,7 @@ func (c *Conversation) Messages() []types.Message {
 	if c == nil {
 		return nil
 	}
-	msgs := c.Branches[c.Branch]
-	out := make([]types.Message, len(msgs))
-	copy(out, msgs)
-	return out
+	return cloneMessages(c.Branches[c.Branch])
 }
 
 type Summary struct {
@@ -165,8 +162,7 @@ func (m *Manager) BranchCreate(name string) error {
 		return fmt.Errorf("branch already exists: %s", name)
 	}
 	current := m.active.Branches[m.active.Branch]
-	copyMsgs := make([]types.Message, len(current))
-	copy(copyMsgs, current)
+	copyMsgs := cloneMessages(current)
 	m.active.Branches[name] = copyMsgs
 	return nil
 }
@@ -253,8 +249,7 @@ func (m *Manager) UndoLast() (int, error) {
 	if trimTo < 0 {
 		trimTo = 0
 	}
-	next := make([]types.Message, trimTo)
-	copy(next, msgs[:trimTo])
+	next := cloneMessages(msgs[:trimTo])
 	m.active.Branches[m.active.Branch] = next
 	return removed, nil
 }
@@ -481,9 +476,7 @@ func cloneConversation(in *Conversation) *Conversation {
 	out.Metadata = cloneMap(in.Metadata)
 	out.Branches = map[string][]types.Message{}
 	for k, v := range in.Branches {
-		cp := make([]types.Message, len(v))
-		copy(cp, v)
-		out.Branches[k] = cp
+		out.Branches[k] = cloneMessages(v)
 	}
 	return &out
 }
@@ -493,6 +486,49 @@ func cloneMap(in map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneMessages(in []types.Message) []types.Message {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]types.Message, len(in))
+	for i, msg := range in {
+		out[i] = cloneMessage(msg)
+	}
+	return out
+}
+
+func cloneMessage(in types.Message) types.Message {
+	out := in
+	out.Metadata = cloneMap(in.Metadata)
+	if len(in.ToolCalls) > 0 {
+		out.ToolCalls = make([]types.ToolCallRecord, len(in.ToolCalls))
+		for i, call := range in.ToolCalls {
+			out.ToolCalls[i] = call
+			out.ToolCalls[i].Params = cloneAnyMap(call.Params)
+			out.ToolCalls[i].Metadata = cloneMap(call.Metadata)
+		}
+	}
+	if len(in.Results) > 0 {
+		out.Results = make([]types.ToolResultRecord, len(in.Results))
+		for i, result := range in.Results {
+			out.Results[i] = result
+			out.Results[i].Metadata = cloneMap(result.Metadata)
+		}
+	}
+	return out
+}
+
+func cloneAnyMap(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
 	for k, v := range in {
 		out[k] = v
 	}

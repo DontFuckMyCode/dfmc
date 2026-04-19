@@ -91,23 +91,27 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 		if err != nil {
 			return Result{}, err
 		}
-		// Per-target read-before-mutate. New files are exempt (matches
-		// the write_file behaviour); deletes and modifies must have a
-		// prior read_file snapshot or the engine refuses. Without this
-		// check apply_patch is the silent backdoor in the safety model
-		// — flagged in the 2026-04-18 audit.
-		if !f.IsNew && t.engine != nil {
-			if guardErr := t.engine.EnsureReadBeforeMutation(abs); guardErr != nil {
-				return Result{}, fmt.Errorf("apply_patch %s: %w (read the file first via read_file, then retry)", targetPath, guardErr)
+		// Per-target read-before-mutate must be keyed off disk reality,
+		// not the diff header's "new file" claim. A fabricated /dev/null
+		// header against an existing file used to bypass the safety gate
+		// entirely. Stat the resolved path independently and require a
+		// prior read_file snapshot whenever the file already exists.
+		if t.engine != nil {
+			if _, statErr := os.Stat(abs); statErr == nil {
+				if guardErr := t.engine.EnsureReadBeforeMutation(abs); guardErr != nil {
+					return Result{}, fmt.Errorf("apply_patch %s: %w (read the file first via read_file, then retry)", targetPath, guardErr)
+				}
+			} else if statErr != nil && !os.IsNotExist(statErr) {
+				return Result{}, fmt.Errorf("apply_patch %s: stat target: %w", targetPath, statErr)
 			}
 		}
 
 		entry := map[string]any{
-			"path":       targetPath,
-			"hunks":      len(f.Hunks),
-			"new_file":   f.IsNew,
-			"deleted":    f.IsDeleted,
-			"dry_run":    dryRun,
+			"path":     targetPath,
+			"hunks":    len(f.Hunks),
+			"new_file": f.IsNew,
+			"deleted":  f.IsDeleted,
+			"dry_run":  dryRun,
 		}
 
 		if f.IsDeleted {
@@ -133,7 +137,7 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 			original = string(data)
 		}
 
-		updated, applied1, rejected, err := applyHunks(original, f.Hunks, f.IsNew)
+		updated, applied1, rejected, fuzzyOffsets, err := applyHunks(original, f.Hunks, f.IsNew)
 		if err != nil {
 			entry["error"] = err.Error()
 			applied = append(applied, entry)
@@ -142,6 +146,9 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 		}
 		entry["hunks_applied"] = applied1
 		entry["hunks_rejected"] = rejected
+		if len(fuzzyOffsets) > 0 {
+			entry["fuzzy_offsets"] = fuzzyOffsets
+		}
 
 		if !dryRun {
 			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
@@ -372,7 +379,7 @@ func atoiSafe(s string) (int, error) {
 //      apply.
 //   2. Otherwise, scan forward/backward a small window looking for a match.
 //   3. If still no match, mark the hunk rejected (don't force).
-func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int, error) {
+func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int, []int, error) {
 	if isNew {
 		// For a new file, all context/removal lines should be zero; just
 		// emit the '+' lines.
@@ -388,11 +395,12 @@ func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int
 			applied++
 		}
 		out := b.String()
-		return out, applied, 0, nil
+		return out, applied, 0, nil, nil
 	}
 
 	lines := splitKeepNewline(original)
 	applied, rejected := 0, 0
+	fuzzyOffsets := make([]int, 0, len(hunks))
 
 	for _, h := range hunks {
 		// Build the sequence of lines that must be present in the source
@@ -418,10 +426,13 @@ func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int
 		if anchor < 0 {
 			anchor = 0
 		}
-		idx := findHunkAnchor(lines, want, anchor)
+		idx, fuzzyOffset := findHunkAnchor(lines, want, anchor)
 		if idx < 0 {
 			rejected++
 			continue
+		}
+		if fuzzyOffset != 0 {
+			fuzzyOffsets = append(fuzzyOffsets, fuzzyOffset)
 		}
 		// Splice: replace lines[idx : idx+len(want)] with `replace` (preserve
 		// trailing newlines per original line).
@@ -440,14 +451,14 @@ func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int
 		applied++
 	}
 
-	return strings.Join(lines, ""), applied, rejected, nil
+	return strings.Join(lines, ""), applied, rejected, fuzzyOffsets, nil
 }
 
 // findHunkAnchor searches for the contiguous sequence `want` in `lines`,
 // preferring the hint anchor, then expanding outward.
-func findHunkAnchor(lines, want []string, hint int) int {
+func findHunkAnchor(lines, want []string, hint int) (int, int) {
 	if len(want) == 0 {
-		return hint
+		return hint, 0
 	}
 	// Normalize both sides: drop trailing CR+LF so CRLF-ended source
 	// files match against LF-normalized hunks (and vice-versa). Without
@@ -468,7 +479,7 @@ func findHunkAnchor(lines, want []string, hint int) int {
 	}
 
 	if match(hint) {
-		return hint
+		return hint, 0
 	}
 	// Fuzzy anchor search: expand outward a small window around the hint.
 	// Previously we expanded ±200 lines and then linear-scanned the whole
@@ -481,13 +492,13 @@ func findHunkAnchor(lines, want []string, hint int) int {
 	const maxFuzz = 10
 	for delta := 1; delta <= maxFuzz; delta++ {
 		if match(hint + delta) {
-			return hint + delta
+			return hint + delta, delta
 		}
 		if match(hint - delta) {
-			return hint - delta
+			return hint - delta, -delta
 		}
 	}
-	return -1
+	return -1, 0
 }
 
 // splitKeepNewline splits content on '\n' but keeps the trailing newline on

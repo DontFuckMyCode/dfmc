@@ -139,8 +139,8 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 			TotalTokens      int `json:"total_tokens"`
 		} `json:"usage"`
 		Choices []struct {
-			FinishReason string             `json:"finish_reason"`
-			Message      openaiChatMessage  `json:"message"`
+			FinishReason string            `json:"finish_reason"`
+			Message      openaiChatMessage `json:"message"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
@@ -221,6 +221,9 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 		raw, _ := io.ReadAll(resp.Body)
+		if isThrottleStatus(resp.StatusCode) {
+			return nil, newThrottledErrorFromResponse(p.name, resp, string(raw))
+		}
 		return nil, fmt.Errorf("%s error status %d: %s", p.name, resp.StatusCode, string(raw))
 	}
 

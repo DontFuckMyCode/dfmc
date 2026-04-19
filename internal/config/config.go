@@ -156,7 +156,7 @@ type AgentConfig struct {
 	ToolReasoning string `yaml:"tool_reasoning"`
 
 	// AutonomousResume controls whether a budget-exhausted park triggers
-	// an automatic compact-and-resume from inside the same Ask call —
+	// an automatic compact-and-resume from inside the same Ask call -
 	// the user sees one continuous response instead of having to type
 	// /continue (or "devam") between every park. Bounded by the same
 	// ResumeMaxMultiplier ceiling so a runaway loop can't go forever.
@@ -167,9 +167,18 @@ type AgentConfig struct {
 	// against cost runaway.
 	AutonomousResume string `yaml:"autonomous_resume"`
 
+	// AutonomousPlanning controls the deterministic preflight that runs on
+	// fresh native-tool asks before the model's first round. When enabled,
+	// DFMC splits obviously multi-part requests up-front, seeds the session
+	// todo list, and injects a dynamic system note nudging the model toward
+	// orchestrate/delegate fan-out instead of serializing everything in one
+	// giant loop. Empty / unset / "on" / "auto" enable it; "off" / "false"
+	// / "no" / "0" disable it.
+	AutonomousPlanning string `yaml:"autonomous_planning"`
+
 	// ContextLifecycle governs offline auto-compaction of in-loop history so
-	// token spend stays flat even across many tool rounds. Strictly offline —
-	// no extra LLM call — to honour DFMC's token-miser promise.
+	// token spend stays flat even across many tool rounds. Strictly offline -
+	// no extra LLM call - to honour DFMC's token-miser promise.
 	ContextLifecycle ContextLifecycleConfig `yaml:"context_lifecycle"`
 }
 
@@ -296,6 +305,13 @@ type SecurityConfig struct {
 }
 
 type SandboxConfig struct {
+	// AllowCommand is the preferred spelling for the run_command kill-switch.
+	// When false, DFMC disables the entire run_command tool, not just shell
+	// interpreters. The legacy allow_shell key is still accepted for backward
+	// compatibility and maps to the same canonical boolean.
+	AllowCommand *bool `yaml:"allow_command,omitempty"`
+	// AllowShell is the legacy alias for AllowCommand. Keep it wired so older
+	// configs keep working, but prefer allow_command in docs and examples.
 	AllowShell bool   `yaml:"allow_shell"`
 	AllowNet   bool   `yaml:"allow_network"`
 	Timeout    string `yaml:"timeout"`
@@ -409,6 +425,7 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	if err := loadYAML(globalPath, cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("load global config: %w", err)
 	}
+	cfg.normalizeAliases()
 	globalHooks := cloneHooksConfig(cfg.Hooks)
 	allowProjectHooks := cfg.Hooks.AllowProject
 
@@ -425,6 +442,7 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 		if err := loadYAML(projectPath, cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("load project config: %w", err)
 		}
+		cfg.normalizeAliases()
 		if !allowProjectHooks {
 			cfg.Hooks = globalHooks
 		}
@@ -457,6 +475,16 @@ func cloneHooksConfig(in HooksConfig) HooksConfig {
 		out.Entries[event] = cp
 	}
 	return out
+}
+
+func (c *Config) normalizeAliases() {
+	if c == nil {
+		return
+	}
+	if c.Security.Sandbox.AllowCommand != nil {
+		c.Security.Sandbox.AllowShell = *c.Security.Sandbox.AllowCommand
+		c.Security.Sandbox.AllowCommand = nil
+	}
 }
 
 func loadYAML(path string, out *Config) error {

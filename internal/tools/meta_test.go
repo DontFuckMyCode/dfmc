@@ -754,3 +754,49 @@ func TestToolBatchCall_UsesCumulativeMetaBudgetPerTurn(t *testing.T) {
 		t.Fatalf("expected cumulative budget exhaustion on the 65th planned call, got %v", err)
 	}
 }
+
+func TestEnterMetaBudget_ConcurrentCallsStayWithinBudget(t *testing.T) {
+	ctx := SeedMetaToolBudget(context.Background())
+	state, _ := ctx.Value(metaBudgetKey{}).(*metaBudgetState)
+	if state == nil {
+		t.Fatal("expected seeded meta budget state")
+	}
+
+	start := make(chan struct{})
+	successes := int32(0)
+	errs := make(chan error, 20)
+
+	for range 20 {
+		go func() {
+			<-start
+			_, release, err := enterMetaBudget(ctx, 8)
+			if err != nil {
+				errs <- err
+				return
+			}
+			atomic.AddInt32(&successes, 1)
+			release()
+			errs <- nil
+		}()
+	}
+
+	close(start)
+	for i := 0; i < 20; i++ {
+		<-errs
+	}
+	remainingSuccesses := atomic.LoadInt32(&successes)
+	if remainingSuccesses != 8 {
+		t.Fatalf("expected exactly 8 successful 8-call reservations within a 64-call budget, got %d", remainingSuccesses)
+	}
+
+	state.mu.Lock()
+	if state.used != defaultMetaCallBudget {
+		state.mu.Unlock()
+		t.Fatalf("expected used budget to stop at %d before releases, got %d", defaultMetaCallBudget, state.used)
+	}
+	if state.depth != 0 {
+		state.mu.Unlock()
+		t.Fatalf("expected meta depth to return to 0 after releases, got %d", state.depth)
+	}
+	state.mu.Unlock()
+}

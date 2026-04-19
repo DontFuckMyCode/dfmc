@@ -11,9 +11,9 @@ import (
 
 func newSecurityTestModel() Model {
 	return Model{
-		tabs:      []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security"},
-		activeTab: 11,
-		security:  securityPanelState{view: securityViewSecrets},
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security"},
+		activeTab:             11,
+		diagnosticPanelsState: newDiagnosticPanelsState(),
 	}
 }
 

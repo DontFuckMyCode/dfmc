@@ -37,7 +37,7 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 		return Result{}, fmt.Errorf("run_command config is unavailable")
 	}
 	if !t.cfg.allowShell {
-		return Result{}, fmt.Errorf("run_command is disabled by security.sandbox.allow_shell=false")
+		return Result{}, fmt.Errorf("run_command is disabled by security.sandbox.allow_command=false (legacy key: allow_shell=false); this flag disables the whole run_command tool, not only shell interpreters")
 	}
 
 	command := strings.TrimSpace(asString(req.Params, "command", ""))
@@ -79,6 +79,18 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 	args, err := commandArgs(req.Params["args"])
 	if err != nil {
 		return Result{}, err
+	}
+	if token, value := detectShellSubstitutionArg(args); token != "" {
+		return Result{}, fmt.Errorf(
+			"run_command args are passed literally to the target binary; shell substitution is never expanded. "+
+				"Found shell syntax %q in args element %q. If you intended a literal value, keep it exactly as text; "+
+				"if you intended command substitution, resolve it in a prior tool call and pass the concrete result here.",
+			token, value)
+	}
+	for _, arg := range args {
+		if isBlockedShellInterpreter(arg) {
+			return Result{}, fmt.Errorf("shell interpreters are blocked for run_command args as well: %s", arg)
+		}
 	}
 	// Catch the second-most-common LLM packing mistake: `command:"go build ./..."`
 	// with no `args` set. That's not shell syntax (so detectShellMetacharacter
@@ -447,6 +459,18 @@ func hasStandaloneShellAmpersand(cmd string) bool {
 		}
 	}
 	return false
+}
+
+func detectShellSubstitutionArg(args []string) (string, string) {
+	for _, arg := range args {
+		switch {
+		case strings.Contains(arg, "$("):
+			return "$(", arg
+		case strings.Contains(arg, "`"):
+			return "`", arg
+		}
+	}
+	return "", ""
 }
 
 func isShellWhitespace(r rune) bool {

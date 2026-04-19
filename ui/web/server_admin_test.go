@@ -111,6 +111,50 @@ func TestDoctorEndpoint_ShapeAndStatus(t *testing.T) {
 	}
 }
 
+func TestDoctorEndpoint_ZAIAdvisory(t *testing.T) {
+	eng := newTestEngine(t)
+	zai := eng.Config.Providers.Profiles["zai"]
+	zai.Protocol = "anthropic"
+	zai.BaseURL = "https://api.z.ai/api/anthropic"
+	eng.Config.Providers.Profiles["zai"] = zai
+
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/doctor")
+	if err != nil {
+		t.Fatalf("get doctor: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+	var payload struct {
+		Status string `json:"status"`
+		Checks []struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		} `json:"checks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.Status != "warn" && payload.Status != "fail" {
+		t.Fatalf("expected warn/fail status when ZAI advisory is present, got %q", payload.Status)
+	}
+	found := false
+	for _, check := range payload.Checks {
+		if check.Name == "provider.zai.advisory" && check.Status == "warn" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected provider.zai.advisory warn check, got %#v", payload.Checks)
+	}
+}
+
 // /api/v1/config must redact every secret-shaped key. Plant a fake API
 // key in the config and confirm it surfaces as "***REDACTED***" — never
 // the literal value, no matter how the YAML round-trip lays it out.

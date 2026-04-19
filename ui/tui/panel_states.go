@@ -36,6 +36,42 @@ type providersPanelState struct {
 	err    string
 }
 
+// diagnosticPanelsState groups the cold, mostly read-only diagnostic tabs.
+// These views are loaded on demand and mutated far less often than the chat
+// composer / stream path, so keeping them bundled behind one embedded struct
+// makes the hot fields on Model easier to scan and reason about.
+type diagnosticPanelsState struct {
+	memory        memoryPanelState
+	codemap       codemapPanelState
+	conversations conversationsPanelState
+	prompts       promptsPanelState
+	security      securityPanelState
+	plans         plansPanelState
+	contextPanel  contextPanelState
+	providers     providersPanelState
+}
+
+func newDiagnosticPanelsState() *diagnosticPanelsState {
+	state := &diagnosticPanelsState{}
+	state.applyDefaults()
+	return state
+}
+
+func (d *diagnosticPanelsState) applyDefaults() {
+	if d == nil {
+		return
+	}
+	if d.memory.tier == "" {
+		d.memory.tier = memoryTierAll
+	}
+	if d.codemap.view == "" {
+		d.codemap.view = codemapViewOverview
+	}
+	if d.security.view == "" {
+		d.security.view = securityViewSecrets
+	}
+}
+
 // contextPanelState — diagnostic view over Engine.ContextBudgetPreview /
 // ContextRecommendations. Lets the user inspect a query's token budget
 // without firing an Ask.
@@ -129,10 +165,10 @@ type conversationsPanelState struct {
 // three loose groups that all live here because they're touched together
 // on every keystroke and stream event:
 //
-//   • composer    — input, cursor, cursorManual, cursorInput
-//   • stream      — sending, streamIndex/Messages/Cancel/StartedAt,
-//                   userCancelledStream, spinnerFrame/Ticking, scrollback
-//   • queue/tools — pendingQueue, pendingNoteCount, toolPending, toolName
+//   - composer    — input, cursor, cursorManual, cursorInput
+//   - stream      — sending, streamIndex/Messages/Cancel/StartedAt,
+//     userCancelledStream, spinnerFrame/Ticking, scrollback
+//   - queue/tools — pendingQueue, pendingNoteCount, toolPending, toolName
 //
 // `transcript` is the rendered history; `scrollback` is how far PageUp
 // has scrolled us back from the tail (0 = pinned to latest).
@@ -183,14 +219,20 @@ type intentState struct {
 // but grouping them keeps the Model declaration from being half-flooded
 // with bools whose only role is "is this overlay visible?".
 type uiToggles struct {
-	showHelpOverlay     bool // ctrl+h: keybinding card overlay
-	showStatsPanel      bool // ctrl+s: right-side stats panel on chat tab
-	keyLogEnabled       bool // /keylog or DFMC_KEYLOG=1: dump KeyMsg into notice
-	planMode            bool // /plan: investigate-only agent loop
-	resumePromptActive  bool // agent:loop:parked: show "press enter to resume"
-	coachMuted          bool // /coach: hide coach:note transcript lines
-	hintsVerbose        bool // /hints: surface model-facing trajectory hints
-	mouseCaptureEnabled bool // /mouse: cell-motion mouse tracking on/off
+	showHelpOverlay       bool // ctrl+h: keybinding card overlay
+	showStatsPanel        bool // ctrl+s: right-side stats panel on chat tab
+	statsPanelMode        statsPanelMode
+	statsPanelBoostUntil  time.Time
+	statsPanelFocusLocked bool
+	keyLogEnabled         bool // /keylog or DFMC_KEYLOG=1: dump KeyMsg into notice
+	planMode              bool // /plan: investigate-only agent loop
+	resumePromptActive    bool // agent:loop:parked: show "press enter to resume"
+	coachMuted            bool // /coach: hide coach:note transcript lines
+	hintsVerbose          bool // /hints: surface model-facing trajectory hints
+	mouseCaptureEnabled   bool // /mouse: cell-motion mouse tracking on/off
+	selectionModeActive   bool // /select or alt+x: chat-only selection layout
+	selectionRestoreStats bool // previous showStatsPanel before selection mode
+	selectionRestoreMouse bool // previous mouseCaptureEnabled before selection mode
 	// toolStripExpanded controls whether the per-message tool-call
 	// strip renders as a one-line summary table (default, false) or as
 	// the full per-call chip block (when true). Default is collapsed
@@ -200,13 +242,25 @@ type uiToggles struct {
 	toolStripExpanded bool
 }
 
+type statsPanelMode string
+
+const (
+	statsPanelModeOverview  statsPanelMode = "overview"
+	statsPanelModeTodos     statsPanelMode = "todos"
+	statsPanelModeTasks     statsPanelMode = "tasks"
+	statsPanelModeSubagents statsPanelMode = "subagents"
+)
+
 // activityPanelState — Activity tab state. `entries` is the timestamped
 // firehose fed by every engine event; `follow` pins the view to the tail
 // (any manual scroll unpins it).
 type activityPanelState struct {
-	entries []activityEntry
-	scroll  int
-	follow  bool
+	entries      []activityEntry
+	scroll       int
+	follow       bool
+	mode         activityViewMode
+	query        string
+	searchActive bool
 }
 
 // sessionTelemetry — running counters surfaced by the chat header chips
@@ -318,17 +372,17 @@ type commandPickerState struct {
 // Lives off Model so the 13 separate flat fields don't drown unrelated
 // state in the Model declaration.
 type agentLoopState struct {
-	active        bool
-	step          int
-	maxToolStep   int
-	toolRounds    int
-	phase         string
-	provider      string
-	model         string
-	lastTool      string
-	lastStatus    string
-	lastDuration  int
-	lastOutput    string
-	contextScope  string
-	toolTimeline  []toolChip
+	active       bool
+	step         int
+	maxToolStep  int
+	toolRounds   int
+	phase        string
+	provider     string
+	model        string
+	lastTool     string
+	lastStatus   string
+	lastDuration int
+	lastOutput   string
+	contextScope string
+	toolTimeline []toolChip
 }

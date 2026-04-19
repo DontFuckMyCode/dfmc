@@ -3,8 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -99,6 +101,26 @@ func TestReadFileTool_BinaryHeuristicMetadataAndLateNUL(t *testing.T) {
 	}
 }
 
+func TestTrackFailureEvictsOldestDeterministically(t *testing.T) {
+	eng := New(*config.DefaultConfig())
+	for i := 0; i < maxRecentFailures+1; i++ {
+		key := filepath.ToSlash(filepath.Join("tool", "k", strconv.Itoa(i)))
+		eng.trackFailure(key)
+	}
+	if _, ok := eng.recentFailures[filepath.ToSlash(filepath.Join("tool", "k", "0"))]; ok {
+		t.Fatal("oldest failure key should have been evicted first")
+	}
+	for i := maxRecentFailures/2 + 1; i <= maxRecentFailures; i++ {
+		key := filepath.ToSlash(filepath.Join("tool", "k", strconv.Itoa(i)))
+		if _, ok := eng.recentFailures[key]; !ok {
+			t.Fatalf("newer failure key %q should still be present", key)
+		}
+	}
+	if len(eng.recentFailures) != maxRecentFailures/2 {
+		t.Fatalf("expected eviction down to %d entries, got %d", maxRecentFailures/2, len(eng.recentFailures))
+	}
+}
+
 func TestReadFileTool_UTF16WithBOMIsReadAsText(t *testing.T) {
 	t.Run("utf16le", func(t *testing.T) {
 		testReadFileToolUTF16WithBOM(t, binary.LittleEndian, []byte{0xFF, 0xFE}, readFileEncodingUTF16LEBOM)
@@ -164,6 +186,29 @@ func TestGrepTool(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("execute grep: %v", err)
+	}
+	if !strings.Contains(res.Output, "TODO") {
+		t.Fatalf("expected TODO in grep output: %q", res.Output)
+	}
+}
+
+func TestGrepTool_QueryAliasAccepted(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "main.go")
+	src := "package main\nfunc main(){}\n// TODO: improve\n"
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"query": "TODO",
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute grep with query alias: %v", err)
 	}
 	if !strings.Contains(res.Output, "TODO") {
 		t.Fatalf("expected TODO in grep output: %q", res.Output)
@@ -352,6 +397,112 @@ func TestToolParamsNormalizeGrepMaxResultsClamp(t *testing.T) {
 	}
 }
 
+func TestToolParamsNormalizeAliases(t *testing.T) {
+	tmp := t.TempDir()
+	readTarget := filepath.Join(tmp, "alias.txt")
+	if err := os.WriteFile(readTarget, []byte("line1\nline2\nline3\n"), 0o644); err != nil {
+		t.Fatalf("write alias file: %v", err)
+	}
+
+	runCases := []struct {
+		name       string
+		tool       string
+		params     map[string]any
+		assertFunc func(t *testing.T, res Result)
+	}{
+		{
+			name: "read_file_aliases",
+			tool: "read_file",
+			params: map[string]any{
+				"file":  "alias.txt",
+				"start": 2,
+				"end":   2,
+			},
+			assertFunc: func(t *testing.T, res Result) {
+				t.Helper()
+				if !strings.Contains(res.Output, "line2") {
+					t.Fatalf("expected aliased read_file output to contain line2, got %q", res.Output)
+				}
+			},
+		},
+		{
+			name: "list_dir_aliases",
+			tool: "list_dir",
+			params: map[string]any{
+				"dir":   ".",
+				"limit": 1,
+			},
+			assertFunc: func(t *testing.T, res Result) {
+				t.Helper()
+				if entries, _ := res.Data["entries"].([]map[string]any); len(entries) > 1 {
+					t.Fatalf("expected aliased list_dir limit to apply, got %d entries", len(entries))
+				}
+			},
+		},
+		{
+			name: "grep_aliases",
+			tool: "grep_codebase",
+			params: map[string]any{
+				"regex": "line2",
+				"limit": 1,
+			},
+			assertFunc: func(t *testing.T, res Result) {
+				t.Helper()
+				if !strings.Contains(res.Output, "line2") {
+					t.Fatalf("expected aliased grep output to contain match, got %q", res.Output)
+				}
+				if count, _ := res.Data["count"].(int); count > 1 {
+					t.Fatalf("expected aliased grep limit to apply, got count=%d", count)
+				}
+			},
+		},
+		{
+			name: "glob_aliases",
+			tool: "glob",
+			params: map[string]any{
+				"query": "*.txt",
+				"root":  ".",
+			},
+			assertFunc: func(t *testing.T, res Result) {
+				t.Helper()
+				if !strings.Contains(res.Output, "alias.txt") {
+					t.Fatalf("expected aliased glob output to mention alias.txt, got %q", res.Output)
+				}
+			},
+		},
+		{
+			name: "run_command_aliases",
+			tool: "run_command",
+			params: map[string]any{
+				"cmd":     "go",
+				"argv":    []any{"version"},
+				"workdir": tmp,
+				"timeout": 10000,
+			},
+			assertFunc: func(t *testing.T, res Result) {
+				t.Helper()
+				if !strings.Contains(strings.ToLower(res.Output), "go version") {
+					t.Fatalf("expected aliased run_command output, got %q", res.Output)
+				}
+			},
+		},
+	}
+
+	for _, tc := range runCases {
+		t.Run(tc.name, func(t *testing.T) {
+			eng := New(*config.DefaultConfig())
+			res, err := eng.Execute(context.Background(), tc.tool, Request{
+				ProjectRoot: tmp,
+				Params:      tc.params,
+			})
+			if err != nil {
+				t.Fatalf("execute %s with aliases: %v", tc.tool, err)
+			}
+			tc.assertFunc(t, res)
+		})
+	}
+}
+
 func TestToolFailureGuardAfterRepeatedErrors(t *testing.T) {
 	tmp := t.TempDir()
 	eng := New(*config.DefaultConfig())
@@ -465,6 +616,122 @@ func TestWriteFileOverwriteReturnsPreviousHashMetadata(t *testing.T) {
 	if prevBytes, _ := res.Data["previous_bytes"].(int); prevBytes != len([]byte(oldContent)) {
 		t.Fatalf("expected previous_bytes=%d, got %#v", len([]byte(oldContent)), res.Data["previous_bytes"])
 	}
+	if scope, _ := res.Data["previous_hash_scope"].(string); scope != "best_effort_prewrite" {
+		t.Fatalf("expected best-effort hash scope, got %#v", res.Data["previous_hash_scope"])
+	}
+	if verified, _ := res.Data["previous_hash_verified"].(bool); verified {
+		t.Fatalf("previous_hash must not claim atomic verification")
+	}
+}
+
+func TestReadSnapshotsEvictLeastRecentlyRead(t *testing.T) {
+	eng := New(*config.DefaultConfig())
+	eng.readMu.Lock()
+	for i := 0; i < maxReadSnapshots; i++ {
+		path := filepath.Join("root", fmt.Sprintf("f-%03d.txt", i))
+		eng.readSnapshots[path] = "hash"
+		eng.touchReadSnapshotLocked(path)
+	}
+	// Re-read the oldest entry so it becomes most recently used.
+	keep := filepath.Join("root", "f-000.txt")
+	eng.touchReadSnapshotLocked(keep)
+	newest := filepath.Join("root", "f-new.txt")
+	eng.readSnapshots[newest] = "hash"
+	eng.touchReadSnapshotLocked(newest)
+	_, kept := eng.readSnapshots[keep]
+	_, evicted := eng.readSnapshots[filepath.Join("root", "f-001.txt")]
+	eng.readMu.Unlock()
+	if !kept {
+		t.Fatal("most recently touched snapshot should not be evicted")
+	}
+	if evicted {
+		t.Fatal("least recently read snapshot should have been evicted")
+	}
+}
+
+func TestTouchReadSnapshotLockedBoundsCountWithStaleLRUEntries(t *testing.T) {
+	eng := New(*config.DefaultConfig())
+	eng.readMu.Lock()
+	for i := 0; i < maxReadSnapshots; i++ {
+		path := filepath.Join("root", fmt.Sprintf("f-%03d.txt", i))
+		eng.readSnapshots[path] = "hash"
+		eng.touchReadSnapshotLocked(path)
+	}
+	stale := filepath.Join("root", "f-000.txt")
+	delete(eng.readSnapshots, stale)
+	newest := filepath.Join("root", "f-new.txt")
+	eng.readSnapshots[newest] = "hash"
+	eng.touchReadSnapshotLocked(newest)
+	gotSnapshots := len(eng.readSnapshots)
+	eng.readMu.Unlock()
+	if gotSnapshots > maxReadSnapshots {
+		t.Fatalf("snapshot count must stay bounded at %d, got %d", maxReadSnapshots, gotSnapshots)
+	}
+}
+
+func TestTouchReadSnapshotLockedEvictsToHalfCapacity(t *testing.T) {
+	eng := New(*config.DefaultConfig())
+	eng.readMu.Lock()
+	for i := 0; i < maxReadSnapshots; i++ {
+		path := filepath.Join("root", fmt.Sprintf("f-%03d.txt", i))
+		eng.readSnapshots[path] = "hash"
+		eng.touchReadSnapshotLocked(path)
+	}
+	overflow := filepath.Join("root", "f-overflow.txt")
+	eng.readSnapshots[overflow] = "hash"
+	eng.touchReadSnapshotLocked(overflow)
+	gotSnapshots := len(eng.readSnapshots)
+	gotLRU := len(eng.readSnapshotLRU)
+	_, keptOverflow := eng.readSnapshots[overflow]
+	eng.readMu.Unlock()
+	wantTarget := maxReadSnapshots / 2
+	if gotSnapshots != wantTarget {
+		t.Fatalf("expected snapshot count to compact to %d, got %d", wantTarget, gotSnapshots)
+	}
+	if gotLRU < gotSnapshots {
+		t.Fatalf("expected LRU to retain at least surviving entries, got lru=%d snapshots=%d", gotLRU, gotSnapshots)
+	}
+	if !keptOverflow {
+		t.Fatal("newly touched overflow snapshot should survive compaction")
+	}
+}
+
+func TestTouchReadSnapshotLockedStaleLRUCompactsToHalfCapacity(t *testing.T) {
+	eng := New(*config.DefaultConfig())
+	eng.readMu.Lock()
+	for i := 0; i < maxReadSnapshots; i++ {
+		path := filepath.Join("root", fmt.Sprintf("f-%03d.txt", i))
+		eng.readSnapshots[path] = "hash"
+		eng.touchReadSnapshotLocked(path)
+	}
+	for i := 0; i < maxReadSnapshots/4; i++ {
+		delete(eng.readSnapshots, filepath.Join("root", fmt.Sprintf("f-%03d.txt", i)))
+	}
+	for i := 0; i < maxReadSnapshots/4+1; i++ {
+		path := filepath.Join("root", fmt.Sprintf("fresh-%03d.txt", i))
+		eng.readSnapshots[path] = "hash"
+		eng.touchReadSnapshotLocked(path)
+	}
+	gotSnapshots := len(eng.readSnapshots)
+	eng.readMu.Unlock()
+	wantMax := maxReadSnapshots / 2
+	if gotSnapshots > wantMax {
+		t.Fatalf("expected stale-LRU compaction to keep at most %d snapshots, got %d", wantMax, gotSnapshots)
+	}
+}
+
+func TestToolFailureKeyCanonicalizesNestedMaps(t *testing.T) {
+	left := toolFailureKey("tool_call", map[string]any{
+		"name": "read_file",
+		"args": map[string]any{"path": "a.go", "line_end": 10, "line_start": 1},
+	})
+	right := toolFailureKey("tool_call", map[string]any{
+		"name": "read_file",
+		"args": map[string]any{"line_start": 1, "path": "a.go", "line_end": 10},
+	})
+	if left != right {
+		t.Fatalf("nested map order should not affect failure key:\nleft:  %q\nright: %q", left, right)
+	}
 }
 
 func TestWriteFileAllowsNewFileWithoutRead(t *testing.T) {
@@ -487,6 +754,54 @@ func TestWriteFileAllowsNewFileWithoutRead(t *testing.T) {
 	}
 	if string(got) != "hello" {
 		t.Fatalf("unexpected new file content: %q", string(got))
+	}
+}
+
+func TestWriteAndEditFileAcceptCommonAliases(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "alias-write.txt")
+	if err := os.WriteFile(file, []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	eng := New(*config.DefaultConfig())
+	if _, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"file": "alias-write.txt",
+		},
+	}); err != nil {
+		t.Fatalf("read_file with alias: %v", err)
+	}
+
+	if _, err := eng.Execute(context.Background(), "edit_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"file": "alias-write.txt",
+			"old":  "before",
+			"new":  "after",
+		},
+	}); err != nil {
+		t.Fatalf("edit_file with aliases: %v", err)
+	}
+
+	if _, err := eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"file":  "alias-write.txt",
+			"text":  "rewritten\n",
+			"force": true,
+		},
+	}); err != nil {
+		t.Fatalf("write_file with aliases: %v", err)
+	}
+
+	got, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(got) != "rewritten\n" {
+		t.Fatalf("unexpected aliased write_file content: %q", string(got))
 	}
 }
 
@@ -676,6 +991,41 @@ func TestRunCommandToolRejectsShellSyntaxWithActionableError(t *testing.T) {
 	}
 }
 
+func TestRunCommandRejectsShellSubstitutionInArgs(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	cases := []struct {
+		name  string
+		args  any
+		token string
+	}{
+		{name: "dollar-paren", args: []any{"$(pwd)"}, token: "$("},
+		{name: "backticks", args: []any{"`pwd`"}, token: "`"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := eng.Execute(context.Background(), "run_command", Request{
+				ProjectRoot: tmp,
+				Params: map[string]any{
+					"command": "echo",
+					"args":    c.args,
+				},
+			})
+			if err == nil {
+				t.Fatal("shell substitution in args must be rejected")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "passed literally") {
+				t.Fatalf("error should explain literal argv behavior, got %q", msg)
+			}
+			if !strings.Contains(msg, c.token) {
+				t.Fatalf("error should name offending shell token %q, got %q", c.token, msg)
+			}
+		})
+	}
+}
+
 // TestRunCommandShellSyntaxSuggestsDirRecovery pins the targeted recovery
 // hint for the `cd <dir> && <cmd>` footgun. The model passed an entire
 // shell line into `command` because `dir` wasn't surfaced as the actual
@@ -829,6 +1179,22 @@ func TestRunCommandToolBlocksShellInterpreter(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "shell interpreters are blocked") {
 		t.Fatalf("expected shell interpreter block, got %v", err)
+	}
+}
+
+func TestRunCommandToolBlocksShellInterpreterInArgs(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+
+	_, err := eng.Execute(context.Background(), "run_command", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"command": "env",
+			"args":    []any{"bash", "-lc", "echo nope"},
+		},
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "shell interpreters are blocked") {
+		t.Fatalf("expected shell interpreter-in-args block, got %v", err)
 	}
 }
 

@@ -13,8 +13,9 @@ import (
 
 func newConversationsTestModel() Model {
 	return Model{
-		tabs:      []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations"},
-		activeTab: 9,
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations"},
+		activeTab:             9,
+		diagnosticPanelsState: newDiagnosticPanelsState(),
 	}
 }
 

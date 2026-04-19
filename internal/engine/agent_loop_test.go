@@ -13,6 +13,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
+	"github.com/dontfuckmycode/dfmc/internal/planning"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
@@ -74,6 +75,16 @@ func (p *scriptedProvider) Stream(_ context.Context, _ provider.CompletionReques
 	p.streamUsed = true
 	p.mu.Unlock()
 	return nil, fmt.Errorf("unexpected stream call")
+}
+
+type kickoffRunner struct{}
+
+func (kickoffRunner) RunSubagent(_ context.Context, req tools.SubagentRequest) (tools.SubagentResult, error) {
+	return tools.SubagentResult{
+		Summary:    "ran: " + strings.TrimSpace(req.Task),
+		ToolCalls:  1,
+		DurationMs: 5,
+	}, nil
 }
 
 // toolCallInput marshals any Go value through JSON so we can pass arguments
@@ -199,6 +210,298 @@ func TestAskWithMetadata_NativeToolLoop_DiscoverAndCall(t *testing.T) {
 	}
 	if len(assistant.Results) != 1 || !assistant.Results[0].Success {
 		t.Fatalf("expected one successful tool result, got %#v", assistant.Results)
+	}
+}
+
+func TestAskWithMetadata_NativeToolLoop_AutonomyPreflightSeedsTodos(t *testing.T) {
+	tmp := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Providers.Primary = "stub"
+	cfg.Providers.Profiles["stub"] = config.ModelConfig{
+		Model:      "stub-model",
+		MaxTokens:  4096,
+		MaxContext: 128000,
+	}
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	stub := &scriptedProvider{
+		name:  "stub",
+		model: "stub-model",
+		hints: newNativeHints(),
+		responses: []scriptedResponse{
+			{Text: "Done."},
+		},
+	}
+	router.Register(stub)
+
+	bus := NewEventBus()
+	eventsCh := bus.Subscribe("*")
+	defer bus.Unsubscribe("*", eventsCh)
+	eng := &Engine{
+		Config:       cfg,
+		EventBus:     bus,
+		ProjectRoot:  tmp,
+		Providers:    router,
+		Tools:        tools.New(*cfg),
+		Conversation: conversation.New(nil),
+	}
+
+	question := "1. inspect internal/engine 2. patch ui/tui 3. run focused tests"
+	if _, err := eng.AskWithMetadata(context.Background(), question); err != nil {
+		t.Fatalf("AskWithMetadata: %v", err)
+	}
+
+	todos := eng.Tools.TodoSnapshot()
+	if len(todos) != 3 {
+		t.Fatalf("expected 3 pre-seeded todos, got %#v", todos)
+	}
+	if got := strings.ToLower(strings.TrimSpace(todos[0].Status)); got != "in_progress" {
+		t.Fatalf("expected first todo to be in_progress, got %#v", todos[0])
+	}
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if len(stub.requests) != 1 {
+		t.Fatalf("expected 1 provider request, got %d", len(stub.requests))
+	}
+	if !strings.Contains(stub.requests[0].System, "[DFMC autonomy preflight]") {
+		t.Fatalf("expected autonomy preflight in system prompt, got %q", stub.requests[0].System)
+	}
+	if !strings.Contains(stub.requests[0].System, "todo list has already been pre-seeded") {
+		t.Fatalf("expected pre-seeded todo guidance in system prompt, got %q", stub.requests[0].System)
+	}
+
+	var events []Event
+drain:
+	for {
+		select {
+		case ev := <-eventsCh:
+			events = append(events, ev)
+		default:
+			break drain
+		}
+	}
+	ev, ok := findEventByType(events, "agent:autonomy:plan")
+	if !ok {
+		t.Fatalf("expected agent:autonomy:plan event, got %v", eventTypes(events))
+	}
+	payload, _ := ev.Payload.(map[string]any)
+	count, _ := payload["subtask_count"].(int)
+	if count == 0 {
+		t.Fatalf("expected autonomy plan payload to include subtask_count, got %+v", ev.Payload)
+	}
+}
+
+func TestRunSubagent_AutonomyPreflightInjected(t *testing.T) {
+	tmp := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Providers.Primary = "stub"
+	cfg.Providers.Profiles["stub"] = config.ModelConfig{
+		Model:      "stub-model",
+		MaxTokens:  4096,
+		MaxContext: 128000,
+	}
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	stub := &scriptedProvider{
+		name:  "stub",
+		model: "stub-model",
+		hints: newNativeHints(),
+		responses: []scriptedResponse{
+			{Text: "Subagent done."},
+		},
+	}
+	router.Register(stub)
+
+	bus := NewEventBus()
+	eventsCh := bus.Subscribe("*")
+	defer bus.Unsubscribe("*", eventsCh)
+	eng := &Engine{
+		Config:       cfg,
+		EventBus:     bus,
+		ProjectRoot:  tmp,
+		Providers:    router,
+		Tools:        tools.New(*cfg),
+		Conversation: conversation.New(nil),
+	}
+
+	_, err = eng.RunSubagent(context.Background(), tools.SubagentRequest{
+		Task: "1. inspect internal/engine 2. inspect ui/tui 3. summarize the risks",
+		Role: "researcher",
+	})
+	if err != nil {
+		t.Fatalf("RunSubagent: %v", err)
+	}
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if len(stub.requests) != 1 {
+		t.Fatalf("expected 1 provider request, got %d", len(stub.requests))
+	}
+	if !strings.Contains(stub.requests[0].System, "[DFMC autonomy preflight]") {
+		t.Fatalf("expected autonomy preflight in subagent system prompt, got %q", stub.requests[0].System)
+	}
+	if strings.Contains(stub.requests[0].System, "todo list has already been pre-seeded") {
+		t.Fatalf("subagent prompt should not claim todo list was pre-seeded, got %q", stub.requests[0].System)
+	}
+
+	var events []Event
+drainSubagent:
+	for {
+		select {
+		case ev := <-eventsCh:
+			events = append(events, ev)
+		default:
+			break drainSubagent
+		}
+	}
+	found := false
+	for _, ev := range events {
+		if ev.Type != "agent:autonomy:plan" {
+			continue
+		}
+		payload, _ := ev.Payload.(map[string]any)
+		if scope, _ := payload["scope"].(string); scope == "subagent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected agent:autonomy:plan event with scope=subagent, got %v", eventTypes(events))
+	}
+}
+
+func TestRenderAutonomyDirective_AggressiveModeAddsStrongerKickoff(t *testing.T) {
+	plan := planning.Plan{
+		Parallel:   true,
+		Confidence: 0.83,
+		Subtasks: []planning.Subtask{
+			{Title: "Inspect handlers", Hint: "survey"},
+			{Title: "Patch renderer", Hint: "edit"},
+		},
+	}
+	text := renderAutonomyDirective(plan, true, "aggressive")
+	for _, want := range []string{
+		"aggressive autonomy mode",
+		"orchestrate on the first tool round",
+		"todo list has already been pre-seeded",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected aggressive autonomy directive to contain %q, got %q", want, text)
+		}
+	}
+}
+
+func TestMaybeAutoKickoffAutonomy_AggressiveParallelPlanSeedsOrchestrateRound(t *testing.T) {
+	cfg := config.DefaultConfig()
+	eng := &Engine{
+		Config:      cfg,
+		EventBus:    NewEventBus(),
+		ProjectRoot: t.TempDir(),
+		Tools:       tools.New(*cfg),
+	}
+	eng.Tools.SetSubagentRunner(kickoffRunner{})
+	evCh := eng.EventBus.Subscribe("*")
+	defer eng.EventBus.Unsubscribe("*", evCh)
+
+	preflight := &autonomyPreflight{
+		Plan: planning.Plan{
+			Parallel:   true,
+			Confidence: 0.92,
+			Subtasks: []planning.Subtask{
+				{Title: "Inspect handlers", Hint: "survey"},
+				{Title: "Patch renderer", Hint: "edit"},
+				{Title: "Verify the flow", Hint: "verify"},
+			},
+		},
+		Scope: "top_level",
+		Mode:  "aggressive",
+	}
+
+	tail, traces := eng.maybeAutoKickoffAutonomy(context.Background(), "inspect handlers and patch renderer", preflight, eng.agentLimits())
+	if len(tail) != 2 {
+		t.Fatalf("expected assistant+tool_result kickoff tail, got %d messages", len(tail))
+	}
+	if len(traces) != 1 {
+		t.Fatalf("expected one kickoff trace, got %d", len(traces))
+	}
+	call := tail[0].ToolCalls[0]
+	if call.Name != "tool_call" {
+		t.Fatalf("expected meta tool_call wrapper, got %#v", call)
+	}
+	if got, _ := call.Input["name"].(string); got != "orchestrate" {
+		t.Fatalf("expected orchestrate kickoff, got %#v", call.Input)
+	}
+	args, _ := call.Input["args"].(map[string]any)
+	if got := strings.TrimSpace(fmt.Sprint(args["task"])); got != "inspect handlers and patch renderer" {
+		t.Fatalf("expected kickoff task to be preserved, got %#v", args)
+	}
+	if tail[1].ToolCallID != call.ID || !strings.Contains(strings.ToLower(tail[1].Content), "ran:") {
+		t.Fatalf("expected tool_result tied to kickoff call, got %#v / %q", tail[1], tail[1].Content)
+	}
+	if traces[0].Call.ID != call.ID || traces[0].Call.Name != "tool_call" {
+		t.Fatalf("expected kickoff trace to mirror tool call, got %#v", traces[0])
+	}
+
+	events := collectRecentEvents(evCh, 32, 100*time.Millisecond)
+	if !containsEventType(events, "agent:autonomy:kickoff") {
+		t.Fatalf("expected autonomy kickoff event, got %v", eventTypes(events))
+	}
+	if !containsEventType(events, "tool:call") || !containsEventType(events, "tool:result") {
+		t.Fatalf("expected kickoff to publish tool call/result events, got %v", eventTypes(events))
+	}
+}
+
+func TestMaybeAutoKickoffAutonomy_AggressiveSequentialPlanForcesSequentialOrchestrate(t *testing.T) {
+	cfg := config.DefaultConfig()
+	eng := &Engine{
+		Config:      cfg,
+		EventBus:    NewEventBus(),
+		ProjectRoot: t.TempDir(),
+		Tools:       tools.New(*cfg),
+	}
+	eng.Tools.SetSubagentRunner(kickoffRunner{})
+	evCh := eng.EventBus.Subscribe("*")
+	defer eng.EventBus.Unsubscribe("*", evCh)
+
+	preflight := &autonomyPreflight{
+		Plan: planning.Plan{
+			Parallel:   false,
+			Confidence: 0.81,
+			Subtasks: []planning.Subtask{
+				{Title: "Inspect handlers", Hint: "survey"},
+				{Title: "Patch renderer", Hint: "edit"},
+				{Title: "Verify the flow", Hint: "verify"},
+			},
+		},
+		Scope: "top_level",
+		Mode:  "aggressive",
+	}
+
+	tail, traces := eng.maybeAutoKickoffAutonomy(context.Background(), "inspect then patch renderer", preflight, eng.agentLimits())
+	if len(tail) != 2 || len(traces) != 1 {
+		t.Fatalf("expected sequential kickoff assistant+result and one trace, got %d/%d", len(tail), len(traces))
+	}
+	call := tail[0].ToolCalls[0]
+	args, _ := call.Input["args"].(map[string]any)
+	if forced, _ := args["force_sequential"].(bool); !forced {
+		t.Fatalf("expected sequential kickoff to set force_sequential=true, got %#v", args)
+	}
+
+	events := collectRecentEvents(evCh, 32, 100*time.Millisecond)
+	ev, ok := findEventByType(events, "agent:autonomy:kickoff")
+	if !ok {
+		t.Fatalf("expected autonomy kickoff event, got %v", eventTypes(events))
+	}
+	payload, _ := ev.Payload.(map[string]any)
+	if parallel, _ := payload["parallel"].(bool); parallel {
+		t.Fatalf("expected sequential kickoff event to publish parallel=false, got %+v", payload)
 	}
 }
 

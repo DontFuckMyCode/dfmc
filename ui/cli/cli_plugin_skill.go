@@ -26,6 +26,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/pluginexec"
+	"github.com/dontfuckmycode/dfmc/internal/skills"
 	"gopkg.in/yaml.v3"
 )
 
@@ -470,31 +471,28 @@ func runSkillShortcut(ctx context.Context, eng *engine.Engine, name string, args
 }
 
 func runNamedSkill(ctx context.Context, eng *engine.Engine, name, input string, jsonMode bool) int {
-	items := discoverSkills(eng.Status().ProjectRoot)
-	for _, s := range items {
-		if !strings.EqualFold(s.Name, name) {
-			continue
-		}
-		prompt := buildSkillPrompt(s, input)
-		answer, err := eng.Ask(ctx, prompt)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "skill run failed: %v\n", err)
-			return 1
-		}
-		if jsonMode {
-			_ = printJSON(map[string]any{
-				"skill":  s.Name,
-				"source": s.Source,
-				"input":  input,
-				"answer": answer,
-			})
-			return 0
-		}
-		fmt.Println(answer)
+	item, ok := skills.Lookup(eng.Status().ProjectRoot, name)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "skill not found: %s\n", name)
+		return 1
+	}
+	prompt := skills.DecorateQuery(item.Name, input)
+	answer, err := eng.Ask(ctx, prompt)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skill run failed: %v\n", err)
+		return 1
+	}
+	if jsonMode {
+		_ = printJSON(map[string]any{
+			"skill":  item.Name,
+			"source": item.Source,
+			"input":  input,
+			"answer": answer,
+		})
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "skill not found: %s\n", name)
-	return 1
+	fmt.Println(answer)
+	return 0
 }
 
 func buildSkillPrompt(skill skillInfo, input string) string {
@@ -1092,41 +1090,18 @@ func updatePluginEnabled(ctx context.Context, eng *engine.Engine, name string, e
 }
 
 func discoverSkills(projectRoot string) []skillInfo {
-	out := make([]skillInfo, 0, 16)
-	seen := map[string]struct{}{}
-	for _, item := range builtinSkills() {
-		key := strings.ToLower(item.Name)
-		seen[key] = struct{}{}
-		out = append(out, item)
+	raw := skills.Discover(projectRoot)
+	out := make([]skillInfo, 0, len(raw))
+	for _, item := range raw {
+		out = append(out, skillInfo{
+			Name:        item.Name,
+			Description: item.Description,
+			Path:        item.Path,
+			Source:      item.Source,
+			Builtin:     item.Builtin,
+			Prompt:      item.SystemInstruction(),
+		})
 	}
-
-	roots := []struct {
-		Path   string
-		Source string
-	}{
-		{Path: filepath.Join(projectRoot, ".dfmc", "skills"), Source: "project"},
-		{Path: filepath.Join(config.UserConfigDir(), "skills"), Source: "global"},
-	}
-
-	for _, root := range roots {
-		files, _ := filepath.Glob(filepath.Join(root.Path, "*.y*ml"))
-		for _, path := range files {
-			item := readSkillFile(path, root.Source)
-			if strings.TrimSpace(item.Name) == "" {
-				continue
-			}
-			key := strings.ToLower(item.Name)
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			out = append(out, item)
-		}
-	}
-
-	sort.Slice(out, func(i, j int) bool {
-		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
-	})
 	return out
 }
 
@@ -1362,4 +1337,3 @@ func containsCI(list []string, target string) bool {
 	}
 	return false
 }
-

@@ -247,3 +247,35 @@ func Hello() {}
 		t.Fatalf("expected backend %q parse count to be 1, got %d", metrics.LastBackend, metrics.ByBackend[metrics.LastBackend])
 	}
 }
+
+func TestEngineCloseClearsCacheAndMetrics(t *testing.T) {
+	e := New()
+	src := []byte("package sample\n\nfunc Hello() {}\n")
+
+	if _, err := e.ParseContent(context.Background(), "sample.go", src); err != nil {
+		t.Fatalf("first parse: %v", err)
+	}
+	if _, err := e.ParseContent(context.Background(), "sample.go", src); err != nil {
+		t.Fatalf("second parse: %v", err)
+	}
+	before := e.ParseMetrics()
+	if before.CacheHits != 1 {
+		t.Fatalf("expected cache hit before close, got %+v", before)
+	}
+
+	if err := e.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	afterClose := e.ParseMetrics()
+	if afterClose.Requests != 0 || afterClose.Parsed != 0 || afterClose.CacheHits != 0 || afterClose.CacheMisses != 0 {
+		t.Fatalf("close must reset metrics, got %+v", afterClose)
+	}
+
+	if _, err := e.ParseContent(context.Background(), "sample.go", src); err != nil {
+		t.Fatalf("parse after close: %v", err)
+	}
+	afterReparse := e.ParseMetrics()
+	if afterReparse.CacheMisses != 1 || afterReparse.CacheHits != 0 || afterReparse.Parsed != 1 {
+		t.Fatalf("expected cache to be empty after close, got %+v", afterReparse)
+	}
+}

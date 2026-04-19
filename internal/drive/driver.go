@@ -40,6 +40,8 @@ type Driver struct {
 	cfg       Config
 }
 
+const emptyTaskError = "drive task is empty; pass a non-empty task description"
+
 // NewDriver wires the dependencies. cfg.Apply() runs internally so
 // callers can pass a zero Config and get the defaults. Publisher may
 // be nil; store may be nil for in-memory test runs.
@@ -58,7 +60,7 @@ func NewDriver(runner Runner, store *Store, publisher Publisher, cfg Config) *Dr
 func NewRun(task string) (*Run, error) {
 	task = strings.TrimSpace(task)
 	if task == "" {
-		return nil, fmt.Errorf("drive.Driver: task is empty")
+		return nil, fmt.Errorf(emptyTaskError)
 	}
 	return &Run{
 		ID:        newRunID(),
@@ -92,7 +94,7 @@ func (d *Driver) Run(ctx context.Context, task string) (*Run, error) {
 // RunPrepared executes a run record that has already been created (and
 // optionally saved) by the caller. This lets HTTP/MCP surfaces return a
 // stable run ID before the planner starts.
-func (d *Driver) RunPrepared(ctx context.Context, run *Run) (*Run, error) {
+func (d *Driver) RunPrepared(ctx context.Context, run *Run) (retRun *Run, retErr error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("drive.Driver: context must not be nil")
 	}
@@ -102,9 +104,10 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (*Run, error) {
 	if run == nil {
 		return nil, fmt.Errorf("drive.Driver: run is nil")
 	}
+	retRun = run
 	run.Task = strings.TrimSpace(run.Task)
 	if run.Task == "" {
-		return nil, fmt.Errorf("drive.Driver: task is empty")
+		return nil, fmt.Errorf(emptyTaskError)
 	}
 	if strings.TrimSpace(run.ID) == "" {
 		run.ID = newRunID()
@@ -121,6 +124,25 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (*Run, error) {
 	if run.Todos == nil {
 		run.Todos = []Todo{}
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			run.Status = RunFailed
+			run.Reason = fmt.Sprintf("panic: %v", r)
+			run.EndedAt = time.Now()
+			d.persist(run)
+			d.publish(EventRunFailed, map[string]any{
+				"run_id": run.ID,
+				"reason": run.Reason,
+			})
+			switch v := r.(type) {
+			case error:
+				retErr = fmt.Errorf("drive run panic: %w", v)
+			default:
+				retErr = fmt.Errorf("drive run panic: %v", v)
+			}
+			retRun = run
+		}
+	}()
 	d.persist(run)
 
 	// Wrap the caller's ctx so external Cancel(runID) calls can
@@ -153,7 +175,7 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (*Run, error) {
 		d.persist(run)
 		d.publish(EventPlanFailed, map[string]any{"run_id": run.ID, "error": err.Error()})
 		d.publish(EventRunFailed, map[string]any{"run_id": run.ID, "reason": run.Reason})
-		return run, err
+		return run, fmt.Errorf("plan failed: %w", err)
 	}
 	if len(todos) > d.cfg.MaxTodos {
 		// Truncate noisily — surface the cap so the user sees why later
@@ -169,12 +191,23 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (*Run, error) {
 		})
 	}
 	run.Todos = todos
+	beforePlanCount := len(run.Todos)
+	applySupervisorPlan(run, d.cfg.AutoSurvey, d.cfg.AutoVerify, d.cfg.MaxParallel)
+	if len(run.Todos) > beforePlanCount {
+		added := append([]Todo(nil), run.Todos[beforePlanCount:]...)
+		d.publish(EventPlanAugment, map[string]any{
+			"run_id": run.ID,
+			"added":  len(added),
+			"todos":  planSummary(added),
+		})
+	}
 	run.Status = RunRunning
 	d.persist(run)
 	d.publish(EventPlanDone, map[string]any{
 		"run_id":     run.ID,
 		"todo_count": len(run.Todos),
 		"todos":      planSummary(run.Todos),
+		"plan":       run.Plan,
 	})
 
 	d.executeLoop(ctx, run)
@@ -206,8 +239,9 @@ func (d *Driver) executeLoop(ctx context.Context, run *Run) {
 		// resume time when the original deadline already passed.
 		deadline = time.Now().Add(d.cfg.MaxWallTime)
 	}
+	policy := schedulerPolicyForRun(run, d.cfg.MaxParallel)
 	consecutiveBlocked := 0
-	results := make(chan todoOutcome, d.cfg.MaxParallel)
+	results := make(chan todoOutcome, policy.MaxParallel)
 	inFlight := 0
 
 	for {
@@ -232,9 +266,9 @@ func (d *Driver) executeLoop(ctx context.Context, run *Run) {
 		}
 
 		// Dispatch as many ready TODOs as fit under MaxParallel.
-		available := d.cfg.MaxParallel - inFlight
+		available := policy.MaxParallel - inFlight
 		if available > 0 {
-			picks := readyBatch(run.Todos, available)
+			picks := readyBatchWithPolicy(run.Todos, policy, available)
 			for _, idx := range picks {
 				d.dispatchTodo(ctx, run, idx, results)
 				inFlight++
@@ -260,7 +294,7 @@ func (d *Driver) executeLoop(ctx context.Context, run *Run) {
 			// Re-scan after the skip pass — a previously-blocked
 			// chain may now have ready siblings that don't depend on
 			// the blocked branch.
-			if len(readyBatch(run.Todos, 1)) > 0 {
+			if len(readyBatchWithPolicy(run.Todos, policy, 1)) > 0 {
 				continue
 			}
 			d.finalize(run, RunFailed, "scheduler deadlock — no ready TODO and no progress possible")
@@ -293,26 +327,39 @@ func (d *Driver) dispatchTodo(ctx context.Context, run *Run, idx int, results ch
 	t.StartedAt = time.Now()
 	t.Attempts++
 	d.persist(run)
-	d.publish(EventTodoStart, map[string]any{
-		"run_id":  run.ID,
-		"todo_id": t.ID,
-		"title":   t.Title,
-		"attempt": t.Attempts,
-	})
 
 	// Snapshot fields the worker needs so the goroutine doesn't
 	// touch run.Todos. The brief is built from the *current* state
 	// of completed TODOs (may include parallel-completed siblings
 	// when the worker wakes up — that's fine; the brief is best-
 	// effort context, not a strict ordering invariant).
+	// The main loop is the sole writer of run.Todos; workers only see
+	// this copied request payload and never mutate the shared slice.
 	req := ExecuteTodoRequest{
-		TodoID:   t.ID,
-		Title:    t.Title,
-		Detail:   t.Detail,
-		Brief:    briefSoFar(run.Todos, idx),
-		Model:    d.cfg.providerForTag(t.ProviderTag),
-		MaxSteps: 0,
+		TodoID:            t.ID,
+		Title:             t.Title,
+		Detail:            t.Detail,
+		Brief:             briefSoFar(run.Todos, idx),
+		Role:              executorRoleFor(t.WorkerClass),
+		Skills:            append([]string(nil), t.Skills...),
+		Labels:            append([]string(nil), t.Labels...),
+		Verification:      t.Verification,
+		Model:             d.cfg.providerForTag(t.ProviderTag),
+		ProfileCandidates: nil,
+		AllowedTools:      append([]string(nil), t.AllowedTools...),
+		MaxSteps:          executorStepBudgetFor(*t),
 	}
+	d.publish(EventTodoStart, map[string]any{
+		"run_id":       run.ID,
+		"todo_id":      t.ID,
+		"title":        t.Title,
+		"attempt":      t.Attempts,
+		"origin":       t.Origin,
+		"kind":         t.Kind,
+		"worker_class": t.WorkerClass,
+		"max_steps":    req.MaxSteps,
+		"providers":    req.ProfileCandidates,
+	})
 	go func(idx int, req ExecuteTodoRequest, started time.Time, attempt int) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -393,17 +440,55 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 		return
 	}
 	t.Status = TodoDone
-	t.Brief = strings.TrimSpace(res.Resp.Summary)
+	brief, spawned, spawnErr := parseSpawnedTodos(res.Resp.Summary, *t, run.Todos)
+	if spawnErr != nil {
+		t.Status = TodoBlocked
+		t.Error = "spawn_todos invalid: " + spawnErr.Error()
+		*consecutiveBlocked++
+		d.persist(run)
+		d.publish(EventTodoBlocked, map[string]any{
+			"run_id":   run.ID,
+			"todo_id":  t.ID,
+			"error":    t.Error,
+			"attempts": t.Attempts,
+		})
+		return
+	}
+	t.Brief = strings.TrimSpace(brief)
+	var added []Todo
+	if len(spawned) > 0 {
+		added = applySpawnedTodos(run, *t, spawned, d.cfg.MaxTodos, d.cfg.MaxParallel)
+	}
 	*consecutiveBlocked = 0
 	d.persist(run)
 	d.publish(EventTodoDone, map[string]any{
-		"run_id":      run.ID,
-		"todo_id":     t.ID,
-		"brief":       t.Brief,
-		"duration_ms": dur,
-		"tool_calls":  res.Resp.ToolCalls,
-		"parked":      res.Resp.Parked,
+		"run_id":         run.ID,
+		"todo_id":        t.ID,
+		"brief":          t.Brief,
+		"duration_ms":    dur,
+		"tool_calls":     res.Resp.ToolCalls,
+		"parked":         res.Resp.Parked,
+		"origin":         t.Origin,
+		"kind":           t.Kind,
+		"worker_class":   t.WorkerClass,
+		"spawned":        len(added),
+		"provider":       res.Resp.Provider,
+		"model":          res.Resp.Model,
+		"attempts":       res.Resp.Attempts,
+		"fallback":       res.Resp.FallbackUsed,
+		"fallback_from":  res.Resp.FallbackFrom,
+		"fallback_reasons": res.Resp.FallbackReasons,
+		"profiles_tried": res.Resp.FallbackChain,
 	})
+	if len(added) > 0 {
+		d.publish(EventPlanAugment, map[string]any{
+			"run_id":      run.ID,
+			"added":       len(added),
+			"source":      "worker",
+			"parent_todo": t.ID,
+			"todos":       planSummary(added),
+		})
+	}
 }
 
 // drainAndFinalize collects the outcomes of in-flight workers before
@@ -424,8 +509,6 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 // on ctx through ExecuteTodo, but a malicious or buggy provider
 // could ignore cancellation. We bound our wait so a single stuck
 // worker can't keep the run from terminating.
-const drainGraceWindow = 2 * time.Second
-
 func (d *Driver) drainAndFinalize(ctx context.Context, run *Run, results <-chan todoOutcome, inFlight int, status RunStatus, reason string) {
 	consecutiveBlocked := 0 // applyOutcome takes a pointer; value is discarded after finalize
 
@@ -450,7 +533,7 @@ graceDrain:
 	// a cancel that's already fired would short-circuit us before
 	// any worker had a chance to flush.
 	if inFlight > 0 {
-		grace := time.NewTimer(drainGraceWindow)
+		grace := time.NewTimer(d.cfg.DrainGraceWindow)
 		defer grace.Stop()
 		for inFlight > 0 {
 			select {
@@ -573,7 +656,13 @@ func (d *Driver) persist(run *Run) {
 	if d.store == nil {
 		return
 	}
-	_ = d.store.Save(run)
+	if err := d.store.Save(run); err != nil {
+		d.publish(EventRunWarning, map[string]any{
+			"run_id": run.ID,
+			"status": string(run.Status),
+			"error":  err.Error(),
+		})
+	}
 }
 
 // publish is a no-op when publisher is nil. Keeps the call sites
@@ -613,14 +702,63 @@ func planSummary(todos []Todo) []map[string]any {
 	out := make([]map[string]any, 0, len(todos))
 	for _, t := range todos {
 		out = append(out, map[string]any{
-			"id":     t.ID,
-			"title":  t.Title,
-			"deps":   t.DependsOn,
-			"tag":    t.ProviderTag,
-			"status": string(t.Status),
+			"id":            t.ID,
+			"title":         t.Title,
+			"deps":          t.DependsOn,
+			"origin":        t.Origin,
+			"kind":          t.Kind,
+			"tag":           t.ProviderTag,
+			"worker_class":  t.WorkerClass,
+			"skills":        t.Skills,
+			"verification":  t.Verification,
+			"confidence":    t.Confidence,
+			"allowed_tools": t.AllowedTools,
+			"status":        string(t.Status),
 		})
 	}
 	return out
+}
+
+func executorRoleFor(workerClass string) string {
+	switch strings.ToLower(strings.TrimSpace(workerClass)) {
+	case "planner":
+		return "planner"
+	case "researcher":
+		return "researcher"
+	case "reviewer":
+		return "code_reviewer"
+	case "tester":
+		return "test_engineer"
+	case "security":
+		return "security_auditor"
+	case "synthesizer":
+		return "synthesizer"
+	case "coder":
+		fallthrough
+	default:
+		return "drive-executor"
+	}
+}
+
+func executorStepBudgetFor(todo Todo) int {
+	switch todoLane(todo) {
+	case "discovery":
+		return 6
+	case "review":
+		return 7
+	case "verify":
+		if strings.EqualFold(strings.TrimSpace(todo.Verification), "deep") {
+			return 10
+		}
+		return 8
+	case "synthesize":
+		return 6
+	default:
+		if len(todo.FileScope) >= 3 {
+			return 14
+		}
+		return 12
+	}
 }
 
 // reasonByID retrieves the per-TODO Error/reason for the skipped

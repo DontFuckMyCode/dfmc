@@ -16,6 +16,10 @@ type SubagentRequest struct {
 	AllowedTools []string `json:"allowed_tools"` // Optional restriction — if empty, engine picks defaults.
 	MaxSteps     int      `json:"max_steps"`     // Tool-call budget; 0 means engine default.
 	Model        string   `json:"model"`         // Optional provider profile override.
+	// ToolSource is an engine-internal approval scope marker. It is not
+	// user/model supplied; adapters like drive may set it so approval
+	// overrides apply only to their own sub-agent tool calls.
+	ToolSource string `json:"-"`
 }
 
 // SubagentResult is what the engine reports back to the parent tool loop.

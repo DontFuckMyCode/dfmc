@@ -22,11 +22,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/drive"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/supervisor"
+	supervisorbridge "github.com/dontfuckmycode/dfmc/internal/supervisor/bridge"
 )
 
 func runDrive(ctx context.Context, eng *engine.Engine, args []string, asJSON bool) int {
@@ -65,6 +68,8 @@ func runDrive(ctx context.Context, eng *engine.Engine, args []string, asJSON boo
 	retries := fs.Int("retries", -1, "per-TODO retry count (default 1)")
 	planner := fs.String("planner", "", "optional planner provider/model override")
 	maxParallel := fs.Int("max-parallel", 0, "max concurrent TODO executors (default 3); 1 forces sequential")
+	autoVerify := fs.Bool("auto-verify", false, "append a supervisor-generated verification TODO after planning")
+	autoSurvey := fs.Bool("auto-survey", false, "prepend a supervisor-generated discovery/survey TODO when planning skipped it")
 	var routes multiString
 	fs.Var(&routes, "route", "per-tag provider routing (repeatable): --route plan=opus --route code=sonnet")
 	autoApprove := fs.String("auto-approve", "",
@@ -94,6 +99,8 @@ func runDrive(ctx context.Context, eng *engine.Engine, args []string, asJSON boo
 		MaxParallel:    *maxParallel,
 		Routing:        routing,
 		AutoApprove:    parseAutoApproveFlag(*autoApprove),
+		AutoSurvey:     *autoSurvey,
+		AutoVerify:     *autoVerify,
 	}
 	return executeDriveRun(ctx, eng, task, cfg, asJSON, false, "")
 }
@@ -358,6 +365,8 @@ func renderDriveEventLine(w *os.File, typ string, payload map[string]any) {
 		fmt.Fprintf(w, "[%s] %s task=%q\n", short, typ, payload["task"])
 	case drive.EventPlanDone:
 		fmt.Fprintf(w, "[%s] %s todo_count=%v\n", short, typ, payload["todo_count"])
+	case drive.EventPlanAugment:
+		fmt.Fprintf(w, "[%s] %s added=%v\n", short, typ, payload["added"])
 	case drive.EventTodoStart:
 		fmt.Fprintf(w, "[%s] %s id=%v title=%q attempt=%v\n",
 			short, typ, payload["todo_id"], payload["title"], payload["attempt"])
@@ -390,6 +399,17 @@ func renderDriveEventLine(w *os.File, typ string, payload map[string]any) {
 // drive show <id>`.
 func renderDriveSummary(w *os.File, run *drive.Run) {
 	done, blocked, skipped, pending := run.Counts()
+	var layerCount, rootCount, leafCount int
+	if run.Plan != nil {
+		layerCount = len(run.Plan.Layers)
+		rootCount = len(run.Plan.Roots)
+		leafCount = len(run.Plan.Leaves)
+	} else {
+		plan := supervisor.BuildExecutionPlan(supervisorbridge.RunFromDrive(run), supervisor.ExecutionOptions{})
+		layerCount = len(plan.Layers)
+		rootCount = len(plan.Roots)
+		leafCount = len(plan.Leaves)
+	}
 	fmt.Fprintf(w, "\n=== drive run %s ===\n", run.ID)
 	fmt.Fprintf(w, "task:   %s\n", run.Task)
 	fmt.Fprintf(w, "status: %s", run.Status)
@@ -400,6 +420,12 @@ func renderDriveSummary(w *os.File, run *drive.Run) {
 	if !run.EndedAt.IsZero() {
 		fmt.Fprintf(w, "duration: %s\n", run.EndedAt.Sub(run.CreatedAt).Round(time.Millisecond))
 	}
+	if layerCount > 0 {
+		fmt.Fprintf(w, "plan:   %d layers, %d roots, %d leaves\n", layerCount, rootCount, leafCount)
+	}
+	if run.Plan != nil && len(run.Plan.LaneCaps) > 0 {
+		fmt.Fprintf(w, "lanes:  %s\n", formatLaneCaps(run.Plan.LaneOrder, run.Plan.LaneCaps))
+	}
 	fmt.Fprintf(w, "totals:  %d done, %d blocked, %d skipped, %d pending (of %d)\n",
 		done, blocked, skipped, pending, len(run.Todos))
 	fmt.Fprintln(w)
@@ -409,7 +435,14 @@ func renderDriveSummary(w *os.File, run *drive.Run) {
 		if len(t.DependsOn) > 0 {
 			deps = "  ← " + strings.Join(t.DependsOn, ",")
 		}
-		fmt.Fprintf(w, "  %s %s  %s%s\n", marker, t.ID, t.Title, deps)
+		meta := ""
+		if strings.TrimSpace(t.Kind) != "" && !strings.EqualFold(t.Kind, "work") {
+			meta = " [" + t.Kind + "]"
+		}
+		if strings.EqualFold(t.Origin, "supervisor") {
+			meta += " [auto]"
+		}
+		fmt.Fprintf(w, "  %s %s  %s%s%s\n", marker, t.ID, t.Title, meta, deps)
 		if t.Status == drive.TodoBlocked && t.Error != "" {
 			fmt.Fprintf(w, "      err: %s\n", truncateLine(t.Error, 200))
 		}
@@ -440,6 +473,36 @@ func todoMarker(s drive.TodoStatus) string {
 	}
 }
 
+func formatLaneCaps(order []string, caps map[string]int) string {
+	if len(caps) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(caps))
+	seen := map[string]struct{}{}
+	for _, lane := range order {
+		lane = strings.TrimSpace(lane)
+		if lane == "" {
+			continue
+		}
+		cap, ok := caps[lane]
+		if !ok {
+			continue
+		}
+		seen[strings.ToLower(lane)] = struct{}{}
+		parts = append(parts, fmt.Sprintf("%s=%d", lane, cap))
+	}
+	var extra []string
+	for lane, cap := range caps {
+		if _, ok := seen[strings.ToLower(strings.TrimSpace(lane))]; ok {
+			continue
+		}
+		extra = append(extra, fmt.Sprintf("%s=%d", lane, cap))
+	}
+	sort.Strings(extra)
+	parts = append(parts, extra...)
+	return strings.Join(parts, ", ")
+}
+
 func printDriveHelp() {
 	fmt.Println(`dfmc drive — autonomous plan/execute loop
 
@@ -459,6 +522,8 @@ Flags (for new runs):
   --retries N             per-TODO retry count (default 1)
   --planner NAME          override the planner provider/model
   --max-parallel N        max concurrent TODO executors (default 3); 1 = sequential
+  --auto-survey           prepend a supervisor-generated discovery task
+  --auto-verify           append a supervisor-generated verification TODO
   --route TAG=PROFILE     route TODOs with provider_tag=TAG to a specific
                           provider profile (repeatable)
   --auto-approve LIST     comma-separated tools to auto-approve during the run.

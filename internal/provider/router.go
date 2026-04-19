@@ -12,10 +12,19 @@ import (
 )
 
 type Router struct {
-	mu        sync.RWMutex
-	primary   string
-	fallback  []string
-	providers map[string]Provider
+	mu               sync.RWMutex
+	primary          string
+	fallback         []string
+	providers        map[string]Provider
+	throttleObserver func(ThrottleNotice)
+}
+
+type ThrottleNotice struct {
+	Provider string
+	Attempt  int
+	Wait     time.Duration
+	Stream   bool
+	Err      error
 }
 
 func NewRouter(cfg config.ProvidersConfig) (*Router, error) {
@@ -44,13 +53,23 @@ func providerFromProfile(name string, profile config.ModelConfig) Provider {
 	apiKey := strings.TrimSpace(profile.APIKey)
 	baseURL := strings.TrimSpace(profile.BaseURL)
 	protocol := normalizedProtocol(name, profile.Protocol)
+	if name == "zai" && (protocol == "anthropic" || strings.Contains(strings.ToLower(baseURL), "/api/anthropic")) {
+		// Z.AI documents an Anthropic-compatible endpoint for Claude Code style
+		// clients, but DFMC's runtime behaves more reliably against Z.AI's
+		// OpenAI-compatible `/api/paas/v4` surface. Users often paste the
+		// Claude-style base URL into DFMC and hit 404_NOT_FOUND; remap that
+		// configuration onto the stable OpenAI-compatible endpoint so the
+		// profile self-heals instead of failing at runtime.
+		protocol = "openai-compatible"
+		baseURL = defaultOpenAIBaseURL(name)
+	}
 
 	switch protocol {
 	case "anthropic":
 		if apiKey == "" {
 			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
 		}
-		return NewAnthropicProvider(model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext)
+		return NewNamedAnthropicProvider(name, model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext)
 	case "google", "gemini":
 		if apiKey == "" {
 			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
@@ -95,11 +114,26 @@ func (r *Router) Register(p Provider) {
 	r.providers[normalizeProviderName(p.Name())] = p
 }
 
+func (r *Router) SetThrottleObserver(fn func(ThrottleNotice)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.throttleObserver = fn
+}
+
 func (r *Router) Get(name string) (Provider, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	p, ok := r.providers[normalizeProviderName(name)]
 	return p, ok
+}
+
+func (r *Router) emitThrottleNotice(n ThrottleNotice) {
+	r.mu.RLock()
+	fn := r.throttleObserver
+	r.mu.RUnlock()
+	if fn != nil {
+		fn(n)
+	}
 }
 
 func (r *Router) List() []string {
@@ -228,6 +262,13 @@ func (r *Router) completeWithThrottleRetry(ctx context.Context, p Provider, req 
 			break
 		}
 		wait := throttleWait(err, attempt)
+		r.emitThrottleNotice(ThrottleNotice{
+			Provider: p.Name(),
+			Attempt:  attempt + 1,
+			Wait:     wait,
+			Stream:   false,
+			Err:      err,
+		})
 		if wait <= 0 {
 			continue
 		}
@@ -274,6 +315,13 @@ func (r *Router) streamWithThrottleRetry(ctx context.Context, p Provider, req Co
 			break
 		}
 		wait := throttleWait(err, attempt)
+		r.emitThrottleNotice(ThrottleNotice{
+			Provider: p.Name(),
+			Attempt:  attempt + 1,
+			Wait:     wait,
+			Stream:   true,
+			Err:      err,
+		})
 		if wait <= 0 {
 			continue
 		}

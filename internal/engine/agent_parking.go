@@ -185,6 +185,7 @@ func (e *Engine) parkNativeToolLoop(
 		Step:             step,
 		LastProvider:     lastProvider,
 		LastModel:        lastModel,
+		ToolSource:       seed.ToolSource,
 		RecentCoachHints: seed.RecentCoachHints,
 		// Carry cumulative counters forward across park→resume→park
 		// cycles. Without this the ceiling in ResumeAgent never trips:

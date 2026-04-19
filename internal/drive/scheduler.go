@@ -8,6 +8,14 @@
 
 package drive
 
+import "strings"
+
+type SchedulerPolicy struct {
+	MaxParallel int
+	LaneCaps    map[string]int
+	LaneOrder   []string
+}
+
 // readyNext returns the next TODO eligible to run, plus its index in
 // the Todos slice. Returns (nil, -1) when nothing is ready (run is
 // done OR everything pending is blocked behind a Blocked dep).
@@ -44,9 +52,9 @@ func readyNext(todos []Todo) (*Todo, int) {
 type depsState int
 
 const (
-	depsAllDone     depsState = iota // every dep is Done — ready to run
-	depsHasPending                   // at least one dep is still Pending or Running
-	depsHasBlocked                   // at least one dep is Blocked (caller should skip)
+	depsAllDone    depsState = iota // every dep is Done — ready to run
+	depsHasPending                  // at least one dep is still Pending or Running
+	depsHasBlocked                  // at least one dep is Blocked (caller should skip)
 )
 
 // depsReady classifies a single TODO's dependency state. When any dep
@@ -150,23 +158,34 @@ func runFinished(todos []Todo) bool {
 // Returns the indices of selected TODOs in run.Todos so the caller
 // can mark them Running and dispatch under their original positions.
 func readyBatch(todos []Todo, limit int) []int {
+	return readyBatchWithPolicy(todos, SchedulerPolicy{}, limit)
+}
+
+func readyBatchWithPolicy(todos []Todo, policy SchedulerPolicy, limit int) []int {
 	if limit <= 0 {
+		return nil
+	}
+	if hasRunningExclusiveTodo(todos) {
 		return nil
 	}
 	statusByID := make(map[string]TodoStatus, len(todos))
 	for _, t := range todos {
 		statusByID[t.ID] = t.Status
 	}
-	// Files held by currently-running TODOs. Empty FileScope means
-	// "unknown — assume could touch anything", which we represent as
-	// the sentinel scopeAny in busyScopes; any candidate with a
-	// non-empty scope conflicts with it (and the candidate with
-	// empty scope conflicts in turn).
+	// Files held by currently-running TODOs. Empty FileScope normally
+	// means "unknown — assume could touch anything", which we represent
+	// as the sentinel scopeAny in busyScopes. Read-only TODOs are the
+	// exception: when they carry no file scope they don't claim scopeAny
+	// because they only inspect state and should not serialize unrelated
+	// writers.
 	busyScopes := collectScopes(todos, func(t Todo) bool { return t.Status == TodoRunning })
+	runningLanes := countRunningLanes(todos)
 
 	picked := make([]int, 0, limit)
 	pickedScopes := scopeSet{}
-	for i := range todos {
+	pickedExclusive := false
+	pickedLanes := map[string]int{}
+	for _, i := range orderedCandidateIndices(todos, policy) {
 		t := &todos[i]
 		if t.Status != TodoPending {
 			continue
@@ -174,10 +193,21 @@ func readyBatch(todos []Todo, limit int) []int {
 		if depsReady(t, statusByID) != depsAllDone {
 			continue
 		}
-		if scopeConflicts(t.FileScope, busyScopes) {
+		if scopeConflicts(*t, busyScopes) {
 			continue
 		}
-		if scopeConflicts(t.FileScope, pickedScopes) {
+		lane := todoLane(*t)
+		if cap := laneCap(policy, lane); cap > 0 && runningLanes[lane]+pickedLanes[lane] >= cap {
+			continue
+		}
+		if todoNeedsExclusiveSlot(*t) {
+			if len(picked) > 0 || hasAnyRunningTodo(todos) {
+				continue
+			}
+		} else if pickedExclusive {
+			break
+		}
+		if scopeConflicts(*t, pickedScopes) {
 			continue
 		}
 		// A TODO with no declared scope (scopeAny) is treated as
@@ -185,14 +215,19 @@ func readyBatch(todos []Todo, limit int) []int {
 		// already prevented joining a batch that has any picked TODO
 		// with scope, so all we need here is: if our candidate has
 		// no scope but the batch already has anyone, skip.
-		if len(t.FileScope) == 0 && len(picked) > 0 {
+		if len(t.FileScope) == 0 && !todoReadOnly(*t) && len(picked) > 0 {
 			continue
 		}
 		picked = append(picked, i)
-		pickedScopes = mergeScopes(pickedScopes, t.FileScope)
+		pickedScopes = mergeScopes(pickedScopes, *t)
+		pickedLanes[lane]++
+		if todoNeedsExclusiveSlot(*t) {
+			pickedExclusive = true
+			break
+		}
 		// Same reverse rule: if the picked-just-now is unscoped, no
 		// further TODOs can join — break early.
-		if len(t.FileScope) == 0 {
+		if len(t.FileScope) == 0 && !todoReadOnly(*t) {
 			break
 		}
 		if len(picked) >= limit {
@@ -200,6 +235,51 @@ func readyBatch(todos []Todo, limit int) []int {
 		}
 	}
 	return picked
+}
+
+func schedulerPolicyForRun(run *Run, fallbackMaxParallel int) SchedulerPolicy {
+	policy := SchedulerPolicy{MaxParallel: fallbackMaxParallel}
+	if policy.MaxParallel <= 0 {
+		policy.MaxParallel = 1
+	}
+	if run == nil || run.Plan == nil {
+		return policy
+	}
+	if run.Plan.MaxParallel > 0 {
+		policy.MaxParallel = run.Plan.MaxParallel
+	}
+	if len(run.Plan.LaneCaps) > 0 {
+		policy.LaneCaps = cloneWorkerCounts(run.Plan.LaneCaps)
+	}
+	if len(run.Plan.LaneOrder) > 0 {
+		policy.LaneOrder = append([]string(nil), run.Plan.LaneOrder...)
+	}
+	return policy
+}
+
+func orderedCandidateIndices(todos []Todo, policy SchedulerPolicy) []int {
+	out := make([]int, 0, len(todos))
+	if len(policy.LaneOrder) == 0 {
+		for i := range todos {
+			out = append(out, i)
+		}
+		return out
+	}
+	buckets := map[string][]int{}
+	var unknown []int
+	for i := range todos {
+		lane := todoLane(todos[i])
+		if containsLane(policy.LaneOrder, lane) {
+			buckets[lane] = append(buckets[lane], i)
+			continue
+		}
+		unknown = append(unknown, i)
+	}
+	for _, lane := range policy.LaneOrder {
+		out = append(out, buckets[lane]...)
+	}
+	out = append(out, unknown...)
+	return out
 }
 
 // scopeSet is a normalized representation of file_scope used by the
@@ -213,7 +293,8 @@ const scopeAny = ""
 
 // collectScopes builds a scopeSet from every TODO matching `match`.
 // When any matching TODO has empty FileScope, scopeAny is added
-// (which makes every subsequent conflict check return true).
+// (which makes every subsequent conflict check return true) unless the
+// TODO is explicitly read-only.
 func collectScopes(todos []Todo, match func(Todo) bool) scopeSet {
 	out := scopeSet{}
 	for _, t := range todos {
@@ -221,7 +302,9 @@ func collectScopes(todos []Todo, match func(Todo) bool) scopeSet {
 			continue
 		}
 		if len(t.FileScope) == 0 {
-			out[scopeAny] = struct{}{}
+			if !todoReadOnly(t) {
+				out[scopeAny] = struct{}{}
+			}
 			continue
 		}
 		for _, f := range t.FileScope {
@@ -231,15 +314,18 @@ func collectScopes(todos []Todo, match func(Todo) bool) scopeSet {
 	return out
 }
 
-// mergeScopes adds the normalized entries from scope into base and
-// returns base. When scope is empty, scopeAny is recorded (same
-// semantics as collectScopes — empty scope is "owns everything").
-func mergeScopes(base scopeSet, scope []string) scopeSet {
-	if len(scope) == 0 {
+// mergeScopes adds the normalized entries from todo into base and
+// returns base. When FileScope is empty, scopeAny is recorded unless
+// the TODO is read-only.
+func mergeScopes(base scopeSet, todo Todo) scopeSet {
+	if len(todo.FileScope) == 0 {
+		if todoReadOnly(todo) {
+			return base
+		}
 		base[scopeAny] = struct{}{}
 		return base
 	}
-	for _, f := range scope {
+	for _, f := range todo.FileScope {
 		base[normalizeScope(f)] = struct{}{}
 	}
 	return base
@@ -249,7 +335,7 @@ func mergeScopes(base scopeSet, scope []string) scopeSet {
 // set in held. The rules:
 //   - Either side containing scopeAny is a conflict (unscoped owns all).
 //   - Otherwise, conflict iff any normalized path appears in both.
-func scopeConflicts(candidate []string, held scopeSet) bool {
+func scopeConflicts(candidate Todo, held scopeSet) bool {
 	if len(held) == 0 {
 		return false
 	}
@@ -257,18 +343,40 @@ func scopeConflicts(candidate []string, held scopeSet) bool {
 		// held has an unscoped owner — conflicts with anyone.
 		return true
 	}
-	if len(candidate) == 0 {
+	if len(candidate.FileScope) == 0 {
+		if todoReadOnly(candidate) {
+			return false
+		}
 		// candidate is unscoped but held is non-empty (scoped) —
 		// candidate would conflict with all held files; treat as
 		// conflict so unscoped TODOs queue up behind scoped ones.
 		return true
 	}
-	for _, f := range candidate {
+	for _, f := range candidate.FileScope {
 		if _, ok := held[normalizeScope(f)]; ok {
 			return true
 		}
 	}
 	return false
+}
+
+func todoReadOnly(t Todo) bool {
+	if t.ReadOnly {
+		return true
+	}
+	if len(t.AllowedTools) > 0 {
+		return !allowsMutatingTools(t.AllowedTools)
+	}
+	switch strings.ToLower(strings.TrimSpace(t.Kind)) {
+	case "survey":
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(t.WorkerClass)) {
+	case "planner", "researcher":
+		return true
+	default:
+		return false
+	}
 }
 
 // normalizeScope coerces a file_scope entry into a canonical form
@@ -286,4 +394,86 @@ func normalizeScope(s string) string {
 		out = append(out, c)
 	}
 	return string(out)
+}
+
+func todoLane(t Todo) string {
+	switch strings.ToLower(strings.TrimSpace(t.WorkerClass)) {
+	case "planner", "researcher":
+		return "discovery"
+	case "reviewer":
+		return "review"
+	case "tester", "security":
+		return "verify"
+	case "synthesizer":
+		return "synthesize"
+	}
+	switch strings.ToLower(strings.TrimSpace(t.ProviderTag)) {
+	case "research", "plan":
+		return "discovery"
+	case "review":
+		return "review"
+	case "test":
+		return "verify"
+	case "synthesize":
+		return "synthesize"
+	default:
+		return "code"
+	}
+}
+
+func laneCap(policy SchedulerPolicy, lane string) int {
+	if len(policy.LaneCaps) == 0 {
+		return 0
+	}
+	return policy.LaneCaps[strings.ToLower(strings.TrimSpace(lane))]
+}
+
+func countRunningLanes(todos []Todo) map[string]int {
+	out := map[string]int{}
+	for _, t := range todos {
+		if t.Status != TodoRunning {
+			continue
+		}
+		out[todoLane(t)]++
+	}
+	return out
+}
+
+func todoNeedsExclusiveSlot(t Todo) bool {
+	if strings.EqualFold(strings.TrimSpace(t.Kind), "verify") {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(t.WorkerClass)) {
+	case "reviewer", "tester", "security":
+		return true
+	default:
+		return false
+	}
+}
+
+func containsLane(items []string, needle string) bool {
+	for _, item := range items {
+		if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(needle)) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyRunningTodo(todos []Todo) bool {
+	for _, t := range todos {
+		if t.Status == TodoRunning {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRunningExclusiveTodo(todos []Todo) bool {
+	for _, t := range todos {
+		if t.Status == TodoRunning && todoNeedsExclusiveSlot(t) {
+			return true
+		}
+	}
+	return false
 }

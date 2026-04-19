@@ -127,3 +127,19 @@ func (m *parseMetricsTracker) snapshot() ParseMetrics {
 	}
 }
 
+func (m *parseMetricsTracker) reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requests = 0
+	m.parsed = 0
+	m.cacheHits = 0
+	m.cacheMisses = 0
+	m.unsupported = 0
+	m.errors = 0
+	m.totalParseDuration = 0
+	m.lastLanguage = ""
+	m.lastBackend = ""
+	m.byLanguage = map[string]int64{}
+	m.byBackend = map[string]int64{}
+}
+

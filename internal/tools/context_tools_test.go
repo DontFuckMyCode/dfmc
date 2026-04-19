@@ -19,8 +19,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 // TestReadFile_NewMetadataFields covers the spec's `view` requirements:
@@ -367,6 +369,9 @@ func TestGrepCodebase_SkipsSymlinkEscapeTargets(t *testing.T) {
 	if got := dataInt(res.Data, "count"); got != 0 {
 		t.Fatalf("symlinked outside-root file should be skipped, got count=%d output=%q", got, res.Output)
 	}
+	if got := dataInt(res.Data, "skipped_files"); got != 1 {
+		t.Fatalf("expected skipped_files=1 for the outside-root symlink, got %d", got)
+	}
 }
 
 func TestGrepCodebase_SkipsOversizeFiles(t *testing.T) {
@@ -523,6 +528,24 @@ func ShouldNotLeak() {}
 	}
 	if strings.Contains(res.Output, "ShouldNotLeak") || strings.Contains(res.Output, "escape.go") {
 		t.Fatalf("codemap should skip symlink escapes, got: %s", res.Output)
+	}
+	if got := dataInt(res.Data, "skipped_files"); got != 1 {
+		t.Fatalf("expected codemap skipped_files=1, got %d", got)
+	}
+}
+
+func TestCodemapSymbolLine_TruncatesOnRuneBoundary(t *testing.T) {
+	line := codemapSymbolLine(types.Symbol{
+		Name:      "世界World",
+		Kind:      "func",
+		Signature: "func 世界World(" + strings.Repeat("界", 80) + ")",
+		Line:      12,
+	})
+	if !utf8.ValidString(line) {
+		t.Fatalf("codemapSymbolLine produced invalid UTF-8: %q", line)
+	}
+	if !strings.Contains(line, "...") {
+		t.Fatalf("expected truncated signature marker, got %q", line)
 	}
 }
 

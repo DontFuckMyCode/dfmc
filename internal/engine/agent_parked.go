@@ -35,6 +35,7 @@ type parkedAgentState struct {
 	Step          int
 	LastProvider  string
 	LastModel     string
+	ToolSource    string
 	ParkedAt      time.Time
 	// RecentCoachHints remembers trajectory hints already injected into
 	// this loop so the composer doesn't repeat itself round after round.

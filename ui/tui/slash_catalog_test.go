@@ -2,8 +2,12 @@ package tui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
 // cliOnlySlashCommands enumerates slash verbs that intentionally dispatch to
@@ -215,6 +219,42 @@ func TestPlanModeTogglesViaSlashCommands(t *testing.T) {
 	last = mm3.chat.transcript[len(mm3.chat.transcript)-1].Content
 	if !strings.Contains(last, "Plan mode OFF") {
 		t.Fatalf("/code should announce OFF, got:\n%s", last)
+	}
+}
+
+func TestDefaultReviewTargetsPreferSelectionThenChangedFiles(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.filesView.entries = []string{"ui/tui/conversations.go", "ui/tui/describe.go"}
+	m.filesView.index = 0
+	m.patchView.changed = []string{"internal/engine/engine.go", "ui/tui/tui.go"}
+
+	targets := m.defaultReviewTargets(nil)
+	if len(targets) != 1 || targets[0] != "ui/tui/conversations.go" {
+		t.Fatalf("expected selected file to win, got %#v", targets)
+	}
+
+	m.filesView.entries = nil
+	m.filesView.index = 0
+	m.filesView.path = ""
+	targets = m.defaultReviewTargets(nil)
+	if len(targets) != 2 || targets[0] != "internal/engine/engine.go" || targets[1] != "ui/tui/tui.go" {
+		t.Fatalf("expected changed files fallback, got %#v", targets)
+	}
+}
+
+func TestComposeReviewPromptStaysBudgetAware(t *testing.T) {
+	targeted := composeReviewPrompt([]string{"ui/tui/conversations.go"}, "")
+	for _, want := range []string{"[[file:ui/tui/conversations.go]]", "Stay budget-aware", "avoid broad repo scans"} {
+		if !strings.Contains(targeted, want) {
+			t.Fatalf("targeted review prompt should contain %q, got:\n%s", want, targeted)
+		}
+	}
+
+	diffOnly := composeReviewPrompt(nil, "")
+	for _, want := range []string{"current worktree diff only", "avoid broad codebase sweeps"} {
+		if !strings.Contains(diffOnly, want) {
+			t.Fatalf("default review prompt should contain %q, got:\n%s", want, diffOnly)
+		}
 	}
 }
 
@@ -437,5 +477,44 @@ func TestUnknownSlashCommandEmitsHelpPointer(t *testing.T) {
 	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 	if !strings.Contains(last, "/help") {
 		t.Fatalf("unknown slash with no suggestion should point at /help, got:\n%s", last)
+	}
+}
+
+func TestComposeReviewPromptAddsScopeMapForLocalCodeFile(t *testing.T) {
+	tmp := t.TempDir()
+	src := "package demo\n\ntype Service struct{}\n\nfunc (s *Service) Handle() error {\n\treturn nil\n}\n\nfunc helper() {}\n"
+	if err := os.WriteFile(filepath.Join(tmp, "service.go"), []byte(src), 0o644); err != nil {
+		t.Fatalf("write service.go: %v", err)
+	}
+
+	eng := &engine.Engine{ProjectRoot: tmp}
+	m := NewModel(context.Background(), eng)
+	prompt := m.composeReviewPrompt([]string{"service.go"}, "")
+
+	for _, want := range []string{"Scope map:", "[[file:service.go]]", "method Handle", "type Service"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("scoped review prompt should contain %q, got:\n%s", want, prompt)
+		}
+	}
+	if !strings.Contains(prompt, "Start with 1-2 high-risk scopes") {
+		t.Fatalf("scoped review prompt should steer narrow symbol-first review, got:\n%s", prompt)
+	}
+}
+
+func TestComposeReviewPromptAddsSectionMapForDocs(t *testing.T) {
+	tmp := t.TempDir()
+	doc := "# Intro\nbody\n\n## Usage\nmore\n"
+	if err := os.WriteFile(filepath.Join(tmp, "README.md"), []byte(doc), 0o644); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+
+	eng := &engine.Engine{ProjectRoot: tmp}
+	m := NewModel(context.Background(), eng)
+	prompt := m.composeReviewPrompt([]string{"README.md"}, "")
+
+	for _, want := range []string{"Scope map:", "[[file:README.md]]", "section Intro", "section Usage"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("doc review prompt should contain %q, got:\n%s", want, prompt)
+		}
 	}
 }

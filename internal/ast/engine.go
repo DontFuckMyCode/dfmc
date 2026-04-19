@@ -96,6 +96,22 @@ func NewWithCacheSize(cacheSize int) *Engine {
 	}
 }
 
+// Close releases cache-held memory for long-running sessions that are tearing
+// down the owning tools/engine. Package-level parser tables remain shared, but
+// per-Engine ParseResult caches can otherwise stay live until process exit.
+func (e *Engine) Close() error {
+	if e == nil {
+		return nil
+	}
+	if e.cache != nil {
+		e.cache.Clear()
+	}
+	if e.metrics != nil {
+		e.metrics.reset()
+	}
+	return nil
+}
+
 func (e *Engine) ParseFile(ctx context.Context, path string) (*ParseResult, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -431,4 +447,12 @@ func (c *parseCache) Set(path string, res *ParseResult) {
 		delete(c.entries, oldest)
 		delete(c.index, oldest)
 	}
+}
+
+func (c *parseCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = map[string]*cacheEntry{}
+	c.order.Init()
+	c.index = make(map[string]*list.Element, c.maxSize)
 }

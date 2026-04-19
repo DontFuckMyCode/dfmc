@@ -177,6 +177,7 @@ func (e *Engine) executeAndAppendToolBatch(
 	resp *provider.CompletionResponse,
 	msgs []provider.Message,
 	traces []nativeToolTrace,
+	toolSource string,
 	lastProvider, lastModel string,
 	step, totalTokens int,
 	lim agentLimits,
@@ -206,7 +207,7 @@ func (e *Engine) executeAndAppendToolBatch(
 	if allParallelSafe(resp.ToolCalls) {
 		batchSize = e.parallelBatchSize()
 	}
-	results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize, cache, cacheMu)
+	results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize, toolSource, cache, cacheMu)
 
 	// When we're already deep in the budget, halve the per-tool char
 	// caps so new results don't accelerate bloat.

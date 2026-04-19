@@ -400,6 +400,15 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.chat.sending {
+			if strings.HasPrefix(raw, "/") {
+				cmd, _, _, err := parseChatCommandInput(raw)
+				if err != nil || !isKnownChatCommandToken(cmd) || isImmediateChatSlashCommand(cmd) {
+					m.pushInputHistory(raw)
+					m.setChatInput("")
+					next, cmdOut, _ := m.executeChatCommand(raw)
+					return next, cmdOut
+				}
+			}
 			// Cap the queue so a user spamming Enter while a long stream
 			// is in flight can't grow unbounded memory. 64 is enough
 			// headroom for normal "ask three follow-ups in a row" flow

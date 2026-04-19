@@ -281,6 +281,21 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.chat.input = ""
 		m.notice = "Session stats below."
 		return m.appendSystemMessage(m.describeStats()), nil, true
+	case "workflow":
+		m.chat.input = ""
+		m.notice = "Workflow snapshot below."
+		return m.appendSystemMessage(m.describeWorkflow()), nil, true
+	case "todos", "todo":
+		m.chat.input = ""
+		m.notice = "Shared todo list below."
+		return m.appendSystemMessage(m.describeTodos()), nil, true
+	case "subagents", "workers":
+		m.chat.input = ""
+		m.notice = "Subagent activity below."
+		return m.appendSystemMessage(m.describeSubagents()), nil, true
+	case "queue":
+		m.chat.input = ""
+		return m.handleQueueSlash(args)
 	case "keylog":
 		// Toggle key-event dump into m.notice. Used to diagnose Turkish-
 		// keyboard AltGr delivery and similar terminal-specific weirdness
@@ -342,6 +357,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		// terminals also let Shift+drag bypass capture when it's on.
 		m.chat.input = ""
 		var cmd tea.Cmd
+		m.ui.selectionModeActive = false
 		if m.ui.mouseCaptureEnabled {
 			m.ui.mouseCaptureEnabled = false
 			cmd = tea.DisableMouse
@@ -352,6 +368,9 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			m.notice = "Mouse capture on — wheel scrolls transcript. Shift+drag bypasses capture in most terminals."
 		}
 		return m.appendSystemMessage("Mouse capture toggled. /mouse to flip again; set tui.mouse_capture in .dfmc/config.yaml for the default."), cmd, true
+	case "select":
+		m.chat.input = ""
+		return m.toggleSelectionMode()
 	case "status":
 		m.chat.input = ""
 		return m.appendSystemMessage(m.statusCommandSummary()), loadStatusCmd(m.eng), true
@@ -747,4 +766,71 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.notice = "Unknown chat command: " + raw
 		return m.appendSystemMessage("Unknown chat command: " + raw + "\nRun /help for the catalog."), nil, true
 	}
+}
+
+func (m Model) toggleSelectionMode() (tea.Model, tea.Cmd, bool) {
+	next, cmd := m.setSelectionMode(!m.ui.selectionModeActive)
+	return next, cmd, true
+}
+
+func (m Model) handleQueueSlash(args []string) (tea.Model, tea.Cmd, bool) {
+	sub := ""
+	if len(args) > 0 {
+		sub = strings.ToLower(strings.TrimSpace(args[0]))
+	}
+	switch sub {
+	case "", "show", "list", "ls":
+		m.notice = fmt.Sprintf("Queued messages: %d", len(m.chat.pendingQueue))
+		return m.appendSystemMessage(m.describePendingQueue()), nil, true
+	case "clear":
+		count := len(m.chat.pendingQueue)
+		m.chat.pendingQueue = nil
+		m.notice = fmt.Sprintf("Queue cleared (%d removed).", count)
+		return m.appendSystemMessage(fmt.Sprintf("Cleared %d queued message(s).", count)), nil, true
+	case "drop", "rm", "remove", "del":
+		if len(args) < 2 {
+			return m.appendSystemMessage("Usage: /queue drop <index>"), nil, true
+		}
+		idx, err := strconv.Atoi(strings.TrimSpace(args[1]))
+		if err != nil || idx < 1 || idx > len(m.chat.pendingQueue) {
+			return m.appendSystemMessage(fmt.Sprintf("Queue index out of range. Use /queue to inspect the %d queued message(s).", len(m.chat.pendingQueue))), nil, true
+		}
+		removed := m.chat.pendingQueue[idx-1]
+		m.chat.pendingQueue = append(m.chat.pendingQueue[:idx-1], m.chat.pendingQueue[idx:]...)
+		m.notice = fmt.Sprintf("Dropped queued #%d.", idx)
+		return m.appendSystemMessage(fmt.Sprintf("Dropped queued #%d: %s", idx, removed)), nil, true
+	default:
+		return m.appendSystemMessage("Usage: /queue [show|clear|drop N]"), nil, true
+	}
+}
+
+func (m Model) setSelectionMode(active bool) (Model, tea.Cmd) {
+	m.activeTab = 0
+	if active {
+		if m.ui.selectionModeActive {
+			return m, nil
+		}
+		m.ui.selectionModeActive = true
+		m.ui.selectionRestoreStats = m.ui.showStatsPanel
+		m.ui.selectionRestoreMouse = m.ui.mouseCaptureEnabled
+		m.ui.showStatsPanel = false
+		m.ui.mouseCaptureEnabled = false
+		m.notice = "Selection mode on — chat-only width, drag to select with terminal."
+		return m.appendSystemMessage("Selection mode ON. Stats are hidden and mouse capture is off so terminal drag-select stays focused on the chat column. Use /select or alt+x again to restore the previous layout. Drag-scroll while selecting depends on your terminal."), tea.DisableMouse
+	}
+	prevStats := m.ui.selectionRestoreStats
+	prevMouse := m.ui.selectionRestoreMouse
+	m.ui.selectionModeActive = false
+	m.ui.selectionRestoreStats = false
+	m.ui.selectionRestoreMouse = false
+	m.ui.showStatsPanel = prevStats
+	m.ui.mouseCaptureEnabled = prevMouse
+	m.notice = "Selection mode off — restored previous layout."
+	var cmd tea.Cmd
+	if prevMouse {
+		cmd = tea.EnableMouseCellMotion
+	} else {
+		cmd = tea.DisableMouse
+	}
+	return m.appendSystemMessage("Selection mode OFF. Restored the previous stats-panel and mouse-capture state."), cmd
 }

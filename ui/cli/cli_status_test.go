@@ -68,6 +68,34 @@ func TestRunStatusJSONIncludesProviderProfileAndModelsDevCache(t *testing.T) {
 	}
 }
 
+func TestRunStatusJSONIncludesProviderAdvisories(t *testing.T) {
+	eng := newCLITestEngine(t)
+	eng.Config.Providers.Primary = "zai"
+	eng.Config.Providers.Profiles["zai"] = config.ModelConfig{
+		Model:      "glm-4.5",
+		Protocol:   "anthropic",
+		BaseURL:    "https://api.z.ai/api/anthropic",
+		MaxContext: 128000,
+		MaxTokens:  8192,
+	}
+
+	out := captureStdout(t, func() {
+		if code := runStatus(eng, "dev", []string{}, true); code != 0 {
+			t.Fatalf("runStatus json exit=%d", code)
+		}
+	})
+
+	var payload struct {
+		ProviderProfile engine.ProviderProfileStatus `json:"provider_profile"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("unmarshal status json: %v\n%s", err, out)
+	}
+	if len(payload.ProviderProfile.Advisories) == 0 {
+		t.Fatalf("expected provider advisories in status payload: %#v", payload.ProviderProfile)
+	}
+}
+
 func TestRunStatusJSONIncludesApprovalGateAndHooks(t *testing.T) {
 	eng := newCLITestEngine(t)
 	eng.Config.Tools.RequireApproval = []string{"write_file", "run_command", "edit_file"}
@@ -160,6 +188,26 @@ func TestRunStatusTextMentionsGateAndHooks(t *testing.T) {
 	}
 	if !strings.Contains(out, "write_file") || !strings.Contains(out, "run_command") {
 		t.Fatalf("status text should list gated tools, got:\n%s", out)
+	}
+}
+
+func TestRunStatusTextMentionsProviderAdvisory(t *testing.T) {
+	eng := newCLITestEngine(t)
+	eng.Config.Providers.Primary = "zai"
+	eng.Config.Providers.Profiles["zai"] = config.ModelConfig{
+		Model:    "glm-4.5",
+		Protocol: "anthropic",
+		BaseURL:  "https://api.z.ai/api/anthropic",
+	}
+
+	out := captureStdout(t, func() {
+		if code := runStatus(eng, "dev", []string{}, false); code != 0 {
+			t.Fatalf("runStatus text exit=%d", code)
+		}
+	})
+
+	if !strings.Contains(out, "provider advisory:") {
+		t.Fatalf("status text should mention provider advisory, got:\n%s", out)
 	}
 }
 
@@ -277,6 +325,19 @@ func TestFormatProviderProfileSummary(t *testing.T) {
 	}
 	if !strings.Contains(summary, "configured=true") {
 		t.Fatalf("expected configured flag in provider profile summary, got %q", summary)
+	}
+}
+
+func TestFormatProviderProfileSummaryIncludesAdvisoryCount(t *testing.T) {
+	summary := formatProviderProfileSummary(engine.ProviderProfileStatus{
+		Name:       "zai",
+		Model:      "glm-4.5",
+		Protocol:   "openai-compatible",
+		Configured: true,
+		Advisories: []string{"bad config"},
+	})
+	if !strings.Contains(summary, "advisories=1") {
+		t.Fatalf("expected advisory count in provider profile summary, got %q", summary)
 	}
 }
 

@@ -780,6 +780,10 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "hooks", Template: "/hooks", Description: "list lifecycle hooks registered per event (pre_tool, post_tool, user_prompt_submit, …)"},
 		{Command: "doctor", Template: "/doctor", Description: "in-chat health snapshot (provider, ast, tools, gate, hooks, denials)"},
 		{Command: "stats", Template: "/stats", Description: "session metrics: tool rounds, rtk savings, agent progress, context fill"},
+		{Command: "workflow", Template: "/workflow", Description: "show todos, active subagents, drive progress, and the latest plan"},
+		{Command: "todos", Template: "/todos", Description: "print the shared todo list the agent is currently tracking"},
+		{Command: "subagents", Template: "/subagents", Description: "show current subagent fan-out and recent delegation activity"},
+		{Command: "queue", Template: "/queue", Description: "inspect or clear queued follow-up prompts"},
 		{Command: "export", Template: "/export", Description: "save the current transcript to .dfmc/exports/*.md (or /export path.md)"},
 		{Command: "quit", Template: "/quit", Description: "exit DFMC"},
 		{Command: "providers", Template: "/providers", Description: "list configured providers"},
@@ -804,6 +808,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "btw", Template: "/btw ", Description: "inject a note at the next tool-loop step"},
 		{Command: "coach", Template: "/coach", Description: coachLabel + " the background coach notes"},
 		{Command: "hints", Template: "/hints", Description: hintsLabel + " between-round trajectory hints"},
+		{Command: "select", Template: "/select", Description: "toggle chat-only selection mode (hide stats, disable mouse capture)"},
 		// Analyze family: these have TUI handlers (case "map", "scan") but
 		// live at SurfaceCLI|SurfaceWeb in the shared registry, so they
 		// never reach the palette through ForSurface. Surface them here so

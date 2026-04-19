@@ -98,7 +98,7 @@ func TestBundleToSystemBlocks_NoCacheMeansNilBlocks(t *testing.T) {
 func TestBuildNativeToolSystemPromptBundle_BridgeCached(t *testing.T) {
 	eng := newTestEngine(t)
 
-	text, blocks := eng.buildNativeToolSystemPromptBundle("analyze", nil)
+	text, blocks := eng.buildNativeToolSystemPromptBundle("analyze", nil, nil)
 	if !strings.Contains(text, "[DFMC native tool surface]") {
 		t.Fatalf("flat text should include native tool bridge: %q", text)
 	}
@@ -124,6 +124,50 @@ func TestBuildNativeToolSystemPromptBundle_BridgeCached(t *testing.T) {
 	}
 	if !sawDynamic {
 		t.Fatalf("expected user query to land in dynamic block; blocks=%+v", blocks)
+	}
+}
+
+func TestBuildNativeToolSystemPromptBundle_AutonomyPreflightStaysDynamic(t *testing.T) {
+	eng := newTestEngine(t)
+	preflight := &autonomyPreflight{
+		Directive: "Deterministic preflight split this request into 3 subtasks.",
+	}
+
+	text, blocks := eng.buildNativeToolSystemPromptBundle("analyze", nil, preflight)
+	if !strings.Contains(text, "[DFMC autonomy preflight]") {
+		t.Fatalf("flat text should include autonomy preflight block, got %q", text)
+	}
+
+	sawDynamicAutonomy := false
+	for _, b := range blocks {
+		if b.Cacheable && strings.Contains(b.Text, "[DFMC autonomy preflight]") {
+			t.Fatalf("autonomy preflight must stay dynamic, blocks=%+v", blocks)
+		}
+		if !b.Cacheable && strings.Contains(b.Text, "[DFMC autonomy preflight]") {
+			sawDynamicAutonomy = true
+		}
+	}
+	if !sawDynamicAutonomy {
+		t.Fatalf("expected autonomy preflight in a dynamic block, got %+v", blocks)
+	}
+}
+
+func TestBuildNativeToolSystemPromptBundle_ContainsToolChoiceGuardrails(t *testing.T) {
+	eng := newTestEngine(t)
+
+	text, _ := eng.buildNativeToolSystemPromptBundle("review the changes", nil, nil)
+	want := []string{
+		"grep_codebase for content discovery",
+		"glob for file-shape discovery",
+		"read_file for exact file slices",
+		"run_command is NOT a shell",
+		"do not blindly retry the identical call",
+		"Keep reads narrow",
+	}
+	for _, needle := range want {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("native tool prompt missing %q\nprompt=%q", needle, text)
+		}
 	}
 }
 

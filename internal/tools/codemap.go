@@ -39,7 +39,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
@@ -50,21 +49,24 @@ import (
 // Holds a lazy ast.Engine so repeat calls within one session reuse the
 // parse cache; first call pays the cost, subsequent calls are cheap.
 type CodemapTool struct {
-	once   sync.Once
 	engine *ast.Engine
 }
 
-func NewCodemapTool() *CodemapTool { return &CodemapTool{} }
+func NewCodemapTool() *CodemapTool { return &CodemapTool{engine: ast.New()} }
 
 func (t *CodemapTool) Name() string { return "codemap" }
 func (t *CodemapTool) Description() string {
 	return "High-level project overview — every file, every symbol, every signature, no bodies."
 }
 
-func (t *CodemapTool) getEngine() *ast.Engine {
-	t.once.Do(func() { t.engine = ast.New() })
-	return t.engine
+func (t *CodemapTool) Close() error {
+	if t == nil || t.engine == nil {
+		return nil
+	}
+	return t.engine.Close()
 }
+
+func (t *CodemapTool) getEngine() *ast.Engine { return t.engine }
 
 func (t *CodemapTool) Spec() ToolSpec {
 	return ToolSpec{
@@ -174,11 +176,12 @@ func (t *CodemapTool) Execute(ctx context.Context, req Request) (Result, error) 
 	rootDepth := strings.Count(strings.TrimRight(filepath.ToSlash(root), "/"), "/")
 
 	var (
-		entries     []codemapFileEntry
-		filesSeen   int
-		parseErrors int
-		truncated   bool
-		langCounts  = map[string]int{}
+		entries      []codemapFileEntry
+		filesSeen    int
+		parseErrors  int
+		truncated    bool
+		skippedFiles int
+		langCounts   = map[string]int{}
 	)
 
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -203,6 +206,7 @@ func (t *CodemapTool) Execute(ctx context.Context, req Request) (Result, error) 
 		}
 		safePath, serr := EnsureWithinRoot(req.ProjectRoot, path)
 		if serr != nil {
+			skippedFiles++
 			return nil
 		}
 		if filesSeen >= maxFiles {
@@ -245,7 +249,7 @@ func (t *CodemapTool) Execute(ctx context.Context, req Request) (Result, error) 
 
 	totalSymbols := 0
 	output := codemapRenderMarkdown(entries, &totalSymbols)
-	stats := codemapStatsLine(filesSeen, totalSymbols, parseErrors, langCounts, time.Since(startedAt), truncated)
+	stats := codemapStatsLine(filesSeen, totalSymbols, parseErrors, skippedFiles, langCounts, time.Since(startedAt), truncated)
 	output = stats + "\n\n" + output
 
 	return Result{
@@ -256,6 +260,7 @@ func (t *CodemapTool) Execute(ctx context.Context, req Request) (Result, error) 
 			"files_with_syms": len(entries),
 			"symbols":         totalSymbols,
 			"parse_errors":    parseErrors,
+			"skipped_files":   skippedFiles,
 			"languages":       langCounts,
 			"truncated":       truncated,
 			"duration_ms":     time.Since(startedAt).Milliseconds(),
@@ -365,8 +370,9 @@ func codemapSymbolLine(sym types.Symbol) string {
 	// like a manual page. Truncate over-long signatures so a 200-arg
 	// generated function can't blow up the line width.
 	const sigBudget = 70
-	if len(sig) > sigBudget {
-		sig = sig[:sigBudget-3] + "..."
+	runes := []rune(sig)
+	if len(runes) > sigBudget {
+		sig = string(runes[:sigBudget-3]) + "..."
 	}
 	const lineCol = 80
 	pad := lineCol - len(sig) - 2 // " " gap on either side of the line marker
@@ -379,7 +385,7 @@ func codemapSymbolLine(sym types.Symbol) string {
 // codemapStatsLine renders the one-line header banner the renderer
 // puts above the body. Surfaces coverage so the model can spot when
 // the map is partial (e.g. truncated, parse errors, missing languages).
-func codemapStatsLine(files, symbols, parseErrors int, langs map[string]int, dur time.Duration, truncated bool) string {
+func codemapStatsLine(files, symbols, parseErrors, skippedFiles int, langs map[string]int, dur time.Duration, truncated bool) string {
 	langKeys := make([]string, 0, len(langs))
 	for k := range langs {
 		langKeys = append(langKeys, k)
@@ -391,6 +397,9 @@ func codemapStatsLine(files, symbols, parseErrors int, langs map[string]int, dur
 	}
 	if parseErrors > 0 {
 		parts = append(parts, fmt.Sprintf("parse_errors=%d", parseErrors))
+	}
+	if skippedFiles > 0 {
+		parts = append(parts, fmt.Sprintf("skipped=%d", skippedFiles))
 	}
 	if len(langKeys) > 0 {
 		var langPairs []string

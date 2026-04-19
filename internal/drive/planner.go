@@ -38,7 +38,14 @@ Output STRICTLY a JSON object matching this shape - nothing else (no prose, no m
       "detail": "Concrete instructions for the executor - what to read, what to change, what to verify. 1-3 sentences.",
       "depends_on": [],
       "file_scope": ["relative/path/from/repo/root.go"],
-      "provider_tag": "code"
+      "read_only": false,
+      "provider_tag": "code",
+      "worker_class": "coder",
+      "skills": ["debug"],
+      "allowed_tools": ["read_file", "grep_codebase", "run_command"],
+      "labels": ["api", "critical-path"],
+      "verification": "required",
+      "confidence": 0.84
     }
   ]
 }
@@ -48,7 +55,14 @@ Rules:
 - title is what the user will see in the progress chip. Keep it under 80 chars.
 - detail is the prompt the executor will run. Be concrete: name files, name functions, state success criteria.
 - file_scope lists the files the TODO will read or write (best effort - used by the scheduler to avoid parallel conflicts). Empty is allowed.
+- read_only is optional. Set it true for survey/review/verification TODOs that must not mutate files, especially when file_scope is empty.
 - provider_tag is one of: "plan" | "code" | "review" | "test" | "research". Default "code".
+- worker_class is optional but preferred. Use one of: "planner" | "researcher" | "coder" | "reviewer" | "tester" | "security" | "synthesizer".
+- skills is optional. Use short builtin capability names when helpful (e.g. "debug", "review", "audit", "test", "doc", "generate", "onboard").
+- allowed_tools is optional. Use it only when the TODO should strongly prefer a narrow tool set.
+- labels is optional. Use a few short tags that help a later supervisor or UI understand the work.
+- verification is optional. Use "none" | "required" | "light" | "deep". Default "required" for code/test/review/security work, otherwise "light".
+- confidence is optional. Float in [0,1] expressing how confident you are this TODO is well-scoped and correctly decomposed.
 - 3 to 12 TODOs. Fewer is better when the task is small. Never exceed 20.
 - The first TODO is usually a discovery step (read the relevant files, understand the existing shape) before any modifications.
 - The last TODO is usually a verification step (run the tests, build, lint).
@@ -124,12 +138,23 @@ func parsePlannerOutput(raw string) ([]Todo, error) {
 		for i := range out.Todos {
 			t := &out.Todos[i]
 			t.ID = strings.TrimSpace(t.ID)
+			t.ParentID = strings.TrimSpace(t.ParentID)
+			t.Origin = normalizeTodoOrigin(t.Origin)
+			t.Kind = normalizeTodoKind(t.Kind, t.Verification, t.ProviderTag, t.WorkerClass)
 			t.Title = strings.TrimSpace(t.Title)
 			t.Detail = strings.TrimSpace(t.Detail)
 			t.ProviderTag = strings.TrimSpace(t.ProviderTag)
 			if t.ProviderTag == "" {
 				t.ProviderTag = "code"
 			}
+			t.WorkerClass = normalizeWorkerClass(t.WorkerClass, t.ProviderTag)
+			t.Skills = cleanList(t.Skills)
+			t.AllowedTools = cleanList(t.AllowedTools)
+			t.Labels = cleanList(t.Labels)
+			t.Verification = normalizeVerification(t.Verification, t.ProviderTag, t.WorkerClass)
+			t.Kind = normalizeTodoKind(t.Kind, t.Verification, t.ProviderTag, t.WorkerClass)
+			t.ReadOnly = normalizeTodoReadOnly(t.ReadOnly, t.WorkerClass, t.Kind, t.AllowedTools)
+			t.Confidence = clampConfidence(t.Confidence)
 			t.Status = TodoPending
 		}
 		return out.Todos, nil
@@ -215,6 +240,9 @@ func validateTodos(todos []Todo) error {
 		if t.Detail == "" {
 			return fmt.Errorf("todos[%d (%s)].detail is empty - executor needs concrete instructions", i, t.ID)
 		}
+		if t.Confidence < 0 || t.Confidence > 1 {
+			return fmt.Errorf("todos[%d (%s)].confidence must be between 0 and 1", i, t.ID)
+		}
 	}
 	for _, t := range todos {
 		for _, dep := range t.DependsOn {
@@ -230,6 +258,140 @@ func validateTodos(todos []Todo) error {
 		return fmt.Errorf("dependency cycle detected: %s", cycle)
 	}
 	return nil
+}
+
+func normalizeWorkerClass(raw, providerTag string) string {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	switch v {
+	case "planner", "researcher", "coder", "reviewer", "tester", "security", "synthesizer":
+		return v
+	}
+	switch strings.ToLower(strings.TrimSpace(providerTag)) {
+	case "plan":
+		return "planner"
+	case "review":
+		return "reviewer"
+	case "test":
+		return "tester"
+	case "research":
+		return "researcher"
+	default:
+		return "coder"
+	}
+}
+
+func normalizeVerification(raw, providerTag, workerClass string) string {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	switch v {
+	case "none", "required", "light", "deep":
+		return v
+	}
+	switch strings.ToLower(strings.TrimSpace(workerClass)) {
+	case "reviewer", "tester", "security", "coder":
+		return "required"
+	}
+	switch strings.ToLower(strings.TrimSpace(providerTag)) {
+	case "review", "test", "code":
+		return "required"
+	default:
+		return "light"
+	}
+}
+
+func clampConfidence(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+func cleanList(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, item := range in {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		key := strings.ToLower(item)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, item)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeTodoOrigin(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "supervisor":
+		return "supervisor"
+	case "worker":
+		return "worker"
+	default:
+		return "planner"
+	}
+}
+
+func normalizeTodoKind(raw, verification, providerTag, workerClass string) string {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	switch v {
+	case "verify", "work", "survey", "synth":
+		return v
+	}
+	if strings.EqualFold(strings.TrimSpace(verification), "deep") && strings.EqualFold(strings.TrimSpace(workerClass), "security") {
+		return "verify"
+	}
+	switch strings.ToLower(strings.TrimSpace(providerTag)) {
+	case "test", "review":
+		return "verify"
+	case "research", "plan":
+		return "survey"
+	default:
+		if strings.EqualFold(strings.TrimSpace(workerClass), "synthesizer") {
+			return "synth"
+		}
+		return "work"
+	}
+}
+
+func normalizeTodoReadOnly(explicit bool, workerClass, kind string, allowedTools []string) bool {
+	if explicit {
+		return true
+	}
+	if len(allowedTools) > 0 {
+		return !allowsMutatingTools(allowedTools)
+	}
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "survey":
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(workerClass)) {
+	case "planner", "researcher":
+		return true
+	default:
+		return false
+	}
+}
+
+func allowsMutatingTools(tools []string) bool {
+	for _, tool := range tools {
+		switch strings.ToLower(strings.TrimSpace(tool)) {
+		case "edit_file", "apply_patch", "write_file", "todo_write":
+			return true
+		}
+	}
+	return false
 }
 
 // detectCycle walks the dependency graph with iterative DFS and

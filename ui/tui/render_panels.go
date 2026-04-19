@@ -422,6 +422,7 @@ func (m Model) renderHelpOverlay(width int) string {
 		"",
 		boldStyle.Render("Global"),
 		"  ctrl+p palette · alt+1..0/alt+t/alt+y/alt+w/alt+o or f1..f12 tabs · ctrl+h help · ctrl+s stats",
+		"  ctrl+y plans · ctrl+g activity · chat stats: alt+a overview · alt+s todos · alt+d tasks · alt+f agents",
 		"  ctrl+c/ctrl+q quit · ctrl+u clear chat input · esc cancels streaming turn (or dismisses parked banner)",
 		"",
 		boldStyle.Render("Chat composer"),
@@ -448,6 +449,7 @@ func helpOverlayTabHints(tab string) []string {
 		return []string{
 			"enter send · ctrl+j or alt+enter newline · / commands · @ mention",
 			"wheel · shift+↑/↓ · pgup/pgdn scroll transcript",
+			"alt+a overview · alt+s todos · alt+d tasks · alt+f subagents in the right stats panel",
 			"when parked: enter resumes · esc dismisses · type a note first to steer",
 		}
 	case "status":

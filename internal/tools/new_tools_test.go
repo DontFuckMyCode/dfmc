@@ -330,6 +330,31 @@ func TestApplyPatchRefusesUnreadFile(t *testing.T) {
 	}
 }
 
+func TestApplyPatchNewHeaderStillGuardsExistingFile(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "existing.txt")
+	if err := os.WriteFile(target, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	patch := "--- /dev/null\n+++ b/existing.txt\n@@ -0,0 +1 @@\n+replaced\n"
+
+	eng := New(*config.DefaultConfig())
+	_, err := eng.Execute(context.Background(), "apply_patch", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"patch": patch},
+	})
+	if err == nil {
+		t.Fatal("existing file masked as /dev/null must still hit the read-before-mutate guard")
+	}
+	if !strings.Contains(err.Error(), "prior read_file") {
+		t.Fatalf("expected prior read guard, got: %v", err)
+	}
+	body, _ := os.ReadFile(target)
+	if string(body) != "hello\n" {
+		t.Fatalf("existing file should remain untouched, got %q", string(body))
+	}
+}
+
 // TestFileToolsReturnRelativePathInData pins the token-leak fix: read,
 // write, and edit file tools now surface a project-relative path in
 // Data["path"] instead of the absolute host-FS prefix. Pre-fix the
@@ -777,6 +802,46 @@ func TestApplyPatchHandlesCRLFSource(t *testing.T) {
 	// We don't assert the exact reassembled CR/LF layout of the
 	// replacement line here — the key guarantee is "hunk matched and
 	// applied," which the applied/rejected count above confirms.
+}
+
+func TestApplyPatchReportsFuzzyAnchorOffset(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "hello.txt")
+	if err := os.WriteFile(target, []byte("a\nx\nb\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	patch := `--- a/hello.txt
++++ b/hello.txt
+@@ -1,2 +1,2 @@
+-x
++X
+ b
+`
+	eng := New(*config.DefaultConfig())
+	if _, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "hello.txt"},
+	}); err != nil {
+		t.Fatalf("read setup: %v", err)
+	}
+	res, err := eng.Execute(context.Background(), "apply_patch", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"patch": patch},
+	})
+	if err != nil {
+		t.Fatalf("apply_patch: %v", err)
+	}
+	files, ok := res.Data["files"].([]map[string]any)
+	if !ok || len(files) != 1 {
+		t.Fatalf("expected one file entry, got %#v", res.Data["files"])
+	}
+	offsets, ok := files[0]["fuzzy_offsets"].([]int)
+	if !ok {
+		t.Fatalf("expected fuzzy_offsets in result data, got %#v", files[0]["fuzzy_offsets"])
+	}
+	if len(offsets) != 1 || offsets[0] != 1 {
+		t.Fatalf("expected fuzzy offset [+1], got %#v", offsets)
+	}
 }
 
 func TestApplyPatchNewFile(t *testing.T) {

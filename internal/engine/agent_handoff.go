@@ -135,7 +135,10 @@ func (e *Engine) maybeAutoHandoff(question string) *handoffReport {
 	// New conversation starts with a non-trivial brief — flush
 	// immediately so the handoff state is durable. Same rationale
 	// as the per-turn save in the agent loop.
-	_ = e.Conversation.SaveActive()
+	e.saveActiveConversationWithWarning("handoff", map[string]any{
+		"old_conversation": oldID,
+		"new_conversation": newConv.ID,
+	})
 
 	report := &handoffReport{
 		OldConversationID: oldID,
@@ -157,6 +160,20 @@ func (e *Engine) maybeAutoHandoff(question string) *handoffReport {
 		"surface":          "conversation",
 	})
 	return report
+}
+
+func (e *Engine) saveActiveConversationWithWarning(surface string, payload map[string]any) {
+	if e == nil || e.Conversation == nil {
+		return
+	}
+	if err := e.Conversation.SaveActive(); err != nil {
+		if payload == nil {
+			payload = map[string]any{}
+		}
+		payload["surface"] = strings.TrimSpace(surface)
+		payload["error"] = err.Error()
+		e.publishAgentLoopEvent("conversation:save_error", payload)
+	}
 }
 
 // buildHandoffBrief renders a terse, LLM-free summary of an outgoing

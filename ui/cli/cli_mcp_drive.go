@@ -74,6 +74,8 @@ func (h *driveMCPHandler) Tools() []mcp.ToolDescriptor {
 					"retries":          map[string]any{"type": "integer", "description": "Per-TODO retry count on failure (default 1)", "minimum": 0, "maximum": 10},
 					"max_wall_time_ms": map[string]any{"type": "integer", "description": "Wall-clock budget in ms before the run is force-stopped (default 30min)", "minimum": 1000},
 					"planner_model":    map[string]any{"type": "string", "description": "Provider profile name to use for the planner LLM call (defaults to engine primary)"},
+					"auto_survey":      map[string]any{"type": "boolean", "description": "Prepend a supervisor-generated discovery task after planning"},
+					"auto_verify":      map[string]any{"type": "boolean", "description": "Append a supervisor-generated verification task after planning"},
 					"routing":          map[string]any{"type": "object", "description": "Map provider_tag -> profile name. Tags planner emits: plan, code, review, test, research", "additionalProperties": map[string]any{"type": "string"}},
 					"auto_approve":     map[string]any{"type": "array", "description": "Tool names to auto-approve for this run (use ['*'] for all)", "items": map[string]any{"type": "string"}},
 				},
@@ -174,6 +176,8 @@ type driveStartArgs struct {
 	MaxWallTimeMs  int64             `json:"max_wall_time_ms,omitempty"`
 	Retries        int               `json:"retries,omitempty"`
 	MaxParallel    int               `json:"max_parallel,omitempty"`
+	AutoSurvey     bool              `json:"auto_survey,omitempty"`
+	AutoVerify     bool              `json:"auto_verify,omitempty"`
 	PlannerModel   string            `json:"planner_model,omitempty"`
 	Routing        map[string]string `json:"routing,omitempty"`
 	AutoApprove    []string          `json:"auto_approve,omitempty"`
@@ -202,6 +206,8 @@ func (h *driveMCPHandler) callStart(_ context.Context, rawArgs []byte) (mcp.Call
 		MaxWallTime:    time.Duration(args.MaxWallTimeMs) * time.Millisecond,
 		Retries:        args.Retries,
 		MaxParallel:    args.MaxParallel,
+		AutoSurvey:     args.AutoSurvey,
+		AutoVerify:     args.AutoVerify,
 		PlannerModel:   args.PlannerModel,
 		Routing:        args.Routing,
 		AutoApprove:    args.AutoApprove,

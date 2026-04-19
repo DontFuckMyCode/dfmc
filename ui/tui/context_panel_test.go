@@ -11,8 +11,9 @@ import (
 
 func newContextTestModel() Model {
 	return Model{
-		tabs:      []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context"},
-		activeTab: 13,
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context"},
+		activeTab:             13,
+		diagnosticPanelsState: newDiagnosticPanelsState(),
 	}
 }
 

@@ -118,8 +118,8 @@ func TestRenderChatHeaderSwitchesToStreamingAndAgent(t *testing.T) {
 		Provider: "openai", Model: "gpt-5.4",
 		AgentActive: true, AgentPhase: "reviewing", AgentStep: 3, AgentMax: 12,
 	}, 160)
-	if !strings.Contains(agent, "agent reviewing") || !strings.Contains(agent, "3/12") {
-		t.Fatalf("agent header should show phase + step progress, got %q", agent)
+	if !strings.Contains(agent, "tool loop reviewing") || !strings.Contains(agent, "3/12") {
+		t.Fatalf("tool-loop header should show phase + step progress, got %q", agent)
 	}
 }
 

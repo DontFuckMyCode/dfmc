@@ -201,6 +201,67 @@ func TestCompleteWithThrottleRetry_RespectsContext(t *testing.T) {
 	}
 }
 
+func TestStreamWithThrottleRetry_RecoversAfterBackoff(t *testing.T) {
+	p := &flakyThrottleProvider{name: "flaky-stream", succeedOn: 3, retryAfter: 10 * time.Millisecond}
+	cfg := config.DefaultConfig()
+	r, err := NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("NewRouter: %v", err)
+	}
+	r.providers[p.name] = p
+
+	start := time.Now()
+	stream, err := r.streamWithThrottleRetry(context.Background(), p, CompletionRequest{})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("expected eventual stream success, got: %v", err)
+	}
+	if atomic.LoadInt32(&p.calls) != 3 {
+		t.Fatalf("expected 3 calls (2 throttles + 1 success), got %d", p.calls)
+	}
+	if elapsed < 15*time.Millisecond {
+		t.Fatalf("stream retry didn't honour Retry-After (elapsed %s)", elapsed)
+	}
+	var deltas []string
+	for ev := range stream {
+		if ev.Type == StreamDelta {
+			deltas = append(deltas, ev.Delta)
+		}
+	}
+	if len(deltas) != 1 || deltas[0] != "ok" {
+		t.Fatalf("unexpected stream output: %#v", deltas)
+	}
+}
+
+func TestThrottleObserverReceivesRetryNotices(t *testing.T) {
+	p := &flakyThrottleProvider{name: "observer", succeedOn: 3, retryAfter: 5 * time.Millisecond}
+	cfg := config.DefaultConfig()
+	r, err := NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("NewRouter: %v", err)
+	}
+	r.providers[p.name] = p
+
+	var notices []ThrottleNotice
+	r.SetThrottleObserver(func(n ThrottleNotice) {
+		notices = append(notices, n)
+	})
+
+	_, err = r.completeWithThrottleRetry(context.Background(), p, CompletionRequest{})
+	if err != nil {
+		t.Fatalf("expected eventual success, got: %v", err)
+	}
+	if len(notices) != 2 {
+		t.Fatalf("expected 2 throttle notices, got %d", len(notices))
+	}
+	if notices[0].Provider != "observer" || notices[0].Attempt != 1 || notices[0].Stream {
+		t.Fatalf("unexpected first notice: %+v", notices[0])
+	}
+	if notices[1].Attempt != 2 {
+		t.Fatalf("unexpected second notice: %+v", notices[1])
+	}
+}
+
 // When ctx is cancelled mid-fallback, Router.Complete must return
 // the cancel error directly rather than churning through every
 // remaining provider (each of which would also return ctx.Err()) and
@@ -247,11 +308,11 @@ type staticErrProvider struct {
 	calls *int32
 }
 
-func (p *staticErrProvider) Name() string              { return p.name }
-func (p *staticErrProvider) Model() string             { return "test-model" }
-func (p *staticErrProvider) Hints() ProviderHints      { return ProviderHints{SupportsTools: true} }
+func (p *staticErrProvider) Name() string                { return p.name }
+func (p *staticErrProvider) Model() string               { return "test-model" }
+func (p *staticErrProvider) Hints() ProviderHints        { return ProviderHints{SupportsTools: true} }
 func (p *staticErrProvider) CountTokens(text string) int { return len(text) / 4 }
-func (p *staticErrProvider) MaxContext() int           { return 100_000 }
+func (p *staticErrProvider) MaxContext() int             { return 100_000 }
 func (p *staticErrProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	atomic.AddInt32(p.calls, 1)
 	return nil, p.err

@@ -417,6 +417,9 @@ func (e *Engine) AskRaced(ctx context.Context, question string, candidates []str
 	if err := e.requireReady("ask"); err != nil {
 		return "", "", err
 	}
+	if err := e.maybeAutoReloadProjectConfig(); err != nil {
+		return "", "", err
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -474,6 +477,9 @@ func (e *Engine) AskRaced(ctx context.Context, question string, candidates []str
 // and the structured SystemBlocks (for Anthropic's prompt caching). Returns
 func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, error) {
 	if err := e.requireReady("ask"); err != nil {
+		return "", err
+	}
+	if err := e.maybeAutoReloadProjectConfig(); err != nil {
 		return "", err
 	}
 	if ctx == nil {
@@ -554,6 +560,9 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 
 func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provider.StreamEvent, error) {
 	if err := e.requireReady("stream ask"); err != nil {
+		return nil, err
+	}
+	if err := e.maybeAutoReloadProjectConfig(); err != nil {
 		return nil, err
 	}
 	if ctx == nil {

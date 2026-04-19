@@ -1,6 +1,6 @@
 package engine
 
-// subagent.go — bounded sub-agent runner used by the delegate_task tool.
+// subagent.go - bounded sub-agent runner used by the delegate_task tool.
 //
 // A sub-agent runs its own provider-native tool loop with a fresh message
 // history and its own step/token budget. It does NOT share parked state with
@@ -10,9 +10,7 @@ package engine
 
 import (
 	"context"
-	"fmt"
 	"strings"
-	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
@@ -22,112 +20,7 @@ import (
 // RunSubagent implements tools.SubagentRunner. The delegate_task tool calls
 // this to execute a scoped sub-task with its own fresh context and budget.
 func (e *Engine) RunSubagent(ctx context.Context, req tools.SubagentRequest) (tools.SubagentResult, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if strings.TrimSpace(req.Task) == "" {
-		return tools.SubagentResult{}, fmt.Errorf("task is required")
-	}
-	if e == nil || e.Providers == nil {
-		return tools.SubagentResult{}, fmt.Errorf("engine not initialized")
-	}
-	if !e.shouldUseNativeToolLoop() {
-		return tools.SubagentResult{}, fmt.Errorf("sub-agent requires a provider with tool support (current: %s)", e.provider())
-	}
-	if override := strings.TrimSpace(req.Model); override != "" {
-		if e.Config == nil || e.Config.Providers.Profiles == nil {
-			return tools.SubagentResult{}, fmt.Errorf("unknown sub-agent model/profile override %q", override)
-		}
-		if _, ok := e.Config.Providers.Profiles[override]; !ok {
-			return tools.SubagentResult{}, fmt.Errorf("unknown sub-agent model/profile override %q", override)
-		}
-	}
-
-	// Preserve parent's parked state across this (and any concurrent
-	// sibling) sub-agent runs. enterSubagent uses a reference counter so
-	// tool_batch_call(delegate_task) fan-outs don't race each other on the
-	// shared agentParked field — the parent's state is stashed once and
-	// restored once.
-	defer e.enterSubagent()()
-
-	task := buildSubagentPrompt(req)
-	chunks := e.buildContextChunks(task)
-	systemPrompt, systemBlocks := e.buildNativeToolSystemPromptBundle(task, chunks)
-	descriptors := metaSpecsToDescriptors(e.Tools.MetaSpecs())
-
-	contextTokens := 0
-	for _, c := range chunks {
-		contextTokens += c.TokenCount
-	}
-
-	seed := &parkedAgentState{
-		Question:      task,
-		Messages:      e.buildToolLoopRequestMessages(task, chunks, systemPrompt, nil),
-		Chunks:        chunks,
-		SystemPrompt:  systemPrompt,
-		SystemBlocks:  systemBlocks,
-		Descriptors:   descriptors,
-		ContextTokens: contextTokens,
-		TotalTokens:   0,
-		Step:          0,
-		LastProvider:  e.provider(),
-		LastModel:     e.model(),
-	}
-	if strings.TrimSpace(req.Model) != "" {
-		// Treat Model as a profile override for the sub-agent's first call.
-		seed.LastProvider = strings.TrimSpace(req.Model)
-	}
-
-	lim := e.agentLimits()
-	if req.MaxSteps > 0 && req.MaxSteps < lim.MaxSteps {
-		lim.MaxSteps = req.MaxSteps
-	}
-	// Sub-agents get a smaller token budget by default so they can't exhaust
-	// the parent's budget with a runaway loop.
-	if lim.MaxTokens > 0 {
-		lim.MaxTokens = lim.MaxTokens / 2
-		if lim.MaxTokens < 10000 {
-			lim.MaxTokens = 10000
-		}
-	}
-
-	start := time.Now()
-	e.publishAgentLoopEvent("agent:subagent:start", map[string]any{
-		"task":           truncateString(req.Task, 200),
-		"role":           req.Role,
-		"max_tool_steps": lim.MaxSteps,
-		"allowed_tools":  req.AllowedTools,
-	})
-	completion, err := e.runNativeToolLoop(ctx, seed, lim)
-	dur := time.Since(start).Milliseconds()
-	e.publishAgentLoopEvent("agent:subagent:done", map[string]any{
-		"duration_ms": dur,
-		"tool_rounds": len(completion.ToolTraces),
-		"parked":      completion.Parked,
-		"err":         errString(err),
-	})
-	if err != nil {
-		return tools.SubagentResult{DurationMs: dur}, err
-	}
-
-	res := tools.SubagentResult{
-		Summary:    strings.TrimSpace(completion.Answer),
-		ToolCalls:  len(completion.ToolTraces),
-		DurationMs: dur,
-		Data: map[string]any{
-			"provider":     completion.Provider,
-			"model":        completion.Model,
-			"tokens":       completion.TokenCount,
-			"parked":       completion.Parked,
-			"context_refs": len(completion.Context),
-		},
-	}
-	if completion.Parked {
-		// Surface this as part of the summary so the parent knows the
-		// sub-task was bounded.
-		res.Summary = strings.TrimSpace(res.Summary + "\n\n[note: sub-agent reached its step budget; summary reflects partial work]")
-	}
-	return res, nil
+	return e.runSubagentProfiles(ctx, req, nil)
 }
 
 // buildSubagentPrompt stitches role and allowed-tool hints onto the raw task
@@ -150,6 +43,7 @@ func buildSubagentPrompt(req tools.SubagentRequest) string {
 		b.WriteString(strings.Join(req.AllowedTools, ", "))
 		b.WriteString(". Avoid tools outside this list unless essential.\n\n")
 	}
+	b.WriteString("Work autonomously until the scoped task is genuinely complete. If the task clearly decomposes, prefer orchestrate or delegate_task fan-out instead of serializing every survey step yourself.\n\n")
 	b.WriteString("Task:\n")
 	b.WriteString(strings.TrimSpace(req.Task))
 	return b.String()
@@ -166,7 +60,7 @@ func truncateString(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return s[:n] + "..."
 }
 
 // assert tools.SubagentRunner at compile time.

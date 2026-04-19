@@ -275,6 +275,8 @@ func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) 
 			data["overwrote_existing"] = true
 			data["previous_hash"] = hex.EncodeToString(sum[:])
 			data["previous_bytes"] = len(oldContent)
+			data["previous_hash_scope"] = "best_effort_prewrite"
+			data["previous_hash_verified"] = false
 		}
 	}
 	if err := writeFileAtomic(absPath, []byte(content), 0o644); err != nil {
@@ -349,11 +351,11 @@ func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
 		updatedNorm = strings.ReplaceAll(normSrc, normOld, normNew)
 	}
 
-	// Restore the file's original newline style so the edit stays a
-	// diff of content, not line endings.
+	// Restore the file's original per-line newline style so the edit
+	// stays a diff of content, not an accidental whole-file EOL rewrite.
 	updated := updatedNorm
 	if wasCRLF {
-		updated = strings.ReplaceAll(updatedNorm, "\n", "\r\n")
+		updated = restoreOriginalLineEndings(src, updatedNorm)
 	}
 
 	if err := writeFileAtomic(absPath, []byte(updated), 0o644); err != nil {
@@ -417,29 +419,20 @@ func editFileMissMessage(absPath, haystack, needle string, crlfMismatch bool) er
 // either pick a more specific old_string or set replace_all=true
 // intentionally.
 func editFileAmbiguityMessage(haystack, needle string, count int) error {
-	lines := strings.Split(haystack, "\n")
 	offsets := make([]int, 0, 3)
-	for i, line := range lines {
-		if strings.Contains(line, needle) || (strings.HasPrefix(needle, "\n") && i+strings.Count(needle, "\n") <= len(lines)) {
-			offsets = append(offsets, i+1)
-			if len(offsets) >= 3 {
-				break
-			}
+	seen := map[int]struct{}{}
+	idx := 0
+	for len(offsets) < 3 {
+		hit := strings.Index(haystack[idx:], needle)
+		if hit < 0 {
+			break
 		}
-	}
-	// Fall back to character-index-based line approximation when needle
-	// spans lines (the per-line scan above misses multi-line needles).
-	if len(offsets) == 0 {
-		idx := 0
-		for len(offsets) < 3 {
-			hit := strings.Index(haystack[idx:], needle)
-			if hit < 0 {
-				break
-			}
-			lineNum := 1 + strings.Count(haystack[:idx+hit], "\n")
+		lineNum := 1 + strings.Count(haystack[:idx+hit], "\n")
+		if _, ok := seen[lineNum]; !ok {
+			seen[lineNum] = struct{}{}
 			offsets = append(offsets, lineNum)
-			idx += hit + len(needle)
 		}
+		idx += hit + len(needle)
 	}
 	locations := make([]string, 0, len(offsets))
 	for _, l := range offsets {
@@ -649,6 +642,9 @@ func (t *GrepCodebaseTool) Description() string {
 func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, error) {
 	pattern := asString(req.Params, "pattern", "")
 	if strings.TrimSpace(pattern) == "" {
+		pattern = asString(req.Params, "query", "")
+	}
+	if strings.TrimSpace(pattern) == "" {
 		hint := ""
 		if p := strings.TrimSpace(asString(req.Params, "path", "")); valueLooksLikePath(p) {
 			hint = fmt.Sprintf(`Looks like you put the directory %q in "path" but forgot the regex. grep_codebase searches CONTENT — pass the regex as "pattern" and (optionally) restrict the search with "path". To list files matching a glob instead, use the glob tool.`, p)
@@ -716,6 +712,7 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 
 	var hits []matchHit
 	var blocks []string
+	skippedFiles := 0
 
 	err = filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -750,6 +747,7 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 
 		safePath, serr := EnsureWithinRoot(req.ProjectRoot, path)
 		if serr != nil {
+			skippedFiles++
 			return nil
 		}
 		info, statErr := os.Stat(safePath)
@@ -804,6 +802,9 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 	}
 	if outputTruncated {
 		data["output_truncated"] = true
+	}
+	if skippedFiles > 0 {
+		data["skipped_files"] = skippedFiles
 	}
 
 	return Result{
@@ -1089,6 +1090,93 @@ func appendReadFileTruncationMarker(segment string, start, end, totalLines int) 
 	return strings.TrimRight(segment, "\n") + "\n" + msg
 }
 
+func restoreOriginalLineEndings(original, updatedNorm string) string {
+	_, endings := splitLinesAndEndings(original)
+	if len(endings) == 0 {
+		return strings.ReplaceAll(updatedNorm, "\n", "\r\n")
+	}
+	defaultEnding := dominantLineEnding(endings)
+	updatedLines, trailingNewline := splitNormalizedLines(updatedNorm)
+	if len(updatedLines) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for i, line := range updatedLines {
+		b.WriteString(line)
+		if i == len(updatedLines)-1 && !trailingNewline {
+			continue
+		}
+		ending := defaultEnding
+		if i < len(endings) && endings[i] != "" {
+			ending = endings[i]
+		}
+		if ending == "" {
+			ending = defaultEnding
+		}
+		b.WriteString(ending)
+	}
+	return b.String()
+}
+
+func splitLinesAndEndings(s string) ([]string, []string) {
+	if s == "" {
+		return nil, nil
+	}
+	lines := make([]string, 0, strings.Count(s, "\n")+1)
+	endings := make([]string, 0, cap(lines))
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\n' {
+			continue
+		}
+		end := i
+		ending := "\n"
+		if i > start && s[i-1] == '\r' {
+			end = i - 1
+			ending = "\r\n"
+		}
+		lines = append(lines, s[start:end])
+		endings = append(endings, ending)
+		start = i + 1
+	}
+	if start < len(s) {
+		lines = append(lines, s[start:])
+		endings = append(endings, "")
+	}
+	return lines, endings
+}
+
+func splitNormalizedLines(s string) ([]string, bool) {
+	if s == "" {
+		return []string{""}, false
+	}
+	trailingNewline := strings.HasSuffix(s, "\n")
+	trimmed := strings.TrimSuffix(s, "\n")
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	return lines, trailingNewline
+}
+
+func dominantLineEnding(endings []string) string {
+	crlf := 0
+	lf := 0
+	for _, ending := range endings {
+		switch ending {
+		case "\r\n":
+			crlf++
+		case "\n":
+			lf++
+		}
+	}
+	if crlf > lf {
+		return "\r\n"
+	}
+	return "\n"
+}
+
 func truncateToolTextWithMarker(s string, maxBytes int, marker string) string {
 	if maxBytes <= 0 {
 		return marker
@@ -1161,24 +1249,109 @@ func grepFileMatches(path, rel string, re *regexp.Regexp, beforeLines, afterLine
 }
 
 func grepFileMatchesWithContext(path, rel string, re *regexp.Regexp, beforeLines, afterLines, remaining int) ([]matchHit, []string, bool, error) {
-	content, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	lines := strings.Split(string(content), "\n")
+	defer f.Close()
+
+	type grepContextLine struct {
+		Number int
+		Text   string
+	}
+	type grepOpenBlock struct {
+		Lines          []grepContextLine
+		MatchLineIndex int
+		RemainingAfter int
+	}
+
+	scanner := bufio.NewScanner(f)
+	bufSize := defaultGrepScannerBufSize
+	if bufSize > maxGrepFileSize {
+		bufSize = maxGrepFileSize
+	}
+	scanner.Buffer(make([]byte, 0, bufSize), maxGrepFileSize)
+
+	formatBlock := func(lines []grepContextLine, matchLineIndex int) string {
+		var b strings.Builder
+		for i, line := range lines {
+			sep := "-"
+			if i == matchLineIndex {
+				sep = ":"
+			}
+			fmt.Fprintf(&b, "%s%s%d%s%s", rel, sep, line.Number, sep, strings.TrimRight(line.Text, "\r"))
+			if i != len(lines)-1 {
+				b.WriteByte('\n')
+			}
+		}
+		return b.String()
+	}
+
+	beforeBuf := make([]grepContextLine, 0, beforeLines)
+	openBlocks := make([]*grepOpenBlock, 0, afterLines+1)
 	hits := make([]matchHit, 0, 4)
 	blocks := make([]string, 0, 4)
 	perFileMatches := 0
-	for i, line := range lines {
+	lineNo := 0
+	truncated := false
+
+	for scanner.Scan() {
+		lineNo++
+		line := scanner.Text()
+
+		if len(openBlocks) > 0 {
+			active := openBlocks[:0]
+			for _, block := range openBlocks {
+				block.Lines = append(block.Lines, grepContextLine{Number: lineNo, Text: line})
+				block.RemainingAfter--
+				if block.RemainingAfter <= 0 {
+					blocks = append(blocks, formatBlock(block.Lines, block.MatchLineIndex))
+					continue
+				}
+				active = append(active, block)
+			}
+			openBlocks = active
+		}
+
 		if !re.MatchString(line) {
+			if beforeLines > 0 {
+				beforeBuf = append(beforeBuf, grepContextLine{Number: lineNo, Text: line})
+				if len(beforeBuf) > beforeLines {
+					beforeBuf = beforeBuf[1:]
+				}
+			}
 			continue
 		}
-		hits = append(hits, matchHit{Rel: rel, Line: i + 1, Text: strings.TrimSpace(strings.TrimRight(line, "\r"))})
-		blocks = append(blocks, formatGrepBlock(rel, lines, i, beforeLines, afterLines))
+		hits = append(hits, matchHit{Rel: rel, Line: lineNo, Text: strings.TrimSpace(strings.TrimRight(line, "\r"))})
+		window := make([]grepContextLine, 0, len(beforeBuf)+1)
+		window = append(window, beforeBuf...)
+		window = append(window, grepContextLine{Number: lineNo, Text: line})
+		if afterLines > 0 {
+			openBlocks = append(openBlocks, &grepOpenBlock{
+				Lines:          window,
+				MatchLineIndex: len(window) - 1,
+				RemainingAfter: afterLines,
+			})
+		} else {
+			blocks = append(blocks, formatBlock(window, len(window)-1))
+		}
 		perFileMatches++
 		if len(hits) >= remaining || perFileMatches >= maxGrepMatchesPerFile {
-			return hits, blocks, true, nil
+			truncated = true
+			break
+		}
+		if beforeLines > 0 {
+			beforeBuf = append(beforeBuf, grepContextLine{Number: lineNo, Text: line})
+			if len(beforeBuf) > beforeLines {
+				beforeBuf = beforeBuf[1:]
+			}
 		}
 	}
-	return hits, blocks, false, nil
+	if err := scanner.Err(); err != nil {
+		return nil, nil, false, err
+	}
+	for _, block := range openBlocks {
+		blocks = append(blocks, formatBlock(block.Lines, block.MatchLineIndex))
+	}
+	return hits, blocks, truncated, nil
 }

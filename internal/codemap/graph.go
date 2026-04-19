@@ -58,6 +58,10 @@ func (g *Graph) AddNode(node Node) {
 	g.nodes[node.ID] = node
 }
 
+// AddEdge records a directed edge exactly as given. Cycles are allowed by
+// design: real import/call graphs can be cyclic, and downstream consumers are
+// expected to consult Cycles()/StronglyConnectedComponents() rather than
+// assume the graph is a DAG.
 func (g *Graph) AddEdge(edge Edge) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

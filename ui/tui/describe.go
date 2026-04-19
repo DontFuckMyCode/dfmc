@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/hooks"
+	toolruntime "github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
 func (m Model) exportTranscript(target string) (string, error) {
@@ -183,6 +184,266 @@ func (m Model) describeStats() string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// describeWorkflow renders the high-level autonomous-workflow snapshot:
+// todo list counts, active subagent fan-out, drive progress, and the
+// latest available plan summary.
+func (m Model) describeWorkflow() string {
+	lines := []string{"â–¸ Workflow snapshot"}
+
+	todos := m.workflowTodos()
+	total, pending, doing, done := summarizeWorkflowTodos(todos)
+	switch {
+	case total == 0:
+		lines = append(lines, "  todos:      no shared todo list yet (this session may still be on a single-step ask)")
+	default:
+		lines = append(lines, fmt.Sprintf("  todos:      %d total Â· %d pending Â· %d doing Â· %d done", total, pending, doing, done))
+		for i, line := range formatWorkflowTodoLines(todos, 5) {
+			prefix := "             "
+			if i == 0 {
+				prefix = "  now:        "
+			}
+			lines = append(lines, prefix+line)
+		}
+	}
+
+	if m.telemetry.activeSubagentCount > 0 {
+		lines = append(lines, fmt.Sprintf("  subagents:  %d active", m.telemetry.activeSubagentCount))
+	} else {
+		lines = append(lines, "  subagents:  idle")
+	}
+	for i, line := range m.recentWorkflowActivity("agent:subagent:", 3) {
+		prefix := "             "
+		if i == 0 {
+			prefix = "  recent:     "
+		}
+		lines = append(lines, prefix+line)
+	}
+
+	if runID := strings.TrimSpace(m.telemetry.driveRunID); runID != "" {
+		lines = append(lines, fmt.Sprintf("  drive:      %s Â· %d/%d done Â· %d blocked", runID, m.telemetry.driveDone, m.telemetry.driveTotal, m.telemetry.driveBlocked))
+	} else {
+		lines = append(lines, "  drive:      idle")
+	}
+
+	if summary := strings.TrimSpace(m.latestWorkflowPlanSummary()); summary != "" {
+		lines = append(lines, "  plan:       "+summary)
+	} else {
+		lines = append(lines, "  plan:       no recent split/autonomy plan recorded")
+	}
+
+	lines = append(lines,
+		"",
+		"Shortcuts:",
+		"  /todos shows the shared todo list",
+		"  /subagents shows recent subagent fan-out",
+		"  ctrl+y jumps to Plans Â· ctrl+g jumps to Activity",
+	)
+	return strings.Join(lines, "\n")
+}
+
+// describeTodos prints the current shared todo_write state directly into the
+// chat transcript so the user can inspect the agent's checklist in-place.
+func (m Model) describeTodos() string {
+	lines := []string{"â–¸ Shared todo list"}
+	todos := m.workflowTodos()
+	total, pending, doing, done := summarizeWorkflowTodos(todos)
+	if total == 0 {
+		lines = append(lines,
+			"  no todo list is active right now.",
+			"  The autonomy preflight seeds this automatically for multi-step asks; /split can also preview a plan.",
+		)
+		return strings.Join(lines, "\n")
+	}
+	lines = append(lines, fmt.Sprintf("  total:      %d Â· %d pending Â· %d doing Â· %d done", total, pending, doing, done))
+	for i, line := range formatWorkflowTodoLines(todos, 12) {
+		lines = append(lines, fmt.Sprintf("  %2d. %s", i+1, line))
+	}
+	if len(todos) > 12 {
+		lines = append(lines, fmt.Sprintf("  â€¦ %d more item(s) not shown here", len(todos)-12))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// describeSubagents shows current fan-out plus the most recent subagent
+// events mirrored into the Activity feed.
+func (m Model) describeSubagents() string {
+	lines := []string{"â–¸ Subagent activity"}
+	if m.telemetry.activeSubagentCount > 0 {
+		lines = append(lines, fmt.Sprintf("  active:     %d subagent(s) currently running", m.telemetry.activeSubagentCount))
+	} else {
+		lines = append(lines, "  active:     no subagents currently running")
+	}
+
+	recent := m.recentWorkflowActivity("agent:subagent:", 6)
+	if len(recent) == 0 {
+		lines = append(lines,
+			"  recent:     no subagent events recorded this session",
+			"  Tip: multi-step tasks can fan out through autonomy preflight, /split, orchestrate, or delegate_task.",
+		)
+		return strings.Join(lines, "\n")
+	}
+	for i, line := range recent {
+		prefix := "             "
+		if i == 0 {
+			prefix = "  recent:     "
+		}
+		lines = append(lines, prefix+line)
+	}
+	lines = append(lines, "  jump:       ctrl+g opens Activity for the full event stream")
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) describePendingQueue() string {
+	lines := []string{"▸ Pending chat queue"}
+	if len(m.chat.pendingQueue) == 0 {
+		lines = append(lines,
+			"  state:      empty",
+			"  note:       while a turn is streaming, normal follow-up prompts queue here",
+			"  commands:   /queue clear · /queue drop N",
+		)
+		return strings.Join(lines, "\n")
+	}
+	lines = append(lines,
+		fmt.Sprintf("  count:      %d queued message(s)", len(m.chat.pendingQueue)),
+		"  commands:   /queue clear · /queue drop N",
+	)
+	for i, item := range m.chat.pendingQueue {
+		lines = append(lines, fmt.Sprintf("  %2d. %s", i+1, truncateSingleLine(item, 120)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) workflowTodos() []toolruntime.TodoItem {
+	if m.eng == nil || m.eng.Tools == nil {
+		return nil
+	}
+	return m.eng.Tools.TodoSnapshot()
+}
+
+func summarizeWorkflowTodos(todos []toolruntime.TodoItem) (total, pending, doing, done int) {
+	total = len(todos)
+	for _, it := range todos {
+		switch strings.ToLower(strings.TrimSpace(it.Status)) {
+		case "completed", "done":
+			done++
+		case "in_progress", "active", "doing":
+			doing++
+		default:
+			pending++
+		}
+	}
+	return total, pending, doing, done
+}
+
+func formatWorkflowTodoLines(todos []toolruntime.TodoItem, limit int) []string {
+	if len(todos) == 0 || limit <= 0 {
+		return nil
+	}
+	if limit > len(todos) {
+		limit = len(todos)
+	}
+	out := make([]string, 0, limit)
+	for _, it := range todos[:limit] {
+		label := strings.TrimSpace(it.Content)
+		if label == "" {
+			label = "(untitled)"
+		}
+		switch strings.ToLower(strings.TrimSpace(it.Status)) {
+		case "completed", "done":
+			label = "[done] " + label
+		case "in_progress", "active", "doing":
+			active := strings.TrimSpace(it.ActiveForm)
+			if active == "" {
+				active = label
+			}
+			label = "[doing] " + active
+		default:
+			label = "[todo] " + label
+		}
+		out = append(out, truncateSingleLine(label, 100))
+	}
+	return out
+}
+
+func (m Model) recentWorkflowActivity(prefix string, limit int) []string {
+	if limit <= 0 || len(m.activity.entries) == 0 {
+		return nil
+	}
+	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	out := make([]string, 0, limit)
+	for i := len(m.activity.entries) - 1; i >= 0 && len(out) < limit; i-- {
+		entry := m.activity.entries[i]
+		eventID := strings.ToLower(strings.TrimSpace(entry.EventID))
+		if prefix != "" && !strings.HasPrefix(eventID, prefix) {
+			continue
+		}
+		text := strings.TrimSpace(entry.Text)
+		if text == "" {
+			continue
+		}
+		out = append(out, truncateSingleLine(text, 100))
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+func (m Model) recentWorkflowTimeline(limit int) []string {
+	if limit <= 0 || len(m.activity.entries) == 0 {
+		return nil
+	}
+	out := make([]string, 0, limit)
+	now := time.Now()
+	for i := len(m.activity.entries) - 1; i >= 0 && len(out) < limit; i-- {
+		entry := m.activity.entries[i]
+		eventID := strings.ToLower(strings.TrimSpace(entry.EventID))
+		switch {
+		case strings.HasPrefix(eventID, "tool:"),
+			strings.HasPrefix(eventID, "drive:"),
+			strings.HasPrefix(eventID, "agent:subagent:"),
+			strings.HasPrefix(eventID, "agent:autonomy:"),
+			strings.HasPrefix(eventID, "agent:loop:"),
+			strings.HasPrefix(eventID, "provider:throttle:retry"):
+		default:
+			continue
+		}
+		text := strings.TrimSpace(entry.Text)
+		if text == "" {
+			continue
+		}
+		age := ""
+		if !entry.At.IsZero() {
+			age = formatSessionDuration(now.Sub(entry.At))
+		}
+		if age != "" {
+			text = age + " ago · " + text
+		}
+		out = append(out, truncateSingleLine(text, 120))
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+func (m Model) latestWorkflowPlanSummary() string {
+	if m.plans.plan != nil && len(m.plans.plan.Subtasks) > 0 {
+		mode := "sequential"
+		if m.plans.plan.Parallel {
+			mode = "parallel"
+		}
+		return fmt.Sprintf("%d subtasks Â· %s Â· confidence %.2f", len(m.plans.plan.Subtasks), mode, m.plans.plan.Confidence)
+	}
+	for i := len(m.activity.entries) - 1; i >= 0; i-- {
+		entry := m.activity.entries[i]
+		if strings.EqualFold(strings.TrimSpace(entry.EventID), "agent:autonomy:plan") {
+			return strings.TrimSpace(entry.Text)
+		}
+	}
+	return ""
 }
 
 // describeHealth renders a compact health snapshot: provider/model/AST

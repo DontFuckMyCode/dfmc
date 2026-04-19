@@ -35,7 +35,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -50,18 +49,20 @@ var goReceiverRE = regexp.MustCompile(`^\s*func\s*\(\s*(?:[A-Za-z_]\w*\s+)?\*?([
 // ast.Engine; the parse cache lets repeat lookups against the same files
 // (model exploring a tree) avoid re-parsing.
 type FindSymbolTool struct {
-	once   sync.Once
 	engine *ast.Engine
 }
 
-func NewFindSymbolTool() *FindSymbolTool      { return &FindSymbolTool{} }
+func NewFindSymbolTool() *FindSymbolTool      { return &FindSymbolTool{engine: ast.New()} }
 func (t *FindSymbolTool) Name() string        { return "find_symbol" }
 func (t *FindSymbolTool) Description() string { return "Locate a named symbol (function, class, HTML id, ...) and return its full scope." }
-
-func (t *FindSymbolTool) getEngine() *ast.Engine {
-	t.once.Do(func() { t.engine = ast.New() })
-	return t.engine
+func (t *FindSymbolTool) Close() error {
+	if t == nil || t.engine == nil {
+		return nil
+	}
+	return t.engine.Close()
 }
+
+func (t *FindSymbolTool) getEngine() *ast.Engine { return t.engine }
 
 func (t *FindSymbolTool) Spec() ToolSpec {
 	return ToolSpec{

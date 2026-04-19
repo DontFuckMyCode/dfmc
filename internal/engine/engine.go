@@ -120,6 +120,12 @@ type Engine struct {
 	agentMu         sync.Mutex
 	agentParked     *parkedAgentState
 	agentNotesQueue []string
+	// Project config snapshot used for pre-ask auto-reload. When the user
+	// edits .dfmc/config.yaml while the TUI is already running, the next ask
+	// should not keep using stale provider/tool state until they remember to
+	// type /reload manually.
+	configProjectPath    string
+	configProjectModTime time.Time
 	// subagentInFlight counts active RunSubagent calls. The first subagent
 	// to start stashes the parent's parked state under subagentStashed;
 	// nested/concurrent subagents bump the counter without touching it.
@@ -221,6 +227,7 @@ func (e *Engine) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("provider router init failed: %w", err)
 	}
+	e.attachProviderObservers(e.Providers)
 
 	backgroundCtx, backgroundCancel := context.WithCancel(ctx)
 	e.mu.Lock()
@@ -259,6 +266,7 @@ func (e *Engine) Init(ctx context.Context) error {
 	})
 
 	e.ProjectRoot = config.FindProjectRoot("")
+	e.refreshProjectConfigSnapshot(e.projectConfigPath())
 	if e.ProjectRoot != "" {
 		// Derive a cancellable child context so Shutdown can tell the
 		// indexer to stop, then Wait for it before tearing down the
@@ -347,6 +355,11 @@ func (e *Engine) Shutdown() {
 	if e.Memory != nil {
 		if err := e.Memory.Persist(); err != nil {
 			e.reportShutdownError("persist_memory", err)
+		}
+	}
+	if e.Tools != nil {
+		if err := e.Tools.Close(); err != nil {
+			e.reportShutdownError("close_tools", err)
 		}
 	}
 	if e.Storage != nil {

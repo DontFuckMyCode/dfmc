@@ -33,7 +33,7 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 	case "Tools":
 		content = fitPanelContentHeight(m.renderToolsView(contentWidth), innerHeight)
 	case "Activity":
-		content = fitPanelContentHeight(m.renderActivityView(contentWidth), innerHeight)
+		content = m.renderActivityViewSized(contentWidth, innerHeight)
 	case "Memory":
 		content = fitPanelContentHeight(m.renderMemoryView(contentWidth), innerHeight)
 	case "CodeMap":
@@ -52,14 +52,20 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 		content = fitPanelContentHeight(m.renderProvidersView(contentWidth), innerHeight)
 	default:
 		panelVisible := m.statsPanelVisible(contentWidth)
+		boosted := m.statsPanelBoostActive(time.Now())
 		chatWidth := contentWidth
+		panelWidth := statsPanelWidth
 		if panelVisible {
-			chatWidth = contentWidth - statsPanelWidth - 2
+			panelWidth = m.statsPanelRenderWidth(contentWidth)
+			chatWidth = contentWidth - panelWidth - 2
 		}
 		parts := m.renderChatViewParts(chatWidth, panelVisible)
 		body := fitChatBody(parts.Head, parts.Tail, innerHeight, m.chat.scrollback)
 		if panelVisible {
-			panel := renderStatsPanel(m.statsPanelInfo(), innerHeight)
+			if boosted {
+				body = lipgloss.NewStyle().Faint(true).Render(body)
+			}
+			panel := renderStatsPanelSized(m.statsPanelInfo(), innerHeight, panelWidth)
 			body = lipgloss.JoinHorizontal(lipgloss.Top, body, "  ", panel)
 		}
 		content = body
@@ -241,6 +247,9 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 	tailLines := []string{}
 	if m.ui.showHelpOverlay {
 		tailLines = append(tailLines, "", m.renderHelpOverlay(min(width, 120)))
+	}
+	if card := renderChatWorkflowFocusCard(m.statsPanelInfo(), min(width, 120)); card != "" {
+		tailLines = append(tailLines, "", card)
 	}
 	if m.ui.resumePromptActive && !m.chat.sending {
 		tailLines = append(tailLines, "", renderResumeBanner(m.agentLoop.step, m.agentLoop.maxToolStep, min(width, 100)))

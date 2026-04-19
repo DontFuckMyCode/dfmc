@@ -12,6 +12,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
+	"github.com/dontfuckmycode/dfmc/internal/skills"
 	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -244,14 +245,32 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 			},
 		}
 	}
-	_ = m.prompts.LoadOverrides(projectRoot)
+	overrideWarning := ""
+	if err := m.prompts.LoadOverrides(projectRoot); err != nil {
+		overrideWarning = "Prompt override warning: " + err.Error() + ". Falling back to embedded defaults for unreadable override roots."
+	}
 
 	task := promptlib.DetectTask(query)
-	language := promptlib.InferLanguage(query, chunks)
-	role := ResolvePromptRole(query, task)
-	profile := ResolvePromptProfile(query, task, runtime)
+	skillSelection := skills.ResolveForQuery(projectRoot, query, task)
+	cleanQuery := skillSelection.Query
+	if cleanQuery == "" {
+		cleanQuery = strings.TrimSpace(query)
+	}
+	task = promptlib.DetectTask(cleanQuery)
+	if primary, ok := skillSelection.Primary(); ok && strings.TrimSpace(primary.Task) != "" {
+		task = strings.TrimSpace(primary.Task)
+	}
+	language := promptlib.InferLanguage(cleanQuery, chunks)
+	role := ResolvePromptRole(cleanQuery, task)
+	if primary, ok := skillSelection.Primary(); ok && strings.TrimSpace(primary.Role) != "" {
+		role = strings.TrimSpace(primary.Role)
+	}
+	profile := ResolvePromptProfile(cleanQuery, task, runtime)
+	if primary, ok := skillSelection.Primary(); ok && strings.TrimSpace(primary.Profile) != "" {
+		profile = strings.TrimSpace(primary.Profile)
+	}
 	limits := ResolvePromptRenderBudget(task, profile, runtime)
-	injected := BuildInjectedContextWithBudget(projectRoot, query, limits)
+	injected := BuildInjectedContextWithBudget(projectRoot, cleanQuery, limits)
 	bundle := m.prompts.RenderBundle(promptlib.RenderRequest{
 		Type:     "system",
 		Task:     task,
@@ -265,18 +284,67 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 			"profile":          profile,
 			"role":             role,
 			"project_brief":    loadProjectBrief(projectRoot, limits.ProjectBriefTokens),
-			"user_query":       strings.TrimSpace(query),
+			"user_query":       strings.TrimSpace(cleanQuery),
 			"context_files":    summarizeContextFiles(projectRoot, chunks, limits.ContextFiles),
 			"injected_context": injected,
 			"tools_overview":   summarizeTools(tools, limits.ToolList),
 			"tool_call_policy": BuildToolCallPolicy(task, runtime),
 			"response_policy":  BuildResponsePolicy(task, profile),
+			"active_skills":    summarizeActiveSkills(skillSelection.Skills),
 		},
 	})
+	bundle = appendSkillSections(bundle, skillSelection.Skills)
 	if budget := PromptTokenBudget(task, profile, runtime); budget > 0 {
 		bundle = trimBundleToBudget(bundle, budget)
 	}
+	if overrideWarning != "" {
+		bundle.Sections = append([]promptlib.PromptSection{{
+			Label:     "prompt_override_warning",
+			Text:      overrideWarning,
+			Cacheable: false,
+		}}, bundle.Sections...)
+	}
 	return bundle
+}
+
+func appendSkillSections(bundle *promptlib.PromptBundle, active []skills.Skill) *promptlib.PromptBundle {
+	if bundle == nil || len(active) == 0 {
+		return bundle
+	}
+	extras := make([]promptlib.PromptSection, 0, len(active))
+	for _, skill := range active {
+		text := strings.TrimSpace(skills.RenderSystemText(skill))
+		if text == "" {
+			continue
+		}
+		extras = append(extras, promptlib.PromptSection{
+			Label:     "skill." + strings.ToLower(strings.TrimSpace(skill.Name)),
+			Text:      text,
+			Cacheable: true,
+		})
+	}
+	if len(extras) == 0 {
+		return bundle
+	}
+
+	sections := make([]promptlib.PromptSection, 0, len(bundle.Sections)+len(extras))
+	sections = append(sections, extras...)
+	sections = append(sections, bundle.Sections...)
+	bundle.Sections = sections
+	return bundle
+}
+
+func summarizeActiveSkills(active []skills.Skill) string {
+	if len(active) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(active))
+	for _, skill := range active {
+		if name := strings.TrimSpace(skill.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, ", ")
 }
 
 // trimBundleToBudget applies a token cap across the bundle. The dynamic
@@ -1026,12 +1094,28 @@ func downshiftChunkForRemaining(chunk types.ContextChunk, remaining, maxTokensPe
 	if chunk.TokenCount <= budget {
 		return chunk
 	}
-	trimmed := trimToTokenBudget(chunk.Content, budget)
-	if strings.TrimSpace(trimmed) == "" {
+	trimmed := ""
+	tokenCount := 0
+	for budget > 0 {
+		trimmed = trimToTokenBudget(chunk.Content, budget)
+		if strings.TrimSpace(trimmed) == "" {
+			return types.ContextChunk{}
+		}
+		tokenCount = estimateTokens(trimmed)
+		if tokenCount <= budget {
+			break
+		}
+		over := tokenCount - budget
+		if over < 1 {
+			over = 1
+		}
+		budget -= over
+	}
+	if strings.TrimSpace(trimmed) == "" || budget <= 0 {
 		return types.ContextChunk{}
 	}
 	chunk.Content = trimmed
-	chunk.TokenCount = estimateTokens(trimmed)
+	chunk.TokenCount = tokenCount
 	chunk.Compression = chunk.Compression + "+trim"
 	return chunk
 }

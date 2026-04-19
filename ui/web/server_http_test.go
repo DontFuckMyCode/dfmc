@@ -1,9 +1,12 @@
 package web
 
 import (
+	"bufio"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -59,5 +62,97 @@ func TestHandlerAppliesBearerAuthWhenConfigured(t *testing.T) {
 	handler.ServeHTTP(apiRec, apiReq)
 	if apiRec.Code != http.StatusOK {
 		t.Fatalf("bearer token should authorize, got %d", apiRec.Code)
+	}
+}
+
+func TestNewClampsAuthNoneToLoopback(t *testing.T) {
+	eng := newTestEngine(t)
+	eng.Config.Web.Auth = "none"
+	srv := New(eng, "0.0.0.0", 7777)
+	if got := srv.addr; got != "127.0.0.1:7777" {
+		t.Fatalf("expected auth=none bind to clamp to loopback, got %q", got)
+	}
+}
+
+func TestSecurityHeadersCSPDisallowsInlineStyles(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(rec, req)
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "style-src 'self'") {
+		t.Fatalf("expected style-src self in CSP, got %q", csp)
+	}
+	if strings.Contains(csp, "unsafe-inline") {
+		t.Fatalf("CSP must not allow unsafe-inline styles, got %q", csp)
+	}
+}
+
+func TestHandlerRejectsWSQueryTokenWhenBearerAuthEnabled(t *testing.T) {
+	eng := newTestEngine(t)
+	eng.Config.Web.Auth = "token"
+	srv := New(eng, "127.0.0.1", 0)
+	srv.SetBearerToken("secret-token")
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/ws?type=test:event&token=secret-token")
+	if err != nil {
+		t.Fatalf("ws request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected ws query token to be rejected, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandlerAllowsWSAuthorizationHeaderWhenConfigured(t *testing.T) {
+	eng := newTestEngine(t)
+	eng.Config.Web.Auth = "token"
+	srv := New(eng, "127.0.0.1", 0)
+	srv.SetBearerToken("secret-token")
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/ws?type=test:event", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer secret-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("ws request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected authorized ws stream, got %d", resp.StatusCode)
+	}
+	reader := bufio.NewReader(resp.Body)
+	done := make(chan string, 1)
+	go func() {
+		line, _ := reader.ReadString('\n')
+		done <- line
+	}()
+	select {
+	case line := <-done:
+		if !strings.Contains(line, `"type":"connected"`) {
+			t.Fatalf("expected connected frame, got %q", line)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for connected frame")
+	}
+}
+
+func TestClientIPKeyStripsPortAndPrefersForwardedFor(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.RemoteAddr = "127.0.0.1:54321"
+	if got := clientIPKey(req); got != "127.0.0.1" {
+		t.Fatalf("expected remote addr port stripped, got %q", got)
+	}
+	req.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.5")
+	if got := clientIPKey(req); got != "198.51.100.7" {
+		t.Fatalf("expected forwarded for to win, got %q", got)
 	}
 }

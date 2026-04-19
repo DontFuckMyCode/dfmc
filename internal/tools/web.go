@@ -27,13 +27,14 @@ var safeTransport = &http.Transport{
 		if err != nil {
 			return nil, fmt.Errorf("invalid address %q: %w", addr, err)
 		}
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		resolverHost := normalizeResolverHost(host)
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, resolverHost)
 		if err != nil {
-			return nil, fmt.Errorf("resolve %q: %w", host, err)
+			return nil, fmt.Errorf("resolve %q: %w", resolverHost, err)
 		}
 		for _, ip := range ips {
 			if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() || ip.IP.IsLinkLocalMulticast() {
-				return nil, fmt.Errorf("blocked IP for %q: %s (SSRF guard)", host, ip.IP)
+				return nil, fmt.Errorf("blocked IP for %q: %s (SSRF guard)", resolverHost, ip.IP)
 			}
 		}
 		for _, ip := range ips {
@@ -67,6 +68,7 @@ func isBlockedHost(host string) bool {
 	if strings.Contains(h, ":") {
 		h, _, _ = net.SplitHostPort(h)
 	}
+	h = normalizeResolverHost(h)
 	ips, err := net.LookupIP(h)
 	if err != nil {
 		return true
@@ -77,6 +79,17 @@ func isBlockedHost(host string) bool {
 		}
 	}
 	return false
+}
+
+func normalizeResolverHost(host string) string {
+	host = strings.TrimSpace(host)
+	if zoneIdx := strings.LastIndex(host, "%"); zoneIdx > 0 {
+		base := host[:zoneIdx]
+		if ip := net.ParseIP(base); ip != nil {
+			return base
+		}
+	}
+	return host
 }
 
 // WebFetchTool does an HTTP GET, converts HTML to text, and returns a

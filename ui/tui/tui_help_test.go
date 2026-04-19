@@ -22,7 +22,7 @@ func TestRenderTUIHelp_MixesRegistryAndShortcuts(t *testing.T) {
 	if !strings.Contains(out, "TUI-only shortcuts:") {
 		t.Fatalf("TUI help missing shortcuts section")
 	}
-	for _, shortcut := range []string{"/reload", "/clear", "/quit", "/coach", "/hints", "/tools", "/diff", "/ls", "/grep", "/continue", "/btw"} {
+	for _, shortcut := range []string{"/reload", "/clear", "/quit", "/coach", "/hints", "/select", "/queue", "/tools", "/diff", "/ls", "/grep", "/continue", "/btw"} {
 		if !strings.Contains(out, shortcut) {
 			t.Fatalf("TUI help missing shortcut %q", shortcut)
 		}

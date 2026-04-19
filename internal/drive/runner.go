@@ -52,7 +52,15 @@ type ExecuteTodoRequest struct {
 	Title        string
 	Detail       string
 	Brief        string
+	Role         string
+	Skills       []string
+	Labels       []string
+	Verification string
 	Model        string
+	// ProfileCandidates is the ordered provider/model chain the
+	// supervisor selected for this TODO. The engine should try them in
+	// order, preserving the same sub-agent seed/context on each attempt.
+	ProfileCandidates []string
 	AllowedTools []string
 	MaxSteps     int
 }
@@ -64,6 +72,17 @@ type ExecuteTodoResponse struct {
 	ToolCalls  int
 	DurationMs int64
 	Parked     bool
+	Provider   string
+	Model      string
+	Attempts   int
+	// FallbackUsed reports whether the sub-agent had to move off its
+	// first profile candidate to finish the task.
+	FallbackUsed bool
+	FallbackFrom string
+	FallbackChain []string
+	// FallbackReasons stores one error string per failed profile attempt,
+	// aligned with the profiles tried before the final successful attempt.
+	FallbackReasons []string
 }
 
 // Runner is the engine seam. The real implementation lives in
@@ -82,12 +101,10 @@ type Runner interface {
 	// support an approval gate (tests, headless runs) can return a
 	// no-op release.
 	//
-	// Safety: the override is process-wide for the engine while
-	// active. Any other operation that fires through the engine
-	// (e.g. a parallel /chat in the TUI) inherits it. That's the
-	// intended trade-off for "calıs babam calıs" — the user kicked
-	// off an autonomous run; treat their session as consenting.
-	// Pass an empty/nil tools list to skip activation entirely (the
-	// driver does this when no auto-approve is configured).
+	// Safety: production implementations should scope the override to
+	// drive-owned sub-agent tool calls so unrelated chat/tool traffic
+	// in the same process does not inherit the allowlist. Pass an
+	// empty/nil tools list to skip activation entirely (the driver does
+	// this when no auto-approve is configured).
 	BeginAutoApprove(tools []string) func()
 }

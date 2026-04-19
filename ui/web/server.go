@@ -18,12 +18,17 @@
 package web
 
 import (
+	"crypto/subtle"
 	_ "embed"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
@@ -116,7 +121,7 @@ type MagicDocUpdateRequest struct {
 // CSP to 'self' only and set standard hardening headers.
 func securityHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		h.ServeHTTP(w, r)
@@ -128,6 +133,7 @@ func New(eng *engine.Engine, host string, port int) *Server {
 	if eng != nil && eng.Config != nil {
 		authMode = strings.ToLower(strings.TrimSpace(eng.Config.Web.Auth))
 	}
+	host = normalizeBindHost(authMode, host)
 	s := &Server{
 		engine: eng,
 		mux:    http.NewServeMux(),
@@ -141,6 +147,32 @@ func New(eng *engine.Engine, host string, port int) *Server {
 	eng.SetApprover(newWebApprover())
 	s.setupRoutes()
 	return s
+}
+
+func normalizeBindHost(authMode, host string) string {
+	if strings.EqualFold(strings.TrimSpace(authMode), "none") && !isLoopbackBindHost(host) {
+		return "127.0.0.1"
+	}
+	return host
+}
+
+// isLoopbackBindHost reports whether a host value binds only to the local
+// machine. Empty string is treated as non-loopback because Go binds that
+// to every interface.
+func isLoopbackBindHost(host string) bool {
+	h := strings.TrimSpace(host)
+	if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		h = h[1 : len(h)-1]
+	}
+	h = strings.ToLower(h)
+	switch h {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 func (s *Server) SetBearerToken(token string) {
@@ -223,6 +255,9 @@ func (s *Server) Start() error {
 func (s *Server) Handler() http.Handler {
 	handler := limitRequestBodySize(s.mux, maxRequestBodyBytes)
 	handler = securityHeaders(handler)
+	// Rate-limit all endpoints: 30 requests/sec per IP with burst of 60.
+	limiter := newPerIPLimiter(30, 60)
+	handler = rateLimitMiddleware(limiter)(handler)
 	if strings.EqualFold(strings.TrimSpace(s.auth), "token") {
 		handler = bearerTokenMiddleware(handler, s.token)
 	}
@@ -272,11 +307,74 @@ func limitRequestBodySize(h http.Handler, max int64) http.Handler {
 	})
 }
 
+// perIPLimiter provides a basic per-IP rate limiter using a token-bucket
+// algorithm. Each client IP gets its own bucket. Buckets for IPs not seen
+// in over 10 minutes are garbage-collected periodically.
+type perIPLimiter struct {
+	mu      sync.Mutex
+	buckets map[string]*rate.Limiter
+	rate   rate.Limit
+	burst  int
+}
+
+func newPerIPLimiter(r rate.Limit, burst int) *perIPLimiter {
+	return &perIPLimiter{buckets: make(map[string]*rate.Limiter), rate: r, burst: burst}
+}
+
+func (l *perIPLimiter) get(ip string) *rate.Limiter {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b, ok := l.buckets[ip]
+	if !ok {
+		b = rate.NewLimiter(l.rate, l.burst)
+		l.buckets[ip] = b
+	}
+	return b
+}
+
+func (l *perIPLimiter) Allow(ip string) bool {
+	return l.get(ip).Allow()
+}
+
+func rateLimitMiddleware(limiter *perIPLimiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !limiter.Allow(clientIPKey(r)) {
+				writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate limit exceeded"})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func clientIPKey(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+		for _, part := range strings.Split(forwarded, ",") {
+			if ip := strings.TrimSpace(part); ip != "" {
+				return ip
+			}
+		}
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil && host != "" {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
 func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(renderWorkbenchHTML()))
 }
 
+// bearerTokenMiddleware validates bearer tokens using constant-time
+// comparison to prevent timing side-channels. All authenticated
+// surfaces, including the /ws SSE stream, must present the bearer
+// token in the Authorization header so secrets never ride in URLs.
 func bearerTokenMiddleware(next http.Handler, token string) http.Handler {
 	rawToken := strings.TrimSpace(token)
 	expected := "Bearer " + rawToken
@@ -289,11 +387,7 @@ func bearerTokenMiddleware(next http.Handler, token string) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if got := strings.TrimSpace(r.Header.Get("Authorization")); rawToken != "" && got == expected {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if rawToken != "" && r.URL.Path == "/ws" && r.URL.Query().Get("token") == rawToken {
+		if got := strings.TrimSpace(r.Header.Get("Authorization")); rawToken != "" && subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1 {
 			next.ServeHTTP(w, r)
 			return
 		}

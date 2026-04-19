@@ -166,6 +166,9 @@ func (s *Server) handleDoctor(w http.ResponseWriter, _ *http.Request) {
 				} else {
 					add("provider."+name+".profile", "pass", prof.Protocol+" "+prof.Model)
 				}
+				for _, advisory := range config.ProviderProfileAdvisories(name, prof) {
+					add("provider."+name+".advisory", "warn", advisory)
+				}
 			}
 		}
 	}

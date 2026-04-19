@@ -104,6 +104,26 @@ func TestSchedulerUnscopedTodoRunsAlone(t *testing.T) {
 	}
 }
 
+func TestSchedulerReadOnlyUnscopedTodoDoesNotBlockParallelScopedWork(t *testing.T) {
+	todos := []Todo{
+		{ID: "S1", Status: TodoPending, Kind: "survey", WorkerClass: "researcher", ReadOnly: true},
+		{ID: "T1", Status: TodoPending, FileScope: []string{"a.go"}},
+	}
+	picks := readyBatch(todos, 5)
+	if got := pickIDs(todos, picks); len(got) != 2 || got[0] != "S1" || got[1] != "T1" {
+		t.Fatalf("read-only unscoped survey should batch with scoped work, got %v", got)
+	}
+
+	todos2 := []Todo{
+		{ID: "S1", Status: TodoRunning, Kind: "survey", WorkerClass: "researcher", ReadOnly: true},
+		{ID: "T1", Status: TodoPending, FileScope: []string{"a.go"}},
+	}
+	picks2 := readyBatch(todos2, 5)
+	if len(picks2) != 1 || todos2[picks2[0]].ID != "T1" {
+		t.Fatalf("running read-only unscoped survey should not block scoped work, got %v", pickIDs(todos2, picks2))
+	}
+}
+
 // TestSchedulerNormalizesPathSeparators: planner output may use
 // backslashes (Windows-leaning model); the scheduler must treat
 // `a\b.go` and `a/b.go` as the same file when checking conflicts.
@@ -130,6 +150,69 @@ func TestSchedulerDepsBlockEvenIfScopeFree(t *testing.T) {
 	picks := readyBatch(todos, 5)
 	if len(picks) != 0 {
 		t.Fatalf("T2 deps not done, must not be picked, got picks=%v", pickIDs(todos, picks))
+	}
+}
+
+func TestSchedulerExclusiveVerifyRunsAlone(t *testing.T) {
+	todos := []Todo{
+		{ID: "T1", Status: TodoPending, FileScope: []string{"a.go"}},
+		{ID: "T2", Status: TodoPending, Kind: "verify", WorkerClass: "tester", FileScope: []string{"b.go"}},
+	}
+	picks := readyBatch(todos, 5)
+	if len(picks) != 1 || todos[picks[0]].ID != "T1" {
+		t.Fatalf("work todo should go first; verify should not batch with others, got %v", pickIDs(todos, picks))
+	}
+
+	todos = []Todo{
+		{ID: "T2", Status: TodoPending, Kind: "verify", WorkerClass: "tester", FileScope: []string{"b.go"}},
+	}
+	picks = readyBatch(todos, 5)
+	if len(picks) != 1 || todos[picks[0]].ID != "T2" {
+		t.Fatalf("single verify todo should still run, got %v", pickIDs(todos, picks))
+	}
+}
+
+func TestSchedulerRunningExclusiveBlocksNewBatch(t *testing.T) {
+	todos := []Todo{
+		{ID: "V1", Status: TodoRunning, Kind: "verify", WorkerClass: "tester", FileScope: []string{"a.go"}},
+		{ID: "T2", Status: TodoPending, FileScope: []string{"b.go"}},
+	}
+	picks := readyBatch(todos, 5)
+	if len(picks) != 0 {
+		t.Fatalf("running exclusive verifier should block any new work, got %v", pickIDs(todos, picks))
+	}
+}
+
+func TestSchedulerPolicyPrefersDiscoveryLane(t *testing.T) {
+	todos := []Todo{
+		{ID: "T1", Status: TodoPending, WorkerClass: "coder", FileScope: []string{"a.go"}},
+		{ID: "S1", Status: TodoPending, WorkerClass: "researcher", ProviderTag: "research", FileScope: []string{"b.go"}},
+	}
+	policy := SchedulerPolicy{
+		MaxParallel: 1,
+		LaneOrder:   []string{"discovery", "code"},
+		LaneCaps:    map[string]int{"discovery": 1, "code": 1},
+	}
+	picks := readyBatchWithPolicy(todos, policy, 1)
+	if len(picks) != 1 || todos[picks[0]].ID != "S1" {
+		t.Fatalf("expected discovery lane to be preferred, got %v", pickIDs(todos, picks))
+	}
+}
+
+func TestSchedulerPolicyHonorsLaneCaps(t *testing.T) {
+	todos := []Todo{
+		{ID: "S1", Status: TodoPending, WorkerClass: "researcher", ProviderTag: "research", FileScope: []string{"survey.go"}},
+		{ID: "T1", Status: TodoPending, WorkerClass: "coder", FileScope: []string{"a.go"}},
+		{ID: "T2", Status: TodoPending, WorkerClass: "coder", FileScope: []string{"b.go"}},
+	}
+	policy := SchedulerPolicy{
+		MaxParallel: 3,
+		LaneOrder:   []string{"discovery", "code"},
+		LaneCaps:    map[string]int{"discovery": 1, "code": 1},
+	}
+	picks := readyBatchWithPolicy(todos, policy, 3)
+	if got := pickIDs(todos, picks); len(got) != 2 || got[0] != "S1" || got[1] != "T1" {
+		t.Fatalf("expected one discovery task plus one code task under lane caps, got %v", got)
 	}
 }
 

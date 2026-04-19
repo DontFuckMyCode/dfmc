@@ -13,6 +13,7 @@ import (
 )
 
 type AnthropicProvider struct {
+	name       string
 	model      string
 	apiKey     string
 	baseURL    string
@@ -22,12 +23,17 @@ type AnthropicProvider struct {
 }
 
 func NewAnthropicProvider(model, apiKey, baseURL string, maxTokens, maxContext int) *AnthropicProvider {
+	return NewNamedAnthropicProvider("anthropic", model, apiKey, baseURL, maxTokens, maxContext)
+}
+
+func NewNamedAnthropicProvider(name, model, apiKey, baseURL string, maxTokens, maxContext int) *AnthropicProvider {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com/v1"
 	}
 	baseURL = normalizeAnthropicBaseURL(baseURL)
 	return &AnthropicProvider{
+		name:       strings.TrimSpace(name),
 		model:      model,
 		apiKey:     apiKey,
 		baseURL:    strings.TrimRight(baseURL, "/"),
@@ -37,7 +43,12 @@ func NewAnthropicProvider(model, apiKey, baseURL string, maxTokens, maxContext i
 	}
 }
 
-func (p *AnthropicProvider) Name() string  { return "anthropic" }
+func (p *AnthropicProvider) Name() string {
+	if strings.TrimSpace(p.name) == "" {
+		return "anthropic"
+	}
+	return p.name
+}
 func (p *AnthropicProvider) Model() string { return p.model }
 
 func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
@@ -178,6 +189,9 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 		raw, _ := io.ReadAll(resp.Body)
+		if isThrottleStatus(resp.StatusCode) {
+			return nil, newThrottledErrorFromResponse("anthropic", resp, string(raw))
+		}
 		return nil, fmt.Errorf("anthropic error status %d: %s", resp.StatusCode, string(raw))
 	}
 
@@ -321,11 +335,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 }
 
 func normalizeAnthropicBaseURL(baseURL string) string {
-	b := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if strings.HasSuffix(b, "/api/anthropic") {
-		return b + "/v1"
-	}
-	return b
+	return strings.TrimRight(strings.TrimSpace(baseURL), "/")
 }
 
 // maxProviderResponseBytes caps how much we read off ANY provider HTTP

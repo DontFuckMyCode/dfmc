@@ -45,30 +45,50 @@ const (
 )
 
 // Todo is one unit of work the planner emitted. The fields beyond the
-// core ID/Title/Detail are forward-looking:
-//   - DependsOn shapes the scheduler walk order (Phase 1+).
-//   - FileScope is the planner's declared file set (Phase 2: scheduler
-//     refuses to parallelize TODOs with overlapping FileScope so two
-//     TODOs don't race on the same file).
-//   - ProviderTag is a freeform routing label (Phase 3: a TaggedRouter
-//     maps tag -> provider profile, e.g. "code"->sonnet, "review"->opus).
+// core ID/Title/Detail are intentionally richer than a simple checklist:
+//   - DependsOn shapes the scheduler walk order.
+//   - FileScope lets the scheduler prevent conflicting parallel writes.
+//   - ReadOnly marks TODOs that only inspect/verify state. This lets the
+//     scheduler keep empty-scope survey/review/verify work parallel
+//     without pretending the task knows exact file targets.
+//   - ProviderTag is the coarse router label ("code", "review", "test").
+//   - WorkerClass is the finer execution persona ("coder", "reviewer",
+//     "security", ...). This drives sub-agent role shaping.
+//   - Skills carries named runtime capabilities that should be activated
+//     for this TODO (debug/review/audit/etc.).
+//   - AllowedTools narrows the preferred/allowed tool surface for the
+//     executor when the planner knows a TODO is read-only or verification-
+//     only. The engine treats it as guidance rather than a hard sandbox.
+//   - Verification and Confidence capture the planner's intent so future
+//     supervisor / verifier workers can reason about which TODOs must be
+//     checked before a run is considered complete.
 //
 // All fields are persisted as part of the Run JSON in bbolt; the JSON
 // keys match the lowercase field names so externally-edited resume
 // state stays compatible.
 type Todo struct {
-	ID          string     `json:"id"`
-	Title       string     `json:"title"`
-	Detail      string     `json:"detail"`
-	DependsOn   []string   `json:"depends_on,omitempty"`
-	FileScope   []string   `json:"file_scope,omitempty"`
-	ProviderTag string     `json:"provider_tag,omitempty"`
-	Status      TodoStatus `json:"status"`
-	Brief       string     `json:"brief,omitempty"`
-	Error       string     `json:"error,omitempty"`
-	Attempts    int        `json:"attempts"`
-	StartedAt   time.Time  `json:"started_at,omitempty"`
-	EndedAt     time.Time  `json:"ended_at,omitempty"`
+	ID           string     `json:"id"`
+	ParentID     string     `json:"parent_id,omitempty"`
+	Origin       string     `json:"origin,omitempty"`
+	Kind         string     `json:"kind,omitempty"`
+	Title        string     `json:"title"`
+	Detail       string     `json:"detail"`
+	DependsOn    []string   `json:"depends_on,omitempty"`
+	FileScope    []string   `json:"file_scope,omitempty"`
+	ReadOnly     bool       `json:"read_only,omitempty"`
+	ProviderTag  string     `json:"provider_tag,omitempty"`
+	WorkerClass  string     `json:"worker_class,omitempty"`
+	Skills       []string   `json:"skills,omitempty"`
+	AllowedTools []string   `json:"allowed_tools,omitempty"`
+	Labels       []string   `json:"labels,omitempty"`
+	Verification string     `json:"verification,omitempty"`
+	Confidence   float64    `json:"confidence,omitempty"`
+	Status       TodoStatus `json:"status"`
+	Brief        string     `json:"brief,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	Attempts     int        `json:"attempts"`
+	StartedAt    time.Time  `json:"started_at,omitempty"`
+	EndedAt      time.Time  `json:"ended_at,omitempty"`
 }
 
 // RunStatus is the lifecycle state of an entire drive run.
@@ -93,13 +113,26 @@ const (
 // Reason captures the human-readable cause when Status is Stopped or
 // Failed (e.g. "max_failed_todos exceeded: 3 consecutive blocks").
 type Run struct {
-	ID        string    `json:"id"`
-	Task      string    `json:"task"`
-	Status    RunStatus `json:"status"`
-	Reason    string    `json:"reason,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	EndedAt   time.Time `json:"ended_at,omitempty"`
-	Todos     []Todo    `json:"todos"`
+	ID        string                 `json:"id"`
+	Task      string                 `json:"task"`
+	Status    RunStatus              `json:"status"`
+	Reason    string                 `json:"reason,omitempty"`
+	CreatedAt time.Time              `json:"created_at"`
+	EndedAt   time.Time              `json:"ended_at,omitempty"`
+	Plan      *ExecutionPlanSnapshot `json:"plan,omitempty"`
+	Todos     []Todo                 `json:"todos"`
+}
+
+type ExecutionPlanSnapshot struct {
+	Layers         [][]string     `json:"layers,omitempty"`
+	Roots          []string       `json:"roots,omitempty"`
+	Leaves         []string       `json:"leaves,omitempty"`
+	WorkerCounts   map[string]int `json:"worker_counts,omitempty"`
+	LaneCaps       map[string]int `json:"lane_caps,omitempty"`
+	LaneOrder      []string       `json:"lane_order,omitempty"`
+	SurveyID       string         `json:"survey_id,omitempty"`
+	VerificationID string         `json:"verification_id,omitempty"`
+	MaxParallel    int            `json:"max_parallel,omitempty"`
 }
 
 // Counts returns done/blocked/skipped tallies. Convenience for the
@@ -140,6 +173,13 @@ type Config struct {
 	// Hitting this marks the run Stopped and the in-flight TODO
 	// (if any) gets retried on resume.
 	MaxWallTime time.Duration
+
+	// DrainGraceWindow is the bounded extra wait after stop/fail/cancel
+	// before the driver finalizes a run with in-flight workers still
+	// running. Default 2 seconds. Lower it in tests to avoid sleeping on
+	// real wall clock; raise it in production if providers routinely need
+	// a little longer to flush final summaries after cancellation.
+	DrainGraceWindow time.Duration
 
 	// Retries is the per-TODO retry count on failure (0 means
 	// "execute once, no retry"). Default 1 — one retry catches
@@ -194,6 +234,20 @@ type Config struct {
 	// (i.e. all read tools + the standard write tools, but NOT
 	// run_command and git_commit — leave those gated even in drive).
 	AutoApprove []string
+
+	// AutoVerify appends a deterministic supervisor-generated
+	// verification TODO after planning. The extra TODO depends on all
+	// mutating/high-risk work items and runs the narrowest reasonable
+	// verification pass (tests/build/review) using the normal scheduler.
+	// Default false so existing drive behavior stays stable unless the
+	// caller explicitly opts into stronger end-of-run verification.
+	AutoVerify bool
+
+	// AutoSurvey prepends a deterministic supervisor-generated
+	// discovery/survey TODO when the planner skipped an initial repo
+	// mapping step. The synthetic task becomes the parent of every root
+	// task so later workers start from a shared understanding.
+	AutoSurvey bool
 }
 
 // DefaultConfig is the safety-leaning preset used when the caller
@@ -202,11 +256,12 @@ type Config struct {
 // a runaway autonomous loop.
 func DefaultConfig() Config {
 	return Config{
-		MaxTodos:       20,
-		MaxFailedTodos: 3,
-		MaxWallTime:    30 * time.Minute,
-		Retries:        1,
-		MaxParallel:    3,
+		MaxTodos:         20,
+		MaxFailedTodos:   3,
+		MaxWallTime:      30 * time.Minute,
+		DrainGraceWindow: 2 * time.Second,
+		Retries:          1,
+		MaxParallel:      3,
 	}
 }
 
@@ -222,6 +277,9 @@ func (c Config) Apply() Config {
 	}
 	if c.MaxWallTime <= 0 {
 		c.MaxWallTime = d.MaxWallTime
+	}
+	if c.DrainGraceWindow <= 0 {
+		c.DrainGraceWindow = d.DrainGraceWindow
 	}
 	if c.Retries < 0 {
 		c.Retries = d.Retries

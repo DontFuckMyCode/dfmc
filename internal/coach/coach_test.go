@@ -18,10 +18,6 @@ func TestRuleObserver_ParkedLoopSurfaced(t *testing.T) {
 	}
 }
 
-// TestRuleObserver_ParkedBudgetSuggestsSplit guards the branch added when the
-// runtime grew a dedicated budget-exhausted park reason. The user needs a
-// different nudge in this case: the scope was too wide, so /split is the
-// useful next move (instead of just /continue-ing into the same wall).
 func TestRuleObserver_ParkedBudgetSuggestsSplit(t *testing.T) {
 	notes := NewRuleObserver().Observe(Snapshot{
 		Parked:     true,
@@ -44,10 +40,11 @@ func TestRuleObserver_ParkedBudgetSuggestsSplit(t *testing.T) {
 
 func TestRuleObserver_MutationWithoutValidationFlagged(t *testing.T) {
 	notes := NewRuleObserver().Observe(Snapshot{
-		Question:  "refactor the token parser",
-		Answer:    "Done, I've rewritten the parser.",
-		ToolSteps: 3,
-		Mutations: []string{"internal/auth/token.go"},
+		Question:       "refactor the token parser",
+		Answer:         "Done, I've rewritten the parser.",
+		ToolSteps:      3,
+		Mutations:      []string{"internal/auth/token.go"},
+		ValidationHint: "`go test ./internal/auth/... -count=1`",
 	})
 	found := false
 	for _, n := range notes {
@@ -55,6 +52,12 @@ func TestRuleObserver_MutationWithoutValidationFlagged(t *testing.T) {
 			found = true
 			if !strings.Contains(n.Text, "internal/auth/token.go") {
 				t.Fatalf("expected path in note, got %q", n.Text)
+			}
+			if !strings.Contains(n.Text, "go test ./internal/auth/... -count=1") {
+				t.Fatalf("expected concrete validation hint in note, got %q", n.Text)
+			}
+			if n.Action != "`go test ./internal/auth/... -count=1`" {
+				t.Fatalf("expected action to mirror validation hint, got %q", n.Action)
 			}
 		}
 	}
@@ -65,11 +68,11 @@ func TestRuleObserver_MutationWithoutValidationFlagged(t *testing.T) {
 
 func TestRuleObserver_MutationWithValidationStaysSilent(t *testing.T) {
 	notes := NewRuleObserver().Observe(Snapshot{
-		Question:  "refactor the token parser",
-		Answer:    "Done. Ran `go test ./internal/auth/...` and it passed.",
-		ToolSteps: 3,
-		Mutations: []string{"internal/auth/token.go"},
-		ToolsUsed: []string{"edit_file"},
+		Question:   "refactor the token parser",
+		Answer:     "Done. Ran `go test ./internal/auth/...` and it passed.",
+		ToolSteps:  3,
+		Mutations:  []string{"internal/auth/token.go"},
+		ToolsUsed:  []string{"edit_file"},
 		TokensUsed: 3000,
 	})
 	for _, n := range notes {
@@ -95,13 +98,22 @@ func TestRuleObserver_RepeatedFailuresWarn(t *testing.T) {
 }
 
 func TestRuleObserver_HeavyTurnInfo(t *testing.T) {
-	notes := NewRuleObserver().Observe(Snapshot{TokensUsed: 45000})
+	notes := NewRuleObserver().Observe(Snapshot{
+		TokensUsed:  45000,
+		TightenHint: "`review [[file:internal/auth/token.go]] parseToken`",
+	})
 	found := false
 	for _, n := range notes {
 		if n.Origin == "heavy_turn" {
 			found = true
 			if n.Severity != SeverityInfo {
 				t.Fatalf("heavy_turn should be info, got %q", n.Severity)
+			}
+			if !strings.Contains(n.Text, "review [[file:internal/auth/token.go]] parseToken") {
+				t.Fatalf("expected concrete tighten hint, got %q", n.Text)
+			}
+			if n.Action != "`review [[file:internal/auth/token.go]] parseToken`" {
+				t.Fatalf("expected action to mirror tighten hint, got %q", n.Action)
 			}
 		}
 	}
@@ -163,10 +175,6 @@ func TestRuleObserver_NoActionTakenSurfaced(t *testing.T) {
 	}
 }
 
-// Pseudo-tool-call coach rule: some provider/model pairs accept tools
-// in the request but answer in prose-shaped tool-call markup (e.g.
-// `[TOOL_CALL]...[/TOOL_CALL]`) instead of using native tool_use. We
-// want a loud warning so the user knows to switch model or endpoint.
 func TestRuleObserver_PseudoToolCallSurfaced(t *testing.T) {
 	notes := NewRuleObserver().Observe(Snapshot{
 		Question:  "read tui.go and summarize",
@@ -187,14 +195,15 @@ func TestRuleObserver_PseudoToolCallSurfaced(t *testing.T) {
 	}
 }
 
-// Retrieval-quality: the query had identifier-looking tokens but nothing
-// resolved to a codemap symbol. Coach should nudge the user to be explicit.
 func TestRuleObserver_RetrievalSymbolMissSurfaced(t *testing.T) {
 	notes := NewRuleObserver().Observe(Snapshot{
-		Question:         "fix parseToken in auth",
-		ContextFiles:     3,
-		ContextSources:   map[string]int{"query-match": 2, "hotspot": 1},
-		QueryIdentifiers: 2,
+		Question:              "fix parseToken in auth",
+		ContextFiles:          3,
+		ContextSources:        map[string]int{"query-match": 2, "hotspot": 1},
+		QueryIdentifiers:      2,
+		QueryIdentifierNames:  []string{"parseToken"},
+		UsefulQueryIdentifier: "parseToken",
+		RetrievalHint:         "`review [[file:internal/auth/token.go]] parseToken`",
 	})
 	found := false
 	for _, n := range notes {
@@ -203,6 +212,12 @@ func TestRuleObserver_RetrievalSymbolMissSurfaced(t *testing.T) {
 			if n.Severity != SeverityInfo {
 				t.Fatalf("retrieval_symbol_miss should be info, got %q", n.Severity)
 			}
+			if !strings.Contains(n.Text, "review [[file:internal/auth/token.go]] parseToken") {
+				t.Fatalf("expected concrete retrieval hint, got %q", n.Text)
+			}
+			if n.Action != "`review [[file:internal/auth/token.go]] parseToken`" {
+				t.Fatalf("expected action to mirror retrieval hint, got %q", n.Action)
+			}
 		}
 	}
 	if !found {
@@ -210,8 +225,21 @@ func TestRuleObserver_RetrievalSymbolMissSurfaced(t *testing.T) {
 	}
 }
 
-// Retrieval-quality: when a symbol-match or explicit marker DID land the
-// miss rule must stay silent — the retrieval was good.
+func TestRuleObserver_RetrievalSymbolMissQuietWithoutUsefulIdentifier(t *testing.T) {
+	notes := NewRuleObserver().Observe(Snapshot{
+		Question:             "review [[file:ui/tui/tui.go]]",
+		ContextFiles:         2,
+		ContextSources:       map[string]int{"query-match": 2},
+		QueryIdentifiers:     1,
+		QueryIdentifierNames: []string{"review"},
+	})
+	for _, n := range notes {
+		if n.Origin == "retrieval_symbol_miss" {
+			t.Fatalf("retrieval_symbol_miss should stay silent without a useful symbol identifier, got %+v", notes)
+		}
+	}
+}
+
 func TestRuleObserver_RetrievalSymbolMissQuietWhenResolved(t *testing.T) {
 	notes := NewRuleObserver().Observe(Snapshot{
 		Question:         "fix parseToken in auth",
@@ -226,7 +254,6 @@ func TestRuleObserver_RetrievalSymbolMissQuietWhenResolved(t *testing.T) {
 	}
 }
 
-// Retrieval-quality: every pulled chunk was a hotspot → query was too vague.
 func TestRuleObserver_RetrievalHotspotOnlySurfaced(t *testing.T) {
 	notes := NewRuleObserver().Observe(Snapshot{
 		Question:       "tell me about the project",
@@ -244,8 +271,6 @@ func TestRuleObserver_RetrievalHotspotOnlySurfaced(t *testing.T) {
 	}
 }
 
-// Negative: structured tool use (ToolSteps>0) must not trip the rule even
-// if the answer happens to quote a tool-call marker.
 func TestRuleObserver_PseudoToolCallQuietWhenToolsRan(t *testing.T) {
 	notes := NewRuleObserver().Observe(Snapshot{
 		Question:  "read tui.go",

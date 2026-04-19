@@ -10,7 +10,7 @@ import (
 
 func isMutationTool(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "write_file", "edit_file":
+	case "write_file", "edit_file", "apply_patch":
 		return true
 	default:
 		return false
@@ -125,13 +125,27 @@ func isKnownChatCommandToken(token string) bool {
 	}
 	switch token {
 	case "reload", "providers", "models", "tools", "ls", "read", "grep", "run", "diff", "patch", "apply", "undo",
-		"continue", "resume", "btw", "quit", "exit", "q", "clear", "coach", "hints":
+		"continue", "resume", "btw", "quit", "exit", "q", "clear", "coach", "hints", "queue", "select",
+		"workflow", "todos", "subagents", "stats":
 		return true
 	}
 	if _, ok := commands.DefaultRegistry().Lookup(token); ok {
 		return true
 	}
 	return false
+}
+
+func isImmediateChatSlashCommand(token string) bool {
+	token = strings.ToLower(strings.TrimSpace(token))
+	switch token {
+	case "", "help", "tools", "stats", "workflow", "todos", "subagents", "queue",
+		"coach", "hints", "keylog", "mouse", "select", "status", "providers", "models",
+		"hooks", "approve", "doctor", "health", "map", "version", "magicdoc", "magic",
+		"conversation", "conv", "memory", "prompt", "skill":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m Model) chatPrompt() string {

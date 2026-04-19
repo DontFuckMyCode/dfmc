@@ -6,7 +6,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 )
@@ -19,18 +18,20 @@ import (
 // main engine's ast.Engine, but the parse cache is per-instance and
 // content-hashed, so repeated calls on the same file are cheap.
 type ASTQueryTool struct {
-	once   sync.Once
 	engine *ast.Engine
 }
 
-func NewASTQueryTool() *ASTQueryTool        { return &ASTQueryTool{} }
+func NewASTQueryTool() *ASTQueryTool        { return &ASTQueryTool{engine: ast.New()} }
 func (t *ASTQueryTool) Name() string        { return "ast_query" }
 func (t *ASTQueryTool) Description() string { return "Parse a file and return its symbols, imports, and language." }
-
-func (t *ASTQueryTool) getEngine() *ast.Engine {
-	t.once.Do(func() { t.engine = ast.New() })
-	return t.engine
+func (t *ASTQueryTool) Close() error {
+	if t == nil || t.engine == nil {
+		return nil
+	}
+	return t.engine.Close()
 }
+
+func (t *ASTQueryTool) getEngine() *ast.Engine { return t.engine }
 
 func (t *ASTQueryTool) Execute(ctx context.Context, req Request) (Result, error) {
 	path := strings.TrimSpace(asString(req.Params, "path", ""))

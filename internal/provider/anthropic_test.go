@@ -2,11 +2,13 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -86,5 +88,58 @@ func TestAnthropicProviderStream(t *testing.T) {
 	}
 	if got := out.String(); got != "hello anthropic" {
 		t.Fatalf("unexpected stream text: %q", got)
+	}
+}
+
+func TestAnthropicProviderStream_ThrottleWraps429(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "2")
+		http.Error(w, `{"error":{"message":"rate limited"}}`, http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	p := NewAnthropicProvider("claude-sonnet-4-6", "test-key", srv.URL, 64000, 1000000)
+	_, err := p.Stream(context.Background(), CompletionRequest{
+		Messages: []Message{{Role: types.RoleUser, Content: "say hello"}},
+	})
+	if err == nil {
+		t.Fatal("expected throttle error")
+	}
+	if !errors.Is(err, ErrProviderThrottled) {
+		t.Fatalf("expected ErrProviderThrottled, got %v", err)
+	}
+	var te *ThrottledError
+	if !errors.As(err, &te) {
+		t.Fatalf("expected ThrottledError, got %T", err)
+	}
+	if te.RetryAfter != 2*time.Second {
+		t.Fatalf("expected Retry-After=2s, got %s", te.RetryAfter)
+	}
+}
+
+func TestAnthropicProviderPreservesExplicitBasePath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+  "model":"glm-5.1",
+  "usage":{"input_tokens":5,"output_tokens":3},
+  "content":[{"type":"text","text":"ok"}]
+}`))
+	}))
+	defer srv.Close()
+
+	p := NewNamedAnthropicProvider("zai", "glm-5.1", "test-key", srv.URL+"/api/anthropic", 131072, 200000)
+	_, err := p.Complete(context.Background(), CompletionRequest{
+		Messages: []Message{
+			{Role: types.RoleUser, Content: "say ok"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("complete failed: %v", err)
+	}
+	if gotPath != "/api/anthropic/messages" {
+		t.Fatalf("expected explicit anthropic base path to be preserved, got %q", gotPath)
 	}
 }

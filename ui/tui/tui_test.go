@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"gopkg.in/yaml.v3"
@@ -15,6 +16,8 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/planning"
+	toolruntime "github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -107,6 +110,29 @@ func TestCtrlPOpensChatCommandPalette(t *testing.T) {
 	}
 	if next.chat.input != "/" {
 		t.Fatalf("expected slash command palette seed, got %q", next.chat.input)
+	}
+}
+
+func TestCtrlYAndCtrlGJumpToWorkflowTabs(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+
+	plansModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlY})
+	plans, ok := plansModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model after ctrl+y, got %T", plansModel)
+	}
+	if plans.activeTab != plans.activityTabIndex("Plans") {
+		t.Fatalf("expected Plans tab after ctrl+y, got %d", plans.activeTab)
+	}
+
+	activityModel, _ := plans.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	activity, ok := activityModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model after ctrl+g, got %T", activityModel)
+	}
+	if activity.activeTab != activity.activityTabIndex("Activity") {
+		t.Fatalf("expected Activity tab after ctrl+g, got %d", activity.activeTab)
 	}
 }
 
@@ -493,6 +519,53 @@ func TestChatSlashRunCommandStreamsToolResultToTranscript(t *testing.T) {
 	last := final.chat.transcript[len(final.chat.transcript)-1]
 	if last.Role != "system" || !strings.Contains(last.Content, "Tool result: run_command") {
 		t.Fatalf("expected run_command result in transcript, got %#v", last)
+	}
+}
+
+func TestFormatToolResultForChat_SurfacesApplyPatchWarnings(t *testing.T) {
+	res := toolruntime.Result{
+		Success:    true,
+		DurationMs: 12,
+		Output:     "1 file(s) patched",
+		Data: map[string]any{
+			"files": []map[string]any{
+				{
+					"path":           "hello.txt",
+					"hunks_rejected": 1,
+					"fuzzy_offsets":  []int{1},
+				},
+			},
+		},
+	}
+	got := formatToolResultForChat("apply_patch", nil, res, nil)
+	if !strings.Contains(got, "Warning: 1 hunk(s) were rejected") {
+		t.Fatalf("expected rejected-hunk warning, got %q", got)
+	}
+	if !strings.Contains(got, "fuzzy anchors were used") {
+		t.Fatalf("expected fuzzy-anchor warning, got %q", got)
+	}
+}
+
+func TestFormatToolResultForPanel_SurfacesApplyPatchWarnings(t *testing.T) {
+	res := toolruntime.Result{
+		Success:    true,
+		DurationMs: 8,
+		Output:     "patched",
+		Data: map[string]any{
+			"files": []any{
+				map[string]any{
+					"path":          "hello.txt",
+					"fuzzy_offsets": []any{float64(-1)},
+				},
+			},
+		},
+	}
+	got := formatToolResultForPanel("apply_patch", nil, res)
+	if !strings.Contains(got, "Warning: fuzzy anchors were used") {
+		t.Fatalf("expected fuzzy warning in panel output, got %q", got)
+	}
+	if !strings.Contains(got, "hello.txt [-1]") {
+		t.Fatalf("expected file+offset detail in panel output, got %q", got)
 	}
 }
 
@@ -1643,6 +1716,42 @@ func TestHandleEngineEventAgentLoopLifecycle(t *testing.T) {
 	}
 }
 
+func TestHandleEngineEventProviderThrottleRetry(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	next := m.handleEngineEvent(engine.Event{
+		Type: "provider:throttle:retry",
+		Payload: map[string]any{
+			"provider": "zai",
+			"attempt":  2,
+			"wait_ms":  1500,
+			"stream":   true,
+		},
+	})
+	if next.notice == "" || !strings.Contains(next.notice, "Provider throttled") {
+		t.Fatalf("expected throttle notice, got %q", next.notice)
+	}
+	if len(next.activityLog) == 0 || !strings.Contains(next.activityLog[len(next.activityLog)-1], "retry #2") {
+		t.Fatalf("expected activity log throttle line, got %#v", next.activityLog)
+	}
+	if len(next.chat.transcript) != 0 {
+		t.Fatalf("throttle event should only mirror while sending, got transcript %#v", next.chat.transcript)
+	}
+
+	m.chat.sending = true
+	mirrored := m.handleEngineEvent(engine.Event{
+		Type: "provider:throttle:retry",
+		Payload: map[string]any{
+			"provider": "zai",
+			"attempt":  1,
+			"wait_ms":  1000,
+			"stream":   true,
+		},
+	})
+	if len(mirrored.chat.transcript) == 0 || !strings.Contains(mirrored.chat.transcript[len(mirrored.chat.transcript)-1].Content, "Provider throttled") {
+		t.Fatalf("expected mirrored throttle message while sending, got %#v", mirrored.chat.transcript)
+	}
+}
+
 func TestRenderChatViewShowsAgentRuntimeCard(t *testing.T) {
 	// Signal-density rule: the header owns phase/step/provider/model so the
 	// runtime card only surfaces what the header doesn't — tool rounds and
@@ -2629,6 +2738,22 @@ func TestReadProjectFileRejectsEscape(t *testing.T) {
 	}
 }
 
+func TestReadProjectFileRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	mustWriteFile(t, filepath.Join(outside, "secret.txt"), "nope\n")
+
+	link := filepath.Join(root, "secret-link.txt")
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	_, _, err := readProjectFile(root, "secret-link.txt", 1024)
+	if err == nil {
+		t.Fatal("expected symlink escape error")
+	}
+}
+
 func TestReadProjectFileSkipsBinaryPreview(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "bin", "tool.exe")
@@ -2660,6 +2785,46 @@ func TestReadProjectFileSkipsInvalidUTF8Preview(t *testing.T) {
 	}
 	if !strings.Contains(content, "Binary preview disabled") {
 		t.Fatalf("expected binary preview guard message, got %q", content)
+	}
+}
+
+func TestReadProjectFileTruncatesUTF8Safely(t *testing.T) {
+	root := t.TempDir()
+	content := strings.Repeat("é", 10)
+	mustWriteFile(t, filepath.Join(root, "utf8.txt"), content)
+
+	got, size, err := readProjectFile(root, "utf8.txt", 5)
+	if err != nil {
+		t.Fatalf("readProjectFile: %v", err)
+	}
+	if size <= 5 {
+		t.Fatalf("expected original size > truncation budget, got %d", size)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncated content must stay valid UTF-8, got %q", got)
+	}
+	if !strings.Contains(got, "[truncated]") {
+		t.Fatalf("expected truncation marker, got %q", got)
+	}
+}
+
+func TestSplitRespectingQuotesRejectsUnterminatedQuote(t *testing.T) {
+	_, err := splitRespectingQuotes(`echo "hello`)
+	if err == nil {
+		t.Fatal("expected unterminated quoted value error")
+	}
+}
+
+func TestFormatRunArgListPreservesMalformedQuotedArg(t *testing.T) {
+	got := formatRunArgList(`echo "hello`)
+	if !strings.Contains(got, `"echo \"hello"`) {
+		t.Fatalf("expected malformed arg list to stay quoted as one token, got %q", got)
+	}
+}
+
+func TestRunRejectsNilEngine(t *testing.T) {
+	if err := Run(context.Background(), nil, Options{}); err == nil {
+		t.Fatal("expected nil engine error")
 	}
 }
 
@@ -3181,6 +3346,37 @@ func TestRenderChatViewShowsPatchSummary(t *testing.T) {
 	}
 }
 
+func TestRenderChatViewShowsWorkflowFocusCard(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.ui.statsPanelMode = statsPanelModeTasks
+	m.agentLoop.active = true
+	m.agentLoop.phase = "tool-call"
+	m.agentLoop.step = 2
+	m.agentLoop.maxToolStep = 6
+	m.agentLoop.lastTool = "read_file"
+	m.activity.entries = []activityEntry{
+		{At: time.Now().Add(-3 * time.Second), EventID: "agent:autonomy:kickoff", Text: "autonomy kickoff - orchestrate 2 subtasks 0.80"},
+		{At: time.Now().Add(-2 * time.Second), EventID: "agent:subagent:start", Text: "subagent started: inspect renderer"},
+		{At: time.Now().Add(-1 * time.Second), EventID: "tool:result", Text: "tool done - read_file (42ms)"},
+	}
+	m.plans.plan = &planning.Plan{
+		Subtasks: []planning.Subtask{
+			{Title: "Inspect handler"},
+			{Title: "Patch renderer"},
+		},
+		Parallel:   true,
+		Confidence: 0.8,
+	}
+
+	view := m.renderChatView(120)
+	for _, want := range []string{"Workflow Focus", "TASKS", "live now", "task 2/2", "Patch renderer", "Inspect handler", "live log:", "autonomy kickoff", "subagent started", "recent:", "tool done - read_file"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected chat workflow focus card to contain %q, got:\n%s", want, view)
+		}
+	}
+}
+
 func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -3255,37 +3451,57 @@ func runGit(t *testing.T, dir string, args ...string) {
 
 func TestRenderStatsPanelShowsAllSections(t *testing.T) {
 	info := statsPanelInfo{
-		Provider:       "openai",
-		Model:          "gpt-5.4",
-		Configured:     true,
-		ContextTokens:  45_000,
-		MaxContext:     200_000,
-		AgentActive:    true,
-		AgentPhase:     "tool-call",
-		AgentStep:      2,
-		AgentMaxSteps:  6,
-		ToolRounds:     2,
-		LastTool:       "read_file",
-		LastStatus:     "ok",
-		LastDurationMs: 42,
-		ToolsEnabled:   true,
-		ToolCount:      6,
-		Branch:         "main",
-		Dirty:          true,
-		Inserted:       255,
-		Deleted:        10,
-		SessionElapsed: 42 * time.Minute,
-		MessageCount:   12,
+		Provider:        "openai",
+		Model:           "gpt-5.4",
+		Configured:      true,
+		ContextTokens:   45_000,
+		MaxContext:      200_000,
+		AgentActive:     true,
+		AgentPhase:      "tool-call",
+		AgentStep:       2,
+		AgentMaxSteps:   6,
+		ToolRounds:      2,
+		LastTool:        "read_file",
+		LastStatus:      "ok",
+		LastDurationMs:  42,
+		ActiveSubagents: 2,
+		ToolsEnabled:    true,
+		ToolCount:       6,
+		TodoTotal:       4,
+		TodoDone:        1,
+		TodoDoing:       1,
+		TodoPending:     2,
+		TodoActive:      "Patch ui/tui stats panel",
+		WorkflowStatus:  "live now · applying patch",
+		WorkflowMeter:   "[####------]",
+		WorkflowRecent:  []string{"tool read_file completed", "plan seeded 3 subtasks"},
+		Boosted:         true,
+		BoostSeconds:    4,
+		DriveRunID:      "drv-123",
+		DriveDone:       3,
+		DriveTotal:      12,
+		DriveBlocked:    1,
+		PlanSubtasks:    3,
+		PlanParallel:    true,
+		PlanConfidence:  0.85,
+		Branch:          "main",
+		Dirty:           true,
+		Inserted:        255,
+		Deleted:         10,
+		SessionElapsed:  42 * time.Minute,
+		MessageCount:    12,
 	}
-	panel := renderStatsPanel(info, 30)
+	panel := renderStatsPanel(info, 40)
 	for _, want := range []string{
 		"PROVIDER", "openai", "gpt-5.4",
 		"CONTEXT", "45k/200k",
-		"AGENT", "tool-call", "2/6", "read_file", "42ms",
+		"TOOL LOOP", "tool loop", "2/6", "call budget 2/6", "read_file", "42ms",
 		"TOOLS", "enabled", "6 registered",
+		"FOCUS MODE", "expanded", "4s",
+		"WORKFLOW", "live now", "[####------]", "todos 4", "1 done", "1 doing", "active: Patch ui/tui stats panel", "subagents 2 active", "drive 3/12", "1 blocked", "plan 3 tasks", "parallel", "0.85", "recent: tool read_file completed",
 		"GIT", "main", "+255", "-10",
-		"SESSION", "42m", "12 msgs",
-		"ctrl+s",
+		"SESSION",
+		"alt+a/s/d/f again locks", "ctrl+s", "hide", "ctrl+h",
 	} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("stats panel missing %q, got:\n%s", want, panel)
@@ -3334,6 +3550,113 @@ func TestRenderStatsPanelUnconfiguredShowsGuidance(t *testing.T) {
 	}
 }
 
+func TestStatsPanelInfoIncludesWorkflowState(t *testing.T) {
+	cfg := config.DefaultConfig()
+	eng := &engine.Engine{
+		Config: cfg,
+		Tools:  toolruntime.New(*cfg),
+	}
+	_, err := eng.Tools.Execute(context.Background(), "todo_write", toolruntime.Request{
+		ProjectRoot: t.TempDir(),
+		Params: map[string]any{
+			"action": "set",
+			"todos": []any{
+				map[string]any{"content": "Inspect engine", "status": "completed"},
+				map[string]any{"content": "Patch TUI", "status": "in_progress", "active_form": "Patching TUI"},
+				map[string]any{"content": "Run tests", "status": "pending"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("todo_write: %v", err)
+	}
+
+	m := NewModel(context.Background(), eng)
+	m.telemetry.activeSubagentCount = 2
+	m.telemetry.driveRunID = "drv-123"
+	m.telemetry.driveDone = 1
+	m.telemetry.driveTotal = 3
+	m.telemetry.driveBlocked = 1
+	m.activity.entries = []activityEntry{
+		{EventID: "tool:result", Text: "tool read_file completed"},
+		{EventID: "drive:progress", Text: "drive moved todo #2 to done"},
+	}
+	m.plans.plan = &planning.Plan{
+		Subtasks: []planning.Subtask{
+			{Title: "Inspect engine"},
+			{Title: "Patch TUI"},
+		},
+		Parallel:   true,
+		Confidence: 0.8,
+	}
+
+	info := m.statsPanelInfo()
+	if info.TodoTotal != 3 || info.TodoDone != 1 || info.TodoDoing != 1 || info.TodoPending != 1 {
+		t.Fatalf("unexpected todo counts: %+v", info)
+	}
+	if info.TodoActive != "Patching TUI" {
+		t.Fatalf("expected active todo label, got %+v", info)
+	}
+	if !strings.Contains(info.WorkflowExecution, "task 2/3") || !strings.Contains(info.WorkflowExecution, "Patching TUI") {
+		t.Fatalf("expected semantic workflow execution summary, got %+v", info)
+	}
+	if info.ActiveSubagents != 2 || info.DriveTotal != 3 || info.PlanSubtasks != 2 || !info.PlanParallel {
+		t.Fatalf("expected workflow state copied into stats panel info, got %+v", info)
+	}
+	if !strings.Contains(info.WorkflowStatus, "drive running") {
+		t.Fatalf("expected live workflow status, got %+v", info)
+	}
+	if strings.TrimSpace(info.WorkflowMeter) == "" {
+		t.Fatalf("expected workflow meter, got %+v", info)
+	}
+	if len(info.WorkflowRecent) == 0 || !strings.Contains(strings.Join(info.WorkflowRecent, " "), "tool read_file completed") {
+		t.Fatalf("expected workflow recent activity, got %+v", info)
+	}
+}
+
+func TestStatsPanelInfoShowsHonestWaitingState(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.sending = true
+	m.chat.streamStartedAt = time.Now().Add(-12 * time.Second)
+	m.activity.entries = []activityEntry{
+		{At: time.Now().Add(-7 * time.Second), EventID: "stream:start", Text: "stream start"},
+	}
+
+	info := m.statsPanelInfo()
+	if !strings.Contains(strings.ToLower(info.WorkflowStatus), "waiting on model reply") {
+		t.Fatalf("expected waiting status, got %+v", info)
+	}
+	if !strings.Contains(strings.ToLower(info.WorkflowStatus), "12s") {
+		t.Fatalf("expected wait duration in workflow status, got %+v", info)
+	}
+	if !strings.Contains(strings.ToLower(info.WorkflowStatus), "idle 7s") {
+		t.Fatalf("expected idle age in workflow status, got %+v", info)
+	}
+}
+
+func TestStatsPanelInfoShowsStalledStateAfterAgentError(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.agentLoop.active = true
+	m.agentLoop.phase = "thinking"
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:error",
+		Payload: map[string]any{
+			"error": "zai: zai provider error: 404 NOT_FOUND",
+		},
+	})
+
+	info := m.statsPanelInfo()
+	if m.agentLoop.active {
+		t.Fatalf("agent loop should deactivate on error")
+	}
+	if !strings.Contains(strings.ToLower(info.WorkflowStatus), "stalled") {
+		t.Fatalf("expected stalled workflow status, got %+v", info)
+	}
+	if !strings.Contains(strings.ToLower(strings.Join(info.WorkflowRecent, " ")), "agent error") {
+		t.Fatalf("expected workflow recent to include agent error, got %+v", info)
+	}
+}
+
 func TestCtrlSTogglesStatsPanel(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	if !m.ui.showStatsPanel {
@@ -3348,6 +3671,237 @@ func TestCtrlSTogglesStatsPanel(t *testing.T) {
 	mm2 := next2.(Model)
 	if !mm2.ui.showStatsPanel {
 		t.Fatalf("ctrl+s should toggle stats panel back on")
+	}
+}
+
+func TestAltStatsShortcutsSwitchPanelModes(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.ui.showStatsPanel = false
+
+	todosModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s"), Alt: true})
+	todos := todosModel.(Model)
+	if !todos.ui.showStatsPanel || todos.ui.statsPanelMode != statsPanelModeTodos {
+		t.Fatalf("alt+s should open todos mode, got show=%v mode=%q", todos.ui.showStatsPanel, todos.ui.statsPanelMode)
+	}
+	if todos.ui.statsPanelBoostUntil.IsZero() {
+		t.Fatalf("alt+s should activate temporary stats panel boost")
+	}
+
+	tasksModel, _ := todos.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d"), Alt: true})
+	tasks := tasksModel.(Model)
+	if tasks.ui.statsPanelMode != statsPanelModeTasks {
+		t.Fatalf("alt+d should switch to tasks mode, got %q", tasks.ui.statsPanelMode)
+	}
+
+	agentsModel, _ := tasks.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f"), Alt: true})
+	agents := agentsModel.(Model)
+	if agents.ui.statsPanelMode != statsPanelModeSubagents {
+		t.Fatalf("alt+f should switch to subagents mode, got %q", agents.ui.statsPanelMode)
+	}
+
+	overviewModel, _ := agents.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a"), Alt: true})
+	overview := overviewModel.(Model)
+	if overview.ui.statsPanelMode != statsPanelModeOverview {
+		t.Fatalf("alt+a should switch to overview mode, got %q", overview.ui.statsPanelMode)
+	}
+	if !overview.statsPanelBoostActive(time.Now()) {
+		t.Fatalf("alt+a should keep focus boost active")
+	}
+
+	lockedModel, _ := overview.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a"), Alt: true})
+	locked := lockedModel.(Model)
+	if !locked.ui.statsPanelFocusLocked {
+		t.Fatalf("repeating same alt+shortcut during boost should lock focus mode")
+	}
+
+	unlockedModel, _ := locked.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	unlocked := unlockedModel.(Model)
+	if unlocked.ui.statsPanelFocusLocked {
+		t.Fatalf("esc should unlock focused stats panel")
+	}
+}
+
+func TestWorkflowEventsAutoFocusStatsModes(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.ui.showStatsPanel = false
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:autonomy:kickoff",
+		Payload: map[string]any{
+			"tool":          "orchestrate",
+			"subtask_count": 3,
+			"confidence":    0.9,
+		},
+	})
+	if !m.ui.showStatsPanel || m.ui.statsPanelMode != statsPanelModeTasks {
+		t.Fatalf("autonomy kickoff should auto-focus tasks mode, got show=%v mode=%q", m.ui.showStatsPanel, m.ui.statsPanelMode)
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:autonomy:plan",
+		Payload: map[string]any{
+			"subtask_count": 3,
+			"parallel":      true,
+			"confidence":    0.8,
+		},
+	})
+	if !m.ui.showStatsPanel || m.ui.statsPanelMode != statsPanelModeTasks {
+		t.Fatalf("autonomy plan should auto-focus tasks mode, got show=%v mode=%q", m.ui.showStatsPanel, m.ui.statsPanelMode)
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":    "todo_write",
+			"success": true,
+		},
+	})
+	if m.ui.statsPanelMode != statsPanelModeTodos {
+		t.Fatalf("todo_write result should auto-focus todos mode, got %q", m.ui.statsPanelMode)
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:subagent:start",
+		Payload: map[string]any{
+			"task": "inspect renderer",
+			"role": "reviewer",
+		},
+	})
+	if m.ui.statsPanelMode != statsPanelModeSubagents {
+		t.Fatalf("subagent start should auto-focus subagents mode, got %q", m.ui.statsPanelMode)
+	}
+}
+
+func TestWorkflowEventsDoNotOverrideLockedFocusMode(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.ui.showStatsPanel = true
+	m.ui.statsPanelMode = statsPanelModeTodos
+	m.ui.statsPanelFocusLocked = true
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:autonomy:plan",
+		Payload: map[string]any{
+			"subtask_count": 2,
+			"parallel":      false,
+			"confidence":    0.7,
+		},
+	})
+	if m.ui.statsPanelMode != statsPanelModeTodos {
+		t.Fatalf("locked focus mode should resist auto retarget, got %q", m.ui.statsPanelMode)
+	}
+}
+
+func TestStatsPanelBoostAllowsWiderTemporaryPanel(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.ui.showStatsPanel = true
+	m.ui.statsPanelBoostUntil = time.Now().Add(2 * time.Second)
+	if !m.statsPanelVisible(statsPanelBoostMinContentWidth) {
+		t.Fatalf("boosted stats panel should remain visible at reduced threshold")
+	}
+	if got := m.statsPanelRenderWidth(120); got <= statsPanelWidth {
+		t.Fatalf("boosted stats panel should render wider than default, got %d", got)
+	}
+	if got := m.statsPanelRenderWidth(120); got < 56 {
+		t.Fatalf("boosted stats panel should get close to half-width, got %d", got)
+	}
+	m.ui.statsPanelFocusLocked = true
+	if !m.statsPanelBoostActive(time.Now()) {
+		t.Fatalf("locked stats panel should stay boosted without timer")
+	}
+	if got := m.statsPanelRenderWidth(120); got <= statsPanelWidth {
+		t.Fatalf("locked stats panel should remain wider than default, got %d", got)
+	}
+	m.ui.statsPanelFocusLocked = false
+	m.ui.statsPanelBoostUntil = time.Now().Add(-2 * time.Second)
+	if got := m.statsPanelRenderWidth(120); got != statsPanelWidth {
+		t.Fatalf("expired boost should fall back to default width, got %d", got)
+	}
+}
+
+func TestRenderStatsPanelShowsLockedFocusHints(t *testing.T) {
+	panel := renderStatsPanel(statsPanelInfo{
+		Mode:        statsPanelModeTasks,
+		Provider:    "openai",
+		Model:       "gpt-5.4",
+		Configured:  true,
+		Boosted:     true,
+		FocusLocked: true,
+		TaskLines:   []string{"agent reviewing", "recent: tool read_file completed"},
+	}, 20)
+	for _, want := range []string{"FOCUS MODE", "locked", "esc unlock", "retarget"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("locked focus panel should surface %q, got:\n%s", want, panel)
+		}
+	}
+}
+
+func TestAltX_TogglesSelectionMode(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.ui.showStatsPanel = true
+	m.ui.mouseCaptureEnabled = true
+
+	selectedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x"), Alt: true})
+	selected := selectedModel.(Model)
+	if !selected.ui.selectionModeActive {
+		t.Fatal("alt+x should enable selection mode")
+	}
+	if selected.ui.showStatsPanel {
+		t.Fatal("selection mode should hide stats panel")
+	}
+	if selected.ui.mouseCaptureEnabled {
+		t.Fatal("selection mode should disable mouse capture")
+	}
+
+	restoredModel, _ := selected.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x"), Alt: true})
+	restored := restoredModel.(Model)
+	if restored.ui.selectionModeActive {
+		t.Fatal("second alt+x should disable selection mode")
+	}
+	if !restored.ui.showStatsPanel {
+		t.Fatal("second alt+x should restore stats panel state")
+	}
+	if !restored.ui.mouseCaptureEnabled {
+		t.Fatal("second alt+x should restore mouse capture state")
+	}
+}
+
+func TestRenderStatsPanelFocusedModesShowWorkflowDetails(t *testing.T) {
+	todosPanel := renderStatsPanel(statsPanelInfo{
+		Mode:           statsPanelModeTodos,
+		Provider:       "openai",
+		Model:          "gpt-5.4",
+		Configured:     true,
+		TodoTotal:      3,
+		TodoDone:       1,
+		TodoDoing:      1,
+		TodoPending:    1,
+		TodoActive:     "patch TUI",
+		WorkflowStatus: "live now · patching",
+		WorkflowMeter:  "[###-----]",
+		WorkflowRecent: []string{"tool read_file completed"},
+		TodoLines:      []string{"[done] inspect engine", "[doing] patch TUI", "[todo] run tests"},
+	}, 24)
+	for _, want := range []string{"TODOS", "patch TUI", "3 total", "live now", "[###-----]", "recent: tool read_file completed"} {
+		if !strings.Contains(todosPanel, want) {
+			t.Fatalf("todos mode should surface %q, got:\n%s", want, todosPanel)
+		}
+	}
+
+	subagentsPanel := renderStatsPanel(statsPanelInfo{
+		Mode:          statsPanelModeSubagents,
+		Provider:      "openai",
+		Model:         "gpt-5.4",
+		Configured:    true,
+		SubagentLines: []string{"2 active now", "Subagent (coder) started: auth fix", "Subagent done: 5 rounds (1234ms)."},
+	}, 18)
+	for _, want := range []string{"SUBAGENTS", "2 active now", "auth fix"} {
+		if !strings.Contains(subagentsPanel, want) {
+			t.Fatalf("subagents mode should surface %q, got:\n%s", want, subagentsPanel)
+		}
 	}
 }
 
@@ -3772,6 +4326,93 @@ func TestSubagentFailureSurfacesError(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected subagent-failed chip, got timeline=%#v", m.agentLoop.toolTimeline)
+	}
+}
+
+func TestSubagentFallbackEventSurfacesTransition(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:subagent:start",
+		Payload: map[string]any{
+			"task":                "audit auth boundary",
+			"role":                "security_auditor",
+			"provider_candidates": []string{"anthropic-review", "openai-fast"},
+			"provider":            "anthropic-review",
+			"model":               "claude-sonnet-4-6",
+		},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:subagent:fallback",
+		Payload: map[string]any{
+			"role":         "security_auditor",
+			"attempt":      2,
+			"from_profile": "anthropic-review",
+			"to_profile":   "openai-fast",
+			"error":        "provider timeout",
+			"fallback_reasons": []string{"provider timeout"},
+		},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:subagent:done",
+		Payload: map[string]any{
+			"role":          "security_auditor",
+			"duration_ms":   900,
+			"tool_rounds":   4,
+			"provider":      "openai-fast",
+			"model":         "gpt-5.4-mini",
+			"attempts":      2,
+			"fallback_used": true,
+		},
+	})
+
+	if !strings.Contains(m.notice, "after 2 attempts") {
+		t.Fatalf("expected notice to mention fallback attempts, got %q", m.notice)
+	}
+	foundFallbackChip := false
+	foundDoneChip := false
+	for _, chip := range m.agentLoop.toolTimeline {
+		if chip.Status == "subagent-fallback" && strings.Contains(chip.Preview, "anthropic-review") {
+			foundFallbackChip = true
+		}
+		if chip.Status == "subagent-ok" && strings.Contains(chip.Preview, "openai-fast/gpt-5.4-mini") {
+			foundDoneChip = true
+		}
+	}
+	if !foundFallbackChip {
+		t.Fatalf("expected fallback chip in timeline, got %#v", m.agentLoop.toolTimeline)
+	}
+	if !foundDoneChip {
+		t.Fatalf("expected final subagent-ok chip with provider/model, got %#v", m.agentLoop.toolTimeline)
+	}
+	foundReason := false
+	for _, chip := range m.agentLoop.toolTimeline {
+		if chip.Status == "subagent-fallback" && strings.Contains(chip.Verb, "provider timeout") {
+			foundReason = true
+			break
+		}
+	}
+	if !foundReason {
+		t.Fatalf("expected fallback chip verb to surface the reason, got %#v", m.agentLoop.toolTimeline)
+	}
+}
+
+func TestDriveTodoDoneSurfacesFallbackReason(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "drive:todo:done",
+		Payload: map[string]any{
+			"todo_id":           "T4",
+			"duration_ms":       1200,
+			"tool_calls":        3,
+			"provider":          "openai-fast",
+			"model":             "gpt-5.4-mini",
+			"attempts":          2,
+			"fallback":          true,
+			"fallback_reasons":  []string{"provider timeout"},
+		},
+	})
+	if !strings.Contains(m.notice, "provider timeout") {
+		t.Fatalf("expected drive notice to include fallback reason, got %q", m.notice)
 	}
 }
 

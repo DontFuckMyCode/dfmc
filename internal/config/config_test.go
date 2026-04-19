@@ -299,3 +299,59 @@ func TestValidate_ContextMaxHistoryTokensMustBePositive(t *testing.T) {
 		t.Fatal("expected validation error for context.max_history_tokens <= 0")
 	}
 }
+
+func TestValidate_ASTCacheSizeMustNotBeNegative(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.AST.CacheSize = -1
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for ast.cache_size < 0")
+	}
+}
+
+func TestLoadWithOptions_SandboxAllowCommandAliasDisablesRunCommand(t *testing.T) {
+	tmp := t.TempDir()
+	globalPath := filepath.Join(tmp, "global.yaml")
+	if err := os.WriteFile(globalPath, []byte("version: 1\nsecurity:\n  sandbox:\n    allow_command: false\n"), 0o644); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(LoadOptions{GlobalPath: globalPath, CWD: tmp})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Security.Sandbox.AllowShell {
+		t.Fatal("allow_command=false must disable the canonical sandbox flag")
+	}
+	if cfg.Security.Sandbox.AllowCommand != nil {
+		t.Fatalf("allow_command alias must be normalized away after load, got %#v", cfg.Security.Sandbox.AllowCommand)
+	}
+}
+
+func TestLoadWithOptions_ProjectAllowShellOverridesGlobalAllowCommand(t *testing.T) {
+	tmp := t.TempDir()
+	globalPath := filepath.Join(tmp, "global.yaml")
+	projectRoot := filepath.Join(tmp, "project")
+	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(globalPath, []byte("version: 1\nsecurity:\n  sandbox:\n    allow_command: false\n"), 0o644); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte("version: 1\nsecurity:\n  sandbox:\n    allow_shell: true\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		GlobalPath:  globalPath,
+		ProjectPath: projectPath,
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.Security.Sandbox.AllowShell {
+		t.Fatal("project allow_shell=true must override the earlier allow_command alias")
+	}
+}

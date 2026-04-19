@@ -11,8 +11,9 @@ import (
 
 func newPlansTestModel() Model {
 	return Model{
-		tabs:      []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans"},
-		activeTab: 12,
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans"},
+		activeTab:             12,
+		diagnosticPanelsState: newDiagnosticPanelsState(),
 	}
 }
 
@@ -37,8 +38,8 @@ func TestPlansConfidenceLabel(t *testing.T) {
 
 func TestPlansConfidenceBarFillsProportional(t *testing.T) {
 	cases := []struct {
-		in    float64
-		want  int // expected filled blocks
+		in   float64
+		want int // expected filled blocks
 	}{
 		{0.0, 0},
 		{0.25, 2},

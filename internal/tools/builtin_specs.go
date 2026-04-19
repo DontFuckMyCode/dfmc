@@ -181,6 +181,7 @@ DO use:
 		Tags: []string{"search", "read", "code", "grep"},
 		Args: []Arg{
 			{Name: "pattern", Type: ArgString, Required: true, Description: "Go regexp (RE2) pattern."},
+			{Name: "query", Type: ArgString, Description: "Backward-compatible alias for pattern. If both are present, pattern wins."},
 			{Name: "path", Type: ArgString, Description: "Restrict search to a subdirectory of the project root."},
 			{Name: "case_sensitive", Type: ArgBoolean, Default: true, Description: "When false, prefixes the pattern with (?i) for a case-insensitive match."},
 			{Name: "context", Type: ArgInteger, Default: 0, Description: "Lines of context to include before AND after each match (cap 50). Override per-side with `before` / `after`."},

@@ -7,9 +7,12 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
@@ -110,17 +113,124 @@ func (e *Engine) ReloadConfig(cwd string) error {
 	if err != nil {
 		return err
 	}
+	projectRoot := config.FindProjectRoot(cwd)
+	if strings.TrimSpace(projectRoot) == "" {
+		projectRoot = strings.TrimSpace(e.ProjectRoot)
+	}
 	providers, err := provider.NewRouter(cfg.Providers)
 	if err != nil {
 		return err
 	}
+	e.attachProviderObservers(providers)
 	newTools := tools.New(*cfg)
+	newTools.SetSubagentRunner(e)
+	if toolReasoningEnabledForConfig(cfg) {
+		newTools.SetReasoningPublisher(func(toolName, reason string) {
+			e.EventBus.Publish(Event{
+				Type:   "tool:reasoning",
+				Source: "engine",
+				Payload: map[string]any{
+					"tool":   toolName,
+					"reason": reason,
+				},
+			})
+		})
+	}
 
 	e.mu.Lock()
+	oldTools := e.Tools
 	e.Config = cfg
+	if strings.TrimSpace(projectRoot) != "" {
+		e.ProjectRoot = projectRoot
+	}
 	e.Providers = providers
 	e.Tools = newTools
 	e.mu.Unlock()
+	if oldTools != nil {
+		if err := oldTools.Close(); err != nil {
+			return fmt.Errorf("close old tools during reload: %w", err)
+		}
+	}
+	e.refreshProjectConfigSnapshot(e.projectConfigPath())
+	return nil
+}
+
+func (e *Engine) projectConfigPath() string {
+	if e == nil {
+		return ""
+	}
+	root := strings.TrimSpace(e.ProjectRoot)
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, config.DefaultDirName, "config.yaml")
+}
+
+func (e *Engine) refreshProjectConfigSnapshot(path string) {
+	if e == nil {
+		return
+	}
+	path = strings.TrimSpace(path)
+	var modTime time.Time
+	if path != "" {
+		if info, err := os.Stat(path); err == nil {
+			modTime = info.ModTime()
+		}
+	}
+	e.mu.Lock()
+	e.configProjectPath = path
+	e.configProjectModTime = modTime
+	e.mu.Unlock()
+}
+
+func (e *Engine) maybeAutoReloadProjectConfig() error {
+	if e == nil {
+		return nil
+	}
+	path := e.projectConfigPath()
+	if path == "" {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			e.refreshProjectConfigSnapshot(path)
+			return nil
+		}
+		return err
+	}
+
+	e.mu.RLock()
+	lastPath := e.configProjectPath
+	lastModTime := e.configProjectModTime
+	e.mu.RUnlock()
+	if path == lastPath && !info.ModTime().After(lastModTime) {
+		return nil
+	}
+
+	if err := e.ReloadConfig(e.ProjectRoot); err != nil {
+		if e.EventBus != nil {
+			e.EventBus.Publish(Event{
+				Type:   "config:reload:auto_failed",
+				Source: "engine",
+				Payload: map[string]any{
+					"path":  path,
+					"error": err.Error(),
+				},
+			})
+		}
+		return fmt.Errorf("auto-reload config: %w", err)
+	}
+	if e.EventBus != nil {
+		e.EventBus.Publish(Event{
+			Type:   "config:reload:auto",
+			Source: "engine",
+			Payload: map[string]any{
+				"path":       path,
+				"updated_at": info.ModTime().Unix(),
+			},
+		})
+	}
 	return nil
 }
 
@@ -131,10 +241,17 @@ func (e *Engine) ReloadConfig(cwd string) error {
 // "auto") enables. Centralised here so the publisher wiring at Init
 // and any future schema gate read the same source of truth.
 func (e *Engine) toolReasoningEnabled() bool {
-	if e == nil || e.Config == nil {
+	if e == nil {
 		return true
 	}
-	switch strings.ToLower(strings.TrimSpace(e.Config.Agent.ToolReasoning)) {
+	return toolReasoningEnabledForConfig(e.Config)
+}
+
+func toolReasoningEnabledForConfig(cfg *config.Config) bool {
+	if cfg == nil {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.Agent.ToolReasoning)) {
 	case "off", "false", "no", "0", "disabled":
 		return false
 	default:
@@ -178,6 +295,7 @@ func (e *Engine) providerProfileStatusLocked() ProviderProfileStatus {
 		status.MaxTokens = profile.MaxTokens
 		status.MaxContext = profile.MaxContext
 		status.Configured = providerProfileConfigured(status.Name, profile)
+		status.Advisories = config.ProviderProfileAdvisories(status.Name, profile)
 	}
 	if status.Model == "" {
 		status.Model = strings.TrimSpace(e.model())

@@ -40,6 +40,8 @@ type DriveStartRequest struct {
 	MaxWallTimeMs  int64             `json:"max_wall_time_ms,omitempty"`
 	Retries        int               `json:"retries,omitempty"`
 	MaxParallel    int               `json:"max_parallel,omitempty"`
+	AutoSurvey     bool              `json:"auto_survey,omitempty"`
+	AutoVerify     bool              `json:"auto_verify,omitempty"`
 	PlannerModel   string            `json:"planner_model,omitempty"`
 	Routing        map[string]string `json:"routing,omitempty"`
 	AutoApprove    []string          `json:"auto_approve,omitempty"`
@@ -83,6 +85,8 @@ func (s *Server) handleDriveStart(w http.ResponseWriter, r *http.Request) {
 		MaxWallTime:    time.Duration(req.MaxWallTimeMs) * time.Millisecond,
 		Retries:        req.Retries,
 		MaxParallel:    req.MaxParallel,
+		AutoSurvey:     req.AutoSurvey,
+		AutoVerify:     req.AutoVerify,
 		PlannerModel:   req.PlannerModel,
 		Routing:        req.Routing,
 		AutoApprove:    req.AutoApprove,

@@ -65,6 +65,41 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestStatusEndpointIncludesProviderAdvisories(t *testing.T) {
+	eng := newTestEngine(t)
+	eng.Config.Providers.Primary = "zai"
+	eng.Config.Providers.Profiles["zai"] = config.ModelConfig{
+		Model:    "glm-4.5",
+		Protocol: "anthropic",
+		BaseURL:  "https://api.z.ai/api/anthropic",
+	}
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var payload struct {
+		ProviderProfile struct {
+			Name       string   `json:"name"`
+			Advisories []string `json:"advisories"`
+		} `json:"provider_profile"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if payload.ProviderProfile.Name != "zai" {
+		t.Fatalf("expected active provider profile zai, got %#v", payload.ProviderProfile)
+	}
+	if len(payload.ProviderProfile.Advisories) == 0 {
+		t.Fatalf("expected provider advisories in status payload: %#v", payload.ProviderProfile)
+	}
+}
+
 func TestStatusEndpointIncludesApprovalGateAndHooks(t *testing.T) {
 	eng := newTestEngine(t)
 	eng.Config.Tools.RequireApproval = []string{"write_file", "run_command"}
@@ -371,6 +406,44 @@ func TestProvidersEndpoint(t *testing.T) {
 	if _, ok := payload["providers"]; !ok {
 		t.Fatalf("missing providers field: %#v", payload)
 	}
+}
+
+func TestProvidersEndpointIncludesProviderAdvisories(t *testing.T) {
+	eng := newTestEngine(t)
+	eng.Config.Providers.Profiles["zai"] = config.ModelConfig{
+		Model:    "glm-4.5",
+		Protocol: "anthropic",
+		BaseURL:  "https://api.z.ai/api/anthropic",
+	}
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/providers")
+	if err != nil {
+		t.Fatalf("get providers: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var payload struct {
+		Providers []struct {
+			Name       string   `json:"name"`
+			Advisories []string `json:"advisories"`
+		} `json:"providers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	for _, item := range payload.Providers {
+		if item.Name != "zai" {
+			continue
+		}
+		if len(item.Advisories) == 0 {
+			t.Fatalf("expected zai provider advisories, got %#v", item)
+		}
+		return
+	}
+	t.Fatalf("zai provider missing from payload: %#v", payload.Providers)
 }
 
 func TestSkillsEndpoint(t *testing.T) {

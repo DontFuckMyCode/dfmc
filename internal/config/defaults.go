@@ -78,8 +78,9 @@ func DefaultConfig() *Config {
 			// call. The cumulative ResumeMaxMultiplier ceiling still bounds
 			// total work. Set to "off" in CI / cost-sensitive contexts to
 			// require an explicit /continue between budgets.
-			AutonomousResume: "auto",
-			ToolReasoning:    "auto",
+			AutonomousResume:   "auto",
+			AutonomousPlanning: "auto",
+			ToolReasoning:      "auto",
 			ContextLifecycle: ContextLifecycleConfig{
 				Enabled:                   true,
 				AutoCompactThresholdRatio: 0.7,

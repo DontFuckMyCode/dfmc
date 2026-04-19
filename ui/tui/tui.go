@@ -199,8 +199,9 @@ type quickActionSuggestion struct {
 }
 
 type Model struct {
-	ctx context.Context
-	eng *engine.Engine
+	ctx                context.Context
+	eng                *engine.Engine
+	eventRelayExternal bool
 
 	width  int
 	height int
@@ -264,28 +265,10 @@ type Model struct {
 	// in panel_states.go.
 	activity activityPanelState
 
-	// All read-only diagnostic panel states live in panel_states.go as
-	// their own per-panel sub-structs. Embedding by named field instead
-	// of flattening every panel's 6-9 fields onto Model keeps the type
-	// declaration scannable and groups related state by panel.
-	memory        memoryPanelState
-	codemap       codemapPanelState
-	conversations conversationsPanelState
-	prompts       promptsPanelState
-	security      securityPanelState
-	plans         plansPanelState
-
-	// Context panel state — diagnostic view over Engine.ContextBudgetPreview
-	// and ContextRecommendations. Lets the user see the per-query token
-	// budget before an Ask is actually sent. See contextPanelState in
-	// panel_states.go.
-	contextPanel contextPanelState
-
-	// Providers panel state — diagnostic view over the provider router.
-	// Rows are cached (refresh on 'r' or first tab activation) because
-	// Hints() is cheap but there's no point redoing the walk on every
-	// keystroke. See providersPanelState in panel_states.go.
-	providers providersPanelState
+	// All cold, diagnostic panel state is grouped into one embedded bundle.
+	// Chat / stream / activity remain top-level because they are the hot path;
+	// diagnostic tabs load lazily and are touched far less often.
+	*diagnosticPanelsState
 
 	// Native tool-loop telemetry surfaced by the chat header chips, the
 	// stats panel, and the per-step toolTimeline strip. See agentLoopState
@@ -421,28 +404,47 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 		ctx = context.Background()
 	}
 	return Model{
-		ctx:          ctx,
-		eng:          eng,
-		tabs:         []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers"},
-		activity:     activityPanelState{follow: true},
-		memory:       memoryPanelState{tier: memoryTierAll},
-		codemap:      codemapPanelState{view: codemapViewOverview},
-		security:     securityPanelState{view: securityViewSecrets},
-		chat:         chatState{streamIndex: -1},
-		inputHistory: inputHistoryState{index: -1},
-		toolView:     toolViewState{overrides: map[string]string{}},
+		ctx:                   ctx,
+		eng:                   eng,
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers"},
+		activity:              activityPanelState{follow: true},
+		diagnosticPanelsState: newDiagnosticPanelsState(),
+		chat:                  chatState{streamIndex: -1},
+		inputHistory:          inputHistoryState{index: -1},
+		toolView:              toolViewState{overrides: map[string]string{}},
 		// The chat body shows the welcome + starters on first paint; don't
 		// park a duplicate banner in the footer notice slot (signal density).
 		sessionStart: time.Now(),
 		ui: uiToggles{
 			showStatsPanel: true,
+			statsPanelMode: statsPanelModeOverview,
 			keyLogEnabled:  os.Getenv("DFMC_KEYLOG") == "1",
 		},
 	}
 }
 
+func (m *Model) ensureDiagnostics() {
+	if m == nil {
+		return
+	}
+	if m.diagnosticPanelsState == nil {
+		m.diagnosticPanelsState = newDiagnosticPanelsState()
+		return
+	}
+	m.diagnosticPanelsState.applyDefaults()
+}
+
 func Run(ctx context.Context, eng *engine.Engine, opts Options) error {
+	if eng == nil {
+		return fmt.Errorf("tui engine is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	model := NewModel(ctx, eng)
+	model.eventRelayExternal = true
 	programOpts := []tea.ProgramOption{}
 	// Mouse capture is OFF by default so terminal drag-to-select / copy
 	// just works. Users who prefer wheel-scroll can flip tui.mouse_capture
@@ -466,6 +468,13 @@ func Run(ctx context.Context, eng *engine.Engine, opts Options) error {
 	approver.bindProgram(p)
 	eng.SetApprover(approver)
 	defer eng.SetApprover(nil)
+	unsubscribeEvents := func() {}
+	if eng.EventBus != nil {
+		unsubscribeEvents = eng.EventBus.SubscribeFunc("*", func(ev engine.Event) {
+			p.Send(engineEventMsg{event: ev})
+		})
+	}
+	defer unsubscribeEvents()
 
 	return runProgramSafely(p)
 }
@@ -508,15 +517,18 @@ func runWithPanicGuard(out io.Writer, fn func() error) (err error) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		loadStatusCmd(m.eng),
 		loadWorkspaceCmd(m.eng),
 		loadLatestPatchCmd(m.eng),
 		loadFilesCmd(m.eng),
-		subscribeEventsCmd(m.eng),
 		loadGitInfoCmd(m.projectRoot()),
 		heartbeatTickCmd(),
-	)
+	}
+	if !m.eventRelayExternal {
+		cmds = append(cmds, subscribeEventsCmd(m.eng))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) projectRoot() string {
@@ -703,7 +715,10 @@ func formatRunArgList(args string) string {
 	if args == "" {
 		return ""
 	}
-	tokens := splitRespectingQuotes(args)
+	tokens, err := splitRespectingQuotes(args)
+	if err != nil {
+		return formatSlashArgToken(args)
+	}
 	formatted := make([]string, len(tokens))
 	for i, tok := range tokens {
 		formatted[i] = formatSlashArgToken(tok)
@@ -715,7 +730,7 @@ func formatRunArgList(args string) string {
 // (single or double) atomic. Backslash escapes the next char inside the
 // quote. Tokens are returned without surrounding quotes; the formatter
 // re-applies them only when the token contains whitespace.
-func splitRespectingQuotes(s string) []string {
+func splitRespectingQuotes(s string) ([]string, error) {
 	var out []string
 	var cur strings.Builder
 	quote := byte(0)
@@ -747,10 +762,13 @@ func splitRespectingQuotes(s string) []string {
 		}
 		cur.WriteByte(c)
 	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated quoted value")
+	}
 	if cur.Len() > 0 {
 		out = append(out, cur.String())
 	}
-	return out
+	return out, nil
 }
 
 // Slash-command picker (handleCommandPickerKey, startCommandPicker,
@@ -854,7 +872,7 @@ func (m Model) appendToolEventMessage(text string) Model {
 // fired (useful for giving feedback like "quiet the mutation_unvalidated
 // rule"). Notes always land in the transcript — they're the user-facing
 // surface of the tiny-touches coach, not ephemeral chatter.
-func (m Model) appendCoachMessage(text string, severity coachSeverity, origin string) Model {
+func (m Model) appendCoachMessage(text string, severity coachSeverity, origin string, action string) Model {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return m
@@ -867,13 +885,20 @@ func (m Model) appendCoachMessage(text string, severity coachSeverity, origin st
 		marker = okStyle.Render("✓") + " "
 	}
 	body := marker + text
+	if action = strings.TrimSpace(action); action != "" {
+		body += "\n" + subtleStyle.Render("Suggested: ") + action
+	}
 	if origin = strings.TrimSpace(origin); origin != "" {
 		body += " " + subtleStyle.Render("["+origin+"]")
 	}
 	m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleCoach, body))
 	m.chat.scrollback = 0
 	m.appendActivity("coach: " + text)
-	m.notice = text
+	if action != "" {
+		m.notice = text + " | Suggested: " + action
+	} else {
+		m.notice = text
+	}
 	return m
 }
 
@@ -1097,11 +1122,19 @@ func formatToolResultForChat(name string, params map[string]any, res toolruntime
 		return header + " failed: " + text + body
 	}
 	summary := fmt.Sprintf("%s success (%dms)", header, res.DurationMs)
+	warnings := toolResultWarnings(name, res)
 	out := strings.TrimSpace(res.Output)
-	if out == "" {
+	if out == "" && len(warnings) == 0 {
 		return summary
 	}
-	return summary + "\n" + truncateCommandBlock(out, 1200)
+	parts := []string{summary}
+	if len(warnings) > 0 {
+		parts = append(parts, strings.Join(warnings, "\n"))
+	}
+	if out != "" {
+		parts = append(parts, truncateCommandBlock(out, 1200))
+	}
+	return strings.Join(parts, "\n")
 }
 
 // Intent extraction & slash arg parsers (parseListDirChatArgs,
@@ -1631,6 +1664,7 @@ func (m Model) handleToolsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	m.ensureDiagnostics()
 	width := m.width
 	if width <= 0 {
 		width = 100
@@ -1756,12 +1790,118 @@ func formatToolResultForPanel(name string, params map[string]any, res toolruntim
 	if res.Truncated {
 		lines = append(lines, "Output: truncated")
 	}
+	if warnings := toolResultWarnings(name, res); len(warnings) > 0 {
+		lines = append(lines, warnings...)
+	}
 	output := strings.TrimSpace(res.Output)
 	if output == "" {
 		output = "(no text output)"
 	}
 	lines = append(lines, "", output)
 	return strings.Join(lines, "\n")
+}
+
+func toolResultWarnings(name string, res toolruntime.Result) []string {
+	if !strings.EqualFold(strings.TrimSpace(name), "apply_patch") || res.Data == nil {
+		return nil
+	}
+	files := coerceToolResultFileEntries(res.Data["files"])
+	if len(files) == 0 {
+		return nil
+	}
+	rejected := 0
+	fuzzyFiles := make([]string, 0, len(files))
+	for _, file := range files {
+		rejected += toolResultInt(file, "hunks_rejected")
+		if offsets := toolResultIntSlice(file, "fuzzy_offsets"); len(offsets) > 0 {
+			path := strings.TrimSpace(toolResultString(file, "path"))
+			if path == "" {
+				path = "(unknown path)"
+			}
+			fuzzyFiles = append(fuzzyFiles, fmt.Sprintf("%s %v", path, offsets))
+		}
+	}
+	warnings := make([]string, 0, 2)
+	if rejected > 0 {
+		warnings = append(warnings, fmt.Sprintf("Warning: %d hunk(s) were rejected. Re-read the file and regenerate the patch before retrying.", rejected))
+	}
+	if len(fuzzyFiles) > 0 {
+		warnings = append(warnings, "Warning: fuzzy anchors were used: "+strings.Join(fuzzyFiles, "; ")+". Review the touched file before continuing.")
+	}
+	return warnings
+}
+
+func coerceToolResultFileEntries(raw any) []map[string]any {
+	switch v := raw.(type) {
+	case []map[string]any:
+		return v
+	case []any:
+		out := make([]map[string]any, 0, len(v))
+		for _, item := range v {
+			if m, ok := item.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func toolResultString(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	if v, ok := m[key]; ok {
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+	return ""
+}
+
+func toolResultInt(m map[string]any, key string) int {
+	if m == nil {
+		return 0
+	}
+	switch v := m[key].(type) {
+	case int:
+		return v
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case []int:
+		return len(v)
+	}
+	return 0
+}
+
+func toolResultIntSlice(m map[string]any, key string) []int {
+	if m == nil {
+		return nil
+	}
+	switch v := m[key].(type) {
+	case []int:
+		return append([]int(nil), v...)
+	case []any:
+		out := make([]int, 0, len(v))
+		for _, item := range v {
+			switch n := item.(type) {
+			case int:
+				out = append(out, n)
+			case int32:
+				out = append(out, int(n))
+			case int64:
+				out = append(out, int(n))
+			case float64:
+				out = append(out, int(n))
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func formatToolErrorForPanel(name string, params map[string]any, res toolruntime.Result, err error) string {
@@ -1921,33 +2061,51 @@ func startChatStream(ctx context.Context, eng *engine.Engine, question string) <
 	go func() {
 		defer close(out)
 		if eng == nil {
-			out <- chatErrMsg{err: fmt.Errorf("engine is nil")}
+			sendChatStreamMsg(ctx, out, chatErrMsg{err: fmt.Errorf("engine is nil")})
 			return
 		}
 		stream, err := eng.StreamAsk(ctx, question)
 		if err != nil {
-			out <- chatErrMsg{err: err}
+			sendChatStreamMsg(ctx, out, chatErrMsg{err: err})
 			return
 		}
 		for ev := range stream {
 			switch ev.Type {
 			case provider.StreamDelta:
-				out <- chatDeltaMsg{delta: ev.Delta}
+				if !sendChatStreamMsg(ctx, out, chatDeltaMsg{delta: ev.Delta}) {
+					return
+				}
 			case provider.StreamError:
 				if ev.Err != nil {
-					out <- chatErrMsg{err: ev.Err}
+					sendChatStreamMsg(ctx, out, chatErrMsg{err: ev.Err})
 				} else {
-					out <- chatErrMsg{err: fmt.Errorf("stream error")}
+					sendChatStreamMsg(ctx, out, chatErrMsg{err: fmt.Errorf("stream error")})
 				}
 				return
 			case provider.StreamDone:
-				out <- chatDoneMsg{}
+				sendChatStreamMsg(ctx, out, chatDoneMsg{})
 				return
 			}
 		}
-		out <- streamClosedMsg{}
+		sendChatStreamMsg(ctx, out, streamClosedMsg{})
 	}()
 	return out
+}
+
+func sendChatStreamMsg(ctx context.Context, out chan<- tea.Msg, msg tea.Msg) bool {
+	if out == nil {
+		return false
+	}
+	if ctx == nil {
+		out <- msg
+		return true
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case out <- msg:
+		return true
+	}
 }
 
 // startChatResumeStream runs ResumeAgent in a goroutine and surfaces the
@@ -2570,7 +2728,14 @@ func readProjectFile(root, rel string, maxBytes int) (string, int, error) {
 		return fmt.Sprintf("Binary preview disabled for %s.\nSize: %d bytes.\nUse an external viewer for this file type.", filepath.ToSlash(rel), size), size, nil
 	}
 	if maxBytes > 0 && size > maxBytes {
-		data = append(data[:maxBytes], []byte("\n... [truncated]\n")...)
+		cut := maxBytes
+		if cut >= len(data) {
+			cut = len(data)
+		}
+		for cut > 0 && cut < len(data) && !utf8.RuneStart(data[cut]) {
+			cut--
+		}
+		data = append(data[:cut], []byte("\n... [truncated]\n")...)
 	}
 	return string(data), size, nil
 }
@@ -2580,11 +2745,19 @@ func resolvePathWithinRoot(root, rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	absRoot, err = filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return "", err
+	}
 	target := rel
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(absRoot, rel)
 	}
 	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return "", err
+	}
+	absTarget, err = filepath.EvalSymlinks(absTarget)
 	if err != nil {
 		return "", err
 	}
@@ -2650,10 +2823,15 @@ func renderTUIHelp() string {
 		"    /hooks                       List lifecycle hooks registered per event",
 		"    /doctor                      In-chat health snapshot (alias /health)",
 		"    /stats                       Session metrics (alias /tokens, /cost)",
+		"    /workflow                    Show todos, active subagents, drive progress, and the latest plan",
+		"    /todos                       Print the shared todo list the agent is tracking",
+		"    /subagents                   Show current subagent fan-out and recent delegation activity",
+		"    /queue [show|clear|drop N]   Inspect or prune queued follow-up prompts",
 		"    /export [PATH]               Save transcript to markdown (default .dfmc/exports/transcript-*.md)",
 		"    /quit                        Exit DFMC",
 		"    /coach                       Mute or unmute background coach notes",
 		"    /hints                       Show or hide between-round trajectory hints",
+		"    /select                      Toggle chat-only selection mode (hide stats, disable mouse capture)",
 		"    /tools                       Show tool surface",
 		"    /tool show NAME              Print the spec for NAME (args, risk, examples)",
 		"    /diff                        Show staged patch diff",
@@ -2678,6 +2856,68 @@ func renderTUIHelp() string {
 // renderTUICommandHelp prints the detail view for a single registry command,
 // or a short error + catalog pointer when unknown.
 func renderTUICommandHelp(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "workflow":
+		return strings.Join([]string{
+			"/workflow",
+			"",
+			"Shows the current autonomous-workflow snapshot from inside Chat:",
+			"  - shared todo list counts and the active step",
+			"  - active subagent fan-out",
+			"  - drive progress",
+			"  - the latest split/autonomy plan summary",
+			"",
+			"Related:",
+			"  /todos      show the detailed checklist",
+			"  /subagents  show recent delegation activity",
+			"  ctrl+y      jump to Plans",
+			"  ctrl+g      jump to Activity",
+		}, "\n")
+	case "todos", "todo":
+		return strings.Join([]string{
+			"/todos",
+			"",
+			"Prints the shared todo_write list the agent is currently using.",
+			"Useful when you want to see whether the agent decomposed the task",
+			"and which step is currently marked in progress.",
+		}, "\n")
+	case "subagents", "workers":
+		return strings.Join([]string{
+			"/subagents",
+			"",
+			"Shows current subagent fan-out and the most recent subagent events",
+			"mirrored into the Activity stream.",
+			"",
+			"Tip: ctrl+g jumps straight to Activity for the full event firehose.",
+		}, "\n")
+	case "queue":
+		return strings.Join([]string{
+			"/queue",
+			"",
+			"Shows the pending prompt queue used while a turn is still streaming.",
+			"Safe local slash commands now run immediately; only real follow-up work should queue here.",
+			"",
+			"Subcommands:",
+			"  /queue           show the current queue",
+			"  /queue clear     remove every queued item",
+			"  /queue drop N    remove one queued item by its 1-based index",
+		}, "\n")
+	case "select":
+		return strings.Join([]string{
+			"/select",
+			"",
+			"Toggles chat-only selection mode.",
+			"When ON, the right stats panel is hidden and Bubble Tea mouse capture is disabled",
+			"so terminal drag-to-select focuses on the chat column instead of the whole split layout.",
+			"",
+			"Shortcuts:",
+			"  alt+x      toggle selection mode",
+			"  ctrl+s     manually show/hide stats panel",
+			"  /mouse     manually toggle mouse capture",
+			"",
+			"Note: drag-scroll while selecting depends on your terminal emulator.",
+		}, "\n")
+	}
 	reg := commands.DefaultRegistry()
 	if detail := reg.RenderCommandHelp(name); detail != "" {
 		return detail

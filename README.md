@@ -74,6 +74,7 @@ go run ./cmd/dfmc --json status --query "security audit auth middleware" --runti
 
 If provider API keys are not configured, DFMC automatically uses offline mode with local-context response generation.
 Project-root `.env` files are auto-loaded during startup, and existing process env vars still take precedence.
+For command execution policy, prefer `security.sandbox.allow_command`; the legacy `allow_shell` key is still accepted, but it disables the whole `run_command` tool rather than just shell interpreters.
 
 ### 3.1) Interactive streaming chat
 

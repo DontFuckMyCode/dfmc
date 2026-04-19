@@ -19,6 +19,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	codeast "github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/commands"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -38,15 +39,18 @@ func (m Model) runTemplateSlash(verb string, args []string, raw string) (Model, 
 	_ = raw
 	payload := strings.TrimSpace(strings.Join(args, " "))
 	targets, tail := splitTargetsAndTail(args)
-	pinned := strings.TrimSpace(m.filesView.pinned)
-	if len(targets) == 0 && pinned != "" {
-		targets = []string{pinned}
+	if verb == "review" {
+		targets = m.defaultReviewTargets(targets)
+	} else if len(targets) == 0 {
+		if target := strings.TrimSpace(m.toolTargetFile()); target != "" {
+			targets = []string{target}
+		}
 	}
 
 	var prompt string
 	switch verb {
 	case "review":
-		prompt = composeReviewPrompt(targets, tail)
+		prompt = m.composeReviewPrompt(targets, tail)
 	case "explain":
 		prompt = composeExplainPrompt(targets, tail)
 	case "refactor":
@@ -72,11 +76,159 @@ func (m Model) runTemplateSlash(verb string, args []string, raw string) (Model, 
 }
 
 func composeReviewPrompt(targets []string, tail string) string {
+	reviewTail := strings.TrimSpace(tail)
 	if len(targets) == 0 {
-		return strings.TrimSpace("Review the code base. Focus on correctness, risks, missing tests. " + tail)
+		return strings.TrimSpace(
+			"Review the current worktree diff only. Focus on correctness, risks, and missing tests. " +
+				"Start from changed hunks, avoid broad codebase sweeps, and only read more context when the diff is insufficient. " +
+				reviewTail,
+		)
 	}
-	return fmt.Sprintf("Review the following file(s) for correctness, risks, readability, and missing tests: %s\n%s",
-		joinFileMarkers(targets), strings.TrimSpace(tail))
+	return fmt.Sprintf(
+		"Review the following file(s) for correctness, risks, readability, and missing tests: %s\n"+
+			"Stay budget-aware: inspect the touched symbols or changed hunks first, avoid broad repo scans, and only open more files when directly justified.\n%s",
+		joinFileMarkers(targets), reviewTail,
+	)
+}
+
+func (m Model) composeReviewPrompt(targets []string, tail string) string {
+	base := composeReviewPrompt(targets, tail)
+	if len(targets) == 0 {
+		return base
+	}
+	scopeGuide := strings.TrimSpace(m.reviewScopeGuide(targets))
+	if scopeGuide == "" {
+		return base
+	}
+	return strings.TrimSpace(base + "\n\n" + scopeGuide)
+}
+
+func (m Model) reviewScopeGuide(targets []string) string {
+	root := strings.TrimSpace(m.projectRoot())
+	if root == "" {
+		return ""
+	}
+	limit := len(targets)
+	if limit > 2 {
+		limit = 2
+	}
+	outlines := make([]string, 0, limit)
+	for _, target := range targets[:limit] {
+		if outline := strings.TrimSpace(m.reviewScopeOutline(root, target)); outline != "" {
+			outlines = append(outlines, outline)
+		}
+	}
+	if len(outlines) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Scope map:\n")
+	b.WriteString("Use this map before opening more files. Start with 1-2 high-risk scopes, inspect only those symbols or line ranges first, and widen only if the scoped read leaves uncertainty.\n")
+	b.WriteString(strings.Join(outlines, "\n"))
+	return strings.TrimSpace(b.String())
+}
+
+func (m Model) reviewScopeOutline(root, target string) string {
+	target = filepath.ToSlash(strings.TrimSpace(target))
+	if target == "" {
+		return ""
+	}
+	abs := filepath.Join(root, filepath.FromSlash(target))
+	info, err := os.Stat(abs)
+	if err != nil || info.IsDir() {
+		return ""
+	}
+	if info.Size() > 512*1024 {
+		return fmt.Sprintf("- %s: large file (%d bytes). Start from changed hunks or the most suspicious symbol names before widening.", fileMarker(target), info.Size())
+	}
+	if outline := reviewSymbolOutline(abs, target); outline != "" {
+		return outline
+	}
+	content, err := os.ReadFile(abs)
+	if err != nil {
+		return ""
+	}
+	return reviewSectionOutline(target, string(content))
+}
+
+func reviewSymbolOutline(absPath, target string) string {
+	parser := codeast.New()
+	defer func() { _ = parser.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+
+	res, err := parser.ParseFile(ctx, absPath)
+	if err != nil || res == nil || len(res.Symbols) == 0 {
+		return ""
+	}
+	symbols := append([]types.Symbol(nil), res.Symbols...)
+	sort.SliceStable(symbols, func(i, j int) bool {
+		if symbols[i].Line == symbols[j].Line {
+			return strings.ToLower(symbols[i].Name) < strings.ToLower(symbols[j].Name)
+		}
+		return symbols[i].Line < symbols[j].Line
+	})
+
+	limit := len(symbols)
+	if limit > 8 {
+		limit = 8
+	}
+	lines := make([]string, 0, limit+2)
+	lines = append(lines, fmt.Sprintf("- %s (%s):", fileMarker(target), blankFallback(res.Language, "source")))
+	for _, sym := range symbols[:limit] {
+		label := strings.TrimSpace(sym.Name)
+		if label == "" {
+			continue
+		}
+		kind := strings.TrimSpace(string(sym.Kind))
+		if kind == "" {
+			kind = "symbol"
+		}
+		lines = append(lines, fmt.Sprintf("  - %s %s (line %d)", kind, label, sym.Line))
+	}
+	if extra := len(symbols) - limit; extra > 0 {
+		lines = append(lines, fmt.Sprintf("  - ... plus %d more symbols", extra))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func reviewSectionOutline(target, content string) string {
+	lines := strings.Split(content, "\n")
+	headings := make([]string, 0, 8)
+	for idx, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(trimmed, "#"):
+			headings = append(headings, fmt.Sprintf("  - section %s (line %d)", strings.TrimSpace(strings.TrimLeft(trimmed, "#")), idx+1))
+		case strings.HasPrefix(trimmed, "[") && strings.Contains(trimmed, "]"):
+			headings = append(headings, fmt.Sprintf("  - section %s (line %d)", trimmed, idx+1))
+		}
+		if len(headings) >= 8 {
+			break
+		}
+	}
+	if len(headings) > 0 {
+		return fmt.Sprintf("- %s:\n%s", fileMarker(target), strings.Join(headings, "\n"))
+	}
+
+	totalLines := len(lines)
+	if totalLines == 0 {
+		return ""
+	}
+	const chunkSize = 160
+	chunks := make([]string, 0, 6)
+	for start := 1; start <= totalLines && len(chunks) < 6; start += chunkSize {
+		end := start + chunkSize - 1
+		if end > totalLines {
+			end = totalLines
+		}
+		chunks = append(chunks, fmt.Sprintf("  - lines %d-%d", start, end))
+	}
+	return fmt.Sprintf("- %s:\n%s", fileMarker(target), strings.Join(chunks, "\n"))
 }
 
 func composeExplainPrompt(targets []string, tail string) string {
@@ -158,6 +310,32 @@ func joinFileMarkers(targets []string) string {
 		out = append(out, fileMarker(t))
 	}
 	return strings.Join(out, " ")
+}
+
+func (m Model) defaultReviewTargets(explicit []string) []string {
+	if len(explicit) > 0 {
+		return explicit
+	}
+	if target := strings.TrimSpace(m.toolTargetFile()); target != "" {
+		return []string{target}
+	}
+	if len(m.patchView.changed) == 0 {
+		return nil
+	}
+	limit := len(m.patchView.changed)
+	if limit > 4 {
+		limit = 4
+	}
+	out := make([]string, 0, limit)
+	for _, path := range m.patchView.changed[:limit] {
+		if path = strings.TrimSpace(path); path != "" {
+			out = append(out, path)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // runAnalyzeSlash executes /analyze or /scan and returns a compact transcript

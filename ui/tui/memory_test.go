@@ -11,9 +11,9 @@ import (
 
 func newMemoryTestModel() Model {
 	return Model{
-		tabs:      []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory"},
-		activeTab: 7,
-		memory:    memoryPanelState{tier: memoryTierAll},
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory"},
+		activeTab:             7,
+		diagnosticPanelsState: newDiagnosticPanelsState(),
 	}
 }
 

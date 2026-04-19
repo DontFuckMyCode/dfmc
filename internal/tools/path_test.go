@@ -218,6 +218,15 @@ func TestEnsureWithinRoot_RejectsEmptyPath(t *testing.T) {
 	}
 }
 
+func TestEnsureWithinRoot_RejectsMissingRootWhenSymlinkVerificationFails(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing-root")
+	if _, err := EnsureWithinRoot(root, "a.txt"); err == nil {
+		t.Fatal("missing root must be refused when root symlinks cannot be resolved")
+	} else if !strings.Contains(err.Error(), "resolve project root symlinks") {
+		t.Fatalf("expected root symlink resolution error, got %v", err)
+	}
+}
+
 // skipIfNoSymlink probes the current environment by attempting to
 // create a symlink in a temp dir. On Windows, this fails unless the
 // running process has SeCreateSymbolicLinkPrivilege (developer mode

@@ -80,6 +80,55 @@ func TestBuildSystemPromptUsesPromptLibrary(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptBundleSurfacesPromptOverrideLoadWarning(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".dfmc"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Project prompts path exists but is a file, not a directory.
+	if err := os.WriteFile(filepath.Join(tmp, ".dfmc", "prompts"), []byte("not-a-dir"), 0o644); err != nil {
+		t.Fatalf("write prompts sentinel: %v", err)
+	}
+
+	mgr := New(codemap.New(ast.New()))
+	bundle := mgr.BuildSystemPromptBundle(tmp, "review auth flow", nil, []string{"read_file"}, PromptRuntime{})
+	text := bundle.Text()
+	if !strings.Contains(text, "Prompt override warning:") {
+		t.Fatalf("expected prompt override warning in bundle, got: %s", text)
+	}
+}
+
+func TestBuildSystemPromptBundle_InjectsExplicitSkillSectionAndStripsMarker(t *testing.T) {
+	tmp := t.TempDir()
+	mgr := New(codemap.New(ast.New()))
+
+	bundle := mgr.BuildSystemPromptBundle(tmp, "[[skill:debug]] investigate auth refresh failure", nil, []string{"read_file"}, PromptRuntime{})
+	text := bundle.Text()
+	if strings.Contains(text, "[[skill:debug]]") {
+		t.Fatalf("skill marker should be stripped from rendered prompt, got: %s", text)
+	}
+	if !strings.Contains(text, "Activated skill: debug") {
+		t.Fatalf("expected explicit debug skill section, got: %s", text)
+	}
+	if !strings.Contains(text, "Root-cause the problem") {
+		t.Fatalf("expected debug skill contract in prompt, got: %s", text)
+	}
+}
+
+func TestBuildSystemPromptBundle_AutoSelectsAuditForSecurityTask(t *testing.T) {
+	tmp := t.TempDir()
+	mgr := New(codemap.New(ast.New()))
+
+	bundle := mgr.BuildSystemPromptBundle(tmp, "security audit auth middleware", nil, []string{"grep_codebase"}, PromptRuntime{})
+	cacheable := bundle.CacheableText()
+	if !strings.Contains(cacheable, "Activated skill: audit") {
+		t.Fatalf("expected audit skill section in cacheable prompt text, got: %s", cacheable)
+	}
+	if !strings.Contains(cacheable, "Produce a triaged security report") {
+		t.Fatalf("expected audit system instruction in prompt, got: %s", cacheable)
+	}
+}
+
 func TestBuildSystemPromptWithRuntimeToolPolicy(t *testing.T) {
 	tmp := t.TempDir()
 	mgr := New(codemap.New(ast.New()))
@@ -281,6 +330,51 @@ func TestBuildWithOptions_RespectsTokenBudgets(t *testing.T) {
 	}
 	if total > 200 {
 		t.Fatalf("expected total budget <= 200, got %d", total)
+	}
+}
+
+func TestBuildWithOptions_TrimsOversizedChunkToRemainingBudget(t *testing.T) {
+	tmp := t.TempDir()
+	first := filepath.Join(tmp, "first.go")
+	second := filepath.Join(tmp, "second.go")
+	body := "package main\nfunc Big(){\n" + strings.Repeat("println(\"alpha beta gamma delta epsilon\")\n", 220) + "}\n"
+	if err := os.WriteFile(first, []byte(body), 0o644); err != nil {
+		t.Fatalf("write first.go: %v", err)
+	}
+	if err := os.WriteFile(second, []byte(body), 0o644); err != nil {
+		t.Fatalf("write second.go: %v", err)
+	}
+
+	ae := ast.New()
+	cm := codemap.New(ae)
+	if err := cm.BuildFromFiles(context.Background(), []string{first, second}); err != nil {
+		t.Fatalf("build codemap: %v", err)
+	}
+
+	mgr := New(cm)
+	chunks, err := mgr.BuildWithOptions("Big", BuildOptions{
+		MaxFiles:         2,
+		MaxTokensTotal:   150,
+		MaxTokensPerFile: 120,
+		Compression:      "none",
+		IncludeTests:     true,
+		IncludeDocs:      true,
+	})
+	if err != nil {
+		t.Fatalf("build context: %v", err)
+	}
+	if len(chunks) != 2 {
+		t.Fatalf("expected both files to be represented, got %d chunks", len(chunks))
+	}
+	total := 0
+	for _, c := range chunks {
+		total += c.TokenCount
+	}
+	if total > 150 {
+		t.Fatalf("expected trimmed context to stay within total budget, got %d", total)
+	}
+	if chunks[1].TokenCount <= 0 {
+		t.Fatalf("expected second oversized chunk to be trimmed, not dropped: %+v", chunks[1])
 	}
 }
 

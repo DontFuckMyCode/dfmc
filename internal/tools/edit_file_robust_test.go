@@ -153,6 +153,30 @@ func TestEditFile_AmbiguityErrorIncludesLineNumbers(t *testing.T) {
 	}
 }
 
+func TestEditFile_AmbiguityMultilineNeedleListsOnlyRealStarts(t *testing.T) {
+	src := "foo\nzzz\nfoo\nbar\nfoo\nbar\n"
+	eng, tmp, name := readThenEdit(t, src, "multi.txt")
+
+	_, err := eng.Execute(context.Background(), "edit_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":       name,
+			"old_string": "foo\nbar",
+			"new_string": "baz\nbar",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected multiline uniqueness error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "line 3") || !strings.Contains(msg, "line 5") {
+		t.Fatalf("expected real multiline start lines, got: %v", err)
+	}
+	if strings.Contains(msg, "line 1") {
+		t.Fatalf("ambiguity error must not report partial-line false positives, got: %v", err)
+	}
+}
+
 func TestEditFile_RejectsIdenticalOldNewString(t *testing.T) {
 	src := "hello world\n"
 	eng, tmp, name := readThenEdit(t, src, "identity.txt")
@@ -191,5 +215,26 @@ func TestEditFile_OutputReportsReplacementCount(t *testing.T) {
 	}
 	if !strings.Contains(res.Output, "2 replacements") {
 		t.Fatalf("output should report replacement count, got: %q", res.Output)
+	}
+}
+
+func TestEditFile_PreservesMixedLineEndings(t *testing.T) {
+	src := "alpha\r\nbeta\ngamma\r\n"
+	eng, tmp, name := readThenEdit(t, src, "mixed.txt")
+
+	if _, err := eng.Execute(context.Background(), "edit_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":       name,
+			"old_string": "beta",
+			"new_string": "BETA",
+		},
+	}); err != nil {
+		t.Fatalf("edit_file on mixed-endings file: %v", err)
+	}
+
+	got, _ := os.ReadFile(filepath.Join(tmp, name))
+	if string(got) != "alpha\r\nBETA\ngamma\r\n" {
+		t.Fatalf("mixed line endings should be preserved per-line, got %q", string(got))
 	}
 }

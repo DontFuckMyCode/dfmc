@@ -22,7 +22,45 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
+const statsPanelBoostDuration = 4 * time.Second
+
+func (m *Model) activateStatsPanelMode(mode statsPanelMode, label string) {
+	now := time.Now()
+	m.ui.selectionModeActive = false
+	m.ui.showStatsPanel = true
+	if m.ui.statsPanelMode == mode && m.statsPanelBoostActive(now) {
+		if m.ui.statsPanelFocusLocked {
+			m.ui.statsPanelFocusLocked = false
+			m.ui.statsPanelBoostUntil = now.Add(statsPanelBoostDuration)
+			m.notice = "Stats panel: " + label + " (expanded)"
+			return
+		}
+		m.ui.statsPanelFocusLocked = true
+		m.ui.statsPanelBoostUntil = time.Time{}
+		m.notice = "Stats panel: " + label + " (locked)"
+		return
+	}
+	m.ui.statsPanelMode = mode
+	m.ui.statsPanelFocusLocked = false
+	m.ui.statsPanelBoostUntil = now.Add(statsPanelBoostDuration)
+	m.notice = "Stats panel: " + label + " (expanded)"
+}
+
+func (m *Model) autoActivateStatsPanelMode(mode statsPanelMode, label string) {
+	if m.activeTab != 0 || m.ui.selectionModeActive || m.ui.statsPanelFocusLocked {
+		return
+	}
+	now := time.Now()
+	m.ui.showStatsPanel = true
+	if m.ui.statsPanelMode != mode || !m.statsPanelBoostActive(now) {
+		m.ui.statsPanelMode = mode
+		m.ui.statsPanelBoostUntil = now.Add(statsPanelBoostDuration)
+		m.notice = "Workflow focus: " + label
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.ensureDiagnostics()
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -277,6 +315,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.toolView.output = formatToolResultForPanel(msg.name, msg.params, msg.result)
 		m.notice = fmt.Sprintf("Tool ran: %s (%dms)", msg.name, msg.result.DurationMs)
+		if warnings := toolResultWarnings(msg.name, msg.result); len(warnings) > 0 {
+			m.notice = warnings[0]
+		}
 		if m.chat.toolPending && strings.EqualFold(strings.TrimSpace(msg.name), strings.TrimSpace(m.chat.toolName)) {
 			m = m.appendSystemMessage(formatToolResultForChat(msg.name, msg.params, msg.result, nil))
 			m.chat.toolPending = false
@@ -457,15 +498,60 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+h":
 			m.ui.showHelpOverlay = !m.ui.showHelpOverlay
 			return m, nil
+		case "esc":
+			if m.activeTab == 0 && m.ui.statsPanelFocusLocked {
+				m.ui.statsPanelFocusLocked = false
+				m.ui.statsPanelBoostUntil = time.Time{}
+				m.notice = "Stats panel focus unlocked."
+				return m, nil
+			}
 		case "ctrl+s":
+			m.ui.selectionModeActive = false
+			if !m.ui.showStatsPanel {
+				m.ui.statsPanelFocusLocked = false
+				m.ui.statsPanelBoostUntil = time.Time{}
+			} else {
+				m.ui.statsPanelFocusLocked = false
+				m.ui.statsPanelBoostUntil = time.Time{}
+			}
 			m.ui.showStatsPanel = !m.ui.showStatsPanel
 			return m, nil
+		case "alt+x":
+			if m.activeTab == 0 {
+				return m.setSelectionMode(!m.ui.selectionModeActive)
+			}
+		case "alt+a":
+			if m.activeTab == 0 {
+				m.activateStatsPanelMode(statsPanelModeOverview, "overview")
+				return m, nil
+			}
+		case "alt+s":
+			if m.activeTab == 0 {
+				m.activateStatsPanelMode(statsPanelModeTodos, "todos")
+				return m, nil
+			}
+		case "alt+d":
+			if m.activeTab == 0 {
+				m.activateStatsPanelMode(statsPanelModeTasks, "tasks")
+				return m, nil
+			}
+		case "alt+f":
+			if m.activeTab == 0 {
+				m.activateStatsPanelMode(statsPanelModeSubagents, "subagents")
+				return m, nil
+			}
 		case "ctrl+p":
 			m.activeTab = 0
 			m.setChatInput("/")
 			m.slashMenu.command = 0
 			m.slashMenu.commandArg = 0
 			m.slashMenu.mention = 0
+			return m, nil
+		case "ctrl+g":
+			m = m.activateDiagnosticTab("Activity")
+			return m, nil
+		case "ctrl+y":
+			m = m.activateDiagnosticTab("Plans")
 			return m, nil
 		case "tab":
 			if m.tabs[m.activeTab] != "Chat" {
@@ -562,21 +648,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Plans — no F13 on most keyboards, so use alt+y (y for "why
 			// did this split?"). Decomposition is offline and runs on
 			// enter inside the panel.
-			m.activeTab = 12
+			m = m.activatePlansPanel("", false)
 			return m, nil
 		case "alt+w":
 			// Context — w for "weigh the budget". Preview is offline so
 			// just flip the tab; the empty state teaches what e/enter do.
-			m.activeTab = 13
+			m = m.activateContextPanel("", false)
 			return m, nil
 		case "alt+o":
 			// Providers — o for "prOviders". Router walk is synchronous
 			// and cheap, so we populate on first activation rather than
 			// dispatching a tea.Cmd.
-			m.activeTab = 14
-			if len(m.providers.rows) == 0 && m.providers.err == "" {
-				m = m.refreshProvidersRows()
-			}
+			m = m.activateProvidersPanel("", false)
 			return m, nil
 		}
 

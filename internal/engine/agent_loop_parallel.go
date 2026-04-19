@@ -88,7 +88,7 @@ type parallelToolResult struct {
 // network) and stored on miss. Cache writes are guarded by cacheMu so
 // the parallel branch is safe under fan-out. Cache lookups are O(1)
 // and can save tens of seconds per repeated read in long loops.
-func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.ToolCall, batchSize int, cache map[string]string, cacheMu *sync.Mutex) []parallelToolResult {
+func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.ToolCall, batchSize int, source string, cache map[string]string, cacheMu *sync.Mutex) []parallelToolResult {
 	if len(calls) == 0 {
 		return nil
 	}
@@ -109,7 +109,7 @@ func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.
 			})
 			return
 		}
-		res, err := e.executeToolWithLifecycle(ctx, c.Name, c.Input, "agent")
+		res, err := e.executeToolWithLifecycle(ctx, c.Name, c.Input, source)
 		out[idx] = parallelToolResult{Index: idx, Result: res, Err: err}
 		if err == nil {
 			storeToolCache(c, res, cache, cacheMu)

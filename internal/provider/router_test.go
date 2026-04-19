@@ -75,8 +75,12 @@ func TestProviderFromProfileSelectsLiveClients(t *testing.T) {
 		MaxContext: 1000000,
 		Protocol:   "anthropic",
 	})
-	if _, ok := p2.(*AnthropicProvider); !ok {
+	ap2, ok := p2.(*AnthropicProvider)
+	if !ok {
 		t.Fatalf("expected AnthropicProvider, got %T", p2)
+	}
+	if got := ap2.Name(); got != "anthropic" {
+		t.Fatalf("expected anthropic provider name preserved, got %q", got)
 	}
 
 	p3 := providerFromProfile("generic", config.ModelConfig{
@@ -107,7 +111,29 @@ func TestProviderFromProfileSelectsLiveClients(t *testing.T) {
 		MaxContext: 204800,
 		Protocol:   "anthropic",
 	})
-	if _, ok := p5.(*AnthropicProvider); !ok {
+	ap5, ok := p5.(*AnthropicProvider)
+	if !ok {
 		t.Fatalf("expected AnthropicProvider for minimax, got %T", p5)
+	}
+	if got := ap5.Name(); got != "minimax" {
+		t.Fatalf("expected minimax provider name preserved, got %q", got)
+	}
+
+	p6 := providerFromProfile("zai", config.ModelConfig{
+		Model:      "glm-5.1",
+		APIKey:     "k-test",
+		BaseURL:    "https://api.z.ai/api/anthropic",
+		MaxContext: 200000,
+		Protocol:   "anthropic",
+	})
+	ap6, ok := p6.(*OpenAICompatibleProvider)
+	if !ok {
+		t.Fatalf("expected OpenAICompatibleProvider for zai anthropic-style profile, got %T", p6)
+	}
+	if got := ap6.Name(); got != "zai" {
+		t.Fatalf("expected zai provider name preserved, got %q", got)
+	}
+	if got := ap6.baseURL; got != "https://api.z.ai/api/paas/v4" {
+		t.Fatalf("expected zai anthropic-style config to remap to paas endpoint, got %q", got)
 	}
 }
