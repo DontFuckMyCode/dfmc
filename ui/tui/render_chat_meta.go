@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/supervisor"
+	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
 )
 
@@ -115,6 +117,7 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 	planParallel := false
 	planConfidence := 0.0
 	taskLines := []string{}
+	taskTreeLines := []string{}
 	workflowStatus := ""
 	workflowMeter := ""
 	workflowExecution := ""
@@ -145,6 +148,46 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 					title = "(untitled)"
 				}
 				taskLines = append(taskLines, fmt.Sprintf("%d. %s", i+1, title))
+			}
+		}
+	}
+
+	// Build hierarchical task tree from the task store.
+	if m.eng != nil && m.eng.Tools != nil && m.eng.Tools.TaskStore() != nil {
+		storeTasks, _ := m.eng.Tools.TaskStore().ListTasks(taskstore.ListOptions{})
+		if len(storeTasks) > 0 {
+			children := make(map[string][]*supervisor.Task)
+			var roots []*supervisor.Task
+			for _, t := range storeTasks {
+				if t.ParentID == "" {
+					roots = append(roots, t)
+				} else {
+					children[t.ParentID] = append(children[t.ParentID], t)
+				}
+			}
+			var buildTree func(t *supervisor.Task, indent int, isLast bool)
+			buildTree = func(t *supervisor.Task, indent int, isLast bool) {
+				prefix := ""
+				if indent > 0 {
+					treeChar := "├─"
+					if isLast {
+						treeChar = "└─"
+					}
+					prefix = strings.Repeat("  ", indent-1) + treeChar + " "
+				}
+				title := t.Title
+				if title == "" {
+					title = t.Detail
+				}
+				line := fmt.Sprintf("%s[%s] %s  %s", prefix, t.State, t.ID, title)
+				taskTreeLines = append(taskTreeLines, line)
+				kids := children[t.ID]
+				for i, child := range kids {
+					buildTree(child, indent+1, i == len(kids)-1)
+				}
+			}
+			for i, root := range roots {
+				buildTree(root, 0, i == len(roots)-1)
 			}
 		}
 	}
@@ -374,6 +417,7 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		TodoActive:            todoActive,
 		TodoLines:             todoLines,
 		TaskLines:             taskLines,
+		TaskTreeLines:        taskTreeLines,
 		WorkflowStatus:        workflowStatus,
 		WorkflowMeter:         workflowMeter,
 		WorkflowExecution:     workflowExecution,

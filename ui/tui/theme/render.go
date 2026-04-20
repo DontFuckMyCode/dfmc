@@ -1546,7 +1546,10 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 		if meter := strings.TrimSpace(info.WorkflowMeter); meter != "" {
 			body = append(body, meter)
 		}
-		if len(info.TaskLines) == 0 {
+		if len(info.TaskTreeLines) > 0 {
+			body = append(body, fmt.Sprintf("%d task(s) in store", len(info.TaskTreeLines)))
+			body = append(body, info.TaskTreeLines...)
+		} else if len(info.TaskLines) == 0 {
 			body = append(body, "No active task graph yet.")
 			body = append(body, "This fills from autonomy preflight, /split, or drive planning.")
 			body = append(body, "Broad asks are more likely to create task breakdowns than tiny one-shot prompts.")
