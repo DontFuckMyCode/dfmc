@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/dontfuckmycode/dfmc/internal/supervisor"
+	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 )
 
 // GlobTool performs fast shell-style glob matching anywhere under the project
@@ -181,12 +184,13 @@ func (t *ThinkTool) Execute(_ context.Context, req Request) (Result, error) {
 }
 
 // TodoWriteTool maintains a per-engine, in-memory todo list. The LLM calls it
-// to plan multi-step work. State is intentionally ephemeral: it does not
-// persist across process restarts — by design, so stale plans don't leak
-// across sessions.
+// to plan multi-step work. When a task store is injected via SetStore, state
+// is persisted to bbolt so todos survive process restarts. Without a store the
+// tool falls back to the original in-memory behaviour.
 type TodoWriteTool struct {
 	mu    struct{} // placeholder
 	state *todoState
+	store *taskstore.Store
 }
 
 type todoState struct {
@@ -205,13 +209,26 @@ func NewTodoWriteTool() *TodoWriteTool {
 func (t *TodoWriteTool) Name() string        { return "todo_write" }
 func (t *TodoWriteTool) Description() string { return "Plan or update the session todo list." }
 
+func (t *TodoWriteTool) SetStore(store *taskstore.Store) {
+	t.store = store
+}
+
 func (t *TodoWriteTool) Execute(_ context.Context, req Request) (Result, error) {
 	action := strings.ToLower(strings.TrimSpace(asString(req.Params, "action", "set")))
 	switch action {
 	case "list", "show":
-		return t.render(), nil
+		return t.renderStore(), nil
 	case "clear", "reset":
-		t.state.items = t.state.items[:0]
+		if t.store != nil {
+			tasks, _ := t.store.ListTasks(taskstore.ListOptions{})
+			for _, task := range tasks {
+				if task.RunID == "" {
+					_ = t.store.DeleteTask(task.ID)
+				}
+			}
+		} else {
+			t.state.items = t.state.items[:0]
+		}
 		return Result{Output: "todos cleared", Data: map[string]any{"count": 0}}, nil
 	case "set", "replace", "update":
 		raw, ok := req.Params["todos"]
@@ -224,14 +241,105 @@ func (t *TodoWriteTool) Execute(_ context.Context, req Request) (Result, error) 
 		if err != nil {
 			return Result{}, err
 		}
-		t.state.items = items
-		return t.render(), nil
+		if t.store != nil {
+			if err := t.syncToStore(items); err != nil {
+				return Result{}, fmt.Errorf("todo_write: persist failed: %w", err)
+			}
+		} else {
+			t.state.items = items
+		}
+		return t.renderStore(), nil
 	default:
 		return Result{}, fmt.Errorf("todo_write: unknown action %q. Allowed: set | list | clear (aliases: replace/update for set; show for list; reset for clear). Example: {\"action\":\"set\",\"todos\":[...]}", action)
 	}
 }
 
-func (t *TodoWriteTool) render() Result {
+// renderStore renders todos from the task store when available, falling back
+// to the in-memory state.
+func (t *TodoWriteTool) renderStore() Result {
+	if t.store != nil {
+		tasks, err := t.store.ListTasks(taskstore.ListOptions{})
+		if err == nil && len(tasks) == 0 {
+			return Result{Output: "(no todos)", Data: map[string]any{"count": 0, "items": []any{}}}
+		}
+		if err == nil {
+			return t.renderTasksAsResult(tasks)
+		}
+	}
+	return t.renderMem()
+}
+
+// syncToStore clears session-only tasks (those with no RunID) and replaces
+// them with the items parsed from the model payload.
+func (t *TodoWriteTool) syncToStore(items []todoItem) error {
+	existing, err := t.store.ListTasks(taskstore.ListOptions{})
+	if err != nil {
+		return err
+	}
+	for _, task := range existing {
+		if task.RunID == "" {
+			_ = t.store.DeleteTask(task.ID)
+		}
+	}
+	for _, item := range items {
+		task := supervisor.Task{
+			ID:     taskstore.NewTaskID(),
+			Title:  item.Content,
+			State:  supervisor.TaskState(strings.ToLower(item.Status)),
+			Origin: "todo_write",
+		}
+		if task.State == "" {
+			task.State = supervisor.TaskPending
+		}
+		if err := t.store.SaveTask(&task); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *TodoWriteTool) renderTasksAsResult(tasks []*supervisor.Task) Result {
+	if len(tasks) == 0 {
+		return Result{Output: "(no todos)", Data: map[string]any{"count": 0, "items": []any{}}}
+	}
+	var lines []string
+	var pending, active, done int
+	for i, task := range tasks {
+		mark := "[ ]"
+		switch strings.ToLower(string(task.State)) {
+		case "running", "in_progress", "active", "doing":
+			mark = "[~]"
+			active++
+		case "done", "completed":
+			mark = "[x]"
+			done++
+		default:
+			pending++
+		}
+		content := task.Title
+		if task.Detail != "" {
+			content = task.Detail
+		}
+		lines = append(lines, fmt.Sprintf("%s %d. %s", mark, i+1, content))
+	}
+	out := strings.Join(lines, "\n")
+	items := make([]todoItem, len(tasks))
+	for i, task := range tasks {
+		items[i] = todoItem{Content: task.Title, Status: string(task.State)}
+	}
+	return Result{
+		Output: out,
+		Data: map[string]any{
+			"count":       len(tasks),
+			"pending":     pending,
+			"in_progress": active,
+			"completed":   done,
+			"items":       items,
+		},
+	}
+}
+
+func (t *TodoWriteTool) renderMem() Result {
 	if len(t.state.items) == 0 {
 		return Result{Output: "(no todos)", Data: map[string]any{"count": 0, "items": []any{}}}
 	}
@@ -273,9 +381,23 @@ type TodoItem struct {
 }
 
 // Snapshot returns a defensive copy of the current todo list so callers
-// can read it without racing with a concurrent todo_write call.
+// can read it without racing with a concurrent todo_write call. Reads from
+// the task store when available, falls back to in-memory state.
 func (t *TodoWriteTool) Snapshot() []TodoItem {
-	if t == nil || t.state == nil {
+	if t == nil {
+		return nil
+	}
+	if t.store != nil {
+		tasks, err := t.store.ListTasks(taskstore.ListOptions{})
+		if err == nil {
+			out := make([]TodoItem, len(tasks))
+			for i, task := range tasks {
+				out[i] = TodoItem{Content: task.Title, Status: string(task.State)}
+			}
+			return out
+		}
+	}
+	if t.state == nil {
 		return nil
 	}
 	out := make([]TodoItem, len(t.state.items))

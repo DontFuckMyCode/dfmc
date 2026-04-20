@@ -46,6 +46,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/internal/storage"
+	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -184,6 +185,11 @@ func (e *Engine) Init(ctx context.Context) error {
 	e.CodeMap = codemap.New(e.AST)
 	e.Context = ctxmgr.New(e.CodeMap)
 	e.Tools = tools.New(*e.Config)
+	// Task store is bbolt-backed independent task persistence. Wired after
+	// tools.New so e.Tools is non-nil. The TodoWriteTool falls back to
+	// in-memory when the store is nil (e.g. tests that construct
+	// tools.Engine directly without going through engine.Init).
+	e.Tools.SetTaskStore(taskstore.NewStore(e.Storage.DB()))
 	e.Tools.SetSubagentRunner(e)
 	// Wire tool self-narration: the tools.Engine strips the optional
 	// `_reason` virtual field from every params map before dispatch and

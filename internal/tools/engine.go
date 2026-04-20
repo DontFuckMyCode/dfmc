@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 )
 
 type Request struct {
@@ -61,6 +62,10 @@ type Engine struct {
 	// publisher is installed (tests, embedded use), the field is just
 	// stripped silently. Atomic via the mu lock.
 	reasoningPublisher ReasoningPublisher
+
+	// taskStore is the bbolt-backed task persistence. Injected via
+	// SetTaskStore so the package stays free of an engine-cycle.
+	taskStore *taskstore.Store
 }
 
 // ReasoningPublisher is the callback shape the higher-level engine wires
@@ -78,6 +83,22 @@ func (e *Engine) SetReasoningPublisher(pub ReasoningPublisher) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.reasoningPublisher = pub
+}
+
+func (e *Engine) SetTaskStore(store *taskstore.Store) {
+	e.taskStore = store
+	t, ok := e.Get("todo_write")
+	if !ok {
+		return
+	}
+	if tw, ok := t.(*TodoWriteTool); ok {
+		tw.SetStore(store)
+	}
+}
+
+// TaskStore returns the injected task store, or nil when no store was set.
+func (e *Engine) TaskStore() *taskstore.Store {
+	return e.taskStore
 }
 
 func New(cfg config.Config) *Engine {

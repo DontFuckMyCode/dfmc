@@ -148,6 +148,7 @@ type StatsPanelInfo struct {
 	TodoActive            string
 	TodoLines             []string
 	TaskLines             []string
+	TaskTreeLines        []string
 	WorkflowStatus        string
 	WorkflowMeter         string
 	WorkflowExecution     string

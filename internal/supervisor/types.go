@@ -5,12 +5,14 @@ import "time"
 type TaskState string
 
 const (
-	TaskPending   TaskState = "pending"
-	TaskRunning   TaskState = "running"
-	TaskDone      TaskState = "done"
-	TaskBlocked   TaskState = "blocked"
-	TaskSkipped   TaskState = "skipped"
-	TaskVerifying TaskState = "verifying"
+	TaskPending         TaskState = "pending"
+	TaskRunning         TaskState = "running"
+	TaskDone            TaskState = "done"
+	TaskBlocked         TaskState = "blocked"
+	TaskSkipped         TaskState = "skipped"
+	TaskVerifying       TaskState = "verifying"
+	TaskWaiting         TaskState = "waiting"
+	TaskExternalReview TaskState = "external_review"
 )
 
 type WorkerClass string
@@ -42,6 +44,7 @@ type Task struct {
 	ID           string
 	ParentID     string
 	Origin       string
+	RunID        string // drive run that created this task; empty for standalone todos
 	Title        string
 	Detail       string
 	State        TaskState

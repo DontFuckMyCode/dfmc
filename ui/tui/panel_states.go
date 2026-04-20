@@ -386,3 +386,10 @@ type agentLoopState struct {
 	contextScope string
 	toolTimeline []toolChip
 }
+
+// taskPanelState — UI state for the task tree panel (stats panel TASKS tab).
+// Tracks scroll offset and which task ID is expanded to show its detail.
+type taskPanelState struct {
+	scroll       int
+	expandedTask string
+}

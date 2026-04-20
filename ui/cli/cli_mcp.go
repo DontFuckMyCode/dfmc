@@ -32,7 +32,7 @@ func runMCP(ctx context.Context, eng *engine.Engine, args []string, version stri
 		return 1
 	}
 
-	bridge := &engineMCPBridge{eng: eng, drive: &driveMCPHandler{eng: eng}}
+	bridge := &engineMCPBridge{eng: eng, drive: &driveMCPHandler{eng: eng}, task: &taskMCPHandler{eng: eng}}
 	srv := mcp.NewServer(os.Stdin, os.Stdout, bridge, mcp.ServerInfo{
 		Name:    "dfmc",
 		Version: version,
@@ -76,6 +76,7 @@ Example Claude Desktop config snippet:
 type engineMCPBridge struct {
 	eng   *engine.Engine
 	drive *driveMCPHandler
+	task  *taskMCPHandler
 }
 
 func (b *engineMCPBridge) List() []mcp.ToolDescriptor {
@@ -102,6 +103,9 @@ func (b *engineMCPBridge) List() []mcp.ToolDescriptor {
 	if b.drive != nil {
 		out = append(out, b.drive.Tools()...)
 	}
+	if b.task != nil {
+		out = append(out, b.task.Tools()...)
+	}
 	return out
 }
 
@@ -114,6 +118,9 @@ func (b *engineMCPBridge) Call(ctx context.Context, name string, rawArgs []byte)
 	// approval gate / hooks dispatch don't need to special-case them.
 	if b.drive != nil && b.drive.Handles(name) {
 		return b.drive.Call(ctx, name, rawArgs)
+	}
+	if b.task != nil && b.task.Handles(name) {
+		return b.task.Call(ctx, name, rawArgs)
 	}
 	params := map[string]any{}
 	if len(rawArgs) > 0 {
