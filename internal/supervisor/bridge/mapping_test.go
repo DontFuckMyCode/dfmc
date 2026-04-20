@@ -14,6 +14,7 @@ func TestTaskDriveRoundTripPreservesExecutionMetadata(t *testing.T) {
 	task := supervisor.Task{
 		ID:           "T2",
 		ParentID:     "T1",
+		Origin:       "supervisor",
 		Title:        "Patch auth flow",
 		Detail:       "Update the refresh path and add regression coverage.",
 		State:        supervisor.TaskRunning,
@@ -51,6 +52,9 @@ func TestTaskDriveRoundTripPreservesExecutionMetadata(t *testing.T) {
 	if todo.BlockedReason != "" {
 		t.Fatalf("expected empty BlockedReason, got: %q", todo.BlockedReason)
 	}
+	if todo.Origin != "supervisor" {
+		t.Fatalf("expected Origin=supervisor, got: %q", todo.Origin)
+	}
 
 	back := TaskFromDriveTodo(todo)
 	if back.WorkerClass != supervisor.WorkerCoder {
@@ -67,6 +71,9 @@ func TestTaskDriveRoundTripPreservesExecutionMetadata(t *testing.T) {
 	}
 	if back.BlockedReason != "" {
 		t.Fatalf("expected empty blocked reason after roundtrip, got: %q", back.BlockedReason)
+	}
+	if back.Origin != "supervisor" {
+		t.Fatalf("expected origin=supervisor after roundtrip, got: %q", back.Origin)
 	}
 }
 

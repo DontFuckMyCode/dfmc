@@ -41,6 +41,7 @@ const (
 type Task struct {
 	ID           string
 	ParentID     string
+	Origin       string
 	Title        string
 	Detail       string
 	State        TaskState

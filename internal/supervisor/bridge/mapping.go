@@ -9,9 +9,10 @@ import (
 
 func TaskFromDriveTodo(todo drive.Todo) supervisor.Task {
 	return supervisor.Task{
-		ID:           todo.ID,
-		ParentID:     todo.ParentID,
-		Title:        todo.Title,
+		ID:            todo.ID,
+		ParentID:      todo.ParentID,
+		Origin:        todo.Origin,
+		Title:         todo.Title,
 		Detail:       todo.Detail,
 		State:        supervisor.TaskState(todo.Status),
 		DependsOn:    append([]string(nil), todo.DependsOn...),
@@ -37,6 +38,7 @@ func TaskToDriveTodo(task supervisor.Task) drive.Todo {
 	return drive.Todo{
 		ID:           task.ID,
 		ParentID:     task.ParentID,
+		Origin:       task.Origin,
 		Title:        task.Title,
 		Detail:       task.Detail,
 		DependsOn:    append([]string(nil), task.DependsOn...),
