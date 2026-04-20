@@ -57,6 +57,9 @@ func (c *Config) Validate() error {
 		if profile.MaxContext < 0 {
 			return fmt.Errorf("providers.profiles.%q: max_context must be >= 0", name)
 		}
+		if isLikelyPlaceholder(profile.APIKey) {
+			return fmt.Errorf("providers.profiles.%q: api_key %q looks like an unfilled placeholder — replace it with your actual key or remove the line", name, profile.APIKey)
+		}
 	}
 
 	if c.Context.MaxFiles <= 0 {
@@ -103,4 +106,20 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// isLikelyPlaceholder returns true if key looks like an unfilled .env.example
+// placeholder (e.g. "<your-key-here>", "<MY_API_KEY>"). Such literals
+// must not be accepted as real API keys — they cause confusing provider
+// authentication failures that are hard to trace back to a misconfigured
+// config file.
+func isLikelyPlaceholder(key string) bool {
+	if len(key) < 2 || key[0] != '<' {
+		return false
+	}
+	if key[len(key)-1] != '>' {
+		return false
+	}
+	inner := key[1 : len(key)-1]
+	return len(inner) > 0 && !strings.ContainsAny(inner, " \t")
 }

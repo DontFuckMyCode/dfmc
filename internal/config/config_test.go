@@ -345,6 +345,35 @@ func TestValidate_ProfileWithModelAndBaseURLPasses(t *testing.T) {
 	}
 }
 
+func TestValidate_PlaceholderAPIKeyRejected(t *testing.T) {
+	cases := []string{
+		"<your-key-here>",
+		"<YOUR_ANTHROPIC_KEY>",
+		"<some-placeholder>",
+		"<api-key-placeholder>",
+	}
+	for _, key := range cases {
+		cfg := DefaultConfig()
+		cfg.Providers.Profiles["test"] = ModelConfig{Model: "gpt-4", APIKey: key}
+		cfg.Providers.Primary = "test"
+		cfg.Providers.Fallback = nil
+		err := cfg.Validate()
+		if err == nil {
+			t.Errorf("Validate() with api_key=%q: want placeholder rejection, got nil", key)
+		}
+	}
+}
+
+func TestValidate_RealAPIKeyPasses(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Providers.Profiles["custom"] = ModelConfig{Model: "gpt-4", APIKey: "sk-real-key-12345"}
+	cfg.Providers.Primary = "custom"
+	cfg.Providers.Fallback = nil
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("real api_key should pass validation, got: %v", err)
+	}
+}
+
 func TestLoadWithOptions_SandboxAllowCommandAliasDisablesRunCommand(t *testing.T) {
 	tmp := t.TempDir()
 	globalPath := filepath.Join(tmp, "global.yaml")
