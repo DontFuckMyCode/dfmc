@@ -16,7 +16,7 @@ import (
 // up to 2 short coaching sentences. `fresh` is the slice added in the round
 // that just completed; `all` is the full history including fresh. `recent`
 // is the sliding de-dup window so the same hint doesn't fire on every round.
-func buildTrajectoryHints(fresh, all []nativeToolTrace, recent []string) []string {
+func buildTrajectoryHints(fresh, all []nativeToolTrace, recent []string) *ctxmgr.TrajectoryOutput {
 	if len(fresh) == 0 {
 		return nil
 	}

@@ -31,11 +31,11 @@ func TestBuildTrajectoryHints_UnwrapsBridgedToolCall(t *testing.T) {
 		},
 	}
 	hints := buildTrajectoryHints(traces, traces, nil)
-	if len(hints) == 0 {
+	if hints == nil || len(hints.Hints) == 0 {
 		t.Fatalf("expected mutation hint for bridged write_file")
 	}
-	if !strings.Contains(hints[0], "internal/auth/token.go") {
-		t.Fatalf("hint should carry inner path, got %q", hints[0])
+	if !strings.Contains(hints.Hints[0], "internal/auth/token.go") {
+		t.Fatalf("hint should carry inner path, got %q", hints.Hints[0])
 	}
 }
 
@@ -56,11 +56,11 @@ func TestBuildTrajectoryHints_FailureSurfaces(t *testing.T) {
 		},
 	}
 	hints := buildTrajectoryHints(traces, traces, nil)
-	if len(hints) == 0 {
+	if hints == nil || len(hints.Hints) == 0 {
 		t.Fatalf("expected failure hint")
 	}
-	if !strings.Contains(strings.ToLower(hints[0]), "failed") {
-		t.Fatalf("hint should flag the failure, got %q", hints[0])
+	if !strings.Contains(strings.ToLower(hints.Hints[0]), "failed") {
+		t.Fatalf("hint should flag the failure, got %q", hints.Hints[0])
 	}
 }
 

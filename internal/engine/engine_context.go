@@ -246,6 +246,8 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 			"reasons":     report.Reasons,
 		},
 	})
+	// Capture snapshot for task-attached context reuse.
+	e.lastContextSnapshot = e.buildContextSnapshot(question, task, total, chunks)
 	return chunks
 }
 
@@ -505,6 +507,39 @@ func detectContextTask(question string) string {
 		return "general"
 	}
 	return task
+}
+
+// buildContextSnapshot creates a ContextSnapshot from the retrieval outcome.
+func (e *Engine) buildContextSnapshot(query, task string, budgetUsed int, chunks []types.ContextChunk) *ctxmgr.ContextSnapshot {
+	if chunks == nil {
+		return nil
+	}
+	avgScore := 0.0
+	if len(chunks) > 0 {
+		for _, c := range chunks {
+			avgScore += c.Score
+		}
+		avgScore /= float64(len(chunks))
+	}
+	refs := make([]ctxmgr.ContextChunkRef, len(chunks))
+	for i, c := range chunks {
+		refs[i] = ctxmgr.ContextChunkRef{
+			Path:      c.Path,
+			Language:  c.Language,
+			LineStart: c.LineStart,
+			LineEnd:   c.LineEnd,
+			Score:     c.Score,
+			Source:    c.Source,
+		}
+	}
+	return &ctxmgr.ContextSnapshot{
+		Query:      query,
+		Task:       task,
+		BudgetUsed: budgetUsed,
+		Confidence: avgScore,
+		RetrievedAt: time.Now(),
+		Chunks:     refs,
+	}
 }
 
 func contextTaskProfile(task string) contextTaskBudgetProfile {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -30,6 +31,31 @@ func (c *Config) Validate() error {
 		}
 		if strings.TrimSpace(profile.Model) == "" {
 			return fmt.Errorf("providers.profiles.%q: model is required for non-offline providers", name)
+		}
+		if profile.BaseURL != "" {
+			u, err := url.Parse(profile.BaseURL)
+			if err != nil {
+				return fmt.Errorf("providers.profiles.%q: base_url %q is not a valid URL: %v", name, profile.BaseURL, err)
+			}
+			if u.Scheme == "" || u.Host == "" {
+				return fmt.Errorf("providers.profiles.%q: base_url %q must include scheme (https) and host", name, profile.BaseURL)
+			}
+			if u.Scheme != "http" && u.Scheme != "https" {
+				return fmt.Errorf("providers.profiles.%q: base_url %q scheme must be http or https", name, profile.BaseURL)
+			}
+		}
+		if profile.Protocol != "" {
+			switch strings.ToLower(profile.Protocol) {
+			case "anthropic", "google", "gemini", "openai", "openai-compatible":
+			default:
+				return fmt.Errorf("providers.profiles.%q: protocol %q must be one of anthropic|google|gemini|openai|openai-compatible", name, profile.Protocol)
+			}
+		}
+		if profile.MaxTokens < 0 {
+			return fmt.Errorf("providers.profiles.%q: max_tokens must be >= 0", name)
+		}
+		if profile.MaxContext < 0 {
+			return fmt.Errorf("providers.profiles.%q: max_context must be >= 0", name)
 		}
 	}
 

@@ -142,3 +142,20 @@ func (e *Engine) FindSymbol(name string) []Node {
 	}
 	return out
 }
+
+// InvalidateFile removes a file and all its symbol nodes from the codemap.
+// Subsequent context builds for this file will re-parse it from scratch.
+func (e *Engine) InvalidateFile(path string) {
+	if e == nil || e.graph == nil {
+		return
+	}
+	p := filepath.ToSlash(path)
+	e.graph.RemoveNode("file:" + p)
+
+	prefix := fmt.Sprintf("sym:%s:", p)
+	for _, n := range e.graph.Nodes() {
+		if strings.HasPrefix(n.ID, prefix) {
+			e.graph.RemoveNode(n.ID)
+		}
+	}
+}

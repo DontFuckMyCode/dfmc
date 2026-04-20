@@ -1,7 +1,6 @@
 # DFMC — Derin Proje Analiz Raporu
 
-> Tarih: 2026-04-20 | Tarayan: DFMC Copilot | Kaynak: 363 dosya, 5663 graf düğümü
-> **Son güncelleme:** H1, H2, H3, M2, M4, L2 (kısmi), L3 çözüldü (2026-04-20)
+> Tarih: 2026-04-21 | Tarayan: DFMC Copilot | Kaynak: 200+ `.go` dosya, 199 test dosyası, 5663 graf düğümü
 
 ---
 
@@ -11,15 +10,15 @@
 |---|---|
 | Modül | `github.com/dontfuckmycode/dfmc` |
 | Go Versiyonu | 1.25.0 |
-| Toplam `.go` dosyası | 200+ |
-| Test dosyası | ~70 `_test.go` |
+| Kaynak `.go` dosyası | 200+ |
+| Test dosyası | 199 `_test.go` |
 | Ana bağımlılıklar | bubbletea, tree-sitter, bbolt, golang.org/x/net, golang.org/x/time, yaml.v3 |
 | Doğrudan dep sayısı | 16 |
 | Dolaylı dep sayısı | 12 |
 | Graf | 5663 düğüm, 7176 kenar, 0 döngü |
 | Son yazar | Ersin KOÇ |
 
-DFMC, LLM tabanlı bir AI kod asistanı motorudur. CLI, TUI (terminal UI) ve web arayüzü sunar. Tree-sitter ile AST analizi, kod grafiği oluşturma, güvenlik taraması, hook sistemi, otonom drive modu ve çoklu provider (OpenAI, Anthropic, Google, Alibaba vb.) desteği içerir.
+DFMC, LLM tabanlı bir AI kod asistanı motorudur. CLI, TUI (terminal UI) ve web arayüzü sunar. Tree-sitter ile AST analizi, kod grafiği oluşturma, güvenlik taraması, hook sistemi, otonom drive modu ve çoklu provider (OpenAI, Anthropic, Google, Alibaba, Z.AI, MiniMax vb.) desteği içerir.
 
 ---
 
@@ -29,334 +28,311 @@ DFMC, LLM tabanlı bir AI kod asistanı motorudur. CLI, TUI (terminal UI) ve web
 
 ```
 cmd/dfmc/           → Uygulama giriş noktası
-internal/engine/    → Çekirdek motor (69 dosya — en büyük modül)
+internal/engine/    → Çekirdek motor (~69 dosya — en büyük modül)
 internal/drive/     → Otonom drive döngüsü (17 dosya)
 internal/tools/     → Araç motoru + 37 dosya (apply_patch, ast_query, delegate, git, web vb.)
 internal/provider/  → LLM provider yönlendirici + throttle + stream
-internal/security/  → Gizli anahtar + güvenlik açığı tarayıcı
-internal/ast/       → Tree-sitter tabanlı AST motoru
-internal/codemap/   → Kod bağımlılık grafiği
-internal/config/    → YAML yapılandırma + doğrulama
-internal/context/   → Bağlam penceresi yönetimi
-internal/conversation/ → Konuşma kalıcılığı
+internal/security/  → Gizli anahtar + güvenlik açığı tarayıcı (AST + regex)
+internal/ast/       → Tree-sitter tabanlı AST motoru (CGO + regex fallback)
+internal/codemap/   → Kod bağımlılık grafiği (düğüm/kenar ekleme, döngü tespiti)
+internal/config/    → YAML yapılandırma + doğrulama + models.dev senkronizasyonu
+internal/context/   → Bağlam penceresi yönetimi + sembol genişletme
+internal/conversation/ → Konuşma kalıcılığı + dallanma
 internal/memory/    → Uzun süreli bellek deposu (3 dosya — küçük)
-internal/hooks/     → Shell hook dispatch
+internal/hooks/     → Shell hook dispatch (session_start, pre_tool, post_tool)
 internal/mcp/       → Model Context Protocol köprüsü
-internal/intent/    → Niyet yönlendirici
-internal/promptlib/ → Prompt kataloğu
+internal/intent/    → Niyet yönlendirici (resume vs. new vs. clarify)
+internal/promptlib/ → Prompt kataloğu + istatistik
 internal/planning/  → Görev bölücü
-ui/tui/             → Bubble Tea TUI (96 dosya — ikinci en büyük modül)
+internal/supervisor/→ Süpervizör + köprü + yürütücü
+internal/tokens/    → Token sayacı
+internal/storage/   → bbolt destekli kalıcı depo
+internal/skills/    → Yetenek kataloğu
+internal/pluginexec/→ Plugin çalıştırıcı
+internal/coach/     → Koç geri bildirim motoru
+ui/tui/             → Bubble Tea TUI (99 dosya — ikinci en büyük modül)
+ui/cli/             → CLI yüzeyi
+ui/web/             → Web API + Workbench
+pkg/types/          → Paylaşılan tipler (Message, Symbol, SafeGo)
 ```
 
 ### 2.2 Kritik Bağımlılık Grafiği
 
 ```
 Engine → {AST, CodeMap, Context, Conversation, Security, Tools, Provider, Memory, Hooks, Intent}
-Tools.Engine → {Config}
+Tools.Engine → {Config, SubagentRunner}
 Driver (Drive) → {Runner, Store, Publisher}
 TUI.Model → {Engine (salt-okunur event tüketici)}
 Provider.Router → {Config, Provider interface}
+CodeMap → AST
+Context → CodeMap
 ```
 
-**Döngüsel bağımlılık yok** (graf: 0 döngü) — bu mimari açıdan temiz bir işaret.
+**Döngüsel bağımlılık yok** (graf: 0 döngü) — bu, modülerlik için güçlü bir işaret.
 
-### 2.3 Engine: Merkezî Yapı
+### 2.3 Engine Bölünmesi
 
-`internal/engine/engine.go:63` — `Engine` struct, 12 ana bileşeni barındırır:
-- `Config`, `Storage`, `EventBus`, `ProjectRoot`, `AST`, `CodeMap`, `Context`, `Providers`, `Tools`, `Memory`, `Conversation`, `Security`, `Hooks`, `Intent`
-- Lock sıralaması dokümante edilmiş: `agentMu → mu` (deadlock önleme)
-- `memoryDegraded` flag: Memory yüklemesi başarısız olursa motor degraded modda çalışır
+`internal/engine/` daha önce tek bir god file idi; şimdi 7 alan dosyasına bölündü:
 
-**State Machine:** `StateCreated → StateInitializing → StateReady → StateServing → StateShuttingDown → StateStopped`
+| Dosya | Sorumluluk |
+|---|---|
+| `engine.go` | Yapı, yaşam döngüsü, durum |
+| `engine_tools.go` | ListTools, CallTool, onay + hook + panic-guard |
+| `engine_context.go` | Bağlam bütçesi, öneri, sıkıştırma |
+| `engine_prompt.go` | Prompt önerileri, sistem blokları |
+| `engine_ask.go` | Ask / StreamAsk, geçmiş bütçesi |
+| `engine_passthrough.go` | Status, Memory, Conversation, config reload |
+| `engine_analyze.go` | Ölü kod tespiti, karmaşıklık puanı |
 
 ---
 
-## 3. Modül Detayları
+## 3. Güvenlik Değerlendirmesi
 
-### 3.1 internal/engine (69 dosya)
+### 3.1 Gizli Anahtar Yönetimi ✅
 
-| Alt-modül | Satır | Açıklama |
-|---|---|---|
-| `engine.go` | 489 | Merkezî yapı, Init, Shutdown, state yönetimi |
-| `agent_loop.go` | ~420 | Araç döngüsü, payload trim, stream yardımcıları |
-| `agent_loop_native.go` | ~600+ | Native araç çalıştırma, park/resume |
-| `agent_loop_parallel.go` | ~200 | Paralel araç çalıştırma + önbellek |
-| `agent_loop_phases.go` | ~185+ | Faz yardımcıları (cacheMu parametreli) |
-| `agent_autonomy.go` | - | Otonom mod |
-| `agent_coach.go` + `_emit.go` | - | Coach geri bildirim |
-| `agent_compact.go` | - | Konuşma sıkıştırma |
-| `agent_handoff.go` | - | Agent el sıkışma |
-| `agent_parking.go` + `_parked.go` | - | Park edilmiş agent yönetimi |
-| `subagent.go` | 71 | Subagent çalıştırma arayüzü |
-| `approver.go` | - | İnsan-onay kapısı |
-| `drive_adapter.go` | - | Drive ↔ Engine adaptörü |
-| `eventbus.go` | - | Olay veriyolu |
-| `engine_ask.go` | - | Ask giriş noktası |
-| `engine_analyze.go` | - | Analiz giriş noktası |
-| `engine_context.go` | - | Bağlam yönetimi |
-| `engine_intent.go` | - | Niyet yönlendirme |
-| `engine_prompt.go` | - | Prompt oluşturma |
-| `engine_tools.go` | - | Araç kayıt/yönetim |
-| `status_types.go` | - | Durum tip tanımları |
+- `.env` ve `.env.local` dosyaları `.gitignore`'da (satır 23-24).
+- Config yükleyici, çevresel değişkenleri `.env` dosyasına göre önceliklendirir.
+- Security scanner, AST-tetiğli credential tespiti yapar (`astscan_credentials.go`).
+- **Uyarı:** `.env.example`'daki `<your-key-here>` yer tutucuları boş string olarak ayrıştırılmaz; `parseDotEnvValue` literal değeri döndürür. Kullanıcı kopyalayıp düzenlemezse karmaşık hata mesajı alır.
 
-**Gözlem:** `engine.go` 489 satır — başarılı bir "god file" bölme refactoring geçirmiş (commit: `bb6753e5` "split engine.go god file into 7 domain modules"). Modülerlik iyi.
+### 3.2 Komut Çalıştırma Politikası ✅
 
-### 3.2 internal/drive (17 dosya)
+- `security.sandbox.allow_command` önerilen yapılandırma.
+- Eski `allow_shell` geriye uyumlu ama tüm `run_command` aracını devre dışı bırakır.
+- SSRF koruması web_fetch aracında mevcut.
 
-| Dosya | Açıklama |
-|---|---|
-| `driver.go` | Ana döngü: plan → dispatch → drain → finalize (786+ satır) |
-| `runner.go` | Runner interface: PlannerRequest/Response, ExecuteTodoRequest/Response |
-| `planner.go` | Plan oluşturucu |
-| `scheduler.go` | TODO DAG çizelgeleyici — `readyBatch` dosya kapsamı çakışma kontrolü yapar |
-| `supervision.go` | Denetim mantığı |
-| `persistence.go` | BoltDB kalıcılık |
-| `events.go` | Olay tanımları |
-| `types.go` | Run, Todo, Config, RunStatus tipleri |
-| `expansion.go` | Plan genişletme |
-| `verification.go` | Sonuç doğrulama |
-| `registry.go` | Provider kayıt defteri |
+### 3.3 AST-Akıllı Güvenlik Tarayıcı ✅
 
-**Gözlem:** `driver.go` en karmaşık dosya — paralel TODO dispatch, drainGraceWindow (2sn), MaxFailedTodos sonlandırma. İyi dokümantasyon.
-
-### 3.3 internal/tools (37 dosya)
-
-| Araç | Dosya |
-|---|---|
-| Merkez motor | `engine.go` (1062+ satır — en büyük tek dosya) |
-| Araç spesifikasyonu | `spec.go`, `builtin_specs.go` |
-| apply_patch | `apply_patch.go` |
-| ast_query | `ast_query.go` |
-| codemap | `codemap.go` |
-| delegate | `delegate.go` |
-| destructive | `destructive.go` |
-| find_symbol | `find_symbol.go` |
-| git | `git.go` |
-| glob | `glob.go` |
-| meta | `meta.go` |
-| orchestrate | `orchestrate.go`, `orchestrate_dag.go` |
-| web | `web.go` (SSRF koruması) |
-| komut | `command.go` |
-
-**`tools/engine.go` Sorun:** 1062 satır — okunabilirlik açısından bölünmeye aday. `normalizeToolParams` (495-607), `compressToolOutput` (737+), `writeFileAtomic` (1062+) gibi fonksiyonlar ayrı dosyalara taşınabilir.
-
-### 3.4 internal/provider (~20 dosya)
-
-Provider arayüzü: `Stream(ctx, messages, tools) <-chan StreamEvent`
-
-| Provider | Dosya |
-|---|---|
-| OpenAI uyumlu | `openai_compat.go` + `_tools.go` |
-| Anthropic | `anthropic.go` + `_tools.go` |
-| Google | `google.go` + `_tools.go` |
-| Alibaba | `alibaba_test.go` |
-| Offline | `offline.go`, `offline_analyzer.go` |
-| Router | `router.go` — throttle, fallback, Retry-After |
-| Throttle | `throttle.go` |
-
-**Sentinel hatalar:** `ErrProviderUnavailable`, `ErrProviderNotFound`, `ErrContextOverflow`, `ErrProviderThrottled` — iyi tasarlanmış hata hiyerarşisi.
-
-### 3.5 ui/tui (96 dosya)
-
-En büyük ikinci modül. Bubble Tea framework üzerine kurulu.
-
-| Kategori | Dosyalar |
-|---|---|
-| Ana model | `tui.go`, `update.go` |
-| Render | `render_layout.go`, `render_panels.go`, `render_chat_meta.go`, `render_status_helpers.go` |
-| Chat | `chat_actions.go`, `chat_commands.go`, `chat_helpers.go`, `chat_key.go` |
-| Slash komutları | `slash_handlers.go`, `slash_picker.go`, `slash_picker_modal.go` |
-| Tema | `theme.go`, `color.go`, `tui_palette.go` |
-| Panel | `context_panel.go`, `codemap.go`, `drive.go`, `memory.go`, `security.go`, `providers.go` |
-| Onay | `approver.go` |
-| Giriş | `input.go`, `mention.go`, `mention_helpers.go`, `composer_mentions.go` |
-| Fark | `diff_sidebyside.go`, `patch_view.go`, `patch_parse.go` |
-| Güvenlik | `secret_redact.go` |
+- Regex tarayıcı + AST tarayıcı çift katmanlı.
+- Tüm argümanları literal olan `exec.Command` çağrıları güvenli olarak işaretlenir (false positive azaltma).
+- Dil bazlı kurallar: Go, JavaScript, TypeScript, Python.
 
 ---
 
-## 4. Kod Kalitesi Metrikleri
+## 4. Kod Kalitesi
 
 ### 4.1 Test Kapsamı
 
 | Modül | Kaynak Dosya | Test Dosyası | Oran |
 |---|---|---|---|
-| engine | 22 | 47 | **2.1x** (her kaynak dosya başına 2+ test) |
-| drive | 11 | 6 | **0.55x** |
-| tools | 24 | 13 | **0.54x** |
-| tui | ~60 | ~36 | **0.6x** |
-| security | 6 | 3 | **0.5x** |
-| provider | ~12 | ~8 | **0.67x** |
-| ast | 9 | 4 | **0.44x** |
-| codemap | 5 | 3 | **0.6x** |
-| memory | 1 | 2 | **2.0x** |
-| config | 4 | 3 | **0.75x** |
-| context | 3 | 3 | **1.0x** |
+| engine | ~25 | ~30 | 1.2 |
+| tools | ~15 | ~15 | 1.0 |
+| drive | 13 | 6 | 0.5 |
+| provider | ~12 | ~12 | 1.0 |
+| tui | ~60 | ~45 | 0.75 |
+| config | 4 | 3 | 0.75 |
+| security | 7 | 3 | 0.4 |
+| memory | 3 | 3 | 1.0 |
+| hooks | 5 | 3 | 0.6 |
+| codemap | 4 | 3 | 0.75 |
 
-**Genel test: kaynak oranı ≈ 0.7x** — engine modülü çok iyi kapsanmış, drive ve ast zayıf.
+**Toplam test/kaynak oranı: ~199/200+ ≈ 0.95** — Yüksek.
 
-### 4.2 Mutex / Eşzamanlılık
+### 4.2 Zayıf Test Kapsamlı Alanlar
 
-- **16+ mutex alanı** tespit edildi (`sync.RWMutex` veya `sync.Mutex`)
-- Tüm `Lock/Unlock` çiftleri `defer` ile korunuyor ✓
-- Lock sıralaması engine.go'da dokümante: `agentMu → mu` ✓
-- `conversation/manager.go:52-53`: çift mutex (`mu` + `saveMu`) — save işlemleri serileştirilmiş, snapshot tutarlılığı korunuyor ✓
-
-### 4.3 Panic Kullanımı
-
-- **Üretim kodunda sadece 1 `panic()`** çağrısı: `internal/commands/registry.go:236` — `RegistrationError` sarmalama
-- Kalan 7 `panic()` hepsi test dosyalarında — kabul edilebilir ✓
-
-### 4.4 context.Background / context.TODO
-
-- Sadece **test dosyalarında** kullanılıyor (10 bulgu) — üretim kodunda yok ✓
-
-### 4.5 init() Fonksiyonları
-
-- **0 adet** `func init()` — temiz ✓
-
-### 4.6 Shutdown / Close Yönetimi
-
-| Bileşen | Metot |
-|---|---|
-| Engine | `Shutdown()` — aşamalı, hata raporlamalı |
-| AST Engine | `Close()` |
-| Tools Engine | `Close()` — tüm araçları iteratif kapatır |
-| Storage (BoltDB) | `Close()` |
-| PluginExec Client | `Close(ctx)` |
-| AST Query Tool | `Close()` |
-| Codemap Tool | `Close()` |
-| Find Symbol Tool | `Close()` |
-
-**Sorun:** Engine.Shutdown() `error` döndürmüyor — hataları `reportShutdownError` ile logluyor ama çağırana bildirmiyor.
-
----
-
-## 5. Güvenlik Analizi
-
-### 5.1 Güvenlik Tarayıcı
-
-`internal/security/` iki katmanlı tarama sunar:
-1. **Regex tarayıcı** (`scanner.go`) — gizli anahtar desenleri + güvenlik açığı desenleri
-2. **AST tarayıcı** (`astscan.go` + `_credentials.go`, `_go.go`, `_javascript.go`, `_python.go`) — dile özel AST tabanlı tarama
-
-Desteklenen diller: Go, JavaScript, Python
-
-### 5.2 Koruma Mekanizmaları
-
-| Mekanizma | Konum |
-|---|---|
-| SSRF koruması | `internal/tools/web.go` |
-| Binary dosya koruması | `internal/tools/engine.go` |
-| Read-before-mutation guard | `internal/tools/engine.go:398-437` |
-| Path traversal koruması | `internal/tools/engine.go:964-1010` (`EnsureWithinRoot`) |
-| Dosya kapsamı çakışma koruması | `internal/drive/scheduler.go` |
-| Secret redaksiyon | `ui/tui/secret_redact.go` |
-| İnsan-onay kapısı | `internal/engine/approver.go` |
-| Hook güvenliği | README'de dokümante |
-
-### 5.3 Potansiyel Riskler
-
-1. **`writeFileAtomic`** (`tools/engine.go:1062`): Atomik yazma yapıyor ama geçici dosya yolu `EnsureWithinRoot` kontrolünden geçiyor mu? Doğrulanmalı.
-2. **`command.go`**: Shell komut çalıştırma aracı — injection riski var, ancak approver kapısı var.
-3. **Web aracı**: SSRF koruması mevcut ama `golang.org/x/net` ile DNS rebinding saldırılarına karşı ek koruma gerekebilir.
-
----
-
-## 6. Performans ve Verimlilik
-
-### 6.1 Önbellek
-
-| Önbellek | Konum | Boyut |
+| Öncelik | Modül | Sorun |
 |---|---|---|
-| AST Parse Cache | `internal/ast/engine.go` | 10.000 giriş (LRU) |
-| Tree-sitter Parser Pool | `internal/ast/treesitter_cgo.go` | sync.Pool (dil başına) |
-| Read Snapshot Cache | `internal/tools/engine.go` | 256 giriş |
-| Tool Failure Tracker | `internal/tools/engine.go` | 256 giriş |
-| Tool Output Compress | `internal/tools/engine.go` | Dinamik byte limiti |
-| Prompt Cache | Engine tarafı | Token bazlı |
+| **H** | `internal/memory/` | 3 dosya ama küçük — bellek yolsuzluk kurtarma senaryoları eksik |
+| **H** | `internal/security/` | AST tarama testleri dil başına yetersiz; `astscan_javascript.go` / `astscan_python.go` test edilmiyor |
+| **M** | `internal/hooks/` | PGID/Windows dal testleri sınırlı |
+| **M** | `internal/supervisor/` | 3 test dosyası var ama entegrasyon senaryoları zayıf |
+| **L** | `internal/mcp/` | Protocol parsing testleri eksik |
 
-### 6.2 Paralellik
+### 4.3 Kilitleme Düzeni
 
-- **Drive modu**: `MaxParallel` (varsayılan: 3) çalışan TODO sınırı
-- **Tool execution**: `executeToolCallsParallel` — aynı turdaki araç çağrıları paralel yürütülür
-- **Arka plan dizinleme**: `StartBackgroundTask` ile goroutine tabanlı
+Engine'de açık kilitleme sırası belgelenmiş:
+```
+1. agentMu — agent lifecycle + parked state
+2. mu      — general state
 
-### 6.3 Bellek ve Kaynak
-
-- BoltDB kalıcılık: Drive + Konuşma + Bellek depoları
-- `bounded_buffer.go` (tools + hooks): Sınırsız büyüme önleme
-- `trimToolPayload` + `truncateRunesWithMarker`: Büyük payload'ları kırparak bellek taşmasını önler
-- `compactToolPayload`: Akıllı sıkıştırma (relevans terimlerini korur)
+Kural: agentMu tutuluyorken mu alınmaz.
+```
+Bu, deadlock riskini önemli ölçüde azaltır. `engine.go:95-99`
 
 ---
 
-## 7. Tespit Edilen Sorunlar ve Öneriler
+## 5. Performans ve Ölçeklenebilirlik
+
+### 5.1 AST Önbellek ✅
+
+- LRU önbellek (`defaultParseCacheSize = 10000`) `internal/ast/engine.go` içinde.
+- Hash bazlı invalidation (`fnv.New64()`) dosya değişikliklerinde girdi yeniler.
+- Tree-sitter parser havuzu (`sync.Pool`) CGO tahsisini azaltır.
+
+### 5.2 Araç Okuma Anlık Görüntüleri ✅
+
+- `readSnapshots` + `readSnapshotLRU` (max 256) araç motorunda.
+- Son okunan dosya içerikleri önbellekte; tekrar okuma I/O atlanır.
+
+### 5.3 Provider Throttle ✅
+
+- `internal/provider/throttle.go` — rate limiting + backoff.
+- `golang.org/x/time/rate` promote edilmiş, artık doğrudan kullanılıyor.
+
+### 5.4 Potansiyel Darboğazlar
+
+| Alan | Risk | Açıklama |
+|---|---|---|
+| CodeMap indeksleme | **M** | Büyük projelerde başlangıç indeksleme uzun sürebilir; ilerleme bildirimi var ama iptal yavaş |
+| TUI render | **L** | 99 dosya ile bubbletea Update/Render karmaşıklığı artıyor; ancak chat stream optimize edilmiş |
+| bbolt tek yazıcı | **L** | bbolt tek yazıcı kısıtlaması var; ama Engine zaten mutex korumalı |
+
+---
+
+## 6. Yapılandırma ve Çevre
+
+### 6.1 Config Katmanları
+
+```
+1. Yerleşik varsayılanlar (internal/config/defaults.go)
+2. ~/.dfmc/config.yaml (genel)
+3. <project>/.dfmc/config.yaml (proje)
+4. Çevresel değişkenler (ANTHROPIC_API_KEY, OPENAI_API_KEY, vb.)
+5. .env dosyası (otomatik yüklenir, env vars öncelikli)
+6. CLI bayrakları
+```
+
+### 6.2 Provider Desteği
+
+| Provider | Protokol | Durum |
+|---|---|---|
+| Z.AI / GLM | OpenAI-compatible | ✅ Anthropic URL otomatik remap |
+| MiniMax | OpenAI-compatible | ✅ |
+| Alibaba / Qwen | OpenAI-compatible | ✅ |
+| OpenAI | OpenAI-compatible | ✅ |
+| Anthropic | Anthropic native | ✅ Tool use destekli |
+| Google | Google AI native | ✅ Tool use destekli |
+| Offline | Yerel | ✅ Otomatik fallback |
+
+### 6.3 Z.AI URL Remap
+
+`provider/router.go:44-49`: Z.AI Anthropic-uyumlu URL'ler otomatik olarak OpenAI-uyumlu `/api/paas/v4` yüzeyine yeniden yönlendirilir. Kullanıcı yanlış URL yapıştırırsa 404 engellenir.
+
+---
+
+## 7. Otonom Drive Modu
+
+### 7.1 Mimarisi
+
+```
+Kullanıcı → dfmc drive "<task>"
+  → Planner (LLM çağrısı) → DAG oluşturma (TODO'lar + bağımlılıklar)
+  → Scheduler → Hazır TODO'ları sırayla yürütme
+  → Runner → Engine.Ask üzerinden her TODO'yu alt konuşma ile çalıştırma
+  → Verification → Sonuç doğrulama
+  → Persistence → Her durum geçişinde otomatik kayıt
+```
+
+### 7.2 TODO Yaşam Döngüsü
+
+```
+pending → running → done
+                   → blocked (tüm yeniden denemeler bittikten sonra)
+pending → skipped (bağımlılık blocked ise)
+```
+
+### 7.3 Paralellik Desteği
+
+- Faz 1: Sıralı tek provider
+- Faz 2: Dosya kapsamı çakışma tespiti ile paralellik (`FileScope` alanı)
+- Faz 3: TODO başına provider yönlendirme (`ProviderTag` alanı — şu an borulanmış ama kullanılmıyor)
+
+---
+
+## 8. TUI (Terminal UI)
+
+### 8.1 Yapısı
+
+99 dosya ile ikinci en büyük modül. Ana bileşenler:
+
+- `tui.go` — Ana model ve giriş noktası
+- `chat_*.go` — Sohbet render, tuş bağlamaları, eylemler
+- `slash_*.go` — Slash komut işleyicileri
+- `codemap.go` — Kod haritası paneli
+- `drive.go` — Drive ilerleme paneli
+- `security.go` — Güvenlik tarama görünümü
+- `context_panel.go` — Bağlam penceresi paneli
+- `memory.go` — Bellek yönetimi görünümü
+- `approver.go` — Araç onay mekanizması
+- `mention*.go` — @mention sistemi (dosya, sembol, provider)
+- `patch_*.go` — Patch önizleme ve düzenleme
+
+### 8.2 Özellikler
+
+- Akıcı sohbet kaydırma ve akıllı sarma
+- Canlı istatistik paneli (animasyonlu)
+- Slash komut kataloğu
+- Provider geçişi ve durum çubuğu
+- Konuşma dallanma ve dışa aktarma
+- Onay rozeti ve onay akışı
+- Gizli anahtar sansürü
+- Panik koruma
+- Fare etkileşim açma/kapama
+
+---
+
+## 9. Son Değişiklikler (Git Geçmişi)
+
+| Commit | Açıklama |
+|---|---|
+| `bc5ce59` | refactor(tools,tui,engine,commands,provider,ast,drive): H1/H2/H3/M1/M2/M4/L2/L3 çözüldü |
+| `aad1acc` | refactor(config,provider,tools): golang.org/x/time promote, maps.Clone, döngü basitleştirme |
+| `0647d35` | docs(coach,ast,README): Close method, drive:run:warning event |
+| `8360744` | refactor(ast,config,drive): LRU önbellek, project-hook guard, panic recovery, regex hoist |
+| `164285b` | refactor(tools): SSRF guard, LRU önbellek fix, binary-file guard |
+| `514fd40` | refactor(tools): actionable missing-param errors, non-blocking stream, autonomous park flag |
+| `ba72395` | refactor: multi-edge graph bug fix, tree-sitter pool hardening, intent/resume config |
+| `bb6753e` | refactor(engine): god file'ı 7 alan modülüne bölme |
+| `021d33e` | refactor(engine): runNativeToolLoop → named phase helpers |
+| `6bd38f9` | feat(tui): smoother chat scroll, smarter wrap, animated stats panel |
+
+---
+
+## 10. Öneriler
 
 ### 🔴 Yüksek Öncelik
 
-| # | Sorun | Konum | Öneri |
-|---|---|---|---|
-| H1 | `tools/engine.go` 1062 satır — god file | `internal/tools/engine.go` | ✅ **Çözüldü (2026-04-20)** — `normalizeToolParams` → `params.go`, `compressToolOutput` + helpers → `output.go`, `writeFileAtomic` + `fileContentHash` → `fileutil.go` |
-| H2 | `Engine.Shutdown()` error döndürmüyor | `internal/engine/engine.go:306` | ✅ **Çözüldü (2026-04-20)** — `Shutdown() error` imzasına geçti; tüm aşama hataları `errors.Join` ile döndürülüyor, EventBus + stderr bildirimi korundu |
-| H3 | Drive modülü test oranı düşük (0.55x) | `internal/drive/` | ✅ **Çözüldü (2026-04-20)** — `scheduler_test.go` eklendi (8 test: scope conflict, unscoped exclusivity, read-only, blocked/skipped deps, parallelism) |
+| # | Öneri | Gerekçe |
+|---|---|---|
+| H1 | `.env.example` yer tutucu doğrulama | `<your-key-here>` literal olarak ayrıştırılıyor; kullanıcı karışıklığına neden oluyor. Config yükleyicide `<>` kalıpları reddedilmeli |
+| H2 | Security AST tarama test genişletme | JavaScript/Python AST kuralları (`astscan_javascript.go`, `astscan_python.go`) yeterince test edilmiyor |
+| H3 | Memory yolsuzluk kurtarma testleri | `memoryDegraded` kod yolu var ama test edilmiyor |
 
 ### 🟡 Orta Öncelik
 
-| # | Sorun | Konum | Öneri |
-|---|---|---|---|
-| M1 | AST modülü test oranı düşük (0.44x) | `internal/ast/` | ✅ **Çözüldü (2026-04-20)** — `backend_test.go` eklendi (BackendStatus, ParseMetrics, metrics tracker reset/last-language testleri) |
-| M2 | `commands/registry.go:236` panic kullanımı | `internal/commands/registry.go` | ✅ **Çözüldü (2026-04-20)** — `MustRegister` artık `(string, error)` dönüyor, panik yerine |
-| M3 | Memory modülü çok küçük (3 dosya) | `internal/memory/` | Uzun süreli bellek için embedding/semantic search desteği eksik; sadece basit depo |
-| M4 | Provider fallback zinciri belirsiz | `internal/provider/router.go` | ✅ **Çözüldü (2026-04-20)** — `ResolveOrder` fonksiyonuna detaylı doc eklendi; fallback sırası + ContextOverflow compaction stratejisi dokümante edildi |
+| # | Öneri | Gerekçe |
+|---|---|---|
+| M1 | Drive Phase 3 provider yönlendirme | `ProviderTag` alanı borulanmış ama kullanılmıyor; TODO başına provider seçimi büyük projelerde verimlilik artırır |
+| M2 | Supervisor entegrasyon testleri | Köprü ve yürütücü birim testleri var ama uçtan uca senaryolar eksik |
+| M3 | Hook PGID/Windows testleri | Platform-specific dallar yetersiz test edilmiş |
+| M4 | CodeMap indeksleme ilerleme | Büyük projelerde ilerleme bildirimi iyileştirilmeli; iptal gecikmeli olabilir |
 
 ### 🟢 Düşük Öncelik
 
-| # | Sorun | Konum | Öneri |
-|---|---|---|---|
-| L1 | 40 TODO/FIXME/HACK yorum | Çeşitli | Drive modülü yoğun TODO içeriyor — planlı geliştirme işaretleri, acil değil |
-| L2 | TUI modülü büyük (96 dosya) | `ui/tui/` | 🟡 **Kısmi çözüldü (2026-04-20)** — `ui/tui/theme/` alt-paketi oluşturuldu (~1650 satır render kodu `types.go`, `palette.go`, `render.go`'a taşındı); geri kalan dosyalar `Model` tipına sıkı bağlı (panel_states, engine_events) |
-| L3 | `writeFileAtomic` güvenlik doğrulaması | `internal/tools/engine.go:1062` | ✅ **Çözüldü (2026-04-20)** — `EnsureWithinRoot` ile symlink escape koruması zaten mevcut; `TestWriteFileAtomic_EscapesViaSymlink` testi eklendi ve geçti |
-| L4 | `offline_analyzer.go` statik analiz uyarıları | `internal/provider/` | panic() ve TODO marker tespiti var — bunlar çevrimdışı analiz için, üretim etkisi yok |
+| # | Öneri | Gerekçe |
+|---|---|---|
+| L1 | MCP protocol parsing testleri | Basit protocol ama test yok |
+| L2 | TUI dosya sayısının kontrol altına alınması | 99 dosya ile en büyük modül; düzenleme zorluğu artıyor |
+| L3 | bbolt yedekleme mekanizması | Veri kaybı riski minimal ama yedekleme yok |
+| L4 | Config validator genişletme | Geçersiz provider profilleri için daha fazla doğrulama |
 
 ---
 
-## 8. Mimari Güçlü Yönler
+## 11. Özet Matrisi
 
-1. **Sıfır döngüsel bağımlılık** — temiz modüler yapı
-2. **Lock sıralaması dokümante** — deadlock riski minimize
-3. **Degraded mod desteği** — Memory yüklemesi başarısız olsa bile motor çalışır
-4. **Atomik dosya yazma** — veri bütünlüğü korunuyor
-5. **Okuma öncesi mutasyon guard** — blind edit önleme
-6. **SSRF + path traversal koruması** — güvenlik katmanı güçlü
-7. **Paralel TODO dispatch + dosya kapsamı kilidi** — drive modunda veri yarışı önleme
-8. **Throttle + Retry-After desteği** — provider hata yönetimi olgun
-9. **Sentinel hata hiyerarşisi** — `ErrContextOverflow`, `ErrProviderThrottled` ile tip-güvenli hata işleme
-10. **Tree-sitter pool** — CGO parser nesneleri `sync.Pool` ile yönetiliyor, bellek sızıntısı önleniyor
+| Kategori | Durum | Not |
+|---|---|---|
+| Mimari | ✅ İyi | Modüler, döngüsüz, açık bağımlılık grafiği |
+| Güvenlik | ✅ İyi | .env gitignore, SSRF guard, AST scanner |
+| Test Kapsamı | ✅ İyi | %95 test/kaynak oranı |
+| Performans | ✅ İyi | LRU önbellek, parser havuzu, throttle |
+| Hata Yönetimi | ✅ İyi | Graceful degradation, panic guard, event bus |
+| Yapılandırma | ⚠️ İyi | .env yer tutucu sorunu dışında sağlam |
+| Drive Modu | ⚠️ İyi | Phase 3 tamamlanmamış |
+| TUI | ⚠️ İyi | Fonksiyonel ama dosya sayısı yüksek |
 
----
-
-## 9. Teknoloji Yığını Değerlendirmesi
-
-| Teknoloji | Değerlendirme |
-|---|---|
-| Go 1.25 | Güncel, generics + gelişmiş stdlib |
-| Bubble Tea | TUI framework olgun, topluluk büyük |
-| Tree-sitter (CGO) | Güçlü AST desteği; pool yönetimi kritik |
-| BoltDB | Gömülü KV deposu; basit ve güvenilir |
-| golang.org/x/time | Rate limiting için standart |
-| golang.org/x/net | SSRF koruması için gerekli |
-| yaml.v3 | Yapılandırma için yeterli |
+**Genel Değerlendirme:** Proje mimari olarak sağlam, güvenlik önlemleri yeterli, test kapsamı yüksek. Ana risk alanları: .env yer tutucu doğrulama, security AST test coverage ve drive Phase 3 tamamlama.
 
 ---
 
-## 10. Sonuç
-
-DFMC, mimari açıdan **olgun ve iyi yapılandırılmış** bir proje. Döngüsel bağımlılığın olmaması, lock sıralamasının dokümante edilmesi, degraded mod desteği ve kapsamlı güvenlik katmanları, projenin production kalitesinde olduğunu gösteriyor.
-
-**Ana riskler:**
-1. `tools/engine.go` god file — okunabilirlik ve bakım riski
-2. Drive ve AST modüllerinin test kapsamı düşük — paralel dispatch ve pool yönetimi edge-case'leri yakalanmayabilir
-3. `commands/registry.go` panic kullanımı — beklenmeyen crash riski
-
-**Önerilen öncelik sırası:** H1 (tools bölme) → H3 (drive test) → M2 (panic kaldırma) → H2 (Shutdown error) → M1 (AST test)
+*Rapor otomatik olarak DFMC Copilot tarafından üretilmiştir.*

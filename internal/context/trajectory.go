@@ -42,12 +42,24 @@ func (t TraceEntry) EffectiveTool() string {
 	return t.Tool
 }
 
+// TrajectoryOutput bundles the trajectory hints with metadata about the round.
+type TrajectoryOutput struct {
+	Hints         []string  // up to 2 short coaching lines
+	RoundSummary  string    // one-line recap of the round
+	OpenQuestions []string  // unresolved issues for the next round
+	Confidence    float64   // 0-1; low triggers expanded retrieval on next round
+}
+
 // TrajectoryHints returns up to 2 short coaching lines derived from the
 // most recent round of tool calls. `fresh` is the slice of traces from the
 // *current* loop step; `all` is the running history including fresh; both
 // may be empty. `recent` is a short de-dup window of hints already injected
 // in this conversation — rules skip if they'd re-emit an already-seen hint.
-func TrajectoryHints(fresh, all []TraceEntry, recent []string) []string {
+//
+// RoundSummary is a one-line recap of what the round accomplished.
+// OpenQuestions lists unresolved issues the next round should address.
+// Confidence is 0-1: low confidence (< 0.5) triggers expanded retrieval.
+func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput {
 	if len(fresh) == 0 {
 		return nil
 	}
@@ -69,6 +81,12 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) []string {
 		return len(out) >= 2
 	}
 
+	// Build round summary from fresh traces.
+	roundSummary := buildRoundSummary(fresh)
+
+	// Collect open questions.
+	var openQuestions []string
+
 	// Rule 1: any failed tool this round → retry-safely hint. Highest
 	// priority because silent retries burn budget fast.
 	for _, t := range fresh {
@@ -81,8 +99,14 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) []string {
 			brief = "unknown error"
 		}
 		msg := fmt.Sprintf("Prior call %s failed (%s). Don't retry with the same inputs — read the error, adjust arguments, or pick a different tool.", et, brief)
+		openQuestions = append(openQuestions, fmt.Sprintf("%s failed: %s", et, brief))
 		if push(msg) {
-			return out
+			return &TrajectoryOutput{
+				Hints:         out,
+				RoundSummary:  roundSummary,
+				OpenQuestions: openQuestions,
+				Confidence:    computeConfidence(fresh),
+			}
 		}
 		break // one failure hint per turn
 	}
@@ -105,7 +129,12 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) []string {
 			}
 			hint := "Just mutated " + path + ". Validate with the smallest targeted check (build/vet/test that touches it) before declaring done — don't trust edits on faith."
 			if push(hint) {
-				return out
+				return &TrajectoryOutput{
+					Hints:         out,
+					RoundSummary:  roundSummary,
+					OpenQuestions: openQuestions,
+					Confidence:    computeConfidence(fresh),
+				}
 			}
 		}
 		// Only consider the most recent mutation.
@@ -127,7 +156,12 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) []string {
 		}
 		hint := "grep_codebase returned a lot. Narrow with a tighter regex or `glob` filter before expanding — wide scans waste the context budget."
 		if push(hint) {
-			return out
+			return &TrajectoryOutput{
+				Hints:         out,
+				RoundSummary:  roundSummary,
+				OpenQuestions: openQuestions,
+				Confidence:    computeConfidence(fresh),
+			}
 		}
 	}
 
@@ -135,7 +169,12 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) []string {
 	if dup := detectRepeatedCalls(all); dup != "" {
 		hint := "You've called " + dup + " several times on similar inputs. Consolidate via tool_batch_call, or rethink whether another tool would answer the question in one shot."
 		if push(hint) {
-			return out
+			return &TrajectoryOutput{
+				Hints:         out,
+				RoundSummary:  roundSummary,
+				OpenQuestions: openQuestions,
+				Confidence:    computeConfidence(fresh),
+			}
 		}
 	}
 
@@ -155,12 +194,101 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) []string {
 		if alt := preferDedicatedTool(cmd); alt != "" {
 			hint := "run_command was used for a task with a dedicated tool: prefer " + alt + " next time — it's safer and the output is structured."
 			if push(hint) {
-				return out
+				return &TrajectoryOutput{
+					Hints:         out,
+					RoundSummary:  roundSummary,
+					OpenQuestions: openQuestions,
+					Confidence:    computeConfidence(fresh),
+				}
 			}
 		}
 	}
 
-	return out
+	return &TrajectoryOutput{
+		Hints:         out,
+		RoundSummary:  roundSummary,
+		OpenQuestions: openQuestions,
+		Confidence:    computeConfidence(fresh),
+	}
+}
+
+// buildRoundSummary produces a one-line recap of the round's activity.
+func buildRoundSummary(fresh []TraceEntry) string {
+	if len(fresh) == 0 {
+		return ""
+	}
+	var actions []string
+	searched := false
+	for _, t := range fresh {
+		if !t.Ok {
+			continue
+		}
+		switch t.EffectiveTool() {
+		case "edit_file":
+			actions = append(actions, "edited "+abbrevPath(argAsString(t.Args, "path")))
+		case "write_file":
+			actions = append(actions, "wrote "+abbrevPath(argAsString(t.Args, "path")))
+		case "apply_patch":
+			actions = append(actions, "applied patch")
+		case "grep_codebase":
+			searched = true
+		case "read_file":
+			actions = append(actions, "read "+abbrevPath(argAsString(t.Args, "path")))
+		case "codemap":
+			actions = append(actions, "explored codemap")
+		case "run_command":
+			actions = append(actions, "ran command")
+		}
+	}
+	if len(actions) == 0 {
+		if searched {
+			return "searched codebase"
+		}
+		return "no significant file activity"
+	}
+	if len(actions) > 3 {
+		actions = actions[:3]
+		actions = append(actions, "...")
+	}
+	return strings.Join(actions, ", ")
+}
+
+// computeConfidence returns 0-1 based on how many tools succeeded and whether
+// there are unresolved errors or large search results.
+func computeConfidence(fresh []TraceEntry) float64 {
+	if len(fresh) == 0 {
+		return 0.5
+	}
+	ok := 0
+	for _, t := range fresh {
+		if t.Ok {
+			ok++
+		}
+	}
+	rate := float64(ok) / float64(len(fresh))
+	// Deduct for failures.
+	if rate < 1.0 {
+		rate -= 0.1
+	}
+	if rate < 0 {
+		rate = 0
+	}
+	return rate
+}
+
+// abbrevPath returns the last path component, trimmed.
+func abbrevPath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return p
+	}
+	if i := strings.LastIndexByte(p, '/'); i >= 0 {
+		p = p[i+1:]
+	}
+	if i := strings.LastIndexByte(p, '\\'); i >= 0 {
+		p = p[i+1:]
+	}
+	return p
 }
 
 // detectRepeatedCalls returns the name of a tool that was called 3+ times
@@ -291,19 +419,32 @@ func argAsString(args map[string]any, key string) string {
 	}
 }
 
-// FormatTrajectoryHints wraps a hint slice into a single system-note block
+// FormatTrajectoryHints wraps a TrajectoryOutput into a single system-note block
 // suitable for injection as a user message between agent-loop rounds.
-// Returns "" when there are no hints.
-func FormatTrajectoryHints(hints []string) string {
-	if len(hints) == 0 {
+// Returns "" when there are no hints. When Confidence < 0.5, also includes
+// the round summary and open questions to trigger expanded retrieval.
+func FormatTrajectoryHints(out *TrajectoryOutput) string {
+	if out == nil || len(out.Hints) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("[trajectory coach]\n")
-	for _, h := range hints {
+	for _, h := range out.Hints {
 		b.WriteString("• ")
 		b.WriteString(strings.TrimSpace(h))
 		b.WriteByte('\n')
+	}
+	// When confidence is low, include the round summary so the next retrieval
+	// pass does expanded exploration.
+	if out.Confidence < 0.5 && strings.TrimSpace(out.RoundSummary) != "" {
+		b.WriteString("• round: ")
+		b.WriteString(strings.TrimSpace(out.RoundSummary))
+		b.WriteByte('\n')
+		for _, q := range out.OpenQuestions {
+			b.WriteString("  open: ")
+			b.WriteString(strings.TrimSpace(q))
+			b.WriteByte('\n')
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

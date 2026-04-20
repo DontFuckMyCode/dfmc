@@ -20,7 +20,20 @@ import (
 type Manager struct {
 	codemap *codemap.Engine
 	prompts *promptlib.Library
+	// dirty tracks files that have been modified since the last context build.
+	// When non-empty, BuildWithOptions triggers a re-parse before retrieval.
+	dirty map[string]bool
 }
+
+type RetrievalStrategy string
+
+const (
+	StrategyGeneral   RetrievalStrategy = "general"
+	StrategySecurity  RetrievalStrategy = "security"
+	StrategyDebug     RetrievalStrategy = "debug"
+	StrategyReview    RetrievalStrategy = "review"
+	StrategyRefactor RetrievalStrategy = "refactor"
+)
 
 type BuildOptions struct {
 	MaxFiles         int
@@ -39,6 +52,11 @@ type BuildOptions struct {
 	// SymbolAware is set. Practical range: 1-2; larger values produce
 	// diminishing returns at real cost to the budget.
 	GraphDepth int
+	// Strategy tunes retrieval for specific task types: security uses
+	// deep cross-reference mining, debug focuses on call-sites, review
+	// prioritizes hotspots and changed files, refactor walks both
+	// import and export directions. Defaults to StrategyGeneral.
+	Strategy RetrievalStrategy
 }
 
 type PromptRuntime struct {
@@ -56,7 +74,40 @@ func New(cm *codemap.Engine) *Manager {
 	return &Manager{
 		codemap: cm,
 		prompts: promptlib.New(),
+		dirty:   make(map[string]bool),
 	}
+}
+
+// Invalidate marks a file as modified so the next BuildWithOptions
+// triggers a re-parse rather than returning stale cached chunks.
+func (m *Manager) Invalidate(path string) {
+	if path == "" || m == nil {
+		return
+	}
+	if m.dirty == nil {
+		m.dirty = make(map[string]bool)
+	}
+	m.dirty[path] = true
+	if m.codemap != nil {
+		m.codemap.InvalidateFile(path)
+	}
+}
+
+// InvalidateDir marks all files under dir as modified. Paths are resolved
+// to absolute form before marking so dir argument variations collapse.
+func (m *Manager) InvalidateDir(dir string) {
+	if dir == "" || m == nil {
+		return
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = dir
+	}
+	prefix := abs + string(filepath.Separator)
+	if m.dirty == nil {
+		m.dirty = make(map[string]bool)
+	}
+	m.dirty[prefix] = true
 }
 
 func (m *Manager) Build(query string, maxFiles int) ([]types.ContextChunk, error) {
@@ -89,6 +140,18 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 		opts.MaxTokensTotal = 128
 	}
 	opts.Compression = normalizeCompression(opts.Compression)
+
+	// Apply task-type differentiation to retrieval strategy.
+	switch opts.Strategy {
+	case StrategySecurity:
+		opts.GraphDepth = max(opts.GraphDepth, 3)
+	case StrategyDebug:
+		opts.GraphDepth = max(opts.GraphDepth, 2)
+	case StrategyReview:
+		opts.GraphDepth = min(opts.GraphDepth, 1)
+	case StrategyRefactor:
+		opts.GraphDepth = max(opts.GraphDepth, 2)
+	}
 
 	terms := tokenizeQuery(query)
 	scores := map[string]float64{}

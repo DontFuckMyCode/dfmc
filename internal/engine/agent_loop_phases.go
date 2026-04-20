@@ -307,7 +307,7 @@ func (e *Engine) injectTrajectoryHints(
 	freshStart, step int,
 ) []provider.Message {
 	hints := buildTrajectoryHints(traces[freshStart:], traces, seed.RecentCoachHints)
-	if len(hints) == 0 {
+	if hints == nil || len(hints.Hints) == 0 {
 		return msgs
 	}
 	block := ctxmgr.FormatTrajectoryHints(hints)
@@ -318,10 +318,10 @@ func (e *Engine) injectTrajectoryHints(
 		Role:    types.RoleUser,
 		Content: block,
 	})
-	seed.RecentCoachHints = appendRecentHints(seed.RecentCoachHints, hints)
+	seed.RecentCoachHints = appendRecentHints(seed.RecentCoachHints, hints.Hints)
 	e.publishAgentLoopEvent("agent:coach:hint", map[string]any{
 		"step":  step,
-		"hints": hints,
+		"hints": hints.Hints,
 	})
 	return msgs
 }

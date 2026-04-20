@@ -70,6 +70,10 @@ type Engine struct {
 	AST          *ast.Engine
 	CodeMap      *codemap.Engine
 	Context      *ctxmgr.Manager
+	// lastContextSnapshot holds the retrieval outcome from the most recent
+	// buildContextChunks call. Attached to supervisor.Task after todo
+	// execution so resume/replay reuse the same chunks.
+	lastContextSnapshot *ctxmgr.ContextSnapshot
 	Providers    *provider.Router
 	Tools        *tools.Engine
 	Memory       *memory.Store

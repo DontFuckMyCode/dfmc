@@ -9,7 +9,10 @@ package engine
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"regexp"
 	"runtime/debug"
+	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/hooks"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
@@ -21,6 +24,52 @@ func (e *Engine) ListTools() []string {
 	}
 	return e.Tools.List()
 }
+
+// invalidateContextForTool calls Context.Invalidate for any files modified by
+// edit_file, write_file, or apply_patch. For apply_patch the patch parameter
+// is parsed to extract the set of affected file paths.
+func (e *Engine) invalidateContextForTool(name string, params map[string]any) {
+	if e.Context == nil {
+		return
+	}
+	switch name {
+	case "edit_file", "write_file":
+		if path, ok := params["path"].(string); ok && path != "" {
+			e.Context.Invalidate(path)
+		}
+	case "apply_patch":
+		if patch, ok := params["patch"].(string); ok && patch != "" {
+			paths := extractPathsFromPatch(patch)
+			for _, p := range paths {
+				e.Context.Invalidate(p)
+			}
+		}
+	}
+}
+
+// extractPathsFromPatch returns the unique set of file paths affected by a
+// unified-diff string. It parses both --- a/<path> and +++ b/<path> headers.
+func extractPathsFromPatch(patch string) []string {
+	seen := map[string]struct{}{}
+	var results []string
+	for _, line := range strings.Split(patch, "\n") {
+		m := diffPathRE.FindStringSubmatch(line)
+		if len(m) < 2 {
+			continue
+		}
+		p := filepath.ToSlash(m[1])
+		if p != "" && p != "/dev/null" {
+			if _, exists := seen[p]; !exists {
+				seen[p] = struct{}{}
+				results = append(results, p)
+			}
+		}
+	}
+	return results
+}
+
+// diffPathRE matches --- a/<path> and +++ b/<path> lines in unified diffs.
+var diffPathRE = regexp.MustCompile(`^(?:--- a/|\+\+\+ b/)([^\t ]+)`)
 
 func (e *Engine) CallTool(ctx context.Context, name string, params map[string]any) (tools.Result, error) {
 	if err := e.requireReady("tool call"); err != nil {
@@ -159,6 +208,9 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 		})
 	}
 	res, err := e.executeToolWithPanicGuard(ctx, name, params)
+	if err == nil {
+		e.invalidateContextForTool(name, params)
+	}
 	if e.Hooks != nil && e.Hooks.Count(hooks.EventPostTool) > 0 {
 		success := "true"
 		if err != nil {
