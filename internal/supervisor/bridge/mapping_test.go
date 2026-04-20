@@ -29,6 +29,7 @@ func TestTaskDriveRoundTripPreservesExecutionMetadata(t *testing.T) {
 		Confidence:   0.82,
 		Summary:      "refresh path patched",
 		Error:        "",
+		BlockedReason: "",
 		Attempts:     2,
 		StartedAt:    start,
 		EndedAt:      end,
@@ -47,6 +48,9 @@ func TestTaskDriveRoundTripPreservesExecutionMetadata(t *testing.T) {
 	if !todo.ReadOnly {
 		t.Fatalf("read_only lost: %+v", todo)
 	}
+	if todo.BlockedReason != "" {
+		t.Fatalf("expected empty BlockedReason, got: %q", todo.BlockedReason)
+	}
 
 	back := TaskFromDriveTodo(todo)
 	if back.WorkerClass != supervisor.WorkerCoder {
@@ -60,6 +64,34 @@ func TestTaskDriveRoundTripPreservesExecutionMetadata(t *testing.T) {
 	}
 	if !back.ReadOnly {
 		t.Fatalf("read_only lost after roundtrip: %+v", back)
+	}
+	if back.BlockedReason != "" {
+		t.Fatalf("expected empty blocked reason after roundtrip, got: %q", back.BlockedReason)
+	}
+}
+
+func TestTaskDriveRoundTrip_BlockedReasonRoundTrips(t *testing.T) {
+	start := time.Now().Add(-time.Minute).Round(time.Second)
+	task := supervisor.Task{
+		ID:            "T3",
+		Title:         "Patch sensitive area",
+		State:         supervisor.TaskBlocked,
+		WorkerClass:   supervisor.WorkerCoder,
+		BlockedReason: "retries_exhausted",
+		Error:         "transient failure after 2 attempts",
+		Attempts:      2,
+		StartedAt:     start,
+	}
+	todo := TaskToDriveTodo(task)
+	if todo.BlockedReason != drive.BlockReasonRetriesExhausted {
+		t.Fatalf("expected BlockedReason=retries_exhausted, got: %q", todo.BlockedReason)
+	}
+	back := TaskFromDriveTodo(todo)
+	if back.BlockedReason != "retries_exhausted" {
+		t.Fatalf("expected blocked_reason=retries_exhausted after roundtrip, got: %q", back.BlockedReason)
+	}
+	if back.Error != task.Error {
+		t.Fatalf("error lost after roundtrip: got %q, want %q", back.Error, task.Error)
 	}
 }
 

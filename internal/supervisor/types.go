@@ -56,6 +56,7 @@ type Task struct {
 	Confidence   float64
 	Summary      string
 	Error        string
+	BlockedReason string
 	Attempts     int
 	StartedAt    time.Time
 	EndedAt      time.Time
