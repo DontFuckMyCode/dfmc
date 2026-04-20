@@ -350,15 +350,18 @@ func (d *Driver) dispatchTodo(ctx context.Context, run *Run, idx int, results ch
 		MaxSteps:          executorStepBudgetFor(*t),
 	}
 	d.publish(EventTodoStart, map[string]any{
-		"run_id":       run.ID,
-		"todo_id":      t.ID,
-		"title":        t.Title,
-		"attempt":      t.Attempts,
-		"origin":       t.Origin,
-		"kind":         t.Kind,
-		"worker_class": t.WorkerClass,
-		"max_steps":    req.MaxSteps,
-		"providers":    req.ProfileCandidates,
+		"run_id":          run.ID,
+		"todo_id":         t.ID,
+		"title":           t.Title,
+		"attempt":         t.Attempts,
+		"origin":          t.Origin,
+		"kind":            t.Kind,
+		"worker_class":    t.WorkerClass,
+		"provider_tag":    t.ProviderTag,
+		"routed":          t.ProviderTag != "" && d.cfg.Routing != nil,
+		"profile_selected": req.Model,
+		"max_steps":       req.MaxSteps,
+		"providers":       req.ProfileCandidates,
 	})
 	go func(idx int, req ExecuteTodoRequest, started time.Time, attempt int) {
 		defer func() {

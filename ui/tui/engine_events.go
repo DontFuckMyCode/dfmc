@@ -697,6 +697,8 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		title := payloadString(payload, "title", "")
 		attempt := payloadInt(payload, "attempt", 1)
 		workerClass := payloadString(payload, "worker_class", "")
+		providerTag := payloadString(payload, "provider_tag", "")
+		profileSelected := payloadString(payload, "profile_selected", "")
 		m.telemetry.driveTodoID = id
 		if attempt > 1 {
 			line = fmt.Sprintf("Drive: ▶ %s (attempt %d) — %s", id, attempt, truncateForLine(title, 80))
@@ -705,6 +707,13 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		}
 		if workerClass != "" {
 			line += " [" + workerClass + "]"
+		}
+		if providerTag != "" {
+			if profileSelected != "" {
+				line += fmt.Sprintf(" [route:%s→%s]", providerTag, profileSelected)
+			} else {
+				line += " [route:" + providerTag + "]"
+			}
 		}
 	case "drive:todo:done":
 		id := payloadString(payload, "todo_id", "")
