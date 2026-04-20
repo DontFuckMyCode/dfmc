@@ -722,6 +722,9 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			m.telemetry.driveTodoID = ""
 		}
 		line = fmt.Sprintf("Drive: ✓ %s done (%dms, %d tool calls)", id, dur, tools)
+		if workerClass := payloadString(payload, "worker_class", ""); workerClass != "" {
+			line += " [" + workerClass + "]"
+		}
 		if providerLabel != "" {
 			line += " via " + providerLabel
 		}
@@ -731,14 +734,25 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 				line += " - " + truncateForLine(fallbackReasons[len(fallbackReasons)-1], 120)
 			}
 		}
+		if spawned := payloadInt(payload, "spawned", 0); spawned > 0 {
+			line += fmt.Sprintf(" (+%d spawned)", spawned)
+		}
 	case "drive:todo:blocked":
 		id := payloadString(payload, "todo_id", "")
 		errStr := payloadString(payload, "error", "")
+		class := payloadString(payload, "class", "")
+		blockedReason := payloadString(payload, "blocked_reason", "")
 		m.telemetry.driveBlocked++
 		if m.telemetry.driveTodoID == id {
 			m.telemetry.driveTodoID = ""
 		}
-		line = fmt.Sprintf("Drive: ✗ %s blocked — %s", id, truncateForLine(errStr, 160))
+		extra := ""
+		if blockedReason != "" && blockedReason != "none" {
+			extra = " [" + blockedReason + "]"
+		} else if class != "" && class != "unknown" {
+			extra = " [class:" + class + "]"
+		}
+		line = fmt.Sprintf("Drive: ✗ %s blocked — %s%s", id, truncateForLine(errStr, 160), extra)
 	case "drive:todo:skipped":
 		id := payloadString(payload, "todo_id", "")
 		reason := payloadString(payload, "reason", "")
@@ -746,7 +760,12 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 	case "drive:todo:retry":
 		id := payloadString(payload, "todo_id", "")
 		attempt := payloadInt(payload, "attempt", 0)
-		line = fmt.Sprintf("Drive: ↻ %s retry (attempt %d)", id, attempt)
+		class := payloadString(payload, "class", "")
+		var extra string
+		if class != "" && class != "unknown" {
+			extra = " [" + class + "]"
+		}
+		line = fmt.Sprintf("Drive: ↻ %s retry (attempt %d)%s", id, attempt, extra)
 	case "drive:run:warning":
 		errStr := payloadString(payload, "error", "")
 		line = fmt.Sprintf("Drive: warning — %s", truncateForLine(errStr, 200))
