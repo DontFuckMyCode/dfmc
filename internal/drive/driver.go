@@ -416,27 +416,30 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 	dur := t.EndedAt.Sub(t.StartedAt).Milliseconds()
 
 	if res.Err != nil {
-		if t.Attempts <= d.cfg.Retries {
-			t.Status = TodoPending
-			d.publish(EventTodoRetry, map[string]any{
-				"run_id":     run.ID,
-				"todo_id":    t.ID,
-				"attempt":    t.Attempts,
-				"last_error": res.Err.Error(),
-			})
+		class := FailureClassify(res.Err)
+		if class == Fatal || t.Attempts > d.cfg.Retries {
+			t.Status = TodoBlocked
+			t.Error = res.Err.Error()
+			*consecutiveBlocked++
 			d.persist(run)
+			d.publish(EventTodoBlocked, map[string]any{
+				"run_id":   run.ID,
+				"todo_id":  t.ID,
+				"error":    t.Error,
+				"attempts": t.Attempts,
+				"class":    class.String(),
+			})
 			return
 		}
-		t.Status = TodoBlocked
-		t.Error = res.Err.Error()
-		*consecutiveBlocked++
-		d.persist(run)
-		d.publish(EventTodoBlocked, map[string]any{
-			"run_id":   run.ID,
-			"todo_id":  t.ID,
-			"error":    res.Err.Error(),
-			"attempts": t.Attempts,
+		t.Status = TodoPending
+		d.publish(EventTodoRetry, map[string]any{
+			"run_id":     run.ID,
+			"todo_id":    t.ID,
+			"attempt":    t.Attempts,
+			"last_error": res.Err.Error(),
+			"class":      class.String(),
 		})
+		d.persist(run)
 		return
 	}
 	t.Status = TodoDone
