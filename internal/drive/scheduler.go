@@ -107,6 +107,7 @@ func skipBlockedDescendants(todos []Todo) []string {
 				if s := statusByID[dep]; s == TodoBlocked || s == TodoSkipped {
 					t.Status = TodoSkipped
 					t.Error = "dependency " + dep + " was " + string(s)
+					t.BlockedReason = BlockReasonDependencyBlocked
 					statusByID[t.ID] = TodoSkipped
 					skipped = append(skipped, t.ID)
 					changed = true

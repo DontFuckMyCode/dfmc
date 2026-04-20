@@ -420,14 +420,20 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 		if class == Fatal || t.Attempts > d.cfg.Retries {
 			t.Status = TodoBlocked
 			t.Error = res.Err.Error()
+			if class == Fatal {
+				t.BlockedReason = BlockReasonFatal
+			} else {
+				t.BlockedReason = BlockReasonRetriesExhausted
+			}
 			*consecutiveBlocked++
 			d.persist(run)
 			d.publish(EventTodoBlocked, map[string]any{
-				"run_id":   run.ID,
-				"todo_id":  t.ID,
-				"error":    t.Error,
-				"attempts": t.Attempts,
-				"class":    class.String(),
+				"run_id":         run.ID,
+				"todo_id":        t.ID,
+				"error":          t.Error,
+				"attempts":       t.Attempts,
+				"class":          class.String(),
+				"blocked_reason": string(t.BlockedReason),
 			})
 			return
 		}
@@ -447,13 +453,15 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 	if spawnErr != nil {
 		t.Status = TodoBlocked
 		t.Error = "spawn_todos invalid: " + spawnErr.Error()
+		t.BlockedReason = BlockReasonSpawnInvalid
 		*consecutiveBlocked++
 		d.persist(run)
 		d.publish(EventTodoBlocked, map[string]any{
-			"run_id":   run.ID,
-			"todo_id":  t.ID,
-			"error":    t.Error,
-			"attempts": t.Attempts,
+			"run_id":         run.ID,
+			"todo_id":        t.ID,
+			"error":          t.Error,
+			"attempts":       t.Attempts,
+			"blocked_reason": string(t.BlockedReason),
 		})
 		return
 	}

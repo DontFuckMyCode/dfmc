@@ -44,6 +44,19 @@ const (
 	TodoSkipped TodoStatus = "skipped"
 )
 
+// BlockReason describes why a TODO ended as TodoBlocked.
+// Persisted in the Run JSON so the TUI and remote can show a human-readable
+// reason alongside the raw error message.
+type BlockReason string
+
+const (
+	BlockReasonFatal            BlockReason = "fatal_error"       // non-retriable error (tool denied, auth failure, etc.)
+	BlockReasonRetriesExhausted BlockReason = "retries_exhausted" // all retry attempts failed
+	BlockReasonSpawnInvalid     BlockReason = "spawn_invalid"     // planner emitted malformed child TODOs
+	BlockReasonDependencyBlocked BlockReason = "dependency_blocked" // a depends-on TODO was itself blocked
+	BlockReasonMaxFailedTodos    BlockReason = "max_failed_todos"  // run-level consecutive blocked limit hit
+)
+
 // Todo is one unit of work the planner emitted. The fields beyond the
 // core ID/Title/Detail are intentionally richer than a simple checklist:
 //   - DependsOn shapes the scheduler walk order.
@@ -83,10 +96,11 @@ type Todo struct {
 	Labels       []string   `json:"labels,omitempty"`
 	Verification string     `json:"verification,omitempty"`
 	Confidence   float64    `json:"confidence,omitempty"`
-	Status       TodoStatus `json:"status"`
-	Brief        string     `json:"brief,omitempty"`
-	Error        string     `json:"error,omitempty"`
-	Attempts     int        `json:"attempts"`
+	Status        TodoStatus `json:"status"`
+	Brief         string     `json:"brief,omitempty"`
+	Error         string     `json:"error,omitempty"`
+	BlockedReason BlockReason `json:"blocked_reason,omitempty"`
+	Attempts      int        `json:"attempts"`
 	StartedAt    time.Time  `json:"started_at,omitempty"`
 	EndedAt      time.Time  `json:"ended_at,omitempty"`
 }
