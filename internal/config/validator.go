@@ -24,6 +24,14 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("providers.fallback %q not found in providers.profiles", fb)
 		}
 	}
+	for name, profile := range c.Providers.Profiles {
+		if name == "offline" {
+			continue
+		}
+		if strings.TrimSpace(profile.Model) == "" {
+			return fmt.Errorf("providers.profiles.%q: model is required for non-offline providers", name)
+		}
+	}
 
 	if c.Context.MaxFiles <= 0 {
 		return fmt.Errorf("context.max_files must be > 0")

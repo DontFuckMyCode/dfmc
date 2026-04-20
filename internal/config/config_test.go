@@ -309,6 +309,42 @@ func TestValidate_ASTCacheSizeMustNotBeNegative(t *testing.T) {
 	}
 }
 
+func TestValidate_NonOfflineProfileMustHaveModel(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Providers.Profiles["custom"] = ModelConfig{BaseURL: "https://custom.example/v1"}
+	cfg.Providers.Primary = "custom"
+	cfg.Providers.Fallback = nil
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for non-offline profile without model")
+	}
+}
+
+// Profiles named "offline" skip the model requirement — the offline provider
+// works without a model since it falls back to local inference.
+func TestValidate_ProfileNamedOfflineSkipsModelRequirement(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Providers.Profiles["offline"] = ModelConfig{BaseURL: "http://localhost:11434/v1"}
+	cfg.Providers.Primary = "offline"
+	cfg.Providers.Fallback = nil
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("offline profile should not require model, got: %v", err)
+	}
+}
+
+
+func TestValidate_ProfileWithModelAndBaseURLPasses(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Providers.Profiles["custom"] = ModelConfig{Model: "my-model", BaseURL: "https://custom.example/v1"}
+	cfg.Providers.Primary = "custom"
+	cfg.Providers.Fallback = nil
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("profile with model should pass validation, got: %v", err)
+	}
+}
+
 func TestLoadWithOptions_SandboxAllowCommandAliasDisablesRunCommand(t *testing.T) {
 	tmp := t.TempDir()
 	globalPath := filepath.Join(tmp, "global.yaml")
@@ -355,3 +391,41 @@ func TestLoadWithOptions_ProjectAllowShellOverridesGlobalAllowCommand(t *testing
 		t.Fatal("project allow_shell=true must override the earlier allow_command alias")
 	}
 }
+
+func TestParseDotEnvValue_PlaceholderReturnsEmpty(t *testing.T) {
+	cases := []string{
+		"<your-key-here>",
+		"<your-zai-key>",
+		"<YOUR_ANTHROPIC_KEY>",
+		"<some-placeholder>",
+	}
+	for _, v := range cases {
+		got := parseDotEnvValue(v)
+		if got != "" {
+			t.Errorf("parseDotEnvValue(%q): want empty string for placeholder, got %q", v, got)
+		}
+	}
+}
+
+func TestParseDotEnvValue_RealValuesPassThrough(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"sk-test-key-123", "sk-test-key-123"},
+		{"\"quoted value\"", "quoted value"},
+		{"'single quoted'", "single quoted"},
+		{"<end_of_line", "<end_of_line"}, // missing closing > — not a placeholder
+		{"< >", "< >"},                      // empty interior — not a placeholder
+		{"plainnoangles", "plainnoangles"},  // no angle brackets at all
+		{"plainnoangles", "plainnoangles"},    // no angle brackets at all
+		{"", ""},
+	}
+	for _, tc := range cases {
+		got := parseDotEnvValue(tc.input)
+		if got != tc.want {
+			t.Errorf("parseDotEnvValue(%q): want %q, got %q", tc.input, tc.want, got)
+		}
+	}
+}
+

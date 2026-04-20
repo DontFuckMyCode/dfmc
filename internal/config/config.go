@@ -546,6 +546,9 @@ func parseDotEnvValue(raw string) string {
 	if value == "" {
 		return ""
 	}
+	if looksLikeEnvPlaceholder(value) {
+		return ""
+	}
 	if strings.HasPrefix(value, "\"") || strings.HasPrefix(value, "'") {
 		if unquoted, err := strconv.Unquote(value); err == nil {
 			return unquoted
@@ -556,6 +559,21 @@ func parseDotEnvValue(raw string) string {
 		value = strings.TrimSpace(value[:idx])
 	}
 	return value
+}
+
+// looksLikeEnvPlaceholder returns true if value looks like an unfilled
+// placeholder from .env.example (e.g. "<your-key-here>", "<MY_API_KEY>").
+// Such values must not be returned as literal API keys.
+func looksLikeEnvPlaceholder(value string) bool {
+	if len(value) < 2 || value[0] != '<' {
+		return false
+	}
+	// "<>" or "< >" are not placeholder shapes.
+	if value[len(value)-1] != '>' {
+		return false
+	}
+	inner := value[1 : len(value)-1]
+	return len(inner) > 0 && !strings.ContainsAny(inner, " \t")
 }
 
 // providerAPIEnvVars maps env var name → provider profile name. Used both

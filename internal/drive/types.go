@@ -8,8 +8,8 @@
 //
 // Phase 1 (this file set) is sequential single-provider. Phase 2 adds
 // parallelism with file-scope conflict detection. Phase 3 adds per-TODO
-// provider routing (the `ProviderTag` field is plumbed but unused in
-// Phase 1).
+// provider routing via Config.Routing map (ProviderTag → profile name);
+// the override is applied by providerForTag and SelectDriveProfile.
 //
 // Why a separate package and not an Engine method:
 //   - Drive runs are stateful long-lived objects with their own
