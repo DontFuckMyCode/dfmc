@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
 )
 
 const workflowSep = " | "
@@ -334,7 +336,7 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 	}
 
 	return statsPanelInfo{
-		Mode:                  mode,
+		Mode:                  theme.StatsPanelMode(mode),
 		Provider:              head.Provider,
 		Model:                 head.Model,
 		Configured:            head.Configured,

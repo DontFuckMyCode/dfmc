@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -492,135 +491,8 @@ func (e *Engine) clearFailure(key string) {
 	}
 }
 
-func normalizeToolParams(name string, params map[string]any) map[string]any {
-	if params == nil {
-		params = map[string]any{}
-	}
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "read_file":
-		promoteFirstAlias(params, "path", "file", "filepath", "target")
-		promoteFirstAlias(params, "line_start", "start", "from", "lineStart", "start_line")
-		promoteFirstAlias(params, "line_end", "end", "to", "lineEnd", "end_line")
-		start := asInt(params, "line_start", 1)
-		start = max(1, start)
-		end := asInt(params, "line_end", start+199)
-		end = max(start, end)
-		if end-start+1 > 400 {
-			end = start + 399
-		}
-		params["line_start"] = start
-		params["line_end"] = end
-	case "list_dir":
-		promoteFirstAlias(params, "path", "dir", "directory", "target", "root")
-		promoteFirstAlias(params, "max_entries", "limit", "max", "maxEntries")
-		promoteFirstAlias(params, "recursive", "recurse")
-		maxEntries := asInt(params, "max_entries", 200)
-		if maxEntries <= 0 {
-			maxEntries = 200
-		}
-		if maxEntries > 500 {
-			maxEntries = 500
-		}
-		params["max_entries"] = maxEntries
-	case "grep_codebase":
-		promoteFirstAlias(params, "pattern", "query", "regex", "text", "needle", "search")
-		promoteFirstAlias(params, "path", "dir", "directory", "root")
-		promoteFirstAlias(params, "max_results", "limit", "max", "maxResults")
-		promoteFirstAlias(params, "case_sensitive", "caseSensitive")
-		promoteFirstAlias(params, "context", "context_lines", "contextLines")
-		promoteFirstAlias(params, "before", "before_lines", "context_before")
-		promoteFirstAlias(params, "after", "after_lines", "context_after")
-		maxResults := asInt(params, "max_results", 80)
-		if maxResults <= 0 {
-			maxResults = 80
-		}
-		if maxResults > 500 {
-			maxResults = 500
-		}
-		params["max_results"] = maxResults
-	case "glob":
-		promoteFirstAlias(params, "pattern", "glob", "query", "match")
-		promoteFirstAlias(params, "path", "dir", "directory", "root")
-		promoteFirstAlias(params, "max_results", "limit", "max", "maxResults")
-	case "ast_query":
-		promoteFirstAlias(params, "path", "file", "filepath", "target")
-		promoteFirstAlias(params, "kind", "type", "symbol_kind")
-		promoteFirstAlias(params, "name_contains", "name", "query", "filter", "contains")
-	case "find_symbol":
-		promoteFirstAlias(params, "name", "symbol", "query", "identifier")
-		promoteFirstAlias(params, "kind", "type", "symbol_kind")
-		promoteFirstAlias(params, "path", "dir", "directory", "file")
-		promoteFirstAlias(params, "max_results", "limit", "max", "maxResults")
-		promoteFirstAlias(params, "include_body", "body", "with_body")
-	case "run_command":
-		promoteFirstAlias(params, "command", "cmd", "program", "executable", "bin")
-		promoteFirstAlias(params, "args", "argv", "arguments", "command_args")
-		promoteFirstAlias(params, "dir", "cwd", "workdir", "working_dir")
-		promoteFirstAlias(params, "timeout_ms", "timeoutMs", "timeout")
-		timeoutMs := asInt(params, "timeout_ms", 0)
-		timeoutMs = max(0, timeoutMs)
-		timeoutMs = min(timeoutMs, 120_000)
-		if timeoutMs > 0 {
-			params["timeout_ms"] = timeoutMs
-		}
-	case "edit_file":
-		promoteFirstAlias(params, "path", "file", "filepath", "target")
-		promoteFirstAlias(params, "replace_all", "replaceAll", "all", "global")
-		// Common typo trap: weaker models often emit `old`/`new` instead
-		// of `old_string`/`new_string` (the JS/Python edit-tool conventions
-		// they were trained on). Pre-fix the call hard-failed with the
-		// self-teaching error, but the model often took 1-2 wasted rounds
-		// to correct. Aliasing at the param-normalization layer means the
-		// canonical names are always set when Execute runs — zero retries.
-		// Only aliases — never overwrite an explicit canonical value.
-		if _, ok := params["old_string"]; !ok {
-			if v, alt := params["old"]; alt {
-				params["old_string"] = v
-				delete(params, "old")
-			}
-		}
-		if _, ok := params["new_string"]; !ok {
-			if v, alt := params["new"]; alt {
-				params["new_string"] = v
-				delete(params, "new")
-			}
-		}
-	case "write_file":
-		promoteFirstAlias(params, "path", "file", "filepath", "target")
-		promoteFirstAlias(params, "overwrite", "force", "replace", "allow_overwrite")
-		// Same family of typo: `content` vs `text`/`body`. Aliases keep
-		// non-canonical names from looping the model on a missing-field
-		// error.
-		if _, ok := params["content"]; !ok {
-			for _, alt := range []string{"text", "body", "data"} {
-				if v, found := params[alt]; found {
-					params["content"] = v
-					delete(params, alt)
-					break
-				}
-			}
-		}
-	}
-	return params
-}
-
-func promoteFirstAlias(params map[string]any, canonical string, aliases ...string) {
-	if params == nil {
-		return
-	}
-	// Canonical wins silently when both keys are present; we only promote
-	// from aliases when the canonical field is absent.
-	if _, ok := params[canonical]; ok {
-		return
-	}
-	for _, alt := range aliases {
-		if v, ok := params[alt]; ok {
-			params[canonical] = v
-			delete(params, alt)
-			return
-		}
-	}
-}
+// Extracted to params.go — see engine.go:495.
+// Extracted to output.go — see engine.go:737.
 
 func toolFailureKey(name string, params map[string]any) string {
 	keys := make([]string, 0, len(params))
@@ -725,203 +597,23 @@ func (e *Engine) touchReadSnapshotLocked(abs string) {
 	}
 }
 
-func fileContentHash(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
-}
+// fileContentHash moved to fileutil.go — see engine.go:600.
 
-func (e *Engine) compressToolOutput(req Request, res Result) Result {
-	limit := e.resolveOutputByteLimit(req.Params)
-	if limit <= 0 || strings.TrimSpace(res.Output) == "" {
-		return res
-	}
-	out, compressed, omittedLines := compressOutput(res.Output, limit, collectRelevanceTerms(req.Params))
-	if !compressed {
-		return res
-	}
-	if res.Data == nil {
-		res.Data = map[string]any{}
-	}
-	res.Data["output_original_bytes"] = len([]byte(res.Output))
-	res.Data["output_compressed_bytes"] = len([]byte(out))
-	res.Data["output_omitted_lines"] = omittedLines
-	res.Output = out
-	res.Truncated = true
-	return res
-}
+// compressToolOutput moved to output.go — see engine.go:609.
 
-func (e *Engine) resolveOutputByteLimit(params map[string]any) int {
-	if v := asInt(params, "max_output_bytes", 0); v > 0 {
-		return v
-	}
-	if v := asInt(params, "max_output_chars", 0); v > 0 {
-		return v
-	}
-	return parseByteLimit(e.cfg.Security.Sandbox.MaxOutput, 100*1024)
-}
+// resolveOutputByteLimit moved to output.go — see engine.go:631.
 
-func parseByteLimit(raw string, fallback int) int {
-	s := strings.ToUpper(strings.TrimSpace(raw))
-	if s == "" {
-		return fallback
-	}
-	mult := 1
-	switch {
-	case strings.HasSuffix(s, "KB"):
-		mult = 1024
-		s = strings.TrimSpace(strings.TrimSuffix(s, "KB"))
-	case strings.HasSuffix(s, "MB"):
-		mult = 1024 * 1024
-		s = strings.TrimSpace(strings.TrimSuffix(s, "MB"))
-	case strings.HasSuffix(s, "B"):
-		mult = 1
-		s = strings.TrimSpace(strings.TrimSuffix(s, "B"))
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n <= 0 {
-		return fallback
-	}
-	return n * mult
-}
+// parseByteLimit moved to output.go — see engine.go:641.
 
-func collectRelevanceTerms(params map[string]any) []string {
-	if params == nil {
-		return nil
-	}
-	keys := []string{"pattern", "query", "symbol", "name", "path"}
-	seen := map[string]struct{}{}
-	out := make([]string, 0, 8)
-	for _, k := range keys {
-		v := strings.TrimSpace(strings.ToLower(asString(params, k, "")))
-		if v == "" {
-			continue
-		}
-		for _, token := range strings.FieldsFunc(v, func(r rune) bool {
-			return r == ' ' || r == '\t' || r == '\n' || r == '/' || r == ':' || r == ',' || r == ';' || r == '.'
-		}) {
-			t := strings.TrimSpace(token)
-			if len(t) < 3 {
-				continue
-			}
-			if _, ok := seen[t]; ok {
-				continue
-			}
-			seen[t] = struct{}{}
-			out = append(out, t)
-		}
-	}
-	return out
-}
+// collectRelevanceTerms moved to output.go — see engine.go:637.
 
-func compressOutput(output string, limit int, terms []string) (string, bool, int) {
-	if len([]byte(output)) <= limit || limit <= 0 {
-		return output, false, 0
-	}
+// compressOutput moved to output.go — see engine.go:646.
 
-	lines := strings.Split(output, "\n")
-	if len(lines) == 0 {
-		return truncateUTF8ByBytes(output, limit), true, 0
-	}
+// truncateUTF8ByBytes moved to output.go — see engine.go:681.
 
-	headN, tailN := 20, 20
-	keep := map[int]struct{}{}
-	for i := 0; i < minInt(headN, len(lines)); i++ {
-		keep[i] = struct{}{}
-	}
-	for i := maxInt(0, len(lines)-tailN); i < len(lines); i++ {
-		keep[i] = struct{}{}
-	}
+// minInt moved to output.go — see engine.go:738.
 
-	if len(terms) > 0 {
-		for i, line := range lines {
-			low := strings.ToLower(line)
-			for _, t := range terms {
-				if strings.Contains(low, t) {
-					for j := maxInt(0, i-1); j <= minInt(len(lines)-1, i+1); j++ {
-						keep[j] = struct{}{}
-					}
-					break
-				}
-			}
-		}
-	}
-
-	ordered := make([]int, 0, len(keep))
-	for idx := range keep {
-		ordered = append(ordered, idx)
-	}
-	sort.Ints(ordered)
-
-	var b strings.Builder
-	omitted := 0
-	prev := -1
-	for _, idx := range ordered {
-		if prev >= 0 && idx > prev+1 {
-			gap := idx - prev - 1
-			omitted += gap
-			fmt.Fprintf(&b, "... [omitted %d lines]\n", gap)
-		}
-		b.WriteString(lines[idx])
-		if idx < len(lines)-1 {
-			b.WriteByte('\n')
-		}
-		prev = idx
-	}
-
-	compressed := b.String()
-	if len([]byte(compressed)) > limit {
-		compressed = truncateUTF8ByBytes(compressed, limit)
-	}
-	return compressed, true, omitted
-}
-
-func truncateUTF8ByBytes(s string, maxBytes int) string {
-	if maxBytes <= 0 {
-		return ""
-	}
-	b := []byte(s)
-	if len(b) <= maxBytes {
-		return s
-	}
-	ellipsis := "\n... [truncated]"
-	limit := maxBytes - len([]byte(ellipsis))
-	if limit <= 0 {
-		limit = maxBytes
-		ellipsis = ""
-	}
-	var out strings.Builder
-	n := 0
-	for _, r := range s {
-		rb := len([]byte(string(r)))
-		if n+rb > limit {
-			break
-		}
-		out.WriteRune(r)
-		n += rb
-	}
-	if ellipsis != "" {
-		out.WriteString(ellipsis)
-	}
-	return out.String()
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
+// maxInt moved to output.go — see engine.go:745.
 
 // EnsureWithinRoot resolves `path` relative to `root` and refuses
 // anything that escapes. Resistance comes from two layers:
@@ -995,7 +687,7 @@ func EnsureWithinRoot(root, path string) (string, error) {
 		// in the existing ancestor chain still gets caught.
 		resolvedPath, err = resolveExistingAncestor(absPath)
 		if err != nil {
-			return absPath, nil
+			return "", fmt.Errorf("cannot resolve symlink ancestry for %q: %w", path, err)
 		}
 	}
 	if !isPathWithin(resolvedRoot, resolvedPath) {
@@ -1028,69 +720,22 @@ func resolveExistingAncestor(absPath string) (string, error) {
 	for {
 		parent := filepath.Dir(current)
 		if parent == current {
-			// Reached filesystem root without finding anything that
-			// exists — unusual but not exploitable.
 			return "", fmt.Errorf("no existing ancestor")
 		}
 		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
-			return resolved, nil
+			// Resolved the existing ancestor. Check if the full target
+			// path under the resolved ancestor is within the project root.
+			// We reconstruct the path by appending the remaining relative
+			// components so symlink-to-absolute-path escapes are caught.
+			rel, err := filepath.Rel(parent, absPath)
+			if err != nil {
+				return "", fmt.Errorf("cannot compute relative path: %w", err)
+			}
+			reconstructed := filepath.Join(resolved, rel)
+			return reconstructed, nil
 		}
 		current = parent
 	}
 }
 
-// writeFileAtomic replaces `path`'s contents with `data` such that a
-// crash mid-write can never leave the destination truncated or
-// half-written. Implementation: write to a sibling temp file on the
-// same filesystem, fsync, then rename over the target. os.Rename is
-// atomic on both POSIX and NTFS, so any reader either sees the
-// previous contents or the new contents — never the in-progress
-// state.
-//
-// The temp file lives in the same directory as the target so the
-// rename stays on one filesystem. If the rename fails, we best-effort
-// delete the temp to avoid leaving `.filename.dfmc-tmp.XXXXXX` debris
-// behind. `perm` controls the final file's permissions; the temp is
-// created with the same mode so the rename doesn't downgrade it.
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	base := filepath.Base(path)
-	tmp, err := os.CreateTemp(dir, "."+base+".dfmc-tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp for atomic write: %w", err)
-	}
-	tmpPath := tmp.Name()
-	// Ensure we always clean up the temp unless the rename succeeds.
-	cleanup := func() {
-		_ = os.Remove(tmpPath)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("write temp: %w", err)
-	}
-	// fsync — not every OS/filesystem requires it, but POSIX semantics
-	// say that without fsync a crash could lose the data even after
-	// rename. Cheap insurance.
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("sync temp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return fmt.Errorf("close temp: %w", err)
-	}
-	// Align temp's mode to `perm`. CreateTemp uses 0o600 by default; a
-	// call expecting a 0o644 world-readable config would otherwise end
-	// up with tighter-than-requested permissions.
-	if err := os.Chmod(tmpPath, perm); err != nil {
-		cleanup()
-		return fmt.Errorf("chmod temp: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		cleanup()
-		return fmt.Errorf("rename temp to target: %w", err)
-	}
-	return nil
-}
+// writeFileAtomic moved to fileutil.go — see engine.go:763.

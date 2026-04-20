@@ -179,9 +179,9 @@ func looksLikeUnifiedDiffWeb(diff string) bool {
 }
 
 func applyUnifiedDiffWeb(projectRoot, patch string, checkOnly bool) error {
-	root := strings.TrimSpace(projectRoot)
-	if root == "" {
-		root = "."
+	root, err := security.SanitizeGitRoot(projectRoot)
+	if err != nil {
+		return fmt.Errorf("invalid project root: %w", err)
 	}
 	patch = strings.ReplaceAll(patch, "\r\n", "\n")
 	if patch != "" && !strings.HasSuffix(patch, "\n") {
@@ -205,9 +205,9 @@ func applyUnifiedDiffWeb(projectRoot, patch string, checkOnly bool) error {
 }
 
 func gitChangedFilesWeb(projectRoot string, limit int) ([]string, error) {
-	root := strings.TrimSpace(projectRoot)
-	if root == "" {
-		root = "."
+	root, err := security.SanitizeGitRoot(projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project root: %w", err)
 	}
 	cmd := exec.Command("git", "-C", root, "status", "--short", "--")
 	out, err := cmd.Output()

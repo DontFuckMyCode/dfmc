@@ -45,8 +45,16 @@ func TestHandlerAppliesBearerAuthWhenConfigured(t *testing.T) {
 	rootReq := httptest.NewRequest(http.MethodGet, "/", nil)
 	rootRec := httptest.NewRecorder()
 	handler.ServeHTTP(rootRec, rootReq)
+	if rootRec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET / with token configured should require auth, got %d", rootRec.Code)
+	}
+
+	rootReq = httptest.NewRequest(http.MethodGet, "/", nil)
+	rootReq.Header.Set("Authorization", "Bearer secret-token")
+	rootRec = httptest.NewRecorder()
+	handler.ServeHTTP(rootRec, rootReq)
 	if rootRec.Code != http.StatusOK {
-		t.Fatalf("GET / should stay public, got %d", rootRec.Code)
+		t.Fatalf("GET / with bearer token should succeed, got %d", rootRec.Code)
 	}
 
 	apiReq := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)

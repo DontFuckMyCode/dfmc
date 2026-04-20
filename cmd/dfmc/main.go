@@ -45,7 +45,7 @@ func run() int {
 	// Cover every exit path including init-failure-with-degraded-allow
 	// and panic-out-of-cli.Run. Engine.Shutdown is safe to call after
 	// a partial Init (it no-ops on subsystems that never started).
-	defer eng.Shutdown()
+	defer func() { _ = eng.Shutdown() }()
 
 	if err := eng.Init(ctx); err != nil {
 		if !allowsDegradedStartup(os.Args[1:]) {

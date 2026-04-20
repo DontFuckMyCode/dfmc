@@ -13,6 +13,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"gopkg.in/yaml.v3"
 
+	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
+
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -3823,7 +3825,7 @@ func TestStatsPanelBoostAllowsWiderTemporaryPanel(t *testing.T) {
 
 func TestRenderStatsPanelShowsLockedFocusHints(t *testing.T) {
 	panel := renderStatsPanel(statsPanelInfo{
-		Mode:        statsPanelModeTasks,
+		Mode:        theme.StatsPanelMode(statsPanelModeTasks),
 		Provider:    "openai",
 		Model:       "gpt-5.4",
 		Configured:  true,
@@ -3871,7 +3873,7 @@ func TestAltX_TogglesSelectionMode(t *testing.T) {
 
 func TestRenderStatsPanelFocusedModesShowWorkflowDetails(t *testing.T) {
 	todosPanel := renderStatsPanel(statsPanelInfo{
-		Mode:           statsPanelModeTodos,
+		Mode:           theme.StatsPanelMode(statsPanelModeTodos),
 		Provider:       "openai",
 		Model:          "gpt-5.4",
 		Configured:     true,
@@ -3892,7 +3894,7 @@ func TestRenderStatsPanelFocusedModesShowWorkflowDetails(t *testing.T) {
 	}
 
 	subagentsPanel := renderStatsPanel(statsPanelInfo{
-		Mode:          statsPanelModeSubagents,
+		Mode:          theme.StatsPanelMode(statsPanelModeSubagents),
 		Provider:      "openai",
 		Model:         "gpt-5.4",
 		Configured:    true,

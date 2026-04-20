@@ -71,7 +71,7 @@ func TestShutdown_ErrorPublishesEvent(t *testing.T) {
 	// pipeline would couple this test to internal/conversation +
 	// internal/memory implementation details. The contract we care
 	// about is "every reported error reaches the bus".
-	eng.reportShutdownError("save_conversation", errors.New("disk full"))
+	eng.publishShutdownError("save_conversation", errors.New("disk full"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()

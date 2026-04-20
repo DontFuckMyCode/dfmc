@@ -227,17 +227,17 @@ func (e *RegistrationError) Unwrap() error {
 }
 
 // MustRegister is the panic-on-error variant — useful in package init or
-// tests where a registration failure is a programmer bug. The panic
-// value is a *RegistrationError so a recovering caller can pull the
-// command name and root cause out for a readable crash report instead
-// of a bare string.
-func (r *Registry) MustRegister(cmd Command) {
+// tests where a registration failure is a programmer bug. Returns the
+// canonical name on success and a *RegistrationError on failure so callers
+// can distinguish the two cases without panic/recover.
+func (r *Registry) MustRegister(cmd Command) (string, error) {
 	if err := r.Register(cmd); err != nil {
-		panic(&RegistrationError{
+		return "", &RegistrationError{
 			CommandName: strings.ToLower(strings.TrimSpace(cmd.Name)),
 			Err:         err,
-		})
+		}
 	}
+	return strings.ToLower(strings.TrimSpace(cmd.Name)), nil
 }
 
 // Lookup resolves a name (or alias) to its canonical command record. The

@@ -146,6 +146,17 @@ func (r *Router) List() []string {
 	return out
 }
 
+// ResolveOrder returns the provider lookup order for a request targeting
+// `requested`. The order is: requested (if any) → primary → fallback[]
+// → "offline". Deduplication is applied so each name appears at most once.
+// "offline" is always last because it always has an answer and racing it
+// would waste tokens.
+//
+// The returned slice is the order Complete/Stream iterate when handling
+// a request. On ErrContextOverflow the SAME provider is retried once after
+// compacting history before moving to the next provider — compacting and
+// moving to a different provider wouldn't help because the new provider
+// still sees the same conversation.
 func (r *Router) ResolveOrder(requested string) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 4)

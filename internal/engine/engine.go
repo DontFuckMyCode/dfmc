@@ -28,6 +28,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -303,7 +304,7 @@ func (e *Engine) StartServing() {
 	e.EventBus.Publish(Event{Type: "engine:serving", Source: "engine"})
 }
 
-func (e *Engine) Shutdown() {
+func (e *Engine) Shutdown() error {
 	e.setState(StateShuttingDown)
 	e.EventBus.Publish(Event{Type: "engine:shutdown", Source: "engine"})
 
@@ -340,31 +341,34 @@ func (e *Engine) Shutdown() {
 		}
 	}
 
-	// Persist and close in stage order. We deliberately keep this method
-	// void because main.go's `defer eng.Shutdown()` shouldn't have to
-	// branch on an error — but we can't silently swallow failures here
-	// either. Disk-full / permission-denied during conversation save or
-	// memory persist used to vanish into _ = err. Now each stage that
-	// fails publishes an event AND prints to stderr so the user sees the
-	// data-loss before the process exits.
+	// Persist and close in stage order. Each failure is collected into
+	// errs, published on the EventBus, and printed to stderr so the
+	// user sees the data-loss before the process exits. The returned
+	// error (errors.Join of all failures, nil if none) lets callers
+	// decide whether to log further or abort with a non-zero exit.
+	var errs []error
 	if e.Conversation != nil {
 		if err := e.Conversation.SaveActive(); err != nil {
-			e.reportShutdownError("save_conversation", err)
+			errs = append(errs, fmt.Errorf("save_conversation: %w", err))
+			e.publishShutdownError("save_conversation", err)
 		}
 	}
 	if e.Memory != nil {
 		if err := e.Memory.Persist(); err != nil {
-			e.reportShutdownError("persist_memory", err)
+			errs = append(errs, fmt.Errorf("persist_memory: %w", err))
+			e.publishShutdownError("persist_memory", err)
 		}
 	}
 	if e.Tools != nil {
 		if err := e.Tools.Close(); err != nil {
-			e.reportShutdownError("close_tools", err)
+			errs = append(errs, fmt.Errorf("close_tools: %w", err))
+			e.publishShutdownError("close_tools", err)
 		}
 	}
 	if e.Storage != nil {
 		if err := e.Storage.Close(); err != nil {
-			e.reportShutdownError("close_storage", err)
+			errs = append(errs, fmt.Errorf("close_storage: %w", err))
+			e.publishShutdownError("close_storage", err)
 		}
 	}
 
@@ -377,13 +381,14 @@ func (e *Engine) Shutdown() {
 
 	e.setState(StateStopped)
 	e.EventBus.Publish(Event{Type: "engine:stopped", Source: "engine"})
+	return errors.Join(errs...)
 }
 
-// reportShutdownError surfaces a Shutdown-stage failure on both the
+// publishShutdownError surfaces a Shutdown-stage failure on both the
 // EventBus (so live observers like the TUI and web /ws stream see it)
 // and stderr (so the operator sees it after the process exits, even if
 // the bus is no longer being read by then).
-func (e *Engine) reportShutdownError(stage string, err error) {
+func (e *Engine) publishShutdownError(stage string, err error) {
 	if err == nil {
 		return
 	}

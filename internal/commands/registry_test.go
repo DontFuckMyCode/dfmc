@@ -46,7 +46,7 @@ func TestRegister_RejectsDuplicateName(t *testing.T) {
 func TestRegister_RejectsAliasCollisions(t *testing.T) {
 	r := NewRegistry()
 	r.MustRegister(Command{Name: "conversation", Aliases: []string{"conv"}, Summary: "first", Surfaces: SurfaceCLI, Category: CategoryMemory})
-	// Alias collides with existing alias.
+	// Alias "conv" collides with existing alias — Register should error.
 	if err := r.Register(Command{Name: "chat", Aliases: []string{"conv"}, Summary: "second", Surfaces: SurfaceCLI, Category: CategoryQuery}); err == nil {
 		t.Fatalf("expected alias collision error")
 	}
@@ -107,7 +107,9 @@ func TestForSurface_FiltersAndGroups(t *testing.T) {
 
 func TestListByCategory_OmitsEmptyGroups(t *testing.T) {
 	r := NewRegistry()
-	r.MustRegister(Command{Name: "ask", Summary: "x", Surfaces: SurfaceCLI, Category: CategoryQuery})
+	if _, err := r.MustRegister(Command{Name: "ask", Summary: "x", Surfaces: SurfaceCLI, Category: CategoryQuery}); err != nil {
+		t.Fatalf("mustregister: %v", err)
+	}
 	groups := r.ListByCategory(SurfaceCLI)
 	if len(groups) != 1 {
 		t.Fatalf("expected 1 category group, got %d", len(groups))

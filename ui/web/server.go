@@ -153,6 +153,9 @@ func normalizeBindHost(authMode, host string) string {
 	if strings.EqualFold(strings.TrimSpace(authMode), "none") && !isLoopbackBindHost(host) {
 		return "127.0.0.1"
 	}
+	if strings.EqualFold(strings.TrimSpace(authMode), "token") && !isLoopbackBindHost(host) {
+		fmt.Fprintf(os.Stderr, "[DFMC] WARNING: auth=token with non-loopback bind (%s) exposes the agent on all interfaces. Use --host 127.0.0.1 or set auth=none.\n", host)
+	}
 	return host
 }
 
@@ -383,7 +386,7 @@ func bearerTokenMiddleware(next http.Handler, token string) http.Handler {
 			writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 			return
 		}
-		if r.Method == http.MethodGet && r.URL.Path == "/" {
+		if r.Method == http.MethodGet && r.URL.Path == "/" && rawToken == "" {
 			next.ServeHTTP(w, r)
 			return
 		}

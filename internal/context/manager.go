@@ -374,21 +374,15 @@ func trimBundleToBudget(bundle *promptlib.PromptBundle, budget int) *promptlib.P
 		// even when the stable prefix is large. Cap by actual dynamic size so
 		// we don't over-reserve when there isn't much dynamic content.
 		dynamicFloor = budget / 4
-		if dynamicFloor < 180 {
-			dynamicFloor = 180
-		}
-		if dynamicFloor > dynamicTokens {
-			dynamicFloor = dynamicTokens
-		}
+		dynamicFloor = max(180, dynamicFloor)
+		dynamicFloor = min(dynamicFloor, dynamicTokens)
 		if dynamicFloor > budget {
 			dynamicFloor = budget
 		}
 	}
 
 	stableBudget := budget - dynamicFloor
-	if stableBudget < 0 {
-		stableBudget = 0
-	}
+	stableBudget = max(0, stableBudget)
 
 	out := &promptlib.PromptBundle{Sections: make([]promptlib.PromptSection, 0, len(bundle.Sections))}
 	stableRemaining := stableBudget
@@ -481,13 +475,9 @@ func extractSnippet(content string, terms []string, maxLines int) (string, int, 
 	end := len(lines)
 	if needleIdx >= 0 {
 		start = needleIdx - maxLines/2
-		if start < 0 {
-			start = 0
-		}
+		start = max(0, start)
 		end = start + maxLines
-		if end > len(lines) {
-			end = len(lines)
-		}
+		end = min(len(lines), end)
 	} else if len(lines) > maxLines {
 		end = maxLines
 	}
@@ -652,9 +642,7 @@ func extractInjectedContext(projectRoot, query string, maxBlocks, maxLines int) 
 			}
 			if lineEnd-lineStart+1 > maxLines {
 				lineEnd = lineStart + maxLines - 1
-				if lineEnd > len(lines) {
-					lineEnd = len(lines)
-				}
+				lineEnd = min(len(lines), lineStart+maxLines-1)
 			}
 
 			snippet := strings.Join(lines[lineStart-1:lineEnd], "\n")
@@ -831,12 +819,12 @@ func ResolvePromptRenderBudget(task, profile string, runtime PromptRuntime) Prom
 		b.ContextFiles += 2
 	}
 	if runtime.LowLatency {
-		b.ContextFiles = maxInt(4, int(float64(b.ContextFiles)*0.72))
-		b.ToolList = maxInt(8, int(float64(b.ToolList)*0.72))
-		b.InjectedBlocks = maxInt(1, b.InjectedBlocks-1)
-		b.InjectedLines = maxInt(28, int(float64(b.InjectedLines)*0.65))
-		b.InjectedTokens = maxInt(120, int(float64(b.InjectedTokens)*0.65))
-		b.ProjectBriefTokens = maxInt(90, int(float64(b.ProjectBriefTokens)*0.68))
+		b.ContextFiles = max(4, int(float64(b.ContextFiles)*0.72))
+		b.ToolList = max(8, int(float64(b.ToolList)*0.72))
+		b.InjectedBlocks = max(1, b.InjectedBlocks-1)
+		b.InjectedLines = max(28, int(float64(b.InjectedLines)*0.65))
+		b.InjectedTokens = max(120, int(float64(b.InjectedTokens)*0.65))
+		b.ProjectBriefTokens = max(90, int(float64(b.ProjectBriefTokens)*0.68))
 	}
 	if runtime.MaxContext > 0 {
 		scale := float64(runtime.MaxContext) / 128000.0
@@ -846,11 +834,11 @@ func ResolvePromptRenderBudget(task, profile string, runtime PromptRuntime) Prom
 		if scale < 0.22 {
 			scale = 0.22
 		}
-		b.ContextFiles = maxInt(3, int(float64(b.ContextFiles)*scale))
-		b.ToolList = maxInt(6, int(float64(b.ToolList)*scale))
-		b.InjectedLines = maxInt(24, int(float64(b.InjectedLines)*scale))
-		b.InjectedTokens = maxInt(100, int(float64(b.InjectedTokens)*scale))
-		b.ProjectBriefTokens = maxInt(80, int(float64(b.ProjectBriefTokens)*scale))
+		b.ContextFiles = max(3, int(float64(b.ContextFiles)*scale))
+		b.ToolList = max(6, int(float64(b.ToolList)*scale))
+		b.InjectedLines = max(24, int(float64(b.InjectedLines)*scale))
+		b.InjectedTokens = max(100, int(float64(b.InjectedTokens)*scale))
+		b.ProjectBriefTokens = max(80, int(float64(b.ProjectBriefTokens)*scale))
 	}
 	return b
 }
@@ -893,11 +881,11 @@ func PromptTokenBudget(task, profile string, runtime PromptRuntime) int {
 	}
 	if runtime.MaxContext > 0 {
 		cap := runtime.MaxContext / 4
-		if cap < 720 {
-			cap = 720
-		}
 		if cap > 3400 {
 			cap = 3400
+		}
+		if cap < 720 {
+			cap = 720
 		}
 		if budget > cap {
 			budget = cap
@@ -1010,9 +998,7 @@ func BuildToolCallPolicy(task string, runtime PromptRuntime) string {
 	}
 	if runtime.MaxContext > 0 {
 		toolOutputBudget := runtime.MaxContext / 5
-		if toolOutputBudget < 96 {
-			toolOutputBudget = 96
-		}
+		toolOutputBudget = max(96, toolOutputBudget)
 		lines = append(lines, "Keep cumulative tool output near "+strconv.Itoa(toolOutputBudget)+" tokens unless risk requires deeper evidence.")
 	}
 	switch strings.ToLower(strings.TrimSpace(task)) {
@@ -1106,9 +1092,7 @@ func downshiftChunkForRemaining(chunk types.ContextChunk, remaining, maxTokensPe
 			break
 		}
 		over := tokenCount - budget
-		if over < 1 {
-			over = 1
-		}
+		over = max(1, over)
 		budget -= over
 	}
 	if strings.TrimSpace(trimmed) == "" || budget <= 0 {
@@ -1142,7 +1126,7 @@ func compressContent(raw string, terms []string, lang, level string, maxTokens i
 			snippet, lineStart, lineEnd := extractSnippet(raw, terms, 30)
 			return trimToTokenBudget(stripComments(snippet), maxTokens), lineStart, lineEnd
 		}
-		return trimToTokenBudget(sig, maxTokens), 1, minInt(160, len(strings.Split(raw, "\n")))
+		return trimToTokenBudget(sig, maxTokens), 1, min(160, len(strings.Split(raw, "\n")))
 	default:
 		snippet, lineStart, lineEnd := extractSnippet(raw, terms, 60)
 		return trimToTokenBudget(stripComments(snippet), maxTokens), lineStart, lineEnd
@@ -1235,18 +1219,4 @@ func shouldIncludePath(path string, includeTests, includeDocs bool) bool {
 		}
 	}
 	return true
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
