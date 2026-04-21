@@ -714,6 +714,8 @@ func RenderChatWorkflowFocusCard(info StatsPanelInfo, width int) string {
 		title += " · TASKS"
 	case StatsPanelModeSubagents:
 		title += " · SUBAGENTS"
+	case StatsPanelModeProviders:
+		title += " · PROVIDERS"
 	}
 	lines := []string{SectionHeader("»", title)}
 	if status := info.WorkflowStatus; status != "" {
@@ -747,6 +749,61 @@ func RenderChatWorkflowFocusCard(info StatsPanelInfo, width int) string {
 		appendBlock(info.TaskLines, "No active task graph yet.")
 	case StatsPanelModeSubagents:
 		appendBlock(info.SubagentLines, "No subagent activity yet.")
+	case StatsPanelModeProviders:
+		if len(info.Providers) == 0 {
+			appendBlock(nil, "No providers registered.")
+		} else {
+			var lines []string
+			for i, row := range info.Providers {
+				prefix := "  "
+				if i == info.ProvidersSelectedIndex {
+					prefix = "» "
+				}
+				line := prefix + row.Name
+				if len(row.Models) > 0 {
+					line += " · " + strings.Join(row.Models, " › ")
+				}
+				if row.Status == "no-key" {
+					line += " ⚠ no-key"
+				} else if row.Status == "offline" {
+					line += " ○ offline"
+				} else {
+					line += " ● ready"
+				}
+				lines = append(lines, line)
+			}
+			appendBlock(lines, "")
+
+			// Detail pane for the selected provider
+			if info.ProvidersSelectedIndex >= 0 && info.ProvidersSelectedIndex < len(info.Providers) {
+				sel := info.Providers[info.ProvidersSelectedIndex]
+				detail := []string{
+					AccentStyle.Bold(true).Render("▸ " + sel.Name),
+				}
+				if sel.Primary {
+					detail = append(detail, SubtleStyle.Render("  primary"))
+				}
+				if sel.Active {
+					detail = append(detail, AccentStyle.Render("  ◉ active"))
+				}
+				if len(sel.Models) > 0 {
+					detail = append(detail, SubtleStyle.Render("  models:    ")+strings.Join(sel.Models, " › "))
+				}
+				if len(sel.FallbackModels) > 0 {
+					detail = append(detail, SubtleStyle.Render("  fallback:  ")+strings.Join(sel.FallbackModels, " › "))
+				}
+				detail = append(detail, SubtleStyle.Render("  protocol:  "+sel.Protocol))
+				detail = append(detail, SubtleStyle.Render(fmt.Sprintf("  max_ctx:   %d", sel.MaxContext)))
+				if sel.HasAPIKey {
+					detail = append(detail, OkStyle.Render("  api_key:   ● set"))
+				} else {
+					detail = append(detail, FailStyle.Render("  api_key:   ⚠ missing"))
+				}
+				lines = append(lines, strings.Join(detail, "\n"))
+				lines = append(lines, "")
+				lines = append(lines, SubtleStyle.Render("  enter:switch · m:model · f:fallback · s:save"))
+			}
+		}
 	}
 	if len(info.WorkflowTimeline) > 0 {
 		lines = append(lines, "  live log:")
@@ -1573,6 +1630,43 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 			body = append(body, info.SubagentLines...)
 		}
 		addSection("?", "SUBAGENTS", body)
+	case StatsPanelModeProviders:
+		addSection(providerIcon, "PROVIDER", providerBody)
+		addSection("▦", "CONTEXT", contextBody)
+		addSection(agentIcon, "TOOL LOOP", agentBody)
+		body := []string{}
+		if len(info.Providers) == 0 {
+			body = append(body, "No providers registered.")
+			body = append(body, "Configure providers in .dfmc/config.yaml or via dfmc providers setup.")
+		} else {
+			for _, row := range info.Providers {
+				prefix := "  "
+				if row.Active {
+					prefix = OkStyle.Render("◉ ")
+				} else if row.Primary {
+					prefix = AccentStyle.Render("◎ ")
+				} else {
+					prefix = SubtleStyle.Render("○ ")
+				}
+				name := BoldStyle.Render(row.Name)
+				if row.Active {
+					name = OkStyle.Bold(true).Render(row.Name)
+				}
+				line := prefix + name
+				if len(row.Models) > 0 {
+					line += SubtleStyle.Render(" · " + strings.Join(row.Models, " › "))
+				}
+				body = append(body, line)
+				if row.Status == "no-key" {
+					body = append(body, SubtleStyle.Render("  ⚠ no API key — set providers.profiles."+row.Name+".api_key"))
+				}
+				if len(row.FallbackModels) > 0 {
+					body = append(body, SubtleStyle.Render("  fallback: "+strings.Join(row.FallbackModels, " › ")))
+				}
+			}
+		}
+		addSection("◉", "PROVIDERS", body)
+		addSection("?", "SESSION", sessionBody)
 	default:
 		addSection(providerIcon, "PROVIDER", providerBody)
 		addSection("?", "CONTEXT", contextBody)
@@ -1589,9 +1683,9 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 		}
 		addSection("?", "SESSION", sessionBody)
 	}
-	footerText := "  ctrl+s hide ? alt+a/s/d/f switch ? ctrl+h keys"
+	footerText := "  ctrl+s hide ? alt+a/s/d/f/p switch ? ctrl+h keys"
 	if info.FocusLocked {
-		footerText = "  esc unlock ? ctrl+s hide ? alt+a/s/d/f retarget ? ctrl+h keys"
+		footerText = "  esc unlock ? ctrl+s hide ? alt+a/s/d/f/p retarget ? ctrl+h keys"
 	} else if info.Boosted {
 		footerText = "  alt+a/s/d/f again locks ? ctrl+s hide ? ctrl+h keys"
 	}
@@ -1637,6 +1731,7 @@ func RenderStatsPanelModeTabs(mode StatsPanelMode, width int) string {
 		{key: "S", label: "todos", mode: StatsPanelModeTodos},
 		{key: "D", label: "tasks", mode: StatsPanelModeTasks},
 		{key: "F", label: "subagents", mode: StatsPanelModeSubagents},
+		{key: "P", label: "providers", mode: StatsPanelModeProviders},
 	}
 	parts := make([]string, 0, len(items))
 	for _, item := range items {

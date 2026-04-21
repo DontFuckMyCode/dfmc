@@ -29,6 +29,7 @@ type fakeRaceProvider struct {
 
 func (f *fakeRaceProvider) Name() string  { return f.name }
 func (f *fakeRaceProvider) Model() string { return f.name + "-model" }
+func (f *fakeRaceProvider) Models() []string { return []string{f.name + "-model"} }
 func (f *fakeRaceProvider) Complete(ctx context.Context, _ CompletionRequest) (*CompletionResponse, error) {
 	atomic.AddInt32(&f.calls, 1)
 	if f.sleep > 0 {

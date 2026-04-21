@@ -219,36 +219,54 @@ func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*Completi
 			errs = append(errs, fmt.Errorf("%w: %s", ErrProviderNotFound, name))
 			continue
 		}
-		resp, err := r.completeWithThrottleRetry(ctx, p, req)
+		resp, usedModel, err := r.completeWithProviderRetry(ctx, p, req)
 		if err == nil {
-			return resp, p.Name(), nil
-		}
-		// Context overflow: trim the oldest non-tail messages and retry the
-		// SAME provider once before giving up on it. Moving to a fallback
-		// provider won't help if the same huge conversation just shifts over.
-		if isContextOverflow(err) {
-			compacted, trimmed := compactMessagesForRetry(req.Messages)
-			if trimmed > 0 {
-				retryReq := req
-				retryReq.Messages = compacted
-				resp, err2 := r.completeWithThrottleRetry(ctx, p, retryReq)
-				if err2 == nil {
-					return resp, p.Name(), nil
-				}
-				errs = append(errs, fmt.Errorf("%s (context overflow, compacted %d msgs, retry failed): %w", p.Name(), trimmed, err2))
-				continue
-			}
-			errs = append(errs, fmt.Errorf("%s: %w", p.Name(), err))
-			continue
-		}
-		if errors.Is(err, ErrProviderUnavailable) {
-			errs = append(errs, err)
-			continue
+			return resp, usedModel, nil
 		}
 		errs = append(errs, fmt.Errorf("%s: %w", p.Name(), err))
 	}
 
 	return nil, "", errors.Join(errs...)
+}
+
+// completeWithProviderRetry tries a provider's model chain (primary + FallbackModels).
+// On ErrContextOverflow it first retries the SAME model after compacting messages,
+// then falls through to the next model in the chain. Returns (resp, providerName, error).
+func (r *Router) completeWithProviderRetry(ctx context.Context, p Provider, req CompletionRequest) (*CompletionResponse, string, error) {
+	models := p.Models()
+	if len(models) == 0 {
+		resp, err := r.completeWithThrottleRetry(ctx, p, req)
+		return resp, p.Name(), err
+	}
+	var errs []error
+	for _, model := range models {
+		reqWithModel := req
+		reqWithModel.Model = model
+		resp, err := r.completeWithThrottleRetry(ctx, p, reqWithModel)
+		if err == nil {
+			return resp, p.Name(), nil
+		}
+		if isContextOverflow(err) {
+			// Compact and retry the SAME model before giving up on it.
+			compacted, trimmed := compactMessagesForRetry(reqWithModel.Messages)
+			if trimmed > 0 {
+				retryReq := reqWithModel
+				retryReq.Messages = compacted
+				resp, err2 := r.completeWithThrottleRetry(ctx, p, retryReq)
+				if err2 == nil {
+					return resp, p.Name(), nil
+				}
+				errs = append(errs, fmt.Errorf("%s (model %s, context overflow, compacted %d msgs, retry failed): %w", p.Name(), model, trimmed, err2))
+			} else {
+				errs = append(errs, fmt.Errorf("%s (model %s): %w", p.Name(), model, err))
+			}
+			continue // try next model in chain
+		}
+		// Non-overflow error: give up on this provider immediately.
+		errs = append(errs, fmt.Errorf("%s (model %s): %w", p.Name(), model, err))
+		break
+	}
+	return nil, p.Name(), errors.Join(errs...)
 }
 
 // completeWithThrottleRetry is the same-provider wrapper that honors
@@ -488,33 +506,52 @@ func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 			errs = append(errs, fmt.Errorf("%w: %s", ErrProviderNotFound, name))
 			continue
 		}
-		stream, err := r.streamWithThrottleRetry(ctx, p, req)
+		stream, usedModel, err := r.streamWithProviderRetry(ctx, p, req)
 		if err == nil {
-			return stream, p.Name(), nil
-		}
-		if isContextOverflow(err) {
-			compacted, trimmed := compactMessagesForRetry(req.Messages)
-			if trimmed > 0 {
-				retryReq := req
-				retryReq.Messages = compacted
-				stream, err2 := r.streamWithThrottleRetry(ctx, p, retryReq)
-				if err2 == nil {
-					return stream, p.Name(), nil
-				}
-				errs = append(errs, fmt.Errorf("%s (context overflow, compacted %d msgs, retry failed): %w", p.Name(), trimmed, err2))
-				continue
-			}
-			errs = append(errs, fmt.Errorf("%s: %w", p.Name(), err))
-			continue
-		}
-		if errors.Is(err, ErrProviderUnavailable) {
-			errs = append(errs, err)
-			continue
+			return stream, usedModel, nil
 		}
 		errs = append(errs, fmt.Errorf("%s: %w", p.Name(), err))
 	}
 
 	return nil, "", errors.Join(errs...)
+}
+
+// streamWithProviderRetry tries a provider's model chain on context overflow.
+// On ErrContextOverflow it first retries the SAME model after compacting messages,
+// then falls through to the next model. Returns (stream, providerName, error).
+func (r *Router) streamWithProviderRetry(ctx context.Context, p Provider, req CompletionRequest) (<-chan StreamEvent, string, error) {
+	models := p.Models()
+	if len(models) == 0 {
+		stream, err := r.streamWithThrottleRetry(ctx, p, req)
+		return stream, p.Name(), err
+	}
+	var errs []error
+	for _, model := range models {
+		reqWithModel := req
+		reqWithModel.Model = model
+		stream, err := r.streamWithThrottleRetry(ctx, p, reqWithModel)
+		if err == nil {
+			return stream, p.Name(), nil
+		}
+		if isContextOverflow(err) {
+			compacted, trimmed := compactMessagesForRetry(reqWithModel.Messages)
+			if trimmed > 0 {
+				retryReq := reqWithModel
+				retryReq.Messages = compacted
+				stream, err2 := r.streamWithThrottleRetry(ctx, p, retryReq)
+				if err2 == nil {
+					return stream, p.Name(), nil
+				}
+				errs = append(errs, fmt.Errorf("%s (model %s, context overflow, compacted %d msgs, retry failed): %w", p.Name(), model, trimmed, err2))
+			} else {
+				errs = append(errs, fmt.Errorf("%s (model %s): %w", p.Name(), model, err))
+			}
+			continue
+		}
+		errs = append(errs, fmt.Errorf("%s (model %s): %w", p.Name(), model, err))
+		break
+	}
+	return nil, p.Name(), errors.Join(errs...)
 }
 
 // isContextOverflow matches either the explicit ErrContextOverflow sentinel or

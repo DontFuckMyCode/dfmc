@@ -794,21 +794,10 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "grep", Template: "/grep TODO", Description: "search codebase (regex)"},
 		{Command: "run", Template: "/run go test ./...", Description: "run a guarded command"},
 		{Command: "diff", Template: "/diff", Description: "show worktree diff"},
-		{Command: "patch", Template: "/patch", Description: "show latest patch summary"},
-		{Command: "apply", Template: "/apply --check", Description: "dry-run apply latest patch"},
-		{Command: "undo", Template: "/undo", Description: "undo last exchange"},
-		{Command: "retry", Template: "/retry", Description: "resend the last user message"},
-		{Command: "edit", Template: "/edit", Description: "pull last user message into composer to amend"},
-		{Command: "keylog", Template: "/keylog", Description: "toggle raw KeyMsg dump into the footer (diagnostic)"},
 		{Command: "file", Template: "/file", Description: "open the file picker (alias for @, avoids AltGr-@ conflicts)"},
-		{Command: "plan", Template: "/plan", Description: "enter investigate-only plan mode (read-only tools)"},
-		{Command: "code", Template: "/code", Description: "exit plan mode, allow file-mutating tool calls"},
-		{Command: "continue", Template: "/continue", Description: "resume a parked agent loop"},
-		{Command: "split", Template: "/split ", Description: "decompose a broad task into focused subtasks"},
-		{Command: "btw", Template: "/btw ", Description: "inject a note at the next tool-loop step"},
 		{Command: "coach", Template: "/coach", Description: coachLabel + " the background coach notes"},
 		{Command: "hints", Template: "/hints", Description: hintsLabel + " between-round trajectory hints"},
-		{Command: "select", Template: "/select", Description: "toggle chat-only selection mode (hide stats, disable mouse capture)"},
+		{Command: "btw", Template: "/btw ", Description: "inject a note at the next tool-loop step"},
 		// Analyze family: these have TUI handlers (case "map", "scan") but
 		// live at SurfaceCLI|SurfaceWeb in the shared registry, so they
 		// never reach the palette through ForSurface. Surface them here so
@@ -822,6 +811,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "refactor", Template: "/refactor " + blankFallback(m.toolTargetFile(), "path/to/file.go"), Description: "propose a scoped, reversible refactor"},
 		{Command: "test", Template: "/test " + blankFallback(m.toolTargetFile(), "path/to/file.go"), Description: "draft tests for a target"},
 		{Command: "doc", Template: "/doc " + blankFallback(m.toolTargetFile(), "path/to/file.go"), Description: "draft or update documentation"},
+		{Command: "continue", Template: "/continue", Description: "resume a parked agent loop"},
 	}
 	for _, x := range extras {
 		add(x.Command, x.Template, x.Description)

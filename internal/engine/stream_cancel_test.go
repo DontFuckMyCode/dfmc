@@ -15,6 +15,7 @@ type terminalAfterCancelProvider struct {
 
 func (p *terminalAfterCancelProvider) Name() string  { return "cancel-drain" }
 func (p *terminalAfterCancelProvider) Model() string { return "cancel-drain-model" }
+func (p *terminalAfterCancelProvider) Models() []string { return []string{"cancel-drain-model"} }
 func (p *terminalAfterCancelProvider) Complete(context.Context, provider.CompletionRequest) (*provider.CompletionResponse, error) {
 	return &provider.CompletionResponse{Text: "unused", Model: p.Model()}, nil
 }

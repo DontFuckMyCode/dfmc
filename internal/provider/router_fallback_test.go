@@ -23,6 +23,7 @@ type stubProvider struct {
 
 func (p *stubProvider) Name() string                            { return p.name }
 func (p *stubProvider) Model() string                            { return p.name + "-model" }
+func (p *stubProvider) Models() []string                        { return []string{p.name + "-model"} }
 func (p *stubProvider) Complete(_ context.Context, _ CompletionRequest) (*CompletionResponse, error) {
 	atomic.AddInt32(&p.calls, 1)
 	if p.err != nil {

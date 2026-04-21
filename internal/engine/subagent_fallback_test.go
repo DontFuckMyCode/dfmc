@@ -23,6 +23,7 @@ type failingProvider struct {
 
 func (p *failingProvider) Name() string                { return p.name }
 func (p *failingProvider) Model() string               { return p.model }
+func (p *failingProvider) Models() []string            { return []string{p.model} }
 func (p *failingProvider) CountTokens(text string) int { return len(text) }
 func (p *failingProvider) MaxContext() int             { return 128000 }
 func (p *failingProvider) Hints() provider.ProviderHints {

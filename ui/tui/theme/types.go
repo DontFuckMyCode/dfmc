@@ -14,10 +14,11 @@ import "time"
 type StatsPanelMode string
 
 const (
-	StatsPanelModeOverview  StatsPanelMode = "overview"
-	StatsPanelModeTodos     StatsPanelMode = "todos"
-	StatsPanelModeTasks     StatsPanelMode = "tasks"
-	StatsPanelModeSubagents StatsPanelMode = "subagents"
+	StatsPanelModeOverview   StatsPanelMode = "overview"
+	StatsPanelModeTodos      StatsPanelMode = "todos"
+	StatsPanelModeTasks      StatsPanelMode = "tasks"
+	StatsPanelModeSubagents  StatsPanelMode = "subagents"
+	StatsPanelModeProviders  StatsPanelMode = "providers"
 )
 
 // --- tool chip ----------------------------------------------------------
@@ -110,6 +111,20 @@ type ChatHeaderInfo struct {
 
 // --- stats panel info ---------------------------------------------------
 
+// ProviderPanelRow is one row in the F2 providers sub-panel.
+type ProviderPanelRow struct {
+	Name           string
+	Active         bool // is current runtime provider
+	Primary        bool // is primary in config
+	Models         []string
+	FallbackModels []string
+	MaxContext     int
+	Protocol       string
+	HasAPIKey      bool
+	Status         string // "ready" | "no-key" | "offline"
+	IsPlaceholder  bool
+}
+
 type StatsPanelInfo struct {
 	Mode                  StatsPanelMode
 	Provider              string
@@ -167,4 +182,6 @@ type StatsPanelInfo struct {
 	PlanParallel          bool
 	PlanConfidence        float64
 	SpinnerFrame          int
+	Providers             []ProviderPanelRow
+	ProvidersSelectedIndex int // cursor position in the providers list
 }

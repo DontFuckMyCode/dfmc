@@ -8,48 +8,61 @@ Status: Alpha (actively under development)
 
 ## Current State
 
-Implemented now:
-- CLI entrypoint and command router
-- Config loading (defaults + global + project + env)
+Implemented:
+- CLI entrypoint, command router, and shell completion (`bash`/`zsh`/`fish`/`powershell`)
+- Config hierarchy (defaults → `~/.dfmc/config.yaml` → `.dfmc/config.yaml` → env → CLI flags) with `.env` auto-load
 - Models.dev-backed provider profile sync (`dfmc config sync-models`)
-- Engine lifecycle and event bus
-- Local AST extraction (regex-based v1)
-- CodeMap graph (nodes/edges, cycles, hotspots, path traversal)
-- Provider router with automatic offline fallback
-- Live provider clients:
+- Engine lifecycle with event bus, panic-guarded tool execution, and lock-ordered state
+- AST extraction via tree-sitter (Go, JavaScript, TypeScript, Python) with regex fallback when built without CGO
+- CodeMap graph (symbols/edges, cycles, hotspots, path traversal, DOT/SVG export)
+- Provider router with automatic fallback and always-available offline provider:
   - Anthropic Messages API
-  - OpenAI-compatible Chat Completions API (`openai`, `deepseek`, `generic` with `base_url`)
-- Streaming support:
-  - `chat` uses provider stream path when possible
-  - Tool-capable providers now also have a first local tool bridge, so chat/TUI can execute `read_file`, `write_file`, `edit_file`, `list_dir`, `grep_codebase`, and guarded `run_command` steps through bounded agent loops
-- Context builder for relevant code snippets
-- Tool engine (`read_file`, `write_file`, `edit_file`, `list_dir`, `grep_codebase`, `run_command`)
-- Skill commands (`skill list/info/run`) and built-in shortcuts (`review`, `explain`, `refactor`, `test`, `doc`)
-- Plugin commands (`plugin list/info/install/remove/enable/disable`) with config-backed enable state
-- Web API server (`dfmc serve`) with status, codemap, tools, memory, files, chat SSE
-- Terminal workbench (`dfmc tui`) with chat, status, and patch panels
-- Conversation persistence (JSONL)
+  - Google AI (Gemini)
+  - OpenAI-compatible Chat Completions (covers `openai`, `deepseek`, `kimi`, `zai`, `alibaba`, `minimax`, `generic`, `ollama`)
+- Streaming + native tool-calling loop with approval gate, pre/post hooks, panic guard, and context-lifecycle auto-compact / auto-handoff / autonomous resume
+- Tool engine — built-in registry:
+  - **File**: `read_file`, `write_file`, `edit_file`, `apply_patch`, `list_dir`
+  - **Search/nav**: `grep_codebase`, `glob`, `find_symbol`, `codemap`, `ast_query`
+  - **Shell**: `run_command` (allowlist + sandbox)
+  - **Git**: `git_status`, `git_diff`, `git_log`, `git_blame`, `git_branch`, `git_commit`, `git_worktree_list`/`_add`/`_remove`
+  - **Web**: `web_fetch`, `web_search`
+  - **Planning / sub-agents**: `task_split`, `orchestrate`, `delegate_task`
+  - **Reasoning**: `think`, `todo_write`
+  - **Meta layer** (exposed to tool-capable providers): `tool_search`, `tool_help`, `tool_call`, `tool_batch_call` — keeps the wire-level tool list short and the protocol stable across providers
+- Intent router — state-aware sub-LLM that routes `resume`/`new`/`clarify` before every Ask (fail-open)
+- Drive — autonomous plan/execute loop that breaks a task into a DAG of TODOs and schedules sub-agents in parallel (`dfmc drive`, `/drive` in TUI)
+- Hooks — user-configured shell commands on `user_prompt_submit`, `pre_tool`, `post_tool`, `session_start`/`_end` with per-entry timeout and `shell: false` payload safety
+- Tool approval gate with per-tool auto-approve and denial logging
+- MCP server (`dfmc mcp`) exposing the tool registry plus six synthetic Drive tools (`dfmc_drive_start`/`_status`/`_active`/`_list`/`_stop`/`_resume`) for IDE hosts (Claude Desktop, Cursor, VSCode)
+- Skill commands (`skill list/info/run`) and built-in shortcuts (`review`, `explain`, `refactor`, `debug`, `test`, `doc`, `generate`, `audit`, `onboard`)
+- Plugin commands (`plugin list/info/install/remove/enable/disable`) with config-backed enable state and manifest validation
+- Web API server (`dfmc serve`) with status, codemap, tools, memory, files, chat SSE, Drive cockpit, task CRUD, workspace diff/patch
+- Terminal workbench (`dfmc tui`) with Chat, Status, Files, Patch, Setup, Tools, Drive, and Tasks panels
+- Remote mode (`dfmc remote start` + `dfmc remote <verb>`) for headless operation over gRPC/WebSocket
+- Conversation persistence (JSONL) with branching, search, and compare
 - Memory store (working + episodic + semantic via bbolt buckets)
+- Task store (bbolt-backed) shared by `todo_write`, HTTP `/api/v1/tasks/*`, and MCP
 - Security scan (regex patterns for secrets and common vulnerability indicators)
-- Analyze pipeline with optional `--security`, `--dead-code`, `--complexity`
-
-Planned next:
-- Real tree-sitter integration
-- Streaming-native provider transport (SSE) and richer tool-calling formats
-- Richer tool catalog and skill execution pipeline
-- Richer TUI/WebUI workflows and remote control
+- Analyze pipeline with optional `--security`, `--dead-code`, `--complexity`, `--deps`, `--full`, `--magicdoc`
 
 ## Quick Start
 
 Requirements:
-- Go 1.23+
-- Windows/Linux/macOS
+- Go 1.25+
+- Windows / Linux / macOS
+- A C toolchain **if you want full-fidelity tree-sitter AST** (see note below)
 
 ### 1) Build
 
 ```bash
-go build ./cmd/dfmc
+# Full build (tree-sitter for Go/JS/TS/Python)
+CGO_ENABLED=1 go build -o bin/dfmc ./cmd/dfmc
+
+# Minimal build (falls back to regex AST — symbol/codemap accuracy degrades)
+go build -o bin/dfmc ./cmd/dfmc
 ```
+
+> With `CGO_ENABLED=0` the build still succeeds but `dfmc status` / `dfmc doctor` will report `ast_backend: regex`. If symbol extraction behavior looks wrong, check the backend before blaming the code.
 
 ### 2) Initialize in project
 
@@ -170,11 +183,33 @@ go run ./cmd/dfmc tool list
 go run ./cmd/dfmc tool run read_file --path internal/engine/engine.go --line_start 1 --line_end 40
 go run ./cmd/dfmc tool run write_file --path tmp/demo.txt --content "hello"
 go run ./cmd/dfmc tool run edit_file --path tmp/demo.txt --old_string hello --new_string hi
+go run ./cmd/dfmc tool run apply_patch --patch @changes.diff
 go run ./cmd/dfmc tool run grep_codebase --pattern "ErrProviderUnavailable" --max_results 10
+go run ./cmd/dfmc tool run find_symbol --name Engine --parent Engine
+go run ./cmd/dfmc tool run codemap
+go run ./cmd/dfmc tool run glob --pattern "internal/**/*.go"
 go run ./cmd/dfmc tool run run_command --command go --args "version"
+go run ./cmd/dfmc tool run git_status
+go run ./cmd/dfmc tool run git_diff --cached
+go run ./cmd/dfmc tool run web_fetch --url https://models.dev/api.json
 go run ./cmd/dfmc map --format dot
 go run ./cmd/dfmc map --format svg > codemap.svg
 ```
+
+**Context-gathering layer order** (cheapest → most precise): `grep_codebase` (text discovery) → `codemap` (project signatures-only outline) → `find_symbol` (semantic locate with full scope) → `read_file` (raw byte/line fetch). Skipping straight to `read_file` on a guessed path costs more than starting with discovery.
+
+### 6.0) Drive — autonomous plan/execute
+
+```bash
+go run ./cmd/dfmc drive "add a health check endpoint and wire it into doctor"
+go run ./cmd/dfmc drive "refactor agent_loop" --max-parallel 4 --route plan=opus --route code=sonnet --route test=haiku
+go run ./cmd/dfmc drive list
+go run ./cmd/dfmc drive show <run-id>
+go run ./cmd/dfmc drive resume <run-id>
+go run ./cmd/dfmc drive stop <run-id>
+```
+
+Drive decomposes a task into a DAG of TODOs, then schedules ready ones in parallel through the sub-agent surface. Per-tag provider routing (`--route <tag>=<profile>`) sends each TODO to the best profile for that work — `plan`, `code`, `review`, `test`, `research`. Runs persist to bbolt and are resumable after Ctrl+C.
 
 ### 6.1) Run Web API
 
@@ -185,37 +220,29 @@ DFMC_WEB_TOKEN=change-me go run ./cmd/dfmc serve --host 127.0.0.1 --port 7788 --
 ```
 
 Endpoints:
+- `GET /healthz`
 - `GET /api/v1/status`
-- `POST /api/v1/chat` (SSE)
+- `GET /api/v1/commands`, `GET /api/v1/commands/{name}`
+- `POST /api/v1/ask`, `POST /api/v1/chat` (SSE)
 - `GET /api/v1/codemap`
 - `GET /api/v1/context/budget?q=...&runtime_provider=...&runtime_model=...&runtime_tool_style=...&runtime_max_context=...`
 - `GET /api/v1/context/recommend?q=...&runtime_provider=...&runtime_model=...&runtime_tool_style=...&runtime_max_context=...`
 - `GET /api/v1/context/brief?max_words=...&path=...`
 - `POST /api/v1/analyze`
 - `GET /api/v1/providers`
-- `GET /api/v1/tools`
-- `POST /api/v1/tools/:name`
-- `GET /api/v1/skills`
-- `POST /api/v1/skills/:name`
+- `GET /api/v1/tools`, `GET /api/v1/tools/{name}`, `POST /api/v1/tools/{name}`
+- `GET /api/v1/skills`, `POST /api/v1/skills/{name}`
 - `GET /api/v1/memory`
-- `GET /api/v1/conversation`
-- `POST /api/v1/conversation/new`
-- `POST /api/v1/conversation/save`
-- `POST /api/v1/conversation/load`
-- `GET /api/v1/conversation/branches`
-- `POST /api/v1/conversation/branches/create`
-- `POST /api/v1/conversation/branches/switch`
-- `GET /api/v1/conversation/branches/compare?a=...&b=...`
-- `GET /api/v1/prompts`
-- `GET /api/v1/prompts/stats?max_template_tokens=...&allow_var=...`
-- `GET /api/v1/prompts/recommend?q=...&runtime_provider=...&runtime_model=...&runtime_tool_style=...&runtime_max_context=...`
-- `POST /api/v1/prompts/render`
-- `GET /api/v1/magicdoc`
-- `POST /api/v1/magicdoc/update`
-- `GET /api/v1/conversations`
-- `GET /api/v1/conversations/search?q=...`
-- `GET /api/v1/files`
-- `GET /api/v1/files/:path`
+- `GET /api/v1/conversation`, `POST /api/v1/conversation/new|save|load|undo`
+- `GET /api/v1/conversation/branches`, `POST /api/v1/conversation/branches/create|switch`, `GET /api/v1/conversation/branches/compare?a=...&b=...`
+- `GET /api/v1/prompts`, `GET /api/v1/prompts/stats`, `GET /api/v1/prompts/recommend`, `POST /api/v1/prompts/render`
+- `GET /api/v1/magicdoc`, `POST /api/v1/magicdoc/update`
+- `GET /api/v1/conversations`, `GET /api/v1/conversations/search?q=...`
+- `GET /api/v1/workspace/diff`, `GET /api/v1/workspace/patch`, `POST /api/v1/workspace/apply`
+- `GET /api/v1/files`, `GET /api/v1/files/{path...}`
+- `GET /api/v1/scan`, `GET /api/v1/doctor`, `GET /api/v1/hooks`, `GET /api/v1/config`
+- `POST /api/v1/drive`, `GET /api/v1/drive`, `GET /api/v1/drive/{id}`, `POST /api/v1/drive/{id}/resume|stop`, `DELETE /api/v1/drive/{id}`, `GET /api/v1/drive/active`
+- `GET /api/v1/tasks`, `POST /api/v1/tasks`, `GET /api/v1/tasks/{id}`, `PATCH /api/v1/tasks/{id}`, `DELETE /api/v1/tasks/{id}`
 - `GET /ws` (event stream, SSE)
 
 ### 6.2) Manage config
@@ -434,36 +461,35 @@ When present, DFMC injects a budgeted slice of this brief into the system prompt
 
 ## Command Overview
 
-Available:
-- `dfmc init`
-- `dfmc status`
-- `dfmc version`
-- `dfmc ask`
-- `dfmc chat` (basic REPL)
-- `dfmc analyze`
-- `dfmc scan`
-- `dfmc map`
-- `dfmc tool`
-- `dfmc memory`
-- `dfmc conversation`
-- `dfmc config`
-- `dfmc prompt`
-- `dfmc magicdoc`
-- `dfmc plugin`
-- `dfmc skill`
-- `dfmc review`
-- `dfmc explain`
-- `dfmc refactor`
-- `dfmc test`
-- `dfmc doc`
-- `dfmc serve`
-- `dfmc remote`
-- `dfmc doctor`
-- `dfmc completion`
-- `dfmc man`
+Core:
+- `dfmc init`, `dfmc status`, `dfmc version`, `dfmc doctor`, `dfmc update`
+- `dfmc ask`, `dfmc chat`, `dfmc tui`
+- `dfmc analyze`, `dfmc scan`, `dfmc map`
 
-Scaffolded (placeholder):
-- none
+Agent / automation:
+- `dfmc drive` — autonomous plan/execute loop (list/show/resume/stop)
+- `dfmc tool` — run a single tool
+- `dfmc hooks` — inspect configured hooks
+- `dfmc approvals` (alias: `approve`, `permissions`) — manage tool auto-approve list
+
+Provider / model:
+- `dfmc providers`, `dfmc provider`, `dfmc model`
+
+State:
+- `dfmc memory`, `dfmc conversation` (alias: `conv`)
+- `dfmc context`, `dfmc prompt`, `dfmc magicdoc`
+
+Extensibility:
+- `dfmc plugin`, `dfmc skill`
+- `dfmc review`, `dfmc explain`, `dfmc refactor`, `dfmc debug`, `dfmc test`, `dfmc doc`, `dfmc generate`, `dfmc audit`, `dfmc onboard` (skill shortcuts)
+
+Services / host integration:
+- `dfmc serve` — HTTP + SSE workbench on port 7777
+- `dfmc remote` — headless client against `dfmc remote start` (gRPC on 7778, WebSocket on 7779)
+- `dfmc mcp` — Model Context Protocol server for IDE hosts
+
+Config / scaffolding:
+- `dfmc config`, `dfmc completion`, `dfmc man`
 
 ## Configuration
 
@@ -532,18 +558,33 @@ hooks:
 
 ```text
 cmd/dfmc                 # binary entrypoint
-internal/engine          # orchestration lifecycle
-internal/config          # config loading/default/validation
-internal/storage         # bbolt + artifact store
-internal/ast             # AST extraction v1
-internal/codemap         # dependency/symbol graph
-internal/context         # context builder
-internal/provider        # provider router + offline fallback
-internal/tools           # tool registry/executor
+internal/engine          # orchestration lifecycle, agent loop, tool-exec gate
+internal/config          # config loading/defaults/validation
+internal/storage         # bbolt handle + artifact store
+internal/ast             # tree-sitter (CGO) + regex fallback
+internal/codemap         # dependency/symbol graph, DOT/SVG export
+internal/context         # ranked context builder + budget/compression
+internal/provider        # router, protocols (anthropic/openai/google/offline)
+internal/tools           # tool registry + meta-tool layer + approval funnel
+internal/drive           # autonomous plan/execute loop (planner + scheduler)
+internal/intent          # state-aware sub-LLM request normalizer
+internal/hooks           # user-configured lifecycle shell hooks
+internal/coach           # trajectory-hint generator for agent loops
+internal/supervisor      # shared task/executor types for drive + taskstore
+internal/taskstore       # bbolt-backed task persistence (todo_write + HTTP/MCP)
+internal/mcp             # MCP server + bridge (tool registry + Drive surface)
 internal/security        # security scanner
-internal/conversation    # conversation persistence
-internal/memory          # memory system
-ui/cli                   # CLI commands
+internal/skills          # skill registry + shortcuts
+internal/planning        # planning helpers
+internal/pluginexec      # plugin execution runtime
+internal/commands        # runtime slash-command registry
+internal/promptlib       # task/language/role prompt library
+internal/conversation    # JSONL persistence, branches
+internal/memory          # working/episodic/semantic tiers
+internal/tokens          # tokenization helpers
+ui/cli                   # CLI entry, subcommands, remote client
+ui/tui                   # bubbletea Model/View workbench
+ui/web                   # HTTP/SSE server + Drive cockpit + task CRUD
 pkg/types                # shared types and errors
 ```
 
@@ -552,21 +593,28 @@ pkg/types                # shared types and errors
 - Security and dead-code analysis are heuristic in current alpha.
 - Results are useful for triage, not final security sign-off.
 - False positives/negatives are expected while the engine is still evolving.
+- Agent-initiated tool calls go through an approval gate and pre/post hooks. Auto-approve list is managed by `dfmc approvals`; project-local hooks are disabled by default (`hooks.allow_project: true` to opt in).
+- Only one `dfmc` process at a time can open the bbolt store for a project; a second one hits `ErrStoreLocked`. `dfmc doctor` is whitelisted for degraded startup.
 
 ## Development
 
 Run tests:
 
 ```bash
-go test ./...
+# Full race-enabled suite (what CI runs)
+CGO_ENABLED=1 go test -race -count=1 ./...
+
+# Single package / single test
+go test ./internal/engine -run TestAgentLoop -v
 ```
 
 Run formatted build loop:
 
 ```bash
 gofmt -w ./...
-go test ./...
-go build ./cmd/dfmc
+go vet ./...
+CGO_ENABLED=1 go test -race ./...
+CGO_ENABLED=1 go build -o bin/dfmc ./cmd/dfmc
 ```
 
 ## License

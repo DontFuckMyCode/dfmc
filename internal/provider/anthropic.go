@@ -49,7 +49,8 @@ func (p *AnthropicProvider) Name() string {
 	}
 	return p.name
 }
-func (p *AnthropicProvider) Model() string { return p.model }
+func (p *AnthropicProvider) Model() string   { return p.model }
+func (p *AnthropicProvider) Models() []string { return []string{p.model} }
 
 func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	if strings.TrimSpace(p.apiKey) == "" {

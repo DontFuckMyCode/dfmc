@@ -68,6 +68,11 @@ var (
 	mentionSelectedRowStyle = theme.MentionSelectedRowStyle
 	dividerStyle            = theme.DividerStyle
 	bannerStyle             = theme.BannerStyle
+	doneStyle               = theme.DoneStyle
+	pendingStyle            = theme.PendingStyle
+	runningStyle            = theme.RunningStyle
+	blockedStyle            = theme.BlockedStyle
+	skippedStyle            = theme.SkippedStyle
 )
 
 // --- stats panel constants --------------------------------------------------

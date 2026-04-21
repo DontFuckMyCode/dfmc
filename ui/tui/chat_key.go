@@ -13,6 +13,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,11 +29,8 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// the user should compare against. Combined with m.chat.input always being
 	// rendered in the input box, this tells us both the event and its
 	// effect.
-	if m.ui.keyLogEnabled {
-		m.notice = fmt.Sprintf("key: %s · type=%d · runes=%q · alt=%t · input-before=%q",
-			msg.String(), msg.Type, string(msg.Runes), msg.Alt, m.chat.input)
-	}
 	m.syncChatCursor()
+	now := time.Now()
 	switch msg.Type {
 	case tea.KeyRunes:
 		if len(msg.Runes) == 1 && strings.TrimSpace(m.chat.input) == "" && len(m.chat.transcript) == 0 && !m.chat.sending {
@@ -44,18 +42,77 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.exitInputHistoryNavigation()
-		m.insertInputText(string(msg.Runes))
 		m.slashMenu.command = 0
 		m.slashMenu.commandArg = 0
 		m.slashMenu.mention = 0
 		m.slashMenu.quickAction = 0
-		if m.ui.keyLogEnabled {
-			m.notice = fmt.Sprintf("KeyRunes inserted %q → input=%q", string(msg.Runes), m.chat.input)
+		inserted := string(msg.Runes)
+		// Paste detection: Windows sends paste as many small events (one per line,
+		// or chunks of ~16 chars). Multi-line paste is identified by hasNewline;
+		// single-line large chunks by len >= 16. Subsequent chunks arriving
+		// within a 200ms window are treated as continuation of the same paste.
+		// Regular typing (short, no newline) outside the window is NOT paste.
+		// Bracketed paste mode (enabled in Init) delivers the entire pasted
+		// text as one KeyMsg with Paste=true, newlines included. Handle it
+		// explicitly so we never mistake it for rapid typing.
+		if msg.Paste {
+			n := len(m.chat.pasteBlocks) + 1
+			block := pasteBlock{content: inserted, blockNum: n, lineCount: strings.Count(inserted, "\n")}
+			m.chat.pasteBlocks = append(m.chat.pasteBlocks, block)
+			m.insertInputText(block.placeholder())
+			m.notice = fmt.Sprintf("PASTE! %d bytes", len(inserted))
+			// Bracketed paste delivers the complete text in one message;
+			// do not extend the window so Enter submits immediately.
+			m.chat.pasteWindowEnd = time.Time{}
+			return m, nil
 		}
-		// When the user starts an @-mention but the project file index
-		// hasn't landed yet (startup race, or the walk failed silently),
-		// kick a refresh so the picker populates on the next frame
-		// instead of leaving a dead empty-state.
+		hasNewline := strings.Contains(inserted, "\n")
+		isPaste := hasNewline || len(inserted) >= 16
+		inPasteWindow := !m.chat.pasteWindowEnd.IsZero() && now.Before(m.chat.pasteWindowEnd)
+		if isPaste {
+			if len(m.chat.pasteBlocks) == 0 || !inPasteWindow {
+				// Start a new paste block
+				n := len(m.chat.pasteBlocks) + 1
+				block := pasteBlock{content: inserted, blockNum: n, lineCount: strings.Count(inserted, "\n")}
+				m.chat.pasteBlocks = append(m.chat.pasteBlocks, block)
+				m.insertInputText(block.placeholder())
+				m.notice = fmt.Sprintf("PASTE! %d bytes", len(inserted))
+			} else {
+				// Accumulate into the last block (within paste window)
+				last := &m.chat.pasteBlocks[len(m.chat.pasteBlocks)-1]
+				oldPH := last.placeholder()
+				last.content += inserted
+				last.lineCount += strings.Count(inserted, "\n")
+				newPH := last.placeholder()
+				m.chat.input = strings.Replace(m.chat.input, oldPH, newPH, 1)
+				m.chat.cursor = len([]rune(m.chat.input))
+				m.chat.cursorManual = true
+				m.chat.cursorInput = m.chat.input
+				m.notice = fmt.Sprintf("PASTE x%d total=%d bytes", len(m.chat.pasteBlocks), len(last.content))
+			}
+			if !hasNewline {
+				m.chat.pasteWindowEnd = now.Add(50 * time.Millisecond)
+			}
+		} else if inPasteWindow && len(m.chat.pasteBlocks) > 0 {
+			// Non-paste chunk inside an active paste window — accumulate
+			last := &m.chat.pasteBlocks[len(m.chat.pasteBlocks)-1]
+			oldPH := last.placeholder()
+			last.content += inserted
+			last.lineCount += strings.Count(inserted, "\n")
+			newPH := last.placeholder()
+			m.chat.input = strings.Replace(m.chat.input, oldPH, newPH, 1)
+			m.chat.cursor = len([]rune(m.chat.input))
+			m.chat.cursorManual = true
+			m.chat.cursorInput = m.chat.input
+			m.chat.pasteWindowEnd = now.Add(50 * time.Millisecond)
+		} else {
+			// Regular typing — keep window alive so a rapid Enter can be
+			// detected as part of a paste (terminal paste is <1ms, human
+			// typing is >100ms).
+			m.chat.pasteWindowEnd = now.Add(50 * time.Millisecond)
+			m.insertInputText(inserted)
+		}
+		// Auto-load files when @ is typed (if not already loaded)
 		if strings.ContainsRune(string(msg.Runes), '@') && len(m.filesView.entries) == 0 && m.eng != nil {
 			return m, loadFilesCmd(m.eng)
 		}
@@ -225,14 +282,12 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if len(suggestions.mentionSuggestions) > 0 {
-			if len(suggestions.mentionSuggestions) > 0 {
-				idx := clampIndex(m.slashMenu.mention, len(suggestions.mentionSuggestions))
-				if idx > 0 {
-					idx--
-				}
-				m.slashMenu.mention = idx
-				m.notice = "Mention: " + suggestions.mentionSuggestions[m.slashMenu.mention].Path
+			idx := clampIndex(m.slashMenu.mention, len(suggestions.mentionSuggestions))
+			if idx > 0 {
+				idx--
 			}
+			m.slashMenu.mention = idx
+			m.notice = "Mention: " + suggestions.mentionSuggestions[m.slashMenu.mention].Path
 			return m, nil
 		}
 		if len(suggestions.quickActions) > 0 {
@@ -348,7 +403,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if len(suggestions.quickActions) > 0 {
 				selected := suggestions.quickActions[clampIndex(m.slashMenu.quickAction, len(suggestions.quickActions))]
-				m.setChatInput(selected.PreparedInput)
+				m.insertInputText(selected.PreparedInput)
 				return m, nil
 			}
 		}
@@ -380,6 +435,25 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.slashMenu.quickAction = 0
 			return m, nil
 		}
+		// Paste window active? Swallow Enter as a newline inside the paste
+		// block rather than submitting. Many terminals send multi-line paste
+		// as separate KeyRunes chunks interleaved with KeyEnter events.
+		inPasteWindow := !m.chat.pasteWindowEnd.IsZero() && now.Before(m.chat.pasteWindowEnd)
+		if inPasteWindow && len(m.chat.pasteBlocks) > 0 {
+			last := &m.chat.pasteBlocks[len(m.chat.pasteBlocks)-1]
+			oldPH := last.placeholder()
+			last.content += "\n"
+			last.lineCount++
+			// Keep the visible placeholder in sync with the updated lineCount
+			// so composeInput() can still match it.
+			newPH := last.placeholder()
+			m.chat.input = strings.Replace(m.chat.input, oldPH, newPH, 1)
+			m.chat.cursor = len([]rune(m.chat.input))
+			m.chat.cursorManual = true
+			m.chat.cursorInput = m.chat.input
+			m.chat.pasteWindowEnd = now.Add(50 * time.Millisecond)
+			return m, nil
+		}
 		suggestions := m.buildChatSuggestionState()
 		if !m.chat.sending && len(suggestions.mentionSuggestions) > 0 {
 			if next, ok := autocompleteMentionSelectionFromSuggestions(m.chat.input, m.slashMenu.mention, suggestions.mentionSuggestions); ok {
@@ -388,35 +462,50 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		// If the input starts with one or more newlines, the user is
-		// intentionally building a multiline message — don't submit on the
-		// first Enter. TrimSpace first so a leading newline alone doesn't
-		// submit, but preserve whether there were any.
+		// Retroactive paste detection: text was just typed and Enter arrived
+		// within the paste window. Convert the current input to a paste block
+		// so the newline becomes part of the pasted content, not a submit.
+		if inPasteWindow && len(m.chat.pasteBlocks) == 0 && len(m.chat.input) > 0 {
+			n := len(m.chat.pasteBlocks) + 1
+			block := pasteBlock{
+				content:   m.chat.input + "\n",
+				blockNum:  n,
+				lineCount: strings.Count(m.chat.input, "\n") + 1,
+			}
+			m.chat.pasteBlocks = append(m.chat.pasteBlocks, block)
+			m.chat.input = block.placeholder()
+			m.chat.cursor = len([]rune(m.chat.input))
+			m.chat.cursorManual = true
+			m.chat.cursorInput = m.chat.input
+			m.chat.pasteWindowEnd = now.Add(50 * time.Millisecond)
+			return m, nil
+		}
+		// If there are paste blocks, reconstruct full text and submit as one.
+		if len(m.chat.pasteBlocks) > 0 {
+			full := m.composeInput()
+			n := len(m.chat.pasteBlocks)
+			m.chat.pasteBlocks = nil
+			m.chat.pasteWindowEnd = time.Time{}
+			m.setChatInput("")
+			m.notice = fmt.Sprintf("pasted text · %d block%s", n, _s(n))
+			next, cmdOut := m.submitChatQuestion(full, nil)
+			return next, cmdOut
+		}
+		// Normal submit path (no paste blocks).
 		raw := m.chat.input
 		startsWithNewline := len(raw) > 0 && raw[0] == '\n'
 		raw = strings.TrimSpace(raw)
-		// Parked-resume affordance. When the loop is parked, a bare Enter
-		// resumes; any typed text is forwarded to the resumed loop as a
-		// /btw-style note so the user can redirect the continuation.
 		if !m.chat.sending && m.ui.resumePromptActive && m.eng != nil && m.eng.HasParkedAgent() {
-			m.chat.pasteCount = 0
 			m.setChatInput("")
 			return m.startChatResume(raw)
 		}
-		// Empty input (no newlines) — Enter submits nothing.
 		if raw == "" && !startsWithNewline {
 			return m, nil
 		}
-		// Input starts with newline(s) — user is building a multiline paste
-		// or typing a multi-line message. Insert the newline, don't submit.
+		// User is typing a multi-line message (starts with newline) — insert
+		// another newline, don't submit yet.
 		if startsWithNewline {
 			m.exitInputHistoryNavigation()
-			// Track sequential paste operations so the UI can label them:
-			// [Pasted text #1 +N lines]. Reset when the user types non-paste
-			// text or submits.
-			if m.chat.pasteCount == 0 {
-				m.chat.pasteCount = 1
-			}
 			m.insertInputText("\n")
 			m.slashMenu.command = 0
 			m.slashMenu.commandArg = 0
@@ -429,8 +518,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				cmd, _, _, err := parseChatCommandInput(raw)
 				if err != nil || !isKnownChatCommandToken(cmd) || isImmediateChatSlashCommand(cmd) {
 					m.pushInputHistory(raw)
-					m.chat.pasteCount = 0
-					m.setChatInput("")
+										m.setChatInput("")
 					next, cmdOut, _ := m.executeChatCommand(raw)
 					return next, cmdOut
 				}
@@ -441,13 +529,11 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// without becoming a DOS vector.
 			if len(m.chat.pendingQueue) >= pendingQueueCap {
 				m.notice = fmt.Sprintf("Queue full (%d max) — wait for the current reply, then send again.", pendingQueueCap)
-				m.chat.pasteCount = 0
-				m.setChatInput("")
+								m.setChatInput("")
 				return m, nil
 			}
 			m.chat.pendingQueue = append(m.chat.pendingQueue, raw)
-			m.chat.pasteCount = 0
-			m.setChatInput("")
+						m.setChatInput("")
 			m.notice = fmt.Sprintf("Queued (%d/%d) — will send after the current reply finishes.", len(m.chat.pendingQueue), pendingQueueCap)
 			m = m.appendSystemMessage(fmt.Sprintf("▸ queued #%d: %s", len(m.chat.pendingQueue), raw))
 			return m, nil
@@ -463,8 +549,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if question == "" {
 			return m, nil
 		}
-		m.chat.pasteCount = 0
-		m.setChatInput("")
+				m.setChatInput("")
 		return m.submitChatQuestion(question, suggestions.quickActions)
 	}
 	// Defensive catch-all for keys that didn't match any explicit case but
@@ -485,8 +570,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if printable {
 			m.exitInputHistoryNavigation()
-			m.chat.pasteCount = 0
-			m.insertInputText(string(msg.Runes))
+						m.insertInputText(string(msg.Runes))
 			m.slashMenu.command = 0
 			m.slashMenu.commandArg = 0
 			m.slashMenu.mention = 0
@@ -501,6 +585,14 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// _s returns "s" for plural, "" for singular.
+func _s(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // Chat composer input editing (cursor, word boundaries, Ctrl+W/K,

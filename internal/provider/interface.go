@@ -205,6 +205,7 @@ type ProviderHints struct {
 type Provider interface {
 	Name() string
 	Model() string
+	Models() []string // ordered list of available models; first is preferred
 	Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error)
 	Stream(ctx context.Context, req CompletionRequest) (<-chan StreamEvent, error)
 	CountTokens(text string) int

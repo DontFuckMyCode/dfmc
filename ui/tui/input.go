@@ -69,6 +69,9 @@ func (m *Model) insertInputText(text string) {
 	m.chat.cursorInput = m.chat.input
 }
 
+// deleteInputBeforeCursor removes the character before the cursor. When the
+// cursor sits at the end of a paste-block placeholder, the entire block is
+// removed (content + placeholder) and subsequent blocks renumbered.
 func (m *Model) deleteInputBeforeCursor() {
 	m.syncChatCursor()
 	runes := []rune(m.chat.input)
@@ -79,6 +82,29 @@ func (m *Model) deleteInputBeforeCursor() {
 	if cursor > len(runes) {
 		cursor = len(runes)
 	}
+	// Check if cursor is at the end of a paste block placeholder.
+	if m.chat.cursor == cursor && cursor > 0 {
+		before := string(runes[:cursor])
+		for i, b := range m.chat.pasteBlocks {
+			ph := b.placeholder()
+			if strings.HasSuffix(before, ph) {
+				// Cursor is at the end of this placeholder — delete whole block.
+				m.chat.pasteBlocks = append(m.chat.pasteBlocks[:i], m.chat.pasteBlocks[i+1:]...)
+				// Renumber remaining blocks.
+				for j := i; j < len(m.chat.pasteBlocks); j++ {
+					m.chat.pasteBlocks[j].blockNum = j + 1
+				}
+				// Remove placeholder from input.
+				newBefore := before[:len(before)-len(ph)]
+				after := string(runes[cursor:])
+				m.chat.input = newBefore + after
+				m.chat.cursor = len([]rune(newBefore))
+				m.chat.cursorManual = true
+				m.chat.cursorInput = m.chat.input
+				return
+			}
+		}
+	}
 	updated := append([]rune(nil), runes[:cursor-1]...)
 	updated = append(updated, runes[cursor:]...)
 	m.chat.input = string(updated)
@@ -87,6 +113,8 @@ func (m *Model) deleteInputBeforeCursor() {
 	m.chat.cursorInput = m.chat.input
 }
 
+// deleteInputAtCursor removes the rune after the cursor. When the cursor sits
+// at the start of a paste block placeholder, the entire block is removed.
 func (m *Model) deleteInputAtCursor() {
 	m.syncChatCursor()
 	runes := []rune(m.chat.input)
@@ -99,6 +127,24 @@ func (m *Model) deleteInputAtCursor() {
 	}
 	if cursor >= len(runes) {
 		return
+	}
+	// Check if cursor is at the start of a paste block placeholder.
+	after := string(runes[cursor:])
+	for i, b := range m.chat.pasteBlocks {
+		if strings.HasPrefix(after, b.placeholder()) {
+			// Cursor is at the start of this placeholder — delete whole block.
+			m.chat.pasteBlocks = append(m.chat.pasteBlocks[:i], m.chat.pasteBlocks[i+1:]...)
+			for j := i; j < len(m.chat.pasteBlocks); j++ {
+				m.chat.pasteBlocks[j].blockNum = j + 1
+			}
+			// Remove placeholder from input.
+			before := string(runes[:cursor])
+			m.chat.input = before + after[len(b.placeholder()):]
+			m.chat.cursor = cursor
+			m.chat.cursorManual = true
+			m.chat.cursorInput = m.chat.input
+			return
+		}
 	}
 	updated := append([]rune(nil), runes[:cursor]...)
 	updated = append(updated, runes[cursor+1:]...)

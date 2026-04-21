@@ -15,9 +15,8 @@ func (p *OfflineProvider) Name() string {
 	return "offline"
 }
 
-func (p *OfflineProvider) Model() string {
-	return "offline-analyzer-v1"
-}
+func (p *OfflineProvider) Model() string   { return "offline-analyzer-v1" }
+func (p *OfflineProvider) Models() []string { return []string{"offline-analyzer-v1"} }
 
 func (p *OfflineProvider) Complete(_ context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	question := ""

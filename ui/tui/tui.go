@@ -239,6 +239,7 @@ type Model struct {
 	patchView patchViewState
 	// Setup wizard cursor + draft. See setupWizardState in panel_states.go.
 	setupWizard setupWizardState
+	workflow   workflowPanelState
 	// Files tab state (entries list, cursor, sticky pin, preview pane).
 	// See filesViewState in panel_states.go.
 	filesView filesViewState
@@ -406,7 +407,7 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	return Model{
 		ctx:                   ctx,
 		eng:                   eng,
-		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers"},
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Workflow", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers"},
 		activity:              activityPanelState{follow: true},
 		diagnosticPanelsState: newDiagnosticPanelsState(),
 		chat:                  chatState{streamIndex: -1},
@@ -518,6 +519,7 @@ func runWithPanicGuard(out io.Writer, fn func() error) (err error) {
 
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
+		tea.EnableBracketedPaste,
 		loadStatusCmd(m.eng),
 		loadWorkspaceCmd(m.eng),
 		loadLatestPatchCmd(m.eng),

@@ -25,6 +25,7 @@ type fakeTextProvider struct {
 
 func (f *fakeTextProvider) Name() string             { return f.name }
 func (f *fakeTextProvider) Model() string            { return f.name + "-m" }
+func (f *fakeTextProvider) Models() []string        { return []string{f.name + "-m"} }
 func (f *fakeTextProvider) CountTokens(s string) int { return len(s) / 4 }
 func (f *fakeTextProvider) MaxContext() int          { return 64000 }
 func (f *fakeTextProvider) Hints() provider.ProviderHints {

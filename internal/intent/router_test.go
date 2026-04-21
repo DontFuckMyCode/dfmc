@@ -29,6 +29,7 @@ type stubProvider struct {
 
 func (s *stubProvider) Name() string  { return "stub" }
 func (s *stubProvider) Model() string { return s.modelName }
+func (s *stubProvider) Models() []string { return []string{s.modelName} }
 func (s *stubProvider) Complete(ctx context.Context, req provider.CompletionRequest) (*provider.CompletionResponse, error) {
 	s.calledN++
 	s.gotReq = req

@@ -28,8 +28,8 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 		content = fitPanelContentHeight(m.renderFilesViewSized(contentWidth, innerHeight), innerHeight)
 	case "Patch":
 		content = fitPanelContentHeight(m.renderPatchView(contentWidth), innerHeight)
-	case "Setup":
-		content = fitPanelContentHeight(m.renderSetupView(contentWidth), innerHeight)
+	case "Workflow":
+		content = fitPanelContentHeight(m.renderWorkflowView(contentWidth), innerHeight)
 	case "Tools":
 		content = fitPanelContentHeight(m.renderToolsView(contentWidth), innerHeight)
 	case "Activity":
@@ -255,14 +255,10 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 		tailLines = append(tailLines, "", renderResumeBanner(m.agentLoop.step, m.agentLoop.maxToolStep, min(width, 100)))
 	}
 	var inputLine string
-	if m.chat.pasteCount > 0 && len(m.chat.input) > 0 && m.chat.input[0] == '\n' {
-		// User pasted multiline content. Show a compact label instead of
-		// rendering every line of the buffer in the input box. The full
-		// content is preserved in m.chat.input for cursor/submission.
-		lineCount := strings.Count(m.chat.input, "\n") + 1
-		label := fmt.Sprintf("[Pasted text #%d +%d lines]", m.chat.pasteCount, lineCount)
-		labelCursor := len([]rune(label))
-		inputLine = renderChatInputLine(label, labelCursor, false, "", m.chat.sending)
+	if len(m.chat.pasteBlocks) > 0 && len(m.chat.input) > 0 && strings.HasPrefix(m.chat.input, "[pasted text #") {
+		// User has paste blocks with placeholder text in composer.
+		// Show a compact label instead of rendering placeholder gibberish.
+		inputLine = renderChatInputLine(m.chat.input, m.chat.cursor, m.chat.cursorManual, m.chat.cursorInput, m.chat.sending)
 	} else {
 		inputLine = renderChatInputLine(m.chat.input, m.chat.cursor, m.chat.cursorManual, m.chat.cursorInput, m.chat.sending)
 	}

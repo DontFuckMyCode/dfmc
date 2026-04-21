@@ -435,6 +435,8 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		PlanParallel:          planParallel,
 		PlanConfidence:        planConfidence,
 		SpinnerFrame:          m.chat.spinnerFrame,
+		Providers:             m.providerPanelRows(),
+		ProvidersSelectedIndex: m.providers.selectedIndex,
 	}
 }
 

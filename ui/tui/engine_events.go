@@ -675,6 +675,12 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		m.telemetry.driveDone = 0
 		m.telemetry.driveTotal = 0
 		m.telemetry.driveBlocked = 0
+		// Refresh workflow panel run list
+		if res, err := buildTUIDriver(m.eng, nil); err == nil {
+			if runs, err := res.listRuns(); err == nil {
+				m.workflow.runs = runs
+			}
+		}
 		if resumed := payloadBool(payload, "resumed", false); resumed {
 			line = fmt.Sprintf("Drive: resumed %s (task: %s)", shortID(runID), truncateForLine(task, 80))
 		} else {
@@ -793,6 +799,12 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			line = base + " · " + reason
 		} else {
 			line = base
+		}
+		// Refresh workflow panel run list when a run ends
+		if res, err := buildTUIDriver(m.eng, nil); err == nil {
+			if runs, err := res.listRuns(); err == nil {
+				m.workflow.runs = runs
+			}
 		}
 	}
 	line = strings.TrimSpace(line)
@@ -941,6 +953,18 @@ func shouldMirrorEventToTranscript(eventType string) bool {
 	}
 }
 
+
+// refreshWorkflowOnTabEnter is called when the user switches to the Workflow
+// tab (F5 or alt+5). It reloads the run list from the drive store so the
+// panel shows current state without requiring a drive event to have fired.
+func (m Model) refreshWorkflowOnTabEnter() Model {
+	if res, err := buildTUIDriver(m.eng, nil); err == nil {
+		if runs, err := res.listRuns(); err == nil {
+			m.workflow.runs = runs
+		}
+	}
+	return m
+}
 func (m *Model) appendActivity(line string) {
 	line = strings.TrimSpace(line)
 	if line == "" {

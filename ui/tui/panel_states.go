@@ -15,6 +15,8 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -24,6 +26,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/planning"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/security"
+	"github.com/dontfuckmycode/dfmc/internal/drive"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -31,9 +34,13 @@ import (
 // are cached (refresh on 'r' or first tab activation) because Hints() is
 // cheap but there's no point redoing the walk on every keystroke.
 type providersPanelState struct {
-	rows   []providerRow
-	scroll int
-	err    string
+	rows          []providerRow
+	scroll        int
+	err           string
+	selectedIndex int           // cursor position in the providers list
+	editMode      string        // "" | "model" | "fallback"
+	modelEditIdx  int           // index into the selected profile's Models list when editMode == "model"
+	fallbackIdx   int           // index into the selected profile's FallbackModels when editMode == "fallback"
 }
 
 // diagnosticPanelsState groups the cold, mostly read-only diagnostic tabs.
@@ -191,10 +198,60 @@ type chatState struct {
 	scrollback          int
 	toolPending         bool
 	toolName            string
-	// pasteCount tracks sequential paste operations so the UI can
-	// label them: [Pasted text #1 +123 lines]. Resets when the user
-	// types non-paste text or submits.
-	pasteCount int
+	// pasteBlocks holds multi-line paste segments. Each block stores the
+	// original content and a compact display placeholder so the composer
+	// shows "[pasted text #N +L lines]" instead of 500 raw lines.
+	// Backspace at a block boundary deletes the whole block.
+	// Enter submits all blocks + any regular text as one message.
+	pasteBlocks    []pasteBlock
+	pasteWindowEnd time.Time // if set, paste chunks arriving before this time accumulate into current block
+}
+
+// pasteBlock represents one multi-line paste operation.
+type pasteBlock struct {
+	content   string // original pasted text (newlines preserved)
+	blockNum  int    // 1-based sequence number
+	lineCount int    // number of lines in the content
+}
+
+// composeInput reconstructs the full submission text from all paste blocks
+// and the visible composer text. Paste block placeholders are replaced
+// with the original content.
+func (m Model) composeInput() string {
+	var full strings.Builder
+	// Reconstruct from stored blocks + visible input
+	blocks := m.chat.pasteBlocks
+	if len(blocks) == 0 {
+		return m.chat.input
+	}
+	// The visible m.chat.input contains placeholders like
+	// "[pasted text #1 +3 lines]" interleaved with regular typed text.
+	// We reconstruct by scanning the input left-to-right and substituting.
+	rest := m.chat.input
+	for len(rest) > 0 {
+		matched := false
+		for _, b := range blocks {
+			placeholder := b.placeholder()
+			if strings.HasPrefix(rest, placeholder) {
+				full.WriteString(b.content)
+				rest = rest[len(placeholder):]
+				matched = true
+				break
+			}
+		}
+		if matched {
+			continue
+		}
+		// No placeholder match — take one character
+		full.WriteByte(rest[0])
+		rest = rest[1:]
+	}
+	return full.String()
+}
+
+// placeholder returns the compact display string for this block.
+func (b pasteBlock) placeholder() string {
+	return fmt.Sprintf("[pasted text #%d +%d lines]", b.blockNum, b.lineCount)
 }
 
 // intentState — most recent decision from the engine's intent router,
@@ -253,6 +310,7 @@ const (
 	statsPanelModeTodos     statsPanelMode = "todos"
 	statsPanelModeTasks     statsPanelMode = "tasks"
 	statsPanelModeSubagents statsPanelMode = "subagents"
+	statsPanelModeProviders statsPanelMode = "providers"
 )
 
 // activityPanelState — Activity tab state. `entries` is the timestamped
@@ -396,4 +454,23 @@ type agentLoopState struct {
 type taskPanelState struct {
 	scroll       int
 	expandedTask string
+}
+
+// workflowPanelState — Drive TODO tree panel state for the Workflow tab.
+// Tracks the list of drive runs, which run is selected, scroll position,
+// and which TODO nodes are expanded to show their detail.
+type workflowPanelState struct {
+	runs               []*drive.Run // from drive store List(), refreshed on events
+	selectedRunID      string        // empty = show run selector; set = show TODO tree
+	scrollY            int           // vertical scroll offset in the TODO tree
+	expandedTodo       map[string]bool
+	selectedIndex      int // index in run selector list when no run selected
+	selectedTodoID     string        // ID of the TODO whose detail is shown
+	// routingEditor controls the drive.Config.Routing editor overlay.
+	showRoutingEditor  bool            // true = overlay open
+	routingEditTag     string          // tag being edited (empty = new entry)
+	routingEditProfile string          // profile name being edited
+	routingEditIndex   int             // which row is selected in the routing list
+	routingEditMode    bool            // true = currently editing the profile field
+	routingDraft       map[string]string // routing entries in the editor (tag -> profile)
 }

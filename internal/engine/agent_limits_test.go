@@ -18,6 +18,7 @@ type fixedContextProvider struct {
 
 func (p *fixedContextProvider) Name() string                  { return p.name }
 func (p *fixedContextProvider) Model() string                 { return "stub" }
+func (p *fixedContextProvider) Models() []string               { return []string{"stub"} }
 func (p *fixedContextProvider) CountTokens(text string) int   { return len(text) }
 func (p *fixedContextProvider) MaxContext() int               { return p.maxContext }
 func (p *fixedContextProvider) Hints() provider.ProviderHints { return provider.ProviderHints{} }

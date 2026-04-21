@@ -11,7 +11,7 @@ import (
 func TestRunDriveAsyncReturnsPersistedRunID(t *testing.T) {
 	eng := newTUITestEngine(t)
 
-	runID, err := runDriveAsync(eng, "add smoke test")
+	runID, err := runDriveAsync(eng, "add smoke test", nil)
 	if err != nil {
 		t.Fatalf("runDriveAsync error: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestBuildTUIDriverRejectsNilStorage(t *testing.T) {
 	t.Cleanup(func() { eng.Storage = orig })
 	eng.Storage = nil
 
-	_, err := buildTUIDriver(eng)
+	_, err := buildTUIDriver(eng, nil)
 	if err == nil {
 		t.Fatal("expected storage error")
 	}

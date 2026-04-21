@@ -21,6 +21,7 @@ type flakyProvider struct {
 
 func (p *flakyProvider) Name() string  { return p.name }
 func (p *flakyProvider) Model() string { return "test-model" }
+func (p *flakyProvider) Models() []string { return []string{"test-model"} }
 func (p *flakyProvider) Complete(_ context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	p.seenCalls++
 	p.lastCompleteMsgs = append([]Message(nil), req.Messages...)

@@ -481,11 +481,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
+			// Ctrl+C cancels paste blocks; otherwise rage-quits.
+			if m.activeTab == 0 && len(m.chat.pasteBlocks) > 0 {
+				m.chat.pasteBlocks = nil
+				m.chat.pasteWindowEnd = time.Time{}
+				m.setChatInput("")
+				m.notice = "Paste cancelled."
+				return m, nil
+			}
 			return m, tea.Quit
 		case "ctrl+u":
 			// Unix readline-style "clear input line". Only useful on the
 			// Chat tab — other panels don't have a live composer.
 			if m.activeTab == 0 {
+				m.chat.pasteBlocks = nil // also cancel any active paste
 				m.setChatInput("")
 				m.chat.cursor = 0
 				m.slashMenu.mention = 0
@@ -504,6 +513,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ui.statsPanelBoostUntil = time.Time{}
 				m.notice = "Stats panel focus unlocked."
 				return m, nil
+			}
+		case "j", "k", "up", "down", "enter", "m", "f", "s", "g", "G", "r":
+			// Route to stats panel handler when providers sub-mode is focused
+			if m.activeTab == 0 && m.ui.statsPanelFocusLocked && m.ui.statsPanelMode == statsPanelModeProviders {
+				return m.handleStatsPanelProviderKey(msg)
 			}
 		case "ctrl+s":
 			m.ui.selectionModeActive = false
@@ -538,6 +552,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "alt+f":
 			if m.activeTab == 0 {
 				m.activateStatsPanelMode(statsPanelModeSubagents, "subagents")
+				return m, nil
+			}
+		case "alt+p":
+			if m.activeTab == 0 {
+				m.activateStatsPanelMode(statsPanelModeProviders, "providers")
 				return m, nil
 			}
 		case "ctrl+p":
@@ -580,7 +599,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "alt+5":
 			m.activeTab = 4
-			m = m.snapSetupCursorToActive()
+			m = m.refreshWorkflowOnTabEnter()
 			return m, nil
 		case "alt+6":
 			m.activeTab = 5
@@ -599,7 +618,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "f5":
 			m.activeTab = 4
-			m = m.snapSetupCursorToActive()
+			m = m.refreshWorkflowOnTabEnter()
 			return m, nil
 		case "f6":
 			m.activeTab = 5
@@ -717,6 +736,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleContextKey(msg)
 		case "Providers":
 			return m.handleProvidersKey(msg)
+		case "Workflow":
+			return m.handleWorkflowKey(msg)
 		}
 	}
 	return m, nil

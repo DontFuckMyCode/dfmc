@@ -101,4 +101,10 @@ var (
 	BannerStyle = lipgloss.NewStyle().
 			Foreground(ColorTitleBg).
 			Bold(true)
+
+	DoneStyle     = lipgloss.NewStyle().Foreground(ColorOk)
+	PendingStyle  = lipgloss.NewStyle().Foreground(ColorMuted)
+	RunningStyle  = lipgloss.NewStyle().Foreground(ColorAccent)
+	BlockedStyle  = lipgloss.NewStyle().Foreground(ColorFail)
+	SkippedStyle  = lipgloss.NewStyle().Foreground(ColorWarn)
 )

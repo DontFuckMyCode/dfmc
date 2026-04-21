@@ -221,7 +221,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 				"  /drive list            — list every persisted run\n" +
 				"  /drive resume <id>     — resume a stopped run"), nil, true
 		}
-		runID, err := runDriveAsync(m.eng, task)
+		runID, err := runDriveAsync(m.eng, task, m.workflow.routingDraft)
 		if err != nil {
 			return m.appendSystemMessage("/drive error: " + err.Error()), nil, true
 		}

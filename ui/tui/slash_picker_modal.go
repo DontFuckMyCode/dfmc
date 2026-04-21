@@ -41,7 +41,8 @@ func renderSlashPickerModal(items []slashCommandItem, slashIndex, width int) str
 			line := fmt.Sprintf("%s  %s", items[i].Template, subtleStyle.Render("· "+items[i].Description))
 			label := truncateSingleLine(line, width-6)
 			if i == selected {
-				body = append(body, mentionSelectedRowStyle.Render("▶ "+label))
+				selectedLine := fmt.Sprintf("▶ %s\n  %s", items[i].Template, items[i].Description)
+				body = append(body, mentionSelectedRowStyle.Render(selectedLine))
 			} else {
 				body = append(body, "  "+label)
 			}

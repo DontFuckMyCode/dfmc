@@ -98,6 +98,8 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 	switch {
 	case len(s.MentionSuggestions()) > 0:
 		countLine = subtleStyle.Render(fmt.Sprintf("%d/%d files match", len(s.MentionSuggestions()), totalFiles))
+	case totalFiles == 0 && s.MentionQuery() == "":
+		countLine = subtleStyle.Render("indexing project files…")
 	case totalFiles == 0:
 		countLine = warnStyle.Render("file index empty")
 	default:
@@ -106,6 +108,11 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 
 	bodyLines := []string{}
 	switch {
+	case totalFiles == 0 && s.MentionQuery() == "":
+		bodyLines = append(bodyLines,
+			subtleStyle.Render("Project files are still being indexed…"),
+			subtleStyle.Render("If this persists, press Ctrl+T or use /file to reopen the picker after the index loads."),
+		)
 	case len(s.MentionSuggestions()) > 0:
 		selected := clampIndex(mentionIndex, len(s.MentionSuggestions()))
 		for i, row := range s.MentionSuggestions() {

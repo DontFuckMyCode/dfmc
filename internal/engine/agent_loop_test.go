@@ -39,6 +39,7 @@ type scriptedProvider struct {
 
 func (p *scriptedProvider) Name() string                { return p.name }
 func (p *scriptedProvider) Model() string               { return p.model }
+func (p *scriptedProvider) Models() []string           { return []string{p.model} }
 func (p *scriptedProvider) CountTokens(text string) int { return len(strings.Fields(text)) }
 func (p *scriptedProvider) MaxContext() int {
 	if p.maxContext > 0 {

@@ -295,3 +295,115 @@ func (m Model) handleProvidersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
+// handleStatsPanelProviderKey processes keystrokes when the F2 stats panel
+// is locked to the providers sub-mode (alt+p while on chat tab). It supports:
+// j/k — move cursor through provider list
+// enter — switch to the selected provider
+// m — cycle preferred model for the selected profile
+// f — cycle fallback model index
+// s — save provider config to project .dfmc/config.yaml
+// g/G — jump to first/last provider
+func (m Model) handleStatsPanelProviderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Ensure rows are populated
+	panelRows := m.providerPanelRows()
+	if len(panelRows) == 0 {
+		return m, nil
+	}
+
+	total := len(panelRows)
+	step := 1
+
+	switch msg.String() {
+	case "j", "down":
+		if m.providers.editMode == "" {
+			if m.providers.selectedIndex+step < total {
+				m.providers.selectedIndex += step
+			}
+		}
+	case "k", "up":
+		if m.providers.editMode == "" {
+			if m.providers.selectedIndex >= step {
+				m.providers.selectedIndex -= step
+			} else {
+				m.providers.selectedIndex = 0
+			}
+		}
+	case "g":
+		if m.providers.editMode == "" {
+			m.providers.selectedIndex = 0
+		}
+	case "G":
+		if m.providers.editMode == "" && total > 0 {
+			m.providers.selectedIndex = total - 1
+		}
+	case "enter":
+		if m.providers.selectedIndex >= 0 && m.providers.selectedIndex < total {
+			row := panelRows[m.providers.selectedIndex]
+			if m.providers.editMode == "model" {
+				// commit model edit
+				if row.Models != nil && len(row.Models) > 0 {
+					model := row.Models[m.providers.modelEditIdx]
+					m = m.applyProviderModelSelection(row.Name, model)
+					m.notice = formatProviderSwitchNotice(m.providerProfile(row.Name))
+				}
+				m.providers.editMode = ""
+			} else if m.providers.editMode == "fallback" {
+				// commit fallback edit
+				m.providers.editMode = ""
+				m.notice = "fallback profile for " + row.Name + " updated"
+			} else {
+				// switch to this provider (use best model)
+				model := ""
+				if len(row.Models) > 0 {
+					model = row.Models[0]
+				}
+				m = m.applyProviderModelSelection(row.Name, model)
+				m.notice = formatProviderSwitchNotice(m.providerProfile(row.Name))
+			}
+		}
+	case "m":
+		if m.providers.selectedIndex >= 0 && m.providers.selectedIndex < total {
+			row := panelRows[m.providers.selectedIndex]
+			if len(row.Models) > 1 {
+				if m.providers.editMode == "model" {
+					m.providers.modelEditIdx = (m.providers.modelEditIdx + 1) % len(row.Models)
+				} else {
+					m.providers.editMode = "model"
+					m.providers.modelEditIdx = 0
+				}
+			} else {
+				m.notice = row.Name + " has no additional models to cycle"
+			}
+		}
+	case "f":
+		if m.providers.selectedIndex >= 0 && m.providers.selectedIndex < total {
+			row := panelRows[m.providers.selectedIndex]
+			if len(row.FallbackModels) > 0 {
+				if m.providers.editMode == "fallback" {
+					m.providers.fallbackIdx = (m.providers.fallbackIdx + 1) % len(row.FallbackModels)
+				} else {
+					m.providers.editMode = "fallback"
+					m.providers.fallbackIdx = 0
+				}
+			} else {
+				m.notice = row.Name + " has no fallback models configured"
+			}
+		}
+	case "s":
+		if m.providers.selectedIndex >= 0 && m.providers.selectedIndex < total {
+			row := panelRows[m.providers.selectedIndex]
+			model := ""
+			if len(row.Models) > 0 {
+				model = row.Models[0]
+			}
+			path, err := m.persistProviderModelProjectConfig(row.Name, model)
+			if err != nil {
+				m.notice = "save failed: " + err.Error()
+			} else {
+				m.notice = "saved " + path
+			}
+		}
+	}
+	return m, nil
+}

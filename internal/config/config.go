@@ -212,13 +212,36 @@ type ProvidersConfig struct {
 }
 
 type ModelConfig struct {
-	APIKey     string `yaml:"api_key,omitempty"`
-	BaseURL    string `yaml:"base_url,omitempty"`
-	Model      string `yaml:"model,omitempty"`
-	MaxTokens  int    `yaml:"max_tokens,omitempty"`
-	MaxContext int    `yaml:"max_context,omitempty"`
-	Protocol   string `yaml:"protocol,omitempty"`
-	Region     string `yaml:"region,omitempty"`
+	APIKey         string   `yaml:"api_key,omitempty"`
+	BaseURL        string   `yaml:"base_url,omitempty"`
+	Models         []string `yaml:"models,omitempty"`            // ordered list, first = preferred
+	FallbackModels []string `yaml:"fallback_models,omitempty"`  // tried in order when preferred model fails
+	Model          string   `yaml:"model,omitempty"`            // deprecated single-model alias (backward compat)
+	MaxTokens      int      `yaml:"max_tokens,omitempty"`
+	MaxContext     int      `yaml:"max_context,omitempty"`
+	Protocol       string   `yaml:"protocol,omitempty"`
+	Region         string   `yaml:"region,omitempty"`
+}
+
+// BestModel returns the preferred model: Models[0] if set, otherwise Model.
+// This preserves backward compat where only Model (singular) was available.
+func (c ModelConfig) BestModel() string {
+	if len(c.Models) > 0 {
+		return c.Models[0]
+	}
+	return c.Model
+}
+
+// AllModels returns the full ordered model list: Models if set,
+// otherwise a single-element list of Model (for backward compat).
+func (c ModelConfig) AllModels() []string {
+	if len(c.Models) > 0 {
+		return c.Models
+	}
+	if c.Model != "" {
+		return []string{c.Model}
+	}
+	return nil
 }
 
 const DefaultModelsDevAPIURL = "https://models.dev/api.json"

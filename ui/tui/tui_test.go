@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"gopkg.in/yaml.v3"
 
+	"github.com/dontfuckmycode/dfmc/internal/drive"
 	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
@@ -386,8 +387,9 @@ func TestChatTabPreparesQuickActionFromNaturalLanguage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after quick-action tab, got %T", nextModel)
 	}
-	if next.chat.input != "/read note.txt 1 200" {
-		t.Fatalf("expected quick action to prepare slash command, got %q", next.chat.input)
+	// Tab inserts the quick action rather than replacing input, so user's text is preserved.
+	if !strings.Contains(next.chat.input, "/read note.txt 1 200") {
+		t.Fatalf("expected quick action inserted, got %q", next.chat.input)
 	}
 }
 
@@ -417,8 +419,9 @@ func TestChatDownThenTabPreparesSecondQuickAction(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after quick-action tab, got %T", nextModel)
 	}
-	if !strings.HasPrefix(next.chat.input, "/grep ") {
-		t.Fatalf("expected second quick action to prepare grep command, got %q", next.chat.input)
+	// Tab inserts the quick action rather than replacing input, so user's text is preserved.
+	if !strings.Contains(next.chat.input, "/grep note") {
+		t.Fatalf("expected second quick action inserted, got %q", next.chat.input)
 	}
 }
 
@@ -2152,117 +2155,132 @@ func TestChatSlashContextFullIncludesDetailedFileEvidence(t *testing.T) {
 	}
 }
 
-func TestSetupTabAppliesProviderSelection(t *testing.T) {
-	eng := newTUITestEngine(t)
-	m := NewModel(context.Background(), eng)
+func TestWorkflowTabRendersRunList(t *testing.T) {
+	m := NewModel(context.Background(), nil)
 	m.activeTab = 4
-	m.status = eng.Status()
-	providers := m.availableProviders()
-	if len(providers) < 2 {
-		t.Fatalf("expected multiple providers in setup test, got %#v", providers)
-	}
-	targetIndex := 0
-	for i, name := range providers {
-		if name == "openai" {
-			targetIndex = i
-			break
-		}
-	}
-	m.setupWizard.index = targetIndex
 
-	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	next, ok := nextModel.(Model)
-	if !ok {
-		t.Fatalf("expected Model after setup apply, got %T", nextModel)
+	// Simulate two drive runs loaded into the workflow panel
+	m.workflow.runs = []*drive.Run{
+		{ID: "drv-abc123", Task: "Implement auth", Status: drive.RunDone},
+		{ID: "drv-def456", Task: "Refactor DB layer", Status: drive.RunRunning},
 	}
-	if next.currentProvider() != providers[targetIndex] {
-		t.Fatalf("expected setup to apply provider %q, got %q", providers[targetIndex], next.currentProvider())
+
+	view := m.renderWorkflowView(120)
+	if view == "" {
+		t.Fatal("expected non-empty workflow view")
 	}
-	if len(next.chat.transcript) == 0 || next.chat.transcript[len(next.chat.transcript)-1].Role != "system" {
-		t.Fatalf("expected setup apply to append system transcript, got %#v", next.chat.transcript)
+	if !strings.Contains(view, "drv-abc") {
+		t.Fatalf("expected first run ID in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Refactor DB") {
+		t.Fatalf("expected second run task in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Workflow") {
+		t.Fatalf("expected Workflow section header, got:\n%s", view)
 	}
 }
 
-func TestSetupTabEditModelAndSave(t *testing.T) {
-	eng := newTUITestEngine(t)
-	root := t.TempDir()
-	eng.ProjectRoot = root
-
-	m := NewModel(context.Background(), eng)
+func TestWorkflowTabEnterSelectsRun(t *testing.T) {
+	m := NewModel(context.Background(), nil)
 	m.activeTab = 4
-	m.status = eng.Status()
-	providers := m.availableProviders()
-	if len(providers) == 0 {
-		t.Fatal("expected providers in setup test")
-	}
-	targetIndex := 0
-	for i, name := range providers {
-		if name == "openai" {
-			targetIndex = i
-			break
-		}
-	}
-	m.setupWizard.index = targetIndex
 
-	editModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
-	editing, ok := editModel.(Model)
-	if !ok {
-		t.Fatalf("expected Model after setup edit key, got %T", editModel)
-	}
-	if !editing.setupWizard.editing {
-		t.Fatal("expected setup editing mode")
+	m.workflow.runs = []*drive.Run{
+		{ID: "drv-abc123", Task: "Implement auth", Status: drive.RunDone},
+		{ID: "drv-def456", Task: "Refactor DB layer", Status: drive.RunRunning},
 	}
 
-	typedModel, _ := editing.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("-dev")})
-	typed, ok := typedModel.(Model)
+	// Press enter on the first run to select it
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, ok := nextModel.(Model)
 	if !ok {
-		t.Fatalf("expected Model after setup draft typing, got %T", typedModel)
+		t.Fatalf("expected Model after enter on workflow, got %T", nextModel)
 	}
-	appliedModel, _ := typed.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	applied, ok := appliedModel.(Model)
+	if next.workflow.selectedRunID != "drv-abc123" {
+		t.Fatalf("expected selectedRunID drv-abc123, got %q", next.workflow.selectedRunID)
+	}
+	// Second enter expands the TODO tree
+	next2Model, _ := next.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next2, ok := next2Model.(Model)
 	if !ok {
-		t.Fatalf("expected Model after setup draft apply, got %T", appliedModel)
+		t.Fatalf("expected Model after second enter, got %T", next2Model)
 	}
-	if got := applied.currentModel(); !strings.Contains(got, "-dev") {
-		t.Fatalf("expected edited model suffix in runtime model, got %q", got)
+	_ = next2.workflow.selectedTodoID
+}
+
+func TestWorkflowTabJukNavigation(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 4
+
+	m.workflow.runs = []*drive.Run{
+		{ID: "drv-abc123", Task: "Implement auth", Status: drive.RunDone},
+		{ID: "drv-def456", Task: "Refactor DB layer", Status: drive.RunRunning},
+		{ID: "drv-ghi789", Task: "Write tests", Status: drive.RunPlanning},
 	}
 
-	savedModel, _ := applied.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
-	saved, ok := savedModel.(Model)
+	// j moves selection down
+	jModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	j, ok := jModel.(Model)
 	if !ok {
-		t.Fatalf("expected Model after setup save key, got %T", savedModel)
+		t.Fatalf("expected Model after j, got %T", jModel)
 	}
-	if !strings.Contains(saved.notice, "Setup saved:") {
-		t.Fatalf("expected setup saved notice, got %q", saved.notice)
+	if j.workflow.selectedIndex != 1 {
+		t.Fatalf("expected selectedIndex 1 after j, got %d", j.workflow.selectedIndex)
 	}
 
-	path := filepath.Join(root, ".dfmc", "config.yaml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read persisted setup config: %v", err)
-	}
-	doc := map[string]any{}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		t.Fatalf("yaml unmarshal: %v", err)
-	}
-	providersNode, ok := doc["providers"].(map[string]any)
+	// another j
+	j2Model, _ := j.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	j2, ok := j2Model.(Model)
 	if !ok {
-		t.Fatalf("expected providers map in setup save, got %#v", doc["providers"])
+		t.Fatalf("expected Model after second j, got %T", j2Model)
 	}
-	profilesNode, ok := providersNode["profiles"].(map[string]any)
+	if j2.workflow.selectedIndex != 2 {
+		t.Fatalf("expected selectedIndex 2 after second j, got %d", j2.workflow.selectedIndex)
+	}
+
+	// k moves back up
+	kModel, _ := j2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	k, ok := kModel.(Model)
 	if !ok {
-		t.Fatalf("expected profiles map in setup save, got %#v", providersNode["profiles"])
+		t.Fatalf("expected Model after k, got %T", kModel)
 	}
-	profileNode, ok := profilesNode["openai"].(map[string]any)
+	if k.workflow.selectedIndex != 1 {
+		t.Fatalf("expected selectedIndex 1 after k, got %d", k.workflow.selectedIndex)
+	}
+}
+
+func TestWorkflowTabEscDeselects(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 4
+
+	m.workflow.runs = []*drive.Run{
+		{ID: "drv-abc123", Task: "Implement auth", Status: drive.RunDone},
+	}
+	m.workflow.selectedRunID = "drv-abc123"
+	m.workflow.scrollY = 5
+
+	escModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	esc, ok := escModel.(Model)
 	if !ok {
-		t.Fatalf("expected openai profile in setup save, got %#v", profilesNode["openai"])
+		t.Fatalf("expected Model after esc, got %T", escModel)
 	}
-	gotModel, ok := profileNode["model"].(string)
+	if esc.workflow.selectedRunID != "" {
+		t.Fatalf("expected selectedRunID cleared after esc, got %q", esc.workflow.selectedRunID)
+	}
+	if esc.workflow.scrollY != 0 {
+		t.Fatalf("expected scrollY reset after esc, got %d", esc.workflow.scrollY)
+	}
+}
+
+func TestF5OpensWorkflowTab(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyF5})
+	next, ok := nextModel.(Model)
 	if !ok {
-		t.Fatalf("expected string model value in setup save, got %#v", profileNode["model"])
+		t.Fatalf("expected Model after F5, got %T", nextModel)
 	}
-	if !strings.Contains(gotModel, "-dev") {
-		t.Fatalf("expected edited model persisted, got %#v", gotModel)
+	if next.activeTab != 4 {
+		t.Fatalf("expected workflow tab index 4 after F5, got %d", next.activeTab)
 	}
 }
 

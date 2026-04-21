@@ -30,6 +30,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
 )
 
 func (m Model) availableProviders() []string {
@@ -42,6 +43,66 @@ func (m Model) availableProviders() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// providerPanelRows builds the list of all registered provider profiles
+// for the F2 providers sub-panel.
+func (m Model) providerPanelRows() []theme.ProviderPanelRow {
+	if m.eng == nil || m.eng.Config == nil {
+		return nil
+	}
+	cfg := m.eng.Config.Providers
+	primary := strings.TrimSpace(cfg.Primary)
+	currentProvider := strings.TrimSpace(m.currentProvider())
+
+	var rows []theme.ProviderPanelRow
+	for name, profile := range cfg.Profiles {
+		model := profile.BestModel()
+		hasAPIKey := strings.TrimSpace(profile.APIKey) != ""
+		status := "ready"
+		isPlaceholder := false
+		if !hasAPIKey && strings.TrimSpace(profile.BaseURL) == "" {
+			status = "no-key"
+		}
+		if model == "" {
+			model = "(none)"
+		}
+		rows = append(rows, theme.ProviderPanelRow{
+			Name:           name,
+			Active:         strings.EqualFold(name, currentProvider),
+			Primary:        strings.EqualFold(name, primary),
+			Models:         profile.AllModels(),
+			FallbackModels: profile.FallbackModels,
+			MaxContext:     profile.MaxContext,
+			Protocol:       strings.TrimSpace(profile.Protocol),
+			HasAPIKey:      hasAPIKey,
+			Status:         status,
+			IsPlaceholder:  isPlaceholder,
+		})
+	}
+	// Also add the offline provider if not in profiles.
+	hasOffline := false
+	for name := range cfg.Profiles {
+		if strings.EqualFold(name, "offline") {
+			hasOffline = true
+			break
+		}
+	}
+	if !hasOffline {
+		rows = append(rows, theme.ProviderPanelRow{
+			Name:          "offline",
+			Active:        strings.EqualFold("offline", currentProvider),
+			Primary:       strings.EqualFold("offline", primary),
+			Models:        []string{"offline-analyzer-v1"},
+			FallbackModels: nil,
+			MaxContext:    12000,
+			Protocol:      "offline",
+			HasAPIKey:     false,
+			Status:        "ready",
+			IsPlaceholder: false,
+		})
+	}
+	return rows
 }
 
 func (m Model) currentProvider() string {

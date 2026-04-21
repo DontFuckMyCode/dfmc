@@ -86,6 +86,11 @@ func (r mentionRanker) rank(query string, limit int) []mentionCandidate {
 		}
 		return candidates[i].path < candidates[j].path
 	})
+	// Empty query: show more files (up to 20) so the picker is immediately
+	// useful as a file browser, not a sparse teaser. Binary skip still applies.
+	if q == "" && limit < 20 {
+		limit = 20
+	}
 	if len(candidates) > limit {
 		candidates = candidates[:limit]
 	}
@@ -100,7 +105,10 @@ func (r mentionRanker) scoreOne(path, q string) int {
 	recency := r.recencyBonus(path)
 
 	if q == "" {
-		// Empty query still gets surfaced, recency-first; we tiebreak by length later.
+		// Empty query — no substring/basename filter applied.
+		// Return recency-sorted list so the picker is immediately useful
+		// after typing bare "@". Score of 1 keeps them ranked by recency
+		// tiebreak (shorter paths first).
 		return 1 + recency
 	}
 

@@ -56,8 +56,9 @@ func NewGoogleProvider(model, apiKey, baseURL string, maxTokens, maxContext int)
 	}
 }
 
-func (p *GoogleProvider) Name() string  { return p.name }
-func (p *GoogleProvider) Model() string { return p.model }
+func (p *GoogleProvider) Name() string                  { return p.name }
+func (p *GoogleProvider) Model() string                 { return p.model }
+func (p *GoogleProvider) Models() []string              { return []string{p.model} }
 
 func (p *GoogleProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	if strings.TrimSpace(p.apiKey) == "" {

@@ -92,6 +92,7 @@ type flakyThrottleProvider struct {
 
 func (p *flakyThrottleProvider) Name() string  { return p.name }
 func (p *flakyThrottleProvider) Model() string { return "test-model" }
+func (p *flakyThrottleProvider) Models() []string { return []string{"test-model"} }
 func (p *flakyThrottleProvider) Hints() ProviderHints {
 	return ProviderHints{SupportsTools: true}
 }
@@ -310,6 +311,7 @@ type staticErrProvider struct {
 
 func (p *staticErrProvider) Name() string                { return p.name }
 func (p *staticErrProvider) Model() string               { return "test-model" }
+func (p *staticErrProvider) Models() []string           { return []string{"test-model"} }
 func (p *staticErrProvider) Hints() ProviderHints        { return ProviderHints{SupportsTools: true} }
 func (p *staticErrProvider) CountTokens(text string) int { return len(text) / 4 }
 func (p *staticErrProvider) MaxContext() int             { return 100_000 }
@@ -351,6 +353,7 @@ type errorOnceProvider struct {
 
 func (p *errorOnceProvider) Name() string  { return p.name }
 func (p *errorOnceProvider) Model() string { return "test-model" }
+func (p *errorOnceProvider) Models() []string { return []string{"test-model"} }
 func (p *errorOnceProvider) Hints() ProviderHints {
 	return ProviderHints{SupportsTools: true}
 }

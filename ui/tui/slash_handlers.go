@@ -41,6 +41,13 @@ func (m Model) runTemplateSlash(verb string, args []string, raw string) (Model, 
 	targets, tail := splitTargetsAndTail(args)
 	if verb == "review" {
 		targets = m.defaultReviewTargets(targets)
+		if len(targets) == 0 && len(tail) > 0 {
+			words := strings.Fields(tail)
+			if len(words) == 1 && len(words[0]) > 2 {
+				targets = []string{words[0]}
+				tail = ""
+			}
+		}
 	} else if len(targets) == 0 {
 		if target := strings.TrimSpace(m.toolTargetFile()); target != "" {
 			targets = []string{target}

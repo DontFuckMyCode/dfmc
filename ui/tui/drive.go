@@ -28,16 +28,33 @@ import (
 )
 
 type tuiDriveResources struct {
-	driver *drive.Driver
-	store  *drive.Store
+	driver  *drive.Driver
+	store   *drive.Store
+	routing map[string]string // routing config set by the user in the routing editor
+}
+
+// Routing returns the current routing map.
+func (r *tuiDriveResources) Routing() map[string]string {
+	if r == nil {
+		return nil
+	}
+	return r.routing
+}
+
+// SetRouting updates the routing config used for subsequent drive runs.
+func (r *tuiDriveResources) SetRouting(routing map[string]string) {
+	if r == nil {
+		return
+	}
+	r.routing = routing
 }
 
 // runDriveAsync constructs the driver, persists the planning stub, and runs
 // it in a goroutine. Returns the run ID immediately so the TUI can print a
 // stable handle in the transcript instead of telling the user to go hunting
 // through the activity panel.
-func runDriveAsync(eng *engine.Engine, task string) (string, error) {
-	resources, err := buildTUIDriver(eng)
+func runDriveAsync(eng *engine.Engine, task string, routing map[string]string) (string, error) {
+	resources, err := buildTUIDriver(eng, routing)
 	if err != nil {
 		return "", err
 	}
@@ -57,7 +74,7 @@ func runDriveAsync(eng *engine.Engine, task string) (string, error) {
 // runDriveResumeAsync re-enters a stopped/in-progress run. Same
 // fire-and-forget pattern as runDriveAsync.
 func runDriveResumeAsync(eng *engine.Engine, runID string) (string, error) {
-	resources, err := buildTUIDriver(eng)
+	resources, err := buildTUIDriver(eng, nil)
 	if err != nil {
 		return "", err
 	}
@@ -88,7 +105,7 @@ func runDriveResumeAsync(eng *engine.Engine, runID string) (string, error) {
 // by runDriveAsync and runDriveResumeAsync. Returns nil + publishes a
 // failure event when the engine isn't usable so the caller doesn't
 // have to repeat the guard.
-func buildTUIDriver(eng *engine.Engine) (*tuiDriveResources, error) {
+func buildTUIDriver(eng *engine.Engine, routing map[string]string) (*tuiDriveResources, error) {
 	if eng == nil {
 		return nil, fmt.Errorf("engine is not initialized")
 	}
@@ -118,10 +135,21 @@ func buildTUIDriver(eng *engine.Engine) (*tuiDriveResources, error) {
 	publisher := drive.Publisher(func(typ string, payload map[string]any) {
 		eng.PublishDriveEvent(typ, payload)
 	})
+	cfg := drive.Config{Routing: routing}
 	return &tuiDriveResources{
-		driver: drive.NewDriver(runner, store, publisher, drive.Config{}),
+		driver: drive.NewDriver(runner, store, publisher, cfg),
 		store:  store,
+		routing: routing,
 	}, nil
+}
+
+// listRuns returns all persisted drive runs, newest first. Used by the
+// Workflow tab to populate the run selector.
+func (r *tuiDriveResources) listRuns() ([]*drive.Run, error) {
+	if r == nil || r.store == nil {
+		return nil, nil
+	}
+	return r.store.List()
 }
 
 // handleDriveStopSlash powers `/drive stop [id]`. Without an ID,
