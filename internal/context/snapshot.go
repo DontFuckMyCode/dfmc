@@ -17,10 +17,10 @@ type ContextChunkRef struct {
 // a supervisor task so resume/replay can reuse the same chunks instead of
 // re-running retrieval from scratch.
 type ContextSnapshot struct {
-	Query      string            `json:"query"`
-	Chunks     []ContextChunkRef `json:"chunks"`
-	BudgetUsed int               `json:"budget_used"`
-	Task       string            `json:"task"`        // "security"|"debug"|"review"|"refactor"|etc.
-	Confidence float64           `json:"confidence"`  // avg chunk score, 0-1
-	RetrievedAt time.Time       `json:"retrieved_at"`
+	Query       string            `json:"query"`
+	Chunks      []ContextChunkRef `json:"chunks"`
+	BudgetUsed  int               `json:"budget_used"`
+	Task        string            `json:"task"`       // "security"|"debug"|"review"|"refactor"|etc.
+	Confidence  float64           `json:"confidence"` // avg chunk score, 0-1
+	RetrievedAt time.Time         `json:"retrieved_at"`
 }

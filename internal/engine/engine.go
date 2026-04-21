@@ -63,22 +63,22 @@ const (
 )
 
 type Engine struct {
-	Config       *config.Config
-	Storage      *storage.Store
-	EventBus     *EventBus
-	ProjectRoot  string
-	AST          *ast.Engine
-	CodeMap      *codemap.Engine
-	Context      *ctxmgr.Manager
+	Config      *config.Config
+	Storage     *storage.Store
+	EventBus    *EventBus
+	ProjectRoot string
+	AST         *ast.Engine
+	CodeMap     *codemap.Engine
+	Context     *ctxmgr.Manager
 	// lastContextSnapshot holds the retrieval outcome from the most recent
 	// buildContextChunks call. Attached to supervisor.Task after todo
 	// execution so resume/replay reuse the same chunks.
 	lastContextSnapshot *ctxmgr.ContextSnapshot
-	Providers    *provider.Router
-	Tools        *tools.Engine
-	Memory       *memory.Store
-	Conversation *conversation.Manager
-	Security     *security.Scanner
+	Providers           *provider.Router
+	Tools               *tools.Engine
+	Memory              *memory.Store
+	Conversation        *conversation.Manager
+	Security            *security.Scanner
 	// Hooks dispatches user-configured shell commands on lifecycle events
 	// (user_prompt_submit, pre_tool, post_tool, session_start/end). A nil
 	// value is safe — Fire is a no-op on nil.

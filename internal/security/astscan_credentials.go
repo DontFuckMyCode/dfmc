@@ -290,7 +290,7 @@ var credentialPrefixes = []string{
 	"ghp_", "ghs_", "gho_", "ghu_", "ghr_",
 	"npm_",
 	"AKIA", "ASIA",
-	"AIzaSy",     // Google API keys
+	"AIzaSy", // Google API keys
 	"xoxp-", "xoxb-", "xoxa-", "xoxs-",
 	"-----BEGIN", // PEM blocks
 	"eyJ",        // JWT header (base64 '{"') — common leak shape

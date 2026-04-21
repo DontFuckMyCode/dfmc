@@ -30,9 +30,9 @@ import (
 // that rely on freshness — we'd rather forget to cache a new read tool
 // than accidentally cache a write.
 var cacheableBackendTools = map[string]struct{}{
-	"read_file":      {},
-	"list_dir":       {},
-	"grep_codebase":  {},
+	"read_file":     {},
+	"list_dir":      {},
+	"grep_codebase": {},
 }
 
 // cacheableToolCallKey returns a stable key for the call when it's a

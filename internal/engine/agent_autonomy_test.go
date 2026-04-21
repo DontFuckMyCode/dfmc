@@ -244,8 +244,8 @@ func TestShouldAutoKickoffAutonomy_TooFewSubtasks(t *testing.T) {
 
 func TestShouldAutoKickoffAutonomy_AggressiveThresholdRequiresThreeSubtasks(t *testing.T) {
 	pf := &autonomyPreflight{
-		Plan: planning.Plan{Confidence: 0.40, Subtasks: []planning.Subtask{{}, {}, {}}},
-		Mode: "aggressive",
+		Plan:  planning.Plan{Confidence: 0.40, Subtasks: []planning.Subtask{{}, {}, {}}},
+		Mode:  "aggressive",
 		Scope: "top_level",
 	}
 	if !shouldAutoKickoffAutonomy(pf) {

@@ -121,7 +121,7 @@ func (s *Server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 		Labels:        append([]string(nil), req.Labels...),
 		Verification:  supervisor.VerificationStatus(strings.TrimSpace(req.Verification)),
 		Confidence:    req.Confidence,
-		Summary:      strings.TrimSpace(req.Summary),
+		Summary:       strings.TrimSpace(req.Summary),
 		BlockedReason: strings.TrimSpace(req.BlockedReason),
 	}
 	if err := store.SaveTask(&task); err != nil {

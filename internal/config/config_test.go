@@ -333,7 +333,6 @@ func TestValidate_ProfileNamedOfflineSkipsModelRequirement(t *testing.T) {
 	}
 }
 
-
 func TestValidate_ProfileWithModelAndBaseURLPasses(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Providers.Profiles["custom"] = ModelConfig{Model: "my-model", BaseURL: "https://custom.example/v1"}
@@ -444,10 +443,10 @@ func TestParseDotEnvValue_RealValuesPassThrough(t *testing.T) {
 		{"sk-test-key-123", "sk-test-key-123"},
 		{"\"quoted value\"", "quoted value"},
 		{"'single quoted'", "single quoted"},
-		{"<end_of_line", "<end_of_line"}, // missing closing > — not a placeholder
-		{"< >", "< >"},                      // empty interior — not a placeholder
-		{"plainnoangles", "plainnoangles"},  // no angle brackets at all
-		{"plainnoangles", "plainnoangles"},    // no angle brackets at all
+		{"<end_of_line", "<end_of_line"},   // missing closing > — not a placeholder
+		{"< >", "< >"},                     // empty interior — not a placeholder
+		{"plainnoangles", "plainnoangles"}, // no angle brackets at all
+		{"plainnoangles", "plainnoangles"}, // no angle brackets at all
 		{"", ""},
 	}
 	for _, tc := range cases {
@@ -457,4 +456,3 @@ func TestParseDotEnvValue_RealValuesPassThrough(t *testing.T) {
 		}
 	}
 }
-

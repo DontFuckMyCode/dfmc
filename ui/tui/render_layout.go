@@ -254,7 +254,18 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 	if m.ui.resumePromptActive && !m.chat.sending {
 		tailLines = append(tailLines, "", renderResumeBanner(m.agentLoop.step, m.agentLoop.maxToolStep, min(width, 100)))
 	}
-	inputLine := renderChatInputLine(m.chat.input, m.chat.cursor, m.chat.cursorManual, m.chat.cursorInput, m.chat.sending)
+	var inputLine string
+	if m.chat.pasteCount > 0 && len(m.chat.input) > 0 && m.chat.input[0] == '\n' {
+		// User pasted multiline content. Show a compact label instead of
+		// rendering every line of the buffer in the input box. The full
+		// content is preserved in m.chat.input for cursor/submission.
+		lineCount := strings.Count(m.chat.input, "\n") + 1
+		label := fmt.Sprintf("[Pasted text #%d +%d lines]", m.chat.pasteCount, lineCount)
+		labelCursor := len([]rune(label))
+		inputLine = renderChatInputLine(label, labelCursor, false, "", m.chat.sending)
+	} else {
+		inputLine = renderChatInputLine(m.chat.input, m.chat.cursor, m.chat.cursorManual, m.chat.cursorInput, m.chat.sending)
+	}
 	tailLines = append(tailLines, "", sectionHeader("›", "Input"), renderInputBox(inputLine, min(width, 100)))
 
 	if m.pendingApproval != nil {

@@ -24,15 +24,15 @@ func TestSaveAndLoad(t *testing.T) {
 	s := NewStore(db)
 
 	task := &supervisor.Task{
-		ID:       "tsk-test-1",
-		ParentID: "",
-		Origin:   "supervisor",
-		Title:    "Implement auth module",
-		Detail:   "Add refresh token rotation to the auth service.",
-		State:    supervisor.TaskRunning,
+		ID:          "tsk-test-1",
+		ParentID:    "",
+		Origin:      "supervisor",
+		Title:       "Implement auth module",
+		Detail:      "Add refresh token rotation to the auth service.",
+		State:       supervisor.TaskRunning,
 		WorkerClass: supervisor.WorkerCoder,
-		Labels:   []string{"auth", "security"},
-		StartedAt: time.Now(),
+		Labels:      []string{"auth", "security"},
+		StartedAt:   time.Now(),
 	}
 
 	if err := s.SaveTask(task); err != nil {

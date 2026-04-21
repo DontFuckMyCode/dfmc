@@ -42,17 +42,17 @@ func (h *taskMCPHandler) Tools() []mcp.ToolDescriptor {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"title":          map[string]any{"type": "string", "description": "Task title (required)"},
-					"parent_id":      map[string]any{"type": "string", "description": "Parent task ID for hierarchical tasks"},
-					"origin":         map[string]any{"type": "string", "description": "Origin hint: 'todo_write', 'planner', or 'supervisor'"},
-					"state":          map[string]any{"type": "string", "description": "Initial state: pending (default), running, done, blocked, skipped, waiting, external_review"},
-					"worker_class":   map[string]any{"type": "string", "description": "Planner/coder/reviewer/tester/security/synthesizer"},
-					"depends_on":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Task IDs this task depends on"},
-					"file_scope":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File paths this task operates on"},
-					"labels":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Arbitrary string tags"},
-					"verification":    map[string]any{"type": "string", "description": "none/light/required/deep"},
-					"confidence":     map[string]any{"type": "number", "description": "Confidence 0-1"},
-					"summary":        map[string]any{"type": "string", "description": "Brief summary of outcome"},
+					"title":        map[string]any{"type": "string", "description": "Task title (required)"},
+					"parent_id":    map[string]any{"type": "string", "description": "Parent task ID for hierarchical tasks"},
+					"origin":       map[string]any{"type": "string", "description": "Origin hint: 'todo_write', 'planner', or 'supervisor'"},
+					"state":        map[string]any{"type": "string", "description": "Initial state: pending (default), running, done, blocked, skipped, waiting, external_review"},
+					"worker_class": map[string]any{"type": "string", "description": "Planner/coder/reviewer/tester/security/synthesizer"},
+					"depends_on":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Task IDs this task depends on"},
+					"file_scope":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File paths this task operates on"},
+					"labels":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Arbitrary string tags"},
+					"verification": map[string]any{"type": "string", "description": "none/light/required/deep"},
+					"confidence":   map[string]any{"type": "number", "description": "Confidence 0-1"},
+					"summary":      map[string]any{"type": "string", "description": "Brief summary of outcome"},
 				},
 				"required":             []string{"title"},
 				"additionalProperties": false,
@@ -92,11 +92,11 @@ func (h *taskMCPHandler) Tools() []mcp.ToolDescriptor {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"id":            map[string]any{"type": "string"},
-					"title":         map[string]any{"type": "string"},
-					"state":         map[string]any{"type": "string"},
-					"summary":       map[string]any{"type": "string"},
-					"confidence":    map[string]any{"type": "number"},
+					"id":             map[string]any{"type": "string"},
+					"title":          map[string]any{"type": "string"},
+					"state":          map[string]any{"type": "string"},
+					"summary":        map[string]any{"type": "string"},
+					"confidence":     map[string]any{"type": "number"},
 					"blocked_reason": map[string]any{"type": "string"},
 				},
 				"required":             []string{"id"},
@@ -170,10 +170,10 @@ func (h *taskMCPHandler) callCreate(_ context.Context, rawArgs []byte) (mcp.Call
 		DependsOn:    append([]string(nil), args.DependsOn...),
 		FileScope:    append([]string(nil), args.FileScope...),
 		WorkerClass:  supervisor.WorkerClass(strings.TrimSpace(args.WorkerClass)),
-		Labels:      append([]string(nil), args.Labels...),
+		Labels:       append([]string(nil), args.Labels...),
 		Verification: supervisor.VerificationStatus(strings.TrimSpace(args.Verification)),
-		Confidence:  args.Confidence,
-		Summary:    strings.TrimSpace(args.Summary),
+		Confidence:   args.Confidence,
+		Summary:      strings.TrimSpace(args.Summary),
 	}
 	if task.State == "" {
 		task.State = supervisor.TaskPending
@@ -213,11 +213,11 @@ func (h *taskMCPHandler) callGet(rawArgs []byte) (mcp.CallToolResult, error) {
 
 type taskListArgs struct {
 	ParentID string `json:"parent_id,omitempty"`
-	RunID   string `json:"run_id,omitempty"`
-	State   string `json:"state,omitempty"`
-	Label   string `json:"label,omitempty"`
-	Limit   int    `json:"limit,omitempty"`
-	Offset  int    `json:"offset,omitempty"`
+	RunID    string `json:"run_id,omitempty"`
+	State    string `json:"state,omitempty"`
+	Label    string `json:"label,omitempty"`
+	Limit    int    `json:"limit,omitempty"`
+	Offset   int    `json:"offset,omitempty"`
 }
 
 func (h *taskMCPHandler) callList(rawArgs []byte) (mcp.CallToolResult, error) {
@@ -251,12 +251,12 @@ func (h *taskMCPHandler) callList(rawArgs []byte) (mcp.CallToolResult, error) {
 }
 
 type taskUpdateArgs struct {
-	ID           string  `json:"id"`
-	Title       string  `json:"title,omitempty"`
-	State       string  `json:"state,omitempty"`
-	Summary     string  `json:"summary,omitempty"`
-	Confidence  float64 `json:"confidence,omitempty"`
-	BlockedReason string `json:"blocked_reason,omitempty"`
+	ID            string  `json:"id"`
+	Title         string  `json:"title,omitempty"`
+	State         string  `json:"state,omitempty"`
+	Summary       string  `json:"summary,omitempty"`
+	Confidence    float64 `json:"confidence,omitempty"`
+	BlockedReason string  `json:"blocked_reason,omitempty"`
 }
 
 func (h *taskMCPHandler) callUpdate(rawArgs []byte) (mcp.CallToolResult, error) {

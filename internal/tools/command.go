@@ -87,6 +87,9 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 				"if you intended command substitution, resolve it in a prior tool call and pass the concrete result here.",
 			token, value)
 	}
+	if hasScriptRunnerWithEvalFlag(args) {
+		return Result{}, fmt.Errorf("run_command args contain a script-runner inline-eval flag (-e, -c, -r) which is not supported — these allow arbitrary code execution and are blocked")
+	}
 	for _, arg := range args {
 		if isBlockedShellInterpreter(arg) {
 			return Result{}, fmt.Errorf("shell interpreters are blocked for run_command args as well: %s", arg)
@@ -595,11 +598,39 @@ func suggestSplitRunCommand(bin, rest string) string {
 func isBlockedShellInterpreter(command string) bool {
 	binary := strings.ToLower(filepath.Base(strings.TrimSpace(command)))
 	switch binary {
-	case "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "bash", "sh", "zsh", "fish", "nu":
+	case "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "bash", "sh", "zsh", "fish", "nu", "dash", "ash", "ksh", "tcsh", "csh", "jsh":
 		return true
 	default:
 		return false
 	}
+}
+
+// M2: detect script-runner binaries with inline-eval flags (node -e, python -c, etc.)
+// These are blocked because they allow arbitrary code execution via args.
+var scriptRunnerEvalFlags = map[string]string{
+	"node":   "-e",
+	"nodejs": "-e",
+	"python": "-c",
+	"python2": "-c",
+	"python3": "-c",
+	"perl":   "-e",
+	"ruby":   "-e",
+	"php":    "-r",
+	"pwsh":   "-c",
+	"powershell": "-c",
+}
+
+func hasScriptRunnerWithEvalFlag(args []string) bool {
+	if len(args) < 2 {
+		return false
+	}
+	for i := 0; i < len(args)-1; i++ {
+		binary := strings.ToLower(filepath.Base(strings.TrimSpace(args[i])))
+		if flag, ok := scriptRunnerEvalFlags[binary]; ok && args[i+1] == flag {
+			return true
+		}
+	}
+	return false
 }
 
 func joinCommandStderr(stderr string, hasStdout bool) string {

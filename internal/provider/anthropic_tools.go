@@ -144,10 +144,10 @@ func buildAnthropicMessage(role string, m Message) anthropicMessage {
 	// emit anything.
 	if role == "user" && strings.TrimSpace(m.ToolCallID) != "" {
 		blocks = append(blocks, map[string]any{
-			"type":         "tool_result",
-			"tool_use_id":  m.ToolCallID,
-			"content":      m.Content,
-			"is_error":     m.ToolError,
+			"type":        "tool_result",
+			"tool_use_id": m.ToolCallID,
+			"content":     m.Content,
+			"is_error":    m.ToolError,
 		})
 		return anthropicMessage{Role: role, Content: blocks}
 	}

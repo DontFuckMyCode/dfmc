@@ -96,14 +96,19 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 		// header against an existing file used to bypass the safety gate
 		// entirely. Stat the resolved path independently and require a
 		// prior read_file snapshot whenever the file already exists.
-		if t.engine != nil {
-			if _, statErr := os.Stat(abs); statErr == nil {
-				if guardErr := t.engine.EnsureReadBeforeMutation(abs); guardErr != nil {
-					return Result{}, fmt.Errorf("apply_patch %s: %w (read the file first via read_file, then retry)", targetPath, guardErr)
-				}
-			} else if statErr != nil && !os.IsNotExist(statErr) {
-				return Result{}, fmt.Errorf("apply_patch %s: stat target: %w", targetPath, statErr)
+		// C2: Per-target read-before-mutate gate. Requires engine to be
+		// wired so the engine can track which files have been read. If the
+		// engine is nil, refuse rather than silently bypassing the safety
+		// check — a nil engine means read-tracking was never initialized.
+		if t.engine == nil {
+			return Result{}, fmt.Errorf("apply_patch: engine is not wired — read-before-mutate gate is unavailable; refusing to apply without an engine (caller must call SetEngine before use)")
+		}
+		if _, statErr := os.Stat(abs); statErr == nil {
+			if guardErr := t.engine.EnsureReadBeforeMutation(abs); guardErr != nil {
+				return Result{}, fmt.Errorf("apply_patch %s: %w (read the file first via read_file, then retry)", targetPath, guardErr)
 			}
+		} else if statErr != nil && !os.IsNotExist(statErr) {
+			return Result{}, fmt.Errorf("apply_patch %s: stat target: %w", targetPath, statErr)
 		}
 
 		entry := map[string]any{
@@ -375,10 +380,10 @@ func atoiSafe(s string) (int, error) {
 }
 
 // applyHunks runs each hunk against the original text. Strategy:
-//   1. Use OldStart as the first guess; if context + deletions match there,
-//      apply.
-//   2. Otherwise, scan forward/backward a small window looking for a match.
-//   3. If still no match, mark the hunk rejected (don't force).
+//  1. Use OldStart as the first guess; if context + deletions match there,
+//     apply.
+//  2. Otherwise, scan forward/backward a small window looking for a match.
+//  3. If still no match, mark the hunk rejected (don't force).
 func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int, []int, error) {
 	if isNew {
 		// For a new file, all context/removal lines should be zero; just

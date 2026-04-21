@@ -15,9 +15,11 @@ import (
 
 type TaskSplitTool struct{}
 
-func NewTaskSplitTool() *TaskSplitTool       { return &TaskSplitTool{} }
-func (t *TaskSplitTool) Name() string        { return "task_split" }
-func (t *TaskSplitTool) Description() string { return "Decompose a free-text task into parallel or sequential subtasks." }
+func NewTaskSplitTool() *TaskSplitTool { return &TaskSplitTool{} }
+func (t *TaskSplitTool) Name() string  { return "task_split" }
+func (t *TaskSplitTool) Description() string {
+	return "Decompose a free-text task into parallel or sequential subtasks."
+}
 
 func (t *TaskSplitTool) Execute(_ context.Context, req Request) (Result, error) {
 	query := strings.TrimSpace(asString(req.Params, "task", ""))

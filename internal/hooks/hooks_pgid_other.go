@@ -10,4 +10,4 @@ package hooks
 import "os/exec"
 
 func applyProcessGroupIsolation(_ *exec.Cmd) {}
-func killProcessGroup(_ int)                {}
+func killProcessGroup(_ int)                 {}

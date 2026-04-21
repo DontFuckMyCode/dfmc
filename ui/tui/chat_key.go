@@ -388,15 +388,40 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		raw := strings.TrimSpace(m.chat.input)
+		// If the input starts with one or more newlines, the user is
+		// intentionally building a multiline message — don't submit on the
+		// first Enter. TrimSpace first so a leading newline alone doesn't
+		// submit, but preserve whether there were any.
+		raw := m.chat.input
+		startsWithNewline := len(raw) > 0 && raw[0] == '\n'
+		raw = strings.TrimSpace(raw)
 		// Parked-resume affordance. When the loop is parked, a bare Enter
 		// resumes; any typed text is forwarded to the resumed loop as a
 		// /btw-style note so the user can redirect the continuation.
 		if !m.chat.sending && m.ui.resumePromptActive && m.eng != nil && m.eng.HasParkedAgent() {
+			m.chat.pasteCount = 0
 			m.setChatInput("")
 			return m.startChatResume(raw)
 		}
-		if raw == "" {
+		// Empty input (no newlines) — Enter submits nothing.
+		if raw == "" && !startsWithNewline {
+			return m, nil
+		}
+		// Input starts with newline(s) — user is building a multiline paste
+		// or typing a multi-line message. Insert the newline, don't submit.
+		if startsWithNewline {
+			m.exitInputHistoryNavigation()
+			// Track sequential paste operations so the UI can label them:
+			// [Pasted text #1 +N lines]. Reset when the user types non-paste
+			// text or submits.
+			if m.chat.pasteCount == 0 {
+				m.chat.pasteCount = 1
+			}
+			m.insertInputText("\n")
+			m.slashMenu.command = 0
+			m.slashMenu.commandArg = 0
+			m.slashMenu.mention = 0
+			m.slashMenu.quickAction = 0
 			return m, nil
 		}
 		if m.chat.sending {
@@ -404,6 +429,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				cmd, _, _, err := parseChatCommandInput(raw)
 				if err != nil || !isKnownChatCommandToken(cmd) || isImmediateChatSlashCommand(cmd) {
 					m.pushInputHistory(raw)
+					m.chat.pasteCount = 0
 					m.setChatInput("")
 					next, cmdOut, _ := m.executeChatCommand(raw)
 					return next, cmdOut
@@ -415,10 +441,12 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// without becoming a DOS vector.
 			if len(m.chat.pendingQueue) >= pendingQueueCap {
 				m.notice = fmt.Sprintf("Queue full (%d max) — wait for the current reply, then send again.", pendingQueueCap)
+				m.chat.pasteCount = 0
 				m.setChatInput("")
 				return m, nil
 			}
 			m.chat.pendingQueue = append(m.chat.pendingQueue, raw)
+			m.chat.pasteCount = 0
 			m.setChatInput("")
 			m.notice = fmt.Sprintf("Queued (%d/%d) — will send after the current reply finishes.", len(m.chat.pendingQueue), pendingQueueCap)
 			m = m.appendSystemMessage(fmt.Sprintf("▸ queued #%d: %s", len(m.chat.pendingQueue), raw))
@@ -435,6 +463,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if question == "" {
 			return m, nil
 		}
+		m.chat.pasteCount = 0
 		m.setChatInput("")
 		return m.submitChatQuestion(question, suggestions.quickActions)
 	}
@@ -456,6 +485,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if printable {
 			m.exitInputHistoryNavigation()
+			m.chat.pasteCount = 0
 			m.insertInputText(string(msg.Runes))
 			m.slashMenu.command = 0
 			m.slashMenu.commandArg = 0

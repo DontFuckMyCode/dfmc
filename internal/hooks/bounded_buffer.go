@@ -36,9 +36,6 @@ func newBoundedBuffer(cap int) *boundedBuffer {
 func (b *boundedBuffer) Write(p []byte) (int, error) {
 	n := len(p)
 	if b.truncated {
-		// Cap already hit; pretend we accepted everything so the child
-		// keeps writing and doesn't block on a full pipe. The parent
-		// has the head bytes, which is all we need for diagnostics.
 		return n, nil
 	}
 	remaining := b.cap - len(b.data)
@@ -46,12 +43,16 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 		b.data = append(b.data, p...)
 		return n, nil
 	}
-	// Partial fit: take the head, mark truncated, drop the tail.
 	if remaining > 0 {
 		b.data = append(b.data, p[:remaining]...)
 	}
 	b.truncated = true
 	return n, nil
+}
+
+// S7: Truncated reports whether the buffer truncated its output.
+func (b *boundedBuffer) Truncated() bool {
+	return b.truncated
 }
 
 // String returns the captured content followed by a one-line marker

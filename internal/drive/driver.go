@@ -350,18 +350,18 @@ func (d *Driver) dispatchTodo(ctx context.Context, run *Run, idx int, results ch
 		MaxSteps:          executorStepBudgetFor(*t),
 	}
 	d.publish(EventTodoStart, map[string]any{
-		"run_id":          run.ID,
-		"todo_id":         t.ID,
-		"title":           t.Title,
-		"attempt":         t.Attempts,
-		"origin":          t.Origin,
-		"kind":            t.Kind,
-		"worker_class":    t.WorkerClass,
-		"provider_tag":    t.ProviderTag,
-		"routed":          t.ProviderTag != "" && d.cfg.Routing != nil,
+		"run_id":           run.ID,
+		"todo_id":          t.ID,
+		"title":            t.Title,
+		"attempt":          t.Attempts,
+		"origin":           t.Origin,
+		"kind":             t.Kind,
+		"worker_class":     t.WorkerClass,
+		"provider_tag":     t.ProviderTag,
+		"routed":           t.ProviderTag != "" && d.cfg.Routing != nil,
 		"profile_selected": req.Model,
-		"max_steps":       req.MaxSteps,
-		"providers":       req.ProfileCandidates,
+		"max_steps":        req.MaxSteps,
+		"providers":        req.ProfileCandidates,
 	})
 	go func(idx int, req ExecuteTodoRequest, started time.Time, attempt int) {
 		defer func() {
@@ -452,6 +452,8 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 		return
 	}
 	t.Status = TodoDone
+	// Attach the retrieval snapshot so resume can reuse the same chunks.
+	t.LastContext = res.Resp.LastContext
 	brief, spawned, spawnErr := parseSpawnedTodos(res.Resp.Summary, *t, run.Todos)
 	if spawnErr != nil {
 		t.Status = TodoBlocked
@@ -476,23 +478,23 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 	*consecutiveBlocked = 0
 	d.persist(run)
 	d.publish(EventTodoDone, map[string]any{
-		"run_id":         run.ID,
-		"todo_id":        t.ID,
-		"brief":          t.Brief,
-		"duration_ms":    dur,
-		"tool_calls":     res.Resp.ToolCalls,
-		"parked":         res.Resp.Parked,
-		"origin":         t.Origin,
-		"kind":           t.Kind,
-		"worker_class":   t.WorkerClass,
-		"spawned":        len(added),
-		"provider":       res.Resp.Provider,
-		"model":          res.Resp.Model,
-		"attempts":       res.Resp.Attempts,
-		"fallback":       res.Resp.FallbackUsed,
-		"fallback_from":  res.Resp.FallbackFrom,
+		"run_id":           run.ID,
+		"todo_id":          t.ID,
+		"brief":            t.Brief,
+		"duration_ms":      dur,
+		"tool_calls":       res.Resp.ToolCalls,
+		"parked":           res.Resp.Parked,
+		"origin":           t.Origin,
+		"kind":             t.Kind,
+		"worker_class":     t.WorkerClass,
+		"spawned":          len(added),
+		"provider":         res.Resp.Provider,
+		"model":            res.Resp.Model,
+		"attempts":         res.Resp.Attempts,
+		"fallback":         res.Resp.FallbackUsed,
+		"fallback_from":    res.Resp.FallbackFrom,
 		"fallback_reasons": res.Resp.FallbackReasons,
-		"profiles_tried": res.Resp.FallbackChain,
+		"profiles_tried":   res.Resp.FallbackChain,
 	})
 	if len(added) > 0 {
 		d.publish(EventPlanAugment, map[string]any{

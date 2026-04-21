@@ -22,7 +22,11 @@
 
 package drive
 
-import "context"
+import (
+	"context"
+
+	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
+)
 
 // PlannerRequest is the input to a single planner LLM call. Model is
 // optional — when empty the runner uses its default. The system+user
@@ -61,8 +65,8 @@ type ExecuteTodoRequest struct {
 	// supervisor selected for this TODO. The engine should try them in
 	// order, preserving the same sub-agent seed/context on each attempt.
 	ProfileCandidates []string
-	AllowedTools []string
-	MaxSteps     int
+	AllowedTools      []string
+	MaxSteps          int
 }
 
 // ExecuteTodoResponse carries the sub-agent's final summary plus
@@ -77,12 +81,16 @@ type ExecuteTodoResponse struct {
 	Attempts   int
 	// FallbackUsed reports whether the sub-agent had to move off its
 	// first profile candidate to finish the task.
-	FallbackUsed bool
-	FallbackFrom string
+	FallbackUsed  bool
+	FallbackFrom  string
 	FallbackChain []string
 	// FallbackReasons stores one error string per failed profile attempt,
 	// aligned with the profiles tried before the final successful attempt.
 	FallbackReasons []string
+	// LastContext holds the retrieval outcome from the sub-agent's
+	// final context build, so the caller can reuse the same chunks
+	// instead of re-running retrieval from scratch on resume.
+	LastContext *ctxmgr.ContextSnapshot
 }
 
 // Runner is the engine seam. The real implementation lives in

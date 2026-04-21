@@ -100,9 +100,9 @@ type SystemBlock struct {
 }
 
 type CompletionRequest struct {
-	Provider string               `json:"provider,omitempty"`
-	Model    string               `json:"model,omitempty"`
-	System   string               `json:"system,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	System   string `json:"system,omitempty"`
 	// SystemBlocks optionally mirrors System as an ordered list of labelled
 	// fragments. When set, providers that understand prompt caching prefer
 	// these over the flat System string. When empty, the flat string is

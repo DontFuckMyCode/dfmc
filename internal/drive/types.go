@@ -24,6 +24,8 @@ package drive
 import (
 	"strings"
 	"time"
+
+	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 )
 
 // TodoStatus is the lifecycle state of a single TODO inside a drive run.
@@ -50,11 +52,11 @@ const (
 type BlockReason string
 
 const (
-	BlockReasonFatal            BlockReason = "fatal_error"       // non-retriable error (tool denied, auth failure, etc.)
-	BlockReasonRetriesExhausted BlockReason = "retries_exhausted" // all retry attempts failed
-	BlockReasonSpawnInvalid     BlockReason = "spawn_invalid"     // planner emitted malformed child TODOs
+	BlockReasonFatal             BlockReason = "fatal_error"        // non-retriable error (tool denied, auth failure, etc.)
+	BlockReasonRetriesExhausted  BlockReason = "retries_exhausted"  // all retry attempts failed
+	BlockReasonSpawnInvalid      BlockReason = "spawn_invalid"      // planner emitted malformed child TODOs
 	BlockReasonDependencyBlocked BlockReason = "dependency_blocked" // a depends-on TODO was itself blocked
-	BlockReasonMaxFailedTodos    BlockReason = "max_failed_todos"  // run-level consecutive blocked limit hit
+	BlockReasonMaxFailedTodos    BlockReason = "max_failed_todos"   // run-level consecutive blocked limit hit
 )
 
 // Todo is one unit of work the planner emitted. The fields beyond the
@@ -80,29 +82,33 @@ const (
 // keys match the lowercase field names so externally-edited resume
 // state stays compatible.
 type Todo struct {
-	ID           string     `json:"id"`
-	ParentID     string     `json:"parent_id,omitempty"`
-	Origin       string     `json:"origin,omitempty"`
-	Kind         string     `json:"kind,omitempty"`
-	Title        string     `json:"title"`
-	Detail       string     `json:"detail"`
-	DependsOn    []string   `json:"depends_on,omitempty"`
-	FileScope    []string   `json:"file_scope,omitempty"`
-	ReadOnly     bool       `json:"read_only,omitempty"`
-	ProviderTag  string     `json:"provider_tag,omitempty"`
-	WorkerClass  string     `json:"worker_class,omitempty"`
-	Skills       []string   `json:"skills,omitempty"`
-	AllowedTools []string   `json:"allowed_tools,omitempty"`
-	Labels       []string   `json:"labels,omitempty"`
-	Verification string     `json:"verification,omitempty"`
-	Confidence   float64    `json:"confidence,omitempty"`
-	Status        TodoStatus `json:"status"`
-	Brief         string     `json:"brief,omitempty"`
-	Error         string     `json:"error,omitempty"`
+	ID            string      `json:"id"`
+	ParentID      string      `json:"parent_id,omitempty"`
+	Origin        string      `json:"origin,omitempty"`
+	Kind          string      `json:"kind,omitempty"`
+	Title         string      `json:"title"`
+	Detail        string      `json:"detail"`
+	DependsOn     []string    `json:"depends_on,omitempty"`
+	FileScope     []string    `json:"file_scope,omitempty"`
+	ReadOnly      bool        `json:"read_only,omitempty"`
+	ProviderTag   string      `json:"provider_tag,omitempty"`
+	WorkerClass   string      `json:"worker_class,omitempty"`
+	Skills        []string    `json:"skills,omitempty"`
+	AllowedTools  []string    `json:"allowed_tools,omitempty"`
+	Labels        []string    `json:"labels,omitempty"`
+	Verification  string      `json:"verification,omitempty"`
+	Confidence    float64     `json:"confidence,omitempty"`
+	Status        TodoStatus  `json:"status"`
+	Brief         string      `json:"brief,omitempty"`
+	Error         string      `json:"error,omitempty"`
 	BlockedReason BlockReason `json:"blocked_reason,omitempty"`
-	Attempts      int        `json:"attempts"`
-	StartedAt    time.Time  `json:"started_at,omitempty"`
-	EndedAt      time.Time  `json:"ended_at,omitempty"`
+	Attempts      int         `json:"attempts"`
+	StartedAt     time.Time   `json:"started_at,omitempty"`
+	EndedAt       time.Time   `json:"ended_at,omitempty"`
+	// LastContext holds the retrieval outcome from the most recent
+	// context build, so resume can reuse the same chunks instead of
+	// re-running retrieval from scratch.
+	LastContext *ctxmgr.ContextSnapshot `json:"last_context,omitempty"`
 }
 
 // RunStatus is the lifecycle state of an entire drive run.

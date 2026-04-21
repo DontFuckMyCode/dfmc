@@ -60,13 +60,13 @@ func (e *Engine) routeIntent(ctx context.Context, raw string) intent.Decision {
 			Type:   "intent:decision",
 			Source: "intent",
 			Payload: map[string]any{
-				"intent":            string(dec.Intent),
-				"source":            dec.Source,
-				"latency_ms":        dec.Latency.Milliseconds(),
-				"reasoning":         dec.Reasoning,
-				"raw":               raw,
-				"enriched":          dec.EnrichedRequest,
-				"follow_up":         dec.FollowUpQuestion,
+				"intent":     string(dec.Intent),
+				"source":     dec.Source,
+				"latency_ms": dec.Latency.Milliseconds(),
+				"reasoning":  dec.Reasoning,
+				"raw":        raw,
+				"enriched":   dec.EnrichedRequest,
+				"follow_up":  dec.FollowUpQuestion,
 			},
 		})
 	}

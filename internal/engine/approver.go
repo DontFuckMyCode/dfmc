@@ -147,8 +147,8 @@ type RecentDenial struct {
 const recentDenialsCapacity = 8
 
 var (
-	denialsMu         sync.RWMutex
-	denialsPerEngine  = map[*Engine][]RecentDenial{}
+	denialsMu        sync.RWMutex
+	denialsPerEngine = map[*Engine][]RecentDenial{}
 )
 
 // recordDenial appends a RecentDenial to this engine's ring buffer.

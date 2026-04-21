@@ -323,8 +323,8 @@ func limitRequestBodySize(h http.Handler, max int64) http.Handler {
 type perIPLimiter struct {
 	mu      sync.Mutex
 	buckets map[string]*rate.Limiter
-	rate   rate.Limit
-	burst  int
+	rate    rate.Limit
+	burst   int
 }
 
 func newPerIPLimiter(r rate.Limit, burst int) *perIPLimiter {

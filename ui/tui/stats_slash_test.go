@@ -92,13 +92,13 @@ func TestSlashStats_ShowsAgentProgressWhenActive(t *testing.T) {
 
 func TestFormatThousands(t *testing.T) {
 	cases := map[int]string{
-		0:           "0",
-		7:           "7",
-		999:         "999",
-		1_000:       "1,000",
-		1_234_567:   "1,234,567",
-		-12_345:     "-12,345",
-		10_000_000:  "10,000,000",
+		0:          "0",
+		7:          "7",
+		999:        "999",
+		1_000:      "1,000",
+		1_234_567:  "1,234,567",
+		-12_345:    "-12,345",
+		10_000_000: "10,000,000",
 	}
 	for in, want := range cases {
 		if got := formatThousands(in); got != want {

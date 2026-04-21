@@ -46,10 +46,11 @@ func newE2EEngine(t *testing.T) (*Engine, string) {
 }
 
 // Subsystems-together smoke test:
-//   1. tool: write a Go file under the project root
-//   2. tool: read it back, confirm content round-trip
-//   3. memory: add an episodic entry, search for it
-//   4. conversation: start, add messages, save, list
+//  1. tool: write a Go file under the project root
+//  2. tool: read it back, confirm content round-trip
+//  3. memory: add an episodic entry, search for it
+//  4. conversation: start, add messages, save, list
+//
 // If any of these subsystems was broken at construction (Init order,
 // shared bbolt handle, project-root resolution), this test catches
 // it without needing a live LLM.

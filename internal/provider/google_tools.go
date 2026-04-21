@@ -33,8 +33,8 @@ type googleFunctionCall struct {
 }
 
 type googleFunctionResponse struct {
-	Name     string                 `json:"name"`
-	Response map[string]any         `json:"response"`
+	Name     string         `json:"name"`
+	Response map[string]any `json:"response"`
 }
 
 // googleContent is one turn in the dialogue.

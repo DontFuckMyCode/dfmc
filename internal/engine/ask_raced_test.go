@@ -23,11 +23,13 @@ type fakeTextProvider struct {
 	err   error
 }
 
-func (f *fakeTextProvider) Name() string                  { return f.name }
-func (f *fakeTextProvider) Model() string                 { return f.name + "-m" }
-func (f *fakeTextProvider) CountTokens(s string) int      { return len(s) / 4 }
-func (f *fakeTextProvider) MaxContext() int               { return 64000 }
-func (f *fakeTextProvider) Hints() provider.ProviderHints { return provider.ProviderHints{MaxContext: 64000} }
+func (f *fakeTextProvider) Name() string             { return f.name }
+func (f *fakeTextProvider) Model() string            { return f.name + "-m" }
+func (f *fakeTextProvider) CountTokens(s string) int { return len(s) / 4 }
+func (f *fakeTextProvider) MaxContext() int          { return 64000 }
+func (f *fakeTextProvider) Hints() provider.ProviderHints {
+	return provider.ProviderHints{MaxContext: 64000}
+}
 func (f *fakeTextProvider) Complete(ctx context.Context, _ provider.CompletionRequest) (*provider.CompletionResponse, error) {
 	if f.sleep > 0 {
 		select {

@@ -17,13 +17,13 @@ type Snapshot struct {
 	// and is waiting for the user to resume. The presence of parked state
 	// is the strongest signal toward IntentResume — a bare "devam et" /
 	// "continue" / "go on" without parked state is much weaker.
-	Parked            bool
-	ParkedSummary     string // human-readable, e.g. "parked at step 7 — refactor tui.go"
-	ParkedStep        int
-	ParkedToolName    string    // last tool the parked loop ran
-	ParkedAt          time.Time // wall-clock; "stale park" hints at IntentNew
-	CumulativeSteps   int       // across all resume cycles, rough effort gauge
-	CumulativeTokens  int
+	Parked           bool
+	ParkedSummary    string // human-readable, e.g. "parked at step 7 — refactor tui.go"
+	ParkedStep       int
+	ParkedToolName   string    // last tool the parked loop ran
+	ParkedAt         time.Time // wall-clock; "stale park" hints at IntentNew
+	CumulativeSteps  int       // across all resume cycles, rough effort gauge
+	CumulativeTokens int
 
 	// Provider/model the engine is currently configured to use for the
 	// main turn. Surfaced to the classifier so it can mention "you're on

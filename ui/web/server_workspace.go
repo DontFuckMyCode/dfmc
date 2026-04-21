@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
@@ -183,7 +184,28 @@ func applyUnifiedDiffWeb(projectRoot, patch string, checkOnly bool) error {
 	if err != nil {
 		return fmt.Errorf("invalid project root: %w", err)
 	}
-	patch = strings.ReplaceAll(patch, "\r\n", "\n")
+	// M3: sanitize patch content before passing to git apply.
+	// Reject patches with embedded git directives or option-like lines
+	// that could cause git to execute arbitrary commands or write files
+	// outside the project root.
+	patchLines := strings.Split(strings.ReplaceAll(patch, "\r\n", "\n"), "\n")
+	var sanitized strings.Builder
+	for _, line := range patchLines {
+		trimmed := strings.TrimSpace(line)
+		// Reject lines that look like git config directives or CLI options
+		// that could be interpreted as flag injection.
+		if strings.HasPrefix(trimmed, "--") &&
+			(len(trimmed) > 2 && !strings.HasPrefix(trimmed, "---") && !strings.HasPrefix(trimmed, "+++")) {
+			continue // drop option-like lines that aren't part of the diff header
+		}
+		if strings.HasPrefix(trimmed, "apply.") ||
+			strings.HasPrefix(trimmed, "git config") ||
+			strings.HasPrefix(trimmed, "[") {
+			continue // drop gitconfig-style sections and apply. directives
+		}
+		sanitized.WriteString(line + "\n")
+	}
+	patch = sanitized.String()
 	if patch != "" && !strings.HasSuffix(patch, "\n") {
 		patch += "\n"
 	}
@@ -200,6 +222,30 @@ func applyUnifiedDiffWeb(projectRoot, patch string, checkOnly bool) error {
 			msg = err.Error()
 		}
 		return fmt.Errorf("%s", msg)
+	}
+	// M3: after a successful --check dry-run, verify all affected files
+	// resolve inside projectRoot before allowing the actual apply.
+	if !checkOnly {
+		cmd = exec.Command("git", "-C", root, "apply", "--whitespace=nowarn", "--recount", "--dry-run", "--porcelain")
+		cmd.Stdin = strings.NewReader(patch)
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			for _, line := range lines {
+				parts := strings.Fields(line)
+				if len(parts) >= 2 {
+					relPath := parts[len(parts)-1]
+					absPath := filepath.Join(root, relPath)
+					absPath, err = filepath.EvalSymlinks(absPath)
+					if err != nil {
+						return fmt.Errorf("apply: failed to resolve path %s: %w", relPath, err)
+					}
+					if !strings.HasPrefix(absPath, root) {
+						return fmt.Errorf("apply: path %s resolves outside project root (denied)", relPath)
+					}
+				}
+			}
+		}
 	}
 	return nil
 }

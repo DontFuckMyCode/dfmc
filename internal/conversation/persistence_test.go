@@ -10,9 +10,9 @@ package conversation
 
 import (
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
-	"strings"
 	"testing"
 	"time"
 

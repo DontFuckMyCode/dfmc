@@ -32,7 +32,16 @@ func (e *Engine) Graph() *Graph {
 	return e.graph
 }
 
-func (e *Engine) BuildFromFiles(ctx context.Context, paths []string) error {
+// BuildFromFiles parses each path with the AST engine and populates
+// the codemap graph. OnProgress (if provided) is called every ~50 files
+// so the caller can publish progress events and check for context
+// cancellation — without this hook, cancellation is only detected between
+// files, causing multi-second delay on large projects.
+func (e *Engine) BuildFromFiles(ctx context.Context, paths []string, onProgress ...func(processed, total int)) error {
+	callback := func(processed, total int) {}
+	if len(onProgress) > 0 && onProgress[0] != nil {
+		callback = onProgress[0]
+	}
 	if e.ast == nil {
 		return fmt.Errorf("ast engine is nil")
 	}
@@ -44,8 +53,9 @@ func (e *Engine) BuildFromFiles(ctx context.Context, paths []string) error {
 	parseErrors := 0
 	languageCounts := map[string]int64{}
 	directoryCounts := map[string]int64{}
+	total := len(paths)
 
-	for _, path := range paths {
+	for i, path := range paths {
 		if strings.TrimSpace(path) == "" {
 			skipped++
 			continue
@@ -99,6 +109,16 @@ func (e *Engine) BuildFromFiles(ctx context.Context, paths []string) error {
 				To:   symID,
 				Type: "defines",
 			})
+		}
+
+		// Check cancellation and report progress every 50 files.
+		if processed%50 == 0 || i == total-1 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				callback(processed, total)
+			}
 		}
 	}
 

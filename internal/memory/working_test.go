@@ -153,6 +153,83 @@ func TestMemory_AddRejectsWhenStorageMissing(t *testing.T) {
 	}
 }
 
+// List must return nil slice (not an error) when storage is unavailable.
+// The caller handles nil gracefully; an error would break the degraded-path
+// call sites that use List as a "get what you can" probe.
+func TestMemory_ListReturnsNilWhenStorageNil(t *testing.T) {
+	m := New(nil)
+	got, err := m.List(types.MemoryEpisodic, 10)
+	if err != nil {
+		t.Fatalf("List should not error when storage is nil; got %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil slice when storage is nil, got %v", got)
+	}
+}
+
+// Search delegates to List; when storage is nil both must be nil-safe.
+func TestMemory_SearchIsSafeWhenStorageNil(t *testing.T) {
+	m := New(nil)
+	got, err := m.Search("any query", types.MemoryEpisodic, 10)
+	if err != nil {
+		t.Fatalf("Search should not error when storage is nil; got %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty result when storage is nil, got %v", got)
+	}
+}
+
+// Clear must be safe to call even when storage is nil — a corrupt-db
+// recovery that wipes memory state mid-boot must not panic.
+func TestMemory_ClearIsSafeWhenStorageNil(t *testing.T) {
+	m := New(nil)
+	if err := m.Clear(types.MemoryEpisodic); err != nil {
+		t.Fatalf("Clear should not error when storage is nil; got %v", err)
+	}
+}
+
+// T4: Concurrent memory operations with nil storage must not panic.
+// TouchFile/TouchSymbol are working-tier (in-memory); List/Search
+// fall back to nil-safes. The fan-out exercises all three code paths.
+func TestMemory_ConcurrentAccessNilStorage(t *testing.T) {
+	m := New(nil)
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.TouchFile("a.go")
+			m.List(types.MemoryEpisodic, 10)
+			m.Search("q", types.MemoryEpisodic, 10)
+		}()
+	}
+	wg.Wait()
+	// If we got here without panicking, the test passes.
+}
+
+// TouchFile/TouchSymbol are working-memory operations — they are entirely
+// in-memory and must work even when bbolt storage is unavailable.
+func TestWorkingMemory_WorksWhenStorageIsNil(t *testing.T) {
+	m := New(nil)
+	m.TouchFile("a.go")
+	m.TouchSymbol("Foo")
+	w := m.Working()
+	if len(w.RecentFiles) != 1 || w.RecentFiles[0] != "a.go" {
+		t.Fatalf("TouchFile failed when storage nil: %v", w.RecentFiles)
+	}
+	if len(w.RecentSymbols) != 1 || w.RecentSymbols[0] != "Foo" {
+		t.Fatalf("TouchSymbol failed when storage nil: %v", w.RecentSymbols)
+	}
+	m.SetWorkingQuestionAnswer("q", "a")
+	if w.LastQuestion != "" || w.LastAnswer != "" {
+		t.Fatalf("Working() returned alias instead of copy before Set call")
+	}
+	w2 := m.Working()
+	if w2.LastQuestion != "q" || w2.LastAnswer != "a" {
+		t.Fatalf("SetWorkingQuestionAnswer failed when storage nil: %v", w2)
+	}
+}
+
 // AddEpisodicInteraction is the convenience wrapper agent loops use;
 // it must populate the structured fields that downstream search +
 // list rely on (Tier=Episodic, Category="interaction").

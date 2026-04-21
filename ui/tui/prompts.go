@@ -101,7 +101,7 @@ func formatPromptRow(t promptlib.Template, selected bool, width int) string {
 		meta = append(meta, fmt.Sprintf("prio=%d", t.Priority))
 	}
 	if len(meta) > 0 {
-		tail += subtleStyle.Render("  ("+strings.Join(meta, ", ")+")")
+		tail += subtleStyle.Render("  (" + strings.Join(meta, ", ") + ")")
 	}
 	if t.ID != "" {
 		tail += subtleStyle.Render("  " + t.ID)

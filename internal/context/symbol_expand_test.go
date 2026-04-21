@@ -15,8 +15,8 @@ import (
 func TestExtractIdentifiers_KeepsCamelAndDotted(t *testing.T) {
 	got := extractIdentifiers("please fix parseToken and handleRequest in internal/auth.Token")
 	want := map[string]bool{
-		"parseToken":         true,
-		"handleRequest":      true,
+		"parseToken":          true,
+		"handleRequest":       true,
 		"internal/auth.Token": true,
 	}
 	for _, tok := range got {

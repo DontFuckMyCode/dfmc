@@ -773,4 +773,3 @@ func gitChangedFiles(projectRoot string, limit int) ([]string, error) {
 	}
 	return files, nil
 }
-

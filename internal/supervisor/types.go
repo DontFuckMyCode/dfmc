@@ -1,17 +1,21 @@
 package supervisor
 
-import "time"
+import (
+	"time"
+
+	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
+)
 
 type TaskState string
 
 const (
-	TaskPending         TaskState = "pending"
-	TaskRunning         TaskState = "running"
-	TaskDone            TaskState = "done"
-	TaskBlocked         TaskState = "blocked"
-	TaskSkipped         TaskState = "skipped"
-	TaskVerifying       TaskState = "verifying"
-	TaskWaiting         TaskState = "waiting"
+	TaskPending        TaskState = "pending"
+	TaskRunning        TaskState = "running"
+	TaskDone           TaskState = "done"
+	TaskBlocked        TaskState = "blocked"
+	TaskSkipped        TaskState = "skipped"
+	TaskVerifying      TaskState = "verifying"
+	TaskWaiting        TaskState = "waiting"
 	TaskExternalReview TaskState = "external_review"
 )
 
@@ -41,29 +45,33 @@ const (
 // worker intent, verification policy, and routing hints without relying on
 // provider prompts alone.
 type Task struct {
-	ID           string
-	ParentID     string
-	Origin       string
-	RunID        string // drive run that created this task; empty for standalone todos
-	Title        string
-	Detail       string
-	State        TaskState
-	DependsOn    []string
-	FileScope    []string
-	ReadOnly     bool
-	ProviderTag  string
-	WorkerClass  WorkerClass
-	Skills       []string
-	AllowedTools []string
-	Labels       []string
-	Verification VerificationStatus
-	Confidence   float64
-	Summary      string
-	Error        string
+	ID            string
+	ParentID      string
+	Origin        string
+	RunID         string // drive run that created this task; empty for standalone todos
+	Title         string
+	Detail        string
+	State         TaskState
+	DependsOn     []string
+	FileScope     []string
+	ReadOnly      bool
+	ProviderTag   string
+	WorkerClass   WorkerClass
+	Skills        []string
+	AllowedTools  []string
+	Labels        []string
+	Verification  VerificationStatus
+	Confidence    float64
+	Summary       string
+	Error         string
 	BlockedReason string
-	Attempts     int
-	StartedAt    time.Time
-	EndedAt      time.Time
+	Attempts      int
+	StartedAt     time.Time
+	EndedAt       time.Time
+	// LastContext holds the retrieval outcome from the most recent
+	// buildContextChunks call. When the task resumes, the same chunks
+	// can be reused instead of re-running retrieval from scratch.
+	LastContext *ctxmgr.ContextSnapshot
 }
 
 type Run struct {

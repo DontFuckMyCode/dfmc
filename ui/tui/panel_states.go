@@ -191,6 +191,10 @@ type chatState struct {
 	scrollback          int
 	toolPending         bool
 	toolName            string
+	// pasteCount tracks sequential paste operations so the UI can
+	// label them: [Pasted text #1 +123 lines]. Resets when the user
+	// types non-paste text or submits.
+	pasteCount int
 }
 
 // intentState — most recent decision from the engine's intent router,

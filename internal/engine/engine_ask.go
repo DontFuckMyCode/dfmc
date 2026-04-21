@@ -8,6 +8,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -379,8 +380,21 @@ func (e *Engine) indexCodebase(ctx context.Context) {
 	}
 
 	if e.CodeMap != nil {
-		if err := e.CodeMap.BuildFromFiles(ctx, paths); err != nil {
-			e.EventBus.Publish(Event{Type: "index:error", Source: "engine", Payload: err.Error()})
+		if err := e.CodeMap.BuildFromFiles(ctx, paths, func(processed, total int) {
+			e.EventBus.Publish(Event{
+				Type:   "index:progress",
+				Source: "engine",
+				Payload: map[string]any{
+					"processed": processed,
+					"total":     total,
+				},
+			})
+		}); err != nil {
+			if errors.Is(err, context.Canceled) {
+				e.EventBus.Publish(Event{Type: "index:cancelled", Source: "engine"})
+			} else {
+				e.EventBus.Publish(Event{Type: "index:error", Source: "engine", Payload: err.Error()})
+			}
 			return
 		}
 	}

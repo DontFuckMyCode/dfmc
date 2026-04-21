@@ -12,10 +12,10 @@ import (
 // flakyProvider fails the first N Complete calls with the configured error,
 // then succeeds. Used to verify the router's compact-and-retry behavior.
 type flakyProvider struct {
-	name       string
-	failErr    error
-	failsLeft  int
-	seenCalls  int
+	name             string
+	failErr          error
+	failsLeft        int
+	seenCalls        int
 	lastCompleteMsgs []Message
 }
 

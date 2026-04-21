@@ -61,24 +61,24 @@ type Arg struct {
 
 // ToolSpec is the canonical, provider-agnostic description of a tool.
 type ToolSpec struct {
-	Name        string   `json:"name"`
-	Title       string   `json:"title,omitempty"` // human-friendly label
-	Summary     string   `json:"summary"`         // one-line description (what it does)
-	Purpose     string   `json:"purpose,omitempty"`
+	Name    string `json:"name"`
+	Title   string `json:"title,omitempty"` // human-friendly label
+	Summary string `json:"summary"`         // one-line description (what it does)
+	Purpose string `json:"purpose,omitempty"`
 	// Prompt is the operational guide shown to the model when it asks for
 	// detailed help on the tool (tool_help). It should call out when to pick
 	// this tool over alternatives, footguns, and patterns that matter in
 	// practice. Multi-line markdown is fine. Kept out of ShortHelp and the
 	// system-prompt overview to keep common paths cheap.
-	Prompt      string   `json:"prompt,omitempty"`
-	Args        []Arg    `json:"args,omitempty"`
-	Returns     string   `json:"returns,omitempty"`
-	Risk        Risk     `json:"risk"`
-	Tags        []string `json:"tags,omitempty"`     // e.g. ["filesystem","read","code"]
-	Examples    []string `json:"examples,omitempty"` // short usage examples
-	Idempotent  bool     `json:"idempotent,omitempty"`
-	CostHint    string   `json:"cost_hint,omitempty"` // "cheap", "io-bound", "network"
-	Deprecated  string   `json:"deprecated,omitempty"`
+	Prompt     string   `json:"prompt,omitempty"`
+	Args       []Arg    `json:"args,omitempty"`
+	Returns    string   `json:"returns,omitempty"`
+	Risk       Risk     `json:"risk"`
+	Tags       []string `json:"tags,omitempty"`     // e.g. ["filesystem","read","code"]
+	Examples   []string `json:"examples,omitempty"` // short usage examples
+	Idempotent bool     `json:"idempotent,omitempty"`
+	CostHint   string   `json:"cost_hint,omitempty"` // "cheap", "io-bound", "network"
+	Deprecated string   `json:"deprecated,omitempty"`
 }
 
 // Specer is an optional interface that Tools may implement to advertise a

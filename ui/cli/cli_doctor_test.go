@@ -167,9 +167,10 @@ func TestRunDoctorFixRepairsProjectConfig(t *testing.T) {
 	badCfg := "" +
 		"version: 1\n" +
 		"providers:\n" +
-		"  primary: missing-provider\n" +
+		"  primary: nonexistent\n" +
 		"  profiles:\n" +
 		"    generic:\n" +
+		"      model: qwen3.5-coder\n" +
 		"      base_url: http://localhost:11434/v1\n" +
 		"web:\n" +
 		"  auth: invalid\n" +

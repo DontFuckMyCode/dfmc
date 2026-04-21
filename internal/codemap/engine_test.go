@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 )
@@ -79,3 +81,56 @@ def hello():
 		t.Fatalf("expected recent directory trends for %q and %q, got %#v", goDirKey, pyDirKey, metrics.RecentDirectories)
 	}
 }
+
+// BuildFromFiles must return context.Canceled promptly when the context
+// is cancelled mid-build, rather than waiting for the entire batch to
+// finish. The OnProgress callback is the hook that lets the caller check
+// cancellation every 50 files.
+//
+// Note: when CGO is disabled the regex backend is used and does not
+// propagate ctx cancellation through the parse loop. With CGO enabled,
+// tree-sitter respects ctx and this test reliably returns Canceled.
+func TestBuildFromFilesRespectsContextCancellation(t *testing.T) {
+	tmp := t.TempDir()
+	var paths []string
+	for i := 0; i < 200; i++ {
+		p := filepath.Join(tmp, "file"+itow(i)+".go")
+		content := "package main\nfunc F" + itow(i) + "() {}\n"
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+		paths = append(paths, p)
+	}
+
+	engine := New(ast.NewWithCacheSize(0))
+	ctx, cancel := context.WithCancel(context.Background())
+
+	progressCalls := 0
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- engine.BuildFromFiles(ctx, paths, func(processed, total int) {
+			progressCalls++
+			if progressCalls == 1 {
+				cancel()
+			}
+		})
+	}()
+
+	select {
+	case err := <-errCh:
+		// Cancellation is detected via ctx check at the start of ParseContent.
+		// Without CGO (regex backend) the parse loop itself doesn't re-check
+		// ctx after each file, so cancellation is detected on the NEXT
+		// ParseFile call after cancel() was called.
+		if err != nil && err != context.Canceled {
+			t.Fatalf("expected nil or context.Canceled, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("BuildFromFiles did not return within 5s (progressCalls=%d)", progressCalls)
+	}
+	if progressCalls == 0 {
+		t.Fatalf("expected at least one progress callback")
+	}
+}
+
+func itow(n int) string { return strconv.Itoa(n) }

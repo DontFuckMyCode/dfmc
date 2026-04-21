@@ -116,7 +116,8 @@ func (r *driveRunner) ExecuteTodo(ctx context.Context, req drive.ExecuteTodoRequ
 	res, err := r.e.runSubagentProfiles(ctx, subReq, req.ProfileCandidates)
 	if err != nil {
 		return drive.ExecuteTodoResponse{
-			DurationMs: res.DurationMs,
+			DurationMs:  res.DurationMs,
+			LastContext: r.e.lastContextSnapshot,
 		}, err
 	}
 	parked := false
@@ -140,17 +141,18 @@ func (r *driveRunner) ExecuteTodo(ctx context.Context, req drive.ExecuteTodoRequ
 	}
 	reasons := stringSliceFromAny(res.Data["fallback_reasons"])
 	return drive.ExecuteTodoResponse{
-		Summary:      res.Summary,
-		ToolCalls:    res.ToolCalls,
-		DurationMs:   res.DurationMs,
-		Parked:       parked,
-		Provider:     finalProvider,
-		Model:        finalModel,
-		Attempts:     attempts,
-		FallbackUsed: fallbackUsed,
-		FallbackFrom: fallbackFrom,
-		FallbackChain: chain,
+		Summary:         res.Summary,
+		ToolCalls:       res.ToolCalls,
+		DurationMs:      res.DurationMs,
+		Parked:          parked,
+		Provider:        finalProvider,
+		Model:           finalModel,
+		Attempts:        attempts,
+		FallbackUsed:    fallbackUsed,
+		FallbackFrom:    fallbackFrom,
+		FallbackChain:   chain,
 		FallbackReasons: reasons,
+		LastContext:     r.e.lastContextSnapshot,
 	}, nil
 }
 

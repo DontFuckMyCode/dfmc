@@ -49,9 +49,11 @@ type DelegateTaskTool struct {
 	runner SubagentRunner
 }
 
-func NewDelegateTaskTool() *DelegateTaskTool    { return &DelegateTaskTool{} }
-func (t *DelegateTaskTool) Name() string        { return "delegate_task" }
-func (t *DelegateTaskTool) Description() string { return "Spawn a bounded sub-agent to handle a focused task." }
+func NewDelegateTaskTool() *DelegateTaskTool { return &DelegateTaskTool{} }
+func (t *DelegateTaskTool) Name() string     { return "delegate_task" }
+func (t *DelegateTaskTool) Description() string {
+	return "Spawn a bounded sub-agent to handle a focused task."
+}
 
 func (t *DelegateTaskTool) SetRunner(r SubagentRunner) {
 	t.mu.Lock()

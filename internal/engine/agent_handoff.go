@@ -179,11 +179,11 @@ func (e *Engine) saveActiveConversationWithWarning(surface string, payload map[s
 // buildHandoffBrief renders a terse, LLM-free summary of an outgoing
 // conversation so the new session has just enough context to keep going
 // without paying for the whole transcript. Ordering:
-//   1. Original user intent (first user turn, truncated).
-//   2. Subsequent user asks (one-line each, up to a few).
-//   3. Tool activity summary — count per tool name, ok/fail split.
-//   4. Open todos (pending + in_progress from todo_write), if any.
-//   5. Last assistant answer (truncated).
+//  1. Original user intent (first user turn, truncated).
+//  2. Subsequent user asks (one-line each, up to a few).
+//  3. Tool activity summary — count per tool name, ok/fail split.
+//  4. Open todos (pending + in_progress from todo_write), if any.
+//  5. Last assistant answer (truncated).
 //
 // Bounded by maxTokens (~4 chars per token). Deterministic: identical inputs
 // produce identical output.

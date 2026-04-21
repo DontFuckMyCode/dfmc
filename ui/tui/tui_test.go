@@ -4346,11 +4346,11 @@ func TestSubagentFallbackEventSurfacesTransition(t *testing.T) {
 	m = m.handleEngineEvent(engine.Event{
 		Type: "agent:subagent:fallback",
 		Payload: map[string]any{
-			"role":         "security_auditor",
-			"attempt":      2,
-			"from_profile": "anthropic-review",
-			"to_profile":   "openai-fast",
-			"error":        "provider timeout",
+			"role":             "security_auditor",
+			"attempt":          2,
+			"from_profile":     "anthropic-review",
+			"to_profile":       "openai-fast",
+			"error":            "provider timeout",
 			"fallback_reasons": []string{"provider timeout"},
 		},
 	})
@@ -4403,14 +4403,14 @@ func TestDriveTodoDoneSurfacesFallbackReason(t *testing.T) {
 	m = m.handleEngineEvent(engine.Event{
 		Type: "drive:todo:done",
 		Payload: map[string]any{
-			"todo_id":           "T4",
-			"duration_ms":       1200,
-			"tool_calls":        3,
-			"provider":          "openai-fast",
-			"model":             "gpt-5.4-mini",
-			"attempts":          2,
-			"fallback":          true,
-			"fallback_reasons":  []string{"provider timeout"},
+			"todo_id":          "T4",
+			"duration_ms":      1200,
+			"tool_calls":       3,
+			"provider":         "openai-fast",
+			"model":            "gpt-5.4-mini",
+			"attempts":         2,
+			"fallback":         true,
+			"fallback_reasons": []string{"provider timeout"},
 		},
 	})
 	if !strings.Contains(m.notice, "provider timeout") {

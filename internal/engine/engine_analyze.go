@@ -372,7 +372,7 @@ func isTestingIdentifier(name string) bool {
 //     line comments, `/* ... */` block comments (cross-line),
 //     double-quoted strings with `\` escapes, single-quoted runes,
 //     backtick raw strings.
-//   - .py: `#` line comments, `"""..."""` / `'''...'''` triple-quoted
+//   - .py: `#` line comments, `"""..."""` / `”'...”'` triple-quoted
 //     docstrings (cross-line), single-line "..." and '...' strings.
 //   - others: no stripping — a conservative choice that may leave
 //     false-usage mentions for unknown languages.
@@ -465,7 +465,7 @@ func stripCFamilyComments(text string) string {
 }
 
 // stripPythonComments blanks out `#` line comments and `"""..."""` /
-// `'''...'''` docstrings while leaving ordinary string literals
+// `”'...”'` docstrings while leaving ordinary string literals
 // intact. Single-quoted / double-quoted single-line strings are
 // preserved — they carry the data we need to distinguish struct /
 // dict entries.
@@ -828,7 +828,7 @@ func endOfBraceBody(lines []string, start int) int {
 
 // skipStringLiteral returns the index of the character AFTER the
 // closing quote of a string/rune/backtick literal starting at
-// `line[start]`. Respects escape sequences for "" and ''. Backtick
+// `line[start]`. Respects escape sequences for "" and ”. Backtick
 // (raw) strings don't honour escapes in Go. If the literal doesn't
 // close on this line (multi-line raw strings), returns len(line).
 func skipStringLiteral(line string, start int) int {

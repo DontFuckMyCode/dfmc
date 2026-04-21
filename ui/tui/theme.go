@@ -21,72 +21,72 @@ import (
 // panel_states.go so are not duplicated here.
 
 type (
-	toolChip         = theme.ToolChip
-	todoStripItem    = theme.TodoStripItem
-	runtimeSummary   = theme.RuntimeSummary
+	toolChip          = theme.ToolChip
+	todoStripItem     = theme.TodoStripItem
+	runtimeSummary    = theme.RuntimeSummary
 	messageHeaderInfo = theme.MessageHeaderInfo
-	chatHeaderInfo   = theme.ChatHeaderInfo
-	statsPanelInfo   = theme.StatsPanelInfo
-	starterPrompt    = theme.StarterPrompt
+	chatHeaderInfo    = theme.ChatHeaderInfo
+	statsPanelInfo    = theme.StatsPanelInfo
+	starterPrompt     = theme.StarterPrompt
 )
 
 // --- re-export palette vars --------------------------------------------------
 
 var (
 	colorPanelBorder   = theme.ColorPanelBorder
-	colorPanelBg      = theme.ColorPanelBg
-	colorTitleBg      = theme.ColorTitleBg
-	colorTitleFg      = theme.ColorTitleFg
-	colorMuted        = theme.ColorMuted
-	colorAccent       = theme.ColorAccent
-	colorOk           = theme.ColorOk
-	colorFail         = theme.ColorFail
-	colorWarn         = theme.ColorWarn
-	colorInfo         = theme.ColorInfo
-	colorRoleUser     = theme.ColorRoleUser
+	colorPanelBg       = theme.ColorPanelBg
+	colorTitleBg       = theme.ColorTitleBg
+	colorTitleFg       = theme.ColorTitleFg
+	colorMuted         = theme.ColorMuted
+	colorAccent        = theme.ColorAccent
+	colorOk            = theme.ColorOk
+	colorFail          = theme.ColorFail
+	colorWarn          = theme.ColorWarn
+	colorInfo          = theme.ColorInfo
+	colorRoleUser      = theme.ColorRoleUser
 	colorRoleAssistant = theme.ColorRoleAssistant
-	colorRoleSystem   = theme.ColorRoleSystem
-	colorRoleTool     = theme.ColorRoleTool
-	colorTabActiveBg  = theme.ColorTabActiveBg
+	colorRoleSystem    = theme.ColorRoleSystem
+	colorRoleTool      = theme.ColorRoleTool
+	colorTabActiveBg   = theme.ColorTabActiveBg
 )
 
 var (
-	titleStyle             = theme.TitleStyle
-	subtleStyle            = theme.SubtleStyle
-	sectionTitleStyle      = theme.SectionTitleStyle
-	statusBarStyle         = theme.StatusBarStyle
-	boldStyle              = theme.BoldStyle
-	codeStyle              = theme.CodeStyle
-	accentStyle            = theme.AccentStyle
-	okStyle                = theme.OkStyle
-	failStyle              = theme.FailStyle
-	warnStyle              = theme.WarnStyle
-	infoStyle              = theme.InfoStyle
-	toolStyle              = theme.ToolStyle
-	inputBoxStyle          = theme.InputBoxStyle
-	mentionPickerStyle     = theme.MentionPickerStyle
+	titleStyle              = theme.TitleStyle
+	subtleStyle             = theme.SubtleStyle
+	sectionTitleStyle       = theme.SectionTitleStyle
+	statusBarStyle          = theme.StatusBarStyle
+	boldStyle               = theme.BoldStyle
+	codeStyle               = theme.CodeStyle
+	accentStyle             = theme.AccentStyle
+	okStyle                 = theme.OkStyle
+	failStyle               = theme.FailStyle
+	warnStyle               = theme.WarnStyle
+	infoStyle               = theme.InfoStyle
+	toolStyle               = theme.ToolStyle
+	inputBoxStyle           = theme.InputBoxStyle
+	mentionPickerStyle      = theme.MentionPickerStyle
 	mentionSelectedRowStyle = theme.MentionSelectedRowStyle
-	dividerStyle           = theme.DividerStyle
-	bannerStyle            = theme.BannerStyle
+	dividerStyle            = theme.DividerStyle
+	bannerStyle             = theme.BannerStyle
 )
 
 // --- stats panel constants --------------------------------------------------
 
 const (
-	statsPanelWidth              = theme.StatsPanelWidth
-	statsPanelBoostWidthMin      = theme.StatsPanelBoostWidthMin
+	statsPanelWidth                = theme.StatsPanelWidth
+	statsPanelBoostWidthMin        = theme.StatsPanelBoostWidthMin
 	statsPanelBoostMinContentWidth = theme.StatsPanelBoostMinContentWidth
-	statsPanelMinContentWidth    = theme.StatsPanelMinContentWidth
+	statsPanelMinContentWidth      = theme.StatsPanelMinContentWidth
 )
 
 // --- re-export functions -------------------------------------------------
 
-func roleBadge(role string) string                        { return theme.RoleBadge(role) }
-func roleLineStyle(role string) lipgloss.Style             { return theme.RoleLineStyle(role) }
-func sectionHeader(icon, label string) string              { return theme.SectionHeader(icon, label) }
-func renderMarkdownLite(text string) string                { return theme.RenderMarkdownLite(text) }
-func renderMarkdownBlocks(text string) []string            { return theme.RenderMarkdownBlocks(text) }
-func renderToolChip(chip toolChip, width int) string       { return theme.RenderToolChip(chip, width) }
+func roleBadge(role string) string                   { return theme.RoleBadge(role) }
+func roleLineStyle(role string) lipgloss.Style       { return theme.RoleLineStyle(role) }
+func sectionHeader(icon, label string) string        { return theme.SectionHeader(icon, label) }
+func renderMarkdownLite(text string) string          { return theme.RenderMarkdownLite(text) }
+func renderMarkdownBlocks(text string) []string      { return theme.RenderMarkdownBlocks(text) }
+func renderToolChip(chip toolChip, width int) string { return theme.RenderToolChip(chip, width) }
 func renderInlineToolChips(chips []toolChip, width int) string {
 	return theme.RenderInlineToolChips(chips, width)
 }
@@ -102,14 +102,14 @@ func renderRuntimeCard(rs runtimeSummary, width int) string {
 func renderChatWorkflowFocusCard(info statsPanelInfo, width int) string {
 	return theme.RenderChatWorkflowFocusCard(info, width)
 }
-func spinnerFrame(frame int) string { return theme.SpinnerFrame(frame) }
+func spinnerFrame(frame int) string                     { return theme.SpinnerFrame(frame) }
 func renderMessageHeader(info messageHeaderInfo) string { return theme.RenderMessageHeader(info) }
-func formatDurationChip(ms int) string { return theme.FormatDurationChip(ms) }
+func formatDurationChip(ms int) string                  { return theme.FormatDurationChip(ms) }
 func renderMessageBubble(role, content, header string, width int) string {
 	return theme.RenderMessageBubble(role, content, header, width)
 }
-func renderDivider(width int) string                       { return theme.RenderDivider(width) }
-func renderInputBox(line string, width int) string       { return theme.RenderInputBox(line, width) }
+func renderDivider(width int) string               { return theme.RenderDivider(width) }
+func renderInputBox(line string, width int) string { return theme.RenderInputBox(line, width) }
 func renderChatHeader(info chatHeaderInfo, width int) string {
 	return theme.RenderChatHeader(info, width)
 }
@@ -143,8 +143,8 @@ func renderStatsPanelSized(info statsPanelInfo, height int, panelWidth int) stri
 func renderStatsPanelModeTabs(mode statsPanelMode, width int) string {
 	return theme.RenderStatsPanelModeTabs(theme.StatsPanelMode(mode), width)
 }
-func defaultStarterPrompts() []starterPrompt         { return theme.DefaultStarterPrompts() }
-func starterTemplateForDigit(r rune) (string, bool)  { return theme.StarterTemplateForDigit(r) }
+func defaultStarterPrompts() []starterPrompt        { return theme.DefaultStarterPrompts() }
+func starterTemplateForDigit(r rune) (string, bool) { return theme.StarterTemplateForDigit(r) }
 func renderStarterPrompts(width int, configured bool) []string {
 	return theme.RenderStarterPrompts(width, configured)
 }
@@ -164,12 +164,12 @@ func formatThousands(n int) string { return theme.FormatThousands(n) }
 func formatToolTokenCount(n int) string { return theme.FormatToolTokenCount(n) }
 
 // helper functions re-exported from theme subpackage.
-func headerLevel(trimmed string) int { return theme.HeaderLevel(trimmed) }
+func headerLevel(trimmed string) int                        { return theme.HeaderLevel(trimmed) }
 func bulletLine(line string) (bullet, rest string, ok bool) { return theme.BulletLine(line) }
-func wrapBubbleLine(line string, limit int) []string { return theme.WrapBubbleLine(line, limit) }
-func isTableHeader(line string) bool { return theme.IsTableHeader(line) }
-func isTableSeparator(line string) bool { return theme.IsTableSeparator(line) }
-func compactTokens(n int) string { return theme.CompactTokens(n) }
+func wrapBubbleLine(line string, limit int) []string        { return theme.WrapBubbleLine(line, limit) }
+func isTableHeader(line string) bool                        { return theme.IsTableHeader(line) }
+func isTableSeparator(line string) bool                     { return theme.IsTableSeparator(line) }
+func compactTokens(n int) string                            { return theme.CompactTokens(n) }
 
 func init() {
 	// Wire theme's FileMarker var to the real implementation in chat_helpers.

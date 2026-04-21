@@ -17,9 +17,9 @@ import (
 // contains "**", otherwise defers to filepath.Match for each candidate.
 type GlobTool struct{}
 
-func NewGlobTool() *GlobTool             { return &GlobTool{} }
-func (t *GlobTool) Name() string         { return "glob" }
-func (t *GlobTool) Description() string  { return "Match file paths against a glob pattern." }
+func NewGlobTool() *GlobTool            { return &GlobTool{} }
+func (t *GlobTool) Name() string        { return "glob" }
+func (t *GlobTool) Description() string { return "Match file paths against a glob pattern." }
 
 func (t *GlobTool) Execute(_ context.Context, req Request) (Result, error) {
 	pattern := strings.TrimSpace(asString(req.Params, "pattern", ""))
@@ -158,9 +158,9 @@ func matchSegments(pattern []string, pi int, name []string, ni int) bool {
 // and proceed. No output back — the thought is recorded via Result.Data.
 type ThinkTool struct{}
 
-func NewThinkTool() *ThinkTool            { return &ThinkTool{} }
-func (t *ThinkTool) Name() string         { return "think" }
-func (t *ThinkTool) Description() string  { return "Record a reasoning step for the trace." }
+func NewThinkTool() *ThinkTool           { return &ThinkTool{} }
+func (t *ThinkTool) Name() string        { return "think" }
+func (t *ThinkTool) Description() string { return "Record a reasoning step for the trace." }
 
 func (t *ThinkTool) Execute(_ context.Context, req Request) (Result, error) {
 	thought := strings.TrimSpace(asString(req.Params, "thought", ""))
@@ -434,4 +434,3 @@ func parseTodoList(raw any) ([]todoItem, error) {
 	}
 	return out, nil
 }
-

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -41,7 +42,7 @@ type OpenError struct {
 
 func (e *OpenError) Error() string {
 	if e == nil {
-		return ""
+		return "<nil>"
 	}
 	if errors.Is(e.Cause, ErrStoreLocked) {
 		return fmt.Sprintf("%s; close other DFMC/TUI processes using %s and try again", ErrStoreLocked.Error(), e.Path)
@@ -74,7 +75,7 @@ func Open(dataDir string) (*Store, error) {
 		if errors.Is(err, bbolt.ErrTimeout) {
 			return nil, &OpenError{
 				Path:  dbPath,
-				Cause: fmt.Errorf("%w: %w", ErrStoreLocked, err),
+				Cause: fmt.Errorf("storage database is locked: %w", err),
 			}
 		}
 		return nil, &OpenError{Path: dbPath, Cause: err}
@@ -117,6 +118,109 @@ func (s *Store) DataDir() string {
 
 func (s *Store) ArtifactsDir() string {
 	return s.artifactDir
+}
+
+// BackupTo creates a consistent hot backup of the bbolt database and writes
+// it to dst. The destination is a valid bbolt database that can be opened
+// independently with bbolt.Open. Backup is atomic via os.Rename so dst is
+// either the previous backup or the new one, never partially written.
+// BackupTo uses db.View so it is safe to call while the Store is open and
+// accepting reads/writes — no exclusive lock is held during backup.
+func (s *Store) BackupTo(dst string) error {
+	if s == nil || s.db == nil {
+		return errors.New("store is not open")
+	}
+	// M5: use CreateTemp instead of a predictable .dfmc-backup-tmp name.
+	// This prevents a TOCTOU symlink attack where an attacker pre-creates
+	// a symlink at the predictable path, causing BackupTo to overwrite
+	// an arbitrary target file.
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".dfmc-backup-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create backup temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := s.db.View(func(tx *bbolt.Tx) error {
+		_, err := tx.WriteTo(tmp)
+		return err
+	}); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("backup write: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close backup: %w", err)
+	}
+	if err := os.Rename(tmpPath, dst); err != nil {
+		return fmt.Errorf("rename backup: %w", err)
+	}
+	return nil
+}
+
+// BackupInfo describes a single backup file on disk.
+type BackupInfo struct {
+	Path      string
+	Size      int64
+	CreatedAt time.Time
+}
+
+// ListBackups returns all `.dfmc.db` backup files in dir sorted by creation
+// time (newest first). Empty or nonexistent directories return nil.
+func ListBackups(dir string) ([]BackupInfo, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read backup dir: %w", err)
+	}
+	var out []BackupInfo
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".db" {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		out = append(out, BackupInfo{
+			Path:      path,
+			Size:      info.Size(),
+			CreatedAt: info.ModTime(),
+		})
+	}
+	sortBackupsByTime(out)
+	return out, nil
+}
+
+// TrimBackups removes all but the newest `keep` backups in dir.
+// If keep < 0 it removes all backups. Returns the number of files deleted
+// and any error encountered while reading the directory.
+func TrimBackups(dir string, keep int) (int, error) {
+	backups, err := ListBackups(dir)
+	if err != nil {
+		return 0, err
+	}
+	if len(backups) == 0 {
+		return 0, nil
+	}
+	if keep < 0 {
+		keep = 1 // S3: keep at least the newest; negative means "remove all" was a footgun
+	}
+	if keep >= len(backups) {
+		return 0, nil
+	}
+	toDelete := backups[keep:]
+	for _, b := range toDelete {
+		if err := os.Remove(b.Path); err != nil {
+			return 0, fmt.Errorf("remove backup %s: %w", b.Path, err)
+		}
+	}
+	return len(toDelete), nil
+}
+
+func sortBackupsByTime(b []BackupInfo) {
+	sort.Slice(b, func(i, j int) bool { return b[i].CreatedAt.After(b[j].CreatedAt) })
 }
 
 func (s *Store) SaveConversationLog(convID string, messages []types.Message) error {
@@ -230,7 +334,7 @@ func (s *Store) LoadConversationLog(convID string) ([]types.Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var messages []types.Message
 	sc := bufio.NewScanner(f)
@@ -274,7 +378,7 @@ func syncDir(dir string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := f.Sync(); err != nil {
 		// Some filesystems do not support directory sync. The rename still
 		// gave us atomic replacement, so do not fail persistence outright.

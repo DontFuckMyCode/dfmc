@@ -869,6 +869,39 @@ func TestApplyPatchNewFile(t *testing.T) {
 	}
 }
 
+// TestApplyPatch_NilEngine_ReturnsError pins the M1 fix: when the engine
+// is not wired, apply_patch must error rather than silently bypassing the
+// read-before-mutate safety gate.
+func TestApplyPatch_NilEngine_ReturnsError(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "hello.txt")
+	if err := os.WriteFile(target, []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	patch := `--- a/hello.txt
++++ b/hello.txt
+@@ -1,2 +1,2 @@
+-old
++new
+`
+	tool := NewApplyPatchTool()
+	_, err := tool.Execute(context.Background(), Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"patch": patch},
+	})
+	if err == nil {
+		t.Fatal("expected error when engine is nil")
+	}
+	if !strings.Contains(err.Error(), "engine is not wired") {
+		t.Fatalf("expected engine-is-not-wired error, got: %v", err)
+	}
+	// File on disk must be unchanged.
+	data, _ := os.ReadFile(target)
+	if string(data) != "old\n" {
+		t.Fatalf("file was modified despite nil engine: %q", string(data))
+	}
+}
+
 func TestDelegateToolWithoutRunnerReturnsError(t *testing.T) {
 	eng := New(*config.DefaultConfig())
 	// Runner intentionally not set.
@@ -926,5 +959,84 @@ func TestDelegateToolWithRunnerForwardsTask(t *testing.T) {
 	}
 	if !strings.Contains(res.Output, "ran: survey the code") {
 		t.Fatalf("summary not surfaced: %q", res.Output)
+	}
+}
+
+// T2: run_command blocks script runners with inline eval flags
+// Verifies that hasScriptRunnerWithEvalFlag correctly detects -e, -c, -r
+// across all supported script runners (node, python, ruby, php, perl).
+// This test calls the function directly to avoid interaction with
+// isBlockedShellInterpreter (which blocks powershell before the
+// eval-flag check can be reached).
+func TestRunCommandBlocksScriptRunnerEvalFlags(t *testing.T) {
+	eng := New(*config.DefaultConfig())
+
+	// Unit test: hasScriptRunnerWithEvalFlag directly
+	// args format must be [binary, flag, ...] for the function to work.
+	unitBlocked := []struct {
+		args []string
+		flag string
+	}{
+		{[]string{"node", "-e"}, "-e"},
+		{[]string{"python", "-c"}, "-c"},
+		{[]string{"python3", "-c"}, "-c"},
+		{[]string{"ruby", "-e"}, "-e"},
+		{[]string{"php", "-r"}, "-r"},
+		{[]string{"perl", "-e"}, "-e"},
+		{[]string{"/usr/bin/node", "-e"}, "-e"},
+	}
+
+	for _, tc := range unitBlocked {
+		if !hasScriptRunnerWithEvalFlag(tc.args) {
+			t.Fatalf("hasScriptRunnerWithEvalFlag(%v) returned false; flag=%q", tc.args, tc.flag)
+		}
+	}
+
+	// Integration test: run_command via engine
+	// Use node/python/ruby/php/perl which are NOT blocked shell interpreters
+	// (so isBlockedShellInterpreter passes and hasScriptRunnerWithEvalFlag is reached).
+	// args format: [binary, flag, code] for hasScriptRunnerWithEvalFlag.
+	integrationBlocked := []struct {
+		command string
+		args    []string
+	}{
+		{"node", []string{"node", "-e", "console.log(1)"}},
+		{"python", []string{"python", "-c", "print(1)"}},
+		{"python3", []string{"python3", "-c", "print(1)"}},
+		{"ruby", []string{"ruby", "-e", "puts 1"}},
+		{"php", []string{"php", "-r", "echo 1"}},
+		{"perl", []string{"perl", "-e", "print 1"}},
+	}
+
+	for _, tc := range integrationBlocked {
+		params := map[string]any{
+			"command": tc.command,
+			"args":    tc.args,
+		}
+		params = normalizeToolParams("run_command", params)
+		res, err := eng.Execute(context.Background(), "run_command", Request{
+			Params: params,
+		})
+		if err == nil {
+			t.Fatalf("expected error for %s, got nil (res=%+v)", tc.command, res)
+		}
+		if !strings.Contains(err.Error(), "inline-eval") {
+			t.Fatalf("error should mention inline-eval flag: %v", err)
+		}
+		if !strings.Contains(err.Error(), "-e") && !strings.Contains(err.Error(), "-c") && !strings.Contains(err.Error(), "-r") {
+			t.Fatalf("error should name the blocked flag: %v", err)
+		}
+	}
+
+	// Sanity: node without -e should not trigger the eval-flag error
+	params := map[string]any{
+		"command": "node",
+		"args":    []string{"--version"},
+	}
+	_, err := eng.Execute(context.Background(), "run_command", Request{
+		Params: params,
+	})
+	if err != nil && strings.Contains(err.Error(), "inline-eval") {
+		t.Fatalf("node without eval flag should not trigger inline-eval error: %v", err)
 	}
 }

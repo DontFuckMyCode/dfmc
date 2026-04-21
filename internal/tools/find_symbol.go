@@ -52,9 +52,11 @@ type FindSymbolTool struct {
 	engine *ast.Engine
 }
 
-func NewFindSymbolTool() *FindSymbolTool      { return &FindSymbolTool{engine: ast.New()} }
-func (t *FindSymbolTool) Name() string        { return "find_symbol" }
-func (t *FindSymbolTool) Description() string { return "Locate a named symbol (function, class, HTML id, ...) and return its full scope." }
+func NewFindSymbolTool() *FindSymbolTool { return &FindSymbolTool{engine: ast.New()} }
+func (t *FindSymbolTool) Name() string   { return "find_symbol" }
+func (t *FindSymbolTool) Description() string {
+	return "Locate a named symbol (function, class, HTML id, ...) and return its full scope."
+}
 func (t *FindSymbolTool) Close() error {
 	if t == nil || t.engine == nil {
 		return nil

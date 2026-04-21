@@ -34,14 +34,14 @@ func TestDetectOfflineTaskFromSystemStamp(t *testing.T) {
 func TestDetectOfflineTask_IgnoresSlashInsidePathsAndComments(t *testing.T) {
 	cases := map[string]string{
 		// Path-like contexts.
-		"please look at tests/plans/golden_test.go":     "general",
-		"open the file at internal/security/audit.go":   "general",
-		"refactor /home/user/code/project/main.go":      "general",
+		"please look at tests/plans/golden_test.go":   "general",
+		"open the file at internal/security/audit.go": "general",
+		"refactor /home/user/code/project/main.go":    "general",
 		// Slash command embedded in a sentence (not at line start).
-		"the comment said // /review but it's stale":    "general",
+		"the comment said // /review but it's stale":     "general",
 		"a docstring with /* /explain markers */ inline": "general",
 		// Quoted string holding a slash command.
-		"the message body was \"please /debug it\"":      "general",
+		"the message body was \"please /debug it\"": "general",
 	}
 	for in, want := range cases {
 		if got := detectOfflineTask(in, ""); got != want {
@@ -54,13 +54,13 @@ func TestDetectOfflineTask_IgnoresSlashInsidePathsAndComments(t *testing.T) {
 // since that's the canonical user-typed shape.
 func TestDetectOfflineTask_AnchoredSlashTriggers(t *testing.T) {
 	cases := map[string]string{
-		"/review main.go":                "review",
-		"  /security audit auth/":        "security",
-		"/refactor the engine struct":    "refactor",
-		"/debug the panic":               "debug",
-		"/test the patch flow":           "test",
-		"/plan the migration":            "planning",
-		"line one\n/explain main.go":     "explain",
+		"/review main.go":             "review",
+		"  /security audit auth/":     "security",
+		"/refactor the engine struct": "refactor",
+		"/debug the panic":            "debug",
+		"/test the patch flow":        "test",
+		"/plan the migration":         "planning",
+		"line one\n/explain main.go":  "explain",
 	}
 	for in, want := range cases {
 		if got := detectOfflineTask(in, ""); got != want {

@@ -21,9 +21,11 @@ type ASTQueryTool struct {
 	engine *ast.Engine
 }
 
-func NewASTQueryTool() *ASTQueryTool        { return &ASTQueryTool{engine: ast.New()} }
-func (t *ASTQueryTool) Name() string        { return "ast_query" }
-func (t *ASTQueryTool) Description() string { return "Parse a file and return its symbols, imports, and language." }
+func NewASTQueryTool() *ASTQueryTool { return &ASTQueryTool{engine: ast.New()} }
+func (t *ASTQueryTool) Name() string { return "ast_query" }
+func (t *ASTQueryTool) Description() string {
+	return "Parse a file and return its symbols, imports, and language."
+}
 func (t *ASTQueryTool) Close() error {
 	if t == nil || t.engine == nil {
 		return nil

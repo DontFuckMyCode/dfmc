@@ -40,15 +40,15 @@ func mustNotContainKind(t *testing.T, findings []VulnerabilityFinding, kindSub s
 // Test-fixture sink fragments, assembled so the literals in source
 // don't trigger external hooks.
 const (
-	fxExecCmd       = "exec.Comm" + "and"
-	fxChildProcess  = "child" + "_process"
-	fxJsExec        = "ex" + "ec"
-	fxJsEval        = "ev" + "al"
-	fxJsFnCtor      = "Func" + "tion"
-	fxPyEval        = "ev" + "al"
-	fxPyPickleName  = "pic" + "kle"
-	fxPyPickleCall  = "pic" + "kle.loads"
-	fxJsSpawn       = "sp" + "awn"
+	fxExecCmd      = "exec.Comm" + "and"
+	fxChildProcess = "child" + "_process"
+	fxJsExec       = "ex" + "ec"
+	fxJsEval       = "ev" + "al"
+	fxJsFnCtor     = "Func" + "tion"
+	fxPyEval       = "ev" + "al"
+	fxPyPickleName = "pic" + "kle"
+	fxPyPickleCall = "pic" + "kle.loads"
+	fxJsSpawn      = "sp" + "awn"
 )
 
 // --- Go rules --------------------------------------------------------
@@ -410,4 +410,71 @@ func TestSmartScan_Python_YamlSafeLoaderIsSafe(t *testing.T) {
 		"yaml.load(data, Loader=yaml.SafeLoader)\n"
 	findings := scanHelper(t, "x.py", src)
 	mustNotContainKind(t, findings, "Unsafe YAML")
+}
+
+func TestSmartScan_Python_SubprocessRunShellFalseIsSafe(t *testing.T) {
+	src := "import subprocess\n" +
+		"subprocess.run(['ls', '-la'], shell=False)\n"
+	findings := scanHelper(t, "x.py", src)
+	mustNotContainKind(t, findings, "Shell Invocation")
+}
+
+func TestSmartScan_Python_ExecStatementWithConcat(t *testing.T) {
+	src := "import os\n" +
+		"exec('print(' + user_input)\n"
+	findings := scanHelper(t, "x.py", src)
+	mustContainKind(t, findings, "Insecure dynamic evaluation")
+}
+
+func TestSmartScan_Python_WeakHashMD5Direct(t *testing.T) {
+	src := "import hashlib\n" +
+		"hashlib.md5(b'data')\n"
+	findings := scanHelper(t, "x.py", src)
+	mustContainKind(t, findings, "Weak cryptographic hash (md5 / sha1)")
+}
+
+func TestSmartScan_Python_SSLContextWithCERTNONE(t *testing.T) {
+	src := "import ssl\n" +
+		"context = ssl.create_default_context()\n" +
+		"context.check_hostname = False\n" +
+		"context.verify_mode = ssl.CERT_NONE\n"
+	findings := scanHelper(t, "x.py", src)
+	mustContainKind(t, findings, "Insecure SSL/TLS (unverified context / CERT_NONE)")
+}
+
+func TestSmartScan_JS_BareSpawnWithVariableArg(t *testing.T) {
+	src := "const { spawn } = require('child_process');\n" +
+		"spawn('ls ' + cmd, ['-la']);\n"
+	findings := scanHelper(t, "x.js", src)
+	mustContainKind(t, findings, "Command injection")
+}
+
+func TestSmartScan_JS_BareExecWithVariableArg(t *testing.T) {
+	src := "const { exec } = require('child_process');\n" +
+		"exec('ls ' + cmd);\n"
+	findings := scanHelper(t, "x.js", src)
+	mustContainKind(t, findings, "Command injection")
+}
+
+func TestSmartScan_JS_SpawnInVariableNameIsSafe(t *testing.T) {
+	src := "const myspawn = require('child_process');\n" +
+		"myspawn.spawn('ls', ['-la']);\n"
+	findings := scanHelper(t, "x.js", src)
+	mustNotContainKind(t, findings, "Shell Invocation")
+}
+
+func TestSmartScan_TS_HTTPSRequestInsecureTLS(t *testing.T) {
+	src := "import https from 'https';\n" +
+		"https.request({ hostname: 'example.com', rejectUnauthorized: false }, res => {});\n"
+	findings := scanHelper(t, "x.ts", src)
+	mustContainKind(t, findings, "Insecure TLS (rejectUnauthorized: false)")
+}
+
+func TestSmartScan_Python_SQLiteExecuteWithConcat(t *testing.T) {
+	src := "import sqlite3\n" +
+		"conn = sqlite3.connect(':memory:')\n" +
+		"cursor = conn.cursor()\n" +
+		"cursor.execute('SELECT * FROM users WHERE id=' + user_id)\n"
+	findings := scanHelper(t, "x.py", src)
+	mustContainKind(t, findings, "SQL injection via string formatting in query")
 }

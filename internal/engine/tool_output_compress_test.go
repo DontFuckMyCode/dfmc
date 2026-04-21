@@ -120,8 +120,8 @@ func TestPublishNativeToolResult_IncludesCompressionStats(t *testing.T) {
 	ch := eng.EventBus.Subscribe("tool:result")
 	defer eng.EventBus.Unsubscribe("tool:result", ch)
 
-	raw := strings.Repeat("a", 100)     // pretend-output: 100 chars
-	payload := strings.Repeat("b", 40)  // model-bound payload: 40 chars
+	raw := strings.Repeat("a", 100)    // pretend-output: 100 chars
+	payload := strings.Repeat("b", 40) // model-bound payload: 40 chars
 	trace := nativeToolTrace{
 		Call:       provider.ToolCall{ID: "c1", Name: "read_file"},
 		Result:     tools.Result{Output: raw},

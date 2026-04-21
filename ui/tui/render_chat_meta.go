@@ -417,7 +417,7 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		TodoActive:            todoActive,
 		TodoLines:             todoLines,
 		TaskLines:             taskLines,
-		TaskTreeLines:        taskTreeLines,
+		TaskTreeLines:         taskTreeLines,
 		WorkflowStatus:        workflowStatus,
 		WorkflowMeter:         workflowMeter,
 		WorkflowExecution:     workflowExecution,

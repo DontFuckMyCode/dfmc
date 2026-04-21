@@ -28,10 +28,10 @@ type Manager struct {
 type RetrievalStrategy string
 
 const (
-	StrategyGeneral   RetrievalStrategy = "general"
-	StrategySecurity  RetrievalStrategy = "security"
-	StrategyDebug     RetrievalStrategy = "debug"
-	StrategyReview    RetrievalStrategy = "review"
+	StrategyGeneral  RetrievalStrategy = "general"
+	StrategySecurity RetrievalStrategy = "security"
+	StrategyDebug    RetrievalStrategy = "debug"
+	StrategyReview   RetrievalStrategy = "review"
 	StrategyRefactor RetrievalStrategy = "refactor"
 )
 

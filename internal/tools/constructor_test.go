@@ -21,7 +21,7 @@ func TestASTBackedToolConstructorsInitializeEngine(t *testing.T) {
 
 type closingStubTool struct{ closed bool }
 
-func (t *closingStubTool) Name() string { return "closing_stub" }
+func (t *closingStubTool) Name() string        { return "closing_stub" }
 func (t *closingStubTool) Description() string { return "stub" }
 func (t *closingStubTool) Execute(_ context.Context, _ Request) (Result, error) {
 	return Result{}, nil

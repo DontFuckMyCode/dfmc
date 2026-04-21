@@ -40,6 +40,8 @@ var slashesThatDispatchEngineWork = map[string]struct{}{
 	"test":     {},
 	"doc":      {},
 	"retry":    {},
+	"analyze":  {},
+	"scan":     {},
 }
 
 // TestSlashCoverage_AllAdvertisedCommandsHandled is a spec-level test:

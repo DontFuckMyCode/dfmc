@@ -142,4 +142,3 @@ func (m *parseMetricsTracker) reset() {
 	m.byLanguage = map[string]int64{}
 	m.byBackend = map[string]int64{}
 }
-

@@ -44,10 +44,10 @@ func (t TraceEntry) EffectiveTool() string {
 
 // TrajectoryOutput bundles the trajectory hints with metadata about the round.
 type TrajectoryOutput struct {
-	Hints         []string  // up to 2 short coaching lines
-	RoundSummary  string    // one-line recap of the round
-	OpenQuestions []string  // unresolved issues for the next round
-	Confidence    float64   // 0-1; low triggers expanded retrieval on next round
+	Hints         []string // up to 2 short coaching lines
+	RoundSummary  string   // one-line recap of the round
+	OpenQuestions []string // unresolved issues for the next round
+	Confidence    float64  // 0-1; low triggers expanded retrieval on next round
 }
 
 // TrajectoryHints returns up to 2 short coaching lines derived from the

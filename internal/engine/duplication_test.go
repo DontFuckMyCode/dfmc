@@ -320,10 +320,10 @@ func TestIsBareStringLine(t *testing.T) {
 		}
 	}
 	no := []string{
-		`s := "foo"`,          // code before quote
-		`"hello" + "world"`,   // concatenation
-		`return "ok"`,         // prefixed by keyword
-		`"unterminated`,       // no closing quote
+		`s := "foo"`,        // code before quote
+		`"hello" + "world"`, // concatenation
+		`return "ok"`,       // prefixed by keyword
+		`"unterminated`,     // no closing quote
 	}
 	for _, s := range no {
 		if isBareStringLine(s) {

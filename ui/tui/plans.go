@@ -66,7 +66,7 @@ func formatPlansSubtaskRow(i int, s planning.Subtask, selected bool, width int) 
 	head := fmt.Sprintf("%d.", i+1)
 	hint := ""
 	if s.Hint != "" {
-		hint = subtleStyle.Render(" ["+s.Hint+"]")
+		hint = subtleStyle.Render(" [" + s.Hint + "]")
 	}
 	title := s.Title
 	if title == "" {

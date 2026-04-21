@@ -21,9 +21,9 @@ import (
 // can be null when the model emits only tool_calls; we leave it as a Go
 // string (empty when null was sent).
 type openaiChatMessage struct {
-	Role      string             `json:"role"`
-	Content   string             `json:"content"`
-	ToolCalls []openaiToolCall   `json:"tool_calls,omitempty"`
+	Role      string           `json:"role"`
+	Content   string           `json:"content"`
+	ToolCalls []openaiToolCall `json:"tool_calls,omitempty"`
 }
 
 type openaiToolCall struct {

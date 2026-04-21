@@ -1295,10 +1295,10 @@ func RenderResumeBanner(step, maxSteps, width int) string {
 // --- stats panel --------------------------------------------------------
 
 const (
-	StatsPanelWidth             = 38
-	StatsPanelBoostWidthMin     = 48
+	StatsPanelWidth                = 38
+	StatsPanelBoostWidthMin        = 48
 	StatsPanelBoostMinContentWidth = 96
-	StatsPanelMinContentWidth  = 120
+	StatsPanelMinContentWidth      = 120
 )
 
 func RenderStatsPanel(info StatsPanelInfo, height int) string {

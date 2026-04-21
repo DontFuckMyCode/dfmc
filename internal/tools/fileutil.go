@@ -15,7 +15,7 @@ import (
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)
-	tmp, err := os.CreateTemp(dir, "."+base+".dfmc-tmp-*")
+	tmp, err := os.CreateTemp(dir, base+".dfmc-tmp-*")
 	if err != nil {
 		return fmt.Errorf("create temp for atomic write: %w", err)
 	}

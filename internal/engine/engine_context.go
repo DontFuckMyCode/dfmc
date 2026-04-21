@@ -174,6 +174,7 @@ func (e *Engine) ContextTuningSuggestionsWithRuntime(question string, overrides 
 	}
 	return suggestions
 }
+
 const (
 	defaultContextTotalCapTokens = 16000
 	minContextTotalBudgetTokens  = 512
@@ -205,6 +206,7 @@ type contextReserveBreakdown struct {
 	Tool     int
 	Total    int
 }
+
 func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 	if e.Context == nil {
 		return nil
@@ -324,6 +326,18 @@ func (e *Engine) contextBuildOptionsWithRuntime(question string, runtime ctxmgr.
 	if opts.MaxTokensPerFile > opts.MaxTokensTotal {
 		opts.MaxTokensPerFile = opts.MaxTokensTotal
 	}
+
+	// Phase 4: If the previous retrieval had low confidence, expand the
+	// next retrieval with deeper graph traversal and fewer but more thoroughly
+	// explored files. This triggers "uncertainty-aware retrieval": when
+	// confidence is low, the next round does expanded graph exploration.
+	if prev := e.lastContextSnapshot; prev != nil && prev.Confidence < 0.5 {
+		opts.GraphDepth += 1
+		if opts.MaxFiles > 1 {
+			opts.MaxFiles = maxInt(1, opts.MaxFiles/2)
+		}
+	}
+
 	return opts
 }
 func (e *Engine) setLastContextInStatus(status ContextInStatus) {
@@ -533,12 +547,12 @@ func (e *Engine) buildContextSnapshot(query, task string, budgetUsed int, chunks
 		}
 	}
 	return &ctxmgr.ContextSnapshot{
-		Query:      query,
-		Task:       task,
-		BudgetUsed: budgetUsed,
-		Confidence: avgScore,
+		Query:       query,
+		Task:        task,
+		BudgetUsed:  budgetUsed,
+		Confidence:  avgScore,
 		RetrievedAt: time.Now(),
-		Chunks:     refs,
+		Chunks:      refs,
 	}
 }
 

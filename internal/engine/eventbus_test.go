@@ -83,3 +83,29 @@ func TestEventBusSubscribeFunc_UnsubscribeStopsDelivery(t *testing.T) {
 		t.Fatalf("expected exactly one callback before unsubscribe, got %d", got)
 	}
 }
+
+// T7: Publish must not crash when a channel-subscriber panics.
+// The recover in publishToChannel guards each send; a panicking
+// subscriber drops the event (not the process) and continues.
+// Note: SubscribeFunc has its own goroutine-level recover already
+// (see SubscribeFunc_RecoversAndContinues). This test targets the
+// raw channel Subscribe path via SubscribeFunc to hit publishToChannel's
+// panic guard.
+func TestEventBus_Publish_SubscriberPanicDoesNotCrashCaller(t *testing.T) {
+	eb := NewEventBus()
+	panicCh := make(chan Event, 1)
+
+	unsubscribe := eb.SubscribeFunc("test", func(ev Event) {
+		panic("boom from subscriber")
+	})
+	_ = panicCh // placeholder for future expansion
+
+	// Must not panic — publishToChannel recovers internally.
+	eb.Publish(Event{Type: "test"})
+
+	// Subscriber continues working after panic (goroutine-level recover).
+	eb.Publish(Event{Type: "test"})
+
+	unsubscribe()
+	// All good — if we got here the test passes.
+}

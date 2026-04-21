@@ -137,3 +137,31 @@ func TestProviderFromProfileSelectsLiveClients(t *testing.T) {
 		t.Fatalf("expected zai anthropic-style config to remap to paas endpoint, got %q", got)
 	}
 }
+
+// T5: Router.Get must never return (nil, true) for a disabled/placeholder
+// provider. A caller that receives (nil, true) will panic on the next
+// method call. The test verifies that a provider registered with no API
+// key (placeholder) is either absent from the map OR returns (provider, true)
+// with a non-nil provider.
+func TestRouter_Get_DisabledProvider_ReturnsSafeValue(t *testing.T) {
+	cfg := config.ProvidersConfig{
+		Primary:  "disabled",
+		Fallback: []string{},
+		Profiles: map[string]config.ModelConfig{
+			// Empty API key → placeholder provider registered
+			"disabled": {Model: "claude-sonnet", APIKey: ""},
+		},
+	}
+	router, err := NewRouter(cfg)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	p, ok := router.Get("disabled")
+	if ok && p == nil {
+		t.Fatal("Get returned (nil, true) for disabled provider — caller will panic")
+	}
+	// It's acceptable for ok=false (placeholder not in map) OR
+	// ok=true with a non-nil provider (placeholder is present).
+	// Both are safe. The forbidden case is (nil, true).
+}

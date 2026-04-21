@@ -315,11 +315,11 @@ func TestSnapshotRender_EmptyStateProducesPlaceholder(t *testing.T) {
 
 func TestStripCodeFences(t *testing.T) {
 	cases := map[string]string{
-		"plain":                                    "plain",
-		"```\nfoo\n```":                            "foo",
-		"```json\n{\"a\":1}\n```":                  `{"a":1}`,
-		"```yaml\nkey: value\n```":                 "key: value",
-		"   ```\nbar\n```\n":                       "bar",
+		"plain":                    "plain",
+		"```\nfoo\n```":            "foo",
+		"```json\n{\"a\":1}\n```":  `{"a":1}`,
+		"```yaml\nkey: value\n```": "key: value",
+		"   ```\nbar\n```\n":       "bar",
 	}
 	for in, want := range cases {
 		got := stripCodeFences(strings.TrimSpace(in))

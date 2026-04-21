@@ -54,7 +54,7 @@ var (
 			Foreground(ColorStatusFg).
 			Background(ColorStatusBg)
 
-	UserLineStyle       = lipgloss.NewStyle().Foreground(ColorRoleUser)
+	UserLineStyle      = lipgloss.NewStyle().Foreground(ColorRoleUser)
 	AssistantLineStyle = lipgloss.NewStyle().Foreground(ColorRoleAssistant)
 	SystemLineStyle    = lipgloss.NewStyle().Foreground(ColorRoleSystem)
 	CoachLineStyle     = lipgloss.NewStyle().Foreground(ColorRoleCoach).Italic(true)
@@ -69,11 +69,11 @@ var (
 	InfoStyle   = lipgloss.NewStyle().Foreground(ColorInfo)
 	ToolStyle   = lipgloss.NewStyle().Foreground(ColorRoleTool)
 
-	BadgeUserStyle       = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleUser).Padding(0, 1).Bold(true)
-	BadgeAssistantStyle  = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleAssistant).Padding(0, 1).Bold(true)
-	BadgeSystemStyle     = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleSystem).Padding(0, 1).Bold(true)
-	BadgeToolStyle       = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleTool).Padding(0, 1).Bold(true)
-	BadgeCoachStyle      = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleCoach).Padding(0, 1).Bold(true)
+	BadgeUserStyle      = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleUser).Padding(0, 1).Bold(true)
+	BadgeAssistantStyle = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleAssistant).Padding(0, 1).Bold(true)
+	BadgeSystemStyle    = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleSystem).Padding(0, 1).Bold(true)
+	BadgeToolStyle      = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleTool).Padding(0, 1).Bold(true)
+	BadgeCoachStyle     = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleCoach).Padding(0, 1).Bold(true)
 
 	InputBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).

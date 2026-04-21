@@ -223,7 +223,7 @@ func TestAlibabaProviderComplete_WithTools(t *testing.T) {
 		Tools: []ToolDescriptor{{
 			Name:        "read_file",
 			Description: "Read a file",
-			InputSchema:  map[string]any{"type": "object"},
+			InputSchema: map[string]any{"type": "object"},
 		}},
 	})
 	if err != nil {

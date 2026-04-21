@@ -228,4 +228,3 @@ func expandViaGraph(graph *codemap.Graph, seedPaths []string, depth int) map[str
 	}
 	return out
 }
-

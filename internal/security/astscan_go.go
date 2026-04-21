@@ -14,6 +14,26 @@ import "strings"
 func goASTRules() []astRule {
 	return []astRule{
 		{
+			Name:     "go:embed directive targeting sensitive file",
+			Severity: "high",
+			CWE:      "CWE-862",
+			OWASP:    "A01:2021 Broken Access Control",
+			Langs:    []string{"go"},
+			Match: func(ctx *scanLineCtx) bool {
+				if !strings.Contains(ctx.Trimmed, "//go:embed") {
+					return false
+				}
+				lower := strings.ToLower(ctx.Trimmed)
+				sensitive := []string{".env", ".pem", ".key", ".p12", ".pfx", "id_rsa", "id_ed25519", "cookie_secret", "service_account.json"}
+				for _, pat := range sensitive {
+					if strings.Contains(lower, pat) {
+						return true
+					}
+				}
+				return false
+			},
+		},
+		{
 			Name:     "Command injection via exec.Command with concatenation",
 			Severity: "high",
 			CWE:      "CWE-78",

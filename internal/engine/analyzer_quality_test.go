@@ -72,12 +72,12 @@ func TestComplexityScore_CountsEachBranch(t *testing.T) {
 
 func TestEndOfBraceBody_BalancesNestedClosures(t *testing.T) {
 	src := []string{
-		`func outer() {`,       // 0: opens depth 1
+		`func outer() {`,     // 0: opens depth 1
 		`	x := func() int {`, // 1: opens depth 2
 		`		return 1`,
 		`	}`, // 3: depth back to 1
 		`	_ = x`,
-		`}`,      // 5: depth to 0 -> end at line 6
+		`}`, // 5: depth to 0 -> end at line 6
 		`// sibling`,
 	}
 	end := endOfBraceBody(src, 0)

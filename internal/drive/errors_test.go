@@ -94,7 +94,7 @@ func TestFailureClassify_Substrings(t *testing.T) {
 		"STATUS CODE 429":                    RetryTransient,
 		"timeout after":                      RetryTransient,
 		"STATUS CODE 500":                    RetryWithFallback,
-		"no such host":                      RetryWithFallback,
+		"no such host":                       RetryWithFallback,
 	}
 	for msg, want := range substrings {
 		got := FailureClassify(errors.New(msg))
