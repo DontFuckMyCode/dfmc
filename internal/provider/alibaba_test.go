@@ -53,7 +53,7 @@ func TestAlibabaNormalizeBaseURL_PreservesCompatibleMode(t *testing.T) {
 }
 
 func TestAlibabaNewProvider_EmptyBaseURLUsesDefault(t *testing.T) {
-	p := NewOpenAICompatibleProvider("alibaba", "qwen3.5-plus", "test-key", "", 65536, 1000000)
+	p := NewOpenAICompatibleProvider("alibaba", "qwen3.5-plus", "test-key", "", 65536, 1000000, 0)
 	if got := p.baseURL; got != "https://dashscope-intl.aliyuncs.com/compatible-mode/v1" {
 		t.Fatalf("expected default dashscope URL, got %q", got)
 	}
@@ -130,7 +130,7 @@ func TestAlibabaProviderComplete(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("alibaba", "qwen3.5-plus", "sk-test-alibaba", srv.URL, 65536, 1000000)
+	p := NewOpenAICompatibleProvider("alibaba", "qwen3.5-plus", "sk-test-alibaba", srv.URL, 65536, 1000000, 0)
 	resp, err := p.Complete(context.Background(), CompletionRequest{
 		Messages: []Message{{Role: types.RoleUser, Content: "say hello"}},
 	})
@@ -156,7 +156,7 @@ func TestAlibabaProviderStream(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("alibaba", "qwen3.5-plus", "sk-test-alibaba", srv.URL, 65536, 1000000)
+	p := NewOpenAICompatibleProvider("alibaba", "qwen3.5-plus", "sk-test-alibaba", srv.URL, 65536, 1000000, 0)
 	stream, err := p.Stream(context.Background(), CompletionRequest{
 		Messages: []Message{{Role: types.RoleUser, Content: "say hello"}},
 	})
@@ -192,7 +192,7 @@ func TestAlibabaStream_ThrottleWraps429(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("alibaba", "qwen3.5-plus", "sk-test-alibaba", srv.URL, 65536, 1000000)
+	p := NewOpenAICompatibleProvider("alibaba", "qwen3.5-plus", "sk-test-alibaba", srv.URL, 65536, 1000000, 0)
 	_, err := p.Stream(context.Background(), CompletionRequest{
 		Messages: []Message{{Role: types.RoleUser, Content: "say hello"}},
 	})
@@ -217,7 +217,7 @@ func TestAlibabaProviderComplete_WithTools(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("alibaba", "qwen3.5-plus", "sk-test-alibaba", srv.URL, 65536, 1000000)
+	p := NewOpenAICompatibleProvider("alibaba", "qwen3.5-plus", "sk-test-alibaba", srv.URL, 65536, 1000000, 0)
 	resp, err := p.Complete(context.Background(), CompletionRequest{
 		Messages: []Message{{Role: types.RoleUser, Content: "read main.go"}},
 		Tools: []ToolDescriptor{{

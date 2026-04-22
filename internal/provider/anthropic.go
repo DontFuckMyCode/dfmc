@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type AnthropicProvider struct {
@@ -23,10 +24,10 @@ type AnthropicProvider struct {
 }
 
 func NewAnthropicProvider(model, apiKey, baseURL string, maxTokens, maxContext int) *AnthropicProvider {
-	return NewNamedAnthropicProvider("anthropic", model, apiKey, baseURL, maxTokens, maxContext)
+	return NewNamedAnthropicProvider("anthropic", model, apiKey, baseURL, maxTokens, maxContext, 0)
 }
 
-func NewNamedAnthropicProvider(name, model, apiKey, baseURL string, maxTokens, maxContext int) *AnthropicProvider {
+func NewNamedAnthropicProvider(name, model, apiKey, baseURL string, maxTokens, maxContext int, httpTimeout time.Duration) *AnthropicProvider {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com/v1"
@@ -39,7 +40,7 @@ func NewNamedAnthropicProvider(name, model, apiKey, baseURL string, maxTokens, m
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		maxTokens:  maxTokens,
 		maxContext: maxContext,
-		httpClient: newProviderHTTPClient(),
+		httpClient: newProviderHTTPClient(httpTimeout),
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -23,7 +24,7 @@ type OpenAICompatibleProvider struct {
 	httpClient *http.Client
 }
 
-func NewOpenAICompatibleProvider(name, model, apiKey, baseURL string, maxTokens, maxContext int) *OpenAICompatibleProvider {
+func NewOpenAICompatibleProvider(name, model, apiKey, baseURL string, maxTokens, maxContext int, httpTimeout time.Duration) *OpenAICompatibleProvider {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
 		baseURL = defaultOpenAIBaseURL(name)
@@ -35,7 +36,7 @@ func NewOpenAICompatibleProvider(name, model, apiKey, baseURL string, maxTokens,
 		baseURL:    normalizeOpenAIBaseURL(name, baseURL),
 		maxTokens:  maxTokens,
 		maxContext: maxContext,
-		httpClient: newProviderHTTPClient(),
+		httpClient: newProviderHTTPClient(httpTimeout),
 	}
 }
 

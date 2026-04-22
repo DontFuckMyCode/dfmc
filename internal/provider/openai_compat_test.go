@@ -30,7 +30,7 @@ func TestOpenAICompatibleProviderComplete(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("openai", "gpt-5.4", "test-key", srv.URL+"/v1", 128000, 1050000)
+	p := NewOpenAICompatibleProvider("openai", "gpt-5.4", "test-key", srv.URL+"/v1", 128000, 1050000, 0)
 	resp, err := p.Complete(context.Background(), CompletionRequest{
 		Messages: []Message{
 			{Role: types.RoleUser, Content: "say hello"},
@@ -56,7 +56,7 @@ func TestOpenAICompatibleProviderStream(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("openai", "gpt-5.4", "test-key", srv.URL+"/v1", 128000, 1050000)
+	p := NewOpenAICompatibleProvider("openai", "gpt-5.4", "test-key", srv.URL+"/v1", 128000, 1050000, 0)
 	stream, err := p.Stream(context.Background(), CompletionRequest{
 		Messages: []Message{
 			{Role: types.RoleUser, Content: "say hello"},
@@ -92,7 +92,7 @@ func TestOpenAICompatibleProviderStream_ThrottleWraps429(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("zai", "glm-5.1", "test-key", srv.URL+"/v1", 128000, 1050000)
+	p := NewOpenAICompatibleProvider("zai", "glm-5.1", "test-key", srv.URL+"/v1", 128000, 1050000, 0)
 	_, err := p.Stream(context.Background(), CompletionRequest{
 		Messages: []Message{{Role: types.RoleUser, Content: "say hello"}},
 	})

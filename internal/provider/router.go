@@ -69,12 +69,12 @@ func providerFromProfile(name string, profile config.ModelConfig) Provider {
 		if apiKey == "" {
 			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
 		}
-		return NewNamedAnthropicProvider(name, model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext)
+		return NewNamedAnthropicProvider(name, model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext, httpTimeout(profile.HTTPTimeout))
 	case "google", "gemini":
 		if apiKey == "" {
 			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
 		}
-		return NewGoogleProvider(model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext)
+		return NewGoogleProvider(model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext, httpTimeout(profile.HTTPTimeout))
 	case "openai", "openai-compatible":
 		if name == "generic" && strings.TrimSpace(baseURL) == "" {
 			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
@@ -82,11 +82,20 @@ func providerFromProfile(name string, profile config.ModelConfig) Provider {
 		if name != "generic" && apiKey == "" {
 			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
 		}
-		return NewOpenAICompatibleProvider(name, model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext)
+		return NewOpenAICompatibleProvider(name, model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext, httpTimeout(profile.HTTPTimeout))
 	default:
 		configured := apiKey != "" || baseURL != ""
 		return NewPlaceholderProvider(name, model, configured, profile.MaxContext)
 	}
+}
+
+// httpTimeout converts an HTTPTimeout field value (seconds) to a time.Duration.
+// 0 returns 0 (caller uses default via newProviderHTTPClient(0)).
+func httpTimeout(seconds int) time.Duration {
+	if seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func normalizedProtocol(name, protocol string) string {

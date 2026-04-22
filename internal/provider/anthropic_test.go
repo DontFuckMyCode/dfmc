@@ -130,7 +130,7 @@ func TestAnthropicProviderPreservesExplicitBasePath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewNamedAnthropicProvider("zai", "glm-5.1", "test-key", srv.URL+"/api/anthropic", 131072, 200000)
+	p := NewNamedAnthropicProvider("zai", "glm-5.1", "test-key", srv.URL+"/api/anthropic", 131072, 200000, 0)
 	_, err := p.Complete(context.Background(), CompletionRequest{
 		Messages: []Message{
 			{Role: types.RoleUser, Content: "say ok"},

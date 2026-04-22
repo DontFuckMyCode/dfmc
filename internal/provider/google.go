@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const defaultGoogleBaseURL = "https://generativelanguage.googleapis.com/v1beta"
@@ -40,7 +41,7 @@ type GoogleProvider struct {
 // NewGoogleProvider builds a Gemini client. `model` is e.g. "gemini-1.5-pro"
 // or "gemini-2.0-flash". `baseURL` overrides the API host for testing or
 // self-hosted gateways; empty uses the public endpoint.
-func NewGoogleProvider(model, apiKey, baseURL string, maxTokens, maxContext int) *GoogleProvider {
+func NewGoogleProvider(model, apiKey, baseURL string, maxTokens, maxContext int, httpTimeout time.Duration) *GoogleProvider {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
 		baseURL = defaultGoogleBaseURL
@@ -52,7 +53,7 @@ func NewGoogleProvider(model, apiKey, baseURL string, maxTokens, maxContext int)
 		baseURL:    baseURL,
 		maxTokens:  maxTokens,
 		maxContext: maxContext,
-		httpClient: newProviderHTTPClient(),
+		httpClient: newProviderHTTPClient(httpTimeout),
 	}
 }
 

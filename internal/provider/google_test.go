@@ -48,7 +48,7 @@ func TestGoogleCompleteHappyPath(t *testing.T) {
 	}`
 	srv, cap := newGoogleTestServer(t, 200, resp)
 
-	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0)
+	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0, 0)
 	got, err := p.Complete(context.Background(), CompletionRequest{
 		System: "be concise",
 		Messages: []Message{
@@ -90,7 +90,7 @@ func TestGoogleCompleteHappyPath(t *testing.T) {
 }
 
 func TestGoogleMissingAPIKeyUnavailable(t *testing.T) {
-	p := NewGoogleProvider("gemini-test", "", "", 0, 0)
+	p := NewGoogleProvider("gemini-test", "", "", 0, 0, 0)
 	_, err := p.Complete(context.Background(), CompletionRequest{Messages: []Message{{Role: "user", Content: "hi"}}})
 	if !errors.Is(err, ErrProviderUnavailable) {
 		t.Fatalf("err=%v want ErrProviderUnavailable", err)
@@ -99,7 +99,7 @@ func TestGoogleMissingAPIKeyUnavailable(t *testing.T) {
 
 func TestGoogleContextOverflowSurfaced(t *testing.T) {
 	srv, _ := newGoogleTestServer(t, 400, `{"error":{"message":"input exceeds the maximum number of tokens"}}`)
-	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0)
+	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0, 0)
 	_, err := p.Complete(context.Background(), CompletionRequest{Messages: []Message{{Role: "user", Content: "too big"}}})
 	if err == nil || !errors.Is(err, ErrContextOverflow) {
 		t.Fatalf("err=%v want ErrContextOverflow", err)
@@ -118,7 +118,7 @@ func TestGoogleToolCallRoundTrip(t *testing.T) {
 		"usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 2, "totalTokenCount": 7}
 	}`
 	srv, cap := newGoogleTestServer(t, 200, resp)
-	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0)
+	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0, 0)
 	got, err := p.Complete(context.Background(), CompletionRequest{
 		Messages: []Message{{Role: "user", Content: "read the readme"}},
 		Tools: []ToolDescriptor{{
@@ -161,7 +161,7 @@ func TestGoogleToolCallRoundTrip(t *testing.T) {
 
 func TestGoogleFunctionResponseRoundTrip(t *testing.T) {
 	srv, cap := newGoogleTestServer(t, 200, `{"candidates":[{"content":{"role":"model","parts":[{"text":"done"}]},"finishReason":"STOP"}]}`)
-	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0)
+	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0, 0)
 	// Simulate a tool round-trip: user → assistant tool_call → tool result → ask for final answer.
 	_, err := p.Complete(context.Background(), CompletionRequest{
 		Messages: []Message{
@@ -212,7 +212,7 @@ func TestGoogleFunctionResponseRoundTrip(t *testing.T) {
 
 func TestGoogleContextChunksInjected(t *testing.T) {
 	srv, cap := newGoogleTestServer(t, 200, `{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`)
-	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0)
+	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0, 0)
 	_, err := p.Complete(context.Background(), CompletionRequest{
 		Messages: []Message{{Role: "user", Content: "summarise"}},
 		Context:  []types.ContextChunk{{Path: "foo.go", Content: "package foo", Score: 0.9}},
@@ -252,7 +252,7 @@ func TestGoogleStreamHappyPath(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0)
+	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0, 0)
 	ch, err := p.Stream(context.Background(), CompletionRequest{Messages: []Message{{Role: "user", Content: "hi"}}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
@@ -284,7 +284,7 @@ func TestGoogleStreamHappyPath(t *testing.T) {
 }
 
 func TestGoogleHintsAdvertiseTools(t *testing.T) {
-	p := NewGoogleProvider("gemini-test", "key", "", 0, 0)
+	p := NewGoogleProvider("gemini-test", "key", "", 0, 0, 0)
 	h := p.Hints()
 	if !h.SupportsTools || h.ToolStyle != "function-calling" {
 		t.Fatalf("hints=%+v", h)

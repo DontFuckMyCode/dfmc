@@ -183,7 +183,7 @@ func TestOpenAIToolCallRoundTrip(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("openai", "gpt-5.4", "k", srv.URL, 4096, 128000)
+	p := NewOpenAICompatibleProvider("openai", "gpt-5.4", "k", srv.URL, 4096, 128000, 0)
 	resp, err := p.Complete(context.Background(), CompletionRequest{
 		Messages: []Message{
 			{Role: types.RoleUser, Content: "find Engine"},

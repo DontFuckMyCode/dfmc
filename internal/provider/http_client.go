@@ -38,7 +38,14 @@ const defaultResponseHeaderTimeout = 180 * time.Second
 // Client.Timeout so streaming body reads aren't silently truncated.
 // Callers still bound total call duration via the request context when
 // they need to — e.g. router-level retry loops pass a WithTimeout ctx.
-func newProviderHTTPClient() *http.Client {
+//
+// responseHeaderTimeout is the ResponseHeaderTimeout on the transport;
+// it bounds time-to-first-byte only (not total body read time).
+// Pass 0 to use the default (180s).
+func newProviderHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
+	if responseHeaderTimeout == 0 {
+		responseHeaderTimeout = defaultResponseHeaderTimeout
+	}
 	return &http.Client{
 		Transport: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
@@ -51,7 +58,7 @@ func newProviderHTTPClient() *http.Client {
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   15 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
-			ResponseHeaderTimeout: defaultResponseHeaderTimeout,
+			ResponseHeaderTimeout: responseHeaderTimeout,
 		},
 	}
 }

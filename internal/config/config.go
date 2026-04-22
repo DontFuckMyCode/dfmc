@@ -213,15 +213,16 @@ type ProvidersConfig struct {
 }
 
 type ModelConfig struct {
-	APIKey         string   `yaml:"api_key,omitempty"`
-	BaseURL        string   `yaml:"base_url,omitempty"`
-	Models         []string `yaml:"models,omitempty"`            // ordered list, first = preferred
-	FallbackModels []string `yaml:"fallback_models,omitempty"`  // tried in order when preferred model fails
-	Model          string   `yaml:"model,omitempty"`            // deprecated single-model alias (backward compat)
-	MaxTokens      int      `yaml:"max_tokens,omitempty"`
-	MaxContext     int      `yaml:"max_context,omitempty"`
-	Protocol       string   `yaml:"protocol,omitempty"`
-	Region         string   `yaml:"region,omitempty"`
+	APIKey      string   `yaml:"api_key,omitempty"`
+	BaseURL     string   `yaml:"base_url,omitempty"`
+	Models      []string `yaml:"models,omitempty"`           // ordered list, first = preferred
+	FallbackModels []string `yaml:"fallback_models,omitempty"` // tried in order when preferred model fails
+	Model      string   `yaml:"model,omitempty"`            // deprecated single-model alias (backward compat)
+	MaxTokens   int      `yaml:"max_tokens,omitempty"`
+	MaxContext  int      `yaml:"max_context,omitempty"`
+	Protocol    string   `yaml:"protocol,omitempty"`
+	Region      string   `yaml:"region,omitempty"`
+	HTTPTimeout int      `yaml:"http_timeout,omitempty"` // response header timeout in seconds; 0 uses default (180s)
 }
 
 // BestModel returns the preferred model: Models[0] if set, otherwise Model.

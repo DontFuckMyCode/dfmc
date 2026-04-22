@@ -118,7 +118,7 @@ func TestOpenAICompatStream_EmitsStartAndFinishReason(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("generic", "gpt-test", "", srv.URL, 0, 0)
+	p := NewOpenAICompatibleProvider("generic", "gpt-test", "", srv.URL, 0, 0, 0)
 	ch, err := p.Stream(context.Background(), CompletionRequest{
 		Messages: []Message{{Role: "user", Content: "hi"}},
 	})
