@@ -116,7 +116,7 @@ func (e *Engine) trimmedConversationMessages(budget int) ([]provider.Message, []
 		}
 		msg := history[i]
 		content := strings.TrimSpace(msg.Content)
-		tok := estimateTokens(content)
+		tok := tokens.Estimate(content)
 		if tok <= 0 {
 			continue
 		}
@@ -127,7 +127,7 @@ func (e *Engine) trimmedConversationMessages(budget int) ([]provider.Message, []
 				break
 			}
 			content = trimToTokenBudget(content, remaining)
-			tok = estimateTokens(content)
+			tok = tokens.Estimate(content)
 			if tok <= 0 {
 				cutoff = i
 				break
@@ -167,7 +167,7 @@ func (e *Engine) historyBudgetForRequest(question string, chunks []types.Context
 		responseReserve = minContextPerFileTokens
 	}
 
-	usedByRequest := estimateTokens(question) + estimateTokens(systemPrompt) + baseToolReserveTokens
+	usedByRequest := tokens.Estimate(question) + tokens.Estimate(systemPrompt) + baseToolReserveTokens
 	for _, ch := range chunks {
 		usedByRequest += ch.TokenCount
 	}
@@ -687,7 +687,7 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 			if ev.Type == provider.StreamDone {
 				answer := acc.String()
 				if strings.TrimSpace(answer) != "" {
-					tokenEstimate := estimateTokens(prompt) + estimateTokens(answer)
+					tokenEstimate := tokens.Estimate(prompt) + tokens.Estimate(answer)
 					e.recordInteraction(prompt, answer, usedProvider, req.Model, tokenEstimate, chunks)
 					e.EventBus.Publish(Event{
 						Type:   "provider:complete",
