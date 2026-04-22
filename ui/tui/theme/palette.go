@@ -67,7 +67,8 @@ var (
 	FailStyle   = lipgloss.NewStyle().Foreground(ColorFail)
 	WarnStyle   = lipgloss.NewStyle().Foreground(ColorWarn)
 	InfoStyle   = lipgloss.NewStyle().Foreground(ColorInfo)
-	ToolStyle   = lipgloss.NewStyle().Foreground(ColorRoleTool)
+	ToolStyle     = lipgloss.NewStyle().Foreground(ColorRoleTool)
+	DisabledStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#5A6A82"))
 
 	BadgeUserStyle      = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleUser).Padding(0, 1).Bold(true)
 	BadgeAssistantStyle = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleAssistant).Padding(0, 1).Bold(true)

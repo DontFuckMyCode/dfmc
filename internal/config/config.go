@@ -24,8 +24,9 @@ const (
 
 type Config struct {
 	Version   int             `yaml:"version"`
-	Providers ProvidersConfig `yaml:"providers"`
-	Routing   RoutingConfig   `yaml:"routing"`
+	Providers ProvidersConfig           `yaml:"providers"`
+	Routing   RoutingConfig             `yaml:"routing"`
+	Pipelines map[string]PipelineConfig `yaml:"pipelines"`
 	Context   ContextConfig   `yaml:"context"`
 	Memory    MemoryConfig    `yaml:"memory"`
 	Security  SecurityConfig  `yaml:"security"`
@@ -292,6 +293,17 @@ type RoutingRule struct {
 	Condition string `yaml:"condition"`
 	Provider  string `yaml:"provider"`
 	Model     string `yaml:"model,omitempty"`
+}
+
+// PipelineConfig is a named ordered chain of provider+model steps.
+// When active, the engine walks the steps in order on failure.
+type PipelineConfig struct {
+	Steps []PipelineStep `yaml:"steps"`
+}
+
+type PipelineStep struct {
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
 }
 
 type ContextConfig struct {
@@ -810,7 +822,7 @@ func MergeProviderProfilesFromModelsDev(existing map[string]ModelConfig, catalog
 	if len(catalog) == 0 {
 		return out
 	}
-	for name, providerID := range modelsDevProviderAliases() {
+	for name, providerID := range ModelsDevProviderAliases() {
 		provider, ok := catalog[providerID]
 		if !ok {
 			continue
@@ -840,7 +852,7 @@ func MergeProviderProfilesFromModelsDev(existing map[string]ModelConfig, catalog
 	return out
 }
 
-func modelsDevProviderAliases() map[string]string {
+func ModelsDevProviderAliases() map[string]string {
 	return map[string]string{
 		"anthropic": "anthropic",
 		"openai":    "openai",

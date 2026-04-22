@@ -84,8 +84,8 @@ func TestAltNumberSwitchesTabs(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after alt+2, got %T", nextModel)
 	}
-	if next.activeTab != 1 {
-		t.Fatalf("expected active tab 1 after alt+2, got %d", next.activeTab)
+	if next.activeTab != 14 {
+		t.Fatalf("expected active tab 14 (Providers) after alt+2, got %d", next.activeTab)
 	}
 
 	finalModel, _ := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("6"), Alt: true})

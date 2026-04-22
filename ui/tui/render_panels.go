@@ -425,7 +425,7 @@ func (m Model) renderHelpOverlay(width int) string {
 	lines = append(lines,
 		"",
 		boldStyle.Render("Global"),
-		"  ctrl+p palette · alt+1..0/alt+t/alt+y/alt+w/alt+o or f1..f12 tabs · ctrl+h help · ctrl+s stats",
+		"  ctrl+p palette · f1=chat f2=providers f3=files f4=patch f5=workflow f6=tools f7=activity f8=memory f9=codemap f10=conversations f11=prompts f12=security · alt+i=status alt+y=plans alt+w=context alt+t=prompts alt+o=providers · ctrl+h help · ctrl+s stats",
 		"  ctrl+y plans · ctrl+g activity · chat stats: alt+a overview · alt+s todos · alt+d tasks · alt+f agents",
 		"  ctrl+c/ctrl+q quit · ctrl+u clear chat input · esc cancels streaming turn (or dismisses parked banner)",
 		"",
@@ -512,7 +512,7 @@ func helpOverlayTabHints(tab string) []string {
 			"j/k scroll · r refresh · g/G top/bottom",
 		}
 	default:
-		return []string{"alt+1..0/alt+t/alt+y/alt+w/alt+o tabs · ctrl+p palette · ctrl+q quit"}
+		return []string{"f1=chat f2=providers f3=files f4=patch f5=workflow f6=tools f7=activity f8=memory f9=codemap f10=conversations f11=prompts f12=security · alt+i=status alt+y=plans alt+w=context · ctrl+p palette · ctrl+q quit"}
 	}
 }
 // renderWorkflowView shows the Drive TODO tree panel. Two-column layout:

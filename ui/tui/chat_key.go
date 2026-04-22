@@ -91,7 +91,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.notice = fmt.Sprintf("PASTE x%d total=%d bytes", len(m.chat.pasteBlocks), len(last.content))
 			}
 			if !hasNewline {
-				m.chat.pasteWindowEnd = now.Add(50 * time.Millisecond)
+				m.chat.pasteWindowEnd = now.Add(200 * time.Millisecond)
 			}
 		} else if inPasteWindow && len(m.chat.pasteBlocks) > 0 {
 			// Non-paste chunk inside an active paste window — accumulate
@@ -104,12 +104,12 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.chat.cursor = len([]rune(m.chat.input))
 			m.chat.cursorManual = true
 			m.chat.cursorInput = m.chat.input
-			m.chat.pasteWindowEnd = now.Add(50 * time.Millisecond)
+			m.chat.pasteWindowEnd = now.Add(200 * time.Millisecond)
 		} else {
 			// Regular typing — keep window alive so a rapid Enter can be
 			// detected as part of a paste (terminal paste is <1ms, human
 			// typing is >100ms).
-			m.chat.pasteWindowEnd = now.Add(50 * time.Millisecond)
+			m.chat.pasteWindowEnd = now.Add(200 * time.Millisecond)
 			m.insertInputText(inserted)
 		}
 		// Auto-load files when @ is typed (if not already loaded)
@@ -451,7 +451,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.chat.cursor = len([]rune(m.chat.input))
 			m.chat.cursorManual = true
 			m.chat.cursorInput = m.chat.input
-			m.chat.pasteWindowEnd = now.Add(50 * time.Millisecond)
+			m.chat.pasteWindowEnd = now.Add(200 * time.Millisecond)
 			return m, nil
 		}
 		suggestions := m.buildChatSuggestionState()
@@ -477,7 +477,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.chat.cursor = len([]rune(m.chat.input))
 			m.chat.cursorManual = true
 			m.chat.cursorInput = m.chat.input
-			m.chat.pasteWindowEnd = now.Add(50 * time.Millisecond)
+			m.chat.pasteWindowEnd = now.Add(200 * time.Millisecond)
 			return m, nil
 		}
 		// If there are paste blocks, reconstruct full text and submit as one.

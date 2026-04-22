@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -100,6 +101,119 @@ func (e *Engine) SetProviderModel(provider, model string) {
 	defer e.mu.Unlock()
 	e.providerOverride = provider
 	e.modelOverride = model
+}
+
+func (e *Engine) SetPrimaryProvider(name string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.Config != nil {
+		e.Config.Providers.Primary = name
+	}
+	if e.Providers != nil {
+		e.Providers.SetPrimary(name)
+	}
+}
+
+func (e *Engine) SetFallbackProviders(names []string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.Config != nil {
+		e.Config.Providers.Fallback = append([]string(nil), names...)
+	}
+	if e.Providers != nil {
+		e.Providers.SetFallback(names)
+	}
+}
+
+func (e *Engine) FallbackProviders() []string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.Providers != nil {
+		return e.Providers.Fallback()
+	}
+	if e.Config != nil {
+		return append([]string(nil), e.Config.Providers.Fallback...)
+	}
+	return nil
+}
+
+// ActivatePipeline sets the engine's provider routing to follow the named
+// pipeline. Step 1 becomes primary+model override; remaining steps become
+// the fallback chain. Each step's model is written into the provider profile
+// so the router's per-provider model retry honours the pipeline's intent.
+func (e *Engine) ActivatePipeline(name string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.Config == nil || e.Config.Pipelines == nil {
+		return fmt.Errorf("no pipelines configured")
+	}
+	pipe, ok := e.Config.Pipelines[name]
+	if !ok {
+		return fmt.Errorf("pipeline %q not found", name)
+	}
+	if len(pipe.Steps) == 0 {
+		return fmt.Errorf("pipeline %q has no steps", name)
+	}
+
+	// Step 1: primary + model override
+	first := pipe.Steps[0]
+	e.providerOverride = first.Provider
+	e.modelOverride = first.Model
+	if e.Config != nil {
+		e.Config.Providers.Primary = first.Provider
+		if e.Config.Providers.Profiles == nil {
+			e.Config.Providers.Profiles = map[string]config.ModelConfig{}
+		}
+		prof := e.Config.Providers.Profiles[first.Provider]
+		prof.Model = first.Model
+		e.Config.Providers.Profiles[first.Provider] = prof
+	}
+	if e.Providers != nil {
+		e.Providers.SetPrimary(first.Provider)
+	}
+
+	// Steps 2+: fallback chain
+	fallbackProviders := make([]string, 0, len(pipe.Steps)-1)
+	for i := 1; i < len(pipe.Steps); i++ {
+		step := pipe.Steps[i]
+		fallbackProviders = append(fallbackProviders, step.Provider)
+		if e.Config != nil {
+			prof := e.Config.Providers.Profiles[step.Provider]
+			prof.Model = step.Model
+			e.Config.Providers.Profiles[step.Provider] = prof
+		}
+	}
+	if e.Config != nil {
+		e.Config.Providers.Fallback = fallbackProviders
+	}
+	if e.Providers != nil {
+		e.Providers.SetFallback(fallbackProviders)
+	}
+	return nil
+}
+
+func (e *Engine) PipelineNames() []string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.Config == nil || e.Config.Pipelines == nil {
+		return nil
+	}
+	names := make([]string, 0, len(e.Config.Pipelines))
+	for n := range e.Config.Pipelines {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (e *Engine) Pipeline(name string) (config.PipelineConfig, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.Config == nil || e.Config.Pipelines == nil {
+		return config.PipelineConfig{}, false
+	}
+	p, ok := e.Config.Pipelines[name]
+	return p, ok
 }
 
 func (e *Engine) SetVerbose(v bool) {

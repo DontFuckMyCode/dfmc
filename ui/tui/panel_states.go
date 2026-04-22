@@ -21,6 +21,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/planning"
@@ -31,16 +32,51 @@ import (
 )
 
 // providersPanelState — diagnostic view over the provider router. Rows
-// are cached (refresh on 'r' or first tab activation) because Hints() is
-// cheap but there's no point redoing the walk on every keystroke.
+// are cached (refresh on first tab activation or menu action) because Hints()
+// is cheap but there's no point redoing the walk on every keystroke.
 type providersPanelState struct {
 	rows          []providerRow
 	scroll        int
 	err           string
-	selectedIndex int           // cursor position in the providers list
-	editMode      string        // "" | "model" | "fallback"
-	modelEditIdx  int           // index into the selected profile's Models list when editMode == "model"
-	fallbackIdx   int           // index into the selected profile's FallbackModels when editMode == "fallback"
+	selectedIndex int    // cursor position in the providers list
+	editMode      string // "" | "model" | "fallback"
+	modelEditIdx  int    // index into the selected profile's Models list when editMode == "model"
+	fallbackIdx   int    // index into the selected profile's FallbackModels when editMode == "fallback"
+	viewMode      string // "list" | "detail" | "pipelines"
+	// detail state
+	detailProvider string // which provider is being viewed in detail mode
+	pipelineScroll int
+	pipelineNames  []string
+	activePipeline string
+	// pipeline editor state
+	pipelineEditMode   bool
+	pipelineDraftName  string
+	pipelineDraftSteps []config.PipelineStep
+	pipelineEditStep   int // which step is selected (-1 = name field)
+	pipelineEditField  int // 0=provider, 1=model (within selected step)
+	pipelineDraftBuf   string
+	// provider detail model picker state
+	modelPickerActive bool
+	modelPickerItems  []string
+	modelPickerIndex  int
+	modelPickerManual bool
+	modelPickerDraft  string
+	modelListScroll   int // scroll offset for long model lists in detail view
+	// provider CRUD state
+	confirmDelete    string // provider name awaiting delete confirmation
+	newProviderDraft string // name buffer when adding a new provider
+	// profile field editor state
+	profileEditMode  bool
+	profileEditField int    // 0=protocol, 1=base_url, 2=max_context, 3=max_tokens
+	profileEditDraft string
+	// sync state
+	syncing bool
+	// action menu state — replaces single-key shortcuts with Enter-activated menus
+	menuActive   bool
+	menuLabels   []string
+	menuActions  []string
+	menuDisabled []bool
+	menuIndex    int
 }
 
 // diagnosticPanelsState groups the cold, mostly read-only diagnostic tabs.
@@ -447,13 +483,6 @@ type agentLoopState struct {
 	lastOutput   string
 	contextScope string
 	toolTimeline []toolChip
-}
-
-// taskPanelState — UI state for the task tree panel (stats panel TASKS tab).
-// Tracks scroll offset and which task ID is expanded to show its detail.
-type taskPanelState struct {
-	scroll       int
-	expandedTask string
 }
 
 // workflowPanelState — Drive TODO tree panel state for the Workflow tab.

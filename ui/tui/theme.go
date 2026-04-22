@@ -63,6 +63,7 @@ var (
 	warnStyle               = theme.WarnStyle
 	infoStyle               = theme.InfoStyle
 	toolStyle               = theme.ToolStyle
+	disabledStyle           = theme.DisabledStyle
 	inputBoxStyle           = theme.InputBoxStyle
 	mentionPickerStyle      = theme.MentionPickerStyle
 	mentionSelectedRowStyle = theme.MentionSelectedRowStyle

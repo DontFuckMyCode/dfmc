@@ -277,6 +277,10 @@ func (m *Model) reloadEngineConfig() error {
 }
 
 func (m Model) persistProviderModelProjectConfig(providerName, model string) (string, error) {
+	return m.persistProviderConfigProjectConfig(providerName, model, providerName, nil)
+}
+
+func (m Model) persistProviderConfigProjectConfig(providerName, model, primary string, fallback []string) (string, error) {
 	providerName = strings.TrimSpace(providerName)
 	model = strings.TrimSpace(model)
 	if providerName == "" {
@@ -308,7 +312,12 @@ func (m Model) persistProviderModelProjectConfig(providerName, model string) (st
 	}
 
 	providersNode := ensureStringAnyMap(doc, "providers")
-	providersNode["primary"] = providerName
+	if primary != "" {
+		providersNode["primary"] = primary
+	}
+	if fallback != nil {
+		providersNode["fallback"] = fallback
+	}
 	profilesNode := ensureStringAnyMap(providersNode, "profiles")
 	profileNode := ensureStringAnyMap(profilesNode, providerName)
 	profileNode["model"] = model
@@ -374,6 +383,110 @@ func toStringAnyMap(raw any) (map[string]any, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func (m Model) persistPipelinesProjectConfig(name string, steps []config.PipelineStep) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("pipeline name is empty")
+	}
+	path, err := m.projectConfigPath()
+	if err != nil {
+		return "", err
+	}
+
+	doc := map[string]any{}
+	if data, readErr := os.ReadFile(path); readErr == nil {
+		if len(strings.TrimSpace(string(data))) > 0 {
+			if unmarshalErr := yaml.Unmarshal(data, &doc); unmarshalErr != nil {
+				return "", fmt.Errorf("parse project config: %w", unmarshalErr)
+			}
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return "", fmt.Errorf("read project config: %w", readErr)
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	if _, ok := doc["version"]; !ok {
+		doc["version"] = 1
+	}
+
+	pipelinesNode := ensureStringAnyMap(doc, "pipelines")
+	stepsNode := []map[string]any{}
+	for _, step := range steps {
+		stepsNode = append(stepsNode, map[string]any{
+			"provider": strings.TrimSpace(step.Provider),
+			"model":    strings.TrimSpace(step.Model),
+		})
+	}
+	pipelinesNode[name] = map[string]any{"steps": stepsNode}
+
+	out, marshalErr := yaml.Marshal(doc)
+	if marshalErr != nil {
+		return "", fmt.Errorf("marshal project config: %w", marshalErr)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", fmt.Errorf("create project config dir: %w", err)
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return "", fmt.Errorf("write project config: %w", err)
+	}
+
+	if err := m.reloadEngineConfig(); err != nil {
+		return path, fmt.Errorf("reload engine: %w", err)
+	}
+	return path, nil
+}
+
+func (m Model) saveProviderModels(providerName string, models []string) error {
+	providerName = strings.TrimSpace(providerName)
+	if providerName == "" {
+		return fmt.Errorf("provider is empty")
+	}
+	path, err := m.projectConfigPath()
+	if err != nil {
+		return err
+	}
+
+	doc := map[string]any{}
+	if data, readErr := os.ReadFile(path); readErr == nil {
+		if len(strings.TrimSpace(string(data))) > 0 {
+			if unmarshalErr := yaml.Unmarshal(data, &doc); unmarshalErr != nil {
+				return fmt.Errorf("parse project config: %w", unmarshalErr)
+			}
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return fmt.Errorf("read project config: %w", readErr)
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	if _, ok := doc["version"]; !ok {
+		doc["version"] = 1
+	}
+
+	profilesNode := ensureStringAnyMap(ensureStringAnyMap(doc, "providers"), "profiles")
+	profileNode := ensureStringAnyMap(profilesNode, providerName)
+	if len(models) > 0 {
+		profileNode["models"] = models
+		profileNode["model"] = models[0]
+	} else {
+		delete(profileNode, "models")
+		delete(profileNode, "model")
+	}
+
+	out, marshalErr := yaml.Marshal(doc)
+	if marshalErr != nil {
+		return fmt.Errorf("marshal project config: %w", marshalErr)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create project config dir: %w", err)
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return fmt.Errorf("write project config: %w", err)
+	}
+	return m.reloadEngineConfig()
 }
 
 func (m Model) providerProfile(name string) engine.ProviderProfileStatus {

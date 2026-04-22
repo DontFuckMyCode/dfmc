@@ -270,6 +270,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.security.scroll = 0
 		return m, nil
 
+	case syncModelsDevMsg:
+		m.providers.syncing = false
+		if msg.err != nil {
+			m.notice = "sync failed: " + msg.err.Error()
+			return m, nil
+		}
+		m = m.refreshProvidersRows()
+		m.status = m.eng.Status()
+		m.notice = fmt.Sprintf("synced %d changes → %s", len(msg.changes), msg.path)
+		return m, nil
+
 	case patchApplyMsg:
 		if msg.err != nil {
 			m.notice = "patch: " + msg.err.Error()
@@ -588,9 +599,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "alt+1":
 			m.activeTab = 0
 			return m, nil
-		case "alt+2":
-			m.activeTab = 1
-			return m, nil
 		case "alt+3":
 			m.activeTab = 2
 			return m, nil
@@ -607,8 +615,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "f1":
 			m.activeTab = 0
 			return m, nil
-		case "f2":
-			m.activeTab = 1
+		case "f2", "alt+2":
+			m = m.activateProvidersPanel("", true)
+			return m, nil
+		case "alt+i":
+			m = m.activateDiagnosticTab("Status")
 			return m, nil
 		case "f3":
 			m.activeTab = 2

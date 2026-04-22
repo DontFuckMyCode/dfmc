@@ -114,6 +114,43 @@ func (r *Router) Register(p Provider) {
 	r.providers[normalizeProviderName(p.Name())] = p
 }
 
+func (r *Router) Primary() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.primary
+}
+
+func (r *Router) SetPrimary(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.primary = normalizeProviderName(name)
+}
+
+func (r *Router) Fallback() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]string(nil), r.fallback...)
+}
+
+func (r *Router) SetFallback(names []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(names))
+	seen := map[string]struct{}{}
+	for _, n := range names {
+		n = normalizeProviderName(n)
+		if n == "" {
+			continue
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	r.fallback = out
+}
+
 func (r *Router) SetThrottleObserver(fn func(ThrottleNotice)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

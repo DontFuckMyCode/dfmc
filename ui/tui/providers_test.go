@@ -202,14 +202,21 @@ func TestProvidersScrollBindings(t *testing.T) {
 	}
 }
 
-func TestProvidersRefreshKeyResetsError(t *testing.T) {
+func TestProvidersRefreshMenuResetsError(t *testing.T) {
 	m := newProvidersTestModel()
 	m.providers.err = "stale"
-	m2, _ := m.handleProvidersKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	// open menu (enter), navigate to Refresh (index 4 with no rows), select (enter)
+	m2, _ := m.handleProvidersKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("enter")})
+	m = m2.(Model)
+	if !m.providers.menuActive {
+		t.Fatalf("enter should open menu")
+	}
+	m.providers.menuIndex = 3 // Refresh is last item when no rows
+	m2, _ = m.handleProvidersKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("enter")})
 	m = m2.(Model)
 	// nil engine keeps an error, but the specific message should be the
 	// "engine not ready" one, not "stale".
 	if m.providers.err == "stale" {
-		t.Fatalf("r should re-derive error, not preserve previous text")
+		t.Fatalf("refresh should re-derive error, not preserve previous text")
 	}
 }
