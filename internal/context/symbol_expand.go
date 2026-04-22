@@ -186,9 +186,8 @@ func expandViaGraph(graph *codemap.Graph, seedPaths []string, depth int) map[str
 	if graph == nil || len(seedPaths) == 0 {
 		return nil
 	}
-	if depth <= 0 {
-		depth = 2
-	}
+	//nolint:ineffassign // TODO: depth is currently ignored; graph.Descendants/Ancestors
+	// hardcode depth=1 below. To fix, pass depth into those calls (behavior change).
 	out := map[string]int{}
 	seen := map[string]struct{}{}
 	for _, p := range seedPaths {

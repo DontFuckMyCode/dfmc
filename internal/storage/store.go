@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.etcd.io/bbolt"
+	berrors "go.etcd.io/bbolt/errors"
 
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -72,7 +73,7 @@ func Open(dataDir string) (*Store, error) {
 		FreelistType: bbolt.FreelistMapType,
 	})
 	if err != nil {
-		if errors.Is(err, bbolt.ErrTimeout) {
+		if errors.Is(err, berrors.ErrTimeout) {
 			return nil, &OpenError{
 				Path:  dbPath,
 				Cause: fmt.Errorf("storage database is locked: %w", err),

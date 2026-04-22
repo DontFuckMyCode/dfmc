@@ -159,13 +159,13 @@ func TestRegisterProvider_EmptyNameNormalization(t *testing.T) {
 		t.Errorf("offline.Name() = %q, want offline", p.Name())
 	}
 
-	p, ok = r.Get("Offline")
+	_, ok = r.Get("Offline")
 	if !ok {
 		t.Error("offline lookup by MixedCase failed")
 	}
 
 	// Whitespace-padded name should also work.
-	p, ok = r.Get("  offline  ")
+	_, ok = r.Get("  offline  ")
 	if !ok {
 		t.Error("offline lookup by whitespace-padded name failed")
 	}

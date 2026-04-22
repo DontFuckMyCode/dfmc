@@ -69,9 +69,6 @@ func TestApplyUnifiedDiffWeb_RootEscape(t *testing.T) {
 		t.Fatal("expected error for root escape path, got nil")
 	}
 	// Error should indicate invalid project root
-	if _, ok := err.(interface{ Unwrap() error }); !ok {
-		// just checking error is returned
-	}
 }
 
 // TestGitChangedFilesWeb_RootEscape — M3

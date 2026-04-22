@@ -44,7 +44,7 @@ func descendantPIDs(root uint32) []uint32 {
 	if err != nil {
 		return []uint32{root}
 	}
-	defer windows.CloseHandle(snapshot)
+	defer func() { _ = windows.CloseHandle(snapshot) }()
 
 	children := map[uint32][]uint32{}
 	var entry windows.ProcessEntry32
@@ -94,6 +94,6 @@ func terminateProcess(pid uint32) {
 	if err != nil {
 		return
 	}
-	defer windows.CloseHandle(handle)
+	defer func() { _ = windows.CloseHandle(handle) }()
 	_ = windows.TerminateProcess(handle, 1)
 }

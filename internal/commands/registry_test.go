@@ -45,6 +45,7 @@ func TestRegister_RejectsDuplicateName(t *testing.T) {
 
 func TestRegister_RejectsAliasCollisions(t *testing.T) {
 	r := NewRegistry()
+	//nolint:errcheck // MustRegister panics on error; we test alias collision below
 	r.MustRegister(Command{Name: "conversation", Aliases: []string{"conv"}, Summary: "first", Surfaces: SurfaceCLI, Category: CategoryMemory})
 	// Alias "conv" collides with existing alias — Register should error.
 	if err := r.Register(Command{Name: "chat", Aliases: []string{"conv"}, Summary: "second", Surfaces: SurfaceCLI, Category: CategoryQuery}); err == nil {

@@ -93,10 +93,10 @@ func TestListBackups_MixedValidAndInvalidFiles(t *testing.T) {
 		t.Fatalf("mkdir dir: %v", err)
 	}
 	// Create a non-.db file (should be skipped).
-	os.WriteFile(filepath.Join(dir, "skip.txt"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "skip.txt"), []byte("x"), 0o644)
 	// Create .db files (should be included).
-	os.WriteFile(filepath.Join(dir, "a.db"), []byte("x"), 0o644)
-	os.WriteFile(filepath.Join(dir, "b.db"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "a.db"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "b.db"), []byte("x"), 0o644)
 
 	got, err := ListBackups(dir)
 	if err != nil {
@@ -123,7 +123,7 @@ func TestTrimBackups_EmptyDir(t *testing.T) {
 func TestTrimBackups_KeepMoreThanExist(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 3; i++ {
-		os.WriteFile(filepath.Join(dir, fmt.Sprintf("b%d.db", i)), []byte("x"), 0o644)
+		_ = os.WriteFile(filepath.Join(dir, fmt.Sprintf("b%d.db", i)), []byte("x"), 0o644)
 	}
 	deleted, err := TrimBackups(dir, 10)
 	if err != nil {
@@ -280,9 +280,9 @@ func TestListBackups_SortsByNewest(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 3; i++ {
 		p := filepath.Join(dir, fmt.Sprintf("backup-%d.db", i))
-		os.WriteFile(p, []byte("x"), 0o644)
+		_ = os.WriteFile(p, []byte("x"), 0o644)
 		time.Sleep(10 * time.Millisecond)
-		os.Chtimes(p, time.Now().Add(time.Duration(i)*time.Hour), time.Now().Add(time.Duration(i)*time.Hour))
+		_ = os.Chtimes(p, time.Now().Add(time.Duration(i)*time.Hour), time.Now().Add(time.Duration(i)*time.Hour))
 	}
 	got, err := ListBackups(dir)
 	if err != nil {
@@ -368,7 +368,7 @@ func TestBackupTo_AtomicOnError(t *testing.T) {
 func TestTrimBackups_RemoveAll(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 3; i++ {
-		os.WriteFile(filepath.Join(dir, fmt.Sprintf("b%d.db", i)), []byte("x"), 0o644)
+		_ = os.WriteFile(filepath.Join(dir, fmt.Sprintf("b%d.db", i)), []byte("x"), 0o644)
 	}
 	deleted, err := TrimBackups(dir, 0)
 	if err != nil {

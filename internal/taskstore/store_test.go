@@ -74,7 +74,7 @@ func TestUpdateTask(t *testing.T) {
 	db := tempDB(t)
 	s := NewStore(db)
 
-	s.SaveTask(&supervisor.Task{ID: "tsk-upd-1", Title: "original", State: supervisor.TaskPending})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-upd-1", Title: "original", State: supervisor.TaskPending})
 
 	err := s.UpdateTask("tsk-upd-1", func(t *supervisor.Task) error {
 		t.State = supervisor.TaskDone
@@ -111,7 +111,7 @@ func TestDeleteTask(t *testing.T) {
 	db := tempDB(t)
 	s := NewStore(db)
 
-	s.SaveTask(&supervisor.Task{ID: "tsk-del-1", Title: "to delete"})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-del-1", Title: "to delete"})
 	if err := s.DeleteTask("tsk-del-1"); err != nil {
 		t.Fatalf("DeleteTask: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestListTasks(t *testing.T) {
 
 	now := time.Now()
 	for i := 0; i < 5; i++ {
-		s.SaveTask(&supervisor.Task{
+		_ = s.SaveTask(&supervisor.Task{
 			ID:        "tsk-list-" + string(rune('a'+i)),
 			Title:     "task",
 			State:     supervisor.TaskPending,
@@ -156,9 +156,9 @@ func TestListTasksFilters(t *testing.T) {
 	s := NewStore(db)
 
 	parent := "tsk-parent-x"
-	s.SaveTask(&supervisor.Task{ID: "tsk-c1", ParentID: parent, State: supervisor.TaskDone})
-	s.SaveTask(&supervisor.Task{ID: "tsk-c2", ParentID: parent, State: supervisor.TaskPending})
-	s.SaveTask(&supervisor.Task{ID: "tsk-c3", ParentID: "other-parent", State: supervisor.TaskDone})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-c1", ParentID: parent, State: supervisor.TaskDone})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-c2", ParentID: parent, State: supervisor.TaskPending})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-c3", ParentID: "other-parent", State: supervisor.TaskDone})
 
 	children, err := s.ListTasks(ListOptions{ParentID: parent})
 	if err != nil {
@@ -182,9 +182,9 @@ func TestListChildren(t *testing.T) {
 	s := NewStore(db)
 
 	parent := "tsk-parent-y"
-	s.SaveTask(&supervisor.Task{ID: "tsk-child-1", ParentID: parent})
-	s.SaveTask(&supervisor.Task{ID: "tsk-child-2", ParentID: parent})
-	s.SaveTask(&supervisor.Task{ID: "tsk-other"})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-child-1", ParentID: parent})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-child-2", ParentID: parent})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-other"})
 
 	children, err := s.ListChildren(parent)
 	if err != nil {
@@ -200,7 +200,7 @@ func TestListTasksLimitOffset(t *testing.T) {
 	s := NewStore(db)
 
 	for i := 0; i < 10; i++ {
-		s.SaveTask(&supervisor.Task{
+		_ = s.SaveTask(&supervisor.Task{
 			ID:        "tsk-limit-" + string(rune('0'+i)),
 			State:     supervisor.TaskPending,
 			StartedAt: time.Now(),
