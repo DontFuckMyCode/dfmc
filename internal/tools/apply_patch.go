@@ -287,6 +287,7 @@ func parseUnifiedDiff(patch string) ([]diffFile, error) {
 			hunk.Lines = append(hunk.Lines, diffLine{Kind: ' ', Text: ""})
 			oldConsumed++
 			newConsumed++
+		//nolint:staticcheck // false positive: return value is the case condition in tagless switch
 		case strings.HasPrefix(line, "\\ No newline at end of file"):
 			// Ignore — we preserve original trailing-newline behavior.
 		default:

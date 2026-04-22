@@ -29,23 +29,6 @@ type SchedulerPolicy struct {
 // Ordering: input order is preserved (we don't reorder by priority).
 // The planner controls execution sequence by emitting TODOs in the
 // intended order.
-func readyNext(todos []Todo) (*Todo, int) {
-	statusByID := make(map[string]TodoStatus, len(todos))
-	for _, t := range todos {
-		statusByID[t.ID] = t.Status
-	}
-	for i := range todos {
-		t := &todos[i]
-		if t.Status != TodoPending {
-			continue
-		}
-		if depsReady(t, statusByID) == depsAllDone {
-			return t, i
-		}
-	}
-	return nil, -1
-}
-
 // depsState is the tri-state outcome of dependency inspection. Used
 // both by readyNext (to skip not-ready TODOs) and by skipBlocked (to
 // mark TODOs Skipped when a dep is Blocked).

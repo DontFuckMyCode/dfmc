@@ -933,6 +933,7 @@ func containsStringFold(items []string, needle string) bool {
 func TestDriverRunPreparedRejectsNilContext(t *testing.T) {
 	runner := &fakeRunner{}
 	d := NewDriver(runner, nil, nil, Config{})
+	//nolint:staticcheck // intentional nil to verify rejection
 	run, err := d.RunPrepared(nil, &Run{ID: "r1", Task: "test"})
 	if err == nil {
 		t.Fatal("expected nil-context error")
@@ -947,6 +948,7 @@ func TestDriverRunPreparedRejectsNilContext(t *testing.T) {
 
 func TestDriverResumeRejectsNilContext(t *testing.T) {
 	d := NewDriver(&fakeRunner{}, nil, nil, Config{})
+	//nolint:staticcheck // intentional nil to verify rejection
 	run, err := d.Resume(nil, "run-1")
 	if err == nil {
 		t.Fatal("expected nil-context error")

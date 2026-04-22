@@ -188,7 +188,6 @@ func (t *ThinkTool) Execute(_ context.Context, req Request) (Result, error) {
 // is persisted to bbolt so todos survive process restarts. Without a store the
 // tool falls back to the original in-memory behaviour.
 type TodoWriteTool struct {
-	mu    struct{} // placeholder
 	state *todoState
 	store *taskstore.Store
 }
@@ -402,7 +401,7 @@ func (t *TodoWriteTool) Snapshot() []TodoItem {
 	}
 	out := make([]TodoItem, len(t.state.items))
 	for i, it := range t.state.items {
-		out[i] = TodoItem{Content: it.Content, Status: it.Status, ActiveForm: it.ActiveForm}
+		out[i] = TodoItem(it)
 	}
 	return out
 }

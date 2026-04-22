@@ -190,7 +190,7 @@ func TestShutdown_CleansApproverState(t *testing.T) {
 		t.Fatal("denialsPerEngine should hold this engine before Shutdown")
 	}
 
-	eng.Shutdown()
+	_ = eng.Shutdown()
 
 	approverMu.RLock()
 	_, leakedApprover := approverPerEngine[eng]

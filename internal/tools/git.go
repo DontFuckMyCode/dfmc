@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -640,7 +641,9 @@ func parseGitBlamePorcelain(raw string) []map[string]any {
 		if len(fields) >= 3 && len(fields[0]) >= 7 && isHexLine(fields[0]) {
 			currentHash = fields[0]
 			// fields[1] is orig line; we expose only final-line numbers.
-			fmt.Sscanf(fields[2], "%d", &currentFinal)
+			if n, err := strconv.Atoi(fields[2]); err == nil {
+				currentFinal = n
+			}
 			currentInfo = commitInfo{}
 			haveLineHeader = true
 			continue

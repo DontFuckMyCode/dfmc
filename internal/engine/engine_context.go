@@ -708,10 +708,6 @@ func contextCompressionRank(level string) int {
 		return 1
 	}
 }
-func (e *Engine) contextReserveBreakdown(question string) contextReserveBreakdown {
-	return e.contextReserveBreakdownWithRuntime(question, e.promptRuntime())
-}
-
 func (e *Engine) contextReserveBreakdownWithRuntime(question string, runtime ctxmgr.PromptRuntime) contextReserveBreakdown {
 	promptReserve := maxInt(basePromptReserveTokens, estimateTokens(question)*3)
 	responseReserve := defaultResponseReserveTokens

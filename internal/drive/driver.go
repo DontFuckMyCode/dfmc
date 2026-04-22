@@ -19,6 +19,7 @@ package drive
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -60,7 +61,7 @@ func NewDriver(runner Runner, store *Store, publisher Publisher, cfg Config) *Dr
 func NewRun(task string) (*Run, error) {
 	task = strings.TrimSpace(task)
 	if task == "" {
-		return nil, fmt.Errorf(emptyTaskError)
+		return nil, errors.New(emptyTaskError)
 	}
 	return &Run{
 		ID:        newRunID(),
@@ -107,7 +108,7 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (retRun *Run, retErr
 	retRun = run
 	run.Task = strings.TrimSpace(run.Task)
 	if run.Task == "" {
-		return nil, fmt.Errorf(emptyTaskError)
+		return nil, errors.New(emptyTaskError)
 	}
 	if strings.TrimSpace(run.ID) == "" {
 		run.ID = newRunID()

@@ -21,9 +21,8 @@ type Server struct {
 
 	writeMu sync.Mutex
 
-	info     ServerInfo
-	initOnce sync.Once
-	inited   bool
+	info   ServerInfo
+	inited bool
 	initMu   sync.Mutex
 }
 

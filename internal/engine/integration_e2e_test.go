@@ -183,6 +183,6 @@ func TestE2E_ShutdownIdempotent(t *testing.T) {
 	eng, _ := newE2EEngine(t)
 	// First Shutdown via t.Cleanup (registered in newE2EEngine).
 	// Manually call again — should not panic, should not error.
-	eng.Shutdown()
-	eng.Shutdown()
+	_ = eng.Shutdown()
+	_ = eng.Shutdown()
 }

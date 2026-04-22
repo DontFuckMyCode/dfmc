@@ -41,7 +41,7 @@ func TestStartBackgroundTaskStopsOnShutdown(t *testing.T) {
 		t.Fatal("background task did not start")
 	}
 
-	eng.Shutdown()
+	_ = eng.Shutdown()
 
 	select {
 	case <-stopped:
