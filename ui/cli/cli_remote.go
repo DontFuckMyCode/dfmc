@@ -147,7 +147,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				"auth":      eng.Config.Remote.Auth,
 			}
 			if jsonMode {
-				_ = printJSON(payload)
+				mustPrintJSON(payload)
 				return 0
 			}
 			fmt.Printf("Remote enabled: %t\n", eng.Config.Remote.Enabled)
@@ -176,10 +176,10 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			"providers": providersPayload,
 		}
 		if jsonMode {
-			_ = printJSON(out)
+			mustPrintJSON(out)
 			return 0
 		}
-		_ = printJSON(out)
+		mustPrintJSON(out)
 		return 0
 
 	case "probe":
@@ -358,13 +358,13 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			return 1
 		}
 		if jsonMode {
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		}
 		if out, ok := payload["output"]; ok {
 			fmt.Println(fmt.Sprint(out))
 		} else {
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 		}
 		return 0
 
@@ -399,13 +399,13 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			return 1
 		}
 		if jsonMode {
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		}
 		if out, ok := payload["answer"]; ok {
 			fmt.Println(fmt.Sprint(out))
 		} else {
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 		}
 		return 0
 
@@ -454,10 +454,10 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			return 1
 		}
 		if jsonMode {
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		}
-		_ = printJSON(payload)
+		mustPrintJSON(payload)
 		return 0
 
 	case "context":
@@ -518,7 +518,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote context budget error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		case "recommend", "recommendations":
 			q := strings.TrimSpace(*query)
@@ -550,7 +550,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote context recommend error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		case "brief":
 			v := url.Values{}
@@ -569,7 +569,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote context brief error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		default:
 			fmt.Fprintln(os.Stderr, "usage: dfmc remote context [budget --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[brief --max-words 240 --path ...] [--url ...] [--token ...]")
@@ -602,7 +602,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				return 1
 			}
 			if jsonMode {
-				_ = printJSON(payload)
+				mustPrintJSON(payload)
 				return 0
 			}
 			root := strings.TrimSpace(fmt.Sprint(payload["root"]))
@@ -630,14 +630,14 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				return 1
 			}
 			if jsonMode {
-				_ = printJSON(payload)
+				mustPrintJSON(payload)
 				return 0
 			}
 			if typ := strings.TrimSpace(fmt.Sprint(payload["type"])); typ == "file" {
 				fmt.Println(fmt.Sprint(payload["content"]))
 				return 0
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		default:
 			fmt.Fprintln(os.Stderr, "usage: dfmc remote files [list|get <path>] [--url ...] [--token ...]")
@@ -669,9 +669,9 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				return 1
 			}
 			if jsonMode {
-				_ = printJSON(payload)
+				mustPrintJSON(payload)
 			} else {
-				_ = printJSON(payload)
+				mustPrintJSON(payload)
 			}
 			return 0
 		case "list":
@@ -684,10 +684,10 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				return 1
 			}
 			if jsonMode {
-				_ = printJSON(payload)
+				mustPrintJSON(payload)
 				return 0
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		default:
 			fmt.Fprintln(os.Stderr, "usage: dfmc remote memory [working|list --tier episodic|semantic] [--url ...] [--token ...]")
@@ -729,7 +729,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote conversation list error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		case "search":
 			q := strings.TrimSpace(*query)
@@ -745,7 +745,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote conversation search error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		case "active":
 			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation"
@@ -754,7 +754,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote conversation active error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		case "new", "clear":
 			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/new"
@@ -763,7 +763,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote conversation new error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		case "save":
 			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/save"
@@ -772,7 +772,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote conversation save error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		case "load":
 			convID := strings.TrimSpace(*id)
@@ -789,7 +789,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote conversation load error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		case "branch":
 			switch branchAction {
@@ -800,7 +800,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 					fmt.Fprintf(os.Stderr, "remote conversation branch list error: %v\n", err)
 					return 1
 				}
-				_ = printJSON(payload)
+				mustPrintJSON(payload)
 				return 0
 			case "create":
 				branchName := strings.TrimSpace(*name)
@@ -817,7 +817,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 					fmt.Fprintf(os.Stderr, "remote conversation branch create error: %v\n", err)
 					return 1
 				}
-				_ = printJSON(payload)
+				mustPrintJSON(payload)
 				return 0
 			case "switch":
 				branchName := strings.TrimSpace(*name)
@@ -834,7 +834,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 					fmt.Fprintf(os.Stderr, "remote conversation branch switch error: %v\n", err)
 					return 1
 				}
-				_ = printJSON(payload)
+				mustPrintJSON(payload)
 				return 0
 			case "compare":
 				a := strings.TrimSpace(*branchA)
@@ -858,7 +858,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 					fmt.Fprintf(os.Stderr, "remote conversation branch compare error: %v\n", err)
 					return 1
 				}
-				_ = printJSON(payload)
+				mustPrintJSON(payload)
 				return 0
 			default:
 				fmt.Fprintln(os.Stderr, "usage: dfmc remote conversation branch [list|create|switch|compare]")
@@ -893,7 +893,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 		f := strings.ToLower(strings.TrimSpace(*format))
 		if jsonMode || f == "json" {
-			_ = printJSON(map[string]any{"nodes": nodes, "edges": edges})
+			mustPrintJSON(map[string]any{"nodes": nodes, "edges": edges})
 			return 0
 		}
 		switch f {
@@ -924,7 +924,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			fmt.Fprintf(os.Stderr, "remote tools error: %v\n", err)
 			return 1
 		}
-		_ = printJSON(payload)
+		mustPrintJSON(payload)
 		return 0
 
 	case "skills":
@@ -943,7 +943,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			fmt.Fprintf(os.Stderr, "remote skills error: %v\n", err)
 			return 1
 		}
-		_ = printJSON(payload)
+		mustPrintJSON(payload)
 		return 0
 
 	case "prompt":
@@ -991,7 +991,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote prompt list error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		case "render":
 			extraVars, err := parsePromptVars(varsRaw)
@@ -1023,7 +1023,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote prompt render error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		case "recommend", "recommendation", "tune":
 			v := url.Values{}
@@ -1051,7 +1051,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote prompt recommend error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		case "stats", "validate", "lint":
 			v := url.Values{}
@@ -1072,7 +1072,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote prompt stats error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			if *failOnWarning {
 				if n, ok := payload["warning_count"].(float64); ok && n > 0 {
 					return 1
@@ -1117,7 +1117,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote magicdoc show error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		case "update", "sync", "generate":
 			payload, _, err := remoteJSONRequest(
@@ -1137,7 +1137,7 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 				fmt.Fprintf(os.Stderr, "remote magicdoc update error: %v\n", err)
 				return 1
 			}
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		default:
 			fmt.Fprintln(os.Stderr, "usage: dfmc remote magicdoc [show|update] [--path ...] [--title ...]")
@@ -1300,7 +1300,7 @@ func remoteDriveStop(defaultURL, id string, args []string, jsonMode bool) int {
 		fmt.Fprintf(os.Stderr, "remote drive stop: %q is not active on the remote\n", id)
 		return 1
 	}
-	_ = printJSON(payload)
+	mustPrintJSON(payload)
 	_ = jsonMode
 	return 0
 }
@@ -1409,10 +1409,10 @@ func remoteDriveStart(defaultURL string, args []string, jsonMode bool) int {
 		return 1
 	}
 	if jsonMode {
-		_ = printJSON(payload)
+		mustPrintJSON(payload)
 	} else {
 		fmt.Println("Drive started — subscribe with: dfmc remote events --filter drive:")
-		_ = printJSON(payload)
+		mustPrintJSON(payload)
 	}
 	return 0
 }
@@ -1489,7 +1489,7 @@ func remoteDriveShow(defaultURL, id string, args []string, jsonMode bool) int {
 		fmt.Fprintf(os.Stderr, "remote drive show: run %q not found\n", id)
 		return 1
 	}
-	_ = printJSON(payload)
+	mustPrintJSON(payload)
 	_ = jsonMode
 	return 0
 }
@@ -1518,7 +1518,7 @@ func remoteDriveResume(defaultURL, id string, args []string, jsonMode bool) int 
 		fmt.Fprintf(os.Stderr, "remote drive resume: run %q not found\n", id)
 		return 1
 	}
-	_ = printJSON(payload)
+	mustPrintJSON(payload)
 	_ = jsonMode
 	return 0
 }
@@ -1539,7 +1539,7 @@ func remoteDriveDelete(defaultURL, id string, args []string, jsonMode bool) int 
 		fmt.Fprintf(os.Stderr, "remote drive delete: %v\n", err)
 		return 1
 	}
-	_ = printJSON(payload)
+	mustPrintJSON(payload)
 	_ = jsonMode
 	return 0
 }

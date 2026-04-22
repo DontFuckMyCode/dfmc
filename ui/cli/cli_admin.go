@@ -57,7 +57,7 @@ func runVersion(eng *engine.Engine, version string, args []string, jsonMode bool
 		"binary_size":      executableSize(),
 	}
 	if jsonMode {
-		_ = printJSON(payload)
+		mustPrintJSON(payload)
 		return 0
 	}
 	fmt.Printf("dfmc %s\n", version)
@@ -154,7 +154,7 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 	}
 
 	if jsonMode {
-		_ = printJSON(payload)
+		mustPrintJSON(payload)
 		return 0
 	}
 
@@ -1441,7 +1441,7 @@ func runConfig(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 		out := sanitizeConfigValue(cfgMap, "", !*raw)
 		if jsonMode {
-			_ = printJSON(out)
+			mustPrintJSON(out)
 			return 0
 		}
 		data, err := yaml.Marshal(out)

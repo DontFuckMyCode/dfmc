@@ -129,10 +129,10 @@ func runAnalyze(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 			if magicDoc {
 				out["magicdoc"] = magicDocResult
 			}
-			_ = printJSON(out)
+			mustPrintJSON(out)
 			return 0
 		}
-		_ = printJSON(report)
+		mustPrintJSON(report)
 		return 0
 	}
 	fmt.Printf("Project: %s\n", report.ProjectRoot)
@@ -273,7 +273,7 @@ func runTool(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 	if len(args) == 0 || args[0] == "list" {
 		tools := eng.ListTools()
 		if jsonMode {
-			_ = printJSON(map[string]any{"tools": tools})
+			mustPrintJSON(map[string]any{"tools": tools})
 			return 0
 		}
 		// Show one line per tool with a short summary pulled from its
@@ -320,7 +320,7 @@ func runTool(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 			return 1
 		}
 		if jsonMode {
-			_ = printJSON(spec)
+			mustPrintJSON(spec)
 			return 0
 		}
 		printToolSpec(spec)
@@ -358,7 +358,7 @@ func runTool(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 		return 1
 	}
 	if jsonMode {
-		_ = printJSON(res)
+		mustPrintJSON(res)
 		return 0
 	}
 	if strings.TrimSpace(res.Output) != "" {
@@ -377,7 +377,7 @@ func runMemory(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 	case "working":
 		w := eng.MemoryWorking()
 		if jsonMode {
-			_ = printJSON(w)
+			mustPrintJSON(w)
 			return 0
 		}
 		fmt.Printf("Last question: %s\n", w.LastQuestion)
@@ -399,7 +399,7 @@ func runMemory(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			return 1
 		}
 		if jsonMode {
-			_ = printJSON(items)
+			mustPrintJSON(items)
 			return 0
 		}
 		for _, e := range items {
@@ -424,7 +424,7 @@ func runMemory(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			return 1
 		}
 		if jsonMode {
-			_ = printJSON(items)
+			mustPrintJSON(items)
 			return 0
 		}
 		for _, e := range items {
@@ -459,7 +459,7 @@ func runMemory(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			return 1
 		}
 		if jsonMode {
-			_ = printJSON(map[string]any{"status": "ok"})
+			mustPrintJSON(map[string]any{"status": "ok"})
 		} else {
 			fmt.Println("memory entry added")
 		}
@@ -476,7 +476,7 @@ func runMemory(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			return 1
 		}
 		if jsonMode {
-			_ = printJSON(map[string]any{"status": "ok"})
+			mustPrintJSON(map[string]any{"status": "ok"})
 		} else {
 			fmt.Println("memory cleared")
 		}
@@ -514,7 +514,7 @@ func runScan(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 		return 0
 	}
 	if jsonMode {
-		_ = printJSON(report.Security)
+		mustPrintJSON(report.Security)
 		return 0
 	}
 	fmt.Printf("Scanned files: %d\n", report.Security.FilesScanned)
@@ -569,7 +569,7 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 			return 1
 		}
 		if jsonMode {
-			_ = printJSON(items)
+			mustPrintJSON(items)
 			return 0
 		}
 		for _, item := range items {
@@ -581,7 +581,7 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 		active := eng.ConversationActive()
 		if active == nil {
 			if jsonMode {
-				_ = printJSON(map[string]any{"active": nil})
+				mustPrintJSON(map[string]any{"active": nil})
 				return 0
 			}
 			fmt.Println("No active conversation.")
@@ -597,7 +597,7 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 			"messages":   len(active.Messages()),
 		}
 		if jsonMode {
-			_ = printJSON(payload)
+			mustPrintJSON(payload)
 			return 0
 		}
 		fmt.Printf("ID:       %s\n", active.ID)
@@ -630,7 +630,7 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 			return 1
 		}
 		if jsonMode {
-			_ = printJSON(map[string]any{"status": "ok"})
+			mustPrintJSON(map[string]any{"status": "ok"})
 		} else {
 			fmt.Println("conversation saved")
 		}
@@ -643,7 +643,7 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 			return 1
 		}
 		if jsonMode {
-			_ = printJSON(map[string]any{"status": "ok", "removed": n})
+			mustPrintJSON(map[string]any{"status": "ok", "removed": n})
 		} else {
 			fmt.Printf("undone messages: %d\n", n)
 		}
@@ -682,7 +682,7 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 			return 1
 		}
 		if jsonMode {
-			_ = printJSON(items)
+			mustPrintJSON(items)
 			return 0
 		}
 		for _, item := range items {
@@ -703,7 +703,7 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 		case "list":
 			items := eng.ConversationBranchList()
 			if jsonMode {
-				_ = printJSON(map[string]any{"branches": items})
+				mustPrintJSON(map[string]any{"branches": items})
 			} else {
 				for _, name := range items {
 					fmt.Printf("- %s\n", name)
@@ -721,7 +721,7 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 				return 1
 			}
 			if jsonMode {
-				_ = printJSON(map[string]any{"status": "ok", "branch": name})
+				mustPrintJSON(map[string]any{"status": "ok", "branch": name})
 			} else {
 				fmt.Printf("branch created: %s\n", name)
 			}
@@ -737,7 +737,7 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 				return 1
 			}
 			if jsonMode {
-				_ = printJSON(map[string]any{"status": "ok", "branch": name})
+				mustPrintJSON(map[string]any{"status": "ok", "branch": name})
 			} else {
 				fmt.Printf("branch switched: %s\n", name)
 			}
@@ -753,7 +753,7 @@ func runConversation(ctx context.Context, eng *engine.Engine, args []string, jso
 				return 1
 			}
 			if jsonMode {
-				_ = printJSON(comp)
+				mustPrintJSON(comp)
 			} else {
 				fmt.Printf("%s vs %s: shared=%d only_%s=%d only_%s=%d\n",
 					comp.BranchA, comp.BranchB, comp.SharedPrefixN, comp.BranchA, comp.OnlyA, comp.BranchB, comp.OnlyB)
@@ -927,7 +927,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 	case "list":
 		items := lib.List()
 		if jsonMode {
-			_ = printJSON(map[string]any{"prompts": items})
+			mustPrintJSON(map[string]any{"prompts": items})
 			return 0
 		}
 		for _, item := range items {
@@ -1164,7 +1164,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			AllowVars:         allowVar,
 		})
 		if jsonMode {
-			_ = printJSON(report)
+			mustPrintJSON(report)
 		} else {
 			fmt.Printf(
 				"prompt stats: templates=%d total_tokens=%d avg_tokens=%.1f max_tokens=%d warnings=%d threshold=%d\n",
@@ -1293,7 +1293,7 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		}
 		preview := eng.ContextBudgetPreviewWithRuntime(*query, runtimeHints)
 		if jsonMode {
-			_ = printJSON(preview)
+			mustPrintJSON(preview)
 			return 0
 		}
 		fmt.Printf("context budget: provider=%s model=%s task=%s mentions=%d scale[t=%.2f f=%.2f pf=%.2f] provider_max=%d available=%d reserve_total=%d reserve[prompt=%d history=%d response=%d tools=%d] total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",

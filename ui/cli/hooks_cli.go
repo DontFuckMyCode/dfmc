@@ -38,7 +38,7 @@ func runHooksCLI(eng *engine.Engine, args []string, jsonMode bool) int {
 			"total":     inventoryTotal(inv),
 			"per_event": inventoryToMap(inv),
 		}
-		_ = printJSON(payload)
+		mustPrintJSON(payload)
 		return 0
 	}
 

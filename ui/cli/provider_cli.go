@@ -110,7 +110,7 @@ func runModelCLI(eng *engine.Engine, args []string, jsonMode bool) int {
 func runProvidersList(eng *engine.Engine, jsonMode bool) int {
 	names := listProviderNames(eng)
 	if jsonMode {
-		_ = printJSON(map[string]any{"providers": names})
+		mustPrintJSON(map[string]any{"providers": names})
 		return 0
 	}
 	if len(names) == 0 {

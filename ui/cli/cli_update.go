@@ -101,7 +101,7 @@ func runUpdate(ctx context.Context, args []string, version string, jsonMode bool
 	}
 
 	if jsonMode {
-		_ = printJSON(report)
+		mustPrintJSON(report)
 		return 0
 	}
 	printUpdateReport(report)

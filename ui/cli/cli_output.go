@@ -51,8 +51,22 @@ Run "dfmc help <command>" for details on a specific command.`
 	return body + globalFlags
 }
 
+// printJSON encodes v as indented JSON to stdout. Intended for non-interactive
+// use (scripts, CI pipes). When encoding fails (e.g. stdout is a closed pipe),
+// prints a brief error to stderr and returns false so the caller can exit non-zero.
 func printJSON(v any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+// mustPrintJSON calls printJSON and reports whether encoding succeeded.
+// On failure it prints a one-line error to stderr so broken pipes surface
+// as non-zero exit codes rather than silent empty output.
+func mustPrintJSON(v any) bool {
+	if err := printJSON(v); err != nil {
+		fmt.Fprintf(os.Stderr, "json output error: %v\n", err)
+		return false
+	}
+	return true
 }

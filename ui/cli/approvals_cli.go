@@ -32,7 +32,7 @@ func runApprovalsCLI(eng *engine.Engine, args []string, jsonMode bool) int {
 			"gate":           gate,
 			"recent_denials": denialsPayload(denials),
 		}
-		_ = printJSON(payload)
+		mustPrintJSON(payload)
 		return 0
 	}
 

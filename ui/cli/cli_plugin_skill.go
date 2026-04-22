@@ -107,7 +107,7 @@ func runPlugin(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		for _, p := range items {
 			if strings.EqualFold(p.Name, name) {
 				if jsonMode {
-					_ = printJSON(p)
+					mustPrintJSON(p)
 				} else {
 					fmt.Printf("Name:      %s\n", p.Name)
 					fmt.Printf("Installed: %t\n", p.Installed)
@@ -407,7 +407,7 @@ func runSkill(ctx context.Context, eng *engine.Engine, args []string, jsonMode b
 	case "list":
 		items := discoverSkills(eng.Status().ProjectRoot)
 		if jsonMode {
-			_ = printJSON(map[string]any{"skills": items})
+			mustPrintJSON(map[string]any{"skills": items})
 			return 0
 		}
 		for _, s := range items {
@@ -429,7 +429,7 @@ func runSkill(ctx context.Context, eng *engine.Engine, args []string, jsonMode b
 		for _, s := range items {
 			if strings.EqualFold(s.Name, name) {
 				if jsonMode {
-					_ = printJSON(s)
+					mustPrintJSON(s)
 				} else {
 					fmt.Printf("Name:        %s\n", s.Name)
 					fmt.Printf("Source:      %s\n", s.Source)
