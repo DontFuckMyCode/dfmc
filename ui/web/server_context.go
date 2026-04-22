@@ -115,7 +115,9 @@ func (s *Server) handleContextBrief(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePrompts(w http.ResponseWriter, _ *http.Request) {
 	lib := promptlib.New()
-	_ = lib.LoadOverrides(s.engine.Status().ProjectRoot)
+	if err := lib.LoadOverrides(s.engine.Status().ProjectRoot); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(os.Stderr, "[DFMC] prompt library warning: %v\n", err)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"prompts": lib.List(),
 	})
@@ -123,7 +125,9 @@ func (s *Server) handlePrompts(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handlePromptStats(w http.ResponseWriter, r *http.Request) {
 	lib := promptlib.New()
-	_ = lib.LoadOverrides(s.engine.Status().ProjectRoot)
+	if err := lib.LoadOverrides(s.engine.Status().ProjectRoot); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(os.Stderr, "[DFMC] prompt library warning: %v\n", err)
+	}
 
 	maxTemplateTokens := 450
 	if raw := strings.TrimSpace(r.URL.Query().Get("max_template_tokens")); raw != "" {
@@ -222,7 +226,9 @@ func (s *Server) handlePromptRender(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lib := promptlib.New()
-	_ = lib.LoadOverrides(s.engine.Status().ProjectRoot)
+	if err := lib.LoadOverrides(s.engine.Status().ProjectRoot); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(os.Stderr, "[DFMC] prompt library warning: %v\n", err)
+	}
 	prompt := lib.Render(promptlib.RenderRequest{
 		Type:     req.Type,
 		Task:     resolvedTask,
