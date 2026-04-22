@@ -190,7 +190,7 @@ func (m Model) describeStats() string {
 // todo list counts, active subagent fan-out, drive progress, and the
 // latest available plan summary.
 func (m Model) describeWorkflow() string {
-	lines := []string{"â–¸ Workflow snapshot"}
+	lines := []string{"▸ Workflow snapshot"}
 
 	todos := m.workflowTodos()
 	total, pending, doing, done := summarizeWorkflowTodos(todos)
@@ -198,7 +198,7 @@ func (m Model) describeWorkflow() string {
 	case total == 0:
 		lines = append(lines, "  todos:      no shared todo list yet (this session may still be on a single-step ask)")
 	default:
-		lines = append(lines, fmt.Sprintf("  todos:      %d total Â· %d pending Â· %d doing Â· %d done", total, pending, doing, done))
+		lines = append(lines, fmt.Sprintf("  todos:      %d total · %d pending · %d doing · %d done", total, pending, doing, done))
 		for i, line := range formatWorkflowTodoLines(todos, 5) {
 			prefix := "             "
 			if i == 0 {
@@ -246,7 +246,7 @@ func (m Model) describeWorkflow() string {
 // describeTodos prints the current shared todo_write state directly into the
 // chat transcript so the user can inspect the agent's checklist in-place.
 func (m Model) describeTodos() string {
-	lines := []string{"â–¸ Shared todo list"}
+	lines := []string{"▸ Shared todo list"}
 	todos := m.workflowTodos()
 	total, pending, doing, done := summarizeWorkflowTodos(todos)
 	if total == 0 {
@@ -261,7 +261,7 @@ func (m Model) describeTodos() string {
 		lines = append(lines, fmt.Sprintf("  %2d. %s", i+1, line))
 	}
 	if len(todos) > 12 {
-		lines = append(lines, fmt.Sprintf("  â€¦ %d more item(s) not shown here", len(todos)-12))
+		lines = append(lines, fmt.Sprintf("  … %d more item(s) not shown here", len(todos)-12))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -269,7 +269,7 @@ func (m Model) describeTodos() string {
 // describeSubagents shows current fan-out plus the most recent subagent
 // events mirrored into the Activity feed.
 func (m Model) describeSubagents() string {
-	lines := []string{"â–¸ Subagent activity"}
+	lines := []string{"▸ Subagent activity"}
 	if m.telemetry.activeSubagentCount > 0 {
 		lines = append(lines, fmt.Sprintf("  active:     %d subagent(s) currently running", m.telemetry.activeSubagentCount))
 	} else {
