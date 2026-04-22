@@ -8,7 +8,6 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/planning"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
-	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -267,13 +266,6 @@ func (e *Engine) maybeAutoKickoffAutonomy(
 			},
 		},
 		[]nativeToolTrace{trace}
-}
-
-func toolRequest(projectRoot string, params map[string]any) tools.Request {
-	return tools.Request{
-		ProjectRoot: projectRoot,
-		Params:      params,
-	}
 }
 
 func truncateSingleLineLocal(s string, n int) string {

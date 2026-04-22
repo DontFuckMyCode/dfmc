@@ -252,13 +252,3 @@ func TestShouldAutoKickoffAutonomy_AggressiveThresholdRequiresThreeSubtasks(t *t
 		t.Error("aggressive mode at confidence 0.40 with 3 subtasks should auto-kickoff")
 	}
 }
-
-func TestToolRequest(t *testing.T) {
-	req := toolRequest("/tmp/project", map[string]any{"key": "val"})
-	if req.ProjectRoot != "/tmp/project" {
-		t.Errorf("ProjectRoot = %q, want /tmp/project", req.ProjectRoot)
-	}
-	if req.Params["key"] != "val" {
-		t.Errorf("Params[key] = %v, want val", req.Params["key"])
-	}
-}
