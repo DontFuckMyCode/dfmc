@@ -108,10 +108,10 @@ func (e *Engine) seedAutonomyTodos(ctx context.Context, plan planning.Plan) bool
 		}
 		todos = append(todos, item)
 	}
-	_, err := e.Tools.Execute(ctx, "todo_write", toolRequest(e.ProjectRoot, map[string]any{
+	_, err := e.CallTool(ctx, "todo_write", map[string]any{
 		"action": "set",
 		"todos":  todos,
-	}))
+	})
 	return err == nil
 }
 
@@ -245,7 +245,7 @@ func (e *Engine) maybeAutoKickoffAutonomy(
 		"subtask_count": len(preflight.Plan.Subtasks),
 	})
 	e.publishNativeToolCall(trace)
-	res, err := e.Tools.Execute(ctx, "orchestrate", toolRequest(e.ProjectRoot, params))
+	res, err := e.CallTool(ctx, "orchestrate", params)
 	if err != nil {
 		trace.Err = err.Error()
 	} else {
