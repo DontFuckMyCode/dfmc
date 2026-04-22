@@ -17,6 +17,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -39,6 +40,10 @@ type globalOptions struct {
 func Run(ctx context.Context, eng *engine.Engine, args []string, version string) int {
 	opts, rest, err := parseGlobalFlags(args)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printHelp()
+			return 0
+		}
 		fmt.Fprintf(os.Stderr, "flag error: %v\n", err)
 		return 2
 	}
@@ -170,6 +175,9 @@ func parseGlobalFlags(args []string) (globalOptions, []string, error) {
 	fs.StringVar(&opts.Project, "project", "", "project root path")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return opts, nil, nil
+		}
 		return opts, nil, err
 	}
 	return opts, fs.Args(), nil
