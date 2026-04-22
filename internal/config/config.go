@@ -652,15 +652,23 @@ func (c *Config) applyEnv(dotEnv map[string]string) {
 	if c.Providers.Profiles == nil {
 		c.Providers.Profiles = map[string]ModelConfig{}
 	}
-	for envName, providerName := range providerAPIEnvVars {
+	// First pass: process environment variables (they always win).
+	for _, envName := range slices.Sorted(maps.Keys(providerAPIEnvVars)) {
+		providerName := providerAPIEnvVars[envName]
 		val, ok := os.LookupEnv(envName)
 		if ok && strings.TrimSpace(val) != "" {
 			prof := c.Providers.Profiles[providerName]
 			prof.APIKey = strings.TrimSpace(val)
 			c.Providers.Profiles[providerName] = prof
+		}
+	}
+	// Second pass: dotenv fills gaps for providers not set by process env.
+	for _, envName := range slices.Sorted(maps.Keys(providerAPIEnvVars)) {
+		providerName := providerAPIEnvVars[envName]
+		if p := c.Providers.Profiles[providerName]; strings.TrimSpace(p.APIKey) != "" {
 			continue
 		}
-		val = strings.TrimSpace(dotEnv[envName])
+		val := strings.TrimSpace(dotEnv[envName])
 		if val == "" {
 			continue
 		}

@@ -435,6 +435,80 @@ func TestParseDotEnvValue_PlaceholderReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestLoadWithOptions_DotEnvEmptyValuesIgnored(t *testing.T) {
+	tmp := t.TempDir()
+	projectRoot := filepath.Join(tmp, "project")
+	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	// Empty value and whitespace-only value must be ignored
+	if err := os.WriteFile(filepath.Join(projectRoot, ".env"), []byte("ZAI_API_KEY=\nOPENAI_API_KEY=   \n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		ProjectPath: projectPath,
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got := cfg.Providers.Profiles["zai"].APIKey; got != "" {
+		t.Fatalf("empty .env value must be ignored, got zai key %q", got)
+	}
+	if got := cfg.Providers.Profiles["openai"].APIKey; got != "" {
+		t.Fatalf("whitespace-only .env value must be ignored, got openai key %q", got)
+	}
+}
+
+func TestLoadWithOptions_KimiMoonshotDeterministicPriority(t *testing.T) {
+	tmp := t.TempDir()
+	projectRoot := filepath.Join(tmp, "project")
+	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	// Both keys map to "kimi" profile. With deterministic iteration,
+	// MOONSHOT_API_KEY (sorted after KIMI_API_KEY) should win in dotenv
+	// because it is processed later and overwrites.
+	if err := os.WriteFile(filepath.Join(projectRoot, ".env"), []byte("KIMI_API_KEY=from-kimi\nMOONSHOT_API_KEY=from-moonshot\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		ProjectPath: projectPath,
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	got := cfg.Providers.Profiles["kimi"].APIKey
+	want := "from-kimi"
+	if got != want {
+		t.Fatalf("deterministic dotenv priority: want %q, got %q", want, got)
+	}
+
+	// Process env must always win regardless of order
+	t.Setenv("KIMI_API_KEY", "process-kimi")
+	cfg2, err := LoadWithOptions(LoadOptions{
+		ProjectPath: projectPath,
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got2 := cfg2.Providers.Profiles["kimi"].APIKey; got2 != "process-kimi" {
+		t.Fatalf("process env must win over dotenv, got %q", got2)
+	}
+}
+
 func TestParseDotEnvValue_RealValuesPassThrough(t *testing.T) {
 	cases := []struct {
 		input string
