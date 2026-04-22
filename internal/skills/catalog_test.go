@@ -142,6 +142,15 @@ func TestStripMarkers_CollapsesBlankLines(t *testing.T) {
 	}
 }
 
+// StripMarkers handles query with no markers.
+func TestStripMarkers_NoMarkers(t *testing.T) {
+	query := "plain user query"
+	got := StripMarkers(query)
+	if got != query {
+		t.Fatalf("expected unchanged, got %q", got)
+	}
+}
+
 // Selection.Primary returns false when no skills selected.
 func TestSelection_Primary_Empty(t *testing.T) {
 	s := Selection{}
@@ -214,5 +223,125 @@ func TestSkillForTask_MapsCorrectly(t *testing.T) {
 		if !tc.ok && got != "" {
 			t.Errorf("skillForTask(%q): got %q want empty", tc.task, got)
 		}
+	}
+}
+
+// ResolveForQuery with empty query and no detected task returns empty selection.
+func TestResolveForQuery_EmptyQueryEmptyTask(t *testing.T) {
+	sel := ResolveForQuery("", "", "")
+	if len(sel.Skills) != 0 {
+		t.Fatalf("expected empty selection, got %d skills", len(sel.Skills))
+	}
+}
+
+// ResolveForQuery with empty query falls back to task mapping.
+func TestResolveForQuery_EmptyQueryWithTaskFallback(t *testing.T) {
+	sel := ResolveForQuery("", "", "review")
+	if len(sel.Skills) != 1 {
+		t.Fatalf("expected 1 skill (task fallback), got %d", len(sel.Skills))
+	}
+	if sel.Skills[0].Name != "review" {
+		t.Fatalf("expected review skill, got %q", sel.Skills[0].Name)
+	}
+}
+
+// ResolveForQuery explicit skill name resolves to that skill.
+func TestResolveForQuery_ExplicitSkillName(t *testing.T) {
+	sel := ResolveForQuery("", "use [[skill:debug]] to investigate", "")
+	if !sel.Explicit {
+		t.Fatal("expected Explicit=true")
+	}
+	if len(sel.Skills) == 0 {
+		t.Fatal("expected at least one skill")
+	}
+	if sel.Skills[0].Name != "debug" {
+		t.Fatalf("expected debug skill, got %q", sel.Skills[0].Name)
+	}
+}
+
+// ResolveForQuery deduplicates duplicate markers.
+func TestResolveForQuery_Deduplicates(t *testing.T) {
+	sel := ResolveForQuery("", "[[skill:debug]] [[skill:debug]]", "")
+	if len(sel.Skills) != 1 {
+		t.Fatalf("expected 1 skill (deduplicated), got %d", len(sel.Skills))
+	}
+}
+
+// RenderSystemText produces non-empty text.
+func TestRenderSystemText_NonEmptySkill(t *testing.T) {
+	skill := Skill{Name: "debug", Description: "debugging skill", Task: "debug"}
+	text := RenderSystemText(skill)
+	if text == "" {
+		t.Fatal("expected non-empty output")
+	}
+	if !strings.Contains(text, "debug") {
+		t.Fatalf("expected skill name in output, got %q", text)
+	}
+}
+
+// RenderSystemText omits empty optional fields.
+func TestRenderSystemText_OmitsEmptyFields(t *testing.T) {
+	skill := Skill{Name: "test"}
+	text := RenderSystemText(skill)
+	// Should not contain "Runtime hints:" when no hints are set.
+	if strings.Contains(text, "Runtime hints:") {
+		t.Fatalf("should not contain Runtime hints when no hints set: %q", text)
+	}
+}
+
+// Skill.SystemInstruction returns system field when non-empty.
+func TestSystemInstruction_SystemField(t *testing.T) {
+	skill := Skill{System: "system prompt text"}
+	if text := skill.SystemInstruction(); text != "system prompt text" {
+		t.Fatalf("expected system field, got %q", text)
+	}
+}
+
+// Skill.SystemInstruction falls back to Prompt when system is empty.
+func TestSystemInstruction_FallsBackToPrompt(t *testing.T) {
+	skill := Skill{Prompt: "prompt with {input} placeholder", System: ""}
+	text := skill.SystemInstruction()
+	if strings.Contains(text, "{input}") {
+		t.Fatalf("expected {input} placeholder removed, got %q", text)
+	}
+}
+
+// parseStringList handles nil.
+func TestParseStringList_Nil(t *testing.T) {
+	got := parseStringList(nil)
+	if got != nil {
+		t.Fatalf("expected nil, got %v", got)
+	}
+}
+
+// parseStringList handles []string.
+func TestParseStringList_StringSlice(t *testing.T) {
+	got := parseStringList([]string{"go", "test"})
+	if len(got) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(got))
+	}
+}
+
+// parseStringList handles []any.
+func TestParseStringList_AnySlice(t *testing.T) {
+	got := parseStringList([]any{"go", 123, "test"})
+	if len(got) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(got))
+	}
+}
+
+// parseStringList handles comma-separated string.
+func TestParseStringList_CommaString(t *testing.T) {
+	got := parseStringList("go, test, vet")
+	if len(got) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(got))
+	}
+}
+
+// cleanStringList deduplicates and trims.
+func TestCleanStringList_DeduplicatesAndTrims(t *testing.T) {
+	got := cleanStringList([]string{" go ", "test", " go ", "VET", "test"})
+	if len(got) != 3 {
+		t.Fatalf("expected 3 (deduped+trimmed), got %d", len(got))
 	}
 }
