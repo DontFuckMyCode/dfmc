@@ -23,6 +23,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -1282,13 +1283,13 @@ func (e *Engine) publishNativeToolResultWithPayload(trace nativeToolTrace, model
 		"truncated":      trace.Result.Truncated,
 		"output_preview": compactToolPayload(outputText, 180),
 		"output_chars":   len(outputText),
-		"output_tokens":  estimateTokens(outputText),
+		"output_tokens":  tokens.Estimate(outputText),
 		"tool_call_id":   trace.Call.ID,
 		"surface":        "native",
 	}
 	if modelPayload != "" {
 		payload["payload_chars"] = len(modelPayload)
-		payload["payload_tokens"] = estimateTokens(modelPayload)
+		payload["payload_tokens"] = tokens.Estimate(modelPayload)
 		if raw := len(outputText); raw > 0 {
 			saved := max(raw-len(modelPayload), 0)
 			payload["compression_saved_chars"] = saved

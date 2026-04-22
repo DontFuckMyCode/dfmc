@@ -8,6 +8,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -92,7 +93,7 @@ func TestTrimmedConversationMessages_RespectsBudgetAndRoleFilter(t *testing.T) {
 		if m.Role != types.RoleUser && m.Role != types.RoleAssistant {
 			t.Fatalf("unexpected role in trimmed history: %s", m.Role)
 		}
-		total += estimateTokens(m.Content)
+		total += tokens.Estimate(m.Content)
 	}
 	if total > budget {
 		t.Fatalf("expected history tokens <= %d, got %d", budget, total)
@@ -188,7 +189,7 @@ func TestBuildRequestMessages_IncludesSummaryWhenOmitted(t *testing.T) {
 	hasSummary := false
 	totalHistoryTokens := 0
 	for _, m := range msgs[:len(msgs)-1] {
-		totalHistoryTokens += estimateTokens(m.Content)
+		totalHistoryTokens += tokens.Estimate(m.Content)
 		if strings.Contains(m.Content, "[History summary]") {
 			hasSummary = true
 		}

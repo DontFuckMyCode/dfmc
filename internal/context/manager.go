@@ -426,7 +426,7 @@ func trimBundleToBudget(bundle *promptlib.PromptBundle, budget int) *promptlib.P
 	for _, s := range bundle.Sections {
 		if !s.Cacheable {
 			dynamicCount++
-			dynamicTokens += estimateTokens(s.Text)
+			dynamicTokens += tokens.Estimate(s.Text)
 		}
 	}
 
@@ -453,10 +453,10 @@ func trimBundleToBudget(bundle *promptlib.PromptBundle, budget int) *promptlib.P
 	for _, s := range bundle.Sections {
 		text := s.Text
 		if s.Cacheable {
-			if tok := estimateTokens(text); tok > stableRemaining {
+			if tok := tokens.Estimate(text); tok > stableRemaining {
 				text = trimToTokenBudget(text, stableRemaining)
 			}
-			stableRemaining -= estimateTokens(text)
+			stableRemaining -= tokens.Estimate(text)
 			// Any unused stable budget rolls forward to dynamic — the
 			// reverse (dynamic → stable) is deliberately disallowed to keep
 			// cache prefixes stable across turns.
@@ -465,10 +465,10 @@ func trimBundleToBudget(bundle *promptlib.PromptBundle, budget int) *promptlib.P
 			}
 		} else {
 			allowance := dynamicRemaining + stableRemaining
-			if tok := estimateTokens(text); tok > allowance {
+			if tok := tokens.Estimate(text); tok > allowance {
 				text = trimToTokenBudget(text, allowance)
 			}
-			used := estimateTokens(text)
+			used := tokens.Estimate(text)
 			if used <= dynamicRemaining {
 				dynamicRemaining -= used
 			} else {
@@ -547,10 +547,6 @@ func extractSnippet(content string, terms []string, maxLines int) (string, int, 
 
 	snippet := strings.Join(lines[start:end], "\n")
 	return snippet, start + 1, end
-}
-
-func estimateTokens(content string) int {
-	return tokens.Estimate(content)
 }
 
 func summarizeContextFiles(projectRoot string, chunks []types.ContextChunk, limit int) string {
@@ -1113,7 +1109,7 @@ func buildChunkForBudget(path, raw string, terms []string, score float64, compre
 	lang := detectLanguageFromPath(path)
 	for _, lvl := range levels {
 		content, lineStart, lineEnd := compressContent(raw, terms, lang, lvl, maxTokensPerFile)
-		tc := estimateTokens(content)
+		tc := tokens.Estimate(content)
 		if tc <= 0 || strings.TrimSpace(content) == "" {
 			continue
 		}
@@ -1149,7 +1145,7 @@ func downshiftChunkForRemaining(chunk types.ContextChunk, remaining, maxTokensPe
 		if strings.TrimSpace(trimmed) == "" {
 			return types.ContextChunk{}
 		}
-		tokenCount = estimateTokens(trimmed)
+		tokenCount = tokens.Estimate(trimmed)
 		if tokenCount <= budget {
 			break
 		}

@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -66,12 +67,12 @@ func (e *Engine) historyBudgetForRequestWithTail(question string, chunks []types
 		responseReserve = minContextPerFileTokens
 	}
 
-	usedByRequest := estimateTokens(question) + estimateTokens(systemPrompt) + baseToolReserveTokens
+	usedByRequest := tokens.Estimate(question) + tokens.Estimate(systemPrompt) + baseToolReserveTokens
 	for _, ch := range chunks {
 		usedByRequest += ch.TokenCount
 	}
 	for _, msg := range tail {
-		usedByRequest += estimateTokens(msg.Content)
+		usedByRequest += tokens.Estimate(msg.Content)
 	}
 	available := providerLimit - responseReserve - usedByRequest
 	if available <= 0 {

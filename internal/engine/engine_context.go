@@ -17,6 +17,7 @@ import (
 
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -709,7 +710,7 @@ func contextCompressionRank(level string) int {
 	}
 }
 func (e *Engine) contextReserveBreakdownWithRuntime(question string, runtime ctxmgr.PromptRuntime) contextReserveBreakdown {
-	promptReserve := maxInt(basePromptReserveTokens, estimateTokens(question)*3)
+	promptReserve := maxInt(basePromptReserveTokens, tokens.Estimate(question)*3)
 	responseReserve := defaultResponseReserveTokens
 	providerName := strings.TrimSpace(runtime.Provider)
 	if providerName == "" {

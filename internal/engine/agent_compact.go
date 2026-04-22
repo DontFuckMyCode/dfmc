@@ -17,6 +17,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -553,18 +554,18 @@ func pickInt(raw any) (int, bool) {
 // compaction decision and the post-compaction delta so the report reflects a
 // real saving.
 func estimateRequestTokens(systemPrompt string, chunks []types.ContextChunk, msgs []provider.Message) int {
-	total := estimateTokens(systemPrompt)
+	total := tokens.Estimate(systemPrompt)
 	for _, ch := range chunks {
 		total += ch.TokenCount
 	}
 	for _, m := range msgs {
-		total += estimateTokens(m.Content)
+		total += tokens.Estimate(m.Content)
 		for _, call := range m.ToolCalls {
 			if call.Name != "" {
-				total += estimateTokens(call.Name)
+				total += tokens.Estimate(call.Name)
 			}
 			for k, v := range call.Input {
-				total += estimateTokens(k) + estimateTokens(fmt.Sprint(v))
+				total += tokens.Estimate(k) + tokens.Estimate(fmt.Sprint(v))
 			}
 		}
 	}

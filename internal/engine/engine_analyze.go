@@ -14,8 +14,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-
-	"github.com/dontfuckmycode/dfmc/internal/tokens"
 )
 
 func (e *Engine) ensureIndexed(ctx context.Context) {
@@ -931,8 +929,4 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func estimateTokens(text string) int {
-	return tokens.Estimate(text)
 }

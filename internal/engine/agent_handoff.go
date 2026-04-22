@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/tools"
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -80,17 +81,17 @@ func (e *Engine) maybeAutoHandoff(question string) *handoffReport {
 		return nil
 	}
 
-	pending := estimateTokens(question)
+	pending := tokens.Estimate(question)
 	for _, msg := range history {
-		pending += estimateTokens(msg.Content)
+		pending += tokens.Estimate(msg.Content)
 		for _, call := range msg.ToolCalls {
-			pending += estimateTokens(call.Name)
+			pending += tokens.Estimate(call.Name)
 			for k, v := range call.Params {
-				pending += estimateTokens(k) + estimateTokens(fmt.Sprint(v))
+				pending += tokens.Estimate(k) + tokens.Estimate(fmt.Sprint(v))
 			}
 		}
 		for _, r := range msg.Results {
-			pending += estimateTokens(r.Output)
+			pending += tokens.Estimate(r.Output)
 		}
 	}
 	if pending < threshold {
@@ -144,7 +145,7 @@ func (e *Engine) maybeAutoHandoff(question string) *handoffReport {
 		OldConversationID: oldID,
 		NewConversationID: newConv.ID,
 		HistoryTokens:     pending,
-		BriefTokens:       estimateTokens(brief),
+		BriefTokens:       tokens.Estimate(brief),
 		MessagesSealed:    len(history),
 		ThresholdRatio:    ratio,
 		MaxBriefTokens:    briefBudget,
