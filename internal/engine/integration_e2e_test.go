@@ -41,7 +41,7 @@ func newE2EEngine(t *testing.T) (*Engine, string) {
 		t.Fatalf("engine.Init: %v", err)
 	}
 	eng.ProjectRoot = tmp
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 	return eng, tmp
 }
 

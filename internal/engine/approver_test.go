@@ -32,7 +32,7 @@ func newApproverTestEngine(t *testing.T) *Engine {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("init engine: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 	eng.ProjectRoot = tmp
 	return eng
 }

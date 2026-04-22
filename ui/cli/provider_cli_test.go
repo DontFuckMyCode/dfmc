@@ -28,7 +28,7 @@ func newProviderCLITestEngine(t *testing.T) *engine.Engine {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("engine.Init: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 	eng.ProjectRoot = tmp
 	return eng
 }

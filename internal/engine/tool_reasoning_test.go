@@ -33,7 +33,7 @@ func newReasoningTestEngine(t *testing.T, knob string) *Engine {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 	return eng
 }
 

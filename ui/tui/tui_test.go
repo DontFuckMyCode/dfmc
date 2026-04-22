@@ -3544,7 +3544,7 @@ func TestRenderStatsPanelUnconfiguredShowsGuidance(t *testing.T) {
 	panel := renderStatsPanel(statsPanelInfo{
 		SessionElapsed: 10 * time.Second,
 	}, 16)
-	for _, want := range []string{"no provider", "f5 setup", "/provider"} {
+	for _, want := range []string{"no provider", "f5 workflow", "/provider"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("unconfigured stats panel should surface %q, got:\n%s", want, panel)
 		}

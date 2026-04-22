@@ -38,7 +38,7 @@ func newTestEngine(t *testing.T) *engine.Engine {
 		t.Fatalf("init engine: %v", err)
 	}
 	eng.ProjectRoot = filepath.Clean(".")
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 	return eng
 }
 

@@ -1294,41 +1294,6 @@ Request:
 	}
 }
 
-func readSkillFile(path, source string) skillInfo {
-	item := skillInfo{
-		Name:    strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
-		Path:    path,
-		Source:  source,
-		Builtin: false,
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return item
-	}
-	raw := map[string]any{}
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return item
-	}
-	if v, ok := raw["name"]; ok {
-		name := strings.TrimSpace(fmt.Sprint(v))
-		if name != "" {
-			item.Name = name
-		}
-	}
-	if v, ok := raw["description"]; ok {
-		item.Description = strings.TrimSpace(fmt.Sprint(v))
-	}
-	if v, ok := raw["prompt"]; ok {
-		item.Prompt = strings.TrimSpace(fmt.Sprint(v))
-	}
-	if item.Prompt == "" {
-		if v, ok := raw["template"]; ok {
-			item.Prompt = strings.TrimSpace(fmt.Sprint(v))
-		}
-	}
-	return item
-}
-
 func containsCI(list []string, target string) bool {
 	for _, item := range list {
 		if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(target)) {

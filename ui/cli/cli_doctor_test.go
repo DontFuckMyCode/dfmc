@@ -37,7 +37,7 @@ func TestRunDoctorJSON(t *testing.T) {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("eng.Init: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 
 	out := captureStdout(t, func() {
 		code := runDoctor(context.Background(), eng, []string{"--network=false"}, true)
@@ -104,7 +104,7 @@ func TestRunDoctorProvidersOnly(t *testing.T) {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("eng.Init: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 
 	code := runDoctor(context.Background(), eng, []string{"--providers-only"}, true)
 	if code != 0 {
@@ -130,7 +130,7 @@ func TestRunDoctorWarnsOnZAIAnthropicStyleConfig(t *testing.T) {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("eng.Init: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 
 	out := captureStdout(t, func() {
 		code := runDoctor(context.Background(), eng, []string{"--network=false"}, true)
@@ -197,7 +197,7 @@ func TestRunDoctorFixRepairsProjectConfig(t *testing.T) {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("eng.Init: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 
 	code := runDoctor(context.Background(), eng, []string{"--fix"}, true)
 	if code != 0 {
@@ -265,7 +265,7 @@ func TestRunDoctorFixRewritesZAIAnthropicStyleProfile(t *testing.T) {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("eng.Init: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 
 	code := runDoctor(context.Background(), eng, []string{"--fix"}, true)
 	if code != 0 {

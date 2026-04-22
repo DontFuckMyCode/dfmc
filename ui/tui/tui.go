@@ -447,7 +447,7 @@ func Run(ctx context.Context, eng *engine.Engine, opts Options) error {
 	// in their config — the TUI will read it below and enable cell-motion
 	// tracking. A runtime toggle (/mouse) lets you switch mid-session
 	// without restarting.
-	if eng != nil && eng.Config != nil && eng.Config.TUI.MouseCapture {
+	if eng.Config != nil && eng.Config.TUI.MouseCapture {
 		model.ui.mouseCaptureEnabled = true
 		programOpts = append(programOpts, tea.WithMouseCellMotion())
 	}

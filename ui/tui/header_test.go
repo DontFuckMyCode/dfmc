@@ -187,7 +187,7 @@ func TestRenderStarterPromptsListsSixActions(t *testing.T) {
 		t.Fatalf("starter prompts should open with a welcome line, got:\n%s", joined)
 	}
 	if strings.Contains(joined, "No provider configured") {
-		t.Fatalf("setup banner should stay hidden when configured=true, got:\n%s", joined)
+		t.Fatalf("workflow banner should stay hidden when configured=true, got:\n%s", joined)
 	}
 }
 

@@ -1423,7 +1423,7 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 	case providerTrim == "":
 		providerBody = []string{
 			FailStyle.Bold(true).Render("⚠ no provider"),
-			SubtleStyle.Render("f5 setup · /provider"),
+			SubtleStyle.Render("f5 workflow · /provider"),
 		}
 	case !info.Configured:
 		providerBody = []string{

@@ -26,7 +26,7 @@ func TestReloadConfig_RewiresToolReasoningPublisher(t *testing.T) {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 
 	if err := eng.ReloadConfig(home); err != nil {
 		t.Fatalf("ReloadConfig: %v", err)

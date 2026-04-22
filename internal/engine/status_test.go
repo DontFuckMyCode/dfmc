@@ -22,7 +22,7 @@ func TestStatusIncludesASTBackend(t *testing.T) {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("init engine: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 
 	if _, err := eng.AST.ParseContent(context.Background(), "sample.go", []byte("package sample\n\nfunc Hello() {}\n")); err != nil {
 		t.Fatalf("seed ast parse: %v", err)
@@ -126,7 +126,7 @@ func TestStatusIncludesModelsDevCacheMetadata(t *testing.T) {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("init engine: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 
 	st := eng.Status()
 	if !st.ModelsDevCache.Exists {
@@ -169,7 +169,7 @@ func TestStatusIncludesLastContextInReport(t *testing.T) {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("init engine: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 
 	eng.ProjectRoot = project
 	if err := eng.CodeMap.BuildFromFiles(context.Background(), []string{mainPath, authPath}); err != nil {

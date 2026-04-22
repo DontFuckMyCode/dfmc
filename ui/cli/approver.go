@@ -44,7 +44,6 @@ type stdinApprover struct {
 	autoYes            bool
 	autoNo             bool
 	autoYesDestructive bool
-	verbose            bool
 }
 
 // newStdinApprover builds an approver that respects three env flags for
