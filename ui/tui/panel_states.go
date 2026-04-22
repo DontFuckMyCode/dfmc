@@ -70,13 +70,21 @@ type providersPanelState struct {
 	profileEditField int    // 0=protocol, 1=base_url, 2=max_context, 3=max_tokens
 	profileEditDraft string
 	// sync state
-	syncing bool
+	syncing      bool
+	lastSyncedAt time.Time
 	// action menu state — replaces single-key shortcuts with Enter-activated menus
 	menuActive   bool
 	menuLabels   []string
 	menuActions  []string
-	menuDisabled []bool
-	menuIndex    int
+	menuDisabled       []bool
+	menuDisabledReasons []string
+	menuIndex          int
+	// search state — filters the provider list by name, model, or status
+	query        string
+	searchActive bool
+	// confirm state — destructive actions ask for y/n before executing
+	confirmAction string // e.g. "delete_provider", "delete_model", "delete_pipeline"
+	confirmTarget string // name of the thing being deleted
 }
 
 // diagnosticPanelsState groups the cold, mostly read-only diagnostic tabs.
@@ -429,14 +437,6 @@ type toolViewState struct {
 type inputHistoryState struct {
 	history []string
 	index   int
-	draft   string
-}
-
-// setupWizardState — first-run configuration wizard cursor + draft buffer.
-// Editing flips on while the user is typing into a field.
-type setupWizardState struct {
-	index   int
-	editing bool
 	draft   string
 }
 

@@ -40,7 +40,7 @@ var tabPalette = map[string]tabPaletteEntry{
 	"Status":        {Border: lipgloss.Color("#6EE7A7"), Accent: lipgloss.Color("#6EE7A7"), Glyph: "◉"},
 	"Files":         {Border: lipgloss.Color("#F6D38A"), Accent: lipgloss.Color("#F6D38A"), Glyph: "▦"},
 	"Patch":         {Border: lipgloss.Color("#FF9F6A"), Accent: lipgloss.Color("#FF9F6A"), Glyph: "◈"},
-	"Setup":         {Border: lipgloss.Color("#BFA9FF"), Accent: lipgloss.Color("#BFA9FF"), Glyph: "⚙"},
+	"Workflow":      {Border: lipgloss.Color("#BFA9FF"), Accent: lipgloss.Color("#BFA9FF"), Glyph: "⚙"},
 	"Tools":         {Border: lipgloss.Color("#F4B8D6"), Accent: lipgloss.Color("#F4B8D6"), Glyph: "⚒"},
 	"Activity":      {Border: lipgloss.Color("#8BC7FF"), Accent: lipgloss.Color("#8BC7FF"), Glyph: "✦"},
 	"Memory":        {Border: lipgloss.Color("#C4A7FF"), Accent: lipgloss.Color("#C4A7FF"), Glyph: "❖"},
@@ -90,13 +90,13 @@ func tabFKeyHint(tab string) string {
 	switch tab {
 	case "Chat":
 		return "F1"
-	case "Status":
+	case "Providers":
 		return "F2"
 	case "Files":
 		return "F3"
 	case "Patch":
 		return "F4"
-	case "Setup":
+	case "Workflow":
 		return "F5"
 	case "Tools":
 		return "F6"
@@ -112,12 +112,12 @@ func tabFKeyHint(tab string) string {
 		return "F11"
 	case "Security":
 		return "F12"
+	case "Status":
+		return "Alt+I"
 	case "Plans":
 		return "Alt+Y"
 	case "Context":
 		return "Alt+W"
-	case "Providers":
-		return "Alt+O"
 	}
 	return ""
 }

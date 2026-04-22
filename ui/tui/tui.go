@@ -20,15 +20,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dontfuckmycode/dfmc/internal/commands"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/planning"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
-	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	toolruntime "github.com/dontfuckmycode/dfmc/internal/tools"
-	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 type Options struct {
@@ -237,9 +234,7 @@ type Model struct {
 	// panel_states.go. Workspace loader writes diff/changed; parser writes
 	// latestPatch/set/files; the [/] keys move index/hunk.
 	patchView patchViewState
-	// Setup wizard cursor + draft. See setupWizardState in panel_states.go.
-	setupWizard setupWizardState
-	workflow   workflowPanelState
+	workflow workflowPanelState
 	// Files tab state (entries list, cursor, sticky pin, preview pane).
 	// See filesViewState in panel_states.go.
 	filesView filesViewState
@@ -1489,98 +1484,6 @@ func (m Model) handleFilesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleSetupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	providers := m.availableProviders()
-	if len(providers) == 0 {
-		return m, nil
-	}
-	m.setupWizard.index = clampIndex(m.setupWizard.index, len(providers))
-	if m.setupWizard.editing {
-		switch msg.Type {
-		case tea.KeyRunes:
-			m.setupWizard.draft += string(msg.Runes)
-			return m, nil
-		case tea.KeySpace:
-			m.setupWizard.draft += " "
-			return m, nil
-		case tea.KeyBackspace, tea.KeyCtrlH:
-			runes := []rune(m.setupWizard.draft)
-			if len(runes) > 0 {
-				m.setupWizard.draft = string(runes[:len(runes)-1])
-			}
-			return m, nil
-		case tea.KeyEnter:
-			target := providers[m.setupWizard.index]
-			model := strings.TrimSpace(m.setupWizard.draft)
-			if model == "" {
-				model = m.defaultModelForProvider(target)
-			}
-			m = m.applyProviderModelSelection(target, model)
-			m.setupWizard.editing = false
-			m.setupWizard.draft = ""
-			m.notice = fmt.Sprintf("Setup applied: %s (%s)", target, blankFallback(model, "-"))
-			m = m.appendSystemMessage(fmt.Sprintf("Setup applied: provider=%s model=%s", target, blankFallback(model, "-")))
-			return m, loadStatusCmd(m.eng)
-		case tea.KeyEsc:
-			m.setupWizard.editing = false
-			m.setupWizard.draft = ""
-			m.notice = "Setup edit cancelled."
-			return m, nil
-		}
-		return m, nil
-	}
-	switch msg.String() {
-	case "down", "j", "alt+j":
-		if m.setupWizard.index < len(providers)-1 {
-			m.setupWizard.index++
-		}
-		m.notice = "Setup selection: " + providers[m.setupWizard.index]
-		return m, nil
-	case "up", "k", "alt+k":
-		if m.setupWizard.index > 0 {
-			m.setupWizard.index--
-		}
-		m.notice = "Setup selection: " + providers[m.setupWizard.index]
-		return m, nil
-	case "m", "alt+m":
-		selected := providers[m.setupWizard.index]
-		m.setupWizard.editing = true
-		m.setupWizard.draft = m.defaultModelForProvider(selected)
-		m.notice = "Editing model for " + selected
-		return m, nil
-	case "enter":
-		target := providers[m.setupWizard.index]
-		model := m.defaultModelForProvider(target)
-		m = m.applyProviderModelSelection(target, model)
-		m.notice = fmt.Sprintf("Setup applied: %s (%s)", target, blankFallback(model, "-"))
-		m = m.appendSystemMessage(fmt.Sprintf("Setup applied: provider=%s model=%s", target, blankFallback(model, "-")))
-		return m, loadStatusCmd(m.eng)
-	case "s", "alt+s":
-		target := providers[m.setupWizard.index]
-		model := m.defaultModelForProvider(target)
-		m = m.applyProviderModelSelection(target, model)
-		path, err := m.persistProviderModelProjectConfig(target, model)
-		if err != nil {
-			m.notice = "setup save: " + err.Error()
-			m = m.appendSystemMessage(fmt.Sprintf("Setup save failed: %v", err))
-			return m, nil
-		}
-		m.notice = "Setup saved: " + filepath.ToSlash(path)
-		m = m.appendSystemMessage(fmt.Sprintf("Setup saved: provider=%s model=%s path=%s", target, blankFallback(model, "-"), filepath.ToSlash(path)))
-		return m, loadStatusCmd(m.eng)
-	case "r", "alt+r":
-		if err := m.reloadEngineConfig(); err != nil {
-			m.notice = "setup reload: " + err.Error()
-			m = m.appendSystemMessage("Setup reload failed: " + err.Error())
-			return m, nil
-		}
-		m.notice = "Setup runtime reloaded."
-		m = m.appendSystemMessage(fmt.Sprintf("Setup runtime reloaded: provider=%s model=%s", blankFallback(m.status.Provider, "-"), blankFallback(m.status.Model, "-")))
-		return m, loadStatusCmd(m.eng)
-	}
-	return m, nil
-}
-
 func (m Model) handleToolsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	tools := m.availableTools()
 	if len(tools) == 0 {
@@ -2175,141 +2078,12 @@ func waitForEventMsg(ch <-chan engine.Event) tea.Cmd {
 // payload* getters, shouldMirrorEventToTranscript, appendActivity,
 // resetAgentRuntime live in engine_events.go.
 
-// chatBubbleContent returns the text the chat transcript should render for
-// one message. Unlike chatPreviewForLine (which collapses to a one-line
-// digest for compact side views), this is the full content, optionally
-// decorated with a streaming caret while the assistant is still generating.
-func legacyChatBubbleContentTUI(item chatLine, streaming bool) string {
-	content := strings.TrimRight(item.Content, " \t\r\n")
-	if streaming {
-		if content == "" {
-			return subtleStyle.Render("… thinking") + " ▎"
-		}
-		return content + " ▎"
-	}
-	return content
-}
-
-func legacyRenderChatInputLineTUI(input string, cursor int, manual bool, manualInput string, sending bool) string {
-	// Multi-line composition: a literal "\n" in the buffer becomes a new
-	// physical row. Continuation rows get a "  " indent instead of the "> "
-	// prompt so the prompt glyph never repeats. The cursor "|" lands on the
-	// correct logical row. Sending/streaming displays the raw buffer without
-	// a cursor since we're not collecting keystrokes at that moment.
-	if sending {
-		return renderSendingInputBuffer(input)
-	}
-	runes := []rune(input)
-	total := len(runes)
-	if manual && manualInput != input {
-		manual = false
-	}
-	if !manual {
-		cursor = total
-	}
-	if cursor < 0 {
-		cursor = 0
-	}
-	if cursor > total {
-		cursor = total
-	}
-	before := string(runes[:cursor])
-	after := string(runes[cursor:])
-	withCursor := before + "|" + after
-	logical := strings.Split(withCursor, "\n")
-	out := make([]string, 0, len(logical))
-	for i, row := range logical {
-		prefix := "> "
-		if i > 0 {
-			prefix = "  "
-		}
-		out = append(out, prefix+row)
-	}
-	return strings.Join(out, "\n")
-}
-
-// renderSendingInputBuffer prints the frozen input while a turn is streaming
-// (no cursor, just the text with the same prompt rules as the live editor).
-func legacyRenderSendingInputBufferTUI(input string) string {
-	if !strings.ContainsRune(input, '\n') {
-		return "> " + input
-	}
-	logical := strings.Split(input, "\n")
-	out := make([]string, 0, len(logical))
-	for i, row := range logical {
-		prefix := "> "
-		if i > 0 {
-			prefix = "  "
-		}
-		out = append(out, prefix+row)
-	}
-	return strings.Join(out, "\n")
-}
-
-func legacyChatDigestTUI(text string) string {
-	trimmed := strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
-	if trimmed == "" {
-		return ""
-	}
-	preview := trimmed
-	if first, _, ok := strings.Cut(trimmed, "\n"); ok {
-		first = strings.TrimSpace(first)
-		if first == "" {
-			first = "[multiline]"
-		}
-		preview = first + " ..."
-	}
-	return preview
-}
-
-func legacyBlankFallbackTUI(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
-}
-
 // Slash-command autocomplete (slashMenuActive,
 // activeSlashArgSuggestions, autocompleteSlashArg/Command,
 // expandSlashSelection, slashAssistHints, slashCommandCatalog,
 // slashTemplateOverrides, formatSlash*, toolParamKey* /
 // toolValueToken*, the *Suggestions feeders) lives in
 // slash_picker.go.
-
-func legacyComposeChatPromptTUI(current, addition string) string {
-	current = strings.TrimSpace(current)
-	addition = strings.TrimSpace(addition)
-	switch {
-	case current == "":
-		return addition
-	case addition == "":
-		return current
-	case strings.Contains(current, addition):
-		return current
-	case strings.HasSuffix(current, "[[file:") || strings.HasSuffix(current, " ") || strings.HasSuffix(current, "\n"):
-		return current + addition
-	default:
-		return current + " " + addition
-	}
-}
-
-func legacyFileMarkerTUI(rel string) string {
-	return fileMarkerRange(rel, "")
-}
-
-// fileMarkerRange emits the context-manager marker with an optional line
-// range suffix (`#L10` or `#L10-L50`). The context manager's regex only
-// accepts `#L<start>[-L?<end>]`, so callers must pass a pre-normalized
-// suffix (see splitMentionToken). Uses types.FileMarkerPrefix/Suffix so
-// the wire shape stays in sync with the parser.
-func legacyFileMarkerRangeTUI(rel, rangeSuffix string) string {
-	rel = filepath.ToSlash(strings.TrimSpace(rel))
-	if rel == "" {
-		return ""
-	}
-	rangeSuffix = strings.TrimSpace(rangeSuffix)
-	return types.FileMarkerPrefix + rel + rangeSuffix + types.FileMarkerSuffix
-}
 
 // clearStreamCancel drops the stored per-stream CancelFunc. Called from
 // every chat-lifecycle terminus (done, err, closed, explicit cancel) so
@@ -2335,295 +2109,11 @@ func (m *Model) cancelActiveStream() bool {
 	return true
 }
 
-// renderContextStrip summarizes what will be attached to the next message:
-// pinned file, inline [[file:...]] markers, fenced code blocks, and — the
-// piece that actually matters to providers — a heuristic token count with
-// percent-of-budget when the provider profile declares MaxContext. chars
-// are kept too since they answer a different "am I about to spam?" concern
-// but tokens drive what the API will accept.
-// Returns "" when nothing is attached so we don't paint a dead strip.
-func legacyRenderContextStripTUI(m Model, width int) string {
-	if width < 40 {
-		width = 40
-	}
-	input := m.chat.input
-
-	pinned := strings.TrimSpace(m.filesView.pinned)
-	markerCount := countFileMarkers(input)
-	fenceCount := countFencedBlocks(input)
-	atMentions := countAtMentions(input)
-
-	// Nothing to show — the strip disappears when the composer is resting.
-	if pinned == "" && markerCount == 0 && fenceCount == 0 && atMentions == 0 && strings.TrimSpace(input) == "" {
-		return ""
-	}
-
-	parts := []string{accentStyle.Render("📎 context")}
-	if pinned != "" {
-		parts = append(parts, subtleStyle.Render("pinned:")+" "+boldStyle.Render(pinned))
-	}
-	if markerCount > 0 {
-		parts = append(parts, subtleStyle.Render("markers:")+" "+boldStyle.Render(fmt.Sprintf("%d", markerCount)))
-	}
-	if atMentions > 0 {
-		// Unresolved @mentions — these still get resolved at send time, but
-		// counting them separately shows users which pieces are bare refs vs
-		// concrete [[file:]] markers.
-		parts = append(parts, subtleStyle.Render("@refs:")+" "+boldStyle.Render(fmt.Sprintf("%d", atMentions)))
-	}
-	if fenceCount > 0 {
-		parts = append(parts, subtleStyle.Render("fenced:")+" "+boldStyle.Render(fmt.Sprintf("%d", fenceCount)))
-	}
-	if trimmed := strings.TrimSpace(input); trimmed != "" {
-		chars := len([]rune(trimmed))
-		parts = append(parts, subtleStyle.Render("chars:")+" "+boldStyle.Render(fmt.Sprintf("%d", chars)))
-		// Token projection: heuristic is fast, safe, zero-alloc enough for
-		// every-frame rendering. When the provider declares MaxContext, show
-		// percent-of-budget so users can tell at a glance whether they're
-		// about to pack 200 tokens or 20000 into the next turn.
-		tok := tokens.Estimate(trimmed)
-		budget := m.status.ProviderProfile.MaxContext
-		if budget <= 0 && m.status.ContextIn != nil {
-			budget = m.status.ContextIn.ProviderMaxContext
-		}
-		tokenLabel := fmt.Sprintf("~%d", tok)
-		if budget > 0 {
-			pct := int(float64(tok) / float64(budget) * 100)
-			tokenLabel = fmt.Sprintf("~%d (%d%% of %d)", tok, pct, budget)
-		}
-		parts = append(parts, subtleStyle.Render("tokens:")+" "+boldStyle.Render(tokenLabel))
-	}
-
-	joined := strings.Join(parts, subtleStyle.Render("  ·  "))
-	return "  " + truncateSingleLine(joined, width-2)
-}
-
-// countFileMarkers counts `[[file:...]]` markers in the current input. The
-// regex mirrors what the context manager resolves.
-func legacyCountFileMarkersTUI(s string) int {
-	return strings.Count(s, "[[file:")
-}
-
-// countFencedBlocks counts complete triple-backtick blocks in the input.
-// Odd fences (open but not yet closed) are treated as zero — the user is
-// still mid-edit so we don't surface a partial count.
-func legacyCountFencedBlocksTUI(s string) int {
-	n := strings.Count(s, "```")
-	return n / 2
-}
-
-// countAtMentions counts bare `@token` refs that start after whitespace or
-// at string start. Matches only well-formed references that the resolve
-// pass would actually try to expand.
-func legacyCountAtMentionsTUI(s string) int {
-	if !strings.Contains(s, "@") {
-		return 0
-	}
-	count := 0
-	prevSpace := true
-	for _, r := range s {
-		if r == '@' && prevSpace {
-			count++
-		}
-		prevSpace = r == ' ' || r == '\t' || r == '\n'
-	}
-	return count
-}
-
-// renderMentionPickerModal frames the @ file picker as a visible bordered
-// box — the earlier inline list looked like a passive suggestion strip and
-// users didn't realise they could commit with enter. The modal makes the
-// state change obvious and teaches the keys on every render. Width is
-// clamped by the caller so a tiny terminal doesn't crash the layout.
-func legacyRenderMentionPickerModalTUI(s chatSuggestionState, mentionIndex, totalFiles int, width int) string {
-	if width < 40 {
-		width = 40
-	}
-	// Title bar — uses the accent style so the eye locks on.
-	title := accentStyle.Bold(true).Render("◆ File Picker") +
-		subtleStyle.Render("  —  ") +
-		boldStyle.Render("@"+s.MentionQuery())
-	if s.MentionRange() != "" {
-		title += subtleStyle.Render(" · range " + s.MentionRange())
-	}
-
-	countLine := ""
-	switch {
-	case len(s.MentionSuggestions()) > 0:
-		countLine = subtleStyle.Render(fmt.Sprintf(
-			"%d/%d files match", len(s.MentionSuggestions()), totalFiles))
-	case totalFiles == 0:
-		countLine = warnStyle.Render("file index empty")
-	default:
-		countLine = warnStyle.Render("no files match")
-	}
-
-	// Body — either the match rows, or a descriptive empty state.
-	bodyLines := []string{}
-	switch {
-	case len(s.MentionSuggestions()) > 0:
-		selected := clampIndex(mentionIndex, len(s.MentionSuggestions()))
-		for i, row := range s.MentionSuggestions() {
-			label := truncateSingleLine(row.Path, width-6)
-			if row.Recent {
-				label += " " + subtleStyle.Render("· recent")
-			}
-			if i == selected {
-				bodyLines = append(bodyLines, mentionSelectedRowStyle.Render("▶ "+label))
-			} else {
-				bodyLines = append(bodyLines, "  "+label)
-			}
-		}
-	case totalFiles == 0:
-		bodyLines = append(bodyLines,
-			subtleStyle.Render("Indexing project files…"),
-			subtleStyle.Render("If this persists, open the Files tab (F3) and press r to reload,"),
-			subtleStyle.Render("or confirm you launched dfmc from a project root."),
-		)
-	case s.MentionQuery() != "":
-		bodyLines = append(bodyLines,
-			subtleStyle.Render("No files matched '"+s.MentionQuery()+"'."),
-			subtleStyle.Render("Refine the query or press esc to cancel."),
-		)
-	default:
-		bodyLines = append(bodyLines,
-			subtleStyle.Render("Type a path after @ to filter."),
-			subtleStyle.Render("Ranges: auth.go:10-50 or auth.go#L10-L50 attaches that slice."),
-		)
-	}
-
-	// Footer — always show how to drive it so users don't have to remember.
-	footer := subtleStyle.Render(
-		"↑/↓ move · tab/enter insert as [[file:…]] · esc cancel")
-
-	parts := []string{title, countLine, ""}
-	parts = append(parts, bodyLines...)
-	parts = append(parts, "", footer)
-	return mentionPickerStyle.Width(width).Render(strings.Join(parts, "\n"))
-}
-
-// MentionQuery and friends expose chatSuggestionState fields to callers in
-// other files. Keeping them as methods rather than exporting the fields lets
-// the render code remain in this file while tests can construct the state
-// directly via the unexported fields.
-func legacyMentionQueryTUI(s chatSuggestionState) string { return s.mentionQuery }
-func legacyMentionRangeTUI(s chatSuggestionState) string { return s.mentionRange }
-func legacyMentionSuggestionsTUI(s chatSuggestionState) []mentionRow {
-	return s.mentionSuggestions
-}
-
-// renderSlashPickerModal frames the `/` command picker in the same bordered
-// modal style as the file picker. Consistency with the @ modal makes the
-// composer feel like it has two first-class picker affordances rather than
-// two different "kind of a dropdown" experiences.
-func legacyRenderSlashPickerModalTUI(items []slashCommandItem, slashIndex, width int) string {
-	if width < 40 {
-		width = 40
-	}
-	title := accentStyle.Bold(true).Render("◆ Commands") +
-		subtleStyle.Render("  —  type to filter, enter to run")
-
-	count := ""
-	if len(items) > 0 {
-		count = subtleStyle.Render(fmt.Sprintf("%d matching · window of 6", len(items)))
-	} else {
-		count = warnStyle.Render("no match")
-	}
-
-	body := []string{}
-	if len(items) == 0 {
-		body = append(body,
-			subtleStyle.Render("No command matched the current prefix."),
-			subtleStyle.Render("Press esc to dismiss, or /help for the full catalog."),
-		)
-	} else {
-		selected := clampIndex(slashIndex, len(items))
-		start := 0
-		if selected > 4 {
-			start = selected - 4
-		}
-		end := start + 6
-		if end > len(items) {
-			end = len(items)
-		}
-		for i := start; i < end; i++ {
-			line := fmt.Sprintf("%s  %s", items[i].Template,
-				subtleStyle.Render("· "+items[i].Description))
-			label := truncateSingleLine(line, width-6)
-			if i == selected {
-				body = append(body, mentionSelectedRowStyle.Render("▶ "+label))
-			} else {
-				body = append(body, "  "+label)
-			}
-		}
-	}
-
-	footer := subtleStyle.Render("↑/↓ move · tab cycle · enter run · esc cancel")
-
-	parts := []string{title, count, ""}
-	parts = append(parts, body...)
-	parts = append(parts, "", footer)
-	return mentionPickerStyle.Width(width).Render(strings.Join(parts, "\n"))
-}
-
 // Patch parsing & apply (patchSectionPaths, totalPatchHunks,
 // patchLineCounts, extractPatchedFiles, parseUnifiedDiffSections,
 // normalizePatchPath, extractPatchHunks, gitWorkingDiff,
 // latestAssistantUnifiedDiff, extractUnifiedDiff,
 // looksLikeUnifiedDiff, applyUnifiedDiff) lives in patch_parse.go.
-
-// truncateSingleLine clips `text` to at most `width` visible terminal cells.
-// ANSI styling is preserved — we count display width, not runes or bytes —
-// so a styled label like lipgloss.Bold("streaming") doesn't get clipped to
-// "stre..." just because its escape sequences puffed the rune count.
-func legacyTruncateSingleLineTUI(text string, width int) string {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return ""
-	}
-	if width <= 0 {
-		return trimmed
-	}
-	if ansi.StringWidth(trimmed) <= width {
-		return trimmed
-	}
-	if width <= 3 {
-		return ansi.Truncate(trimmed, width, "")
-	}
-	return ansi.Truncate(trimmed, width, "…")
-}
-
-func legacyFormatCommandPickerItemTUI(item commandPickerItem) string {
-	value := strings.TrimSpace(item.Value)
-	desc := strings.TrimSpace(item.Description)
-	meta := strings.TrimSpace(item.Meta)
-	switch {
-	case desc != "" && meta != "":
-		return value + " - " + desc + " - " + meta
-	case desc != "":
-		return value + " - " + desc
-	case meta != "":
-		return value + " - " + meta
-	default:
-		return value
-	}
-}
-
-func legacyFitPanelContentHeightTUI(content string, maxLines int) string {
-	if maxLines <= 0 {
-		return content
-	}
-	content = strings.ReplaceAll(content, "\r\n", "\n")
-	lines := strings.Split(content, "\n")
-	if len(lines) > maxLines {
-		if maxLines >= 2 {
-			lines = append(lines[:maxLines-1], subtleStyle.Render("..."))
-		} else {
-			lines = lines[:maxLines]
-		}
-	}
-	return strings.Join(lines, "\n")
-}
 
 func gitChangedFiles(projectRoot string, limit int) ([]string, error) {
 	root := strings.TrimSpace(projectRoot)
@@ -2849,7 +2339,7 @@ func renderTUIHelp() string {
 		"    /btw NOTE                    Queue a note for the next tool-loop step",
 		"",
 		"Mentions: @file.go picks a file · @file.go:10-50 or @file.go#L10-L50 attaches a range.",
-		"Panels: F1 Chat · F2 Status · F3 Files · F4 Patch · F5 Setup · F6 Tools · Ctrl+P palette",
+		"Panels: F1 Chat · F2 Providers · F3 Files · F4 Patch · F5 Workflow · F6 Tools · F7 Activity · F8 Memory · F9 CodeMap · F10 Conversations · F11 Prompts · F12 Security · Alt+I Status · Alt+Y Plans · Alt+W Context · Alt+O Providers · Ctrl+P palette",
 		"Run /help <command> for details on a specific command.",
 	}, "\n")
 	return catalog + tail

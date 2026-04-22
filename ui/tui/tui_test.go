@@ -3014,25 +3014,6 @@ func TestRenderFilesViewHintDescribesRealKeys(t *testing.T) {
 	}
 }
 
-func TestRenderSetupViewShowsProviderDetails(t *testing.T) {
-	eng := newTUITestEngine(t)
-	m := NewModel(context.Background(), eng)
-	m.activeTab = 4
-	m.status = eng.Status()
-	providers := m.availableProviders()
-	if len(providers) == 0 {
-		t.Fatal("expected providers for setup view")
-	}
-
-	view := m.renderSetupView(100)
-	if !strings.Contains(view, "Setup") || !strings.Contains(view, "Selection") {
-		t.Fatalf("expected setup headings, got:\n%s", view)
-	}
-	if !strings.Contains(view, "Provider:") || !strings.Contains(view, "Model:") {
-		t.Fatalf("expected provider/model details in setup view, got:\n%s", view)
-	}
-}
-
 func TestRenderToolsViewShowsToolDetails(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)

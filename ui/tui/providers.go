@@ -23,6 +23,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"gopkg.in/yaml.v3"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
@@ -37,6 +38,7 @@ type providerRow struct {
 	Name          string
 	Model         string
 	Models        []string // ordered model list for cycling
+	Protocol      string
 	MaxContext    int
 	ToolStyle     string
 	SupportsTools bool
@@ -91,10 +93,12 @@ func collectProviderRows(eng *engine.Engine) []providerRow {
 		}
 		hints := p.Hints()
 		status, isOffline := providerStatusTag(name, hints.SupportsTools)
+		prof, _ := eng.Config.Providers.Profiles[name]
 		rows = append(rows, providerRow{
 			Name:          name,
 			Model:         p.Model(),
 			Models:        p.Models(),
+			Protocol:      prof.Protocol,
 			MaxContext:    p.MaxContext(),
 			ToolStyle:     hints.ToolStyle,
 			SupportsTools: hints.SupportsTools,
@@ -112,6 +116,24 @@ func collectProviderRows(eng *engine.Engine) []providerRow {
 		return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name)
 	})
 	return rows
+}
+
+// filteredProviderRows returns only rows whose name, model, or status
+// matches the query (case-insensitive). An empty query returns all rows.
+func filteredProviderRows(rows []providerRow, query string) []providerRow {
+	q := strings.TrimSpace(strings.ToLower(query))
+	if q == "" {
+		return rows
+	}
+	var out []providerRow
+	for _, r := range rows {
+		if strings.Contains(strings.ToLower(r.Name), q) ||
+			strings.Contains(strings.ToLower(r.Model), q) ||
+			strings.Contains(strings.ToLower(r.Status), q) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // resolveProviderOrder returns the fallback chain the router would walk
@@ -137,6 +159,45 @@ func providerStatusStyle(status string) string {
 	default:
 		return subtleStyle.Render(strings.ToUpper(status))
 	}
+}
+
+// formatRelativeTime returns a human-friendly elapsed string like "2m ago"
+// or "just now" for recent timestamps.
+func formatRelativeTime(t time.Time) string {
+	d := time.Since(t)
+	if d < 10*time.Second {
+		return "just now"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+}
+
+// apiKeySourceBadge returns a styled badge showing where the provider's API
+// key comes from: env var, config file, or missing. When the key is present
+// and the canonical env var matches it, the badge names the env var.
+func apiKeySourceBadge(name string, prof config.ModelConfig) string {
+	envVar := config.EnvVarForProvider(name)
+	key := strings.TrimSpace(prof.APIKey)
+	if key == "" {
+		if envVar != "" {
+			return warnStyle.Render("[key:missing — set " + envVar + "]")
+		}
+		return warnStyle.Render("[key:missing]")
+	}
+	if envVar != "" {
+		if v, _ := os.LookupEnv(envVar); strings.TrimSpace(v) == key {
+			return okStyle.Render("[key:env " + envVar + "]")
+		}
+	}
+	return subtleStyle.Render("[key:config]")
 }
 
 // formatProviderRow renders one line. Shape:
@@ -173,7 +234,7 @@ func formatProviderRow(row providerRow, selected bool, width int) string {
 
 // formatProviderRowNumbered renders one numbered line. Shape:
 // `▶ 1. [READY] anthropic*  claude-opus-4  [key:ok]  max=200k  tools=on`.
-func formatProviderRowNumbered(row providerRow, num int, selected bool, fallbackSet map[string]bool, width int) string {
+func formatProviderRowNumbered(row providerRow, num int, selected bool, fallbackPos map[string]int, width int) string {
 	marker := "  "
 	if selected {
 		marker = accentStyle.Render("▶ ")
@@ -182,8 +243,8 @@ func formatProviderRowNumbered(row providerRow, num int, selected bool, fallback
 	name := row.Name
 	if row.IsPrimary {
 		name = accentStyle.Render(name) + subtleStyle.Render("*")
-	} else if fallbackSet[strings.ToLower(strings.TrimSpace(row.Name))] {
-		name = subtleStyle.Render(name) + subtleStyle.Render("↓")
+	} else if pos, ok := fallbackPos[strings.ToLower(strings.TrimSpace(row.Name))]; ok {
+		name = subtleStyle.Render(name) + subtleStyle.Render(fmt.Sprintf("↓[%d]", pos))
 	}
 
 	keyBadge := subtleStyle.Render("[key:--]")
@@ -195,15 +256,30 @@ func formatProviderRowNumbered(row providerRow, num int, selected bool, fallback
 	if strings.TrimSpace(model) == "" {
 		model = "(no model)"
 	}
-	line := fmt.Sprintf("%s%d. %s  %s  %s  %s  %s  %s",
+	modelCount := subtleStyle.Render(fmt.Sprintf("models=%d", len(row.Models)))
+	if len(row.Models) == 0 {
+		modelCount = warnStyle.Render("models=0")
+	}
+	line := fmt.Sprintf("%s%d. %s  %s  %s  %s  %s  %s  %s",
 		marker, num, tag, name,
 		subtleStyle.Render(model),
 		keyBadge,
+		modelCount,
 		subtleStyle.Render(fmt.Sprintf("max=%d", row.MaxContext)),
 		subtleStyle.Render(fmt.Sprintf("tools=%v", row.SupportsTools)),
 	)
 	if row.ToolStyle != "" {
 		line += "  " + subtleStyle.Render(row.ToolStyle)
+	}
+	if strings.TrimSpace(row.Protocol) != "" {
+		line += "  " + subtleStyle.Render("protocol="+row.Protocol)
+	}
+	if len(row.BestFor) > 0 {
+		tags := strings.Join(row.BestFor, ",")
+		if len(tags) > 20 {
+			tags = tags[:20] + "..."
+		}
+		line += "  " + subtleStyle.Render("best_for="+tags)
 	}
 	if width > 0 {
 		line = truncateSingleLine(line, width)
@@ -213,7 +289,7 @@ func formatProviderRowNumbered(row providerRow, num int, selected bool, fallback
 
 // formatProviderDetail renders the selected row's extended info beneath the list.
 func formatProviderDetail(row providerRow, width int) []string {
-	out := []string{"  " + subtleStyle.Render("detail")}
+	var out []string
 	head := row.Name
 	if row.IsPrimary {
 		head = accentStyle.Render(row.Name) + subtleStyle.Render(" · primary")
@@ -223,12 +299,21 @@ func formatProviderDetail(row providerRow, width int) []string {
 		"model=%s  max_context=%d  tool_style=%s  tools=%v",
 		nonEmpty(row.Model, "(none)"), row.MaxContext, nonEmpty(row.ToolStyle, "(none)"), row.SupportsTools,
 	)))
+	if len(row.Models) > 1 {
+		out = append(out, "    "+subtleStyle.Render(fmt.Sprintf("(%d models configured)", len(row.Models))))
+	}
 	if len(row.BestFor) > 0 {
 		out = append(out, "    "+subtleStyle.Render("best_for: ")+strings.Join(row.BestFor, ", "))
 	}
 	switch row.Status {
 	case "no-key":
-		out = append(out, "    "+warnStyle.Render("missing API key — set the env var or providers.profiles entry."))
+		var hint string
+		if envVar := config.EnvVarForProvider(row.Name); envVar != "" {
+			hint = "missing API key — set " + envVar + " or add api_key to providers.profiles." + row.Name
+		} else {
+			hint = "missing API key — add api_key to providers.profiles." + row.Name
+		}
+		out = append(out, "    "+warnStyle.Render(hint))
 	case "offline":
 		out = append(out, "    "+subtleStyle.Render("offline provider — deterministic fallback, no network."))
 	}
@@ -237,6 +322,9 @@ func formatProviderDetail(row providerRow, width int) []string {
 }
 
 func (m Model) renderProvidersView(width int) string {
+	if m.providers.confirmAction != "" {
+		return m.renderProvidersConfirm(width)
+	}
 	switch m.providers.viewMode {
 	case "detail":
 		return m.renderProviderDetailView(width)
@@ -251,10 +339,10 @@ func (m Model) renderProvidersView(width int) string {
 
 func (m Model) renderProviderListView(width int) string {
 	width = clampInt(width, 24, 1000)
-	hint := subtleStyle.Render("j/k scroll · enter menu · g/G top/bottom")
+	hint := subtleStyle.Render("j/k scroll · g/G/home/end top/bottom · pgup/pgdown page · enter menu · / search · c clear")
 	header := sectionHeader("⚑", "Providers")
 
-	rows := m.providers.rows
+	rows := filteredProviderRows(m.providers.rows, m.providers.query)
 	order := resolveProviderOrder(m.eng)
 
 	lines := []string{header, hint}
@@ -267,7 +355,11 @@ func (m Model) renderProviderListView(width int) string {
 		for i, name := range order {
 			numbered = append(numbered, fmt.Sprintf("%d.%s", i+1, accentStyle.Render(name)))
 		}
-		lines = append(lines, subtleStyle.Render("fallback chain: ")+strings.Join(numbered, subtleStyle.Render(" → ")))
+		chainLine := subtleStyle.Render("fallback chain: ") + strings.Join(numbered, subtleStyle.Render(" → "))
+		if width > 0 {
+			chainLine = truncateSingleLine(chainLine, width-2)
+		}
+		lines = append(lines, chainLine)
 	}
 	lines = append(lines, renderDivider(width-2))
 
@@ -276,18 +368,29 @@ func (m Model) renderProviderListView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
+	if m.providers.searchActive {
+		searchLine := "search: " + accentStyle.Render(m.providers.query) + subtleStyle.Render("  · enter confirm · esc cancel")
+		lines = append(lines, "", searchLine)
+	}
+
 	if len(rows) == 0 {
-		lines = append(lines,
-			"",
-			subtleStyle.Render("No providers registered — engine is in degraded startup."),
-			subtleStyle.Render("Press enter for the actions menu once the store is available."),
-		)
+		if m.providers.query != "" {
+			lines = append(lines, "", subtleStyle.Render("No providers match your search."))
+		} else {
+			lines = append(lines,
+				"",
+				warnStyle.Render("No providers registered"),
+				subtleStyle.Render("The engine is in degraded startup."),
+				"",
+				subtleStyle.Render("Press Enter → New Provider to add one."),
+			)
+		}
 		return strings.Join(lines, "\n")
 	}
 
 	readyCount := 0
 	noKeyCount := 0
-	for _, r := range rows {
+	for _, r := range m.providers.rows {
 		switch r.Status {
 		case "ready":
 			readyCount++
@@ -295,21 +398,43 @@ func (m Model) renderProviderListView(width int) string {
 			noKeyCount++
 		}
 	}
-	summary := fmt.Sprintf("%d providers · %d ready · %d missing keys", len(rows), readyCount, noKeyCount)
+	offlineCount := len(m.providers.rows) - readyCount - noKeyCount
+	primaryName := ""
+	if m.eng != nil {
+		primaryName = strings.TrimSpace(m.eng.Config.Providers.Primary)
+	}
+	summary := fmt.Sprintf("%d providers · %d ready · %d missing keys · %d offline", len(m.providers.rows), readyCount, noKeyCount, offlineCount)
+	if primaryName != "" {
+		summary += " · primary: " + primaryName
+	}
+	if m.providers.syncing {
+		summary = runningStyle.Render("syncing models...") + "  " + subtleStyle.Render(summary)
+	} else if !m.providers.lastSyncedAt.IsZero() {
+		summary += subtleStyle.Render(" · synced " + formatRelativeTime(m.providers.lastSyncedAt))
+	}
+	if m.providers.query != "" {
+		summary += subtleStyle.Render(fmt.Sprintf("  · showing %d of %d", len(rows), len(m.providers.rows)))
+	}
 	lines = append(lines, subtleStyle.Render(summary), "")
 
-	// Build fallback set for markers
-	fallbackSet := map[string]bool{}
+	// Build fallback map for markers (name -> 1-based position)
+	fallbackPos := map[string]int{}
 	if m.eng != nil {
-		for _, n := range m.eng.FallbackProviders() {
-			fallbackSet[strings.ToLower(strings.TrimSpace(n))] = true
+		for idx, n := range m.eng.FallbackProviders() {
+			fallbackPos[strings.ToLower(strings.TrimSpace(n))] = idx + 1
 		}
 	}
 
 	scroll := clampScroll(m.providers.scroll, len(rows))
+	lastStatus := ""
 	for i, row := range rows {
+		if lastStatus != "" && row.Status != lastStatus {
+			label := strings.ToUpper(row.Status)
+			lines = append(lines, subtleStyle.Render("  ─── "+label+" ───"))
+		}
+		lastStatus = row.Status
 		selected := i == scroll
-		lines = append(lines, formatProviderRowNumbered(row, i+1, selected, fallbackSet, width-2))
+		lines = append(lines, formatProviderRowNumbered(row, i+1, selected, fallbackPos, width-2))
 	}
 
 	if scroll >= 0 && scroll < len(rows) {
@@ -324,12 +449,12 @@ func (m Model) renderProviderListView(width int) string {
 func (m Model) renderProviderDetailView(width int) string {
 	width = clampInt(width, 24, 1000)
 	header := sectionHeader("⚑", "Provider Detail")
-	hint := subtleStyle.Render("j/k scroll model list · enter menu · esc/q back")
+	hint := subtleStyle.Render("j/k scroll · g/G/home/end top/bottom · pgup/pgdown page · enter menu · esc/q back")
 	if m.providers.modelPickerActive {
 		if m.providers.modelPickerManual {
 			hint = subtleStyle.Render("type model · enter confirm · esc cancel")
 		} else {
-			hint = subtleStyle.Render("j/k scroll · enter pick · m manual · esc cancel")
+			hint = subtleStyle.Render("j/k scroll · g/G home/end · pgup/pgdown page · enter pick · m manual · esc cancel")
 		}
 	} else if m.providers.profileEditMode {
 		hint = subtleStyle.Render("tab field · enter commit · esc cancel")
@@ -357,31 +482,50 @@ func (m Model) renderProviderDetailView(width int) string {
 
 	// Header badges
 	badges := []string{providerStatusStyle(status)}
-	if strings.TrimSpace(prof.APIKey) != "" {
-		badges = append(badges, accentStyle.Render("[key:set]"))
-	} else {
-		badges = append(badges, warnStyle.Render("[key:missing]"))
-	}
+	badges = append(badges, apiKeySourceBadge(name, prof))
 	if m.eng != nil && strings.EqualFold(m.eng.Config.Providers.Primary, name) {
 		badges = append(badges, accentStyle.Render("[primary]"))
 	}
 	if m.eng != nil {
-		for _, fb := range m.eng.FallbackProviders() {
+		fbs := m.eng.FallbackProviders()
+		for fi, fb := range fbs {
 			if strings.EqualFold(fb, name) {
-				badges = append(badges, subtleStyle.Render("[fallback]"))
+				pos := fmt.Sprintf("%d", fi+1)
+				suffix := "th"
+				switch pos {
+				case "1":
+					suffix = "st"
+				case "2":
+					suffix = "nd"
+				case "3":
+					suffix = "rd"
+				}
+				badges = append(badges, subtleStyle.Render("[fallback: "+pos+suffix+"]"))
 				break
 			}
 		}
 	}
 	lines = append(lines, "")
 	lines = append(lines, accentStyle.Render(name))
-	lines = append(lines, "  "+strings.Join(badges, "  "))
+	badgeLine := "  " + strings.Join(badges, "  ")
+	if width > 0 {
+		badgeLine = truncateSingleLine(badgeLine, width-2)
+	}
+	lines = append(lines, badgeLine)
+	lines = append(lines, "")
+	lines = append(lines, sectionTitleStyle.Render("Profile"))
 
 	// Profile fields
 	protocol := nonEmpty(prof.Protocol, "(auto)")
 	baseURL := nonEmpty(prof.BaseURL, "(default)")
 	maxContext := fmt.Sprintf("%d", prof.MaxContext)
+	if prof.MaxContext == 0 {
+		maxContext = "(default)"
+	}
 	maxTokens := fmt.Sprintf("%d", prof.MaxTokens)
+	if prof.MaxTokens == 0 {
+		maxTokens = "(default)"
+	}
 	if m.providers.profileEditMode {
 		fields := []struct {
 			label  string
@@ -412,50 +556,65 @@ func (m Model) renderProviderDetailView(width int) string {
 			lines = append(lines, prefix+label+"="+val)
 		}
 	} else {
-		lines = append(lines, "")
 		lines = append(lines, "  "+subtleStyle.Render("protocol:")+" "+protocol)
 		lines = append(lines, "  "+subtleStyle.Render("base_url:")+" "+baseURL)
 		lines = append(lines, "  "+subtleStyle.Render("max_context:")+" "+maxContext)
 		lines = append(lines, "  "+subtleStyle.Render("max_tokens:")+" "+maxTokens)
 	}
 
+	// Best-for tags from the provider row
+	for _, r := range m.providers.rows {
+		if strings.EqualFold(r.Name, m.providers.detailProvider) {
+			if len(r.BestFor) > 0 {
+				lines = append(lines, "")
+				lines = append(lines, "  "+subtleStyle.Render("best_for: ")+strings.Join(r.BestFor, ", "))
+			}
+			break
+		}
+	}
+
 	// Models section with numbered list and scroll window
 	models := prof.AllModels()
 	lines = append(lines, "")
-	lines = append(lines, sectionTitleStyle.Render(fmt.Sprintf("Models (%d)", len(models))))
-	if len(models) == 0 {
-		lines = append(lines, "  "+subtleStyle.Render("(no models configured — use Add Model from the menu)"))
+	selectedIdx := m.providers.modelEditIdx
+	const modelWindow = 12
+	start := 0
+	if selectedIdx >= modelWindow {
+		start = selectedIdx - modelWindow + 1
+	}
+	end := start + modelWindow
+	if end > len(models) {
+		end = len(models)
+	}
+	var modelTitle string
+	if len(models) > modelWindow {
+		modelTitle = fmt.Sprintf("Models (%d-%d of %d)", start+1, end, len(models))
 	} else {
-		selectedIdx := m.providers.modelEditIdx
-		if m.providers.editMode != "model" {
-			selectedIdx = 0
-		}
-		// Show a window of up to 12 models around the selection
-		const modelWindow = 12
-		start := 0
-		if selectedIdx >= modelWindow {
-			start = selectedIdx - modelWindow + 1
-		}
-		end := start + modelWindow
-		if end > len(models) {
-			end = len(models)
-		}
+		modelTitle = fmt.Sprintf("Models (%d)", len(models))
+	}
+	lines = append(lines, sectionTitleStyle.Render(modelTitle))
+	if len(models) == 0 {
+		lines = append(lines, "  "+warnStyle.Render("No models configured"))
+		lines = append(lines, "  "+subtleStyle.Render("Press Enter → Add Model to add one."))
+	} else {
 		if start > 0 {
 			lines = append(lines, "  "+subtleStyle.Render(fmt.Sprintf("... %d more above", start)))
 		}
+		activeModel := strings.TrimSpace(prof.Model)
 		for i := start; i < end; i++ {
 			model := models[i]
 			num := fmt.Sprintf("%2d.", i+1)
 			prefix := "  " + num + " "
 			label := model
-			if m.providers.editMode == "model" && i == m.providers.modelEditIdx {
+			isActive := strings.EqualFold(model, activeModel)
+			if i == m.providers.modelEditIdx {
 				prefix = accentStyle.Render("▶ ") + num + " "
 				label = accentStyle.Render(label)
-				if i == 0 {
-					label += subtleStyle.Render(" ← active")
+				if isActive {
+					label += okStyle.Render(" ← active")
 				}
-			} else if i == 0 {
-				label = label + subtleStyle.Render(" ← active")
+			} else if isActive {
+				label = label + okStyle.Render(" ← active")
 			}
 			lines = append(lines, prefix+label)
 		}
@@ -482,15 +641,33 @@ func (m Model) renderProviderDetailView(width int) string {
 			items := m.providers.modelPickerItems
 			if len(items) == 0 {
 				lines = append(lines, "  "+subtleStyle.Render("(no models in cache — press m for manual entry)"))
+			} else {
+				lines = append(lines, "  "+subtleStyle.Render(fmt.Sprintf("(%d models in cache)", len(items))))
 			}
-			for i, item := range items {
+			const pickerWindow = 12
+			idx := m.providers.modelPickerIndex
+			start := 0
+			if idx >= pickerWindow {
+				start = idx - pickerWindow + 1
+			}
+			end := start + pickerWindow
+			if end > len(items) {
+				end = len(items)
+			}
+			if start > 0 {
+				lines = append(lines, "    "+subtleStyle.Render(fmt.Sprintf("... %d more above", start)))
+			}
+			for i := start; i < end; i++ {
 				prefix := "    "
-				label := item
-				if i == m.providers.modelPickerIndex {
+				label := items[i]
+				if i == idx {
 					prefix = accentStyle.Render("▶ ")
 					label = accentStyle.Render(label)
 				}
 				lines = append(lines, prefix+label)
+			}
+			if end < len(items) {
+				lines = append(lines, "    "+subtleStyle.Render(fmt.Sprintf("... %d more below", len(items)-end)))
 			}
 		}
 	}
@@ -507,17 +684,20 @@ func (m Model) renderPipelinesView(width int) string {
 		return m.renderPipelineEditView(width, header)
 	}
 
-	hint := subtleStyle.Render("j/k scroll · enter menu · g/G top/bottom · esc/q back")
+	hint := subtleStyle.Render("j/k scroll · g/G/home/end top/bottom · pgup/pgdown page · enter menu · esc/q back")
 	lines := []string{header, hint, renderDivider(width - 2)}
 
 	names := m.providers.pipelineNames
 	if len(names) == 0 {
 		lines = append(lines, "",
-			subtleStyle.Render("No pipelines configured."),
-			subtleStyle.Render("Press enter for the actions menu to create a pipeline."),
+			warnStyle.Render("No pipelines configured"),
+			"",
+			subtleStyle.Render("Press Enter → New Pipeline to create one."),
 		)
 		return strings.Join(lines, "\n")
 	}
+
+	lines = append(lines, subtleStyle.Render(fmt.Sprintf("%d pipelines configured", len(names))), "")
 
 	for i, name := range names {
 		selected := i == m.providers.pipelineScroll
@@ -535,34 +715,44 @@ func (m Model) renderPipelinesView(width int) string {
 		if name == m.providers.activePipeline {
 			label += accentStyle.Render(" · active")
 		}
-		lines = append(lines, prefix+num+" "+label)
-
 		if m.eng != nil {
 			if pipe, ok := m.eng.Pipeline(name); ok {
 				if len(pipe.Steps) > 0 {
-					var stepStrs []string
-					for j, step := range pipe.Steps {
-						stepStrs = append(stepStrs, fmt.Sprintf("%d.%s/%s", j+1, step.Provider, step.Model))
-					}
-					chain := strings.Join(stepStrs, subtleStyle.Render(" → "))
-					lines = append(lines, "    "+subtleStyle.Render("chain: ")+chain)
-					if len(pipe.Steps) > 1 {
-						fbStrs := []string{}
-						for j := 1; j < len(pipe.Steps); j++ {
-							fbStrs = append(fbStrs, fmt.Sprintf("%d.%s/%s", j+1, pipe.Steps[j].Provider, pipe.Steps[j].Model))
+					if selected {
+						lines = append(lines, prefix+num+" "+label)
+						for j, step := range pipe.Steps {
+							stepNum := fmt.Sprintf("%d.", j+1)
+							stepLabel := subtleStyle.Render(stepNum+" ") + step.Provider + subtleStyle.Render(" / ") + step.Model
+							if j == 0 {
+								stepLabel = subtleStyle.Render(stepNum+" ") + accentStyle.Render(step.Provider) + subtleStyle.Render(" / ") + accentStyle.Render(step.Model)
+								stepLabel += subtleStyle.Render(" ← primary")
+							} else {
+								stepLabel = subtleStyle.Render(stepNum+" ") + subtleStyle.Render(step.Provider) + subtleStyle.Render(" / ") + subtleStyle.Render(step.Model)
+								stepLabel += subtleStyle.Render(fmt.Sprintf(" ← fallback %d", j))
+							}
+							lines = append(lines, "    "+stepLabel)
 						}
-						lines = append(lines, "    "+subtleStyle.Render("fallback: ")+strings.Join(fbStrs, subtleStyle.Render(" → ")))
+					} else {
+						label += subtleStyle.Render(fmt.Sprintf(" · %d steps", len(pipe.Steps)))
+						lines = append(lines, prefix+num+" "+label)
 					}
+				} else {
+					lines = append(lines, prefix+num+" "+label)
 				}
+			} else {
+				lines = append(lines, prefix+num+" "+label)
 			}
+		} else {
+			lines = append(lines, prefix+num+" "+label)
 		}
 	}
 
+	lines = append(lines, m.renderProvidersMenu(width-2)...)
 	return strings.Join(lines, "\n")
 }
 
 func (m Model) renderPipelineEditView(width int, header string) string {
-	hint := subtleStyle.Render("j/k step · tab field · enter commit · esc cancel")
+	hint := subtleStyle.Render("j/k step · tab field · enter commit · d delete step · esc cancel")
 	if m.providers.pipelineEditStep == -1 {
 		hint = subtleStyle.Render("type name · tab next · enter save · esc cancel")
 	} else if m.providers.pipelineEditStep == len(m.providers.pipelineDraftSteps) {
@@ -580,6 +770,10 @@ func (m Model) renderPipelineEditView(width int, header string) string {
 	lines = append(lines, "")
 
 	steps := m.providers.pipelineDraftSteps
+	if len(steps) > 0 {
+		lines = append(lines, "  "+sectionTitleStyle.Render(fmt.Sprintf("Steps (%d)", len(steps))))
+	}
+
 	for i, step := range steps {
 		selected := i == m.providers.pipelineEditStep
 		prefix := "    "
@@ -634,7 +828,7 @@ func (m Model) refreshProvidersRows() Model {
 	} else {
 		m.providers.err = ""
 	}
-	m.providers.scroll = clampScroll(m.providers.scroll, len(rows))
+	m.providers.scroll = clampScroll(m.providers.scroll, len(filteredProviderRows(rows, m.providers.query)))
 	return m
 }
 
@@ -660,6 +854,11 @@ func isProvidersInputMode(m Model) bool {
 }
 
 func (m Model) handleProvidersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Confirmation mode takes priority over everything
+	if m.providers.confirmAction != "" {
+		return m.handleProvidersConfirmKey(msg)
+	}
+
 	// Input modes (typing) bypass menus and global shortcuts
 	if isProvidersInputMode(m) {
 		switch m.providers.viewMode {
@@ -676,6 +875,10 @@ func (m Model) handleProvidersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	}
+
+	if m.providers.searchActive {
+		return m.handleProvidersSearchKey(msg)
 	}
 
 	if m.providers.menuActive {
@@ -698,7 +901,8 @@ func (m Model) handleProvidersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleProvidersListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	total := len(m.providers.rows)
+	filtered := filteredProviderRows(m.providers.rows, m.providers.query)
+	total := len(filtered)
 	step := 1
 	pageStep := 10
 
@@ -725,23 +929,65 @@ func (m Model) handleProvidersListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.providers.scroll = 0
 		}
-	case "g":
+	case "g", "home":
 		m.providers.scroll = 0
-	case "G":
+	case "G", "end":
 		if total > 0 {
 			m.providers.scroll = total - 1
 		}
+	case "/":
+		m.providers.searchActive = true
+	case "c":
+		m.providers.query = ""
+		m.providers.scroll = 0
 	case "enter":
-		labels, actions, disabled := m.buildListMenu()
+		labels, actions, disabled, reasons := m.buildListMenu()
 		if len(labels) > 0 {
 			m.providers.menuActive = true
 			m.providers.menuLabels = labels
 			m.providers.menuActions = actions
 			m.providers.menuDisabled = disabled
+			m.providers.menuDisabledReasons = reasons
 			m.providers.menuIndex = 0
 		}
 	}
 	return m, nil
+}
+
+func (m Model) handleProvidersSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.providers.searchActive = false
+		m.providers.scroll = 0
+		return m, nil
+	case tea.KeyEsc:
+		m.providers.searchActive = false
+		m.providers.query = ""
+		m.providers.scroll = 0
+		return m, nil
+	case tea.KeyBackspace:
+		if r := []rune(m.providers.query); len(r) > 0 {
+			m.providers.query = string(r[:len(r)-1])
+		}
+		m.providers.scroll = 0
+		return m, nil
+	case tea.KeyRunes, tea.KeySpace:
+		m.providers.query += msg.String()
+		m.providers.scroll = 0
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) detailProviderModels() []string {
+	if m.eng == nil || m.eng.Config == nil {
+		return nil
+	}
+	prof, ok := m.eng.Config.Providers.Profiles[m.providers.detailProvider]
+	if !ok {
+		return nil
+	}
+	return prof.AllModels()
 }
 
 func (m Model) handleProvidersDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -749,43 +995,51 @@ func (m Model) handleProvidersDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		m.providers.viewMode = "list"
 		m.providers.detailProvider = ""
+		m.providers.modelEditIdx = 0
 	case "j", "down":
-		if m.eng == nil || m.eng.Config == nil {
-			return m, nil
-		}
-		prof, ok := m.eng.Config.Providers.Profiles[m.providers.detailProvider]
-		if !ok {
-			return m, nil
-		}
-		models := prof.AllModels()
-		if len(models) == 0 {
-			return m, nil
-		}
-		if m.providers.modelEditIdx+1 < len(models) {
+		models := m.detailProviderModels()
+		if len(models) > 0 && m.providers.modelEditIdx+1 < len(models) {
 			m.providers.modelEditIdx++
 		}
 	case "k", "up":
-		if m.eng == nil || m.eng.Config == nil {
-			return m, nil
-		}
-		prof, ok := m.eng.Config.Providers.Profiles[m.providers.detailProvider]
-		if !ok {
-			return m, nil
-		}
-		models := prof.AllModels()
-		if len(models) == 0 {
-			return m, nil
-		}
-		if m.providers.modelEditIdx > 0 {
+		models := m.detailProviderModels()
+		if len(models) > 0 && m.providers.modelEditIdx > 0 {
 			m.providers.modelEditIdx--
 		}
+	case "g", "home":
+		models := m.detailProviderModels()
+		if len(models) > 0 {
+			m.providers.modelEditIdx = 0
+		}
+	case "G", "end":
+		models := m.detailProviderModels()
+		if len(models) > 0 {
+			m.providers.modelEditIdx = len(models) - 1
+		}
+	case "pgdown":
+		models := m.detailProviderModels()
+		if len(models) > 0 {
+			m.providers.modelEditIdx += 12
+			if m.providers.modelEditIdx >= len(models) {
+				m.providers.modelEditIdx = len(models) - 1
+			}
+		}
+	case "pgup":
+		models := m.detailProviderModels()
+		if len(models) > 0 {
+			m.providers.modelEditIdx -= 12
+			if m.providers.modelEditIdx < 0 {
+				m.providers.modelEditIdx = 0
+			}
+		}
 	case "enter":
-		labels, actions, disabled := m.buildDetailMenu()
+		labels, actions, disabled, reasons := m.buildDetailMenu()
 		if len(labels) > 0 {
 			m.providers.menuActive = true
 			m.providers.menuLabels = labels
 			m.providers.menuActions = actions
 			m.providers.menuDisabled = disabled
+			m.providers.menuDisabledReasons = reasons
 			m.providers.menuIndex = 0
 		}
 	}
@@ -834,6 +1088,22 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "k", "up":
 		if m.providers.modelPickerIndex > 0 {
 			m.providers.modelPickerIndex--
+		}
+	case "g", "home":
+		m.providers.modelPickerIndex = 0
+	case "G", "end":
+		if len(m.providers.modelPickerItems) > 0 {
+			m.providers.modelPickerIndex = len(m.providers.modelPickerItems) - 1
+		}
+	case "pgdown":
+		m.providers.modelPickerIndex += 12
+		if total := len(m.providers.modelPickerItems); total > 0 && m.providers.modelPickerIndex >= total {
+			m.providers.modelPickerIndex = total - 1
+		}
+	case "pgup":
+		m.providers.modelPickerIndex -= 12
+		if m.providers.modelPickerIndex < 0 {
+			m.providers.modelPickerIndex = 0
 		}
 	case "m":
 		m.providers.modelPickerManual = true
@@ -903,19 +1173,32 @@ func (m Model) handleProvidersPipelineKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.providers.pipelineScroll > 0 {
 			m.providers.pipelineScroll--
 		}
-	case "g":
+	case "g", "home":
 		m.providers.pipelineScroll = 0
-	case "G":
+	case "G", "end":
 		if total > 0 {
 			m.providers.pipelineScroll = total - 1
 		}
+	case "pgdown":
+		if m.providers.pipelineScroll+10 < total {
+			m.providers.pipelineScroll += 10
+		} else if total > 0 {
+			m.providers.pipelineScroll = total - 1
+		}
+	case "pgup":
+		if m.providers.pipelineScroll >= 10 {
+			m.providers.pipelineScroll -= 10
+		} else {
+			m.providers.pipelineScroll = 0
+		}
 	case "enter":
-		labels, actions, disabled := m.buildPipelineMenu()
+		labels, actions, disabled, reasons := m.buildPipelineMenu()
 		if len(labels) > 0 {
 			m.providers.menuActive = true
 			m.providers.menuLabels = labels
 			m.providers.menuActions = actions
 			m.providers.menuDisabled = disabled
+			m.providers.menuDisabledReasons = reasons
 			m.providers.menuIndex = 0
 		}
 	}
@@ -1027,6 +1310,17 @@ func (m Model) handlePipelineEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.providers.pipelineEditStep = stepIdx - 1
 			m.providers.pipelineEditField = 0
 			m.providers.pipelineDraftBuf = ""
+		}
+	case "d":
+		if stepIdx >= 0 && stepIdx < len(steps) {
+			m.providers.pipelineDraftSteps = append(steps[:stepIdx], steps[stepIdx+1:]...)
+			if stepIdx >= len(m.providers.pipelineDraftSteps) {
+				m.providers.pipelineEditStep = len(m.providers.pipelineDraftSteps) - 1
+			}
+			if m.providers.pipelineEditStep < -1 {
+				m.providers.pipelineEditStep = -1
+			}
+			m.providers.pipelineEditField = 0
 		}
 	case "backspace":
 		if len(m.providers.pipelineDraftBuf) > 0 {
@@ -1480,6 +1774,7 @@ func (m Model) renderProvidersMenu(width int) []string {
 	lines = append(lines, sectionTitleStyle.Render(title))
 
 	disabled := m.providers.menuDisabled
+	reasons := m.providers.menuDisabledReasons
 	for i, label := range labels {
 		num := fmt.Sprintf("%d. ", i+1)
 		prefix := "   "
@@ -1505,6 +1800,9 @@ func (m Model) renderProvidersMenu(width int) []string {
 				l = subtleStyle.Render(l)
 			}
 		}
+		if isDisabled && i < len(reasons) && reasons[i] != "" {
+			l += subtleStyle.Render(" (" + reasons[i] + ")")
+		}
 		lines = append(lines, prefix+l)
 	}
 
@@ -1513,9 +1811,10 @@ func (m Model) renderProvidersMenu(width int) []string {
 	return lines
 }
 
-func (m Model) buildListMenu() ([]string, []string, []bool) {
+func (m Model) buildListMenu() ([]string, []string, []bool, []string) {
 	var labels, actions []string
 	var disabled []bool
+	var reasons []string
 
 	scroll := clampScroll(m.providers.scroll, len(m.providers.rows))
 	selectedName := ""
@@ -1528,6 +1827,7 @@ func (m Model) buildListMenu() ([]string, []string, []bool) {
 		labels = append(labels, "View Detail")
 		actions = append(actions, "detail")
 		disabled = append(disabled, false)
+		reasons = append(reasons, "")
 
 		// Set Primary — context-aware label
 		isPrimary := false
@@ -1541,6 +1841,11 @@ func (m Model) buildListMenu() ([]string, []string, []bool) {
 		}
 		actions = append(actions, "set_primary")
 		disabled = append(disabled, isPrimary)
+		if isPrimary {
+			reasons = append(reasons, "already the primary provider")
+		} else {
+			reasons = append(reasons, "")
+		}
 
 		// Toggle Fallback — context-aware label
 		inFallback := false
@@ -1559,52 +1864,68 @@ func (m Model) buildListMenu() ([]string, []string, []bool) {
 		}
 		actions = append(actions, "toggle_fallback")
 		disabled = append(disabled, false)
+		reasons = append(reasons, "")
 
 		labels = append(labels, "Cycle Model")
 		actions = append(actions, "cycle_model")
 		disabled = append(disabled, false)
+		reasons = append(reasons, "")
 		labels = append(labels, "Save Config")
 		actions = append(actions, "save_config")
 		disabled = append(disabled, false)
+		reasons = append(reasons, "")
 		labels = append(labels, "Delete Provider")
 		actions = append(actions, "delete_provider")
 		disabled = append(disabled, false)
+		reasons = append(reasons, "")
 	}
 
 	// --- Global actions ---
 	labels = append(labels, "Sync Models")
 	actions = append(actions, "sync_models")
 	disabled = append(disabled, false)
+	reasons = append(reasons, "")
 	labels = append(labels, "Pipelines")
 	actions = append(actions, "pipelines")
 	disabled = append(disabled, false)
+	reasons = append(reasons, "")
 	labels = append(labels, "New Provider")
 	actions = append(actions, "new_provider")
 	disabled = append(disabled, false)
+	reasons = append(reasons, "")
 	labels = append(labels, "Refresh")
 	actions = append(actions, "refresh")
 	disabled = append(disabled, false)
+	reasons = append(reasons, "")
 
-	return labels, actions, disabled
+	return labels, actions, disabled, reasons
 }
 
-func (m Model) buildDetailMenu() ([]string, []string, []bool) {
+func (m Model) buildDetailMenu() ([]string, []string, []bool, []string) {
 	var labels, actions []string
 	var disabled []bool
+	var reasons []string
 	name := m.providers.detailProvider
 
 	// --- Profile ---
 	labels = append(labels, "Edit Profile")
 	actions = append(actions, "edit_profile")
 	disabled = append(disabled, false)
+	reasons = append(reasons, "")
 
 	// --- Models ---
 	labels = append(labels, "Add Model")
 	actions = append(actions, "add_model")
 	disabled = append(disabled, false)
-	labels = append(labels, "Delete Active Model")
+	reasons = append(reasons, "")
+	labels = append(labels, "Set Active Model")
+	actions = append(actions, "set_active_model")
+	disabled = append(disabled, false)
+	reasons = append(reasons, "")
+	labels = append(labels, "Delete Selected Model")
 	actions = append(actions, "delete_model")
 	disabled = append(disabled, false)
+	reasons = append(reasons, "")
 
 	// --- Routing ---
 	isPrimary := false
@@ -1618,6 +1939,11 @@ func (m Model) buildDetailMenu() ([]string, []string, []bool) {
 	}
 	actions = append(actions, "set_primary")
 	disabled = append(disabled, isPrimary)
+	if isPrimary {
+		reasons = append(reasons, "already the primary provider")
+	} else {
+		reasons = append(reasons, "")
+	}
 
 	inFallback := false
 	if m.eng != nil {
@@ -1635,23 +1961,27 @@ func (m Model) buildDetailMenu() ([]string, []string, []bool) {
 	}
 	actions = append(actions, "toggle_fallback")
 	disabled = append(disabled, false)
+	reasons = append(reasons, "")
 
 	// --- Persistence ---
 	labels = append(labels, "Save Config")
 	actions = append(actions, "save_config")
 	disabled = append(disabled, false)
+	reasons = append(reasons, "")
 
 	// --- Navigation ---
 	labels = append(labels, "Back to List")
 	actions = append(actions, "back")
 	disabled = append(disabled, false)
+	reasons = append(reasons, "")
 
-	return labels, actions, disabled
+	return labels, actions, disabled, reasons
 }
 
-func (m Model) buildPipelineMenu() ([]string, []string, []bool) {
+func (m Model) buildPipelineMenu() ([]string, []string, []bool, []string) {
 	var labels, actions []string
 	var disabled []bool
+	var reasons []string
 
 	scroll := clampScroll(m.providers.pipelineScroll, len(m.providers.pipelineNames))
 	if scroll >= 0 && scroll < len(m.providers.pipelineNames) {
@@ -1663,22 +1993,31 @@ func (m Model) buildPipelineMenu() ([]string, []string, []bool) {
 		}
 		actions = append(actions, "activate")
 		disabled = append(disabled, name == m.providers.activePipeline)
+		if name == m.providers.activePipeline {
+			reasons = append(reasons, "already the active pipeline")
+		} else {
+			reasons = append(reasons, "")
+		}
 		labels = append(labels, "Edit Pipeline")
 		actions = append(actions, "edit")
 		disabled = append(disabled, false)
+		reasons = append(reasons, "")
 		labels = append(labels, "Delete Pipeline")
 		actions = append(actions, "delete")
 		disabled = append(disabled, false)
+		reasons = append(reasons, "")
 	}
 
 	labels = append(labels, "New Pipeline")
 	actions = append(actions, "new")
 	disabled = append(disabled, false)
+	reasons = append(reasons, "")
 	labels = append(labels, "Back to List")
 	actions = append(actions, "back")
 	disabled = append(disabled, false)
+	reasons = append(reasons, "")
 
-	return labels, actions, disabled
+	return labels, actions, disabled, reasons
 }
 
 func (m Model) handleProvidersMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1740,6 +2079,95 @@ func nextEnabledMenuIndex(disabled []bool, start, total, dir int) int {
 	return start
 }
 
+func (m Model) renderProvidersConfirm(width int) string {
+	width = clampInt(width, 24, 1000)
+	lines := []string{""}
+
+	var icon, question string
+	switch m.providers.confirmAction {
+	case "delete_provider":
+		icon = warnStyle.Render("⚠")
+		question = fmt.Sprintf("Delete provider %s?", accentStyle.Render(m.providers.confirmTarget))
+	case "delete_model":
+		icon = warnStyle.Render("⚠")
+		question = fmt.Sprintf("Delete model %s from %s?",
+			accentStyle.Render(m.providers.confirmTarget),
+			subtleStyle.Render(m.providers.detailProvider))
+	case "delete_pipeline":
+		icon = warnStyle.Render("⚠")
+		question = fmt.Sprintf("Delete pipeline %s?", accentStyle.Render(m.providers.confirmTarget))
+	default:
+		icon = subtleStyle.Render("?")
+		question = "Are you sure?"
+	}
+
+	lines = append(lines, "  "+icon+"  "+question)
+	if m.providers.confirmAction == "delete_provider" {
+		if m.eng != nil && strings.EqualFold(m.eng.Config.Providers.Primary, m.providers.confirmTarget) {
+			lines = append(lines, "     "+warnStyle.Render("→ currently set as primary"))
+		}
+		if m.eng != nil {
+			for _, fb := range m.eng.Config.Providers.Fallback {
+				if strings.EqualFold(fb, m.providers.confirmTarget) {
+					lines = append(lines, "     "+warnStyle.Render("→ in fallback chain"))
+					break
+				}
+			}
+		}
+	}
+	lines = append(lines, "")
+	lines = append(lines, "     "+okStyle.Render("y")+subtleStyle.Render(" confirm  ")+
+		failStyle.Render("n")+subtleStyle.Render(" cancel"))
+
+	content := strings.Join(lines, "\n")
+	// Frame the dialog with a warning-colored border
+	frameStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorWarn).
+		Padding(0, 1).
+		Width(width - 4)
+	return frameStyle.Render(content)
+}
+
+func (m Model) handleProvidersConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y":
+		action := m.providers.confirmAction
+		target := m.providers.confirmTarget
+		m.providers.confirmAction = ""
+		m.providers.confirmTarget = ""
+		return m.executeConfirmedAction(action, target)
+	case "n", "esc":
+		m.notice = "cancelled"
+		m.providers.confirmAction = ""
+		m.providers.confirmTarget = ""
+	}
+	return m, nil
+}
+
+func (m Model) executeConfirmedAction(action, target string) (tea.Model, tea.Cmd) {
+	switch action {
+	case "delete_provider":
+		if err := m.deleteProvider(target); err != nil {
+			m.notice = "delete failed: " + err.Error()
+		} else {
+			m = m.refreshProvidersRows()
+			m.notice = "deleted provider: " + target
+		}
+	case "delete_model":
+		m = m.deleteActiveModel()
+	case "delete_pipeline":
+		if err := m.deletePipeline(target); err != nil {
+			m.notice = "delete failed: " + err.Error()
+		} else {
+			m.providers.pipelineNames = m.pipelineNamesFromEngine()
+			m.providers.pipelineScroll = clampScroll(m.providers.pipelineScroll, len(m.providers.pipelineNames))
+			m.notice = "deleted pipeline: " + target
+		}
+	}
+	return m, nil
+}
+
 func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
 	switch action {
 	case "detail":
@@ -1788,6 +2216,7 @@ func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "sync_models":
+		m.providers.syncing = true
 		return m, syncModelsDevCmd(m.eng)
 	case "pipelines":
 		m.providers.viewMode = "pipelines"
@@ -1800,12 +2229,8 @@ func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
 		scroll := clampScroll(m.providers.scroll, len(m.providers.rows))
 		if scroll >= 0 && scroll < len(m.providers.rows) {
 			name := m.providers.rows[scroll].Name
-			if err := m.deleteProvider(name); err != nil {
-				m.notice = "delete failed: " + err.Error()
-			} else {
-				m = m.refreshProvidersRows()
-				m.notice = "deleted provider: " + name
-			}
+			m.providers.confirmAction = "delete_provider"
+			m.providers.confirmTarget = name
 		}
 	case "refresh":
 		m = m.refreshProvidersRows()
@@ -1821,8 +2246,51 @@ func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
 		if m.eng != nil {
 			m.providers.modelPickerItems = m.loadModelsDevForProvider(m.providers.detailProvider)
 		}
+	case "set_active_model":
+		if m.eng == nil || m.eng.Config == nil {
+			m.notice = "engine not ready"
+			return m, nil
+		}
+		prof, ok := m.eng.Config.Providers.Profiles[m.providers.detailProvider]
+		if !ok {
+			m.notice = "provider not found"
+			return m, nil
+		}
+		models := prof.AllModels()
+		if len(models) == 0 {
+			m.notice = "no models to set"
+			return m, nil
+		}
+		idx := m.providers.modelEditIdx
+		if idx < 0 || idx >= len(models) {
+			idx = 0
+		}
+		prof.Model = models[idx]
+		m.eng.Config.Providers.Profiles[m.providers.detailProvider] = prof
+		m = m.refreshProvidersRows()
+		m = m.focusProviderRow(m.providers.detailProvider)
+		m.notice = fmt.Sprintf("set active model → %s", prof.Model)
 	case "delete_model":
-		m = m.deleteActiveModel()
+		if m.eng == nil || m.eng.Config == nil {
+			m.notice = "engine not ready"
+			return m, nil
+		}
+		prof, ok := m.eng.Config.Providers.Profiles[m.providers.detailProvider]
+		if !ok {
+			m.notice = "provider not found"
+			return m, nil
+		}
+		models := prof.AllModels()
+		if len(models) == 0 {
+			m.notice = "no models to delete"
+			return m, nil
+		}
+		idx := m.providers.modelEditIdx
+		if idx < 0 || idx >= len(models) {
+			idx = 0
+		}
+		m.providers.confirmAction = "delete_model"
+		m.providers.confirmTarget = models[idx]
 	case "activate":
 		scroll := clampScroll(m.providers.pipelineScroll, len(m.providers.pipelineNames))
 		if scroll >= 0 && scroll < len(m.providers.pipelineNames) {
@@ -1856,13 +2324,8 @@ func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
 		scroll := clampScroll(m.providers.pipelineScroll, len(m.providers.pipelineNames))
 		if scroll >= 0 && scroll < len(m.providers.pipelineNames) {
 			name := m.providers.pipelineNames[scroll]
-			if err := m.deletePipeline(name); err != nil {
-				m.notice = "delete failed: " + err.Error()
-			} else {
-				m.providers.pipelineNames = m.pipelineNamesFromEngine()
-				m.providers.pipelineScroll = clampScroll(m.providers.pipelineScroll, len(m.providers.pipelineNames))
-				m.notice = "deleted pipeline: " + name
-			}
+			m.providers.confirmAction = "delete_pipeline"
+			m.providers.confirmTarget = name
 		}
 	case "new":
 		m.providers.pipelineEditMode = true

@@ -14,7 +14,7 @@ import (
 
 func TestTabPaletteCoversEveryCanonicalTab(t *testing.T) {
 	canonical := []string{
-		"Chat", "Status", "Files", "Patch", "Setup", "Tools",
+		"Chat", "Status", "Files", "Patch", "Workflow", "Tools",
 		"Activity", "Memory", "CodeMap", "Conversations",
 		"Prompts", "Security", "Plans", "Context", "Providers",
 	}
@@ -45,7 +45,7 @@ func TestPaletteForTab_NonChatIgnoresPlanMode(t *testing.T) {
 }
 
 func TestTabFKeyHintCoversNavigableTabs(t *testing.T) {
-	for _, name := range []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools",
+	for _, name := range []string{"Chat", "Status", "Files", "Patch", "Workflow", "Tools",
 		"Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security",
 		"Plans", "Context", "Providers"} {
 		if hint := tabFKeyHint(name); strings.TrimSpace(hint) == "" {
@@ -55,7 +55,7 @@ func TestTabFKeyHintCoversNavigableTabs(t *testing.T) {
 }
 
 func TestRenderTopTabStrip_ShowsPrevActiveNext(t *testing.T) {
-	tabs := []string{"Chat", "Status", "Files", "Patch", "Setup"}
+	tabs := []string{"Chat", "Status", "Files", "Patch", "Workflow"}
 	out := renderTopTabStrip(tabs, 2 /* Files */, false, 200)
 	// The active tab must surface in upper-case as part of the badge —
 	// that's what makes it scan as "the one I'm on".
@@ -67,7 +67,7 @@ func TestRenderTopTabStrip_ShowsPrevActiveNext(t *testing.T) {
 	if !strings.Contains(out, "Status") || !strings.Contains(out, "Patch") {
 		t.Fatalf("prev/next neighbours missing:\n%s", out)
 	}
-	if !strings.Contains(out, "F2") || !strings.Contains(out, "F4") {
+	if !strings.Contains(out, "Alt+I") || !strings.Contains(out, "F4") {
 		t.Fatalf("prev/next F-key hints missing:\n%s", out)
 	}
 }

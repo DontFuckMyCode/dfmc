@@ -172,90 +172,6 @@ func (m Model) renderFilesViewSized(width, height int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, "   ", right)
 }
 
-func (m Model) renderSetupView(width int) string {
-	providers := m.availableProviders()
-	m.setupWizard.index = clampIndex(m.setupWizard.index, len(providers))
-
-	listWidth := width / 3
-	if listWidth < 24 {
-		listWidth = 24
-	}
-	if listWidth > width-24 {
-		listWidth = width / 2
-	}
-	detailWidth := width - listWidth - 3
-	if detailWidth < 20 {
-		detailWidth = 20
-	}
-
-	listLines := []string{
-		sectionHeader("⚙", "Setup"),
-		subtleStyle.Render("enter apply · m edit model · s save · ctrl+h keys"),
-		renderDivider(listWidth - 2),
-		"",
-	}
-	if len(providers) == 0 {
-		listLines = append(listLines,
-			warnStyle.Render("No providers configured."),
-			"",
-			subtleStyle.Render("Get online in under a minute:"),
-			subtleStyle.Render("  • set ")+codeStyle.Render("ANTHROPIC_API_KEY")+subtleStyle.Render(", ")+codeStyle.Render("OPENAI_API_KEY")+subtleStyle.Render(", or ")+codeStyle.Render("DEEPSEEK_API_KEY"),
-			subtleStyle.Render("  • then run ")+codeStyle.Render("dfmc config sync-models")+subtleStyle.Render(" to refresh the catalog"),
-			subtleStyle.Render("  • or keep using ")+accentStyle.Render("offline")+subtleStyle.Render(" provider for local analysis"),
-		)
-	} else {
-		for i, name := range providers {
-			prefix := "  "
-			label := truncateSingleLine(name, listWidth-4)
-			if i == m.setupWizard.index {
-				prefix = "> "
-				label = titleStyle.Render(label)
-			}
-			if strings.EqualFold(name, m.currentProvider()) {
-				label += subtleStyle.Render("  (active)")
-			}
-			listLines = append(listLines, prefix+label)
-		}
-	}
-
-	detailLines := []string{
-		sectionHeader("◉", "Selection"),
-		renderDivider(detailWidth - 2),
-	}
-	if len(providers) == 0 {
-		detailLines = append(detailLines, subtleStyle.Render("Provider config unavailable."))
-	} else {
-		selected := providers[m.setupWizard.index]
-		model := m.defaultModelForProvider(selected)
-		profile := m.providerProfile(selected)
-		detailLines = append(detailLines,
-			fmt.Sprintf("Provider: %s", selected),
-			fmt.Sprintf("Model:    %s", blankFallback(model, "-")),
-			fmt.Sprintf("Protocol: %s", blankFallback(profile.Protocol, "-")),
-			fmt.Sprintf("Context:  %s tokens", formatToolTokenCount(profile.MaxContext)),
-			fmt.Sprintf("Output:   %s tokens", formatToolTokenCount(profile.MaxTokens)),
-			fmt.Sprintf("Endpoint: %s", blankFallback(profile.BaseURL, "(default)")),
-			"",
-			subtleStyle.Render("enter applies · s saves to .dfmc/config.yaml · slash: /provider /model"),
-		)
-		if m.setupWizard.editing {
-			draft := m.setupWizard.draft
-			if draft == "" {
-				draft = model
-			}
-			detailLines = append(detailLines,
-				"",
-				subtleStyle.Render("Model Editor (enter apply, esc cancel)"),
-				"> "+draft+"|",
-			)
-		}
-	}
-
-	left := lipgloss.NewStyle().Width(listWidth).Render(strings.Join(listLines, "\n"))
-	right := lipgloss.NewStyle().Width(detailWidth).Render(strings.Join(detailLines, "\n"))
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, "   ", right)
-}
-
 func (m Model) renderToolsView(width int) string {
 	tools := m.availableTools()
 	m.toolView.index = clampIndex(m.toolView.index, len(tools))
@@ -881,7 +797,10 @@ func (m Model) handleWorkflowKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.workflow.routingEditIndex = 0
 			m.workflow.routingEditMode = false
 			if m.workflow.routingDraft == nil {
-				m.workflow.routingDraft = make(map[string]string)
+				m.workflow.routingDraft = m.loadDriveRoutingFromProjectConfig()
+				if m.workflow.routingDraft == nil {
+					m.workflow.routingDraft = make(map[string]string)
+				}
 			}
 		}
 	case "esc":
@@ -1006,6 +925,9 @@ func (m Model) handleRoutingEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "esc":
+		if path, err := m.persistDriveRoutingProjectConfig(m.workflow.routingDraft); err == nil {
+			m.notice = "routing saved: " + path
+		}
 		m.workflow.showRoutingEditor = false
 		m.workflow.routingEditMode = false
 	}

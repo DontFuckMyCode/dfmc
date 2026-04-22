@@ -276,6 +276,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "sync failed: " + msg.err.Error()
 			return m, nil
 		}
+		m.providers.lastSyncedAt = time.Now()
 		m = m.refreshProvidersRows()
 		m.status = m.eng.Status()
 		m.notice = fmt.Sprintf("synced %d changes → %s", len(msg.changes), msg.path)
@@ -725,8 +726,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "u", "alt+u":
 				return m, undoConversationCmd(m.eng)
 			}
-		case "Setup":
-			return m.handleSetupKey(msg)
 		case "Tools":
 			return m.handleToolsKey(msg)
 		case "Activity":

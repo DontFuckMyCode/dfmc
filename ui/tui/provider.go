@@ -115,29 +115,6 @@ func (m Model) currentProvider() string {
 	return strings.TrimSpace(m.eng.Status().Provider)
 }
 
-// snapSetupCursorToActive lands the Setup-tab cursor on whichever
-// provider is currently in use. Invoked when the user opens the Setup
-// tab so the active row is highlighted instead of always starting at
-// index 0 — that "active provider invisible until you scroll" feel
-// confused users into thinking nothing was selected.
-func (m Model) snapSetupCursorToActive() Model {
-	providers := m.availableProviders()
-	if len(providers) == 0 {
-		return m
-	}
-	active := strings.TrimSpace(m.currentProvider())
-	if active == "" {
-		return m
-	}
-	for i, name := range providers {
-		if strings.EqualFold(name, active) {
-			m.setupWizard.index = i
-			return m
-		}
-	}
-	return m
-}
-
 func (m Model) currentModel() string {
 	if model := strings.TrimSpace(m.status.Model); model != "" {
 		return model
@@ -336,6 +313,73 @@ func (m Model) persistProviderConfigProjectConfig(providerName, model, primary s
 				profileNode["max_context"] = prof.MaxContext
 			}
 		}
+	}
+
+	out, marshalErr := yaml.Marshal(doc)
+	if marshalErr != nil {
+		return "", fmt.Errorf("marshal project config: %w", marshalErr)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", fmt.Errorf("create project config dir: %w", err)
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return "", fmt.Errorf("write project config: %w", err)
+	}
+	return path, nil
+}
+
+func (m Model) loadDriveRoutingFromProjectConfig() map[string]string {
+	path, err := m.projectConfigPath()
+	if err != nil {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil
+	}
+	driveNode := ensureStringAnyMap(doc, "drive")
+	routingNode := ensureStringAnyMap(driveNode, "routing")
+	out := make(map[string]string, len(routingNode))
+	for k, v := range routingNode {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
+}
+
+func (m Model) persistDriveRoutingProjectConfig(routing map[string]string) (string, error) {
+	path, err := m.projectConfigPath()
+	if err != nil {
+		return "", err
+	}
+
+	doc := map[string]any{}
+	if data, readErr := os.ReadFile(path); readErr == nil {
+		if len(strings.TrimSpace(string(data))) > 0 {
+			if unmarshalErr := yaml.Unmarshal(data, &doc); unmarshalErr != nil {
+				return "", fmt.Errorf("parse project config: %w", unmarshalErr)
+			}
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return "", fmt.Errorf("read project config: %w", readErr)
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	if _, ok := doc["version"]; !ok {
+		doc["version"] = 1
+	}
+
+	driveNode := ensureStringAnyMap(doc, "drive")
+	if len(routing) == 0 {
+		delete(driveNode, "routing")
+	} else {
+		driveNode["routing"] = routing
 	}
 
 	out, marshalErr := yaml.Marshal(doc)

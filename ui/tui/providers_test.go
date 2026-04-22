@@ -3,8 +3,12 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
 func newProvidersTestModel() Model {
@@ -130,8 +134,11 @@ func TestRenderProvidersViewEmptyState(t *testing.T) {
 	if !strings.Contains(out, "Providers") {
 		t.Fatalf("header missing: %s", out)
 	}
-	if !strings.Contains(out, "degraded startup") {
+	if !strings.Contains(out, "No providers registered") {
 		t.Fatalf("empty-state copy missing: %s", out)
+	}
+	if !strings.Contains(out, "New Provider") {
+		t.Fatalf("actionable hint missing: %s", out)
 	}
 }
 
@@ -218,5 +225,120 @@ func TestProvidersRefreshMenuResetsError(t *testing.T) {
 	// "engine not ready" one, not "stale".
 	if m.providers.err == "stale" {
 		t.Fatalf("refresh should re-derive error, not preserve previous text")
+	}
+}
+
+func TestProviderMenuDisabledReason(t *testing.T) {
+	m := newProvidersTestModel()
+	m.eng = &engine.Engine{Config: config.DefaultConfig()}
+	m.eng.Config.Providers.Primary = "anthropic"
+	m.providers.rows = sampleProviderRows()
+	// anthropic is primary in sample rows; "Set as Primary" should be disabled with a reason
+	labels, _, disabled, reasons := m.buildListMenu()
+	found := false
+	for i, l := range labels {
+		if strings.Contains(l, "Primary") && disabled[i] {
+			found = true
+			if reasons[i] == "" {
+				t.Fatalf("disabled 'Already Primary' must have a reason, got empty")
+			}
+			if !strings.Contains(reasons[i], "primary") {
+				t.Fatalf("reason should mention 'primary', got %q", reasons[i])
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a disabled primary item in menu")
+	}
+}
+
+func TestProviderMenuRendersDisabledReason(t *testing.T) {
+	m := newProvidersTestModel()
+	m.providers.rows = sampleProviderRows()
+	m.providers.menuActive = true
+	m.providers.menuLabels = []string{"Already Primary", "Set Active Model"}
+	m.providers.menuDisabled = []bool{true, false}
+	m.providers.menuDisabledReasons = []string{"already the primary provider", ""}
+	m.providers.menuIndex = 0
+	lines := m.renderProvidersMenu(80)
+	out := strings.Join(lines, "\n")
+	if !strings.Contains(out, "already the primary provider") {
+		t.Fatalf("menu render should include disabled reason: %s", out)
+	}
+}
+
+func TestAPIKeySourceBadge(t *testing.T) {
+	cases := []struct {
+		name   string
+		prof   config.ModelConfig
+		wantIn string
+	}{
+		{"missing", config.ModelConfig{}, "missing"},
+		{"config", config.ModelConfig{APIKey: "sk-123"}, "config"},
+	}
+	for _, c := range cases {
+		got := apiKeySourceBadge(c.name, c.prof)
+		if !strings.Contains(got, c.wantIn) {
+			t.Errorf("apiKeySourceBadge(%q) missing %q, got %s", c.name, c.wantIn, got)
+		}
+	}
+}
+
+func TestAPIKeySourceBadgeEnv(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-env")
+	prof := config.ModelConfig{APIKey: "sk-test-env"}
+	got := apiKeySourceBadge("anthropic", prof)
+	if !strings.Contains(got, "env") || !strings.Contains(got, "ANTHROPIC_API_KEY") {
+		t.Fatalf("expected env badge with var name, got %s", got)
+	}
+}
+
+func TestFilteredProviderRows(t *testing.T) {
+	rows := sampleProviderRows()
+	// search by name
+	got := filteredProviderRows(rows, "deep")
+	if len(got) != 1 || got[0].Name != "deepseek" {
+		t.Fatalf("expected 1 deepseek row, got %v", got)
+	}
+	// search by status
+	got = filteredProviderRows(rows, "offline")
+	if len(got) != 1 || got[0].Name != "offline" {
+		t.Fatalf("expected 1 offline row, got %v", got)
+	}
+	// empty query returns all
+	got = filteredProviderRows(rows, "")
+	if len(got) != 3 {
+		t.Fatalf("expected all 3 rows, got %d", len(got))
+	}
+	// no match
+	got = filteredProviderRows(rows, "xyz")
+	if len(got) != 0 {
+		t.Fatalf("expected 0 rows, got %d", len(got))
+	}
+}
+
+func TestProviderSearchRendersSearchLine(t *testing.T) {
+	m := newProvidersTestModel()
+	m.providers.rows = sampleProviderRows()
+	m.providers.searchActive = true
+	m.providers.query = "anth"
+	out := m.renderProvidersView(200)
+	if !strings.Contains(out, "search:") {
+		t.Fatalf("search line missing: %s", out)
+	}
+	if !strings.Contains(out, "showing 1 of 3") {
+		t.Fatalf("filtered count missing: %s", out)
+	}
+}
+
+func TestFormatRelativeTime(t *testing.T) {
+	if got := formatRelativeTime(time.Now()); got != "just now" {
+		t.Fatalf("expected 'just now', got %q", got)
+	}
+	if got := formatRelativeTime(time.Now().Add(-5 * time.Minute)); got != "5m ago" {
+		t.Fatalf("expected '5m ago', got %q", got)
+	}
+	if got := formatRelativeTime(time.Now().Add(-2 * time.Hour)); got != "2h ago" {
+		t.Fatalf("expected '2h ago', got %q", got)
 	}
 }
