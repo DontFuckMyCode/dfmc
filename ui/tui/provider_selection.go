@@ -1,6 +1,6 @@
 package tui
 
-// provider.go — provider/model selection, profile reads, and project
+// provider_selection.go — provider/model selection, profile reads, and project
 // config persistence.
 //
 // Lifted out of the 10K-line tui.go god file (REPORT.md C1) so the
@@ -86,16 +86,16 @@ func (m Model) providerPanelRows() []theme.ProviderPanelRow {
 	}
 	if !hasOffline {
 		rows = append(rows, theme.ProviderPanelRow{
-			Name:          "offline",
-			Active:        strings.EqualFold("offline", currentProvider),
-			Primary:       strings.EqualFold("offline", primary),
-			Models:        []string{"offline-analyzer-v1"},
+			Name:           "offline",
+			Active:         strings.EqualFold("offline", currentProvider),
+			Primary:        strings.EqualFold("offline", primary),
+			Models:         []string{"offline-analyzer-v1"},
 			FallbackModels: nil,
-			MaxContext:    12000,
-			Protocol:      "offline",
-			HasAPIKey:     false,
-			Status:        "ready",
-			IsPlaceholder: false,
+			MaxContext:     12000,
+			Protocol:       "offline",
+			HasAPIKey:      false,
+			Status:         "ready",
+			IsPlaceholder:  false,
 		})
 	}
 	return rows
