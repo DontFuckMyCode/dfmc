@@ -415,7 +415,7 @@ func validateConvID(id string) error {
 	// identifier we generate ourselves.
 	for _, r := range id {
 		if r < 0x20 || r == 0x7f {
-			return fmt.Errorf("invalid conversation id: contains control character")
+			return fmt.Errorf("invalid conversation id: contains control character U+%04X (%q)", r, string(r))
 		}
 	}
 	return nil
