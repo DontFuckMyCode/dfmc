@@ -421,7 +421,7 @@ func RenderToolChip(chip ToolChip, width int) string {
 		appendInnerLines(&out, chip.InnerLines, innerWidth)
 		return out.String()
 	}
-	headRendered := head1
+	var headRendered string
 	if preview != "" {
 		single := head1 + " " + SubtleStyle.Render("· "+preview)
 		if reason == "" && ansi.StringWidth(single) <= width && len(chip.InnerLines) == 0 {
@@ -753,9 +753,9 @@ func RenderChatWorkflowFocusCard(info StatsPanelInfo, width int) string {
 		if len(info.Providers) == 0 {
 			appendBlock(nil, "No providers registered.")
 		} else {
-			var lines []string
+			var providerLines []string
 			for i, row := range info.Providers {
-				prefix := "  "
+				var prefix string
 				if i == info.ProvidersSelectedIndex {
 					prefix = "» "
 				}
@@ -770,9 +770,9 @@ func RenderChatWorkflowFocusCard(info StatsPanelInfo, width int) string {
 				} else {
 					line += " ● ready"
 				}
-				lines = append(lines, line)
+				providerLines = append(providerLines, line)
 			}
-			appendBlock(lines, "")
+			appendBlock(providerLines, "")
 
 			// Detail pane for the selected provider
 			if info.ProvidersSelectedIndex >= 0 && info.ProvidersSelectedIndex < len(info.Providers) {
@@ -1291,7 +1291,7 @@ func RenderStarterPrompts(width int, configured bool) []string {
 	if !configured {
 		lines = append(lines,
 			FailStyle.Bold(true).Render("⚠ No provider configured"),
-			SubtleStyle.Render("  Press ")+AccentStyle.Bold(true).Render("f5")+SubtleStyle.Render(" for the Setup tab, or type ")+CodeStyle.Render("/provider")+SubtleStyle.Render(" to pick one — starters need a model to run."),
+			SubtleStyle.Render("  Press ")+AccentStyle.Bold(true).Render("f5")+SubtleStyle.Render(" for the Workflow tab, or type ")+CodeStyle.Render("/provider")+SubtleStyle.Render(" to pick one — starters need a model to run."),
 			"",
 		)
 	}
@@ -1640,7 +1640,7 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 			body = append(body, "Configure providers in .dfmc/config.yaml or via dfmc providers setup.")
 		} else {
 			for _, row := range info.Providers {
-				prefix := "  "
+				var prefix string
 				if row.Active {
 					prefix = OkStyle.Render("◉ ")
 				} else if row.Primary {

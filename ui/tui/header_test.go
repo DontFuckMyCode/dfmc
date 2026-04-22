@@ -191,7 +191,7 @@ func TestRenderStarterPromptsListsSixActions(t *testing.T) {
 	}
 }
 
-func TestRenderStarterPromptsShowsSetupBannerWhenUnconfigured(t *testing.T) {
+func TestRenderStarterPromptsShowsWorkflowBannerWhenUnconfigured(t *testing.T) {
 	out := renderStarterPrompts(120, false)
 	joined := strings.Join(out, "\n")
 	for _, want := range []string{"No provider configured", "f5", "/provider"} {

@@ -465,7 +465,7 @@ func (m Model) describeHealth() string {
 	// report "agent isn't doing anything" — surface it first.
 	provider := strings.TrimSpace(m.status.Provider)
 	model := strings.TrimSpace(m.status.Model)
-	providerLine := "?"
+	var providerLine string
 	switch {
 	case provider == "":
 		providerLine = "✗ no provider selected (run `dfmc config provider anthropic` or edit .dfmc/config.yaml)"

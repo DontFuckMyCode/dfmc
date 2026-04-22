@@ -877,13 +877,6 @@ func (m Model) renderActivityViewSized(width int, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-func followHint(follow bool) string {
-	if follow {
-		return "pause follow"
-	}
-	return "resume follow"
-}
-
 func (m Model) activitySelectedEntry() (activityEntry, bool) {
 	filtered := m.filteredActivityEntries()
 	if len(filtered) == 0 {

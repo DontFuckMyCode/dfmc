@@ -184,7 +184,6 @@ func readyBatchWithPolicy(todos []Todo, policy SchedulerPolicy, limit int) []int
 
 	picked := make([]int, 0, limit)
 	pickedScopes := scopeSet{}
-	pickedExclusive := false
 	pickedLanes := map[string]int{}
 	for _, i := range orderedCandidateIndices(todos, policy) {
 		t := &todos[i]
@@ -205,8 +204,6 @@ func readyBatchWithPolicy(todos []Todo, policy SchedulerPolicy, limit int) []int
 			if len(picked) > 0 || hasAnyRunningTodo(todos) {
 				continue
 			}
-		} else if pickedExclusive {
-			break
 		}
 		if scopeConflicts(*t, pickedScopes) {
 			continue
@@ -223,7 +220,6 @@ func readyBatchWithPolicy(todos []Todo, policy SchedulerPolicy, limit int) []int
 		pickedScopes = mergeScopes(pickedScopes, *t)
 		pickedLanes[lane]++
 		if todoNeedsExclusiveSlot(*t) {
-			pickedExclusive = true
 			break
 		}
 		// Same reverse rule: if the picked-just-now is unscoped, no

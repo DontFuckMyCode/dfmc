@@ -11,7 +11,7 @@ import (
 
 func newCodemapTestModel() Model {
 	return Model{
-		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap"},
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Workflow", "Tools", "Activity", "Memory", "CodeMap"},
 		activeTab:             8,
 		diagnosticPanelsState: newDiagnosticPanelsState(),
 	}

@@ -704,7 +704,6 @@ func extractInjectedContext(projectRoot, query string, maxBlocks, maxLines int) 
 				lineEnd = lineStart
 			}
 			if lineEnd-lineStart+1 > maxLines {
-				lineEnd = lineStart + maxLines - 1
 				lineEnd = min(len(lines), lineStart+maxLines-1)
 			}
 

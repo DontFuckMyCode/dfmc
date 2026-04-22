@@ -12,7 +12,7 @@ import (
 
 func newActivityTestModel() Model {
 	return Model{
-		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers"},
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Workflow", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers"},
 		activeTab:             6,
 		activity:              activityPanelState{follow: true},
 		diagnosticPanelsState: newDiagnosticPanelsState(),

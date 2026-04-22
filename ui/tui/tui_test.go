@@ -3412,7 +3412,7 @@ func newTUITestEngine(t *testing.T) *engine.Engine {
 	if err := eng.Init(context.Background()); err != nil {
 		t.Fatalf("eng.Init: %v", err)
 	}
-	t.Cleanup(func() { eng.Shutdown() })
+	t.Cleanup(func() { _ = eng.Shutdown() })
 	return eng
 }
 

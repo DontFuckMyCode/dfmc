@@ -11,7 +11,7 @@ import (
 
 func newPlansTestModel() Model {
 	return Model{
-		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Setup", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans"},
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Workflow", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans"},
 		activeTab:             12,
 		diagnosticPanelsState: newDiagnosticPanelsState(),
 	}

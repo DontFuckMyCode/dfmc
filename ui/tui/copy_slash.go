@@ -80,7 +80,7 @@ func (m Model) copyAssistantResponseAt(n int) (tea.Model, tea.Cmd, bool) {
 		m.notice = "Nothing to copy — no assistant responses yet."
 		return m, nil, true
 	}
-	slot := -1
+	var slot int
 	switch {
 	case n == 0:
 		slot = idxs[len(idxs)-1]

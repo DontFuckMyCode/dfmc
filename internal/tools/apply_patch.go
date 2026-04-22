@@ -344,7 +344,7 @@ func parseRange(r string) (int, int, error) {
 		return 0, 0, fmt.Errorf("bad range %q", r)
 	}
 	body := r[1:]
-	start, count := 0, 1
+	var start, count int
 	if i := strings.Index(body, ","); i >= 0 {
 		s, err := atoiSafe(body[:i])
 		if err != nil {

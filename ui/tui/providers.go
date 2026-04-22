@@ -93,7 +93,7 @@ func collectProviderRows(eng *engine.Engine) []providerRow {
 		}
 		hints := p.Hints()
 		status, isOffline := providerStatusTag(name, hints.SupportsTools)
-		prof, _ := eng.Config.Providers.Profiles[name]
+		prof := eng.Config.Providers.Profiles[name]
 		rows = append(rows, providerRow{
 			Name:          name,
 			Model:         p.Model(),
@@ -539,7 +539,7 @@ func (m Model) renderProviderDetailView(width int) string {
 		}
 		for _, f := range fields {
 			prefix := "  "
-			label := f.label
+			var label string
 			val := f.value
 			if f.active {
 				prefix = accentStyle.Render("▶ ")
@@ -722,7 +722,7 @@ func (m Model) renderPipelinesView(width int) string {
 						lines = append(lines, prefix+num+" "+label)
 						for j, step := range pipe.Steps {
 							stepNum := fmt.Sprintf("%d.", j+1)
-							stepLabel := subtleStyle.Render(stepNum+" ") + step.Provider + subtleStyle.Render(" / ") + step.Model
+							var stepLabel string
 							if j == 0 {
 								stepLabel = subtleStyle.Render(stepNum+" ") + accentStyle.Render(step.Provider) + subtleStyle.Render(" / ") + accentStyle.Render(step.Model)
 								stepLabel += subtleStyle.Render(" ← primary")
@@ -1777,7 +1777,7 @@ func (m Model) renderProvidersMenu(width int) []string {
 	reasons := m.providers.menuDisabledReasons
 	for i, label := range labels {
 		num := fmt.Sprintf("%d. ", i+1)
-		prefix := "   "
+			var prefix string
 		l := label
 		isDisabled := i < len(disabled) && disabled[i]
 		isDanger := strings.Contains(strings.ToLower(label), "delete")

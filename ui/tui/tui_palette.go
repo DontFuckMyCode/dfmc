@@ -177,7 +177,6 @@ func renderTopTabStrip(tabs []string, activeIdx int, planMode bool, width int) s
 	if dashBudget < 4 {
 		// Not enough room — drop the hint, then the next/prev arrows.
 		hint = ""
-		hintW = 0
 		fixed = brandW + prevW + badgeW + nextW + gap*3
 		dashBudget = width - fixed
 		if dashBudget < 4 {

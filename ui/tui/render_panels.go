@@ -697,7 +697,7 @@ func (m Model) renderWorkflowTodoDetail(run *drive.Run, width int) []string {
 			lines = append(lines, "  "+subtleStyle.Render(truncateForPanel(detailLine, width-2)))
 		}
 	}
-	if todo.FileScope != nil && len(todo.FileScope) > 0 {
+	if len(todo.FileScope) > 0 {
 		lines = append(lines, fmt.Sprintf("  Scope:    %s", subtleStyle.Render(strings.Join(todo.FileScope, ", "))))
 	}
 	if len(todo.DependsOn) > 0 {

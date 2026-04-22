@@ -61,9 +61,7 @@ type providersPanelState struct {
 	modelPickerIndex  int
 	modelPickerManual bool
 	modelPickerDraft  string
-	modelListScroll   int // scroll offset for long model lists in detail view
 	// provider CRUD state
-	confirmDelete    string // provider name awaiting delete confirmation
 	newProviderDraft string // name buffer when adding a new provider
 	// profile field editor state
 	profileEditMode  bool

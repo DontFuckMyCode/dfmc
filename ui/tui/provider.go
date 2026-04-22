@@ -9,7 +9,7 @@ package tui
 //
 //   - read-only accessors (availableProviders, currentProvider,
 //     currentModel, defaultModelForProvider, providerProfile,
-//     snapSetupCursorToActive)
+//     loadDriveRoutingFromProjectConfig, persistDriveRoutingProjectConfig)
 //   - mutating apply/persist (applyProviderModelSelection,
 //     persistProviderModelProjectConfig, reloadEngineConfig)
 //
@@ -57,15 +57,11 @@ func (m Model) providerPanelRows() []theme.ProviderPanelRow {
 
 	var rows []theme.ProviderPanelRow
 	for name, profile := range cfg.Profiles {
-		model := profile.BestModel()
 		hasAPIKey := strings.TrimSpace(profile.APIKey) != ""
 		status := "ready"
 		isPlaceholder := false
 		if !hasAPIKey && strings.TrimSpace(profile.BaseURL) == "" {
 			status = "no-key"
-		}
-		if model == "" {
-			model = "(none)"
 		}
 		rows = append(rows, theme.ProviderPanelRow{
 			Name:           name,
@@ -481,56 +477,6 @@ func (m Model) persistPipelinesProjectConfig(name string, steps []config.Pipelin
 		return path, fmt.Errorf("reload engine: %w", err)
 	}
 	return path, nil
-}
-
-func (m Model) saveProviderModels(providerName string, models []string) error {
-	providerName = strings.TrimSpace(providerName)
-	if providerName == "" {
-		return fmt.Errorf("provider is empty")
-	}
-	path, err := m.projectConfigPath()
-	if err != nil {
-		return err
-	}
-
-	doc := map[string]any{}
-	if data, readErr := os.ReadFile(path); readErr == nil {
-		if len(strings.TrimSpace(string(data))) > 0 {
-			if unmarshalErr := yaml.Unmarshal(data, &doc); unmarshalErr != nil {
-				return fmt.Errorf("parse project config: %w", unmarshalErr)
-			}
-		}
-	} else if !errors.Is(readErr, os.ErrNotExist) {
-		return fmt.Errorf("read project config: %w", readErr)
-	}
-	if doc == nil {
-		doc = map[string]any{}
-	}
-	if _, ok := doc["version"]; !ok {
-		doc["version"] = 1
-	}
-
-	profilesNode := ensureStringAnyMap(ensureStringAnyMap(doc, "providers"), "profiles")
-	profileNode := ensureStringAnyMap(profilesNode, providerName)
-	if len(models) > 0 {
-		profileNode["models"] = models
-		profileNode["model"] = models[0]
-	} else {
-		delete(profileNode, "models")
-		delete(profileNode, "model")
-	}
-
-	out, marshalErr := yaml.Marshal(doc)
-	if marshalErr != nil {
-		return fmt.Errorf("marshal project config: %w", marshalErr)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create project config dir: %w", err)
-	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return fmt.Errorf("write project config: %w", err)
-	}
-	return m.reloadEngineConfig()
 }
 
 func (m Model) providerProfile(name string) engine.ProviderProfileStatus {

@@ -33,21 +33,16 @@ type (
 // --- re-export palette vars --------------------------------------------------
 
 var (
-	colorPanelBorder   = theme.ColorPanelBorder
-	colorPanelBg       = theme.ColorPanelBg
-	colorTitleBg       = theme.ColorTitleBg
-	colorTitleFg       = theme.ColorTitleFg
-	colorMuted         = theme.ColorMuted
-	colorAccent        = theme.ColorAccent
-	colorOk            = theme.ColorOk
-	colorFail          = theme.ColorFail
-	colorWarn          = theme.ColorWarn
-	colorInfo          = theme.ColorInfo
-	colorRoleUser      = theme.ColorRoleUser
-	colorRoleAssistant = theme.ColorRoleAssistant
-	colorRoleSystem    = theme.ColorRoleSystem
-	colorRoleTool      = theme.ColorRoleTool
-	colorTabActiveBg   = theme.ColorTabActiveBg
+	colorPanelBorder = theme.ColorPanelBorder
+	colorPanelBg     = theme.ColorPanelBg
+	colorTitleFg     = theme.ColorTitleFg
+	colorMuted       = theme.ColorMuted
+	colorAccent      = theme.ColorAccent
+	colorOk          = theme.ColorOk
+	colorFail        = theme.ColorFail
+	colorWarn        = theme.ColorWarn
+	colorInfo        = theme.ColorInfo
+	colorTabActiveBg = theme.ColorTabActiveBg
 )
 
 var (
@@ -62,12 +57,9 @@ var (
 	failStyle               = theme.FailStyle
 	warnStyle               = theme.WarnStyle
 	infoStyle               = theme.InfoStyle
-	toolStyle               = theme.ToolStyle
 	disabledStyle           = theme.DisabledStyle
-	inputBoxStyle           = theme.InputBoxStyle
 	mentionPickerStyle      = theme.MentionPickerStyle
 	mentionSelectedRowStyle = theme.MentionSelectedRowStyle
-	dividerStyle            = theme.DividerStyle
 	bannerStyle             = theme.BannerStyle
 	doneStyle               = theme.DoneStyle
 	pendingStyle            = theme.PendingStyle
@@ -87,10 +79,7 @@ const (
 
 // --- re-export functions -------------------------------------------------
 
-func roleBadge(role string) string                   { return theme.RoleBadge(role) }
-func roleLineStyle(role string) lipgloss.Style       { return theme.RoleLineStyle(role) }
-func sectionHeader(icon, label string) string        { return theme.SectionHeader(icon, label) }
-func renderMarkdownLite(text string) string          { return theme.RenderMarkdownLite(text) }
+func sectionHeader(icon, label string) string { return theme.SectionHeader(icon, label) }
 func renderMarkdownBlocks(text string) []string      { return theme.RenderMarkdownBlocks(text) }
 func renderToolChip(chip toolChip, width int) string { return theme.RenderToolChip(chip, width) }
 func renderInlineToolChips(chips []toolChip, width int) string {
@@ -110,7 +99,6 @@ func renderChatWorkflowFocusCard(info statsPanelInfo, width int) string {
 }
 func spinnerFrame(frame int) string                     { return theme.SpinnerFrame(frame) }
 func renderMessageHeader(info messageHeaderInfo) string { return theme.RenderMessageHeader(info) }
-func formatDurationChip(ms int) string                  { return theme.FormatDurationChip(ms) }
 func renderMessageBubble(role, content, header string, width int) string {
 	return theme.RenderMessageBubble(role, content, header, width)
 }
@@ -118,9 +106,6 @@ func renderDivider(width int) string               { return theme.RenderDivider(
 func renderInputBox(line string, width int) string { return theme.RenderInputBox(line, width) }
 func renderChatHeader(info chatHeaderInfo, width int) string {
 	return theme.RenderChatHeader(info, width)
-}
-func renderChatModeSegment(info chatHeaderInfo) string {
-	return theme.RenderChatModeSegment(info)
 }
 func renderTokenMeter(used, max int) string {
 	return theme.RenderTokenMeter(used, max)
@@ -130,9 +115,6 @@ func renderStepBar(step, maxSteps, cells, frame int) string {
 }
 func renderContextBar(used, max, cells int) string {
 	return theme.RenderContextBar(used, max, cells)
-}
-func renderContextBarFrame(used, max, cells, frame int) string {
-	return theme.RenderContextBarFrame(used, max, cells, frame)
 }
 func renderStreamingIndicator(phase string, frame int) string {
 	return theme.RenderStreamingIndicator(phase, frame)
@@ -145,9 +127,6 @@ func renderStatsPanel(info statsPanelInfo, height int) string {
 }
 func renderStatsPanelSized(info statsPanelInfo, height int, panelWidth int) string {
 	return theme.RenderStatsPanelSized(info, height, panelWidth)
-}
-func renderStatsPanelModeTabs(mode statsPanelMode, width int) string {
-	return theme.RenderStatsPanelModeTabs(theme.StatsPanelMode(mode), width)
 }
 func defaultStarterPrompts() []starterPrompt        { return theme.DefaultStarterPrompts() }
 func starterTemplateForDigit(r rune) (string, bool) { return theme.StarterTemplateForDigit(r) }
@@ -166,8 +145,6 @@ var _ = fileMarker
 // formatThousands re-exported from theme subpackage.
 func formatThousands(n int) string { return theme.FormatThousands(n) }
 
-// formatToolTokenCount re-exported from theme subpackage.
-func formatToolTokenCount(n int) string { return theme.FormatToolTokenCount(n) }
 
 // helper functions re-exported from theme subpackage.
 func headerLevel(trimmed string) int                        { return theme.HeaderLevel(trimmed) }

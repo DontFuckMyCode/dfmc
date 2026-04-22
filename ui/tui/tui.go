@@ -1145,7 +1145,7 @@ func formatToolResultForChat(name string, params map[string]any, res toolruntime
 
 // Provider/model selection & project config persistence
 // (availableProviders, currentProvider, currentModel,
-// defaultModelForProvider, snapSetupCursorToActive,
+// defaultModelForProvider, loadDriveRoutingFromProjectConfig,
 // parseModelPersistArgs, parseArgsWithPersist,
 // applyProviderModelSelection, formatProviderSwitchNotice,
 // projectConfigPath, reloadEngineConfig,

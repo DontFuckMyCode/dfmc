@@ -670,7 +670,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "f12":
-			// Security — no alt alias (alt+s is taken by Setup's save).
+			// Security — no alt alias (alt+s is taken by stats panel toggle).
 			// Scan is manual via `r` inside the panel so landing here is
 			// cheap; we just flip the tab and show the empty-state hint.
 			m.activeTab = 11
