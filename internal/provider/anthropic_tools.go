@@ -144,12 +144,23 @@ func buildAnthropicMessages(req CompletionRequest) []anthropicMessage {
 		out = append(out, next)
 	}
 	if len(req.Context) > 0 {
-		out = append(out, anthropicMessage{
-			Role: "user",
-			Content: []any{
-				map[string]any{"type": "text", "text": renderContextChunks(req.Context)},
-			},
-		})
+		ctxBlock := map[string]any{"type": "text", "text": renderContextChunks(req.Context)}
+		// Same alternation rule as the per-message coalesce above. The
+		// agent loop re-submits CompletionRequest.Context on every
+		// round-trip, and after the first round Messages ends with a
+		// user tool_result - appending a fresh user context message
+		// there produces the exact consecutive-user shape Anthropic
+		// rejects. Fold the context into the tail user message's
+		// content blocks when the tail is already user; otherwise emit
+		// it as its own message like before.
+		if n := len(out); n > 0 && out[n-1].Role == "user" {
+			out[n-1].Content = append(out[n-1].Content, ctxBlock)
+		} else {
+			out = append(out, anthropicMessage{
+				Role:    "user",
+				Content: []any{ctxBlock},
+			})
+		}
 	}
 	return out
 }
