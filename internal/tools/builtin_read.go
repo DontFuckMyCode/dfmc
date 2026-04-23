@@ -7,7 +7,9 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -107,10 +109,13 @@ func (t *ReadFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	if truncated {
 		segment = appendReadFileTruncationMarker(segment, start, end, totalLines)
 	}
+	contentSum := sha256.Sum256(data)
+	contentHash := hex.EncodeToString(contentSum[:])
 	return Result{
 		Output: segment,
 		Data: map[string]any{
 			"path":               PathRelativeToRoot(req.ProjectRoot, absPath),
+			"content_sha256":     contentHash,
 			"line_start":         start,
 			"line_end":           end,
 			"line_count":         totalLines, // legacy field name

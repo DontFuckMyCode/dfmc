@@ -602,8 +602,18 @@ func (e *Engine) recordReadSnapshot(name, projectRoot string, params map[string]
 	// IS authoritative, so hash from disk.
 	var hash string
 	if toolName == "read_file" {
-		sum := sha256.Sum256([]byte(res.Output))
-		hash = hex.EncodeToString(sum[:])
+		// Prefer the full-file hash emitted by ReadFileTool over
+		// sha256(res.Output). The Output field carries only the returned
+		// line window (default 200 lines), so hashing it would produce a
+		// slice-hash that can never match fileContentHash(abs) at the
+		// strict gate - any write_file / apply_patch after a sliced read
+		// would be refused as "drift" even when nothing had changed.
+		if fullHash := asString(res.Data, "content_sha256", ""); fullHash != "" {
+			hash = fullHash
+		} else {
+			sum := sha256.Sum256([]byte(res.Output))
+			hash = hex.EncodeToString(sum[:])
+		}
 	} else {
 		hash, err = fileContentHash(abs)
 		if err != nil {
