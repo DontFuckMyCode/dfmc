@@ -244,6 +244,9 @@ func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*Completi
 	if len(req.Tools) > 0 {
 		order = r.filterToolCapable(order, req.Provider)
 	}
+	if len(order) == 0 {
+		return nil, "", fmt.Errorf("%w: all registered providers lack tool support for this request", ErrNoCapableProvider)
+	}
 	var errs []error
 
 	for _, name := range order {
@@ -543,6 +546,9 @@ func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 	order := r.ResolveOrder(req.Provider)
 	if len(req.Tools) > 0 {
 		order = r.filterToolCapable(order, req.Provider)
+	}
+	if len(order) == 0 {
+		return nil, "", fmt.Errorf("%w: all registered providers lack tool support for this request", ErrNoCapableProvider)
 	}
 	var errs []error
 

@@ -11,6 +11,15 @@ import (
 var (
 	ErrProviderUnavailable = errors.New("provider unavailable")
 	ErrProviderNotFound    = errors.New("provider not found")
+	// ErrNoCapableProvider is returned by Complete/Stream when the fallback
+	// cascade resolves to an empty order because every registered provider
+	// was filtered out for lacking a capability the caller needs (today:
+	// SupportsTools). Distinguishing this from ErrProviderNotFound matters
+	// for operator messaging - the providers exist, they just cannot service
+	// this specific request, and surfacing (nil, "", nil) the way the
+	// zero-iteration fallthrough used to would NPE the agent loop three
+	// frames up instead of telling the operator what to fix.
+	ErrNoCapableProvider   = errors.New("no capable provider available")
 	// ErrContextOverflow is a hint the router uses to decide whether to
 	// compact the conversation and retry the same provider before falling
 	// over to the next one. Providers that can detect the condition should
