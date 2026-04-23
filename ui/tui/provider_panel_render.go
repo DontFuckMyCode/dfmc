@@ -187,7 +187,8 @@ func (m Model) renderProviderListView(width int) string {
 			lines = append(lines,
 				"",
 				warnStyle.Render("No providers registered"),
-				subtleStyle.Render("The engine is in degraded startup."),
+				subtleStyle.Render("The engine started without loading providers — usually because another dfmc process holds the store lock."),
+				subtleStyle.Render("Run `dfmc doctor` for a health read, or close the other process and reopen."),
 				"",
 				subtleStyle.Render("Press Enter → New Provider to add one."),
 			)

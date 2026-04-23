@@ -207,7 +207,7 @@ func (m Model) runContextPreview() Model {
 	if m.eng == nil {
 		m.contextPanel.preview = nil
 		m.contextPanel.hints = nil
-		m.contextPanel.err = "engine not ready (degraded startup)"
+		m.contextPanel.err = "engine not ready — another dfmc process may hold the store lock (try `dfmc doctor`)"
 		return m
 	}
 	m.contextPanel.err = ""

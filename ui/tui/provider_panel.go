@@ -190,7 +190,7 @@ func (m Model) refreshProvidersRows() Model {
 	rows := collectProviderRows(m.eng)
 	m.providers.rows = rows
 	if m.eng == nil {
-		m.providers.err = "engine not ready (degraded startup)"
+		m.providers.err = "engine not ready — another dfmc process may hold the store lock (try `dfmc doctor`)"
 	} else if len(rows) == 0 {
 		m.providers.err = "router has no providers"
 	} else {
