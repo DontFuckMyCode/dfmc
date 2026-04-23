@@ -1,5 +1,9 @@
 # Don't Fuck My Code (DFMC)
 
+<p align="center">
+  <img src="assets/dfmc_banner.png" alt="DFMC Banner" width="100%">
+</p>
+
 Your Code Deserves Better.
 
 DFMC is a code intelligence assistant written in Go. It combines local code analysis (AST + codemap + security heuristics) with a provider router that can fall back to offline mode when API providers are unavailable.
