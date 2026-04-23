@@ -141,7 +141,12 @@ func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativ
 const maxBudgetAutoRecoveries = 1
 
 func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, lim agentLimits) (nativeToolCompletion, error) {
-	ctx = tools.SeedMetaToolBudget(ctx)
+	callBudget, depthLimit := 0, 0
+	if e.Config != nil {
+		callBudget = e.Config.Agent.MetaCallBudget
+		depthLimit = e.Config.Agent.MetaDepthLimit
+	}
+	ctx = tools.SeedMetaToolBudgetWithLimits(ctx, callBudget, depthLimit)
 	msgs := seed.Messages
 	traces := seed.Traces
 	if traces == nil {

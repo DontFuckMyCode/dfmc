@@ -98,6 +98,18 @@ type AgentConfig struct {
 	// Reserved for S4; not consumed yet.
 	ParallelBatchSize int `yaml:"parallel_batch_size"`
 
+	// MetaCallBudget caps the cumulative number of backend tool calls any
+	// single agent turn may dispatch via the meta tools (tool_call /
+	// tool_batch_call) combined. 0 falls back to 64. Raise for long-running
+	// orchestration sessions that fan out a lot (e.g. Drive runs with many
+	// subagents); the ceiling guards against runaway planner loops that
+	// produce pathological batches.
+	MetaCallBudget int `yaml:"meta_call_budget"`
+	// MetaDepthLimit caps how deeply meta tools can nest in a single turn.
+	// 0 falls back to 4. Nesting beyond this is almost always a model error
+	// (meta-in-meta) so the ceiling should rarely need raising.
+	MetaDepthLimit int `yaml:"meta_depth_limit"`
+
 	// ToolRoundSoftCap is the round count at which the loop injects a single
 	// synthesis nudge ("you have enough context, answer now"). Tuned below
 	// MaxToolSteps so a model stuck in a read-read-read loop gets one firm

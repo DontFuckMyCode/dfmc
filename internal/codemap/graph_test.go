@@ -1,6 +1,10 @@
 package codemap
 
-import "testing"
+import (
+	"fmt"
+	"sync"
+	"testing"
+)
 
 func TestGraphBasicOps(t *testing.T) {
 	g := NewGraph()
@@ -78,5 +82,55 @@ func TestGraphCycles(t *testing.T) {
 	cycles := g.Cycles()
 	if len(cycles) == 0 {
 		t.Fatal("expected at least one cycle")
+	}
+}
+
+// TestGraphConcurrentAccess exercises Graph under a mixed read/write
+// workload with the race detector on. Regression guard against future
+// changes that drop or reorder the RWMutex acquisitions in the public
+// Graph surface. Run via `go test -race ./internal/codemap`.
+func TestGraphConcurrentAccess(t *testing.T) {
+	g := NewGraph()
+	g.AddNode(Node{ID: "seed", Name: "seed"})
+
+	const workers = 32
+	const opsPerWorker = 200
+
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for w := 0; w < workers; w++ {
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < opsPerWorker; i++ {
+				switch i % 6 {
+				case 0:
+					id := fmt.Sprintf("n-%d-%d", w, i)
+					g.AddNode(Node{ID: id, Name: id})
+				case 1:
+					from := fmt.Sprintf("n-%d-%d", w, i-1)
+					g.AddEdge(Edge{From: from, To: "seed", Type: "calls"})
+				case 2:
+					_ = g.Counts()
+				case 3:
+					_ = g.Nodes()
+				case 4:
+					_ = g.Edges()
+				case 5:
+					_, _ = g.GetNode("seed")
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	// Sanity — the seed node must survive the mixed workload, and each
+	// worker's AddNode cases (ops 0, 6, 12, ...) should have landed
+	// without any serialization hazard.
+	if _, ok := g.GetNode("seed"); !ok {
+		t.Fatal("seed node disappeared under concurrent load")
+	}
+	counts := g.Counts()
+	if counts.Nodes < workers {
+		t.Fatalf("expected at least %d nodes after concurrent load, got %d", workers, counts.Nodes)
 	}
 }

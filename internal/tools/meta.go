@@ -46,7 +46,10 @@ const maxBatchCalls = 32
 
 // Meta-tool cumulative budget across a single agent turn. Seeded once at the
 // agent-loop boundary so repeated tool_call / tool_batch_call expansion shares
-// one counter instead of getting a fresh allowance per dispatch.
+// one counter instead of getting a fresh allowance per dispatch. Defaults
+// apply when the state is seeded without explicit limits (tests, legacy
+// callers); production callers pass the AgentConfig values through
+// SeedMetaToolBudgetWithLimits.
 const (
 	defaultMetaCallBudget = 64
 	defaultMetaDepthLimit = 4
@@ -55,21 +58,42 @@ const (
 type metaBudgetKey struct{}
 
 type metaBudgetState struct {
-	mu    sync.Mutex
-	depth int
-	used  int
+	mu          sync.Mutex
+	depth       int
+	used        int
+	callBudget  int
+	depthLimit  int
 }
 
-// SeedMetaToolBudget ensures ctx carries the shared meta-tool execution budget
-// for a whole agent turn. Calling it repeatedly is cheap and idempotent.
+// SeedMetaToolBudget seeds the context with the shared meta-tool execution
+// budget using the built-in defaults (64 calls, depth 4). Safe to call
+// repeatedly — the first call wins and later calls are no-ops.
 func SeedMetaToolBudget(ctx context.Context) context.Context {
+	return SeedMetaToolBudgetWithLimits(ctx, 0, 0)
+}
+
+// SeedMetaToolBudgetWithLimits seeds the meta-tool budget with explicit
+// per-turn caps. Pass 0 for either limit to fall back to the built-in
+// default. If the context already carries a budget state (double-seed),
+// the existing state wins — later callers cannot tighten or relax limits
+// set by an earlier seeder in the same turn.
+func SeedMetaToolBudgetWithLimits(ctx context.Context, callBudget, depthLimit int) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if _, ok := ctx.Value(metaBudgetKey{}).(*metaBudgetState); ok {
 		return ctx
 	}
-	return context.WithValue(ctx, metaBudgetKey{}, &metaBudgetState{})
+	if callBudget <= 0 {
+		callBudget = defaultMetaCallBudget
+	}
+	if depthLimit <= 0 {
+		depthLimit = defaultMetaDepthLimit
+	}
+	return context.WithValue(ctx, metaBudgetKey{}, &metaBudgetState{
+		callBudget: callBudget,
+		depthLimit: depthLimit,
+	})
 }
 
 func enterMetaBudget(ctx context.Context, calls int) (context.Context, func(), error) {
@@ -85,20 +109,20 @@ func enterMetaBudget(ctx context.Context, calls int) (context.Context, func(), e
 	defer state.mu.Unlock()
 	state.depth++
 	depth := state.depth
-	if depth > defaultMetaDepthLimit {
+	if depth > state.depthLimit {
 		state.depth--
 		return ctx, nil, fmt.Errorf(
 			"meta tool nesting exceeded depth limit (%d > %d). Split the work across separate rounds instead of recursively chaining tool_call/tool_batch_call",
-			depth, defaultMetaDepthLimit)
+			depth, state.depthLimit)
 	}
 	state.used += calls
 	used := state.used
-	if used > defaultMetaCallBudget {
+	if used > state.callBudget {
 		state.depth--
 		state.used -= calls
 		return ctx, nil, fmt.Errorf(
 			"meta tool budget exhausted (%d > %d backend calls planned in one turn). Split the work into smaller batches or let the agent answer before fanning out again",
-			used, defaultMetaCallBudget)
+			used, state.callBudget)
 	}
 	return ctx, func() {
 		state.mu.Lock()

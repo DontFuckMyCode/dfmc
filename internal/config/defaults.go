@@ -68,6 +68,8 @@ func DefaultConfig() *Config {
 			MaxToolResultChars:          3200,
 			MaxToolResultDataChars:      1200,
 			ParallelBatchSize:           4,
+			MetaCallBudget:              64,
+			MetaDepthLimit:              4,
 			ToolRoundSoftCap:            15,
 			ToolRoundHardCap:            30,
 			BudgetHeadroomDivisor:       7,
