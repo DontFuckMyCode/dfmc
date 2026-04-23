@@ -872,10 +872,16 @@ func TestEditFileRequiresReadAndUniqueness(t *testing.T) {
 	}
 }
 
-func TestEditFileFailsIfChangedSinceRead(t *testing.T) {
+// edit_file now tolerates disk drift as long as a prior read_file
+// snapshot exists — the tool's own old_string anchor check catches the
+// case where the model's understanding is too stale to produce a valid
+// edit. Editors and formatters saving the file between read and edit
+// used to trip a refusal the model couldn't recover from; now the edit
+// proceeds when the anchor still matches on the current bytes.
+func TestEditFileToleratesDriftWhenAnchorStillValid(t *testing.T) {
 	tmp := t.TempDir()
 	file := filepath.Join(tmp, "a.txt")
-	if err := os.WriteFile(file, []byte("alpha"), 0o644); err != nil {
+	if err := os.WriteFile(file, []byte("alpha beta"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 	eng := New(*config.DefaultConfig())
@@ -886,28 +892,86 @@ func TestEditFileFailsIfChangedSinceRead(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("read_file: %v", err)
 	}
-	if err := os.WriteFile(file, []byte("beta"), 0o644); err != nil {
+	// Simulate an editor/formatter touching the file between read and edit.
+	if err := os.WriteFile(file, []byte("alpha beta\n"), 0o644); err != nil {
 		t.Fatalf("external write: %v", err)
 	}
-	_, err := eng.Execute(context.Background(), "edit_file", Request{
+	if _, err := eng.Execute(context.Background(), "edit_file", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
 			"path":       "a.txt",
 			"old_string": "beta",
 			"new_string": "gamma",
 		},
+	}); err != nil {
+		t.Fatalf("edit_file should succeed after drift when anchor matches, got: %v", err)
+	}
+	got, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read edited file: %v", err)
+	}
+	if !strings.Contains(string(got), "gamma") {
+		t.Fatalf("expected replacement in output, got: %q", string(got))
+	}
+}
+
+// edit_file still refuses when the model never read the file at all.
+// A prior read_file snapshot is the floor; only the hash equality check
+// was relaxed.
+func TestEditFileStillRefusesWithoutPriorRead(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "a.txt")
+	if err := os.WriteFile(file, []byte("alpha"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	eng := New(*config.DefaultConfig())
+	_, err := eng.Execute(context.Background(), "edit_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":       "a.txt",
+			"old_string": "alpha",
+			"new_string": "beta",
+		},
 	})
 	if err == nil {
-		t.Fatalf("expected changed-since-read guard error, got nil")
+		t.Fatalf("expected missing-snapshot guard error, got nil")
 	}
-	{
-		msg := err.Error()
-		if !strings.Contains(msg, "changed on disk since your last read_file") {
-			t.Fatalf("expected 'changed on disk since your last read_file' in error, got: %v", err)
-		}
-		if !strings.Contains(msg, `{"name":"read_file","args":{"path":`) {
-			t.Fatalf("expected actionable read_file recovery example in error, got: %v", err)
-		}
+	if !strings.Contains(err.Error(), "no prior read_file snapshot") {
+		t.Fatalf("expected missing-snapshot message, got: %v", err)
+	}
+}
+
+// write_file is still strict: full overwrites have no anchor safety net,
+// so losing changes someone else wrote between read and write would be
+// silent. Keep the hash-drift refusal here.
+func TestWriteFileStillRefusesOnDrift(t *testing.T) {
+	tmp := t.TempDir()
+	file := filepath.Join(tmp, "a.txt")
+	if err := os.WriteFile(file, []byte("alpha"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	eng := New(*config.DefaultConfig())
+	if _, err := eng.Execute(context.Background(), "read_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "a.txt"},
+	}); err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	if err := os.WriteFile(file, []byte("beta"), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	_, err := eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"path":    "a.txt",
+			"content": "overwrite",
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected drift guard error for write_file, got nil")
+	}
+	if !strings.Contains(err.Error(), "changed on disk since your last read_file") {
+		t.Fatalf("expected drift message, got: %v", err)
 	}
 }
 

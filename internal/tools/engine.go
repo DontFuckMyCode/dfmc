@@ -373,13 +373,13 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 			pub(name, reason)
 		}
 	}
-	if requiresReadBeforeMutation(name) {
+	if mode := readBeforeMutationMode(name); mode != readGateNone {
 		path := asString(req.Params, "path", "")
 		absPath, err := EnsureWithinRoot(req.ProjectRoot, path)
 		if err != nil {
 			return Result{}, err
 		}
-		if err := e.ensureReadBeforeMutation(absPath); err != nil {
+		if err := e.ensureReadBeforeMutationMode(absPath, mode); err != nil {
 			return Result{}, err
 		}
 	}
@@ -400,12 +400,35 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 	return res, nil
 }
 
-func requiresReadBeforeMutation(name string) bool {
+// readGateMode picks which read-before-mutate checks run for a given
+// tool. "strict" enforces both the presence of a prior read_file
+// snapshot AND hash equality; "lenient" only requires a prior snapshot
+// and tolerates drift because the tool has its own per-call anchor
+// validation (edit_file's exact-string match, for instance). "none"
+// skips the gate entirely (tools that never touch existing files).
+type readGateMode int
+
+const (
+	readGateNone readGateMode = iota
+	readGateLenient
+	readGateStrict
+)
+
+func readBeforeMutationMode(name string) readGateMode {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "write_file", "edit_file":
-		return true
+	case "edit_file":
+		// edit_file refuses on its own when old_string doesn't match or
+		// matches ambiguously. A hash-drift refusal at the gate added
+		// noise without catching any case edit_file wouldn't already
+		// catch — an editor/formatter touching the file between read
+		// and edit tripped the gate even when the anchor was still a
+		// perfectly safe unique match. Require a prior snapshot (so the
+		// model has at least seen the file) but skip the hash check.
+		return readGateLenient
+	case "write_file":
+		return readGateStrict
 	default:
-		return false
+		return readGateNone
 	}
 }
 
@@ -414,12 +437,17 @@ func requiresReadBeforeMutation(name string) bool {
 // The per-`path` dispatch in Execute() only handles single-target tools;
 // multi-target ones must thread each path through this method explicitly
 // so a fabricated diff can't bypass the read snapshot check that
-// edit_file / write_file already enforce.
+// edit_file / write_file already enforce. Callers that don't have a
+// per-tool mode use strict — apply_patch has line-number-sensitive
+// hunks that genuinely need the hash check.
 func (e *Engine) EnsureReadBeforeMutation(absPath string) error {
-	return e.ensureReadBeforeMutation(absPath)
+	return e.ensureReadBeforeMutationMode(absPath, readGateStrict)
 }
 
-func (e *Engine) ensureReadBeforeMutation(absPath string) error {
+func (e *Engine) ensureReadBeforeMutationMode(absPath string, mode readGateMode) error {
+	if mode == readGateNone {
+		return nil
+	}
 	_, err := os.Stat(absPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -427,16 +455,20 @@ func (e *Engine) ensureReadBeforeMutation(absPath string) error {
 		}
 		return err
 	}
+
+	e.readMu.RLock()
+	lastReadHash, ok := e.readSnapshots[absPath]
+	e.readMu.RUnlock()
+	if !ok {
+		return readGuardError(absPath, "missing")
+	}
+	if mode == readGateLenient {
+		return nil
+	}
+
 	hash, err := fileContentHash(absPath)
 	if err != nil {
 		return err
-	}
-
-	e.readMu.RLock()
-	defer e.readMu.RUnlock()
-	lastReadHash, ok := e.readSnapshots[absPath]
-	if !ok {
-		return readGuardError(absPath, "missing")
 	}
 	if lastReadHash != hash {
 		return readGuardError(absPath, "drift")
