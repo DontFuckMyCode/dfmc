@@ -200,12 +200,27 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 			return tools.Result{}, fmt.Errorf("tool %s denied: %s", name, reason)
 		}
 	}
+	// Peek at the params so we can mirror pre/post_tool hook fires onto
+	// each inner backend tool name when the outer name is a meta wrapper
+	// (tool_call / tool_batch_call). Approval stays at the meta level
+	// so a 4-tool batch doesn't fire 4 prompts, but hooks fan out so an
+	// operator-configured pre_tool for e.g. run_command still sees the
+	// call. See engine_meta_hooks.go for the unwrap logic.
+	innerNames := metaInnerNames(name, params)
 	if e.Hooks != nil && e.Hooks.Count(hooks.EventPreTool) > 0 {
 		e.Hooks.Fire(ctx, hooks.EventPreTool, hooks.Payload{
 			"tool_name":    name,
 			"tool_source":  source,
 			"project_root": e.ProjectRoot,
 		})
+		for _, inner := range innerNames {
+			e.Hooks.Fire(ctx, hooks.EventPreTool, hooks.Payload{
+				"tool_name":    inner,
+				"tool_source":  source,
+				"wrapped_by":   name,
+				"project_root": e.ProjectRoot,
+			})
+		}
 	}
 	res, err := e.executeToolWithPanicGuard(ctx, name, params)
 	if err == nil {
@@ -223,6 +238,22 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 			"tool_duration_ms": fmt.Sprintf("%d", res.DurationMs),
 			"project_root":     e.ProjectRoot,
 		})
+		// Inner post_tool fires carry the outer meta success. For
+		// tool_batch_call this is best-effort: one inner can fail while
+		// others succeed and the outer may still report success=true
+		// (the batch returns each entry's success separately). Hooks
+		// that need per-inner granularity should subscribe to the
+		// engine event bus's tool:step events instead.
+		for _, inner := range innerNames {
+			e.Hooks.Fire(ctx, hooks.EventPostTool, hooks.Payload{
+				"tool_name":        inner,
+				"tool_source":      source,
+				"tool_success":     success,
+				"tool_duration_ms": fmt.Sprintf("%d", res.DurationMs),
+				"wrapped_by":       name,
+				"project_root":     e.ProjectRoot,
+			})
+		}
 	}
 	return res, err
 }
