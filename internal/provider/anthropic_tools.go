@@ -182,6 +182,16 @@ func buildAnthropicMessage(role string, m Message) anthropicMessage {
 // portion from tool_use calls. Text blocks are concatenated; unknown block
 // types are dropped silently (forward-compatible with new Anthropic block
 // types).
+//
+// Fallback: some "Anthropic-compatible" endpoints (MiniMax M2 among them)
+// emit tool calls as XML inside a plain `text` block instead of proper
+// `tool_use` blocks. When no native tool_use is found but the text carries
+// the distinctive `<invoke name="..."` marker, parse the XML, promote the
+// calls, and strip the XML from the visible text so the user doesn't see
+// raw `<minimax:tool_call>` syntax bleed into the chat. The detection is
+// narrow enough that regular prose (even prose discussing tool-call syntax
+// in a code fence) won't trigger it — see extractXMLToolCalls for the
+// exact guard.
 func splitAnthropicContent(blocks []anthropicContentBlock) (string, []ToolCall) {
 	var text strings.Builder
 	var calls []ToolCall
@@ -201,7 +211,13 @@ func splitAnthropicContent(blocks []anthropicContentBlock) (string, []ToolCall) 
 			})
 		}
 	}
-	return text.String(), calls
+	out := text.String()
+	if len(calls) == 0 {
+		if cleaned, synth := extractXMLToolCalls(out); len(synth) > 0 {
+			return cleaned, synth
+		}
+	}
+	return out, calls
 }
 
 // anthropicStopReason maps Anthropic's stop_reason strings into the
