@@ -197,22 +197,31 @@ func (eb *EventBus) Unsubscribe(eventType string, ch chan Event) {
 func (eb *EventBus) publishToChannel(ch chan Event, event Event) {
 	defer func() {
 		if recover() != nil {
-			eb.noteDroppedEvent()
+			eb.noteDroppedEvent(event.Type)
 		}
 	}()
 	select {
 	case ch <- event:
 	default:
-		eb.noteDroppedEvent()
+		eb.noteDroppedEvent(event.Type)
 	}
 }
 
-func (eb *EventBus) noteDroppedEvent() {
+// noteDroppedEvent bumps the drop counter and, once per
+// eventBusDropWarnEvery, logs both the cumulative total and the most
+// recently dropped event type. The event type is the best cheap hint we
+// have toward "which subscriber is lagging" — we don't track per-channel
+// owners, but a consistent type in the log (e.g. always "drive:todo:retry")
+// points the operator at the subscriber that handles it.
+func (eb *EventBus) noteDroppedEvent(eventType string) {
 	if eb == nil {
 		return
 	}
 	total := atomic.AddUint64(&eb.dropped, 1)
 	if total%eventBusDropWarnEvery == 0 {
-		log.Printf("dfmc: event bus dropped %d events so far; a subscriber is lagging", total)
+		if eventType == "" {
+			eventType = "(untyped)"
+		}
+		log.Printf("dfmc: event bus dropped %d events so far; most recent drop was %q — a subscriber is lagging", total, eventType)
 	}
 }
