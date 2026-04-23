@@ -1025,6 +1025,49 @@ func TestDriverPersistFailurePublishesWarningEvent(t *testing.T) {
 	}
 }
 
+// When the planner returns more TODOs than MaxTodos, the driver should
+// truncate and surface the cap as a RUN WARNING — not as a plan
+// failure. Consumers (TUI/CLI) that gate on drive:plan:failed as a
+// terminal signal were tripping on what was really a "heads-up, some
+// TODOs got dropped" message.
+func TestDriverTruncateMaxTodosEmitsWarningNotPlanFailed(t *testing.T) {
+	runner := &fakeRunner{
+		PlanFunc: func(_ PlannerRequest) (string, error) {
+			return `{"todos":[
+				{"id":"T1","title":"one","detail":"."},
+				{"id":"T2","title":"two","detail":"."},
+				{"id":"T3","title":"three","detail":"."},
+				{"id":"T4","title":"four","detail":"."}
+			]}`, nil
+		},
+	}
+	var events []string
+	var mu sync.Mutex
+	d := NewDriver(runner, nil, captureEvents(&events, &mu), Config{MaxTodos: 2, MaxParallel: 1})
+	run, err := d.Run(context.Background(), "too many todos")
+	if err != nil {
+		t.Fatalf("truncation should not fail the run: %v", err)
+	}
+	if run.Status != RunDone {
+		t.Fatalf("run should complete despite truncation, got %s", run.Status)
+	}
+	if len(run.Todos) != 2 {
+		t.Fatalf("MaxTodos=2 should cap todos to 2, got %d", len(run.Todos))
+	}
+	sawWarning := false
+	for _, ev := range events {
+		if ev == EventPlanFailed {
+			t.Fatalf("truncation must not emit EventPlanFailed; events=%v", events)
+		}
+		if ev == EventRunWarning {
+			sawWarning = true
+		}
+	}
+	if !sawWarning {
+		t.Fatalf("truncation should emit EventRunWarning; events=%v", events)
+	}
+}
+
 func TestPlannerPicksFirstValidEnvelopeFromMultipleJSONObjects(t *testing.T) {
 	runner := &fakeRunner{
 		PlanFunc: func(_ PlannerRequest) (string, error) {

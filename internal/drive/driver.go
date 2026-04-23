@@ -180,10 +180,13 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (retRun *Run, retErr
 	}
 	if len(todos) > d.cfg.MaxTodos {
 		// Truncate noisily — surface the cap so the user sees why later
-		// TODOs are missing, instead of silently dropping work.
+		// TODOs are missing, instead of silently dropping work. Publishes
+		// EventRunWarning (not EventPlanFailed): the plan succeeded, we
+		// just dropped tail TODOs over the cap; listeners that gate on
+		// plan:failed as a real failure signal shouldn't trip on this.
 		truncated := todos[d.cfg.MaxTodos:]
 		todos = todos[:d.cfg.MaxTodos]
-		d.publish(EventPlanFailed, map[string]any{
+		d.publish(EventRunWarning, map[string]any{
 			"run_id":           run.ID,
 			"warning":          "MaxTodos exceeded; truncated",
 			"kept":             d.cfg.MaxTodos,
