@@ -133,6 +133,11 @@ func runChat(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 	fmt.Println("Type /help for slash commands.")
 
 	scanner := bufio.NewScanner(os.Stdin)
+	// Pasting a multi-line prompt or a file snippet can easily exceed
+	// bufio's default 64 KiB token limit. Raising the cap to 1 MiB keeps
+	// realistic paste sizes working without unbounded memory growth on a
+	// malformed stdin.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for {
 		select {
 		case <-ctx.Done():

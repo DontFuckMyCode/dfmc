@@ -116,6 +116,10 @@ func gitChurn(ctx context.Context, root string) (inserted, deleted int, dirty bo
 
 func parseNumstat(raw string) (inserted, deleted int, any bool) {
 	scanner := bufio.NewScanner(strings.NewReader(raw))
+	// Repos with very long file paths (deep node_modules, localized
+	// monorepos) can exceed bufio's default 64 KiB per-line limit and
+	// silently truncate the numstat. 1 MiB covers any realistic path.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "" {
