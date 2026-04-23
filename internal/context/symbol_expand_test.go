@@ -197,3 +197,52 @@ func chunkPaths(chunks []types.ContextChunk) []string {
 	}
 	return out
 }
+
+// TestExpandViaGraph_DepthHonored pins multi-iteration expansion. Two
+// modules chain A → B → C via shared imports; depth=1 should surface B
+// only (hop 2), depth=2 should also surface C (hop 4).
+func TestExpandViaGraph_DepthHonored(t *testing.T) {
+	g := codemap.NewGraph()
+	fileA := codemap.Node{ID: "file:a.go", Kind: "file", Path: "a.go", Name: "a.go"}
+	fileB := codemap.Node{ID: "file:b.go", Kind: "file", Path: "b.go", Name: "b.go"}
+	fileC := codemap.Node{ID: "file:c.go", Kind: "file", Path: "c.go", Name: "c.go"}
+	modX := codemap.Node{ID: "module:x", Kind: "module", Name: "x"}
+	modY := codemap.Node{ID: "module:y", Kind: "module", Name: "y"}
+	for _, n := range []codemap.Node{fileA, fileB, fileC, modX, modY} {
+		g.AddNode(n)
+	}
+	// A and B share modX (A↔B siblings); B and C share modY (B↔C siblings).
+	// So from A, B is 1 iteration away and C is 2 iterations away.
+	for _, e := range []codemap.Edge{
+		{From: fileA.ID, To: modX.ID, Type: "imports"},
+		{From: fileB.ID, To: modX.ID, Type: "imports"},
+		{From: fileB.ID, To: modY.ID, Type: "imports"},
+		{From: fileC.ID, To: modY.ID, Type: "imports"},
+	} {
+		g.AddEdge(e)
+	}
+
+	got1 := expandViaGraph(g, []string{"a.go"}, 1)
+	if _, ok := got1["b.go"]; !ok {
+		t.Fatalf("depth=1 should surface b.go, got %v", got1)
+	}
+	if _, ok := got1["c.go"]; ok {
+		t.Fatalf("depth=1 must NOT surface c.go (needs 2 iterations), got %v", got1)
+	}
+	if got1["b.go"] != 2 {
+		t.Fatalf("b.go hop cost should be 2 at depth=1, got %d", got1["b.go"])
+	}
+
+	got2 := expandViaGraph(g, []string{"a.go"}, 2)
+	if got2["b.go"] != 2 {
+		t.Fatalf("b.go hop cost should remain 2 at depth=2, got %d", got2["b.go"])
+	}
+	if got2["c.go"] != 4 {
+		t.Fatalf("c.go hop cost should be 4 at depth=2, got %d (full=%v)", got2["c.go"], got2)
+	}
+
+	got0 := expandViaGraph(g, []string{"a.go"}, 0)
+	if len(got0) != 0 {
+		t.Fatalf("depth=0 should return empty, got %v", got0)
+	}
+}

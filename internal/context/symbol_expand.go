@@ -176,54 +176,64 @@ func resolveSymbolSeeds(graph *codemap.Graph, identifiers []string) map[string]f
 
 // expandViaGraph walks outward from seed files through the codemap's
 // "imports" edges to surface sibling files — anything that imports the
-// same modules, or is imported by the seeds. Depth defaults to 2 (seed →
-// module → sibling file). Larger depths blow the budget without materially
-// improving relevance in practice.
+// same modules, or is imported by the seeds. depth is the number of
+// iterations of the (file → module → sibling file) expansion; each
+// iteration uses the previous iteration's siblings as new seeds. A
+// depth of 1 produces only direct import-siblings; higher values pull
+// transitive neighbors with monotonically increasing hop distance.
+// depth is clamped to [1, 3] — past 3 the graph fans out far enough
+// that hop-inverse scoring can't meaningfully dampen the noise.
 //
-// The returned map carries the strongest hop distance for each neighbor
+// The returned map carries the shortest hop distance for each neighbor
 // (lower is closer) so the caller can inverse-scale the score.
 func expandViaGraph(graph *codemap.Graph, seedPaths []string, depth int) map[string]int {
-	if graph == nil || len(seedPaths) == 0 {
+	if graph == nil || len(seedPaths) == 0 || depth <= 0 {
 		return nil
 	}
-	//nolint:ineffassign // TODO: depth is currently ignored; graph.Descendants/Ancestors
-	// hardcode depth=1 below. To fix, pass depth into those calls (behavior change).
+	if depth > 3 {
+		depth = 3
+	}
+
 	out := map[string]int{}
 	seen := map[string]struct{}{}
 	for _, p := range seedPaths {
 		seen[filepath.ToSlash(p)] = struct{}{}
 	}
 
-	// For each seed file, pull its imported modules (outgoing "imports"),
-	// then walk the incoming edges of those modules to find other files
-	// that import the same modules. Cap the fan-out so a popular module
-	// (e.g. "fmt", "strings") doesn't drag the whole repo in.
+	// Per-module fan-out cap so a popular module (e.g. "fmt", "strings")
+	// doesn't drag the whole repo in at any single iteration.
 	const maxSiblingsPerModule = 6
-	for _, seed := range seedPaths {
-		seedID := "file:" + filepath.ToSlash(seed)
-		for _, module := range graph.Descendants(seedID, 1) {
-			if module.Kind != "module" {
-				continue
-			}
-			siblings := 0
-			for _, sib := range graph.Ancestors(module.ID, 1) {
-				if sib.Kind != "file" || sib.Path == "" {
+	frontier := append([]string(nil), seedPaths...)
+	for hop := 1; hop <= depth && len(frontier) > 0; hop++ {
+		// Each iteration is two edges (file → module → file).
+		hopCost := hop * 2
+		next := make([]string, 0, len(frontier))
+		for _, seed := range frontier {
+			seedID := "file:" + filepath.ToSlash(seed)
+			for _, module := range graph.Descendants(seedID, 1) {
+				if module.Kind != "module" {
 					continue
 				}
-				path := filepath.ToSlash(sib.Path)
-				if _, isSeed := seen[path]; isSeed {
-					continue
-				}
-				// Keep the lowest hop count (closer wins ties).
-				if cur, ok := out[path]; !ok || cur > 2 {
-					out[path] = 2
-				}
-				siblings++
-				if siblings >= maxSiblingsPerModule {
-					break
+				siblings := 0
+				for _, sib := range graph.Ancestors(module.ID, 1) {
+					if sib.Kind != "file" || sib.Path == "" {
+						continue
+					}
+					path := filepath.ToSlash(sib.Path)
+					if _, skip := seen[path]; skip {
+						continue
+					}
+					seen[path] = struct{}{}
+					out[path] = hopCost
+					next = append(next, path)
+					siblings++
+					if siblings >= maxSiblingsPerModule {
+						break
+					}
 				}
 			}
 		}
+		frontier = next
 	}
 	return out
 }
