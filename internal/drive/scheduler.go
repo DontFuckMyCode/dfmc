@@ -8,7 +8,10 @@
 
 package drive
 
-import "strings"
+import (
+	"path"
+	"strings"
+)
 
 type SchedulerPolicy struct {
 	MaxParallel int
@@ -364,16 +367,33 @@ func todoReadOnly(t Todo) bool {
 // planner output joins the same bucket as Unix-style. Lowercase is
 // NOT applied — case-insensitive filesystems (NTFS) are common but
 // safer to over-conflict than under-conflict.
+// normalizeScope maps a FileScope entry onto a canonical form so
+// semantically-equal paths ("main.go", "./main.go", "main.go" with a
+// Windows backslash, "a//b.go") collapse into the same scopeSet key.
+// Without this pass a planner that emits "./pkg/foo.go" for one TODO
+// and "pkg/foo.go" for another would have both run in parallel and
+// corrupt each other's writes. Empty input is preserved (not rewritten
+// to path.Clean's "." sentinel) because callers use "" as an explicit
+// "no scope" marker.
 func normalizeScope(s string) string {
-	out := make([]byte, 0, len(s))
+	if s == "" {
+		return ""
+	}
+	slashed := make([]byte, 0, len(s))
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if c == '\\' {
 			c = '/'
 		}
-		out = append(out, c)
+		slashed = append(slashed, c)
 	}
-	return string(out)
+	cleaned := path.Clean(string(slashed))
+	if cleaned == "." {
+		// path.Clean turns bare "./" / "" into "." — keep as "." since
+		// that's a legitimate scope (the repo root itself).
+		return "."
+	}
+	return cleaned
 }
 
 func todoLane(t Todo) string {
