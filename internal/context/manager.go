@@ -18,9 +18,6 @@ import (
 type Manager struct {
 	codemap *codemap.Engine
 	prompts *promptlib.Library
-	// dirty tracks files that have been modified since the last context build.
-	// When non-empty, BuildWithOptions triggers a re-parse before retrieval.
-	dirty map[string]bool
 }
 
 type RetrievalStrategy string
@@ -72,40 +69,17 @@ func New(cm *codemap.Engine) *Manager {
 	return &Manager{
 		codemap: cm,
 		prompts: promptlib.New(),
-		dirty:   make(map[string]bool),
 	}
 }
 
-// Invalidate marks a file as modified so the next BuildWithOptions
-// triggers a re-parse rather than returning stale cached chunks.
+// Invalidate forwards a file-modified signal to the codemap so the next
+// BuildWithOptions call sees fresh symbol data. No-op on nil receiver or
+// when the codemap isn't wired.
 func (m *Manager) Invalidate(path string) {
-	if path == "" || m == nil {
+	if m == nil || path == "" || m.codemap == nil {
 		return
 	}
-	if m.dirty == nil {
-		m.dirty = make(map[string]bool)
-	}
-	m.dirty[path] = true
-	if m.codemap != nil {
-		m.codemap.InvalidateFile(path)
-	}
-}
-
-// InvalidateDir marks all files under dir as modified. Paths are resolved
-// to absolute form before marking so dir argument variations collapse.
-func (m *Manager) InvalidateDir(dir string) {
-	if dir == "" || m == nil {
-		return
-	}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		abs = dir
-	}
-	prefix := abs + string(filepath.Separator)
-	if m.dirty == nil {
-		m.dirty = make(map[string]bool)
-	}
-	m.dirty[prefix] = true
+	m.codemap.InvalidateFile(path)
 }
 
 func (m *Manager) Build(query string, maxFiles int) ([]types.ContextChunk, error) {
