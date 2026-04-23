@@ -39,18 +39,29 @@ func (e *Engine) buildRequestMessages(question string, chunks []types.ContextChu
 	}
 
 	msgs, omitted := e.trimmedConversationMessages(mainBudget)
+	var summary string
 	if summaryBudget > 0 && len(omitted) > 0 {
-		summary := buildHistorySummary(omitted, summaryBudget)
-		if strings.TrimSpace(summary) != "" {
-			msgs = append([]provider.Message{
-				{Role: types.RoleAssistant, Content: summary},
-			}, msgs...)
-		}
+		summary = strings.TrimSpace(buildHistorySummary(omitted, summaryBudget))
 	}
 	msgs = append(msgs, provider.Message{
 		Role:    types.RoleUser,
 		Content: question,
 	})
+	// Merge the summary into the oldest kept user turn instead of
+	// prepending it as its own message. Prepending-as-assistant left
+	// msgs[0].Role == assistant (Anthropic/compat reject user-first
+	// violations); prepending-as-user doubled up with the following
+	// user turn (same rejection). Merging keeps the alternation valid
+	// and preserves the [History summary] marker that downstream
+	// prompts rely on.
+	if summary != "" {
+		for i := range msgs {
+			if msgs[i].Role == types.RoleUser {
+				msgs[i].Content = summary + "\n\n---\n\n" + msgs[i].Content
+				break
+			}
+		}
+	}
 	return msgs
 }
 
@@ -143,11 +154,29 @@ func (e *Engine) trimmedConversationMessages(budget int) ([]provider.Message, []
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
-	if cutoff < 0 {
+
+	// The backward walk above can leave an assistant turn at the head of
+	// the kept window when the budget cuts mid-pair. Anthropic's
+	// /messages API (and the Anthropic-compat paths in kimi/zai/minimax)
+	// hard-reject a request whose messages array starts with an
+	// assistant turn - the operator would see a generic 400 with no tie
+	// back to the trim decision. Peel leading assistants into the
+	// omitted slice so the kept window always opens on a user turn; the
+	// dropped entries still contribute to the history summary.
+	firstKept := 0
+	if cutoff >= 0 {
+		firstKept = cutoff + 1
+	}
+	for len(out) > 0 && out[0].Role == types.RoleAssistant {
+		out = out[1:]
+		firstKept++
+	}
+
+	if firstKept == 0 {
 		return out, nil
 	}
-	omitted := make([]types.Message, cutoff+1)
-	copy(omitted, history[:cutoff+1])
+	omitted := make([]types.Message, firstKept)
+	copy(omitted, history[:firstKept])
 	return out, omitted
 }
 
