@@ -411,9 +411,10 @@ type TUIConfig struct {
 	// MouseCapture toggles bubbletea's mouse-event capture. When true
 	// the wheel scrolls the transcript natively but the terminal's
 	// drag-to-select / right-click-copy is disabled — most terminals
-	// let Shift+drag bypass this. Default is false so copy/paste
-	// "just works" out of the box; users who prefer wheel scroll can
-	// opt in.
+	// let Shift+drag bypass this. Default is true because wheel-scroll
+	// is what people reach for in a full-screen TUI; users who prefer
+	// native drag-to-select can flip it off with /mouse or set
+	// tui.mouse_capture: false in .dfmc/config.yaml.
 	MouseCapture bool `yaml:"mouse_capture"`
 }
 

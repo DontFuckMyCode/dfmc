@@ -339,11 +339,11 @@ func Run(ctx context.Context, eng *engine.Engine, opts Options) error {
 	model := NewModel(ctx, eng)
 	model.eventRelayExternal = true
 	programOpts := []tea.ProgramOption{}
-	// Mouse capture is OFF by default so terminal drag-to-select / copy
-	// just works. Users who prefer wheel-scroll can flip tui.mouse_capture
-	// in their config — the TUI will read it below and enable cell-motion
-	// tracking. A runtime toggle (/mouse) lets you switch mid-session
-	// without restarting.
+	// Mouse capture is ON by default — wheel scrolls the transcript, which
+	// is what people reach for in a full-screen TUI. Drag-to-select still
+	// works via Shift+drag in most terminals, and /mouse flips capture at
+	// runtime (or set tui.mouse_capture: false in .dfmc/config.yaml to
+	// make the "off" behavior the default).
 	if eng.Config != nil && eng.Config.TUI.MouseCapture {
 		model.ui.mouseCaptureEnabled = true
 		programOpts = append(programOpts, tea.WithMouseCellMotion())
