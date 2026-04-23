@@ -405,6 +405,15 @@ func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int
 	}
 
 	lines := splitKeepNewline(original)
+	// Detect the source file's dominant newline so emitted replacement
+	// lines keep the same style as the rest of the file. Without this,
+	// an LF patch applied to a CRLF source produced mixed line endings
+	// (or, when the hunk spanned the whole file, a silent EOL flip),
+	// which showed up in git as unwanted whole-file diff noise.
+	fileEnding := "\n"
+	if strings.Contains(original, "\r\n") {
+		fileEnding = "\r\n"
+	}
 	applied, rejected := 0, 0
 	fuzzyOffsets := make([]int, 0, len(hunks))
 
@@ -446,12 +455,16 @@ func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int
 		after := append([]string{}, lines[idx+len(want):]...)
 		middle := make([]string, 0, len(replace))
 		for _, r := range replace {
-			middle = append(middle, r+"\n")
+			// Strip any trailing CR the patch carried (e.g. a CRLF patch
+			// pasted from a Windows IDE) so we don't leak CR bytes into an
+			// LF source, then append the file's own ending detected above.
+			r = strings.TrimRight(r, "\r")
+			middle = append(middle, r+fileEnding)
 		}
 		// If the last original line lacked a trailing newline and the replace
 		// region touches the end, preserve that.
 		if idx+len(want) == len(lines) && len(lines) > 0 && !strings.HasSuffix(lines[len(lines)-1], "\n") && len(middle) > 0 {
-			middle[len(middle)-1] = strings.TrimSuffix(middle[len(middle)-1], "\n")
+			middle[len(middle)-1] = strings.TrimSuffix(middle[len(middle)-1], fileEnding)
 		}
 		lines = append(before, append(middle, after...)...)
 		applied++
