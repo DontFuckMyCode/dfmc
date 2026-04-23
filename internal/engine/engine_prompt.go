@@ -109,33 +109,7 @@ func (e *Engine) promptCacheTokens(query string, overrides ctxmgr.PromptRuntime)
 	return tokens.Estimate(bundle.CacheableText()), tokens.Estimate(bundle.DynamicText())
 }
 func (e *Engine) promptRuntime() ctxmgr.PromptRuntime {
-	rt := ctxmgr.PromptRuntime{
-		Provider: strings.TrimSpace(e.provider()),
-		Model:    strings.TrimSpace(e.model()),
-	}
-	if e.Providers == nil {
-		return rt
-	}
-	p, ok := e.Providers.Get(rt.Provider)
-	if !ok || p == nil {
-		return rt
-	}
-	hints := p.Hints()
-	if rt.Model == "" {
-		rt.Model = strings.TrimSpace(p.Model())
-	}
-	rt.ToolStyle = strings.TrimSpace(hints.ToolStyle)
-	rt.DefaultMode = strings.TrimSpace(hints.DefaultMode)
-	rt.Cache = hints.Cache
-	rt.LowLatency = hints.LowLatency
-	rt.MaxContext = hints.MaxContext
-	if rt.MaxContext <= 0 {
-		rt.MaxContext = p.MaxContext()
-	}
-	if len(hints.BestFor) > 0 {
-		rt.BestFor = append([]string(nil), hints.BestFor...)
-	}
-	return rt
+	return e.promptRuntimeForProvider(e.provider(), e.model())
 }
 
 func (e *Engine) PromptRuntime() ctxmgr.PromptRuntime {
