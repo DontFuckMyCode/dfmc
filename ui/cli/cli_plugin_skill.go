@@ -1,8 +1,11 @@
-// Plugin and skill subcommands plus their installers, discovery,
-// manifest validation, archive extraction, and skill-prompt builders.
-// Extracted from cli.go so the dispatcher stays focused. These commands
-// share plugin-directory resolution, manifest parsing, and builtin
-// skill definitions so they travel together.
+// Plugin subcommands: runPlugin / runPluginRPC dispatchers and the
+// supporting install / discover / manifest / archive / download
+// surface. The skill subcommand surface lives in cli_skill.go — it's
+// a lighter prompt-shaped overlay that doesn't share the plugin
+// installer's complexity. What stays here is everything that talks
+// to the plugins directory on disk: manifest parsing, sanitized
+// install/remove paths, HTTPS source resolution, and the enabled-
+// list editor that round-trips through .dfmc/config.yaml.
 
 package cli
 
@@ -24,7 +27,6 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/pluginexec"
-	"github.com/dontfuckmycode/dfmc/internal/skills"
 	"gopkg.in/yaml.v3"
 )
 
@@ -45,15 +47,6 @@ type pluginManifest struct {
 	Type        string `yaml:"type"`
 	Entry       string `yaml:"entry"`
 	Description string `yaml:"description"`
-}
-
-type skillInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Path        string `json:"path,omitempty"`
-	Source      string `json:"source"`
-	Builtin     bool   `json:"builtin"`
-	Prompt      string `json:"-"`
 }
 
 func runPlugin(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
@@ -395,114 +388,6 @@ func resolvePluginEntry(p pluginInfo) (string, error) {
 		return "", fmt.Errorf("plugin %s entry %q: %w", p.Name, entry, err)
 	}
 	return entry, nil
-}
-
-func runSkill(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
-	if len(args) == 0 {
-		args = []string{"list"}
-	}
-	switch args[0] {
-	case "list":
-		items := discoverSkills(eng.Status().ProjectRoot)
-		if jsonMode {
-			mustPrintJSON(map[string]any{"skills": items})
-			return 0
-		}
-		for _, s := range items {
-			label := s.Source
-			if s.Builtin {
-				label = "builtin"
-			}
-			fmt.Printf("- %s [%s]\n", s.Name, label)
-		}
-		return 0
-
-	case "info":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: dfmc skill info <name>")
-			return 2
-		}
-		name := strings.TrimSpace(args[1])
-		items := discoverSkills(eng.Status().ProjectRoot)
-		for _, s := range items {
-			if strings.EqualFold(s.Name, name) {
-				if jsonMode {
-					mustPrintJSON(s)
-				} else {
-					fmt.Printf("Name:        %s\n", s.Name)
-					fmt.Printf("Source:      %s\n", s.Source)
-					fmt.Printf("Builtin:     %t\n", s.Builtin)
-					if s.Description != "" {
-						fmt.Printf("Description: %s\n", s.Description)
-					}
-					if s.Path != "" {
-						fmt.Printf("Path:        %s\n", s.Path)
-					}
-				}
-				return 0
-			}
-		}
-		fmt.Fprintf(os.Stderr, "skill not found: %s\n", name)
-		return 1
-
-	case "run":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: dfmc skill run <name> [input]")
-			return 2
-		}
-		name := strings.TrimSpace(args[1])
-		input := strings.TrimSpace(strings.Join(args[2:], " "))
-		return runNamedSkill(ctx, eng, name, input, jsonMode)
-
-	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc skill [list|info <name>|run <name> [input]]")
-		return 2
-	}
-}
-
-func runSkillShortcut(ctx context.Context, eng *engine.Engine, name string, args []string, jsonMode bool) int {
-	input := strings.TrimSpace(strings.Join(args, " "))
-	if input == "" {
-		input = "Analyze the current project."
-	}
-	return runNamedSkill(ctx, eng, name, input, jsonMode)
-}
-
-func runNamedSkill(ctx context.Context, eng *engine.Engine, name, input string, jsonMode bool) int {
-	item, ok := skills.Lookup(eng.Status().ProjectRoot, name)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "skill not found: %s\n", name)
-		return 1
-	}
-	prompt := skills.DecorateQuery(item.Name, input)
-	answer, err := eng.Ask(ctx, prompt)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "skill run failed: %v\n", err)
-		return 1
-	}
-	if jsonMode {
-		_ = printJSON(map[string]any{
-			"skill":  item.Name,
-			"source": item.Source,
-			"input":  input,
-			"answer": answer,
-		})
-		return 0
-	}
-	fmt.Println(answer)
-	return 0
-}
-
-func buildSkillPrompt(skill skillInfo, input string) string {
-	p := strings.TrimSpace(skill.Prompt)
-	if p == "" {
-		p = input
-	} else if strings.Contains(p, "{input}") {
-		p = strings.ReplaceAll(p, "{input}", input)
-	} else if strings.TrimSpace(input) != "" {
-		p = p + "\n\nUser request:\n" + input
-	}
-	return p
 }
 
 func discoverPlugins(pluginDir string, enabled []string) []pluginInfo {
@@ -888,22 +773,6 @@ func updatePluginEnabled(ctx context.Context, eng *engine.Engine, name string, e
 		return fmt.Errorf("config reload failed, reverted: %w", err)
 	}
 	return nil
-}
-
-func discoverSkills(projectRoot string) []skillInfo {
-	raw := skills.Discover(projectRoot)
-	out := make([]skillInfo, 0, len(raw))
-	for _, item := range raw {
-		out = append(out, skillInfo{
-			Name:        item.Name,
-			Description: item.Description,
-			Path:        item.Path,
-			Source:      item.Source,
-			Builtin:     item.Builtin,
-			Prompt:      item.SystemInstruction(),
-		})
-	}
-	return out
 }
 
 
