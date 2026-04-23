@@ -209,6 +209,75 @@ func TestRenderComposesRoleFragments(t *testing.T) {
 	}
 }
 
+// Pins the hardening sections added to the default system prompt:
+// - tool error → recovery reflex table
+// - DFMC runtime surface contract
+// - language-specific pitfall lists
+// Regression guard: silently dropping any of these re-opens a class of
+// weaker-model tool loops the shipped prompt is built to close.
+func TestDefaultSystemPromptCarriesHardeningSections(t *testing.T) {
+	lib := New()
+	renderAll := func(language string) string {
+		return lib.Render(RenderRequest{
+			Type:     "system",
+			Task:     "general",
+			Language: language,
+			Role:     "generalist",
+			Vars: map[string]string{
+				"project_root": "/tmp/project",
+				"user_query":   "warm-up",
+			},
+		})
+	}
+	goPrompt := renderAll("go")
+
+	// Error-recovery table landmarks.
+	for _, needle := range []string{
+		"Tool error",
+		"read-before-mutate",
+		"flag-injection",
+		"meta tools cannot dispatch other meta tools",
+		`"truncated": true`,
+		"approval denied",
+	} {
+		if !strings.Contains(strings.ToLower(goPrompt), strings.ToLower(needle)) {
+			t.Fatalf("error-recovery section missing %q", needle)
+		}
+	}
+
+	// DFMC runtime contract landmarks.
+	for _, needle := range []string{
+		"Parked agent",
+		"autonomous_resume",
+		"Intent-routed",
+		"Approval gate",
+		"trajectory coach",
+		"Prompt-cache boundary",
+	} {
+		if !strings.Contains(goPrompt, needle) {
+			t.Fatalf("runtime contract section missing %q", needle)
+		}
+	}
+
+	// Language pitfalls: Go (CGO fallback), TS (any), Python (mutable
+	// defaults), Rust (unwrap).
+	if !strings.Contains(goPrompt, "CGO_ENABLED=0") {
+		t.Fatalf("Go pitfall list missing CGO fallback note: %s", goPrompt)
+	}
+	tsPrompt := renderAll("typescript")
+	if !strings.Contains(tsPrompt, "`any` is a regression") {
+		t.Fatalf("TS pitfall list missing any-regression note")
+	}
+	pyPrompt := renderAll("python")
+	if !strings.Contains(pyPrompt, "Mutable default arguments") {
+		t.Fatalf("Python pitfall list missing mutable-defaults note")
+	}
+	rustPrompt := renderAll("rust")
+	if !strings.Contains(rustPrompt, "`unwrap()`") {
+		t.Fatalf("Rust pitfall list missing unwrap note")
+	}
+}
+
 func TestNormalizeTemplateComposeMode(t *testing.T) {
 	a := normalizeTemplate(Template{Type: "system", Task: "general", Compose: "append", Body: "x"})
 	if a.Compose != "append" {

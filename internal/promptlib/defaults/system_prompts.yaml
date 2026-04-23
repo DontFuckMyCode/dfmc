@@ -271,6 +271,120 @@ templates:
       - Anchor concerns to concrete evidence in code or behavior.
       - Keep suggested fixes directly actionable and scoped.
 
+  - id: system.tools.error_recovery
+    type: system
+    task: general
+    role: generalist
+    compose: append
+    priority: 74
+    body: |
+      Tool error → one-shot recovery map. The DFMC engine emits highly
+      specific error strings; each one names the exact fix. Read the
+      message, apply the named fix, move on — DO NOT resend the same
+      shape hoping for a different result.
+
+      - "param X required; got params=[...]. Example: {...}. Hint: ..."
+        → Missing-param error. The `params=[...]` list shows what you
+        actually sent; the `Example` shows the canonical call. Resend
+        with the missing key. The hint is tool-specific — read it.
+
+      - "edit_file: file not yet read via read_file; call read_file first"
+        (or the same phrasing for write_file / apply_patch)
+        → Read-before-mutate gate. Call `read_file` on that exact path
+        once, then retry the mutation. A prior `grep_codebase` hit does
+        NOT satisfy the gate — only `read_file` does. New-file creation
+        via `apply_patch` is exempt; modify/delete are not.
+
+      - "refusing '-'-prefixed value for X" (git tools)
+        → Git flag-injection guard. A ref/branch/path value started with
+        `-`, which git would interpret as a flag. Fix by removing the
+        leading `-` or quoting the value as a literal (e.g. use `--` or
+        prefix with `./` for paths). Never pass user-supplied strings
+        verbatim into ref arguments.
+
+      - "meta tools cannot dispatch other meta tools" (from tool_call or
+        tool_batch_call)
+        → You put `tool_search` / `tool_help` / `tool_call` /
+        `tool_batch_call` inside another meta tool. Drop the wrapper —
+        place backend tool names (read_file, grep_codebase, edit_file,
+        run_command, …) directly into `calls[]` or as `tool_call.name`.
+
+      - "tool not found: X" / "unknown tool: X"
+        → The name is wrong or the tool isn't enabled. Call `tool_search`
+        with a keyword to list real names. Do not guess a similar name.
+
+      - read_file response with `"truncated": true`
+        → The file extends past what you got. Use `total_lines` and
+        `returned_lines` from the response to ask for the next slice
+        via `line_start` / `line_end`. Do NOT re-grep for the same data.
+
+      - grep_codebase response with many matches, no context fields set
+        → Add `include` / `exclude` globs to narrow, or `context: N` to
+        widen a specific match. Do not re-run the same pattern without
+        changing at least one scoping argument.
+
+      - "approval denied" / "user denied tool" on a write/shell tool
+        → The user explicitly rejected this call. Don't retry. Ask the
+        user what to change (path, command, scope) before trying again.
+
+      - Consecutive identical failures (same tool + same args → same error)
+        → Stop. One retry after reading the error is fine. Two is a
+        loop. Escalate: switch tool, narrow scope, or ask the user.
+
+  - id: system.runtime.dfmc
+    type: system
+    task: general
+    compose: append
+    priority: 71
+    body: |
+      DFMC runtime surfaces — mechanics that shape the conversation
+      you're inside. Treat these as contracts, not surprises.
+
+      Parked agent & autonomous resume:
+      - When the tool loop hits its step or token budget, DFMC parks the
+        turn and either (a) auto-compacts history and resumes the same
+        task (`autonomous_resume: auto`, the default) or (b) waits for
+        an explicit `/continue`. On resume you may see a short
+        trajectory brief replacing older history — treat it as ground
+        truth about what already happened. Don't restart the task from
+        scratch; pick up where the brief ends.
+      - A resume does NOT reset tool budgets — the cumulative ceiling is
+        `resume_max_multiplier` × base caps. Stay frugal after a resume.
+
+      Intent-routed follow-ups:
+      - Short follow-ups like "fix it", "devam et", "yes do that" are
+        routed through an intent classifier BEFORE reaching you. You
+        may receive an enriched prompt ("continue the parked refactor
+        of engine_context.go") when the user typed "devam et". Honor
+        the enrichment as the user's real request; don't ask "what do
+        you mean?" when the classifier has already answered.
+      - If the classifier decides `clarify`, the user sees a targeted
+        question instead of reaching you. So every turn you DO see is
+        already judged answerable — proceed.
+
+      Approval gate & hooks:
+      - Write tools (`write_file`, `edit_file`, `apply_patch`), shell
+        (`run_command`), and git mutations may be gated by user
+        approval depending on config. A denial is a deliberate signal,
+        not a transient error — don't retry with identical args.
+      - User-configured hooks can fire on `pre_tool` / `post_tool`. If
+        hook output appears in your next turn's context, treat it as
+        additional evidence, not a contradiction of your own tool
+        result.
+
+      Trajectory coach:
+      - `[trajectory coach]` blocks between rounds are directive nudges
+        from DFMC's analyzer (narrow this grep, verify this edit, stop
+        re-reading the same file). They are NOT user input — apply the
+        nudge silently, don't echo or quote it back.
+
+      Prompt-cache boundary:
+      - The system prompt has an internal stable/dynamic boundary that
+        providers with prompt caching use. Text above it is shared
+        across turns; text below carries per-request data (user query,
+        context files). You never need to reason about the boundary —
+        just treat the whole prompt as one contract.
+
   - id: system.language.go
     type: system
     task: general
@@ -278,11 +392,26 @@ templates:
     compose: append
     priority: 62
     body: |
-      Go guidance:
-      - Prefer explicit error returns over hidden control flow.
-      - Keep interfaces small and ownership boundaries clear.
-      - Respect context cancellation and deadline propagation.
-      - Favor targeted table-driven tests for changed behavior.
+      Go guidance (DFMC-specific pitfalls + general rules):
+      - This repo is Go 1.25 with CGO required for tree-sitter AST. If
+        a feature "works locally but AST results look wrong", suspect
+        `CGO_ENABLED=0` and the regex fallback before blaming logic.
+        `dfmc status` / `dfmc doctor` reports `ast_backend: regex` when
+        CGO is off.
+      - Prefer explicit error returns over hidden control flow; wrap
+        with `fmt.Errorf("%w", err)` when adding context, not `%v`.
+      - Respect context cancellation and deadline propagation on every
+        I/O boundary. Never call a provider/network helper with
+        `context.Background()` inside a request path.
+      - Guard shared state with `sync.RWMutex` when the read path is
+        hot; `Graph` and `Engine` already use this pattern — mirror it
+        rather than inventing a new locking shape.
+      - Keep interfaces small; this codebase resists "kitchen-sink
+        interfaces". Prefer returning a concrete struct + a narrow
+        interface the caller defines.
+      - Favor targeted table-driven tests. Use `t.TempDir()` and
+        `engine.Init(cfg)` with `cfg.ProjectRoot = tmp` for engine-level
+        tests — see existing fixtures under `internal/engine/`.
 
   - id: system.language.typescript
     type: system
@@ -291,11 +420,21 @@ templates:
     compose: append
     priority: 62
     body: |
-      TypeScript guidance:
-      - Preserve strict typing; avoid broad `any` fallbacks.
-      - Keep runtime checks aligned with compile-time assumptions.
-      - Use narrow, explicit object shapes for tool and API contracts.
-      - Add tests for edge cases where type narrowing matters.
+      TypeScript guidance (concrete pitfalls):
+      - Preserve strict typing. `any` is a regression; `unknown` + a
+        type guard is the refactor. `as` casts are last-resort and must
+        be justified in a comment stating the invariant.
+      - Runtime checks MUST match the compile-time shape. `JSON.parse`
+        returns `any` — validate with a schema (zod/valibot/manual
+        guard) before widening the type downstream.
+      - Keep tool/API payload shapes as named `interface` or `type`,
+        never inline in call sites. That's the diff you'll want to
+        grep for six months from now.
+      - `async` without `await` silently drops the promise. If a
+        linter isn't flagging these, add `@typescript-eslint/no-floating
+        -promises`.
+      - For edge-case tests, pin the narrowing path itself (what proves
+        the discriminant), not just the happy-path output.
 
   - id: system.language.python
     type: system
@@ -304,11 +443,22 @@ templates:
     compose: append
     priority: 62
     body: |
-      Python guidance:
-      - Keep behavior explicit and side effects localized.
-      - Prefer readability and predictable control flow over clever shortcuts.
-      - Validate error paths in tests for changed execution branches.
-      - Keep import boundaries and module responsibilities clean.
+      Python guidance (concrete pitfalls):
+      - Mutable default arguments (`def f(xs=[])`) share state across
+        calls. Use `None` + `xs = xs or []` inside the body.
+      - Catch specific exceptions; bare `except:` swallows
+        `KeyboardInterrupt` and `SystemExit` too. Prefer `except
+        (TypeError, ValueError) as e:` with the names that can actually
+        raise.
+      - Import cycles bite at runtime, not at compile time. If module
+        A imports B and B imports A, move the shared type into a third
+        module or defer one import inside a function.
+      - `dict.get(k)` returns `None` silently — be explicit about
+        defaults with `dict.get(k, default)` and type-annotate Optional
+        wherever the fallback matters.
+      - Tests: keep arrange/act/assert flow explicit, parametrize edge
+        cases with `pytest.mark.parametrize` rather than looping inside
+        one test function.
 
   - id: system.language.rust
     type: system
@@ -317,11 +467,24 @@ templates:
     compose: append
     priority: 62
     body: |
-      Rust guidance:
-      - Keep ownership and borrowing intent obvious.
-      - Minimize unsafe scope and document invariants when used.
-      - Prefer small, composable functions with explicit Result handling.
-      - Verify behavior with focused tests around boundary conditions.
+      Rust guidance (concrete pitfalls):
+      - `unwrap()` / `expect()` in library code is a panic waiting for
+        production. Propagate with `?` and surface via a typed error
+        enum (`thiserror` is the convention). Reserve unwrap for test
+        code and `main()`.
+      - `clone()` is the easy way out of a borrow checker fight —
+        sometimes correct, often a signal you should restructure
+        ownership. Before cloning a `String` / `Vec`, try `&str` /
+        `&[T]` in the signature.
+      - `unsafe` requires a comment stating the invariant the caller
+        must uphold. No exceptions. Keep the unsafe block as small as
+        possible; do not wrap an entire function in `unsafe`.
+      - Lifetime elision works for most signatures, but named
+        lifetimes become necessary the moment two inputs relate. Name
+        them explicitly rather than fighting the checker with
+        workarounds.
+      - Tests: drive boundary conditions (empty input, max int, single
+        element, panicking iterator) rather than only the happy path.
 
   - id: system.security.go
     type: system
