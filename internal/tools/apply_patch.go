@@ -416,6 +416,17 @@ func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int
 	}
 	applied, rejected := 0, 0
 	fuzzyOffsets := make([]int, 0, len(hunks))
+	// Running offset between original-file line coords (what each
+	// hunk's OldStart describes) and the current lines-buffer coords
+	// (what findHunkAnchor probes). Every applied hunk that replaces
+	// len(want) lines with len(middle) lines shifts every subsequent
+	// hunk's true anchor by (len(middle) - len(want)). Without this,
+	// the second+ hunks of a patch that net-adds or net-removes more
+	// than findHunkAnchor's +-10 fuzz window were silently rejected
+	// (the outer Result reports success but with hunks_rejected>0),
+	// producing a partially-applied patch the caller couldn't easily
+	// notice until the compile/test step blew up.
+	offset := 0
 
 	for _, h := range hunks {
 		// Build the sequence of lines that must be present in the source
@@ -437,7 +448,7 @@ func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int
 			continue
 		}
 
-		anchor := h.OldStart - 1
+		anchor := h.OldStart - 1 + offset
 		if anchor < 0 {
 			anchor = 0
 		}
@@ -467,6 +478,7 @@ func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int
 			middle[len(middle)-1] = strings.TrimSuffix(middle[len(middle)-1], fileEnding)
 		}
 		lines = append(before, append(middle, after...)...)
+		offset += len(middle) - len(want)
 		applied++
 	}
 
