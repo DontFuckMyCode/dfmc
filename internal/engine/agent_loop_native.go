@@ -326,6 +326,24 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 
 		resp, usedProvider, err := e.Providers.Complete(ctx, req)
 		if err != nil {
+			// Ctx cancellation mid-round (user interrupt, parent timeout)
+			// would otherwise discard every trace + msg the loop has built.
+			// Park instead so /continue can pick up where we left off.
+			if ctxErr := ctx.Err(); ctxErr != nil && len(traces) > 0 {
+				headline := fmt.Sprintf(
+					"Parked at step %d — interrupted (%d tool rounds, ~%d tokens).",
+					step, len(traces), totalTokens,
+				)
+				notice := composeParkedNotice(headline, traces,
+					`Type "devam" / "continue" or /continue to resume — your work is saved.`)
+				e.publishAgentLoopEvent("agent:loop:interrupted", map[string]any{
+					"step":        step,
+					"tool_rounds": len(traces),
+					"error":       ctxErr.Error(),
+					"surface":     "native",
+				})
+				return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonInterrupted), nil
+			}
 			e.publishAgentLoopEvent("agent:loop:error", map[string]any{
 				"step":  step,
 				"error": err.Error(),

@@ -46,6 +46,12 @@ const (
 	// panic, and the user gets to /continue from a fresh boot.
 	// REPORT.md #9.
 	ParkReasonShuttingDown ParkReason = "shutting_down"
+	// ParkReasonInterrupted fires when the parent context is cancelled
+	// mid-round (user Ctrl+C, TUI abort, HTTP disconnect). Without this,
+	// the provider.Complete error bubbled up and discarded every trace
+	// and message the loop had accumulated — /continue had nothing to
+	// resume. Parking here costs nothing and preserves the work.
+	ParkReasonInterrupted ParkReason = "interrupted"
 )
 
 // summarizeTraces walks the parked loop's tool traces and produces a

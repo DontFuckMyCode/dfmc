@@ -503,6 +503,83 @@ func TestNativeToolLoop_ShutdownStateParksMidLoop(t *testing.T) {
 	}
 }
 
+// TestNativeToolLoop_InterruptParksInsteadOfDiscardingTraces pins the
+// fix for ctx-cancel trace loss: when the caller cancels mid-round
+// AFTER one or more tool rounds have landed, the loop must park (so
+// /continue can resume) rather than bubble the ctx error up and throw
+// away every trace the loop collected. Before the fix this path hit
+// the generic `agent:loop:error` branch and returned the ctx error,
+// leaving the user with nothing to /continue.
+func TestNativeToolLoop_InterruptParksInsteadOfDiscardingTraces(t *testing.T) {
+	eng, stub, evCh := buildGuardTestEngine(t, 0, 10, []scriptedResponse{
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("irq1")}}, // round 1 succeeds, lays a trace
+		// round 2 will never deliver: wrapper cancels ctx before the
+		// provider gets a chance to return this response.
+		{Text: "never reached"},
+	})
+	eng.Config.Agent.AutonomousResume = "off"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Swap the scripted provider for one that cancels ctx on its
+	// second call — that's the interrupt mid-round we want to test.
+	irq := &cancelOnCallProvider{inner: stub, cancel: cancel, cancelOnCall: 2}
+	eng.Providers.Register(irq)
+	eng.Config.Providers.Primary = irq.Name()
+
+	_, err := eng.AskWithMetadata(ctx, "interrupt park check")
+	if err != nil {
+		t.Fatalf("interrupt should park gracefully, got err: %v", err)
+	}
+	if !eng.HasParkedAgent() {
+		t.Fatal("interrupt park must save state so /continue can resume")
+	}
+
+	events := collectRecentEvents(evCh, 64, 150*time.Millisecond)
+	if _, ok := findEventByType(events, "agent:loop:interrupted"); !ok {
+		t.Fatalf("want agent:loop:interrupted event, got %v", eventTypes(events))
+	}
+	ev, ok := findEventByType(events, "agent:loop:parked")
+	if !ok {
+		t.Fatalf("want agent:loop:parked event, got %v", eventTypes(events))
+	}
+	payload, _ := ev.Payload.(map[string]any)
+	if reason, _ := payload["reason"].(string); reason != string(ParkReasonInterrupted) {
+		t.Fatalf("want reason=interrupted, got %v", payload["reason"])
+	}
+}
+
+// cancelOnCallProvider wraps another provider and cancels the caller's
+// ctx on the Nth Complete invocation, then forwards the call (which
+// now sees a cancelled ctx through its own ctx check, or in scripted
+// providers' case, returns normally but the engine sees ctx.Err()
+// after the fact). For the interrupt test we want the engine's post-
+// Complete ctx-err branch to fire, so the simplest shape is: cancel
+// BEFORE delegating, then return a ctx error ourselves.
+type cancelOnCallProvider struct {
+	inner        provider.Provider
+	cancel       context.CancelFunc
+	cancelOnCall int
+	calls        int
+}
+
+func (p *cancelOnCallProvider) Name() string                  { return "irq-" + p.inner.Name() }
+func (p *cancelOnCallProvider) Model() string                 { return p.inner.Model() }
+func (p *cancelOnCallProvider) Models() []string              { return p.inner.Models() }
+func (p *cancelOnCallProvider) MaxContext() int               { return p.inner.MaxContext() }
+func (p *cancelOnCallProvider) CountTokens(s string) int      { return p.inner.CountTokens(s) }
+func (p *cancelOnCallProvider) Hints() provider.ProviderHints { return p.inner.Hints() }
+func (p *cancelOnCallProvider) Complete(ctx context.Context, req provider.CompletionRequest) (*provider.CompletionResponse, error) {
+	p.calls++
+	if p.calls >= p.cancelOnCall {
+		p.cancel()
+		return nil, context.Canceled
+	}
+	return p.inner.Complete(ctx, req)
+}
+func (p *cancelOnCallProvider) Stream(ctx context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	return p.inner.Stream(ctx, req)
+}
+
 // padCallID keeps tool-call IDs deterministic and unique so provider
 // implementations that key on ID don't get confused.
 func padCallID(n int) string {
