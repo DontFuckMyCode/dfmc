@@ -248,8 +248,16 @@ func (m Model) renderChatViewParts(width int, slimHeader bool) chatViewParts {
 	if m.ui.showHelpOverlay {
 		tailLines = append(tailLines, "", m.renderHelpOverlay(min(width, 120)))
 	}
-	if card := renderChatWorkflowFocusCard(m.statsPanelInfo(), min(width, 120)); card != "" {
-		tailLines = append(tailLines, "", card)
+	// Suppress the in-chat Workflow Focus card when the right-hand stats
+	// panel is visible — it shows the same mode (todos/tasks/subagents/
+	// providers) and duplicating it in the tail steals ~20 lines from the
+	// transcript window, pushing live chat off the top of the screen. The
+	// card is still rendered on narrow terminals where the side panel is
+	// hidden (slimHeader=false) so the info never goes fully missing.
+	if !slimHeader {
+		if card := renderChatWorkflowFocusCard(m.statsPanelInfo(), min(width, 120)); card != "" {
+			tailLines = append(tailLines, "", card)
+		}
 	}
 	if m.ui.resumePromptActive && !m.chat.sending {
 		tailLines = append(tailLines, "", renderResumeBanner(m.agentLoop.step, m.agentLoop.maxToolStep, min(width, 100)))
