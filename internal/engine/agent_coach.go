@@ -67,8 +67,24 @@ func extractBridgedInnerName(input map[string]any) string {
 	if input == nil {
 		return ""
 	}
-	if v, ok := input["name"].(string); ok {
-		return strings.TrimSpace(v)
+	// Peel redundant tool_call(tool_call(...)) layers the same way the
+	// engine's dispatcher does before reaching a real backend tool.
+	// Without this the coach saw "tool_call" as the inner name for
+	// any double-wrapped call and lost tool/path-specific hints.
+	for depth := 0; depth < maxMetaUnwrapDepth; depth++ {
+		v, ok := input["name"].(string)
+		if !ok {
+			break
+		}
+		name := strings.TrimSpace(v)
+		if name != "tool_call" {
+			return name
+		}
+		inner, ok := input["args"].(map[string]any)
+		if !ok {
+			break
+		}
+		input = inner
 	}
 	if calls, ok := input["calls"].([]any); ok && len(calls) > 0 {
 		if first, ok := calls[0].(map[string]any); ok {
@@ -87,6 +103,20 @@ func extractBridgedInnerName(input map[string]any) string {
 func extractBridgedInnerArgs(input map[string]any) map[string]any {
 	if input == nil {
 		return nil
+	}
+	// Mirror the peel in extractBridgedInnerName so args track the same
+	// backend tool the coach labels the entry with - otherwise the hint
+	// text would carry outer {name,args} pairs instead of real params.
+	for depth := 0; depth < maxMetaUnwrapDepth; depth++ {
+		name, _ := input["name"].(string)
+		if strings.TrimSpace(name) != "tool_call" {
+			break
+		}
+		inner, ok := input["args"].(map[string]any)
+		if !ok {
+			break
+		}
+		input = inner
 	}
 	if args, ok := input["args"].(map[string]any); ok {
 		return args
