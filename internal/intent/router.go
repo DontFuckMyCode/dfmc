@@ -126,7 +126,9 @@ func (r *Router) resolveProvider() (provider.Provider, bool) {
 	// Default cascade: Haiku, gpt-4o-mini, gemini flash. Kept short on
 	// purpose — these three cover ~95% of user keys and are all cheap
 	// enough that the intent layer's per-turn cost is rounding error.
-	for _, name := range []string{"anthropic", "openai", "gemini"} {
+	// The Google provider registers as "google" (see google.go's Name());
+	// asking for "gemini" here would always miss.
+	for _, name := range []string{"anthropic", "openai", "google"} {
 		if p, ok := r.lookup(name); ok && p.Hints().SupportsTools {
 			// SupportsTools is a proxy for "real provider, not the
 			// offline placeholder" — placeholders advertise
