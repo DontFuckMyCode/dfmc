@@ -582,11 +582,26 @@ func (e *Engine) RecentConversationContext(maxAssistantChars, maxToolNames int) 
 		}
 		if len(out.RecentToolNames) < maxToolNames {
 			for _, tc := range m.ToolCalls {
-				if name := strings.TrimSpace(tc.Name); name != "" {
-					out.RecentToolNames = append(out.RecentToolNames, name)
-					if len(out.RecentToolNames) >= maxToolNames {
-						break
+				name := strings.TrimSpace(tc.Name)
+				if name == "" {
+					continue
+				}
+				// Unwrap meta wrappers so the intent classifier sees the
+				// actual backend tool the agent used. Without this, every
+				// entry on the dominant tool-capable-provider path is
+				// just "tool_call" / "tool_batch_call" — useless noise.
+				if inner := metaInnerNames(name, tc.Params); len(inner) > 0 {
+					for _, n := range inner {
+						out.RecentToolNames = append(out.RecentToolNames, n)
+						if len(out.RecentToolNames) >= maxToolNames {
+							break
+						}
 					}
+				} else {
+					out.RecentToolNames = append(out.RecentToolNames, name)
+				}
+				if len(out.RecentToolNames) >= maxToolNames {
+					break
 				}
 			}
 		}

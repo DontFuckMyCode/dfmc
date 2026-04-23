@@ -129,7 +129,14 @@ func (e *Engine) ParkedAgentDetails() (*ParkedAgentDetails, bool) {
 		ParkedAt:         p.ParkedAt,
 	}
 	if n := len(p.Traces); n > 0 {
-		d.LastToolName = p.Traces[n-1].Call.Name
+		call := p.Traces[n-1].Call
+		d.LastToolName = call.Name
+		// Surface the real backend tool when the outer call is a meta
+		// wrapper, so intent snapshots / TUI badges show e.g. "run_command"
+		// instead of always "tool_call" on tool-capable providers.
+		if inner := metaInnerNames(call.Name, call.Input); len(inner) > 0 {
+			d.LastToolName = inner[len(inner)-1]
+		}
 	}
 	return d, true
 }
