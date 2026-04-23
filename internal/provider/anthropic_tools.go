@@ -123,7 +123,25 @@ func buildAnthropicMessages(req CompletionRequest) []anthropicMessage {
 		if role == "system" {
 			continue
 		}
-		out = append(out, buildAnthropicMessage(role, m))
+		next := buildAnthropicMessage(role, m)
+		// Coalesce consecutive same-role messages. Anthropic's /messages
+		// API (and the Anthropic-compat paths in kimi/zai/minimax/alibaba)
+		// reject consecutive user turns with a 400 that never names the
+		// shape violation back to the caller. This happens organically in
+		// two places today:
+		//   1. N parallel tool calls from one assistant turn get flushed
+		//      back as N separate user tool_result messages (see the
+		//      per-call append loop in engine/agent_loop_phases.go).
+		//   2. ResumeAgent (/continue <note>) appends a plain user note
+		//      after a parked-state tail that is itself a user tool_result.
+		// Merging content blocks preserves every tool_use_id and text
+		// segment, so the on-wire request is shape-legal without losing
+		// information the caller already serialized.
+		if n := len(out); n > 0 && out[n-1].Role == next.Role {
+			out[n-1].Content = append(out[n-1].Content, next.Content...)
+			continue
+		}
+		out = append(out, next)
 	}
 	if len(req.Context) > 0 {
 		out = append(out, anthropicMessage{
