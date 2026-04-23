@@ -24,6 +24,13 @@ import (
 type scriptedResponse struct {
 	Text      string
 	ToolCalls []provider.ToolCall
+	// Usage lets a test override the per-round token footprint. When
+	// nil the provider returns its default (InputTokens:12,
+	// OutputTokens:18). Tests that exercise budget-gate behaviour
+	// supply a growing Usage across responses to simulate real
+	// conversation footprint growth under the new footprint-tracking
+	// semantics (see totalTokens comment in agent_loop_native.go).
+	Usage *provider.Usage
 }
 
 type scriptedProvider struct {
@@ -62,10 +69,14 @@ func (p *scriptedProvider) Complete(_ context.Context, req provider.CompletionRe
 	if len(next.ToolCalls) > 0 {
 		stop = provider.StopTool
 	}
+	usage := provider.Usage{InputTokens: 12, OutputTokens: 18, TotalTokens: 30}
+	if next.Usage != nil {
+		usage = *next.Usage
+	}
 	return &provider.CompletionResponse{
 		Text:       next.Text,
 		Model:      p.model,
-		Usage:      provider.Usage{InputTokens: 12, OutputTokens: 18, TotalTokens: 30},
+		Usage:      usage,
 		ToolCalls:  next.ToolCalls,
 		StopReason: stop,
 	}, nil

@@ -53,6 +53,34 @@ func buildGuardTestEngine(t *testing.T, budget int, steps int, responses []scrip
 	if err != nil {
 		t.Fatalf("new router: %v", err)
 	}
+	// Simulate realistic conversation footprint growth across rounds.
+	// totalTokens now tracks the rolling InputTokens+OutputTokens the
+	// provider reports (not a cumulative sum), so budget tests need
+	// responses whose Usage actually grows to trip the gate. Growth is
+	// capped just below `budget` so the gate still parks (headroom +
+	// footprint >= budget after a couple rounds) while keeping the
+	// per-park footprint bounded — autonomous-resume cumulative tokens
+	// then accrue at ~cap rate per attempt and the cumulative-tokens
+	// ceiling won't trip before tests intending to reach safetyBound
+	// (default 64 attempts) do. Skipping responses that already set
+	// Usage lets individual tests override.
+	cap := budget - 10
+	if cap < 30 {
+		cap = 30
+	}
+	for i := range responses {
+		if responses[i].Usage == nil {
+			n := 30 * (i + 1)
+			if n > cap {
+				n = cap
+			}
+			responses[i].Usage = &provider.Usage{
+				InputTokens:  n,
+				OutputTokens: 0,
+				TotalTokens:  n,
+			}
+		}
+	}
 	stub := &scriptedProvider{
 		name:       "stub",
 		model:      "stub-model",

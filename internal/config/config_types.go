@@ -87,8 +87,13 @@ type IntentConfig struct {
 type AgentConfig struct {
 	// MaxToolSteps caps the number of model<->tool round-trips.
 	MaxToolSteps int `yaml:"max_tool_steps"`
-	// MaxToolTokens is the hard token budget across all provider calls in a
-	// single agent loop. Zero disables the budget.
+	// MaxToolTokens caps the live conversation footprint (prompt tokens +
+	// last assistant response) the loop is willing to carry inside a single
+	// agent turn. It is NOT a cumulative sum across rounds -- history tokens
+	// repeat in every round's InputTokens, so summing quadratically inflates
+	// without reflecting real memory pressure. The loop parks for
+	// auto-compact or hand-off when this footprint is exceeded, and the
+	// metric shrinks again after compaction. Zero disables the budget.
 	MaxToolTokens int `yaml:"max_tool_tokens"`
 	// MaxToolResultChars trims the text output sent back as tool_result.
 	MaxToolResultChars int `yaml:"max_tool_result_chars"`

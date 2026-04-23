@@ -350,7 +350,22 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			})
 			return nativeToolCompletion{}, err
 		}
-		totalTokens += resp.Usage.TotalTokens
+		// totalTokens is the rolling conversation footprint as seen by
+		// the provider, NOT a cumulative sum across rounds. Summing
+		// per-round Usage.TotalTokens double-counted the growing history
+		// every iteration — a modest 20-round loop that never left a 25k
+		// working set would trip a 250k "budget" purely from re-counting
+		// the same prompt tokens. Replace with the latest
+		// InputTokens+OutputTokens so the metric tracks real footprint
+		// and correctly shrinks after auto-compact trims the history.
+		if footprint := resp.Usage.InputTokens + resp.Usage.OutputTokens; footprint > 0 {
+			totalTokens = footprint
+		} else if resp.Usage.TotalTokens > 0 {
+			// Provider only reported the aggregate (some OpenAI-compatible
+			// endpoints drop the per-direction split). Best-effort
+			// footprint: treat TotalTokens as the request size.
+			totalTokens = resp.Usage.TotalTokens
+		}
 		if strings.TrimSpace(usedProvider) != "" {
 			lastProvider = usedProvider
 		}
