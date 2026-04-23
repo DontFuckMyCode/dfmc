@@ -1,15 +1,17 @@
 package tui
 
-// slash_picker.go — slash-command autocomplete and per-tool argument
-// suggestion machinery.
+// slash_picker.go — slash-command menu, autocomplete, and input-token
+// plumbing.
 //
 // The picker's static data half (slashCommandCatalog, slashTemplate
-// Overrides) lives in slash_catalog.go so "what commands exist" stays
-// separate from "what to suggest next." Everything here operates on
-// that catalog + user input to produce completions and arg hints.
-// Every method continues to live on `Model` — no behaviour change.
-// The chat key handler calls these via buildChatSuggestionState/
-// handleChatKey.
+// Overrides) lives in slash_catalog.go, and the per-tool / per-/run
+// argument suggestion feeders live in slash_arg_suggestions.go — this
+// file is what sits between those two. Given the user's current input
+// and cursor position it figures out whether the menu is active, which
+// entries to show, what the next autocomplete should be, and how to
+// format a selection back into the chat buffer. Every method lives on
+// `Model`; the chat key handler calls these via buildChatSuggestion
+// State/handleChatKey.
 //
 // Two related but distinct surfaces live here:
 //
@@ -19,14 +21,11 @@ package tui
 //                        slashSuggestionsForToken)
 //   - Argument picker  — what's offered after the command is typed
 //                        (activeSlashArgSuggestions, autocompleteSlashArg,
-//                        slashAssistHints, formatSlash*, the
-//                        toolParamKey* / toolValueToken* helpers, and
-//                        the project-dir / run-command suggestion
-//                        feeders)
+//                        slashAssistHints, formatSlash*). The value-side
+//                        feeders and the /tool param catalog live in
+//                        slash_arg_suggestions.go.
 
 import (
-	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -468,230 +467,6 @@ func hasTrailingWhitespace(text string) bool {
 	return last == ' ' || last == '\t' || last == '\n' || last == '\r'
 }
 
-func (m Model) toolParamKeySuggestions(toolName string, existingTokens []string, prefix string) []string {
-	keys := m.toolParamKeyCatalog(toolName)
-	if len(keys) == 0 {
-		return nil
-	}
-	used := map[string]struct{}{}
-	for _, token := range existingTokens {
-		key, _, ok := strings.Cut(strings.TrimSpace(token), "=")
-		if !ok {
-			continue
-		}
-		key = strings.ToLower(strings.TrimSpace(key))
-		if key == "" {
-			continue
-		}
-		used[key] = struct{}{}
-	}
-	prefix = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(prefix, "=")))
-	out := make([]string, 0, len(keys))
-	for _, token := range keys {
-		key := strings.ToLower(strings.TrimSpace(strings.TrimSuffix(token, "=")))
-		if key == "" {
-			continue
-		}
-		if _, exists := used[key]; exists {
-			continue
-		}
-		if prefix != "" && !strings.HasPrefix(key, prefix) && !strings.Contains(key, prefix) {
-			continue
-		}
-		out = append(out, token)
-	}
-	return out
-}
-
-func (m Model) toolParamKeyCatalog(toolName string) []string {
-	switch strings.ToLower(strings.TrimSpace(toolName)) {
-	case "list_dir":
-		return []string{"path=", "recursive=", "max_entries="}
-	case "read_file":
-		return []string{"path=", "line_start=", "line_end="}
-	case "grep_codebase":
-		return []string{"pattern=", "max_results="}
-	case "run_command":
-		return []string{"command=", "args=", "dir=", "timeout_ms="}
-	case "write_file":
-		return []string{"path=", "content=", "overwrite=", "create_dirs="}
-	case "edit_file":
-		return []string{"path=", "old_string=", "new_string=", "replace_all="}
-	default:
-		preset := strings.TrimSpace(m.toolPresetSummary(toolName))
-		if preset == "" || strings.EqualFold(preset, "no preset available") {
-			return nil
-		}
-		params, err := parseToolParamString(preset)
-		if err != nil || len(params) == 0 {
-			return nil
-		}
-		keys := make([]string, 0, len(params))
-		for key := range params {
-			key = strings.TrimSpace(key)
-			if key == "" {
-				continue
-			}
-			keys = append(keys, key+"=")
-		}
-		sort.Strings(keys)
-		return keys
-	}
-}
-
-func (m Model) toolValueTokenSuggestions(toolName, key, valuePrefix string) []string {
-	key = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(key, "=")))
-	valuePrefix = strings.TrimSpace(valuePrefix)
-	switch key {
-	case "path":
-		candidates := m.filesView.entries
-		if strings.EqualFold(strings.TrimSpace(toolName), "list_dir") {
-			candidates = m.projectDirSuggestions()
-		}
-		candidates = filterSuggestionsByToken(candidates, valuePrefix)
-		return mapSuggestionsToKV(key, candidates, 12)
-	case "dir":
-		candidates := filterSuggestionsByToken(m.projectDirSuggestions(), valuePrefix)
-		return mapSuggestionsToKV(key, candidates, 10)
-	case "command":
-		candidates := filterSuggestionsByToken(m.runCommandNameSuggestions(), valuePrefix)
-		return mapSuggestionsToKV(key, candidates, 8)
-	case "args":
-		candidates := filterSuggestionsByToken(m.runCommandArgSuggestions(), valuePrefix)
-		return mapSuggestionsToKV(key, candidates, 8)
-	case "pattern":
-		candidates := []string{}
-		if pattern := strings.TrimSpace(m.toolGrepPattern()); pattern != "" {
-			candidates = append(candidates, pattern)
-		}
-		candidates = append(candidates, "TODO", "FIXME")
-		candidates = filterSuggestionsByToken(candidates, valuePrefix)
-		return mapSuggestionsToKV(key, candidates, 6)
-	case "recursive", "overwrite", "create_dirs", "replace_all":
-		candidates := filterSuggestionsByToken([]string{"true", "false"}, valuePrefix)
-		return mapSuggestionsToKV(key, candidates, 2)
-	case "line_start", "line_end":
-		candidates := filterSuggestionsByToken([]string{"1", "80", "120", "200"}, valuePrefix)
-		return mapSuggestionsToKV(key, candidates, 4)
-	case "max_entries":
-		candidates := filterSuggestionsByToken([]string{"40", "80", "120", "200"}, valuePrefix)
-		return mapSuggestionsToKV(key, candidates, 4)
-	case "max_results":
-		candidates := filterSuggestionsByToken([]string{"20", "40", "80", "120"}, valuePrefix)
-		return mapSuggestionsToKV(key, candidates, 4)
-	case "timeout_ms":
-		candidates := filterSuggestionsByToken([]string{"5000", "10000", "30000", "60000"}, valuePrefix)
-		return mapSuggestionsToKV(key, candidates, 4)
-	default:
-		return nil
-	}
-}
-
-func mapSuggestionsToKV(key string, values []string, limit int) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	if limit > 0 && len(values) > limit {
-		values = values[:limit]
-	}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		out = append(out, key+"="+value)
-	}
-	return out
-}
-
-func (m Model) runCommandNameSuggestions() []string {
-	raw := m.runCommandSuggestions()
-	if len(raw) == 0 {
-		return nil
-	}
-	set := map[string]string{}
-	for _, suggestion := range raw {
-		params, err := parseToolParamString(suggestion)
-		if err != nil {
-			continue
-		}
-		command := paramStr(params, "command")
-		if command == "" {
-			continue
-		}
-		lower := strings.ToLower(command)
-		if _, exists := set[lower]; exists {
-			continue
-		}
-		set[lower] = command
-	}
-	out := make([]string, 0, len(set))
-	for _, value := range set {
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (m Model) runCommandArgSuggestions() []string {
-	raw := m.runCommandSuggestions()
-	if len(raw) == 0 {
-		return nil
-	}
-	set := map[string]string{}
-	for _, suggestion := range raw {
-		params, err := parseToolParamString(suggestion)
-		if err != nil {
-			continue
-		}
-		args := paramStr(params, "args")
-		if args == "" {
-			continue
-		}
-		lower := strings.ToLower(args)
-		if _, exists := set[lower]; exists {
-			continue
-		}
-		set[lower] = args
-	}
-	out := make([]string, 0, len(set))
-	for _, value := range set {
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (m Model) projectDirSuggestions() []string {
-	set := map[string]string{
-		".": ".",
-	}
-	if dir := strings.TrimSpace(m.toolTargetDir()); dir != "" {
-		set[strings.ToLower(dir)] = dir
-	}
-	for _, file := range m.filesView.entries {
-		file = filepath.ToSlash(strings.TrimSpace(file))
-		if file == "" {
-			continue
-		}
-		dir := filepath.ToSlash(filepath.Dir(file))
-		if dir == "" {
-			dir = "."
-		}
-		lower := strings.ToLower(dir)
-		if _, exists := set[lower]; exists {
-			continue
-		}
-		set[lower] = dir
-	}
-	out := make([]string, 0, len(set))
-	for _, value := range set {
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
-}
 
 func filterSuggestionsByToken(items []string, token string) []string {
 	items = append([]string(nil), items...)
