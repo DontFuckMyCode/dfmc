@@ -462,13 +462,12 @@ func (m Model) latestWorkflowActivity(now time.Time) (string, time.Duration) {
 }
 
 // statsPanelVisible returns true when the chat tab should render the
-// right-side panel alongside the chat body.
+// right-side panel alongside the chat body. The threshold is fixed
+// regardless of boost state — toggling visibility on/off as boost
+// expires would re-wrap the whole transcript, which is exactly the
+// reflow the reserved-width scheme above is trying to avoid.
 func (m Model) statsPanelVisible(contentWidth int) bool {
-	minWidth := statsPanelMinContentWidth
-	if m.statsPanelBoostActive(time.Now()) {
-		minWidth = statsPanelBoostMinContentWidth
-	}
-	return m.ui.showStatsPanel && contentWidth >= minWidth
+	return m.ui.showStatsPanel && contentWidth >= statsPanelMinContentWidth
 }
 
 func (m Model) statsPanelBoostActive(now time.Time) bool {
@@ -485,6 +484,18 @@ func (m Model) statsPanelRenderWidth(contentWidth int) int {
 	if !m.statsPanelBoostActive(time.Now()) {
 		return statsPanelWidth
 	}
+	return m.statsPanelReservedWidth(contentWidth)
+}
+
+// statsPanelReservedWidth is the column width the chat layout must
+// always hold open for the stats panel whenever it is visible,
+// regardless of current boost state. Reserving the max possible
+// panel width keeps the chat body's word-wrap boundary stable across
+// boost expand/collapse so the transcript never reflows mid-session.
+// The panel itself still renders at its variable statsPanelRenderWidth
+// inside this reserved column — unused slack appears as right-side
+// padding in the outer frame, not as a re-wrap of the chat text.
+func (m Model) statsPanelReservedWidth(contentWidth int) int {
 	width := contentWidth/2 + 2
 	if width < statsPanelBoostWidthMin {
 		width = statsPanelBoostWidthMin

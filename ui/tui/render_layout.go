@@ -56,8 +56,13 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 		chatWidth := contentWidth
 		panelWidth := statsPanelWidth
 		if panelVisible {
+			// Hold the chat column at a fixed width equal to
+			// contentWidth minus the *max* the panel could take. The
+			// panel itself still renders at its variable width, but
+			// chat never reflows when boost grows/shrinks.
+			reserved := m.statsPanelReservedWidth(contentWidth)
 			panelWidth = m.statsPanelRenderWidth(contentWidth)
-			chatWidth = contentWidth - panelWidth - 2
+			chatWidth = contentWidth - reserved - 2
 		}
 		parts := m.renderChatViewParts(chatWidth, panelVisible)
 		body := fitChatBody(parts.Head, parts.Tail, innerHeight, m.chat.scrollback)

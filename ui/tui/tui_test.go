@@ -3799,8 +3799,10 @@ func TestStatsPanelBoostAllowsWiderTemporaryPanel(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.ui.showStatsPanel = true
 	m.ui.statsPanelBoostUntil = time.Now().Add(2 * time.Second)
-	if !m.statsPanelVisible(statsPanelBoostMinContentWidth) {
-		t.Fatalf("boosted stats panel should remain visible at reduced threshold")
+	// Visibility threshold is now fixed regardless of boost state,
+	// so the chat column never reflows when boost expires.
+	if !m.statsPanelVisible(statsPanelMinContentWidth) {
+		t.Fatalf("boosted stats panel should remain visible at standard threshold")
 	}
 	if got := m.statsPanelRenderWidth(120); got <= statsPanelWidth {
 		t.Fatalf("boosted stats panel should render wider than default, got %d", got)
