@@ -164,6 +164,22 @@ func TestRenderMemoryViewEmptyState(t *testing.T) {
 	}
 }
 
+func TestRenderMemoryViewNoMatchesDistinguishesFromEmpty(t *testing.T) {
+	m := newMemoryTestModel()
+	m.memory.entries = sampleMemoryEntries()
+	m.memory.query = "doesnotexistxyz"
+	out := m.renderMemoryView(100)
+	if strings.Contains(out, "No memory entries in this view") {
+		t.Fatalf("should not render empty copy when entries exist; got:\n%s", out)
+	}
+	if !strings.Contains(out, "No matches for") {
+		t.Fatalf("want no-matches notice, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Press c to clear the query") {
+		t.Fatalf("want clear-query affordance, got:\n%s", out)
+	}
+}
+
 func TestRenderMemoryViewWithEntries(t *testing.T) {
 	m := newMemoryTestModel()
 	m.memory.entries = sampleMemoryEntries()

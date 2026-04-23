@@ -177,10 +177,18 @@ func (m Model) renderConversationsView(width int) string {
 
 	filtered := filteredConversations(m.conversations.entries, m.conversations.query)
 	if len(filtered) == 0 {
-		lines = append(lines, "",
-			subtleStyle.Render("No conversations persisted yet."),
-			subtleStyle.Render("Start a chat and DFMC will persist it under .dfmc/conversations/."),
-		)
+		lines = append(lines, "")
+		if len(m.conversations.entries) == 0 {
+			lines = append(lines,
+				subtleStyle.Render("No conversations persisted yet."),
+				subtleStyle.Render("Start a chat and DFMC will persist it under .dfmc/conversations/."),
+			)
+		} else {
+			lines = append(lines,
+				warnStyle.Render(fmt.Sprintf("No matches for %q in %d conversations.", m.conversations.query, len(m.conversations.entries))),
+				subtleStyle.Render("Press c to clear the query, or / to edit it."),
+			)
+		}
 		return strings.Join(lines, "\n")
 	}
 

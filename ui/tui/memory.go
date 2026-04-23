@@ -161,10 +161,18 @@ func (m Model) renderMemoryView(width int) string {
 
 	filtered := filteredMemoryEntries(m.memory.entries, m.memory.query)
 	if len(filtered) == 0 {
-		lines = append(lines, "",
-			subtleStyle.Render("No memory entries in this view."),
-			subtleStyle.Render("Use `dfmc memory add <text>` or ask the agent to remember something."),
-		)
+		lines = append(lines, "")
+		if len(m.memory.entries) == 0 {
+			lines = append(lines,
+				subtleStyle.Render("No memory entries in this view."),
+				subtleStyle.Render("Use `dfmc memory add <text>` or ask the agent to remember something."),
+			)
+		} else {
+			lines = append(lines,
+				warnStyle.Render(fmt.Sprintf("No matches for %q in %d memory entries.", m.memory.query, len(m.memory.entries))),
+				subtleStyle.Render("Press c to clear the query, or / to edit it."),
+			)
+		}
 		return strings.Join(lines, "\n")
 	}
 

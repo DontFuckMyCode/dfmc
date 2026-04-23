@@ -116,6 +116,22 @@ func TestRenderConversationsViewEmptyState(t *testing.T) {
 	}
 }
 
+func TestRenderConversationsViewNoMatchesDistinguishesFromEmpty(t *testing.T) {
+	m := newConversationsTestModel()
+	m.conversations.entries = sampleConversationSummaries()
+	m.conversations.query = "doesnotexistxyz"
+	out := m.renderConversationsView(120)
+	if strings.Contains(out, "No conversations persisted yet") {
+		t.Fatalf("should not render empty copy when entries exist; got:\n%s", out)
+	}
+	if !strings.Contains(out, "No matches for") {
+		t.Fatalf("want no-matches notice, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Press c to clear the query") {
+		t.Fatalf("want clear-query affordance, got:\n%s", out)
+	}
+}
+
 func TestRenderConversationsViewErrorBanner(t *testing.T) {
 	m := newConversationsTestModel()
 	m.conversations.err = "store locked"
