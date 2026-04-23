@@ -284,11 +284,8 @@ func (t *TodoWriteTool) syncToStore(items []todoItem) error {
 		task := supervisor.Task{
 			ID:     taskstore.NewTaskID(),
 			Title:  item.Content,
-			State:  supervisor.TaskState(strings.ToLower(item.Status)),
+			State:  todoStatusToTaskState(item.Status),
 			Origin: "todo_write",
-		}
-		if task.State == "" {
-			task.State = supervisor.TaskPending
 		}
 		if err := t.store.SaveTask(&task); err != nil {
 			return err
@@ -324,7 +321,7 @@ func (t *TodoWriteTool) renderTasksAsResult(tasks []*supervisor.Task) Result {
 	out := strings.Join(lines, "\n")
 	items := make([]todoItem, len(tasks))
 	for i, task := range tasks {
-		items[i] = todoItem{Content: task.Title, Status: string(task.State)}
+		items[i] = todoItem{Content: task.Title, Status: taskStateToTodoStatus(task.State)}
 	}
 	return Result{
 		Output: out,
@@ -406,6 +403,42 @@ func (t *TodoWriteTool) Snapshot() []TodoItem {
 	return out
 }
 
+// todoStatusToTaskState normalizes the LLM-facing vocabulary ("pending" |
+// "in_progress" | "completed", plus common aliases) onto the canonical
+// supervisor.TaskState values the task store filters on. Without this
+// mapping a todo saved with status "in_progress" would never match a
+// ListTasks(State:"running") query — /api/v1/task and `dfmc task list
+// --state running` would silently skip every model-authored todo.
+func todoStatusToTaskState(status string) supervisor.TaskState {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "pending", "todo", "queued":
+		return supervisor.TaskPending
+	case "in_progress", "in-progress", "running", "active", "doing", "working":
+		return supervisor.TaskRunning
+	case "completed", "complete", "done", "finished":
+		return supervisor.TaskDone
+	case "blocked":
+		return supervisor.TaskBlocked
+	case "skipped":
+		return supervisor.TaskSkipped
+	}
+	return supervisor.TaskPending
+}
+
+// taskStateToTodoStatus is the inverse of todoStatusToTaskState: it
+// renders the canonical state back into the LLM-facing vocabulary so a
+// todo_write "list" call shows the status text the model originally
+// sent (e.g. "in_progress" not "running") on tasks persisted via the
+// task store.
+func taskStateToTodoStatus(state supervisor.TaskState) string {
+	switch state {
+	case supervisor.TaskRunning:
+		return "in_progress"
+	case supervisor.TaskDone:
+		return "completed"
+	}
+	return string(state)
+}
 func parseTodoList(raw any) ([]todoItem, error) {
 	arr, ok := raw.([]any)
 	if !ok {
