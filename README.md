@@ -64,6 +64,11 @@ go build -o bin/dfmc ./cmd/dfmc
 
 > With `CGO_ENABLED=0` the build still succeeds but `dfmc status` / `dfmc doctor` will report `ast_backend: regex`. If symbol extraction behavior looks wrong, check the backend before blaming the code.
 
+**Getting a C toolchain:**
+- Linux — `sudo apt install build-essential` / `sudo dnf group install "Development Tools"`
+- macOS — `xcode-select --install`
+- Windows — install MSYS2 MinGW (`pacman -S mingw-w64-x86_64-gcc` then add `C:\msys64\mingw64\bin` to `PATH`) or TDM-GCC. Confirm `gcc --version` resolves before running the CGO build.
+
 ### 2) Initialize in project
 
 ```bash
