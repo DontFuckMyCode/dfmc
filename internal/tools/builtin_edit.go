@@ -177,7 +177,7 @@ func plural(n int) string {
 }
 
 func restoreOriginalLineEndings(original, updatedNorm string) string {
-	_, endings := splitLinesAndEndings(original)
+	origLines, endings := splitLinesAndEndings(original)
 	if len(endings) == 0 {
 		return strings.ReplaceAll(updatedNorm, "\n", "\r\n")
 	}
@@ -188,14 +188,29 @@ func restoreOriginalLineEndings(original, updatedNorm string) string {
 	}
 
 	var b strings.Builder
+	offset := 0
 	for i, line := range updatedLines {
+		origIdx := i + offset
+
+		// Detect insert/delete by looking ahead: does the current line match
+		// the next original position (insert) or previous (delete)?
+		if origIdx+1 < len(origLines) && origLines[origIdx+1] == line {
+			// Inserted line: next original line matches current updated line
+			offset++
+			origIdx++
+		} else if origIdx-1 >= 0 && origIdx-1 < len(origLines) && origLines[origIdx-1] == line {
+			// Deleted line: previous original line matches current updated line
+			offset--
+			origIdx--
+		}
+
 		b.WriteString(line)
 		if i == len(updatedLines)-1 && !trailingNewline {
 			continue
 		}
 		ending := defaultEnding
-		if i < len(endings) && endings[i] != "" {
-			ending = endings[i]
+		if origIdx >= 0 && origIdx < len(endings) && endings[origIdx] != "" {
+			ending = endings[origIdx]
 		}
 		if ending == "" {
 			ending = defaultEnding
