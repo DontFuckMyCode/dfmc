@@ -106,10 +106,13 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.chat.cursorInput = m.chat.input
 			m.chat.pasteWindowEnd = now.Add(200 * time.Millisecond)
 		} else {
-			// Regular typing — keep window alive so a rapid Enter can be
-			// detected as part of a paste (terminal paste is <1ms, human
-			// typing is >100ms).
-			m.chat.pasteWindowEnd = now.Add(200 * time.Millisecond)
+			// Regular typing — do NOT extend the paste window. Humans
+			// type slower than the 200ms window but fast enough that
+			// extending on every keystroke keeps it permanently open,
+			// which then turns every Enter into a "retroactive paste"
+			// false positive. The window is only opened by real paste
+			// signals (len>=16 chunk or hasNewline) in the isPaste
+			// branch above.
 			m.insertInputText(inserted)
 		}
 		// Auto-load files when @ is typed (if not already loaded)
@@ -461,24 +464,6 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.slashMenu.mention = 0
 				return m, nil
 			}
-		}
-		// Retroactive paste detection: text was just typed and Enter arrived
-		// within the paste window. Convert the current input to a paste block
-		// so the newline becomes part of the pasted content, not a submit.
-		if inPasteWindow && len(m.chat.pasteBlocks) == 0 && len(m.chat.input) > 0 {
-			n := len(m.chat.pasteBlocks) + 1
-			block := pasteBlock{
-				content:   m.chat.input + "\n",
-				blockNum:  n,
-				lineCount: strings.Count(m.chat.input, "\n") + 1,
-			}
-			m.chat.pasteBlocks = append(m.chat.pasteBlocks, block)
-			m.chat.input = block.placeholder()
-			m.chat.cursor = len([]rune(m.chat.input))
-			m.chat.cursorManual = true
-			m.chat.cursorInput = m.chat.input
-			m.chat.pasteWindowEnd = now.Add(200 * time.Millisecond)
-			return m, nil
 		}
 		// If there are paste blocks, reconstruct full text and submit as one.
 		if len(m.chat.pasteBlocks) > 0 {

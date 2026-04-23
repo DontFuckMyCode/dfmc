@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -489,6 +490,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Swallow every other key while a prompt is pending so the
 				// user doesn't accidentally drop noise into the composer.
 				return m, nil
+			}
+		}
+		// Turkish keyboards on MinTTY / Windows Terminal occasionally
+		// deliver a plain letter keystroke with Alt=true during paste
+		// or fast typing (the same ESC-prefix quirk that ships '@' as
+		// alt+q). If we let that hit the global alt+<letter> switch
+		// below, typing "kelime" would trip alt+i → Status tab mid-
+		// word. Shield the Chat composer: when the tab is Chat and
+		// the user has active input, route alt+<letter> straight to
+		// the chat handler where it inserts as a rune. Empty Chat
+		// composer still honours alt+<letter> as a real shortcut.
+		if m.activeTab == 0 && msg.Alt && msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
+			if unicode.IsLetter(msg.Runes[0]) && (len(m.chat.input) > 0 || len(m.chat.pasteBlocks) > 0) {
+				return m.handleChatKey(msg)
 			}
 		}
 		switch msg.String() {
