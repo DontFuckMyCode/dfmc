@@ -7,6 +7,8 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -221,7 +223,7 @@ func readAllString(resp *http.Response) (string, error) {
 			sb.Write(buf[:n])
 		}
 		if err != nil {
-			if err.Error() == "EOF" {
+			if errors.Is(err, io.EOF) {
 				return sb.String(), nil
 			}
 			return sb.String(), err

@@ -36,10 +36,21 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"gopkg.in/yaml.v3"
+)
+
+// Hard caps for plugin downloads. 60s is long enough for a slow proxy
+// but short enough that a user stuck on a broken URL learns about it
+// quickly. 256 MiB is comfortably above any real plugin binary (for
+// reference: go+tree-sitter dfmc itself builds to ~80 MiB) while
+// keeping a malicious or misconfigured host from filling /tmp.
+const (
+	pluginDownloadTimeout = 60 * time.Second
+	pluginDownloadMaxSize = 256 * 1024 * 1024
 )
 
 func discoverPlugins(pluginDir string, enabled []string) []pluginInfo {
@@ -278,7 +289,20 @@ func isHTTPPluginSource(source string) bool {
 }
 
 func downloadPluginSource(src string) (string, error) {
-	resp, err := http.Get(src) //nolint:gosec // plugin install intentionally fetches user-provided URL.
+	// A dedicated client with an explicit timeout. http.DefaultClient
+	// has no timeout — a slow or deliberately-stalled server would
+	// hang the CLI until the user Ctrl+C'd. The redirect cap defends
+	// against redirect loops on top of Go's default 10-hop limit.
+	client := &http.Client{
+		Timeout: pluginDownloadTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
+		},
+	}
+	resp, err := client.Get(src) //nolint:gosec // plugin install intentionally fetches user-provided URL; timeout + size cap enforced below.
 	if err != nil {
 		return "", err
 	}
@@ -299,8 +323,16 @@ func downloadPluginSource(src string) (string, error) {
 	}
 	defer tmp.Close()
 
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	// Cap the copy so a malicious host can't stream gigabytes into
+	// /tmp. +1 lets us tell "hit the cap" apart from "finished at
+	// exactly the cap" — if we read more than the cap, reject.
+	limited := io.LimitReader(resp.Body, pluginDownloadMaxSize+1)
+	written, err := io.Copy(tmp, limited)
+	if err != nil {
 		return "", err
+	}
+	if written > pluginDownloadMaxSize {
+		return "", fmt.Errorf("download exceeded %d bytes — refusing", pluginDownloadMaxSize)
 	}
 	return tmp.Name(), nil
 }
