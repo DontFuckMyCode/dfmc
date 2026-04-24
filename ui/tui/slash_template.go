@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -95,11 +96,12 @@ func (m Model) runTemplateSlash(verb string, args []string, raw string) (Model, 
 func composeReviewPrompt(targets []string, tail string) string {
 	reviewTail := strings.TrimSpace(tail)
 	if len(targets) == 0 {
-		return strings.TrimSpace(
-			"Review the current worktree diff only. Focus on correctness, risks, and missing tests. " +
-				"Start from changed hunks, avoid broad codebase sweeps, and only read more context when the diff is insufficient. " +
-				reviewTail,
-		)
+		msg := "Review the current worktree diff only. Focus on correctness, risks, and missing tests. " +
+			"Start from changed hunks, avoid broad codebase sweeps, and only read more context when the diff is insufficient."
+		if reviewTail != "" {
+			msg += " " + reviewTail
+		}
+		return strings.TrimSpace(msg)
 	}
 	return fmt.Sprintf(
 		"Review the following file(s) for correctness, risks, readability, and missing tests: %s\n"+
@@ -179,7 +181,7 @@ func reviewSymbolOutline(absPath, target string) string {
 
 	res, err := parser.ParseFile(ctx, absPath)
 	if err != nil || res == nil || len(res.Symbols) == 0 {
-		return ""
+		return "(scope map unavailable for this file type)"
 	}
 	symbols := append([]types.Symbol(nil), res.Symbols...)
 	sort.SliceStable(symbols, func(i, j int) bool {
@@ -247,6 +249,10 @@ func reviewSectionOutline(target, content string) string {
 
 func composeExplainPrompt(targets []string, tail string) string {
 	if len(targets) == 0 {
+		tail = strings.TrimSpace(tail)
+		if tail == "" {
+			return "Explain the recent changes or the listed topic."
+		}
 		return strings.TrimSpace("Explain the recent changes or the listed topic: " + tail)
 	}
 	return fmt.Sprintf("Explain what this code does, its structure, and any non-obvious invariants: %s\n%s",
@@ -307,10 +313,17 @@ func looksLikePath(s string) bool {
 		return false
 	}
 	if strings.ContainsAny(s, "/\\") {
+		if strings.Contains(s, ":") {
+			// Reject Windows drive letters (C:\, D:/, etc.) — single letter followed by :\ or :/
+			if len(s) >= 2 && unicode.IsLetter(rune(s[0])) && (s[1] == '\\' || s[1] == '/') {
+				return false
+			}
+			// Accept PATH:LINE or URL-style
+			if !strings.HasPrefix(s, "http") {
+				return true
+			}
+		}
 		return true
-	}
-	if strings.Contains(s, ":") && !strings.HasPrefix(s, "http") {
-		return true // PATH:LINE form
 	}
 	if ext := filepath.Ext(s); ext != "" {
 		return true
