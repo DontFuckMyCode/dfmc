@@ -27,13 +27,13 @@ func (m Model) runAnalyzeSlash(args []string, securityOnly bool) Model {
 	if m.eng == nil {
 		return m.appendSystemMessage("Engine unavailable — cannot analyze.")
 	}
-	path := ""
+	var paths []string
 	for _, a := range args {
 		if a = strings.TrimSpace(a); a != "" && !strings.HasPrefix(a, "-") {
-			path = a
-			break
+			paths = append(paths, a)
 		}
 	}
+	path := strings.Join(paths, " ")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	opts := engine.AnalyzeOptions{Path: path}
