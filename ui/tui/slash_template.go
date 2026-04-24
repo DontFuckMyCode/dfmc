@@ -127,9 +127,14 @@ func (m Model) reviewScopeGuide(targets []string) string {
 	}
 	limit := min(len(targets), 2)
 	outlines := make([]string, 0, limit)
-	for _, target := range targets[:limit] {
+	for _, target := range targets[:min(len(targets), limit)] {
 		if outline := strings.TrimSpace(m.reviewScopeOutline(root, target)); outline != "" {
 			outlines = append(outlines, outline)
+		}
+	}
+	if len(outlines) == 0 && limit > 0 {
+		if firstOutline := strings.TrimSpace(m.reviewScopeOutline(root, targets[0])); firstOutline != "" {
+			outlines = append(outlines, firstOutline)
 		}
 	}
 	if len(outlines) == 0 {
