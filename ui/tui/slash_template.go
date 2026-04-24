@@ -333,24 +333,23 @@ func (m Model) defaultReviewTargets(explicit []string) []string {
 	if len(explicit) > 0 {
 		return explicit
 	}
+	if len(m.patchView.changed) > 0 {
+		limit := len(m.patchView.changed)
+		if limit > 4 {
+			limit = 4
+		}
+		out := make([]string, 0, limit)
+		for _, path := range m.patchView.changed[:limit] {
+			if path = strings.TrimSpace(path); path != "" {
+				out = append(out, path)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
 	if target := strings.TrimSpace(m.toolTargetFile()); target != "" {
 		return []string{target}
 	}
-	if len(m.patchView.changed) == 0 {
-		return nil
-	}
-	limit := len(m.patchView.changed)
-	if limit > 4 {
-		limit = 4
-	}
-	out := make([]string, 0, limit)
-	for _, path := range m.patchView.changed[:limit] {
-		if path = strings.TrimSpace(path); path != "" {
-			out = append(out, path)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	return nil
 }
