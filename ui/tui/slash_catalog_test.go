@@ -222,23 +222,34 @@ func TestPlanModeTogglesViaSlashCommands(t *testing.T) {
 	}
 }
 
-func TestDefaultReviewTargetsPreferSelectionThenChangedFiles(t *testing.T) {
+func TestDefaultReviewTargetsOrder(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.filesView.entries = []string{"ui/tui/conversations.go", "ui/tui/describe.go"}
-	m.filesView.index = 0
-	m.patchView.changed = []string{"internal/engine/engine.go", "ui/tui/tui.go"}
 
-	targets := m.defaultReviewTargets(nil)
-	if len(targets) != 1 || targets[0] != "ui/tui/conversations.go" {
-		t.Fatalf("expected selected file to win, got %#v", targets)
-	}
-
+	// No selection, no changed files -> nil
 	m.filesView.entries = nil
 	m.filesView.index = 0
 	m.filesView.path = ""
+	m.patchView.changed = nil
+	targets := m.defaultReviewTargets(nil)
+	if targets != nil {
+		t.Fatalf("expected nil when nothing available, got %#v", targets)
+	}
+
+	// No selection, but patchView.changed has values -> changed files win
+	m.patchView.changed = []string{"internal/engine/engine.go", "ui/tui/tui.go"}
 	targets = m.defaultReviewTargets(nil)
 	if len(targets) != 2 || targets[0] != "internal/engine/engine.go" || targets[1] != "ui/tui/tui.go" {
-		t.Fatalf("expected changed files fallback, got %#v", targets)
+		t.Fatalf("expected changed files when no selection, got %#v", targets)
+	}
+
+	// Both changed files AND toolTargetFile available -> patchView.changed wins
+	m.patchView.changed = []string{"internal/engine/engine.go", "ui/tui/tui.go"}
+	m.filesView.entries = []string{"ui/tui/conversations.go", "ui/tui/describe.go"}
+	m.filesView.index = 0
+	m.filesView.path = "ui/tui/conversations.go" // <- toolTargetFile source
+	targets = m.defaultReviewTargets(nil)
+	if len(targets) != 2 || targets[0] != "internal/engine/engine.go" || targets[1] != "ui/tui/tui.go" {
+		t.Fatalf("expected patchView.changed to win over toolTargetFile, got %#v", targets)
 	}
 }
 

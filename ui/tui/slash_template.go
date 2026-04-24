@@ -125,10 +125,7 @@ func (m Model) reviewScopeGuide(targets []string) string {
 	if root == "" {
 		return ""
 	}
-	limit := len(targets)
-	if limit > 2 {
-		limit = 2
-	}
+	limit := min(len(targets), 2)
 	outlines := make([]string, 0, limit)
 	for _, target := range targets[:limit] {
 		if outline := strings.TrimSpace(m.reviewScopeOutline(root, target)); outline != "" {
@@ -187,10 +184,7 @@ func reviewSymbolOutline(absPath, target string) string {
 		return symbols[i].Line < symbols[j].Line
 	})
 
-	limit := len(symbols)
-	if limit > 8 {
-		limit = 8
-	}
+	limit := min(len(symbols), 8)
 	lines := make([]string, 0, limit+2)
 	lines = append(lines, fmt.Sprintf("- %s (%s):", fileMarker(target), blankFallback(res.Language, "source")))
 	for _, sym := range symbols[:limit] {
@@ -240,9 +234,7 @@ func reviewSectionOutline(target, content string) string {
 	chunks := make([]string, 0, 6)
 	for start := 1; start <= totalLines && len(chunks) < 6; start += chunkSize {
 		end := start + chunkSize - 1
-		if end > totalLines {
-			end = totalLines
-		}
+		end = min(end, totalLines)
 		chunks = append(chunks, fmt.Sprintf("  - lines %d-%d", start, end))
 	}
 	return fmt.Sprintf("- %s:\n%s", fileMarker(target), strings.Join(chunks, "\n"))
@@ -334,10 +326,14 @@ func (m Model) defaultReviewTargets(explicit []string) []string {
 		return explicit
 	}
 	if len(m.patchView.changed) > 0 {
+<<<<<<< HEAD
 		limit := len(m.patchView.changed)
 		if limit > 4 {
 			limit = 4
 		}
+=======
+		limit := min(len(m.patchView.changed), 4)
+>>>>>>> 9999f01 (fix(tui): /review targets worktree diff before single-file fallback)
 		out := make([]string, 0, limit)
 		for _, path := range m.patchView.changed[:limit] {
 			if path = strings.TrimSpace(path); path != "" {
