@@ -34,6 +34,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"slices"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
@@ -410,28 +411,15 @@ func kindMatches(have, want string) bool {
 		"variable":  {"var", "field"},
 		"constant":  {"const", "enum"},
 	}
-	for _, alt := range aliases[want] {
-		if have == alt {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(aliases[want], have)
 }
 
 // buildScopeMatch turns one symbol hit into a symbolMatch with its
 // extracted body. Picks the scope strategy from the language.
 func buildScopeMatch(path, language string, sym types.Symbol, lines []string, bodyMax int, includeBody bool) symbolMatch {
-	startLine := sym.Line
-	if startLine < 1 {
-		startLine = 1
-	}
-	if startLine > len(lines) {
-		startLine = len(lines)
-	}
+	startLine := min(max(sym.Line, 1), len(lines))
 	endLine := extractScopeEnd(language, lines, startLine)
-	if endLine < startLine {
-		endLine = startLine
-	}
+	endLine = max(endLine, startLine)
 	m := symbolMatch{
 		Path:      path,
 		Language:  language,
