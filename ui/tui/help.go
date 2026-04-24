@@ -48,6 +48,8 @@ func renderTUIHelp() string {
 		"    /continue                    Resume a parked agent loop (only when loop is parked at a step cap or /continue)",
 		"    /split TASK                  Decompose a broad task into subtasks",
 		"    /btw NOTE                    Inject a note at the next agent step",
+		"    /analyze [--flag] [path]     Full analysis (hotspots, complexity, dead code, duplication, todos)",
+		"    /scan [--flag] [path]         Security-only scan (aliases: --security, --secrets, --vulns)",
 		"",
 		"Mentions: @file.go picks a file · @file.go:10-50 or @file.go#L10-L50 attaches a range.",
 		"Panels: F1 Chat · F2 Providers · F3 Files · F4 Patch · F5 Workflow · F6 Tools · F7 Activity · F8 Memory · F9 CodeMap · F10 Conversations · F11 Prompts · F12 Security · Alt+I Status · Alt+Y Plans · Alt+W Context · Alt+O Providers · Ctrl+P palette",
