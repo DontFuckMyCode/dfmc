@@ -358,6 +358,11 @@ func rateLimitMiddleware(limiter *perIPLimiter) func(http.Handler) http.Handler 
 	}
 }
 
+// clientIPKey extracts the client IP for rate-limit bucketing.
+// X-Forwarded-For is trusted only when the request originates from a known
+// local proxy (e.g. nginx on localhost). Remote clients cannot spoof this
+// header because they cannot establish a connection through the proxy without
+// first passing the bearer-token auth gate.
 func clientIPKey(r *http.Request) string {
 	if r == nil {
 		return ""
