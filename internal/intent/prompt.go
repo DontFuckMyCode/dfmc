@@ -26,8 +26,8 @@ message. Output strict JSON with these fields and nothing else:
 
 Routing rules:
   - intent="resume" when PARKED_AGENT=yes AND the user is signalling
-    continuation (any language, any phrasing: "continue", "devam", "go
-    on", "keep going", "yeah do it", "更多", "продолжай", "merge with that",
+    continuation (any language, any phrasing: "continue", "devam", "devam et",
+    "go on", "keep going", "yeah do it", "更多", "продолжай", "merge with that",
     or simply restating the same task). Append any new instructions from
     the user to enriched_request as a note.
   - intent="new" when the user is starting an unrelated task, OR when
