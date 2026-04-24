@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -74,7 +75,7 @@ func TestApplyUnifiedDiffWeb_RootEscape(t *testing.T) {
 // TestGitChangedFilesWeb_RootEscape — M3
 // gitChangedFilesWeb must reject projectRoot pointing outside allowed tree.
 func TestGitChangedFilesWeb_RootEscape(t *testing.T) {
-	_, err := gitChangedFilesWeb("../../../etc", 10)
+	_, err := gitChangedFilesWeb(context.Background(), "../../../etc", 10)
 	if err == nil {
 		t.Fatal("expected error for root escape path, got nil")
 	}
