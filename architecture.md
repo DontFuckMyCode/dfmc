@@ -1,538 +1,880 @@
 # DFMC Architecture
 
-This document describes how DFMC is structured today, how its major subsystems interact, and how a request moves through the runtime.
+DFMC ("Don't Fuck My Code") is a code intelligence assistant distributed as a single Go binary. It combines local code analysis (AST + codemap + security heuristics) with a multi-provider LLM router that falls back to an offline provider when API keys are missing or calls fail. Three UIs (CLI, bubbletea TUI, embedded Web API) all drive the same `engine.Engine`.
 
-## 1. What DFMC Is
+**Module path:** `github.com/dontfuckmycode/dfmc`. Go 1.25. CGO required for tree-sitter AST bindings.
 
-DFMC is a single-binary Go application for code intelligence and agentic coding workflows. It combines:
+---
 
-- Local code understanding: AST parsing, codemap generation, context retrieval, heuristic analysis, and security scanning
-- LLM orchestration: provider routing, streaming, tool-calling, fallback behavior, and bounded agent loops
-- Multiple surfaces on one core: CLI, Bubble Tea TUI, embedded web server, remote client, and MCP server
-- Persistent project state: conversations, memory, drive runs, and artifacts stored under `.dfmc/`
+## 1. System Architecture
 
-At the center of the system is `internal/engine.Engine`. Every major surface delegates to it.
-
-## 2. High-Level Architecture
-
-```mermaid
-flowchart TD
-    User[User]
-    CLI[CLI<br/>ui/cli]
-    TUI[TUI Workbench<br/>ui/tui]
-    WEB[Web API + Workbench<br/>ui/web]
-    MCP[MCP Server<br/>internal/mcp + ui/cli]
-
-    Engine[Engine<br/>internal/engine]
-
-    Config[Config Loader<br/>internal/config]
-    Router[Provider Router<br/>internal/provider]
-    Tools[Tool Engine<br/>internal/tools]
-    Context[Context Manager<br/>internal/context]
-    AST[AST Engine<br/>internal/ast]
-    CodeMap[CodeMap Graph<br/>internal/codemap]
-    Memory[Memory Store<br/>internal/memory]
-    Conv[Conversation Manager<br/>internal/conversation]
-    Security[Security Scanner<br/>internal/security]
-    Drive[Autonomous Drive<br/>internal/drive]
-    Events[Event Bus<br/>internal/engine/eventbus]
-    Storage[Storage<br/>internal/storage]
-    Plugins[Plugin Runtime<br/>internal/pluginexec]
-
-    Providers[Online Providers<br/>Anthropic / OpenAI-compatible / Google]
-    Offline[Offline Provider]
-
-    User --> CLI
-    User --> TUI
-    User --> WEB
-    User --> MCP
-
-    CLI --> Engine
-    TUI --> Engine
-    WEB --> Engine
-    MCP --> Engine
-
-    Engine --> Config
-    Engine --> Router
-    Engine --> Tools
-    Engine --> Context
-    Engine --> AST
-    Engine --> CodeMap
-    Engine --> Memory
-    Engine --> Conv
-    Engine --> Security
-    Engine --> Drive
-    Engine --> Events
-    Engine --> Storage
-    Engine --> Plugins
-
-    Router --> Providers
-    Router --> Offline
-    Context --> CodeMap
-    CodeMap --> AST
-    Memory --> Storage
-    Conv --> Storage
-    Drive --> Engine
+```
+                            +-----------------------------------------+
+                            |              main.go                    |
+                            |         engine.New(cfg)                |
+                            |            engine.Init()                |
+                            +--------------------+--------------------+
+                                             |
+                    +------------------------+------------------------+
+                    |                        |                        |
+            +-------v--------+    +----------v----------+    +------v-------+
+            |  ui/cli/cli.go  |    |  ui/tui/tui.go      |    |ui/web/server.go|
+            |   Run() dispatch|    | bubbletea Model      |    |http mux + SSE  |
+            +-------+---------+    +----------+----------+    +------+-------+
+                    |                         |                        |
+                    +-------------------------+------------------------+
+                                          | *engine.Engine
+                        +------------------+------------------+
+                        |                  |                  |
+              +---------v--------+ +-------v--------+ +------v--------+
+              | internal/engine   | | internal/tools  | |internal/provider|
+              |   Engine{}        | |  Tools.Engine    | |    Router{}     |
+              | owns all subsystems| |  40+ backend     | |primary+fallback |
+              |                   | |  + 4 meta tools  | |  + offline stub |
+              +-------------------+ +------------------+ +----------------+
 ```
 
-## 3. Core Design Principles
-
-- One runtime core, many frontends: CLI, TUI, web, remote, and MCP all share the same engine and subsystem model.
-- Local-first context: DFMC tries to understand the repository itself before asking an LLM to reason about it.
-- Bounded autonomy: tool loops, sub-agents, and drive runs are capped by steps, tokens, and safety checks.
-- Graceful degradation: if live providers are unavailable, DFMC can still operate through offline analysis.
-- Observable execution: the event bus exposes lifecycle, provider, tool, and drive events to every UI.
-
-## 4. Startup and Lifecycle
-
-The process starts in `cmd/dfmc/main.go`.
-
-### Startup path
-
-1. Load merged configuration via `internal/config.Load()`
-2. Construct `engine.Engine`
-3. Initialize storage, AST, codemap, context manager, tool registry, memory, conversation manager, security scanner, provider router, hooks, and intent router
-4. Resolve the project root
-5. Start background indexing of the codebase
-6. Publish engine lifecycle events
-7. Hand control to the selected UI surface
-
-### Shutdown path
-
-Shutdown is centralized in `Engine.Shutdown()`:
-
-- cancel background tasks
-- wait for the indexer to finish
-- fire session-end hooks
-- persist active conversation and memory
-- close tools and storage
-- publish shutdown events
-
-This is important because DFMC keeps bbolt-backed state open while the process is running.
-
-## 5. Configuration Model
-
-DFMC merges configuration in this order:
-
-1. Built-in defaults
-2. Global config: `~/.dfmc/config.yaml`
-3. Project config: `<repo>/.dfmc/config.yaml`
-4. Project `.env`
-5. Process environment variables
-6. CLI overrides
-
-Key configuration areas:
-
-- `providers`: primary/fallback routing and provider profiles
-- `context`: retrieval budgets and compression behavior
-- `agent`: tool loop budgets, auto-resume, autonomy, and context lifecycle
-- `security`: scan behavior and command sandbox controls
-- `tools`, `hooks`, `plugins`, `web`, `remote`, `tui`, `intent`, `ast`
-
-## 6. Main Runtime Components
-
-### 6.1 Engine
-
-`internal/engine` is the orchestration hub. It owns subsystem instances and exposes the main runtime operations:
-
-- `Ask`, `AskWithMetadata`, `AskRaced`, `StreamAsk`
-- tool execution
-- status and config reload
-- conversation and memory access
-- drive runner creation
-- background task and event publishing
-
-The engine is intentionally split into domain-specific files:
-
-- `engine_ask.go`: request flow and streaming
-- `engine_context.go`: context budgeting and retrieval status
-- `engine_prompt.go`: prompt assembly
-- `engine_tools.go`: tool invocation lifecycle
-- `engine_analyze.go`: analysis pipeline
-- `agent_loop_native.go`: provider-native tool loop
-- `subagent.go`, `drive_adapter.go`: delegated execution
-
-### 6.2 AST Engine
-
-`internal/ast` parses source files and extracts:
-
-- language
-- symbols
-- imports
-- parse errors
-- backend metadata
-
-The parser is hybrid:
-
-- tree-sitter is used for Go, JavaScript/JSX, TypeScript/TSX, and Python when CGO is enabled
-- regex fallback is used when CGO is unavailable or for unsupported languages
-
-Results are cached in an LRU parse cache.
-
-### 6.3 CodeMap
-
-`internal/codemap` builds a project graph on top of AST output.
-
-It models:
-
-- file nodes
-- symbol nodes
-- module/import edges
-- file-to-symbol definition edges
-
-This graph powers:
-
-- symbol lookup
-- hotspots
-- cycle detection
-- context ranking
-- codemap rendering tools
-
-### 6.4 Context Manager
-
-`internal/context` builds the code snippets that are sent to the model.
-
-It ranks files using:
-
-- query text matches
-- symbol-aware matching
-- graph-neighborhood expansion
-- hotspot bonuses
-
-Then it compresses selected files into token-budgeted `ContextChunk`s. It also renders the system prompt bundle using the prompt library.
-
-### 6.5 Provider Router
-
-`internal/provider.Router` abstracts all model providers behind one interface:
-
-- Anthropic
-- OpenAI
-- OpenAI-compatible vendors
-- Google
-- Offline provider
-- Placeholder providers when profiles exist but credentials are missing
-
-Responsibilities:
-
-- resolve provider order
-- retry throttled calls
-- retry compacted calls after context overflow
-- filter non-tool-capable providers out of tool-calling cascades
-- stream or complete requests
-
-### 6.6 Tool Engine
-
-`internal/tools.Engine` is the execution backend for all tools.
-
-Backend tool groups include:
-
-- file operations
-- code search and semantic lookup
-- git operations
-- shell/command execution
-- web fetch/search
-- codemap and AST queries
-- patching and editing
-- task splitting and orchestration
-- delegated sub-agent execution
-
-The model does not see the full backend tool list. Instead, DFMC exposes four meta tools:
-
-- `tool_search`
-- `tool_help`
-- `tool_call`
-- `tool_batch_call`
-
-This keeps prompt size stable even as the backend tool catalog grows.
-
-### 6.7 Memory and Conversations
-
-Persistent and semi-persistent state is split into two layers:
-
-- `internal/conversation`: active and historical conversations, branchable, saved as JSON + JSONL artifacts
-- `internal/memory`: working memory in-memory, episodic/semantic memory in bbolt buckets
-
-This lets DFMC preserve interaction history and lightweight project memory across sessions.
-
-### 6.8 Security and Analysis
-
-DFMC has two analysis styles:
-
-- graph/AST-driven structural analysis in `engine_analyze.go`
-- heuristic secret and vulnerability scanning in `internal/security`
-
-The scanner looks for:
-
-- hardcoded secrets
-- risky patterns such as injection, eval, deserialization, and SSRF indicators
-- AST-based security heuristics for supported languages
-
-### 6.9 Drive
-
-`internal/drive` is a higher-level autonomous execution mode.
-
-It adds:
-
-- a planner that converts a task into a TODO DAG
-- a scheduler that respects dependencies and file-scope conflicts
-- parallel execution of ready TODOs
-- persistence for resumable runs
-- event emission for all progress
-
-Drive delegates actual execution back into engine sub-agents.
-
-### 6.10 Event Bus
-
-The event bus is the internal observability backbone.
-
-It publishes:
-
-- engine lifecycle events
-- provider events
-- tool lifecycle and tool reasoning events
-- memory/config/hook events
-- drive events
-
-Consumers include:
-
-- TUI activity panels
-- web `/ws` SSE stream
-- remote clients
-- any internal subscriber
-
-## 7. Request Lifecycle
-
-### Standard ask/chat flow
-
-```mermaid
-sequenceDiagram
-    participant U as User Surface
-    participant E as Engine
-    participant I as Intent Router
-    participant C as Context Manager
-    participant M as AST + CodeMap
-    participant R as Provider Router
-    participant P as Provider
-    participant S as Storage
-
-    U->>E: Ask / StreamAsk
-    E->>I: Normalize user intent
-    I-->>E: new / resume / clarify
-    alt clarify
-        E-->>U: Follow-up question
-    else resume
-        E->>E: Resume parked agent
-        E-->>U: Continued answer
-    else new
-        E->>M: Ensure repository indexed
-        E->>C: Build context chunks
-        C-->>E: Ranked, compressed code snippets
-        E->>C: Build system prompt bundle
-        E->>R: CompletionRequest
-        R->>P: Complete or Stream
-        P-->>R: Response
-        R-->>E: Final provider result
-        E->>S: Persist conversation and memory updates
-        E-->>U: Answer or SSE stream
-    end
+### 1.1 Engine as the Hub
+
+`internal/engine/engine.go` owns all subsystems and is passed (by pointer) into all three UIs. The Engine type is split across sibling files:
+
+| File | Responsibility |
+|------|---------------|
+| `engine.go` | Construction, lifecycle (`Init`/`Shutdown`), state machine |
+| `engine_tools.go` | `CallTool`, tool approval, pre/post hooks, panic guard |
+| `engine_context.go` | Context budgeting, chunk building, reserve breakdown |
+| `engine_prompt.go` | System prompt assembly, PromptRuntime resolver |
+| `engine_ask.go` | `Ask`/`AskRaced`/`AskWithMetadata`/`StreamAsk`, history budgeting |
+| `engine_intent.go` | Intent layer glue: builds Snapshot, runs `Intent.Evaluate` |
+| `engine_passthrough.go` | `Status`, Memory/Conversation/Provider passthrough |
+| `engine_analyze.go` | `AnalyzeWithOptions`, dead-code/complexity passes |
+| `agent_loop_native.go` | Provider-native tool loop |
+| `agent_parking.go` | Park/resume state freeze |
+
+### 1.2 Subsystem Ownership
+
+```
+Engine
++-- *ast.Engine          (tree-sitter or regex fallback)
++-- *codemap.Engine      (symbol/dependency graph)
++-- *ctxmgr.Manager      (context ranking + compression)
++-- *provider.Router     (multi-provider with fallback cascade)
++-- *tools.Engine        (40+ backend tools + 4 meta tools)
++-- *memory.Store        (working + episodic + semantic tiers)
++-- *conversation.Manager (JSONL-persisted, branching)
++-- *hooks.Dispatcher    (lifecycle event hooks)
++-- *intent.Router       (state-aware intent classification)
++-- *storage.Store       (bbolt handle)
++-- *security.Scanner    (static analysis heuristics)
++-- EventBus             (fan-out to TUI/Web/remote)
 ```
 
-### Important details in this flow
+### 1.3 Engine State Machine
 
-- The intent layer can short-circuit work before a full model call.
-- Codebase indexing is lazy-safe: if the codemap is empty, the engine builds it before retrieval.
-- Prompt assembly is runtime-aware and budget-aware.
-- Provider routing can retry after throttling or context overflow.
-- Conversation history is trimmed and summarized before each request.
-
-## 8. Native Tool Loop
-
-When the active provider supports tool calling, DFMC can enter a bounded agent loop instead of a single completion.
-
-```mermaid
-flowchart TD
-    A[User Task] --> B[Engine prepares context + system prompt]
-    B --> C[Expose only 4 meta tools]
-    C --> D[Provider-native response]
-    D -->|text only| E[Return final answer]
-    D -->|tool calls| F[Execute tool_call / tool_batch_call]
-    F --> G[Backend tools run inside tools.Engine]
-    G --> H[Tool results returned to model]
-    H --> D
-    D -->|step/token cap reached| I[Park or auto-resume]
-    I -->|resume| D
-    I -->|stop| J[Return bounded partial result]
+```
+StateCreated -> StateInitializing -> StateReady -> StateServing -> StateShuttingDown -> StateStopped
 ```
 
-### Why the meta-tool design matters
+`StateServing` is set when `StartServing()` is called (by the web server or CLI serve command). `StateShuttingDown` gates the agent loop so a `Shutdown()` mid-round parks the agent instead of racing with bbolt close.
 
-- It prevents the system prompt from exploding as tools increase.
-- It lets backend tool specs evolve without changing provider protocols.
-- It gives DFMC one stable agent-loop contract across Anthropic and OpenAI-style providers.
+---
 
-### Safety controls in the loop
+## 2. Tool Execution Flow
 
-- step limit
-- cumulative token limit
-- per-tool result truncation
-- read-before-mutate safeguards for edits and patches
-- approval hooks for gated tools
-- optional self-narrated tool reasoning surfaced as events
-- parking and resume when budgets are reached
+Every tool invocation -- user-initiated (`CallTool`), agent-initiated, or subagent-initiated -- funnels through `executeToolWithLifecycle` in `engine_tools.go`. This is the only place where approval gate, pre/post hooks, and panic guard all fire together.
 
-## 9. Autonomous Drive Mode
-
-Drive is a larger-grain orchestration loop built on top of the engine.
-
-```mermaid
-flowchart TD
-    Task[Drive Task] --> Plan[Planner LLM Call]
-    Plan --> DAG[TODO DAG]
-    DAG --> Sched[Scheduler]
-    Sched --> Ready[Ready TODOs]
-    Ready --> Exec[Run as Sub-agents]
-    Exec --> Results[TODO summaries + status]
-    Results --> Persist[Persist run state]
-    Persist --> Sched
-    Sched --> Done{All terminal?}
-    Done -->|No| Ready
-    Done -->|Yes| Final[Run complete / failed / stopped]
+```
+CallTool / agent loop / subagent
+          |
+          v
+executeToolWithLifecycle(ctx, name, params, source)
+          |
+          +-- [source != "user"] --> requiresApproval(name)? --> askToolApproval --> deny/log
+          |
+          +-- Hooks.Fire(EventPreTool)  <- outer tool (meta or backend)
+          +-- Hooks.Fire(EventPreTool)  <- inner tools (fan-out for meta wrappers)
+          |
+          v
+executeToolWithPanicGuard
+          |
+          +-- defer/recover -- any panic becomes a regular error
+          |                   + runtime:panic event + truncated stack (2 KiB cap)
+          |
+          v
+tools.Engine.Execute(ctx, name, req)
+          |
+          +-- normalizeToolParams (alias resolution: old->old_string, text->content)
+          +-- ExtractReason -- publish tool:reasoning event, strip _reason field
+          +-- readBeforeMutationMode -- strict/lenient/none gate
+          |       EnsureReadBeforeMutation (strict) --> hash check against snapshot
+          +-- tool.Execute(ctx, req) -- real work
+          +-- trackFailure / clearFailure (3-retry gate per unique key)
+          +-- compressToolOutput (byte/truncation limits)
+          +-- recordReadSnapshot (LRU, 256 entry cap)
+          |
+          v
+Result + Hooks.Fire(EventPostTool)  <- outer + inner fan-out
+          |
+          v
+tool:complete | tool:error | tool:panicked | tool:denied events
 ```
 
-Key traits:
+### 2.1 Read-Before-Mutation Gate
 
-- planner is stateless and cheap: one completion, no tool loop
-- executor TODOs are real sub-agent runs
-- scheduler prevents unsafe parallel overlap using `file_scope`
-- runs are resumable from persistent state
-- progress is published as `drive:*` events
+Tools that mutate existing files enforce a prior `read_file` snapshot:
 
-## 10. UI and Surface Model
+| Tool | Mode | Check |
+|------|------|-------|
+| `edit_file` | `readGateLenient` | Prior snapshot required; hash drift tolerated (edit_file has its own anchor validation) |
+| `write_file` | `readGateStrict` | Prior snapshot + hash equality |
+| `apply_patch` | `readGateStrict` (per file, via `Engine.EnsureReadBeforeMutation`) | Prior snapshot + hash equality |
+| All others | `readGateNone` | No gate |
 
-### CLI
+The snapshot is the SHA-256 of the file content at the time of the last `read_file` call. For `read_file` itself the hash comes from `content_sha256` in the result Data (full-file hash, not the returned slice hash) to avoid TOCTOU drift.
 
-`ui/cli` is the command router and local operator surface.
+### 2.2 Meta-Tool Layer
 
-It handles:
+The model only sees 4 meta tools (in `internal/tools/meta.go`). Backend tools are discovered on demand.
 
-- one-shot ask/status/analyze/tool commands
-- interactive chat
-- TUI startup
-- web server startup
-- remote client commands
-- drive lifecycle commands
-- plugin and skill management
-- MCP stdio mode
+```
+tool_search(query, limit?)   -> ranked backend tool list (meta tools filtered out)
+tool_help(name)              -> full spec + JSON schema for one backend tool
+tool_call(name, args)        -> dispatch ONE backend tool
+tool_batch_call(calls[])      -> dispatch N backend tools in parallel (bounded by ParallelBatchSize)
 
-### TUI
+Auto-unwrap: tool_call{name:"tool_call", args:{name:"<backend>", args:{...}}}
+  -> peels the wrapper, dispatches the inner call, prepends a hint.
 
-`ui/tui` is the richest local surface. It is a Bubble Tea application built around the same engine instance.
+Refusal: tool_call/tool_batch_call cannot dispatch other meta tools.
+  The refusal message names the correct shape so the model self-corrects in one round.
+```
 
-Main capabilities:
+Meta-tool budget (64 calls/turn, depth 4) is seeded once at the agent-loop boundary via `SeedMetaToolBudgetWithLimits`. Nested calls share one counter rather than each getting a fresh allowance.
 
-- streaming chat
-- status and activity views
-- files and patch inspection
-- provider/model switching
-- tool execution presets
-- drive monitoring
+### 2.3 Param-Name Aliasing
 
-### Web
+`tools/engine.go normalizeToolParams` rewrites known typo aliases before every Execute:
 
-`ui/web` embeds an HTTP API and browser workbench.
+- `edit_file`: `old` -> `old_string`, `new` -> `new_string`
+- `write_file`: `text`/`body`/`data` -> `content`
 
-It exposes:
+This lets weaker models use JS/Python edit-tool conventions without failing.
 
-- REST-style endpoints for status, prompts, tools, files, memory, conversations, and drive
-- SSE chat streaming
-- SSE event streaming on `/ws`
-- an embedded static workbench UI
+---
 
-### Remote
+## 3. Agent Loop Flow (Provider-Native)
 
-`dfmc remote ...` is a client layer against a running web server. It does not implement separate business logic; it mirrors server APIs.
+When the active provider supports native tool calling (Anthropic, OpenAI, OpenAI-compatible), the engine uses the native tool loop (`agent_loop_native.go`) instead of a plain completion. The model sees only the 4 meta tools; meta-inside-meta is refused with a self-teaching hint.
 
-### MCP
+```
+askWithNativeTools(ctx, question)
+          |
+          +-- ClearParkedAgent (fresh question abandons stale parked loop)
+          +-- ensureIndexed (prime codemap if not yet built)
+          +-- buildContextChunks (retrieval pipeline)
+          +-- buildNativeToolSystemPromptBundle (system prompt + tool descriptors)
+          +-- maybeAutoKickoffAutonomy (supervisor DAG --> kickoff TODOs)
+          |
+          v
+runNativeToolLoop(seed, limits, "ask")
+          |
+          +-- per-step loop (1 -> MaxSteps):
+                |
+                +-- [engine shutting down?] --> parkNativeToolLoop(ParkReasonShuttingDown)
+                |
+                +-- drainAgentNotes --> inject [user btw] notes as messages
+                |
+                +-- maybeCompactNativeLoopHistory (reactive, 0.7 threshold)
+                |
+                +-- proactiveCompact (step > RoundSoftCap --> threshold 0.5)
+                |
+                +-- preflightBudget --> park-or-recover before next round burns tokens
+                |
+                +-- [len(traces) >= RoundSoftCap?] --> synthesis nudge (stop gathering, answer now)
+                |
+                +-- [len(traces) >= RoundHardCap?] --> ToolChoice:none (final guardrail)
+                |
+                +-- Providers.Complete(ctx, req) --> resp with tool_calls[]
+                |
+                +-- [resp has no tool_calls + no text?] --> handleEmptyTurn (nudge or give up)
+                |
+                +-- [resp has no tool_calls + text] --> final answer, record, coach, return
+                |
+                +-- executeAndAppendToolBatch (parallel bounded fan-out via tool_batch_call)
+                |
+                +-- injectTrajectoryHints (coach-aware hints after batch)
+                |
+                +-- postStepBudget --> compact-or-park if tokens near MaxTokens
+                |
+                +-- [step == MaxSteps?] --> parkNativeToolLoop(ParkReasonStepCap)
+```
 
-`dfmc mcp` exposes DFMC as an MCP-compatible stdio server. This lets IDE hosts call DFMC tools, including synthetic drive tools, over JSON-RPC.
+### 3.1 Tool Result Processing
 
-## 11. Persistence Model
+`executeAndAppendToolBatch` dispatches all tool calls in the response through `executeToolWithLifecycle`. Results are accumulated as `nativeToolTrace` entries (tool call + result/error + provider/model + step + time). The trace feeds:
+- Coach hints (trajectory analysis for circle detection)
+- Parked state (for `/continue` resume)
+- Telemetry events (`agent:loop:tool_result`)
 
-### On disk
+### 3.2 Budget Auto-Recovery
 
-Project-local state lives under `.dfmc/` and bbolt-backed storage.
+When `preflightBudget` or `postStepBudget` detects token overflow risk:
+1. Compact the message history (drop oldest rounds, keep system prompt + recent context)
+2. Retry the same provider/model once
+3. If still overflow after compaction: `parkNativeToolLoop(ParkReasonBudgetExhausted)`
 
-Persisted artifacts include:
+Auto-recovery is capped at `maxBudgetAutoRecoveries = 1` per invocation to prevent compact->fill->compact loops.
 
-- `dfmc.db`
-- conversation state and JSONL logs
-- memory buckets
-- drive-run records
-- generated project artifacts such as magic docs
+### 3.3 Autonomous Resume
 
-### Storage responsibilities
+When `autonomous_resume = "auto"` (default), the wrapper around `askWithNativeTools` detects a budget-exhausted park and immediately re-enters the loop after compacting. The user sees one continuous answer instead of a "press Enter to resume" banner. `resume_max_multiplier` (default 10) caps total work: `MaxSteps x multiplier` steps and `MaxTokens x multiplier` tokens per ask.
 
-`internal/storage` provides:
+---
 
-- database open/close
-- bucket initialization
-- artifact directory management
-- atomic conversation writes
-- lock detection when another DFMC process already owns the store
+## 4. Intent Classification Flow
 
-## 12. Extension Model
+The intent layer (`internal/intent/router.go`) runs a small classifier before every `Ask`. It decides whether the user's turn is a **resume** (continuing a parked agent), a **new** question, or a **clarify** (too vague to act on).
 
-DFMC supports two extension directions.
+```
+User submits "devam et" / "fix it" / ...
+          |
+          v
+Engine.routeIntent(ctx, raw)
+          |
+          +-- Intent.Evaluate(ctx, raw, Snapshot)
+          |     |
+          |     +-- buildClassifierMessages(snapshot.Render(), raw)
+          |     |     -> system: intent system prompt
+          |     |     -> user: ENGINE_STATE:\n<snapshot>\n\nUSER_MESSAGE:\n<raw>
+          |     |
+          |     +-- provider.Complete(ctx, req)  [timeout: 1500ms, ToolChoice:none]
+          |     |
+          |     +-- parseDecision(JSON) --> Decision{Intent, EnrichedRequest, Reasoning, FollowUpQuestion}
+          |
+          +-- [Intent == "resume" && HasParkedAgent?] --> ResumeAgent(ctx, note)
+          |
+          +-- [Intent == "clarify" && FollowUpQuestion != ""] --> echo question to user (no main model call)
+          |
+          +-- [Intent == "new"] --> standard Ask path (enriched prompt replaces raw)
+```
 
-### Plugins
+**Snapshot** (`snapshot.go`) is a compact view of engine state:
 
-Plugins are child processes started by `internal/pluginexec`.
+```
+PARKED_AGENT: yes|no
+  summary: "parked at step 7 -- refactor tui.go"
+  step: 7 (cumulative: 23)
+  last_tool: edit_file
+  parked_age: 47s
+ACTIVE_MODEL: anthropic/claude-3-5-sonnet
+USER_TURNS: 14
+RECENT_TOOLS: read_file, grep_codebase, edit_file, run_command
+LAST_ASSISTANT:
+  [last assistant text, truncated to fit max_chars]
+```
 
-Characteristics:
+**Decision types:**
+- `resume`: user is continuing a parked loop. The note from this turn is appended to the parked state.
+- `new`: fresh question. Any parked state is abandoned.
+- `clarify`: ambiguous input with no anchoring state. User sees `FollowUpQuestion` directly.
 
-- line-delimited JSON-RPC over stdin/stdout
-- stderr captured for diagnostics
-- supports executable or interpreted script plugins
-- surfaced mainly through CLI plugin commands
+**Fail-open:** Any error (timeout, no provider, JSON parse failure) returns `Fallback(raw)` with `Source: "fallback"`. The engine never blocks on the intent layer.
 
-### MCP hosts
+---
 
-External IDE/tooling hosts can use DFMC over MCP rather than embedding DFMC logic directly.
+## 5. Drive Autonomous Loop
 
-This creates a clean separation:
+`dfmc drive "<task>"` (CLI) and `/drive <task>` (TUI) run a self-driving plan->execute loop:
 
-- DFMC remains the tool runtime
-- the host remains the UX shell
+```
+Driver.Run(ctx, task)
+          |
+          +-- NewRun(task) --> Run{id, Status: RunPlanning, Todos: []}
+          |
+          +-- fire EventRunStart
+          |
+          +-- BeginAutoApprove(autoApprove scope)
+          |
+          v
+        Plan Stage
+          |
+          v
+runPlanner --> Runner.PlannerCall (raw LLM call, no tools, no history)
+          |
+          +-- plannerSystemPrompt + task --> JSON{todos:[{id,title,detail,depends_on,file_scope,...}]}
+          +-- parsePlannerOutput --> []Todo
+          +-- validateTodos (unique ids, valid deps, no cycles)
+          +-- applySupervisorPlan (auto-survey/verify wrapping)
+          |
+          v
+        Execute Stage (executeLoop)
+          |
+          +-- while !runFinished(todos):
+                |
+                +-- readyBatch(todos, MaxParallel) --> indices of runnable TODOs
+                |     Conflict checks: file_scope intersection with Running TODOs
+                |
+                +-- ExecuteTodo(ctx, todo) for each picked index (parallel, bounded)
+                |     --> engine.RunSubagent(todo.Detail, provider_tag, ...)
+                |     --> supervisor.Task with context snapshot + todo metadata
+                |
+                +-- per-TODO result --> update todo.Status (Done/Blocked/Skipped)
+                |
+                +-- skipBlockedDescendants (propagate Blocked dep --> Skipped)
+                |
+                +-- persist(run) after every transition (bbolt)
+                |
+                +-- fire drive:todo:start/done/blocked/skipped events
+          |
+          v
+        Finalize
+          |
+          +-- RunDone:     all TODOs terminal
+          +-- RunFailed:   MaxFailedTodos consecutive Blocked, or planner error
+          +-- RunStopped:  MaxWallTime exceeded or ctx cancelled (resumable)
+          |
+          +-- EventRunDone/Stopped/Failed + persist
+```
 
-## 13. Package-Level Mental Model
+**Per-TODO provider routing:** `provider_tag` ("plan" | "code" | "review" | "test" | "research") is looked up in `Config.Routing` to select a named provider profile for the executor sub-agent. Unmapped tags fall back to the engine default.
 
-If you want to navigate the codebase quickly, think in these layers:
+**Scheduler conflict rules (`scheduler.go`):**
+1. Deps all Done -> eligible
+2. File scope conflict with Running TODO -> skip
+3. File scope conflict within batch -> only first (input order) wins
+4. Empty scope + non-readonly -> exclusive slot (runs alone)
+5. `kind=verify` / `worker_class=reviewer|tester|security` -> exclusive slot
 
-- `cmd/dfmc`: binary entrypoint
-- `internal/config`: config and runtime defaults
-- `internal/engine`: orchestration hub
-- `internal/provider`: model abstraction and routing
-- `internal/tools`: actionable runtime tools
-- `internal/ast` + `internal/codemap`: repository understanding
-- `internal/context` + `internal/promptlib`: prompt and retrieval shaping
-- `internal/conversation` + `internal/memory` + `internal/storage`: state
-- `internal/drive`: autonomous plan-and-execute mode
-- `ui/cli`, `ui/tui`, `ui/web`: operator-facing surfaces
+**Resume:** `Driver.Resume(ctx, runID)` resets Running TODOs to Pending, re-runs from persisted state. Works for `RunStopped` (wall-time/cancel) and in-progress crashes.
 
-## 14. End-to-End Summary
+---
 
-In practice, DFMC works like this:
+## 6. Context Injection Pipeline
 
-1. Load configuration and persistent project state
-2. Build a repository model with AST + codemap
-3. Accept a request from CLI, TUI, web, remote, or MCP
-4. Normalize the request with the intent layer
-5. Retrieve budgeted local context
-6. Either:
-   - send one completion request through the provider router, or
-   - enter the bounded native tool loop, or
-   - run the higher-level drive planner/scheduler
-7. Persist conversation and memory side effects
-8. Publish events so every surface stays in sync
+```
+User question
+          |
+          v
+contextBuildOptions (task profile, explicit file markers, provider max_context)
+          |
+          +-- task detection: security | debug | review | refactor | general
+          +-- file_scale / per_file_scale / total_scale from profile
+          +-- provider limit - reserve breakdown = available for context
+          +-- GraphDepth, Compression, IncludeTests/Docs from config
+          |
+          v
+ctxmgr.Manager.BuildWithOptions(query, opts)
+          |
+          +-- tokenizeQuery (alphanumeric + underscore terms, >= 3 chars)
+          +-- graph.Nodes() scoring (path/name substring --> +2.0, symbol name --> +3.0)
+          +-- symbol-aware pass: resolve identifiers --> seed files (+4.0 + strength)
+          +-- graph walk: expandViaGraph(seeds, GraphDepth) --> +1.5/hop
+          +-- hotspot scoring (+1.0 per hotspot file)
+          +-- sort by score, filter by IncludeTests/Docs
+          +-- buildChunkForBudget (compress, token-count, line window)
+          |
+          v
+[]types.ContextChunk
+          |
+          +-- --> buildContextChunks --> e.lastContextSnapshot (for task-attached reuse)
+          +-- --> buildSystemPrompt --> system prompt bundle with context files injected
+          +-- --> buildRequestMessages --> trimmed conversation history
+```
 
-That combination gives DFMC its architecture: a local-first code intelligence core, wrapped by a bounded LLM runtime, exposed through several operator interfaces.
+**Reserve breakdown** (`contextReserveBreakdown`):
+- Prompt tokens (system prompt estimate)
+- History tokens (conversation budget)
+- Response tokens (MaxTokens / response reserve)
+- Tool tokens (baseToolReserveTokens = 512)
+
+**Prompt library** (`internal/promptlib`): Composes system prompt from `defaults/*.yaml` + `~/.dfmc/prompts` + `.dfmc/prompts`. Renders `PromptBundle` (cacheable prefix + dynamic tail) so providers that support prompt caching (Anthropic) can emit `cache_control` annotations.
+
+---
+
+## 7. Provider Routing / Failover
+
+```
+Providers.Complete(ctx, req)
+          |
+          +-- ResolveOrder(requested) --> [requested?, primary, ...fallback..., offline]
+          |     (offline always last -- it always has an answer)
+          |
+          +-- filterToolCapable(order, requested) -- strip providers that lack
+          |     SupportsTools when req.Tools is non-empty (silence would yield
+          |     a tool-less offline reply to a live tool-using task)
+          |
+          v
+        Per-provider loop:
+          |
+          +-- [provider has multiple models?] --> completeWithProviderRetry chain
+          |     +-- on ErrContextOverflow: compact messages, retry same model
+          |
+          +-- completeWithThrottleRetry (429/503 --> Retry-After or backoff, max 3 retries)
+          |
+          +-- [error?] --> next provider; [success?] --> return
+
+Providers.CompleteRaced(ctx, req, candidates)
+          +-- resolveRaceTargets (dedupe + normalize)
+          +-- fire all candidates concurrently (context cancellation as winner signal)
+          +-- return first success; cancel losers
+```
+
+**Offline provider:** Always registered as the final fallback. `NewOfflineProvider()` returns a placeholder that implements `Complete` with a canned "offline mode" response -- no actual LLM call. When API keys are missing, the primary provider resolves to a placeholder, so the cascade silently falls through to offline.
+
+**Throttle handling:** `ErrProviderThrottled` carries `RetryAfter` if the provider sets the header; otherwise exponential backoff (1s, 2s, 4s). Respects `ctx.Done()` during wait -- agent loop cancellation aborts retries immediately.
+
+---
+
+## 8. Conversation / Message Flow
+
+```
+User message
+          |
+          v
+buildRequestMessages (question, chunks, systemPrompt)
+          |
+          +-- historyBudgetForRequest
+          |     = min(conversationHistoryBudget, providerLimit - responseReserve - usedByRequest)
+          |
+          +-- trimmedConversationMessages(budget)
+          |     <- backward walk from latest message
+          |     <- truncate at budget boundary
+          |     <- peel leading assistant turns (anthropic: messages[0] must be user)
+          |
+          +-- [omitted messages > 0 && summaryBudget > 0]
+          |     --> buildHistorySummary(omitted, summaryBudget)
+          |     --> merged into oldest kept user turn (preserves role alternation)
+          |
+          +-- append current user message --> []provider.Message
+          |
+          v
+Providers.Complete(ctx, req) --> resp
+          |
+          v
+recordInteraction(question, answer, providerName, model, tokenCount, chunks)
+          |
+          +-- Conversation.AddMessage(user) + AddMessage(assistant)
+          |     +-- SaveActive() --> JSON + JSONL on disk (atomic rename + fsync)
+          |
+          +-- Memory.SetWorkingQuestionAnswer
+          +-- Memory.TouchFile(each context chunk)
+          +-- Memory.AddEpisodicInteraction(projectRoot, question, answer, 0.7)
+```
+
+**Branching:** `Conversation.BranchCreate(name)` copies the current branch's messages into a new branch. `BranchSwitch(name)` changes the active branch. `UndoLast()` removes the last user+assistant pair (or just the assistant if there's no preceding user).
+
+---
+
+## 9. Slash Command Dispatch Chain
+
+```
+User types "/review src/foo.go"
+          |
+          v
+TUI: submitChatQuestion --> executeChatCommand
+CLI: runChatSlash --> runSkillShortcut
+
+executeChatCommand(cmd string, args string) --> Model + tea.Cmd
+          |
+          +-- detectSlashCommand --> SlashCommandItem{template, description}
+          |
+          +-- renderSlashCommandPreview (tool call preview for actions)
+          |
+          +-- [quick-action?] --> executeQuickAction (no LLM call)
+          |     list_dir, read_file, grep_codebase, run_command shortcuts
+          |
+          +-- [intent-gated?] --> autoToolIntentFromQuestion --> autoToolIntentGatedTool
+          |
+          +-- [ask mode?] --> submitToEngine (AskWithMetadata or StreamAsk)
+```
+
+| Slash Command | Action |
+|---------------|--------|
+| `/help` | Print registered tool catalog |
+| `/tools` | Toggle `m.ui.toolStripExpanded` (collapsed by default) |
+| `/keylog` | Toggle `m.ui.keyLogEnabled` (DFMC_KEYLOG env var) |
+| `/mouse` | Toggle mouse capture mode |
+| `/continue` | Resume parked agent loop |
+| `/reasoning` | Toggle coach reasoning verbosity |
+| `/compact` | Force history compaction |
+| `/clear` | Clear transcript, keep conversation |
+| `/undo` | Conversation.UndoLast() |
+| `/branch` | BranchCreate / BranchSwitch |
+| `/drive` | Drive.Run(task) |
+| `/skill` | runSkillShortcut |
+| `/{tool}` | Quick-action tool calls (list_dir, read_file, grep, run_command, etc.) |
+
+---
+
+## 10. Hooks System
+
+`internal/hooks/hooks.go` dispatches user-configured shell commands on lifecycle events. Hooks are **best-effort**: failure never blocks a tool call or user turn.
+
+```
+Hooks.Fire(ctx, event, payload) --> int (hooks that actually ran)
+          |
+          +-- entries := d.entries[event]
+          +-- conditionMatches? (tool_name == X, tool_name ~ file, etc.)
+          |
+          +-- runOne(ctx, event, compiledHook, payload) --> Report
+                +-- timeout (default 30s, per-entry override)
+                +-- applyProcessGroupIsolation (kill children on timeout)
+                +-- cmd.Env = os.Environ() + DFMC_EVENT=... + DFMC_<KEY>=<value>
+                +-- CombinedOutput (bounded at 1 MiB per stream)
+                +-- observer(Report) --> engine EventBus --> hook:run event
+```
+
+**Events:**
+
+| Event | Payload keys |
+|-------|--------------|
+| `user_prompt_submit` | `DFMC_PROMPT`, `DFMC_PROVIDER`, `DFMC_MODEL`, `DFMC_PROJECT_ROOT` |
+| `pre_tool` | `DFMC_TOOL_NAME`, `DFMC_TOOL_SOURCE`, `DFMC_PROJECT_ROOT` |
+| `post_tool` | `DFMC_TOOL_NAME`, `DFMC_TOOL_SOURCE`, `DFMC_TOOL_SUCCESS`, `DFMC_TOOL_DURATION_MS`, `DFMC_PROJECT_ROOT` |
+| `session_start` | `DFMC_PROJECT_ROOT` |
+| `session_end` | `DFMC_PROJECT_ROOT` |
+
+**Condition grammar:** `tool_name == apply_patch`, `tool_name != run_command`, `tool_name ~ file`
+
+---
+
+## 11. Key Types
+
+### Engine (`engine.go`)
+```go
+type Engine struct {
+    Config      *config.Config
+    Storage     *storage.Store
+    EventBus    *EventBus        // fan-out to TUI/Web/remote
+    ProjectRoot string
+
+    AST         *ast.Engine
+    CodeMap     *codemap.Engine
+    Context     *ctxmgr.Manager
+    Providers   *provider.Router
+    Tools       *tools.Engine
+    Memory      *memory.Store
+    Conversation *conversation.Manager
+    Security    *security.Scanner
+    Hooks       *hooks.Dispatcher
+    Intent      *intent.Router
+
+    // Lock ordering: agentMu -> mu (never hold mu while holding agentMu)
+    mu         sync.RWMutex  // general state
+    state      EngineState
+    agentMu    sync.Mutex   // parked agent + subagent state
+
+    lastContextSnapshot *ctxmgr.ContextSnapshot
+    agentParked         *parkedAgentState
+    subagentInFlight    int
+    subagentStashed     *parkedAgentState
+}
+```
+
+### Provider Router (`provider/router.go`)
+```go
+type Router struct {
+    primary   string                 // default provider name
+    fallback  []string               // fallback chain
+    providers map[string]Provider    // registered providers
+}
+type ThrottleNotice struct {
+    Provider string; Attempt int; Wait time.Duration; Stream bool; Err error
+}
+```
+
+### Tools Engine (`tools/engine.go`)
+```go
+type Engine struct {
+    registry        map[string]Tool   // backend + meta tools
+    readSnapshots   map[string]string // path -> sha256(content at read time)
+    readSnapshotLRU []string          // LRU order for eviction
+    delegateTool    *DelegateTaskTool  // engine.RunSubagent wired here
+    orchestrateTool *OrchestrateTool
+    reasoningPublisher ReasoningPublisher  // (toolName, reason) -> engine event
+    taskStore       *taskstore.Store
+}
+```
+
+### Intent (`intent/intent.go` + `router.go`)
+```go
+type Intent   string  // "resume" | "new" | "clarify"
+type Decision struct {
+    Intent           Intent
+    EnrichedRequest  string   // rewritten prompt
+    Reasoning        string   // short trace
+    FollowUpQuestion string   // only for clarify
+    Source           string   // "llm" | "fallback"
+    Latency          time.Duration
+}
+type Router struct {
+    cfg    config.IntentConfig  // Enabled, Provider, Model, TimeoutMs, FailOpen
+    lookup ProviderLookup       // func(name) (Provider, bool)
+}
+```
+
+### Drive (`drive/driver.go` + `types.go`)
+```go
+type Run struct {
+    ID        string; Status RunStatus
+    Task      string; Plan *Plan; Todos []Todo
+    CreatedAt time.Time; EndedAt time.Time; Reason string
+}
+type Todo struct {
+    ID string; Title string; Detail string
+    DependsOn []string; FileScope []string
+    ProviderTag string; WorkerClass string; Skills []string
+    AllowedTools []string; Labels []string
+    Verification string; ReadOnly bool; Confidence float64
+    Status TodoStatus; Error string; BlockedReason string
+    Origin string; Kind string; ParentID string
+}
+type Driver struct {
+    runner Runner; store *Store; publisher Publisher; cfg Config
+}
+```
+
+### Context Manager (`context/manager.go`)
+```go
+type Manager struct {
+    codemap *codemap.Engine
+    prompts *promptlib.Library
+}
+type BuildOptions struct {
+    MaxFiles, MaxTokensTotal, MaxTokensPerFile int
+    Compression string; IncludeTests, IncludeDocs bool
+    SymbolAware bool; GraphDepth int
+    Strategy RetrievalStrategy  // general | security | debug | review | refactor
+}
+```
+
+---
+
+## 12. Event Bus
+
+`internal/engine/event_bus.go` provides a publish-subscribe fan-out. All UIs and Drive subscribe to receive engine and agent events for real-time rendering.
+
+**Key events:**
+
+| Event | Payload |
+|-------|---------|
+| `engine:initializing/ready/serving/shutdown/stopped` | -- |
+| `engine:shutdown_error` | `{stage, error}` |
+| `memory:degraded` | `{reason}` |
+| `index:start/progress/done/error/cancelled` | varies |
+| `context:built/error` | `{files, tokens, budget, task, reasons}` |
+| `provider:complete` | `{provider, model, tokens}` |
+| `provider:race:complete/failed` | `{winner, candidates, model, tokens, duration_ms}` |
+| `agent:loop:start/thinking/final/parked/error/interrupted/shutdown_parked` | varies |
+| `agent:loop:budget_exhausted` | `{step, max_tool_steps, max_tool_tokens, tokens_used}` |
+| `agent:note:injected` | `{step, note}` |
+| `tool:complete/error/panicked/denied/reasoning` | varies |
+| `hook:run` | `{event, name, command, exit_code, duration_ms, err}` |
+| `intent:decision` | `Decision` struct |
+| `drive:run:start/done/stopped/failed/warning` | varies |
+| `drive:todo:start/done/blocked/skipped/retry` | varies |
+
+---
+
+## 13. Config Hierarchy
+
+```
+config.Load() merges (in order, later wins):
+  1. Built-in defaults (internal/config/defaults.go)
+  2. ~/.dfmc/config.yaml (global overrides)
+  3. <project>/.dfmc/config.yaml (project overrides)
+  4. Environment variables (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...)
+  5. CLI flags (--provider, --model, --project, ...)
+
+.dfc/config.yaml is gitignored -- it contains API keys.
+.project/ holds design specs (SPECIFICATION.md, IMPLEMENTATION.md) -- also gitignored.
+```
+
+**Degraded startup:** Commands that don't need a full engine (`help`, `version`, `doctor`, `completion`, `man`, `update`) are allow-listed in `allowsDegradedStartup`. When `engine.Init` fails with `ErrStoreLocked`, these commands still run so the user can diagnose the lock conflict.
+
+---
+
+## 14. CGO / AST Backend
+
+**Tree-sitter bindings** (`tree-sitter-go`, `-javascript`, `-typescript`, `-python`) require CGO. With `CGO_ENABLED=0` the build succeeds but AST silently falls back to the regex extractor in `internal/ast/backend_stub.go`.
+
+```
+ast.NewWithCacheSize(cacheSize)
+  +-- CGO_ENABLED=1 --> tree_sitter bindings (real AST)
+  +-- CGO_ENABLED=0 --> backend_stub.go (regex fallback, no AST)
+
+dfmc doctor --> reports ast_backend: tree-sitter | regex
+```
+
+The `ast_backend: regex` result means AST features will be degraded -- code search via `grep_codebase` still works, but `find_symbol` and `codemap` have reduced precision.
+
+---
+
+## 15. Read-Gate Summary
+
+```
+edit_file   --> readGateLenient   --> prior snapshot (hash drift tolerated)
+write_file  --> readGateStrict    --> prior snapshot + hash equality
+apply_patch --> readGateStrict    --> per-file via Engine.EnsureReadBeforeMutation
+new files   --> exempt            --> no prior read needed
+```
+
+The purpose: prevent the model from editing a file that has changed since it was read (another tool, an editor, a formatter). For `edit_file` the tool's own exact-string anchor check already catches drift, so the gate is lenient. For `write_file` and `apply_patch` there is no per-call anchor -- full overwrite and line-numbered hunks silently lose concurrent changes without the hash check.
+
+---
+
+## 16. Interaction Between Subsystems
+
+```
++---------------------------------------------------------------------+
+|                          Engine.Ask                                 |
+|                                                                     |
+|  1. routeIntent --> Intent.Evaluate(Snapshot) --> resume / new / clarify |
+|                                                                     |
+|  2a. [resume] --> ResumeAgent --> runNativeToolLoop --> CallTool --> execute |
+|                                                                     |
+|  2b. [new]    --> buildContextChunks --> buildSystemPrompt           |
+|                 --> Providers.Complete(req)                          |
+|                 --> recordInteraction --> Conversation + Memory        |
+|                                                                     |
+|  3. [tool call from loop] --> executeToolWithLifecycle              |
+|       --> Hooks(pre_tool) --> Tools.Execute --> Hooks(post_tool)     |
+|       --> Context.Invalidate(file) --> CodeMap refreshed on next build|
+|                                                                     |
+|  4. result --> model sees tool_result --> next completion call       |
+|                                                                     |
+|  5. [budget low] --> compactHistory --> retry same provider          |
+|     [budget exhausted after compact] --> parkNativeToolLoop         |
+|     [parked] --> user types /continue --> ResumeAgent resumes       |
++---------------------------------------------------------------------+
+|                    Engine.Init --> Shutdown                          |
+|                                                                     |
+|  Init:                                                               |
+|    storage.Open --> AST.New + CodeMap.New + Tools.New                |
+|    Memory.New + Memory.Load (degraded flag on failure)               |
+|    provider.NewRouter --> attachProviderObservers                    |
+|    intent.NewRouter (fail-open, nil-safe)                           |
+|    hooks.New --> fire session_start                                  |
+|    indexCodebase (async, writes to CodeMap)                          |
+|                                                                     |
+|  Shutdown (order matters!):                                          |
+|    cancel indexCtx --> indexWG.Wait (join background goroutines)     |
+|    fire session_end hooks (5s timeout)                              |
+|    Conversation.SaveActive --> Memory.Persist --> Tools.Close --> Storage|
++---------------------------------------------------------------------+
+|                      Drive / Planner / Scheduler                     |
+|                                                                     |
+|  Driver.Run --> runPlanner (no tools, no history, single LLM call)   |
+|    --> []Todo (validated, dependency graph)                         |
+|                                                                     |
+|  Scheduler.readyBatch(todos, limit):                               |
+|    depsAllDone? --> file_scope conflicts? --> lane capacity?         |
+|    --> batch of runnable TODO indices                               |
+|                                                                     |
+|  ExecuteTodo --> engine.RunSubagent(detail, provider_tag)            |
+|    --> supervisor.Task --> tools.TaskStore (bbolt)                    |
+|    --> context snapshot attached to task                             |
+|    --> result --> todo.Status = Done|Blocked|Skipped                |
+|    --> persist(run) --> EventBus.drive:*                            |
++---------------------------------------------------------------------+
+```
+
+---
+
+## 17. TUI Panel State Architecture
+
+All TUI panel state lives in `panel_states.go` structs, not flat fields on `Model`:
+
+```
+Model
++-- chat chatState              (composer + transcript + stream)
++-- program *tea.Program         (live handle for runtime commands)
++-- gitInfo / sessionStart       (workspace metadata)
++-- ui uiToggles                 (overlay/mode flags)
++-- patchView patchViewState     (patch tab + diff snapshot)
++-- workflow workflowPanelState
++-- filesView filesViewState
++-- toolView toolViewState
++-- slashMenu slashMenuState
++-- inputHistory inputHistoryState
++-- commandPicker commandPickerState
++-- activity activityPanelState  (timestamped firehose)
++-- *diagnosticPanelsState      (cold panels: Memory, CodeMap, Conversations, ...)
++-- agentLoop agentLoopState    (native loop telemetry)
++-- telemetry sessionTelemetry   (running counters)
++-- intent intentState           (latest intent decision)
++-- pendingApproval *pendingApproval  (modal, y/n/Esc)
+```
+
+The `uiToggles` struct holds runtime flags driven by slash commands and ctrl-keys. Cold diagnostic panels are lazily constructed via `ensureDiagnostics()` so they don't consume memory until visited.
+
+---
+
+## 18. Web Server Routes
+
+```
+GET  /                      --> renderWorkbenchHTML (go:embed static/index.html)
+GET  /healthz               --> {status: ok}
+
+GET  /api/v1/status         --> engine.Status()
+GET  /api/v1/commands/{name} --> command detail
+POST /api/v1/chat           --> handleChat (SSE stream)
+POST /api/v1/ask            --> handleAsk (non-streaming, supports race mode)
+GET  /api/v1/codemap        --> handleCodeMap
+GET  /api/v1/providers      --> provider list
+GET  /api/v1/tools/{name}   --> tool spec
+POST /api/v1/tools/{name}   --> tool exec
+
+GET/POST /api/v1/conversation/*  --> conversation CRUD
+GET  /api/v1/memory            --> memory search
+GET/POST /api/v1/prompts/*     --> prompt library
+GET/POST /api/v1/magicdoc      --> magicdoc show/update
+
+GET/POST /api/v1/drive/*      --> Drive.Run / Drive.Resume / Drive.Stop
+GET/POST /api/v1/tasks/*     --> task store CRUD
+
+GET /ws                      --> handleWebSocket (SSE stream for live updates)
+
+Rate limiting: 30 req/s per IP, burst 60.
+Bearer token auth: enabled when auth=token (DFMC_WEB_TOKEN env var).
+Body size cap: 4 MiB per POST/PUT/PATCH.
+```
+
+---
+
+## 19. File Path Normalization
+
+All file paths in tool results are made project-relative before being stored in conversation logs or memory:
+
+```
+Tools.Execute --> res.Data["path"] = PathRelativeToRoot(projectRoot, absPath)
+                +-- filepath.Rel(absRoot, absPath) --> forward-slash normalized
+                   Falls back to absPath on cross-volume (Windows)
+
+EnsureWithinRoot(root, path):
+  1. Lexical: filepath.Abs + filepath.Rel -- rejects .. prefix
+  2. Symbolic: filepath.EvalSymlinks on both root and path
+     --> re-check containment after symlink resolution
+     --> for non-existent path: resolve nearest existing ancestor,
+         then re-check containment
+```
+
+This prevents absolute host paths (`C:\Users\...`) from leaking into conversation JSONL and episodic memory.
+
+---
+
+## 20. Notable Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| `executeToolWithLifecycle` is the only tool entry point | Ensures approval gate + hooks + panic guard fire for every call, including subagent-initiated ones |
+| Intent layer is fail-open | The engine must never be blocked by the intent classifier; any failure falls back to raw input routing |
+| Offline provider is always last in ResolveOrder | It always has an answer; racing it wastes tokens |
+| `tool_reasoning` strip is unconditional | Even when the publisher is nil the strip runs so tools never see `_reason` as unexpected input |
+| Read-gate uses full-file hash for `read_file` | The returned `Output` is a line window, not the full file; hashing the window would produce a slice-hash that never matches `fileContentHash` at the strict gate |
+| History trim peels leading assistant turns | Anthropic/compat rejects messages arrays that start with assistant; peeling keeps alternation valid |
+| Park saves cumulative steps/tokens | Without this, each park->resume cycle resets `CumulativeSteps` and the autonomous ceiling never trips |
+| Hook output capped at 1 MiB per stream | Prevents runaway hooks (`tail -f`, infinite progress dots) from growing buffers until OOM |
+| Meta tool budget seeded once at loop boundary | Double-seeding wins (first call wins), so nested expansion shares one counter instead of each dispatch getting a fresh allowance |
+| Drive persist after every state transition | Crash or restart loses at most one in-flight transition; no explicit checkpoint needed |
+| Supervisor plan wraps planner TODOs | Auto-survey adds `file_scope`-empty discovery TODOs before each modification; auto-verify adds terminal review TODOs |
