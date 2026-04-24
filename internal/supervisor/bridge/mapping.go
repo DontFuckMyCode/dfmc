@@ -110,6 +110,8 @@ func normalizeWorkerClass(raw string) string {
 		return string(supervisor.WorkerSecurity)
 	case string(supervisor.WorkerSynthesizer):
 		return string(supervisor.WorkerSynthesizer)
+	case string(supervisor.WorkerVerifier):
+		return string(supervisor.WorkerVerifier)
 	default:
 		return string(supervisor.WorkerCoder)
 	}

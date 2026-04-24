@@ -44,7 +44,7 @@ func TestBuildExecutionPlan_AutoVerifySynthesizesVerificationTask(t *testing.T) 
 		t.Fatalf("expected synthesized verification task, got %d tasks", len(plan.Tasks))
 	}
 	last := plan.Tasks[len(plan.Tasks)-1]
-	if last.ID != "SV1" || !last.IsAuto || last.WorkerClass != WorkerSecurity {
+	if last.ID != "SV1" || !last.IsAuto || (last.WorkerClass != WorkerSecurity && last.WorkerClass != WorkerVerifier) {
 		t.Fatalf("unexpected synthesized task: %+v", last)
 	}
 	if plan.VerificationID != "SV1" {

@@ -16,19 +16,24 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/skills"
+	"gopkg.in/yaml.v3"
 )
 
 type skillInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Path        string `json:"path,omitempty"`
-	Source      string `json:"source"`
-	Builtin     bool   `json:"builtin"`
-	Prompt      string `json:"-"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Path        string   `json:"path,omitempty"`
+	Source      string   `json:"source"`
+	Builtin     bool     `json:"builtin"`
+	Prompt      string   `json:"-"`
+	Preferred   []string `json:"preferred,omitempty"`
+	Allowed     []string `json:"allowed,omitempty"`
 }
 
 func runSkill(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
@@ -91,6 +96,10 @@ func runSkill(ctx context.Context, eng *engine.Engine, args []string, jsonMode b
 	default:
 		fmt.Fprintln(os.Stderr, "usage: dfmc skill [list|info <name>|run <name> [input]]")
 		return 2
+	case "export":
+		return runSkillExport(args[1:])
+	case "install":
+		return runSkillInstall(args[1:])
 	}
 }
 
@@ -150,7 +159,115 @@ func discoverSkills(projectRoot string) []skillInfo {
 			Source:      item.Source,
 			Builtin:     item.Builtin,
 			Prompt:      item.SystemInstruction(),
+			Preferred:   item.Preferred,
+			Allowed:     item.Allowed,
 		})
 	}
 	return out
+}
+
+// runSkillExport writes a skill's YAML definition to stdout.
+// Usage: dfmc skill export <name>
+func runSkillExport(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: dfmc skill export <name>")
+		return 2
+	}
+	name := strings.TrimSpace(args[0])
+	item, ok := skills.Lookup("", name)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "skill %q not found\n", name)
+		return 1
+	}
+	if item.Builtin {
+		fmt.Fprintf(os.Stderr, "warning: %q is a builtin — export shows source fields only\n", name)
+	}
+	rec := skillExportRecord{
+		Name:           item.Name,
+		Description:    item.Description,
+		Task:           item.Task,
+		Role:           item.Role,
+		Profile:        item.Profile,
+		PreferredTools: item.Preferred,
+		AllowedTools:   item.Allowed,
+	}
+	if body := strings.TrimSpace(item.System); body != "" {
+		rec.SystemPrompt = body
+	} else if body := strings.TrimSpace(item.Prompt); body != "" {
+		rec.Prompt = body
+	}
+	data, err := yaml.Marshal(rec)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "yaml marshal: %v\n", err)
+		return 1
+	}
+	fmt.Print(string(data))
+	return 0
+}
+
+type skillExportRecord struct {
+	Name           string   `yaml:"name"`
+	Description    string   `yaml:"description,omitempty"`
+	Task           string   `yaml:"task,omitempty"`
+	Role           string   `yaml:"role,omitempty"`
+	Profile        string   `yaml:"profile,omitempty"`
+	PreferredTools []string `yaml:"preferred_tools,omitempty"`
+	AllowedTools   []string `yaml:"allowed_tools,omitempty"`
+	Prompt         string   `yaml:"prompt,omitempty"`
+	SystemPrompt   string   `yaml:"system_prompt,omitempty"`
+}
+
+// runSkillInstall copies a skill YAML file to .dfmc/skills/.
+// Usage: dfmc skill install <path>
+func runSkillInstall(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: dfmc skill install <path>")
+		return 2
+	}
+	src := strings.TrimSpace(args[0])
+	if src == "" {
+		fmt.Fprintln(os.Stderr, "path required")
+		return 2
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read %s: %v\n", src, err)
+		return 1
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		fmt.Fprintf(os.Stderr, "parse %s as YAML: %v\n", src, err)
+		return 1
+	}
+	nameRaw, ok := raw["name"]
+	if !ok {
+		fmt.Fprintln(os.Stderr, "YAML must have a top-level 'name' field")
+		return 1
+	}
+	name := strings.TrimSpace(fmt.Sprint(nameRaw))
+	if name == "" {
+		fmt.Fprintln(os.Stderr, "'name' field cannot be empty")
+		return 1
+	}
+	// Determine install target (prefer project over global)
+	projectRoot := os.Getenv("DFMC_PROJECT_ROOT")
+	targetDir := filepath.Join(config.UserConfigDir(), "skills")
+	if projectRoot != "" {
+		targetDir = filepath.Join(projectRoot, ".dfmc", "skills")
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "create skills dir %s: %v\n", targetDir, err)
+		return 1
+	}
+	dst := filepath.Join(targetDir, name+".yaml")
+	if _, err := os.Stat(dst); err == nil {
+		fmt.Fprintf(os.Stderr, "skill %q already exists at %s\n", name, dst)
+		return 1
+	}
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "write %s: %v\n", dst, err)
+		return 1
+	}
+	fmt.Printf("installed: %s\n", dst)
+	return 0
 }

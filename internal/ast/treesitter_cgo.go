@@ -151,7 +151,14 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 			}
 		case "method_declaration":
 			if name := node.ChildByFieldName("name"); name != nil {
-				symbols = append(symbols, buildTreeSitterSymbol(path, lang, node, content, name.Utf8Text(content), types.SymbolMethod))
+				receiver := node.ChildByFieldName("receiver")
+				meta := map[string]string{}
+				if receiver != nil {
+					meta["receiver"] = strings.TrimSpace(receiver.Utf8Text(content))
+				}
+				sym := buildTreeSitterSymbol(path, lang, node, content, name.Utf8Text(content), types.SymbolMethod)
+				sym.Metadata = meta
+				symbols = append(symbols, sym)
 			}
 		case "type_spec":
 			name := node.ChildByFieldName("name")

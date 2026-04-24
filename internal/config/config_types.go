@@ -10,6 +10,8 @@
 
 package config
 
+import "strings"
+
 type Config struct {
 	Version   int             `yaml:"version"`
 	Providers ProvidersConfig           `yaml:"providers"`
@@ -220,14 +222,20 @@ type ProvidersConfig struct {
 type ModelConfig struct {
 	APIKey      string   `yaml:"api_key,omitempty"`
 	BaseURL     string   `yaml:"base_url,omitempty"`
-	Models      []string `yaml:"models,omitempty"`           // ordered list, first = preferred
+	Models      []string `yaml:"models,omitempty"` // ordered list, first = preferred
 	FallbackModels []string `yaml:"fallback_models,omitempty"` // tried in order when preferred model fails
-	Model      string   `yaml:"model,omitempty"`            // deprecated single-model alias (backward compat)
+	Model      string   `yaml:"model,omitempty"` // deprecated single-model alias (backward compat)
 	MaxTokens   int      `yaml:"max_tokens,omitempty"`
 	MaxContext  int      `yaml:"max_context,omitempty"`
 	Protocol    string   `yaml:"protocol,omitempty"`
 	Region      string   `yaml:"region,omitempty"`
 	HTTPTimeout int      `yaml:"http_timeout,omitempty"` // response header timeout in seconds; 0 uses default (180s)
+	Tags        []string `yaml:"tags,omitempty"` // capability tags e.g. "code", "review", "fast", "cheap"
+	// CostPer1kTokens is the approximate cost in USD per 1k tokens (input+output)
+	// at the time of configuration. Used by cost-weighted model selection to
+	// prefer cheaper models when capability is equal. Not persisted — derived
+	// from provider pricing at config time or updated via sync-models.
+	CostPer1kTokens float64 `yaml:"cost_per_1k_tokens,omitempty"`
 }
 
 // BestModel returns the preferred model: Models[0] if set, otherwise Model.
@@ -249,6 +257,17 @@ func (c ModelConfig) AllModels() []string {
 		return []string{c.Model}
 	}
 	return nil
+}
+
+// TagMatches reports whether the profile has a tag matching name (case-insensitive).
+func (c ModelConfig) TagMatches(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, t := range c.Tags {
+		if strings.EqualFold(strings.TrimSpace(t), name) {
+			return true
+		}
+	}
+	return false
 }
 
 type RoutingConfig struct {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
+	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 type Engine struct {
@@ -97,18 +98,33 @@ func (e *Engine) BuildFromFiles(ctx context.Context, paths []string, onProgress 
 
 		for _, sym := range result.Symbols {
 			symID := fmt.Sprintf("sym:%s:%s:%d", filepath.ToSlash(path), sym.Name, sym.Line)
-			e.graph.AddNode(Node{
+			node := Node{
 				ID:       symID,
 				Name:     sym.Name,
 				Path:     filepath.ToSlash(path),
 				Kind:     string(sym.Kind),
 				Language: sym.Language,
-			})
+				Meta:     sym.Metadata,
+			}
+			e.graph.AddNode(node)
 			e.graph.AddEdge(Edge{
 				From: fileNodeID,
 				To:   symID,
 				Type: "defines",
 			})
+			// Method→type ownership edge: a method declared on a receiver type
+			// gets a "method_of" edge to the type symbol found in the same file.
+			if sym.Kind == types.SymbolMethod && sym.Metadata != nil {
+				if receiver := sym.Metadata["receiver"]; receiver != "" {
+					if typeNode := findTypeNodeForReceiver(e.graph, receiver, filepath.ToSlash(path)); typeNode != "" {
+						e.graph.AddEdge(Edge{
+							From: symID,
+							To:   typeNode,
+							Type: "method_of",
+						})
+					}
+				}
+			}
 		}
 
 		// Check cancellation and report progress every 50 files.
@@ -178,4 +194,41 @@ func (e *Engine) InvalidateFile(path string) {
 			e.graph.RemoveNode(n.ID)
 		}
 	}
+}
+
+// findTypeNodeForReceiver locates the type symbol (class/interface/type)
+// whose name matches the receiver string within the same file. This wires
+// method→type ownership edges ("method_of") so that codemap queries like
+// "what methods does *Server own?" can traverse the graph directly.
+func findTypeNodeForReceiver(graph *Graph, receiver, filePath string) string {
+	rec := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(receiver), "*"), "&")
+	rec = strings.TrimLeft(rec, "() ")
+	if rec == "" {
+		return ""
+	}
+	recLower := strings.ToLower(rec)
+	var candidates []string
+	for _, n := range graph.Nodes() {
+		if n.Path != filePath {
+			continue
+		}
+		switch n.Kind {
+		case "class", "interface", "type":
+			if strings.ToLower(n.Name) == recLower {
+				candidates = append(candidates, n.ID)
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+	for _, id := range candidates {
+		if id == rec {
+			return id
+		}
+	}
+	return candidates[0]
 }

@@ -133,6 +133,7 @@ func todoToTask(todo Todo) supervisor.Task {
 		Attempts:     todo.Attempts,
 		StartedAt:    todo.StartedAt,
 		EndedAt:      todo.EndedAt,
+		LastContext:  todo.LastContext,
 	}
 }
 
@@ -158,12 +159,13 @@ func taskToTodo(task supervisor.Task) Todo {
 		Attempts:     task.Attempts,
 		StartedAt:    task.StartedAt,
 		EndedAt:      task.EndedAt,
+		LastContext:  task.LastContext,
 	}
 }
 
 func supervisorNormalizeWorkerClass(raw string) string {
 	switch raw {
-	case "planner", "researcher", "reviewer", "tester", "security", "synthesizer":
+	case "planner", "researcher", "coder", "reviewer", "tester", "security", "synthesizer", "verifier":
 		return raw
 	default:
 		return "coder"

@@ -76,8 +76,14 @@ func ResolvePromptRole(query, task string) string {
 		return "refactorer"
 	case "test":
 		return "test_engineer"
-	case "doc":
+	case "doc", "document":
 		return "documenter"
+	case "synthesize", "synthesis", "summarize":
+		return "synthesizer"
+	case "research", "survey", "inventory":
+		return "researcher"
+	case "verify", "verification":
+		return "verifier"
 	default:
 		return "generalist"
 	}

@@ -1412,6 +1412,9 @@ function renderDriveDetail(run) {
 		if (Array.isArray(todo.depends_on) && todo.depends_on.length) meta.push("deps=" + todo.depends_on.join(","));
 		if (Array.isArray(todo.file_scope) && todo.file_scope.length) meta.push("scope=" + todo.file_scope.join(","));
 		if (todo.provider_tag) meta.push("@" + todo.provider_tag);
+		if (todo.worker_class) meta.push("[" + todo.worker_class + "]");
+		if (Array.isArray(todo.skills) && todo.skills.length) meta.push("\u2699" + todo.skills.join("\u00b7"));
+		if (todo.verification) meta.push("v:" + todo.verification);
 		if (meta.length) {
 			const m = document.createElement("div");
 			m.className = "drive-item-meta";

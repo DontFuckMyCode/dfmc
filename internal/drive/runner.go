@@ -53,6 +53,7 @@ type PlannerResponse struct {
 // the planner declared file_scope or tagged the TODO as read-only.
 type ExecuteTodoRequest struct {
 	TodoID       string
+	ProviderTag  string // routing hint for per-worker provider selection
 	Title        string
 	Detail       string
 	Brief        string

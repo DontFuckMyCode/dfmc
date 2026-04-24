@@ -20,6 +20,10 @@ type SubagentRequest struct {
 	// user/model supplied; adapters like drive may set it so approval
 	// overrides apply only to their own sub-agent tool calls.
 	ToolSource string `json:"-"`
+	// Skills carries skill names to inject as system-prompt overlays in
+	// sub-agent prompts. The engine resolves names to playbook text before
+	// building the system prompt.
+	Skills []string `json:"skills,omitempty"`
 }
 
 // SubagentResult is what the engine reports back to the parent tool loop.

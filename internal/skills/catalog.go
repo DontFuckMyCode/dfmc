@@ -86,6 +86,27 @@ func Discover(projectRoot string) []Skill {
 			seen[key] = struct{}{}
 			out = append(out, item)
 		}
+		// Also scan for Agent Skills directory bundles: <name>/SKILL.md
+		entries, _ := os.ReadDir(root.path)
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			skillPath := filepath.Join(root.path, entry.Name(), "SKILL.md")
+			if _, err := os.Stat(skillPath); err != nil {
+				continue
+			}
+			item := readSkillFile(skillPath, root.source)
+			key := strings.ToLower(strings.TrimSpace(item.Name))
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, item)
+		}
 	}
 
 	sort.Slice(out, func(i, j int) bool {
@@ -105,6 +126,13 @@ func Lookup(projectRoot, name string) (Skill, bool) {
 		}
 	}
 	return Skill{}, false
+}
+
+// SkillForName is a thin wrapper around Lookup that returns the Skill
+// struct directly. Used by callers that need the full Skill value
+// (Preferred/Allowed lists) rather than just existence.
+func SkillForName(projectRoot, name string) (Skill, bool) {
+	return Lookup(projectRoot, name)
 }
 
 func ResolveForQuery(projectRoot, query, detectedTask string) Selection {
@@ -275,6 +303,109 @@ func skillForTask(task string) string {
 	}
 }
 
+// extractMarkdownBody splits a SKILL.md body (YAML frontmatter + markdown)
+// and returns the markdown portion. Returns empty string if the file
+// doesn't look like a SKILL.md.
+func extractMarkdownBody(data []byte) string {
+	body := string(data)
+	if !strings.HasPrefix(body, "---") {
+		return ""
+	}
+	sep := "\n---"
+	idx := strings.Index(body[3:], sep)
+	if idx < 0 {
+		return ""
+	}
+	frontEnd := 3 + idx + len(sep)
+	return strings.TrimSpace(body[frontEnd:])
+}
+
+// tryAgentSkillFormat parses a SKILL.md file (YAML frontmatter + markdown body)
+// and returns a Skill struct. Returns zero value if the file does not look like
+// an Agent Skills SKILL.md.
+func tryAgentSkillFormat(data []byte, path, source string) Skill {
+	// Split YAML frontmatter from markdown body.
+	body := string(data)
+	if !strings.HasPrefix(body, "---") {
+		return Skill{}
+	}
+	sep := "\n---"
+	idx := strings.Index(body[3:], sep)
+	if idx < 0 {
+		return Skill{}
+	}
+	frontEnd := 3 + idx + len(sep)
+	frontMatter := strings.TrimSpace(body[3 : 3+idx])
+	markdownBody := strings.TrimSpace(body[frontEnd:])
+	if markdownBody == "" {
+		return Skill{}
+	}
+
+	raw := map[string]any{}
+	if err := yaml.Unmarshal([]byte(frontMatter), &raw); err != nil {
+		return Skill{}
+	}
+	nameRaw, ok := raw["name"]
+	if !ok {
+		return Skill{}
+	}
+	name := strings.TrimSpace(fmt.Sprint(nameRaw))
+	if name == "" {
+		return Skill{}
+	}
+	// Validate filename matches skill name (Agent Skills spec requirement).
+	// For <name>.SKILL.md: strip ".md" then ".SKILL" to get <name>.
+	// For <name>.md: strip ".md" to get <name>.
+	filename := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if strings.HasSuffix(strings.ToLower(filename), ".skill") {
+		filename = strings.TrimSuffix(filename, filepath.Ext(filename))
+	}
+	if !strings.EqualFold(name, filename) {
+		// Warn but proceed — filename mismatch is a soft error.
+	}
+	description := ""
+	if v, ok := raw["description"]; ok {
+		description = strings.TrimSpace(fmt.Sprint(v))
+	}
+	// Build system_prompt from markdown body.
+	system := markdownBody
+
+	// allowed-tools is space-separated; convert to our []string.
+	var allowed []string
+	if v, ok := raw["allowed-tools"].(string); ok && strings.TrimSpace(v) != "" {
+		for tok := range strings.FieldsSeq(v) {
+			if t := strings.TrimSpace(tok); t != "" {
+				allowed = append(allowed, t)
+			}
+		}
+	}
+
+	// compatibility and metadata are informational only — stash in description.
+	var extra []string
+	if v, ok := raw["compatibility"].(string); ok && strings.TrimSpace(v) != "" {
+		extra = append(extra, "compatibility: "+strings.TrimSpace(v))
+	}
+	if meta, ok := raw["metadata"].(map[string]any); ok {
+		for k, rv := range meta {
+			extra = append(extra, k+"="+fmt.Sprint(rv))
+		}
+	}
+	desc := description
+	if len(extra) > 0 {
+		desc = desc + " (" + strings.Join(extra, ", ") + ")"
+	}
+
+	return Skill{
+		Name:        name,
+		Description: desc,
+		Path:        path,
+		Source:      source,
+		Builtin:     false,
+		System:      system,
+		Allowed:     allowed,
+	}
+}
+
 func readSkillFile(path, source string) Skill {
 	item := Skill{
 		Name:    strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
@@ -286,12 +417,41 @@ func readSkillFile(path, source string) Skill {
 	if err != nil {
 		return item
 	}
+	// If yaml.Unmarshal succeeds with a name, it's a native DFMC skill.
 	if err := yaml.Unmarshal(data, &item); err == nil && strings.TrimSpace(item.Name) != "" {
 		item.Source = source
 		item.Path = path
+		// SKILL.md files: yaml tag mapping misses `allowed-tools` (hyphen vs underscore).
+		// If Allowed is still empty, re-parse as raw map and pull allowed-tools.
+		if len(item.Allowed) == 0 && strings.HasPrefix(string(data), "---") {
+			raw := map[string]any{}
+			if yaml.Unmarshal(data, &raw) == nil {
+				if v, ok := raw["allowed-tools"].(string); ok && strings.TrimSpace(v) != "" {
+					for tok := range strings.FieldsSeq(v) {
+						if t := strings.TrimSpace(tok); t != "" {
+							item.Allowed = append(item.Allowed, t)
+						}
+					}
+				}
+			}
+		}
+		// SKILL.md: System field maps from system_prompt but the markdown body
+		// is the actual skill content. Extract it when System is empty.
+		if item.System == "" && strings.HasPrefix(string(data), "---") {
+			if md := extractMarkdownBody(data); md != "" {
+				item.System = md
+			}
+		}
 		return item
 	}
 
+	// Not a native DFMC skill — try Agent Skills SKILL.md format.
+	item = tryAgentSkillFormat(data, path, source)
+	if strings.TrimSpace(item.Name) != "" {
+		return item
+	}
+
+	// Last resort: generic map[string]any parse.
 	raw := map[string]any{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return item

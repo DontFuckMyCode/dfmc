@@ -63,6 +63,10 @@ type PromptRuntime struct {
 	LowLatency  bool
 	MaxContext  int
 	BestFor     []string
+	// ActiveSkills carries the resolved skill list from BuildSystemPromptBundle
+	// into the agent loop so executeToolWithLifecycle can consult Preferred/Allowed
+	// tool lists when enforcing skill-scoped tool policy.
+	ActiveSkills []string
 }
 
 func New(cm *codemap.Engine) *Manager {
@@ -304,6 +308,15 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 	if primary, ok := skillSelection.Primary(); ok && strings.TrimSpace(primary.Profile) != "" {
 		profile = strings.TrimSpace(primary.Profile)
 	}
+	// Surface active skill names in the system prompt so the model knows
+	// which skill overlays are active and can honour Preferred/Allowed lists.
+	activeSkillNames := make([]string, 0, len(skillSelection.Skills))
+	for _, s := range skillSelection.Skills {
+		if n := strings.TrimSpace(s.Name); n != "" {
+			activeSkillNames = append(activeSkillNames, n)
+		}
+	}
+	runtime.ActiveSkills = activeSkillNames
 	limits := ResolvePromptRenderBudget(task, profile, runtime)
 	injected := BuildInjectedContextWithBudget(projectRoot, cleanQuery, limits)
 	bundle := m.prompts.RenderBundle(promptlib.RenderRequest{
@@ -363,6 +376,12 @@ func appendSkillSections(bundle *promptlib.PromptBundle, active []skills.Skill) 
 	}
 
 	sections := make([]promptlib.PromptSection, 0, len(bundle.Sections)+len(extras))
+	// Prepend skill extras before all existing sections. The stable section
+	// (system prompt, tool policies) is typically 4000+ chars while skill playbooks
+	// are ~700 chars. trimBundleToBudget scans top-to-bottom and each cacheable
+	// section takes its proportional share — inserting AFTER the stable section
+	// would let stable consume the budget before skill sections are even reached.
+	// Prepending puts skill text first so it gets priority when trimming kicks in.
 	sections = append(sections, extras...)
 	sections = append(sections, bundle.Sections...)
 	bundle.Sections = sections

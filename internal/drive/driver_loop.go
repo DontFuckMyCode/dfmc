@@ -137,6 +137,7 @@ func (d *Driver) dispatchTodo(ctx context.Context, run *Run, idx int, results ch
 	// this copied request payload and never mutate the shared slice.
 	req := ExecuteTodoRequest{
 		TodoID:            t.ID,
+		ProviderTag:       t.ProviderTag,
 		Title:             t.Title,
 		Detail:            t.Detail,
 		Brief:             briefSoFar(run.Todos, idx),
@@ -162,6 +163,8 @@ func (d *Driver) dispatchTodo(ctx context.Context, run *Run, idx int, results ch
 		"profile_selected": req.Model,
 		"max_steps":        req.MaxSteps,
 		"providers":        req.ProfileCandidates,
+		"skills":           t.Skills,
+		"file_scope":       t.FileScope,
 	})
 	go func(idx int, req ExecuteTodoRequest, started time.Time, attempt int) {
 		defer func() {
@@ -287,6 +290,7 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 		"origin":           t.Origin,
 		"kind":             t.Kind,
 		"worker_class":     t.WorkerClass,
+		"skills":           t.Skills,
 		"spawned":          len(added),
 		"provider":         res.Resp.Provider,
 		"model":            res.Resp.Model,

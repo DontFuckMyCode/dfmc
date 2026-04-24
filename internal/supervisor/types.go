@@ -29,6 +29,7 @@ const (
 	WorkerTester      WorkerClass = "tester"
 	WorkerSecurity    WorkerClass = "security"
 	WorkerSynthesizer WorkerClass = "synthesizer"
+	WorkerVerifier    WorkerClass = "verifier"
 )
 
 type VerificationStatus string

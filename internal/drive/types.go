@@ -39,11 +39,14 @@ import (
 type TodoStatus string
 
 const (
-	TodoPending TodoStatus = "pending"
-	TodoRunning TodoStatus = "running"
-	TodoDone    TodoStatus = "done"
-	TodoBlocked TodoStatus = "blocked"
-	TodoSkipped TodoStatus = "skipped"
+	TodoPending        TodoStatus = "pending"
+	TodoRunning        TodoStatus = "running"
+	TodoDone           TodoStatus = "done"
+	TodoBlocked        TodoStatus = "blocked"
+	TodoSkipped        TodoStatus = "skipped"
+	TodoVerifying      TodoStatus = "verifying"
+	TodoWaiting        TodoStatus = "waiting"
+	TodoExternalReview TodoStatus = "external_review"
 )
 
 // BlockReason describes why a TODO ended as TodoBlocked.

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 )
@@ -66,6 +67,11 @@ type Engine struct {
 	// taskStore is the bbolt-backed task persistence. Injected via
 	// SetTaskStore so the package stays free of an engine-cycle.
 	taskStore *taskstore.Store
+
+	// codemap is the project codemap engine. Injected via SetCodemap
+	// so the dependency_graph tool can query edges without importing
+	// the engine package (which would create a cycle).
+	codemap *codemap.Engine
 }
 
 // ReasoningPublisher is the callback shape the higher-level engine wires
@@ -101,6 +107,12 @@ func (e *Engine) TaskStore() *taskstore.Store {
 	return e.taskStore
 }
 
+// SetCodemap injects the project codemap engine so the dependency_graph
+// tool can query edges. Called by engine.Init after CodeMap is wired.
+func (e *Engine) SetCodemap(cm *codemap.Engine) {
+	e.codemap = cm
+}
+
 func New(cfg config.Config) *Engine {
 	e := &Engine{
 		registry:        map[string]Tool{},
@@ -123,6 +135,14 @@ func New(cfg config.Config) *Engine {
 	e.Register(NewASTQueryTool())
 	e.Register(NewFindSymbolTool())
 	e.Register(NewCodemapTool())
+	e.Register(NewTestDiscoveryTool())
+	depTool := NewDependencyGraphTool()
+	// SetEngine uses a deferred pattern: it stores the engine and will
+	// re-read the codemap field when SetCodemap is called later (from
+	// engine.Init). This avoids a circular import while still allowing
+	// the engine to inject the codemap after tools.New() returns.
+	depTool.SetEngine(e)
+	e.Register(depTool)
 	apTool := NewApplyPatchTool()
 	apTool.SetEngine(e)
 	e.Register(apTool)
@@ -135,6 +155,13 @@ func New(cfg config.Config) *Engine {
 	e.Register(NewGitWorktreeAddTool())
 	e.Register(NewGitWorktreeRemoveTool())
 	e.Register(NewGitCommitTool())
+	e.Register(NewGHPullRequestTool())
+	pvTool := NewPatchValidationTool()
+	pvTool.SetEngine(e)
+	e.Register(pvTool)
+	benchTool := NewBenchmarkTool()
+	benchTool.SetEngine(e)
+	e.Register(benchTool)
 	e.Register(NewTaskSplitTool())
 	e.delegateTool = NewDelegateTaskTool()
 	e.Register(e.delegateTool)

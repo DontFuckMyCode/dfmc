@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/skills"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -32,7 +33,8 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 
 	defer e.enterSubagent()()
 
-	task := buildSubagentPrompt(req)
+	skillTexts := resolveSubagentSkillTexts(e.ProjectRoot, req.Skills)
+	task := buildSubagentPrompt(req, skillTexts)
 	preflight := e.prepareAutonomyPreflight(ctx, task, "subagent", false)
 	chunks := e.buildContextChunks(task)
 	systemPrompt, systemBlocks := e.buildNativeToolSystemPromptBundle(task, chunks, preflight)
@@ -255,6 +257,34 @@ func (e *Engine) resolveSubagentProfileTarget(profile string) (string, string, e
 		}
 	}
 	return "", "", fmt.Errorf("unknown sub-agent model/profile override %q", profile)
+}
+
+// ensure skills import usage doesn't become unused in edits.
+var _ = skills.Skill{}
+
+func resolveSubagentSkillTexts(projectRoot string, names []string) []string {
+	if len(names) == 0 || projectRoot == "" {
+		return nil
+	}
+	var out []string
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if s, ok := skills.Lookup(projectRoot, name); ok {
+			if text := strings.TrimSpace(s.SystemInstruction()); text != "" {
+				out = append(out, text)
+			}
+		}
+	}
+	return out
 }
 
 func shouldFallbackSubagentError(err error) bool {

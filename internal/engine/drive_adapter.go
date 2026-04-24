@@ -112,6 +112,7 @@ func (r *driveRunner) ExecuteTodo(ctx context.Context, req drive.ExecuteTodoRequ
 		MaxSteps:     req.MaxSteps,
 		Model:        req.Model,
 		ToolSource:   "drive",
+		Skills:       req.Skills,
 	}
 	res, err := r.e.runSubagentProfiles(ctx, subReq, req.ProfileCandidates)
 	if err != nil {

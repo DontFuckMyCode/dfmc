@@ -28,8 +28,14 @@ func (e *Engine) RunSubagent(ctx context.Context, req tools.SubagentRequest) (to
 // these in the user prompt (rather than inventing a parallel system-prompt
 // variant) means behavior degrades gracefully on providers we haven't
 // specially tuned for.
-func buildSubagentPrompt(req tools.SubagentRequest) string {
+func buildSubagentPrompt(req tools.SubagentRequest, skillTexts []string) string {
 	var b strings.Builder
+	if len(skillTexts) > 0 {
+		for _, text := range skillTexts {
+			b.WriteString(text)
+			b.WriteString("\n\n")
+		}
+	}
 	role := strings.TrimSpace(req.Role)
 	if role != "" {
 		b.WriteString("You are acting as a ")

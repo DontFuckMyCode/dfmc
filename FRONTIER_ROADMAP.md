@@ -44,17 +44,20 @@ Shipped in this pass:
 - shared `internal/skills` catalog
 - built-in skills unified into one source of truth
 - project/global YAML skills loaded through the same catalog
+- Agent Skills `SKILL.md` format support (`.dfmc/skills/<name>/SKILL.md` and `.SKILL.md` files)
 - explicit `[[skill:name]]` activation syntax
 - task-aware auto-selection for some modes (`security -> audit`, etc.)
-- skill overlays injected into the system prompt
+- skill overlays injected into the system prompt (prepended for budget priority)
+- skill-scoped tool allow/prefer enforcement surfaced in tool result feedback
+- skill composition (`[[skill:review]] + [[skill:audit]]`) — multiple explicit skills resolve correctly
 - CLI and web skill execution routed through the shared runtime
+- CLI skill install/export workflow (`dfmc skill install <path>`, `dfmc skill export <name>`)
+- TUI `/skill` list and show powered by the shared catalog (all 14 builtins + custom skills)
+- 7 new builtins: `api`, `backend`, `frontend`, `security`, `performance`, `git`, `architecture`
 
 Next hardening in this phase:
 
-- skill-scoped tool allow/prefer enforcement in the agent loop
-- skill composition (`[[skill:review]]` + `[[skill:audit]]`)
-- skill install/export workflow and tests
-- TUI affordances for activating and inspecting skills
+- (none — Phase 1 complete)
 
 ## Phase 2: Execution Supervisor
 
