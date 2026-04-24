@@ -107,7 +107,7 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 			if guardErr := t.engine.EnsureReadBeforeMutation(abs); guardErr != nil {
 				return Result{}, fmt.Errorf("apply_patch %s: %w (read the file first via read_file, then retry)", targetPath, guardErr)
 			}
-		} else if statErr != nil && !os.IsNotExist(statErr) {
+		} else if !os.IsNotExist(statErr) {
 			return Result{}, fmt.Errorf("apply_patch %s: stat target: %w", targetPath, statErr)
 		}
 
