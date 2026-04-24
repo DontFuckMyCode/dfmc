@@ -265,7 +265,7 @@ func composeRefactorPrompt(targets []string, tail string) string {
 		goal = "propose a scoped, reversible refactor plan"
 	}
 	if len(targets) == 0 {
-		return "Refactor target unspecified — " + goal
+		return "" // triggers usage message in runTemplateSlash
 	}
 	return fmt.Sprintf("Refactor %s. Goal: %s. Produce a scoped, reversible plan with file-level edits.",
 		joinFileMarkers(targets), goal)

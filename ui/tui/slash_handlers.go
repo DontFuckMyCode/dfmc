@@ -59,7 +59,7 @@ func (m Model) magicDocSlash(args []string) string {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return "MAGIC_DOC.md not found. Generate it with: dfmc magicdoc update"
+				return "MAGIC_DOC.md not found. Generate it with: dfmc magicdoc update (or dfmc magicdoc)"
 			}
 			return "magicdoc read failed: " + err.Error()
 		}
