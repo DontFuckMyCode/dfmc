@@ -1,7 +1,11 @@
 package conversation
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -317,6 +321,29 @@ func (m *Manager) LoadReadOnly(id string) (*Conversation, error) {
 	return cloneConversation(c), nil
 }
 
+// isJSONError reports whether err indicates a JSON file that is absent,
+// empty, or structurally malformed — in all these cases the .jsonl
+// fallback is worth attempting.
+func isJSONError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// os.IsNotExist — .json absent (redundant with caller check, but defensive)
+	if os.IsNotExist(err) {
+		return true
+	}
+	// json.Unmarshal wraps its errors; check the chain.
+	// *json.SyntaxError — truncated/garbage JSON (e.g. crash mid-write)
+	// *json.UnmarshalTypeError — wrong types (partial schema match)
+	// io.EOF — empty file
+	var synErr *json.SyntaxError
+	var typErr *json.UnmarshalTypeError
+	if errors.As(err, &synErr) || errors.As(err, &typErr) || errors.Is(err, io.EOF) {
+		return true
+	}
+	return false
+}
+
 // loadFromStore is the shared scaffolding behind Load and LoadReadOnly.
 // Disk I/O happens outside m.mu (the store handles its own concurrency)
 // so a long history scan can't block readers.
@@ -338,7 +365,11 @@ func (m *Manager) loadFromStore(id string) (*Conversation, error) {
 			Branches:  state.Branches,
 			Metadata:  state.Metadata,
 		}), nil
-	} else if !os.IsNotExist(err) {
+	} else if os.IsNotExist(err) {
+		// .json does not exist — fall through to .jsonl fallback
+	} else if isJSONError(err) {
+		// .json is corrupted (truncated/malformed) — fall through to .jsonl fallback
+	} else {
 		return nil, err
 	}
 	msgs, err := store.LoadConversationLog(id)
@@ -486,9 +517,7 @@ func cloneMap(in map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 
@@ -529,9 +558,7 @@ func cloneAnyMap(in map[string]any) map[string]any {
 		return nil
 	}
 	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 
@@ -585,23 +612,9 @@ func totalMessageCount(c *Conversation) int {
 	return total
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 func sharedPrefixLen(a, b []types.Message) int {
 	n := min(len(a), len(b))
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if a[i].Role != b[i].Role || a[i].Content != b[i].Content {
 			return i
 		}
