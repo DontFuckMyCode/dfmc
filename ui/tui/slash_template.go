@@ -326,14 +326,7 @@ func (m Model) defaultReviewTargets(explicit []string) []string {
 		return explicit
 	}
 	if len(m.patchView.changed) > 0 {
-<<<<<<< HEAD
-		limit := len(m.patchView.changed)
-		if limit > 4 {
-			limit = 4
-		}
-=======
-		limit := min(len(m.patchView.changed), 4)
->>>>>>> 9999f01 (fix(tui): /review targets worktree diff before single-file fallback)
+limit := min(len(m.patchView.changed), 4)
 		out := make([]string, 0, limit)
 		for _, path := range m.patchView.changed[:limit] {
 			if path = strings.TrimSpace(path); path != "" {
