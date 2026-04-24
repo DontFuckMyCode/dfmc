@@ -38,6 +38,8 @@ import (
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
+const scopeMapUnavailable = "(scope map unavailable for this file type)"
+
 // runTemplateSlash composes a natural-language prompt for one of the
 // skill-style shortcuts (/review, /explain, /refactor, /test, /doc) and feeds
 // it through the normal chat pipeline so it benefits from streaming, context
@@ -162,7 +164,7 @@ func (m Model) reviewScopeOutline(root, target string) string {
 	if info.Size() > 512*1024 {
 		return fmt.Sprintf("- %s: large file (%d bytes). Start from changed hunks or the most suspicious symbol names before widening.", fileMarker(target), info.Size())
 	}
-	if outline := reviewSymbolOutline(abs, target); outline != "" {
+	if outline := reviewSymbolOutline(abs, target); outline != "" && outline != scopeMapUnavailable {
 		return outline
 	}
 	content, err := os.ReadFile(abs)
@@ -181,7 +183,7 @@ func reviewSymbolOutline(absPath, target string) string {
 
 	res, err := parser.ParseFile(ctx, absPath)
 	if err != nil || res == nil || len(res.Symbols) == 0 {
-		return "(scope map unavailable for this file type)"
+		return scopeMapUnavailable
 	}
 	symbols := append([]types.Symbol(nil), res.Symbols...)
 	sort.SliceStable(symbols, func(i, j int) bool {
