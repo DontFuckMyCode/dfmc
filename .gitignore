@@ -17,6 +17,9 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Reports and temp docs
+report.md
+
 .project/
 
 
