@@ -374,7 +374,8 @@ func formatToolParamsKVDump(params map[string]any) string {
 }
 
 func compactToolPayload(raw string, maxChars int) string {
-	text := strings.TrimSpace(strings.ReplaceAll(raw, "\r\n", "\n"))
+	text := stripTerminalControlBytes(raw)
+	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
 	if text == "" {
 		return ""
 	}

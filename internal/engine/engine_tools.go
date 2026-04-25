@@ -262,6 +262,21 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 	if e.Tools == nil {
 		return tools.Result{}, fmt.Errorf("tool engine is not initialized")
 	}
+	// Sub-agent allowlist gate — fires before approval so unlisted tools
+	// are refused without prompting even when the approver is permissive.
+	if denial := checkSubagentAllowlist(ctx, name, metaInnerNames(name, params)); denial != "" {
+		e.recordDenial(name, source, denial)
+		e.EventBus.Publish(Event{
+			Type:   "tool:denied",
+			Source: "engine",
+			Payload: map[string]any{
+				"name":   name,
+				"reason": denial,
+				"source": source,
+			},
+		})
+		return tools.Result{}, fmt.Errorf("tool %s denied: %s", name, denial)
+	}
 	// Approval gate — only engages for non-user sources and only when
 	// the tool is on the approval list. Blocks until the Approver
 	// responds or returns an implicit deny on timeout. See approver.go.
