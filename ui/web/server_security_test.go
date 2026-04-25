@@ -167,3 +167,53 @@ func TestNormalizeBindHost_AuthNoneLoopbackNoNotice(t *testing.T) {
 		t.Fatalf("loopback under auth=none should not emit a notice, got: %q", got)
 	}
 }
+
+// TestHandleFileContent_RejectsSecretFiles — VULN-013
+// GET /api/v1/files/{path...} must reject paths that look like credential
+// files (.env, id_rsa, *.pem, etc.) with 403.
+func TestHandleFileContent_RejectsSecretFiles(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	for _, path := range []string{".env", "id_rsa", "credentials.json", "secrets.yaml", "token.pem"} {
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/files/"+path, nil)
+		if err != nil {
+			t.Fatalf("new request for %s: %v", path, err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request for %s: %v", path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("GET /api/v1/files/%s: expected 403, got %d", path, resp.StatusCode)
+		}
+	}
+}
+
+// TestHandleFileContent_AllowsNormalFiles — VULN-013 complement
+// Normal files (source code, docs) are still served normally.
+func TestHandleFileContent_AllowsNormalFiles(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// main.go should be served (exists in the test project).
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/files/main.go", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	// 200 or 404 are both acceptable — 403 would mean it was incorrectly
+	// flagged as a secret file.
+	if resp.StatusCode == http.StatusForbidden {
+		t.Fatalf("main.go should NOT be flagged as secret, got 403")
+	}
+}

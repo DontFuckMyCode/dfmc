@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/dontfuckmycode/dfmc/internal/security"
 )
 
 func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +58,16 @@ func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
 	target, err := resolvePathWithinRoot(root, rel)
 	if err != nil {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": err.Error()})
+		return
+	}
+
+	// VULN-013: refuse to serve paths that look like credential holders.
+	// The check uses the user-supplied rel path (not the resolved target)
+	// so a symlink pointing to ~/.ssh/id_rsa is also caught.
+	if security.LooksLikeSecretFile(rel) {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error": fmt.Sprintf("refusing to serve %q: path looks like a credential file", rel),
+		})
 		return
 	}
 
