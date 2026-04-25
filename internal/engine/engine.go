@@ -97,6 +97,14 @@ type Engine struct {
 	// internal/intent for the routing semantics.
 	Intent *intent.Router
 
+	// activeSupervisor holds a supervisor instance during a drive run.
+	// Sub-agent budget halving uses the pool when non-nil. Set by
+	// SetSupervisor and cleared by ClearSupervisor.
+	activeSupervisor interface {
+		AllocTokens(int) int
+		RestoreTokens(int)
+	}
+
 	providerOverride string
 	modelOverride    string
 	verbose          bool
