@@ -325,3 +325,10 @@ func TestDescribe(t *testing.T) {
 		t.Errorf("Describe should include per-event counts, got %q", got)
 	}
 }
+
+func TestCheckConfigPermissions_Nonexistent(t *testing.T) {
+	got := CheckConfigPermissions("C:/nonexistent/path/that/does/not/exist.yaml")
+	if got != "" {
+		t.Errorf("nonexistent file: expected empty string, got %q", got)
+	}
+}

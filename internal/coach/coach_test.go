@@ -284,3 +284,120 @@ func TestRuleObserver_PseudoToolCallQuietWhenToolsRan(t *testing.T) {
 		}
 	}
 }
+
+// trimPaths tests
+
+func TestTrimPaths_UnderMax(t *testing.T) {
+	paths := []string{"a.go", "b.go"}
+	got := trimPaths(paths, 5)
+	if len(got) != 2 {
+		t.Errorf("got %d", len(got))
+	}
+	if got[0] != "a.go" || got[1] != "b.go" {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestTrimPaths_ExactlyMax(t *testing.T) {
+	paths := []string{"a.go", "b.go"}
+	got := trimPaths(paths, 2)
+	if len(got) != 2 {
+		t.Errorf("got %d", len(got))
+	}
+}
+
+func TestTrimPaths_OverMax(t *testing.T) {
+	paths := []string{"a.go", "b.go", "c.go", "d.go"}
+	got := trimPaths(paths, 2)
+	if len(got) != 3 {
+		t.Errorf("expected 3, got %d", len(got))
+	}
+	if got[0] != "a.go" || got[1] != "b.go" {
+		t.Errorf("first two should be preserved, got %v", got)
+	}
+	if !strings.Contains(got[2], "+2 more") {
+		t.Errorf("expected +N more suffix, got %q", got[2])
+	}
+}
+
+func TestTrimPaths_OneOver(t *testing.T) {
+	paths := []string{"a.go", "b.go", "c.go"}
+	got := trimPaths(paths, 2)
+	if !strings.Contains(got[2], "+1 more") {
+		t.Errorf("expected +1 more, got %q", got[2])
+	}
+}
+
+// looksActionable tests
+
+func TestLooksActionable_ReturnsFalse(t *testing.T) {
+	nonActionable := []string{
+		"what is this project?",
+		"show me the files",
+		"hello",
+		"thanks",
+		"nevermind",
+		"why did it fail?",
+	}
+	for _, q := range nonActionable {
+		if looksActionable(q) {
+			t.Errorf("looksActionable(%q) = true, want false", q)
+		}
+	}
+}
+
+func TestLooksActionable_ReturnsTrue_English(t *testing.T) {
+	actionable := []string{
+		"fix the bug",
+		"add tests",
+		"implement the feature",
+		"edit the file",
+		"refactor this",
+		"migrate the database",
+		"remove the dead code",
+		"delete the file",
+		"rename the function",
+		"update the config",
+		"create a new file",
+		"build the project",
+		"write a test",
+		"generate the docs",
+	}
+	for _, q := range actionable {
+		if !looksActionable(q) {
+			t.Errorf("looksActionable(%q) = false, want true", q)
+		}
+	}
+}
+
+func TestLooksActionable_ReturnsTrue_Turkish(t *testing.T) {
+	actionable := []string{
+		"ekleme yap",        // add
+		"silme islemi",      // delete operation
+		"duzeltme gerekiyor", // needs fix
+		"yazma zamani",       // time to write
+	}
+	for _, q := range actionable {
+		if !looksActionable(q) {
+			t.Errorf("looksActionable(%q) = false, want true", q)
+		}
+	}
+}
+
+func TestLooksActionable_TwoWordPhrases(t *testing.T) {
+	if !looksActionable("wire up the auth") {
+		t.Error("wire up should be actionable")
+	}
+	if !looksActionable("hook up the database") {
+		t.Error("hook up should be actionable")
+	}
+}
+
+func TestLooksActionable_CaseInsensitive(t *testing.T) {
+	if !looksActionable("FIX THE BUG") {
+		t.Error("FIX THE BUG should be actionable")
+	}
+	if !looksActionable("Add More Tests") {
+		t.Error("Add More Tests should be actionable")
+	}
+}

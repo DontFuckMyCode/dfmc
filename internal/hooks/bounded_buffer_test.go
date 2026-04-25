@@ -90,3 +90,28 @@ func TestBoundedBuffer_ExactFitNotTruncated(t *testing.T) {
 		t.Fatalf("exact-fit should not be marked truncated: %q", got)
 	}
 }
+
+// Truncated reports true after writes exceed cap.
+func TestBoundedBuffer_Truncated(t *testing.T) {
+	b := newBoundedBuffer(5)
+	if b.Truncated() {
+		t.Error("new buffer should not be truncated")
+	}
+	_, _ = b.Write([]byte("hello")) // exactly at cap
+	if b.Truncated() {
+		t.Error("exact-fit should not be truncated")
+	}
+	_, _ = b.Write([]byte("x")) // exceeds cap
+	if !b.Truncated() {
+		t.Error("should be truncated after exceeding cap")
+	}
+}
+
+// Truncated is false when cap is not exceeded.
+func TestBoundedBuffer_Truncated_False(t *testing.T) {
+	b := newBoundedBuffer(100)
+	_, _ = b.Write([]byte("short"))
+	if b.Truncated() {
+		t.Error("short write should not be truncated")
+	}
+}

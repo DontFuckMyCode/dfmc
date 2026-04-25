@@ -329,3 +329,48 @@ func TestStripCodeFences(t *testing.T) {
 		}
 	}
 }
+
+func TestRouter_Enabled_NilRouter(t *testing.T) {
+	var r *Router
+	if r.Enabled() {
+		t.Error("nil router should not be enabled")
+	}
+}
+
+func TestRouter_Enabled_DisabledConfig(t *testing.T) {
+	prov := &stubProvider{supports: true, modelName: "test"}
+	r := NewRouter(config.IntentConfig{
+		Enabled: false,
+	}, func(string) (provider.Provider, bool) { return prov, true })
+	if r.Enabled() {
+		t.Error("disabled config should not be enabled")
+	}
+}
+
+func TestRouter_Enabled_NoProvider(t *testing.T) {
+	r := NewRouter(config.IntentConfig{
+		Enabled: true,
+	}, func(string) (provider.Provider, bool) { return nil, false })
+	if r.Enabled() {
+		t.Error("no provider should not be enabled")
+	}
+}
+
+func TestRouter_Enabled_AllGood(t *testing.T) {
+	prov := &stubProvider{supports: true, modelName: "test"}
+	r := NewRouter(config.IntentConfig{
+		Enabled: true,
+	}, func(string) (provider.Provider, bool) { return prov, true })
+	if !r.Enabled() {
+		t.Error("all conditions met should be enabled")
+	}
+}
+
+func TestInvalidJSONError_Unwrap(t *testing.T) {
+	innerErr := errors.New("json: unexpected end of input")
+	e := &invalidJSONError{raw: "bad", err: innerErr}
+	got := e.Unwrap()
+	if got != innerErr {
+		t.Errorf("Unwrap() = %v, want %v", got, innerErr)
+	}
+}

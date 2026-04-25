@@ -103,3 +103,140 @@ func TestTrimToBudget_SuffixOmittedWhenNoRoom(t *testing.T) {
 		t.Fatalf("suffix should not appear when no room: got %q", got)
 	}
 }
+
+// EstimateMessages delegates to default counter
+func TestEstimateMessages(t *testing.T) {
+	msgs := []Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi there"},
+	}
+	got := EstimateMessages(msgs)
+	if got <= 0 {
+		t.Fatalf("EstimateMessages returned %d, want positive", got)
+	}
+}
+
+func TestEstimateMessages_Empty(t *testing.T) {
+	got := EstimateMessages(nil)
+	if got != 0 {
+		t.Fatalf("EstimateMessages(nil) = %d, want 0", got)
+	}
+	got = EstimateMessages([]Message{})
+	if got != 0 {
+		t.Fatalf("EstimateMessages([]) = %d, want 0", got)
+	}
+}
+
+// Default returns the process-wide default Counter
+func TestDefault(t *testing.T) {
+	c := Default()
+	if c == nil {
+		t.Fatal("Default() returned nil")
+	}
+	// Should be functional
+	n := c.Count("hello world")
+	if n <= 0 {
+		t.Fatalf("Default().Count returned %d, want positive", n)
+	}
+}
+
+// SetDefault swaps the default counter
+func TestSetDefault_Normal(t *testing.T) {
+	prev := Default()
+	custom := &HeuristicCounter{PerMessageOverhead: 99}
+	SetDefault(custom)
+	got := Default()
+	if got != custom {
+		t.Fatalf("Default() did not return the custom counter after SetDefault")
+	}
+	SetDefault(prev) // restore
+}
+
+func TestSetDefault_NilIgnored(t *testing.T) {
+	prev := Default()
+	SetDefault(nil)
+	if Default() != prev {
+		t.Fatal("SetDefault(nil) should not change the default counter")
+	}
+}
+
+// Count edge cases
+
+func TestCount_EmptyAfterTrim(t *testing.T) {
+	c := NewHeuristic()
+	// Only whitespace
+	got := c.Count("   \t\n  ")
+	if got != 0 {
+		t.Errorf("whitespace-only: got %d", got)
+	}
+}
+
+func TestCount_EmptyString(t *testing.T) {
+	c := NewHeuristic()
+	got := c.Count("")
+	if got != 0 {
+		t.Errorf("empty string: got %d", got)
+	}
+}
+
+// Count density branches: JSON/minified (>0.22), source code (>0.12), mixed (>0.06)
+
+func TestCount_DensityJSON(t *testing.T) {
+	c := NewHeuristic()
+	// JSON with many symbols -> density > 0.22
+	json := `{"a":1,"b":2,"c":[1,2,3],"d":{"x":true,"y":false},"e":"longer string here"}`
+	got := c.Count(json)
+	if got <= 0 {
+		t.Fatalf("expected positive count, got %d", got)
+	}
+}
+
+func TestCount_DensitySourceCode(t *testing.T) {
+	c := NewHeuristic()
+	// Source code: brackets, colons, etc. -> density > 0.12
+	code := `func add(a int, b int) int { return a + b }`
+	got := c.Count(code)
+	if got <= 0 {
+		t.Fatalf("expected positive count, got %d", got)
+	}
+}
+
+func TestCount_DensityProse(t *testing.T) {
+	c := NewHeuristic()
+	// Plain prose with minimal symbols -> density < 0.06 -> divisor 4.2
+	text := "This is a simple sentence with just words and periods."
+	got := c.Count(text)
+	if got <= 0 {
+		t.Fatalf("expected positive count, got %d", got)
+	}
+}
+
+// TrimToBudget binary search path: when content must be trimmed
+
+func TestTrimToBudget_BestZeroReturnsEmpty(t *testing.T) {
+	// Very small budget so that even one word exceeds it
+	// Each word is at least 1 token, so budget=0 or budget=1 with suffix consuming tokens
+	got := TrimToBudget("one two three", 0, "")
+	if got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestTrimToBudget_BinarySearchTrims(t *testing.T) {
+	// Content is long enough that it must be trimmed by binary search
+	text := "one two three four five six seven eight nine ten eleven twelve"
+	// Use a moderate budget that forces trimming but not to zero
+	got := TrimToBudget(text, 5, "")
+	if got == "" {
+		t.Fatal("expected non-empty result")
+	}
+	if got == text {
+		t.Error("expected trimmed result, got original")
+	}
+	// The result should have fewer words
+	gotWords := len(strings.Fields(got))
+	textWords := len(strings.Fields(text))
+	if gotWords >= textWords {
+		t.Errorf("expected fewer words, got %d vs %d", gotWords, textWords)
+	}
+}

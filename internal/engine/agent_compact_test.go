@@ -468,3 +468,47 @@ func TestFindNativeLoopPrefixEnd_IgnoresToolResultUsers(t *testing.T) {
 		t.Fatalf("expected prefix end at index 4 (after current question), got %d", end)
 	}
 }
+
+func TestPickInt(t *testing.T) {
+	tests := []struct {
+		raw    any
+		wantOk bool
+	}{
+		{nil, false},
+		{int(42), true},
+		{int64(99), true},
+		{float64(7.9), true},
+		{"not a number", false},
+		{true, false},
+	}
+	for _, tc := range tests {
+		got, ok := pickInt(tc.raw)
+		if ok != tc.wantOk {
+			t.Errorf("pickInt(%v) ok=%v, want %v", tc.raw, ok, tc.wantOk)
+		}
+		if tc.wantOk && got == 0 && tc.raw != nil {
+			// only check non-zero if we expected success
+		}
+	}
+}
+
+func TestPickInt_IntValue(t *testing.T) {
+	got, ok := pickInt(int(42))
+	if !ok || got != 42 {
+		t.Errorf("pickInt(int(42)) = (%d, %v), want (42, true)", got, ok)
+	}
+}
+
+func TestPickInt_Int64Value(t *testing.T) {
+	got, ok := pickInt(int64(99))
+	if !ok || got != 99 {
+		t.Errorf("pickInt(int64(99)) = (%d, %v), want (99, true)", got, ok)
+	}
+}
+
+func TestPickInt_FloatValue(t *testing.T) {
+	got, ok := pickInt(float64(7))
+	if !ok || got != 7 {
+		t.Errorf("pickInt(float64(7)) = (%d, %v), want (7, true)", got, ok)
+	}
+}

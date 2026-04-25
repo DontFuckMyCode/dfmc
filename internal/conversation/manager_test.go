@@ -309,3 +309,84 @@ func TestConversationListUsesLegacyLogModTimeForStartedAt(t *testing.T) {
 		t.Fatalf("expected old StartedAt=%v, got %v", oldTime, list[1].StartedAt)
 	}
 }
+
+func TestLoadReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	mgr := New(store)
+	mgr.Start("offline", "offline-analyzer-v1")
+	mgr.AddMessage("offline", "offline-analyzer-v1", types.Message{
+		Role:      types.RoleUser,
+		Content:   "hello",
+		Timestamp: time.Now(),
+	})
+	if err := mgr.SaveActive(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	active := mgr.Active()
+	ro, err := mgr.LoadReadOnly(active.ID)
+	if err != nil {
+		t.Fatalf("LoadReadOnly: %v", err)
+	}
+	if ro.ID != active.ID {
+		t.Errorf("LoadReadOnly ID: got %q", ro.ID)
+	}
+	if len(ro.Messages()) != 1 {
+		t.Errorf("LoadReadOnly Messages: got %d", len(ro.Messages()))
+	}
+}
+
+func TestLoadReadOnly_Nonexistent(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	mgr := New(store)
+	_, err = mgr.LoadReadOnly("nonexistent-id")
+	if err == nil {
+		t.Fatal("expected error for nonexistent id")
+	}
+}
+
+// isJSONError is exercised via loadFromStore when a corrupted JSON file exists.
+// We test this by manually writing a malformed JSON state file and verifying
+// that LoadReadOnly falls back to JSONL (which may be empty, but doesn't error).
+func TestLoadReadOnly_CorruptedJSONFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	mgr := New(store)
+	mgr.Start("offline", "offline-analyzer-v1")
+	if err := mgr.SaveActive(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Corrupt the JSON state file by writing truncated garbage
+	active := mgr.Active()
+	statePath := filepath.Join(dir, "data", active.ID+".json")
+	if err := os.WriteFile(statePath, []byte("{truncated json}"), 0o644); err != nil {
+		t.Fatalf("corrupt json: %v", err)
+	}
+
+	// Should fall back gracefully (load returns the conversation from jsonl or empty)
+	ro, err := mgr.LoadReadOnly(active.ID)
+	if err != nil {
+		t.Fatalf("LoadReadOnly with corrupted JSON: %v", err)
+	}
+	if ro.ID != active.ID {
+		t.Errorf("ID mismatch: got %q", ro.ID)
+	}
+}

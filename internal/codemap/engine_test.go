@@ -134,3 +134,79 @@ func TestBuildFromFilesRespectsContextCancellation(t *testing.T) {
 }
 
 func itow(n int) string { return strconv.Itoa(n) }
+
+func TestInvalidateFile_NilEngine(t *testing.T) {
+	var e *Engine
+	e.InvalidateFile("foo.go") // must not panic
+}
+
+func TestInvalidateFile_NilGraph(t *testing.T) {
+	e := &Engine{}
+	e.InvalidateFile("foo.go") // must not panic
+}
+
+func TestInvalidateFile_RemovesFileAndSymbols(t *testing.T) {
+	tmp := t.TempDir()
+	goPath := filepath.Join(tmp, "sample.go")
+	src := `package sample
+func Hello() {}
+`
+	if err := os.WriteFile(goPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	engine := New(ast.New())
+	if err := engine.BuildFromFiles(context.Background(), []string{goPath}); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	// Verify the file node exists
+	g := engine.Graph()
+	if g == nil {
+		t.Fatal("Graph() returned nil")
+	}
+	fileNodeID := "file:" + filepath.ToSlash(goPath)
+	if _, ok := g.GetNode(fileNodeID); !ok {
+		t.Fatalf("expected file node %q before invalidation", fileNodeID)
+	}
+
+	// Invalidate the file
+	engine.InvalidateFile(goPath)
+
+	// File node should be gone
+	if _, ok := g.GetNode(fileNodeID); ok {
+		t.Error("file node should be removed after InvalidateFile")
+	}
+}
+
+func TestGraph_NilGraph(t *testing.T) {
+	e := &Engine{}
+	if g := e.Graph(); g != nil {
+		t.Errorf("nil graph: expected nil, got %v", g)
+	}
+}
+
+func TestGraph_WithRealGraph(t *testing.T) {
+	tmp := t.TempDir()
+	goPath := filepath.Join(tmp, "sample.go")
+	src := `package sample
+func Hello() {}
+`
+	if err := os.WriteFile(goPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	engine := New(ast.New())
+	if err := engine.BuildFromFiles(context.Background(), []string{goPath}); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	g := engine.Graph()
+	if g == nil {
+		t.Fatal("Graph() should return non-nil after build")
+	}
+	_, ok := g.GetNode("nonexistent-node")
+	if ok {
+		t.Error("nonexistent node should not exist")
+	}
+}

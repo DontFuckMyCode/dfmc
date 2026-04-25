@@ -366,7 +366,56 @@ func TestCleanStringList_DeduplicatesAndTrims(t *testing.T) {
 
 // tryAgentSkillFormat parses a valid SKILL.md with YAML frontmatter + markdown body.
 func TestTryAgentSkillFormat_ValidSKILLMD(t *testing.T) {
-	// Verified through integration via readSkillFile and Discover tests.
+	data := []byte(`---
+name: pdf-processing
+description: Extract text from PDF files.
+allowed-tools: Read GrepCodebase
+---
+# PDF Processing Skill
+
+Use the pdf tool to extract text.`)
+	got := tryAgentSkillFormat(data, "pdf-processing/SKILL.md", "test")
+	if got.Name != "pdf-processing" {
+		t.Errorf("Name=%q, want %q", got.Name, "pdf-processing")
+	}
+	if got.Description != "Extract text from PDF files." {
+		t.Errorf("Description=%q", got.Description)
+	}
+	if len(got.Allowed) != 2 || got.Allowed[0] != "Read" {
+		t.Errorf("Allowed=%v", got.Allowed)
+	}
+}
+
+func TestTryAgentSkillFormat_NoFrontmatter(t *testing.T) {
+	// No leading "---" should return zero value
+	got := tryAgentSkillFormat([]byte("no frontmatter"), "foo/SKILL.md", "test")
+	if got.Name != "" {
+		t.Errorf("expected empty Name, got %q", got.Name)
+	}
+}
+
+func TestTryAgentSkillFormat_NoSeparator(t *testing.T) {
+	// Has "---" but no closing "\n---" separator
+	got := tryAgentSkillFormat([]byte("---\nname: foo\n"), "foo/SKILL.md", "test")
+	if got.Name != "" {
+		t.Errorf("expected empty Name, got %q", got.Name)
+	}
+}
+
+func TestTryAgentSkillFormat_EmptyMarkdownBody(t *testing.T) {
+	// Has frontmatter but empty markdown body after separator
+	got := tryAgentSkillFormat([]byte("---\nname: foo\ndescription: d\n---\n  \n"), "foo/SKILL.md", "test")
+	if got.Name != "" {
+		t.Errorf("expected empty Name for empty markdown body, got %q", got.Name)
+	}
+}
+
+func TestTryAgentSkillFormat_MissingName(t *testing.T) {
+	// YAML frontmatter without "name" field
+	got := tryAgentSkillFormat([]byte("---\ndescription: d\n---\n# Body\n"), "foo/SKILL.md", "test")
+	if got.Name != "" {
+		t.Errorf("expected empty Name for missing name field, got %q", got.Name)
+	}
 }
 
 // readSkillFile parses Agent Skills SKILL.md and returns a Skill.
@@ -468,3 +517,277 @@ system_prompt: |
 		t.Fatalf("expected name fallback-skill, got %q", item.Name)
 	}
 }
+
+// readSkillFile with a non-existent file returns item with name from filepath.Base.
+func TestReadSkillFile_FileNotFound(t *testing.T) {
+	item := readSkillFile("/nonexistent/path/skill.yaml", "project")
+	if item.Name != "skill" {
+		t.Fatalf("expected name 'skill' (from filename), got %q", item.Name)
+	}
+	if item.Source != "project" {
+		t.Fatalf("expected source project, got %q", item.Source)
+	}
+}
+
+// readSkillFile parses SKILL.md with allowed-tools (hyphen) and extracts allowed list.
+func TestReadSkillFile_SKILLMD_AllowedToolsHyphen(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "my-skill", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	data := []byte(`---
+name: my-skill
+description: A skill with allowed-tools hyphen
+allowed-tools: Read GrepCodebase
+---
+# My Skill
+
+Do the thing.`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write skill file: %v", err)
+	}
+
+	item := readSkillFile(path, "project")
+	if item.Name != "my-skill" {
+		t.Fatalf("expected name 'my-skill', got %q", item.Name)
+	}
+	if len(item.Allowed) != 2 {
+		t.Fatalf("expected 2 allowed tools, got %v", item.Allowed)
+	}
+}
+
+// readSkillFile with raw map fallback: parses description, prompt, template, system fields.
+func TestReadSkillFile_RawMapFallback(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "raw-skill.yaml")
+	data := []byte(`description: A raw fallback skill
+prompt: Do the thing.
+template: Template hint.
+system: System hint.
+task: review
+role: reviewer
+profile: default
+preferred_tools: read_file,grep_codebase
+allowed_tools: Read Write
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write skill file: %v", err)
+	}
+
+	item := readSkillFile(path, "global")
+	if item.Description != "A raw fallback skill" {
+		t.Errorf("Description=%q", item.Description)
+	}
+	if item.Prompt != "Do the thing." {
+		t.Errorf("Prompt=%q", item.Prompt)
+	}
+	if item.Task != "review" {
+		t.Errorf("Task=%q", item.Task)
+	}
+	if item.Role != "reviewer" {
+		t.Errorf("Role=%q", item.Role)
+	}
+	if item.Profile != "default" {
+		t.Errorf("Profile=%q", item.Profile)
+	}
+}
+
+// SkillForName is a thin wrapper around Lookup.
+func TestSkillForName(t *testing.T) {
+	s, ok := SkillForName("", "review")
+	if !ok {
+		t.Fatal("expected to find review skill")
+	}
+	if s.Name != "review" {
+		t.Fatalf("expected name 'review', got %q", s.Name)
+	}
+
+	_, ok = SkillForName("", "nonexistent-xyz")
+	if ok {
+		t.Fatal("expected not found for nonexistent skill")
+	}
+}
+
+// RenderSystemText with all fields populated.
+func TestRenderSystemText_AllFields(t *testing.T) {
+	skill := Skill{
+		Name:        "test-skill",
+		Description: "A test skill",
+		Task:        "testing",
+		Role:        "tester",
+		Profile:     "test-profile",
+		Preferred:   []string{"read_file", "grep_codebase"},
+		Allowed:     []string{"Read"},
+		System:      "Skill contract:\nTest contract body",
+	}
+	text := RenderSystemText(skill)
+	if !strings.Contains(text, "test-skill") {
+		t.Fatalf("expected skill name in output")
+	}
+	if !strings.Contains(text, "Runtime hints:") {
+		t.Fatalf("expected Runtime hints section")
+	}
+	if !strings.Contains(text, "task hint: testing") {
+		t.Fatalf("expected task hint")
+	}
+	if !strings.Contains(text, "role hint: tester") {
+		t.Fatalf("expected role hint")
+	}
+	if !strings.Contains(text, "profile hint: test-profile") {
+		t.Fatalf("expected profile hint")
+	}
+	if !strings.Contains(text, "Preferred tools:") {
+		t.Fatalf("expected Preferred tools section")
+	}
+	if !strings.Contains(text, "Scope guard:") {
+		t.Fatalf("expected Scope guard section")
+	}
+	if !strings.Contains(text, "Skill contract:") {
+		t.Fatalf("expected Skill contract section")
+	}
+}
+
+// RenderSystemText with Role only (no Task or Profile).
+func TestRenderSystemText_RoleOnly(t *testing.T) {
+	skill := Skill{Name: "r", Role: "code-reviewer"}
+	text := RenderSystemText(skill)
+	if !strings.Contains(text, "role hint:") {
+		t.Fatalf("expected role hint, got: %s", text)
+	}
+}
+
+// RenderSystemText with Preferred only (no Allowed).
+func TestRenderSystemText_PreferredOnly(t *testing.T) {
+	skill := Skill{Name: "p", Preferred: []string{"read_file"}}
+	text := RenderSystemText(skill)
+	if !strings.Contains(text, "Preferred tools:") {
+		t.Fatalf("expected Preferred tools, got: %s", text)
+	}
+	if strings.Contains(text, "Scope guard:") {
+		t.Fatalf("should not have Scope guard without Allowed, got: %s", text)
+	}
+}
+
+// RenderSystemText with Allowed only (no Preferred).
+func TestRenderSystemText_AllowedOnly(t *testing.T) {
+	skill := Skill{Name: "a", Allowed: []string{"Read"}}
+	text := RenderSystemText(skill)
+	if !strings.Contains(text, "Scope guard:") {
+		t.Fatalf("expected Scope guard, got: %s", text)
+	}
+}
+
+// RenderSystemText with SystemInstruction body.
+func TestRenderSystemText_SystemInstruction(t *testing.T) {
+	skill := Skill{Name: "sys", System: "System body here", Prompt: "Prompt {input}"}
+	text := RenderSystemText(skill)
+	if !strings.Contains(text, "Skill contract:") {
+		t.Fatalf("expected Skill contract section, got: %s", text)
+	}
+	if !strings.Contains(text, "System body here") {
+		t.Fatalf("expected System body, got: %s", text)
+	}
+}
+
+// explicitNames with no matches returns empty slice.
+func TestExplicitNames_NoMatches(t *testing.T) {
+	names := explicitNames("plain text without markers")
+	if len(names) != 0 {
+		t.Fatalf("expected 0 names, got %d", len(names))
+	}
+}
+
+// explicitNames with empty input.
+func TestExplicitNames_EmptyInput(t *testing.T) {
+	names := explicitNames("")
+	if len(names) != 0 {
+		t.Fatalf("expected 0 names, got %d", len(names))
+	}
+}
+
+// cleanStringList with all empty strings returns empty slice.
+func TestCleanStringList_AllEmpty(t *testing.T) {
+	got := cleanStringList([]string{"", "  ", ""})
+	if len(got) != 0 {
+		t.Fatalf("expected 0 items, got %v", got)
+	}
+}
+
+// parseStringList with unknown type falls back to fmt.Sprint.
+func TestParseStringList_UnknownType(t *testing.T) {
+	got := parseStringList(42)
+	if len(got) != 1 || got[0] != "42" {
+		t.Fatalf("expected [42], got %v", got)
+	}
+}
+
+// tryAgentSkillFormat with only frontmatter (no markdown body).
+func TestTryAgentSkillFormat_OnlyFrontmatter(t *testing.T) {
+	data := []byte(`---
+name: empty-skill
+description: No body
+---`)
+	got := tryAgentSkillFormat(data, "empty/SKILL.md", "test")
+	if got.Name != "" {
+		t.Errorf("expected empty name for no body, got %q", got.Name)
+	}
+}
+
+// explicitNames with path separators in skill name.
+func TestExplicitNames_WithPathSeparators(t *testing.T) {
+	names := explicitNames("use [[skill:debug/specific]] tool")
+	if len(names) != 1 || names[0] != "debug/specific" {
+		t.Fatalf("expected [debug/specific], got %v", names)
+	}
+}
+
+// extractMarkdownBody tests
+
+func TestExtractMarkdownBody_NoFrontmatter(t *testing.T) {
+	got := extractMarkdownBody([]byte("just plain text"))
+	if got != "" {
+		t.Errorf("no frontmatter: got %q", got)
+	}
+}
+
+func TestExtractMarkdownBody_Empty(t *testing.T) {
+	got := extractMarkdownBody([]byte{})
+	if got != "" {
+		t.Errorf("empty: got %q", got)
+	}
+}
+
+func TestExtractMarkdownBody_OnlyFrontmatter(t *testing.T) {
+	got := extractMarkdownBody([]byte("---\nname: test\n---\n"))
+	if got != "" {
+		t.Errorf("only frontmatter: got %q", got)
+	}
+}
+
+func TestExtractMarkdownBody_WithBody(t *testing.T) {
+	data := []byte(`---
+name: test
+---
+# Hello
+
+This is the body.
+`)
+	got := extractMarkdownBody(data)
+	if !strings.Contains(got, "Hello") {
+		t.Errorf("expected 'Hello' in body, got %q", got)
+	}
+	if !strings.Contains(got, "This is the body") {
+		t.Errorf("expected body content, got %q", got)
+	}
+}
+
+func TestExtractMarkdownBody_MultipleSeparators(t *testing.T) {
+	// The first \n--- is the separator, anything after is the body
+	data := []byte("---\nname: test\n---\n---\nmore content\n")
+	got := extractMarkdownBody(data)
+	if !strings.Contains(got, "more content") {
+		t.Errorf("expected 'more content' in body, got %q", got)
+	}
+}
+

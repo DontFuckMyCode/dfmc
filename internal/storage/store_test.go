@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -213,6 +214,73 @@ func TestStore_CloseNilDBIsSafe(t *testing.T) {
 	}
 }
 
+// OpenError.Error() returns "<nil>" for nil receiver.
+func TestOpenError_NilError(t *testing.T) {
+	var e *OpenError
+	if got := e.Error(); got != "<nil>" {
+		t.Errorf("Error() on nil = %q, want %q", got, "<nil>")
+	}
+}
+
+// OpenError.Unwrap() returns nil for nil receiver.
+func TestOpenError_NilUnwrap(t *testing.T) {
+	var e *OpenError
+	if got := e.Unwrap(); got != nil {
+		t.Errorf("Unwrap() on nil = %v, want nil", got)
+	}
+}
+
+// OpenError.Unwrap() returns Cause.
+func TestOpenError_UnwrapCause(t *testing.T) {
+	inner := fmt.Errorf("inner cause")
+	e := &OpenError{Path: "/tmp/data", Cause: inner}
+	if got := e.Unwrap(); got != inner {
+		t.Errorf("Unwrap() = %v, want %v", got, inner)
+	}
+}
+
+// Store.DB() returns the underlying bbolt.DB.
+func TestStore_DB(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	db := store.DB()
+	if db == nil {
+		t.Fatal("DB() returned nil")
+	}
+}
+
+// Store.DB() on nil store is tested via Store_NilDBMethods.
+
+// validateConvID error messages are specific.
+func TestValidateConvID_ErrorMessages(t *testing.T) {
+	tests := []struct {
+		id    string
+		want  string
+		slice []string
+	}{
+		{"", "conversation id is required", nil},
+		{"/abs", "invalid conversation id", nil},
+		{"a/b", "path separators", nil},
+		{"..", "must not contain `..`", nil},
+		{"a\x00b", "control character", nil},
+		{".", "must not contain `..`", nil},
+	}
+	for _, tt := range tests {
+		err := validateConvID(tt.id)
+		if err == nil {
+			t.Fatalf("validateConvID(%q): expected error, got nil", tt.id)
+		}
+		if !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("validateConvID(%q) error = %q, want to contain %q", tt.id, err.Error(), tt.want)
+		}
+	}
+}
+
 // Open with nil db returns errors on BackupTo and other db-dependent ops.
 func TestStore_NilDBMethods(t *testing.T) {
 	s := &Store{}
@@ -391,5 +459,57 @@ func TestTrimBackups_NonexistentDir(t *testing.T) {
 	}
 	if deleted != 0 {
 		t.Fatalf("expected 0 deleted, got %d", deleted)
+	}
+}
+
+// OpenError.Error() with nil receiver returns "<nil>".
+func TestOpenError_Error_Nil(t *testing.T) {
+	var e *OpenError
+	if got := e.Error(); got != "<nil>" {
+		t.Errorf("nil.OpenError().Error() = %q, want %q", got, "<nil>")
+	}
+}
+
+// OpenError.Error() with ErrStoreLocked returns locked message.
+func TestOpenError_Error_Locked(t *testing.T) {
+	e := &OpenError{
+		Path:  "/path/to/db",
+		Cause: ErrStoreLocked,
+	}
+	got := e.Error()
+	if !strings.Contains(got, "locked") {
+		t.Errorf("Error() = %q, want message containing 'locked'", got)
+	}
+}
+
+// OpenError.Error() with regular error returns generic message.
+func TestOpenError_Error_Generic(t *testing.T) {
+	e := &OpenError{
+		Path:  "/path/to/db",
+		Cause: errors.New("permission denied"),
+	}
+	got := e.Error()
+	if !strings.Contains(got, "permission denied") {
+		t.Errorf("Error() = %q, want message containing 'permission denied'", got)
+	}
+}
+
+// OpenError.Unwrap() with nil receiver returns nil.
+func TestOpenError_Unwrap_Nil(t *testing.T) {
+	var e *OpenError
+	if got := e.Unwrap(); got != nil {
+		t.Errorf("nil.OpenError().Unwrap() = %v, want nil", got)
+	}
+}
+
+// OpenError.Unwrap() returns the cause.
+func TestOpenError_Unwrap_Cause(t *testing.T) {
+	e := &OpenError{
+		Path:  "/path/to/db",
+		Cause: errors.New("boom"),
+	}
+	got := e.Unwrap()
+	if got == nil || !strings.Contains(got.Error(), "boom") {
+		t.Errorf("Unwrap() = %v, want error containing 'boom'", got)
 	}
 }
