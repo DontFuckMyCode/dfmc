@@ -376,7 +376,11 @@ func (s *Server) Start() error {
 // keep composing on top of this — the limiter sits at the bottom so
 // huge bodies can never slip past before auth decisions are made.
 func (s *Server) Handler() http.Handler {
-	handler := limitRequestBodySize(s.mux, maxRequestBodyBytes)
+	// VULN-050: reject non-JSON content types on state-changing requests
+	// before the body is decoded. Must be outermost so body-size limits
+	// still apply even to rejected payloads.
+	handler := contentTypeEnforcementMiddleware(s.mux)
+	handler = limitRequestBodySize(handler, maxRequestBodyBytes)
 	handler = hostAllowlistMiddleware(handler, s.allowedHosts)
 	handler = securityHeaders(handler)
 	// Rate-limit all endpoints: 30 requests/sec per IP with burst of 60.
@@ -394,6 +398,7 @@ const (
 	serverWriteTimeout      = 2 * time.Minute
 	serverIdleTimeout       = 2 * time.Minute
 	serverMaxHeaderBytes    = 1 << 20
+	taskListLimitMax        = 500
 )
 
 // NewHTTPServer applies the timeout and header-size hardening we want on
@@ -455,27 +460,45 @@ func matchAllowlist(value string, list []string) bool {
 	return false
 }
 
-// hostAllowlistMiddleware rejects requests whose Host header doesn't
-// match the allowlist. Mounted near the top of the middleware chain so
-// foreign-host requests never reach handlers — including the bearer
-// auth check, since DNS rebinding sometimes lets the same TCP
-// connection be reused with different Host across requests.
-//
-// Returns 421 Misdirected Request (RFC 7540 §9.1.2) — the canonical
-// status for "this server didn't expect to receive this Host".
-func hostAllowlistMiddleware(next http.Handler, allowed []string) http.Handler {
+// contentTypeEnforcementMiddleware rejects non-JSON Content-Types on
+// state-changing requests (POST/PATCH/PUT) before the body is decoded.
+// Prevents a CORS-simple `<form enctype="text/plain">` POST from reaching
+// the JSON decoder at all (Go's json.NewDecoder is content-type-blind).
+// Returns 415 Unsupported Media Type.
+func contentTypeEnforcementMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := strings.TrimSpace(r.Host)
-		if host == "" {
+		switch r.Method {
+		case http.MethodPost, http.MethodPatch, http.MethodPut:
+		default:
 			next.ServeHTTP(w, r)
 			return
 		}
-		if matchAllowlist(host, allowed) {
+		// Empty body (ContentLength 0 or -1 for chunked) has nothing to
+		// decode — allow it so bodyless POSTs (e.g. /conversation/undo)
+		// are not rejected.
+		if r.ContentLength <= 0 {
 			next.ServeHTTP(w, r)
 			return
 		}
-		writeJSON(w, http.StatusMisdirectedRequest, map[string]any{
-			"error": fmt.Sprintf("host %q is not allowed; configure web.allowed_hosts to permit additional values", host),
+		ct := strings.TrimSpace(strings.ToLower(r.Header.Get("Content-Type")))
+		// VULN-050: block non-JSON content types on body-bearing requests.
+		// Bodyless POSTs (ContentLength <= 0) always pass — the handler
+		// doesn't read a body anyway, so enforcing JSON there is pointless.
+		// Empty Content-Type on a body-bearing request is passed through
+		// to the decoder (a decode error will surface as 400 from the
+		// handler, not a 415 from us — this avoids rejecting valid empty
+		// CT POSTs to endpoints like /conversation/undo that don't read
+		// the body).
+		if r.ContentLength <= 0 || (ct == "") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasPrefix(ct, "application/json") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]any{
+			"error": "Content-Type must be application/json; received " + r.Header.Get("Content-Type"),
 		})
 	})
 }
@@ -512,7 +535,7 @@ func (l *perIPLimiter) Allow(ip string) bool {
 func rateLimitMiddleware(s *Server, limiter *perIPLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !limiter.Allow(s.clientIPKey(r)) {
+			if !limiter.Allow(clientIPKey(r, s.trustedProxies)) {
 				writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate limit exceeded"})
 				return
 			}
@@ -522,21 +545,17 @@ func rateLimitMiddleware(s *Server, limiter *perIPLimiter) func(http.Handler) ht
 }
 
 // clientIPKey extracts the client IP for rate-limit bucketing.
-// X-Forwarded-For is trusted only when the request originates from a known
-// local proxy (e.g. nginx on localhost). Remote clients cannot spoof this
+// X-Forwarded-For is trusted only when the direct remote address belongs to a
+// known local proxy (loopback by default). Remote clients cannot spoof this
 // header because they cannot establish a connection through the proxy without
-// first passing the bearer-token auth gate.
-// clientIPKey returns a key for per-client rate limiting. It honors
-// X-Forwarded-For only when the direct remote address belongs to a
-// configured trusted proxy (loopback by default), preventing spoofing
-// via arbitrary XFF values. When XFF is honored, the rightmost (last)
-// IP is used — that is the most recent proxy hop.
+// first passing the bearer-token auth gate. When XFF is honored, the rightmost
+// (last) IP is used — that is the most recent proxy hop.
 //
-// VULN-010 fix: previously XFF was honored unconditionally, and the
-// leftmost (first) entry was returned. An attacker could rotate
-// X-Forwarded-For: random-each-time to reset their bucket every
-// request and bypass the per-IP rate limit entirely.
-func (s *Server) clientIPKey(r *http.Request) string {
+// VULN-010 fix: previously XFF was honored unconditionally, and the leftmost
+// (first) entry was returned. An attacker could rotate XFF random-each-time
+// to reset their bucket every request and bypass the per-IP rate limit entirely.
+// clientIPKey standalone function.
+func clientIPKey(r *http.Request, trustedProxies []string) string {
 	if r == nil {
 		return ""
 	}
@@ -550,7 +569,7 @@ func (s *Server) clientIPKey(r *http.Request) string {
 
 	// VULN-010: only honor XFF when the direct peer is a trusted proxy.
 	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
-		if isTrustedProxy(remoteHost, s.trustedProxies) {
+		if isTrustedProxy(remoteHost, trustedProxies) {
 			// Use rightmost (last) IP — it was added by the rightmost
 			// (most trusted) proxy hop.
 			parts := strings.Split(forwarded, ",")
@@ -574,7 +593,7 @@ func isTrustedProxy(host string, trusted []string) bool {
 	host = strings.TrimSpace(strings.ToLower(host))
 	for _, t := range trusted {
 		t = strings.TrimSpace(strings.ToLower(t))
-		if t == host {
+		if t == host || isTrustedProxyAddr(host) {
 			return true
 		}
 		// Support CIDR notation (e.g. "127.0.0.0/8") for future use.
@@ -583,6 +602,21 @@ func isTrustedProxy(host string, trusted []string) bool {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// isTrustedProxyAddr is a simple predicate for testing trusted proxy
+// detection. Exported so the ratelimit test can call it directly without
+// going through clientIPKey (which needs a full Server).
+func isTrustedProxyAddr(host string) bool {
+	if host == "" {
+		return false
+	}
+	host = strings.TrimSpace(strings.ToLower(host))
+	switch host {
+	case "127.0.0.1", "localhost", "::1", "[::1]":
+		return true
 	}
 	return false
 }

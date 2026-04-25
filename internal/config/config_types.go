@@ -276,9 +276,17 @@ type RoutingConfig struct {
 }
 
 type RoutingRule struct {
-	Condition string `yaml:"condition"`
-	Provider  string `yaml:"provider"`
-	Model     string `yaml:"model,omitempty"`
+	Condition    string   `yaml:"condition"`
+	Provider     string   `yaml:"provider"`
+	Model        string   `yaml:"model,omitempty"`
+	Priority     int      `yaml:"priority"`                  // higher = evaluated first
+	ProviderTag  string   `yaml:"provider_tag,omitempty"`    // tag to match against Todo.ProviderTag
+	WorkerClass  string   `yaml:"worker_class,omitempty"`    // worker class filter
+	Verification string   `yaml:"verification,omitempty"`    // verification level filter
+	MinConfidence float64 `yaml:"min_confidence,omitempty"`  // minimum confidence threshold
+	FileScope    []string `yaml:"file_scope,omitempty"`     // glob patterns for file scope matching
+	Role         string   `yaml:"role,omitempty"`            // role filter
+	Profile      string   `yaml:"profile,omitempty"`        // profile name to return on match
 }
 
 // PipelineConfig is a named ordered chain of provider+model steps.

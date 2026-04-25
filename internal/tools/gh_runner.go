@@ -97,3 +97,45 @@ func resolveGHTimeout(params map[string]any) time.Duration {
 	}
 	return ghDefaultTimeout
 }
+
+// rejectGHFlagInjection refuses any user-supplied value that carries
+// dangerous patterns through the gh surface. It mirrors rejectGitFlagInjection
+// but covers the gh-specific attack surface (--body-file read, @path local
+// file read, shell-substitution via $() / backticks / ${}, path traversal
+// via ../). VULN-053.
+func rejectGHFlagInjection(value string) error {
+	if value == "" {
+		return nil
+	}
+	orig := value
+	value = strings.TrimSpace(value)
+	// Single-dash args are never valid gh positions.
+	if strings.HasPrefix(value, "-") && !strings.HasPrefix(value, "--") {
+		return fmt.Errorf("single-dash flag %q; use --flag=value form", orig)
+	}
+	// @path means "read from this file" — reject on first appearance.
+	if strings.HasPrefix(value, "@") {
+		return fmt.Errorf("@<path> (reads an arbitrary file) is not permitted through this tool surface")
+	}
+	// --body-file, --input, --input-file (flag-only or =value form) read
+	// arbitrary files and must be refused regardless of the value.
+	lower := strings.ToLower(value)
+	for _, flag := range []string{"--body-file", "--input", "--input-file"} {
+		if lower == flag || strings.HasPrefix(lower, flag+"=") {
+			return fmt.Errorf("%s (reads an arbitrary file) is not permitted through this tool surface", flag)
+		}
+	}
+	// --field=@path or --raw-field=@path embed a file read in a flag value.
+	if strings.Contains(lower, "--field=@") || strings.Contains(lower, "--raw-field=@") {
+		return fmt.Errorf("@<path> (reads an arbitrary file) is not permitted through this tool surface")
+	}
+	// Shell substitution via $() / backticks / ${}.
+	if strings.Contains(value, "$(") || strings.Contains(value, "`") || strings.Contains(value, "${") {
+		return fmt.Errorf("shell-substitution is not permitted through this tool surface")
+	}
+	// Path traversal via ../
+	if strings.Contains(value, "../") || strings.HasSuffix(value, "/..") || strings.Contains(value, "..\\") {
+		return fmt.Errorf("path-traversal is not permitted through this tool surface")
+	}
+	return nil
+}

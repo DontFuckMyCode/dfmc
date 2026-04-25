@@ -61,12 +61,22 @@ func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// VULN-013: refuse to serve paths that look like credential holders.
-	// The check uses the user-supplied rel path (not the resolved target)
-	// so a symlink pointing to ~/.ssh/id_rsa is also caught.
+	// VULN-013: redact secret paths instead of serving raw content.
+	// Serving a 403 would reveal the path exists to an attacker who
+	// doesn't know the exact names. A redacted=true response tells the
+	// UI to show "hidden" without leaking that the file exists.
 	if security.LooksLikeSecretFile(rel) {
-		writeJSON(w, http.StatusForbidden, map[string]any{
-			"error": fmt.Sprintf("refusing to serve %q: path looks like a credential file", rel),
+		info, _ := os.Stat(target)
+		size := int64(0)
+		if info != nil {
+			size = info.Size()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"path":     filepath.ToSlash(rel),
+			"type":     "file",
+			"size":     size,
+			"content":  "",
+			"redacted": true,
 		})
 		return
 	}

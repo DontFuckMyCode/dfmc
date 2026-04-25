@@ -65,6 +65,11 @@ func (s *Server) handleTaskList(w http.ResponseWriter, r *http.Request) {
 			opts.Limit = n
 		}
 	}
+	// VULN-042: cap limit to taskListLimitMax so a caller cannot
+	// request unlimited rows and exhaust memory.
+	if opts.Limit > taskListLimitMax {
+		opts.Limit = taskListLimitMax
+	}
 	if off := r.URL.Query().Get("offset"); off != "" {
 		if n, err := strconv.Atoi(off); err == nil && n >= 0 {
 			opts.Offset = n
@@ -101,10 +106,12 @@ func (s *Server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "title is required"})
 		return
 	}
-	id := strings.TrimSpace(req.ID)
-	if id == "" {
-		id = taskstore.NewTaskID()
+	// VULN-033: id is server-generated; reject client-supplied values.
+	if id := strings.TrimSpace(req.ID); id != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "id is server-generated; do not supply it in the request body"})
+		return
 	}
+	id := taskstore.NewTaskID()
 	task := supervisor.Task{
 		ID:            id,
 		ParentID:      strings.TrimSpace(req.ParentID),
@@ -181,7 +188,17 @@ func (s *Server) handleTaskUpdate(w http.ResponseWriter, r *http.Request) {
 			t.Detail = strings.TrimSpace(stringField(v))
 		}
 		if v, ok := patch["state"]; ok {
-			t.State = supervisor.TaskState(strings.TrimSpace(stringField(v)))
+			s := strings.TrimSpace(stringField(v))
+			// VULN-032: reject unknown state strings before writing.
+			switch supervisor.TaskState(s) {
+			case supervisor.TaskPending, supervisor.TaskRunning, supervisor.TaskDone,
+				supervisor.TaskBlocked, supervisor.TaskSkipped,
+				supervisor.TaskVerifying, supervisor.TaskWaiting,
+				supervisor.TaskExternalReview:
+				t.State = supervisor.TaskState(s)
+			default:
+				return fmt.Errorf("unknown state %q; valid values: pending, running, done, blocked, skipped, verifying, waiting, external_review", s)
+			}
 		}
 		if v, ok := patch["summary"]; ok {
 			t.Summary = strings.TrimSpace(stringField(v))
@@ -203,6 +220,15 @@ func (s *Server) handleTaskUpdate(w http.ResponseWriter, r *http.Request) {
 		if v, ok := patch["parent_id"]; ok {
 			t.ParentID = strings.TrimSpace(stringField(v))
 		}
+		// VULN-032: detect self-reparent and descendant cycles.
+		if t.ParentID != "" {
+			if t.ParentID == t.ID {
+				return fmt.Errorf("cannot set parent_id to own task id (self-reparent)")
+			}
+			if ancestor, found := findTaskAncestor(store, t.ID, t.ParentID); found {
+				return fmt.Errorf("cannot set parent_id=%q: would create a cycle (found ancestor %q)", t.ParentID, ancestor)
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -210,7 +236,16 @@ func (s *Server) handleTaskUpdate(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "task " + id + " not found"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		// VULN-032: validation errors (unknown state, self-reparent, cycles)
+		// are client mistakes → 400, not 500.
+		errStr := err.Error()
+		if strings.Contains(errStr, "unknown state") ||
+			strings.Contains(errStr, "self-reparent") ||
+			strings.Contains(errStr, "would create a cycle") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": errStr})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": errStr})
 		return
 	}
 	updated, _ := store.LoadTask(id)
@@ -234,6 +269,29 @@ func (s *Server) handleTaskDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
+}
+
+// findTaskAncestor walks the ancestor chain from candidateParent upward.
+// Returns (ancestorID, true) if targetID is found as an ancestor, which
+// means setting candidateParent as the parent of targetID would create a cycle.
+func findTaskAncestor(store *taskstore.Store, targetID, candidateParent string) (string, bool) {
+	visited := make(map[string]bool)
+	current := candidateParent
+	for current != "" && !visited[current] {
+		visited[current] = true
+		task, err := store.LoadTask(current)
+		if err != nil || task == nil {
+			return "", false
+		}
+		if task.ParentID == "" {
+			return "", false
+		}
+		if task.ParentID == targetID {
+			return current, true
+		}
+		current = task.ParentID
+	}
+	return "", false
 }
 
 func stringField(v any) string {

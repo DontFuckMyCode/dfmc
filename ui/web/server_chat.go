@@ -173,6 +173,20 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, payload any) {
 	flusher.Flush()
 }
 
+// writeSSEWithDeadline writes an SSE frame with a per-chunk deadline to
+// prevent a slow-loris reader from pinning the handler goroutine forever.
+// Returns false if the write failed (deadline exceeded or connection dead).
+func writeSSEWithDeadline(w http.ResponseWriter, flusher http.Flusher, payload any) bool {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(15 * time.Second))
+	data, _ := json.Marshal(payload)
+	_, err := fmt.Fprintf(w, "data: %s\n\n", data)
+	if err != nil {
+		return false
+	}
+	flusher.Flush()
+	return true
+}
+
 func clearStreamingWriteDeadline(w http.ResponseWriter) {
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 }

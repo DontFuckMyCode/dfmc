@@ -168,10 +168,12 @@ func TestNormalizeBindHost_AuthNoneLoopbackNoNotice(t *testing.T) {
 	}
 }
 
-// TestHandleFileContent_RejectsSecretFiles — VULN-013
-// GET /api/v1/files/{path...} must reject paths that look like credential
-// files (.env, id_rsa, *.pem, etc.) with 403.
-func TestHandleFileContent_RejectsSecretFiles(t *testing.T) {
+// TestHandleFileContent_RedactsSecretFiles — VULN-013
+// GET /api/v1/files/{path...} must redact credential files (.env, id_rsa,
+// *.pem, etc.) with 200 + redacted=true instead of leaking content.
+// Serving 403 would reveal the path exists; redacting with size preserved
+// lets the UI show "hidden" without leaking existence.
+func TestHandleFileContent_RedactsSecretFiles(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
 	ts := httptest.NewServer(srv.Handler())
@@ -187,8 +189,8 @@ func TestHandleFileContent_RejectsSecretFiles(t *testing.T) {
 			t.Fatalf("request for %s: %v", path, err)
 		}
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
-			t.Fatalf("GET /api/v1/files/%s: expected 403, got %d", path, resp.StatusCode)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /api/v1/files/%s: expected 200 (redacted), got %d", path, resp.StatusCode)
 		}
 	}
 }

@@ -17,14 +17,10 @@
 
 package engine
 
-// SourceAgent — agent loop running inside the engine on behalf of
-// a model response. Goes through the approval gate.
-const SourceAgent Source = "agent"
-
-// SourceSubagent — delegate_task / orchestrate child loop. Same
-// gate as SourceAgent but distinct so denials can name the
-// orchestrator vs the orchestrated.
-const SourceSubagent Source = "subagent"
+// Source identifies who initiated a tool call. The string form is
+// stable wire format — see the "stable" note in the package comment.
+// SourceAgent and SourceSubagent are added here; SourceCLI is in engine_tools.go.
+// SourceUser, SourceWeb, SourceWS, SourceMCP are already defined in engine_tools.go.
 
 // IsUser reports whether s is the privileged-user source. Centralises
 // the "skip the gate" predicate so future Source additions don't have

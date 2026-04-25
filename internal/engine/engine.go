@@ -42,6 +42,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/hooks"
 	"github.com/dontfuckmycode/dfmc/internal/intent"
+	"github.com/dontfuckmycode/dfmc/internal/langintel"
 	"github.com/dontfuckmycode/dfmc/internal/memory"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/security"
@@ -79,6 +80,10 @@ type Engine struct {
 	Memory              *memory.Store
 	Conversation        *conversation.Manager
 	Security            *security.Scanner
+	// LangIntel is the per-language knowledge base used to surface tips,
+	// patterns, bug patterns, security rules, and idioms during analysis.
+	// Nil is safe — callers check before using.
+	LangIntel *langintel.Registry
 	// Hooks dispatches user-configured shell commands on lifecycle events
 	// (user_prompt_submit, pre_tool, post_tool, session_start/end). A nil
 	// value is safe — Fire is a no-op on nil.
@@ -255,6 +260,7 @@ func (e *Engine) Init(ctx context.Context) error {
 	}
 	e.Conversation = conversation.New(e.Storage)
 	e.Security = security.New()
+	e.LangIntel = langintel.NewRegistry()
 
 	e.Providers, err = provider.NewRouter(e.Config.Providers)
 	if err != nil {

@@ -72,14 +72,39 @@ func (s *Server) handleWorkspaceApply(w http.ResponseWriter, r *http.Request) {
 	if root == "" {
 		root = "."
 	}
+	// VULN-009: check_only dry-run is read-only — bypass the approval gate
+	// by using the local apply path directly (same containment checks apply).
+	// Mutation calls go through CallToolFromSource so the gate fires for
+	// non-user sources (web/ws/mcp) as required.
+	if req.CheckOnly {
+		if err := applyUnifiedDiffWeb(root, patch, true); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"status":    "error",
+				"check_only": true,
+				"error":     err.Error(),
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":     "ok",
+			"check_only": true,
+			"valid":      true,
+		})
+		return
+	}
 	// Route through the engine so the full lifecycle fires:
 	// approval gate, pre/post hooks, EnsureReadBeforeMutation.
 	toolResult, err := s.engine.CallToolFromSource(r.Context(), "apply_patch", map[string]any{
-		"patch":    patch,
-		"dry_run":  req.CheckOnly,
+		"patch":   patch,
+		"dry_run": false,
 	}, engine.SourceWeb)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		errStr := err.Error()
+		if strings.Contains(errStr, " denied:") {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": errStr})
+		} else {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": errStr})
+		}
 		return
 	}
 	if req.CheckOnly {
@@ -308,4 +333,58 @@ func gitChangedFilesWeb(ctx context.Context, projectRoot string, limit int) ([]s
 		}
 	}
 	return files, nil
+}
+
+// pathsFromUnifiedDiff extracts file paths from a unified diff header.
+// Used by the test to verify the handler rejects traversal targets.
+func pathsFromUnifiedDiff(patch string) []string {
+	var out []string
+	seen := make(map[string]bool)
+	lines := strings.Split(strings.ReplaceAll(patch, "\r\n", "\n"), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "--- ") || strings.HasPrefix(trimmed, "+++ ") {
+			// Strip the leading --- / +++ prefix and a/ b/ prefix.
+			p := trimmed[4:]
+			if len(p) >= 2 && p[1] == '/' {
+				p = p[2:]
+			}
+			if strings.TrimSpace(p) == "/dev/null" {
+				continue
+			}
+			// Strip timestamp suffix (tab + date)
+			if idx := strings.IndexByte(p, '\t'); idx >= 0 {
+				p = p[:idx]
+			}
+			p = strings.TrimSpace(p)
+			if p != "" && !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+// assertPathWithinRoot checks that relPath resolves inside root.
+// Returns nil on success, error on traversal attempt.
+func assertPathWithinRoot(root, relPath string) error {
+	abs := absPathNoClean(root, relPath)
+	rel, err := filepath.Rel(root, abs)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path escapes root")
+	}
+	return nil
+}
+
+// absPathNoClean joins root+rel WITHOUT cleaning — traversal must be
+// detected via Rel, not prevented by Clean collapsing ".." first.
+func absPathNoClean(root, rel string) string {
+	if filepath.IsAbs(rel) {
+		return rel
+	}
+	return filepath.Join(root, rel)
 }

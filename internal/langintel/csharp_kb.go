@@ -1,0 +1,125 @@
+package langintel
+
+// csharpKB returns the embedded C# knowledge base.
+func csharpKB() *Registry {
+	return &Registry{
+		Practices: []Practice{
+			{
+				ID:      "csharp-using",
+				Summary: "Use using statements for IDisposable resources",
+				Body: `using (var conn = new SqlConnection(cs)) { ... } or the C# 8+ using var conn = new SqlConnection(cs); — both call Dispose() at end of scope, even on exception. Never let SqlConnection, StreamReader, or HttpClient leak (but also see: dispose HttpClient properly via IHttpClientFactory).`,
+				Langs: []string{"csharp"},
+				Kinds: []string{"using_statement", "local_declaration_statement"},
+				Tags:  []string{"resource-management"},
+			},
+			{
+				ID:      "csharp-null-conditional",
+				Summary: "Use ?. and ?? operators instead of null checks",
+				Body: `string name = user?.Address?.City ?? "Unknown"; — the null-conditional ?. short-circuits the entire chain if any part is null. Use ?? for default values. Avoid nested if (x != null) blocks when ?. and ?? can express the same logic concisely.`,
+				Langs: []string{"csharp"},
+				Kinds: []string{"if_statement", "local_declaration_statement"},
+				Tags:  []string{"null-safety"},
+			},
+			{
+				ID:      "csharp-async-await",
+				Summary: "Use async/await — never block on async code with .Result or .Wait()",
+				Body: `.Result and .Wait() cause deadlocks in UI applications and thread-pool starvation in ASP.NET. Always use async all the way: await MyAsyncMethod(). In legacy code that cannot be made async, use Task.Run(() => syncMethod()).`,
+				Langs: []string{"csharp"},
+				Kinds: []string{"invocation_expression", "method_declaration"},
+				Tags:  []string{"async", "concurrency"},
+			},
+			{
+				ID:      "csharp-record",
+				Summary: "Use records for immutable data carriers (C# 9+)",
+				Body: `record Person(string FirstName, string LastName); creates an immutable class with value-based equality, ToString(), Deconstruct(). Use init instead of set for properties that should be set only during construction. Records are ideal for DTOs, events, and domain values.`,
+				Langs: []string{"csharp"},
+				Kinds: []string{"class_declaration", "record_declaration"},
+				Tags:  []string{"design", "immutability"},
+			},
+		},
+		BugPatterns: []BugPattern{
+			{
+				ID:       "csharp-list-reference",
+				Summary:  "Assigning a List<T> to a variable and mutating it affects both references",
+				Body:     "C# reference types (class) share the same object on assignment. List<T> is a reference type — List<T> list2 = list1; means list2 and list1 point to the same list. Use .ToList() or new List<T>(original) to create an independent copy.",
+				Langs:    []string{"csharp"},
+				Kinds:    []string{"variable_declarator", "assignment_expression"},
+				Severity: "warning",
+			},
+			{
+				ID:       "csharp-foreach-mutation",
+				Summary:  "Do not modify a collection while iterating over it with foreach",
+				Body:     "Modifying a collection during enumeration throws InvalidOperationException. To add/remove while iterating, collect items to change and apply after the loop, or use a for loop from the end.",
+				Langs:    []string{"csharp"},
+				Kinds:    []string{"for_each_statement"},
+				Severity: "error",
+				CWE:      "CWE-667", // Improper Locking
+			},
+			{
+				ID:       "csharp-string-format",
+				Summary:  "String interpolation ($) is preferred over string.Format",
+				Body:     "string.Format(\"{0} {1}\", a, b) is harder to read and refactor than $\"{a} {b}\". String interpolation is inlined at compile time and has the same performance. Reserve string.Format for composite formats with number alignment.",
+				Langs:    []string{"csharp"},
+				Kinds:    []string{"invocation_expression", "object_creation_expression"},
+				Severity: "info",
+			},
+			{
+				ID:       "csharp-task-configure",
+				Summary:  "ConfigureTaskAwaiter to prevent deadlocks in async sync interop",
+				Body:     "Task.ConfigureAwait(false) avoids synchronization-context deadlocks in library code. Always use ConfigureAwait(false) in non-UI/non-ASP.NET code. In ASP.NET Core, there is no SynchronizationContext so ConfigureAwait(false) is less critical but still good practice.",
+				Langs:    []string{"csharp"},
+				Kinds:    []string{"await_expression"},
+				Severity: "warning",
+			},
+		},
+		SecurityRules: []SecurityRule{
+			{
+				ID:       "csharp-sql-injection",
+				Summary:  "Use parameterized queries — never string concatenation in SQL",
+				Body:     "String interpolation into SQL is SQL injection. Use SqlParameter: cmd.Parameters.AddWithValue(\"@id\", userId). In EF Core, use FromSqlInterpolated or LINQ. Never use string.Format or $ strings with SQL.",
+				Langs:    []string{"csharp"},
+				Kinds:    []string{"invocation_expression", "string_literal"},
+				CWE:      "CWE-89",
+				OWASP:    "A03:2021",
+				Severity: "critical",
+			},
+			{
+				ID:       "csharp-hardcoded-secret",
+				Summary:  "Do not embed secrets in C# source",
+				Body:     "Secrets in C# source are compiled into IL and visible in decompiled assemblies. Use environment variables: Environment.GetEnvironmentVariable(\"API_KEY\"), or Azure Key Vault / AWS Secrets Manager for production.",
+				Langs:    []string{"csharp"},
+				Kinds:    []string{"variable_declarator", "string_literal"},
+				CWE:      "CWE-798",
+				Severity: "critical",
+			},
+			{
+				ID:       "csharp-path-traversal",
+				Summary:  "Validate and sanitize path inputs — check .. escaping",
+				Body:     "User-supplied paths like ../../etc/passwd can escape the intended directory. Use Path.GetFullPath and compare: Path.GetFullPath(userInput).StartsWith(allowedDir). Use Path.Combine rather than string concatenation.",
+				Langs:    []string{"csharp"},
+				Kinds:    []string{"invocation_expression"},
+				CWE:      "CWE-22",
+				OWASP:    "A01:2021",
+				Severity: "high",
+			},
+			{
+				ID:       "csharp-xml-xxe",
+				Summary:  "Disable DTD and external entities in XML readers",
+				Body:     "XmlDocument and XmlReader with default settings are vulnerable to XXE. Set DtdProcessing = DtdProcessing.Prohibit and XmlReaderSettings.DtdProcessing = DtdProcessing.Prohibit. In .NET Framework 4.5.2+, this is the default but verify explicitly.",
+				Langs:    []string{"csharp"},
+				Kinds:    []string{"object_creation_expression", "invocation_expression"},
+				CWE:      "CWE-611",
+				OWASP:    "A05:2021",
+				Severity: "high",
+			},
+		},
+		Idioms: []Idiom{
+			{ID: "csharp-PascalCase", Lang: "csharp", Rule: "Use PascalCase for types, methods, properties; camelCase for local variables and parameters",
+				Detail: "C# convention: classes, methods, properties use PascalCase. Local variables and parameters use camelCase. Private fields use _camelCase (StyleCop convention) or _PascalCase (Resharper default).",
+				Kinds: []string{"class_declaration", "method_declaration", "property_declaration", "variable_declarator"}},
+			{ID: "csharp-when", Lang: "csharp", Rule: "Use pattern matching with when clauses instead of nested if statements",
+				Detail: "C# pattern matching with when: if (obj is Person { Age: var age } p && age > 18) — directly extracts nested properties. Reduces nested if chains and eliminates temp variables.",
+				Kinds: []string{"if_statement", "switch_statement"}},
+		},
+	}
+}

@@ -78,6 +78,26 @@ type Engine struct {
 	// bridge adapter after clients are loaded. Nil when no MCP servers
 	// are configured.
 	mcpBridge mcp.ToolBridge
+
+	// pathLocks serialises concurrent (read-gate-check → write) operations
+	// on the same absolute path. Sub-agent fan-out can touch the same file
+	// from multiple goroutines; without serialisation the window between
+	// EnsureReadBeforeMutation and os.WriteFile is a TOCTOU race.
+	pathLocks sync.Map
+}
+
+// LockPath returns a release function for the per-path lock covering abs.
+// Empty abs is a no-op (returns a nop release). Used by apply_patch and
+// write_file to serialise the read-gate → write window per target file.
+func (e *Engine) LockPath(abs string) func() {
+	if abs == "" {
+		return func() {}
+	}
+	// Load or create the per-path mutex.
+	lock, _ := e.pathLocks.LoadOrStore(abs, &sync.Mutex{})
+	mu := lock.(*sync.Mutex)
+	mu.Lock()
+	return func() { mu.Unlock() }
 }
 
 // ReasoningPublisher is the callback shape the higher-level engine wires

@@ -173,7 +173,7 @@ func fetchFileStats(projectRoot string) map[string]any {
 			return nil
 		}
 		if info.IsDir() {
-			for _, skip := range projectSkipDirs {
+			for _, skip := range skipDirs {
 				if info.Name() == skip {
 					return filepath.SkipDir
 				}

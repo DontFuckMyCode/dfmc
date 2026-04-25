@@ -249,14 +249,14 @@ func TestClientIPKeyStripsPortAndPrefersForwardedFor(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
-	if got := srv.clientIPKey(req); got != "127.0.0.1" {
+	if got := clientIPKey(req, srv.trustedProxies); got != "127.0.0.1" {
 		t.Fatalf("expected remote addr port stripped, got %q", got)
 	}
 
 	// When remote is loopback (trusted proxy), XFF is honored.
 	// VULN-010 fix: rightmost entry wins, not leftmost.
 	req.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.5")
-	if got := srv.clientIPKey(req); got != "10.0.0.5" {
+	if got := clientIPKey(req, srv.trustedProxies); got != "10.0.0.5" {
 		t.Fatalf("expected rightmost XFF entry (10.0.0.5) when remote is trusted proxy, got %q", got)
 	}
 }
@@ -268,7 +268,7 @@ func TestClientIPKeyIgnoresXFFWhenRemoteNotTrusted(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	req.RemoteAddr = "203.0.113.5:54321"
 	req.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.5")
-	if got := srv.clientIPKey(req); got != "203.0.113.5" {
+	if got := clientIPKey(req, srv.trustedProxies); got != "203.0.113.5" {
 		t.Fatalf("expected XFF ignored when remote is not trusted proxy, got %q", got)
 	}
 }
@@ -279,7 +279,7 @@ func TestClientIPKeyEmptyProxiesListIgnoresXFF(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
 	req.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.5")
-	if got := srv.clientIPKey(req); got != "127.0.0.1" {
+	if got := clientIPKey(req, srv.trustedProxies); got != "127.0.0.1" {
 		t.Fatalf("expected XFF ignored when no proxies configured, got %q", got)
 	}
 }

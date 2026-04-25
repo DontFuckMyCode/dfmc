@@ -1,0 +1,126 @@
+package langintel
+
+// javaKB returns the embedded Java knowledge base.
+func javaKB() *Registry {
+	return &Registry{
+		Practices: []Practice{
+			{
+				ID:      "java-try-with-resources",
+				Summary: "Use try-with-resources for all AutoCloseable resources",
+				Body: `Try-with-resources automatically calls close() even when exceptions occur. Replace manual try/finally with: try (FileInputStream fis = new FileInputStream(path)) { ... } — the resource is closed regardless of how the block exits.`,
+				Langs: []string{"java"},
+				Kinds: []string{"try_statement"},
+				Tags:  []string{"resource-management"},
+			},
+			{
+				ID:      "java-stream-api",
+				Summary: "Prefer Stream API over imperative loops for transformations",
+				Body: `Java streams are readable and often as fast as hand-written loops for most cases. Use .filter().map().collect() for pipeline operations. Avoid side effects inside stream operations — they make streams harder to reason about and harder to parallelize.`,
+				Langs: []string{"java"},
+				Kinds: []string{"for_statement", "method_invocation"},
+				Tags:  []string{"idiom", "style"},
+			},
+			{
+				ID:      "java-immutability",
+				Summary: "Prefer immutable objects — final fields, no setters",
+				Body: `Immutable objects (final fields, no mutators, no leaked references) are thread-safe by design and simpler to reason about. Use builder pattern for complex construction. Collections: return unmodifiable views (Collections.unmodifiableMap) or copies.`,
+				Langs: []string{"java"},
+				Kinds: []string{"class_declaration", "field_declaration"},
+				Tags:  []string{"design", "thread-safety"},
+			},
+			{
+				ID:      "java-optional",
+				Summary: "Use Optional for nullable return values, not null",
+				Body: `Optional<T> makes the absence explicit. Never return null from a method that already uses Optional — use Optional.empty() or Optional.ofNullable(). Never use Optional as a field type or method parameter.`,
+				Langs: []string{"java"},
+				Kinds: []string{"method_declaration", "variable_declarator"},
+				Tags:  []string{"null-safety", "style"},
+			},
+		},
+		BugPatterns: []BugPattern{
+			{
+				ID:       "java-null-list",
+				Summary:  "Returning null instead of empty collection causes NPE in callers",
+				Body:     "Returning null from a method that returns a collection forces every caller to null-check. Return an empty collection (Collections.emptyList(), emptySet(), emptyMap()) instead. The Collections overloads are immutable and cost nothing to return repeatedly.",
+				Langs:    []string{"java"},
+				Kinds:    []string{"method_declaration", "return_statement"},
+				Severity: "warning",
+				CWE:      "CWE-476",
+			},
+			{
+				ID:       "java-synchronized",
+				Summary:  "Prefer java.util.concurrent primitives over synchronized blocks",
+				Body:     "synchronized blocks are coarse-grained and can cause contention. Use ConcurrentHashMap, AtomicInteger, CopyOnWriteArrayList, or StampedLock for fine-grained concurrency. For producer-consumer patterns, use BlockingQueue.",
+				Langs:    []string{"java"},
+				Kinds:    []string{"synchronized_statement", "method_declaration"},
+				Severity: "warning",
+			},
+			{
+				ID:       "java-string-pool",
+				Summary:  "Avoid new String() — it creates unnecessary heap objects",
+				Body:     "new String(s) creates a new heap-allocated String even when s is already in the string pool. Use String s directly. For concatenation, use StringBuilder or String.format. For repeated concatenation in loops, pre-size StringBuilder.",
+				Langs:    []string{"java"},
+				Kinds:    []string{"class_instance_creation_expression"},
+				Severity: "info",
+			},
+			{
+				ID:       "java-bigdecimal",
+				Summary:  "Use BigDecimal for precise decimal arithmetic — not double",
+				Body:     "double's binary floating-point cannot exactly represent most decimal fractions. For financial calculations, use BigDecimal with String constructor (not double): new BigDecimal(\"0.1\") not new BigDecimal(0.1). Compare with compareTo(), not equals().",
+				Langs:    []string{"java"},
+				Kinds:    []string{"variable_declarator", "method_invocation"},
+				Severity: "error",
+				CWE:      "CWE-681", // Incorrect Conversion Between Numeric Types
+			},
+		},
+		SecurityRules: []SecurityRule{
+			{
+				ID:       "java-sql-injection",
+				Summary:  "Use parameterized queries — never concatenate into SQL strings",
+				Body:     "JDBC string concatenation into SQL is SQL injection. Use PreparedStatement with ? placeholders: pstmt.setString(1, userId). Never build SQL with + in Java — even with trusted input, it creates a maintenance hazard.",
+				Langs:    []string{"java"},
+				Kinds:    []string{"method_invocation", "variable_declarator"},
+				CWE:      "CWE-89",
+				OWASP:    "A03:2021",
+				Severity: "critical",
+			},
+			{
+				ID:       "java-deserialization",
+				Summary:  "Never deserialize untrusted data — use JSON or protobuf instead",
+				Body:     "ObjectInputStream.readObject on untrusted data is arbitrary code execution. Apache Commons Collections and similar gadget chains can exploit this. Use JSON (Jackson, Gson) or protobuf for untrusted serialization. If you must deserialize, use a look-ahead ObjectInputStream subclass.",
+				Langs:    []string{"java"},
+				Kinds:    []string{"method_invocation", "class_instance_creation_expression"},
+				CWE:      "CWE-502",
+				OWASP:    "A08:2021",
+				Severity: "critical",
+			},
+			{
+				ID:       "java-hardcoded-secret",
+				Summary:  "Do not embed credentials or secrets in Java source",
+				Body:     "Secrets in source are compiled into bytecode and visible in decompiled JARs. Use environment variables: System.getenv(\"API_KEY\"), or a secrets manager (HashiCorp Vault, AWS Secrets Manager). For tests, use @BeforeClass to set from env.",
+				Langs:    []string{"java"},
+				Kinds:    []string{"variable_declarator", "string_literal"},
+				CWE:      "CWE-798",
+				Severity: "critical",
+			},
+			{
+				ID:       "java-xxe",
+				Summary:  "Disable external entity expansion in XML parsers",
+				Body:     "XML parsers with DTD processing enabled are vulnerable to XXE attacks. Always configure XMLInputFactory to disable external entities: xmlInputFactory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, \"\"); xmlInputFactory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, \"\");",
+				Langs:    []string{"java"},
+				Kinds:    []string{"method_invocation", "class_instance_creation_expression"},
+				CWE:      "CWE-611",
+				OWASP:    "A05:2021",
+				Severity: "high",
+			},
+		},
+		Idioms: []Idiom{
+			{ID: "java-camelCase", Lang: "java", Rule: "Use camelCase for methods and variables, PascalCase for types",
+				Detail: "Java convention: methods and variables use camelCase. Classes, interfaces, enums use PascalCase. Constants (static final) use SCREAMING_SNAKE_CASE.",
+				Kinds: []string{"method_declaration", "variable_declarator", "class_declaration", "interface_declaration"}},
+			{ID: "java-builder", Lang: "java", Rule: "Use builder pattern for complex object construction with many parameters",
+				Detail: "When a class has more than 3 constructor parameters, use a static nested Builder class. This avoids telescoping constructors and makes the call site self-documenting: Person.builder().name(\"Alice\").age(30).build().",
+				Kinds: []string{"class_declaration", "method_invocation"}},
+		},
+	}
+}

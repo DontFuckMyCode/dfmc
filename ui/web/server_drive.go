@@ -65,6 +65,22 @@ func (s *Server) handleDriveStart(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// VULN-034: cap max_parallel and auto_approve to prevent memory exhaustion
+	// from maliciously large values.
+	if req.MaxParallel > 1000 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":       "max_parallel exceeds maximum allowed (1000)",
+			"max_allowed": 1000,
+		})
+		return
+	}
+	if len(req.AutoApprove) > 5000 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":       "auto_approve length exceeds maximum allowed (5000)",
+			"max_allowed": 5000,
+		})
+		return
+	}
 	if s.engine == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "engine not initialized"})
 		return
