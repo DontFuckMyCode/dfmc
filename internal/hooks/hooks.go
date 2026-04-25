@@ -146,6 +146,52 @@ func New(cfg config.HooksConfig, observer Observer) *Dispatcher {
 // effects have a deterministic ordering (e.g. a log hook writes its
 // line before a notify hook triggers a desktop notification). Callers
 // who want async dispatch should invoke Fire on a goroutine.
+// safeObserve calls the observer with panic protection. A panicking
+// observer must not unwind the dispatch loop — the next hook must still
+// get a fresh invocation (VULN-048).
+func safeObserve(obs Observer, report Report) {
+	if obs == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	obs(report)
+}
+
+// fireOne evaluates the condition, runs one hook, and reports its result.
+// Wrapped in defer/recover so a panicing hook or observer is contained
+// and the dispatch loop continues with the next hook (VULN-048).
+func (d *Dispatcher) fireOne(ctx context.Context, event Event, h compiledHook, payload Payload) (ran bool) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			if d.observer != nil {
+				safeObserve(d.observer, Report{
+					Event:   event,
+					Name:    h.name,
+					Command: h.command,
+					Err:     fmt.Errorf("hook panic: %v", rec),
+					ExitCode: -1,
+				})
+			}
+		}
+	}()
+	if !d.conditionMatches(h.condition, payload) {
+		return false
+	}
+	report := d.runOne(ctx, event, h, payload)
+	if d.observer != nil {
+		safeObserve(d.observer, report)
+	}
+	return true
+}
+
+// Fire runs every handler for `event` sequentially. The Payload is
+// projected onto environment variables for each hook process. Returns
+// the count of hooks that actually ran (post-condition filter).
+//
+// We run hooks sequentially rather than in parallel so their side
+// effects have a deterministic ordering (e.g. a log hook writes its
+// line before a notify hook triggers a desktop notification). Callers
+// who want async dispatch should invoke Fire on a goroutine.
 func (d *Dispatcher) Fire(ctx context.Context, event Event, payload Payload) int {
 	if d == nil {
 		return 0
@@ -158,13 +204,8 @@ func (d *Dispatcher) Fire(ctx context.Context, event Event, payload Payload) int
 	}
 	ran := 0
 	for _, h := range entries {
-		if !d.conditionMatches(h.condition, payload) {
-			continue
-		}
-		report := d.runOne(ctx, event, h, payload)
-		ran++
-		if d.observer != nil {
-			d.observer(report)
+		if d.fireOne(ctx, event, h, payload) {
+			ran++
 		}
 	}
 	return ran

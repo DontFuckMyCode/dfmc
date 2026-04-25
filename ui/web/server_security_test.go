@@ -1,9 +1,12 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
@@ -97,5 +100,58 @@ func TestNormalizeBindHost_TokenModeNonLoopback(t *testing.T) {
 	host = normalizeBindHost("none", "0.0.0.0")
 	if host != "127.0.0.1" {
 		t.Fatalf("auth=none should force loopback, got %q", host)
+	}
+}
+
+// VULN-049: auth=none silently rebinding non-loopback to 127.0.0.1
+// must now emit a NOTICE on stderr so the operator can see their
+// flag was overridden.
+func TestNormalizeBindHost_AuthNoneEmitsNotice(t *testing.T) {
+	rPipe, wPipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = wPipe
+	defer func() { os.Stderr = origStderr }()
+
+	host := normalizeBindHost("none", "0.0.0.0")
+
+	wPipe.Close()
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(rPipe)
+	captured := buf.String()
+
+	if host != "127.0.0.1" {
+		t.Fatalf("rebind expected, got %q", host)
+	}
+	if !strings.Contains(captured, "auth=none") {
+		t.Fatalf("notice should mention auth=none, got %q", captured)
+	}
+	if !strings.Contains(captured, "0.0.0.0") {
+		t.Fatalf("notice should echo the overridden host, got %q", captured)
+	}
+	if !strings.Contains(captured, "127.0.0.1") {
+		t.Fatalf("notice should mention the chosen loopback, got %q", captured)
+	}
+}
+
+// VULN-049: a loopback bind under auth=none must NOT emit the notice.
+func TestNormalizeBindHost_AuthNoneLoopbackNoNotice(t *testing.T) {
+	rPipe, wPipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = wPipe
+	defer func() { os.Stderr = origStderr }()
+
+	_ = normalizeBindHost("none", "127.0.0.1")
+
+	wPipe.Close()
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(rPipe)
+	if got := buf.String(); strings.Contains(got, "NOTICE") || strings.Contains(got, "WARNING") {
+		t.Fatalf("loopback under auth=none should not emit a notice, got: %q", got)
 	}
 }

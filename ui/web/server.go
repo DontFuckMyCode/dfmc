@@ -151,6 +151,7 @@ func New(eng *engine.Engine, host string, port int) *Server {
 
 func normalizeBindHost(authMode, host string) string {
 	if strings.EqualFold(strings.TrimSpace(authMode), "none") && !isLoopbackBindHost(host) {
+		fmt.Fprintf(os.Stderr, "[DFMC] NOTICE: auth=none forces loopback bind; ignoring --host %s and using 127.0.0.1. Pass --auth=token to expose on a network interface.\n", host)
 		return "127.0.0.1"
 	}
 	if strings.EqualFold(strings.TrimSpace(authMode), "token") && !isLoopbackBindHost(host) {

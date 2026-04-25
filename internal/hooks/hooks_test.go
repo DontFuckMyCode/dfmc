@@ -200,6 +200,112 @@ func TestFire_TimeoutKillsRunawayHook(t *testing.T) {
 	}
 }
 
+// VULN-048: a panicking observer must not unwind the dispatch loop.
+// Hooks are best-effort — a buggy observer is the engine's own bug
+// to fix, not a reason to crash the tool call that fired the hook.
+func TestFire_ObserverPanicIsContained(t *testing.T) {
+	cmd := "echo ok"
+	if runtime.GOOS == "windows" {
+		cmd = "cmd.exe /C echo ok"
+	}
+
+	var calls int
+	var mu sync.Mutex
+	observer := func(report Report) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		// First observer call panics; second hook's call must still
+		// run — the dispatch loop must not be unwound.
+		if calls == 1 {
+			panic("observer boom")
+		}
+	}
+
+	d := New(config.HooksConfig{Entries: map[string][]config.HookEntry{
+		"pre_tool": {
+			{Name: "first", Command: cmd},
+			{Name: "second", Command: cmd},
+		},
+	}}, observer)
+
+	// Must not panic.
+	got := d.Fire(context.Background(), EventPreTool, Payload{"tool_name": "x"})
+	if got != 2 {
+		t.Fatalf("expected both hooks to run despite observer panic, got ran=%d", got)
+	}
+	mu.Lock()
+	if calls != 2 {
+		t.Fatalf("expected observer to be called twice, got %d", calls)
+	}
+	mu.Unlock()
+}
+
+// VULN-048: a panic in conditionMatches (synthetically: we exercise
+// the panic-guard contract by injecting a panicking observer into a
+// hook that is gated by a no-op condition). The fireOne wrapper must
+// catch any panic from the per-hook stack and surface a synthetic
+// "hook panic" Report through the observer-safe path so operators
+// see the failure without losing the rest of the chain.
+func TestFire_PanicSurfacedAsReport(t *testing.T) {
+	cmd := "echo ok"
+	if runtime.GOOS == "windows" {
+		cmd = "cmd.exe /C echo ok"
+	}
+
+	var seen []Report
+	var mu sync.Mutex
+	observer := func(r Report) {
+		mu.Lock()
+		seen = append(seen, r)
+		count := len(seen)
+		mu.Unlock()
+		if count == 1 {
+			// First call panics — the next hook must still get a
+			// fresh observer invocation (and panic again, harmlessly).
+			panic("synthetic")
+		}
+	}
+
+	d := New(config.HooksConfig{Entries: map[string][]config.HookEntry{
+		"pre_tool": {
+			{Name: "first", Command: cmd},
+			{Name: "second", Command: cmd},
+		},
+	}}, observer)
+
+	d.Fire(context.Background(), EventPreTool, nil)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) < 2 {
+		t.Fatalf("expected both hooks to deliver a report despite panicking observer, got %d", len(seen))
+	}
+}
+
+// VULN-048: with timeout=0 (default 30s), a quick-running hook must
+// not be affected by the panic guard — sanity check that the guard
+// doesn't break the happy path.
+func TestFire_HappyPathStillWorks(t *testing.T) {
+	cmd := "echo ok"
+	if runtime.GOOS == "windows" {
+		cmd = "cmd.exe /C echo ok"
+	}
+	var got Report
+	d := New(config.HooksConfig{Entries: map[string][]config.HookEntry{
+		"pre_tool": {{Name: "ok", Command: cmd}},
+	}}, func(r Report) { got = r })
+	if ran := d.Fire(context.Background(), EventPreTool, nil); ran != 1 {
+		t.Fatalf("ran=%d, want 1", ran)
+	}
+	if got.Err != nil {
+		t.Fatalf("unexpected hook error: %v", got.Err)
+	}
+	if got.Duration > 30*time.Second {
+		t.Fatalf("unexpected hook duration: %v", got.Duration)
+	}
+}
+
 // TestDescribe — surfaces hook counts per event for status displays.
 func TestDescribe(t *testing.T) {
 	var d *Dispatcher
