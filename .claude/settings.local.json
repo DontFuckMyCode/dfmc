@@ -12,7 +12,19 @@
       "mcp__dfmt__dfmt.recall",
       "mcp__dfmt__dfmt.stats",
       "Bash(cat *)",
-      "Bash(head *)"
+      "Bash(head *)",
+      "Bash(go test *)",
+      "Bash(go get *)",
+      "Bash(go list *)",
+      "Bash(go build *)",
+      "Bash(git add *)",
+      "Bash(git merge *)",
+      "Bash(git commit *)",
+      "Bash(dir .deferred/internal/tools/)",
+      "Bash(git checkout *)",
+      "Bash(python3 -c \"f=open\\('ui/web/server.go','r'\\); lines=f.readlines\\(\\); print\\(repr\\(lines[378]\\)\\)\")",
+      "Bash(powershell -c 'Get-Content ui/web/server.go | Select-Object -Index 378 | ForEach-Object { Write-Output $_ }')",
+      "Bash(git stash *)"
     ]
   }
 }

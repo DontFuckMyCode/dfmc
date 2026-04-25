@@ -39,6 +39,7 @@ func TestWS_OversizedFrameClosesConn(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
 	srv.SetAllowedOrigins([]string{"*"})
+	srv.SetAllowedHosts([]string{"*"})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -68,6 +69,7 @@ func TestWS_RateLimitDoesNotKill(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
 	srv.SetAllowedOrigins([]string{"*"})
+	srv.SetAllowedHosts([]string{"*"})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -99,6 +101,7 @@ func TestWS_PingPongHeartbeat(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
 	srv.SetAllowedOrigins([]string{"*"})
+	srv.SetAllowedHosts([]string{"*"})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -143,6 +146,7 @@ func TestWS_ClientCloseUnwindsServer(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
 	srv.SetAllowedOrigins([]string{"*"})
+	srv.SetAllowedHosts([]string{"*"})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

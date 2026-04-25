@@ -1,8 +1,24 @@
 {
-  // Autonomous agent session — no user confirmation requested
-  "auto_tool_call": true,
-  "tool_search_limit": 20,
-  "initial_read_profile": "deep",
+  "hooks": {
+    "PreCompact": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "dfmt recall --format md > .dfmt/last-recall.md 2>/dev/null || true",
+        "timeout": 30,
+        "statusMessage": "Saving session snapshot for next session..."
+      }]
+    }],
+    "SessionStart": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "if [ -f .dfmt/last-recall.md ]; then echo '--- Previous session summary ---' && cat .dfmt/last-recall.md && echo '--- End of previous session ---'; fi",
+        "timeout": 10,
+        "statusMessage": "Loading previous session summary..."
+      }]
+    }]
+  },
   "permissions": {
     "allow": [
       "mcp__dfmt__dfmt.read",
@@ -12,8 +28,7 @@
       "mcp__dfmt__dfmt.search",
       "mcp__dfmt__dfmt.recall",
       "mcp__dfmt__dfmt.stats",
-      "Bash(cat *)",
-      "Bash(head *)"
+      "Bash(dfmt recall --format md *)"
     ]
   }
 }

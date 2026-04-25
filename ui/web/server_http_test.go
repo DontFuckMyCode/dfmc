@@ -42,34 +42,57 @@ func TestHandlerAppliesBearerAuthWhenConfigured(t *testing.T) {
 	srv.SetBearerToken("secret-token")
 	handler := srv.Handler()
 
-	rootReq := httptest.NewRequest(http.MethodGet, "/", nil)
-	rootRec := httptest.NewRecorder()
-	handler.ServeHTTP(rootRec, rootReq)
-	if rootRec.Code != http.StatusUnauthorized {
-		t.Fatalf("GET / with token configured should require auth, got %d", rootRec.Code)
+	// Use http.Get against a live test server so the Host header is
+	// correctly set to the actual server address (127.0.0.1:PORT).
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	// Without token -> 401
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatalf("get root: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("GET / without token: expected 401, got %d", resp.StatusCode)
 	}
 
-	rootReq = httptest.NewRequest(http.MethodGet, "/", nil)
-	rootReq.Header.Set("Authorization", "Bearer secret-token")
-	rootRec = httptest.NewRecorder()
-	handler.ServeHTTP(rootRec, rootReq)
-	if rootRec.Code != http.StatusOK {
-		t.Fatalf("GET / with bearer token should succeed, got %d", rootRec.Code)
+	// With correct token -> 200
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer secret-token")
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get root with token: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("GET / with bearer token: expected 200, got %d", resp2.StatusCode)
 	}
 
-	apiReq := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
-	apiRec := httptest.NewRecorder()
-	handler.ServeHTTP(apiRec, apiReq)
-	if apiRec.Code != http.StatusUnauthorized {
-		t.Fatalf("missing auth should 401, got %d", apiRec.Code)
+	// /api/v1/status also protected
+	apiReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/status", nil)
+	apiResp, err := http.DefaultClient.Do(apiReq)
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+	defer apiResp.Body.Close()
+	if apiResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("missing auth should 401, got %d", apiResp.StatusCode)
 	}
 
-	apiReq = httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
-	apiReq.Header.Set("Authorization", "Bearer secret-token")
-	apiRec = httptest.NewRecorder()
-	handler.ServeHTTP(apiRec, apiReq)
-	if apiRec.Code != http.StatusOK {
-		t.Fatalf("bearer token should authorize, got %d", apiRec.Code)
+	// With token -> 200
+	apiReq2, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/status", nil)
+	apiReq2.Header.Set("Authorization", "Bearer secret-token")
+	apiResp2, err := http.DefaultClient.Do(apiReq2)
+	if err != nil {
+		t.Fatalf("get status with token: %v", err)
+	}
+	defer apiResp2.Body.Close()
+	if apiResp2.StatusCode != http.StatusOK {
+		t.Fatalf("bearer token should authorize, got %d", apiResp2.StatusCode)
 	}
 }
 
@@ -153,14 +176,110 @@ func TestHandlerAllowsWSAuthorizationHeaderWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestHostAllowlistMiddlewareRejectsForeignHost(t *testing.T) {
+	handler := hostAllowlistMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), []string{"127.0.0.1:7777", "localhost:7777"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Host = "evil.example.com"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("expected 421 Misdirected Request for foreign Host, got %d", rec.Code)
+	}
+}
+
+func TestHostAllowlistMiddlewareAcceptsAllowedHost(t *testing.T) {
+	handler := hostAllowlistMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), []string{"127.0.0.1:7777", "localhost:7777"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Host = "127.0.0.1:7777"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for allowed Host, got %d", rec.Code)
+	}
+}
+
+func TestHostAllowlistMiddlewareAcceptsWildcard(t *testing.T) {
+	handler := hostAllowlistMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), []string{"*"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Host = "anything.example.com"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for wildcard allowlist, got %d", rec.Code)
+	}
+}
+
+func TestHostAllowlistMiddlewareAcceptsLocalhost(t *testing.T) {
+	handler := hostAllowlistMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), []string{"127.0.0.1:7777", "localhost:7777"})
+
+	// localhost:7777 on allowed list
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Host = "localhost:7777"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for localhost:7777, got %d", rec.Code)
+	}
+
+	// With host-stripping matching, "127.0.0.1" on allowlist matches
+	// "127.0.0.1:9999" — port is stripped before comparison so ephemeral
+	// port servers work without explicit port in allowlist.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req2.Host = "127.0.0.1:9999"
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for host-strip match, got %d", rec2.Code)
+	}
+}
+
 func TestClientIPKeyStripsPortAndPrefersForwardedFor(t *testing.T) {
+	srv := &Server{trustedProxies: []string{"127.0.0.1", "localhost", "::1"}}
+
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
-	if got := clientIPKey(req); got != "127.0.0.1" {
+	if got := srv.clientIPKey(req); got != "127.0.0.1" {
 		t.Fatalf("expected remote addr port stripped, got %q", got)
 	}
+
+	// When remote is loopback (trusted proxy), XFF is honored.
+	// VULN-010 fix: rightmost entry wins, not leftmost.
 	req.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.5")
-	if got := clientIPKey(req); got != "198.51.100.7" {
-		t.Fatalf("expected forwarded for to win, got %q", got)
+	if got := srv.clientIPKey(req); got != "10.0.0.5" {
+		t.Fatalf("expected rightmost XFF entry (10.0.0.5) when remote is trusted proxy, got %q", got)
+	}
+}
+
+func TestClientIPKeyIgnoresXFFWhenRemoteNotTrusted(t *testing.T) {
+	srv := &Server{trustedProxies: []string{"127.0.0.1", "localhost", "::1"}}
+
+	// Remote is NOT a trusted proxy — XFF must be ignored.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.RemoteAddr = "203.0.113.5:54321"
+	req.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.5")
+	if got := srv.clientIPKey(req); got != "203.0.113.5" {
+		t.Fatalf("expected XFF ignored when remote is not trusted proxy, got %q", got)
+	}
+}
+
+func TestClientIPKeyEmptyProxiesListIgnoresXFF(t *testing.T) {
+	srv := &Server{trustedProxies: nil} // no proxies trusted
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.5")
+	if got := srv.clientIPKey(req); got != "127.0.0.1" {
+		t.Fatalf("expected XFF ignored when no proxies configured, got %q", got)
 	}
 }

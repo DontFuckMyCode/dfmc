@@ -26,22 +26,30 @@ func TestBearerTokenMiddleware_WorkbenchRequiresAuth(t *testing.T) {
 	srv := New(eng, "127.0.0.1", 0)
 	srv.SetBearerToken("secret-token")
 	handler := srv.Handler()
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
 
 	// Without token -> 401
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("GET / without token: expected 401, got %d", rec.Code)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request without token: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("GET / without token: expected 401, got %d", resp.StatusCode)
 	}
 
 	// With correct token -> 200
-	req = httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("Authorization", "Bearer secret-token")
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET / with bearer token: expected 200, got %d", rec.Code)
+	req2, _ := http.NewRequest(http.MethodGet, ts.URL+"/", nil)
+	req2.Header.Set("Authorization", "Bearer secret-token")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("request with token: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("GET / with bearer token: expected 200, got %d", resp2.StatusCode)
 	}
 }
 
@@ -56,12 +64,16 @@ func TestBearerTokenMiddleware_NoTokenAllowsPublicGET(t *testing.T) {
 	}
 	srv := New(eng, "127.0.0.1", 0)
 	handler := srv.Handler()
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET / with auth=none: expected 200, got %d", rec.Code)
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatalf("get /: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET / with auth=none: expected 200, got %d", resp.StatusCode)
 	}
 }
 

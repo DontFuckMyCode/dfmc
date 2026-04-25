@@ -217,7 +217,7 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) 
 	// doesn't pin readLoop/writeLoop goroutines in the cap-exceeded
 	// case. The release closure runs from cleanup() so a dropped
 	// connection always frees its slot.
-	wsRelease, gateMsg := s.wsConnLimiter.Acquire(clientIPKey(r))
+	wsRelease, gateMsg := s.wsConnLimiter.Acquire(s.clientIPKey(r))
 	if gateMsg != "" {
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
 			"error": gateMsg,

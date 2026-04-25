@@ -42,6 +42,7 @@ type Server struct {
 	token           string
 	allowedOrigins  []string
 	allowedHosts    []string
+	trustedProxies  []string
 	wsConnLimiter   *wsConnLimiter
 }
 
@@ -154,6 +155,7 @@ func New(eng *engine.Engine, host string, port int) *Server {
 		token:          strings.TrimSpace(os.Getenv("DFMC_WEB_TOKEN")),
 		allowedOrigins: allowedOrigins,
 		allowedHosts:   allowedHosts,
+		trustedProxies: []string{"127.0.0.1", "localhost", "::1"},
 		wsConnLimiter:  newWSConnLimiter(wsGlobalConnCap, wsPerIPConnCap),
 	}
 	// Register a deny-by-default approver so a publicly-reachable serve
@@ -213,6 +215,21 @@ func (s *Server) SetAllowedHosts(hosts []string) {
 		return
 	}
 	s.allowedHosts = hosts
+}
+
+func (s *Server) port() string {
+	_, portStr, err := net.SplitHostPort(s.addr)
+	if err != nil {
+		return ""
+	}
+	return portStr
+}
+
+func (s *Server) SetTrustedProxies(proxies []string) {
+	if s == nil {
+		return
+	}
+	s.trustedProxies = proxies
 }
 
 // checkWebSocketOrigin validates the Origin header against the per-Server
@@ -360,10 +377,11 @@ func (s *Server) Start() error {
 // huge bodies can never slip past before auth decisions are made.
 func (s *Server) Handler() http.Handler {
 	handler := limitRequestBodySize(s.mux, maxRequestBodyBytes)
+	handler = hostAllowlistMiddleware(handler, s.allowedHosts)
 	handler = securityHeaders(handler)
 	// Rate-limit all endpoints: 30 requests/sec per IP with burst of 60.
 	limiter := newPerIPLimiter(30, 60)
-	handler = rateLimitMiddleware(limiter)(handler)
+	handler = rateLimitMiddleware(s, limiter)(handler)
 	if strings.EqualFold(strings.TrimSpace(s.auth), "token") {
 		handler = bearerTokenMiddleware(handler, s.token)
 	}
@@ -413,6 +431,55 @@ func limitRequestBodySize(h http.Handler, max int64) http.Handler {
 	})
 }
 
+// matchAllowlist reports whether value matches any allowlist entry.
+// "*" anywhere in the list is the explicit wildcard escape hatch.
+// Port is stripped from both value and entry so "127.0.0.1:PORT"
+// matches allowlist entry "127.0.0.1" — critical for ephemeral port
+// httptest servers where the actual port is random.
+func matchAllowlist(value string, list []string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return false
+	}
+	value = stripPort(value)
+	for _, entry := range list {
+		entry = strings.ToLower(strings.TrimSpace(entry))
+		if entry == "*" {
+			return true
+		}
+		entry = stripPort(entry)
+		if entry == value {
+			return true
+		}
+	}
+	return false
+}
+
+// hostAllowlistMiddleware rejects requests whose Host header doesn't
+// match the allowlist. Mounted near the top of the middleware chain so
+// foreign-host requests never reach handlers — including the bearer
+// auth check, since DNS rebinding sometimes lets the same TCP
+// connection be reused with different Host across requests.
+//
+// Returns 421 Misdirected Request (RFC 7540 §9.1.2) — the canonical
+// status for "this server didn't expect to receive this Host".
+func hostAllowlistMiddleware(next http.Handler, allowed []string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := strings.TrimSpace(r.Host)
+		if host == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if matchAllowlist(host, allowed) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeJSON(w, http.StatusMisdirectedRequest, map[string]any{
+			"error": fmt.Sprintf("host %q is not allowed; configure web.allowed_hosts to permit additional values", host),
+		})
+	})
+}
+
 // perIPLimiter provides a basic per-IP rate limiter using a token-bucket
 // algorithm. Each client IP gets its own bucket. Buckets for IPs not seen
 // in over 10 minutes are garbage-collected periodically.
@@ -442,10 +509,10 @@ func (l *perIPLimiter) Allow(ip string) bool {
 	return l.get(ip).Allow()
 }
 
-func rateLimitMiddleware(limiter *perIPLimiter) func(http.Handler) http.Handler {
+func rateLimitMiddleware(s *Server, limiter *perIPLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !limiter.Allow(clientIPKey(r)) {
+			if !limiter.Allow(s.clientIPKey(r)) {
 				writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate limit exceeded"})
 				return
 			}
@@ -459,22 +526,65 @@ func rateLimitMiddleware(limiter *perIPLimiter) func(http.Handler) http.Handler 
 // local proxy (e.g. nginx on localhost). Remote clients cannot spoof this
 // header because they cannot establish a connection through the proxy without
 // first passing the bearer-token auth gate.
-func clientIPKey(r *http.Request) string {
+// clientIPKey returns a key for per-client rate limiting. It honors
+// X-Forwarded-For only when the direct remote address belongs to a
+// configured trusted proxy (loopback by default), preventing spoofing
+// via arbitrary XFF values. When XFF is honored, the rightmost (last)
+// IP is used — that is the most recent proxy hop.
+//
+// VULN-010 fix: previously XFF was honored unconditionally, and the
+// leftmost (first) entry was returned. An attacker could rotate
+// X-Forwarded-For: random-each-time to reset their bucket every
+// request and bypass the per-IP rate limit entirely.
+func (s *Server) clientIPKey(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
+	remoteHost := func() string {
+		host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+		if err == nil && host != "" {
+			return host
+		}
+		return strings.TrimSpace(r.RemoteAddr)
+	}()
+
+	// VULN-010: only honor XFF when the direct peer is a trusted proxy.
 	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
-		for _, part := range strings.Split(forwarded, ",") {
-			if ip := strings.TrimSpace(part); ip != "" {
-				return ip
+		if isTrustedProxy(remoteHost, s.trustedProxies) {
+			// Use rightmost (last) IP — it was added by the rightmost
+			// (most trusted) proxy hop.
+			parts := strings.Split(forwarded, ",")
+			for i := len(parts) - 1; i >= 0; i-- {
+				if ip := strings.TrimSpace(parts[i]); ip != "" {
+					return ip
+				}
 			}
 		}
 	}
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil && host != "" {
-		return host
+	return remoteHost
+}
+
+// isTrustedProxy reports whether the given remote host is in the
+// configured trusted-proxy list. Nil or empty list means no proxies
+// are trusted (XFF will be ignored).
+func isTrustedProxy(host string, trusted []string) bool {
+	if len(trusted) == 0 {
+		return false
 	}
-	return strings.TrimSpace(r.RemoteAddr)
+	host = strings.TrimSpace(strings.ToLower(host))
+	for _, t := range trusted {
+		t = strings.TrimSpace(strings.ToLower(t))
+		if t == host {
+			return true
+		}
+		// Support CIDR notation (e.g. "127.0.0.0/8") for future use.
+		if strings.Contains(t, "/") {
+			if _, cidr, err := net.ParseCIDR(t); err == nil && cidr.Contains(net.ParseIP(host)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
