@@ -131,7 +131,7 @@ func (b *engineMCPBridge) Call(ctx context.Context, name string, rawArgs []byte)
 	// CallTool funnels through executeToolWithLifecycle → panic guard.
 	// A panic inside the tool is converted to err here, so the MCP
 	// transport never sees a process crash.
-	res, err := b.eng.CallTool(ctx, name, params)
+	res, err := b.eng.CallToolFromSource(ctx, name, params, engine.SourceMCP)
 	if err != nil {
 		return mcp.CallToolResult{
 			Content: []mcp.ContentBlock{mcp.TextContent(err.Error())},

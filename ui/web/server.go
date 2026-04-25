@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -34,11 +35,14 @@ import (
 )
 
 type Server struct {
-	engine *engine.Engine
-	mux    *http.ServeMux
-	addr   string
-	auth   string
-	token  string
+	engine          *engine.Engine
+	mux             *http.ServeMux
+	addr            string
+	auth            string
+	token           string
+	allowedOrigins  []string
+	allowedHosts    []string
+	wsConnLimiter   *wsConnLimiter
 }
 
 type ChatRequest struct {
@@ -130,16 +134,27 @@ func securityHeaders(h http.Handler) http.Handler {
 
 func New(eng *engine.Engine, host string, port int) *Server {
 	authMode := "none"
+	allowedOrigins := []string{"http://127.0.0.1", "http://localhost"}
+	allowedHosts := []string{"127.0.0.1", "localhost"}
 	if eng != nil && eng.Config != nil {
 		authMode = strings.ToLower(strings.TrimSpace(eng.Config.Web.Auth))
+		if len(eng.Config.Web.AllowedOrigins) > 0 {
+			allowedOrigins = eng.Config.Web.AllowedOrigins
+		}
+		if len(eng.Config.Web.AllowedHosts) > 0 {
+			allowedHosts = eng.Config.Web.AllowedHosts
+		}
 	}
 	host = normalizeBindHost(authMode, host)
 	s := &Server{
-		engine: eng,
-		mux:    http.NewServeMux(),
-		addr:   fmt.Sprintf("%s:%d", host, port),
-		auth:   authMode,
-		token:  strings.TrimSpace(os.Getenv("DFMC_WEB_TOKEN")),
+		engine:         eng,
+		mux:            http.NewServeMux(),
+		addr:           fmt.Sprintf("%s:%d", host, port),
+		auth:           authMode,
+		token:          strings.TrimSpace(os.Getenv("DFMC_WEB_TOKEN")),
+		allowedOrigins: allowedOrigins,
+		allowedHosts:   allowedHosts,
+		wsConnLimiter:  newWSConnLimiter(wsGlobalConnCap, wsPerIPConnCap),
 	}
 	// Register a deny-by-default approver so a publicly-reachable serve
 	// doesn't silently run gated tools; DFMC_APPROVE=yes|no lets the
@@ -184,6 +199,85 @@ func (s *Server) SetBearerToken(token string) {
 		return
 	}
 	s.token = strings.TrimSpace(token)
+}
+
+func (s *Server) SetAllowedOrigins(origins []string) {
+	if s == nil {
+		return
+	}
+	s.allowedOrigins = origins
+}
+
+func (s *Server) SetAllowedHosts(hosts []string) {
+	if s == nil {
+		return
+	}
+	s.allowedHosts = hosts
+}
+
+// checkWebSocketOrigin validates the Origin header against the per-Server
+// allowlist. Cross-origin browser tabs are rejected so a malicious site
+// can't drive the WS connection on the user's behalf. Native WS clients
+// (no Origin header) are always accepted.
+func (s *Server) checkWebSocketOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// Native client (curl, wscat, IDE plugin) — no Origin header,
+		// accept unconditionally.
+		return true
+	}
+	// Strip any port from the origin so "http://127.0.0.1:14715" matches
+	// the allowlist entry "http://127.0.0.1".
+	originHost := origin
+	if h := parseURLHost(origin); h != "" {
+		originHost = h
+	}
+	for _, allowed := range s.allowedOrigins {
+		if allowed == "*" {
+			return true
+		}
+		allowedHost := allowed
+		if h := parseURLHost(allowed); h != "" {
+			allowedHost = h
+		}
+		// Normalize by stripping the port so "http://127.0.0.1:14715"
+		// matches allowlist entry "http://127.0.0.1".
+		originHost = stripPort(originHost)
+		allowedHost = stripPort(allowedHost)
+		if originHost == allowedHost {
+			return true
+		}
+	}
+	return false
+}
+
+// parseURLHost returns the scheme://host:port from a URL string, stripping
+// the path. Returns the parsed scheme://host:port on success or "" on failure.
+func parseURLHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// stripPort removes any :port suffix from hostOrHostPort, handling IPv6.
+func stripPort(hostOrHostPort string) string {
+	if hostOrHostPort == "" {
+		return hostOrHostPort
+	}
+	// IPv6: [::1]:8080
+	if strings.HasPrefix(hostOrHostPort, "[") {
+		end := strings.LastIndex(hostOrHostPort, "]")
+		if end > 0 {
+			return hostOrHostPort[:end+1]
+		}
+	}
+	// host:port or host
+	if idx := strings.LastIndex(hostOrHostPort, ":"); idx > 0 {
+		return hostOrHostPort[:idx]
+	}
+	return hostOrHostPort
 }
 
 func (s *Server) setupRoutes() {
@@ -247,6 +341,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("PATCH /api/v1/tasks/{id}", s.handleTaskUpdate)
 	s.mux.HandleFunc("DELETE /api/v1/tasks/{id}", s.handleTaskDelete)
 	s.mux.HandleFunc("GET /ws", s.handleWebSocket)
+	s.mux.HandleFunc("GET /api/v1/ws", s.handleWebSocketUpgrade)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

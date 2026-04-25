@@ -352,6 +352,13 @@ type ToolsConfig struct {
 	// invocations bypass the gate, since the user already typed the
 	// command. "*" matches every tool. Empty list disables the gate.
 	RequireApproval []string `yaml:"require_approval,omitempty"`
+	// RequireApprovalNetwork is the same as RequireApproval but applies
+	// to network-originated calls (source=web, ws, mcp). These sources
+	// bypass the approval gate without this list, which is dangerous for
+	// a publicly-reachable serve. Defaults to RequireApprovalNetwork=["*"]
+	// so any non-user source must get approval on all tools unless
+	// explicitly configured otherwise.
+	RequireApprovalNetwork []string `yaml:"require_approval_network,omitempty"`
 }
 
 type ShellToolConfig struct {
@@ -403,10 +410,12 @@ type TUIConfig struct {
 }
 
 type WebConfig struct {
-	Port        int    `yaml:"port"`
-	Host        string `yaml:"host"`
-	Auth        string `yaml:"auth"`
-	OpenBrowser bool   `yaml:"open_browser"`
+	Port           int      `yaml:"port"`
+	Host           string   `yaml:"host"`
+	Auth           string   `yaml:"auth"`
+	OpenBrowser    bool     `yaml:"open_browser"`
+	AllowedOrigins []string `yaml:"allowed_origins"`
+	AllowedHosts   []string `yaml:"allowed_hosts"`
 }
 
 type RemoteConfig struct {

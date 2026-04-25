@@ -91,15 +91,35 @@ func (e *Engine) approver() Approver {
 	return approverPerEngine[e]
 }
 
-// requiresApproval answers "is this tool on the approval list?" It's a
-// cheap string match against config.Tools.RequireApproval. "*" is the
-// gate-everything wildcard. Zero-allocation on the hot path (len() check
-// short-circuits the common case of no gate configured).
-func (e *Engine) requiresApproval(name string) bool {
+// requiresApproval reports whether a tool requires approval for the given
+// source. "*" is the gate-everything wildcard. Zero-allocation on the hot
+// path (len() check short-circuits the common case of no gate configured).
+//
+// For non-user sources (web, ws, mcp) we consult RequireApprovalNetwork
+// first, falling back to RequireApproval if the network list is empty.
+// This lets operators lock down network traffic independently from
+// agent-loop traffic.
+func (e *Engine) requiresApproval(name string, source string) bool {
 	if e == nil || e.Config == nil {
 		return false
 	}
-	list := e.Config.Tools.RequireApproval
+	// "user" is always allowed — real user input at the terminal.
+	// "cli" (dfmc tool run) is the operator's own tooling — also allowed.
+	if source == "user" || source == "cli" {
+		return false
+	}
+	// For web/ws/mcp, check RequireApprovalNetwork first (strictest gate).
+	// For agent/subagent, use the regular RequireApproval list.
+	var list []string
+	switch source {
+	case "web", "ws", "mcp":
+		list = e.Config.Tools.RequireApprovalNetwork
+		if len(list) == 0 {
+			list = e.Config.Tools.RequireApproval
+		}
+	default: // "agent", "subagent", or any other source
+		list = e.Config.Tools.RequireApproval
+	}
 	if len(list) == 0 {
 		return false
 	}

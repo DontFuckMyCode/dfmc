@@ -113,11 +113,54 @@ func extractPathsFromPatch(patch string) []string {
 // diffPathRE matches --- a/<path> and +++ b/<path> lines in unified diffs.
 var diffPathRE = regexp.MustCompile(`^(?:--- a/|\+\+\+ b/)([^\t ]+)`)
 
+// Source is the logical origin of a tool call. Used by the approval
+// gate to distinguish user-initiated calls (bypass) from calls that
+// come from a network surface (web, ws, mcp — require approval on
+// gated tools).
+type Source string
+
+const (
+	SourceUser Source = "user" // TUI/CLI real user input; always allowed
+	SourceWeb  Source = "web"
+	SourceWS   Source = "ws"
+	SourceMCP  Source = "mcp"
+	SourceCLI  Source = "cli" // dfmc tool run — operator's own tooling
+)
+
 func (e *Engine) CallTool(ctx context.Context, name string, params map[string]any) (tools.Result, error) {
 	if err := e.requireReady("tool call"); err != nil {
 		return tools.Result{}, err
 	}
-	res, err := e.executeToolWithLifecycle(ctx, name, params, "user")
+	res, err := e.executeToolWithLifecycle(ctx, name, params, string(SourceUser))
+	if err != nil {
+		e.EventBus.Publish(Event{
+			Type:    "tool:error",
+			Source:  "engine",
+			Payload: err.Error(),
+		})
+		return res, err
+	}
+	e.EventBus.Publish(Event{
+		Type:   "tool:complete",
+		Source: "engine",
+		Payload: map[string]any{
+			"name":       name,
+			"durationMs": res.DurationMs,
+		},
+	})
+	return res, nil
+}
+
+// CallToolFromSource is the network-surface entry point. Unlike CallTool
+// (user-initiated, bypasses gate), CallToolFromSource tags the call with
+// its origin so the approval gate can distinguish real user input from
+// traffic originating from web/WS/MCP surfaces. Network sources that
+// bypass the gate would let any browser tab drive run_command.
+func (e *Engine) CallToolFromSource(ctx context.Context, name string, params map[string]any, source Source) (tools.Result, error) {
+	if err := e.requireReady("tool call"); err != nil {
+		return tools.Result{}, err
+	}
+	res, err := e.executeToolWithLifecycle(ctx, name, params, string(source))
 	if err != nil {
 		e.EventBus.Publish(Event{
 			Type:    "tool:error",
@@ -222,7 +265,7 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 	// Approval gate — only engages for non-user sources and only when
 	// the tool is on the approval list. Blocks until the Approver
 	// responds or returns an implicit deny on timeout. See approver.go.
-	if source != "user" && e.requiresApproval(name) {
+	if source != "user" && e.requiresApproval(name, source) {
 		decision := e.askToolApproval(ctx, name, params, source)
 		if !decision.Approved {
 			reason := decision.Reason

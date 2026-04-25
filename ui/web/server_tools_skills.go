@@ -17,6 +17,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/commands"
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/skills"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -164,7 +165,7 @@ func (s *Server) handleToolExec(w http.ResponseWriter, r *http.Request) {
 	if req.Params == nil {
 		req.Params = map[string]any{}
 	}
-	res, err := s.engine.CallTool(r.Context(), name, req.Params)
+	res, err := s.engine.CallToolFromSource(r.Context(), name, req.Params, engine.SourceWeb)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return

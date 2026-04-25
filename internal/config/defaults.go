@@ -49,6 +49,12 @@ func DefaultConfig() *Config {
 		},
 		Tools: ToolsConfig{
 			Enabled: []string{"file_ops", "shell", "git", "search", "code_edit", "web"},
+			// RequireApprovalNetwork defaults to ["*"] so any non-user source
+			// (web, ws, mcp) is gated by default. Operators who trust their
+			// local browser tab can set this to [] to disable the network gate,
+			// or to specific tool names. The agent-loop RequireApproval stays
+			// empty so existing automation isn't broken by default.
+			RequireApprovalNetwork: []string{"*"},
 			Shell: ShellToolConfig{
 				BlockedCommands: []string{"rm -rf /", "mkfs", "dd if="},
 				Timeout:         "30s",

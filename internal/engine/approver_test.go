@@ -39,7 +39,7 @@ func newApproverTestEngine(t *testing.T) *Engine {
 
 func TestRequiresApproval_EmptyListAllowsAll(t *testing.T) {
 	eng := newApproverTestEngine(t)
-	if eng.requiresApproval("read_file") {
+	if eng.requiresApproval("read_file", "agent") {
 		t.Fatalf("empty RequireApproval list should not gate anything")
 	}
 }
@@ -47,10 +47,10 @@ func TestRequiresApproval_EmptyListAllowsAll(t *testing.T) {
 func TestRequiresApproval_NamedToolGated(t *testing.T) {
 	eng := newApproverTestEngine(t)
 	eng.Config.Tools.RequireApproval = []string{"write_file"}
-	if !eng.requiresApproval("write_file") {
+	if !eng.requiresApproval("write_file", "agent") {
 		t.Fatalf("write_file should be gated")
 	}
-	if eng.requiresApproval("read_file") {
+	if eng.requiresApproval("read_file", "agent") {
 		t.Fatalf("read_file should not be gated")
 	}
 }
@@ -58,7 +58,7 @@ func TestRequiresApproval_NamedToolGated(t *testing.T) {
 func TestRequiresApproval_WildcardGatesEverything(t *testing.T) {
 	eng := newApproverTestEngine(t)
 	eng.Config.Tools.RequireApproval = []string{"*"}
-	if !eng.requiresApproval("read_file") || !eng.requiresApproval("write_file") {
+	if !eng.requiresApproval("read_file", "agent") || !eng.requiresApproval("write_file", "agent") {
 		t.Fatalf("wildcard should gate every tool")
 	}
 }
@@ -66,7 +66,7 @@ func TestRequiresApproval_WildcardGatesEverything(t *testing.T) {
 func TestRequiresApproval_WhitespaceTolerant(t *testing.T) {
 	eng := newApproverTestEngine(t)
 	eng.Config.Tools.RequireApproval = []string{"  write_file  ", ""}
-	if !eng.requiresApproval("write_file") {
+	if !eng.requiresApproval("write_file", "agent") {
 		t.Fatalf("whitespace-padded entries must still match")
 	}
 }
