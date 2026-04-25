@@ -40,12 +40,11 @@ func (t *PatchValidationTool) Spec() ToolSpec {
 2. optional build/test command: run a shell command (e.g. "go build ./..." or "go test ./...") after dry-run to verify the patched code is valid
 
 Returns structured per-file, per-hunk results: hunks_applied, hunks_rejected, fuzzy_offsets, and validation_command exit code. A patch is "clean" when all hunks apply without rejection and the validation command exits 0.`,
-		Risk:     RiskRead,
+		Risk:     RiskExecute,
 		Tags:     []string{"patch", "validation", "dry-run", "hunk"},
 		Args: []Arg{
 			{Name: "patch", Type: ArgString, Required: true, Description: `Unified-diff patch string to validate.`},
 			{Name: "validation_command", Type: ArgString, Description: `Optional shell command to run after dry-run (e.g. "go build ./..." or "go test ./..."). Exit code 0 = validation passed.`},
-			{Name: "project_root", Type: ArgString, Description: `Project root override (defaults to engine ProjectRoot).`},
 		},
 		Returns:    "Structured JSON: {files: [{path, hunks_applied, hunks_rejected, fuzzy_offsets, validation}], validation_passed bool}",
 		Idempotent: true,
@@ -63,9 +62,6 @@ func (t *PatchValidationTool) Execute(ctx context.Context, req Request) (Result,
 
 	validationCmd := strings.TrimSpace(asString(req.Params, "validation_command", ""))
 	projectRoot := req.ProjectRoot
-	if override := strings.TrimSpace(asString(req.Params, "project_root", "")); override != "" {
-		projectRoot = override
-	}
 
 	files, parseErr := parseUnifiedDiff(patch)
 	if parseErr != nil {
@@ -96,7 +92,12 @@ func (t *PatchValidationTool) Execute(ctx context.Context, req Request) (Result,
 			continue
 		}
 
-		abs := projectRoot + "/" + targetPath
+		abs, err := EnsureWithinRoot(projectRoot, targetPath)
+		if err != nil {
+			result["error"] = err.Error()
+			results = append(results, result)
+			continue
+		}
 		data, err := os.ReadFile(abs)
 		var original string
 		if err != nil {
@@ -136,9 +137,28 @@ func (t *PatchValidationTool) Execute(ctx context.Context, req Request) (Result,
 		if cmdErr != nil || len(cmdParts) == 0 {
 			return Result{}, fmt.Errorf("validation_command %q parse error: %v", validationCmd, cmdErr)
 		}
+		binary, args := cmdParts[0], cmdParts[1:]
+		if isBlockedShellInterpreter(binary) {
+			return Result{}, fmt.Errorf("validation_command: shell interpreter %q is blocked", binary)
+		}
+		if token := detectShellMetacharacter(binary); token != "" {
+			return Result{}, fmt.Errorf("validation_command does not invoke a shell — binary must be a single executable, not a shell line. Found shell syntax %q in command", token)
+		}
+		if hasScriptRunnerWithEvalFlag(args) {
+			return Result{}, fmt.Errorf("validation_command args contain a script-runner inline-eval flag (-e, -c, -r) which is not supported")
+		}
+		for _, arg := range args {
+			if isBlockedShellInterpreter(arg) {
+				return Result{}, fmt.Errorf("validation_command args contain blocked shell interpreter: %s", arg)
+			}
+		}
+		blocked := t.engine.cfg.Tools.Shell.BlockedCommands
+		if err := ensureCommandAllowed(binary, args, blocked); err != nil {
+			return Result{}, err
+		}
 		runCtx, cancel := context.WithTimeout(ctx, 120000)
 		defer cancel()
-		cmd := exec.CommandContext(runCtx, cmdParts[0], cmdParts[1:]...)
+		cmd := exec.CommandContext(runCtx, binary, args...)
 		cmd.Dir = projectRoot
 		out, err := cmd.CombinedOutput()
 		validationExitCode = 0
@@ -221,7 +241,10 @@ func ValidatePatchIsClean(patch, projectRoot string) (bool, int, int, error) {
 		if path == "" || path == "/dev/null" {
 			path = f.OldPath
 		}
-		abs := projectRoot + "/" + path
+		abs, err := EnsureWithinRoot(projectRoot, path)
+		if err != nil {
+			continue
+		}
 		data, err := os.ReadFile(abs)
 		if err != nil {
 			continue

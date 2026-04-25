@@ -680,6 +680,7 @@ func TestAnalyzeEndpointWithMagicDoc(t *testing.T) {
 }
 
 func TestFileContentAndToolExecEndpoints(t *testing.T) {
+	t.Setenv("DFMC_APPROVE", "yes")
 	eng := newTestEngine(t)
 	root := t.TempDir()
 	eng.ProjectRoot = root
@@ -920,6 +921,8 @@ func TestConversationsEndpoints(t *testing.T) {
 }
 
 func TestWorkspaceEndpoints(t *testing.T) {
+	t.Setenv("DFMC_APPROVE", "yes")
+	t.Setenv("DFMC_APPROVE_DESTRUCTIVE", "yes")
 	eng := newTestEngine(t)
 	root := t.TempDir()
 	run := func(args ...string) error {
@@ -1012,6 +1015,22 @@ func TestWorkspaceEndpoints(t *testing.T) {
 	if checkResp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(checkResp.Body)
 		t.Fatalf("unexpected check status %d: %s", checkResp.StatusCode, string(raw))
+	}
+
+	// Read a.txt via the tool API so the read-before-mutation gate allows the apply.
+	readReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/tools/read_file", bytes.NewBufferString(`{"params":{"path":"a.txt"}}`))
+	if err != nil {
+		t.Fatalf("new read request: %v", err)
+	}
+	readReq.Header.Set("Content-Type", "application/json")
+	readResp, err := http.DefaultClient.Do(readReq)
+	if err != nil {
+		t.Fatalf("read a.txt: %v", err)
+	}
+	defer readResp.Body.Close()
+	if readResp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(readResp.Body)
+		t.Fatalf("read a.txt status %d: %s", readResp.StatusCode, string(raw))
 	}
 
 	applyReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/workspace/apply", bytes.NewBufferString(`{"source":"latest"}`))

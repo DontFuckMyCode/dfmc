@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
@@ -241,17 +242,20 @@ func TestPatchValidationTool_Spec(t *testing.T) {
 	if spec.Name != "patch_validation" {
 		t.Errorf("spec.Name: want patch_validation, got %s", spec.Name)
 	}
-	if spec.Risk != RiskRead {
-		t.Errorf("spec.Risk: want RiskRead, got %v", spec.Risk)
+	if spec.Risk != RiskExecute {
+		t.Errorf("spec.Risk: want RiskExecute, got %v", spec.Risk)
 	}
 	argsByName := make(map[string]Arg)
 	for _, a := range spec.Args {
 		argsByName[a.Name] = a
 	}
-	for _, name := range []string{"patch", "validation_command", "project_root"} {
+	for _, name := range []string{"patch", "validation_command"} {
 		if _, ok := argsByName[name]; !ok {
 			t.Errorf("spec.Args missing %s", name)
 		}
+	}
+	if _, ok := argsByName["project_root"]; ok {
+		t.Errorf("spec.Args should not contain project_root (it was removed)")
 	}
 }
 
@@ -314,18 +318,17 @@ func TestValidatePatchIsClean_Rejected(t *testing.T) {
 	}
 }
 
-func TestPatchValidation_ProjectRootOverride(t *testing.T) {
+func TestPatchValidation_TraversalRejection(t *testing.T) {
 	tmp := t.TempDir()
 	eng := New(*config.DefaultConfig())
 	eng.SetCodemap(nil)
 
-	// Write file in tmp
 	fpath := filepath.Join(tmp, "main.go")
 	os.WriteFile(fpath, []byte("package main\nfunc main() {}\n"), 0644)
 
-	// But pass tmp+"/sub" as project root (doesn't exist) — file not found
-	patch := `--- a/main.go
-+++ b/main.go
+	// Patch target contains traversal — should be rejected by EnsureWithinRoot
+	patch := `--- a/../main.go
++++ b/../main.go
 @@ -1,2 +1,2 @@
  package main
 -func main() {}
@@ -333,18 +336,45 @@ func TestPatchValidation_ProjectRootOverride(t *testing.T) {
 `
 	res, err := eng.Execute(context.Background(), "patch_validation", Request{
 		ProjectRoot: tmp,
-		Params: map[string]any{
-			"patch":        patch,
-			"project_root": tmp + "/nonexistent",
-		},
+		Params:      map[string]any{"patch": patch},
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	data := res.Data["files"].([]map[string]any)
-	if data[0]["skip_reason"] != "new file (no original to diff against)" {
-		// Abs path with non-existent root means file not found
-		t.Logf("got skip_reason: %v", data[0]["skip_reason"])
+	if data[0]["error"] == "" {
+		t.Errorf("expected traversal rejection error in result, got: %+v", data[0])
+	}
+}
+
+func TestPatchValidation_ValidationCommandShellBlocked(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+	eng.SetCodemap(nil)
+
+	fpath := filepath.Join(tmp, "main.go")
+	os.WriteFile(fpath, []byte("package main\nfunc main() {}\n"), 0644)
+
+	patch := `--- a/main.go
++++ b/main.go
+@@ -1,2 +1,2 @@
+ package main
+-func main() {}
++func main() {} //
+`
+	// bash is a blocked shell interpreter — should be rejected
+	_, err := eng.Execute(context.Background(), "patch_validation", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"patch":               patch,
+			"validation_command": "bash -c whoami",
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected error for blocked shell interpreter in validation_command")
+	}
+	if !strings.Contains(err.Error(), "blocked") && !strings.Contains(err.Error(), "shell interpreter") {
+		t.Errorf("expected blocked shell interpreter error, got: %v", err)
 	}
 }
 

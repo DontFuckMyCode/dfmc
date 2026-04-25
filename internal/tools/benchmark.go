@@ -94,14 +94,27 @@ func (t *BenchmarkTool) Execute(ctx context.Context, req Request) (Result, error
 		args = append(args, "-count", strconv.Itoa(count))
 	}
 	if cpuprofile := strings.TrimSpace(asString(req.Params, "cpuprofile", "")); cpuprofile != "" {
-		args = append(args, "-cpuprofile", cpuprofile)
+		cpuprofileAbs, err := EnsureWithinRoot(req.ProjectRoot, cpuprofile)
+		if err != nil {
+			return Result{}, fmt.Errorf("cpuprofile: %w", err)
+		}
+		args = append(args, "-cpuprofile", cpuprofileAbs)
 	}
 	if memprofile := strings.TrimSpace(asString(req.Params, "memprofile", "")); memprofile != "" {
-		args = append(args, "-memprofile", memprofile)
+		memprofileAbs, err := EnsureWithinRoot(req.ProjectRoot, memprofile)
+		if err != nil {
+			return Result{}, fmt.Errorf("memprofile: %w", err)
+		}
+		args = append(args, "-memprofile", memprofileAbs)
 	}
 
 	// Add the target — must come after the flags.
-	args = append(args, target)
+	// Insert "--" separator so any user-supplied flags in target can't override
+	// the benchmark flags we set above (e.g. target="--help" or target="-bench=...").
+	if strings.HasPrefix(target, "-") {
+		return Result{}, fmt.Errorf("target %q begins with -, which would inject a flag: prepend a package path (e.g. ./internal/engine)", target)
+	}
+	args = append(args, "--", target)
 
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
 	defer cancel()

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
+	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -71,7 +72,13 @@ func (s *Server) handleWorkspaceApply(w http.ResponseWriter, r *http.Request) {
 	if root == "" {
 		root = "."
 	}
-	if err := applyUnifiedDiffWeb(root, patch, req.CheckOnly); err != nil {
+	// Route through the engine so the full lifecycle fires:
+	// approval gate, pre/post hooks, EnsureReadBeforeMutation.
+	toolResult, err := s.engine.CallToolFromSource(r.Context(), "apply_patch", map[string]any{
+		"patch":    patch,
+		"dry_run":  req.CheckOnly,
+	}, engine.SourceWeb)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
@@ -79,14 +86,27 @@ func (s *Server) handleWorkspaceApply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":     "ok",
 			"check_only": true,
-			"valid":      true,
+			"valid":      toolResult.Output != "" && !strings.Contains(toolResult.Output, "FAIL"),
 		})
 		return
 	}
-	changed, err := gitChangedFilesWeb(r.Context(), root, 24)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
+	// Extract changed files from the tool result data.
+	var changed []string
+	if files, ok := toolResult.Data["files"].([]map[string]any); ok {
+		for _, f := range files {
+			if p, ok := f["path"].(string); ok {
+				if err2 := f["error"]; err2 == nil {
+					changed = append(changed, p)
+				}
+			}
+		}
+	}
+	if len(changed) == 0 {
+		changed, err = gitChangedFilesWeb(r.Context(), root, 24)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":        "ok",

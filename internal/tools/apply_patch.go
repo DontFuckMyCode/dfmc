@@ -104,8 +104,12 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 			return Result{}, fmt.Errorf("apply_patch: engine is not wired — read-before-mutate gate is unavailable; refusing to apply without an engine (caller must call SetEngine before use)")
 		}
 		if _, statErr := os.Stat(abs); statErr == nil {
-			if guardErr := t.engine.EnsureReadBeforeMutation(abs); guardErr != nil {
-				return Result{}, fmt.Errorf("apply_patch %s: %w (read the file first via read_file, then retry)", targetPath, guardErr)
+			// Only gate on read-before-mutation when actually writing.
+			// Dry-run has no side effects, so the snapshot isn't required.
+			if !dryRun {
+				if guardErr := t.engine.EnsureReadBeforeMutation(abs); guardErr != nil {
+					return Result{}, fmt.Errorf("apply_patch %s: %w (read the file first via read_file, then retry)", targetPath, guardErr)
+				}
 			}
 		} else if !os.IsNotExist(statErr) {
 			return Result{}, fmt.Errorf("apply_patch %s: stat target: %w", targetPath, statErr)
