@@ -5,7 +5,10 @@ package tui
 // drive:* case funnels through handleDriveEvent which returns the
 // updated Model plus the activity/notice line the parent appends.
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 func (m Model) handleDriveEvent(eventType string, payload map[string]any) (Model, string) {
 	line := ""
@@ -47,6 +50,7 @@ func (m Model) handleDriveEvent(eventType string, payload map[string]any) (Model
 		workerClass := payloadString(payload, "worker_class", "")
 		providerTag := payloadString(payload, "provider_tag", "")
 		profileSelected := payloadString(payload, "profile_selected", "")
+		skills := payloadStringSlice(payload, "skills")
 		m.telemetry.driveTodoID = id
 		if attempt > 1 {
 			line = fmt.Sprintf("Drive: ▶ %s (attempt %d) — %s", id, attempt, truncateForLine(title, 80))
@@ -55,6 +59,17 @@ func (m Model) handleDriveEvent(eventType string, payload map[string]any) (Model
 		}
 		if workerClass != "" {
 			line += " [" + workerClass + "]"
+		}
+		if len(skills) > 0 {
+			line += " ⚙" + strings.Join(skills, "·")
+		}
+		if fileScope := payloadString(payload, "file_scope", ""); fileScope != "" {
+			parts := strings.Split(fileScope, ",")
+			if len(parts) <= 3 {
+				line += " ⊃" + strings.ReplaceAll(fileScope, ",", " ")
+			} else {
+				line += fmt.Sprintf(" ⊃%s +%d more", parts[0], len(parts)-1)
+			}
 		}
 		if providerTag != "" {
 			if profileSelected != "" {
@@ -74,6 +89,7 @@ func (m Model) handleDriveEvent(eventType string, payload map[string]any) (Model
 		attempts := payloadInt(payload, "attempts", 0)
 		fallbackUsed := payloadBool(payload, "fallback", false)
 		fallbackReasons := payloadStringSlice(payload, "fallback_reasons")
+		skills := payloadStringSlice(payload, "skills")
 		m.telemetry.driveDone++
 		if m.telemetry.driveTodoID == id {
 			m.telemetry.driveTodoID = ""
@@ -81,6 +97,9 @@ func (m Model) handleDriveEvent(eventType string, payload map[string]any) (Model
 		line = fmt.Sprintf("Drive: ✓ %s done (%dms, %d tool calls)", id, dur, tools)
 		if workerClass := payloadString(payload, "worker_class", ""); workerClass != "" {
 			line += " [" + workerClass + "]"
+		}
+		if len(skills) > 0 {
+			line += " ⚙" + strings.Join(skills, "·")
 		}
 		if providerLabel != "" {
 			line += " via " + providerLabel

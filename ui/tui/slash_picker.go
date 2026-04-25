@@ -399,6 +399,15 @@ func (m Model) expandSlashSelection(raw string) (string, bool) {
 	if len(items) == 0 {
 		return "", false
 	}
+	// If the bare token exactly matches a catalog entry's command name,
+	// the user typed a complete command but pressed Enter without args.
+	// Don't expand — let executeChatCommand handle the empty-args case.
+	for _, item := range items {
+		cmd := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(item.Command)), "/")
+		if cmd == token {
+			return "", false
+		}
+	}
 	idx := clampIndex(m.slashMenu.command, len(items))
 	return items[idx].Template, true
 }

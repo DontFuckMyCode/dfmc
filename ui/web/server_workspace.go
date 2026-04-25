@@ -5,6 +5,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,13 +14,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
-func (s *Server) handleWorkspaceDiff(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 	root := strings.TrimSpace(s.engine.Status().ProjectRoot)
 	if root == "" {
 		root = "."
@@ -29,7 +31,7 @@ func (s *Server) handleWorkspaceDiff(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	changed, err := gitChangedFilesWeb(root, 24)
+	changed, err := gitChangedFilesWeb(r.Context(), root, 24)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -81,7 +83,7 @@ func (s *Server) handleWorkspaceApply(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	changed, err := gitChangedFilesWeb(root, 24)
+	changed, err := gitChangedFilesWeb(r.Context(), root, 24)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -209,11 +211,14 @@ func applyUnifiedDiffWeb(projectRoot, patch string, checkOnly bool) error {
 	if patch != "" && !strings.HasSuffix(patch, "\n") {
 		patch += "\n"
 	}
+	const applyTimeout = 60 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), applyTimeout)
+	defer cancel()
 	args := []string{"-C", root, "apply", "--whitespace=nowarn", "--recount"}
 	if checkOnly {
 		args = append(args, "--check")
 	}
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Stdin = strings.NewReader(patch)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -226,12 +231,15 @@ func applyUnifiedDiffWeb(projectRoot, patch string, checkOnly bool) error {
 	// M3: after a successful --check dry-run, verify all affected files
 	// resolve inside projectRoot before allowing the actual apply.
 	if !checkOnly {
-		cmd = exec.Command("git", "-C", root, "apply", "--whitespace=nowarn", "--recount", "--dry-run", "--porcelain")
+		cmd = exec.CommandContext(ctx, "git", "-C", root, "apply", "--whitespace=nowarn", "--recount", "--dry-run", "--porcelain")
 		cmd.Stdin = strings.NewReader(patch)
 		out, err = cmd.CombinedOutput()
 		if err == nil {
 			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 			for _, line := range lines {
+				if line == "" {
+					continue
+				}
 				parts := strings.Fields(line)
 				if len(parts) >= 2 {
 					relPath := parts[len(parts)-1]
@@ -250,12 +258,12 @@ func applyUnifiedDiffWeb(projectRoot, patch string, checkOnly bool) error {
 	return nil
 }
 
-func gitChangedFilesWeb(projectRoot string, limit int) ([]string, error) {
+func gitChangedFilesWeb(ctx context.Context, projectRoot string, limit int) ([]string, error) {
 	root, err := security.SanitizeGitRoot(projectRoot)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project root: %w", err)
 	}
-	cmd := exec.Command("git", "-C", root, "status", "--short", "--")
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "status", "--short", "--")
 	out, err := cmd.Output()
 	if err != nil {
 		if ee := (&exec.ExitError{}); errors.As(err, &ee) {

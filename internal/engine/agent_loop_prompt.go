@@ -45,6 +45,20 @@ func (e *Engine) buildNativeToolSystemPromptBundle(question string, chunks []typ
 			e.promptRuntime(),
 		)
 	}
+	// Sync activeSkills into the Engine so executeToolWithLifecycle can
+	// honour skill-scoped tool policies (Preferred/Allowed lists).
+	if bundle != nil {
+		var names []string
+		for _, s := range bundle.Sections {
+			if strings.HasPrefix(s.Label, "skill.") {
+				name := strings.TrimPrefix(s.Label, "skill.")
+				if name != "" {
+					names = append(names, name)
+				}
+			}
+		}
+		e.activeSkills = names
+	}
 	bridge := strings.TrimSpace(buildNativeMetaToolInstructions(e.Tools.BackendSpecs()))
 	if bridge == "" {
 		text, blocks := bundleToSystemBlocks(bundle)

@@ -12,6 +12,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -196,6 +197,12 @@ func (s *Server) handleTaskUpdate(w http.ResponseWriter, r *http.Request) {
 		if v, ok := patch["blocked_reason"]; ok {
 			t.BlockedReason = strings.TrimSpace(stringField(v))
 		}
+		if v, ok := patch["labels"]; ok {
+			t.Labels = cleanStringSlice(v)
+		}
+		if v, ok := patch["parent_id"]; ok {
+			t.ParentID = strings.TrimSpace(stringField(v))
+		}
 		return nil
 	})
 	if err != nil {
@@ -234,4 +241,29 @@ func stringField(v any) string {
 		return s
 	}
 	return ""
+}
+
+func cleanStringSlice(v any) []string {
+	if v == nil {
+		return nil
+	}
+	switch arr := v.(type) {
+	case []string:
+		out := make([]string, 0, len(arr))
+		for _, s := range arr {
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(arr))
+		for _, x := range arr {
+			if s := strings.TrimSpace(fmt.Sprint(x)); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }

@@ -104,8 +104,8 @@ func TestBuildExecutionPlanWithAutoSurveyAndVerify(t *testing.T) {
 			}
 		}
 		if pt.ID == plan.VerificationID {
-			if pt.WorkerClass != supervisor.WorkerSecurity && pt.WorkerClass != supervisor.WorkerTester {
-				t.Fatalf("verify should be tester or security, got %v", pt.WorkerClass)
+			if pt.WorkerClass != supervisor.WorkerSecurity && pt.WorkerClass != supervisor.WorkerTester && pt.WorkerClass != supervisor.WorkerVerifier {
+				t.Fatalf("verify should be tester, security, or verifier, got %v", pt.WorkerClass)
 			}
 			if !pt.IsAuto {
 				t.Fatalf("verify should be IsAuto=true")
@@ -188,7 +188,7 @@ func TestBuildExecutionPlanParallelismScheduling(t *testing.T) {
 }
 
 // TestBuildExecutionPlanDeepVerificationSynthesizesSecurityVerifier verifies that
-// a task with Verification=VerifyDeep produces a security-class verifier.
+// a task with Verification=VerifyDeep produces a verifier-class worker with deep verification.
 func TestBuildExecutionPlanDeepVerificationSynthesizesSecurityVerifier(t *testing.T) {
 	run := supervisor.Run{
 		ID:   "drv-deep",
@@ -212,8 +212,8 @@ func TestBuildExecutionPlanDeepVerificationSynthesizesSecurityVerifier(t *testin
 	}
 	for _, pt := range plan.Tasks {
 		if pt.ID == plan.VerificationID {
-			if pt.WorkerClass != supervisor.WorkerSecurity {
-				t.Fatalf("deep verification should use security worker, got %v", pt.WorkerClass)
+			if pt.WorkerClass != supervisor.WorkerVerifier {
+				t.Fatalf("deep verification should use verifier worker, got %v", pt.WorkerClass)
 			}
 			if pt.Verification != supervisor.VerifyDeep {
 				t.Fatalf("verification level should be deep, got %v", pt.Verification)

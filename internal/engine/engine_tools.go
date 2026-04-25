@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/hooks"
+	"github.com/dontfuckmycode/dfmc/internal/skills"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
@@ -45,6 +46,47 @@ func (e *Engine) invalidateContextForTool(name string, params map[string]any) {
 			}
 		}
 	}
+}
+
+// skillToolPolicy returns a guidance string when an active skill constrains
+// the tool being called. Returns empty string when no policy applies.
+// "Prefer" suggestions are soft; the model remains free to override with
+// sufficient justification.
+func (e *Engine) skillToolPolicy(toolName string) string {
+	if len(e.activeSkills) == 0 {
+		return ""
+	}
+	var pref []string
+	var allowed []string
+	for _, name := range e.activeSkills {
+		skill, ok := skills.SkillForName(e.ProjectRoot, name)
+		if !ok {
+			continue
+		}
+		for _, t := range skill.Preferred {
+			if t == toolName {
+				continue
+			}
+			pref = append(pref, t)
+		}
+		for _, t := range skill.Allowed {
+			if t == toolName {
+				continue
+			}
+			allowed = append(allowed, t)
+		}
+	}
+	if len(pref) > 0 || len(allowed) > 0 {
+		parts := make([]string, 0, 2)
+		if len(pref) > 0 {
+			parts = append(parts, "prefer: "+strings.Join(pref, ", "))
+		}
+		if len(allowed) > 0 {
+			parts = append(parts, "allowed: "+strings.Join(allowed, ", "))
+		}
+		return "skill tool policy — " + strings.Join(parts, " | ")
+	}
+	return ""
 }
 
 // extractPathsFromPatch returns the unique set of file paths affected by a

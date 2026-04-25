@@ -232,6 +232,12 @@ func (e *Engine) executeAndAppendToolBatch(
 		}
 
 		content, isErr := formatNativeToolResultPayloadWithLimits(r.Result, r.Err, effectiveMaxResult, effectiveMaxData)
+		// Skill-scoped tool policy: when an active skill constrains this tool,
+		// surface the guidance so the model can self-correct rather than guessing.
+		// Prefers are soft nudges; Allowed-without-Allowed is a stronger signal.
+		if policy := e.skillToolPolicy(call.Name); policy != "" {
+			content = policy + "\n\n" + content
+		}
 		e.publishNativeToolResultWithPayload(trace, content)
 		traces = append(traces, trace)
 

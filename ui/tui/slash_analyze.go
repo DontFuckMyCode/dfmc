@@ -27,21 +27,58 @@ func (m Model) runAnalyzeSlash(args []string, securityOnly bool) Model {
 	if m.eng == nil {
 		return m.appendSystemMessage("Engine unavailable — cannot analyze.")
 	}
-	path := ""
+	var paths []string
+	opts := engine.AnalyzeOptions{}
+	setFlags := false // true when individual --flags are passed
 	for _, a := range args {
-		if a = strings.TrimSpace(a); a != "" && !strings.HasPrefix(a, "-") {
-			path = a
-			break
+		a = strings.TrimSpace(a)
+		if a == "" || a == "--" {
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			switch strings.ToLower(a) {
+			case "--security":
+				opts.Security = true
+				setFlags = true
+			case "--dead-code", "--deadcode":
+				opts.DeadCode = true
+				setFlags = true
+			case "--complexity", "--complex":
+				opts.Complexity = true
+				setFlags = true
+			case "--duplication", "--dup":
+				opts.Duplication = true
+				setFlags = true
+			case "--todos", "--todo":
+				opts.Todos = true
+				setFlags = true
+			case "--full":
+				opts.Full = true
+				setFlags = true
+			case "--hotspots", "--hotspots-only":
+				// hotspots are always included in full analysis;
+				// there's no standalone flag, but accept the alias gracefully
+				opts.Full = true
+				setFlags = true
+			default:
+				return m.appendSystemMessage(fmt.Sprintf("Unknown /analyze flag %q. Known flags: --full, --security, --dead-code, --complexity, --duplication, --todos.", a))
+			}
+		} else {
+			paths = append(paths, a)
 		}
 	}
+	// Default: full analysis if no specific flags set.
+	if !setFlags {
+		if securityOnly {
+			opts.Security = true
+		} else {
+			opts.Full = true
+		}
+	}
+	path := strings.Join(paths, " ")
+	opts.Path = path
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	opts := engine.AnalyzeOptions{Path: path}
-	if securityOnly {
-		opts.Security = true
-	} else {
-		opts.Full = true
-	}
 	report, err := m.eng.AnalyzeWithOptions(ctx, opts)
 	if err != nil {
 		return m.appendSystemMessage("Analyze failed: " + err.Error())

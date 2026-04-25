@@ -130,7 +130,7 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	beforeChanged, err := gitChangedFilesSnapshot(req.ProjectRoot)
+	beforeChanged, err := gitChangedFilesSnapshot(ctx, req.ProjectRoot)
 	if err != nil {
 		beforeChanged = nil
 	}
@@ -147,7 +147,7 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	err = cmd.Run()
-	afterChanged, _ := gitChangedFilesSnapshot(req.ProjectRoot)
+	afterChanged, _ := gitChangedFilesSnapshot(ctx, req.ProjectRoot)
 
 	output := strings.TrimSpace(strings.TrimSpace(stdout.String()) + joinCommandStderr(stderr.String(), stdout.Len() > 0))
 	res := Result{
@@ -387,7 +387,7 @@ func hasArgSequence(args []string, seq ...string) bool {
 	}
 	for i := range len(args) - len(seq) + 1 {
 		match := true
-		for j := 0; j < len(seq); j++ {
+		for j := range seq {
 			if !strings.EqualFold(strings.TrimSpace(args[i+j]), seq[j]) {
 				match = false
 				break
@@ -655,13 +655,12 @@ func relPathOrAbsolute(root, target string) string {
 	return rel
 }
 
-func gitChangedFilesSnapshot(projectRoot string) ([]string, error) {
-	cmd := exec.Command("git", "-C", projectRoot, "status", "--short", "--untracked-files=all", "--")
-	out, err := cmd.Output()
+func gitChangedFilesSnapshot(ctx context.Context, projectRoot string) ([]string, error) {
+	stdout, _, _, err := runGit(ctx, projectRoot, 30*time.Second, "status", "--short", "--untracked-files=all", "--")
 	if err != nil {
 		return nil, err
 	}
-	lines := strings.Split(strings.ReplaceAll(string(out), "\r\n", "\n"), "\n")
+	lines := splitLines(strings.ReplaceAll(stdout, "\r\n", "\n"))
 	changed := make([]string, 0, len(lines))
 	for _, line := range lines {
 		line = strings.TrimRight(line, " ")

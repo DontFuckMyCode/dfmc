@@ -30,12 +30,15 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	codeast "github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
+
+const scopeMapUnavailable = "(scope map unavailable for this file type)"
 
 // runTemplateSlash composes a natural-language prompt for one of the
 // skill-style shortcuts (/review, /explain, /refactor, /test, /doc) and feeds
@@ -95,11 +98,12 @@ func (m Model) runTemplateSlash(verb string, args []string, raw string) (Model, 
 func composeReviewPrompt(targets []string, tail string) string {
 	reviewTail := strings.TrimSpace(tail)
 	if len(targets) == 0 {
-		return strings.TrimSpace(
-			"Review the current worktree diff only. Focus on correctness, risks, and missing tests. " +
-				"Start from changed hunks, avoid broad codebase sweeps, and only read more context when the diff is insufficient. " +
-				reviewTail,
-		)
+		msg := "Review the current worktree diff only. Focus on correctness, risks, and missing tests. " +
+			"Start from changed hunks, avoid broad codebase sweeps, and only read more context when the diff is insufficient."
+		if reviewTail != "" {
+			msg += " " + reviewTail
+		}
+		return strings.TrimSpace(msg)
 	}
 	return fmt.Sprintf(
 		"Review the following file(s) for correctness, risks, readability, and missing tests: %s\n"+
@@ -125,14 +129,16 @@ func (m Model) reviewScopeGuide(targets []string) string {
 	if root == "" {
 		return ""
 	}
-	limit := len(targets)
-	if limit > 2 {
-		limit = 2
-	}
+	limit := min(len(targets), 2)
 	outlines := make([]string, 0, limit)
 	for _, target := range targets[:limit] {
 		if outline := strings.TrimSpace(m.reviewScopeOutline(root, target)); outline != "" {
 			outlines = append(outlines, outline)
+		}
+	}
+	if len(outlines) == 0 && limit > 0 && len(targets) > 0 {
+		if firstOutline := strings.TrimSpace(m.reviewScopeOutline(root, targets[0])); firstOutline != "" {
+			outlines = append(outlines, firstOutline)
 		}
 	}
 	if len(outlines) == 0 {
@@ -158,7 +164,7 @@ func (m Model) reviewScopeOutline(root, target string) string {
 	if info.Size() > 512*1024 {
 		return fmt.Sprintf("- %s: large file (%d bytes). Start from changed hunks or the most suspicious symbol names before widening.", fileMarker(target), info.Size())
 	}
-	if outline := reviewSymbolOutline(abs, target); outline != "" {
+	if outline := reviewSymbolOutline(abs, target); outline != "" && outline != scopeMapUnavailable {
 		return outline
 	}
 	content, err := os.ReadFile(abs)
@@ -177,7 +183,7 @@ func reviewSymbolOutline(absPath, target string) string {
 
 	res, err := parser.ParseFile(ctx, absPath)
 	if err != nil || res == nil || len(res.Symbols) == 0 {
-		return ""
+		return scopeMapUnavailable
 	}
 	symbols := append([]types.Symbol(nil), res.Symbols...)
 	sort.SliceStable(symbols, func(i, j int) bool {
@@ -187,10 +193,7 @@ func reviewSymbolOutline(absPath, target string) string {
 		return symbols[i].Line < symbols[j].Line
 	})
 
-	limit := len(symbols)
-	if limit > 8 {
-		limit = 8
-	}
+	limit := min(len(symbols), 8)
 	lines := make([]string, 0, limit+2)
 	lines = append(lines, fmt.Sprintf("- %s (%s):", fileMarker(target), blankFallback(res.Language, "source")))
 	for _, sym := range symbols[:limit] {
@@ -240,9 +243,7 @@ func reviewSectionOutline(target, content string) string {
 	chunks := make([]string, 0, 6)
 	for start := 1; start <= totalLines && len(chunks) < 6; start += chunkSize {
 		end := start + chunkSize - 1
-		if end > totalLines {
-			end = totalLines
-		}
+		end = min(end, totalLines)
 		chunks = append(chunks, fmt.Sprintf("  - lines %d-%d", start, end))
 	}
 	return fmt.Sprintf("- %s:\n%s", fileMarker(target), strings.Join(chunks, "\n"))
@@ -250,6 +251,10 @@ func reviewSectionOutline(target, content string) string {
 
 func composeExplainPrompt(targets []string, tail string) string {
 	if len(targets) == 0 {
+		tail = strings.TrimSpace(tail)
+		if tail == "" {
+			return "Explain the recent changes or the listed topic."
+		}
 		return strings.TrimSpace("Explain the recent changes or the listed topic: " + tail)
 	}
 	return fmt.Sprintf("Explain what this code does, its structure, and any non-obvious invariants: %s\n%s",
@@ -262,7 +267,7 @@ func composeRefactorPrompt(targets []string, tail string) string {
 		goal = "propose a scoped, reversible refactor plan"
 	}
 	if len(targets) == 0 {
-		return "Refactor target unspecified — " + goal
+		return "" // triggers usage message in runTemplateSlash
 	}
 	return fmt.Sprintf("Refactor %s. Goal: %s. Produce a scoped, reversible plan with file-level edits.",
 		joinFileMarkers(targets), goal)
@@ -310,10 +315,17 @@ func looksLikePath(s string) bool {
 		return false
 	}
 	if strings.ContainsAny(s, "/\\") {
+		if strings.Contains(s, ":") {
+			// Reject Windows drive letters (C:\, D:/, etc.) — single letter followed by :\ or :/
+			if len(s) >= 2 && unicode.IsLetter(rune(s[0])) && (s[1] == '\\' || s[1] == '/') {
+				return false
+			}
+			// Accept PATH:LINE or URL-style
+			if !strings.HasPrefix(s, "http") {
+				return true
+			}
+		}
 		return true
-	}
-	if strings.Contains(s, ":") && !strings.HasPrefix(s, "http") {
-		return true // PATH:LINE form
 	}
 	if ext := filepath.Ext(s); ext != "" {
 		return true
@@ -333,24 +345,20 @@ func (m Model) defaultReviewTargets(explicit []string) []string {
 	if len(explicit) > 0 {
 		return explicit
 	}
+	if len(m.patchView.changed) > 0 {
+limit := min(len(m.patchView.changed), 4)
+		out := make([]string, 0, limit)
+		for _, path := range m.patchView.changed[:limit] {
+			if path = strings.TrimSpace(path); path != "" {
+				out = append(out, path)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
 	if target := strings.TrimSpace(m.toolTargetFile()); target != "" {
 		return []string{target}
 	}
-	if len(m.patchView.changed) == 0 {
-		return nil
-	}
-	limit := len(m.patchView.changed)
-	if limit > 4 {
-		limit = 4
-	}
-	out := make([]string, 0, limit)
-	for _, path := range m.patchView.changed[:limit] {
-		if path = strings.TrimSpace(path); path != "" {
-			out = append(out, path)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	return nil
 }

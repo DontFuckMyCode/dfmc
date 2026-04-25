@@ -249,7 +249,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		collapsed, collapsedCount, ok := compactTranscript(m.chat.transcript, keep)
 		if !ok {
 			m.notice = "Nothing to compact yet."
-			return m.appendSystemMessage(fmt.Sprintf("Transcript has %d lines — below keep=%d, nothing to compact.", len(m.chat.transcript), keep)), nil, true
+			return m.appendSystemMessage(fmt.Sprintf("Transcript has only %d lines (keep=%d) — nothing to compact yet.", len(m.chat.transcript), keep)), nil, true
 		}
 		m.chat.transcript = collapsed
 		m.chat.scrollback = 0
@@ -374,7 +374,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		payload := strings.TrimSpace(strings.Join(args, " "))
 		if payload == "" {
 			m.notice = "/ask needs a question."
-			return m.appendSystemMessage("Usage: /ask <question>"), nil, true
+			return m.appendSystemMessage("Usage: /ask <question>\nExample: /ask why is the build slow on Windows?"), nil, true
 		}
 		next, cmdOut := m.submitChatQuestion(payload, nil)
 		return next, cmdOut, true

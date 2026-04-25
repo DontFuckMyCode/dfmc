@@ -134,7 +134,7 @@ func TestTodoWriteRoundTripsLLMVocabulary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("todo_write list: %v", err)
 	}
-	raw, ok := res.Data["items"].([]todoItem)
+	raw, ok := res.Data["items"].([]TodoItem)
 	if !ok {
 		t.Fatalf("items not of expected type: %T", res.Data["items"])
 	}

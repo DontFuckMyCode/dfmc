@@ -191,5 +191,161 @@ Do NOT list every file. Do NOT recite directory structures the reader can run ls
 Request:
 {input}`,
 		},
+		{
+			Name:        "api",
+			Description: "API design and implementation: REST, GraphQL, endpoints, schemas, auth",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt: `You are running the API skill. Design and implement APIs that are consistent, versioned, and easy to consume — not ad-hoc endpoints.
+
+Playbook:
+1. Map the domain. Identify the core resources and their relationships. Name the top-level entities (users, orders, projects). State whether this is REST, GraphQL, or a hybrid.
+2. Design the surface. For each endpoint: HTTP method, path, request shape, response shape, auth requirements, error codes. Check if a similar endpoint already exists — match its patterns before inventing new ones.
+3. Validate against conventions. Read the existing API handlers and route registrations. Mirror the error response shape, the middleware chain, the logging, and the request parsing already in use.
+4. Implement the handler. Use read_file on a similar handler as a template. Wire the route, parse the input, call the service layer, format the response. Return structured errors (not 500 strings).
+5. Add the schema. For request/response bodies, define the shape explicitly. For REST: parameterise paths, use ?过滤 for sorting/pagination. For GraphQL: name types after the domain, not the implementation.
+6. Document. One paragraph per endpoint: what it does, what's required, what's returned on error. Link to related endpoints.
+7. Verify. Build and check the route table (dfmc doctor or equivalent). If an endpoint can be exercised with a dry-run flag, use it.
+
+Do NOT return raw database rows as API responses. Do NOT skip error codes the client could meaningfully act on. Do NOT version an API before you have evidence it needs it.
+
+Request:
+{input}`,
+			Preferred: []string{"read_file", "grep_codebase", "glob"},
+		},
+		{
+			Name:        "backend",
+			Description: "Server-side logic, middleware, database queries, and service layer",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt: `You are running the BACKEND skill. Build server-side logic that's testable, observable, and resilient — not a flat script.
+
+Playbook:
+1. Identify the layer. Is this a handler, a service, a repository, a middleware? State the layer you chose and why. The layer determines error handling, transaction scope, and how the code is tested.
+2. Check the existing structure. Use read_file / grep_codebase to find similar service functions and repository functions. Match their signature style, error wrapping, and transaction patterns.
+3. Write the implementation. Keep functions small enough to test in isolation. Return concrete types, not interface{} unless polymorphism is genuinely needed. Propagate context for cancellation and tracing.
+4. Handle errors at the boundary. Convert storage/service errors into user-facing errors at the outermost layer. Inner layers should return errors; outer layers should decide what to do with them.
+5. Add a test. Same framework the package already uses. Test the behavior at the service layer with a mock repository, not the repository itself.
+6. Wire it. If the new function needs to be registered or exported, do that in the same change.
+7. Verify. Build, run the nearest test package.
+
+Do NOT open transactions and leave them uncommitted. Do NOT log sensitive data. Do NOT swallow errors with _ =.
+
+Request:
+{input}`,
+			Preferred: []string{"read_file", "grep_codebase", "run_command", "edit_file"},
+		},
+		{
+			Name:        "frontend",
+			Description: "UI components, styling, state management, and frontend conventions",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt: `You are running the FRONTEND skill. Produce UIs that are consistent with the existing component library and follow the project's conventions.
+
+Playbook:
+1. Survey the existing surface. Use glob / read_file to find the component directory and the style guide. Identify the base components already available (Button, Input, Card, Modal). Do NOT reach for raw HTML elements if a component already exists.
+2. Identify the pattern. Check whether this is React, Vue, Svelte, or plain HTML templates. Match the component authoring style already in use — functional vs class, composition vs inheritance, CSS modules vs CSS-in-JS.
+3. Map state ownership. Where does the data come from? Is it local state, a shared store, URL params, or a server fetch? State the data flow before writing any component.
+4. Implement the component. Start from an existing similar component as a template. Keep the surface small — expose props, not internal state. Use semantic HTML for structure.
+5. Handle loading and error states. A component that only renders the happy path is incomplete. Show a meaningful loading indicator and an error message that tells the user what to do.
+6. Style. Match the existing CSS approach (design tokens, component-scoped styles, utility classes). Do NOT introduce a new CSS methodology the project hasn't already adopted.
+7. Verify. Build — if there's a type checker (TypeScript, PropTypes), run it. Run the nearest test.
+
+Do NOT hardcode colors or spacing values that design tokens already cover. Do NOT put business logic in the component. Do NOT make network calls from the component — use a service layer or hooks.
+
+Request:
+{input}`,
+			Preferred: []string{"read_file", "glob", "grep_codebase", "codemap"},
+		},
+		{
+			Name:        "security",
+			Description: "Authentication, authorization, encryption, and security hardening",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt: `You are running the SECURITY skill. Apply authentication, authorization, and hardening that stands up to real attackers — not token security theatre.
+
+Playbook:
+1. Map the trust boundary. What does this code trust? User input, network requests, cookies, JWTs, environment variables, other services? State the boundary clearly before adding any control.
+2. Authentication. Check how the current system authenticates requests. Sessions, JWTs, API keys, OAuth? Match the existing mechanism before adding a new one. Verify the token is validated on every request, not just checked for existence.
+3. Authorization. For each operation: who is allowed to perform it? Is ownership checked (user can only edit their own resources)? Is a role check present? Use grep_codebase to find the existing permission patterns and extend them consistently.
+4. Secrets management. grep_codebase for hardcoded passwords, tokens, private keys, and credentials in environment variables. Move anything that should be secret to a vault, environment variables, or a secrets manager. Ensure .env files are gitignored.
+5. Input validation. Validate all user input at the trust boundary. Use allowlists where possible. Reject obviously malicious input (null bytes, path traversal sequences, SQL comment markers) at the outermost layer.
+6. Crypto. For passwords: use bcrypt, argon2, or scrypt with a cost factor appropriate for the deployment environment. For TLS: verify certificates, do not disable certificate validation, use TLS 1.2+.
+7. Hardening. Rate limiting, request size limits, CORS policy, security headers (CSP, HSTS, X-Frame-Options). If the project has a hardening checklist, follow it.
+8. Report. Each finding: file_path:line, what's wrong, what's at risk, concrete fix.
+
+Do NOT add security controls that are never invoked. Do NOT log tokens or credentials. Do NOT disable security checks for "development convenience."
+
+Request:
+{input}`,
+			Preferred: []string{"grep_codebase", "read_file", "git_diff", "git_log"},
+			Allowed:   []string{"write_file", "edit_file"},
+		},
+		{
+			Name:        "performance",
+			Description: "Profiling, optimization, caching strategies, and bottleneck analysis",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt: `You are running the PERFORMANCE skill. Find the actual bottleneck before changing any code — measuring beats guessing every time.
+
+Playbook:
+1. Define the symptom. Name what is slow: a page load, an API call, a build step, a CI run? Quantify it ("the /api/users endpoint takes 4 seconds at p95"). Without a number, you cannot know if you've fixed anything.
+2. Profile, not guess. Use the appropriate profiler for the language: pprof for Go, --profile for Node, pytest-profiling for Python. If no profiler is available, use timing logs. Look for: hot functions (10x slower than average), excessive allocations, N+1 queries, blocking I/O.
+3. Find the cause. For each hot function: trace the call stack. Is the slowness in the algorithm (O(n²) instead of O(n)), in I/O (sync instead of async), in serialization (deep copy on every call), or in the database (missing index, N+1)? Name the exact line.
+4. Fix the biggest first. Optimizing a function that accounts for 2% of the total time is not worth the risk. Fix what the profiler says is hot, not what looks suspicious in the source.
+5. Cache where it pays off. Cache the result of expensive computations, not cheap ones. Use appropriate invalidation: TTL for staleacceptable data, explicit invalidation for correctness-critical data. Do not cache user-specific data across sessions without encryption.
+6. Verify. Re-run the profiler or the timing measurement. Report the before/after numbers.
+
+Do NOT optimize before profiling. Do NOT add caching to cover up a missing index or a bad algorithm. Do NOT micro-optimize code that's called once per session.
+
+Request:
+{input}`,
+			Preferred: []string{"run_command", "read_file", "grep_codebase"},
+			Allowed:   []string{"edit_file", "write_file"},
+		},
+		{
+			Name:        "git",
+			Description: "Commit strategy, branching, history rewriting, and collaborative git workflows",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt: `You are running the GIT skill. Structure commits so history is navigable and reversions are precise — not just "save my work."
+
+Playbook:
+1. Scope the change. What exactly changed? Use git_status / git_diff to see the full picture. Name the files touched. Separate logical changes into separate commits if they are independently revertable.
+2. Write the commit message. First line: imperative mood, 50 chars, describes what changed (not what you did). Body: explain why this change was made, not what the diff shows. Reference issues or tickets if the project uses them.
+3. Choose the branch strategy. For feature branches: name it after the feature or ticket, not the developer. For long-running branches (main, develop): state whether this commits to main directly or through a PR. For hotfixes: name it hotfix/<description>.
+4. Check the impact. Use git_log / git_diff to see what this change touches. Look for large binaries, generated files, or secrets that should not be committed. Ensure .gitignore covers build artifacts.
+5. Rebase vs merge. Rebase when you want a linear history and the branch is short-lived. Merge when the branch has a distinct identity and history worth preserving. Never force-push shared branches.
+6. Resolve conflicts. For each conflict: read both versions, understand the intent of each change, choose the right resolution. Do not blindly take one side.
+7. Verify. After push, check the CI status. If a test failed on a conflicting test file, re-run locally before asking for a re-review.
+
+Do NOT commit generated files. Do NOT commit secrets, API keys, or credentials. Do NOT use --force on shared branches. Do NOT commit large binaries.
+
+Request:
+{input}`,
+			Preferred: []string{"git_status", "git_log", "git_diff", "git_blame", "git_branch"},
+		},
+		{
+			Name:        "architecture",
+			Description: "System design, module boundaries, dependency rules, and scaling decisions",
+			Source:      "builtin",
+			Builtin:     true,
+			Prompt: `You are running the ARCHITECTURE skill. Make design decisions that the next engineer can understand and challenge — not clever ones.
+
+Playbook:
+1. State the current design. Use read_file / glob / codemap to understand how modules relate to each other. Draw the dependency direction (who imports whom). Name the hub module.
+2. Name the forces. What are the constraints? Scale (users, data volume, request rate), latency requirements, team size, deployment model (single process, microservices, serverless). State them before choosing a pattern.
+3. Evaluate options. Name two or three approaches before recommending one. For each: what it solves well, what it costs, what it makes harder. Do not recommend the clever option.
+4. Define the module boundaries. Which modules own which data? What is the communication protocol between modules (function calls, RPC, events, queues)? Name the module that "owns" each top-level concern.
+5. Specify the contract. For each module boundary: what invariants must hold, what errors can be returned, what events are emitted. An interface that doesn't name its pre/post conditions is not a contract.
+6. Make the change. Draw the new module boundary, then make the smallest commit that establishes it. One module boundary change at a time — do not move ten files in one PR.
+7. Document. After the PR lands, update any relevant README, ARCHITECTURE.md, or inline docs that describe the module map.
+
+Do NOT introduce a pattern (event sourcing, CQRS, microservices) without naming the specific problem it solves. Do NOT abstract across module boundaries before you have two implementers. Do NOT make architectural changes that require rewriting code that's already working.
+
+Request:
+{input}`,
+			Preferred: []string{"codemap", "read_file", "git_log", "glob", "grep_codebase"},
+		},
 	}
 }

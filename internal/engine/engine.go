@@ -84,6 +84,13 @@ type Engine struct {
 	// value is safe — Fire is a no-op on nil.
 	Hooks *hooks.Dispatcher
 
+	// activeSkills holds the skill names resolved from the current
+	// prompt build (BuildSystemPromptBundle). executeToolWithLifecycle
+	// reads it to honour skill-scoped Preferred/Allowed tool lists.
+	// Set by the prompt-building path before the agent loop runs; cleared
+	// when the loop parks or completes.
+	activeSkills []string
+
 	// Intent is the state-aware request normalizer that runs before each
 	// Ask. Built in Init from Config.Intent + Providers; nil-safe in
 	// every consumer (a nil router falls back to the raw input). See
@@ -195,6 +202,7 @@ func (e *Engine) Init(ctx context.Context) error {
 	// tools.Engine directly without going through engine.Init).
 	e.Tools.SetTaskStore(taskstore.NewStore(e.Storage.DB()))
 	e.Tools.SetSubagentRunner(e)
+	e.Tools.SetCodemap(e.CodeMap)
 	// Wire tool self-narration: the tools.Engine strips the optional
 	// `_reason` virtual field from every params map before dispatch and
 	// hands the text to this callback. We translate that into a

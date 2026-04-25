@@ -54,6 +54,19 @@ func SelectDriveProfiles(req drive.ExecuteTodoRequest, profiles map[string]confi
 		seen[strings.ToLower(name)] = struct{}{}
 		out = append(out, name)
 	}
+
+	// Tag-based routing: if a provider_tag is set and matches a profile tag,
+	// those profiles get first priority.
+	tag := strings.TrimSpace(strings.ToLower(req.ProviderTag))
+	if tag != "" {
+		for name, prof := range profiles {
+			if prof.TagMatches(tag) {
+				add(name)
+			}
+		}
+	}
+
+	// Then fall back to vendor preference ordering.
 	for _, vendor := range vendorPreference(req.Role, req.Verification) {
 		add(pickProfileByVendor(profiles, vendor))
 	}
@@ -225,7 +238,7 @@ func vendorPreference(role, verification string) []string {
 	role = strings.ToLower(strings.TrimSpace(role))
 	verification = strings.ToLower(strings.TrimSpace(verification))
 	switch role {
-	case "security_auditor", "code_reviewer", "synthesizer", "planner":
+	case "security_auditor", "code_reviewer", "synthesizer", "planner", "verifier":
 		return []string{"anthropic", "openai", "google", "kimi", "zai", "alibaba", "deepseek", "minimax"}
 	case "researcher":
 		return []string{"google", "openai", "anthropic", "deepseek", "kimi", "zai", "alibaba", "minimax"}
@@ -241,23 +254,30 @@ func vendorPreference(role, verification string) []string {
 
 func pickProfileByVendor(profiles map[string]config.ModelConfig, vendor string) string {
 	bestName := ""
-	bestScore := -1
+	bestScore := -1.0
 	for name, prof := range profiles {
-		score := vendorMatchScore(name, prof.Model, vendor)
+		score := vendorMatchScore(name, prof.AllModels(), vendor)
 		if score <= 0 {
 			continue
 		}
-		score = score*1_000_000 + prof.MaxContext
-		if score > bestScore {
-			bestScore = score
+		// Vendor match is the primary signal; prefer larger context windows
+		combined := float64(score)*1_000_000 + float64(prof.MaxContext)
+		if prof.CostPer1kTokens > 0 {
+			combined /= prof.CostPer1kTokens
+		}
+		if combined > bestScore {
+			bestScore = combined
 			bestName = name
 		}
 	}
 	return bestName
 }
 
-func vendorMatchScore(name, model, vendor string) int {
-	haystacks := []string{strings.ToLower(strings.TrimSpace(name)), strings.ToLower(strings.TrimSpace(model))}
+func vendorMatchScore(name string, models []string, vendor string) int {
+	haystacks := []string{strings.ToLower(strings.TrimSpace(name))}
+	for _, m := range models {
+		haystacks = append(haystacks, strings.ToLower(strings.TrimSpace(m)))
+	}
 	match := func(terms ...string) int {
 		score := 0
 		for _, hay := range haystacks {

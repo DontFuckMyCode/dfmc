@@ -66,6 +66,8 @@ func executorRoleFor(workerClass string) string {
 		return "security_auditor"
 	case "synthesizer":
 		return "synthesizer"
+	case "verifier":
+		return "verifier"
 	case "coder":
 		fallthrough
 	default:

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/supervisor"
@@ -197,9 +198,13 @@ type todoState struct {
 }
 
 type todoItem struct {
-	Content    string `json:"content"`
-	Status     string `json:"status"`
-	ActiveForm string `json:"active_form,omitempty"`
+	Content    string   `json:"content"`
+	Status     string   `json:"status"`
+	ActiveForm string   `json:"active_form,omitempty"`
+	Priority   int      `json:"priority,omitempty"`
+	Labels     []string `json:"labels,omitempty"`
+	Detail     string   `json:"detail,omitempty"`
+	ParentID   string   `json:"parent_id,omitempty"`
 }
 
 func NewTodoWriteTool() *TodoWriteTool {
@@ -282,10 +287,13 @@ func (t *TodoWriteTool) syncToStore(items []todoItem) error {
 	}
 	for _, item := range items {
 		task := supervisor.Task{
-			ID:     taskstore.NewTaskID(),
-			Title:  item.Content,
-			State:  todoStatusToTaskState(item.Status),
-			Origin: "todo_write",
+			ID:       taskstore.NewTaskID(),
+			ParentID: item.ParentID,
+			Title:    item.Content,
+			Detail:   item.Detail,
+			State:    todoStatusToTaskState(item.Status),
+			Origin:   "todo_write",
+			Labels:   item.Labels,
 		}
 		if err := t.store.SaveTask(&task); err != nil {
 			return err
@@ -319,9 +327,20 @@ func (t *TodoWriteTool) renderTasksAsResult(tasks []*supervisor.Task) Result {
 		lines = append(lines, fmt.Sprintf("%s %d. %s", mark, i+1, content))
 	}
 	out := strings.Join(lines, "\n")
-	items := make([]todoItem, len(tasks))
+	items := make([]TodoItem, len(tasks))
 	for i, task := range tasks {
-		items[i] = todoItem{Content: task.Title, Status: taskStateToTodoStatus(task.State)}
+		content := task.Title
+		if task.Detail != "" {
+			content = task.Detail
+		}
+		items[i] = TodoItem{
+			Content:    content,
+			Detail:     task.Detail,
+			Status:     taskStateToTodoStatus(task.State),
+			Priority:   0,
+			Labels:     task.Labels,
+			ParentID:   task.ParentID,
+		}
 	}
 	return Result{
 		Output: out,
@@ -371,9 +390,13 @@ func (t *TodoWriteTool) renderMem() Result {
 // TodoItem is the exported projection of a single todo entry for consumers
 // outside the tools package (agent loop, handoff brief, TUI).
 type TodoItem struct {
-	Content    string `json:"content"`
-	Status     string `json:"status"`
-	ActiveForm string `json:"active_form,omitempty"`
+	Content    string   `json:"content"`
+	Status     string   `json:"status"`
+	ActiveForm string   `json:"active_form,omitempty"`
+	Priority   int      `json:"priority,omitempty"`
+	Labels     []string `json:"labels,omitempty"`
+	Detail     string   `json:"detail,omitempty"`
+	ParentID   string   `json:"parent_id,omitempty"`
 }
 
 // Snapshot returns a defensive copy of the current todo list so callers
@@ -388,7 +411,7 @@ func (t *TodoWriteTool) Snapshot() []TodoItem {
 		if err == nil {
 			out := make([]TodoItem, len(tasks))
 			for i, task := range tasks {
-				out[i] = TodoItem{Content: task.Title, Status: string(task.State)}
+				out[i] = TodoItem{Content: task.Title, Detail: task.Detail, Status: string(task.State), Labels: task.Labels, ParentID: task.ParentID}
 			}
 			return out
 		}
@@ -398,7 +421,15 @@ func (t *TodoWriteTool) Snapshot() []TodoItem {
 	}
 	out := make([]TodoItem, len(t.state.items))
 	for i, it := range t.state.items {
-		out[i] = TodoItem(it)
+		out[i] = TodoItem{
+			Content:    it.Content,
+			Detail:     it.Detail,
+			Status:     it.Status,
+			ActiveForm: it.ActiveForm,
+			Priority:   it.Priority,
+			Labels:     it.Labels,
+			ParentID:   it.ParentID,
+		}
 	}
 	return out
 }
@@ -421,6 +452,12 @@ func todoStatusToTaskState(status string) supervisor.TaskState {
 		return supervisor.TaskBlocked
 	case "skipped":
 		return supervisor.TaskSkipped
+	case "waiting":
+		return supervisor.TaskWaiting
+	case "external_review":
+		return supervisor.TaskExternalReview
+	case "verifying":
+		return supervisor.TaskVerifying
 	}
 	return supervisor.TaskPending
 }
@@ -436,6 +473,16 @@ func taskStateToTodoStatus(state supervisor.TaskState) string {
 		return "in_progress"
 	case supervisor.TaskDone:
 		return "completed"
+	case supervisor.TaskBlocked:
+		return "blocked"
+	case supervisor.TaskSkipped:
+		return "skipped"
+	case supervisor.TaskWaiting:
+		return "waiting"
+	case supervisor.TaskExternalReview:
+		return "external_review"
+	case supervisor.TaskVerifying:
+		return "verifying"
 	}
 	return string(state)
 }
@@ -452,16 +499,50 @@ func parseTodoList(raw any) ([]todoItem, error) {
 		}
 		content := strings.TrimSpace(asString(m, "content", ""))
 		if content == "" {
-			return nil, fmt.Errorf(`todos[%d].content is required (a non-empty string describing the task). Example entry: {"content":"Read engine.go","status":"pending"}`, i)
+			return nil, fmt.Errorf(`todos[%d].content is required (a non-empty string describing the task). Example entry: {"content":"Read engine.go","status":"pending","parent_id":"tsk-abc123"}`, i)
 		}
 		status := strings.ToLower(strings.TrimSpace(asString(m, "status", "pending")))
 		if status == "" {
 			status = "pending"
 		}
+		var labels []string
+		if raw := m["labels"]; raw != nil {
+			switch v := raw.(type) {
+			case []any:
+				for _, x := range v {
+					if s := strings.TrimSpace(fmt.Sprint(x)); s != "" {
+						labels = append(labels, s)
+					}
+				}
+			case []string:
+				for _, s := range v {
+					if s = strings.TrimSpace(s); s != "" {
+						labels = append(labels, s)
+					}
+				}
+			}
+		}
+		priority := 0
+		if raw := m["priority"]; raw != nil {
+			switch v := raw.(type) {
+			case int:
+				priority = v
+			case float64:
+				priority = int(v)
+			case string:
+				if p, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+					priority = p
+				}
+			}
+		}
 		out = append(out, todoItem{
 			Content:    content,
 			Status:     status,
 			ActiveForm: strings.TrimSpace(asString(m, "active_form", "")),
+			Priority:   priority,
+			Labels:     labels,
+			Detail:     strings.TrimSpace(asString(m, "detail", "")),
+			ParentID:   strings.TrimSpace(asString(m, "parent_id", "")),
 		})
 	}
 	return out, nil

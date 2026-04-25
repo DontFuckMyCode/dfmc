@@ -1,13 +1,9 @@
-// slash_skills.go — the /skill slash-command family. Lists builtin
-// template verbs (/review /explain /refactor /test /doc) alongside
-// any YAML files discovered under .dfmc/skills or ~/.dfmc/skills so
-// users can see every way the TUI can be driven without leaving the
-// chat. Read-only; execution for YAML skills still goes through the
-// CLI (dfmc skill run <name>).
+// slash_skills.go — the /skill slash-command family. Uses the shared
+// skills catalog (internal/skills) so builtins, YAML skills, and Agent
+// Skills directory bundles are all surfaced consistently.
 //
 //   - skillSlash: the /skill dispatcher (list | show | run).
-//   - skillEntry + collectSkills: builtin + filesystem discovery with
-//     de-dup and builtins-first sort.
+//   - collectSkills: wraps skills.Discover into skillEntry rows.
 //   - formatSkillsList / formatSkillsShow: the two renderers.
 
 package tui
@@ -19,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/internal/skills"
 )
 
 // skillSlash lists and describes skills (built-in template-family verbs
@@ -67,56 +63,36 @@ func (m Model) skillSlash(args []string) string {
 	}
 }
 
-// skillEntry captures one skill row — either a builtin template-family
-// verb or a YAML file discovered under .dfmc/skills / ~/.dfmc/skills.
+// skillEntry captures one skill row — from the shared skills catalog.
 type skillEntry struct {
-	Name    string
-	Source  string // "builtin" / "project" / "global"
-	Path    string // "" for builtin
-	Summary string
+	Name      string
+	Source    string // "builtin" / "project" / "global"
+	Path      string // "" for builtin
+	Summary   string
+	Preferred []string
+	Allowed   []string
+	Body      string // system prompt / markdown body
 }
 
 func collectSkills(projectRoot string) []skillEntry {
-	builtins := []skillEntry{
-		{Name: "review", Source: "builtin", Summary: "Review a target for bugs, smells, and hazards."},
-		{Name: "explain", Source: "builtin", Summary: "Explain what a target does and why."},
-		{Name: "refactor", Source: "builtin", Summary: "Propose a scoped, reversible refactor."},
-		{Name: "test", Source: "builtin", Summary: "Draft tests for a target."},
-		{Name: "doc", Source: "builtin", Summary: "Draft or update documentation."},
-	}
-	out := make([]skillEntry, 0, len(builtins)+8)
-	out = append(out, builtins...)
-	seen := map[string]struct{}{}
-	for _, b := range builtins {
-		seen[strings.ToLower(b.Name)] = struct{}{}
-	}
-	roots := []struct {
-		path   string
-		source string
-	}{
-		{path: filepath.Join(projectRoot, ".dfmc", "skills"), source: "project"},
-		{path: filepath.Join(config.UserConfigDir(), "skills"), source: "global"},
-	}
-	for _, root := range roots {
-		if strings.TrimSpace(root.path) == "" {
-			continue
+	raw := skills.Discover(projectRoot)
+	out := make([]skillEntry, 0, len(raw))
+	for _, s := range raw {
+		entry := skillEntry{
+			Name:      s.Name,
+			Source:    s.Source,
+			Path:      s.Path,
+			Summary:   s.Description,
+			Preferred: s.Preferred,
+			Allowed:   s.Allowed,
+			Body:      s.SystemInstruction(),
 		}
-		matches, _ := filepath.Glob(filepath.Join(root.path, "*.y*ml"))
-		for _, p := range matches {
-			name := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
-			key := strings.ToLower(strings.TrimSpace(name))
-			if key == "" {
-				continue
-			}
-			if _, dup := seen[key]; dup {
-				continue
-			}
-			seen[key] = struct{}{}
-			out = append(out, skillEntry{Name: name, Source: root.source, Path: p})
+		if entry.Body == "" {
+			entry.Body = s.System
 		}
+		out = append(out, entry)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		// Builtins first, then by name.
 		if (out[i].Source == "builtin") != (out[j].Source == "builtin") {
 			return out[i].Source == "builtin"
 		}
@@ -127,7 +103,7 @@ func collectSkills(projectRoot string) []skillEntry {
 
 func formatSkillsList(skills []skillEntry) string {
 	if len(skills) == 0 {
-		return "No skills found. Place YAML files in .dfmc/skills/ or ~/.dfmc/skills/."
+		return "No skills found. Run /skill list to refresh."
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Skills (%d):\n", len(skills))
@@ -138,13 +114,28 @@ func formatSkillsList(skills []skillEntry) string {
 			fmt.Fprintf(&b, "  %-12s [%s]\n", s.Name, s.Source)
 		}
 	}
-	b.WriteString("Show body: /skill show <name>  ·  Run builtin: /review /explain /refactor /test /doc")
+	b.WriteString("Show: /skill show <name>  ·  Run builtin: /review /explain /refactor /test /doc /audit /onboard")
 	return strings.TrimRight(b.String(), "\n")
 }
 
 func formatSkillsShow(s skillEntry) string {
 	if s.Source == "builtin" {
-		return fmt.Sprintf("▸ %s (builtin)\n  %s\n  Run it with: /%s <target>", s.Name, s.Summary, s.Name)
+		extra := ""
+		if len(s.Preferred) > 0 || len(s.Allowed) > 0 {
+			var b strings.Builder
+			if len(s.Preferred) > 0 {
+				fmt.Fprintf(&b, "  prefer: %s\n", strings.Join(s.Preferred, ", "))
+			}
+			if len(s.Allowed) > 0 {
+				fmt.Fprintf(&b, "  allow:  %s\n", strings.Join(s.Allowed, ", "))
+			}
+			extra = strings.TrimRight(b.String(), "\n")
+		}
+		header := fmt.Sprintf("▸ %s (builtin)\n  %s\n  Run it with: /%s <target>", s.Name, s.Summary, s.Name)
+		if extra != "" {
+			return header + "\n" + extra
+		}
+		return header
 	}
 	if s.Path == "" {
 		return fmt.Sprintf("▸ %s [%s] — no path on disk", s.Name, s.Source)
@@ -153,6 +144,22 @@ func formatSkillsShow(s skillEntry) string {
 	if err != nil {
 		return fmt.Sprintf("▸ %s [%s]\n  path: %s\n  read error: %v", s.Name, s.Source, s.Path, err)
 	}
+	extra := ""
+	if len(s.Preferred) > 0 || len(s.Allowed) > 0 {
+		var b strings.Builder
+		if len(s.Preferred) > 0 {
+			fmt.Fprintf(&b, "  prefer: %s\n", strings.Join(s.Preferred, ", "))
+		}
+		if len(s.Allowed) > 0 {
+			fmt.Fprintf(&b, "  allow:  %s\n", strings.Join(s.Allowed, ", "))
+		}
+		extra = strings.TrimRight(b.String(), "\n")
+	}
+	body := truncateCommandBlock(string(data), 4000)
+	if extra != "" {
+		return fmt.Sprintf("▸ %s [%s]\n  path: %s\n%s\n  body:\n%s",
+			s.Name, s.Source, filepath.ToSlash(s.Path), extra, body)
+	}
 	return fmt.Sprintf("▸ %s [%s]\n  path: %s\n  body:\n%s",
-		s.Name, s.Source, filepath.ToSlash(s.Path), truncateCommandBlock(string(data), 4000))
+		s.Name, s.Source, filepath.ToSlash(s.Path), body)
 }

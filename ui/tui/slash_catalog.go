@@ -89,7 +89,8 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "refactor", Template: "/refactor " + blankFallback(m.toolTargetFile(), "path/to/file.go"), Description: "propose a scoped, reversible refactor"},
 		{Command: "test", Template: "/test " + blankFallback(m.toolTargetFile(), "path/to/file.go"), Description: "draft tests for a target"},
 		{Command: "doc", Template: "/doc " + blankFallback(m.toolTargetFile(), "path/to/file.go"), Description: "draft or update documentation"},
-		{Command: "continue", Template: "/continue", Description: "resume a parked agent loop"},
+		{Command: "continue", Template: "/continue", Description: "resume a parked agent loop (only works when loop is parked at a step cap or /continue)"},
+		{Command: "split", Template: "/split TASK", Description: "Decompose a broad task into subtasks"},
 	}
 	for _, x := range extras {
 		add(x.Command, x.Template, x.Description)

@@ -285,7 +285,7 @@ func synthesizeVerificationTask(tasks []Task) *Task {
 
 	if deep {
 		title = "Deep verification pass"
-		worker = WorkerSecurity
+		worker = WorkerVerifier
 		providerTag = "review"
 		verification = VerifyDeep
 		addUnique(&skills, "audit")

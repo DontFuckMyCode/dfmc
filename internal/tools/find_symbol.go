@@ -34,6 +34,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"slices"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
@@ -293,7 +294,7 @@ func (t *FindSymbolTool) Execute(ctx context.Context, req Request) (Result, erro
 		}, nil
 	}
 
-	output := renderSymbolMatches(name, matches, includeBody)
+	output := renderSymbolMatches(matches, includeBody)
 	dataMatches := make([]map[string]any, 0, len(matches))
 	for _, m := range matches {
 		entry := map[string]any{
@@ -410,28 +411,15 @@ func kindMatches(have, want string) bool {
 		"variable":  {"var", "field"},
 		"constant":  {"const", "enum"},
 	}
-	for _, alt := range aliases[want] {
-		if have == alt {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(aliases[want], have)
 }
 
 // buildScopeMatch turns one symbol hit into a symbolMatch with its
 // extracted body. Picks the scope strategy from the language.
 func buildScopeMatch(path, language string, sym types.Symbol, lines []string, bodyMax int, includeBody bool) symbolMatch {
-	startLine := sym.Line
-	if startLine < 1 {
-		startLine = 1
-	}
-	if startLine > len(lines) {
-		startLine = len(lines)
-	}
+	startLine := min(max(sym.Line, 1), len(lines))
 	endLine := extractScopeEnd(language, lines, startLine)
-	if endLine < startLine {
-		endLine = startLine
-	}
+	endLine = max(endLine, startLine)
 	m := symbolMatch{
 		Path:      path,
 		Language:  language,
@@ -480,7 +468,7 @@ func sliceBody(lines []string, start, end, maxLines int) (string, bool) {
 // gets a header "N. PATH:START-END  KIND  NAME" then (when bodies are
 // included) a fenced code block. Without bodies it's a compact one-line
 // list.
-func renderSymbolMatches(query string, matches []symbolMatch, includeBody bool) string {
+func renderSymbolMatches(matches []symbolMatch, includeBody bool) string {
 	// Stable sort by path then line so repeated calls render the same
 	// shape, even though the walker order is filesystem-dependent.
 	sort.SliceStable(matches, func(i, j int) bool {

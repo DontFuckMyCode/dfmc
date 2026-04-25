@@ -25,6 +25,11 @@ type EventBus struct {
 	// is falling behind. Atomic so Publish stays under RLock without a
 	// separate write lock just to bump a counter.
 	dropped uint64
+
+	// droppedByType tracks drops per event type so the warning log
+	// identifies which subscriber (by event type) is lagging.
+	droppedByType map[string]uint64
+	droppedMu     sync.Mutex
 }
 
 // defaultEventBusBuffer is the per-subscriber channel depth. Bursty
@@ -40,8 +45,9 @@ const eventBusDropWarnEvery = 100
 
 func NewEventBus() *EventBus {
 	return &EventBus{
-		subscribers: map[string][]chan Event{},
-		bufferSize:  defaultEventBusBuffer,
+		subscribers:   map[string][]chan Event{},
+		bufferSize:    defaultEventBusBuffer,
+		droppedByType: make(map[string]uint64),
 	}
 }
 
@@ -208,20 +214,29 @@ func (eb *EventBus) publishToChannel(ch chan Event, event Event) {
 }
 
 // noteDroppedEvent bumps the drop counter and, once per
-// eventBusDropWarnEvery, logs both the cumulative total and the most
-// recently dropped event type. The event type is the best cheap hint we
-// have toward "which subscriber is lagging" — we don't track per-channel
-// owners, but a consistent type in the log (e.g. always "drive:todo:retry")
-// points the operator at the subscriber that handles it.
+// eventBusDropWarnEvery, logs the event type that has accumulated the
+// most drops. droppedByType is locked separately from eb.mu so the
+// RLock on Publish is not held during the log call.
 func (eb *EventBus) noteDroppedEvent(eventType string) {
 	if eb == nil {
 		return
 	}
 	total := atomic.AddUint64(&eb.dropped, 1)
-	if total%eventBusDropWarnEvery == 0 {
-		if eventType == "" {
-			eventType = "(untyped)"
+	eb.droppedMu.Lock()
+	eb.droppedByType[eventType]++
+	topType := eventType
+	topCount := eb.droppedByType[eventType]
+	for t, c := range eb.droppedByType {
+		if c > topCount {
+			topType = t
+			topCount = c
 		}
-		log.Printf("dfmc: event bus dropped %d events so far; most recent drop was %q — a subscriber is lagging", total, eventType)
+	}
+	eb.droppedMu.Unlock()
+	if total%eventBusDropWarnEvery == 0 {
+		if topType == "" {
+			topType = "(untyped)"
+		}
+		log.Printf("dfmc: event bus dropped %d events so far; most-dropped type %q (%d drops) — a subscriber is lagging", total, topType, topCount)
 	}
 }
