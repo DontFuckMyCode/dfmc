@@ -16,6 +16,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/internal/mcp"
 	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 )
 
@@ -72,6 +73,11 @@ type Engine struct {
 	// so the dependency_graph tool can query edges without importing
 	// the engine package (which would create a cycle).
 	codemap *codemap.Engine
+
+	// mcpBridge exposes MCP server tools. Set by the engine-side MCP
+	// bridge adapter after clients are loaded. Nil when no MCP servers
+	// are configured.
+	mcpBridge mcp.ToolBridge
 }
 
 // ReasoningPublisher is the callback shape the higher-level engine wires
@@ -111,6 +117,12 @@ func (e *Engine) TaskStore() *taskstore.Store {
 // tool can query edges. Called by engine.Init after CodeMap is wired.
 func (e *Engine) SetCodemap(cm *codemap.Engine) {
 	e.codemap = cm
+}
+
+// SetMCPBridge installs the MCP bridge after external clients are loaded.
+// The bridge exposes tools from one or more MCP servers as native tools.
+func (e *Engine) SetMCPBridge(bridge mcp.ToolBridge) {
+	e.mcpBridge = bridge
 }
 
 func New(cfg config.Config) *Engine {
@@ -190,7 +202,42 @@ func New(cfg config.Config) *Engine {
 		blocked:    append([]string(nil), cfg.Tools.Shell.BlockedCommands...),
 	}))
 	RegisterMetaTools(e)
+	// Register MCP bridge tools after native tools so the bridge can
+	// shadow a native tool with the same name (caller wins — web/CLI
+	// that already has native tools gets a flat union, not a replacement).
+	if e.mcpBridge != nil {
+		for _, td := range e.mcpBridge.List() {
+			e.Register(&mcpToolAdapter{bridge: e.mcpBridge, name: td.Name})
+		}
+	}
 	return e
+}
+
+// mcpToolAdapter exposes one MCP bridge tool as a tools.Tool so it
+// appears in the same registry as native tools.
+type mcpToolAdapter struct {
+	bridge mcp.ToolBridge
+	name   string
+}
+
+func (a *mcpToolAdapter) Name() string    { return a.name }
+func (a *mcpToolAdapter) Description() string { return "MCP tool: " + a.name }
+
+func (a *mcpToolAdapter) Spec() ToolSpec {
+	return ToolSpec{
+		Name:    a.name,
+		Risk:    RiskExecute,
+		Idempotent: true,
+	}
+}
+
+func (a *mcpToolAdapter) Execute(ctx context.Context, req Request) (Result, error) {
+	argBytes, _ := json.Marshal(req.Params)
+	result, err := a.bridge.Call(ctx, a.name, argBytes)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Output: result.Content[0].Text, Success: !result.IsError}, nil
 }
 
 // SetSubagentRunner wires the delegate_task and orchestrate tools to the

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/dontfuckmycode/dfmc/internal/config"
 )
 
 // ToolBridge is the interface between the MCP server and whatever tool
@@ -72,7 +74,7 @@ func (b *MCPToolBridge) Call(ctx context.Context, name string, arguments []byte)
 
 // LoadClientsFromConfig parses a list of MCP server configs and spawns
 // clients for each. Returns empty slice on nil/empty config (no error).
-func LoadClientsFromConfig(servers []MCPConfig) ([]*Client, error) {
+func LoadClientsFromConfig(servers []config.MCPServerConfig) ([]*Client, error) {
 	if servers == nil || len(servers) == 0 {
 		return nil, nil
 	}
@@ -86,13 +88,3 @@ func LoadClientsFromConfig(servers []MCPConfig) ([]*Client, error) {
 	}
 	return out, nil
 }
-
-// MCPConfig describes one external MCP server to connect to.
-type MCPConfig struct {
-	Name    string
-	Command string
-	Args    []string
-	Env     map[string]string
-}
-
-// Ensure tool index stays in sync after client creation.

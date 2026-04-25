@@ -31,6 +31,7 @@ type Config struct {
 	Coach     CoachConfig     `yaml:"coach"`
 	Intent    IntentConfig    `yaml:"intent"`
 	AST       ASTConfig       `yaml:"ast"`
+	MCP       MCPConfig       `yaml:"mcp"`
 }
 
 // ASTConfig holds runtime knobs for the AST engine. Today only the
@@ -434,4 +435,19 @@ type ProjectConfig struct {
 		MaxFunctionLength int    `yaml:"max_function_length"`
 		MaxFileLength     int    `yaml:"max_file_length"`
 	} `yaml:"conventions"`
+}
+
+// MCPConfig describes external MCP servers to connect to.
+// TheServers field is an alias for the mcp.MCPConfig slice so the
+// config loader doesn't need to import the mcp package.
+type MCPConfig struct {
+	Servers []MCPServerConfig `yaml:"servers"`
+}
+
+// MCPServerConfig describes one external MCP server to connect to.
+type MCPServerConfig struct {
+	Name    string            `yaml:"name"`
+	Command string            `yaml:"command"`
+	Args    []string          `yaml:"args"`
+	Env     map[string]string `yaml:"env"`
 }

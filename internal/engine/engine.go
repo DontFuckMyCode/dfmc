@@ -203,6 +203,12 @@ func (e *Engine) Init(ctx context.Context) error {
 	e.Tools.SetTaskStore(taskstore.NewStore(e.Storage.DB()))
 	e.Tools.SetSubagentRunner(e)
 	e.Tools.SetCodemap(e.CodeMap)
+	// Load MCP external servers after native tools are registered so the
+	// bridge adapter can add MCP tools to the same registry without
+	// replacing any native tools with the same name.
+	if err := loadMCPClients(e.Config, e.Tools); err != nil {
+		return fmt.Errorf("mcp clients: %w", err)
+	}
 	// Wire tool self-narration: the tools.Engine strips the optional
 	// `_reason` virtual field from every params map before dispatch and
 	// hands the text to this callback. We translate that into a
