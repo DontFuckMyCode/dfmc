@@ -134,3 +134,44 @@ func TestGraphConcurrentAccess(t *testing.T) {
 		t.Fatalf("expected at least %d nodes after concurrent load, got %d", workers, counts.Nodes)
 	}
 }
+
+func TestGraph_RemoveEdge(t *testing.T) {
+	g := NewGraph()
+	g.AddNode(Node{ID: "A", Name: "A"})
+	g.AddNode(Node{ID: "B", Name: "B"})
+	g.AddEdge(Edge{From: "A", To: "B", Type: "calls"})
+
+	if c := g.Counts().Edges; c != 1 {
+		t.Fatalf("expected 1 edge, got %d", c)
+	}
+
+	removed := g.RemoveEdge(Edge{From: "A", To: "B", Type: "calls"})
+	if !removed {
+		t.Error("RemoveEdge should return true for existing edge")
+	}
+	if c := g.Counts().Edges; c != 0 {
+		t.Errorf("expected 0 edges after remove, got %d", c)
+	}
+
+	removed = g.RemoveEdge(Edge{From: "A", To: "B", Type: "calls"})
+	if removed {
+		t.Error("RemoveEdge should return false for non-existent edge")
+	}
+}
+
+func TestGraph_RemoveEdge_MultiType(t *testing.T) {
+	g := NewGraph()
+	g.AddNode(Node{ID: "A", Name: "A"})
+	g.AddNode(Node{ID: "B", Name: "B"})
+	g.AddEdge(Edge{From: "A", To: "B", Type: "imports"})
+	g.AddEdge(Edge{From: "A", To: "B", Type: "calls"})
+
+	if c := g.Counts().Edges; c != 2 {
+		t.Fatalf("expected 2 edges, got %d", c)
+	}
+
+	g.RemoveEdge(Edge{From: "A", To: "B", Type: "imports"})
+	if c := g.Counts().Edges; c != 1 {
+		t.Errorf("expected 1 edge after removing imports, got %d", c)
+	}
+}

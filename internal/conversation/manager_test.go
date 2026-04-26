@@ -1,6 +1,9 @@
 package conversation
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -388,5 +391,43 @@ func TestLoadReadOnly_CorruptedJSONFallsBack(t *testing.T) {
 	}
 	if ro.ID != active.ID {
 		t.Errorf("ID mismatch: got %q", ro.ID)
+	}
+}
+
+// isJSONError unit tests
+
+func TestIsJSONError_Nil(t *testing.T) {
+	if isJSONError(nil) {
+		t.Error("nil error should return false")
+	}
+}
+
+func TestIsJSONError_EOF(t *testing.T) {
+	if !isJSONError(io.EOF) {
+		t.Error("io.EOF should return true")
+	}
+}
+
+func TestIsJSONError_SyntaxError(t *testing.T) {
+	// Use json.Unmarshal on invalid data to produce a *json.SyntaxError
+	var v map[string]int
+	err := json.Unmarshal([]byte("{invalid"), &v)
+	if err == nil {
+		t.Fatal("expected error from invalid JSON")
+	}
+	if !isJSONError(err) {
+		t.Error("json.SyntaxError should return true")
+	}
+}
+
+func TestIsJSONError_UnmarshalTypeError(t *testing.T) {
+	if !isJSONError(&json.UnmarshalTypeError{}) {
+		t.Error("json.UnmarshalTypeError should return true")
+	}
+}
+
+func TestIsJSONError_OtherError(t *testing.T) {
+	if isJSONError(errors.New("some other error")) {
+		t.Error("other error should return false")
 	}
 }
