@@ -77,6 +77,26 @@ func (g *Graph) AddEdge(edge Edge) {
 	g.incoming[edge.To][edgeKey{Node: edge.From, Type: edge.Type}] = edge
 }
 
+// AddNodeWithEdges adds a node and multiple edges in a single lock
+// scope. This prevents intermediate state visibility when adding
+// related node+edges atomically (e.g. file node + its symbol children).
+// Thread-safe for concurrent callers.
+func (g *Graph) AddNodeWithEdges(node Node, edges []Edge) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.nodes[node.ID] = node
+	for _, e := range edges {
+		if g.outgoing[e.From] == nil {
+			g.outgoing[e.From] = map[edgeKey]Edge{}
+		}
+		g.outgoing[e.From][edgeKey{Node: e.To, Type: e.Type}] = e
+		if g.incoming[e.To] == nil {
+			g.incoming[e.To] = map[edgeKey]Edge{}
+		}
+		g.incoming[e.To][edgeKey{Node: e.From, Type: e.Type}] = e
+	}
+}
+
 // RemoveEdge deletes one specific (from, to, type) triple from both
 // the outgoing and incoming adjacency maps. Returns true when at least
 // one side held the edge. No-op when neither side does (idempotent —

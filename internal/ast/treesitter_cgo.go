@@ -32,7 +32,7 @@ import (
 // the pool, otherwise a corrupt parser will infect the next caller
 // of the same language.
 var (
-	treeSitterParserPoolsMu sync.Mutex
+	treeSitterParserPoolsMu sync.RWMutex
 	treeSitterParserPools   = map[string]*sync.Pool{}
 )
 
@@ -44,6 +44,9 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 
 	pool := treeSitterParserPool(lang)
 	parser := pool.Get().(*tree_sitter.Parser)
+	if parser == nil {
+		return nil, nil, nil, true, fmt.Errorf("tree-sitter: pool returned nil parser for %s", lang)
+	}
 	// healthy gates the pool return — see finalizeTreeSitterParser.
 	healthy := false
 	defer func() { finalizeTreeSitterParser(pool, parser, healthy) }()
@@ -89,18 +92,18 @@ type parserReturner interface {
 	Put(any)
 }
 
-// finalizeTreeSitterParser is the deferred return-to-pool / discard-and-close
-// branch. Pulled into a small helper so the unhealthy path can be tested
-// without engineering a real tree-sitter SetLanguage failure (which would
-// require fault-injection inside the bindings).
-//
-// healthy=true: parser is returned to the pool for reuse.
-// healthy=false: parser is closed and dropped — its language binding may
-// be in an indeterminate state (previous grammar still attached, or none),
-// and reusing it would leak the inconsistency to the next caller and could
-// panic ParseCtx or silently parse with the wrong grammar. REPORT.md #7.
+// finalizers holds a parser in a known-clean state before returning
+// to the pool. It is the only legitimate Put path; if the parser failed
+// mid-parse it must be Close()d instead, otherwise a corrupt parser
+// will infect the next caller of the same language.
 func finalizeTreeSitterParser(pool parserReturner, parser *tree_sitter.Parser, healthy bool) {
+	if parser == nil {
+		return
+	}
 	if healthy {
+		// Reset clears language binding and parse state before pool return.
+		// Without this, a Go-parser could corrupt a Python caller.
+		parser.Reset()
 		pool.Put(parser)
 		return
 	}
@@ -108,9 +111,16 @@ func finalizeTreeSitterParser(pool parserReturner, parser *tree_sitter.Parser, h
 }
 
 func treeSitterParserPool(lang string) *sync.Pool {
+	treeSitterParserPoolsMu.RLock()
+	if pool, ok := treeSitterParserPools[lang]; ok {
+		treeSitterParserPoolsMu.RUnlock()
+		return pool
+	}
+	treeSitterParserPoolsMu.RUnlock()
+
 	treeSitterParserPoolsMu.Lock()
 	defer treeSitterParserPoolsMu.Unlock()
-
+	// Double-check after acquiring write lock
 	if pool, ok := treeSitterParserPools[lang]; ok {
 		return pool
 	}

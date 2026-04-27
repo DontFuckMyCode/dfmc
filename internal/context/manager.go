@@ -2,6 +2,7 @@ package context
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -237,7 +238,14 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 			continue
 		}
 
-		content, err := os.ReadFile(r.Path)
+		content, err := func() ([]byte, error) {
+			f, err := os.Open(r.Path)
+			if err != nil {
+				return nil, err
+			}
+			defer f.Close()
+			return io.ReadAll(f)
+		}()
 		if err != nil {
 			continue
 		}

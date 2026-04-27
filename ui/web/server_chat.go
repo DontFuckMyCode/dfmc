@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -168,8 +169,16 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeSSE(w http.ResponseWriter, flusher http.Flusher, payload any) {
-	data, _ := json.Marshal(payload)
-	_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+		// SSE write failure is non-fatal (connection may have dropped);
+		// flusher already flushed, so we log and continue.
+		fmt.Fprintf(os.Stderr, "dfmc: writeSSE error: %v\n", err)
+		return
+	}
 	flusher.Flush()
 }
 
@@ -194,5 +203,7 @@ func clearStreamingWriteDeadline(w http.ResponseWriter) {
 func writeJSON(w http.ResponseWriter, code int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(payload)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		fmt.Fprintf(os.Stderr, "dfmc: writeJSON encode error: %v\n", err)
+	}
 }
