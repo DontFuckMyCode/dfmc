@@ -269,6 +269,10 @@ func (e *Engine) ReloadConfig(cwd string) error {
 	return nil
 }
 
+func (e *Engine) globalConfigPath() string {
+	return filepath.Join(config.UserConfigDir(), "config.yaml")
+}
+
 func (e *Engine) projectConfigPath() string {
 	if e == nil {
 		return ""
@@ -467,7 +471,7 @@ func (e *Engine) MemorySearch(query string, tier types.MemoryTier, limit int) ([
 	if e.Memory == nil {
 		return nil, fmt.Errorf("memory store is not initialized")
 	}
-	return e.Memory.Search(query, tier, limit)
+	return e.Memory.Search(query, tier, limit, e.Config.ProjectRoot)
 }
 
 func (e *Engine) MemoryAdd(entry types.MemoryEntry) error {

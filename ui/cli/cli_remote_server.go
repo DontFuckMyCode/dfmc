@@ -8,6 +8,7 @@ package cli
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net"
@@ -80,11 +81,11 @@ func bearerTokenMiddleware(next http.Handler, token string) http.Handler {
 		// Accept the token via Authorization header everywhere. A query-
 		// param fallback is allowed ONLY for /ws because EventSource
 		// cannot set custom headers.
-		if got := strings.TrimSpace(r.Header.Get("Authorization")); got == expected {
+		if got := strings.TrimSpace(r.Header.Get("Authorization")); rawToken != "" && subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1 {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if rawToken != "" && r.URL.Path == "/ws" && r.URL.Query().Get("token") == rawToken {
+		if rawToken != "" && r.URL.Path == "/ws" && subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("token")), []byte(rawToken)) == 1 {
 			next.ServeHTTP(w, r)
 			return
 		}

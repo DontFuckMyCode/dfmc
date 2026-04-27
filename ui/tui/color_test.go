@@ -74,3 +74,24 @@ func unsetEnv(t *testing.T, key string) {
 		}
 	})
 }
+
+func TestDefaultStr(t *testing.T) {
+	cases := []struct {
+		s        string
+		fallback string
+		want     string
+	}{
+		{"hello", "fallback", "hello"},
+		{"", "empty", "empty"},
+		{"  ", "spaces", "spaces"},
+		{"  hello  ", "fallback", "  hello  "},
+		{"", "", ""},
+		{"text", "", "text"},
+	}
+	for _, c := range cases {
+		got := defaultStr(c.s, c.fallback)
+		if got != c.want {
+			t.Errorf("defaultStr(%q, %q) = %q, want %q", c.s, c.fallback, got, c.want)
+		}
+	}
+}

@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -315,18 +317,22 @@ func TestParseGlobalFlags_RemainingArgs(t *testing.T) {
 }
 
 func containsJSONKey(s, key string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] == '"' {
-			start := i + 1
-			end := start
-			for end < len(s) && s[end] != '"' {
-				end++
-			}
-			if s[start:end] == key {
-				return true
-			}
-			i = end
-		}
+	// Find the first { and try to parse JSON from there
+	start := strings.Index(s, "{")
+	if start == -1 {
+		return false
 	}
-	return false
+	// Find the last } that could close the object
+	end := strings.LastIndex(s, "}")
+	if end <= start {
+		return false
+	}
+	// Try to parse the substring as JSON
+	sub := s[start : end+1]
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(sub), &m); err != nil {
+		return false
+	}
+	_, ok := m[key]
+	return ok
 }

@@ -227,6 +227,30 @@ func TestCallRPCError(t *testing.T) {
 	}
 }
 
+func TestRPCError_Error(t *testing.T) {
+	// Nil RPCError should not panic
+	var nilErr *RPCError
+	if nilErr.Error() != "" {
+		t.Error("nil Error() should return empty string")
+	}
+
+	// Non-nil error
+	e := &RPCError{Code: -32601, Message: "method not found"}
+	got := e.Error()
+	if got == "" {
+		t.Error("Error() returned empty string")
+	}
+	if !strings.Contains(got, "plugin rpc error") {
+		t.Errorf("expected 'plugin rpc error' in message, got %q", got)
+	}
+	if !strings.Contains(got, "-32601") {
+		t.Errorf("expected code in message, got %q", got)
+	}
+	if !strings.Contains(got, "method not found") {
+		t.Errorf("expected message in output, got %q", got)
+	}
+}
+
 func TestCallAfterClose(t *testing.T) {
 	c := spawnSelf(t, "echo")
 	if err := c.Close(context.Background()); err != nil {

@@ -30,7 +30,7 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 	limit := 500
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-			limit = n
+			limit = min(n, 2000)
 		}
 	}
 	files, err := listFiles(root, limit)

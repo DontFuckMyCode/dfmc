@@ -11,6 +11,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/hooks"
 	"github.com/dontfuckmycode/dfmc/internal/storage"
 	"github.com/dontfuckmycode/dfmc/ui/cli"
 )
@@ -35,6 +36,15 @@ func run() int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		return 1
+	}
+
+	// VULN-036: warn if config files are group/world-writable — a hostile
+	// co-tenant on a shared host could inject hook commands.
+	globalPath, projectPath := config.ConfigPaths("")
+	for _, path := range []string{globalPath, projectPath} {
+		if msg := hooks.CheckConfigPermissions(path); msg != "" {
+			fmt.Fprintf(os.Stderr, "[DFMC] %s\n", msg)
+		}
 	}
 
 	eng, err := engine.New(cfg)

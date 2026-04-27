@@ -133,6 +133,11 @@ func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 	tier := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("tier")))
 	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = min(n, 1000)
+		}
+	}
 	if tier == "working" {
 		writeJSON(w, http.StatusOK, s.engine.MemoryWorking())
 		return

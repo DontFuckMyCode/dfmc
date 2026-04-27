@@ -179,3 +179,37 @@ Drive is also exposed over MCP for IDE hosts (Claude Desktop, Cursor, VSCode). `
 - `tool_call`/`tool_batch_call` refuse to dispatch other meta tools — never put `tool_search`/`tool_help`/`tool_call`/`tool_batch_call` inside another meta tool's `name` or `calls[]`. The refusal hint names the right action, but adding new meta tools needs the same `metaInBatchHint` entry to keep self-teaching parity.
 - New tool-surface entry points MUST call `executeToolWithLifecycle` (or `CallTool`, which wraps it) rather than `tools.Engine.Execute` directly. The former is the only place approval gate + pre/post hooks + panic guard + denial-logging events fire. Bypassing it silently disables both hooks and user approval for that path. MCP Drive tools in [cli_mcp_drive.go](ui/cli/cli_mcp_drive.go) are the deliberate exception — they route through `driveMCPHandler` to avoid recursive LLM steps, and that's explicitly called out in the Drive section.
 - The intent layer is fail-open by design — a broken classifier falls back to the raw prompt, so tests that assume "intent decided X" must build a Snapshot and call `Intent.Evaluate` directly rather than relying on the engine path, because the engine path will silently swallow classifier failures and return the raw message. Conversely, never add hard-fail paths inside `internal/intent/router.go`: the contract is "always returns a usable Decision."
+
+## Project structure
+
+```
+cmd/dfmc                 # binary entrypoint
+internal/engine          # orchestration lifecycle, agent loop, tool-exec gate
+internal/config          # config loading/defaults/validation
+internal/storage         # bbolt handle + artifact store
+internal/ast             # tree-sitter (CGO) + regex fallback
+internal/codemap         # dependency/symbol graph, DOT/SVG export
+internal/context         # ranked context builder + budget/compression
+internal/provider        # router, protocols (anthropic/openai/google/offline)
+internal/tools           # tool registry + meta-tool layer + approval funnel
+internal/drive           # autonomous plan/execute loop (planner + scheduler)
+internal/intent          # state-aware sub-LLM request normalizer
+internal/hooks           # user-configured lifecycle shell hooks
+internal/coach           # trajectory-hint generator for agent loops
+internal/supervisor      # shared task/executor types for drive + taskstore
+internal/taskstore       # bbolt-backed task persistence (todo_write + HTTP/MCP)
+internal/mcp             # MCP server + bridge (tool registry + Drive surface)
+internal/security        # security scanner
+internal/skills          # skill registry + shortcuts
+internal/planning        # planning helpers
+internal/pluginexec      # plugin execution runtime
+internal/commands        # runtime slash-command registry
+internal/promptlib       # task/language/role prompt library
+internal/conversation    # JSONL persistence, branches
+internal/memory          # working/episodic/semantic tiers
+internal/tokens          # tokenization helpers
+ui/cli                   # CLI entry, subcommands, remote client
+ui/tui                   # bubbletea Model/View workbench
+ui/web                   # HTTP/SSE server + Drive cockpit + task CRUD
+pkg/types                # shared types and errors
+```

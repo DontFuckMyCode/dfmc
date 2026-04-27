@@ -115,14 +115,14 @@ func LoadModelsDevCatalog(path string) (ModelsDevCatalog, error) {
 }
 
 func SaveModelsDevCatalog(path string, catalog ModelsDevCatalog) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(catalog, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 func MergeProviderProfilesFromModelsDev(existing map[string]ModelConfig, catalog ModelsDevCatalog, opts ModelsDevMergeOptions) map[string]ModelConfig {

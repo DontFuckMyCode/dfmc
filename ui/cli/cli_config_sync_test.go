@@ -80,3 +80,100 @@ func TestRunConfigSyncModels(t *testing.T) {
 		t.Fatalf("expected zai max context 200000, got %d", got)
 	}
 }
+
+func TestIsSensitivePath(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"", false},
+		{"providers.profiles.anthropic.api_key", true},
+		{"providers.profiles.openai.apiKey", true},
+		{"providers.profiles.github.secret", true},
+		{"providers.profiles.aws.secret_key", true},
+		{"providers.profiles.aws.client_secret", true},
+		{"auth.password", true},
+		{"ssh.passphrase", true},
+		{"github.token", true},
+		{"github.oauth_token", true},
+		{"providers.profiles.anthropic.model", false},
+		{"providers.profiles.openai.base_url", false},
+		{"general.project_root", false},
+		{"context_budget", false},
+	}
+	for _, c := range cases {
+		got := isSensitivePath(c.path)
+		if got != c.want {
+			t.Errorf("isSensitivePath(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}
+
+func TestSanitizeConfigValue(t *testing.T) {
+	got := sanitizeConfigValue("secret123", "api_key", false)
+	if got != "secret123" {
+		t.Errorf("disabled: got %v want secret123", got)
+	}
+
+	got = sanitizeConfigValue("secret123", "api_key", true)
+	if got != "***REDACTED***" {
+		t.Errorf("api_key: got %v want ***REDACTED***", got)
+	}
+
+	got = sanitizeConfigValue("somevalue", "model", true)
+	if got != "somevalue" {
+		t.Errorf("model: got %v want somevalue", got)
+	}
+
+	nested := map[string]any{
+		"api_key": "secret",
+		"model":   "claude-sonnet",
+	}
+	gotMap := sanitizeConfigValue(nested, "providers.profiles.test", true).(map[string]any)
+	if gotMap["api_key"] != "***REDACTED***" {
+		t.Errorf("nested api_key: got %v want ***REDACTED***", gotMap["api_key"])
+	}
+	if gotMap["model"] != "claude-sonnet" {
+		t.Errorf("nested model: got %v want claude-sonnet", gotMap["model"])
+	}
+}
+
+func TestConfigToMap(t *testing.T) {
+	cfg := &config.Config{
+		Version: 1,
+	}
+	m, err := configToMap(cfg)
+	if err != nil {
+		t.Fatalf("configToMap: %v", err)
+	}
+	if m == nil {
+		t.Fatal("expected non-nil map")
+	}
+}
+
+func TestSplitConfigPath(t *testing.T) {
+	cases := []struct {
+		path  string
+		want  []string
+	}{
+		{"", nil},
+		{"a", []string{"a"}},
+		{"a.b", []string{"a", "b"}},
+		{"a.b.c", []string{"a", "b", "c"}},
+		{"  a . b  ", []string{"a", "b"}},
+		{"a..b", []string{"a", "b"}},
+		{".a.", []string{"a"}},
+	}
+	for _, c := range cases {
+		got := splitConfigPath(c.path)
+		if len(got) != len(c.want) {
+			t.Errorf("splitConfigPath(%q): len=%d want %d", c.path, len(got), len(c.want))
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("splitConfigPath(%q)[%d] = %q want %q", c.path, i, got[i], c.want[i])
+			}
+		}
+	}
+}

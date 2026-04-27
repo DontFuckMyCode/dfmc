@@ -18,7 +18,7 @@ func (s *Server) handleConversations(w http.ResponseWriter, r *http.Request) {
 	limit := 50
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-			limit = n
+			limit = min(n, 1000)
 		}
 	}
 	items, err := s.engine.ConversationList()
@@ -40,7 +40,7 @@ func (s *Server) handleConversationSearch(w http.ResponseWriter, r *http.Request
 	limit := 20
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-			limit = n
+			limit = min(n, 1000)
 		}
 	}
 	items, err := s.engine.ConversationSearch(query, limit)

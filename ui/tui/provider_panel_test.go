@@ -27,6 +27,29 @@ func sampleProviderRows() []providerRow {
 	}
 }
 
+func TestStatusPriority(t *testing.T) {
+	cases := []struct {
+		status string
+		want   int
+	}{
+		{"ready", 0},
+		{"READY", 0},
+		{"no-key", 1},
+		{"NO-KEY", 1},
+		{"offline", 2},
+		{"OFFLINE", 2},
+		{"unknown", 3},
+		{"anything", 3},
+		{"", 3},
+	}
+	for _, c := range cases {
+		got := statusPriority(c.status)
+		if got != c.want {
+			t.Errorf("statusPriority(%q) = %d, want %d", c.status, got, c.want)
+		}
+	}
+}
+
 func TestProviderStatusTagDerivation(t *testing.T) {
 	cases := []struct {
 		name          string

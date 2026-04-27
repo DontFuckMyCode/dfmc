@@ -18,16 +18,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab00eb68f20aedd27de2f3d3f
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@0a12ed9e1a4ce729c53f80fc1f1472bca80d2f2d
         with:
           go-version: "1.25"
           architecture: ${{ matrix.arch }}
 
       - name: Set up Go cache
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e26841
         if: runner.os != 'Windows'
         with:
           path: |
@@ -71,8 +71,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@b4ffde65f46336ab00eb68f20aedd27de2f3d3f
+      - uses: actions/setup-go@0a12ed9e1a4ce729c53f80fc1f1472bca80d2f2d
         with:
           go-version: "1.25"
       - name: go vet
@@ -93,8 +93,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@b4ffde65f46336ab00eb68f20aedd27de2f3d3f
+      - uses: actions/setup-go@0a12ed9e1a4ce729c53f80fc1f1472bca80d2f2d
         with:
           go-version: "1.25"
       - name: Build

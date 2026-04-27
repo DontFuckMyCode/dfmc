@@ -322,6 +322,27 @@ func (e *Engine) Init(ctx context.Context) error {
 		}()
 	}
 
+	// VULN-036: warn if config files are group/world-writable — a hostile
+	// co-tenant on a shared host could inject hook commands via a
+	// world-readable config. Fire after ProjectRoot is resolved but before
+	// session_start hooks so the warning precedes any hook execution.
+	for _, path := range []string{e.globalConfigPath(), e.projectConfigPath()} {
+		if path == "" {
+			continue
+		}
+		if msg := hooks.CheckConfigPermissions(path); msg != "" {
+			e.EventBus.Publish(Event{
+				Type:   "security:config_permissions",
+				Source: "engine",
+				Payload: map[string]any{
+					"path":   path,
+					"status": "warn",
+					"msg":    msg,
+				},
+			})
+		}
+	}
+
 	// Fire session_start AFTER ProjectRoot is resolved so hooks have
 	// access to the right cwd via os.Getwd() even if the user launched
 	// dfmc from a subdirectory.

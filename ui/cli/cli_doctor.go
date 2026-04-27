@@ -20,6 +20,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/hooks"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 )
 
@@ -151,6 +152,18 @@ func runDoctor(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		if eng.Config != nil {
 			addFileSystemHealthCheck(&checks, "storage.data_dir", eng.Config.DataDir())
 			addFileSystemHealthCheck(&checks, "plugins.dir", eng.Config.PluginDir())
+		}
+
+		globalPath, projectPath := config.ConfigPaths("")
+		for _, path := range []string{globalPath, projectPath} {
+			if path == "" {
+				continue
+			}
+			if msg := hooks.CheckConfigPermissions(path); msg != "" {
+				add("config.permissions", "warn", msg)
+			} else {
+				add("config.permissions", "pass", "ok")
+			}
 		}
 
 		for _, bin := range []string{"git", "go"} {

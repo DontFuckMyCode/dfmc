@@ -191,6 +191,50 @@ func TestRenderActivityViewPausedBanner(t *testing.T) {
 	}
 }
 
+func TestHandleActivitySearchKeyEscCancels(t *testing.T) {
+	m := newActivityTestModel()
+	m.activity.searchActive = true
+	m.activity.query = "some query"
+
+	m2, _ := m.handleActivitySearchKey(tea.KeyMsg{Type: tea.KeyEsc})
+	nm := m2.(Model)
+	if nm.activity.searchActive {
+		t.Error("Esc should clear searchActive")
+	}
+	// Note: Esc does NOT clear the query string, only searchActive
+}
+
+func TestHandleActivitySearchKeyBackspace(t *testing.T) {
+	m := newActivityTestModel()
+	m.activity.searchActive = true
+	m.activity.query = "abc"
+
+	m2, _ := m.handleActivitySearchKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	nm := m2.(Model)
+	if nm.activity.query != "ab" {
+		t.Errorf("Backspace should remove last char, got %q", nm.activity.query)
+	}
+}
+
+func TestHandleActivitySearchKeyEnterCommits(t *testing.T) {
+	m := newActivityTestModel()
+	m.activity.searchActive = true
+	m.activity.query = "test"
+	m.activity.follow = false
+
+	m2, _ := m.handleActivitySearchKey(tea.KeyMsg{Type: tea.KeyEnter})
+	nm := m2.(Model)
+	if nm.activity.searchActive {
+		t.Error("Enter should clear searchActive")
+	}
+	if nm.activity.follow != true {
+		t.Error("Enter should restore follow")
+	}
+	if nm.activity.scroll != 0 {
+		t.Error("Enter should reset scroll")
+	}
+}
+
 func TestHandleActivitySearchKeyFiltersEntries(t *testing.T) {
 	m := newActivityTestModel()
 	m.recordActivityEvent(engine.Event{Type: "tool:call", Payload: map[string]any{"tool": "read_file"}})
@@ -445,5 +489,140 @@ func TestClassifyActivityToolResultAcceptsCamelCaseDuration(t *testing.T) {
 	})
 	if !strings.Contains(text, "77ms") {
 		t.Fatalf("expected camelCase duration in text, got %q", text)
+	}
+}
+
+func TestActivityMatchesMode(t *testing.T) {
+	toolEntry := activityEntry{Kind: activityKindTool, EventID: "tool:call"}
+	agentEntry := activityEntry{Kind: activityKindAgent, EventID: "agent:loop:start"}
+	errEntry := activityEntry{Kind: activityKindError, EventID: "tool:error"}
+	ctxEntry := activityEntry{Kind: activityKindCtx, EventID: "context:compacted"}
+	indexEntry := activityEntry{Kind: activityKindIndex, EventID: "index:updated"}
+	driveEntry := activityEntry{Kind: activityKindInfo, EventID: "drive:todo:start"}
+	raceEntry := activityEntry{Kind: activityKindInfo, EventID: "provider:race:start"}
+	throttleEntry := activityEntry{Kind: activityKindInfo, EventID: "provider:throttle:retry"}
+	subagentEntry := activityEntry{Kind: activityKindInfo, EventID: "agent:subagent:start"}
+
+	cases := []struct {
+		entry activityEntry
+		mode  activityViewMode
+		want  bool
+	}{
+		{toolEntry, activityViewTools, true},
+		{toolEntry, activityViewAgents, false},
+		{toolEntry, activityViewErrors, false},
+		{agentEntry, activityViewAgents, true},
+		{agentEntry, activityViewTools, false},
+		{errEntry, activityViewErrors, true},
+		{errEntry, activityViewTools, false},
+		{driveEntry, activityViewWorkflow, true},
+		{raceEntry, activityViewWorkflow, true},
+		{throttleEntry, activityViewWorkflow, true},
+		{subagentEntry, activityViewWorkflow, true},
+		{ctxEntry, activityViewContext, true},
+		{indexEntry, activityViewContext, true},
+		{ctxEntry, activityViewTools, false},
+		// default (all mode) always returns true
+		{toolEntry, activityViewAll, true},
+		{errEntry, activityViewAll, true},
+		{activityEntry{}, activityViewAll, true},
+	}
+	for _, c := range cases {
+		got := activityMatchesMode(c.entry, c.mode)
+		if got != c.want {
+			t.Errorf("activityMatchesMode(entry=%+v, mode=%q) = %v, want %v", c.entry, c.mode, got, c.want)
+		}
+	}
+}
+
+func TestNextActivityMode(t *testing.T) {
+	cases := []struct {
+		current activityViewMode
+		want    activityViewMode
+	}{
+		{activityViewAll, activityViewTools},
+		{activityViewTools, activityViewAgents},
+		{activityViewAgents, activityViewErrors},
+		{activityViewErrors, activityViewWorkflow},
+		{activityViewWorkflow, activityViewContext},
+		{activityViewContext, activityViewAll},
+		{"unknown", activityViewAll},
+	}
+	for _, c := range cases {
+		got := nextActivityMode(c.current)
+		if got != c.want {
+			t.Errorf("nextActivityMode(%q) = %q, want %q", c.current, got, c.want)
+		}
+	}
+}
+
+func TestActivityTargetLabel(t *testing.T) {
+	cases := []struct {
+		target activityActionTarget
+		want   string
+	}{
+		{activityTargetFiles, "Files"},
+		{activityTargetPatch, "Patch"},
+		{activityTargetTools, "Tools"},
+		{activityTargetPlans, "Plans"},
+		{activityTargetContext, "Context"},
+		{activityTargetCodeMap, "CodeMap"},
+		{activityTargetSecurity, "Security"},
+		{activityTargetProviders, "Providers"},
+		{activityTargetStatus, "Status"},
+		{"unknown", "Status"},
+		{"", "Status"},
+	}
+	for _, c := range cases {
+		got := activityTargetLabel(c.target)
+		if got != c.want {
+			t.Errorf("activityTargetLabel(%q) = %q, want %q", c.target, got, c.want)
+		}
+	}
+}
+
+func TestActivityFocusPatchPath(t *testing.T) {
+	m := newCoverageModel(t)
+	m.patchView.set = []patchSection{
+		{Path: "internal/auth/service.go", HunkCount: 1},
+		{Path: "internal/billing/api.go", HunkCount: 2},
+		{Path: "cmd/server/main.go", HunkCount: 1},
+	}
+
+	cases := []struct {
+		path    string
+		wantIdx int
+		wantHun int
+	}{
+		{"internal/auth/service.go", 0, 0},
+		{"INTERNAL/BILLING/API.GO", 1, 0},
+		{"  cmd/server/main.go  ", 2, 0},
+		{"nonexistent/file.go", -1, 0},
+		{"", -1, 0},
+	}
+
+	for _, c := range cases {
+		got := m.activityFocusPatchPath(c.path)
+		if c.wantIdx == -1 {
+			if got.patchView.index != m.patchView.index || got.patchView.hunk != m.patchView.hunk {
+				t.Errorf("activityFocusPatchPath(%q): got index=%d hunk=%d, want unchanged",
+					c.path, got.patchView.index, got.patchView.hunk)
+			}
+		} else {
+			if got.patchView.index != c.wantIdx {
+				t.Errorf("activityFocusPatchPath(%q): got index=%d, want %d", c.path, got.patchView.index, c.wantIdx)
+			}
+			if got.patchView.hunk != c.wantHun {
+				t.Errorf("activityFocusPatchPath(%q): got hunk=%d, want %d", c.path, got.patchView.hunk, c.wantHun)
+			}
+		}
+	}
+}
+
+func TestActivityFocusPatchPath_EmptySet(t *testing.T) {
+	m := newCoverageModel(t)
+	got := m.activityFocusPatchPath("anything")
+	if got.patchView.index != 0 || got.patchView.hunk != 0 {
+		t.Errorf("empty set: got index=%d hunk=%d, want 0,0", got.patchView.index, got.patchView.hunk)
 	}
 }

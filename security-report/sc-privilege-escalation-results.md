@@ -108,6 +108,8 @@ already enumerated** and confirms the rest.
 - **Title:** `hooks.CheckConfigPermissions` is dead code — group/world-writable config silently grants RCE
 - **Severity:** Medium
 - **Confidence:** 95
+- **File:** `cmd/dfmc/main.go`, `ui/cli/cli_doctor.go`, `internal/engine/engine.go`
+- **Status:** **RESOLVED** (2026-04-26)
 - **File:** `D:\Codebox\PROJECTS\DFMC\internal\hooks\hooks.go:300-314` (defined),
   no call sites anywhere in the tree
 - **Vulnerability Type:** CWE-732 (Incorrect Permission Assignment for

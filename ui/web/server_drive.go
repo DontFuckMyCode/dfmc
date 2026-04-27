@@ -138,8 +138,10 @@ func (s *Server) handleDriveStart(w http.ResponseWriter, r *http.Request) {
 
 // handleDriveList returns every persisted run, newest first. Used
 // by the workbench's drive history panel. JSON shape matches the
-// CLI's `--json` output (slice of *drive.Run).
-func (s *Server) handleDriveList(w http.ResponseWriter, _ *http.Request) {
+// CLI's `--json` output (slice of *drive.Run). Unbounded — callers
+// can pass ?limit=N but the store returns all rows if limit is 0,
+// so we cap here to prevent memory exhaustion (VULN-042).
+func (s *Server) handleDriveList(w http.ResponseWriter, r *http.Request) {
 	if s.engine == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "engine not initialized"})
 		return
@@ -149,6 +151,12 @@ func (s *Server) handleDriveList(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	limit := 200
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = min(n, 1000)
+		}
+	}
 	runs, err := store.List()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -156,6 +164,9 @@ func (s *Server) handleDriveList(w http.ResponseWriter, _ *http.Request) {
 	}
 	if runs == nil {
 		runs = []*drive.Run{} // emit [] not null so clients don't have to handle both
+	}
+	if len(runs) > limit {
+		runs = runs[:limit]
 	}
 	writeJSON(w, http.StatusOK, runs)
 }

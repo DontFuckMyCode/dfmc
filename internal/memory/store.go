@@ -159,7 +159,7 @@ func (s *Store) List(tier types.MemoryTier, limit int) ([]types.MemoryEntry, err
 	return out, nil
 }
 
-func (s *Store) Search(query string, tier types.MemoryTier, limit int) ([]types.MemoryEntry, error) {
+func (s *Store) Search(query string, tier types.MemoryTier, limit int, project string) ([]types.MemoryEntry, error) {
 	query = strings.TrimSpace(strings.ToLower(query))
 	if query == "" {
 		return s.List(tier, limit)
@@ -170,6 +170,9 @@ func (s *Store) Search(query string, tier types.MemoryTier, limit int) ([]types.
 	}
 	out := make([]types.MemoryEntry, 0, limit)
 	for _, e := range list {
+		if project != "" && e.Project != project {
+			continue
+		}
 		corpus := strings.ToLower(e.Key + " " + e.Value + " " + e.Category)
 		if strings.Contains(corpus, query) {
 			out = append(out, e)

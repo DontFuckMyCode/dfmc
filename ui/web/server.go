@@ -141,6 +141,12 @@ func New(eng *engine.Engine, host string, port int) *Server {
 		authMode = strings.ToLower(strings.TrimSpace(eng.Config.Web.Auth))
 		if len(eng.Config.Web.AllowedOrigins) > 0 {
 			allowedOrigins = eng.Config.Web.AllowedOrigins
+			for _, o := range allowedOrigins {
+				if o == "*" {
+					fmt.Fprintf(os.Stderr, "[DFMC] WARNING: allowed_origins contains \"*\" which disables origin checking — rejecting all origins for WebSocket upgrades.\n")
+					break
+				}
+			}
 		}
 		if len(eng.Config.Web.AllowedHosts) > 0 {
 			allowedHosts = eng.Config.Web.AllowedHosts
@@ -170,6 +176,9 @@ func normalizeBindHost(authMode, host string) string {
 	if strings.EqualFold(strings.TrimSpace(authMode), "none") && !isLoopbackBindHost(host) {
 		fmt.Fprintf(os.Stderr, "[DFMC] NOTICE: auth=none forces loopback bind; ignoring --host %s and using 127.0.0.1. Pass --auth=token to expose on a network interface.\n", host)
 		return "127.0.0.1"
+	}
+	if strings.EqualFold(strings.TrimSpace(authMode), "none") && isLoopbackBindHost(host) {
+		fmt.Fprintf(os.Stderr, "[DFMC] NOTICE: auth=none — the web API is accessible to any process on this machine. Set DFMC_WEB_TOKEN or use --auth=token for local token auth.\n")
 	}
 	if strings.EqualFold(strings.TrimSpace(authMode), "token") && !isLoopbackBindHost(host) {
 		fmt.Fprintf(os.Stderr, "[DFMC] WARNING: auth=token with non-loopback bind (%s) exposes the agent on all interfaces. Use --host 127.0.0.1 or set auth=none.\n", host)
@@ -243,23 +252,24 @@ func (s *Server) checkWebSocketOrigin(r *http.Request) bool {
 		// accept unconditionally.
 		return true
 	}
-	// Strip any port from the origin so "http://127.0.0.1:14715" matches
-	// the allowlist entry "http://127.0.0.1".
 	originHost := origin
 	if h := parseURLHost(origin); h != "" {
 		originHost = h
 	}
+	// Strip port once, before the loop — stripPort is idempotent.
+	originHost = stripPort(originHost)
 	for _, allowed := range s.allowedOrigins {
 		if allowed == "*" {
-			return true
+			// "*" in the allowlist is not a valid entry — it would
+			// accept any origin, defeating the purpose of the check.
+			// Treat it as "no match" so operators who accidentally set
+			// allowed_origins: ["*"] are not silently open.
+			continue
 		}
 		allowedHost := allowed
 		if h := parseURLHost(allowed); h != "" {
 			allowedHost = h
 		}
-		// Normalize by stripping the port so "http://127.0.0.1:14715"
-		// matches allowlist entry "http://127.0.0.1".
-		originHost = stripPort(originHost)
 		allowedHost = stripPort(allowedHost)
 		if originHost == allowedHost {
 			return true
@@ -627,9 +637,10 @@ func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
 }
 
 // bearerTokenMiddleware validates bearer tokens using constant-time
-// comparison to prevent timing side-channels. All authenticated
-// surfaces, including the /ws SSE stream, must present the bearer
-// token in the Authorization header so secrets never ride in URLs.
+// comparison to prevent timing side-channels. This middleware is only
+// registered when auth=token; with auth=none the /ws SSE stream has no
+// auth check. When active, callers must present the bearer token in the
+// Authorization header so secrets never ride in URLs.
 func bearerTokenMiddleware(next http.Handler, token string) http.Handler {
 	rawToken := strings.TrimSpace(token)
 	expected := "Bearer " + rawToken

@@ -20,10 +20,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab00eb68f20aedd27de2f3d3f
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@0a12ed9e1a4ce729c53f80fc1f1472bca80d2f2d
         with:
           go-version: "1.25"
           architecture: ${{ matrix.arch }}
@@ -54,7 +54,7 @@ jobs:
           TAG: ${{ github.ref_name }}
 
       - name: Upload artifact
-        uses: actions/upload-release-asset@v4
+        uses: actions/upload-release-asset@e224c0a1a34ccefbbf04d3bee4e4edd13de4d00f
         with:
           upload-url: ${{ github.event.release.upload_url }}
           asset-path: dfmc${{ steps.artifact.outputs.ext }}
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           pattern: dfmc-*
           path: artifacts
@@ -81,7 +81,7 @@ jobs:
           cat checksums.txt
 
       - name: Upload checksums
-        uses: actions/upload-release-asset@v4
+        uses: actions/upload-release-asset@e224c0a1a34ccefbbf04d3bee4e4edd13de4d00f
         with:
           upload-url: ${{ github.event.release.upload_url }}
           asset-path: checksums.txt

@@ -305,8 +305,9 @@ func shellCommand(ctx context.Context, command string) *exec.Cmd {
 }
 
 // hookEnv projects the Payload into DFMC_<KEY>=<value> env vars, always
-// including DFMC_EVENT. Keys are uppercased and sanitized; this keeps
-// arbitrary payload keys from shell-injecting via env names.
+// including DFMC_EVENT. Keys are uppercased and sanitized (alphanumerics only);
+// values are quoted to prevent shell injection. This keeps arbitrary payload
+// keys and values from shell-injecting via env names or values.
 func hookEnv(event Event, payload Payload) []string {
 	env := []string{"DFMC_EVENT=" + string(event)}
 	for k, v := range payload {
@@ -314,7 +315,7 @@ func hookEnv(event Event, payload Payload) []string {
 		if key == "" {
 			continue
 		}
-		env = append(env, "DFMC_"+key+"="+v)
+		env = append(env, "DFMC_"+key+"="+sanitizeEnvValue(v))
 	}
 	return env
 }
@@ -335,6 +336,55 @@ func sanitizeEnvKey(raw string) string {
 			b.WriteByte('_')
 		}
 	}
+	return b.String()
+}
+
+// sanitizeEnvValue quotes the value so that shell expansion cannot break out
+// of the env-var assignment. Unix uses single-quote wrapping with embedded
+// quote escaping (' -> '\''); Windows cmd.exe uses double-quote wrapping with
+// % doubling (%%) to block %VAR% expansion inside quoted strings, and ^
+// escaping for other specials. This prevents payload injection when a hook
+// command references $DFMC_<KEY> in a shell context.
+func sanitizeEnvValue(raw string) string {
+	if raw == "" {
+		return "''"
+	}
+	if runtime.GOOS == "windows" {
+		// cmd.exe expands %VAR% inside double quotes, so escape % as %%.
+		// Also escape " and \ to prevent quote-breakout and path interpretation.
+		var b strings.Builder
+		b.Grow(len(raw) * 2)
+		for _, r := range raw {
+			switch r {
+			case '%':
+				b.WriteString("%%")
+			case '"':
+				b.WriteString("^\"")
+			case '\\':
+				b.WriteString("^\\")
+			case '!':
+				b.WriteString("^!")
+			case '^':
+				b.WriteString("^^")
+			default:
+				b.WriteRune(r)
+			}
+		}
+		return "\"" + b.String() + "\""
+	}
+	// Unix: single quotes prevent all $ expansion. Escape embedded single
+	// quotes as '\'' (close, escaped ', reopen).
+	var b strings.Builder
+	b.Grow(len(raw) + 4)
+	b.WriteByte('\'')
+	for _, r := range raw {
+		if r == '\'' {
+			b.WriteString("'\\''")
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('\'')
 	return b.String()
 }
 

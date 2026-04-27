@@ -2842,6 +2842,32 @@ func TestFormatRunArgListPreservesMalformedQuotedArg(t *testing.T) {
 	}
 }
 
+func TestFormatRunArgList_Success(t *testing.T) {
+	// Valid quoted tokens should be processed successfully
+	got := formatRunArgList(`arg1 "quoted arg" arg2`)
+	if got == "" {
+		t.Fatal("expected non-empty result")
+	}
+	// Should contain the original tokens
+	if !strings.Contains(got, "arg1") {
+		t.Errorf("expected arg1 in result, got %q", got)
+	}
+}
+
+func TestFormatRunArgList_Empty(t *testing.T) {
+	got := formatRunArgList("")
+	if got != "" {
+		t.Errorf("empty input: got %q want empty string", got)
+	}
+}
+
+func TestFormatRunArgList_WhitespaceOnly(t *testing.T) {
+	got := formatRunArgList("   ")
+	if got != "" {
+		t.Errorf("whitespace only: got %q want empty string", got)
+	}
+}
+
 func TestRunRejectsNilEngine(t *testing.T) {
 	if err := Run(context.Background(), nil, Options{}); err == nil {
 		t.Fatal("expected nil engine error")
