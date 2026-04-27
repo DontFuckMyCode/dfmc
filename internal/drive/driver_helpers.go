@@ -76,6 +76,9 @@ func executorRoleFor(workerClass string) string {
 }
 
 func executorStepBudgetFor(todo Todo) int {
+	if todo.Budget > 0 {
+		return todo.Budget
+	}
 	switch todoLane(todo) {
 	case "discovery":
 		return 6

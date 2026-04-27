@@ -112,6 +112,9 @@ type Todo struct {
 	// context build, so resume can reuse the same chunks instead of
 	// re-running retrieval from scratch.
 	LastContext *ctxmgr.ContextSnapshot `json:"last_context,omitempty"`
+	// Budget holds the max tool steps allowed for this TODO. When zero,
+	// the executor derives a budget from WorkerClass at dispatch time.
+	Budget int `json:"budget,omitempty"`
 }
 
 // RunStatus is the lifecycle state of an entire drive run.

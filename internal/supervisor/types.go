@@ -73,6 +73,9 @@ type Task struct {
 	// buildContextChunks call. When the task resumes, the same chunks
 	// can be reused instead of re-running retrieval from scratch.
 	LastContext *ctxmgr.ContextSnapshot
+	// Budget holds the max tool steps allowed for this task. When zero,
+	// the executor derives a budget from WorkerClass at dispatch time.
+	Budget int
 }
 
 type Run struct {

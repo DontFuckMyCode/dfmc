@@ -1,0 +1,11 @@
+security: fix XSS escapeHTML, EventBus secret redaction, and validation_command flag injection
+
+- index.html: escapeHTML now escapes " and ' to prevent attribute-injection
+  in SVG title attributes and any future innerHTML use of escapeHTML
+- eventbus.go: call RedactSecretsInValue on payloads before publishing
+  to SSE/WebSocket subscribers — closes the last-mile gap where
+  tool:call.params (raw API keys in headers) and tool:result.output
+  were published unredacted to the event bus
+- patch_validation.go: add isGitBinary + rejectFlagInjection guards
+  to validation_command execution — prevents CVE-2018-17456 class
+  flag injection when git is the validation binary

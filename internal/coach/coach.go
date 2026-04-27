@@ -240,7 +240,7 @@ func looksActionable(question string) bool {
 	keys := []string{
 		"fix", "add", "implement", "edit", "refactor", "migrate", "remove",
 		"delete", "rename", "update", "create", "build", "write", "generate",
-		"wire up", "hook up", "wire", "ekle", "sil", "duzelt", "yaz",
+		"wire up", "hook up", "wire", "append", "insert", "patch", "apply",
 	}
 	for _, k := range keys {
 		if strings.Contains(l, k) {
