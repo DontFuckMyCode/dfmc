@@ -183,6 +183,9 @@ These are correctly implemented and were verified working:
 | **WS event channel drop** | `make(chan engine.Event, 64)` with `default` case — intentional lossy delivery for performance |
 | **Constant-time token comparison** | Verified in `bearerTokenMiddleware` at server.go:655 |
 | **WS connection caps** | VULN-021: 64 global / 8 per-IP WebSocket connection limit |
+| **EventBus secret redaction** | `RedactSecretsInValue` called at `Publish` boundary — raw tool params never reach SSE/WS subscribers |
+| **escapeHTML quote escaping** | `"` and `'` now escaped in all HTML attribute contexts |
+| **patch_validation flag injection** | `isGitBinary` + `rejectFlagInjection` guard on validation_command args |
 
 ---
 
@@ -195,6 +198,9 @@ These are correctly implemented and were verified working:
 | **3** | Update SSE `/ws` auth comment (stale) | Low | None | ✅ FIXED (`server.go:639` — comment now reflects `auth=token` conditional) |
 | **4** | Document bbolt encryption risk and BitLocker recommendation | Low | None | Pending |
 | **5** | Consider making config permission check blocking (breaking change) | Medium | High | Pending |
+| **6** | escapeHTML missing quote escaping (XSS-001) | Low | Medium | ✅ FIXED (`index.html:670` — escapeHTML now escapes `"` and `'`) |
+| **7** | EventBus SSE payload unredacted (F16) | Low | High | ✅ FIXED (`eventbus.go:87` — `RedactSecretsInValue` called at publish boundary) |
+| **8** | patch_validation validation_command flag injection (F17) | Low | High | ✅ FIXED (`patch_validation.go:19-41` — `isGitBinary` + `rejectFlagInjection` guards) |
 
 ---
 

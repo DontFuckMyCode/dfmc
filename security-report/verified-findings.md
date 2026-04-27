@@ -155,6 +155,116 @@ RequireApprovalNetwork []string `yaml:"require_approval_network,omitempty"`
 
 ---
 
+## F15: escapeHTML Missing Quote Escaping (XSS-001)
+
+**CVSS 3.1:** 4.3 (Medium)
+**CWE:** CWE-79 (Improper Neutralization of Input During Web Page Generation)
+**File:** `ui/web/static/index.html:670-675`
+**Status:** VERIFIED — High Confidence
+
+**Root Cause:** `escapeHTML` escaped `&`, `<`, `>` but not `"` or `'`. When symbol names containing quotes were rendered in SVG `title` attributes via string-concatenated markup, an attacker could break out of the attribute and inject event handlers.
+
+**Evidence:**
+```js
+// index.html:670-675 — old
+function escapeHTML(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;"); // missing .replace(/"/g, "&quot;") etc.
+}
+// SVG builder at line 983-984
+svgContent += `<circle ... title="${title}"/>`;
+```
+
+**Compensating Controls:**
+- CSP `script-src 'self'` blocks script execution even if injection succeeds
+- SVG `title` attribute injection requires crafting a symbol name with quotes — unlikely in normal use
+
+**Recommended Fix:** Add `.replace(/"/g, "&quot;")` and `.replace(/'/g, "&#39;")` to `escapeHTML`.
+
+**Status: ✅ FIXED** — `escapeHTML` now escapes both `"` and `'` (`index.html:670`). Attribution: security-check 2026-04-27.
+
+---
+
+## F16: EventBus SSE Payload Not Redacted at Publish Boundary
+
+**CVSS 3.1:** 6.5 (Medium)
+**CWE:** CWE-200 (Exposure of Sensitive Information to an Unauthorized Actor)
+**File:** `internal/engine/eventbus.go:73`
+**Status:** VERIFIED — High Confidence
+
+**Root Cause:** `EventBus.Publish` forwarded `event.Payload` to SSE/WebSocket subscribers without calling `RedactSecretsInValue`. Raw `tool:call.params` (containing `Authorization: Bearer sk-ant-...` headers from `web_fetch`) and `tool:result.output_preview` were visible to all subscribers.
+
+**Evidence:**
+```go
+// eventbus.go:old — Publish sent payload verbatim
+func (eb *EventBus) Publish(event Event) {
+    // ...
+    eb.mu.RLock()
+    for _, ch := range eb.subscribers[event.Type] {
+        eb.publishToChannel(ch, event) // event.Payload unredacted
+    }
+}
+```
+
+**Compensating Controls:**
+- SSE/WebSocket binds to loopback by default (`auth=none`)
+- Bearer token auth required for non-loopback binds
+
+**Recommended Fix:** Call `security.RedactSecretsInValue(event.Payload)` before publishing to subscribers.
+
+**Status: ✅ FIXED** — `eventbus.go:87` now calls `security.RedactSecretsInValue(event.Payload)` before publishing. Attribution: security-check 2026-04-27.
+
+---
+
+## F17: patch_validation validation_command Flag Injection (CVE-2018-17456 class)
+
+**CVSS 3.1:** 6.5 (Medium)
+**CWE:** CWE-78 (OS Command Injection)
+**File:** `internal/tools/patch_validation.go:135-161`
+**Status:** VERIFIED — High Confidence
+
+**Root Cause:** `validation_command` passed user-supplied arguments directly to `exec.CommandContext` without rejecting flag-shaped values. When `git` was the binary, values like `--upload-pack=cmd` would be parsed by git as a command-line option rather than a path (CVE-2018-17456 class).
+
+**Evidence:**
+```go
+// patch_validation.go:old — args passed without flag-injection guard
+cmd := exec.CommandContext(runCtx, binary, args...) // args[0] could be "--upload-pack=evil"
+```
+
+**Compensating Controls:**
+- `isBlockedShellInterpreter` blocks direct shell interpreters
+- `detectShellMetacharacter` catches shell metacharacters in the binary name
+- `ensureCommandAllowed` applies blocked-command list
+- Approval gate applies to `patch_validation` as a destructive tool
+
+**Recommended Fix:** Add `rejectFlagInjection` guard for git binary specifically, mirroring the `rejectGitFlagInjection` pattern used in git tools.
+
+**Status: ✅ FIXED** — added `isGitBinary` + `rejectFlagInjection` guards (`patch_validation.go:19-41`). Fires when binary is `git` and any arg starts with `-`. Attribution: security-check 2026-04-27.
+
+---
+
+## F18: benchmark Tool Flag Injection (Already Fixed in Code)
+
+**CWE:** CWE-88 (Argument Injection)
+**File:** `internal/tools/benchmark.go:75-117`
+**Status:** VERIFIED — Already Fixed (pre-existing)
+
+**Root Cause:** The `target` parameter could contain flag-shaped values like `-exec=cmd.exe /c calc.exe` that would be parsed by `go test` as its own option before the `--` separator.
+
+**Current State:** Lines 112-117 show the fix is already present:
+```go
+if strings.HasPrefix(target, "-") {
+    return Result{}, fmt.Errorf("target %q begins with -, which would inject a flag...", target)
+}
+args = append(args, "--", target)  // -- separator prevents flag injection
+```
+
+**Status:** No action needed — fix is already in place.
+
+---
+
 ## Severity Distribution
 
 | Severity | Count | Findings |
@@ -164,6 +274,8 @@ RequireApprovalNetwork []string `yaml:"require_approval_network,omitempty"`
 | Medium | 5 | F4, F5, F8, F10, F14 |
 | Low | 1 | F3 (docs only) |
 | Info | 0 | — |
+
+**Session additions (2026-04-27):** F15 (XSS-001 ✅), F16 (EventBus ✅), F17 (patch_validation ✅), F18 (benchmark — already fixed)
 
 ---
 
