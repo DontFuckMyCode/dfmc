@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -141,11 +142,8 @@ func New(eng *engine.Engine, host string, port int) *Server {
 		authMode = strings.ToLower(strings.TrimSpace(eng.Config.Web.Auth))
 		if len(eng.Config.Web.AllowedOrigins) > 0 {
 			allowedOrigins = eng.Config.Web.AllowedOrigins
-			for _, o := range allowedOrigins {
-				if o == "*" {
-					fmt.Fprintf(os.Stderr, "[DFMC] WARNING: allowed_origins contains \"*\" which disables origin checking — rejecting all origins for WebSocket upgrades.\n")
-					break
-				}
+			if slices.Contains(allowedOrigins, "*") {
+				fmt.Fprintf(os.Stderr, "[DFMC] WARNING: allowed_origins contains \"*\" which disables origin checking — rejecting all origins for WebSocket upgrades.\n")
 			}
 		}
 		if len(eng.Config.Web.AllowedHosts) > 0 {
