@@ -80,7 +80,6 @@ func TestBackendLanguageStatus_JSONShape(t *testing.T) {
 		Language:  "go",
 		Preferred: "tree-sitter",
 		Active:    "tree-sitter",
-		Reason:    "cgo available",
 	}
 	if s.Language == "" || s.Preferred == "" || s.Active == "" {
 		t.Fatal("all required fields must be non-empty")

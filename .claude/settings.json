@@ -69,10 +69,10 @@
       "mcp__dfmt__dfmt_glob",
       "mcp__dfmt__dfmt_grep",
       "mcp__dfmt__dfmt_edit",
-      "mcp__dfmt__dfmt_write"
+      "mcp__dfmt__dfmt_write",
+      "Bash(git *)"
     ],
     "deny": [
-      "Bash",
       "WebFetch",
       "WebSearch"
     ]
