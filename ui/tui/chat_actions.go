@@ -33,29 +33,6 @@ func (m Model) togglePinnedFile() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) focusChatWithFileMarker(rel, action string) (tea.Model, tea.Cmd) {
-	rel = strings.TrimSpace(rel)
-	if rel == "" {
-		m.notice = "No file selected."
-		return m, nil
-	}
-
-	marker := fileMarker(rel)
-	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "explain":
-		m.chat.input = composeChatPrompt("Explain "+marker, "")
-		m.notice = "Explain prompt prepared for " + rel
-	case "review":
-		m.chat.input = composeChatPrompt("Review "+marker+" for bugs, risks, and missing tests.", "")
-		m.notice = "Review prompt prepared for " + rel
-	default:
-		m.chat.input = composeChatPrompt(m.chat.input, marker)
-		m.notice = "Inserted file marker for " + rel
-	}
-	m.activeTab = 0
-	return m, nil
-}
-
 func (m Model) focusChangedFiles(changed []string) Model {
 	if len(changed) == 0 {
 		return m

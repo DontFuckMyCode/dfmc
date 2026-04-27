@@ -39,12 +39,6 @@ func (m Model) handleFilesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, loadFilePreviewCmd(m.eng, m.selectedFile())
 	case "p", "alt+p":
 		return m.togglePinnedFile()
-	case "i", "alt+i":
-		return m.focusChatWithFileMarker(m.selectedFile(), "")
-	case "e", "alt+e":
-		return m.focusChatWithFileMarker(m.selectedFile(), "Explain")
-	case "v", "alt+v":
-		return m.focusChatWithFileMarker(m.selectedFile(), "Review")
 	}
 	return m, nil
 }
