@@ -10,7 +10,7 @@ import (
 // their tools with the engine. Called from engine.Init after Tools is
 // constructed and all native tools are registered.
 func loadMCPClients(cfg *config.Config, toolsEngine *tools.Engine) error {
-	if cfg.MCP.Servers == nil || len(cfg.MCP.Servers) == 0 {
+	if len(cfg.MCP.Servers) == 0 {
 		return nil
 	}
 	clients, err := mcp.LoadClientsFromConfig(cfg.MCP.Servers)

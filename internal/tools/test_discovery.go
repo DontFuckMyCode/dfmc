@@ -308,7 +308,7 @@ func matchesLanguage(path, language string) bool {
 	}
 }
 
-func extractTestFunctions(path, language, symbol string) []map[string]any {
+func extractTestFunctions(path, _, symbol string) []map[string]any {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil

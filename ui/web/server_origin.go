@@ -30,23 +30,6 @@ func resolveAllowedOrigins(configured []string, host string, port int) []string 
 	}
 }
 
-// resolveAllowedHosts fills in defaults — same shape as origins but
-// without the scheme (Host header is `host:port`, no protocol).
-func resolveAllowedHosts(configured []string, host string, port int) []string {
-	if len(configured) > 0 {
-		return normalizeAllowlist(configured)
-	}
-	bindHost := strings.TrimSpace(host)
-	if bindHost == "" || bindHost == "0.0.0.0" || bindHost == "::" {
-		bindHost = "127.0.0.1"
-	}
-	return []string{
-		fmt.Sprintf("%s:%d", bindHost, port),
-		fmt.Sprintf("localhost:%d", port),
-		fmt.Sprintf("127.0.0.1:%d", port),
-	}
-}
-
 // normalizeAllowlist trims whitespace and drops empties. Lowercase
 // origins/hosts so case-mismatched browser submissions don't break
 // the comparison.

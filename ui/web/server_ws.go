@@ -64,7 +64,7 @@ const (
 	// interactive chat; the burst absorbs natural typing
 	// bursts/auto-saves.
 	wsRPS   rate.Limit = 5
-	wsBurst            = 10
+	wsBurst           int = 10
 )
 
 // wsConnLimiter is the in-memory counter that bounds concurrent
@@ -131,16 +131,6 @@ func (l *wsConnLimiter) Acquire(ip string) (func(), string) {
 			}
 		}
 	}, ""
-}
-
-func (l *wsConnLimiter) snapshot() (int, map[string]int) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	cp := make(map[string]int, len(l.perIP))
-	for k, v := range l.perIP {
-		cp[k] = v
-	}
-	return l.global, cp
 }
 
 // wsUpgraderFor returns a Upgrader bound to this Server's
@@ -437,20 +427,19 @@ func (c *wsConn) handleTool(ctx context.Context, id int64, params json.RawMessag
 	c.sendResponse(id, map[string]any{"result": result})
 }
 
-func (c *wsConn) handleDriveStart(ctx context.Context, id int64, params json.RawMessage) {
-	// Drive start via websocket — delegate to engine
+func (c *wsConn) handleDriveStart(_ context.Context, id int64, _ json.RawMessage) {
 	c.sendResponse(id, map[string]any{"status": "drive_via_http", "hint": "use POST /api/v1/drive to start a drive run"})
 }
 
-func (c *wsConn) handleDriveStop(ctx context.Context, id int64, params json.RawMessage) {
+func (c *wsConn) handleDriveStop(_ context.Context, id int64, _ json.RawMessage) {
 	c.sendResponse(id, map[string]any{"status": "ok"})
 }
 
-func (c *wsConn) handleDriveStatus(ctx context.Context, id int64, params json.RawMessage) {
+func (c *wsConn) handleDriveStatus(_ context.Context, id int64, _ json.RawMessage) {
 	c.sendResponse(id, map[string]any{"status": "ok"})
 }
 
-func (c *wsConn) handleEventsSubscribe(ctx context.Context, id int64, params json.RawMessage) {
+func (c *wsConn) handleEventsSubscribe(_ context.Context, id int64, params json.RawMessage) {
 	var req struct {
 		Type string `json:"type"`
 	}
@@ -460,7 +449,7 @@ func (c *wsConn) handleEventsSubscribe(ctx context.Context, id int64, params jso
 	c.sendResponse(id, map[string]any{"subscribed": req.Type})
 }
 
-func (c *wsConn) handleEventsUnsubscribe(ctx context.Context, id int64, params json.RawMessage) {
+func (c *wsConn) handleEventsUnsubscribe(_ context.Context, id int64, _ json.RawMessage) {
 	c.sendResponse(id, map[string]any{"unsubscribed": true})
 }
 

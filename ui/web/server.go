@@ -226,14 +226,6 @@ func (s *Server) SetAllowedHosts(hosts []string) {
 	s.allowedHosts = hosts
 }
 
-func (s *Server) port() string {
-	_, portStr, err := net.SplitHostPort(s.addr)
-	if err != nil {
-		return ""
-	}
-	return portStr
-}
-
 func (s *Server) SetTrustedProxies(proxies []string) {
 	if s == nil {
 		return

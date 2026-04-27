@@ -312,9 +312,7 @@ func patternNameMatches(symName, pattern string) bool {
 	if pattern == "" {
 		return true
 	}
-	if strings.HasPrefix(pattern, "name=") {
-		pattern = strings.TrimPrefix(pattern, "name=")
-	}
+	pattern = strings.TrimPrefix(pattern, "name=")
 	// Exact match (no wildcards)
 	if !strings.Contains(pattern, "*") {
 		return symName == pattern
