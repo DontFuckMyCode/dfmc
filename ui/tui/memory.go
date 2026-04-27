@@ -53,14 +53,14 @@ func loadMemoryCmd(eng *engine.Engine, tier string) tea.Cmd {
 		)
 		switch tier {
 		case string(types.MemoryEpisodic), string(types.MemorySemantic):
-			entries, err = eng.Memory.List(types.MemoryTier(tier), memoryListLimit)
+			entries, err = eng.MemoryList(types.MemoryTier(tier), memoryListLimit)
 		default:
 			tier = memoryTierAll
-			ep, e1 := eng.Memory.List(types.MemoryEpisodic, memoryListLimit)
+			ep, e1 := eng.MemoryList(types.MemoryEpisodic, memoryListLimit)
 			if e1 != nil {
 				return memoryLoadedMsg{tier: tier, err: e1}
 			}
-			sem, e2 := eng.Memory.List(types.MemorySemantic, memoryListLimit)
+			sem, e2 := eng.MemoryList(types.MemorySemantic, memoryListLimit)
 			if e2 != nil {
 				return memoryLoadedMsg{tier: tier, err: e2}
 			}

@@ -22,13 +22,18 @@ const (
 
 
 
-type WriteFileTool struct{}
+type WriteFileTool struct {
+	engine *Engine
+}
 
 func NewWriteFileTool() *WriteFileTool { return &WriteFileTool{} }
-func (t *WriteFileTool) Name() string  { return "write_file" }
+func (t *WriteFileTool) Name() string        { return "write_file" }
 func (t *WriteFileTool) Description() string {
 	return "Write or create a text file."
 }
+
+// SetEngine wires the per-path lock so concurrent writes serialize correctly.
+func (t *WriteFileTool) SetEngine(e *Engine) { t.engine = e }
 func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	path := asString(req.Params, "path", "")
 	content := asString(req.Params, "content", "")
@@ -70,6 +75,9 @@ func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) 
 			data["previous_hash_verified"] = false
 		}
 	}
+	// Serialize write to prevent TOCTOU races with concurrent mutation tools.
+	release := t.engine.LockPath(absPath)
+	defer release()
 	if err := writeFileAtomic(absPath, []byte(content), 0o644); err != nil {
 		return Result{}, err
 	}

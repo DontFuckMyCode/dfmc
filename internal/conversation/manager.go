@@ -162,6 +162,23 @@ func (m *Manager) BranchCreate(name string) error {
 	if name == "" {
 		return fmt.Errorf("branch name is required")
 	}
+	// Reject names that could escape the branch map key namespace or
+	// confuse UIs that use the name as a path segment or display label.
+	// Mirror validateConvID from store.go for consistency.
+	if filepath.IsAbs(name) {
+		return fmt.Errorf("invalid branch name %q: must be a relative name", name)
+	}
+	if strings.ContainsAny(name, "/\\") {
+		return fmt.Errorf("invalid branch name %q: must not contain path separators", name)
+	}
+	if name == "." || name == ".." || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid branch name %q: must not contain `..`", name)
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("invalid branch name: contains control character U+%04X", r)
+		}
+	}
 	if _, ok := m.active.Branches[name]; ok {
 		return fmt.Errorf("branch already exists: %s", name)
 	}

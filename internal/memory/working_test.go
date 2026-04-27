@@ -158,7 +158,7 @@ func TestMemory_AddRejectsWhenStorageMissing(t *testing.T) {
 // call sites that use List as a "get what you can" probe.
 func TestMemory_ListReturnsNilWhenStorageNil(t *testing.T) {
 	m := New(nil)
-	got, err := m.List(types.MemoryEpisodic, 10)
+	got, err := m.List(types.MemoryEpisodic, 10, "")
 	if err != nil {
 		t.Fatalf("List should not error when storage is nil; got %v", err)
 	}
@@ -170,7 +170,7 @@ func TestMemory_ListReturnsNilWhenStorageNil(t *testing.T) {
 // Search delegates to List; when storage is nil both must be nil-safe.
 func TestMemory_SearchIsSafeWhenStorageNil(t *testing.T) {
 	m := New(nil)
-	got, err := m.Search("any query", types.MemoryEpisodic, 10)
+	got, err := m.Search("any query", types.MemoryEpisodic, 10, "")
 	if err != nil {
 		t.Fatalf("Search should not error when storage is nil; got %v", err)
 	}
@@ -200,7 +200,7 @@ func TestMemory_ConcurrentAccessNilStorage(t *testing.T) {
 			defer wg.Done()
 			m.TouchFile("a.go")
 			_, _ = m.List(types.MemoryEpisodic, 10)
-			_, _ = m.Search("q", types.MemoryEpisodic, 10)
+			_, _ = m.Search("q", types.MemoryEpisodic, 10, "")
 		}()
 	}
 	wg.Wait()
@@ -242,7 +242,7 @@ func TestAddEpisodicInteraction_FieldsPopulated(t *testing.T) {
 	if err := m.AddEpisodicInteraction("proj", "Q?", "A.", 0.5); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	list, err := m.List(types.MemoryEpisodic, 10)
+	list, err := m.List(types.MemoryEpisodic, 10, "proj")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

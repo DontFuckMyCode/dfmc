@@ -23,11 +23,12 @@ func TestMemoryAddListSearchClear(t *testing.T) {
 		Key:        "auth question",
 		Value:      "auth answer",
 		Confidence: 0.8,
+		Project:    "test-project",
 	}); err != nil {
 		t.Fatalf("add entry: %v", err)
 	}
 
-	list, err := m.List(types.MemoryEpisodic, 10)
+	list, err := m.List(types.MemoryEpisodic, 10, "test-project")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -35,7 +36,7 @@ func TestMemoryAddListSearchClear(t *testing.T) {
 		t.Fatal("expected at least one memory entry")
 	}
 
-	search, err := m.Search("auth", types.MemoryEpisodic, 10)
+	search, err := m.Search("auth", types.MemoryEpisodic, 10, "test-project")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestMemoryAddListSearchClear(t *testing.T) {
 	if err := m.Clear(types.MemoryEpisodic); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
-	after, err := m.List(types.MemoryEpisodic, 10)
+	after, err := m.List(types.MemoryEpisodic, 10, "test-project")
 	if err != nil {
 		t.Fatalf("list after clear: %v", err)
 	}

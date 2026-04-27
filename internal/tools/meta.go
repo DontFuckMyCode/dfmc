@@ -269,7 +269,10 @@ func (t *toolHelpTool) Execute(_ context.Context, req Request) (Result, error) {
 
 type toolCallTool struct{ engine *Engine }
 
-const maxToolCallUnwrapDepth = 4
+// MaxMetaUnwrapDepth is the maximum number of nested tool_call layers that will
+// be unwrapped before reaching a real backend tool. Exported so the engine
+// package can share it without duplicating the constant.
+const MaxMetaUnwrapDepth = 4
 
 func (t *toolCallTool) Name() string { return "tool_call" }
 func (t *toolCallTool) Description() string {
@@ -305,10 +308,10 @@ func (t *toolCallTool) Execute(ctx context.Context, req Request) (Result, error)
 	defer release()
 	unwrapDepth := 0
 	for name == "tool_call" {
-		if unwrapDepth >= maxToolCallUnwrapDepth {
+		if unwrapDepth >= MaxMetaUnwrapDepth {
 			return Result{}, fmt.Errorf(
 				`tool_call nesting exceeded max unwrap depth (%d). Drop the wrapper and call the backend tool directly: {"name":"<tool>","args":{...}}`,
-				maxToolCallUnwrapDepth)
+				MaxMetaUnwrapDepth)
 		}
 		inner, ierr := extractArgsObject(req.Params, "args")
 		if ierr != nil {
@@ -526,9 +529,20 @@ func (t *toolBatchCallTool) Execute(ctx context.Context, req Request) (Result, e
 		}
 		go func(idx int, c batchCall, slot map[string]any) {
 			defer wg.Done()
+			// Release must run even when Execute panics — otherwise the
+			// semaphore slot leaks and subsequent batches hang.
 			defer func() { <-sem }()
-			sub := Request{ProjectRoot: req.ProjectRoot, Params: c.Args}
-			res, execErr := t.engine.Execute(batchCtx, c.Name, sub)
+			var res Result
+			var execErr error
+			func() {
+				defer func() {
+					if p := recover(); p != nil {
+						execErr = fmt.Errorf("panic in %s: %v", c.Name, p)
+					}
+				}()
+				res, execErr = t.engine.Execute(batchCtx, c.Name,
+					Request{ProjectRoot: req.ProjectRoot, Params: c.Args})
+			}()
 			slot["duration_ms"] = res.DurationMs
 			if execErr != nil {
 				slot["success"] = false

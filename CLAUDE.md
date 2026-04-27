@@ -71,9 +71,18 @@ Subsystems owned by the Engine:
 - `Conversation` ([internal/conversation/manager.go](internal/conversation/manager.go)) — JSONL-persisted conversations with branching.
 - `Storage` ([internal/storage/store.go](internal/storage/store.go)) — bbolt handle. Returns `ErrStoreLocked` when another DFMC process holds it; `cmd/dfmc/main.go` has a degraded-startup allow-list (`help`, `version`, `doctor`, `completion`, `man`) that runs without init.
 - `Hooks` ([internal/hooks/hooks.go](internal/hooks/hooks.go)) — dispatches user-configured shell commands on lifecycle events (`user_prompt_submit`, `pre_tool`, `post_tool`, `session_start`/`_end`). Best-effort: hook failures are logged to the EventBus but never block a tool call or user turn. Each hook gets a hard timeout (default 30s). `nil` Hooks is safe — `Fire` is a no-op. Fired from `executeToolWithLifecycle` and `engine_ask.go`.
-- `Intent` ([internal/intent/router.go](internal/intent/router.go)) — state-aware sub-LLM that runs before every `Ask`. Classifies the user's turn against an engine `Snapshot` (parked agent, last tool, recent assistant text, user turn count) and returns a `Decision`: `resume` (feed to `ResumeAgent`), `new` (use `EnrichedRequest` for the main model), or `clarify`. Built in `Init` from `Config.Intent` + `Providers`; **fail-open by default** — any classification failure returns `Fallback(raw)` so the layer can never break an engine that would otherwise work. `Enabled()` short-circuits cheap callers when the layer is off. Decisions publish on the EventBus as `intent:decision`.
 - `TaskStore` ([internal/taskstore/store.go](internal/taskstore/store.go)) — bbolt-backed independent task persistence wired into `Tools` via `SetTaskStore`. `TodoWriteTool` falls back to in-memory when the store is nil (e.g. tests that build `tools.Engine` directly without going through `engine.Init`). Tasks are `supervisor.Task` shapes; HTTP + MCP task APIs share this store.
 - `EventBus` — fan-out used by TUI, web `/ws` SSE stream, and remote control.
+
+### Intent layer
+
+`internal/intent` runs a state-aware sub-LLM before every `Ask`. The layer receives the raw user turn and an engine `Snapshot`; it classifies the turn and returns a `Decision` that routes the turn to either the parked agent (resume), the main model (new), or back to the user for clarification.
+
+The intent router is constructed in `engine.Init` from `Config.Intent` + `Providers`. It is **fail-open by default**: any classifier error falls back to `Fallback(raw)` so the layer can never block an otherwise-working engine. `Enabled()` short-circuits callers when the layer is off (common in tests).
+
+**Snapshot is the vocabulary.** Before calling `Intent.Evaluate`, build a `Snapshot` from engine state. Tests that assert "intent decided X" must call `Intent.Evaluate` directly — the engine path silently swallows classifier errors and returns the raw message, so the assertion would flake.
+
+**Intent decisions are logged to the EventBus** as `intent:decision` and surfaced in the TUI as a badge (`RESUME` / `NEW` / `CLARIFY`).
 
 ### Adjacent packages (not directly owned by Engine)
 

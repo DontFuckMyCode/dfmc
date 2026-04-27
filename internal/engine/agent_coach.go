@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
+	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
 // buildTrajectoryHints distills the most recent round of tool activity into
@@ -71,7 +72,7 @@ func extractBridgedInnerName(input map[string]any) string {
 	// engine's dispatcher does before reaching a real backend tool.
 	// Without this the coach saw "tool_call" as the inner name for
 	// any double-wrapped call and lost tool/path-specific hints.
-	for depth := 0; depth < maxMetaUnwrapDepth; depth++ {
+	for depth := 0; depth < tools.MaxMetaUnwrapDepth; depth++ {
 		v, ok := input["name"].(string)
 		if !ok {
 			break
@@ -107,7 +108,7 @@ func extractBridgedInnerArgs(input map[string]any) map[string]any {
 	// Mirror the peel in extractBridgedInnerName so args track the same
 	// backend tool the coach labels the entry with - otherwise the hint
 	// text would carry outer {name,args} pairs instead of real params.
-	for depth := 0; depth < maxMetaUnwrapDepth; depth++ {
+	for depth := 0; depth < tools.MaxMetaUnwrapDepth; depth++ {
 		name, _ := input["name"].(string)
 		if strings.TrimSpace(name) != "tool_call" {
 			break

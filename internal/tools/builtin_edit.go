@@ -12,13 +12,22 @@ import (
 	"strings"
 )
 
-type EditFileTool struct{}
+type EditFileTool struct {
+	engine *Engine
+}
 
 func NewEditFileTool() *EditFileTool { return &EditFileTool{} }
-func (t *EditFileTool) Name() string { return "edit_file" }
+func (t *EditFileTool) Name() string        { return "edit_file" }
 func (t *EditFileTool) Description() string {
 	return "Apply exact string replacement on a text file."
 }
+
+// SetEngine wires the per-path lock so concurrent edits serialize correctly.
+func (t *EditFileTool) SetEngine(e *Engine) { t.engine = e }
+// edit_file holds an exclusive per-path lock during the write to close the
+// TOCTOU window between the read-gate check (Engine.Execute) and the actual
+// write. Without this, two concurrent edits to the same file could interleave
+// their read→process→write cycles.
 func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	path := asString(req.Params, "path", "")
 	oldStr := asString(req.Params, "old_string", "")
@@ -82,6 +91,9 @@ func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
 		updated = restoreOriginalLineEndings(src, updatedNorm)
 	}
 
+	// Serialize write to prevent TOCTOU races with concurrent mutation tools.
+	release := t.engine.LockPath(absPath)
+	defer release()
 	if err := writeFileAtomic(absPath, []byte(updated), 0o644); err != nil {
 		return Result{}, err
 	}

@@ -296,7 +296,7 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return Model{
+	m := Model{
 		ctx:                   ctx,
 		eng:                   eng,
 		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Workflow", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers"},
@@ -314,6 +314,14 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 			keyLogEnabled:  os.Getenv("DFMC_KEYLOG") == "1",
 		},
 	}
+	// Seed status synchronously so the chat header renders with real
+	// provider info on the first paint, before the async loadStatusCmd
+	// delivers. Without this the header shows "⚠ no provider" until the
+	// message loop processes statusLoadedMsg.
+	if eng != nil {
+		m.status = eng.Status()
+	}
+	return m
 }
 
 func (m *Model) ensureDiagnostics() {

@@ -89,6 +89,9 @@ func (s *Store) Add(entry types.MemoryEntry) error {
 	if s.storage == nil || s.storage.DB() == nil {
 		return fmt.Errorf("memory storage is not available")
 	}
+	if entry.Project == "" {
+		return fmt.Errorf("memory entry project is required")
+	}
 	if entry.ID == "" {
 		entry.ID = "mem_" + time.Now().Format("20060102_150405.000000")
 	}
@@ -124,7 +127,7 @@ func (s *Store) Add(entry types.MemoryEntry) error {
 	})
 }
 
-func (s *Store) List(tier types.MemoryTier, limit int) ([]types.MemoryEntry, error) {
+func (s *Store) List(tier types.MemoryTier, limit int, project string) ([]types.MemoryEntry, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -141,6 +144,9 @@ func (s *Store) List(tier types.MemoryTier, limit int) ([]types.MemoryEntry, err
 		return b.ForEach(func(_, v []byte) error {
 			var e types.MemoryEntry
 			if err := json.Unmarshal(v, &e); err != nil {
+				return nil
+			}
+			if project != "" && e.Project != project {
 				return nil
 			}
 			out = append(out, e)
@@ -162,17 +168,14 @@ func (s *Store) List(tier types.MemoryTier, limit int) ([]types.MemoryEntry, err
 func (s *Store) Search(query string, tier types.MemoryTier, limit int, project string) ([]types.MemoryEntry, error) {
 	query = strings.TrimSpace(strings.ToLower(query))
 	if query == "" {
-		return s.List(tier, limit)
+		return s.List(tier, limit, project)
 	}
-	list, err := s.List(tier, limit*5)
+	list, err := s.List(tier, limit*5, project)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]types.MemoryEntry, 0, limit)
 	for _, e := range list {
-		if project != "" && e.Project != project {
-			continue
-		}
 		corpus := strings.ToLower(e.Key + " " + e.Value + " " + e.Category)
 		if strings.Contains(corpus, query) {
 			out = append(out, e)

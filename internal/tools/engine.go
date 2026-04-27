@@ -87,8 +87,8 @@ type Engine struct {
 }
 
 // LockPath returns a release function for the per-path lock covering abs.
-// Empty abs is a no-op (returns a nop release). Used by apply_patch and
-// write_file to serialise the read-gate → write window per target file.
+// Empty abs is a no-op (returns a nop release). Used by edit_file, write_file,
+// and apply_patch to serialise the read-gate → write window per target file.
 func (e *Engine) LockPath(abs string) func() {
 	if abs == "" {
 		return func() {}
@@ -155,8 +155,12 @@ func New(cfg config.Config) *Engine {
 		readSnapshotLRU: []string{},
 	}
 	e.Register(NewReadFileTool())
-	e.Register(NewWriteFileTool())
-	e.Register(NewEditFileTool())
+	writeTool := NewWriteFileTool()
+	writeTool.SetEngine(e)
+	e.Register(writeTool)
+	editTool := NewEditFileTool()
+	editTool.SetEngine(e)
+	e.Register(editTool)
 	e.Register(NewListDirTool())
 	e.Register(NewGrepCodebaseTool())
 	e.Register(NewGlobTool())
@@ -530,6 +534,13 @@ func readBeforeMutationMode(name string) readGateMode {
 		return readGateLenient
 	case "write_file":
 		return readGateStrict
+	case "apply_patch":
+		// apply_patch calls EnsureReadBeforeMutation per target directly
+		// (engine.EnsureReadBeforeMutation), bypassing this gate so it can
+		// handle multi-file patches in one call. The switch entry here is
+		// documentation — future mutating tools that handle multiple paths
+		// should follow the same pattern and bypass this gate too.
+		return readGateNone
 	default:
 		return readGateNone
 	}

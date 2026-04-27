@@ -464,19 +464,22 @@ func (e *Engine) MemoryList(tier types.MemoryTier, limit int) ([]types.MemoryEnt
 	if e.Memory == nil {
 		return nil, fmt.Errorf("memory store is not initialized")
 	}
-	return e.Memory.List(tier, limit)
+	return e.Memory.List(tier, limit, e.ProjectRoot)
 }
 
 func (e *Engine) MemorySearch(query string, tier types.MemoryTier, limit int) ([]types.MemoryEntry, error) {
 	if e.Memory == nil {
 		return nil, fmt.Errorf("memory store is not initialized")
 	}
-	return e.Memory.Search(query, tier, limit, e.Config.ProjectRoot)
+	return e.Memory.Search(query, tier, limit, e.ProjectRoot)
 }
 
 func (e *Engine) MemoryAdd(entry types.MemoryEntry) error {
 	if e.Memory == nil {
 		return fmt.Errorf("memory store is not initialized")
+	}
+	if entry.Project == "" {
+		entry.Project = e.ProjectRoot
 	}
 	return e.Memory.Add(entry)
 }

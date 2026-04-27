@@ -16,9 +16,11 @@
 
 package engine
 
-import "strings"
+import (
+	"strings"
 
-const maxMetaUnwrapDepth = 4
+	"github.com/dontfuckmycode/dfmc/internal/tools"
+)
 
 // metaInnerNames returns the inner backend tool names when `name` is a
 // meta wrapper, or nil for regular tools / malformed params. The unwrap
@@ -59,7 +61,7 @@ func metaInnerNames(name string, params map[string]any) []string {
 }
 
 func unwrapToolCallName(params map[string]any, depth int) string {
-	if depth > maxMetaUnwrapDepth {
+	if depth > tools.MaxMetaUnwrapDepth {
 		return ""
 	}
 	n := pickNameFromMetaMap(params)

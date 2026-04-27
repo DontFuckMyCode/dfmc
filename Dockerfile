@@ -29,12 +29,24 @@ RUN CGO_ENABLED=1 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
 FROM alpine:3.20
 
 # Install runtime dependencies (C runtime for tree-sitter .so, ca-certificates for web fetches)
+# tini for proper signal handling and child process reaping — prevents orphaned
+# bbolt locks and stray MCP subprocesses after docker stop.
 RUN apk add --no-cache \
     ca-certificates \
     tzdata \
+    tini \
     && install -d -m 755 /etc/ssl/private
 
 WORKDIR /app
+
+# Ports: 7777 (web HTTP+SSE), 7778 (gRPC, reserved), 7779 (remote WS, reserved)
+EXPOSE 7777 7778 7779
+
+# Ports 7777-7779 are reserved for dfmc serve (HTTP), dfmc remote start (gRPC),
+# and remote WebSocket. Non-loopback exposure requires --auth token and --bind 0.0.0.0.
+# By default dfmc serve binds 127.0.0.1 and is unreachable from outside the container.
+LABEL maintainer="dfmc"
+LABEL description="DFMC code intelligence assistant. Default serve binds 127.0.0.1:7777. Use --auth token --bind 0.0.0.0 for network exposure."
 
 # Copy binary from builder
 COPY --from=builder /dfmc /usr/local/bin/dfmc
@@ -50,4 +62,4 @@ RUN mkdir -p /app/.dfmc && \
 # /usr/share/zsh/site-contrib, /usr/share/fish/completions by dfmc init -c.
 
 ENV HOME=/root
-ENTRYPOINT ["dfmc"]
+ENTRYPOINT ["/sbin/tini", "--", "dfmc"]

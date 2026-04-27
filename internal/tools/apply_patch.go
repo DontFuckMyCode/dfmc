@@ -163,6 +163,9 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 				return Result{}, err
 			}
+			// Serialize write to prevent TOCTOU races with concurrent mutation tools.
+			release := t.engine.LockPath(abs)
+			defer release()
 			if err := writeFileAtomic(abs, []byte(updated), 0o644); err != nil {
 				return Result{}, fmt.Errorf("write %s: %w", targetPath, err)
 			}

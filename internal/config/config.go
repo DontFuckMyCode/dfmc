@@ -106,6 +106,10 @@ func loadYAML(path string, out *Config) error {
 	if len(data) == 0 {
 		return nil
 	}
+	const maxConfigSize = 1 << 20 // 1 MB — prevents memory exhaustion from maliciously large configs
+	if len(data) > maxConfigSize {
+		return fmt.Errorf("%s is %d bytes (max 1 MB); refusing to parse", path, len(data))
+	}
 	if err := yaml.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}

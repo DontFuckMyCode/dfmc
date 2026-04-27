@@ -92,6 +92,62 @@ func TestBranchCreate_DuplicateRejected(t *testing.T) {
 	}
 }
 
+// BranchCreate must reject names that could break JSON map keys or be
+// misused as path segments in UIs. Mirrors validateConvID from store.go.
+func TestBranchCreate_RejectsPathSeparator(t *testing.T) {
+	mgr := New(openConvStore(t))
+	mgr.Start("offline", "offline-v1")
+	for _, name := range []string{"a/b", "a\\b", "a/b\\c"} {
+		err := mgr.BranchCreate(name)
+		if err == nil {
+			t.Fatalf("BranchCreate(%q): expected error for path separator", name)
+		}
+	}
+}
+
+func TestBranchCreate_RejectsDotSegments(t *testing.T) {
+	mgr := New(openConvStore(t))
+	mgr.Start("offline", "offline-v1")
+	for _, name := range []string{".", "..", "a..b", "../etc/passwd"} {
+		err := mgr.BranchCreate(name)
+		if err == nil {
+			t.Fatalf("BranchCreate(%q): expected error for dot segment", name)
+		}
+	}
+}
+
+func TestBranchCreate_RejectsControlChars(t *testing.T) {
+	mgr := New(openConvStore(t))
+	mgr.Start("offline", "offline-v1")
+	for _, name := range []string{"a\x00b", "a\x1fb", "a\x7fb"} {
+		err := mgr.BranchCreate(name)
+		if err == nil {
+			t.Fatalf("BranchCreate(%q): expected error for control char", name)
+		}
+	}
+}
+
+func TestBranchCreate_RejectsAbsolutePath(t *testing.T) {
+	mgr := New(openConvStore(t))
+	mgr.Start("offline", "offline-v1")
+	err := mgr.BranchCreate("/abs/path")
+	if err == nil {
+		t.Fatalf("BranchCreate(%q): expected error for absolute path", "/abs/path")
+	}
+}
+
+func TestBranchCreate_AcceptsValidNames(t *testing.T) {
+	mgr := New(openConvStore(t))
+	mgr.Start("offline", "offline-v1")
+	valid := []string{"alt", "feature-branch", "exp_1", "a.b.c"}
+	for _, name := range valid {
+		err := mgr.BranchCreate(name)
+		if err != nil {
+			t.Fatalf("BranchCreate(%q): unexpected error %v", name, err)
+		}
+	}
+}
+
 // newConversationID must produce different IDs even when called
 // twice in the same millisecond. The fall-through uses Nanosecond()
 // to disambiguate; pin the contract so a future cleanup doesn't
