@@ -196,7 +196,7 @@ These are correctly implemented and were verified working:
 | **1** | Hook payload value escaping — sanitize values before shell env injection | Low | High | ✅ FIXED (`hooks.go:348` — `sanitizeEnvValue` with single-quote wrapping on Unix, `%`-doubling on Windows) |
 | **2** | Add `RequireApprovalNetwork` field documentation | Low | Low | ✅ Already documented in `config_types.go:364-369` |
 | **3** | Update SSE `/ws` auth comment (stale) | Low | None | ✅ FIXED (`server.go:639` — comment now reflects `auth=token` conditional) |
-| **4** | Document bbolt encryption risk and BitLocker recommendation | Low | None | Pending |
+| **4** | Document bbolt encryption risk and BitLocker recommendation | Low | None | ✅ DOCUMENTED — verified-findings.md F5 notes BitLocker/EFS for shared systems; no code change needed for single-user |
 | **5** | Consider making config permission check blocking (breaking change) | Medium | High | Pending |
 | **6** | escapeHTML missing quote escaping (XSS-001) | Low | Medium | ✅ FIXED (`index.html:670` — escapeHTML now escapes `"` and `'`) |
 | **7** | EventBus SSE payload unredacted (F16) | Low | High | ✅ FIXED (`eventbus.go:87` — `RedactSecretsInValue` called at publish boundary) |

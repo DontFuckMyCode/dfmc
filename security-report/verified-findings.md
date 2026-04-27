@@ -63,6 +63,8 @@ A tool call with args containing `; cat /etc/passwd #` would result in shell com
 
 **Recommended Fix:** Document that `dfmc serve` deployments on shared/multi-user systems should use OS-level full-disk encryption (BitLocker on Windows, EFS for the data directory). For future: consider bbolt encryption extension.
 
+**Status: ✅ DOCUMENTED** — risk and compensating controls documented in this file. For shared/multi-user deployments, apply BitLocker (Windows) or EFS (Unix) to `~/.dfmc/data/`. No code change required for single-user deployments.
+
 ---
 
 ## F8: SSE /ws Endpoint Unauthenticated Under `auth=none`
