@@ -63,7 +63,7 @@ func summarizeActivityPayloadMap(payload map[string]any) []string {
 		if value == "" || value == "<nil>" {
 			continue
 		}
-		parts = append(parts, key+"="+truncateSingleLine(value, 42))
+		parts = append(parts, key+"="+truncateSingleLine(value, 256))
 	}
 	if len(parts) == 0 {
 		return nil

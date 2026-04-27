@@ -174,7 +174,12 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		res.Data["exit_code"] = exitErr.ExitCode()
-		return res, fmt.Errorf("command exited with code %d", exitErr.ExitCode())
+		// Non-zero exit code is the command's own failure signal, not a system error.
+		// The exit code is already in res.Data["exit_code"] for callers to inspect.
+		// Return Result (not error) so the engine marks this as success=true and
+		// the TUI renders the full output. If the caller cares about the exit code,
+		// they check res.Data["exit_code"] != 0.
+		return res, nil
 	}
 	return res, err
 }
