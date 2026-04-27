@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/security"
 )
 
 type Event struct {
@@ -76,6 +78,13 @@ func (eb *EventBus) Publish(event Event) {
 	}
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
+	}
+	// Redact secrets from the payload before forwarding to any subscriber.
+	// This is the last-mile control: raw tool:call.params and tool:result
+	// payloads must not leak API keys, Bearer tokens, or connection strings
+	// into SSE/WebSocket streams consumed by browsers or other processes.
+	if event.Payload != nil {
+		event.Payload = security.RedactSecretsInValue(event.Payload)
 	}
 
 	eb.mu.RLock()

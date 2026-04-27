@@ -16,6 +16,31 @@ import (
 	"strings"
 )
 
+// isGitBinary reports whether binary resolves to a known-git executable.
+// Used to gate CVE-2018-17456 class flag-injection guards.
+func isGitBinary(binary string) bool {
+	switch strings.ToLower(binary) {
+	case "git", "git.exe", "git.bat", "git.cmd":
+		return true
+	}
+	return false
+}
+
+// firstChar returns the first character of s as a string, or "" if empty.
+func firstChar(s string) string {
+	if len(s) == 0 {
+		return ""
+	}
+	return string(s[0])
+}
+
+// rejectFlagInjection reports whether arg looks like a flag that a
+// subprocess would parse as its own option (CVE-2018-17456 class).
+// It fires only on non-empty args starting with `-` or `--`.
+func rejectFlagInjection(arg string) bool {
+	return arg != "" && strings.HasPrefix(arg, "-")
+}
+
 type PatchValidationTool struct {
 	engine *Engine
 }
@@ -150,6 +175,12 @@ func (t *PatchValidationTool) Execute(ctx context.Context, req Request) (Result,
 		for _, arg := range args {
 			if isBlockedShellInterpreter(arg) {
 				return Result{}, fmt.Errorf("validation_command args contain blocked shell interpreter: %s", arg)
+			}
+			// CVE-2018-17456 class: git parses `--upload-pack=cmd`, `--exec=cmd`,
+			// etc. as command-line options rather than positional arguments.
+			// Apply the same guard git tools use when git is the binary.
+			if isGitBinary(binary) && rejectFlagInjection(arg) {
+				return Result{}, fmt.Errorf("validation_command arg %q starts with %q; refused to prevent flag injection (CVE-2018-17456 class). git parses flag-shaped args as options. Use -- to separate git options from positional args, or invoke git via run_command.", arg, firstChar(arg))
 			}
 		}
 		blocked := t.engine.cfg.Tools.Shell.BlockedCommands
