@@ -127,6 +127,7 @@ func (d *diagnosticPanelsState) applyDefaults() {
 type contextPanelState struct {
 	query       string
 	preview     *engine.ContextBudgetInfo
+	breakdown   *engine.ContextBreakdown
 	hints       []engine.ContextRecommendation
 	err         string
 	inputActive bool

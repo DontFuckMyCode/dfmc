@@ -146,6 +146,91 @@ func renderContextBudgetBlock(info engine.ContextBudgetInfo, width int) []string
 	return out
 }
 
+// renderContextBreakdownBlock renders the real-time context breakdown
+// as a visual bar chart + per-row breakdown. This is the "how full is
+// my context window" view the user sees after entering a query.
+func renderContextBreakdownBlock(bd engine.ContextBreakdown, width int) []string {
+	out := []string{}
+
+	// Provider / model / max line
+	if bd.Provider != "" || bd.Model != "" {
+		head := accentStyle.Render(nonEmpty(bd.Provider, "?"))
+		if bd.Model != "" {
+			head += subtleStyle.Render("/" + bd.Model)
+		}
+		head += subtleStyle.Render(fmt.Sprintf("  %dK ctx", bd.MaxContext/1000))
+		out = append(out, "  "+head)
+	}
+
+	// Main bar: used vs total
+	totalUsed := bd.UsedTotal
+	bar := contextRatioBar(totalUsed, bd.MaxContext)
+	if bd.MaxContext > 0 {
+		pct := float64(totalUsed) / float64(bd.MaxContext) * 100
+		out = append(out, "  "+bar+subtleStyle.Render(fmt.Sprintf("  %d%%  ·  %d / %d",
+			int(pct), totalUsed/1000, bd.MaxContext/1000)))
+	} else {
+		out = append(out, "  "+bar+subtleStyle.Render("  ??%%"))
+	}
+
+	// Per-bucket rows
+	rows := []struct {
+		label string
+		value int
+		pct   float64
+	}{
+		{"system prompt", bd.SystemPrompt, bd.SystemPromptPct},
+		{"history", bd.History, bd.HistoryPct},
+		{"file context", bd.ContextChunks, bd.ContextChunksPct},
+		{"tool reserve", bd.ToolReserve, 0},
+		{"response", bd.Response, bd.ResponsePct},
+	}
+	for _, row := range rows {
+		bar := contextRatioBar(int(float64(bd.MaxContext)*row.pct), bd.MaxContext)
+		if row.value == 0 && row.pct == 0 {
+			bar = strings.Repeat("░", 10)
+		}
+		pctStr := fmt.Sprintf("%d%%", int(row.pct*100))
+		line := fmt.Sprintf("  %-12s %5d  %s  %s",
+			subtleStyle.Render(row.label), row.value/1000,
+			bar, subtleStyle.Render(pctStr))
+		out = append(out, line)
+	}
+
+	// Files in context
+	if len(bd.FilesInContext) > 0 {
+		out = append(out, "")
+		out = append(out, "  "+subtleStyle.Render(fmt.Sprintf("files (%d):", len(bd.FilesInContext))))
+		for _, f := range bd.FilesInContext {
+			if len(out) > 30 { // safety cap to avoid runaway output
+				remaining := len(bd.FilesInContext) - (len(out) - 31)
+				if remaining > 0 {
+					out = append(out, "  "+subtleStyle.Render(fmt.Sprintf("  ... +%d more", remaining)))
+				}
+				break
+			}
+			out = append(out, "   "+subtleStyle.Render("▸ "+f))
+		}
+	}
+
+	// Compression + task footer
+	footer := ""
+	if bd.Compression != "" {
+		footer += "compression: " + bd.Compression
+	}
+	if bd.Task != "" {
+		if footer != "" {
+			footer += " · "
+		}
+		footer += "task: " + bd.Task
+	}
+	if footer != "" {
+		out = append(out, "  "+subtleStyle.Render(footer))
+	}
+
+	return out
+}
+
 func (m Model) renderContextView(width int) string {
 	width = clampInt(width, 24, 1000)
 	hint := subtleStyle.Render("e edit · enter preview · esc cancel edit · c clear")
@@ -181,6 +266,11 @@ func (m Model) renderContextView(width int) string {
 	lines = append(lines, "", subtleStyle.Render("budget"))
 	lines = append(lines, renderContextBudgetBlock(*m.contextPanel.preview, width)...)
 
+	if m.contextPanel.breakdown != nil {
+		lines = append(lines, "", subtleStyle.Render("context breakdown"))
+		lines = append(lines, renderContextBreakdownBlock(*m.contextPanel.breakdown, width)...)
+	}
+
 	if len(m.contextPanel.hints) > 0 {
 		lines = append(lines, "", subtleStyle.Render("hints"))
 		for _, h := range m.contextPanel.hints {
@@ -193,19 +283,21 @@ func (m Model) renderContextView(width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// runContextPreview recomputes the budget info + hints for the current
-// query. Pure (no goroutines) — engine.ContextBudgetPreview only reads
-// config, so we don't need a tea.Cmd.
+// runContextPreview recomputes the budget info, hints, and real-time
+// context breakdown for the current query. Pure (no goroutines) —
+// all called functions read only config/state, so no tea.Cmd needed.
 func (m Model) runContextPreview() Model {
 	q := strings.TrimSpace(m.contextPanel.query)
 	if q == "" {
 		m.contextPanel.preview = nil
+		m.contextPanel.breakdown = nil
 		m.contextPanel.hints = nil
 		m.contextPanel.err = "query is empty"
 		return m
 	}
 	if m.eng == nil {
 		m.contextPanel.preview = nil
+		m.contextPanel.breakdown = nil
 		m.contextPanel.hints = nil
 		m.contextPanel.err = "engine not ready — another dfmc process may hold the store lock (try `dfmc doctor`)"
 		return m
@@ -219,6 +311,8 @@ func (m Model) runContextPreview() Model {
 		return &info
 	}()
 	m.contextPanel.preview = preview
+	m.contextPanel.breakdown = new(engine.ContextBreakdown)
+	*m.contextPanel.breakdown = m.eng.ContextBreakdown(q)
 	m.contextPanel.hints = m.eng.ContextRecommendations(q)
 	return m
 }
@@ -239,6 +333,7 @@ func (m Model) handleContextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		m.contextPanel.query = ""
 		m.contextPanel.preview = nil
+		m.contextPanel.breakdown = nil
 		m.contextPanel.hints = nil
 		m.contextPanel.err = ""
 		return m, nil

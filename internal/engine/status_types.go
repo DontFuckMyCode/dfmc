@@ -256,3 +256,34 @@ type DuplicationReport struct {
 	Groups          []DuplicationGroup `json:"groups,omitempty"`
 	DuplicatedLines int                `json:"duplicated_lines"`
 }
+
+// ContextBreakdown is the canonical real-time context budget snapshot.
+// Gathered from contextReserveBreakdown, historyBudgetForRequest, and
+// contextBuildOptionsWithRuntime so every surface (TUI panel, web API,
+// dfmc status) consumes the same data shape.
+type ContextBreakdown struct {
+	// Provider identity
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	// Budget boundaries
+	MaxContext int `json:"max_context"`
+	UsedTotal  int `json:"used_total"`
+	// Reserve buckets
+	SystemPrompt  int `json:"system_prompt_tokens"`
+	History       int `json:"history_tokens"`
+	ContextChunks int `json:"context_chunks_tokens"`
+	Response      int `json:"response_reserve_tokens"`
+	ToolReserve   int `json:"tool_reserve_tokens"`
+	// Remaining
+	Available int `json:"available"`
+	// Percentages (0.0-1.0)
+	SystemPromptPct  float64 `json:"system_prompt_pct"`
+	HistoryPct        float64 `json:"history_pct"`
+	ContextChunksPct float64 `json:"context_chunks_pct"`
+	ResponsePct       float64 `json:"response_pct"`
+	// Files in context
+	FilesInContext []string `json:"files_in_context"`
+	// Configuration
+	Compression string `json:"compression"`
+	Task        string `json:"task"`
+}

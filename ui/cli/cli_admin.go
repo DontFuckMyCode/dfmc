@@ -110,6 +110,7 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 		runtimeHints.MaxContext = *runtimeMaxContext
 	}
 	contextPreview := eng.ContextBudgetPreviewWithRuntime(q, runtimeHints)
+	contextBreakdown := eng.ContextBreakdown(q)
 	promptRecommendation := eng.PromptRecommendationWithRuntime(q, runtimeHints)
 	contextTuning := eng.ContextTuningSuggestionsWithRuntime(q, runtimeHints)
 
@@ -139,6 +140,7 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 		"prompt_templates_count":     len(templates.List()),
 		"query":                      q,
 		"context_budget":             contextPreview,
+		"context_breakdown":          contextBreakdown,
 		"context_tuning_suggestions": contextTuning,
 		"prompt_recommendation":      promptRecommendation,
 		"approval_gate":              gateSummary,
@@ -188,6 +190,22 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 		contextPreview.ReserveTotalTokens,
 		contextPreview.ContextAvailableTokens,
 	)
+	if contextBreakdown.MaxContext > 0 {
+		pct := float64(contextBreakdown.UsedTotal) / float64(contextBreakdown.MaxContext) * 100
+		fmt.Printf("context breakdown: %s/%s %d%% used · system=%dK hist=%dK files=%dK response=%dK tool=%dK available=%dK\n",
+			contextBreakdown.Provider, contextBreakdown.Model,
+			int(pct),
+			contextBreakdown.SystemPrompt/1000,
+			contextBreakdown.History/1000,
+			contextBreakdown.ContextChunks/1000,
+			contextBreakdown.Response/1000,
+			contextBreakdown.ToolReserve/1000,
+			contextBreakdown.Available/1000,
+		)
+		if len(contextBreakdown.FilesInContext) > 0 {
+			fmt.Printf("  context files: %d\n", len(contextBreakdown.FilesInContext))
+		}
+	}
 	fmt.Printf("prompt recommendation: profile=%s role=%s budget=%d tool_style=%s\n",
 		promptRecommendation.Profile,
 		promptRecommendation.Role,

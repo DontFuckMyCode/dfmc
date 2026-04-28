@@ -650,3 +650,76 @@ func (e *Engine) ConversationUndoLast() (int, error) {
 	}
 	return e.Conversation.UndoLast()
 }
+
+// ContextBreakdown returns a real-time snapshot of the context budget,
+// combining reserve breakdown, history budget, and built context chunks
+// into a single unified view consumed by TUI, web API, and dfmc status.
+func (e *Engine) ContextBreakdown(question string) ContextBreakdown {
+	runtime := e.promptRuntime()
+	providerName := strings.TrimSpace(runtime.Provider)
+	if providerName == "" {
+		providerName = e.provider()
+	}
+	modelName := strings.TrimSpace(runtime.Model)
+	if modelName == "" {
+		modelName = e.model()
+	}
+
+	providerLimit := e.providerMaxContextForRuntime(runtime)
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
+
+	reserve := e.contextReserveBreakdownWithRuntime(question, runtime)
+	opts := e.contextBuildOptionsWithRuntime(question, runtime)
+	historyTokens := e.historyBudgetForRequest(question, nil, "")
+
+	// Collect file paths from the last context build.
+	var filesInContext []string
+	var contextChunksTokens int
+	if e.lastContextIn.FileCount > 0 && e.lastContextIn.Files != nil {
+		filesInContext = make([]string, 0, len(e.lastContextIn.Files))
+		for _, f := range e.lastContextIn.Files {
+			filesInContext = append(filesInContext, f.Path)
+			contextChunksTokens += f.TokenCount
+		}
+	}
+
+	usedTotal := reserve.Total
+	available := providerLimit - usedTotal
+	if available < 0 {
+		available = 0
+	}
+
+	// Compute percentages as 0.0-1.0 so callers can render without re-scaling.
+	systemPromptPct := 0.0
+	historyPct := 0.0
+	contextChunksPct := 0.0
+	responsePct := 0.0
+	if providerLimit > 0 {
+		systemPromptPct = float64(reserve.Prompt) / float64(providerLimit)
+		historyPct = float64(historyTokens) / float64(providerLimit)
+		contextChunksPct = float64(contextChunksTokens) / float64(providerLimit)
+		responsePct = float64(reserve.Response) / float64(providerLimit)
+	}
+
+	return ContextBreakdown{
+		Provider:          providerName,
+		Model:             modelName,
+		MaxContext:        providerLimit,
+		UsedTotal:         usedTotal,
+		SystemPrompt:      reserve.Prompt,
+		History:           historyTokens,
+		ContextChunks:     contextChunksTokens,
+		Response:          reserve.Response,
+		ToolReserve:       reserve.Tool,
+		Available:         available,
+		SystemPromptPct:   systemPromptPct,
+		HistoryPct:        historyPct,
+		ContextChunksPct: contextChunksPct,
+		ResponsePct:       responsePct,
+		FilesInContext:    filesInContext,
+		Compression:       opts.Compression,
+		Task:              detectContextTask(question),
+	}
+}
