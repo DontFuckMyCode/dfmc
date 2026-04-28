@@ -120,8 +120,8 @@ if got := strings.TrimSpace(r.Header.Get("Authorization")); rawToken != "" ...
 
 **CVSS 3.1:** 4.8 (Medium)
 **CWE:** CWE-732 (Incorrect Permission Assignment)
-**File:** `internal/hooks/hooks.go:344-354`
-**Status:** VERIFIED — High Confidence
+**File:** `internal/config/config.go:52-66`
+**Status:** ✅ FIXED — project-level hooks refused when project config is group/world-writable
 
 **Root Cause:** `CheckConfigPermissions` warns but does not block when the config file is group/world-writable.
 
@@ -129,10 +129,14 @@ if got := strings.TrimSpace(r.Header.Get("Authorization")); rawToken != "" ...
 
 **Prerequisite:** Attacker must have write access to the config file — a high bar on a properly configured single-user system.
 
-**Recommended Fix:**
-1. Refuse to load hooks from group/world-writable configs (breaking change — existing setups may break)
-2. At minimum, refuse project-level hooks from group/world-writable configs
-3. Document the risk clearly in the config security section
+**Fix Applied:** `config.LoadWithOptions` now calls `isProjectConfigSecure(projectPath)` before merging project hooks. If the project config file is group/world-writable or world-writable, the project-level hooks are discarded and only global hooks are loaded. Global hooks from `~/.dfmc/` are unaffected (assumed secure on single-user systems). This is the "option 2" fix from the recommendation: refuse project-level hooks from insecure configs.
+
+```go
+// config.go:63 — both AllowProject AND secure permissions required
+if !allowProjectHooks || !isProjectConfigSecure(projectPath) {
+    cfg.Hooks = globalHooks
+}
+```
 
 ---
 

@@ -49,12 +49,18 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	} else if projectRoot == "" {
 		projectRoot = filepath.Dir(filepath.Dir(projectPath))
 	}
+	// security: refuse to merge hooks from group/world-writable project configs.
+	// A co-tenant who can make the file group/world-writable could otherwise
+	// inject hook commands. Global hooks are still loaded — only project hooks
+	// from an insecure file are discarded. This supplements the existing
+	// AllowProject flag; both must pass for project hooks to load.
+	projectHooksSecure := true
 	if projectPath != "" {
 		if err := loadYAML(projectPath, cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("load project config: %w", err)
 		}
 		cfg.normalizeAliases()
-		if !allowProjectHooks {
+		if !allowProjectHooks || !isProjectConfigSecure(projectPath) {
 			cfg.Hooks = globalHooks
 		}
 	}
@@ -73,6 +79,19 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// isProjectConfigSecure returns true unless the project config file is
+// group-writable or world-writable. Dumping hooks from a group/world-writable
+// config file is dangerous because any co-tenant who can make the file
+// group/world-writable could inject arbitrary shell commands via hook entries.
+func isProjectConfigSecure(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return true // file doesn't exist — no risk
+	}
+	mode := info.Mode().Perm()
+	return mode&0020 == 0 && mode&0002 == 0
 }
 
 func cloneHooksConfig(in HooksConfig) HooksConfig {

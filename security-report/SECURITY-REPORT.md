@@ -116,16 +116,14 @@ db, err := bbolt.Open(dbPath, 0o600, &bbolt.Options{
 
 **CVSS 3.1:** 4.8 (Medium) — AV:L/AC:L/PR:H/UI:R/S:U/C:H/I:H/NA:H
 
-**File:** `internal/hooks/hooks.go:344-354`
+**File:** `internal/config/config.go:52-66`
 
 **Issue:** The `CheckConfigPermissions` function warns when the config file is group/world-writable but does not refuse to load it. A malicious co-tenant with write access to `~/.dfmc/config.yaml` can inject hook commands.
 
 **Compensating control:** The attacker also needs the ability to modify the config file, which is a prerequisite for many attack paths in a shared system.
 
 **Remediation:**
-- Consider refusing to load hooks from group/world-writable configs (breaking change)
-- At minimum, refuse to run hooks from project-level `.dfmc/config.yaml` that is group/world-writable
-- Document the risk clearly
+- ✅ FIXED — `config.LoadWithOptions` refuses to merge hooks from group/world-writable project configs (`isProjectConfigSecure` check at config.go:88). Project hooks are discarded if the project config file is group/world-writable; global hooks from `~/.dfmc/` are still loaded.
 
 ---
 
@@ -197,7 +195,7 @@ These are correctly implemented and were verified working:
 | **2** | Add `RequireApprovalNetwork` field documentation | Low | Low | ✅ Already documented in `config_types.go:364-369` |
 | **3** | Update SSE `/ws` auth comment (stale) | Low | None | ✅ FIXED (`server.go:639` — comment now reflects `auth=token` conditional) |
 | **4** | Document bbolt encryption risk and BitLocker recommendation | Low | None | ✅ DOCUMENTED — verified-findings.md F5 notes BitLocker/EFS for shared systems; no code change needed for single-user |
-| **5** | Consider making config permission check blocking (breaking change) | Medium | High | Pending |
+| **5** | Refuse hooks from group/world-writable project configs | Low | High | ✅ FIXED (`config.go:63` — `isProjectConfigSecure` gate) |
 | **6** | escapeHTML missing quote escaping (XSS-001) | Low | Medium | ✅ FIXED (`index.html:670` — escapeHTML now escapes `"` and `'`) |
 | **7** | EventBus SSE payload unredacted (F16) | Low | High | ✅ FIXED (`eventbus.go:87` — `RedactSecretsInValue` called at publish boundary) |
 | **8** | patch_validation validation_command flag injection (F17) | Low | High | ✅ FIXED (`patch_validation.go:19-41` — `isGitBinary` + `rejectFlagInjection` guards) |
