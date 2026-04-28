@@ -353,12 +353,11 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if len(suggestions.mentionSuggestions) > 0 {
 			idx := clampIndex(m.slashMenu.mention, len(suggestions.mentionSuggestions))
-				if idx < len(suggestions.mentionSuggestions)-1 {
-					idx++
-				}
-				m.slashMenu.mention = idx
-				m.notice = "Mention: " + suggestions.mentionSuggestions[m.slashMenu.mention].Path
+			if idx < len(suggestions.mentionSuggestions)-1 {
+				idx++
 			}
+			m.slashMenu.mention = idx
+			m.notice = "Mention: " + suggestions.mentionSuggestions[m.slashMenu.mention].Path
 			return m, nil
 		}
 		if len(suggestions.quickActions) > 0 {
@@ -514,11 +513,9 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// without becoming a DOS vector.
 			if len(m.chat.pendingQueue) >= pendingQueueCap {
 				m.notice = fmt.Sprintf("Queue full (%d max) — wait for the current reply, then send again.", pendingQueueCap)
-								m.setChatInput("")
 				return m, nil
 			}
 			m.chat.pendingQueue = append(m.chat.pendingQueue, raw)
-						m.setChatInput("")
 			m.notice = fmt.Sprintf("Queued (%d/%d) — will send after the current reply finishes.", len(m.chat.pendingQueue), pendingQueueCap)
 			m = m.appendSystemMessage(fmt.Sprintf("▸ queued #%d: %s", len(m.chat.pendingQueue), raw))
 			return m, nil
@@ -534,7 +531,6 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if question == "" {
 			return m, nil
 		}
-				m.setChatInput("")
 		return m.submitChatQuestion(question, suggestions.quickActions)
 	}
 	// Defensive catch-all for keys that didn't match any explicit case but

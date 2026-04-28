@@ -6,10 +6,6 @@ package tui
 // This file re-exports them so existing call sites in ui/tui remain unchanged.
 
 import (
-	"time"
-
-	"github.com/charmbracelet/lipgloss"
-
 	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
 )
 

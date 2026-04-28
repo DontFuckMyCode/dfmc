@@ -141,6 +141,12 @@ func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.
 				<-sem
 				wg.Done()
 			}()
+			select {
+			case <-ctx.Done():
+				out[idx] = parallelToolResult{Index: idx, Err: ctx.Err()}
+				return
+			default:
+			}
 			dispatch(idx, c)
 		}(i, call)
 	}

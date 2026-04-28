@@ -90,6 +90,8 @@ func tabFKeyHint(tab string) string {
 	switch tab {
 	case "Chat":
 		return "F1"
+	case "Activity":
+		return "F7"
 	case "Providers":
 		return "F2"
 	case "Files":
@@ -100,8 +102,6 @@ func tabFKeyHint(tab string) string {
 		return "F5"
 	case "Tools":
 		return "F6"
-	case "Activity":
-		return "F7"
 	case "Memory":
 		return "F8"
 	case "CodeMap":

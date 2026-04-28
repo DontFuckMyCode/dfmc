@@ -199,7 +199,7 @@ func TestMemory_ConcurrentAccessNilStorage(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			m.TouchFile("a.go")
-			_, _ = m.List(types.MemoryEpisodic, 10)
+			_, _ = m.List(types.MemoryEpisodic, 10, "")
 			_, _ = m.Search("q", types.MemoryEpisodic, 10, "")
 		}()
 	}

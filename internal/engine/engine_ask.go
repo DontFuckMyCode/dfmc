@@ -467,10 +467,10 @@ func (e *Engine) AskRaced(ctx context.Context, question string, candidates []str
 		ctx = context.Background()
 	}
 	if strings.TrimSpace(question) == "" {
-		return "", "", fmt.Errorf("question cannot be empty")
+		return "", "", errors.New("question cannot be empty")
 	}
 	if e.Providers == nil {
-		return "", "", fmt.Errorf("provider router is not initialized")
+		return "", "", errors.New("provider router is not initialized")
 	}
 	e.maybeAutoHandoff(question)
 	e.ensureIndexed(ctx)
@@ -612,10 +612,10 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 		ctx = context.Background()
 	}
 	if strings.TrimSpace(question) == "" {
-		return nil, fmt.Errorf("question cannot be empty")
+		return nil, errors.New("question cannot be empty")
 	}
 	if e.Providers == nil {
-		return nil, fmt.Errorf("provider router is not initialized")
+		return nil, errors.New("provider router is not initialized")
 	}
 	// user_prompt_submit fires before we commit to a provider round-trip
 	// so hooks can observe every turn that leaves the UI, regardless of

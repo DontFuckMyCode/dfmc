@@ -8,6 +8,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -260,7 +261,7 @@ func truncateStackForError(stack []byte) string {
 
 func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, params map[string]any, source string) (tools.Result, error) {
 	if e.Tools == nil {
-		return tools.Result{}, fmt.Errorf("tool engine is not initialized")
+		return tools.Result{}, errors.New("tool engine is not initialized")
 	}
 	// Sub-agent allowlist gate — fires before approval so unlisted tools
 	// are refused without prompting even when the approver is permissive.
