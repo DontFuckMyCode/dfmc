@@ -101,5 +101,10 @@ func LoadSupervisorFields(runJSON []byte) *supervisorFields {
 	if v, ok := sv["tasks_skipped"].(float64); ok {
 		fields.TasksSkipped = int(v)
 	}
+	if v, ok := sv["ended_at"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			fields.EndedAt = t
+		}
+	}
 	return fields
 }

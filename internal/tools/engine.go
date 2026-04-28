@@ -51,6 +51,7 @@ type Engine struct {
 	failureMu       sync.Mutex
 	recentFailures  map[string]int
 	recentFailOrder []string
+	failureOrderIdx map[string]int // O(1) reverse lookup for clearFailure
 	readMu          sync.RWMutex
 	readSnapshots   map[string]string
 	readSnapshotLRU []string
@@ -628,8 +629,13 @@ func readGuardError(absPath, kind string) error {
 func (e *Engine) trackFailure(key string) int {
 	e.failureMu.Lock()
 	defer e.failureMu.Unlock()
+	if e.failureOrderIdx == nil {
+		e.failureOrderIdx = map[string]int{}
+	}
 	if _, ok := e.recentFailures[key]; !ok {
+		idx := len(e.recentFailOrder)
 		e.recentFailOrder = append(e.recentFailOrder, key)
+		e.failureOrderIdx[key] = idx
 	}
 	e.recentFailures[key]++
 	// M3: evict oldest entries when the map grows too large. Map
@@ -641,6 +647,11 @@ func (e *Engine) trackFailure(key string) int {
 			oldest := e.recentFailOrder[0]
 			e.recentFailOrder = e.recentFailOrder[1:]
 			delete(e.recentFailures, oldest)
+			delete(e.failureOrderIdx, oldest)
+			// Re-index remaining entries (rare, only on eviction path).
+			for i, k := range e.recentFailOrder {
+				e.failureOrderIdx[k] = i
+			}
 		}
 	}
 	return e.recentFailures[key]
@@ -650,12 +661,11 @@ func (e *Engine) clearFailure(key string) {
 	e.failureMu.Lock()
 	defer e.failureMu.Unlock()
 	delete(e.recentFailures, key)
-	for i, existing := range e.recentFailOrder {
-		if existing == key {
-			e.recentFailOrder = append(e.recentFailOrder[:i], e.recentFailOrder[i+1:]...)
-			break
-		}
+	// O(1) reverse lookup via map instead of O(n) slice scan.
+	if e.failureOrderIdx == nil {
+		e.failureOrderIdx = map[string]int{}
 	}
+	delete(e.failureOrderIdx, key)
 }
 
 // Extracted to params.go — see engine.go:495.

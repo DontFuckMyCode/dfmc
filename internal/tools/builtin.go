@@ -66,6 +66,11 @@ func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) 
 		"overwrote_existing": false,
 	}
 	if overwrite {
+		// Serialize BEFORE reading so the hash reflects the actual file
+		// state at write time, not a stale snapshot from before the lock
+		// was acquired (TOCTOU window: ReadFile → another writer → WriteFile).
+		release := t.engine.LockPath(absPath)
+		defer release()
 		if oldContent, err := os.ReadFile(absPath); err == nil {
 			sum := sha256.Sum256(oldContent)
 			data["overwrote_existing"] = true
@@ -74,10 +79,14 @@ func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) 
 			data["previous_hash_scope"] = "best_effort_prewrite"
 			data["previous_hash_verified"] = false
 		}
+	} else {
+		// Must still lock new-file creates: edit_file / apply_patch gate on
+		// readSnapshots which track the parent directory; concurrent
+		// write_file / apply_patch on a sibling file in the same dir
+		// could race on the directory hash check.
+		release := t.engine.LockPath(absPath)
+		defer release()
 	}
-	// Serialize write to prevent TOCTOU races with concurrent mutation tools.
-	release := t.engine.LockPath(absPath)
-	defer release()
 	if err := writeFileAtomic(absPath, []byte(content), 0o644); err != nil {
 		return Result{}, err
 	}

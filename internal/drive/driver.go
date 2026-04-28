@@ -142,6 +142,7 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (retRun *Run, retErr
 				retErr = fmt.Errorf("drive run panic: %v", v)
 			}
 			retRun = run
+			unregister(run.ID) // clean up registry even on panic
 		}
 	}()
 	d.persist(run)

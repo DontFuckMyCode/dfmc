@@ -454,11 +454,10 @@ func trimBundleToBudget(bundle *promptlib.PromptBundle, budget int) *promptlib.P
 		if s.Cacheable {
 			if tok := tokens.Estimate(text); tok > stableRemaining {
 				text = trimToTokenBudget(text, stableRemaining)
+				stableRemaining = 0 // trimmed section consumed all stable budget
+			} else {
+				stableRemaining -= tok
 			}
-			stableRemaining -= tokens.Estimate(text)
-			// Any unused stable budget rolls forward to dynamic — the
-			// reverse (dynamic → stable) is deliberately disallowed to keep
-			// cache prefixes stable across turns.
 			if stableRemaining < 0 {
 				stableRemaining = 0
 			}

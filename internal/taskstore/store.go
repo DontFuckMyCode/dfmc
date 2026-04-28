@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 
 	"go.etcd.io/bbolt"
 
@@ -13,7 +14,8 @@ import (
 const taskBucket = "tasks"
 
 type Store struct {
-	db *bbolt.DB
+	db  *bbolt.DB
+	mu  sync.Mutex // serializes concurrent UpdateTask calls on the same task ID
 }
 
 func NewStore(db *bbolt.DB) *Store {
@@ -71,6 +73,8 @@ func (s *Store) LoadTask(id string) (*supervisor.Task, error) {
 }
 
 func (s *Store) UpdateTask(id string, fn func(*supervisor.Task) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	t, err := s.LoadTask(id)
 	if err != nil {
 		return err

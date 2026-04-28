@@ -417,9 +417,11 @@ func (s *Supervisor) handleResult(r workerResult, depDone map[string]bool, backo
 		attempts := s.taskAtts[r.TaskID]
 
 		if policy.ShouldRetry(fc, attempts) {
-			// Schedule retry with backoff
+			// Schedule retry with backoff. Do NOT mark depDone=true here —
+			// dependents must wait for the retry to complete successfully.
 			s.taskState[r.TaskID] = TaskPending
 			(*backoffs)[r.TaskID] = time.Now().Add(policy.BackoffFor(attempts))
+			depDone[r.TaskID] = false // invalidate any prior depDone signal
 		} else if fc == FailureWaiting {
 			s.taskState[r.TaskID] = TaskWaiting
 		} else if fc == FailureExternalReview {

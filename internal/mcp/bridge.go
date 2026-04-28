@@ -67,7 +67,9 @@ func (b *MCPToolBridge) Call(ctx context.Context, name string, arguments []byte)
 	}
 	var args map[string]any
 	if arguments != nil {
-		_ = json.Unmarshal(arguments, &args)
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return CallToolResult{}, fmt.Errorf("malformed tool arguments: %w", err)
+		}
 	}
 	return c.CallTool(ctx, name, args)
 }

@@ -38,6 +38,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.exitInputHistoryNavigation()
 				m.chat.input = template
 				m.chat.cursor = len([]rune(template))
+				m.notice = fmt.Sprintf("Starter: %s", template)
 				return m, nil
 			}
 		}
@@ -351,8 +352,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if len(suggestions.mentionSuggestions) > 0 {
-			if len(suggestions.mentionSuggestions) > 0 {
-				idx := clampIndex(m.slashMenu.mention, len(suggestions.mentionSuggestions))
+			idx := clampIndex(m.slashMenu.mention, len(suggestions.mentionSuggestions))
 				if idx < len(suggestions.mentionSuggestions)-1 {
 					idx++
 				}

@@ -52,6 +52,13 @@ func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	// Serialize the entire read→match→write sequence to close the TOCTOU
+	// window. Without this, another goroutine could write the file between
+	// our ReadFile (line 57) and our writeFileAtomic (line 97), and we'd
+	// either silently overwrite concurrent changes or (if the file changed
+	// again) report a confusing "drift" on the next edit pass.
+	release := t.engine.LockPath(absPath)
+	defer release()
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return Result{}, err
@@ -91,9 +98,6 @@ func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
 		updated = restoreOriginalLineEndings(src, updatedNorm)
 	}
 
-	// Serialize write to prevent TOCTOU races with concurrent mutation tools.
-	release := t.engine.LockPath(absPath)
-	defer release()
 	if err := writeFileAtomic(absPath, []byte(updated), 0o644); err != nil {
 		return Result{}, err
 	}

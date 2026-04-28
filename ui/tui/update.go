@@ -709,6 +709,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.activeTab < 0 || m.activeTab >= len(m.tabs) {
+			m.notice = "Internal: tab index out of range"
+			return m, nil
+		}
 		switch m.tabs[m.activeTab] {
 		case "Chat":
 			return m.handleChatKey(msg)

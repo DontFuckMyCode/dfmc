@@ -60,7 +60,8 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 			return nil, fmt.Errorf("load project config: %w", err)
 		}
 		cfg.normalizeAliases()
-		if !allowProjectHooks || !isProjectConfigSecure(projectPath) {
+		projectHooksSecure = isProjectConfigSecure(projectPath)
+		if !allowProjectHooks || !projectHooksSecure {
 			cfg.Hooks = globalHooks
 		}
 	}

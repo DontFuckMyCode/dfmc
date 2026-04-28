@@ -342,18 +342,10 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		}
 	}
 	collectWorkflowRecent("tool:", 2)
-	if len(workflowRecent) < 4 {
-		collectWorkflowRecent("drive:", 2)
-	}
-	if len(workflowRecent) < 4 {
-		collectWorkflowRecent("agent:autonomy:", 2)
-	}
-	if len(workflowRecent) < 4 {
-		collectWorkflowRecent("agent:loop:error", 1)
-	}
-	if len(workflowRecent) < 4 {
-		collectWorkflowRecent("provider:throttle:retry", 1)
-	}
+	collectWorkflowRecent("drive:", 2)
+	collectWorkflowRecent("agent:autonomy:", 2)
+	collectWorkflowRecent("agent:loop:error", 1)
+	collectWorkflowRecent("provider:throttle:retry", 1)
 
 	subagentLines := []string{}
 	if head.ActiveSubagents > 0 {

@@ -76,7 +76,7 @@ func FailureClassify(err error) FailureClass {
 	// Transient: explicit rate-limiting from a provider.
 	if strings.Contains(msg, "rate limit") ||
 		strings.Contains(msg, "status code 429") ||
-		strings.Contains(msg, "429") && strings.Contains(msg, "too many") {
+		(strings.Contains(msg, "429")) && strings.Contains(msg, "too many") {
 		return RetryTransient
 	}
 

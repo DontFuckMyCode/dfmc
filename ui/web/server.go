@@ -508,14 +508,22 @@ func contentTypeEnforcementMiddleware(next http.Handler) http.Handler {
 // algorithm. Each client IP gets its own bucket. Buckets for IPs not seen
 // in over 10 minutes are garbage-collected periodically.
 type perIPLimiter struct {
-	mu      sync.Mutex
-	buckets map[string]*rate.Limiter
-	rate    rate.Limit
-	burst   int
+	mu       sync.Mutex
+	buckets  map[string]*rate.Limiter
+	lastSeen map[string]time.Time
+	rate     rate.Limit
+	burst    int
 }
 
 func newPerIPLimiter(r rate.Limit, burst int) *perIPLimiter {
-	return &perIPLimiter{buckets: make(map[string]*rate.Limiter), rate: r, burst: burst}
+	l := &perIPLimiter{
+		buckets:  make(map[string]*rate.Limiter),
+		lastSeen: make(map[string]time.Time),
+		rate:     r,
+		burst:    burst,
+	}
+	go l.gc() // background cleanup of stale entries
+	return l
 }
 
 func (l *perIPLimiter) get(ip string) *rate.Limiter {
@@ -526,11 +534,29 @@ func (l *perIPLimiter) get(ip string) *rate.Limiter {
 		b = rate.NewLimiter(l.rate, l.burst)
 		l.buckets[ip] = b
 	}
+	l.lastSeen[ip] = time.Now()
 	return b
 }
 
 func (l *perIPLimiter) Allow(ip string) bool {
 	return l.get(ip).Allow()
+}
+
+// gc periodically removes IPs with no activity in 10 minutes.
+func (l *perIPLimiter) gc() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		l.mu.Lock()
+		cutoff := time.Now().Add(-10 * time.Minute)
+		for ip, last := range l.lastSeen {
+			if last.Before(cutoff) {
+				delete(l.buckets, ip)
+				delete(l.lastSeen, ip)
+			}
+		}
+		l.mu.Unlock()
+	}
 }
 
 func rateLimitMiddleware(s *Server, limiter *perIPLimiter) func(http.Handler) http.Handler {

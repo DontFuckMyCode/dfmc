@@ -95,7 +95,8 @@ func (s Snapshot) Render(maxChars int) string {
 		b.WriteByte('\n')
 	}
 	out := b.String()
-	if r := []rune(out); len(r) > maxChars {
+	if len([]byte(out)) > maxChars {
+		r := []rune(out)
 		out = string(r[:maxChars]) + "\n  ...(truncated)"
 	}
 	if strings.TrimSpace(out) == "" {

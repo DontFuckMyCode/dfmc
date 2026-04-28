@@ -160,11 +160,3 @@ func init() {
 	theme.FileMarker = fileMarker
 }
 
-// --- unused stubs to keep import compatibility -------------------------
-// Kept to prevent "declared but not used" errors for imports that existed
-// in the original theme.go but are no longer needed here.
-
-var (
-	_ = lipgloss.Color("")
-	_ = time.Time{}
-)

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // compressToolOutput applies the configured byte limit to the tool result
@@ -173,7 +174,7 @@ func truncateUTF8ByBytes(s string, maxBytes int) string {
 	var out strings.Builder
 	n := 0
 	for _, r := range s {
-		rb := len([]byte(string(r)))
+		rb := utf8.RuneLen(r)
 		if n+rb > limit {
 			break
 		}
