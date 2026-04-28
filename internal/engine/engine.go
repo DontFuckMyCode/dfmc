@@ -123,6 +123,11 @@ type Engine struct {
 	mu    sync.RWMutex
 	state EngineState
 
+	modifiedFiles map[string]time.Time // path -> timestamp, cleared after staleWindow
+	staleFileWindow time.Duration       // files newer than this are excluded from context
+
+	seenFiles map[string]struct{} // absolute paths already read via read_file in this session
+
 	lastContextIn ContextInStatus
 
 	// memoryDegraded is set when Memory.Load() failed during Init. The

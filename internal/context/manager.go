@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
@@ -53,6 +54,17 @@ type BuildOptions struct {
 	// prioritizes hotspots and changed files, refactor walks both
 	// import and export directions. Defaults to StrategyGeneral.
 	Strategy RetrievalStrategy
+	// ExcludeStaleFilters files recently modified by write_file/edit_file/apply_patch
+	// from context retrieval so stale cached chunks are not served. The map
+	// is keyed by absolute path; values are modification timestamps. Files
+	// newer than the window are excluded from scoring/retrieval.
+	ExcludeStaleFilters map[string]time.Time
+	// SeenFiles tracks files that have already been provided via read_file
+	// in this session (extracted from conversation history). These are
+	// excluded from context retrieval to avoid sending the same content twice
+	// via different channels — the model already has the file contents in
+	// the conversation context.
+	SeenFiles map[string]struct{}
 }
 
 type PromptRuntime struct {
@@ -139,6 +151,24 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 	// upgradeSource helper, not the map itself).
 	sources := map[string]string{}
 	graph := m.codemap.Graph()
+
+	// Exclude recently modified files (write_file/edit_file/apply_patch).
+	// Files in the stale map are skipped so the LLM always reads the fresh
+	// version via read_file, not a stale context chunk. The map self-prunes
+	// entries older than staleWindow to avoid unbounded growth.
+	staleWindow := 2 * time.Minute
+	now := time.Now()
+	for path, t := range opts.ExcludeStaleFilters {
+		if now.Sub(t) > staleWindow {
+			delete(opts.ExcludeStaleFilters, path)
+		}
+	}
+	// Build a set of normalized seen-file paths for O(1) deduplication check.
+	seenSet := make(map[string]struct{}, len(opts.SeenFiles))
+	for f := range opts.SeenFiles {
+		abs, _ := filepath.Abs(f)
+		seenSet[abs] = struct{}{}
+	}
 
 	upgradeSource := func(path, candidate string) {
 		if path == "" || candidate == "" {
@@ -236,6 +266,23 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 		}
 		if !shouldIncludePath(r.Path, opts.IncludeTests, opts.IncludeDocs) {
 			continue
+		}
+		// Skip recently modified files (stale filter) — the LLM must read
+		// the fresh version via read_file, not an outdated context chunk.
+		if len(opts.ExcludeStaleFilters) > 0 {
+			absPath, _ := filepath.Abs(r.Path)
+			if _, stale := opts.ExcludeStaleFilters[absPath]; stale {
+				continue
+			}
+		}
+		// Skip files already provided via read_file this session — sending
+		// the same content twice via different channels wastes tokens and
+		// confuses the model about which version is authoritative.
+		if len(seenSet) > 0 {
+			absPath, _ := filepath.Abs(r.Path)
+			if _, seen := seenSet[absPath]; seen {
+				continue
+			}
 		}
 
 		content, err := func() ([]byte, error) {

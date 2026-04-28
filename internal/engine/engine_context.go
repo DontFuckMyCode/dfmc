@@ -79,8 +79,8 @@ const (
 	defaultHistoryBudgetTokens   = 1200
 	maxHistoryBudgetTokens       = 2048
 	maxHistoryMessages           = 12
-	minHistorySummaryTokens      = 24
-	maxHistorySummaryTokens      = 96
+	minHistorySummaryTokens      = 64
+	maxHistorySummaryTokens      = 512
 	maxResponseReserveTokens     = 16384
 	basePromptReserveTokens      = 900
 	baseToolReserveTokens        = 512
@@ -229,6 +229,21 @@ func (e *Engine) contextBuildOptionsWithRuntime(question string, runtime ctxmgr.
 		if opts.MaxFiles > 1 {
 			opts.MaxFiles = maxInt(1, opts.MaxFiles/2)
 		}
+	}
+
+	// Propagate recently modified files so BuildWithOptions excludes them
+	// from context retrieval. Files written/edited by tools in the last
+	// few minutes must be re-read via read_file, not served from a stale
+	// context chunk. The map is safely copied — ExcludeStaleFilters is
+	// read-only during the BuildOptions pass.
+	if len(e.modifiedFiles) > 0 {
+		opts.ExcludeStaleFilters = e.modifiedFiles
+	}
+	// Propagate files already read via read_file this session so they are
+	// excluded from context deduplication. The model already has the content
+	// via conversation, so sending it again via context is redundant.
+	if len(e.seenFiles) > 0 {
+		opts.SeenFiles = e.seenFiles
 	}
 
 	return opts

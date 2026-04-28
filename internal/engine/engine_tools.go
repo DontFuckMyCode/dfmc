@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/hooks"
 	"github.com/dontfuckmycode/dfmc/internal/skills"
@@ -27,24 +28,51 @@ func (e *Engine) ListTools() []string {
 	return e.Tools.List()
 }
 
-// invalidateContextForTool calls Context.Invalidate for any files modified by
-// edit_file, write_file, or apply_patch. For apply_patch the patch parameter
-// is parsed to extract the set of affected file paths.
+// invalidateContextForTool tracks files modified by edit_file, write_file,
+// or apply_patch so the next buildContextChunks call excludes them from
+// context retrieval. This prevents stale context chunks from being served
+// when a file has been modified in the last few minutes — the LLM must read
+// the fresh version via read_file instead.
+// It also records files read via read_file so they are excluded from
+// context deduplication (the model already has the content via conversation).
 func (e *Engine) invalidateContextForTool(name string, params map[string]any) {
 	if e.Context == nil {
 		return
 	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	switch name {
 	case "edit_file", "write_file":
 		if path, ok := params["path"].(string); ok && path != "" {
-			e.Context.Invalidate(path)
+			abs, _ := filepath.Abs(path)
+			if e.modifiedFiles == nil {
+				e.modifiedFiles = make(map[string]time.Time)
+			}
+			e.modifiedFiles[abs] = time.Now()
+			e.Context.Invalidate(abs)
 		}
 	case "apply_patch":
 		if patch, ok := params["patch"].(string); ok && patch != "" {
 			paths := extractPathsFromPatch(patch)
-			for _, p := range paths {
-				e.Context.Invalidate(p)
+			if e.modifiedFiles == nil {
+				e.modifiedFiles = make(map[string]time.Time)
 			}
+			now := time.Now()
+			for _, p := range paths {
+				abs, _ := filepath.Abs(p)
+				e.modifiedFiles[abs] = now
+				e.Context.Invalidate(abs)
+			}
+		}
+	case "read_file":
+		// Mark as seen so context building skips it (deduplication).
+		// No need to invalidate codemap — reading doesn't change content.
+		if path, ok := params["path"].(string); ok && path != "" {
+			abs, _ := filepath.Abs(path)
+			if e.seenFiles == nil {
+				e.seenFiles = make(map[string]struct{})
+			}
+			e.seenFiles[abs] = struct{}{}
 		}
 	}
 }
