@@ -751,6 +751,9 @@ func (e *Engine) recordInteraction(question, answer, providerName, model string,
 				"model":    model,
 			},
 		})
+		// Best-effort async persist: non-blocking, failures logged.
+		// This guards against crash-before-Shutdown losing the turn.
+		e.Conversation.SaveActiveAsync()
 	}
 	if e.Memory != nil {
 		e.Memory.SetWorkingQuestionAnswer(question, answer)

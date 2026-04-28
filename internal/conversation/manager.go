@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"maps"
 	"os"
 	"path/filepath"
@@ -313,6 +314,43 @@ func (m *Manager) SaveActive() error {
 		return err
 	}
 	return store.SaveConversationLog(snapshot.ID, snapshot.Branches[snapshot.Branch])
+}
+
+// SaveActiveAsync persists the active conversation without blocking the
+// caller. Failures are logged but never propagated — this is best-effort
+// durability for crash-before-shutdown scenarios. Uses saveMu to serialize
+// with the blocking SaveActive call so the two never race.
+func (m *Manager) SaveActiveAsync() {
+	go func() {
+		m.saveMu.Lock()
+		defer m.saveMu.Unlock()
+
+		m.mu.RLock()
+		if m.active == nil || m.store == nil {
+			m.mu.RUnlock()
+			return
+		}
+		snapshot := cloneConversation(m.active)
+		store := m.store
+		m.mu.RUnlock()
+
+		state := persistedConversation{
+			ID:        snapshot.ID,
+			Provider:  snapshot.Provider,
+			Model:     snapshot.Model,
+			StartedAt: snapshot.StartedAt,
+			Branch:    snapshot.Branch,
+			Branches:  snapshot.Branches,
+			Metadata:  snapshot.Metadata,
+		}
+		if err := store.SaveConversationState(snapshot.ID, state); err != nil {
+			log.Printf("conversation: SaveActiveAsync state: %v", err)
+			return
+		}
+		if err := store.SaveConversationLog(snapshot.ID, snapshot.Branches[snapshot.Branch]); err != nil {
+			log.Printf("conversation: SaveActiveAsync log: %v", err)
+		}
+	}()
 }
 
 func (m *Manager) Load(id string) (*Conversation, error) {

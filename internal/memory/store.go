@@ -15,8 +15,10 @@ import (
 )
 
 const (
-	bucketEpisodic = "memory_episodic"
-	bucketSemantic = "memory_semantic"
+	bucketEpisodic  = "memory_episodic"
+	bucketSemantic  = "memory_semantic"
+	bucketWorking   = "memory_working"
+	bucketWorkingKey = "working" // single key holding JSON WorkingMemory
 )
 
 type WorkingMemory struct {
@@ -43,16 +45,53 @@ func New(store *storage.Store) *Store {
 }
 
 func (s *Store) Load() error {
-	// Working memory is in-memory only for now.
 	if s.storage == nil || s.storage.DB() == nil {
 		return nil
 	}
-	return nil
+	db := s.storage.DB()
+	return db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(bucketWorking))
+		if b == nil {
+			return nil // bucket not created yet; working memory stays at zero value
+		}
+		data := b.Get([]byte(bucketWorkingKey))
+		if data == nil {
+			return nil
+		}
+		var wm WorkingMemory
+		if err := json.Unmarshal(data, &wm); err != nil {
+			return nil // corrupt data; keep zero value, Persist will overwrite
+		}
+		s.mu.Lock()
+		s.working = wm
+		s.mu.Unlock()
+		return nil
+	})
 }
 
 func (s *Store) Persist() error {
-	// bbolt writes are immediate; no-op for now.
-	return nil
+	if s.storage == nil || s.storage.DB() == nil {
+		return nil
+	}
+	s.mu.RLock()
+	wm := WorkingMemory{
+		RecentFiles:   append([]string(nil), s.working.RecentFiles...),
+		RecentSymbols: append([]string(nil), s.working.RecentSymbols...),
+		LastQuestion:  s.working.LastQuestion,
+		LastAnswer:    s.working.LastAnswer,
+	}
+	s.mu.RUnlock()
+	data, err := json.Marshal(wm)
+	if err != nil {
+		return err
+	}
+	return s.storage.DB().Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(bucketWorking))
+		if b == nil {
+			return fmt.Errorf("bucket not found: %s", bucketWorking)
+		}
+		return b.Put([]byte(bucketWorkingKey), data)
+	})
 }
 
 func (s *Store) Working() WorkingMemory {

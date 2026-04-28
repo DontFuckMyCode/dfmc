@@ -19,14 +19,25 @@ import (
 )
 
 var defaultBuckets = []string{
+	"_meta",
 	"conversations",
 	"memory_episodic",
 	"memory_semantic",
+	"memory_working",
 	"codemap_cache",
 	"ast_cache",
 	"config",
 	"plugins",
 }
+
+const (
+	// schemaVersion is the current database schema version.
+	// Bump this whenever a migration is added and runMigrations is updated.
+	schemaVersion = 1
+	// metaBucket is the bucket used to store db-level metadata (e.g. schema version).
+	metaBucket = "_meta"
+	schemaVersionKey = "schema_version"
+)
 
 var ErrStoreLocked = errors.New("storage database is locked")
 
@@ -95,11 +106,64 @@ func Open(dataDir string) (*Store, error) {
 		return nil, err
 	}
 
+	if err := runMigrations(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("run migrations: %w", err)
+	}
+
 	return &Store{
 		db:          db,
 		dataDir:     dataDir,
 		artifactDir: artifactDir,
 	}, nil
+}
+
+// runMigrations checks the schema version stored in the _meta bucket and
+// runs any needed migrations to bring the database up to the current
+// schemaVersion. It is called on every store Open so that upgrades are
+// applied automatically. The migration functions are idempotent — safe to
+// re-run if a previous run was interrupted or if the db is already at the
+// target version.
+func runMigrations(db *bbolt.DB) error {
+	return db.Update(func(tx *bbolt.Tx) error {
+		meta := tx.Bucket([]byte(metaBucket))
+		if meta == nil {
+			return fmt.Errorf("meta bucket not found")
+		}
+		verData := meta.Get([]byte(schemaVersionKey))
+		var currentVersion int
+		if verData != nil {
+			if err := json.Unmarshal(verData, &currentVersion); err != nil {
+				return fmt.Errorf("decode schema version: %w", err)
+			}
+		}
+		if currentVersion >= schemaVersion {
+			return nil // already at current version
+		}
+		// Migration runner: apply in order, updating the version key after
+		// each successful step. If we add a migration function here, bump
+		// schemaVersion to match.
+		if currentVersion < 1 {
+			// No-op migration for v0 -> v1 (initial version). Future
+			// migrations go here, e.g.:
+			//   if err := migrateV1AddWorkingMemory(tx); err != nil { return err }
+			//   if err := writeVersion(meta, 1); err != nil { return err }
+			if err := writeSchemaVersion(meta, 1); err != nil {
+				return fmt.Errorf("v0->v1: %w", err)
+			}
+			currentVersion = 1
+		}
+		// Add: if currentVersion < 2 { migrateV2... }
+		return nil
+	})
+}
+
+func writeSchemaVersion(meta *bbolt.Bucket, version int) error {
+	data, err := json.Marshal(version)
+	if err != nil {
+		return err
+	}
+	return meta.Put([]byte(schemaVersionKey), data)
 }
 
 func (s *Store) Close() error {
