@@ -38,6 +38,7 @@ type ParseResult struct {
 }
 
 type Engine struct {
+	mu       sync.RWMutex
 	extToLang map[string]string
 	cache     *parseCache
 	metrics   *parseMetricsTracker

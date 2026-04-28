@@ -181,6 +181,15 @@ func slimBatchInnerResults(data map[string]any, maxOutput, maxData int) (map[str
 				results = append(results, m)
 			}
 		}
+	case string:
+		var arr []any
+		if err := json.Unmarshal([]byte(v), &arr); err == nil {
+			for _, item := range arr {
+				if m, ok := item.(map[string]any); ok {
+					results = append(results, m)
+				}
+			}
+		}
 	}
 	if len(results) == 0 {
 		return data, false

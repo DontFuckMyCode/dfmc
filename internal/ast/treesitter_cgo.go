@@ -43,7 +43,11 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 	}
 
 	pool := treeSitterParserPool(lang)
-	parser := pool.Get().(*tree_sitter.Parser)
+	p := pool.Get()
+	if p == nil {
+		return nil, nil, nil, true, fmt.Errorf("tree-sitter: pool returned nil for %s", lang)
+	}
+	parser := p.(*tree_sitter.Parser)
 	if parser == nil {
 		return nil, nil, nil, true, fmt.Errorf("tree-sitter: pool returned nil parser for %s", lang)
 	}
@@ -61,7 +65,7 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 		if err := ctx.Err(); err != nil {
 			return nil, nil, nil, true, err
 		}
-		return nil, nil, nil, false, nil
+		return nil, nil, nil, false, fmt.Errorf("tree-sitter parser returned nil for language %q (content length %d)", lang, len(content))
 	}
 	defer tree.Close()
 
