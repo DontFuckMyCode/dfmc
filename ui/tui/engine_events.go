@@ -51,7 +51,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		"agent:loop:budget_exhausted", "agent:loop:auto_resume",
 		"agent:loop:auto_resume_refused", "agent:loop:auto_recover":
 		m, line = m.handleAgentLoopEvent(eventType, payload)
-	case "tool:call", "tool:result", "tool:error", "tool:reasoning":
+	case "tool:call", "tool:result", "tool:error", "tool:reasoning", "tool:timeout":
 		m, line = m.handleToolEvent(eventType, event, payload)
 	case "agent:autonomy:plan":
 		m.autoActivateStatsPanelMode(statsPanelModeTasks, "tasks")

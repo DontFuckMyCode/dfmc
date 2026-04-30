@@ -16,6 +16,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -257,6 +258,13 @@ type taskUpdateArgs struct {
 	Summary       string  `json:"summary,omitempty"`
 	Confidence    float64 `json:"confidence,omitempty"`
 	BlockedReason string  `json:"blocked_reason,omitempty"`
+	// IfVersion mirrors the HTTP If-Match header: when set to a
+	// non-negative value, the update routes through UpdateTaskCAS and
+	// fails with a "version_conflict" error if the stored version no
+	// longer matches. Omit (or use a negative value) for the original
+	// last-writer-wins semantics. Pointer so omitted/zero are
+	// distinguishable — version 0 is a legitimate first-edit case.
+	IfVersion *int `json:"if_version,omitempty"`
 }
 
 func (h *taskMCPHandler) callUpdate(rawArgs []byte) (mcp.CallToolResult, error) {
@@ -272,7 +280,7 @@ func (h *taskMCPHandler) callUpdate(rawArgs []byte) (mcp.CallToolResult, error) 
 	if store == nil {
 		return errResult("task store unavailable")
 	}
-	err := store.UpdateTask(id, func(t *supervisor.Task) error {
+	mutator := func(t *supervisor.Task) error {
 		if args.Title != "" {
 			t.Title = strings.TrimSpace(args.Title)
 		}
@@ -289,7 +297,19 @@ func (h *taskMCPHandler) callUpdate(rawArgs []byte) (mcp.CallToolResult, error) 
 			t.Confidence = args.Confidence
 		}
 		return nil
-	})
+	}
+	var err error
+	if args.IfVersion != nil && *args.IfVersion >= 0 {
+		err = store.UpdateTaskCAS(id, *args.IfVersion, mutator)
+		if errors.Is(err, taskstore.ErrTaskVersionConflict) {
+			// Surface a stable, parseable token so MCP clients can
+			// retry-after-reread without text matching the rest of the
+			// error string. Mirrors the HTTP 412 path in semantic intent.
+			return errResult("version_conflict: stored version differs from if_version; reload the task and retry")
+		}
+	} else {
+		err = store.UpdateTask(id, mutator)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return errResult("task " + id + " not found")

@@ -93,6 +93,62 @@ func TestRecordActivityClassifiesErrorEvents(t *testing.T) {
 	}
 }
 
+// TestRecordActivityRendersTimeoutEvent pins the new tool:timeout
+// surfacing: the entry must classify as Error (operator visibility),
+// carry the limit_ms cap in the rendered text, and reference the
+// tool name. tool:error fires alongside this in production but the
+// tests cover them independently.
+func TestRecordActivityRendersTimeoutEvent(t *testing.T) {
+	m := newActivityTestModel()
+	m.recordActivityEvent(engine.Event{
+		Type: "tool:timeout",
+		Payload: map[string]any{
+			"name":     "ast_query",
+			"limit_ms": int64(30000),
+			"source":   "agent",
+		},
+	})
+	if len(m.activity.entries) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(m.activity.entries))
+	}
+	e := m.activity.entries[0]
+	if e.Kind != activityKindError {
+		t.Errorf("timeout should classify as error kind for visibility, got %s", e.Kind)
+	}
+	if !strings.Contains(e.Text, "ast_query") {
+		t.Errorf("entry text should name the tool, got %q", e.Text)
+	}
+	if !strings.Contains(e.Text, "30000ms") {
+		t.Errorf("entry text should carry the limit, got %q", e.Text)
+	}
+	if !strings.Contains(strings.ToLower(e.Text), "timeout") {
+		t.Errorf("entry text should distinguish from plain error, got %q", e.Text)
+	}
+}
+
+// TestRecordActivityTimeoutWithoutLimit covers the degraded payload:
+// when limit_ms is absent or zero, the entry still renders something
+// sensible rather than a "0ms cap" string that would confuse operators.
+func TestRecordActivityTimeoutWithoutLimit(t *testing.T) {
+	m := newActivityTestModel()
+	m.recordActivityEvent(engine.Event{
+		Type: "tool:timeout",
+		Payload: map[string]any{
+			"name": "ast_query",
+		},
+	})
+	if len(m.activity.entries) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(m.activity.entries))
+	}
+	e := m.activity.entries[0]
+	if strings.Contains(e.Text, "0ms") {
+		t.Errorf("entry must not render '0ms cap' when limit is missing, got %q", e.Text)
+	}
+	if !strings.Contains(strings.ToLower(e.Text), "timeout") {
+		t.Errorf("entry text should still say timeout, got %q", e.Text)
+	}
+}
+
 func TestActivityFollowScrollBehavior(t *testing.T) {
 	m := newActivityTestModel()
 	for i := 0; i < 10; i++ {

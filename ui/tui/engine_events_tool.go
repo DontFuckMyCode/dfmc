@@ -155,6 +155,18 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 			_ = p
 			line = "Tool error occurred."
 		}
+	case "tool:timeout":
+		// Distinct line from tool:error so an operator scanning the feed
+		// sees the gate firing without having to read tool error text.
+		// Both events fire — tool:error carries the model-facing message,
+		// tool:timeout carries the structural fact.
+		toolName := payloadString(payload, "name", "tool")
+		limitMs := payloadInt(payload, "limit_ms", 0)
+		if limitMs > 0 {
+			line = fmt.Sprintf("Tool timeout: %s exceeded %dms cap.", toolName, limitMs)
+		} else {
+			line = fmt.Sprintf("Tool timeout: %s.", toolName)
+		}
 	case "tool:reasoning":
 		// Self-narration: backfill the most recent running chip for
 		// this tool with the model's `_reason` text. Fires AFTER

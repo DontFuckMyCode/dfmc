@@ -182,6 +182,24 @@ func classifyActivity(ev engine.Event) (activityKind, string) {
 		err := payloadString(payload, "error", "")
 		text = fmt.Sprintf("tool failed - %s %s", name, err)
 		kind = activityKindError
+	case "tool:timeout":
+		// Distinct from tool:error — operators care because the gate
+		// firing means either an over-broad tool call or a too-tight
+		// cap; both are actionable. Payload uses "name" (set by the
+		// engine wrapper) rather than "tool" — a tool:error fires
+		// alongside this with the same name, so dedupe is the
+		// caller's job.
+		name := payloadString(payload, "name", "tool")
+		limitMs := payloadInt(payload, "limit_ms", 0)
+		if limitMs > 0 {
+			text = fmt.Sprintf("tool timeout - %s exceeded %dms cap", name, limitMs)
+		} else {
+			text = fmt.Sprintf("tool timeout - %s", name)
+		}
+		// Reuses error kind for visual prominence — operators need to
+		// see timeouts as much as plain failures. The "timeout" text
+		// disambiguates from a regular tool:error in the feed.
+		kind = activityKindError
 	case "agent:loop:start":
 		prov := payloadString(payload, "provider", "")
 		model := payloadString(payload, "model", "")
@@ -285,5 +303,3 @@ func classifyActivity(ev engine.Event) (activityKind, string) {
 	}
 	return kind, text
 }
-
-
