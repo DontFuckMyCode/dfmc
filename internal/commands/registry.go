@@ -158,11 +158,18 @@ func NewRegistry() *Registry {
 // Register inserts cmd, rejecting duplicates and alias collisions so a typo
 // in defaults.go fails at boot rather than the user's first help invocation.
 // The command is stored by normalized (lowercase) name; lookup is
-// case-insensitive.
+// case-insensitive. A zero Surfaces bitset is also rejected: a command not
+// exposed on any surface is invisible everywhere yet would otherwise
+// register cleanly with SurfaceList=["none"], making the catalog lie about
+// what actually ships. Catching this at registration is what stops a
+// missing-Surfaces field in defaults.go from silently dropping the command.
 func (r *Registry) Register(cmd Command) error {
 	name := strings.ToLower(strings.TrimSpace(cmd.Name))
 	if name == "" {
 		return fmt.Errorf("commands: empty name")
+	}
+	if cmd.Surfaces == 0 {
+		return fmt.Errorf("commands: %q has no Surfaces — set Surfaces: SurfaceAll or a specific bit", name)
 	}
 	if _, exists := r.commands[name]; exists {
 		return fmt.Errorf("commands: duplicate name %q", name)
@@ -226,10 +233,12 @@ func (e *RegistrationError) Unwrap() error {
 	return e.Err
 }
 
-// MustRegister is the panic-on-error variant — useful in package init or
-// tests where a registration failure is a programmer bug. Returns the
-// canonical name on success and a *RegistrationError on failure so callers
-// can distinguish the two cases without panic/recover.
+// MustRegister is the error-wrapping variant of Register: it returns the
+// canonical name on success and a *RegistrationError (with the offending
+// command name attached) on failure. Despite the "Must" prefix it does NOT
+// panic — the name is historical and the (string, error) signature is what
+// callers actually rely on. Use it in package init or tests where you want
+// the typed wrapper for diagnostics; otherwise plain Register is fine.
 func (r *Registry) MustRegister(cmd Command) (string, error) {
 	if err := r.Register(cmd); err != nil {
 		return "", &RegistrationError{

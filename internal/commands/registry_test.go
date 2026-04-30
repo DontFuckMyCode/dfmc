@@ -45,8 +45,13 @@ func TestRegister_RejectsDuplicateName(t *testing.T) {
 
 func TestRegister_RejectsAliasCollisions(t *testing.T) {
 	r := NewRegistry()
-	//nolint:errcheck // MustRegister panics on error; we test alias collision below
-	r.MustRegister(Command{Name: "conversation", Aliases: []string{"conv"}, Summary: "first", Surfaces: SurfaceCLI, Category: CategoryMemory})
+	// MustRegister returns (name, error); checking it here would just
+	// duplicate the type's own error path. The first registration is
+	// expected to succeed — if it fails the subsequent assertions all
+	// fail anyway with a clear message.
+	if _, err := r.MustRegister(Command{Name: "conversation", Aliases: []string{"conv"}, Summary: "first", Surfaces: SurfaceCLI, Category: CategoryMemory}); err != nil {
+		t.Fatalf("seed register: %v", err)
+	}
 	// Alias "conv" collides with existing alias — Register should error.
 	if err := r.Register(Command{Name: "chat", Aliases: []string{"conv"}, Summary: "second", Surfaces: SurfaceCLI, Category: CategoryQuery}); err == nil {
 		t.Fatalf("expected alias collision error")
@@ -65,6 +70,51 @@ func TestRegister_RejectsEmptyName(t *testing.T) {
 	r := NewRegistry()
 	if err := r.Register(Command{Name: "   ", Summary: "blank", Surfaces: SurfaceCLI}); err == nil {
 		t.Fatalf("empty name must error")
+	}
+}
+
+// TestRegister_RejectsZeroSurfaces pins the contract introduced to stop
+// silently invisible commands from registering. Before this guard, a
+// caller that forgot the Surfaces field on a Command literal would still
+// succeed at registration but the command would never appear in any UI
+// (Surface(0).String() returns "none", which then leaked into SurfaceList
+// as ["none"] instead of being caught). The error message names the
+// missing field so a contributor sees the fix from the failure alone.
+func TestRegister_RejectsZeroSurfaces(t *testing.T) {
+	r := NewRegistry()
+	err := r.Register(Command{Name: "ghost", Summary: "invisible", Category: CategoryQuery})
+	if err == nil {
+		t.Fatalf("zero-surfaces registration must error, got success")
+	}
+	if !strings.Contains(err.Error(), "Surfaces") {
+		t.Fatalf("error must mention the missing Surfaces field, got: %v", err)
+	}
+}
+
+// TestMustRegister_DoesNotPanic confirms the (renamed-in-doc) contract:
+// MustRegister returns errors, never panics. A previous comment in this
+// test file claimed it panicked, propagating the same misconception that
+// the doc-comment carried. This test pins the actual behavior.
+func TestMustRegister_DoesNotPanic(t *testing.T) {
+	r := NewRegistry()
+	defer func() {
+		if rec := recover(); rec != nil {
+			t.Fatalf("MustRegister panicked on duplicate, expected error return: %v", rec)
+		}
+	}()
+	if _, err := r.MustRegister(Command{Name: "ask", Summary: "first", Surfaces: SurfaceCLI, Category: CategoryQuery}); err != nil {
+		t.Fatalf("seed register: %v", err)
+	}
+	_, err := r.MustRegister(Command{Name: "ask", Summary: "dup", Surfaces: SurfaceCLI, Category: CategoryQuery})
+	if err == nil {
+		t.Fatalf("expected RegistrationError on duplicate, got nil")
+	}
+	regErr, ok := err.(*RegistrationError)
+	if !ok {
+		t.Fatalf("expected *RegistrationError, got %T: %v", err, err)
+	}
+	if regErr.CommandName != "ask" {
+		t.Fatalf("RegistrationError should name the duplicate command, got %q", regErr.CommandName)
 	}
 }
 
