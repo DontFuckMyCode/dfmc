@@ -196,6 +196,51 @@ func TestSubagentRetriesTotal_IncrementsOnActualRetry(t *testing.T) {
 	}
 }
 
+// TestJitteredBackoff_StaysWithinBand asserts the jitter window is
+// symmetric around base and bounded by ±fraction. Probabilistically
+// — over many samples — we should see the spread but never escape the
+// band. 1000 samples is enough to surface a stuck-at-base bug or a
+// math typo without flaking on legitimate randomness.
+func TestJitteredBackoff_StaysWithinBand(t *testing.T) {
+	base := 750 * time.Millisecond
+	frac := 0.2
+	min := base - time.Duration(float64(base)*frac)
+	max := base + time.Duration(float64(base)*frac)
+
+	var sawBelowBase, sawAboveBase bool
+	for i := 0; i < 1000; i++ {
+		got := jitteredBackoff(base, frac)
+		if got < min || got > max {
+			t.Fatalf("jittered backoff escaped band [%v, %v]: got %v", min, max, got)
+		}
+		if got < base {
+			sawBelowBase = true
+		}
+		if got > base {
+			sawAboveBase = true
+		}
+	}
+	// Both halves of the symmetric band should be exercised in 1000 draws.
+	if !sawBelowBase || !sawAboveBase {
+		t.Errorf("jitter is not symmetric: belowBase=%v aboveBase=%v", sawBelowBase, sawAboveBase)
+	}
+}
+
+// TestJitteredBackoff_DegenerateInputs pins the no-op branches: zero or
+// negative base / fraction must collapse to base so a misconfigured
+// caller can't introduce negative sleeps or NaN durations.
+func TestJitteredBackoff_DegenerateInputs(t *testing.T) {
+	if got := jitteredBackoff(0, 0.2); got != 0 {
+		t.Errorf("zero base must return 0, got %v", got)
+	}
+	if got := jitteredBackoff(750*time.Millisecond, 0); got != 750*time.Millisecond {
+		t.Errorf("zero fraction must return base unchanged, got %v", got)
+	}
+	if got := jitteredBackoff(-1, 0.2); got != -1 {
+		t.Errorf("negative base must pass through unchanged, got %v", got)
+	}
+}
+
 // Compile-time hint that strings is intended-imported (defensive in
 // case future edits drop the only call to strings.Contains).
 var _ = strings.Contains

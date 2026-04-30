@@ -12,6 +12,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -160,6 +161,9 @@ func (s *Server) handleTaskShow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "task " + id + " not found"})
 		return
 	}
+	// Emit ETag so clients can pass the version back via If-Match on a
+	// later PATCH without inferring it from the JSON body.
+	w.Header().Set("ETag", fmt.Sprintf(`"%d"`, task.Version))
 	writeJSON(w, http.StatusOK, task)
 }
 
@@ -180,7 +184,25 @@ func (s *Server) handleTaskUpdate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON: " + err.Error()})
 		return
 	}
-	err := store.UpdateTask(id, func(t *supervisor.Task) error {
+	// Optimistic concurrency: when the client passes If-Match: <version>,
+	// route the write through UpdateTaskCAS so a stale version returns
+	// 412 Precondition Failed instead of silently overwriting concurrent
+	// edits. Bbolt's per-key transaction already serializes the closure,
+	// but a client that read at version N and submits at version N+M
+	// without realising deserves a clear refusal, not last-writer-wins.
+	// Without the header, behaviour is unchanged.
+	ifMatch := strings.TrimSpace(r.Header.Get("If-Match"))
+	expectedVersion := -1
+	if ifMatch != "" {
+		ifMatch = strings.Trim(ifMatch, `"`) // permit ETag-style quoted form
+		v, parseErr := strconv.Atoi(ifMatch)
+		if parseErr != nil || v < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "If-Match must be a non-negative integer version"})
+			return
+		}
+		expectedVersion = v
+	}
+	mutator := func(t *supervisor.Task) error {
 		if v, ok := patch["title"]; ok {
 			t.Title = strings.TrimSpace(stringField(v))
 		}
@@ -230,7 +252,20 @@ func (s *Server) handleTaskUpdate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		return nil
-	})
+	}
+	var err error
+	if expectedVersion >= 0 {
+		err = store.UpdateTaskCAS(id, expectedVersion, mutator)
+		if errors.Is(err, taskstore.ErrTaskVersionConflict) {
+			writeJSON(w, http.StatusPreconditionFailed, map[string]any{
+				"error":            "If-Match version is stale; reload the task and retry",
+				"expected_version": expectedVersion,
+			})
+			return
+		}
+	} else {
+		err = store.UpdateTask(id, mutator)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "task " + id + " not found"})
@@ -249,6 +284,11 @@ func (s *Server) handleTaskUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, _ := store.LoadTask(id)
+	if updated != nil {
+		// Emit the post-write version as an ETag so a follow-up PATCH
+		// can pass it back via If-Match without a separate GET round-trip.
+		w.Header().Set("ETag", fmt.Sprintf(`"%d"`, updated.Version))
+	}
 	writeJSON(w, http.StatusOK, updated)
 }
 

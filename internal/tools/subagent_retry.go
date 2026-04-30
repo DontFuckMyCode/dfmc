@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"math/rand"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -58,7 +59,14 @@ func runSubagentRetrying(ctx context.Context, runner SubagentRunner, req Subagen
 		return SubagentResult{}, errors.New("subagent runner not wired")
 	}
 
-	const backoff = 750 * time.Millisecond
+	// baseBackoff + jitter: a coordinated upstream outage triggers retries
+	// from many concurrent subagents at once. Without jitter every retry
+	// lands on the same millisecond, hammering the recovering provider in
+	// a synchronized wave. ±20% jitter spreads the retries over a 300ms
+	// band, which is enough to break the harmonic without pushing the
+	// slowest retry meaningfully past the user's patience threshold.
+	const baseBackoff = 750 * time.Millisecond
+	const jitterFraction = 0.2
 
 	var lastRes SubagentResult
 	var lastErr error
@@ -92,14 +100,35 @@ func runSubagentRetrying(ctx context.Context, runner SubagentRunner, req Subagen
 		// intuition: "we tried to recover".
 		atomic.AddInt64(&subagentRetriesTotal, 1)
 		// Brief sleep before retry. Honour ctx cancel so we don't waste
-		// the backoff window after the user pressed Ctrl+C.
+		// the backoff window after the user pressed Ctrl+C. Jitter is
+		// computed per-attempt so concurrent retries don't synchronize
+		// even within the same process.
+		wait := jitteredBackoff(baseBackoff, jitterFraction)
 		select {
-		case <-time.After(backoff):
+		case <-time.After(wait):
 		case <-ctx.Done():
 			return lastRes, ctx.Err()
 		}
 	}
 	return lastRes, lastErr
+}
+
+// jitteredBackoff returns base ± (base × fraction) using math/rand.
+// math/rand (not crypto/rand) is intentional: the spread only needs to
+// be unpredictable enough to break thundering-herd synchronization, not
+// to resist an attacker. fraction is clamped to [0, 1) to keep the
+// minimum positive; a non-positive base or fraction collapses to base.
+func jitteredBackoff(base time.Duration, fraction float64) time.Duration {
+	if base <= 0 || fraction <= 0 {
+		return base
+	}
+	if fraction >= 1 {
+		fraction = 0.99
+	}
+	span := float64(base) * fraction
+	// rand.Float64 in [0,1); shift to [-1,1) so jitter is symmetric.
+	delta := (rand.Float64()*2 - 1) * span
+	return base + time.Duration(delta)
 }
 
 // isSubagentTransientError classifies a sub-agent error string as

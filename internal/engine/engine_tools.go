@@ -354,6 +354,24 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 	res, err := e.executeToolWithPanicGuard(ctx, name, params)
 	if err == nil {
 		e.invalidateContextForTool(name, params)
+	} else {
+		// Distinct event when the per-tool deadline killed Execute.
+		// Operators care because the gate firing means either (a) the
+		// model is making expensive calls that need narrower scope, or
+		// (b) the cap is too tight for legitimate work and should be
+		// raised. tool:error already fires; this adds the WHY.
+		var tte *tools.ToolTimeoutError
+		if errors.As(err, &tte) {
+			e.EventBus.Publish(Event{
+				Type:   "tool:timeout",
+				Source: "engine",
+				Payload: map[string]any{
+					"name":     tte.Name,
+					"limit_ms": tte.Limit.Milliseconds(),
+					"source":   source,
+				},
+			})
+		}
 	}
 	if e.Hooks != nil && e.Hooks.Count(hooks.EventPostTool) > 0 {
 		success := "true"

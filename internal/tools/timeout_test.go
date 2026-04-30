@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -127,6 +128,39 @@ func TestExecuteSucceedsWithinTimeout(t *testing.T) {
 	}
 	if res.Output != "ok" {
 		t.Errorf("expected output 'ok', got %q", res.Output)
+	}
+}
+
+// TestToolTimeoutErrorIsTyped pins the typed sentinel: when a tool
+// exceeds its deadline, the returned error must be a *ToolTimeoutError
+// so the engine wrapper can publish a distinct tool:timeout event via
+// errors.As. Also asserts the error still unwraps to
+// context.DeadlineExceeded so generic transient classifiers (subagent
+// retry layer) keep recognising it.
+func TestToolTimeoutErrorIsTyped(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.ToolTimeouts = map[string]int{"slow_typed": 1}
+
+	eng := New(*cfg)
+	var inFlight, peak, order int32
+	eng.Register(&sleepTool{nameStr: "slow_typed", sleep: 5 * time.Second, inFlight: &inFlight, peak: &peak, order: &order})
+
+	_, err := eng.Execute(context.Background(), "slow_typed", Request{ProjectRoot: t.TempDir()})
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	var tte *ToolTimeoutError
+	if !errors.As(err, &tte) {
+		t.Fatalf("expected *ToolTimeoutError, got %T: %v", err, err)
+	}
+	if tte.Name != "slow_typed" {
+		t.Errorf("Name=%q, want slow_typed", tte.Name)
+	}
+	if tte.Limit != time.Second {
+		t.Errorf("Limit=%v, want 1s", tte.Limit)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Error("ToolTimeoutError must unwrap to context.DeadlineExceeded so generic classifiers still match")
 	}
 }
 

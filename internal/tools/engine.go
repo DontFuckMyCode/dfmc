@@ -103,6 +103,24 @@ var selfManagedTimeoutTools = map[string]struct{}{
 	"benchmark":        {},
 }
 
+// ToolTimeoutError is returned (wrapped via Unwrap to context.DeadlineExceeded)
+// when a tool exceeds its per-Execute deadline. The engine wrapper uses
+// errors.As to detect this and publish a distinct tool:timeout event,
+// while the model still sees the self-teaching Error() message that
+// names the cap and the config override path.
+type ToolTimeoutError struct {
+	Name  string
+	Limit time.Duration
+}
+
+func (e *ToolTimeoutError) Error() string {
+	return fmt.Sprintf("tool %q exceeded the %s execution timeout — narrow the call (e.g. tighter glob, smaller line range) or raise agent.tool_timeouts.%s in config", e.Name, e.Limit, e.Name)
+}
+
+// Unwrap exposes the underlying ctx sentinel so generic transient-error
+// classifiers (the subagent retry layer in particular) keep working.
+func (e *ToolTimeoutError) Unwrap() error { return context.DeadlineExceeded }
+
 // toolTimeout resolves the per-Execute deadline for a given tool. Zero
 // means "no engine-level deadline; let the tool or outer ctx decide".
 // Lookup order:
@@ -549,11 +567,11 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 	res, err := tool.Execute(ctx, req)
 	res.DurationMs = time.Since(start).Milliseconds()
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || (timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded)) {
-			// Self-teaching error: tell the model both the cap and the
-			// override path so it can either retry with a narrower scope
-			// or the user can raise the limit.
-			err = fmt.Errorf("tool %q exceeded the %s execution timeout — narrow the call (e.g. tighter glob, smaller line range) or raise agent.tool_timeouts.%s in config", name, timeout, name)
+		if timeout > 0 && (errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded)) {
+			// Wrap into a typed sentinel so the engine wrapper can publish
+			// a distinct tool:timeout event AND the model still sees a
+			// self-teaching message (cap + override path) via Error().
+			err = &ToolTimeoutError{Name: name, Limit: timeout}
 		}
 		if n := e.trackFailure(failureKey); n >= 3 {
 			return res, fmt.Errorf("tool %q failed repeatedly (%d times); change params or strategy", name, n)
