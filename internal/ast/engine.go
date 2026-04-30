@@ -38,7 +38,13 @@ type ParseResult struct {
 }
 
 type Engine struct {
-	mu       sync.RWMutex
+	// extToLang is built once in NewWithCacheSize and never mutated after
+	// construction. Concurrent reads of an unmodified map are race-free
+	// under Go's memory model, so detectLanguage reads it without a lock.
+	// If a future change ever needs to mutate this map at runtime — e.g.
+	// dynamic language registration — add the lock back at THAT point,
+	// not pre-emptively. The internal parseCache and metrics tracker
+	// carry their own locks for their mutable state.
 	extToLang map[string]string
 	cache     *parseCache
 	metrics   *parseMetricsTracker

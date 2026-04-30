@@ -4,10 +4,40 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
+
+// TestEngine_DetectLanguageConcurrentRead exercises the read-only-map
+// invariant for Engine.extToLang. The map is built once in the
+// constructor and never mutated, so concurrent reads must be race-free.
+// Run with -race to validate (CI does); without it this still catches
+// any future change that quietly introduces a write path. We deliberately
+// hit the 3-arg detectLanguage (which reads extToLang twice — once for
+// extension, once for basename) from many goroutines to maximize the
+// chance of surfacing a torn read if someone later adds a writer.
+func TestEngine_DetectLanguageConcurrentRead(t *testing.T) {
+	e := New()
+	const goroutines = 32
+	const iters = 200
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iters; i++ {
+				// Mix of extension hits, basename hits, and misses.
+				_ = e.detectLanguage("foo.go", nil)
+				_ = e.detectLanguage("Dockerfile", nil)
+				_ = e.detectLanguage("foo.unknown", nil)
+				_ = e.detectLanguage("script", []byte("#!/usr/bin/env python\n"))
+			}
+		}()
+	}
+	wg.Wait()
+}
 
 func TestParseFile_GoSymbolsAndImports(t *testing.T) {
 	tmp := t.TempDir()
