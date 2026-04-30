@@ -2,6 +2,7 @@ package skills
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -361,7 +362,11 @@ func tryAgentSkillFormat(data []byte, path, source string) Skill {
 		filename = strings.TrimSuffix(filename, filepath.Ext(filename))
 	}
 	if !strings.EqualFold(name, filename) {
-		// Warn but proceed — filename mismatch is a soft error.
+		// Soft error per the Agent Skills spec — surface it so operators
+		// can spot a SKILL.md whose `name:` drifted from its on-disk
+		// filename instead of the mismatch silently passing through. We
+		// still proceed; the in-frontmatter name wins.
+		log.Printf("skills: SKILL.md %q: frontmatter name %q does not match filename %q (using frontmatter)", path, name, filename)
 	}
 	description := ""
 	if v, ok := raw["description"]; ok {
