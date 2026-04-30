@@ -54,4 +54,21 @@ func (e *Engine) attachProviderObservers(r *provider.Router) {
 			Payload: payload,
 		})
 	})
+	// Stream recovery telemetry. Fires after the router silently swaps
+	// providers mid-stream and the fallback delivered a clean StreamDone.
+	// Without this hook, the recovery is invisible to the user — they
+	// see "answer arrived" but not "the primary blew up halfway and
+	// the fallback finished the job". TUI and web Workbench render a
+	// transient "↻ resumed on <fallback>" chip on this event.
+	r.SetStreamRecoveredObserver(func(ev provider.StreamRecoveredEvent) {
+		e.EventBus.Publish(Event{
+			Type:   "provider:stream:recovered",
+			Source: "provider",
+			Payload: map[string]any{
+				"from":  ev.From,
+				"to":    ev.To,
+				"error": errString(ev.Err),
+			},
+		})
+	})
 }

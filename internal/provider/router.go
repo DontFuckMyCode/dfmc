@@ -23,6 +23,23 @@ type Router struct {
 	healthMu        sync.Mutex
 	health          map[string]*providerHealth
 	circuitObserver func(CircuitEvent)
+
+	// streamRecoveredObserver fires when streamForwardWithRecovery
+	// successfully resumed a stream on a fallback provider. Optional;
+	// nil = no telemetry. Engine wires this to its EventBus so the
+	// TUI/web/CLI can render a "↻ stream resumed on <fallback>" chip
+	// instead of letting the recovery be invisible.
+	streamRecoveredObserver func(StreamRecoveredEvent)
+}
+
+// StreamRecoveredEvent describes a successful mid-stream provider swap.
+// From is the provider that errored; To is the provider that served
+// the rest of the stream. Err is the original transient error that
+// triggered the swap.
+type StreamRecoveredEvent struct {
+	From string
+	To   string
+	Err  error
 }
 
 type ThrottleNotice struct {

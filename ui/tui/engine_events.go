@@ -179,6 +179,10 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 	case "provider:circuit:closed":
 		providerName := payloadString(payload, "provider", "?")
 		line = fmt.Sprintf("Provider %s circuit closed — recovered.", providerName)
+	case "provider:stream:recovered":
+		from := payloadString(payload, "from", "?")
+		to := payloadString(payload, "to", "?")
+		line = fmt.Sprintf("↻ Stream resumed on %s after %s blip.", to, from)
 	case "config:reload:auto":
 		path := payloadString(payload, "path", "")
 		line = "Config auto-reloaded."

@@ -223,7 +223,15 @@ func storeToolCache(call provider.ToolCall, res tools.Result, cache map[string]s
 	if rangeIndex != nil && !res.Truncated {
 		if path, start, end, ok := extractReadRangeRequest(call); ok {
 			bucketKey := readRangeIndexKey(path)
-			rangeIndex[bucketKey] = append(rangeIndex[bucketKey], readRangeEntry{
+			bucket := rangeIndex[bucketKey]
+			// FIFO eviction — drop the oldest entry once the bucket is at
+			// cap so a long loop reading many overlapping windows of the
+			// same file doesn't grow this slice unboundedly. The newest
+			// entry usually has the best hit rate for the next request.
+			if len(bucket) >= maxRangeEntriesPerPath {
+				bucket = bucket[1:]
+			}
+			rangeIndex[bucketKey] = append(bucket, readRangeEntry{
 				start:   start,
 				end:     end,
 				content: res.Output,

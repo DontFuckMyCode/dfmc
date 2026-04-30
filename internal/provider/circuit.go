@@ -163,6 +163,17 @@ func (r *Router) SetCircuitObserver(fn func(CircuitEvent)) {
 	r.circuitObserver = fn
 }
 
+// SetStreamRecoveredObserver installs a callback fired after a
+// streamForwardWithRecovery call swaps providers mid-stream and the
+// fallback delivered a clean StreamDone. Engine wires this to its
+// EventBus so TUIs can surface a "↻ stream resumed on <fallback>"
+// chip — without it, the recovery is invisible to the user.
+func (r *Router) SetStreamRecoveredObserver(fn func(StreamRecoveredEvent)) {
+	r.healthMu.Lock()
+	defer r.healthMu.Unlock()
+	r.streamRecoveredObserver = fn
+}
+
 // CircuitState returns a snapshot of provider names currently in the
 // "open" state. Useful for diagnostics (`dfmc status`) and tests. Empty
 // slice when all circuits are closed. Caller-owned; safe to mutate.

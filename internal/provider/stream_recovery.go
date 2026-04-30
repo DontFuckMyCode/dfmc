@@ -147,6 +147,17 @@ func (r *Router) streamForwardWithRecovery(
 			// so the caller knows recovery was attempted but did not
 			// produce a clean answer. Bound at one recovery attempt.
 			emitErr(fmt.Errorf("stream recovery on %s also failed: %w", name, recoveredErr))
+			return
+		}
+		// Recovery succeeded — fire the observer so the engine can
+		// publish a `provider:stream:recovered` event. The observer is
+		// nil-safe; tests that build a Router without engine wiring see
+		// no telemetry but still get correct stream output.
+		r.healthMu.Lock()
+		obs := r.streamRecoveredObserver
+		r.healthMu.Unlock()
+		if obs != nil {
+			obs(StreamRecoveredEvent{From: currentName, To: name, Err: terminalErr})
 		}
 		return
 	}

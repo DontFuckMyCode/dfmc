@@ -59,6 +59,16 @@ type Status struct {
 	// serving traffic the user expected from the primary. Empty (and
 	// omitted from JSON) when every circuit is closed.
 	OpenCircuits []string `json:"open_circuits,omitempty"`
+
+	// SubagentRetries is the cumulative count of transient retries
+	// fired by runSubagentRetrying since process start. Counts the
+	// retries themselves, not the underlying calls — 0 means every
+	// subagent invocation succeeded on first attempt (or no subagent
+	// activity yet). Non-zero indicates flaky upstream behaviour the
+	// retry layer is silently absorbing; if it climbs unbounded,
+	// investigate the provider rather than just trusting the eventual
+	// success.
+	SubagentRetries int64 `json:"subagent_retries,omitempty"`
 }
 
 // ActiveDriveStatus is the status-surface projection of a single

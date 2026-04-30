@@ -523,6 +523,52 @@ func TestInvalidateCacheForFiles_WildcardClearsRangeIndex(t *testing.T) {
 	}
 }
 
+// TestStoreToolCache_RangeIndexBucketCap asserts the per-path bucket
+// is bounded by maxRangeEntriesPerPath. Without the cap, a long loop
+// reading many overlapping windows of one file would grow the slice
+// unboundedly. FIFO eviction means the newest entry stays — empirically
+// it has the best hit rate against the next request.
+func TestStoreToolCache_RangeIndexBucketCap(t *testing.T) {
+	cache := map[string]string{}
+	mu := &sync.Mutex{}
+	rangeIndex := map[string][]readRangeEntry{}
+
+	// Push (cap+5) distinct windows of foo.go through storeToolCache.
+	overflow := 5
+	for i := 0; i < maxRangeEntriesPerPath+overflow; i++ {
+		start := i*10 + 1
+		end := start + 9
+		call := provider.ToolCall{Name: "tool_call", Input: map[string]any{
+			"name": "read_file",
+			"args": map[string]any{
+				"path":       "foo.go",
+				"line_start": start,
+				"line_end":   end,
+			},
+		}}
+		// Distinct content per range so we can identify which entries
+		// survived eviction.
+		content := strings.Repeat("x\n", 9) + "x"
+		storeToolCache(call, toolResult(content, false), cache, mu, rangeIndex)
+	}
+
+	bucket := rangeIndex[readRangeIndexKey("foo.go")]
+	if got := len(bucket); got != maxRangeEntriesPerPath {
+		t.Fatalf("bucket should be capped at %d, got %d", maxRangeEntriesPerPath, got)
+	}
+	// FIFO: the oldest `overflow` entries should be gone — first
+	// surviving entry should start at line (overflow*10 + 1).
+	wantFirstStart := overflow*10 + 1
+	if bucket[0].start != wantFirstStart {
+		t.Errorf("expected oldest survivor to start at %d, got %d", wantFirstStart, bucket[0].start)
+	}
+	// And the newest entry should be the very last write.
+	wantLastStart := (maxRangeEntriesPerPath+overflow-1)*10 + 1
+	if bucket[len(bucket)-1].start != wantLastStart {
+		t.Errorf("expected newest entry to start at %d, got %d", wantLastStart, bucket[len(bucket)-1].start)
+	}
+}
+
 func TestProactiveCompactRatio_FiresEarlierThanReactive(t *testing.T) {
 	// Sanity: the proactive ratio must be strictly LESS than the
 	// reactive AutoCompactThresholdRatio default (0.7) so the

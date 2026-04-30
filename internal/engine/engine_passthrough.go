@@ -67,9 +67,10 @@ func (e *Engine) Status() Status {
 		CodeMap:         codemapMetrics,
 		MemoryDegraded:  e.memoryDegraded,
 		MemoryLoadErr:   e.memoryLoadErr,
-		ActiveDrives:    activeDriveStatuses(),
-		EventsDropped:   e.EventBus.DroppedCount(),
-		OpenCircuits:    openCircuits,
+		ActiveDrives:     activeDriveStatuses(),
+		EventsDropped:    e.EventBus.DroppedCount(),
+		OpenCircuits:     openCircuits,
+		SubagentRetries:  tools.SubagentRetriesTotal(),
 	}
 }
 

@@ -165,6 +165,37 @@ func TestIsSubagentTransientError_KnownMarkers(t *testing.T) {
 	}
 }
 
+// TestSubagentRetriesTotal_IncrementsOnActualRetry asserts the
+// process-wide counter ticks exactly once per retry that fired —
+// not per call, not per failed call. A first-attempt success leaves
+// the counter alone; a transient-then-success bumps it by one.
+func TestSubagentRetriesTotal_IncrementsOnActualRetry(t *testing.T) {
+	before := SubagentRetriesTotal()
+
+	// First-try success: counter must NOT move.
+	good := &stubRunner{
+		responses: []stubResponse{
+			{res: SubagentResult{Summary: "ok"}, err: nil},
+		},
+	}
+	_, _ = runSubagentRetrying(context.Background(), good, SubagentRequest{Task: "x"}, 2)
+	if SubagentRetriesTotal() != before {
+		t.Fatalf("first-try success must not bump retry counter (before=%d after=%d)", before, SubagentRetriesTotal())
+	}
+
+	// Transient then success: counter ticks once.
+	flaky := &stubRunner{
+		responses: []stubResponse{
+			{err: errors.New("upstream returned status 503")},
+			{res: SubagentResult{Summary: "recovered"}, err: nil},
+		},
+	}
+	_, _ = runSubagentRetrying(context.Background(), flaky, SubagentRequest{Task: "x"}, 2)
+	if got := SubagentRetriesTotal() - before; got != 1 {
+		t.Fatalf("expected exactly +1 retry on transient-then-success, got +%d", got)
+	}
+}
+
 // Compile-time hint that strings is intended-imported (defensive in
 // case future edits drop the only call to strings.Contains).
 var _ = strings.Contains

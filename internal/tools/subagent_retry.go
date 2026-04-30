@@ -4,8 +4,25 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+// subagentRetriesTotal is a process-wide cumulative counter of the
+// number of times runSubagentRetrying has actually fired a retry —
+// not the number of subagent calls, just retries. Engine.Status()
+// reads this through SubagentRetriesTotal() so operators can see
+// whether transient subagent failures are happening (and how often)
+// without grepping logs.
+var subagentRetriesTotal int64
+
+// SubagentRetriesTotal returns the cumulative count of retries fired
+// by runSubagentRetrying since process start. Monotonic; safe for
+// concurrent use. 0 means either no subagent activity or all calls
+// succeeded on the first attempt.
+func SubagentRetriesTotal() int64 {
+	return atomic.LoadInt64(&subagentRetriesTotal)
+}
 
 // defaultSubagentRetryAttempts is the maximum number of retry attempts
 // for a transient sub-agent failure. The first call counts as attempt 1,
@@ -68,6 +85,12 @@ func runSubagentRetrying(ctx context.Context, runner SubagentRunner, req Subagen
 		if attempt == attempts {
 			break
 		}
+		// Count the retry now (we've decided to retry, the upcoming
+		// sleep is unconditional barring ctx cancel). Doing this here
+		// rather than after time.After means a ctx-cancel mid-backoff
+		// still records the retry intent — which matches operator
+		// intuition: "we tried to recover".
+		atomic.AddInt64(&subagentRetriesTotal, 1)
 		// Brief sleep before retry. Honour ctx cancel so we don't waste
 		// the backoff window after the user pressed Ctrl+C.
 		select {

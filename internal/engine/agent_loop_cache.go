@@ -42,6 +42,16 @@ type readRangeEntry struct {
 	content string // raw segment text — split by "\n" yields exactly (end-start+1) lines
 }
 
+// maxRangeEntriesPerPath bounds the per-path bucket so a long loop
+// that reads many overlapping windows of the same file doesn't grow
+// the index unboundedly. When a new entry would push past this, the
+// oldest entry is evicted (FIFO). 16 covers the realistic workload
+// (a refactor agent rarely retains more than a handful of distinct
+// windows per file before moving on) while staying small enough that
+// a worst-case 250 file × 16 entry index fits well under any sane
+// memory budget.
+const maxRangeEntriesPerPath = 16
+
 // readRangeIndexKey turns a project-relative path into the bucket key
 // used by the per-path range index. Lower-case + forward-slash
 // normalization so the same file referred to by different casings or

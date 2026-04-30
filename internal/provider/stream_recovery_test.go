@@ -169,6 +169,98 @@ loop:
 	}
 }
 
+// TestStreamRecoveredObserver_FiresOnSuccessfulSwap pins the telemetry
+// hook: the observer must fire exactly once with the From/To pair when
+// recovery succeeded, and NOT fire for failed-recovery or
+// content-already-delivered paths (those would mislead operators about
+// the recovery layer's effectiveness).
+func TestStreamRecoveredObserver_FiresOnSuccessfulSwap(t *testing.T) {
+	primary := &flakyStreamProvider{
+		name: "primary",
+		err:  errors.New("upstream returned status 503"),
+	}
+	fallback := &healthyStreamProvider{name: "fallback", text: "ok"}
+	r := newRouterWith(primary, fallback)
+	r.primary = "primary"
+	r.fallback = []string{"fallback"}
+
+	var (
+		gotFrom string
+		gotTo   string
+		fires   int
+	)
+	r.SetStreamRecoveredObserver(func(ev StreamRecoveredEvent) {
+		gotFrom = ev.From
+		gotTo = ev.To
+		fires++
+	})
+
+	stream, _, err := r.Stream(context.Background(), CompletionRequest{
+		Messages: []Message{{Role: types.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream open: %v", err)
+	}
+	// Drain the recovered stream.
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case ev, ok := <-stream:
+			if !ok {
+				goto done
+			}
+			if ev.Type == StreamDone {
+				goto done
+			}
+		case <-timeout:
+			t.Fatal("stream timed out")
+		}
+	}
+done:
+	if fires != 1 {
+		t.Fatalf("observer should fire exactly once, got %d", fires)
+	}
+	if gotFrom != "primary" || gotTo != "fallback" {
+		t.Errorf("expected From=primary To=fallback, got From=%q To=%q", gotFrom, gotTo)
+	}
+}
+
+// TestStreamRecoveredObserver_SkipsWhenContentAlreadyDelivered asserts
+// that the observer does NOT fire when the wrapper refuses to recover
+// (because partial content was already streamed). A misfire here would
+// tell operators "recovery worked" when in fact the user saw an error.
+func TestStreamRecoveredObserver_SkipsWhenContentAlreadyDelivered(t *testing.T) {
+	mid := &midStreamFailProvider{
+		name:       "primary",
+		preContent: "partial",
+		failAfter:  true,
+		failureErr: errors.New("status 503 mid-stream"),
+	}
+	fallback := &healthyStreamProvider{name: "fallback", text: "unused"}
+	r := newRouterWith(mid, fallback)
+	r.primary = "primary"
+	r.fallback = []string{"fallback"}
+
+	var fires int
+	r.SetStreamRecoveredObserver(func(ev StreamRecoveredEvent) {
+		fires++
+	})
+
+	stream, _, err := r.Stream(context.Background(), CompletionRequest{
+		Messages: []Message{{Role: types.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream open: %v", err)
+	}
+	// Drain until the channel closes.
+	for ev := range stream {
+		_ = ev
+	}
+	if fires != 0 {
+		t.Fatalf("observer must not fire when recovery is refused, got %d", fires)
+	}
+}
+
 // midStreamFailProvider streams some content then fails — used to pin
 // the "no recovery after content" rule.
 type midStreamFailProvider struct {
