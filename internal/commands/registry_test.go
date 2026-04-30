@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -10,6 +11,71 @@ func TestDefaultRegistry_BootsWithoutPanic(t *testing.T) {
 	r := DefaultRegistry()
 	if len(r.All()) == 0 {
 		t.Fatalf("default registry must expose commands")
+	}
+}
+
+// TestDefaultRegistry_ReturnsSingleton pins the perf contract: callers
+// share one *Registry across the process. Pre-fix every call site
+// (HTTP request, slash-menu keystroke, TUI help) rebuilt the catalog
+// (~30 Register calls + map allocations). Now sync.Once ensures one
+// build per process and pointer-equal returns thereafter.
+//
+// If someone reverts the singleton without removing this test, the
+// pointer comparison fails before any user-visible regression.
+func TestDefaultRegistry_ReturnsSingleton(t *testing.T) {
+	a := DefaultRegistry()
+	b := DefaultRegistry()
+	if a != b {
+		t.Fatalf("DefaultRegistry must return the same pointer across calls; got %p and %p", a, b)
+	}
+	// Concurrent calls also share the same instance — sync.Once
+	// serialises construction so racing first-callers can't each
+	// build their own.
+	const n = 16
+	results := make([]*Registry, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			results[idx] = DefaultRegistry()
+		}(i)
+	}
+	wg.Wait()
+	for i := 1; i < n; i++ {
+		if results[i] != results[0] {
+			t.Fatalf("concurrent DefaultRegistry returned %d distinct pointers", i+1)
+		}
+	}
+}
+
+// BenchmarkDefaultRegistry pins the post-cache cost. Pre-cache this
+// benchmark would have shown ~30 Register calls + map allocations
+// per op (call sites: web /api/v1/commands, TUI slash-menu refresh).
+// Post-cache the cost is one map lookup behind sync.Once's fast path.
+func BenchmarkDefaultRegistry(b *testing.B) {
+	// Warm — we want to measure the cached path, not the once-per-process
+	// build cost.
+	_ = DefaultRegistry()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = DefaultRegistry()
+	}
+}
+
+// BenchmarkDefaultRegistry_Rebuild mimics the pre-cache build cost: a
+// fresh NewRegistry plus a Register call for every catalog entry. This
+// is what the call sites paid on every HTTP request / keystroke / TUI
+// refresh before sync.Once landed. Comparing this number against
+// BenchmarkDefaultRegistry shows the order-of-magnitude win.
+func BenchmarkDefaultRegistry_Rebuild(b *testing.B) {
+	cmds := defaultCommands()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r := NewRegistry()
+		for _, c := range cmds {
+			_ = r.Register(c)
+		}
 	}
 }
 
