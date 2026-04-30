@@ -451,6 +451,27 @@ func TestTrimBackups_RemoveAll(t *testing.T) {
 	}
 }
 
+// TrimBackups clamps negative keep to 1 — a stale uninitialised int
+// must NOT nuke the backup directory. keep=0 stays the explicit
+// "wipe everything" knob (covered by TestTrimBackups_RemoveAll).
+func TestTrimBackups_NegativeKeepIsClampedNotWiped(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 3; i++ {
+		_ = os.WriteFile(filepath.Join(dir, fmt.Sprintf("b%d.db", i)), []byte("x"), 0o644)
+	}
+	deleted, err := TrimBackups(dir, -1)
+	if err != nil {
+		t.Fatalf("TrimBackups(-1): %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("expected 2 deleted (newest 1 kept), got %d", deleted)
+	}
+	remaining, _ := ListBackups(dir)
+	if len(remaining) != 1 {
+		t.Fatalf("expected 1 remaining (newest), got %d", len(remaining))
+	}
+}
+
 // TrimBackups on nonexistent dir is not an error.
 func TestTrimBackups_NonexistentDir(t *testing.T) {
 	deleted, err := TrimBackups(filepath.Join(t.TempDir(), "does_not_exist"), 2)

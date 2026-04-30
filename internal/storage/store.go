@@ -35,7 +35,7 @@ const (
 	// Bump this whenever a migration is added and runMigrations is updated.
 	schemaVersion = 1
 	// metaBucket is the bucket used to store db-level metadata (e.g. schema version).
-	metaBucket = "_meta"
+	metaBucket       = "_meta"
 	schemaVersionKey = "schema_version"
 )
 
@@ -258,9 +258,15 @@ func ListBackups(dir string) ([]BackupInfo, error) {
 	return out, nil
 }
 
-// TrimBackups removes all but the newest `keep` backups in dir.
-// If keep < 0 it removes all backups. Returns the number of files deleted
-// and any error encountered while reading the directory.
+// TrimBackups removes all but the newest `keep` backups in dir. Returns the
+// number of files deleted and any error encountered while reading the
+// directory.
+//
+// keep == 0 wipes every backup in dir (used by the "purge" CLI flag).
+// keep < 0 was the same wipe knob in older callers but turned out to be a
+// footgun — a stale uninitialised integer would silently nuke the backup
+// directory. Negative values are now clamped to "keep at least the newest";
+// callers that want a true wipe must pass 0 explicitly.
 func TrimBackups(dir string, keep int) (int, error) {
 	backups, err := ListBackups(dir)
 	if err != nil {
@@ -270,7 +276,7 @@ func TrimBackups(dir string, keep int) (int, error) {
 		return 0, nil
 	}
 	if keep < 0 {
-		keep = 1 // S3: keep at least the newest; negative means "remove all" was a footgun
+		keep = 1
 	}
 	if keep >= len(backups) {
 		return 0, nil

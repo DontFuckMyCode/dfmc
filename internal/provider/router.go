@@ -289,6 +289,16 @@ func (r *Router) completeWithProviderRetry(ctx context.Context, p Provider, req 
 	}
 	var errs []error
 	for _, model := range models {
+		// Same per-iteration ctx check the cross-provider cascade does:
+		// once ctx is dead, every subsequent model would just echo the
+		// sentinel back, so surface it directly instead of running the
+		// rest of the chain on an already-cancelled context.
+		if cerr := ctx.Err(); cerr != nil {
+			if len(errs) == 0 {
+				return nil, p.Name(), cerr
+			}
+			return nil, p.Name(), errors.Join(append(errs, cerr)...)
+		}
 		reqWithModel := req
 		reqWithModel.Model = model
 		resp, err := r.completeWithThrottleRetry(ctx, p, reqWithModel)
@@ -646,6 +656,14 @@ func (r *Router) streamWithProviderRetry(ctx context.Context, p Provider, req Co
 	}
 	var errs []error
 	for _, model := range models {
+		// Mirror the non-stream path: bail early on dead ctx so we don't
+		// burn the rest of the chain echoing the sentinel back.
+		if cerr := ctx.Err(); cerr != nil {
+			if len(errs) == 0 {
+				return nil, p.Name(), cerr
+			}
+			return nil, p.Name(), errors.Join(append(errs, cerr)...)
+		}
 		reqWithModel := req
 		reqWithModel.Model = model
 		stream, err := r.streamWithThrottleRetry(ctx, p, reqWithModel)
