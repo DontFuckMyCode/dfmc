@@ -40,7 +40,7 @@ func NewNamedAnthropicProvider(name, model, apiKey, baseURL string, maxTokens, m
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		maxTokens:  maxTokens,
 		maxContext: maxContext,
-		httpClient: newProviderHTTPClient(httpTimeout),
+		httpClient: newProviderHTTPClient(httpTimeout, baseURL),
 	}
 }
 

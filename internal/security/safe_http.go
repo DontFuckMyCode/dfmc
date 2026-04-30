@@ -1,15 +1,14 @@
 package security
 
-// safe_http.go — SSRF-guarded http.Client factory shared between
-// the LLM provider router (internal/provider) and the CLI surfaces
-// that fetch models.dev catalogs / GitHub release metadata
-// (internal/config, ui/cli/cli_update). Closes VULN-057 / VULN-058.
-//
-// The provider package keeps its own copy of the dialer wrap
-// because it has different timeouts and a Transport tuned for
-// streaming. This file is for the simpler "fetch a small JSON
-// blob over HTTPS once" callers that don't justify their own
-// transport tuning.
+// safe_http.go — SSRF-guarded http.Client factory used by both
+// the LLM provider router (internal/provider, via the exported
+// WrapDialWithSSRFGuard / EndpointIsLoopback helpers) and the
+// CLI surfaces that fetch models.dev catalogs / GitHub release
+// metadata (internal/config, ui/cli/cli_update). Closes
+// VULN-057 / VULN-058 plus the follow-up that found the provider
+// transport had no guard at all (the previous version of this
+// comment claimed the provider "kept its own copy" — that was
+// historical fiction; provider now reuses these helpers).
 //
 // The guard refuses connections to private / loopback / link-
 // local / multicast / unspecified addresses by default. If the
@@ -64,6 +63,16 @@ func NewSafeHTTPClient(timeout time.Duration, endpoint string) *http.Client {
 	}
 }
 
+// EndpointIsLoopback reports whether `raw` (a URL string) points at a
+// loopback host (localhost, 127.0.0.1, ::1). Callers building their own
+// http.Client use this to decide whether to engage WrapDialWithSSRFGuard:
+// a loopback endpoint is the explicit operator opt-in for local mirrors
+// (Ollama, on-prem proxies) where SSRF "guarding" against the very host
+// you're talking to is wrong.
+func EndpointIsLoopback(raw string) bool {
+	return endpointIsLoopback(raw)
+}
+
 func endpointIsLoopback(raw string) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -86,9 +95,18 @@ func endpointIsLoopback(raw string) bool {
 	return false
 }
 
-// wrapDialWithSSRFGuard mirrors the provider package's guard but
-// lives here so the CLI / config callers can reuse it without
-// taking a dependency on internal/provider.
+// WrapDialWithSSRFGuard wraps an inner DialContext with the SSRF
+// guard. Exported so callers building their own http.Client (e.g.
+// internal/provider, which needs its own Transport tuning for
+// streaming response bodies) can install the same defense without
+// duplicating the rebinding-safe resolution logic.
+func WrapDialWithSSRFGuard(inner func(ctx context.Context, network, addr string) (net.Conn, error)) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return wrapDialWithSSRFGuard(inner)
+}
+
+// wrapDialWithSSRFGuard is the internal implementation. The exported
+// version above is just a thin pass-through; we keep the unexported
+// name in use across this file's test suite to minimise churn.
 //
 // DNS-rebinding TOCTOU defense: the previous version did its own
 // LookupIPAddr to validate, then handed the original hostname to

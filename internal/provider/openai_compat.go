@@ -36,7 +36,7 @@ func NewOpenAICompatibleProvider(name, model, apiKey, baseURL string, maxTokens,
 		baseURL:    normalizeOpenAIBaseURL(name, baseURL),
 		maxTokens:  maxTokens,
 		maxContext: maxContext,
-		httpClient: newProviderHTTPClient(httpTimeout),
+		httpClient: newProviderHTTPClient(httpTimeout, baseURL),
 	}
 }
 

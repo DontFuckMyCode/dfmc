@@ -22,6 +22,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/security"
 )
 
 // defaultResponseHeaderTimeout is the ceiling we give a provider to send
@@ -39,20 +41,35 @@ const defaultResponseHeaderTimeout = 180 * time.Second
 // Callers still bound total call duration via the request context when
 // they need to — e.g. router-level retry loops pass a WithTimeout ctx.
 //
+// SSRF guard: the dialer is wrapped with security.WrapDialWithSSRFGuard
+// unless `endpoint` itself is a loopback URL (operator opt-in for local
+// inference servers like Ollama or on-prem mirrors). Without this guard
+// any provider whose endpoint got mistyped — or maliciously rewritten
+// in a config file — would happily dial cloud-metadata IPs
+// (169.254.169.254) or internal services and exfiltrate the response
+// in the LLM body. Provider endpoints are operator-trusted, but
+// defense-in-depth on the transport that carries every API key in the
+// request headers is worth the ~one-syscall cost.
+//
 // responseHeaderTimeout is the ResponseHeaderTimeout on the transport;
 // it bounds time-to-first-byte only (not total body read time).
 // Pass 0 to use the default (180s).
-func newProviderHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
+func newProviderHTTPClient(responseHeaderTimeout time.Duration, endpoint string) *http.Client {
 	if responseHeaderTimeout == 0 {
 		responseHeaderTimeout = defaultResponseHeaderTimeout
 	}
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	dialContext := dialer.DialContext
+	if !security.EndpointIsLoopback(endpoint) {
+		dialContext = security.WrapDialWithSSRFGuard(dialContext)
+	}
 	return &http.Client{
 		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           dialContext,
 			ForceAttemptHTTP2:     true,
 			MaxIdleConns:          20,
 			IdleConnTimeout:       90 * time.Second,

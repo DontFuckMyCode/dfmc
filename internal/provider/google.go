@@ -53,7 +53,7 @@ func NewGoogleProvider(model, apiKey, baseURL string, maxTokens, maxContext int,
 		baseURL:    baseURL,
 		maxTokens:  maxTokens,
 		maxContext: maxContext,
-		httpClient: newProviderHTTPClient(httpTimeout),
+		httpClient: newProviderHTTPClient(httpTimeout, baseURL),
 	}
 }
 
