@@ -210,18 +210,28 @@ func containsStageMarker(q string) bool {
 	return stageMarkerRE.MatchString(q)
 }
 
+// truncateTitle cuts s to at most max RUNES (not bytes), preferring an ASCII
+// space in the trailing 15-rune window so the cut lands on a word boundary.
+// The package tests Turkish stage markers (önce/sonra/ardından) and titles
+// from those queries are routinely multi-byte; a byte-indexed cut could land
+// inside a rune (e.g. between the 0xC3 and 0xA7 of "ç") and emit invalid
+// UTF-8 followed by the ellipsis. Walking by rune index keeps the boundary
+// safe regardless of input character set.
 func truncateTitle(s string, max int) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= max {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	// Prefer word boundary under the cap.
 	cut := max
 	for i := max; i > max-15 && i > 0; i-- {
-		if s[i] == ' ' {
+		if runes[i] == ' ' {
 			cut = i
 			break
 		}
 	}
-	return strings.TrimSpace(s[:cut]) + "…"
+	return strings.TrimSpace(string(runes[:cut])) + "…"
 }

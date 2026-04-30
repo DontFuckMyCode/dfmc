@@ -3,6 +3,7 @@ package planning
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSplitTask_Numbered(t *testing.T) {
@@ -94,6 +95,35 @@ func TestSplitTask_TitleTruncated(t *testing.T) {
 	}
 	if !strings.HasSuffix(plan.Subtasks[0].Title, "…") {
 		t.Fatalf("truncated title should end with ellipsis, got %q", plan.Subtasks[0].Title)
+	}
+}
+
+// TestTruncateTitle_MultibyteRuneCut regresses a UTF-8 corruption bug:
+// the previous byte-indexed implementation could land its cut inside a
+// multi-byte rune when no ASCII space fell within the 15-rune word-boundary
+// window. The output then ended in an orphan UTF-8 start byte (0xC3 for
+// "ç") immediately followed by the 0xE2 of "…" — not a valid sequence.
+// The package's own TestSplitTask_TurkishStages exercises Turkish input,
+// so this is a realistic input shape, not a synthetic one.
+func TestTruncateTitle_MultibyteRuneCut(t *testing.T) {
+	// 51 ASCII chars puts the byte cursor at byte 60 inside the 5th ç,
+	// which is two bytes per rune. No spaces in the trailing window.
+	in := strings.Repeat("a", 51) + strings.Repeat("ç", 15)
+	out := truncateTitle(in, 60)
+	if !utf8.ValidString(out) {
+		t.Fatalf("truncated title is not valid UTF-8: %x", []byte(out))
+	}
+	if !strings.HasSuffix(out, "…") {
+		t.Fatalf("expected trailing ellipsis, got %q", out)
+	}
+	// The cut should sit on a rune boundary, so decoding back to runes
+	// must give a non-empty string with the ellipsis as its final rune.
+	runes := []rune(out)
+	if len(runes) == 0 {
+		t.Fatalf("truncation produced empty title")
+	}
+	if runes[len(runes)-1] != '…' {
+		t.Fatalf("last rune should be ellipsis, got %q", runes[len(runes)-1])
 	}
 }
 
