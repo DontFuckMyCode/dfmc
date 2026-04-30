@@ -3,7 +3,16 @@ package codemap
 func (g *Graph) StronglyConnectedComponents() [][]string {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	return g.sccLocked()
+}
 
+// sccLocked computes Tarjan's SCC over the current graph state. Caller
+// must hold g.mu (read or write); the helper exists so Cycles() can run
+// SCC and the per-component self-loop pass under a single RLock — the
+// previous implementation released the lock between SCC and hasSelfLoop,
+// leaving a mutation window where a node could disappear or grow a
+// self-loop and the result would reflect neither state cleanly.
+func (g *Graph) sccLocked() [][]string {
 	var (
 		index   int
 		stack   []string
@@ -59,7 +68,9 @@ func (g *Graph) StronglyConnectedComponents() [][]string {
 }
 
 func (g *Graph) Cycles() [][]string {
-	scc := g.StronglyConnectedComponents()
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	scc := g.sccLocked()
 	out := make([][]string, 0)
 	for _, comp := range scc {
 		if len(comp) > 1 {
@@ -67,7 +78,7 @@ func (g *Graph) Cycles() [][]string {
 			continue
 		}
 		id := comp[0]
-		if g.hasSelfLoop(id) {
+		if g.hasSelfLoopLocked(id) {
 			out = append(out, comp)
 		}
 	}
@@ -77,6 +88,13 @@ func (g *Graph) Cycles() [][]string {
 func (g *Graph) hasSelfLoop(id string) bool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	return g.hasSelfLoopLocked(id)
+}
+
+// hasSelfLoopLocked is the lock-free body of hasSelfLoop. Caller must
+// hold g.mu (read or write). Used by Cycles() to keep SCC + self-loop
+// inspection inside a single RLock.
+func (g *Graph) hasSelfLoopLocked(id string) bool {
 	for k := range g.outgoing[id] {
 		if k.Node == id {
 			return true

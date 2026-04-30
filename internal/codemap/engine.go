@@ -57,6 +57,15 @@ func (e *Engine) BuildFromFiles(ctx context.Context, paths []string, onProgress 
 	total := len(paths)
 
 	for i, path := range paths {
+		// Cancellation must be checked every iteration, not only on the
+		// progress-callback boundary below — a run that's overwhelmingly
+		// parse-failures (or all empty paths) never increments
+		// `processed`, so the old `processed%50 == 0` gate could leave
+		// ctx unchecked for an entire batch. ctx.Err() is a single
+		// atomic load; the cost is negligible compared to ParseFile.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if strings.TrimSpace(path) == "" {
 			skipped++
 			continue
@@ -127,14 +136,11 @@ func (e *Engine) BuildFromFiles(ctx context.Context, paths []string, onProgress 
 			}
 		}
 
-		// Check cancellation and report progress every 50 files.
+		// Progress callback every 50 processed files, plus the final
+		// iteration. Cancellation is already polled at the top of the
+		// loop so we don't need to re-check here.
 		if processed%50 == 0 || i == total-1 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				callback(processed, total)
-			}
+			callback(processed, total)
 		}
 	}
 

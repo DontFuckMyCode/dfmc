@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -45,6 +46,41 @@ func (m *multiModelStub) Stream(ctx context.Context, req CompletionRequest) (<-c
 func (m *multiModelStub) CountTokens(text string) int { return len(text) / 4 }
 func (m *multiModelStub) MaxContext() int             { return 100_000 }
 func (m *multiModelStub) Hints() ProviderHints        { return ProviderHints{SupportsTools: m.supports} }
+
+// TestIsTransient_StructuredStatusError exercises the errors.As fast
+// path: providers that wrap upstream HTTP failures in *StatusError get
+// an exact classification regardless of the rendered string, so a
+// provider rephrasing its Error() output can never silently break the
+// model fallback chain.
+func TestIsTransient_StructuredStatusError(t *testing.T) {
+	transient := []*StatusError{
+		{Provider: "anthropic", StatusCode: 500, Body: "internal"},
+		{Provider: "anthropic", StatusCode: 502, Body: "bad gateway"},
+		{Provider: "openai", StatusCode: 503, Body: "overloaded"},
+		{Provider: "google", StatusCode: 504, Body: "timeout"},
+		{Provider: "openai", StatusCode: 408, Body: "request timeout"},
+	}
+	for _, e := range transient {
+		// Wrap in fmt.Errorf to verify errors.As traverses the chain.
+		err := fmt.Errorf("upstream call failed: %w", e)
+		if !isTransient(err) {
+			t.Errorf("expected transient via errors.As: %v", err)
+		}
+	}
+	deterministic := []*StatusError{
+		{Provider: "anthropic", StatusCode: 400, Body: "bad request"},
+		{Provider: "anthropic", StatusCode: 401, Body: "invalid api key"},
+		{Provider: "openai", StatusCode: 403, Body: "forbidden"},
+		{Provider: "openai", StatusCode: 404, Body: "model not found"},
+		{Provider: "openai", StatusCode: 422, Body: "validation"},
+	}
+	for _, e := range deterministic {
+		err := fmt.Errorf("upstream call failed: %w", e)
+		if isTransient(err) {
+			t.Errorf("expected NOT transient via errors.As: %v", err)
+		}
+	}
+}
 
 // TestIsTransient_KnownPatterns pins the classifier behaviour against
 // representative error strings produced by the providers and the network

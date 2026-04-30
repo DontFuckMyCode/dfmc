@@ -356,6 +356,13 @@ func isTransient(err error) bool {
 	if errors.Is(err, ErrProviderUnavailable) {
 		return true
 	}
+	// Fast path: providers that wrap their HTTP failures in *StatusError
+	// give us an exact answer. Substring fallback below covers providers
+	// that still return plain fmt.Errorf strings.
+	var se *StatusError
+	if errors.As(err, &se) {
+		return se.IsTransient()
+	}
 	msg := strings.ToLower(err.Error())
 	// 5xx responses from upstream — providers stringify these as
 	// "anthropic error status 503: ..." / "<name> error status 502: ...".

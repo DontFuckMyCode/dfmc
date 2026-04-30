@@ -50,7 +50,7 @@ func (p *AnthropicProvider) Name() string {
 	}
 	return p.name
 }
-func (p *AnthropicProvider) Model() string   { return p.model }
+func (p *AnthropicProvider) Model() string    { return p.model }
 func (p *AnthropicProvider) Models() []string { return []string{p.model} }
 
 func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
@@ -107,7 +107,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 		if isThrottleStatus(resp.StatusCode) {
 			return nil, newThrottledErrorFromResponse("anthropic", resp, string(raw))
 		}
-		return nil, fmt.Errorf("anthropic error status %d: %s", resp.StatusCode, string(raw))
+		return nil, &StatusError{Provider: "anthropic", StatusCode: resp.StatusCode, Body: string(raw)}
 	}
 	if errMsg := parseCommonProviderError(raw); errMsg != "" {
 		return nil, fmt.Errorf("anthropic provider error: %s", errMsg)
@@ -194,7 +194,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 		if isThrottleStatus(resp.StatusCode) {
 			return nil, newThrottledErrorFromResponse("anthropic", resp, string(raw))
 		}
-		return nil, fmt.Errorf("anthropic error status %d: %s", resp.StatusCode, string(raw))
+		return nil, &StatusError{Provider: "anthropic", StatusCode: resp.StatusCode, Body: string(raw)}
 	}
 
 	ch := make(chan StreamEvent, 32)

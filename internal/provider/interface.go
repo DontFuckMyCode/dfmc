@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -19,7 +20,7 @@ var (
 	// this specific request, and surfacing (nil, "", nil) the way the
 	// zero-iteration fallthrough used to would NPE the agent loop three
 	// frames up instead of telling the operator what to fix.
-	ErrNoCapableProvider   = errors.New("no capable provider available")
+	ErrNoCapableProvider = errors.New("no capable provider available")
 	// ErrContextOverflow is a hint the router uses to decide whether to
 	// compact the conversation and retry the same provider before falling
 	// over to the next one. Providers that can detect the condition should
@@ -60,6 +61,47 @@ func (e *ThrottledError) Error() string {
 // Unwrap routes errors.Is(err, ErrProviderThrottled) through the
 // sentinel so existing branching keeps working without an errors.As.
 func (e *ThrottledError) Unwrap() error { return ErrProviderThrottled }
+
+// StatusError carries an upstream HTTP failure that was NOT a throttle
+// (those use ThrottledError + ErrProviderThrottled). Providers should
+// wrap their non-throttle 4xx/5xx responses in this type so the router's
+// transient classifier can branch on StatusCode exactly via errors.As
+// instead of substring-matching the formatted error string. Substring
+// matching stays in place as a fallback for providers that haven't
+// adopted this type yet, so the upgrade is incremental.
+type StatusError struct {
+	Provider   string
+	StatusCode int
+	// Body is the response body excerpt for diagnostics. Truncate at
+	// the producer side — this string lands in Error() output and gets
+	// joined into provider-cascade error reports.
+	Body string
+}
+
+func (e *StatusError) Error() string {
+	if e == nil {
+		return "provider status error"
+	}
+	if e.Provider == "" {
+		return fmt.Sprintf("provider error status %d: %s", e.StatusCode, e.Body)
+	}
+	return fmt.Sprintf("%s error status %d: %s", e.Provider, e.StatusCode, e.Body)
+}
+
+// IsTransient reports whether the underlying status code is one the
+// router should retry across the model fallback chain. 5xx are server-
+// side blips — exactly what FallbackModels exists for. 408 (Request
+// Timeout) is also transient; everything else (4xx auth/validation) is
+// authoritative and must surface immediately.
+func (e *StatusError) IsTransient() bool {
+	if e == nil {
+		return false
+	}
+	if e.StatusCode == 408 {
+		return true
+	}
+	return e.StatusCode >= 500 && e.StatusCode < 600
+}
 
 // ToolDescriptor is the provider-agnostic description of one callable tool.
 // Anthropic and OpenAI providers serialize this into their native tool/
