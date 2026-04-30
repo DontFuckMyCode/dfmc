@@ -51,6 +51,14 @@ type Status struct {
 	// but operators should investigate before assuming the loop is
 	// hung. Increments are monotonic for the lifetime of the process.
 	EventsDropped uint64 `json:"events_dropped,omitempty"`
+
+	// OpenCircuits lists provider names whose circuit breaker has
+	// tripped and is currently in cooldown. The router skips these
+	// providers entirely on Complete/Stream until cooldown elapses,
+	// so a non-empty list explains why fallback providers may be
+	// serving traffic the user expected from the primary. Empty (and
+	// omitted from JSON) when every circuit is closed.
+	OpenCircuits []string `json:"open_circuits,omitempty"`
 }
 
 // ActiveDriveStatus is the status-surface projection of a single
@@ -278,9 +286,9 @@ type ContextBreakdown struct {
 	Available int `json:"available"`
 	// Percentages (0.0-1.0)
 	SystemPromptPct  float64 `json:"system_prompt_pct"`
-	HistoryPct        float64 `json:"history_pct"`
+	HistoryPct       float64 `json:"history_pct"`
 	ContextChunksPct float64 `json:"context_chunks_pct"`
-	ResponsePct       float64 `json:"response_pct"`
+	ResponsePct      float64 `json:"response_pct"`
 	// Files in context
 	FilesInContext []string `json:"files_in_context"`
 	// Configuration

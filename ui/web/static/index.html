@@ -92,6 +92,8 @@ h1 {
 .chip span, .metric span { display: block; margin-top: 4px; font: 600 14px var(--font-mono); }
 .stats-grid { align-content: start; padding: 24px; }
 .metric { min-width: 140px; flex: 1 1 140px; }
+.metric.metric-warn span,
+.metric span.metric-warn { color: #dc7c1c; }
 .workspace {
 	display: grid;
 	grid-template-columns: minmax(320px, 1.15fr) minmax(420px, 1.6fr) minmax(300px, 1fr);
@@ -481,6 +483,7 @@ textarea {
 			<div class="metric"><strong>Context</strong><span id="metric-context">-</span></div>
 			<div class="metric"><strong>Gate</strong><span id="metric-gate" title="Tool approval gate">-</span></div>
 			<div class="metric"><strong>Hooks</strong><span id="metric-hooks" title="Lifecycle hooks registered">-</span></div>
+			<div class="metric"><strong>Circuits</strong><span id="metric-circuits" title="Provider circuit breakers — open list when one or more providers are skipped due to consecutive failures">-</span></div>
 		</div>
 	</section>
 
@@ -816,6 +819,22 @@ async function loadStatus() {
 		const keys = Object.keys(perEvent).sort();
 		const parts = keys.map(k => k + "=" + perEvent[k]);
 		setText("metric-hooks", hooks.total + " (" + parts.slice(0, 3).join(", ") + (keys.length > 3 ? ", …" : "") + ")");
+	}
+
+	const openCircuits = Array.isArray(data.open_circuits) ? data.open_circuits : [];
+	const circuitsEl = document.getElementById("metric-circuits");
+	if (circuitsEl) {
+		if (openCircuits.length === 0) {
+			circuitsEl.textContent = "all closed";
+			circuitsEl.classList.remove("metric-warn");
+		} else {
+			const preview = openCircuits.slice(0, 2).join(", ");
+			const text = openCircuits.length > 2
+				? (openCircuits.length + " open: " + preview + ", …")
+				: (openCircuits.length + " open: " + preview);
+			circuitsEl.textContent = text;
+			circuitsEl.classList.add("metric-warn");
+		}
 	}
 }
 

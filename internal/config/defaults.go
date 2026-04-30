@@ -96,6 +96,7 @@ func DefaultConfig() *Config {
 				HandoffBriefMaxTokens:     500,
 				AutoHandoffThresholdRatio: 0.9,
 			},
+			ToolDefaultTimeoutSeconds: 30,
 		},
 		Hooks: HooksConfig{
 			AllowProject: false,

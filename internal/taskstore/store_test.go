@@ -144,6 +144,96 @@ func TestUpdateTaskRejectsBadInputs(t *testing.T) {
 	}
 }
 
+// TestUpdateTaskBumpsVersion pins that every successful mutation
+// increments the persisted Version field — UpdateTaskCAS callers rely
+// on this to detect concurrent writers.
+func TestUpdateTaskBumpsVersion(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-ver-1", Title: "v0", State: supervisor.TaskPending})
+
+	for i := 1; i <= 3; i++ {
+		err := s.UpdateTask("tsk-ver-1", func(t *supervisor.Task) error {
+			t.Title = "v" + string(rune('0'+i))
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("UpdateTask iter %d: %v", i, err)
+		}
+		got, _ := s.LoadTask("tsk-ver-1")
+		if got.Version != i {
+			t.Fatalf("after %d updates Version=%d, want %d", i, got.Version, i)
+		}
+	}
+}
+
+// TestUpdateTaskCAS_DetectsConcurrentWriter pins the optimistic
+// concurrency contract: a CAS update with a stale expected version
+// must return ErrTaskVersionConflict and leave the stored task
+// untouched.
+func TestUpdateTaskCAS_DetectsConcurrentWriter(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-cas-1", Title: "fresh", State: supervisor.TaskPending})
+
+	// First update by an "other" writer bumps Version 0 → 1.
+	if err := s.UpdateTask("tsk-cas-1", func(t *supervisor.Task) error {
+		t.Title = "by-other"
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateTask (other): %v", err)
+	}
+
+	// Our caller still holds expectedVersion=0 from a prior LoadTask.
+	err := s.UpdateTaskCAS("tsk-cas-1", 0, func(t *supervisor.Task) error {
+		t.Title = "by-stale-caller"
+		return nil
+	})
+	if !errors.Is(err, ErrTaskVersionConflict) {
+		t.Fatalf("expected ErrTaskVersionConflict, got %v", err)
+	}
+
+	// Stored task must still reflect the other writer's value.
+	got, _ := s.LoadTask("tsk-cas-1")
+	if got.Title != "by-other" {
+		t.Fatalf("stale CAS leaked through: title=%q", got.Title)
+	}
+	if got.Version != 1 {
+		t.Fatalf("Version not preserved: got %d, want 1", got.Version)
+	}
+}
+
+// TestUpdateTaskCAS_SucceedsWithFreshVersion pins the happy path: a
+// CAS update with the current observed version succeeds and bumps
+// Version by exactly one.
+func TestUpdateTaskCAS_SucceedsWithFreshVersion(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-cas-2", Title: "fresh"})
+
+	// Bump version once via UpdateTask so we're at v=1.
+	_ = s.UpdateTask("tsk-cas-2", func(t *supervisor.Task) error {
+		t.State = supervisor.TaskRunning
+		return nil
+	})
+
+	// Caller observed v=1, then CASes with that.
+	err := s.UpdateTaskCAS("tsk-cas-2", 1, func(t *supervisor.Task) error {
+		t.State = supervisor.TaskDone
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateTaskCAS happy path: %v", err)
+	}
+	got, _ := s.LoadTask("tsk-cas-2")
+	if got.State != supervisor.TaskDone {
+		t.Errorf("CAS update did not apply: state=%q", got.State)
+	}
+	if got.Version != 2 {
+		t.Errorf("Version=%d, want 2", got.Version)
+	}
+}
+
 func TestDeleteTask(t *testing.T) {
 	db := tempDB(t)
 	s := NewStore(db)

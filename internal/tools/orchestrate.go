@@ -275,12 +275,15 @@ func (t *OrchestrateTool) runStage(
 		"title": title,
 		"hint":  hint,
 	}
-	res, err := runner.RunSubagent(ctx, req)
+	res, err := runSubagentRetrying(ctx, runner, req, defaultSubagentRetryAttempts)
 	stage["tool_calls"] = res.ToolCalls
 	stage["duration_ms"] = res.DurationMs
 	if err != nil {
 		stage["error"] = err.Error()
 		return stage, err
+	}
+	if attempts, ok := res.Data["attempts"]; ok {
+		stage["attempts"] = attempts
 	}
 	stage["summary"] = strings.TrimSpace(res.Summary)
 	return stage, nil

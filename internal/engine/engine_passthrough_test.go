@@ -103,16 +103,16 @@ func TestParkedAgentDetails_WithParked(t *testing.T) {
 	e := newTestEngineForPassthrough(t)
 	e.agentMu.Lock()
 	e.agentParked = &parkedAgentState{
-		Question:          "fix the parser",
-		Step:              5,
-		CumulativeSteps:   12,
-		TotalTokens:       50000,
-		CumulativeTokens:  45000,
-		ContextTokens:     8000,
-		LastProvider:      "anthropic",
-		LastModel:         "claude-opus-4-7",
-		ToolSource:        "edit_file",
-		ParkedAt:          time.Now(),
+		Question:         "fix the parser",
+		Step:             5,
+		CumulativeSteps:  12,
+		TotalTokens:      50000,
+		CumulativeTokens: 45000,
+		ContextTokens:    8000,
+		LastProvider:     "anthropic",
+		LastModel:        "claude-opus-4-7",
+		ToolSource:       "edit_file",
+		ParkedAt:         time.Now(),
 	}
 	e.agentMu.Unlock()
 	details, ok := e.ParkedAgentDetails()

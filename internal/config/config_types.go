@@ -13,25 +13,25 @@ package config
 import "strings"
 
 type Config struct {
-	Version   int             `yaml:"version"`
+	Version   int                       `yaml:"version"`
 	Providers ProvidersConfig           `yaml:"providers"`
 	Routing   RoutingConfig             `yaml:"routing"`
 	Pipelines map[string]PipelineConfig `yaml:"pipelines"`
-	Context   ContextConfig   `yaml:"context"`
-	Memory    MemoryConfig    `yaml:"memory"`
-	Security  SecurityConfig  `yaml:"security"`
-	Tools     ToolsConfig     `yaml:"tools"`
-	Agent     AgentConfig     `yaml:"agent"`
-	Hooks     HooksConfig     `yaml:"hooks"`
-	Plugins   PluginsConfig   `yaml:"plugins"`
-	TUI       TUIConfig       `yaml:"tui"`
-	Web       WebConfig       `yaml:"web"`
-	Remote    RemoteConfig    `yaml:"remote"`
-	Project   ProjectConfig   `yaml:"project"`
-	Coach     CoachConfig     `yaml:"coach"`
-	Intent    IntentConfig    `yaml:"intent"`
-	AST       ASTConfig       `yaml:"ast"`
-	MCP       MCPConfig       `yaml:"mcp"`
+	Context   ContextConfig             `yaml:"context"`
+	Memory    MemoryConfig              `yaml:"memory"`
+	Security  SecurityConfig            `yaml:"security"`
+	Tools     ToolsConfig               `yaml:"tools"`
+	Agent     AgentConfig               `yaml:"agent"`
+	Hooks     HooksConfig               `yaml:"hooks"`
+	Plugins   PluginsConfig             `yaml:"plugins"`
+	TUI       TUIConfig                 `yaml:"tui"`
+	Web       WebConfig                 `yaml:"web"`
+	Remote    RemoteConfig              `yaml:"remote"`
+	Project   ProjectConfig             `yaml:"project"`
+	Coach     CoachConfig               `yaml:"coach"`
+	Intent    IntentConfig              `yaml:"intent"`
+	AST       ASTConfig                 `yaml:"ast"`
+	MCP       MCPConfig                 `yaml:"mcp"`
 }
 
 // ASTConfig holds runtime knobs for the AST engine. Today only the
@@ -190,6 +190,21 @@ type AgentConfig struct {
 	// token spend stays flat even across many tool rounds. Strictly offline -
 	// no extra LLM call - to honour DFMC's token-miser promise.
 	ContextLifecycle ContextLifecycleConfig `yaml:"context_lifecycle"`
+
+	// ToolDefaultTimeoutSeconds is the per-Execute deadline applied to every
+	// tool whose name doesn't appear in ToolTimeouts and isn't self-managed
+	// (run_command, web_fetch, web_search, delegate_task, orchestrate,
+	// patch_validation, benchmark — these own their own deadlines because
+	// they wrap network/process work or recursive agent loops where a flat
+	// outer cap would either be too tight or fight with internal timeouts).
+	// 0 disables the gate entirely; default 30 seconds.
+	ToolDefaultTimeoutSeconds int `yaml:"tool_default_timeout_seconds"`
+
+	// ToolTimeouts is per-tool override in seconds. Set 0 to opt a specific
+	// tool out of the default. Self-managed tools (see above) ignore both
+	// this map and the default — modify their own knobs (e.g. RunCommand's
+	// timeout param, web HTTP client) instead.
+	ToolTimeouts map[string]int `yaml:"tool_timeouts"`
 }
 
 type ContextLifecycleConfig struct {
@@ -221,17 +236,17 @@ type ProvidersConfig struct {
 }
 
 type ModelConfig struct {
-	APIKey      string   `yaml:"api_key,omitempty"`
-	BaseURL     string   `yaml:"base_url,omitempty"`
-	Models      []string `yaml:"models,omitempty"` // ordered list, first = preferred
+	APIKey         string   `yaml:"api_key,omitempty"`
+	BaseURL        string   `yaml:"base_url,omitempty"`
+	Models         []string `yaml:"models,omitempty"`          // ordered list, first = preferred
 	FallbackModels []string `yaml:"fallback_models,omitempty"` // tried in order when preferred model fails
-	Model      string   `yaml:"model,omitempty"` // deprecated single-model alias (backward compat)
-	MaxTokens   int      `yaml:"max_tokens,omitempty"`
-	MaxContext  int      `yaml:"max_context,omitempty"`
-	Protocol    string   `yaml:"protocol,omitempty"`
-	Region      string   `yaml:"region,omitempty"`
-	HTTPTimeout int      `yaml:"http_timeout,omitempty"` // response header timeout in seconds; 0 uses default (180s)
-	Tags        []string `yaml:"tags,omitempty"` // capability tags e.g. "code", "review", "fast", "cheap"
+	Model          string   `yaml:"model,omitempty"`           // deprecated single-model alias (backward compat)
+	MaxTokens      int      `yaml:"max_tokens,omitempty"`
+	MaxContext     int      `yaml:"max_context,omitempty"`
+	Protocol       string   `yaml:"protocol,omitempty"`
+	Region         string   `yaml:"region,omitempty"`
+	HTTPTimeout    int      `yaml:"http_timeout,omitempty"` // response header timeout in seconds; 0 uses default (180s)
+	Tags           []string `yaml:"tags,omitempty"`         // capability tags e.g. "code", "review", "fast", "cheap"
 	// CostPer1kTokens is the approximate cost in USD per 1k tokens (input+output)
 	// at the time of configuration. Used by cost-weighted model selection to
 	// prefer cheaper models when capability is equal. Not persisted — derived
@@ -276,17 +291,17 @@ type RoutingConfig struct {
 }
 
 type RoutingRule struct {
-	Condition    string   `yaml:"condition"`
-	Provider     string   `yaml:"provider"`
-	Model        string   `yaml:"model,omitempty"`
-	Priority     int      `yaml:"priority"`                  // higher = evaluated first
-	ProviderTag  string   `yaml:"provider_tag,omitempty"`    // tag to match against Todo.ProviderTag
-	WorkerClass  string   `yaml:"worker_class,omitempty"`    // worker class filter
-	Verification string   `yaml:"verification,omitempty"`    // verification level filter
-	MinConfidence float64 `yaml:"min_confidence,omitempty"`  // minimum confidence threshold
-	FileScope    []string `yaml:"file_scope,omitempty"`     // glob patterns for file scope matching
-	Role         string   `yaml:"role,omitempty"`            // role filter
-	Profile      string   `yaml:"profile,omitempty"`        // profile name to return on match
+	Condition     string   `yaml:"condition"`
+	Provider      string   `yaml:"provider"`
+	Model         string   `yaml:"model,omitempty"`
+	Priority      int      `yaml:"priority"`                 // higher = evaluated first
+	ProviderTag   string   `yaml:"provider_tag,omitempty"`   // tag to match against Todo.ProviderTag
+	WorkerClass   string   `yaml:"worker_class,omitempty"`   // worker class filter
+	Verification  string   `yaml:"verification,omitempty"`   // verification level filter
+	MinConfidence float64  `yaml:"min_confidence,omitempty"` // minimum confidence threshold
+	FileScope     []string `yaml:"file_scope,omitempty"`     // glob patterns for file scope matching
+	Role          string   `yaml:"role,omitempty"`           // role filter
+	Profile       string   `yaml:"profile,omitempty"`        // profile name to return on match
 }
 
 // PipelineConfig is a named ordered chain of provider+model steps.

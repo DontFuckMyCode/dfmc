@@ -87,6 +87,46 @@ type Engine struct {
 	pathLocks sync.Map
 }
 
+// selfManagedTimeoutTools is the static set of tools whose Execute owns
+// its own deadline — wrapping them with the engine-level cap either
+// fights an internal timeout (run_command, web client) or truncates a
+// legitimately long inner loop (delegate_task, orchestrate). The outer
+// gate falls back on the loop-level MaxToolTokens / MaxToolSteps caps
+// for these.
+var selfManagedTimeoutTools = map[string]struct{}{
+	"run_command":      {},
+	"web_fetch":        {},
+	"web_search":       {},
+	"delegate_task":    {},
+	"orchestrate":      {},
+	"patch_validation": {},
+	"benchmark":        {},
+}
+
+// toolTimeout resolves the per-Execute deadline for a given tool. Zero
+// means "no engine-level deadline; let the tool or outer ctx decide".
+// Lookup order:
+//  1. Self-managed list — always 0 (tool owns its deadline).
+//  2. cfg.Agent.ToolTimeouts[name] — explicit per-tool override; 0 opts out.
+//  3. cfg.Agent.ToolDefaultTimeoutSeconds — fleet-wide default.
+func (e *Engine) toolTimeout(name string) time.Duration {
+	if _, ok := selfManagedTimeoutTools[name]; ok {
+		return 0
+	}
+	if e.cfg.Agent.ToolTimeouts != nil {
+		if s, ok := e.cfg.Agent.ToolTimeouts[name]; ok {
+			if s <= 0 {
+				return 0
+			}
+			return time.Duration(s) * time.Second
+		}
+	}
+	if e.cfg.Agent.ToolDefaultTimeoutSeconds > 0 {
+		return time.Duration(e.cfg.Agent.ToolDefaultTimeoutSeconds) * time.Second
+	}
+	return 0
+}
+
 // LockPath returns a release function for the per-path lock covering abs.
 // Empty abs is a no-op (returns a nop release). Used by edit_file, write_file,
 // and apply_patch to serialise the read-gate → write window per target file.
@@ -245,13 +285,13 @@ type mcpToolAdapter struct {
 	name   string
 }
 
-func (a *mcpToolAdapter) Name() string    { return a.name }
+func (a *mcpToolAdapter) Name() string        { return a.name }
 func (a *mcpToolAdapter) Description() string { return "MCP tool: " + a.name }
 
 func (a *mcpToolAdapter) Spec() ToolSpec {
 	return ToolSpec{
-		Name:    a.name,
-		Risk:    RiskExecute,
+		Name:       a.name,
+		Risk:       RiskExecute,
 		Idempotent: true,
 	}
 }
@@ -493,9 +533,28 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 	}
 	failureKey := toolFailureKey(name, req.Params)
 
+	// Per-tool execution timeout. Tools listed in selfManagedTimeoutTools
+	// own their own deadlines (run_command's per-call timeout, web client's
+	// 20s HTTP timeout, recursive sub-agent loops); wrapping them with an
+	// outer cap either fights internal timeouts or trims a legitimately
+	// long inner agent run. Everything else gets cfg.Agent.ToolTimeouts[name]
+	// or cfg.Agent.ToolDefaultTimeoutSeconds — defaults to 30s. 0 disables.
+	timeout := e.toolTimeout(name)
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
 	res, err := tool.Execute(ctx, req)
 	res.DurationMs = time.Since(start).Milliseconds()
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || (timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded)) {
+			// Self-teaching error: tell the model both the cap and the
+			// override path so it can either retry with a narrower scope
+			// or the user can raise the limit.
+			err = fmt.Errorf("tool %q exceeded the %s execution timeout — narrow the call (e.g. tighter glob, smaller line range) or raise agent.tool_timeouts.%s in config", name, timeout, name)
+		}
 		if n := e.trackFailure(failureKey); n >= 3 {
 			return res, fmt.Errorf("tool %q failed repeatedly (%d times); change params or strategy", name, n)
 		}

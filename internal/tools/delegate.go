@@ -113,13 +113,13 @@ func (t *DelegateTaskTool) Execute(ctx context.Context, req Request) (Result, er
 		}
 	}
 
-	res, err := runner.RunSubagent(ctx, SubagentRequest{
+	res, err := runSubagentRetrying(ctx, runner, SubagentRequest{
 		Task:         task,
 		Role:         role,
 		AllowedTools: allowed,
 		MaxSteps:     maxSteps,
 		Model:        model,
-	})
+	}, defaultSubagentRetryAttempts)
 	if err != nil {
 		return Result{}, fmt.Errorf("sub-agent: %w", err)
 	}

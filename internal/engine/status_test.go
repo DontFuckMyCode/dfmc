@@ -198,3 +198,44 @@ func TestStatusIncludesLastContextInReport(t *testing.T) {
 		t.Fatalf("expected context_in file list, got %#v", st.ContextIn)
 	}
 }
+
+// TestStatusReflectsOpenCircuitBreakers asserts that an engine whose
+// router has a tripped circuit reports the affected provider name in
+// Status.OpenCircuits. CLI/web/TUI status surfaces consume this to
+// render a "primary down, using fallback" badge so operators see why
+// fallback providers are serving traffic.
+func TestStatusReflectsOpenCircuitBreakers(t *testing.T) {
+	cfg := config.DefaultConfig()
+	eng, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	if err := eng.Init(context.Background()); err != nil {
+		t.Fatalf("init engine: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Shutdown() })
+
+	// Closed-circuit baseline: empty list, omitted from JSON.
+	if got := eng.Status().OpenCircuits; len(got) != 0 {
+		t.Fatalf("baseline OpenCircuits should be empty, got %v", got)
+	}
+
+	// Trip the breaker by recording three consecutive transient
+	// failures against a synthetic provider name. Mirrors what
+	// Router.Complete does when a real provider keeps returning 5xx.
+	for i := 0; i < 3; i++ {
+		eng.Providers.RecordHealthForTest("synthetic-down", true)
+	}
+
+	st := eng.Status()
+	found := false
+	for _, name := range st.OpenCircuits {
+		if name == "synthetic-down" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected synthetic-down in OpenCircuits, got %v", st.OpenCircuits)
+	}
+}

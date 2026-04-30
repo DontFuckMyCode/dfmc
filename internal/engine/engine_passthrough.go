@@ -22,6 +22,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/drive"
 	"github.com/dontfuckmycode/dfmc/internal/memory"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -47,6 +48,10 @@ func (e *Engine) Status() Status {
 		codemapMetrics = e.CodeMap.Metrics()
 	}
 	contextIn := cloneContextInStatus(e.lastContextIn)
+	var openCircuits []string
+	if e.Providers != nil {
+		openCircuits = e.Providers.CircuitState()
+	}
 	return Status{
 		State:           e.state,
 		ProjectRoot:     e.ProjectRoot,
@@ -64,6 +69,7 @@ func (e *Engine) Status() Status {
 		MemoryLoadErr:   e.memoryLoadErr,
 		ActiveDrives:    activeDriveStatuses(),
 		EventsDropped:   e.EventBus.DroppedCount(),
+		OpenCircuits:    openCircuits,
 	}
 }
 
@@ -352,6 +358,91 @@ func (e *Engine) maybeAutoReloadProjectConfig() error {
 	return nil
 }
 
+// UnifiedTaskView is the merged shape returned by ListAllTasks. Each
+// entry tags its source so UIs (TUI tasks tab, web /api/v1/tasks/all)
+// can group/filter without re-deriving the origin. The Title/Status
+// fields are the common ground; richer fields fall through via
+// Extra for source-specific drill-down.
+type UnifiedTaskView struct {
+	ID     string `json:"id"`
+	Source string `json:"source"` // "todo" | "drive"
+	Title  string `json:"title"`
+	Status string `json:"status"`
+	// RunID groups Drive-sourced rows; empty for standalone todos.
+	RunID string `json:"run_id,omitempty"`
+	// CreatedAt is best-effort: TodoWrite tasks use StartedAt; Drive
+	// rows use the run's CreatedAt. Used for newest-first sorting.
+	CreatedAt time.Time `json:"created_at,omitempty"`
+}
+
+// ListAllTasks returns the merged "what's on my plate" view across the
+// taskstore (todo_write items + any sub-agent tasks the engine queued)
+// and the drive-runs bucket (autonomous plan/execute runs and their
+// per-TODO progress). Tasks are ordered newest-first by CreatedAt.
+//
+// Drive runs decompose into one row per TODO, prefixed with the run's
+// Title so the user sees `<run> · <todo>`. Empty result on a fresh
+// project — the caller renders an empty-state cue.
+func (e *Engine) ListAllTasks() ([]UnifiedTaskView, error) {
+	if e == nil {
+		return nil, nil
+	}
+	out := make([]UnifiedTaskView, 0)
+
+	// 1) Standalone todos / agent tasks from taskstore.
+	if e.Tools != nil {
+		if store := e.Tools.TaskStore(); store != nil {
+			if tasks, err := store.ListTasks(taskstore.ListOptions{}); err == nil {
+				for _, t := range tasks {
+					if t == nil {
+						continue
+					}
+					out = append(out, UnifiedTaskView{
+						ID:        t.ID,
+						Source:    "todo",
+						Title:     t.Title,
+						Status:    string(t.State),
+						RunID:     t.RunID,
+						CreatedAt: t.StartedAt,
+					})
+				}
+			}
+		}
+	}
+
+	// 2) Drive runs from drive-runs bucket. Each run unfolds into one row
+	//    per non-terminal TODO so the user sees granular progress, plus
+	//    one summary row for the run itself.
+	if e.Storage != nil {
+		if db := e.Storage.DB(); db != nil {
+			driveStore, err := drive.NewStore(db)
+			if err == nil && driveStore != nil {
+				runs, lerr := driveStore.List()
+				if lerr == nil {
+					for _, run := range runs {
+						if run == nil {
+							continue
+						}
+						out = append(out, UnifiedTaskView{
+							ID:        run.ID,
+							Source:    "drive",
+							Title:     run.Task,
+							Status:    string(run.Status),
+							RunID:     run.ID,
+							CreatedAt: run.CreatedAt,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
 // toolReasoningEnabled reports whether the per-tool-call self-narration
 // surface (tool:reasoning events + the virtual `_reason` field on every
 // tool's JSON schema) is active. Mirrors the AutonomousResume parser:
@@ -381,12 +472,18 @@ func (e *Engine) provider() string {
 	if e.providerOverride != "" {
 		return e.providerOverride
 	}
+	if e.Config == nil {
+		return ""
+	}
 	return e.Config.Providers.Primary
 }
 
 func (e *Engine) model() string {
 	if e.modelOverride != "" {
 		return e.modelOverride
+	}
+	if e.Config == nil {
+		return ""
 	}
 	profile, ok := e.Config.Providers.Profiles[e.provider()]
 	if !ok {
@@ -704,22 +801,22 @@ func (e *Engine) ContextBreakdown(question string) ContextBreakdown {
 	}
 
 	return ContextBreakdown{
-		Provider:          providerName,
-		Model:             modelName,
-		MaxContext:        providerLimit,
-		UsedTotal:         usedTotal,
-		SystemPrompt:      reserve.Prompt,
-		History:           historyTokens,
-		ContextChunks:     contextChunksTokens,
-		Response:          reserve.Response,
-		ToolReserve:       reserve.Tool,
-		Available:         available,
-		SystemPromptPct:   systemPromptPct,
-		HistoryPct:        historyPct,
+		Provider:         providerName,
+		Model:            modelName,
+		MaxContext:       providerLimit,
+		UsedTotal:        usedTotal,
+		SystemPrompt:     reserve.Prompt,
+		History:          historyTokens,
+		ContextChunks:    contextChunksTokens,
+		Response:         reserve.Response,
+		ToolReserve:      reserve.Tool,
+		Available:        available,
+		SystemPromptPct:  systemPromptPct,
+		HistoryPct:       historyPct,
 		ContextChunksPct: contextChunksPct,
-		ResponsePct:       responsePct,
-		FilesInContext:    filesInContext,
-		Compression:       opts.Compression,
-		Task:              detectContextTask(question),
+		ResponsePct:      responsePct,
+		FilesInContext:   filesInContext,
+		Compression:      opts.Compression,
+		Task:             detectContextTask(question),
 	}
 }

@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/internal/tokens"
+	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -197,6 +197,14 @@ func buildHandoffBrief(convID string, history []types.Message, openTodos []tools
 	toolCounts := map[string]int{}
 	toolSuccess := map[string]int{}
 	toolFailure := map[string]int{}
+	// readPaths preserves insertion order so the brief lists files in
+	// the sequence they were first touched. Map deduplicates so a file
+	// read three times still appears once. The captured set is used to
+	// hint the resumed session against re-reading the same files; it
+	// replaces the otherwise inevitable cold-start re-discovery pass
+	// that resumed loops trip into right after compaction.
+	readPaths := []string{}
+	seenPath := map[string]struct{}{}
 
 	for _, msg := range history {
 		switch msg.Role {
@@ -215,6 +223,12 @@ func buildHandoffBrief(convID string, history []types.Message, openTodos []tools
 					continue
 				}
 				toolCounts[name]++
+				if p := readPathFromCall(call); p != "" {
+					if _, dup := seenPath[p]; !dup {
+						seenPath[p] = struct{}{}
+						readPaths = append(readPaths, p)
+					}
+				}
 			}
 			for _, r := range msg.Results {
 				name := strings.TrimSpace(r.Name)
@@ -256,6 +270,24 @@ func buildHandoffBrief(convID string, history []types.Message, openTodos []tools
 	if openLines := renderOpenTodos(openTodos); len(openLines) > 0 {
 		lines = append(lines, openLines...)
 	}
+	if len(readPaths) > 0 {
+		// Cap the listed paths so a runaway scan doesn't dominate the brief.
+		// Eight is enough for the model to anchor on "I already explored
+		// these areas"; the rest collapses into a "+N more" summary.
+		const maxReadPaths = 8
+		shown := readPaths
+		more := 0
+		if len(shown) > maxReadPaths {
+			shown = shown[:maxReadPaths]
+			more = len(readPaths) - maxReadPaths
+		}
+		hint := "previously read: " + strings.Join(shown, ", ")
+		if more > 0 {
+			hint += fmt.Sprintf(" (+%d more)", more)
+		}
+		lines = append(lines, hint)
+		lines = append(lines, "(skip re-reading these unless you need a fresher view; their prior content shaped the work above)")
+	}
 	if lastAssistant != "" {
 		lines = append(lines, "last answer: "+truncateRunes(lastAssistant, 320))
 	}
@@ -268,6 +300,37 @@ func buildHandoffBrief(convID string, history []types.Message, openTodos []tools
 		}
 	}
 	return body
+}
+
+// readPathFromCall extracts the file path a read-class tool call
+// targeted, or "" when the call isn't a file read or the path can't be
+// inferred from the params map. Recognises both bare backend calls
+// (read_file/list_dir) and the meta-tool envelope (tool_call wrapping
+// a backend name). Used by buildHandoffBrief to seed the resumed
+// session's "already read" hint so it doesn't re-discover the same
+// files cold.
+func readPathFromCall(call types.ToolCallRecord) string {
+	name := strings.TrimSpace(call.Name)
+	params := call.Params
+	if name == "tool_call" {
+		// Unwrap a single layer: tool_call({"name":"<backend>","args":{...}})
+		if inner, ok := params["name"].(string); ok {
+			name = strings.TrimSpace(inner)
+		}
+		if argMap, ok := params["args"].(map[string]any); ok {
+			params = argMap
+		}
+	}
+	switch name {
+	case "read_file", "list_dir":
+		if params == nil {
+			return ""
+		}
+		if p, ok := params["path"].(string); ok {
+			return strings.TrimSpace(p)
+		}
+	}
+	return ""
 }
 
 // renderOpenTodos emits brief lines for todo_write items still in-flight.

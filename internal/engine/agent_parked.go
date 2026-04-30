@@ -57,6 +57,13 @@ type parkedAgentState struct {
 	// cache survives park/resume because it lives on parkedAgentState;
 	// nil-safe (lazy-initialized when the first cache write happens).
 	LoopFileCache map[string]string
+	// LoopReadRangeIndex is a parallel per-path index of successful
+	// read_file responses with truncated=false. Lets a later request
+	// for a SUBSET of an already-cached range serve from memory by
+	// slicing the stored content, not just exact-key hits. Same
+	// invalidation rules as LoopFileCache (cleared by file mutations).
+	// nil-safe; callers fall through to no-op when unset.
+	LoopReadRangeIndex map[string][]readRangeEntry
 }
 
 // HasParkedAgent reports whether a previous agent loop was parked (cap hit)

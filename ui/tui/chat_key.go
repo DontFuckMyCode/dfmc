@@ -440,6 +440,13 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Paste window active? Swallow Enter as a newline inside the paste
 		// block rather than submitting. Many terminals send multi-line paste
 		// as separate KeyRunes chunks interleaved with KeyEnter events.
+		//
+		// Critically: do NOT extend the paste window here. Earlier the
+		// handler re-opened the window 200ms forward on every swallowed
+		// Enter, which trapped the user — each Enter slid the deadline so
+		// the next Enter was still inside the window, forever. The window
+		// is opened/extended only by real KeyRunes chunks (above); Enter
+		// must let the natural 200ms expiry release us back to submit.
 		inPasteWindow := !m.chat.pasteWindowEnd.IsZero() && now.Before(m.chat.pasteWindowEnd)
 		if inPasteWindow && len(m.chat.pasteBlocks) > 0 {
 			last := &m.chat.pasteBlocks[len(m.chat.pasteBlocks)-1]
@@ -453,7 +460,6 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.chat.cursor = len([]rune(m.chat.input))
 			m.chat.cursorManual = true
 			m.chat.cursorInput = m.chat.input
-			m.chat.pasteWindowEnd = now.Add(200 * time.Millisecond)
 			return m, nil
 		}
 		suggestions := m.buildChatSuggestionState()
@@ -484,6 +490,9 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.startChatResume(raw)
 		}
 		if raw == "" && !startsWithNewline {
+			if len(m.chat.input) > 0 {
+				m.notice = "input is whitespace-only — type a message or press Esc to clear"
+			}
 			return m, nil
 		}
 		// User is typing a multi-line message (starts with newline) — insert
@@ -502,7 +511,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				cmd, _, _, err := parseChatCommandInput(raw)
 				if err != nil || !isKnownChatCommandToken(cmd) || isImmediateChatSlashCommand(cmd) {
 					m.pushInputHistory(raw)
-										m.setChatInput("")
+					m.setChatInput("")
 					next, cmdOut, _ := m.executeChatCommand(raw)
 					return next, cmdOut
 				}
@@ -518,6 +527,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.chat.pendingQueue = append(m.chat.pendingQueue, raw)
 			m.notice = fmt.Sprintf("Queued (%d/%d) — will send after the current reply finishes.", len(m.chat.pendingQueue), pendingQueueCap)
 			m = m.appendSystemMessage(fmt.Sprintf("▸ queued #%d: %s", len(m.chat.pendingQueue), raw))
+			m.setChatInput("")
 			return m, nil
 		}
 		if expanded, ok := m.expandSlashSelection(raw); ok {
@@ -551,7 +561,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if printable {
 			m.exitInputHistoryNavigation()
-						m.insertInputText(string(msg.Runes))
+			m.insertInputText(string(msg.Runes))
 			m.slashMenu.command = 0
 			m.slashMenu.commandArg = 0
 			m.slashMenu.mention = 0

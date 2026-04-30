@@ -183,6 +183,7 @@ func (e *Engine) executeAndAppendToolBatch(
 	lim agentLimits,
 	cache map[string]string,
 	cacheMu *sync.Mutex,
+	rangeIndex map[string][]readRangeEntry,
 ) ([]provider.Message, []nativeToolTrace, int) {
 	msgs = append(msgs, provider.Message{
 		Role:      types.RoleAssistant,
@@ -207,7 +208,31 @@ func (e *Engine) executeAndAppendToolBatch(
 	if allParallelSafe(resp.ToolCalls) {
 		batchSize = e.parallelBatchSize()
 	}
-	results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize, toolSource, cache, cacheMu)
+	results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize, toolSource, cache, cacheMu, rangeIndex)
+
+	// File cache invalidation. After a batch that includes successful
+	// edit_file/write_file/apply_patch calls, drop any cached read_file/
+	// list_dir/grep_codebase entries that touched the same path so the
+	// next read in the loop sees fresh content. Without this, a sub-agent
+	// edits foo.go, the parent re-reads foo.go, and gets the cached pre-
+	// edit body — tracking down "why does the model think the file still
+	// has the bug" wastes a turn or three. Only paths whose call returned
+	// without error count, so a refused edit (read-gate, approval) doesn't
+	// invalidate anything.
+	if cache != nil {
+		modified := make([]string, 0, len(resp.ToolCalls))
+		for i, call := range resp.ToolCalls {
+			if results[i].Err != nil {
+				continue
+			}
+			if p := extractModifiedPath(call); p != "" {
+				modified = append(modified, p)
+			}
+		}
+		if len(modified) > 0 {
+			invalidateCacheForFiles(cache, cacheMu, modified, rangeIndex)
+		}
+	}
 
 	// When we're already deep in the budget, halve the per-tool char
 	// caps so new results don't accelerate bloat.

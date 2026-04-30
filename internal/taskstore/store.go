@@ -2,6 +2,7 @@ package taskstore
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -13,6 +14,12 @@ import (
 )
 
 const taskBucket = "tasks"
+
+// ErrTaskVersionConflict is returned by UpdateTaskCAS when the stored
+// task's Version no longer matches the caller-supplied expected
+// version. The caller is expected to LoadTask afresh and re-apply the
+// update against the new state.
+var ErrTaskVersionConflict = errors.New("taskstore: task version conflict")
 
 type Store struct {
 	db *bbolt.DB
@@ -79,7 +86,36 @@ func (s *Store) LoadTask(id string) (*supervisor.Task, error) {
 // definite intermediate state, not torn writes), and the surrounding
 // txn closes the load-modify-save window where a concurrent SaveTask
 // or DeleteTask could otherwise lose-update between the read and write.
+//
+// On a successful mutation Version is incremented automatically before
+// the write. Callers that need to detect concurrent writers across
+// LoadTask → user-decision → UpdateTask windows should use
+// UpdateTaskCAS instead, which refuses the write when the stored
+// Version no longer matches the value the caller observed.
 func (s *Store) UpdateTask(id string, fn func(*supervisor.Task) error) error {
+	return s.updateTaskInternal(id, -1, fn)
+}
+
+// UpdateTaskCAS is the optimistic-concurrency-controlled variant of
+// UpdateTask. expectedVersion is the Version the caller observed in a
+// prior LoadTask. If the current stored Version differs (because
+// another writer mutated the row in between), the call returns
+// ErrTaskVersionConflict and no write happens. The caller is expected
+// to LoadTask afresh and re-apply the mutation against the new state.
+//
+// Pass expectedVersion = 0 to mean "task should be at its initial
+// version (zero) — fail if anyone has bumped it". Pass any other
+// observed value to require an exact match.
+func (s *Store) UpdateTaskCAS(id string, expectedVersion int, fn func(*supervisor.Task) error) error {
+	if expectedVersion < 0 {
+		return fmt.Errorf("taskstore.UpdateTaskCAS: expectedVersion must be >= 0")
+	}
+	return s.updateTaskInternal(id, expectedVersion, fn)
+}
+
+// updateTaskInternal is the shared implementation. expectedVersion < 0
+// disables the CAS check (UpdateTask path). Bumps Version on success.
+func (s *Store) updateTaskInternal(id string, expectedVersion int, fn func(*supervisor.Task) error) error {
 	if id == "" {
 		return fmt.Errorf("taskstore.UpdateTask: id is empty")
 	}
@@ -101,12 +137,16 @@ func (s *Store) UpdateTask(id string, fn func(*supervisor.Task) error) error {
 		if err := json.Unmarshal(raw, &t); err != nil {
 			return fmt.Errorf("unmarshal task %q: %w", id, err)
 		}
+		if expectedVersion >= 0 && t.Version != expectedVersion {
+			return fmt.Errorf("%w: expected v%d, got v%d for task %s", ErrTaskVersionConflict, expectedVersion, t.Version, id)
+		}
 		if err := fn(&t); err != nil {
 			return err
 		}
 		if t.ID == "" {
 			return fmt.Errorf("taskstore.UpdateTask: fn cleared task.ID")
 		}
+		t.Version++ // bump on every successful mutation
 		data, err := json.MarshalIndent(&t, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshal task: %w", err)

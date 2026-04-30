@@ -76,6 +76,15 @@ type Task struct {
 	// Budget holds the max tool steps allowed for this task. When zero,
 	// the executor derives a budget from WorkerClass at dispatch time.
 	Budget int
+
+	// Version is bumped by taskstore.UpdateTask on every successful
+	// mutation. Callers that read-then-update can guard against lost
+	// updates by passing the observed version through
+	// taskstore.UpdateTaskCAS — a concurrent writer that bumped Version
+	// in between makes that variant return ErrTaskVersionConflict so the
+	// caller can re-read and retry. Zero on a fresh task; preserved
+	// across save/load.
+	Version int `json:"version,omitempty"`
 }
 
 type Run struct {

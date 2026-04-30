@@ -512,3 +512,124 @@ func TestPickInt_FloatValue(t *testing.T) {
 		t.Errorf("pickInt(float64(7)) = (%d, %v), want (7, true)", got, ok)
 	}
 }
+
+// TestPatchUnresolvedToolUses_InjectsSyntheticErrorResults asserts that
+// a kept round whose assistant emitted ToolCalls without matching
+// tool_results gets synthetic error results injected, so the next
+// provider request is well-formed (Anthropic specifically rejects any
+// dangling tool_use IDs with HTTP 400). The synthetic result must echo
+// the tool_call ID and name, set ToolError=true, and signal the lost-
+// result reality so the model can decide whether to re-issue the call.
+func TestPatchUnresolvedToolUses_InjectsSyntheticErrorResults(t *testing.T) {
+	rounds := []toolRound{
+		{Messages: []provider.Message{
+			{
+				Role: types.RoleAssistant,
+				ToolCalls: []provider.ToolCall{
+					{ID: "tu_1", Name: "read_file", Input: map[string]any{"path": "a.go"}},
+					{ID: "tu_2", Name: "grep_codebase", Input: map[string]any{"q": "Foo"}},
+				},
+			},
+			// Only tu_1 has a matching result — tu_2 is orphan.
+			{Role: types.RoleUser, ToolCallID: "tu_1", ToolName: "read_file", Content: "content"},
+		}},
+	}
+	patched := patchUnresolvedToolUses(rounds)
+	if len(patched) != 1 {
+		t.Fatalf("expected 1 round, got %d", len(patched))
+	}
+	if got := len(patched[0].Messages); got != 3 {
+		t.Fatalf("expected 3 messages (assistant + 2 results, 1 synthesized), got %d", got)
+	}
+	synth := patched[0].Messages[2]
+	if synth.Role != types.RoleUser {
+		t.Errorf("synthetic result role=%v, want user", synth.Role)
+	}
+	if synth.ToolCallID != "tu_2" {
+		t.Errorf("synthetic ToolCallID=%q, want tu_2", synth.ToolCallID)
+	}
+	if synth.ToolName != "grep_codebase" {
+		t.Errorf("synthetic ToolName=%q, want grep_codebase", synth.ToolName)
+	}
+	if !synth.ToolError {
+		t.Errorf("synthetic ToolError=false, want true")
+	}
+	if !strings.Contains(synth.Content, "lost during compaction") {
+		t.Errorf("synthetic content lacks lost-result marker: %q", synth.Content)
+	}
+}
+
+// TestPatchUnresolvedToolUses_AllResolvedIsNoOp pins that fully
+// resolved rounds are returned unchanged — the helper must not invent
+// extra messages when every tool_use already has a matching result.
+func TestPatchUnresolvedToolUses_AllResolvedIsNoOp(t *testing.T) {
+	rounds := []toolRound{
+		{Messages: []provider.Message{
+			{
+				Role: types.RoleAssistant,
+				ToolCalls: []provider.ToolCall{
+					{ID: "ok_1", Name: "read_file"},
+				},
+			},
+			{Role: types.RoleUser, ToolCallID: "ok_1", ToolName: "read_file", Content: "ok"},
+		}},
+	}
+	patched := patchUnresolvedToolUses(rounds)
+	if len(patched[0].Messages) != 2 {
+		t.Errorf("expected 2 messages preserved, got %d", len(patched[0].Messages))
+	}
+}
+
+// TestCompactPreservesUnresolvedToolUsesInKeepWindow is the
+// integration-shaped pin: an end-to-end compaction where the most
+// recent (kept) round has an orphan tool_use must produce a rebuilt
+// message slice whose final assistant ToolCalls are all matched by
+// downstream tool_result entries.
+func TestCompactPreservesUnresolvedToolUsesInKeepWindow(t *testing.T) {
+	eng := compactorEngine(t)
+	eng.Config.Agent.ContextLifecycle.KeepRecentRounds = 1
+
+	// Build msgs: prefix + 2 collapsed rounds + 1 kept round with orphan.
+	msgs := []provider.Message{
+		{Role: types.RoleSystem, Content: "sys"},
+		{Role: types.RoleUser, Content: "investigate auth"},
+	}
+	bigBlob := strings.Repeat("alpha beta gamma delta epsilon zeta ", 200)
+	msgs = append(msgs, makeRound("c1", "read_file", "a.go", bigBlob, false)...)
+	msgs = append(msgs, makeRound("c2", "read_file", "b.go", bigBlob, false)...)
+	// Kept round: assistant emits TWO calls, but only ONE result is recorded.
+	msgs = append(msgs,
+		provider.Message{
+			Role: types.RoleAssistant,
+			ToolCalls: []provider.ToolCall{
+				{ID: "k1", Name: "edit_file", Input: map[string]any{"path": "x"}},
+				{ID: "k2", Name: "edit_file", Input: map[string]any{"path": "y"}},
+			},
+		},
+		provider.Message{Role: types.RoleUser, ToolCallID: "k1", ToolName: "edit_file", Content: "applied"},
+	)
+
+	rebuilt, report := eng.maybeCompactNativeLoopHistory(msgs, "sys", nil)
+	if report == nil {
+		t.Fatalf("expected compaction to fire")
+	}
+
+	// Every tool_use ID in the rebuilt slice must have a matching
+	// tool_result later in the slice. Index call IDs first, then verify.
+	wanted := map[string]bool{}
+	for _, m := range rebuilt {
+		if m.Role == types.RoleAssistant {
+			for _, c := range m.ToolCalls {
+				wanted[c.ID] = true
+			}
+		}
+	}
+	for _, m := range rebuilt {
+		if m.ToolCallID != "" {
+			delete(wanted, m.ToolCallID)
+		}
+	}
+	if len(wanted) != 0 {
+		t.Fatalf("rebuilt slice has unresolved tool_use IDs: %v", wanted)
+	}
+}

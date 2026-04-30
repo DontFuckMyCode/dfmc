@@ -167,6 +167,18 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			waitText = fmt.Sprintf("in %s", (time.Duration(waitMs) * time.Millisecond).Round(100*time.Millisecond))
 		}
 		line = fmt.Sprintf("Provider throttled: %s %s retry #%d %s.", providerName, label, attempt, waitText)
+	case "provider:circuit:open":
+		providerName := payloadString(payload, "provider", "?")
+		cooldownMs := payloadInt(payload, "cooldown_ms", 0)
+		if cooldownMs > 0 {
+			cooldown := (time.Duration(cooldownMs) * time.Millisecond).Round(time.Second)
+			line = fmt.Sprintf("Provider %s circuit open — skipping for %s, falling back.", providerName, cooldown)
+		} else {
+			line = fmt.Sprintf("Provider %s circuit open — falling back.", providerName)
+		}
+	case "provider:circuit:closed":
+		providerName := payloadString(payload, "provider", "?")
+		line = fmt.Sprintf("Provider %s circuit closed — recovered.", providerName)
 	case "config:reload:auto":
 		path := payloadString(payload, "path", "")
 		line = "Config auto-reloaded."
@@ -268,7 +280,6 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 	return m
 }
 
-
 // shouldMirrorEventToTranscript decides which engine events earn a system
 // message in the chat transcript. Per-step tool:call / tool:result chatter is
 // deliberately excluded — the tool-chip row, footer notice slot, and activity
@@ -286,7 +297,6 @@ func shouldMirrorEventToTranscript(eventType string) bool {
 		return false
 	}
 }
-
 
 // refreshWorkflowOnTabEnter is called when the user switches to the Workflow
 // tab (F5 or alt+5). It reloads the run list from the drive store so the
@@ -313,7 +323,6 @@ func (m *Model) appendActivity(line string) {
 		m.activityLog = m.activityLog[drop:]
 	}
 }
-
 
 func (m *Model) resetAgentRuntime() {
 	m.agentLoop.active = false

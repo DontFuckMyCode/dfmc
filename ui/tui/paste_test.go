@@ -175,8 +175,13 @@ func TestPasteWindowsTerminal(t *testing.T) {
 	}
 
 	// Wait for paste window to close, then manual Enter submits as ONE message.
+	// Note: prior to the Enter-extends-window fix, this required a 250ms sleep
+	// because every swallowed Enter re-opened the window. With the fix the
+	// window decays naturally and the user-perceived behavior is "press Enter
+	// after a brief pause and it submits"; we still wait the full 200ms here
+	// to assert the natural decay path, not the in-window path.
 	t.Logf("before final Enter: pasteBlocks=%d windowEnd=%v now=%v", len(m6.chat.pasteBlocks), m6.chat.pasteWindowEnd, time.Now())
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(220 * time.Millisecond)
 	t.Logf("after sleep: now=%v", time.Now())
 	next6, _ := m6.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m7, _ := next6.(Model)
@@ -236,6 +241,68 @@ func TestPasteBlockCtrlCCancels(t *testing.T) {
 	}
 	if m3.chat.input != "" {
 		t.Fatalf("expected input cleared, got %q", m3.chat.input)
+	}
+}
+
+// TestPasteEnterDoesNotExtendWindow captures the regression where every
+// swallowed Enter pushed pasteWindowEnd forward 200ms, trapping the user
+// in the window forever — every subsequent Enter would still be inside
+// it, so the message could never submit. The fix removes the window
+// extension on Enter; the natural 200ms expiry is what releases us.
+func TestPasteEnterDoesNotExtendWindow(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+
+	// A long chunk with no internal newline trips the >=16 char heuristic
+	// and opens the paste window (lines 94-95 in chat_key.go).
+	next1, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("this is a long chunk without newline")})
+	m2, _ := next1.(Model)
+	if m2.chat.pasteWindowEnd.IsZero() {
+		t.Fatalf("expected paste window opened for >=16 char chunk")
+	}
+	windowBefore := m2.chat.pasteWindowEnd
+
+	// Press Enter inside the window. It should be swallowed as a newline,
+	// but pasteWindowEnd must NOT move forward.
+	time.Sleep(20 * time.Millisecond)
+	next2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m3, _ := next2.(Model)
+
+	if !windowBefore.Equal(m3.chat.pasteWindowEnd) {
+		t.Fatalf("Enter inside paste window must not extend it: before=%v after=%v (delta %v)",
+			windowBefore, m3.chat.pasteWindowEnd, m3.chat.pasteWindowEnd.Sub(windowBefore))
+	}
+	if len(m3.chat.pasteBlocks) != 1 {
+		t.Fatalf("expected paste block preserved, got %d", len(m3.chat.pasteBlocks))
+	}
+	if !strings.Contains(m3.chat.pasteBlocks[0].content, "\n") {
+		t.Fatalf("expected swallowed Enter folded as newline, got %q", m3.chat.pasteBlocks[0].content)
+	}
+
+	// The bug was that subsequent Enters kept re-extending the window,
+	// so submission was impossible. With the fix, after the natural
+	// 200ms expiry the next Enter must submit.
+	time.Sleep(220 * time.Millisecond)
+	next3, _ := m3.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m4, _ := next3.(Model)
+	if len(m4.chat.pasteBlocks) != 0 {
+		t.Fatalf("expected blocks cleared on submit after window expiry, got %d", len(m4.chat.pasteBlocks))
+	}
+}
+
+// TestEmptyWhitespaceInputShowsNotice asserts the Enter handler tells the
+// user why a whitespace-only message didn't submit instead of returning
+// silently (which previously read as "Enter is broken").
+func TestEmptyWhitespaceInputShowsNotice(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.setChatInput("   \t  ")
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2, _ := next.(Model)
+
+	if !strings.Contains(strings.ToLower(m2.notice), "whitespace") {
+		t.Fatalf("expected whitespace-only notice, got %q", m2.notice)
 	}
 }
 

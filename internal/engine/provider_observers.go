@@ -31,4 +31,27 @@ func (e *Engine) attachProviderObservers(r *provider.Router) {
 			Payload: payload,
 		})
 	})
+	// Circuit breaker transitions feed the same EventBus so the TUI
+	// header / web Workbench / CLI status surface can render a
+	// "primary down, using fallback" badge. open/closed is the only
+	// transition state we publish; the cooldown duration is included
+	// on open so UIs can show a countdown.
+	r.SetCircuitObserver(func(ev provider.CircuitEvent) {
+		payload := map[string]any{
+			"provider": ev.Provider,
+			"state":    ev.State,
+		}
+		if ev.Cooldown > 0 {
+			payload["cooldown_ms"] = ev.Cooldown.Milliseconds()
+		}
+		eventType := "provider:circuit:open"
+		if ev.State == "closed" {
+			eventType = "provider:circuit:closed"
+		}
+		e.EventBus.Publish(Event{
+			Type:    eventType,
+			Source:  "provider",
+			Payload: payload,
+		})
+	})
 }

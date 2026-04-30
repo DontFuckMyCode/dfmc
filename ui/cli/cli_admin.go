@@ -146,6 +146,7 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 		"approval_gate":              gateSummary,
 		"hooks":                      hooksSummary,
 		"recent_denials":             denialCount,
+		"open_circuits":              st.OpenCircuits,
 	}
 
 	if jsonMode {
@@ -230,6 +231,13 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 	}
 	if denialCount > 0 {
 		fmt.Printf("recent denials: %d\n", denialCount)
+	}
+	if len(st.OpenCircuits) > 0 {
+		// Surface circuit-breaker open state so operators can see at a
+		// glance which providers are currently being skipped. The router
+		// silently routes around them; this line is the only operator-
+		// visible signal aside from the EventBus (TUI/web).
+		fmt.Printf("open circuits: %s (router skipping these until cooldown elapses)\n", strings.Join(st.OpenCircuits, ", "))
 	}
 	return 0
 }
@@ -590,4 +598,3 @@ func runInit(jsonMode bool, projectOverride string) int {
 	fmt.Printf("Created %s\n", cfgPath)
 	return 0
 }
-

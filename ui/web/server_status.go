@@ -34,6 +34,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		"approval_gate":    s.approvalGateSummary(),
 		"hooks":            s.hooksSummary(),
 		"recent_denials":   len(s.engine.RecentDenials()),
+		"open_circuits":    st.OpenCircuits,
 	}
 	// Enrich with context breakdown when a query is not required
 	// (the web UI always has a current query in context).

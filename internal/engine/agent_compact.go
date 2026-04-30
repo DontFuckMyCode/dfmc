@@ -224,6 +224,19 @@ func (e *Engine) compactNativeLoopHistory(
 		return msgs, nil
 	}
 
+	// Patch any kept round that has unresolved tool_use IDs (assistant
+	// emitted ToolCalls but the round has no matching tool_result for
+	// some of them). This can happen when:
+	//   - The loop was canceled / panicked between tool_use emit and the
+	//     tool_result append, leaving a half-finished round on disk.
+	//   - A tool was approval-denied and produced no result entry.
+	// Either way, sending the next provider request without resolving the
+	// orphan tool_uses fails on Anthropic with a "tool_use ID matched no
+	// tool_result" 400. We inject a synthetic ToolError result instead so
+	// the conversation stays well-formed. The model can still reason that
+	// a prior tool call failed.
+	keep = patchUnresolvedToolUses(keep)
+
 	rebuilt := make([]provider.Message, 0, prefixEnd+1+totalRoundMessages(keep))
 	rebuilt = append(rebuilt, msgs[:prefixEnd]...)
 	rebuilt = append(rebuilt, provider.Message{
@@ -254,6 +267,69 @@ func (e *Engine) compactNativeLoopHistory(
 // the user tool_result messages that immediately follow it.
 type toolRound struct {
 	Messages []provider.Message
+}
+
+// patchUnresolvedToolUses scans each kept round and, for any assistant
+// ToolCalls that lack a matching tool_result in that round, appends a
+// synthetic tool_result message with ToolError=true so the provider
+// receives a well-formed conversation. Without this, Anthropic in
+// particular rejects the next request with "tool_use ID matched no
+// tool_result" — the symptom the user-facing error log shows is a
+// confusing 400 mid-resume that the model never gets to recover from.
+//
+// The synthetic result deliberately states the lost-result reality
+// instead of inventing an answer; the model can read it and decide
+// whether to re-issue the call.
+func patchUnresolvedToolUses(rounds []toolRound) []toolRound {
+	if len(rounds) == 0 {
+		return rounds
+	}
+	out := make([]toolRound, len(rounds))
+	for i, r := range rounds {
+		out[i] = patchRoundUnresolvedToolUses(r)
+	}
+	return out
+}
+
+func patchRoundUnresolvedToolUses(r toolRound) toolRound {
+	if len(r.Messages) == 0 {
+		return r
+	}
+	head := r.Messages[0]
+	if head.Role != types.RoleAssistant || len(head.ToolCalls) == 0 {
+		return r
+	}
+	// Index the tool_result IDs already present in this round.
+	have := make(map[string]struct{}, len(r.Messages))
+	for i := 1; i < len(r.Messages); i++ {
+		if id := strings.TrimSpace(r.Messages[i].ToolCallID); id != "" {
+			have[id] = struct{}{}
+		}
+	}
+	// Synthesize results for any unresolved IDs.
+	missing := make([]provider.ToolCall, 0)
+	for _, c := range head.ToolCalls {
+		if strings.TrimSpace(c.ID) == "" {
+			continue
+		}
+		if _, ok := have[c.ID]; !ok {
+			missing = append(missing, c)
+		}
+	}
+	if len(missing) == 0 {
+		return r
+	}
+	patched := toolRound{Messages: append([]provider.Message(nil), r.Messages...)}
+	for _, c := range missing {
+		patched.Messages = append(patched.Messages, provider.Message{
+			Role:       types.RoleUser,
+			ToolCallID: c.ID,
+			ToolName:   c.Name,
+			ToolError:  true,
+			Content:    "[result lost during compaction; this tool call did not produce a recorded result. Re-issue the call if the answer is still needed.]",
+		})
+	}
+	return patched
 }
 
 // findNativeLoopPrefixEnd returns the index where the provider-injected

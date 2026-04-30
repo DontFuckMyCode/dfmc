@@ -27,7 +27,6 @@ import (
 // parkPhase, ParkReason, formatBudgetExhaustedNotice, and parkNativeToolLoop
 // live in agent_parking.go.
 
-
 type nativeToolTrace struct {
 	Call       provider.ToolCall
 	Result     tools.Result
@@ -131,7 +130,6 @@ func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativ
 	return e.runNativeToolLoopAutonomous(ctx, seed, lim, "ask")
 }
 
-
 // maxBudgetAutoRecoveries caps how many times a single agent-loop invocation
 // will auto-compact + reset tokens on budget_exhausted before giving up and
 // parking. One is usually enough: Fix A's force-compact on resume already
@@ -171,9 +169,14 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 
 	// Per-loop tool result cache. Lives on seed so it persists across
 	// park/resume; lazy-init here on first run. The mutex guards
-	// concurrent access from the parallel batch dispatcher.
+	// concurrent access from the parallel batch dispatcher AND the
+	// parallel read-range index — both live behind the same lock so a
+	// single Lock/Unlock per dispatch covers exact-key + range merge.
 	if seed.LoopFileCache == nil {
 		seed.LoopFileCache = make(map[string]string)
+	}
+	if seed.LoopReadRangeIndex == nil {
+		seed.LoopReadRangeIndex = make(map[string][]readRangeEntry)
 	}
 	cacheMu := &sync.Mutex{}
 
@@ -415,7 +418,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		// agent_loop_phases.go), then layer trajectory-aware coach
 		// hints over the result before the next provider round.
 		var freshStart int
-		msgs, traces, freshStart = e.executeAndAppendToolBatch(ctx, resp, msgs, traces, seed.ToolSource, lastProvider, lastModel, step, totalTokens, lim, seed.LoopFileCache, cacheMu)
+		msgs, traces, freshStart = e.executeAndAppendToolBatch(ctx, resp, msgs, traces, seed.ToolSource, lastProvider, lastModel, step, totalTokens, lim, seed.LoopFileCache, cacheMu, seed.LoopReadRangeIndex)
 		msgs = e.injectTrajectoryHints(seed, msgs, traces, freshStart, step)
 
 		// Post-step budget gate (postStepBudget in agent_loop_phases.go).
@@ -437,4 +440,3 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 
 	return nativeToolCompletion{}, fmt.Errorf("agent tool loop ended unexpectedly")
 }
-

@@ -17,6 +17,12 @@ type Router struct {
 	fallback         []string
 	providers        map[string]Provider
 	throttleObserver func(ThrottleNotice)
+
+	// Circuit breaker state. Separate mutex so a long-running call against
+	// one provider doesn't block health checks/updates for another.
+	healthMu        sync.Mutex
+	health          map[string]*providerHealth
+	circuitObserver func(CircuitEvent)
 }
 
 type ThrottleNotice struct {
@@ -32,6 +38,7 @@ func NewRouter(cfg config.ProvidersConfig) (*Router, error) {
 		primary:   cfg.Primary,
 		fallback:  append([]string(nil), cfg.Fallback...),
 		providers: map[string]Provider{},
+		health:    map[string]*providerHealth{},
 	}
 
 	// Always available fallback.
@@ -263,12 +270,20 @@ func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*Completi
 			}
 			return nil, "", errors.Join(append(errs, cerr)...)
 		}
+		// Circuit breaker: if this provider has tripped recently, skip
+		// straight to the next one. Saves the user a doomed primary
+		// attempt on every fresh ask while the upstream is down.
+		if r.shouldSkipForCircuit(name) {
+			errs = append(errs, fmt.Errorf("%s: %w", name, ErrProviderUnavailable))
+			continue
+		}
 		p, ok := r.Get(name)
 		if !ok {
 			errs = append(errs, fmt.Errorf("%w: %s", ErrProviderNotFound, name))
 			continue
 		}
 		resp, usedModel, err := r.completeWithProviderRetry(ctx, p, req)
+		r.recordProviderHealth(name, err)
 		if err == nil {
 			return resp, usedModel, nil
 		}
@@ -645,14 +660,33 @@ func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 			}
 			return nil, "", errors.Join(append(errs, cerr)...)
 		}
+		// Skip providers whose circuit is currently open. Mirrors Complete
+		// so streaming asks under a sustained outage don't pay the round-trip
+		// to the down primary on every fresh request.
+		if r.shouldSkipForCircuit(name) {
+			errs = append(errs, fmt.Errorf("%s: %w", name, ErrProviderUnavailable))
+			continue
+		}
 		p, ok := r.Get(name)
 		if !ok {
 			errs = append(errs, fmt.Errorf("%w: %s", ErrProviderNotFound, name))
 			continue
 		}
 		stream, usedModel, err := r.streamWithProviderRetry(ctx, p, req)
+		// Stream errors at this point are stream-open errors only — once
+		// we hand back the channel, mid-stream failures are out of band.
+		// That's enough to drive the breaker because connection failures,
+		// auth, and rate-limit-on-open all surface here.
+		r.recordProviderHealth(name, err)
 		if err == nil {
-			return stream, usedModel, nil
+			// Wrap with mid-stream recovery: if the upstream drops the
+			// connection before any content is delivered, the wrapper
+			// silently re-tries the next eligible provider. Once content
+			// has been forwarded to the caller, recovery is disabled
+			// (splicing is too risky). See stream_recovery.go.
+			out := make(chan StreamEvent, 32)
+			go r.streamForwardWithRecovery(ctx, req, stream, name, out)
+			return out, usedModel, nil
 		}
 		errs = append(errs, fmt.Errorf("%s: %w", p.Name(), err))
 	}

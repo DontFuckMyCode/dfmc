@@ -360,3 +360,71 @@ func TestBuildHandoffBrief_NoTodoSectionWhenNoneOpen(t *testing.T) {
 		t.Fatalf("expected no open-todos section when all completed, got:\n%s", brief)
 	}
 }
+
+// TestBuildHandoffBrief_SurfacesPreviouslyReadFiles asserts the brief
+// emits a "previously read" hint listing every file the prior session
+// already opened. Without this, the resumed agent re-discovers the
+// same files cold and burns budget on work the prior loop did. The
+// hint also instructs the agent to skip re-reads unless freshness is
+// required, which the file cache invalidator handles automatically
+// when a write touches the same path.
+func TestBuildHandoffBrief_SurfacesPreviouslyReadFiles(t *testing.T) {
+	history := []types.Message{
+		{Role: types.RoleUser, Content: "look into auth"},
+		{Role: types.RoleAssistant, Content: "checking", ToolCalls: []types.ToolCallRecord{
+			{Name: "read_file", Params: map[string]any{"path": "internal/auth/login.go"}},
+			{Name: "read_file", Params: map[string]any{"path": "internal/auth/session.go"}},
+			// Meta-tool envelope must also be unwrapped.
+			{Name: "tool_call", Params: map[string]any{
+				"name": "read_file",
+				"args": map[string]any{"path": "internal/auth/middleware.go"},
+			}},
+			// Duplicate read should appear once.
+			{Name: "read_file", Params: map[string]any{"path": "internal/auth/login.go"}},
+			// list_dir also counts as an exploration anchor.
+			{Name: "list_dir", Params: map[string]any{"path": "internal/auth"}},
+		}},
+	}
+	brief := buildHandoffBrief("c-x", history, nil, 0)
+	if !strings.Contains(brief, "previously read:") {
+		t.Fatalf("expected 'previously read' line, got:\n%s", brief)
+	}
+	for _, want := range []string{
+		"internal/auth/login.go",
+		"internal/auth/session.go",
+		"internal/auth/middleware.go",
+		"internal/auth",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("expected %q in brief, missing\n%s", want, brief)
+		}
+	}
+	// login.go appears twice in history; must show up once in the hint.
+	if got := strings.Count(brief, "internal/auth/login.go"); got != 1 {
+		t.Errorf("login.go duplicate suppression failed: %d occurrences\n%s", got, brief)
+	}
+	if !strings.Contains(brief, "skip re-reading") {
+		t.Errorf("expected guidance to skip re-reads, got:\n%s", brief)
+	}
+}
+
+// TestBuildHandoffBrief_ReadPathsCappedWithOverflowMarker pins the
+// "+N more" overflow when the previously-read list exceeds the cap so
+// the brief stays bounded even on long sessions.
+func TestBuildHandoffBrief_ReadPathsCappedWithOverflowMarker(t *testing.T) {
+	calls := make([]types.ToolCallRecord, 0, 12)
+	for i := 0; i < 12; i++ {
+		calls = append(calls, types.ToolCallRecord{
+			Name:   "read_file",
+			Params: map[string]any{"path": "f" + string(rune('a'+i)) + ".go"},
+		})
+	}
+	history := []types.Message{
+		{Role: types.RoleUser, Content: "scan"},
+		{Role: types.RoleAssistant, Content: "scanning", ToolCalls: calls},
+	}
+	brief := buildHandoffBrief("c-y", history, nil, 0)
+	if !strings.Contains(brief, "+4 more") {
+		t.Errorf("expected '+4 more' overflow marker (12 paths, cap 8), got:\n%s", brief)
+	}
+}
