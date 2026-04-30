@@ -188,16 +188,55 @@ func (c *Client) Call(ctx context.Context, method string, params any, timeout ti
 	c.pending[id] = ch
 	c.pendMu.Unlock()
 
-	c.writeMu.Lock()
-	_, werr := c.stdin.Write(append(buf, '\n'))
-	c.writeMu.Unlock()
-	if werr != nil {
-		c.clearPending(id)
-		return nil, fmt.Errorf("write request: %w", werr)
-	}
-
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
+
+	// Bounded write phase. The naive `c.stdin.Write` blocks indefinitely
+	// when the plugin has stopped reading its stdin (OS pipe buffer fills,
+	// typically 4KB-64KB). Holding writeMu through that block used to
+	// freeze EVERY subsequent Call on the client — the calling goroutine
+	// never reached its select, so the per-Call timeout couldn't fire,
+	// and the writeMu it held cascaded to block all other Calls' Lock()
+	// at the head of this function. A single hung plugin took down the
+	// entire client.
+	//
+	// We now run the write in a sub-goroutine and select against the
+	// timer / ctx. If the timeout fires while the write is in flight we
+	// close stdin: that unblocks the orphan goroutine (Write returns
+	// ErrClosedPipe), it drains its err to the buffered werrCh and
+	// exits. Subsequent Calls hit ErrClosedPipe immediately rather than
+	// cascading on writeMu — the client is effectively dead but the
+	// damage is bounded to one timeout window. The user is expected to
+	// call Close to reap the process; stdin.Close is idempotent so the
+	// double-close in Close is harmless.
+	c.writeMu.Lock()
+	payload := append(buf, '\n')
+	werrCh := make(chan error, 1)
+	go func() {
+		_, err := c.stdin.Write(payload)
+		werrCh <- err
+	}()
+	select {
+	case werr := <-werrCh:
+		c.writeMu.Unlock()
+		if werr != nil {
+			c.clearPending(id)
+			return nil, fmt.Errorf("write request: %w", werr)
+		}
+	case <-ctx.Done():
+		_ = c.stdin.Close()
+		c.writeMu.Unlock()
+		c.clearPending(id)
+		return nil, ctx.Err()
+	case <-timer.C:
+		_ = c.stdin.Close()
+		c.writeMu.Unlock()
+		c.clearPending(id)
+		return nil, fmt.Errorf("plugin %q method %q write timed out after %s", c.name, method, timeout)
+	}
+
+	// Response phase. Same timer covers the whole Call so total latency
+	// honours the caller's `timeout`, not 2× of it.
 	select {
 	case <-ctx.Done():
 		c.clearPending(id)

@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -340,5 +342,134 @@ func TestSpawnRejectsMissingEntry(t *testing.T) {
 	_, err = Spawn(context.Background(), Spec{Name: "x", Entry: "/does/not/exist/here"})
 	if err == nil {
 		t.Fatalf("want error for missing entry")
+	}
+}
+
+// blockingWriter is an io.WriteCloser that blocks Write forever until
+// Close() is called. Used to simulate a plugin whose stdin pipe buffer
+// is full because the plugin has stopped reading — the OS-level
+// scenario the writeMu cascade fix addresses.
+type blockingWriter struct {
+	mu      sync.Mutex
+	closed  bool
+	release chan struct{}
+}
+
+func newBlockingWriter() *blockingWriter {
+	return &blockingWriter{release: make(chan struct{})}
+}
+
+func (b *blockingWriter) Write(p []byte) (int, error) {
+	<-b.release
+	return 0, errClosedTestPipe
+}
+
+func (b *blockingWriter) Close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return nil
+	}
+	b.closed = true
+	close(b.release)
+	return nil
+}
+
+var errClosedTestPipe = errClosedTestPipeT{}
+
+type errClosedTestPipeT struct{}
+
+func (errClosedTestPipeT) Error() string { return "test: stdin closed" }
+
+// TestCall_WriteTimeoutDoesNotCascadeOnHungStdin regresses the writeMu
+// freeze bug: pre-fix, holding writeMu during stdin.Write meant a hung
+// plugin (one that stopped reading stdin, OS pipe buffer full) blocked
+// the calling goroutine forever — it never reached its select on the
+// timer, and the writeMu it held cascaded to every subsequent Call.
+//
+// We construct a minimal Client with a stdin that blocks forever and
+// no readLoop running (the test only exercises the write path; response
+// phase is expected to time out via the same timer). Two assertions:
+//   - First Call: returns within ~timeout, not after the OS gives up.
+//   - Second Call: also returns fast (writeMu was released by the
+//     timeout branch closing stdin; the second Call's own write
+//     attempt returns ErrClosedPipe immediately).
+//
+// If the cascade bug regressed, the second Call would block on
+// writeMu acquisition until the orphan goroutine eventually returned —
+// which in the original code path was "never". The 1s ceiling here is
+// generous; the actual budget is 2x the per-Call 80ms.
+func TestCall_WriteTimeoutDoesNotCascadeOnHungStdin(t *testing.T) {
+	bw := newBlockingWriter()
+	defer bw.Close()
+	c := &Client{
+		stdin:    bw,
+		pending:  map[int64]chan rpcResponse{},
+		readDone: make(chan struct{}),
+		errDone:  make(chan struct{}),
+		name:     "blocked",
+	}
+
+	const perCallTimeout = 80 * time.Millisecond
+	start := time.Now()
+	_, err := c.Call(context.Background(), "first", nil, perCallTimeout)
+	firstElapsed := time.Since(start)
+	if err == nil {
+		t.Fatalf("first Call should have timed out, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("first Call: expected timeout error, got %v", err)
+	}
+	if firstElapsed > 1*time.Second {
+		t.Fatalf("first Call took %v — write phase is not bounded", firstElapsed)
+	}
+
+	// Second Call: pre-fix this would block forever on writeMu (held by
+	// the orphan goroutine of Call 1). Post-fix, the timeout branch in
+	// Call 1 closed stdin and released writeMu, so this Call acquires
+	// writeMu fast and its own Write returns ErrClosedPipe immediately.
+	start = time.Now()
+	_, err = c.Call(context.Background(), "second", nil, perCallTimeout)
+	secondElapsed := time.Since(start)
+	if err == nil {
+		t.Fatalf("second Call should have errored on closed stdin, got nil")
+	}
+	if secondElapsed > 1*time.Second {
+		t.Fatalf("second Call cascaded on writeMu: took %v", secondElapsed)
+	}
+}
+
+// TestCall_CtxCancelDuringWriteUnblocks confirms ctx cancellation
+// reaches the write phase. Pre-fix, a cancelled ctx couldn't escape
+// stdin.Write; post-fix the ctx.Done() branch of the write-phase
+// select fires and closes stdin to release the orphan.
+func TestCall_CtxCancelDuringWriteUnblocks(t *testing.T) {
+	bw := newBlockingWriter()
+	defer bw.Close()
+	c := &Client{
+		stdin:    bw,
+		pending:  map[int64]chan rpcResponse{},
+		readDone: make(chan struct{}),
+		errDone:  make(chan struct{}),
+		name:     "blocked-ctx",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := c.Call(ctx, "blocked", nil, 5*time.Second)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatalf("expected ctx.Err() from cancelled write")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if elapsed > 1*time.Second {
+		t.Fatalf("Call did not honour ctx during write: ran %v", elapsed)
 	}
 }
