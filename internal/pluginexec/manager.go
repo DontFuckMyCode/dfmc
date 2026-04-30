@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -185,7 +186,9 @@ func (m *Manager) ProbeAndRegister(ctx context.Context, name string) error {
 		return fmt.Errorf("plugin initialize: %w", err)
 	}
 	if raw != nil {
-		_ = json.Unmarshal(raw, &caps)
+		if err := json.Unmarshal(raw, &caps); err != nil {
+			log.Printf("pluginexec: %s initialize response unparseable, registering 0 capabilities: %v", name, err)
+		}
 	}
 
 	if m.toolRegistry != nil && len(caps.Capabilities.Tools) > 0 {
@@ -203,14 +206,18 @@ func (m *Manager) ProbeAndRegister(ctx context.Context, name string) error {
 		for _, hook := range caps.Capabilities.Hooks {
 			// Hooks are registered as shell commands that delegate to the plugin.
 			h := hook
-			_ = m.hookRegistry(h, fmt.Sprintf("dfmc plugin run %s hook.%s", name, h), 30)
+			if err := m.hookRegistry(h, fmt.Sprintf("dfmc plugin run %s hook.%s", name, h), 30); err != nil {
+				log.Printf("pluginexec: %s hook %q registration failed: %v", name, h, err)
+			}
 		}
 	}
 
 	if m.skillInstaller != nil && len(caps.Capabilities.Skills) > 0 {
 		for _, skill := range caps.Capabilities.Skills {
 			s := skill
-			_ = m.skillInstaller(s, fmt.Sprintf("[[skill:%s]]", s))
+			if err := m.skillInstaller(s, fmt.Sprintf("[[skill:%s]]", s)); err != nil {
+				log.Printf("pluginexec: %s skill %q install failed: %v", name, s, err)
+			}
 		}
 	}
 

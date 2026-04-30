@@ -311,11 +311,68 @@ func (r *Router) completeWithProviderRetry(ctx context.Context, p Provider, req 
 			}
 			continue // try next model in chain
 		}
-		// Non-overflow error: give up on this provider immediately.
 		errs = append(errs, fmt.Errorf("%s (model %s): %w", p.Name(), model, err))
-		break
+		// Transient (5xx, I/O, network) failures are exactly what the
+		// configured FallbackModels exist for — try the next model on
+		// the same provider before giving up. Auth/4xx-non-throttle and
+		// other deterministic failures break out so we don't burn the
+		// whole chain on the same root cause.
+		if !isTransient(err) {
+			break
+		}
 	}
 	return nil, p.Name(), errors.Join(errs...)
+}
+
+// isTransient reports whether err looks recoverable by retrying — either
+// the same model after backoff, or the next model in the provider's
+// fallback chain. Intentionally conservative: we only return true for
+// signals that are very unlikely to repeat on the next attempt. Auth
+// failures, malformed requests, and ctx cancellation are all NOT
+// transient and must surface immediately so the caller sees the real
+// reason instead of a wall of retry noise.
+//
+// ErrProviderThrottled is handled separately by completeWithThrottleRetry
+// (with Retry-After + bounded retries on the SAME model), so we don't
+// duplicate that branch here.
+func isTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Caller-driven cancel/deadline is authoritative — never retry past it.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, ErrProviderUnavailable) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	// 5xx responses from upstream — providers stringify these as
+	// "anthropic error status 503: ..." / "<name> error status 502: ...".
+	// We accept both " status 5" and "status code 5" shapes for resilience.
+	for _, marker := range []string{
+		" status 500", " status 502", " status 503", " status 504",
+		"status code 500", "status code 502", "status code 503", "status code 504",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	// Network-layer hiccups — DNS, dial, mid-request EOF, idle reset.
+	for _, marker := range []string{
+		"connection refused",
+		"connection reset",
+		"no such host",
+		"i/o timeout",
+		"unexpected eof",
+		"broken pipe",
+		"tls handshake timeout",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // completeWithThrottleRetry is the same-provider wrapper that honors
@@ -611,7 +668,13 @@ func (r *Router) streamWithProviderRetry(ctx context.Context, p Provider, req Co
 			continue
 		}
 		errs = append(errs, fmt.Errorf("%s (model %s): %w", p.Name(), model, err))
-		break
+		// Same transient-vs-deterministic split as the non-stream path:
+		// retry transient (5xx, network, I/O) failures across the model
+		// chain, but break on auth/4xx so a misconfigured key doesn't
+		// burn through every fallback model in the profile.
+		if !isTransient(err) {
+			break
+		}
 	}
 	return nil, p.Name(), errors.Join(errs...)
 }

@@ -3,6 +3,7 @@ package taskstore
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 
@@ -143,9 +144,13 @@ func (s *Store) ListTasks(opts ListOptions) ([]*supervisor.Task, error) {
 		if b == nil {
 			return nil
 		}
-		return b.ForEach(func(_, v []byte) error {
+		return b.ForEach(func(k, v []byte) error {
 			var t supervisor.Task
 			if err := json.Unmarshal(v, &t); err != nil {
+				// Skip corrupt rows so the listing surface still works for
+				// every healthy entry, but log so the operator can spot a
+				// bad bucket instead of silently losing tasks from the UI.
+				log.Printf("taskstore: skipping corrupt task %q: %v", string(k), err)
 				return nil
 			}
 			if opts.ParentID != "" && t.ParentID != opts.ParentID {
