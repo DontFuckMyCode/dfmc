@@ -196,6 +196,46 @@ func TestSubagentRetriesTotal_IncrementsOnActualRetry(t *testing.T) {
 	}
 }
 
+// TestSubagentRetriesInWindow_TracksRecentEvents pins the windowed
+// counter: only events stamped within the last `window` duration
+// count, older entries fall out without needing eviction. Uses
+// recordRetryEvent directly so the test isn't gated on the 750ms
+// jittered backoff that runSubagentRetrying sleeps through.
+func TestSubagentRetriesInWindow_TracksRecentEvents(t *testing.T) {
+	// Reset the window so prior tests in the same package run don't
+	// pollute counts. Fine to do because the window is process-wide
+	// state we own.
+	retryWindowMu.Lock()
+	for i := range retryWindowBuf {
+		retryWindowBuf[i] = time.Time{}
+	}
+	retryWindowIdx = 0
+	retryWindowFull = false
+	retryWindowMu.Unlock()
+
+	now := time.Now()
+	// 3 events within the last second.
+	for i := 0; i < 3; i++ {
+		recordRetryEvent(now.Add(-100 * time.Millisecond))
+	}
+	// 2 events ~10 minutes old (outside any reasonable on-call window).
+	recordRetryEvent(now.Add(-10 * time.Minute))
+	recordRetryEvent(now.Add(-10 * time.Minute))
+
+	if got := SubagentRetriesInWindow(time.Second); got != 3 {
+		t.Errorf("1s window should see 3 recent retries, got %d", got)
+	}
+	if got := SubagentRetriesInWindow(15 * time.Minute); got != 5 {
+		t.Errorf("15min window should see all 5 events, got %d", got)
+	}
+	if got := SubagentRetriesInWindow(5 * time.Minute); got != 3 {
+		t.Errorf("5min window should drop the 10min-old events, got %d", got)
+	}
+	if got := SubagentRetriesInWindow(0); got != 0 {
+		t.Errorf("non-positive window should return 0, got %d", got)
+	}
+}
+
 // TestJitteredBackoff_StaysWithinBand asserts the jitter window is
 // symmetric around base and bounded by ±fraction. Probabilistically
 // — over many samples — we should see the spread but never escape the

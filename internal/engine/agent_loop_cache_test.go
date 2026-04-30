@@ -421,7 +421,7 @@ func TestLookupToolCache_RangeMergeHit(t *testing.T) {
 		"args": map[string]any{"path": "foo.go", "line_start": 1, "line_end": 5},
 	}}
 	wideContent := "alpha\nbeta\ngamma\ndelta\nepsilon"
-	storeToolCache(wideCall, toolResult(wideContent, false), cache, mu, rangeIndex)
+	storeToolCache(wideCall, toolResult(wideContent, false), cache, mu, rangeIndex, 0)
 
 	// Sub-range request for lines 2-4 should hit by slicing.
 	subCall := provider.ToolCall{Name: "tool_call", Input: map[string]any{
@@ -449,7 +449,7 @@ func TestLookupToolCache_RangeMergeMiss(t *testing.T) {
 		"name": "read_file",
 		"args": map[string]any{"path": "foo.go", "line_start": 1, "line_end": 5},
 	}}
-	storeToolCache(wideCall, toolResult("a\nb\nc\nd\ne", false), cache, mu, rangeIndex)
+	storeToolCache(wideCall, toolResult("a\nb\nc\nd\ne", false), cache, mu, rangeIndex, 0)
 
 	// Asking for lines 10-20 — outside the cached window. No exact key
 	// match either, so this is a clean miss.
@@ -474,7 +474,7 @@ func TestStoreToolCache_TruncatedSkipsRangeIndex(t *testing.T) {
 		"name": "read_file",
 		"args": map[string]any{"path": "foo.go", "line_start": 1, "line_end": 200},
 	}}
-	storeToolCache(call, toolResult("line1\nline2\n... [truncated]", true), cache, mu, rangeIndex)
+	storeToolCache(call, toolResult("line1\nline2\n... [truncated]", true), cache, mu, rangeIndex, 0)
 
 	if len(rangeIndex) != 0 {
 		t.Fatalf("truncated read must NOT populate range index, got %d buckets", len(rangeIndex))
@@ -524,7 +524,7 @@ func TestInvalidateCacheForFiles_WildcardClearsRangeIndex(t *testing.T) {
 }
 
 // TestStoreToolCache_RangeIndexBucketCap asserts the per-path bucket
-// is bounded by maxRangeEntriesPerPath. Without the cap, a long loop
+// is bounded by defaultMaxRangeEntriesPerPath. Without the cap, a long loop
 // reading many overlapping windows of one file would grow the slice
 // unboundedly. FIFO eviction means the newest entry stays — empirically
 // it has the best hit rate against the next request.
@@ -535,7 +535,7 @@ func TestStoreToolCache_RangeIndexBucketCap(t *testing.T) {
 
 	// Push (cap+5) distinct windows of foo.go through storeToolCache.
 	overflow := 5
-	for i := 0; i < maxRangeEntriesPerPath+overflow; i++ {
+	for i := 0; i < defaultMaxRangeEntriesPerPath+overflow; i++ {
 		start := i*10 + 1
 		end := start + 9
 		call := provider.ToolCall{Name: "tool_call", Input: map[string]any{
@@ -549,12 +549,12 @@ func TestStoreToolCache_RangeIndexBucketCap(t *testing.T) {
 		// Distinct content per range so we can identify which entries
 		// survived eviction.
 		content := strings.Repeat("x\n", 9) + "x"
-		storeToolCache(call, toolResult(content, false), cache, mu, rangeIndex)
+		storeToolCache(call, toolResult(content, false), cache, mu, rangeIndex, 0)
 	}
 
 	bucket := rangeIndex[readRangeIndexKey("foo.go")]
-	if got := len(bucket); got != maxRangeEntriesPerPath {
-		t.Fatalf("bucket should be capped at %d, got %d", maxRangeEntriesPerPath, got)
+	if got := len(bucket); got != defaultMaxRangeEntriesPerPath {
+		t.Fatalf("bucket should be capped at %d, got %d", defaultMaxRangeEntriesPerPath, got)
 	}
 	// FIFO: the oldest `overflow` entries should be gone — first
 	// surviving entry should start at line (overflow*10 + 1).
@@ -563,9 +563,71 @@ func TestStoreToolCache_RangeIndexBucketCap(t *testing.T) {
 		t.Errorf("expected oldest survivor to start at %d, got %d", wantFirstStart, bucket[0].start)
 	}
 	// And the newest entry should be the very last write.
-	wantLastStart := (maxRangeEntriesPerPath+overflow-1)*10 + 1
+	wantLastStart := (defaultMaxRangeEntriesPerPath+overflow-1)*10 + 1
 	if bucket[len(bucket)-1].start != wantLastStart {
 		t.Errorf("expected newest entry to start at %d, got %d", wantLastStart, bucket[len(bucket)-1].start)
+	}
+}
+
+// TestStoreToolCache_RangeIndexCustomCap pins the configurable bucket
+// cap path: passing a positive perPathCap overrides the package
+// default, and a 0 value falls back to defaultMaxRangeEntriesPerPath.
+// This is the production wiring engine.maxRangeEntriesPerPath() relies
+// on — a regression here would silently break agent.range_cache_per_path.
+func TestStoreToolCache_RangeIndexCustomCap(t *testing.T) {
+	cache := map[string]string{}
+	mu := &sync.Mutex{}
+	rangeIndex := map[string][]readRangeEntry{}
+
+	customCap := 4
+	overflow := 2
+	for i := 0; i < customCap+overflow; i++ {
+		start := i*10 + 1
+		end := start + 9
+		call := provider.ToolCall{Name: "tool_call", Input: map[string]any{
+			"name": "read_file",
+			"args": map[string]any{
+				"path":       "foo.go",
+				"line_start": start,
+				"line_end":   end,
+			},
+		}}
+		content := strings.Repeat("x\n", 9) + "x"
+		storeToolCache(call, toolResult(content, false), cache, mu, rangeIndex, customCap)
+	}
+	bucket := rangeIndex[readRangeIndexKey("foo.go")]
+	if got := len(bucket); got != customCap {
+		t.Fatalf("custom cap %d not honored, got %d", customCap, got)
+	}
+	if bucket[0].start != overflow*10+1 {
+		t.Errorf("expected oldest survivor at %d, got %d", overflow*10+1, bucket[0].start)
+	}
+}
+
+// TestEngineMaxRangeEntriesPerPath_HonorsConfig pins that the engine
+// helper resolves the cap from Config.Agent.RangeCachePerPath when set
+// and falls back to the default otherwise. Nil engine and zero-config
+// branches are also covered so a partially-built engine in tests
+// never panics.
+func TestEngineMaxRangeEntriesPerPath_HonorsConfig(t *testing.T) {
+	var nilEng *Engine
+	if got := nilEng.maxRangeEntriesPerPath(); got != defaultMaxRangeEntriesPerPath {
+		t.Errorf("nil engine should return default, got %d", got)
+	}
+
+	eng := newTestEngine(t)
+	if got := eng.maxRangeEntriesPerPath(); got != defaultMaxRangeEntriesPerPath {
+		t.Errorf("zero config should return default, got %d", got)
+	}
+
+	eng.Config.Agent.RangeCachePerPath = 64
+	if got := eng.maxRangeEntriesPerPath(); got != 64 {
+		t.Errorf("explicit 64 should pass through, got %d", got)
+	}
+
+	eng.Config.Agent.RangeCachePerPath = -3
+	if got := eng.maxRangeEntriesPerPath(); got != defaultMaxRangeEntriesPerPath {
+		t.Errorf("negative value should fall back to default, got %d", got)
 	}
 }
 

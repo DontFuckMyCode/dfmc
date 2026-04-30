@@ -205,6 +205,16 @@ type AgentConfig struct {
 	// this map and the default — modify their own knobs (e.g. RunCommand's
 	// timeout param, web HTTP client) instead.
 	ToolTimeouts map[string]int `yaml:"tool_timeouts"`
+
+	// RangeCachePerPath bounds the per-loop read cache's per-path bucket
+	// of overlapping read_file windows. Beyond this many distinct ranges
+	// for the same file, the oldest entry is evicted (FIFO) so a long
+	// refactor session can't grow the index without bound. Default 16.
+	// Raise this when working on files where many narrow windows are
+	// useful (large generated code, vendored libs); lower it to trim
+	// memory in long-running daemons. 0 = use default; negative is
+	// treated as 0.
+	RangeCachePerPath int `yaml:"range_cache_per_path"`
 }
 
 type ContextLifecycleConfig struct {

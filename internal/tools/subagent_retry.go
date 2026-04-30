@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/rand"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -23,6 +24,62 @@ var subagentRetriesTotal int64
 // succeeded on the first attempt.
 func SubagentRetriesTotal() int64 {
 	return atomic.LoadInt64(&subagentRetriesTotal)
+}
+
+// retryWindow holds timestamps of recent retries so callers can ask
+// "how many retries fired in the last N minutes?" — a question the
+// monotonic counter alone can't answer. We keep a fixed-size ring of
+// the most recent 256 retries; that's enough for a 5-minute window at
+// 50 retries/sec (which would already be a fleet incident worth
+// paging on), and bounded so a long-running daemon never accumulates
+// unbounded state.
+const retryWindowSize = 256
+
+var (
+	retryWindowMu  sync.Mutex
+	retryWindowBuf [retryWindowSize]time.Time
+	retryWindowIdx int  // next slot to write
+	retryWindowFull bool // wrapped at least once
+)
+
+// recordRetryEvent stamps a retry into the ring buffer. Called from
+// runSubagentRetrying alongside the atomic counter bump. Cost is one
+// mutex acquisition + array write; negligible against a retry path
+// that's already about to sleep 600-900ms.
+func recordRetryEvent(now time.Time) {
+	retryWindowMu.Lock()
+	retryWindowBuf[retryWindowIdx] = now
+	retryWindowIdx++
+	if retryWindowIdx == retryWindowSize {
+		retryWindowIdx = 0
+		retryWindowFull = true
+	}
+	retryWindowMu.Unlock()
+}
+
+// SubagentRetriesInWindow returns the number of retries fired within
+// the last `window` duration. Caller-driven window so the same data
+// can answer "last minute" and "last 5 minutes" without keeping two
+// counters. A non-positive window returns 0 — telemetry consumers that
+// pass a bad value should see "no spike" rather than the full ring.
+func SubagentRetriesInWindow(window time.Duration) int {
+	if window <= 0 {
+		return 0
+	}
+	cutoff := time.Now().Add(-window)
+	retryWindowMu.Lock()
+	defer retryWindowMu.Unlock()
+	limit := retryWindowIdx
+	if retryWindowFull {
+		limit = retryWindowSize
+	}
+	count := 0
+	for i := 0; i < limit; i++ {
+		if !retryWindowBuf[i].IsZero() && retryWindowBuf[i].After(cutoff) {
+			count++
+		}
+	}
+	return count
 }
 
 // defaultSubagentRetryAttempts is the maximum number of retry attempts
@@ -99,6 +156,7 @@ func runSubagentRetrying(ctx context.Context, runner SubagentRunner, req Subagen
 		// still records the retry intent — which matches operator
 		// intuition: "we tried to recover".
 		atomic.AddInt64(&subagentRetriesTotal, 1)
+		recordRetryEvent(time.Now())
 		// Brief sleep before retry. Honour ctx cancel so we don't waste
 		// the backoff window after the user pressed Ctrl+C. Jitter is
 		// computed per-attempt so concurrent retries don't synchronize

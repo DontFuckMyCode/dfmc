@@ -69,6 +69,14 @@ type Status struct {
 	// investigate the provider rather than just trusting the eventual
 	// success.
 	SubagentRetries int64 `json:"subagent_retries,omitempty"`
+
+	// SubagentRetries5m is the count of retries fired in the last
+	// 5 minutes — answers "is this happening NOW?" which the
+	// cumulative counter alone can't. Long-running daemons can have
+	// SubagentRetries climb steadily over weeks while
+	// SubagentRetries5m stays at 0; the windowed view is the
+	// page-the-oncall signal.
+	SubagentRetries5m int `json:"subagent_retries_5m,omitempty"`
 }
 
 // ActiveDriveStatus is the status-surface projection of a single

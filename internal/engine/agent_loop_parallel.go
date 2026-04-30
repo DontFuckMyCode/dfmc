@@ -113,7 +113,7 @@ func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.
 		res, err := e.executeToolWithLifecycle(ctx, c.Name, c.Input, source)
 		out[idx] = parallelToolResult{Index: idx, Result: res, Err: err}
 		if err == nil {
-			storeToolCache(c, res, cache, cacheMu, rangeIndex)
+			storeToolCache(c, res, cache, cacheMu, rangeIndex, e.maxRangeEntriesPerPath())
 		}
 	}
 
@@ -210,7 +210,7 @@ func lookupToolCache(call provider.ToolCall, cache map[string]string, mu *sync.M
 // slicing rather than re-dispatching the tool. Truncated reads skip
 // the index because their content has a trailing marker that would
 // corrupt slice math.
-func storeToolCache(call provider.ToolCall, res tools.Result, cache map[string]string, mu *sync.Mutex, rangeIndex map[string][]readRangeEntry) {
+func storeToolCache(call provider.ToolCall, res tools.Result, cache map[string]string, mu *sync.Mutex, rangeIndex map[string][]readRangeEntry, perPathCap int) {
 	if cache == nil {
 		return
 	}
@@ -228,7 +228,11 @@ func storeToolCache(call provider.ToolCall, res tools.Result, cache map[string]s
 			// cap so a long loop reading many overlapping windows of the
 			// same file doesn't grow this slice unboundedly. The newest
 			// entry usually has the best hit rate for the next request.
-			if len(bucket) >= maxRangeEntriesPerPath {
+			cap := perPathCap
+			if cap <= 0 {
+				cap = defaultMaxRangeEntriesPerPath
+			}
+			if len(bucket) >= cap {
 				bucket = bucket[1:]
 			}
 			rangeIndex[bucketKey] = append(bucket, readRangeEntry{

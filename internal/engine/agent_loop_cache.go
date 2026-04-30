@@ -42,15 +42,31 @@ type readRangeEntry struct {
 	content string // raw segment text — split by "\n" yields exactly (end-start+1) lines
 }
 
-// maxRangeEntriesPerPath bounds the per-path bucket so a long loop
-// that reads many overlapping windows of the same file doesn't grow
-// the index unboundedly. When a new entry would push past this, the
-// oldest entry is evicted (FIFO). 16 covers the realistic workload
+// defaultMaxRangeEntriesPerPath bounds the per-path bucket so a long
+// loop that reads many overlapping windows of the same file doesn't
+// grow the index unboundedly. When a new entry would push past this,
+// the oldest entry is evicted (FIFO). 16 covers the realistic workload
 // (a refactor agent rarely retains more than a handful of distinct
 // windows per file before moving on) while staying small enough that
 // a worst-case 250 file × 16 entry index fits well under any sane
-// memory budget.
-const maxRangeEntriesPerPath = 16
+// memory budget. Operators can override via agent.range_cache_per_path
+// when a heavy refactor pushes against the cap; the eviction itself
+// still works at any value, the knob just trades memory for hit rate.
+const defaultMaxRangeEntriesPerPath = 16
+
+// maxRangeEntriesPerPath returns the engine's configured bucket cap,
+// falling back to the default when unset or non-positive. Resolved at
+// store-time rather than once per loop so a hot-reload of config picks
+// up immediately on the next read.
+func (e *Engine) maxRangeEntriesPerPath() int {
+	if e == nil || e.Config == nil {
+		return defaultMaxRangeEntriesPerPath
+	}
+	if n := e.Config.Agent.RangeCachePerPath; n > 0 {
+		return n
+	}
+	return defaultMaxRangeEntriesPerPath
+}
 
 // readRangeIndexKey turns a project-relative path into the bucket key
 // used by the per-path range index. Lower-case + forward-slash

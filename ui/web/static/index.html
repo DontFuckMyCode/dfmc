@@ -1055,6 +1055,18 @@ function classifyActivityEvent(ev) {
 			return { kind: "error", icon: "\u2717",
 				text: "tool failed \u00b7 " + (payload.tool || "tool") + " " + (payload.error || "") };
 		}
+		if (type === "tool:timeout") {
+			// Distinct from tool:error so operators can see the per-tool
+			// deadline gate firing. Reuses the error kind for visual
+			// prominence; the "tool timeout" prefix disambiguates from
+			// plain failures in the feed.
+			var tname = payload.name || "tool";
+			var ms = payload.limit_ms || 0;
+			var line = ms > 0
+				? ("tool timeout \u00b7 " + tname + " exceeded " + ms + "ms cap")
+				: ("tool timeout \u00b7 " + tname);
+			return { kind: "error", icon: "\u29d6", text: line };
+		}
 		if (type === "tool:reasoning") {
 			// Self-narration from the model — surface the WHY before the
 			// tool result lands. Glyph mirrors the TUI chip's `↳` shape.
