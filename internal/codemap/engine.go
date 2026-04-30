@@ -5,18 +5,20 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
+// Engine wires the AST parser into the codemap graph. The graph itself
+// is the synchronization boundary — *Graph carries its own RWMutex and
+// is the only mutable state here. Engine fields (ast, graph, stats) are
+// set once in New and never reassigned, so Engine itself needs no lock.
 type Engine struct {
 	ast   *ast.Engine
 	graph *Graph
 	stats *buildMetricsTracker
-	mu    sync.RWMutex
 }
 
 func New(astEngine *ast.Engine) *Engine {
@@ -28,8 +30,6 @@ func New(astEngine *ast.Engine) *Engine {
 }
 
 func (e *Engine) Graph() *Graph {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
 	return e.graph
 }
 

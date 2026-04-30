@@ -57,9 +57,9 @@ func NewGoogleProvider(model, apiKey, baseURL string, maxTokens, maxContext int,
 	}
 }
 
-func (p *GoogleProvider) Name() string                  { return p.name }
-func (p *GoogleProvider) Model() string                 { return p.model }
-func (p *GoogleProvider) Models() []string              { return []string{p.model} }
+func (p *GoogleProvider) Name() string     { return p.name }
+func (p *GoogleProvider) Model() string    { return p.model }
+func (p *GoogleProvider) Models() []string { return []string{p.model} }
 
 func (p *GoogleProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	if strings.TrimSpace(p.apiKey) == "" {
@@ -293,6 +293,13 @@ func (p *GoogleProvider) buildRequestBody(req CompletionRequest) map[string]any 
 // overflow so the router can auto-compact. Gemini surfaces overflow as 400
 // with "exceeds the maximum number of tokens" or similar language; the
 // string match in router.isContextOverflow also catches variants.
+//
+// Non-overflow failures wrap *StatusError so the router's isTransient
+// classifier can branch on StatusCode exactly via errors.As. Context
+// overflow stays as a plain wrapped sentinel because it has its own
+// dedicated handling path (compactMessagesForRetry) — wrapping it as
+// StatusError too would route 400-overflow through the transient
+// classifier and break that path.
 func (p *GoogleProvider) statusError(code int, raw []byte) error {
 	msg := strings.ToLower(string(raw))
 	if strings.Contains(msg, "exceeds the maximum") ||
@@ -300,7 +307,7 @@ func (p *GoogleProvider) statusError(code int, raw []byte) error {
 		strings.Contains(msg, "context window") {
 		return fmt.Errorf("%w: google status %d: %s", ErrContextOverflow, code, string(raw))
 	}
-	return fmt.Errorf("google error status %d: %s", code, string(raw))
+	return &StatusError{Provider: "google", StatusCode: code, Body: string(raw)}
 }
 
 func (p *GoogleProvider) CountTokens(text string) int {

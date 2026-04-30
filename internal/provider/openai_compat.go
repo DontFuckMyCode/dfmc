@@ -66,9 +66,9 @@ func normalizeOpenAIBaseURL(name, raw string) string {
 	return trimmed
 }
 
-func (p *OpenAICompatibleProvider) Name() string                  { return p.name }
-func (p *OpenAICompatibleProvider) Model() string                 { return p.model }
-func (p *OpenAICompatibleProvider) Models() []string              { return []string{p.model} }
+func (p *OpenAICompatibleProvider) Name() string     { return p.name }
+func (p *OpenAICompatibleProvider) Model() string    { return p.model }
+func (p *OpenAICompatibleProvider) Models() []string { return []string{p.model} }
 
 func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	if strings.TrimSpace(p.baseURL) == "" {
@@ -127,7 +127,7 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 		if isThrottleStatus(resp.StatusCode) {
 			return nil, newThrottledErrorFromResponse(p.name, resp, string(raw))
 		}
-		return nil, fmt.Errorf("%s error status %d: %s", p.name, resp.StatusCode, string(raw))
+		return nil, &StatusError{Provider: p.name, StatusCode: resp.StatusCode, Body: string(raw)}
 	}
 	if errMsg := parseCommonProviderError(raw); errMsg != "" {
 		return nil, fmt.Errorf("%s provider error: %s", p.name, errMsg)
@@ -226,7 +226,7 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 		if isThrottleStatus(resp.StatusCode) {
 			return nil, newThrottledErrorFromResponse(p.name, resp, string(raw))
 		}
-		return nil, fmt.Errorf("%s error status %d: %s", p.name, resp.StatusCode, string(raw))
+		return nil, &StatusError{Provider: p.name, StatusCode: resp.StatusCode, Body: string(raw)}
 	}
 
 	ch := make(chan StreamEvent, 32)
