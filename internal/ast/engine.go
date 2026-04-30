@@ -78,6 +78,17 @@ var (
 	reRustStruct = regexp.MustCompile(`^\s*(?:pub\s+)?struct\s+([A-Za-z_]\w*)\b`)
 	reRustEnum   = regexp.MustCompile(`^\s*(?:pub\s+)?enum\s+([A-Za-z_]\w*)\b`)
 	reRustTrait  = regexp.MustCompile(`^\s*(?:pub\s+)?trait\s+([A-Za-z_]\w*)\b`)
+
+	// Import regexes for the extractImports fallback path (JS/TS, Python,
+	// Rust). Hoisted alongside the symbol regexes above; pre-fix these
+	// were rebuilt on every extractImports call, multiplying the
+	// regex-compile cost on !cgo builds and on tree-sitter parse-failure
+	// fallbacks.
+	reJSImport   = regexp.MustCompile(`^\s*import\s+.*from\s+['"]([^'"]+)['"]`)
+	reJSRequire  = regexp.MustCompile(`require\(['"]([^'"]+)['"]\)`)
+	rePyImport   = regexp.MustCompile(`^\s*import\s+([A-Za-z0-9_\.]+)`)
+	rePyFrom     = regexp.MustCompile(`^\s*from\s+([A-Za-z0-9_\.]+)\s+import`)
+	reRustUseDep = regexp.MustCompile(`^\s*use\s+([A-Za-z0-9_:]+)`)
 )
 
 // New constructs an AST engine with the default parse-cache capacity.
@@ -361,31 +372,26 @@ func extractImports(lang string, content []byte) []string {
 
 	switch lang {
 	case "typescript", "tsx", "javascript", "jsx":
-		reImport := regexp.MustCompile(`^\s*import\s+.*from\s+['"]([^'"]+)['"]`)
-		reRequire := regexp.MustCompile(`require\(['"]([^'"]+)['"]\)`)
 		for _, line := range lines {
-			if m := reImport.FindStringSubmatch(line); len(m) > 1 {
+			if m := reJSImport.FindStringSubmatch(line); len(m) > 1 {
 				add(m[1])
 			}
-			if m := reRequire.FindStringSubmatch(line); len(m) > 1 {
+			if m := reJSRequire.FindStringSubmatch(line); len(m) > 1 {
 				add(m[1])
 			}
 		}
 	case "python":
-		reImport := regexp.MustCompile(`^\s*import\s+([A-Za-z0-9_\.]+)`)
-		reFrom := regexp.MustCompile(`^\s*from\s+([A-Za-z0-9_\.]+)\s+import`)
 		for _, line := range lines {
-			if m := reImport.FindStringSubmatch(line); len(m) > 1 {
+			if m := rePyImport.FindStringSubmatch(line); len(m) > 1 {
 				add(m[1])
 			}
-			if m := reFrom.FindStringSubmatch(line); len(m) > 1 {
+			if m := rePyFrom.FindStringSubmatch(line); len(m) > 1 {
 				add(m[1])
 			}
 		}
 	case "rust":
-		reUse := regexp.MustCompile(`^\s*use\s+([A-Za-z0-9_:]+)`)
 		for _, line := range lines {
-			if m := reUse.FindStringSubmatch(line); len(m) > 1 {
+			if m := reRustUseDep.FindStringSubmatch(line); len(m) > 1 {
 				add(m[1])
 			}
 		}

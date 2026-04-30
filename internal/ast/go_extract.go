@@ -9,6 +9,26 @@ import (
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
+// Go-specific extractor regexes hoisted to package scope. Pre-fix these
+// were rebuilt on every extractGoSymbols / extractGoImports / splitIdentifierList
+// call — for !cgo builds (or any tree-sitter parse fallback path) that's
+// 8 regexp.Compile invocations per Go file. The JS/Python/Rust symbol
+// regexes were already hoisted in engine.go; the Go set lagged behind.
+var (
+	reGoFunc          = regexp.MustCompile(`^\s*func\s+([A-Za-z_]\w*)\s*\(`)
+	reGoMethod        = regexp.MustCompile(`^\s*func\s*\([^)]*\)\s*([A-Za-z_]\w*)\s*\(`)
+	reGoInterfaceType = regexp.MustCompile(`^\s*type\s+([A-Za-z_]\w*)\s+interface\b`)
+	reGoType          = regexp.MustCompile(`^\s*type\s+([A-Za-z_]\w*)\s+`)
+	reGoConst         = regexp.MustCompile(`^\s*const\s+([A-Za-z_][\w\s,]*)\b`)
+	reGoVar           = regexp.MustCompile(`^\s*var\s+([A-Za-z_][\w\s,]*)\b`)
+	// reGoQuotedImport matches double-quoted "path" or backtick-quoted `path`
+	// import strings inside a Go source file.
+	reGoQuotedImport = regexp.MustCompile(`"([^"]+)"|` + "`" + `([^` + "`" + `]+)` + "`")
+	// reGoIdentList captures a leading comma-separated identifier list,
+	// used for `const X, Y, Z = ...` and `var A, B = ...`.
+	reGoIdentList = regexp.MustCompile(`^\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\b`)
+)
+
 func extractWithPreferredBackend(ctx context.Context, path, lang string, content []byte) ([]types.Symbol, []string, []ParseError, string, error) {
 	if symbols, imports, errs, handled, err := parseWithTreeSitter(ctx, path, lang, content); handled && err == nil {
 		return symbols, imports, errs, "tree-sitter", nil
@@ -22,12 +42,6 @@ func extractWithPreferredBackend(ctx context.Context, path, lang string, content
 
 func extractGoSymbols(path, lang string, content []byte) []types.Symbol {
 	lines := strings.Split(string(content), "\n")
-	reFunc := regexp.MustCompile(`^\s*func\s+([A-Za-z_]\w*)\s*\(`)
-	reMethod := regexp.MustCompile(`^\s*func\s*\([^)]*\)\s*([A-Za-z_]\w*)\s*\(`)
-	reInterfaceType := regexp.MustCompile(`^\s*type\s+([A-Za-z_]\w*)\s+interface\b`)
-	reType := regexp.MustCompile(`^\s*type\s+([A-Za-z_]\w*)\s+`)
-	reConst := regexp.MustCompile(`^\s*const\s+([A-Za-z_][\w\s,]*)\b`)
-	reVar := regexp.MustCompile(`^\s*var\s+([A-Za-z_][\w\s,]*)\b`)
 
 	var (
 		symbols      []types.Symbol
@@ -69,29 +83,29 @@ func extractGoSymbols(path, lang string, content []byte) []types.Symbol {
 			}
 		}
 
-		if m := reMethod.FindStringSubmatch(line); len(m) > 1 {
+		if m := reGoMethod.FindStringSubmatch(line); len(m) > 1 {
 			add(types.SymbolMethod, m[1], i+1, trimmed)
 			continue
 		}
-		if m := reFunc.FindStringSubmatch(line); len(m) > 1 {
+		if m := reGoFunc.FindStringSubmatch(line); len(m) > 1 {
 			add(types.SymbolFunction, m[1], i+1, trimmed)
 			continue
 		}
-		if m := reInterfaceType.FindStringSubmatch(line); len(m) > 1 {
+		if m := reGoInterfaceType.FindStringSubmatch(line); len(m) > 1 {
 			add(types.SymbolInterface, m[1], i+1, trimmed)
 			continue
 		}
-		if m := reType.FindStringSubmatch(line); len(m) > 1 {
+		if m := reGoType.FindStringSubmatch(line); len(m) > 1 {
 			add(types.SymbolType, m[1], i+1, trimmed)
 			continue
 		}
-		if m := reConst.FindStringSubmatch(line); len(m) > 1 {
+		if m := reGoConst.FindStringSubmatch(line); len(m) > 1 {
 			for _, name := range splitIdentifierList(m[1]) {
 				add(types.SymbolConstant, name, i+1, trimmed)
 			}
 			continue
 		}
-		if m := reVar.FindStringSubmatch(line); len(m) > 1 {
+		if m := reGoVar.FindStringSubmatch(line); len(m) > 1 {
 			for _, name := range splitIdentifierList(m[1]) {
 				add(types.SymbolVariable, name, i+1, trimmed)
 			}
@@ -116,11 +130,10 @@ func extractGoSymbols(path, lang string, content []byte) []types.Symbol {
 func extractGoImports(content []byte) []string {
 	lines := strings.Split(string(content), "\n")
 	set := map[string]struct{}{}
-	reQuoted := regexp.MustCompile(`"([^"]+)"|` + "`" + `([^` + "`" + `]+)` + "`")
 	inBlock := false
 
 	addMatches := func(line string) {
-		for _, match := range reQuoted.FindAllStringSubmatch(line, -1) {
+		for _, match := range reGoQuotedImport.FindAllStringSubmatch(line, -1) {
 			for i := 1; i < len(match); i++ {
 				v := strings.TrimSpace(match[i])
 				if v != "" {
@@ -152,8 +165,7 @@ func extractGoImports(content []byte) []string {
 }
 
 func splitIdentifierList(line string) []string {
-	reNames := regexp.MustCompile(`^\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\b`)
-	match := reNames.FindStringSubmatch(line)
+	match := reGoIdentList.FindStringSubmatch(line)
 	if len(match) < 2 {
 		return nil
 	}

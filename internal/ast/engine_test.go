@@ -10,6 +10,71 @@ import (
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
+// BenchmarkExtractGoSymbols_RegexFallback locks in the regex-hoisting
+// win. Pre-fix the function rebuilt 6 regexes per call (extractGoSymbols)
+// + 1 (splitIdentifierList, called per matched const/var line) + 1
+// (extractGoImports's reQuoted), so a Go file in the regex-fallback path
+// (CGO off, or tree-sitter parse failed) cost ~28µs of regex compile
+// overhead alone. Post-fix that's ~7-8µs total — the fixed cost moves
+// to package init (one compile per regex per process). On a 10K-file
+// !cgo codemap rebuild that's roughly 200ms saved.
+//
+// If a contributor ever puts these regexes back inside the function body
+// this benchmark won't catch it directly, but the wall-clock will
+// regress noticeably and BenchmarkExtractGoImports_RegexFallback below
+// pins extractGoImports's reGoQuotedImport hoist by exercising the
+// import path with a small file.
+func BenchmarkExtractGoSymbols_RegexFallback(b *testing.B) {
+	src := []byte(`package main
+
+import "fmt"
+
+func add(a, b int) int { return a + b }
+func sub(x, y int) int { return x - y }
+
+type User struct { Name string }
+
+func (u User) Greet() string { return "hi " + u.Name }
+func (u *User) SetName(n string) { u.Name = n }
+
+const X = 1
+var Y = 2
+const (
+	A = 1
+	B = 2
+)
+var (
+	P = 1
+	Q = 2
+)
+type T interface {
+	Foo() string
+	Bar() int
+}
+`)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		extractGoSymbols("test.go", "go", src)
+	}
+}
+
+func BenchmarkExtractGoImports_RegexFallback(b *testing.B) {
+	src := []byte(`package main
+
+import (
+	"fmt"
+	"strings"
+	"github.com/dontfuckmycode/dfmc/internal/ast"
+)
+
+import "os"
+`)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		extractGoImports(src)
+	}
+}
+
 // TestEngine_DetectLanguageConcurrentRead exercises the read-only-map
 // invariant for Engine.extToLang. The map is built once in the
 // constructor and never mutated, so concurrent reads must be race-free.
