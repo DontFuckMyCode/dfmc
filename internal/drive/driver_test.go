@@ -162,6 +162,43 @@ func TestDriverRunsHappyPathSequentially(t *testing.T) {
 	}
 }
 
+// TestApplyOutcomeRecoversByTodoID exercises the defensive lookup that
+// realigns a worker outcome to its TODO when the captured Idx no longer
+// resolves to the same ID. Today the planner contract pins verification
+// to the slice tail so this never fires in production, but the guard
+// keeps a future planner change from silently mis-routing outcomes
+// (e.g. stamping worker B's result onto worker A's slot).
+func TestApplyOutcomeRecoversByTodoID(t *testing.T) {
+	d := NewDriver(&fakeRunner{}, nil, nil, Config{}.Apply())
+	run := &Run{
+		Todos: []Todo{
+			{ID: "C", Status: TodoPending, StartedAt: time.Now()},
+			{ID: "A", Status: TodoRunning, StartedAt: time.Now()},
+			{ID: "B", Status: TodoRunning, StartedAt: time.Now()},
+		},
+	}
+	// Simulate worker B returning success after A's spawn shifted indices:
+	// B was dispatched at idx=1 (when slice was [A, B]), but a sibling's
+	// spawn inserted a TODO ahead so B is now at idx=2. Captured Idx=1
+	// resolves to A; the guard must re-route by TodoID.
+	res := todoOutcome{
+		Idx:     1,
+		TodoID:  "B",
+		Resp:    ExecuteTodoResponse{Summary: "B finished"},
+		Started: run.Todos[2].StartedAt,
+		Ended:   time.Now(),
+		Attempt: 1,
+	}
+	consec := 0
+	d.applyOutcome(run, res, &consec)
+	if run.Todos[1].ID != "A" || run.Todos[1].Status != TodoRunning {
+		t.Fatalf("worker B's outcome leaked onto A: got %+v", run.Todos[1])
+	}
+	if run.Todos[2].ID != "B" || run.Todos[2].Status != TodoDone {
+		t.Fatalf("worker B's outcome did not land on B: got %+v", run.Todos[2])
+	}
+}
+
 func TestNewRunRejectsBlankTaskWithActionableError(t *testing.T) {
 	_, err := NewRun(" \n\t ")
 	if err == nil {

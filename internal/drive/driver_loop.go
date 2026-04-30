@@ -218,6 +218,25 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 		return // shouldn't happen; defensive
 	}
 	t := &run.Todos[res.Idx]
+	// Spawned-TODO insertion shifts indices when applySpawnedTodos inserts
+	// somewhere other than the slice tail. Today the planner contract pins
+	// verification to the end so the captured Idx always still resolves to
+	// the same TodoID, but verifying it before mutating costs one comparison
+	// and prevents a future planner change from silently mis-routing
+	// outcomes (e.g. stamping worker B's result onto worker A's slot).
+	if res.TodoID != "" && t.ID != res.TodoID {
+		recovered := -1
+		for i := range run.Todos {
+			if run.Todos[i].ID == res.TodoID {
+				recovered = i
+				break
+			}
+		}
+		if recovered < 0 {
+			return // TODO disappeared (shouldn't happen — TODOs are append-only)
+		}
+		t = &run.Todos[recovered]
+	}
 	t.EndedAt = res.Ended
 	dur := t.EndedAt.Sub(t.StartedAt).Milliseconds()
 

@@ -1,6 +1,7 @@
 package taskstore
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -104,6 +105,42 @@ func TestUpdateTaskNotFound(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for missing task")
+	}
+}
+
+// TestUpdateTaskFnErrorIsNotPersisted regresses the contract that a
+// mutator returning an error must NOT leave a partial write on disk.
+// With the old two-transaction implementation a slow mutator could be
+// preempted between LoadTask and SaveTask; the single-bbolt-Update
+// rewrite makes this trivially atomic.
+func TestUpdateTaskFnErrorIsNotPersisted(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-rb-1", Title: "before", State: supervisor.TaskPending})
+
+	wantErr := errors.New("intentional rollback")
+	err := s.UpdateTask("tsk-rb-1", func(t *supervisor.Task) error {
+		t.Title = "DIRTY"
+		t.State = supervisor.TaskDone
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("UpdateTask: got %v, want %v", err, wantErr)
+	}
+	got, _ := s.LoadTask("tsk-rb-1")
+	if got.Title != "before" || got.State != supervisor.TaskPending {
+		t.Fatalf("partial write leaked: %+v", got)
+	}
+}
+
+func TestUpdateTaskRejectsBadInputs(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	if err := s.UpdateTask("", func(t *supervisor.Task) error { return nil }); err == nil {
+		t.Fatal("expected error for empty id")
+	}
+	if err := s.UpdateTask("any", nil); err == nil {
+		t.Fatal("expected error for nil fn")
 	}
 }
 

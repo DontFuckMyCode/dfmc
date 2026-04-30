@@ -14,8 +14,8 @@ import (
 const taskBucket = "tasks"
 
 type Store struct {
-	db  *bbolt.DB
-	mu  sync.Mutex // serializes concurrent UpdateTask calls on the same task ID
+	db *bbolt.DB
+	mu sync.Mutex // serializes concurrent UpdateTask calls on the same task ID
 }
 
 func NewStore(db *bbolt.DB) *Store {
@@ -72,20 +72,46 @@ func (s *Store) LoadTask(id string) (*supervisor.Task, error) {
 	return &t, nil
 }
 
+// UpdateTask reads, mutates, and writes a task atomically inside a single
+// bbolt.Update transaction. The whole-store mutex still serializes
+// UpdateTask calls against each other (so concurrent readers see one
+// definite intermediate state, not torn writes), and the surrounding
+// txn closes the load-modify-save window where a concurrent SaveTask
+// or DeleteTask could otherwise lose-update between the read and write.
 func (s *Store) UpdateTask(id string, fn func(*supervisor.Task) error) error {
+	if id == "" {
+		return fmt.Errorf("taskstore.UpdateTask: id is empty")
+	}
+	if fn == nil {
+		return fmt.Errorf("taskstore.UpdateTask: fn is nil")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, err := s.LoadTask(id)
-	if err != nil {
-		return err
-	}
-	if t == nil {
-		return fmt.Errorf("task not found: %s", id)
-	}
-	if err := fn(t); err != nil {
-		return err
-	}
-	return s.SaveTask(t)
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists([]byte(taskBucket))
+		if err != nil {
+			return err
+		}
+		raw := b.Get([]byte(id))
+		if raw == nil {
+			return fmt.Errorf("task not found: %s", id)
+		}
+		var t supervisor.Task
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return fmt.Errorf("unmarshal task %q: %w", id, err)
+		}
+		if err := fn(&t); err != nil {
+			return err
+		}
+		if t.ID == "" {
+			return fmt.Errorf("taskstore.UpdateTask: fn cleared task.ID")
+		}
+		data, err := json.MarshalIndent(&t, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal task: %w", err)
+		}
+		return b.Put([]byte(t.ID), data)
+	})
 }
 
 func (s *Store) DeleteTask(id string) error {
