@@ -41,6 +41,14 @@ const ShutdownGrace = 2 * time.Second
 // or noisy plugins.
 const stderrBufferCap = 64 * 1024
 
+// MaxFrameBytes caps a single plugin response frame. Plugins emit
+// "one JSON object per line" per the package contract; 16 MiB is well
+// past any legitimate tool result while bounding memory if a buggy or
+// hostile plugin streams an unbounded document. A frame past the cap
+// fails all pending Calls and stops the readLoop — the stream is
+// unrecoverable because we can't re-sync after a truncated frame.
+const MaxFrameBytes = 16 * 1024 * 1024
+
 // Spec describes one plugin launch. Entry is the absolute (or workdir-
 // relative) path to the script. Type overrides the extension-based
 // interpreter pick — use it when the extension is ambiguous or the file
@@ -73,6 +81,11 @@ type Client struct {
 	name      string
 	stderrMu  sync.Mutex
 	stderrBuf []byte
+
+	// maxFrameBytes is the per-instance read cap, defaulting to
+	// MaxFrameBytes via Spawn. Tests override directly to avoid having
+	// to allocate 16+ MiB to exercise the cap path.
+	maxFrameBytes int
 }
 
 type rpcRequest struct {
@@ -153,12 +166,13 @@ func Spawn(ctx context.Context, spec Spec) (*Client, error) {
 	c := &Client{
 		cmd:      cmd,
 		stdin:    stdin,
-		stdout:   stdout,
-		stderr:   stderr,
-		pending:  map[int64]chan rpcResponse{},
-		readDone: make(chan struct{}),
-		errDone:  make(chan struct{}),
-		name:     strings.TrimSpace(spec.Name),
+		stdout:        stdout,
+		stderr:        stderr,
+		pending:       map[int64]chan rpcResponse{},
+		readDone:      make(chan struct{}),
+		errDone:       make(chan struct{}),
+		name:          strings.TrimSpace(spec.Name),
+		maxFrameBytes: MaxFrameBytes,
 	}
 	go c.readLoop()
 	go c.drainStderr()
@@ -296,15 +310,34 @@ func (c *Client) Stderr() string {
 
 func (c *Client) readLoop() {
 	defer close(c.readDone)
-	dec := json.NewDecoder(bufio.NewReader(c.stdout))
-	for {
+	// Strict line-delimited framing with a per-frame cap. The previous
+	// json.NewDecoder path would have allocated up to memory exhaustion
+	// for a single oversized document, taking down DFMC alongside the
+	// misbehaving plugin. With Scanner + MaxFrameBytes a frame past the
+	// cap surfaces as bufio.ErrTooLong; we fail all pending Calls and
+	// stop reading because we can't recover the stream after a truncated
+	// frame.
+	frameCap := c.maxFrameBytes
+	if frameCap <= 0 {
+		frameCap = MaxFrameBytes
+	}
+	// See note in mcp/server.go's Serve: bufio.Scanner.Buffer's effective
+	// cap is max(maxArg, cap(initBuf)), so the initial buffer must be ≤
+	// frameCap or the limit silently rises. Otherwise the test override
+	// path is a lie.
+	initSize := 64 * 1024
+	if initSize > frameCap {
+		initSize = frameCap
+	}
+	sc := bufio.NewScanner(c.stdout)
+	sc.Buffer(make([]byte, 0, initSize), frameCap)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
 		var resp rpcResponse
-		if err := dec.Decode(&resp); err != nil {
-			if errors.Is(err, io.EOF) {
-				return
-			}
-			// Decode failure — can't recover the stream without re-framing.
-			// Fail all outstanding calls and stop reading.
+		if err := json.Unmarshal(line, &resp); err != nil {
 			c.failAll(fmt.Errorf("plugin decode: %w", err))
 			return
 		}
@@ -319,6 +352,16 @@ func (c *Client) readLoop() {
 			continue
 		}
 		ch <- resp
+	}
+	if err := sc.Err(); err != nil {
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		if errors.Is(err, bufio.ErrTooLong) {
+			c.failAll(fmt.Errorf("plugin %q frame exceeded %d bytes; stream terminated", c.name, frameCap))
+			return
+		}
+		c.failAll(fmt.Errorf("plugin read: %w", err))
 	}
 }
 

@@ -10,6 +10,16 @@ import (
 	"sync"
 )
 
+// MaxFrameBytes caps a single JSON-RPC frame the server is willing to
+// decode. The MCP spec requires newline-delimited frames with no embedded
+// newlines, so per-frame ≈ per-line; 16 MiB is generous for any
+// legitimate tools/list response or tool-call result while keeping a
+// buggy or hostile peer from OOM-ing DFMC by streaming an unbounded
+// document. Hit this cap and Serve writes a parse-error response back
+// (with null id, per JSON-RPC 2.0 §5.1) and returns — the connection
+// is unrecoverable because the rest of the stream is anyone's guess.
+const MaxFrameBytes = 16 * 1024 * 1024
+
 // Server is a line-delimited JSON-RPC 2.0 server over any reader/writer
 // pair. In production the caller hooks it to stdin/stdout; tests pass
 // in-memory pipes. The server is single-session: one Serve call handles one
@@ -23,33 +33,72 @@ type Server struct {
 
 	info   ServerInfo
 	inited bool
-	initMu   sync.Mutex
+	initMu sync.Mutex
+
+	// maxFrameBytes is the per-instance cap, defaulting to MaxFrameBytes.
+	// Exposed for tests via a small white-box override; production code
+	// should not lower this — 16 MiB is already generous and the protocol
+	// is unrecoverable past a truncation.
+	maxFrameBytes int
 }
 
 // NewServer builds a Server. `info` is advertised back to the client during
 // initialize (name + version of the DFMC build).
 func NewServer(in io.Reader, out io.Writer, bridge ToolBridge, info ServerInfo) *Server {
-	return &Server{in: in, out: out, bridge: bridge, info: info}
+	return &Server{in: in, out: out, bridge: bridge, info: info, maxFrameBytes: MaxFrameBytes}
 }
 
 // Serve runs the JSON-RPC loop until the reader returns EOF or ctx is
 // cancelled. Non-nil errors are transport failures; clean EOF returns nil.
+//
+// Framing is strict newline-delimited per MCP spec — bufio.Scanner with
+// the default ScanLines splitter and a MaxFrameBytes cap. A peer that
+// emits a frame larger than the cap gets one parse-error response and
+// then the connection terminates: there's no way to re-sync mid-stream
+// once we've truncated a frame. json.Decoder would have happily allocated
+// up to RAM-exhaustion on a single multi-GB document, which is the
+// failure mode this guards against — a buggy or hostile MCP server
+// can no longer take down DFMC by mis-emitting JSON.
 func (s *Server) Serve(ctx context.Context) error {
-	dec := json.NewDecoder(bufio.NewReader(s.in))
-	for {
+	frameCap := s.maxFrameBytes
+	if frameCap <= 0 {
+		frameCap = MaxFrameBytes
+	}
+	// Initial buffer is the smaller of 64 KiB (avoids realloc for common
+	// frame sizes) and frameCap. bufio.Scanner.Buffer's effective cap is
+	// max(maxArg, cap(initBuf)), so an initial buffer larger than frameCap
+	// would silently raise the limit.
+	initSize := 64 * 1024
+	if initSize > frameCap {
+		initSize = frameCap
+	}
+	sc := bufio.NewScanner(s.in)
+	sc.Buffer(make([]byte, 0, initSize), frameCap)
+	for sc.Scan() {
 		if err := ctx.Err(); err != nil {
 			return nil
 		}
-		var raw json.RawMessage
-		if err := dec.Decode(&raw); err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			s.writeResponse(NewErrorResponse(nil, ErrParseError, "parse error: "+err.Error(), nil))
+		// Copy the line — Scanner reuses its internal buffer between
+		// Scan calls, so handing the slice straight to handleRaw would
+		// race the next iteration's read.
+		line := append([]byte(nil), sc.Bytes()...)
+		if len(line) == 0 {
+			continue
+		}
+		s.handleRaw(ctx, line)
+	}
+	if err := sc.Err(); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if errors.Is(err, bufio.ErrTooLong) {
+			s.writeResponse(NewErrorResponse(nil, ErrParseError, fmt.Sprintf("frame exceeded %d bytes; connection terminated", frameCap), nil))
 			return err
 		}
-		s.handleRaw(ctx, raw)
+		s.writeResponse(NewErrorResponse(nil, ErrParseError, "parse error: "+err.Error(), nil))
+		return err
 	}
+	return nil
 }
 
 // handleRaw decodes one frame and dispatches. Malformed frames yield a

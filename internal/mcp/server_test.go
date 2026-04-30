@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -132,6 +133,100 @@ func decodeResult(t *testing.T, resp Response, dst any) {
 }
 
 // ---------- tests ----------
+
+// TestServer_FrameSizeCapRejectsOversized regresses a memory-exhaustion
+// risk: pre-fix Serve used json.NewDecoder which would happily allocate
+// up to RAM-exhaustion for a single multi-GB document. A buggy or
+// hostile MCP server emitting unbounded JSON could OOM DFMC.
+//
+// We override maxFrameBytes to 256 bytes so the test doesn't have to
+// allocate the production 16 MiB to exercise the cap, then send a 1 KiB
+// frame. The server must:
+//   - reply with a parse-error response carrying the cap-mention message
+//   - exit Serve with bufio.ErrTooLong (transport unrecoverable past a
+//     truncated frame; we can't re-sync mid-stream)
+//
+// io.Pipe is synchronous so a single 1 KiB Write would deadlock against
+// a 256-byte Scanner buffer (Scanner errors after reading the cap and
+// stops reading; the writer blocks forever on the unread tail). We do
+// the write in a goroutine and let it leak if Scanner abandons the
+// stream — that's the production failure mode anyway.
+func TestServer_FrameSizeCapRejectsOversized(t *testing.T) {
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	srv := NewServer(inR, outW, &fakeBridge{}, ServerInfo{Name: "test", Version: "0.0.0"})
+	srv.maxFrameBytes = 256
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		err := srv.Serve(ctx)
+		_ = outW.Close()
+		done <- err
+	}()
+
+	// Push the oversized frame in a goroutine — the writer will block
+	// forever on the tail bytes once Scanner gives up and stops reading.
+	// We unblock it via inW.Close in the cleanup at the end.
+	big := bytes.Repeat([]byte("A"), 1024)
+	frame := append([]byte(`{"jsonrpc":"2.0","id":1,"method":"x","params":"`), big...)
+	frame = append(frame, []byte(`"}`)...)
+	frame = append(frame, '\n')
+	go func() {
+		_, _ = inW.Write(frame)
+	}()
+
+	// The server should emit one error response then close out.
+	br := bufio.NewReader(outR)
+	type readResult struct {
+		line []byte
+		err  error
+	}
+	rch := make(chan readResult, 1)
+	go func() {
+		l, e := br.ReadBytes('\n')
+		rch <- readResult{l, e}
+	}()
+	var rr readResult
+	select {
+	case rr = <-rch:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("server did not emit a parse-error response")
+	}
+	if rr.err != nil && !errors.Is(rr.err, io.EOF) {
+		t.Fatalf("read response: %v", rr.err)
+	}
+	if len(bytes.TrimSpace(rr.line)) == 0 {
+		t.Fatalf("expected parse-error response, got empty")
+	}
+	var resp Response
+	if err := json.Unmarshal(bytes.TrimSpace(rr.line), &resp); err != nil {
+		t.Fatalf("decode response %q: %v", string(rr.line), err)
+	}
+	if resp.Error == nil {
+		t.Fatalf("expected error response, got success: %+v", resp)
+	}
+	if resp.Error.Code != ErrParseError {
+		t.Fatalf("expected ErrParseError (%d), got %d", ErrParseError, resp.Error.Code)
+	}
+	if !strings.Contains(resp.Error.Message, "frame exceeded") {
+		t.Fatalf("error message should mention frame cap, got %q", resp.Error.Message)
+	}
+
+	// Closing inW unblocks the goroutine writer (returns ErrClosedPipe).
+	_ = inW.Close()
+	select {
+	case serveErr := <-done:
+		if serveErr == nil {
+			t.Fatalf("Serve returned nil; expected bufio.ErrTooLong propagation")
+		}
+		if !errors.Is(serveErr, bufio.ErrTooLong) {
+			t.Fatalf("Serve returned %v, want bufio.ErrTooLong", serveErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Serve did not exit after oversized-frame rejection")
+	}
+}
 
 func TestServerInitializeHandshake(t *testing.T) {
 	h := newHarness(t, &fakeBridge{})

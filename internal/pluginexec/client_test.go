@@ -2,10 +2,12 @@ package pluginexec
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -436,6 +438,75 @@ func TestCall_WriteTimeoutDoesNotCascadeOnHungStdin(t *testing.T) {
 	}
 	if secondElapsed > 1*time.Second {
 		t.Fatalf("second Call cascaded on writeMu: took %v", secondElapsed)
+	}
+}
+
+// TestReadLoop_FrameSizeCapFailsPending regresses the symmetric
+// memory-exhaustion risk on the response side: a buggy or hostile
+// plugin emitting an unbounded JSON document would have OOM-ed DFMC
+// pre-fix because json.NewDecoder allocates as needed. Now the
+// readLoop uses bufio.Scanner with a per-Client maxFrameBytes cap;
+// an oversized frame fails all pending Calls with a clear error and
+// stops the readLoop (transport unrecoverable past a truncated frame).
+//
+// We construct a minimal Client with stdout fed by an io.Pipe whose
+// writer side gets an oversized frame, override maxFrameBytes to 256
+// bytes (so we don't allocate the production 16 MiB to exercise the
+// cap path), enqueue one pending Call's response channel, and start
+// the readLoop. Assertions:
+//   - the pending Call's channel receives an *RPCError whose message
+//     mentions the frame cap (failAll wraps the read error)
+//   - readLoop exits (readDone closes) so a subsequent Close has
+//     something to wait on
+func TestReadLoop_FrameSizeCapFailsPending(t *testing.T) {
+	pr, pw := io.Pipe()
+	c := &Client{
+		stdout:        pr,
+		pending:       map[int64]chan rpcResponse{},
+		readDone:      make(chan struct{}),
+		errDone:       make(chan struct{}),
+		name:          "huge-emitter",
+		maxFrameBytes: 256,
+	}
+
+	// Pre-register a pending Call so failAll has something to fail.
+	respCh := make(chan rpcResponse, 1)
+	c.pending[1] = respCh
+
+	// Run readLoop in the background.
+	go c.readLoop()
+
+	// Push an oversized frame in another goroutine — same deadlock-avoidance
+	// pattern as the MCP server cap test. Scanner buffers up to 256 bytes,
+	// errors with bufio.ErrTooLong, exits without draining the rest.
+	go func() {
+		big := bytes.Repeat([]byte("B"), 1024)
+		frame := append([]byte(`{"jsonrpc":"2.0","id":1,"result":"`), big...)
+		frame = append(frame, []byte(`"}`)...)
+		frame = append(frame, '\n')
+		_, _ = pw.Write(frame)
+	}()
+
+	// Wait for the pending Call to be failed.
+	select {
+	case resp := <-respCh:
+		if resp.Error == nil {
+			t.Fatalf("expected RPCError on pending Call, got success: %+v", resp)
+		}
+		if !strings.Contains(resp.Error.Message, "frame exceeded") {
+			t.Fatalf("error message should mention frame cap, got %q", resp.Error.Message)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("readLoop did not fail pending Call within timeout")
+	}
+
+	// Close the writer so readLoop's pending Read unblocks if it hasn't
+	// already exited. readDone should be closed promptly.
+	_ = pw.Close()
+	select {
+	case <-c.readDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("readLoop did not exit after oversized frame")
 	}
 }
 
