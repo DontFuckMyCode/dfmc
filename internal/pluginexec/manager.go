@@ -182,8 +182,21 @@ func (m *Manager) ProbeAndRegister(ctx context.Context, name string) error {
 		} `json:"capabilities"`
 	}
 	raw, err := c.Call(ctx, "initialize", nil, 5*time.Second)
-	if err != nil && !errors.Is(err, ErrPluginNoInitialize) {
-		return fmt.Errorf("plugin initialize: %w", err)
+	if err != nil {
+		// A plugin that doesn't implement `initialize` returns a JSON-RPC
+		// `-32601 method not found` reply. The intent has always been that
+		// this is non-fatal — the plugin just exposes zero capabilities and
+		// we move on. The previous code declared ErrPluginNoInitialize but
+		// nothing ever returned it, so the errors.Is check below was dead
+		// and a no-initialize plugin was rejected at registration. Convert
+		// the *RPCError shape here so the sentinel becomes load-bearing.
+		var rpcErr *RPCError
+		if errors.As(err, &rpcErr) && rpcErr.Code == jsonRPCMethodNotFound {
+			err = ErrPluginNoInitialize
+		}
+		if !errors.Is(err, ErrPluginNoInitialize) {
+			return fmt.Errorf("plugin initialize: %w", err)
+		}
 	}
 	if raw != nil {
 		if err := json.Unmarshal(raw, &caps); err != nil {
@@ -224,6 +237,16 @@ func (m *Manager) ProbeAndRegister(ctx context.Context, name string) error {
 	return nil
 }
 
-// ErrPluginNoInitialize is returned by ProbeAndRegister when the plugin
-// does not implement the optional initialize method.
+// jsonRPCMethodNotFound is the standard JSON-RPC code for "method not
+// found". Duplicated here as a private constant to avoid an import cycle
+// from pluginexec to internal/mcp (which owns the canonical ErrMethodNotFound
+// constant). Both packages honor the same JSON-RPC 2.0 wire convention.
+const jsonRPCMethodNotFound = -32601
+
+// ErrPluginNoInitialize is the wrapped error ProbeAndRegister substitutes
+// for an `initialize` reply that came back as `-32601 method not found`.
+// Use errors.Is(err, ErrPluginNoInitialize) to distinguish "plugin chose
+// not to implement initialize" (non-fatal — capabilities are empty) from
+// other transport / protocol failures (fatal). Before this sentinel was
+// wired, ProbeAndRegister rejected any plugin without an initialize method.
 var ErrPluginNoInitialize = errors.New("plugin does not implement initialize")

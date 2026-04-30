@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 )
@@ -27,13 +28,23 @@ func (e *unknownToolError) Error() string {
 // MCPToolBridge exposes multiple MCP clients as a single tool registry
 // for the engine's MCP bridge adapter.
 type MCPToolBridge struct {
-	clients    []*Client
+	clients   []*Client
 	toolIndex map[string]*Client // tool name → owning client
 }
 
 // NewMCPToolBridge builds a bridge over the given clients. The bridge
 // maintains a flat index of all tools so Call can dispatch by name.
 // Nil clients slice is safe — the bridge still works but every Call fails.
+//
+// Tool name collisions across clients are resolved first-wins: the earliest
+// configured client owns the name, later clients exposing the same tool
+// have their bindings dropped from toolIndex (List() de-duplicates the
+// same way). A warning is logged naming both clients and the tool so the
+// operator can either rename the conflicting tool, drop one of the servers,
+// or reorder them in config to control which one wins. Before this guard
+// List() leaked duplicate ToolDescriptor entries to the host (clients saw
+// the same name twice in their tool picker) and Call routed last-wins,
+// which contradicted what tools/list advertised.
 func NewMCPToolBridge(clients []*Client) *MCPToolBridge {
 	b := &MCPToolBridge{clients: clients, toolIndex: make(map[string]*Client)}
 	if clients == nil {
@@ -41,20 +52,34 @@ func NewMCPToolBridge(clients []*Client) *MCPToolBridge {
 	}
 	for _, c := range clients {
 		for _, td := range c.ListTools() {
+			if existing, dup := b.toolIndex[td.Name]; dup {
+				log.Printf("mcp: tool %q exposed by both %q and %q; keeping first-wins binding to %q. Rename or reorder in config to change precedence.", td.Name, existing.Name, c.Name, existing.Name)
+				continue
+			}
 			b.toolIndex[td.Name] = c
 		}
 	}
 	return b
 }
 
-// List returns the union of all tool descriptors from all clients.
+// List returns the de-duplicated union of all tool descriptors from all
+// clients. Duplicate names (across clients) are reported once with the
+// first-seen client's descriptor; subsequent occurrences are dropped to
+// match Call's first-wins routing.
 func (b *MCPToolBridge) List() []ToolDescriptor {
 	if b.clients == nil {
 		return nil
 	}
+	seen := make(map[string]struct{})
 	var out []ToolDescriptor
 	for _, c := range b.clients {
-		out = append(out, c.ListTools()...)
+		for _, td := range c.ListTools() {
+			if _, dup := seen[td.Name]; dup {
+				continue
+			}
+			seen[td.Name] = struct{}{}
+			out = append(out, td)
+		}
 	}
 	return out
 }

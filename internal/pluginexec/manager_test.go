@@ -2,6 +2,7 @@ package pluginexec
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -205,6 +206,66 @@ func TestManagerStderrNotLoaded(t *testing.T) {
 	got := m.Stderr("nonexistent")
 	if got != "" {
 		t.Errorf("Stderr on not-loaded: got %q want empty", got)
+	}
+}
+
+// TestProbeAndRegister_NoInitializeMethod regresses the dead-sentinel bug:
+// ErrPluginNoInitialize was defined but never returned by Client.Call, so
+// the errors.Is check in ProbeAndRegister was unreachable and any plugin
+// that legitimately returned -32601 method-not-found for `initialize`
+// (intended to mean "I expose tools but skip the handshake") was rejected
+// at registration. The fix in manager.go converts a *RPCError with code
+// -32601 into ErrPluginNoInitialize. This test reuses the existing
+// "error" plugin mode (returns -32601 for every method including
+// initialize) and asserts: ProbeAndRegister succeeds, no tools/hooks/skills
+// are registered, and a manual call still produces the underlying RPC
+// error so we know the plugin is otherwise reachable.
+func TestProbeAndRegister_NoInitializeMethod(t *testing.T) {
+	m := NewManager()
+	toolCalls := 0
+	hookCalls := 0
+	skillCalls := 0
+	m.SetToolRegistry(func(name string, fn func(ctx context.Context, params map[string]any) (any, error)) {
+		toolCalls++
+	})
+	m.SetHookRegistry(func(name, command string, timeout int) error {
+		hookCalls++
+		return nil
+	})
+	m.SetSkillInstaller(func(name, prompt string) error {
+		skillCalls++
+		return nil
+	})
+
+	spec := Spec{
+		Name:  "noinit",
+		Entry: os.Args[0],
+		Type:  "exec",
+		Env:   []string{"DFMC_TEST_PLUGIN_MODE=error"},
+		Args:  []string{"-test.run=^$"},
+	}
+	if err := m.Spawn(context.Background(), spec); err != nil {
+		t.Skip("spawn failed: " + err.Error())
+	}
+	defer m.CloseAll(context.Background())
+
+	if err := m.ProbeAndRegister(context.Background(), "noinit"); err != nil {
+		t.Fatalf("ProbeAndRegister with -32601 initialize must succeed; got %v", err)
+	}
+	if toolCalls != 0 || hookCalls != 0 || skillCalls != 0 {
+		t.Fatalf("no capabilities should be registered; tools=%d hooks=%d skills=%d", toolCalls, hookCalls, skillCalls)
+	}
+
+	// Sanity: the plugin is otherwise reachable — calling any method
+	// produces a *RPCError with code -32601. If this fails, the test
+	// setup is wrong (not the manager fix).
+	_, err := m.Call(context.Background(), "noinit", "anything", nil, 2*time.Second)
+	if err == nil {
+		t.Fatalf("expected RPC error from error-mode plugin")
+	}
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) || rpcErr.Code != -32601 {
+		t.Fatalf("expected *RPCError code -32601, got %T %v", err, err)
 	}
 }
 
