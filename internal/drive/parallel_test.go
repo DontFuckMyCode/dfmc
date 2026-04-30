@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -59,6 +60,94 @@ func TestSchedulerSkipsConflictingFileScope(t *testing.T) {
 	if todos[picks[0]].ID != "T1" || todos[picks[1]].ID != "T3" {
 		t.Fatalf("expected T1 then T3, got %s, %s",
 			todos[picks[0]].ID, todos[picks[1]].ID)
+	}
+}
+
+// TestParallelDispatchWithSpawn covers the realistic flow that the
+// applyOutcome ID guard exists to defend: two TODOs run in parallel,
+// one spawns a child TODO via spawn_todos mid-flight while its sibling
+// is still executing. With the planner contract pinning verification
+// (when present) to the slice tail, the spawn appends and no index
+// shifts — but if any future change broke that invariant, the guard
+// would route worker outcomes by ID instead of by stale Idx. This test
+// exercises the happy path so a breakage shows up as a wrong-slot
+// mutation in the final TODO state, not a silent corruption.
+func TestParallelDispatchWithSpawn(t *testing.T) {
+	runner := &fakeRunner{
+		PlanFunc: func(_ PlannerRequest) (string, error) {
+			return `{"todos":[
+				{"id":"A","title":"task A","detail":"do A","file_scope":["a.go"]},
+				{"id":"B","title":"task B","detail":"do B","file_scope":["b.go"]}
+			]}`, nil
+		},
+		ExecFunc: func(req ExecuteTodoRequest) (ExecuteTodoResponse, error) {
+			switch req.TodoID {
+			case "A":
+				// Make A finish slightly before B so its spawn happens
+				// while B is still in flight — the exact race the guard
+				// would have to recover from if applySpawnedTodos ever
+				// inserted before B's captured idx.
+				time.Sleep(5 * time.Millisecond)
+				return ExecuteTodoResponse{
+					Summary: "did A.\n\n" +
+						`{"spawn_todos":[{"id":"C","title":"child of A","detail":"follow up on A","depends_on":["A"],"provider_tag":"code","worker_class":"coder","verification":"required","confidence":0.7,"file_scope":["c.go"]}]}`,
+				}, nil
+			case "B":
+				time.Sleep(20 * time.Millisecond)
+				return ExecuteTodoResponse{Summary: "did B"}, nil
+			default:
+				return ExecuteTodoResponse{Summary: "did " + req.TodoID}, nil
+			}
+		},
+	}
+	cfg := Config{MaxParallel: 2}.Apply()
+	d := NewDriver(runner, nil, nil, cfg)
+
+	run, err := d.Run(context.Background(), "parallel with spawn")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if run.Status != RunDone {
+		t.Fatalf("expected RunDone, got %s (reason=%q)", run.Status, run.Reason)
+	}
+
+	// All three TODOs must reach Done — and B's outcome must have
+	// landed on B, not on whatever the spawn shifted next to its
+	// captured idx.
+	byID := map[string]Todo{}
+	for _, t := range run.Todos {
+		byID[t.ID] = t
+	}
+	// Both planner-emitted TODOs must be present and Done.
+	for _, id := range []string{"A", "B"} {
+		got, ok := byID[id]
+		if !ok {
+			t.Fatalf("expected TODO %q to exist after run", id)
+		}
+		if got.Status != TodoDone {
+			t.Fatalf("TODO %q: want Done, got %s (error=%q)", id, got.Status, got.Error)
+		}
+	}
+	// The spawn path renames child IDs to "T<N>" — find it by ParentID
+	// and Origin instead of by the local ID we emitted in the JSON.
+	var child *Todo
+	for i := range run.Todos {
+		if run.Todos[i].Origin == "worker" && run.Todos[i].ParentID == "A" {
+			child = &run.Todos[i]
+			break
+		}
+	}
+	if child == nil {
+		t.Fatalf("expected a spawned worker TODO with ParentID=A; got %+v", run.Todos)
+	}
+	if child.Status != TodoDone {
+		t.Fatalf("spawned child %q: want Done, got %s (error=%q)", child.ID, child.Status, child.Error)
+	}
+	// B's brief must carry B's response, not the spawned child's. If the
+	// applySpawnedTodos insertion ever shifted B's captured idx, B's
+	// outcome would have written onto whatever ended up at the old idx.
+	if !strings.Contains(byID["B"].Brief, "did B") {
+		t.Fatalf("B's brief did not capture B's response: %q", byID["B"].Brief)
 	}
 }
 
