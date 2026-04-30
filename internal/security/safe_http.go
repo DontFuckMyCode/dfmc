@@ -89,9 +89,26 @@ func endpointIsLoopback(raw string) bool {
 // wrapDialWithSSRFGuard mirrors the provider package's guard but
 // lives here so the CLI / config callers can reuse it without
 // taking a dependency on internal/provider.
+//
+// DNS-rebinding TOCTOU defense: the previous version did its own
+// LookupIPAddr to validate, then handed the original hostname to
+// inner.DialContext, which performed a SECOND DNS lookup. A malicious
+// DNS server controlling a TTL=0 record could return a public IP for
+// the validation lookup and a private IP (cloud-metadata, internal
+// service) for the dial-time lookup, bypassing every check we made.
+// Both lookups MUST observe the same answer for the guard to bind.
+//
+// Fix: after validating all resolved IPs, dial the first one DIRECTLY
+// — pass `<ip>:<port>` to inner so it skips DNS entirely. TLS SNI is
+// driven by http.Request.Host (set by http.Transport from the URL
+// host, NOT from the dial addr), so HTTPS continues to validate the
+// certificate against the hostname even though we connect to a
+// pinned IP. ips[0] is good-enough — if it happens to be unreachable
+// the connection fails the same way it would have under inner's
+// own resolver pick.
 func wrapDialWithSSRFGuard(inner func(ctx context.Context, network, addr string) (net.Conn, error)) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, _, err := net.SplitHostPort(addr)
+		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return inner(ctx, network, addr)
 		}
@@ -99,6 +116,7 @@ func wrapDialWithSSRFGuard(inner func(ctx context.Context, network, addr string)
 			if isBlockedDialTarget(ip) {
 				return nil, &net.AddrError{Err: "SSRF guard: refusing dial to private/loopback/link-local address", Addr: addr}
 			}
+			// addr is already an IP, no DNS to TOCTOU.
 			return inner(ctx, network, addr)
 		}
 		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
@@ -113,7 +131,10 @@ func wrapDialWithSSRFGuard(inner func(ctx context.Context, network, addr string)
 				return nil, &net.AddrError{Err: "SSRF guard: refusing dial to host that resolves to private/loopback/link-local IP", Addr: addr}
 			}
 		}
-		return inner(ctx, network, addr)
+		// Pin the dial to the validated first IP so a rebinding DNS
+		// server can't swap answers between our check and inner's
+		// second lookup.
+		return inner(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 	}
 }
 

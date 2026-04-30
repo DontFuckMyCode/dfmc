@@ -97,19 +97,19 @@ func TestIsBlockedDialTarget(t *testing.T) {
 		ip   string
 		want bool
 	}{
-		{"127.0.0.1", true},                 // loopback
-		{"::1", true},                       // loopback v6
-		{"10.0.0.1", true},                  // private
-		{"172.16.0.1", true},                // private
-		{"192.168.1.1", true},               // private
-		{"169.254.169.254", true},           // link-local (cloud metadata)
-		{"fe80::1", true},                   // link-local v6
-		{"0.0.0.0", true},                   // unspecified
-		{"224.0.0.1", true},                 // multicast
-		{"8.8.8.8", false},                  // public
-		{"1.1.1.1", false},                  // public
-		{"2606:4700:4700::1111", false},     // public v6 (Cloudflare)
-		{"100.64.0.1", false},               // CGNAT — borderline; passes today
+		{"127.0.0.1", true},             // loopback
+		{"::1", true},                   // loopback v6
+		{"10.0.0.1", true},              // private
+		{"172.16.0.1", true},            // private
+		{"192.168.1.1", true},           // private
+		{"169.254.169.254", true},       // link-local (cloud metadata)
+		{"fe80::1", true},               // link-local v6
+		{"0.0.0.0", true},               // unspecified
+		{"224.0.0.1", true},             // multicast
+		{"8.8.8.8", false},              // public
+		{"1.1.1.1", false},              // public
+		{"2606:4700:4700::1111", false}, // public v6 (Cloudflare)
+		{"100.64.0.1", false},           // CGNAT — borderline; passes today
 	}
 	for _, c := range cases {
 		t.Run(c.ip, func(t *testing.T) {
@@ -121,6 +121,77 @@ func TestIsBlockedDialTarget(t *testing.T) {
 				t.Errorf("isBlockedDialTarget(%s) = %v, want %v", c.ip, got, c.want)
 			}
 		})
+	}
+}
+
+// TestSSRFGuard_PinsResolvedIPAcrossInnerDial regresses a DNS-rebinding
+// TOCTOU: pre-fix the guard validated via its own LookupIPAddr but then
+// handed the original hostname to inner.DialContext, which did a fresh
+// resolution. A malicious DNS server returning a public IP first and a
+// private IP second bypassed every check we made. The fix dials the
+// pre-validated IP directly so inner doesn't re-resolve.
+//
+// We exercise this at the wrapDialWithSSRFGuard level (rather than
+// through a full http.Client) so we don't need a live DNS server to
+// observe the addr inner receives. The captureInner function records
+// the addr it sees; we assert it's the IP form, not the original
+// hostname. Pre-fix this test would see "example.com:443" — the
+// hostname inner re-resolved itself.
+func TestSSRFGuard_PinsResolvedIPAcrossInnerDial(t *testing.T) {
+	captured := ""
+	captureInner := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		captured = addr
+		// Return a synthetic error so we don't actually open a socket;
+		// the addr capture is what we care about.
+		return nil, errors.New("intercepted: not dialing")
+	}
+	guarded := wrapDialWithSSRFGuard(captureInner)
+	// example.com is a real public hostname; this resolves at test time.
+	// If the resolver fails (no DNS in the sandbox), the test is skipped
+	// rather than failing — we're testing the guard's plumbing, not DNS.
+	_, err := guarded(context.Background(), "tcp", "example.com:443")
+	if err == nil {
+		t.Fatalf("expected intercepted-not-dialing error from captureInner")
+	}
+	if !strings.Contains(err.Error(), "intercepted") {
+		// DNS resolution itself may have failed. Skip rather than
+		// false-alarm.
+		if strings.Contains(err.Error(), "no such host") || strings.Contains(err.Error(), "lookup") {
+			t.Skipf("DNS unavailable in test env: %v", err)
+		}
+		t.Fatalf("unexpected error from guarded dial: %v", err)
+	}
+	// Captured addr must be <ip>:443, not example.com:443. ParseIP
+	// returns non-nil only for IPv4/IPv6 literals, so we use it as a
+	// strong signal that DNS happened in the guard, not in inner.
+	host, _, splitErr := net.SplitHostPort(captured)
+	if splitErr != nil {
+		t.Fatalf("captured addr %q is not host:port: %v", captured, splitErr)
+	}
+	if net.ParseIP(host) == nil {
+		t.Fatalf("guard handed inner a hostname (%q) — TOCTOU window still open", captured)
+	}
+}
+
+// TestSSRFGuard_IPLiteralPassthroughUnchanged confirms that when the
+// caller-supplied addr is already an IP literal (no DNS to resolve),
+// the guard hands inner the SAME addr it received — we don't fabricate
+// a different one. This pins that the fix above doesn't accidentally
+// rewrite IP-direct dials.
+func TestSSRFGuard_IPLiteralPassthroughUnchanged(t *testing.T) {
+	captured := ""
+	captureInner := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		captured = addr
+		return nil, errors.New("intercepted")
+	}
+	guarded := wrapDialWithSSRFGuard(captureInner)
+	const want = "1.1.1.1:443" // public, won't be blocked
+	_, err := guarded(context.Background(), "tcp", want)
+	if err == nil {
+		t.Fatalf("expected intercepted error")
+	}
+	if captured != want {
+		t.Fatalf("guard rewrote IP-literal addr: got %q, want %q", captured, want)
 	}
 }
 
