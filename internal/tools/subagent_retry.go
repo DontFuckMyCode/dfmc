@@ -28,29 +28,65 @@ func SubagentRetriesTotal() int64 {
 
 // retryWindow holds timestamps of recent retries so callers can ask
 // "how many retries fired in the last N minutes?" — a question the
-// monotonic counter alone can't answer. We keep a fixed-size ring of
-// the most recent 256 retries; that's enough for a 5-minute window at
-// 50 retries/sec (which would already be a fleet incident worth
-// paging on), and bounded so a long-running daemon never accumulates
-// unbounded state.
-const retryWindowSize = 256
+// monotonic counter alone can't answer. The ring is bounded so a
+// long-running daemon never accumulates unbounded state. Default
+// size 256 covers a 5-minute window at ~50 retries/sec (which
+// would already be a fleet incident); operators expecting higher
+// rates can raise the cap via agent.retry_window_size to keep the
+// rolling count accurate.
+const defaultRetryWindowSize = 256
 
 var (
-	retryWindowMu  sync.Mutex
-	retryWindowBuf [retryWindowSize]time.Time
-	retryWindowIdx int  // next slot to write
-	retryWindowFull bool // wrapped at least once
+	retryWindowMu             sync.Mutex
+	retryWindowBuf            []time.Time // nil until first write or ConfigureRetryWindow
+	retryWindowIdx            int         // next slot to write
+	retryWindowFull           bool        // wrapped at least once
+	retryWindowConfiguredSize int         // 0 = use default
 )
+
+// ConfigureRetryWindow sets the ring buffer size used by
+// recordRetryEvent / SubagentRetriesInWindow. Engine.Init calls this
+// once with cfg.Agent.RetryWindowSize so operators can size the ring
+// for their expected retry rate. 0 or negative resets to default.
+//
+// Resizing wipes existing entries — we don't try to preserve a partial
+// window across a config change because the boundary semantics
+// ("entries older than what?") get fuzzy. Tests reset state via this.
+func ConfigureRetryWindow(n int) {
+	retryWindowMu.Lock()
+	defer retryWindowMu.Unlock()
+	if n <= 0 {
+		n = defaultRetryWindowSize
+	}
+	if retryWindowConfiguredSize == n && retryWindowBuf != nil && len(retryWindowBuf) == n {
+		// Idempotent at the same size — don't wipe state on a second
+		// call from a config hot-reload that didn't change the value.
+		return
+	}
+	retryWindowConfiguredSize = n
+	retryWindowBuf = make([]time.Time, n)
+	retryWindowIdx = 0
+	retryWindowFull = false
+}
 
 // recordRetryEvent stamps a retry into the ring buffer. Called from
 // runSubagentRetrying alongside the atomic counter bump. Cost is one
-// mutex acquisition + array write; negligible against a retry path
-// that's already about to sleep 600-900ms.
+// mutex acquisition + slice write; negligible against a retry path
+// that's already about to sleep 600-900ms. Lazy-allocates the ring on
+// first call so packages that build a tools.Engine without going
+// through engine.Init still get a working window at default size.
 func recordRetryEvent(now time.Time) {
 	retryWindowMu.Lock()
+	if retryWindowBuf == nil {
+		size := retryWindowConfiguredSize
+		if size <= 0 {
+			size = defaultRetryWindowSize
+		}
+		retryWindowBuf = make([]time.Time, size)
+	}
 	retryWindowBuf[retryWindowIdx] = now
 	retryWindowIdx++
-	if retryWindowIdx == retryWindowSize {
+	if retryWindowIdx == len(retryWindowBuf) {
 		retryWindowIdx = 0
 		retryWindowFull = true
 	}
@@ -69,9 +105,12 @@ func SubagentRetriesInWindow(window time.Duration) int {
 	cutoff := time.Now().Add(-window)
 	retryWindowMu.Lock()
 	defer retryWindowMu.Unlock()
+	if retryWindowBuf == nil {
+		return 0
+	}
 	limit := retryWindowIdx
 	if retryWindowFull {
-		limit = retryWindowSize
+		limit = len(retryWindowBuf)
 	}
 	count := 0
 	for i := 0; i < limit; i++ {

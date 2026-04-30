@@ -124,9 +124,7 @@ type Engine struct {
 	state EngineState
 
 	modifiedFiles map[string]time.Time // path -> timestamp, cleared after staleWindow
-	staleFileWindow time.Duration       // files newer than this are excluded from context
-
-	seenFiles map[string]struct{} // absolute paths already read via read_file in this session
+	seenFiles     map[string]struct{}  // absolute paths already read via read_file in this session
 
 	lastContextIn ContextInStatus
 
@@ -214,6 +212,10 @@ func (e *Engine) Init(ctx context.Context) error {
 	e.CodeMap = codemap.New(e.AST)
 	e.Context = ctxmgr.New(e.CodeMap)
 	e.Tools = tools.New(*e.Config)
+	// Size the subagent-retry ring buffer from config before any retry
+	// activity could fire. Idempotent at the same size, so a hot-reload
+	// that doesn't change the value is a no-op.
+	tools.ConfigureRetryWindow(e.Config.Agent.RetryWindowSize)
 	// Task store is bbolt-backed independent task persistence. Wired after
 	// tools.New so e.Tools is non-nil. The TodoWriteTool falls back to
 	// in-memory when the store is nil (e.g. tests that construct
@@ -412,6 +414,10 @@ func (e *Engine) Shutdown() error {
 	// decide whether to log further or abort with a non-zero exit.
 	var errs []error
 	if e.Conversation != nil {
+		// Drain async saves first so a goroutine scheduled by the
+		// agent loop microseconds ago can't sneak past Storage.Close
+		// below and try to write to a closed bbolt handle.
+		e.Conversation.Close()
 		if err := e.Conversation.SaveActive(); err != nil {
 			errs = append(errs, fmt.Errorf("save_conversation: %w", err))
 			e.publishShutdownError("save_conversation", err)

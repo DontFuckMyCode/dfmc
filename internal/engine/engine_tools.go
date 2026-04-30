@@ -359,7 +359,18 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 		// Operators care because the gate firing means either (a) the
 		// model is making expensive calls that need narrower scope, or
 		// (b) the cap is too tight for legitimate work and should be
-		// raised. tool:error already fires; this adds the WHY.
+		// raised.
+		//
+		// Dedupe contract: a real timeout fires THREE events on this
+		// bus — tool:error (model-facing message), tool:timeout
+		// (structural fact, this one), and the underlying tool's
+		// tool:result with success=false from the executeToolCallsParallel
+		// path. Subscribers counting failures must NOT add these
+		// together; the canonical signal-of-record is tool:result. Use
+		// tool:timeout for "the gate fired" telemetry and tool:error
+		// for "the model needs to see why". Both fire within the same
+		// handler tick so a (tool_name, ms-window of ~50ms) tuple is
+		// a safe dedupe key for downstream metrics aggregators.
 		var tte *tools.ToolTimeoutError
 		if errors.As(err, &tte) {
 			e.EventBus.Publish(Event{

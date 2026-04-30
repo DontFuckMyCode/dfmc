@@ -215,6 +215,14 @@ type AgentConfig struct {
 	// memory in long-running daemons. 0 = use default; negative is
 	// treated as 0.
 	RangeCachePerPath int `yaml:"range_cache_per_path"`
+
+	// RetryWindowSize is the number of slots in the subagent-retry ring
+	// buffer used by Status.SubagentRetries5m. At 50 retries/sec the
+	// default 256 slots hold ~5s of history; daemons expecting higher
+	// rates (mass orchestrate fan-out under chronic provider flake)
+	// should raise this so the rolling count doesn't undercount when
+	// the buffer wraps faster than the query window. 0 = default.
+	RetryWindowSize int `yaml:"retry_window_size"`
 }
 
 type ContextLifecycleConfig struct {

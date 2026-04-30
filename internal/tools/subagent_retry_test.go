@@ -203,15 +203,13 @@ func TestSubagentRetriesTotal_IncrementsOnActualRetry(t *testing.T) {
 // jittered backoff that runSubagentRetrying sleeps through.
 func TestSubagentRetriesInWindow_TracksRecentEvents(t *testing.T) {
 	// Reset the window so prior tests in the same package run don't
-	// pollute counts. Fine to do because the window is process-wide
-	// state we own.
-	retryWindowMu.Lock()
-	for i := range retryWindowBuf {
-		retryWindowBuf[i] = time.Time{}
-	}
-	retryWindowIdx = 0
-	retryWindowFull = false
-	retryWindowMu.Unlock()
+	// pollute counts. ConfigureRetryWindow is idempotent at the same
+	// size and reallocates a clean slice — exactly what we want here.
+	ConfigureRetryWindow(defaultRetryWindowSize)
+	// The reallocation path skips when the size matches; force it by
+	// asking for a different size first then resetting.
+	ConfigureRetryWindow(defaultRetryWindowSize - 1)
+	ConfigureRetryWindow(defaultRetryWindowSize)
 
 	now := time.Now()
 	// 3 events within the last second.
@@ -233,6 +231,79 @@ func TestSubagentRetriesInWindow_TracksRecentEvents(t *testing.T) {
 	}
 	if got := SubagentRetriesInWindow(0); got != 0 {
 		t.Errorf("non-positive window should return 0, got %d", got)
+	}
+}
+
+// TestConfigureRetryWindow_ResizesAndWipes pins the configurable
+// ring size: a fresh size allocates a new slice and discards prior
+// stamps; the same size is idempotent (no allocation, state preserved).
+func TestConfigureRetryWindow_ResizesAndWipes(t *testing.T) {
+	// Force a clean slate at the default first.
+	ConfigureRetryWindow(0) // 0 → default
+	ConfigureRetryWindow(64)
+
+	// Stamp 10 events into the size-64 ring.
+	now := time.Now()
+	for i := 0; i < 10; i++ {
+		recordRetryEvent(now)
+	}
+	if got := SubagentRetriesInWindow(time.Hour); got != 10 {
+		t.Fatalf("size-64 ring should hold 10 fresh stamps, got %d", got)
+	}
+
+	// Resize to a different size — wipes.
+	ConfigureRetryWindow(8)
+	if got := SubagentRetriesInWindow(time.Hour); got != 0 {
+		t.Errorf("resize should wipe existing stamps, got %d", got)
+	}
+
+	// Stamp past the new cap; oldest entries must roll off.
+	for i := 0; i < 12; i++ {
+		recordRetryEvent(now)
+	}
+	if got := SubagentRetriesInWindow(time.Hour); got != 8 {
+		t.Errorf("size-8 ring with 12 stamps should hold 8, got %d", got)
+	}
+}
+
+// TestConfigureRetryWindow_NonPositiveResetsToDefault asserts that 0
+// or negative arguments collapse to the default. We verify by going
+// from a non-default size → 0/negative → confirming the buffer was
+// reallocated at default size (not stuck at the prior custom size).
+func TestConfigureRetryWindow_NonPositiveResetsToDefault(t *testing.T) {
+	// Start at a small custom size and fill past it so we know the
+	// state is non-trivial.
+	ConfigureRetryWindow(4)
+	for i := 0; i < 10; i++ {
+		recordRetryEvent(time.Now())
+	}
+	if got := SubagentRetriesInWindow(time.Hour); got != 4 {
+		t.Fatalf("custom size 4 should hold 4 stamps, got %d", got)
+	}
+
+	// 0 → default. Resize wipes.
+	ConfigureRetryWindow(0)
+	if got := SubagentRetriesInWindow(time.Hour); got != 0 {
+		t.Errorf("0 should reset to default and wipe, got %d", got)
+	}
+	// Confirm the new buffer is default-sized by stamping more than
+	// the old custom cap (4) and asserting all survive.
+	for i := 0; i < 10; i++ {
+		recordRetryEvent(time.Now())
+	}
+	if got := SubagentRetriesInWindow(time.Hour); got != 10 {
+		t.Errorf("default-sized ring should hold all 10 stamps (size > 4), got %d", got)
+	}
+
+	// Negative argument is the same path. Resize away first so the
+	// idempotency-on-same-size short-circuit doesn't apply.
+	ConfigureRetryWindow(2)
+	ConfigureRetryWindow(-5)
+	for i := 0; i < 10; i++ {
+		recordRetryEvent(time.Now())
+	}
+	if got := SubagentRetriesInWindow(time.Hour); got != 10 {
+		t.Errorf("negative arg should reset to default-sized ring, got %d", got)
 	}
 }
 
