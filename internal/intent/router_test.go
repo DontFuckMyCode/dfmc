@@ -27,8 +27,8 @@ type stubProvider struct {
 	modelName string
 }
 
-func (s *stubProvider) Name() string  { return "stub" }
-func (s *stubProvider) Model() string { return s.modelName }
+func (s *stubProvider) Name() string     { return "stub" }
+func (s *stubProvider) Model() string    { return s.modelName }
 func (s *stubProvider) Models() []string { return []string{s.modelName} }
 func (s *stubProvider) Complete(ctx context.Context, req provider.CompletionRequest) (*provider.CompletionResponse, error) {
 	s.calledN++
@@ -311,6 +311,24 @@ func TestSnapshotRender_EmptyStateProducesPlaceholder(t *testing.T) {
 	out := Snapshot{}.Render(200)
 	if !strings.Contains(out, "PARKED_AGENT: no") {
 		t.Fatalf("empty snapshot should still spell out PARKED_AGENT: no, got %q", out)
+	}
+}
+
+// TestSnapshotRender_MultiByteRuneSliceBoundary regresses a panic where the
+// truncation gate compared byte length but the slice used a rune index.
+// Multi-byte content (Turkish, CJK, emoji) could push bytes over maxChars
+// while the rune count stayed below, so r[:maxChars] sliced past len(r).
+func TestSnapshotRender_MultiByteRuneSliceBoundary(t *testing.T) {
+	emoji := strings.Repeat("\xf0\x9f\x94\xa5", 1500) // 1500 x U+1F525, 6000 bytes
+	snap := Snapshot{LastAssistant: emoji}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Render panicked on multi-byte content: %v", r)
+		}
+	}()
+	out := snap.Render(2000)
+	if out == "" {
+		t.Fatal("expected non-empty output")
 	}
 }
 

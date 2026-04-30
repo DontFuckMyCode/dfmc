@@ -98,6 +98,41 @@ func TestFire_RunsArgvHookWithoutShell(t *testing.T) {
 	}
 }
 
+// TestFire_ScrubsSecretEnvVars — regression guard: the hooks dispatcher
+// must NOT forward secret-shaped parent env vars (ANTHROPIC_API_KEY etc.)
+// into the hook subprocess. The negative assertion (sentinel must not
+// appear in output) is portable across shells: in sh an unset $VAR
+// expands to empty; in cmd.exe an unset %VAR% stays as literal — neither
+// matches the sentinel value, so finding the sentinel in stdout would
+// only happen if scrubbing failed. Pre-fix this would have leaked API
+// keys to any user-configured hook — see security-report F1.
+func TestFire_ScrubsSecretEnvVars(t *testing.T) {
+	const sentinel = "scrubme-DO-NOT-LEAK"
+	t.Setenv("FAKE_TEST_API_KEY", sentinel)
+	t.Setenv("FAKE_TEST_NORMAL", "keepme") // not secret-shaped; must survive
+	cmdLine := `printf 'secret=%s\nnormal=%s\n' "$FAKE_TEST_API_KEY" "$FAKE_TEST_NORMAL"`
+	if runtime.GOOS == "windows" {
+		// cmd.exe: %VAR% expands inline; unset stays literal.
+		cmdLine = `echo secret=%FAKE_TEST_API_KEY% & echo normal=%FAKE_TEST_NORMAL%`
+	}
+	var got Report
+	d := New(config.HooksConfig{Entries: map[string][]config.HookEntry{
+		"pre_tool": {{Name: "env-leak-probe", Command: cmdLine}},
+	}}, func(r Report) { got = r })
+	if d.Fire(context.Background(), EventPreTool, nil) != 1 {
+		t.Fatal("hook did not run")
+	}
+	if got.Err != nil {
+		t.Fatalf("hook err: %v (stderr=%q)", got.Err, got.Stderr)
+	}
+	if strings.Contains(got.Stdout, sentinel) {
+		t.Errorf("secret env var leaked into hook subprocess. stdout=%q", got.Stdout)
+	}
+	if !strings.Contains(got.Stdout, "normal=keepme") {
+		t.Errorf("non-secret env var was incorrectly scrubbed. stdout=%q", got.Stdout)
+	}
+}
+
 // TestFire_ConditionFilter — a condition that doesn't match skips the
 // hook entirely. The observer receives nothing in that case.
 func TestFire_ConditionFilter(t *testing.T) {

@@ -553,6 +553,16 @@ func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 	var errs []error
 
 	for _, name := range order {
+		// Same preflight as Complete: if the caller's ctx is already dead,
+		// every provider's Stream would just echo ctx.Err() back and the
+		// real cancel/deadline reason gets buried in errors.Join. Surface
+		// it directly so callers see the sentinel they expect.
+		if cerr := ctx.Err(); cerr != nil {
+			if len(errs) == 0 {
+				return nil, "", cerr
+			}
+			return nil, "", errors.Join(append(errs, cerr)...)
+		}
 		p, ok := r.Get(name)
 		if !ok {
 			errs = append(errs, fmt.Errorf("%w: %s", ErrProviderNotFound, name))

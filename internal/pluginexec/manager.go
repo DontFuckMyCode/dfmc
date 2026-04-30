@@ -22,7 +22,7 @@ type ManageReq struct {
 // ManageResp is the response shape for dfmc plugin run.
 type ManageResp struct {
 	Result json.RawMessage `json:"result,omitempty"`
-	Error  *RPCError        `json:"error,omitempty"`
+	Error  *RPCError       `json:"error,omitempty"`
 }
 
 // PluginManager owns all running plugin clients and provides lifecycle ops.
@@ -91,11 +91,11 @@ func (m *Manager) Call(ctx context.Context, name, method string, params any, tim
 	if !ok {
 		return nil, fmt.Errorf("plugin %q not loaded", name)
 	}
-	t := 0
+	var t time.Duration
 	if len(timeout) > 0 {
-		t = int(timeout[0].Seconds())
+		t = timeout[0]
 	}
-	return c.Call(ctx, method, params, time.Duration(t)*time.Second)
+	return c.Call(ctx, method, params, t)
 }
 
 // Close stops a running plugin by name and removes it from the manager.
@@ -160,15 +160,6 @@ func (m *Manager) CloseAll(ctx context.Context) error {
 		return errs[0]
 	}
 	return nil
-}
-
-// ExposedCapabilities returns the capabilities announced by every loaded
-// plugin. Each plugin may advertise tools, hooks, and skills through the
-// "capabilities" notification at startup.
-type ExposedCapabilities struct {
-	Tools  []string
-	Hooks  []string
-	Skills []string
 }
 
 // ProbeAndRegister sends the handshake to a newly spawned plugin and

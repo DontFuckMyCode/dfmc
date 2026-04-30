@@ -149,6 +149,30 @@ func TestManagerCallWithTimeout(t *testing.T) {
 	}
 }
 
+// TestManagerCallSubSecondTimeout regresses a precision bug where the
+// caller's time.Duration was truncated via int(d.Seconds()) — any
+// timeout below one second collapsed to zero and Client.Call silently
+// substituted DefaultCallTimeout, masking caller intent. The fix passes
+// the duration through verbatim; a 50ms timeout against a non-responsive
+// plugin must trip well before the 30s default.
+func TestManagerCallSubSecondTimeout(t *testing.T) {
+	m := NewManager()
+	spec := Spec{Name: "slow", Entry: os.Args[0], Type: "exec", Env: []string{"DFMC_TEST_PLUGIN_MODE=slow"}, Args: []string{"-test.run=^$"}}
+	if err := m.Spawn(context.Background(), spec); err != nil {
+		t.Skip("spawn failed: " + err.Error())
+	}
+	defer m.CloseAll(context.Background())
+	start := time.Now()
+	_, err := m.Call(context.Background(), "slow", "stall", nil, 50*time.Millisecond)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout error from sub-second deadline")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("Manager.Call ignored sub-second timeout: ran for %v before erroring", elapsed)
+	}
+}
+
 func TestManagerCloseAllWithClients(t *testing.T) {
 	m := NewManager()
 	spec := Spec{Name: "echo2", Entry: os.Args[0], Type: "exec", Env: []string{"DFMC_TEST_PLUGIN_MODE=echo"}, Args: []string{"-test.run=^$"}}

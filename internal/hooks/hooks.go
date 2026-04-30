@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/internal/security"
 )
 
 // Event is a hook lifecycle event name. Handlers in config.HooksConfig
@@ -165,10 +166,10 @@ func (d *Dispatcher) fireOne(ctx context.Context, event Event, h compiledHook, p
 		if rec := recover(); rec != nil {
 			if d.observer != nil {
 				safeObserve(d.observer, Report{
-					Event:   event,
-					Name:    h.name,
-					Command: h.command,
-					Err:     fmt.Errorf("hook panic: %v", rec),
+					Event:    event,
+					Name:     h.name,
+					Command:  h.command,
+					Err:      fmt.Errorf("hook panic: %v", rec),
 					ExitCode: -1,
 				})
 			}
@@ -235,7 +236,15 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 	defer cancel()
 
 	cmd := hookCommand(runCtx, h)
-	cmd.Env = append(os.Environ(), hookEnv(event, payload)...)
+	// Strip secret-shaped env vars (ANTHROPIC_API_KEY, GITHUB_TOKEN,
+	// AWS_*, etc.) before forwarding to user-configured hook subprocess.
+	// MCP did this since inception; hooks did not — a hook script that
+	// runs `printenv > /tmp/log` or posts env to a webhook for debugging
+	// would silently exfiltrate every provider key. ScrubEnv is allow-by-
+	// default with a deny-list of secret-shaped key suffixes; users who
+	// genuinely need a specific key in a hook can pass an allowlist via a
+	// future `env_passthrough` config (mirrors MCP's surface).
+	cmd.Env = append(security.ScrubEnv(os.Environ(), nil), hookEnv(event, payload)...)
 	// Process-group isolation: when the hook spawns child processes
 	// (`sleep 60 &`, `npm install &`, an orphaned background daemon),
 	// exec.CommandContext's default SIGKILL on timeout only reaches the
@@ -392,6 +401,13 @@ func sanitizeEnvValue(raw string) string {
 // world-writable, which would allow an attacker who can write to the
 // config to achieve arbitrary code execution via hook commands.
 func CheckConfigPermissions(configPath string) string {
+	// Windows doesn't have POSIX permission bits; Go's os.Stat synthesizes
+	// 0666 for any read-write file, which would make this check fire on
+	// every Windows install. Skip — file ACLs there are governed by the
+	// NTFS DACL, not the simulated mode bits.
+	if runtime.GOOS == "windows" {
+		return ""
+	}
 	info, err := os.Stat(configPath)
 	if err != nil {
 		return ""
