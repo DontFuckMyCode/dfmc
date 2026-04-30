@@ -27,17 +27,17 @@ type Message struct {
 // Estimate returns the default counter's token estimate for text. This is the
 // drop-in replacement for the old word-count estimateTokens helpers.
 func Estimate(text string) int {
-	return defaultCounter.Count(text)
+	return loadDefault().Count(text)
 }
 
 // EstimateMessages returns the default counter's framing-aware estimate.
 func EstimateMessages(msgs []Message) int {
-	return defaultCounter.CountMessages(msgs)
+	return loadDefault().CountMessages(msgs)
 }
 
 // Default returns the process-wide default Counter.
 func Default() Counter {
-	return defaultCounter
+	return loadDefault()
 }
 
 // SetDefault swaps the default counter. Intended for tests or for wiring a
@@ -49,6 +49,18 @@ func SetDefault(c Counter) {
 	defaultMu.Lock()
 	defaultCounter = c
 	defaultMu.Unlock()
+}
+
+// loadDefault is the internal RLock-guarded read for defaultCounter. The
+// pointer-load itself is two words (interface header), so a concurrent
+// SetDefault racing a bare read could surface a torn interface value
+// under Go's memory model. Reads happen on every Ask; SetDefault is
+// rare (test setup or startup wiring) so the lock cost is negligible.
+func loadDefault() Counter {
+	defaultMu.RLock()
+	c := defaultCounter
+	defaultMu.RUnlock()
+	return c
 }
 
 var (
@@ -94,20 +106,19 @@ func (h *HeuristicCounter) Count(text string) int {
 	}
 
 	symbolCount := 0
-	whitespaceRuns := 0
-	prevWasSpace := false
+	wordCount := 0
+	inWord := false
 	for _, r := range text {
-		switch {
-		case unicode.IsSpace(r):
-			if !prevWasSpace {
-				whitespaceRuns++
-			}
-			prevWasSpace = true
-		default:
-			prevWasSpace = false
-			if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
-				symbolCount++
-			}
+		if unicode.IsSpace(r) {
+			inWord = false
+			continue
+		}
+		if !inWord {
+			wordCount++
+			inWord = true
+		}
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
+			symbolCount++
 		}
 	}
 
@@ -124,14 +135,19 @@ func (h *HeuristicCounter) Count(text string) int {
 
 	est := int(float64(chars)/divisor + 0.5)
 
-	// Floor: every non-empty text should cost at least 1 token. Also, if the
-	// text has many whitespace-separated words, tokenizers rarely emit fewer
-	// tokens than words — use word count as a lower bound.
-	if est < 1 && strings.TrimSpace(text) != "" {
+	// Floor: every non-empty text should cost at least 1 token. Also, if
+	// the text has whitespace-separated words, tokenizers rarely emit
+	// fewer tokens than words — use word count as a lower bound. The
+	// previous "whitespace runs + 1" formula overcounted by the number
+	// of leading + trailing whitespace runs (e.g. " a b c " → runs=4 →
+	// floor=5 even though there are only 3 words). The space->non-space
+	// transition counter above gives the exact word count regardless of
+	// boundary whitespace.
+	if est < 1 {
 		est = 1
 	}
-	if words := whitespaceRuns + 1; est < words {
-		est = words
+	if est < wordCount {
+		est = wordCount
 	}
 	return est
 }

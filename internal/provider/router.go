@@ -356,18 +356,26 @@ func isTransient(err error) bool {
 	if errors.Is(err, ErrProviderUnavailable) {
 		return true
 	}
-	// Fast path: providers that wrap their HTTP failures in *StatusError
-	// give us an exact answer. Substring fallback below covers providers
-	// that still return plain fmt.Errorf strings.
+	// Primary path: providers that wrap upstream HTTP failures in
+	// *StatusError get classified by exact StatusCode. All first-party
+	// providers (anthropic, openai-compatible, google) do this; the
+	// status_error_contract_test.go suite locks the contract in.
 	var se *StatusError
 	if errors.As(err, &se) {
 		return se.IsTransient()
 	}
+	// Fallback path — strictly belt-and-suspenders, NOT load-bearing.
+	// Reached only when:
+	//   - a future contributor wires up a Provider that returns plain
+	//     fmt.Errorf strings instead of *StatusError, OR
+	//   - the failure originates below the provider layer (raw net.* /
+	//     transport errors that never get wrapped before reaching us).
+	// If you find yourself relying on the substrings below for a
+	// first-party provider, that provider has regressed — fix it to
+	// return *StatusError instead of expanding this list.
 	msg := strings.ToLower(err.Error())
-	// 5xx responses from upstream — providers stringify these as
-	// "anthropic error status 503: ..." / "<name> error status 502: ...".
-	// We accept both " status 5" and "status code 5" shapes for resilience.
 	for _, marker := range []string{
+		// Stringified upstream 5xx, both common phrasings.
 		" status 500", " status 502", " status 503", " status 504",
 		"status code 500", "status code 502", "status code 503", "status code 504",
 	} {
@@ -375,8 +383,8 @@ func isTransient(err error) bool {
 			return true
 		}
 	}
-	// Network-layer hiccups — DNS, dial, mid-request EOF, idle reset.
 	for _, marker := range []string{
+		// Network-layer hiccups — DNS, dial, mid-request EOF, idle reset.
 		"connection refused",
 		"connection reset",
 		"no such host",

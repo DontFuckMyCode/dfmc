@@ -37,6 +37,41 @@ func TestLookup_BuiltinCaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestDiscover_BuiltinShadowsProjectSkillWithSameName pins the precedence
+// contract: a project-local YAML named like a builtin (e.g. "review") is
+// silently dropped. Builtins win because their shapes are referenced by
+// system prompts shipped with the binary; letting a user YAML override
+// the contract would break those prompts. If this is ever flipped, this
+// test must be updated alongside docs in Discover().
+func TestDiscover_BuiltinShadowsProjectSkillWithSameName(t *testing.T) {
+	tmp := t.TempDir()
+	skillsDir := filepath.Join(tmp, ".dfmc", "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	yaml := []byte("name: review\ndescription: project override attempt\nsystem_prompt: 'CUSTOM'\n")
+	if err := os.WriteFile(filepath.Join(skillsDir, "review.yaml"), yaml, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	all := Discover(tmp)
+	var got *Skill
+	for i := range all {
+		if strings.EqualFold(all[i].Name, "review") {
+			got = &all[i]
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("expected a 'review' skill in Discover output")
+	}
+	if !got.Builtin {
+		t.Fatalf("expected builtin to win over project YAML, got Builtin=%v Source=%s", got.Builtin, got.Source)
+	}
+	if strings.Contains(strings.ToUpper(got.System), "CUSTOM") {
+		t.Fatalf("project YAML body leaked into builtin: %q", got.System)
+	}
+}
+
 // Discover returns a non-empty catalog even with no project root.
 func TestDiscover_NonEmptyCatalog(t *testing.T) {
 	items := Discover("")
@@ -201,9 +236,9 @@ func TestExplicitNames_Deduplicates(t *testing.T) {
 // skillForTask maps task strings to skill names.
 func TestSkillForTask_MapsCorrectly(t *testing.T) {
 	cases := []struct {
-		task  string
-		want  string
-		ok    bool
+		task string
+		want string
+		ok   bool
 	}{
 		{"review", "review", true},
 		{"REFACTOR", "refactor", true},
@@ -790,4 +825,3 @@ func TestExtractMarkdownBody_MultipleSeparators(t *testing.T) {
 		t.Errorf("expected 'more content' in body, got %q", got)
 	}
 }
-

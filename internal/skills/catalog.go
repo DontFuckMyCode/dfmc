@@ -39,6 +39,19 @@ var (
 	trailingRequestRE = regexp.MustCompile(`(?is)\n*(user request|request)\s*:\s*$`)
 )
 
+// Discover returns every skill visible to this project, in this precedence:
+//  1. Builtins (review/explain/refactor/...) — defined in builtinCatalog().
+//  2. Project skills under <projectRoot>/.dfmc/skills/.
+//  3. Global skills under <userConfigDir>/skills/.
+//
+// Names collide case-insensitively; the FIRST registration wins. That means
+// a project or user skill named "review" / "debug" / "audit" / etc. is
+// silently shadowed by the builtin of the same name — pick a different
+// name for any custom skill that overlaps. This precedence is intentional:
+// the builtin contracts ship with the binary and the agent loop's prompts
+// reference them, so letting a user-supplied YAML override the contract
+// would silently break the system prompts that depend on the builtin's
+// shape. Tests pin this in catalog_test.go.
 func Discover(projectRoot string) []Skill {
 	out := make([]Skill, 0, 16)
 	seen := map[string]struct{}{}
