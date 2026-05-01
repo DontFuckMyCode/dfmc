@@ -145,27 +145,6 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		depthLimit = e.Config.Agent.MetaDepthLimit
 	}
 	ctx = tools.SeedMetaToolBudgetWithLimits(ctx, callBudget, depthLimit)
-	msgs := seed.Messages
-	traces := seed.Traces
-	if traces == nil {
-		traces = make([]nativeToolTrace, 0, lim.MaxSteps)
-	}
-	totalTokens := seed.TotalTokens
-	chunks := seed.Chunks
-	systemPrompt := seed.SystemPrompt
-	systemBlocks := seed.SystemBlocks
-	descriptors := seed.Descriptors
-	lastProvider := seed.LastProvider
-	lastModel := seed.LastModel
-	question := seed.Question
-	autoRecoveries := 0
-	// One-shot flags for recovery paths below. These are per-invocation
-	// state: synthesizeHintInjected gates the "stop tool-calling" nudge
-	// so it doesn't spam; emptyRecoveryTried lets us reprompt the model
-	// once when it returns zero tool_calls AND zero text (observed when
-	// the model gets confused by a compacted history or a tool failure).
-	synthesizeHintInjected := len(traces) >= lim.RoundSoftCap
-	emptyRecoveryTried := false
 
 	// Per-loop tool result cache. Lives on seed so it persists across
 	// park/resume; lazy-init here on first run. The mutex guards
@@ -178,9 +157,38 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 	if seed.LoopReadRangeIndex == nil {
 		seed.LoopReadRangeIndex = make(map[string][]readRangeEntry)
 	}
-	cacheMu := &sync.Mutex{}
+
+	traces := seed.Traces
+	if traces == nil {
+		traces = make([]nativeToolTrace, 0, lim.MaxSteps)
+	}
+
+	s := &loopRunState{
+		seed:         seed,
+		msgs:         seed.Messages,
+		traces:       traces,
+		totalTokens:  seed.TotalTokens,
+		lastProvider: seed.LastProvider,
+		lastModel:    seed.LastModel,
+		question:     seed.Question,
+		chunks:       seed.Chunks,
+		systemPrompt: seed.SystemPrompt,
+		systemBlocks: seed.SystemBlocks,
+		descriptors:  seed.Descriptors,
+		lim:          lim,
+		cacheMu:      &sync.Mutex{},
+	}
+
+	// One-shot flags for recovery paths below. These are per-invocation
+	// state: synthesizeHintInjected gates the "stop tool-calling" nudge
+	// so it doesn't spam; emptyRecoveryTried lets us reprompt the model
+	// once when it returns zero tool_calls AND zero text (observed when
+	// the model gets confused by a compacted history or a tool failure).
+	synthesizeHintInjected := len(s.traces) >= lim.RoundSoftCap
+	emptyRecoveryTried := false
 
 	for step := 1; step <= lim.MaxSteps; step++ {
+		s.step = step
 		// Engine.Shutdown() transitions through StateShuttingDown before
 		// closing storage / conversation. Without this guard an in-flight
 		// loop can start a new tool round AFTER shutdown begins, racing
@@ -191,20 +199,20 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		if state := e.State(); state >= StateShuttingDown {
 			headline := fmt.Sprintf(
 				"Parked at step %d — engine is shutting down (%d tool rounds, ~%d tokens).",
-				step, len(traces), totalTokens,
+				step, len(s.traces), s.totalTokens,
 			)
-			notice := composeParkedNotice(headline, traces,
+			notice := composeParkedNotice(headline, s.traces,
 				`Restart dfmc and resume — your work is saved.`)
 			e.publishAgentLoopEvent("agent:loop:shutdown_parked", map[string]any{
 				"step":    step,
 				"state":   int(state),
 				"surface": "native",
 			})
-			return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonShuttingDown), nil
+			return s.park(e, notice, ParkReasonShuttingDown), nil
 		}
 		if notes := e.drainAgentNotes(); len(notes) > 0 {
 			for _, note := range notes {
-				msgs = append(msgs, provider.Message{
+				s.msgs = append(s.msgs, provider.Message{
 					Role:    types.RoleUser,
 					Content: "[user btw] " + note,
 				})
@@ -215,8 +223,8 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			}
 		}
 
-		if compacted, report := e.maybeCompactNativeLoopHistoryForBudget(msgs, systemPrompt, chunks, lim.MaxTokens); report != nil {
-			msgs = compacted
+		if compacted, report := e.maybeCompactNativeLoopHistoryForBudget(s.msgs, s.systemPrompt, s.chunks, lim.MaxTokens); report != nil {
+			s.msgs = compacted
 			e.publishAgentLoopEvent("context:lifecycle:compacted", map[string]any{
 				"step":             step,
 				"before_tokens":    report.BeforeTokens,
@@ -236,8 +244,8 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		// loop never has to pay an emergency park. No-op when the loop is
 		// short or the lifecycle is disabled.
 		if step > lim.RoundSoftCap {
-			if compacted, report := e.proactiveCompactNativeLoopHistory(msgs, systemPrompt, chunks, lim.MaxTokens); report != nil {
-				msgs = compacted
+			if compacted, report := e.proactiveCompactNativeLoopHistory(s.msgs, s.systemPrompt, s.chunks, lim.MaxTokens); report != nil {
+				s.msgs = compacted
 				e.publishAgentLoopEvent("context:lifecycle:proactive_compacted", map[string]any{
 					"step":             step,
 					"before_tokens":    report.BeforeTokens,
@@ -252,9 +260,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 
 		// Pre-flight budget gate (preflightBudget in agent_loop_phases.go).
 		// Park-or-recover before we burn another round's tokens.
-		var parked *nativeToolCompletion
-		msgs, totalTokens, autoRecoveries, parked = e.preflightBudget(seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, question, lastProvider, lastModel, totalTokens, step, autoRecoveries, lim)
-		if parked != nil {
+		if parked := e.preflightBudget(s); parked != nil {
 			return *parked, nil
 		}
 
@@ -262,9 +268,9 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		// has enough context to answer but keeps reading. One explicit
 		// "stop gathering, answer now" message has been observed to
 		// break that pattern without the harder intervention below.
-		if !synthesizeHintInjected && len(traces) >= lim.RoundSoftCap {
+		if !synthesizeHintInjected && len(s.traces) >= lim.RoundSoftCap {
 			synthesizeHintInjected = true
-			msgs = append(msgs, provider.Message{
+			s.msgs = append(s.msgs, provider.Message{
 				Role: types.RoleUser,
 				Content: fmt.Sprintf(
 					"[system] Checkpoint: %d tool rounds in. If the original task is genuinely complete, "+
@@ -272,12 +278,12 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 						"you've reached a real stopping point. The goal is sustained progress, not a "+
 						"premature wrap-up. When you do stop, end with a 2-3 sentence summary covering "+
 						"what you accomplished, what's still open, and the natural next step.",
-					len(traces),
+					len(s.traces),
 				),
 			})
 			e.publishAgentLoopEvent("agent:loop:synthesize_hint", map[string]any{
 				"step":        step,
-				"tool_rounds": len(traces),
+				"tool_rounds": len(s.traces),
 				"surface":     "native",
 			})
 		}
@@ -287,11 +293,11 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		// emit plain text. This is the final guardrail before the
 		// step cap trips.
 		toolChoice := "auto"
-		if len(traces) >= lim.RoundHardCap {
+		if len(s.traces) >= lim.RoundHardCap {
 			toolChoice = "none"
 			e.publishAgentLoopEvent("agent:loop:tools_force_stop", map[string]any{
 				"step":        step,
-				"tool_rounds": len(traces),
+				"tool_rounds": len(s.traces),
 				"hard_cap":    lim.RoundHardCap,
 				"surface":     "native",
 			})
@@ -300,17 +306,17 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		e.publishAgentLoopEvent("agent:loop:thinking", map[string]any{
 			"step":           step,
 			"max_tool_steps": lim.MaxSteps,
-			"tool_rounds":    len(traces),
-			"tokens_used":    totalTokens,
+			"tool_rounds":    len(s.traces),
+			"tokens_used":    s.totalTokens,
 			"tool_choice":    toolChoice,
 			"surface":        "native",
 		})
 
-		reqProvider := strings.TrimSpace(lastProvider)
+		reqProvider := strings.TrimSpace(s.lastProvider)
 		if reqProvider == "" {
 			reqProvider = e.provider()
 		}
-		reqModel := strings.TrimSpace(lastModel)
+		reqModel := strings.TrimSpace(s.lastModel)
 		if reqModel == "" {
 			if selected, ok := e.Providers.Get(reqProvider); ok && selected != nil {
 				reqModel = strings.TrimSpace(selected.Model())
@@ -319,11 +325,11 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		req := provider.CompletionRequest{
 			Provider:     reqProvider,
 			Model:        reqModel,
-			System:       systemPrompt,
-			SystemBlocks: systemBlocks,
-			Context:      chunks,
-			Messages:     msgs,
-			Tools:        descriptors,
+			System:       s.systemPrompt,
+			SystemBlocks: s.systemBlocks,
+			Context:      s.chunks,
+			Messages:     s.msgs,
+			Tools:        s.descriptors,
 			ToolChoice:   toolChoice,
 		}
 
@@ -332,20 +338,20 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			// Ctx cancellation mid-round (user interrupt, parent timeout)
 			// would otherwise discard every trace + msg the loop has built.
 			// Park instead so /continue can pick up where we left off.
-			if ctxErr := ctx.Err(); ctxErr != nil && len(traces) > 0 {
+			if ctxErr := ctx.Err(); ctxErr != nil && len(s.traces) > 0 {
 				headline := fmt.Sprintf(
 					"Parked at step %d — interrupted (%d tool rounds, ~%d tokens).",
-					step, len(traces), totalTokens,
+					step, len(s.traces), s.totalTokens,
 				)
-				notice := composeParkedNotice(headline, traces,
+				notice := composeParkedNotice(headline, s.traces,
 					`Type "devam" / "continue" or /continue to resume — your work is saved.`)
 				e.publishAgentLoopEvent("agent:loop:interrupted", map[string]any{
 					"step":        step,
-					"tool_rounds": len(traces),
+					"tool_rounds": len(s.traces),
 					"error":       ctxErr.Error(),
 					"surface":     "native",
 				})
-				return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonInterrupted), nil
+				return s.park(e, notice, ParkReasonInterrupted), nil
 			}
 			e.publishAgentLoopEvent("agent:loop:error", map[string]any{
 				"step":  step,
@@ -362,18 +368,18 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		// InputTokens+OutputTokens so the metric tracks real footprint
 		// and correctly shrinks after auto-compact trims the history.
 		if footprint := resp.Usage.InputTokens + resp.Usage.OutputTokens; footprint > 0 {
-			totalTokens = footprint
+			s.totalTokens = footprint
 		} else if resp.Usage.TotalTokens > 0 {
 			// Provider only reported the aggregate (some OpenAI-compatible
 			// endpoints drop the per-direction split). Best-effort
 			// footprint: treat TotalTokens as the request size.
-			totalTokens = resp.Usage.TotalTokens
+			s.totalTokens = resp.Usage.TotalTokens
 		}
 		if strings.TrimSpace(usedProvider) != "" {
-			lastProvider = usedProvider
+			s.lastProvider = usedProvider
 		}
 		if strings.TrimSpace(resp.Model) != "" {
-			lastModel = resp.Model
+			s.lastModel = resp.Model
 		}
 
 		// Empty turn: zero tool_calls AND zero visible text. Delegate to
@@ -381,7 +387,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		// second-time visible-failure case (in agent_loop_phases.go).
 		if len(resp.ToolCalls) == 0 && strings.TrimSpace(resp.Text) == "" {
 			var emptyOut *nativeToolCompletion
-			msgs, emptyRecoveryTried, emptyOut = e.handleEmptyTurn(question, msgs, traces, resp, chunks, systemPrompt, lastProvider, lastModel, step, totalTokens, emptyRecoveryTried)
+			emptyRecoveryTried, emptyOut = e.handleEmptyTurn(s, resp, emptyRecoveryTried)
 			if emptyOut != nil {
 				return *emptyOut, nil
 			}
@@ -392,49 +398,47 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		if len(resp.ToolCalls) == 0 {
 			completion := nativeToolCompletion{
 				Answer:       resp.Text,
-				Provider:     lastProvider,
-				Model:        lastModel,
-				TokenCount:   totalTokens,
-				Context:      chunks,
-				ToolTraces:   traces,
-				SystemPrompt: systemPrompt,
+				Provider:     s.lastProvider,
+				Model:        s.lastModel,
+				TokenCount:   s.totalTokens,
+				Context:      s.chunks,
+				ToolTraces:   s.traces,
+				SystemPrompt: s.systemPrompt,
 			}
-			e.recordNativeAgentInteraction(question, completion)
+			e.recordNativeAgentInteraction(s.question, completion)
 			e.publishAgentLoopEvent("agent:loop:final", map[string]any{
 				"step":           step,
 				"max_tool_steps": lim.MaxSteps,
-				"tool_rounds":    len(traces),
-				"tokens_used":    totalTokens,
-				"provider":       lastProvider,
-				"model":          lastModel,
+				"tool_rounds":    len(s.traces),
+				"tokens_used":    s.totalTokens,
+				"provider":       s.lastProvider,
+				"model":          s.lastModel,
 				"surface":        "native",
 			})
-			e.publishProviderComplete(lastProvider, lastModel, totalTokens)
-			e.emitCoachNotes(question, completion)
+			e.publishProviderComplete(s.lastProvider, s.lastModel, s.totalTokens)
+			e.emitCoachNotes(s.question, completion)
 			return completion, nil
 		}
 
 		// Run the round's tool calls (executeAndAppendToolBatch in
 		// agent_loop_phases.go), then layer trajectory-aware coach
 		// hints over the result before the next provider round.
-		var freshStart int
-		msgs, traces, freshStart = e.executeAndAppendToolBatch(ctx, resp, msgs, traces, seed.ToolSource, lastProvider, lastModel, step, totalTokens, lim, seed.LoopFileCache, cacheMu, seed.LoopReadRangeIndex)
-		msgs = e.injectTrajectoryHints(seed, msgs, traces, freshStart, step)
+		freshStart := e.executeAndAppendToolBatch(ctx, s, resp)
+		e.injectTrajectoryHints(s, freshStart)
 
 		// Post-step budget gate (postStepBudget in agent_loop_phases.go).
-		msgs, totalTokens, autoRecoveries, parked = e.postStepBudget(seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, question, lastProvider, lastModel, totalTokens, step, autoRecoveries, lim)
-		if parked != nil {
+		if parked := e.postStepBudget(s); parked != nil {
 			return *parked, nil
 		}
 
 		if step == lim.MaxSteps {
 			headline := fmt.Sprintf(
 				"Parked at step %d — hit the configured ceiling (%d tool rounds, ~%d tokens).",
-				step, len(traces), totalTokens,
+				step, len(s.traces), s.totalTokens,
 			)
-			notice := composeParkedNotice(headline, traces,
+			notice := composeParkedNotice(headline, s.traces,
 				`Type "devam" / "continue" or /continue to resume — add a note to redirect (e.g. "devam, focus on the test file").`)
-			return e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonStepCap), nil
+			return s.park(e, notice, ParkReasonStepCap), nil
 		}
 	}
 
