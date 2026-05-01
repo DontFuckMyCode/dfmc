@@ -46,7 +46,7 @@ type scriptedProvider struct {
 
 func (p *scriptedProvider) Name() string                { return p.name }
 func (p *scriptedProvider) Model() string               { return p.model }
-func (p *scriptedProvider) Models() []string           { return []string{p.model} }
+func (p *scriptedProvider) Models() []string            { return []string{p.model} }
 func (p *scriptedProvider) CountTokens(text string) int { return len(strings.Fields(text)) }
 func (p *scriptedProvider) MaxContext() int {
 	if p.maxContext > 0 {
@@ -165,6 +165,7 @@ func TestAskWithMetadata_NativeToolLoop_DiscoverAndCall(t *testing.T) {
 		Tools:        tools.New(*cfg),
 		Conversation: conversation.New(nil),
 	}
+	eng.setState(StateReady)
 
 	answer, err := eng.AskWithMetadata(context.Background(), "first line of note.txt?")
 	if err != nil {
@@ -260,6 +261,7 @@ func TestAskWithMetadata_NativeToolLoop_AutonomyPreflightSeedsTodos(t *testing.T
 		Tools:        tools.New(*cfg),
 		Conversation: conversation.New(nil),
 	}
+	eng.setState(StateReady)
 
 	question := "1. inspect internal/engine 2. patch ui/tui 3. run focused tests"
 	if _, err := eng.AskWithMetadata(context.Background(), question); err != nil {
@@ -342,6 +344,7 @@ func TestRunSubagent_AutonomyPreflightInjected(t *testing.T) {
 		Tools:        tools.New(*cfg),
 		Conversation: conversation.New(nil),
 	}
+	eng.setState(StateReady)
 
 	_, err = eng.RunSubagent(context.Background(), tools.SubagentRequest{
 		Task: "1. inspect internal/engine 2. inspect ui/tui 3. summarize the risks",
@@ -418,6 +421,7 @@ func TestMaybeAutoKickoffAutonomy_AggressiveParallelPlanSeedsOrchestrateRound(t 
 		ProjectRoot: t.TempDir(),
 		Tools:       tools.New(*cfg),
 	}
+	eng.setState(StateReady)
 	eng.Tools.SetSubagentRunner(kickoffRunner{})
 	evCh := eng.EventBus.Subscribe("*")
 	defer eng.EventBus.Unsubscribe("*", evCh)
@@ -478,6 +482,7 @@ func TestMaybeAutoKickoffAutonomy_AggressiveSequentialPlanForcesSequentialOrches
 		ProjectRoot: t.TempDir(),
 		Tools:       tools.New(*cfg),
 	}
+	eng.setState(StateReady)
 	eng.Tools.SetSubagentRunner(kickoffRunner{})
 	evCh := eng.EventBus.Subscribe("*")
 	defer eng.EventBus.Unsubscribe("*", evCh)
@@ -563,6 +568,7 @@ func TestAskWithMetadata_NativeToolLoop_PublishesLifecycleEvents(t *testing.T) {
 		Providers:   router,
 		Tools:       tools.New(*cfg),
 	}
+	eng.setState(StateReady)
 	evCh := eng.EventBus.Subscribe("*")
 	defer eng.EventBus.Unsubscribe("*", evCh)
 
@@ -642,6 +648,7 @@ func TestStreamAsk_NativeToolLoop_AvoidsProviderStream(t *testing.T) {
 		Providers:   router,
 		Tools:       tools.New(*cfg),
 	}
+	eng.setState(StateReady)
 
 	stream, err := eng.StreamAsk(context.Background(), "what does main.go start with?")
 	if err != nil {
@@ -715,6 +722,7 @@ func TestAskWithMetadata_NativeToolLoop_BatchCall(t *testing.T) {
 		Providers:   router,
 		Tools:       tools.New(*cfg),
 	}
+	eng.setState(StateReady)
 
 	answer, err := eng.AskWithMetadata(context.Background(), "compare sizes")
 	if err != nil {
@@ -778,6 +786,7 @@ func TestAskWithMetadata_NativeToolLoop_RespectsConfiguredMaxSteps(t *testing.T)
 		Providers:   router,
 		Tools:       tools.New(*cfg),
 	}
+	eng.setState(StateReady)
 	evCh := eng.EventBus.Subscribe("*")
 	defer eng.EventBus.Unsubscribe("*", evCh)
 
@@ -878,6 +887,7 @@ func TestAskWithMetadata_NativeToolLoop_RespectsTokenBudget(t *testing.T) {
 		Providers:   router,
 		Tools:       tools.New(*cfg),
 	}
+	eng.setState(StateReady)
 	evCh := eng.EventBus.Subscribe("*")
 	defer eng.EventBus.Unsubscribe("*", evCh)
 

@@ -36,6 +36,7 @@ func TestResolveContextLifecycle_KeepRecentRoundsDefaultIsTwo(t *testing.T) {
 	if got.KeepRecentRounds != 2 {
 		t.Fatalf("KeepRecentRounds default = %d, want 2", got.KeepRecentRounds)
 	}
+	eng.setState(StateReady)
 }
 
 // 2. Compact fires sooner when MaxTokens (tool budget) is tighter than
@@ -52,6 +53,7 @@ func TestMaybeCompactNativeLoopHistoryForBudget_UsesTighterReference(t *testing.
 		AutoCompactThresholdRatio: 0.7,
 		KeepRecentRounds:          1,
 	}
+	eng.setState(StateReady)
 	// Target ~17k tokens total across 4 rounds: sits under the 22400
 	// no-budget threshold but over the 14000 budget-20000 threshold.
 	msgs := []provider.Message{
@@ -285,6 +287,7 @@ func TestNativeToolLoop_DedupsIdenticalReadAcrossRounds(t *testing.T) {
 		Providers:   router,
 		Tools:       tools.New(*cfg),
 	}
+	eng.setState(StateReady)
 
 	if _, err := eng.AskWithMetadata(context.Background(), "dedup check"); err != nil {
 		t.Fatalf("unexpected error: %v", err)

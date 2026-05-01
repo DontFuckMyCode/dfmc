@@ -97,6 +97,10 @@ func buildGuardTestEngine(t *testing.T, budget int, steps int, responses []scrip
 		Providers:   router,
 		Tools:       tools.New(*cfg),
 	}
+	// requireReady gates Ask/CallTool/StreamAsk on StateReady or beyond.
+	// This helper builds the engine with bare struct construction (skipping
+	// Init for speed/test isolation), so transition to Ready manually.
+	eng.setState(StateReady)
 	evCh := eng.EventBus.Subscribe("*")
 	t.Cleanup(func() { eng.EventBus.Unsubscribe("*", evCh) })
 	return eng, stub, evCh
