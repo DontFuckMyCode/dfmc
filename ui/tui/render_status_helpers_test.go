@@ -83,9 +83,9 @@ func TestRenderWorkflowTreeRows_WithTodos(t *testing.T) {
 
 func TestParseGrepChatArgs(t *testing.T) {
 	cases := []struct {
-		args   []string
-		want   string
-		err    bool
+		args []string
+		want string
+		err  bool
 	}{
 		{[]string{}, "", true},
 		{[]string{""}, "", true},
@@ -115,9 +115,9 @@ func TestParseGrepChatArgs(t *testing.T) {
 
 func TestParseRunCommandChatArgs(t *testing.T) {
 	cases := []struct {
-		args  []string
-		want  string
-		err   bool
+		args []string
+		want string
+		err  bool
 	}{
 		{[]string{}, "", true},
 		{[]string{""}, "", true},

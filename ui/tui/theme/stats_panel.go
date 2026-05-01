@@ -348,7 +348,7 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 	if info.FocusLocked {
 		footerText = "  esc unlock ? ctrl+s hide ? alt+a/s/d/f/p retarget ? ctrl+h keys"
 	} else if info.Boosted {
-		footerText = "  alt+a/s/d/f again locks ? ctrl+s hide ? ctrl+h keys"
+		footerText = "  alt+a/s/d/f/p again locks ? ctrl+s hide ? ctrl+h keys"
 	}
 	footer := SubtleStyle.Render(footerText)
 	lines = append(lines, divider, footer)

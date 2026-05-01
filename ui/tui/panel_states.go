@@ -23,11 +23,11 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
+	"github.com/dontfuckmycode/dfmc/internal/drive"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/planning"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/security"
-	"github.com/dontfuckmycode/dfmc/internal/drive"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -65,18 +65,18 @@ type providersPanelState struct {
 	newProviderDraft string // name buffer when adding a new provider
 	// profile field editor state
 	profileEditMode  bool
-	profileEditField int    // 0=protocol, 1=base_url, 2=max_context, 3=max_tokens
+	profileEditField int // 0=protocol, 1=base_url, 2=max_context, 3=max_tokens
 	profileEditDraft string
 	// sync state
 	syncing      bool
 	lastSyncedAt time.Time
 	// action menu state — replaces single-key shortcuts with Enter-activated menus
-	menuActive   bool
-	menuLabels   []string
-	menuActions  []string
-	menuDisabled       []bool
+	menuActive          bool
+	menuLabels          []string
+	menuActions         []string
+	menuDisabled        []bool
 	menuDisabledReasons []string
-	menuIndex          int
+	menuIndex           int
 	// search state — filters the provider list by name, model, or status
 	query        string
 	searchActive bool
@@ -344,6 +344,7 @@ type uiToggles struct {
 	// noise — the user can /tools (or ctrl+y) to flip it for a session
 	// when they want the breakdown.
 	toolStripExpanded bool
+	showTasksPanel    bool // /tasks: floating tasks panel on chat tab
 }
 
 type statsPanelMode string
@@ -390,6 +391,14 @@ type sessionTelemetry struct {
 	driveDone    int
 	driveTotal   int
 	driveBlocked int
+}
+
+// tasksPanelState — floating tasks overlay on the chat tab.
+// Rendered by render_task_tree.go.
+type tasksPanelState struct {
+	expanded      map[string]bool
+	selectedIndex int
+	scroll        int
 }
 
 // patchViewState — Patch tab state plus the workspace-diff snapshot that
@@ -488,17 +497,17 @@ type agentLoopState struct {
 // Tracks the list of drive runs, which run is selected, scroll position,
 // and which TODO nodes are expanded to show their detail.
 type workflowPanelState struct {
-	runs               []*drive.Run // from drive store List(), refreshed on events
-	selectedRunID      string        // empty = show run selector; set = show TODO tree
-	scrollY            int           // vertical scroll offset in the TODO tree
-	expandedTodo       map[string]bool
-	selectedIndex      int // index in run selector list when no run selected
-	selectedTodoID     string        // ID of the TODO whose detail is shown
+	runs           []*drive.Run // from drive store List(), refreshed on events
+	selectedRunID  string       // empty = show run selector; set = show TODO tree
+	scrollY        int          // vertical scroll offset in the TODO tree
+	expandedTodo   map[string]bool
+	selectedIndex  int    // index in run selector list when no run selected
+	selectedTodoID string // ID of the TODO whose detail is shown
 	// routingEditor controls the drive.Config.Routing editor overlay.
-	showRoutingEditor  bool            // true = overlay open
-	routingEditTag     string          // tag being edited (empty = new entry)
-	routingEditProfile string          // profile name being edited
-	routingEditIndex   int             // which row is selected in the routing list
-	routingEditMode    bool            // true = currently editing the profile field
+	showRoutingEditor  bool              // true = overlay open
+	routingEditTag     string            // tag being edited (empty = new entry)
+	routingEditProfile string            // profile name being edited
+	routingEditIndex   int               // which row is selected in the routing list
+	routingEditMode    bool              // true = currently editing the profile field
 	routingDraft       map[string]string // routing entries in the editor (tag -> profile)
 }
