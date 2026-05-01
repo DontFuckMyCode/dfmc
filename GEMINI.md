@@ -24,8 +24,13 @@ describing what you need from the output (e.g. "failing tests",
 "error message", "imports"). Without `intent` the tool returns raw
 bytes and the token savings are lost.
 
-On DFMT failure, report it to the user. Do NOT silently fall back to
-the native tool — that defeats the routing.
+On DFMT failure, report it to the user (one short line — which call,
+what error) and then fall back to the native tool so the session is
+not blocked. The ban is on *silent* fallback — every switch must be
+announced. After a fallback, drop a brief `dfmt_remember` note tagged
+`gap` when practical, so the journal records that a call was bypassed.
+If the native tool is also denied (permission rule, sandbox refusal),
+stop and ask the user; do not retry blindly.
 
 ### Session memory
 

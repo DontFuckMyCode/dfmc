@@ -104,11 +104,11 @@ func TestCheckWebSocketOrigin_AcceptsAllowed(t *testing.T) {
 		origin string
 		want   bool
 	}{
-		{"", true},                                   // native client (curl, dfmc remote)
-		{"http://127.0.0.1:7777", true},              // workbench
-		{"http://evil.example.com", false},           // cross-origin browser tab
-		{"https://127.0.0.1:7777", false},            // wrong scheme
-		{"HTTP://127.0.0.1:7777", true},              // case-insensitive
+		{"", true},                         // native client (curl, dfmc remote)
+		{"http://127.0.0.1:7777", true},    // workbench
+		{"http://evil.example.com", false}, // cross-origin browser tab
+		{"https://127.0.0.1:7777", false},  // wrong scheme
+		{"HTTP://127.0.0.1:7777", true},    // case-insensitive
 	}
 	for _, c := range cases {
 		req, _ := http.NewRequest(http.MethodGet, "/", nil)
@@ -122,10 +122,13 @@ func TestCheckWebSocketOrigin_AcceptsAllowed(t *testing.T) {
 	}
 }
 
-// TestCheckWebSocketOrigin_WildcardEscapeHatch confirms "*" in the
-// list lets every cross-origin request through. Documented escape
-// hatch for users who deliberately want the old wide-open behaviour.
-func TestCheckWebSocketOrigin_WildcardEscapeHatch(t *testing.T) {
+// TestCheckWebSocketOrigin_WildcardRejected pins the security tightening:
+// allowed_origins=["*"] is treated as no-match (with a stderr WARNING
+// at construction) so an operator who pastes the legacy CORS-style
+// wildcard doesn't accidentally open the WebSocket to every cross-origin
+// page. The escape-hatch behaviour was removed deliberately; explicit
+// origins are required.
+func TestCheckWebSocketOrigin_WildcardRejected(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Web.AllowedOrigins = []string{"*"}
 	eng, err := engine.New(cfg)
@@ -137,8 +140,8 @@ func TestCheckWebSocketOrigin_WildcardEscapeHatch(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Origin", "http://anything.example.com")
-	if !s.checkWebSocketOrigin(req) {
-		t.Fatalf("wildcard origin allowlist must accept any cross-origin request")
+	if s.checkWebSocketOrigin(req) {
+		t.Fatalf("\"*\" must be treated as no-match; cross-origin requests must be rejected")
 	}
 }
 

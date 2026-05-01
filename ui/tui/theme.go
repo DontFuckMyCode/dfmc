@@ -75,7 +75,7 @@ const (
 
 // --- re-export functions -------------------------------------------------
 
-func sectionHeader(icon, label string) string { return theme.SectionHeader(icon, label) }
+func sectionHeader(icon, label string) string        { return theme.SectionHeader(icon, label) }
 func renderMarkdownBlocks(text string) []string      { return theme.RenderMarkdownBlocks(text) }
 func renderToolChip(chip toolChip, width int) string { return theme.RenderToolChip(chip, width) }
 func renderInlineToolChips(chips []toolChip, width int) string {
@@ -141,7 +141,6 @@ var _ = fileMarker
 // formatThousands re-exported from theme subpackage.
 func formatThousands(n int) string { return theme.FormatThousands(n) }
 
-
 // helper functions re-exported from theme subpackage.
 func headerLevel(trimmed string) int                        { return theme.HeaderLevel(trimmed) }
 func bulletLine(line string) (bullet, rest string, ok bool) { return theme.BulletLine(line) }
@@ -155,4 +154,3 @@ func init() {
 	// This must happen at init time before any RenderChatHeader call.
 	theme.FileMarker = fileMarker
 }
-

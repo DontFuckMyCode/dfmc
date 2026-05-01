@@ -79,13 +79,17 @@ func TestTabSwitching(t *testing.T) {
 func TestAltNumberSwitchesTabs(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 
+	// Alt+N maps to tab N (indices 0..14): alt+2 → Files (tab 2),
+	// alt+6 → Tools (tab 5), etc. Providers (tab 14) has its own
+	// dedicated chord (Ctrl+O / F4 / activateProvidersPanel) instead
+	// of overloading alt+2.
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2"), Alt: true})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after alt+2, got %T", nextModel)
 	}
-	if next.activeTab != 14 {
-		t.Fatalf("expected active tab 14 (Providers) after alt+2, got %d", next.activeTab)
+	if next.activeTab != 2 {
+		t.Fatalf("expected active tab 2 (Files) after alt+2, got %d", next.activeTab)
 	}
 
 	finalModel, _ := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("6"), Alt: true})
@@ -94,7 +98,7 @@ func TestAltNumberSwitchesTabs(t *testing.T) {
 		t.Fatalf("expected Model after alt+6, got %T", finalModel)
 	}
 	if final.activeTab != 5 {
-		t.Fatalf("expected active tab 5 after alt+6, got %d", final.activeTab)
+		t.Fatalf("expected active tab 5 (Tools) after alt+6, got %d", final.activeTab)
 	}
 }
 
@@ -3528,7 +3532,7 @@ func TestRenderStatsPanelShowsAllSections(t *testing.T) {
 		"WORKFLOW", "live now", "[####------]", "todos 4", "1 done", "1 doing", "active: Patch ui/tui stats panel", "subagents 2 active", "drive 3/12", "1 blocked", "plan 3 tasks", "parallel", "0.85", "recent: tool read_file completed",
 		"GIT", "main", "+255", "-10",
 		"SESSION",
-		"alt+a/s/d/f again locks", "ctrl+s", "hide", "ctrl+h",
+		"alt+a/s/d/f/p again locks", "ctrl+s", "hide", "ctrl+h",
 	} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("stats panel missing %q, got:\n%s", want, panel)

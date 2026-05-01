@@ -342,7 +342,6 @@ func (e *Engine) buildContextInStatus(question string, runtime ctxmgr.PromptRunt
 	}
 }
 
-
 // buildContextSnapshot creates a ContextSnapshot from the retrieval outcome.
 func (e *Engine) buildContextSnapshot(query, task string, budgetUsed int, chunks []types.ContextChunk) *ctxmgr.ContextSnapshot {
 	if chunks == nil {
@@ -375,4 +374,3 @@ func (e *Engine) buildContextSnapshot(query, task string, budgetUsed int, chunks
 		Chunks:      refs,
 	}
 }
-

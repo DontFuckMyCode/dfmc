@@ -370,4 +370,3 @@ Rules:
 		CostHint:   "cheap",
 	}
 }
-

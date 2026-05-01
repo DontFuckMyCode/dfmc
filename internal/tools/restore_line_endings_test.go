@@ -19,7 +19,7 @@ func TestRestoreOriginalLineEndings_InsertPreservesPerLineEnding(t *testing.T) {
 		"l0",        // unchanged — original line 0, LF
 		"l1",        // unchanged — original line 1, CRLF
 		"INSERTED",  // new line — patch inserts this with LF
-		"INSERTED2",  // new line — patch inserts this with LF
+		"INSERTED2", // new line — patch inserts this with LF
 		"l2",        // unchanged — original line 2, LF
 	}, "\n") + "\n"
 

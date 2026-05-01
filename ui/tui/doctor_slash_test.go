@@ -55,8 +55,12 @@ func TestSlashDoctor_HealthAlias(t *testing.T) {
 }
 
 func TestSlashDoctor_WarnsWhenProviderMisconfigured(t *testing.T) {
-	m := newDoctorTestModel(t, nil)
-	// status has empty Provider — the "no provider selected" branch.
+	// Blank the Primary so describe_health hits the "no provider selected"
+	// branch instead of the "profile not fully configured" branch that
+	// DefaultConfig's anthropic default falls into.
+	m := newDoctorTestModel(t, func(eng *engine.Engine) {
+		eng.Config.Providers.Primary = ""
+	})
 	next, _, _ := m.executeChatCommand("/doctor")
 	nm := next.(Model)
 	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content

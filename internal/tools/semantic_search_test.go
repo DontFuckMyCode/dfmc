@@ -196,11 +196,11 @@ func TestSemanticSearchTool_New(t *testing.T) {
 
 func TestParseQuery(t *testing.T) {
 	cases := []struct {
-		input       string
-		nodeType    string
-		name        string
-		typeFilter  string
-		context     int
+		input      string
+		nodeType   string
+		name       string
+		typeFilter string
+		context    int
 	}{
 		{"FunctionCall:name=foo", "FunctionCall", "foo", "", 0},
 		{"FunctionDecl:name=bar", "FunctionDecl", "bar", "", 0},

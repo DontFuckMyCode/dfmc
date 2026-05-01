@@ -219,7 +219,6 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (retRun *Run, retErr
 	return run, nil
 }
 
-
 // Resume re-enters a previously-stopped or in-progress run. Pending
 // and Running TODOs are reset to Pending (Running ones got interrupted
 // mid-execution, safest to retry) and the loop picks up from there.
@@ -339,4 +338,3 @@ func (d *Driver) publish(eventType string, payload map[string]any) {
 	}
 	d.publisher(eventType, payload)
 }
-

@@ -36,17 +36,17 @@ import (
 // over later ones for overlapping matches.
 var redactionPatterns = []*regexp.Regexp{
 	// Provider API keys — most specific shapes first.
-	regexp.MustCompile(`sk-ant-[A-Za-z0-9_\-]{40,}`),                    // Anthropic
-	regexp.MustCompile(`sk-proj-[A-Za-z0-9_\-]{20,}`),                    // OpenAI project keys
-	regexp.MustCompile(`sk-[A-Za-z0-9]{20,}`),                            // OpenAI / generic
-	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),                               // AWS access key id
-	regexp.MustCompile(`ghp_[A-Za-z0-9_]{36}`),                           // GitHub PAT
-	regexp.MustCompile(`gho_[A-Za-z0-9_]{36}`),                           // GitHub OAuth
-	regexp.MustCompile(`ghs_[A-Za-z0-9_]{36}`),                           // GitHub server
-	regexp.MustCompile(`glpat-[A-Za-z0-9\-_]{20,}`),                      // GitLab
-	regexp.MustCompile(`xox[bpras]-[A-Za-z0-9-]+`),                       // Slack
-	regexp.MustCompile(`sk_live_[A-Za-z0-9]{24,}`),                       // Stripe live
-	regexp.MustCompile(`AIza[0-9A-Za-z_\-]{35}`),                         // Google API
+	regexp.MustCompile(`sk-ant-[A-Za-z0-9_\-]{40,}`),                                              // Anthropic
+	regexp.MustCompile(`sk-proj-[A-Za-z0-9_\-]{20,}`),                                             // OpenAI project keys
+	regexp.MustCompile(`sk-[A-Za-z0-9]{20,}`),                                                     // OpenAI / generic
+	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),                                                        // AWS access key id
+	regexp.MustCompile(`ghp_[A-Za-z0-9_]{36}`),                                                    // GitHub PAT
+	regexp.MustCompile(`gho_[A-Za-z0-9_]{36}`),                                                    // GitHub OAuth
+	regexp.MustCompile(`ghs_[A-Za-z0-9_]{36}`),                                                    // GitHub server
+	regexp.MustCompile(`glpat-[A-Za-z0-9\-_]{20,}`),                                               // GitLab
+	regexp.MustCompile(`xox[bpras]-[A-Za-z0-9-]+`),                                                // Slack
+	regexp.MustCompile(`sk_live_[A-Za-z0-9]{24,}`),                                                // Stripe live
+	regexp.MustCompile(`AIza[0-9A-Za-z_\-]{35}`),                                                  // Google API
 	regexp.MustCompile(`eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-+./=]{10,}`), // JWT
 	// Bearer headers — match `Authorization: Bearer <token>` and
 	// `Bearer <token>` standalone. The token capture is greedy up

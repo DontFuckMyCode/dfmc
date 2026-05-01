@@ -83,7 +83,7 @@ func TestIntentChipLabel_EmptyWhenNeverFired(t *testing.T) {
 func TestIntentChipLabel_EmptyWhenSourceNotLLM(t *testing.T) {
 	s := intentState{
 		lastDecisionAtMs: 1234567890,
-		lastSource:        "fallback",
+		lastSource:       "fallback",
 		lastIntent:       "resume",
 	}
 	if intentChipLabel(s) != "" {
@@ -129,8 +129,8 @@ func TestIntentChipLabel_ReturnsClarify(t *testing.T) {
 
 func TestSplitExecutableAndArgs(t *testing.T) {
 	cases := []struct {
-		raw     string
-		wantCmd string
+		raw      string
+		wantCmd  string
 		wantArgs string
 	}{
 		{"", "", ""},

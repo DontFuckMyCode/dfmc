@@ -34,7 +34,7 @@ func (t *DependencyGraphTool) SetEngine(eng *Engine) {
 	t.engine = eng
 }
 
-func (t *DependencyGraphTool) Name() string    { return "dependency_graph" }
+func (t *DependencyGraphTool) Name() string { return "dependency_graph" }
 func (t *DependencyGraphTool) Description() string {
 	return "Query the project's import and call dependency graph — find all files that import a module, all callers of a symbol, or the full fan-out from a given file or package."
 }
@@ -87,10 +87,10 @@ Output is structured JSON with edges, nodes, and a summary line.`,
 }
 
 type depResult struct {
-	Nodes    []depNode  `json:"nodes"`
-	Edges    []depEdge  `json:"edges"`
-	Summary  string     `json:"summary"`
-	Cycles   [][]string `json:"cycles,omitempty"`
+	Nodes   []depNode  `json:"nodes"`
+	Edges   []depEdge  `json:"edges"`
+	Summary string     `json:"summary"`
+	Cycles  [][]string `json:"cycles,omitempty"`
 }
 
 type depNode struct {
@@ -283,8 +283,8 @@ func (t *DependencyGraphTool) queryFanOut(g *codemap.Graph, file string, depth, 
 
 	// BFS traversal up to depth levels, collecting "calls" and "imports" edges
 	type queueItem struct {
-		id     string
-		level  int
+		id    string
+		level int
 	}
 	queue := []queueItem{{id: start, level: 0}}
 	visited[start] = true

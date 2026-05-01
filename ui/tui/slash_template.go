@@ -346,7 +346,7 @@ func (m Model) defaultReviewTargets(explicit []string) []string {
 		return explicit
 	}
 	if len(m.patchView.changed) > 0 {
-limit := min(len(m.patchView.changed), 4)
+		limit := min(len(m.patchView.changed), 4)
 		out := make([]string, 0, limit)
 		for _, path := range m.patchView.changed[:limit] {
 			if path = strings.TrimSpace(path); path != "" {

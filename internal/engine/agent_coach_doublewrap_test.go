@@ -11,7 +11,7 @@ import (
 // TestBuildTrajectoryHints_UnwrapsToolCallDoubleWrap pins the coach
 // adapter against the "double-wrap" dispatch shape:
 //
-//   tool_call -> args -> { name:"tool_call", args:{ name:"write_file", ... } }
+//	tool_call -> args -> { name:"tool_call", args:{ name:"write_file", ... } }
 //
 // The engine's toolCallTool.Execute auto-unwraps one redundant layer
 // (meta.go:maxToolCallUnwrapDepth) so the real dispatch reaches

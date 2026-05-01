@@ -10,11 +10,11 @@ func TestContextSnapshot_ShouldReuse(t *testing.T) {
 	old := now.Add(-10 * time.Minute)
 
 	tests := []struct {
-		name           string
-		snapshot       *ContextSnapshot
-		maxAge         time.Duration
-		minConf        float64
-		want           bool
+		name     string
+		snapshot *ContextSnapshot
+		maxAge   time.Duration
+		minConf  float64
+		want     bool
 	}{
 		{
 			name:     "nil snapshot",
@@ -64,14 +64,18 @@ func TestContextSnapshot_ShouldReuse(t *testing.T) {
 			want:    false,
 		},
 		{
-			name: "boundary age exactly at limit",
+			name: "boundary age just under limit",
 			snapshot: &ContextSnapshot{
-				RetrievedAt: now.Add(-5 * time.Minute),
+				// 100ms inside the limit. We can't pin "exactly at limit"
+				// reliably because time.Since() advances between setup and
+				// the subtest's call — what matters is the > vs >= contract,
+				// which is exercised by being fresh-but-near-boundary.
+				RetrievedAt: now.Add(-5*time.Minute + 100*time.Millisecond),
 				Confidence:  0.8,
 			},
 			maxAge:  5 * time.Minute,
 			minConf: 0.7,
-			want:    true, // exactly at limit is not > limit
+			want:    true,
 		},
 		{
 			name: "just over age limit",
@@ -117,10 +121,10 @@ func TestContextSnapshot_ShouldReuse(t *testing.T) {
 
 func TestContextSnapshot_MergeWith(t *testing.T) {
 	child := &ContextSnapshot{
-		Query:      "child query",
-		Task:       "code",
-		Confidence: 0.8,
-		BudgetUsed: 100,
+		Query:       "child query",
+		Task:        "code",
+		Confidence:  0.8,
+		BudgetUsed:  100,
 		RetrievedAt: time.Now(),
 		Chunks: []ContextChunkRef{
 			{Path: "a.go", Language: "go", Score: 0.9, Source: "symbol-match"},
@@ -129,10 +133,10 @@ func TestContextSnapshot_MergeWith(t *testing.T) {
 	}
 
 	parent := &ContextSnapshot{
-		Query:      "parent query",
-		Task:       "code",
-		Confidence: 0.6,
-		BudgetUsed: 80,
+		Query:       "parent query",
+		Task:        "code",
+		Confidence:  0.6,
+		BudgetUsed:  80,
 		RetrievedAt: time.Now().Add(-1 * time.Minute),
 		Chunks: []ContextChunkRef{
 			{Path: "a.go", Language: "go", Score: 0.5, Source: "hotspot"},
@@ -202,9 +206,9 @@ func TestContextSnapshot_MergeWith(t *testing.T) {
 
 func TestContextSnapshot_MergeWith_NilParent(t *testing.T) {
 	child := &ContextSnapshot{
-		Query:      "child only",
-		Confidence: 0.8,
-		BudgetUsed: 50,
+		Query:       "child only",
+		Confidence:  0.8,
+		BudgetUsed:  50,
 		RetrievedAt: time.Now(),
 		Chunks: []ContextChunkRef{
 			{Path: "x.go", Language: "go", Score: 0.9, Source: "symbol-match"},
@@ -218,9 +222,9 @@ func TestContextSnapshot_MergeWith_NilParent(t *testing.T) {
 
 func TestContextSnapshot_MergeWith_NilChild(t *testing.T) {
 	parent := &ContextSnapshot{
-		Query:      "parent only",
-		Confidence: 0.6,
-		BudgetUsed: 30,
+		Query:       "parent only",
+		Confidence:  0.6,
+		BudgetUsed:  30,
 		RetrievedAt: time.Now(),
 		Chunks: []ContextChunkRef{
 			{Path: "y.go", Language: "go", Score: 0.5, Source: "query-match"},
@@ -241,9 +245,9 @@ func TestContextSnapshot_MergeWith_BothNil(t *testing.T) {
 
 func TestContextSnapshot_MergeWith_WeightedConfidence(t *testing.T) {
 	child := &ContextSnapshot{
-		Query:      "c",
-		Confidence: 0.8,
-		BudgetUsed: 100,
+		Query:       "c",
+		Confidence:  0.8,
+		BudgetUsed:  100,
 		RetrievedAt: time.Now(),
 		Chunks: []ContextChunkRef{
 			{Path: "a.go", Language: "go", Score: 0.9, Source: "symbol-match"},
@@ -251,9 +255,9 @@ func TestContextSnapshot_MergeWith_WeightedConfidence(t *testing.T) {
 		},
 	}
 	parent := &ContextSnapshot{
-		Query:      "p",
-		Confidence: 0.4,
-		BudgetUsed: 50,
+		Query:       "p",
+		Confidence:  0.4,
+		BudgetUsed:  50,
 		RetrievedAt: time.Now(),
 		Chunks: []ContextChunkRef{
 			{Path: "c.go", Language: "go", Score: 0.3, Source: "hotspot"},

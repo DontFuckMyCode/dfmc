@@ -542,7 +542,6 @@ func RenderChatModeSegment(info ChatHeaderInfo) string {
 	}
 }
 
-
 // --- starter prompts ---------------------------------------------------
 
 type StarterPrompt struct {

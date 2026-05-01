@@ -337,8 +337,8 @@ func (m Model) renderHelpOverlay(width int) string {
 	lines = append(lines,
 		"",
 		boldStyle.Render("Global"),
-		"  ctrl+p palette · f1=chat f2=providers f3=files f4=patch f5=workflow f6=tools f7=activity f8=memory f9=codemap f10=conversations f11=prompts f12=security · alt+i=status alt+y=plans alt+w=context alt+t=prompts alt+o=providers · ctrl+h help · ctrl+s stats",
-		"  ctrl+y plans · ctrl+g activity · chat stats: alt+a overview · alt+s todos · alt+d tasks · alt+f agents",
+		"  ctrl+p palette · f1/alt+1=chat f2/alt+2=files f3/alt+3=activity f4/alt+4=providers f5/alt+5=patch f6/alt+6=tools f7/alt+7=workflow f8/alt+8=memory f9/alt+9=codemap f10/alt+0=conversations f11/alt+t=prompts f12=security · ctrl+i=status ctrl+y=plans ctrl+w=context ctrl+g=activity · ctrl+h help · ctrl+s stats",
+		"  chat stats: alt+a overview · alt+s todos · alt+d tasks · alt+f agents · alt+p providers",
 		"  ctrl+c/ctrl+q quit · ctrl+u clear chat input · esc cancels streaming turn (or dismisses parked banner)",
 		"",
 		boldStyle.Render("Chat composer"),
@@ -365,7 +365,7 @@ func helpOverlayTabHints(tab string) []string {
 		return []string{
 			"enter send · ctrl+j or alt+enter newline · / commands · @ mention",
 			"wheel · shift+↑/↓ · pgup/pgdn scroll transcript",
-			"alt+a overview · alt+s todos · alt+d tasks · alt+f subagents in the right stats panel",
+			"alt+a overview · alt+s todos · alt+d tasks · alt+f subagents · alt+p providers in the right stats panel",
 			"when parked: enter resumes · esc dismisses · type a note first to steer",
 		}
 	case "status":
@@ -424,6 +424,6 @@ func helpOverlayTabHints(tab string) []string {
 			"j/k scroll · r refresh · g/G top/bottom",
 		}
 	default:
-		return []string{"f1=chat f2=providers f3=files f4=patch f5=workflow f6=tools f7=activity f8=memory f9=codemap f10=conversations f11=prompts f12=security · alt+i=status alt+y=plans alt+w=context · ctrl+p palette · ctrl+q quit"}
+		return []string{"f1=chat f2=files f3=activity f4=providers f5=patch f6=tools f7=workflow f8=memory f9=codemap f10=conversations f11=prompts f12=security · ctrl+p palette · ctrl+q quit"}
 	}
 }

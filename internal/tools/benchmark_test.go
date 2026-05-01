@@ -194,8 +194,8 @@ BenchmarkSortString-8        5000    234567 ns/op     0.25 MB/s    2048 B/op    
 
 func TestParseBenchmarkLine(t *testing.T) {
 	cases := []struct {
-		line    string
-		want    BenchmarkSpec
+		line string
+		want BenchmarkSpec
 	}{
 		{
 			line: "BenchmarkHash-8    1234567      987 ns/op",

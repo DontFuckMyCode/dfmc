@@ -21,7 +21,7 @@ import (
 type TestDiscoveryTool struct{}
 
 func NewTestDiscoveryTool() *TestDiscoveryTool { return &TestDiscoveryTool{} }
-func (t *TestDiscoveryTool) Name() string    { return "test_discovery" }
+func (t *TestDiscoveryTool) Name() string      { return "test_discovery" }
 func (t *TestDiscoveryTool) Description() string {
 	return "Find test files and test functions that cover a given source file or symbol."
 }

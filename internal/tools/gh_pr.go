@@ -17,7 +17,7 @@ import (
 type GHPullRequestTool struct{}
 
 func NewGHPullRequestTool() *GHPullRequestTool { return &GHPullRequestTool{} }
-func (t *GHPullRequestTool) Name() string    { return "gh_pr" }
+func (t *GHPullRequestTool) Name() string      { return "gh_pr" }
 func (t *GHPullRequestTool) Description() string {
 	return "Query GitHub pull requests: list, view, diff, checks, and status summaries."
 }
@@ -25,21 +25,21 @@ func (t *GHPullRequestTool) Description() string {
 // GHPullRequestSpec is the structured output shape for gh_pr.
 // Stored in Result.Data["pr"] as a map[string]any.
 type GHPullRequestSpec struct {
-	Number     int    `json:"number"`
-	Title      string `json:"title"`
-	State      string `json:"state"` // open, closed, merged, draft
-	HeadRef    string `json:"head_ref"`
-	BaseRef    string `json:"base_ref"`
-	Author     string `json:"author"`
-	URL        string `json:"url"`
-	Body       string `json:"body,omitempty"`
-	Additions  int    `json:"additions,omitempty"`
-	Deletions  int    `json:"deletions,omitempty"`
-	ChangedFiles int  `json:"changed_files,omitempty"`
-	Reviews    []GHPullRequestReview `json:"reviews,omitempty"`
-	CheckStatus string `json:"check_status"` // pending, pass, fail, unknown
-	Comments   int    `json:"comments"`
-	Commits    int    `json:"commits,omitempty"`
+	Number       int                   `json:"number"`
+	Title        string                `json:"title"`
+	State        string                `json:"state"` // open, closed, merged, draft
+	HeadRef      string                `json:"head_ref"`
+	BaseRef      string                `json:"base_ref"`
+	Author       string                `json:"author"`
+	URL          string                `json:"url"`
+	Body         string                `json:"body,omitempty"`
+	Additions    int                   `json:"additions,omitempty"`
+	Deletions    int                   `json:"deletions,omitempty"`
+	ChangedFiles int                   `json:"changed_files,omitempty"`
+	Reviews      []GHPullRequestReview `json:"reviews,omitempty"`
+	CheckStatus  string                `json:"check_status"` // pending, pass, fail, unknown
+	Comments     int                   `json:"comments"`
+	Commits      int                   `json:"commits,omitempty"`
 }
 
 // GHPullRequestReview is the per-reviewer summary.
@@ -153,7 +153,7 @@ func (t *GHPullRequestTool) listPRs(ctx context.Context, repo, projectRoot strin
 	return Result{
 		Output: fmt.Sprintf("PR list (%s, %d):", state, len(prs)),
 		Data: map[string]any{
-			"prs":  prs,
+			"prs":   prs,
 			"count": len(prs),
 		},
 	}, nil
@@ -270,7 +270,7 @@ func (t *GHPullRequestTool) checksPR(ctx context.Context, repo, projectRoot stri
 	return Result{
 		Output: fmt.Sprintf("PR #%s checks:", number),
 		Data: map[string]any{
-			"checks": stdout,
+			"checks":    stdout,
 			"exit_code": exit,
 		},
 	}, nil
@@ -300,7 +300,7 @@ func (t *GHPullRequestTool) statusPR(ctx context.Context, repo, projectRoot stri
 	return Result{
 		Output: summary,
 		Data: map[string]any{
-			"summary":  summary,
+			"summary": summary,
 			"pr":      pr,
 		},
 	}, nil
@@ -336,13 +336,13 @@ func parsePRListJSON(raw string) ([]map[string]any, error) {
 			continue
 		}
 		entry := map[string]any{
-			"number":     num,
-			"title":      get("title"),
-			"state":      get("state"),
-			"head_ref":   get("headRefName"),
-			"base_ref":   get("baseRefName"),
-			"author":     get("author"),
-			"url":        get("url"),
+			"number":   num,
+			"title":    get("title"),
+			"state":    get("state"),
+			"head_ref": get("headRefName"),
+			"base_ref": get("baseRefName"),
+			"author":   get("author"),
+			"url":      get("url"),
 		}
 		results = append(results, entry)
 	}

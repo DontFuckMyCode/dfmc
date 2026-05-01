@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -14,7 +15,6 @@ const (
 	DefaultDirName = ".dfmc"
 	DefaultVersion = 1
 )
-
 
 type LoadOptions struct {
 	GlobalPath  string
@@ -86,7 +86,13 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 // group-writable or world-writable. Dumping hooks from a group/world-writable
 // config file is dangerous because any co-tenant who can make the file
 // group/world-writable could inject arbitrary shell commands via hook entries.
+// On Windows the POSIX group/world bits are not meaningful — Go simulates
+// 0o666 for any read-write file regardless of ACLs — so the check would
+// always return false and break legitimate project hooks. Skip there.
 func isProjectConfigSecure(path string) bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return true // file doesn't exist — no risk
@@ -135,7 +141,6 @@ func loadYAML(path string, out *Config) error {
 	}
 	return nil
 }
-
 
 func UserConfigDir() string {
 	home, err := os.UserHomeDir()
@@ -209,4 +214,3 @@ func (c *Config) Save(path string) error {
 	}
 	return nil
 }
-

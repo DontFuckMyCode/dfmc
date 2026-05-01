@@ -58,11 +58,11 @@ const (
 type metaBudgetKey struct{}
 
 type metaBudgetState struct {
-	mu          sync.Mutex
-	depth       int
-	used        int
-	callBudget  int
-	depthLimit  int
+	mu         sync.Mutex
+	depth      int
+	used       int
+	callBudget int
+	depthLimit int
 }
 
 // SeedMetaToolBudget seeds the context with the shared meta-tool execution

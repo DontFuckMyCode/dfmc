@@ -613,15 +613,15 @@ func isBlockedShellInterpreter(command string) bool {
 // M2: detect script-runner binaries with inline-eval flags (node -e, python -c, etc.)
 // These are blocked because they allow arbitrary code execution via args.
 var scriptRunnerEvalFlags = map[string]string{
-	"node":   "-e",
-	"nodejs": "-e",
-	"python": "-c",
-	"python2": "-c",
-	"python3": "-c",
-	"perl":   "-e",
-	"ruby":   "-e",
-	"php":    "-r",
-	"pwsh":   "-c",
+	"node":       "-e",
+	"nodejs":     "-e",
+	"python":     "-c",
+	"python2":    "-c",
+	"python3":    "-c",
+	"perl":       "-e",
+	"ruby":       "-e",
+	"php":        "-r",
+	"pwsh":       "-c",
 	"powershell": "-c",
 }
 

@@ -43,15 +43,15 @@ func (t *ProjectInfoTool) Spec() ToolSpec {
 - session info: data dir, project root
 
 Does not scan the full codebase — file stats are lightweight (walk skip). For deep code stats use codemap or analyze.`,
-		Risk:     RiskRead,
-		Tags:     []string{"config", "project", "metadata", "tools", "providers"},
+		Risk: RiskRead,
+		Tags: []string{"config", "project", "metadata", "tools", "providers"},
 		Args: []Arg{
 			{Name: "section", Type: ArgString, Description: `Scope: "all" | "module" | "tools" | "providers" | "files". Default: all.`},
 			{Name: "include_config", Type: ArgBoolean, Default: true, Description: `Include merged config state (tools, providers, agent limits). Default true.`},
 		},
-		Returns:        "Structured JSON: {module, go_version, deps, tools_config, provider_config, file_stats, session}",
-		Idempotent:     true,
-		CostHint:       "io-bound",
+		Returns:    "Structured JSON: {module, go_version, deps, tools_config, provider_config, file_stats, session}",
+		Idempotent: true,
+		CostHint:   "io-bound",
 	}
 }
 
@@ -127,13 +127,13 @@ func fetchModuleInfo(projectRoot string) map[string]any {
 // --- file stats ---
 
 type fileStatsInfo struct {
-	TotalFiles    int               `json:"total_files"`
-	TotalLines    int               `json:"total_lines"`
-	ByExtension   map[string]int   `json:"by_extension"`
-	ByLanguage    map[string]int    `json:"by_language"`
-	SkippedDirs   []string          `json:"skipped_dirs"`
-	TestFileCount int               `json:"test_files"`
-	Generated     int               `json:"generated"`
+	TotalFiles    int            `json:"total_files"`
+	TotalLines    int            `json:"total_lines"`
+	ByExtension   map[string]int `json:"by_extension"`
+	ByLanguage    map[string]int `json:"by_language"`
+	SkippedDirs   []string       `json:"skipped_dirs"`
+	TestFileCount int            `json:"test_files"`
+	Generated     int            `json:"generated"`
 }
 
 var projectSkipDirs = []string{".git", "node_modules", "vendor", "bin", "dist", ".dfmc", "__pycache__", ".venv", ".idea", ".vscode"}
@@ -199,11 +199,11 @@ func fetchFileStats(projectRoot string) map[string]any {
 	filepath.Walk(projectRoot, walkFn)
 
 	return map[string]any{
-		"total_files":    stats.TotalFiles,
-		"total_lines":    stats.TotalLines, // 0 — actual count requires reading files
-		"by_extension":   stats.ByExtension,
-		"by_language":    stats.ByLanguage,
-		"skipped_dirs":   stats.SkippedDirs,
+		"total_files":     stats.TotalFiles,
+		"total_lines":     stats.TotalLines, // 0 — actual count requires reading files
+		"by_extension":    stats.ByExtension,
+		"by_language":     stats.ByLanguage,
+		"skipped_dirs":    stats.SkippedDirs,
 		"test_file_count": stats.TestFileCount,
 		"generated_files": stats.Generated,
 	}
@@ -255,10 +255,10 @@ func fetchConfigInfo(engine *Engine, _ string) map[string]any {
 
 	// Agent config.
 	agentCfg := map[string]any{
-		"max_tool_steps":       cfg.Agent.MaxToolSteps,
-		"max_tool_tokens":      cfg.Agent.MaxToolTokens,
-		"autonomous_resume":    cfg.Agent.AutonomousResume,
-		"tool_reasoning":       cfg.Agent.ToolReasoning,
+		"max_tool_steps":    cfg.Agent.MaxToolSteps,
+		"max_tool_tokens":   cfg.Agent.MaxToolTokens,
+		"autonomous_resume": cfg.Agent.AutonomousResume,
+		"tool_reasoning":    cfg.Agent.ToolReasoning,
 	}
 	out["agent"] = agentCfg
 

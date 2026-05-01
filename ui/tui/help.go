@@ -52,7 +52,7 @@ func renderTUIHelp() string {
 		"    /scan [--flag] [path]         Security-only scan (aliases: --security, --secrets, --vulns)",
 		"",
 		"Mentions: @file.go picks a file · @file.go:10-50 or @file.go#L10-L50 attaches a range.",
-		"Panels: F1 Chat · F2 Providers · F3 Files · F4 Patch · F5 Workflow · F6 Tools · F7 Activity · F8 Memory · F9 CodeMap · F10 Conversations · F11 Prompts · F12 Security · Alt+I Status · Alt+Y Plans · Alt+W Context · Alt+O Providers · Ctrl+P palette",
+		"Panels: F1 Chat (Alt+1) · F2 Files (Alt+2) · F3 Activity (Alt+3) · F4 Providers (Alt+4) · F5 Workflow (Alt+5) · F6 Tools (Alt+6) · F7 Patch (Alt+7) · F8 Memory (Alt+8) · F9 CodeMap (Alt+9) · F10 Conversations (Alt+0) · F11 Prompts (Alt+T) · F12 Security · Ctrl+P palette",
 		"Run /help <command> for details on a specific command.",
 	}, "\n")
 	return catalog + tail

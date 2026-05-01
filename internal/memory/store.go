@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -15,9 +17,9 @@ import (
 )
 
 const (
-	bucketEpisodic  = "memory_episodic"
-	bucketSemantic  = "memory_semantic"
-	bucketWorking   = "memory_working"
+	bucketEpisodic   = "memory_episodic"
+	bucketSemantic   = "memory_semantic"
+	bucketWorking    = "memory_working"
 	bucketWorkingKey = "working" // single key holding JSON WorkingMemory
 )
 
@@ -132,7 +134,16 @@ func (s *Store) Add(entry types.MemoryEntry) error {
 		return fmt.Errorf("memory entry project is required")
 	}
 	if entry.ID == "" {
-		entry.ID = "mem_" + time.Now().Format("20060102_150405.000000")
+		// Microsecond-resolution timestamps collide when two goroutines
+		// (e.g. parallel sub-agents writing memory) call Add within the
+		// same microsecond — bbolt Put would silently overwrite one
+		// entry. The 6-byte random suffix mirrors taskstore.NewTaskID
+		// and reduces the collision space to ~2^-48.
+		var rnd [6]byte
+		_, _ = rand.Read(rnd[:])
+		entry.ID = fmt.Sprintf("mem_%s_%s",
+			time.Now().Format("20060102_150405.000000"),
+			hex.EncodeToString(rnd[:]))
 	}
 	now := time.Now()
 	if entry.CreatedAt.IsZero() {

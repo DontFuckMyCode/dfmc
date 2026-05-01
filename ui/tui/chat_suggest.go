@@ -47,6 +47,9 @@ func (m Model) quickActionsForCurrentInput() []quickActionSuggestion {
 	if raw == "" || strings.HasPrefix(raw, "/") {
 		return nil
 	}
+	// Use the expanded prompt for intent detection. The raw "/" guard
+	// above already excluded slash commands, so "readme.md" typed mid-
+	// prompt is correctly treated as context (not a command prefix).
 	question := m.chatPrompt()
 	if strings.TrimSpace(question) == "" {
 		return nil

@@ -11,13 +11,13 @@ import (
 
 // DependencyFinding represents a dependency parsed from a lock file.
 type DependencyFinding struct {
-	File     string `json:"file"`
-	Pkg      string `json:"package"`
-	Version  string `json:"version"`
+	File      string `json:"file"`
+	Pkg       string `json:"package"`
+	Version   string `json:"version"`
 	Ecosystem string `json:"ecosystem"`
-	DevOnly  bool   `json:"dev_only,omitempty"`
-	Kind     string `json:"kind"` // "outdated" | "vulnerable" | "unknown"
-	Severity string `json:"severity,omitempty"`
+	DevOnly   bool   `json:"dev_only,omitempty"`
+	Kind      string `json:"kind"` // "outdated" | "vulnerable" | "unknown"
+	Severity  string `json:"severity,omitempty"`
 }
 
 // ScanDependencyFiles walks the project root for lock files and returns
@@ -122,10 +122,10 @@ func (s *Scanner) scanGoSum(path string) ([]DependencyFinding, error) {
 
 // npmLockPackage describes one entry in package-lock.json's dependencies map.
 type npmLockPackage struct {
-	Version      string `json:"version"`
-	Dev         bool   `json:"dev,omitempty"`
-	Resolved    string `json:"resolved,omitempty"`
-	Requires    map[string]string `json:"requires,omitempty"`
+	Version      string            `json:"version"`
+	Dev          bool              `json:"dev,omitempty"`
+	Resolved     string            `json:"resolved,omitempty"`
+	Requires     map[string]string `json:"requires,omitempty"`
 	Dependencies map[string]string `json:"dependencies,omitempty"`
 }
 

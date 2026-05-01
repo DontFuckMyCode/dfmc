@@ -56,15 +56,15 @@ func (b *BudgetPool) RestoreTokens(tokens int) {
 
 // RunResult is the final outcome of a supervisor run.
 type RunResult struct {
-	RunID       string
-	Status      string // "done", "failed", "stopped"
-	Reason      string
-	TasksDone   int
-	TasksFailed int
+	RunID        string
+	Status       string // "done", "failed", "stopped"
+	Reason       string
+	TasksDone    int
+	TasksFailed  int
 	TasksSkipped int
-	TotalSteps  int
-	TotalTokens int
-	Duration    time.Duration
+	TotalSteps   int
+	TotalTokens  int
+	Duration     time.Duration
 }
 
 // SupervisorStatus describes the current state of a running supervisor.
@@ -84,20 +84,20 @@ type ExecuteTaskFunc func(ctx context.Context, req ExecuteTaskRequest) (ExecuteT
 
 // ExecuteTaskRequest is the input passed to a worker's ExecuteTaskFunc.
 type ExecuteTaskRequest struct {
-	TaskID           string
-	ProviderTag      string
-	Title            string
-	Detail           string
-	Brief            string
-	Role             string
-	Skills           []string
-	Labels           []string
-	Verification     string
-	Model            string
+	TaskID            string
+	ProviderTag       string
+	Title             string
+	Detail            string
+	Brief             string
+	Role              string
+	Skills            []string
+	Labels            []string
+	Verification      string
+	Model             string
 	ProfileCandidates []string
-	AllowedTools     []string
-	MaxSteps         int
-	TokenBudget      int // allocated from BudgetPool for this task
+	AllowedTools      []string
+	MaxSteps          int
+	TokenBudget       int // allocated from BudgetPool for this task
 	// PriorSummary chains trajectory summaries from completed dependency tasks
 	// into this task's prompt so the next worker knows what prior work occurred.
 	PriorSummary string
@@ -135,8 +135,8 @@ type Supervisor struct {
 	stopped  bool
 
 	// per-task state guarded by mu
-	taskState    map[string]TaskState
-	taskAtts     map[string]int  // attempt count
+	taskState     map[string]TaskState
+	taskAtts      map[string]int    // attempt count
 	taskSummaries map[string]string // taskID → cumulative trajectory summary for dependent chains
 }
 
@@ -148,11 +148,11 @@ var ErrBudgetExhausted = "supervisor: budget exhausted"
 // given shared budget pool.
 func NewSupervisor(run *Run, plan *ExecutionPlan, budget *BudgetPool) *Supervisor {
 	s := &Supervisor{
-		run:          run,
-		plan:         plan,
-		budget:       budget,
-		taskState:    make(map[string]TaskState, len(plan.Tasks)),
-		taskAtts:     make(map[string]int, len(plan.Tasks)),
+		run:           run,
+		plan:          plan,
+		budget:        budget,
+		taskState:     make(map[string]TaskState, len(plan.Tasks)),
+		taskAtts:      make(map[string]int, len(plan.Tasks)),
 		taskSummaries: make(map[string]string, len(plan.Tasks)),
 		status: SupervisorStatus{
 			Active: true,
@@ -385,7 +385,7 @@ func (s *Supervisor) dispatchWorker(ctx context.Context, task Task, attempt int,
 		Brief:        brief,
 		Skills:       task.Skills,
 		Labels:       task.Labels,
-		Verification:  string(task.Verification),
+		Verification: string(task.Verification),
 		TokenBudget:  allocBudget,
 		PriorSummary: priorSummary,
 	}

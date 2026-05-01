@@ -3,8 +3,8 @@ package tui
 import (
 	"testing"
 
-	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
+	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/security"
 )
 
@@ -48,8 +48,8 @@ func TestFormatAnalyzeReport_WithSecurity(t *testing.T) {
 		Edges:  25,
 		Cycles: 0,
 		Security: &security.Report{
-			FilesScanned:   10,
-			Secrets:        []security.SecretFinding{{File: "test.go", Line: 1, Severity: "high", Pattern: "api_key"}},
+			FilesScanned:    10,
+			Secrets:         []security.SecretFinding{{File: "test.go", Line: 1, Severity: "high", Pattern: "api_key"}},
 			Vulnerabilities: []security.VulnerabilityFinding{{File: "test.go", Line: 2, Severity: "medium", Kind: "xss", Snippet: "innerHTML"}},
 		},
 	}
@@ -61,15 +61,15 @@ func TestFormatAnalyzeReport_WithSecurity(t *testing.T) {
 
 func TestFormatAnalyzeReport_WithComplexity(t *testing.T) {
 	r := engine.AnalyzeReport{
-		Files:     5,
-		Nodes:     50,
-		Edges:     25,
-		Cycles:    0,
+		Files:  5,
+		Nodes:  50,
+		Edges:  25,
+		Cycles: 0,
 		Complexity: &engine.ComplexityReport{
 			Average:       5.5,
 			Max:           20,
 			ScannedSymbol: 100,
-			TotalSymbols: 150,
+			TotalSymbols:  150,
 		},
 	}
 	got := formatAnalyzeReport(r)

@@ -26,16 +26,16 @@ func (t *DiskUsageTool) Spec() ToolSpec {
 		Title:   "Disk usage",
 		Summary: "Analyze disk usage for a directory tree with breakdowns by file type and language.",
 		Purpose: `Use when you need to understand what's consuming disk space. Returns structured data: total bytes, file count, per-extension breakdown, per-language breakdown (using the standard language map), top 10 largest files, and per-directory summaries to the configured depth. Skips .git, node_modules, vendor, and other standard ignored directories.`,
-		Risk:     RiskRead,
-		Tags:     []string{"filesystem", "diagnostics", "size", "analysis"},
+		Risk:    RiskRead,
+		Tags:    []string{"filesystem", "diagnostics", "size", "analysis"},
 		Args: []Arg{
 			{Name: "path", Type: ArgString, Description: `Directory to analyze. Default: project root.`},
 			{Name: "depth", Type: ArgInteger, Default: 3, Description: `Max directory depth for dir summaries. Default: 3.`},
 			{Name: "by_type", Type: ArgBoolean, Default: true, Description: `Group by file extension. Default: true.`},
 		},
-		Returns:        "{total_bytes, files, by_extension: {ext: bytes}, by_language: {lang: bytes}, largest_files: [{path, bytes}], dirs: [{path, bytes, files}]}",
-		Idempotent:     true,
-		CostHint:       "io-bound",
+		Returns:    "{total_bytes, files, by_extension: {ext: bytes}, by_language: {lang: bytes}, largest_files: [{path, bytes}], dirs: [{path, bytes, files}]}",
+		Idempotent: true,
+		CostHint:   "io-bound",
 	}
 }
 

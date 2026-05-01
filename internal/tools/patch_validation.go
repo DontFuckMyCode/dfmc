@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // isGitBinary reports whether binary resolves to a known-git executable.
@@ -46,7 +47,7 @@ type PatchValidationTool struct {
 }
 
 func NewPatchValidationTool() *PatchValidationTool { return &PatchValidationTool{} }
-func (t *PatchValidationTool) Name() string    { return "patch_validation" }
+func (t *PatchValidationTool) Name() string        { return "patch_validation" }
 func (t *PatchValidationTool) Description() string {
 	return "Validate a unified-diff patch by running a dry-run apply and optional build/test command."
 }
@@ -65,8 +66,8 @@ func (t *PatchValidationTool) Spec() ToolSpec {
 2. optional build/test command: run a shell command (e.g. "go build ./..." or "go test ./...") after dry-run to verify the patched code is valid
 
 Returns structured per-file, per-hunk results: hunks_applied, hunks_rejected, fuzzy_offsets, and validation_command exit code. A patch is "clean" when all hunks apply without rejection and the validation command exits 0.`,
-		Risk:     RiskExecute,
-		Tags:     []string{"patch", "validation", "dry-run", "hunk"},
+		Risk: RiskExecute,
+		Tags: []string{"patch", "validation", "dry-run", "hunk"},
 		Args: []Arg{
 			{Name: "patch", Type: ArgString, Required: true, Description: `Unified-diff patch string to validate.`},
 			{Name: "validation_command", Type: ArgString, Description: `Optional shell command to run after dry-run (e.g. "go build ./..." or "go test ./..."). Exit code 0 = validation passed.`},
@@ -187,7 +188,12 @@ func (t *PatchValidationTool) Execute(ctx context.Context, req Request) (Result,
 		if err := ensureCommandAllowed(binary, args, blocked); err != nil {
 			return Result{}, err
 		}
-		runCtx, cancel := context.WithTimeout(ctx, 120000)
+		// 120s — matches run_command's max_timeout_ms cap; long enough
+		// for typical "go build ./..." / "go test ./..." validation, short
+		// enough that a hung command can't pin the agent loop. The bare
+		// literal 120000 was previously interpreted as 120000 NANOSECONDS
+		// (0.12ms), which cancelled before the subprocess could even fork.
+		runCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(runCtx, binary, args...)
 		cmd.Dir = projectRoot
@@ -227,8 +233,8 @@ func (t *PatchValidationTool) Execute(ctx context.Context, req Request) (Result,
 			"rejected_hunks":       rejectedHunks,
 			"validation_passed":    validationPassed,
 			"validation_exit_code": validationExitCode,
-			"validation_output":   validationOutput,
-			"clean":               clean,
+			"validation_output":    validationOutput,
+			"clean":                clean,
 		},
 	}, nil
 }
@@ -241,7 +247,6 @@ func previewPatch(content string) string {
 	}
 	return preview
 }
-
 
 // PatchHunkStats returns per-file hunk counts without applying anything.
 func PatchHunkStats(patch string) (map[string]int, error) {

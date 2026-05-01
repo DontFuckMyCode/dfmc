@@ -68,17 +68,6 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 		promoteFirstAlias(params, "path", "dir", "directory", "file")
 		promoteFirstAlias(params, "max_results", "limit", "max", "maxResults")
 		promoteFirstAlias(params, "include_body", "body", "with_body")
-	case "run_command":
-		promoteFirstAlias(params, "command", "cmd", "program", "executable", "bin")
-		promoteFirstAlias(params, "args", "argv", "arguments", "command_args")
-		promoteFirstAlias(params, "dir", "cwd", "workdir", "working_dir")
-		promoteFirstAlias(params, "timeout_ms", "timeoutMs", "timeout")
-		timeoutMs := asInt(params, "timeout_ms", 0)
-		timeoutMs = max(0, timeoutMs)
-		timeoutMs = min(timeoutMs, 120_000)
-		if timeoutMs > 0 {
-			params["timeout_ms"] = timeoutMs
-		}
 	case "edit_file":
 		promoteFirstAlias(params, "path", "file", "filepath", "target")
 		promoteFirstAlias(params, "replace_all", "replaceAll", "all", "global")
@@ -105,6 +94,20 @@ func normalizeToolParams(name string, params map[string]any) map[string]any {
 					break
 				}
 			}
+		}
+	case "apply_patch":
+		promoteFirstAlias(params, "patch", "text", "content", "diff", "unified_diff")
+		promoteFirstAlias(params, "dry_run", "dryRun", "preview", "check")
+	case "run_command":
+		promoteFirstAlias(params, "command", "cmd", "program", "executable", "bin")
+		promoteFirstAlias(params, "args", "argv", "arguments", "command_args")
+		promoteFirstAlias(params, "dir", "cwd", "workdir", "working_dir")
+		promoteFirstAlias(params, "timeout_ms", "timeoutMs", "timeout")
+		timeoutMs := asInt(params, "timeout_ms", 0)
+		timeoutMs = max(0, timeoutMs)
+		timeoutMs = min(timeoutMs, 120_000)
+		if timeoutMs > 0 {
+			params["timeout_ms"] = timeoutMs
 		}
 	}
 	return params

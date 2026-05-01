@@ -221,7 +221,7 @@ func endOfBraceBody(lines []string, start int) int {
 
 // skipStringLiteral returns the index of the character AFTER the
 // closing quote of a string/rune/backtick literal starting at
-// `line[start]`. Respects escape sequences for "" and ''. Backtick
+// `line[start]`. Respects escape sequences for "" and ”. Backtick
 // (raw) strings don't honour escapes in Go. If the literal doesn't
 // close on this line (multi-line raw strings), returns len(line).
 func skipStringLiteral(line string, start int) int {

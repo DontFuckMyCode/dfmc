@@ -19,11 +19,11 @@ import "encoding/json"
 // Practice describes an idiomatic pattern worth following.
 type Practice struct {
 	ID      string   `json:"id"`      // e.g. "go-error-wrap"
-	Summary string   `json:"summary"`  // one-liner
-	Body    string   `json:"body"`     // markdown detail
-	Langs   []string `json:"langs"`    // ["go", "python", ...]; empty = universal
-	Kinds   []string `json:"kinds"`    // AST node kinds where this applies
-	Tags    []string `json:"tags"`     // ["concurrency", "error-handling", ...]
+	Summary string   `json:"summary"` // one-liner
+	Body    string   `json:"body"`    // markdown detail
+	Langs   []string `json:"langs"`   // ["go", "python", ...]; empty = universal
+	Kinds   []string `json:"kinds"`   // AST node kinds where this applies
+	Tags    []string `json:"tags"`    // ["concurrency", "error-handling", ...]
 }
 
 // BugPattern describes a frequent mistake.
@@ -33,7 +33,7 @@ type BugPattern struct {
 	Body     string   `json:"body"`
 	Langs    []string `json:"langs"`
 	Kinds    []string `json:"kinds"`
-	Severity string   `json:"severity"` // "error", "warning", "info"
+	Severity string   `json:"severity"`      // "error", "warning", "info"
 	Fix      string   `json:"fix,omitempty"` // markdown suggestion
 	CWE      string   `json:"cwe,omitempty"`
 }
@@ -54,7 +54,7 @@ type SecurityRule struct {
 type Idiom struct {
 	ID     string   `json:"id"`
 	Lang   string   `json:"lang"`
-	Rule   string   `json:"rule"`    // short description
+	Rule   string   `json:"rule"`   // short description
 	Detail string   `json:"detail"` // markdown
 	Kinds  []string `json:"kinds,omitempty"`
 }

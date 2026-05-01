@@ -526,7 +526,12 @@ func decodeJSONTemplates(path string, data []byte) []Template {
 }
 
 func decodeMarkdownTemplate(path string, data []byte) (Template, bool) {
-	text := string(data)
+	// Normalize CRLF -> LF up front so the frontmatter detection below
+	// works regardless of how the file was saved. A user editing a prompt
+	// in Notepad / VSCode on Windows gets CRLF by default; without this
+	// the strict `"---\n"` prefix check missed the marker and the file
+	// loaded with no metadata (ID/Type/Task all fell back to defaults).
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	raw := strings.TrimSpace(text)
 	if raw == "" {
 		return Template{}, false

@@ -66,8 +66,8 @@ type RetryPolicy struct {
 
 // DefaultRetryPolicy is the policy used when none is specified.
 var DefaultRetryPolicy = RetryPolicy{
-	MaxAttempts:  3,
-	BaseBackoff:  2 * time.Second,
+	MaxAttempts: 3,
+	BaseBackoff: 2 * time.Second,
 	MaxBackoff:  30 * time.Second,
 }
 

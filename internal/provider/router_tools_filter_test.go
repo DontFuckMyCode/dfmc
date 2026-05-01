@@ -19,8 +19,8 @@ type toolCapableProvider struct {
 	supportsTools bool
 }
 
-func (p *toolCapableProvider) Name() string  { return p.name }
-func (p *toolCapableProvider) Model() string { return p.name + "-model" }
+func (p *toolCapableProvider) Name() string     { return p.name }
+func (p *toolCapableProvider) Model() string    { return p.name + "-model" }
 func (p *toolCapableProvider) Models() []string { return []string{p.name + "-model"} }
 func (p *toolCapableProvider) Complete(_ context.Context, _ CompletionRequest) (*CompletionResponse, error) {
 	if p.err != nil {

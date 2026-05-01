@@ -676,6 +676,3 @@ func detectLanguageFromPath(path string) string {
 		return ""
 	}
 }
-
-
-

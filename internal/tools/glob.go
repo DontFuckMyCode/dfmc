@@ -334,12 +334,12 @@ func (t *TodoWriteTool) renderTasksAsResult(tasks []*supervisor.Task) Result {
 			content = task.Detail
 		}
 		items[i] = TodoItem{
-			Content:    content,
-			Detail:     task.Detail,
-			Status:     taskStateToTodoStatus(task.State),
-			Priority:   0,
-			Labels:     task.Labels,
-			ParentID:   task.ParentID,
+			Content:  content,
+			Detail:   task.Detail,
+			Status:   taskStateToTodoStatus(task.State),
+			Priority: 0,
+			Labels:   task.Labels,
+			ParentID: task.ParentID,
 		}
 	}
 	return Result{

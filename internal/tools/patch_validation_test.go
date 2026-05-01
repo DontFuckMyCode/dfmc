@@ -152,7 +152,7 @@ func TestPatchValidation_WithValidationCommand(t *testing.T) {
 	res, err := eng.Execute(context.Background(), "patch_validation", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
-			"patch":               patch,
+			"patch":              patch,
 			"validation_command": "go build ./...",
 		},
 	})
@@ -366,7 +366,7 @@ func TestPatchValidation_ValidationCommandShellBlocked(t *testing.T) {
 	_, err := eng.Execute(context.Background(), "patch_validation", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
-			"patch":               patch,
+			"patch":              patch,
 			"validation_command": "bash -c whoami",
 		},
 	})

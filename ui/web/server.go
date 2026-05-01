@@ -4,7 +4,7 @@
 // files grouped by domain:
 //
 //   - server_status.go       handleStatus + approval/hooks summarisers
-//   - server_chat.go         handleAsk, handleChat, handleWebSocket, writeSSE/writeJSON
+//   - server_chat.go         handleAsk, handleChat, handleWebSocket, writeSSEWithDeadline/writeJSON
 //   - server_context.go      context/prompts/magicdoc/analyze + shared helpers
 //   - server_tools_skills.go tools, skills, providers, commands, codemap, memory
 //   - server_conversation.go conversation list/search/load/save/undo + branches
@@ -36,15 +36,15 @@ import (
 )
 
 type Server struct {
-	engine          *engine.Engine
-	mux             *http.ServeMux
-	addr            string
-	auth            string
-	token           string
-	allowedOrigins  []string
-	allowedHosts    []string
-	trustedProxies  []string
-	wsConnLimiter   *wsConnLimiter
+	engine         *engine.Engine
+	mux            *http.ServeMux
+	addr           string
+	auth           string
+	token          string
+	allowedOrigins []string
+	allowedHosts   []string
+	trustedProxies []string
+	wsConnLimiter  *wsConnLimiter
 }
 
 type ChatRequest struct {
@@ -175,9 +175,9 @@ func normalizeBindHost(authMode, host string) string {
 		fmt.Fprintf(os.Stderr, "[DFMC] NOTICE: auth=none forces loopback bind; ignoring --host %s and using 127.0.0.1. Pass --auth=token to expose on a network interface.\n", host)
 		return "127.0.0.1"
 	}
-	if strings.EqualFold(strings.TrimSpace(authMode), "none") && isLoopbackBindHost(host) {
-		fmt.Fprintf(os.Stderr, "[DFMC] NOTICE: auth=none — the web API is accessible to any process on this machine. Set DFMC_WEB_TOKEN or use --auth=token for local token auth.\n")
-	}
+	// VULN-049: when auth=none and already on a loopback bind, stay quiet.
+	// The "any process on this machine" notice was redundant — loopback is
+	// already the safe default and the user explicitly chose it.
 	if strings.EqualFold(strings.TrimSpace(authMode), "token") && !isLoopbackBindHost(host) {
 		fmt.Fprintf(os.Stderr, "[DFMC] WARNING: auth=token with non-loopback bind (%s) exposes the agent on all interfaces. Use --host 127.0.0.1 or set auth=none.\n", host)
 	}
@@ -278,21 +278,41 @@ func parseURLHost(raw string) string {
 	return u.Scheme + "://" + u.Host
 }
 
-// stripPort removes any :port suffix from hostOrHostPort, handling IPv6.
+// stripPort removes any :port suffix from hostOrHostPort, handling IPv6
+// and scheme://host:port forms. Without scheme awareness, LastIndex(":")
+// on "http://127.0.0.1" would land on the scheme separator and return
+// just "http"; that broke origin matching for any allowlist entry that
+// omits the port.
 func stripPort(hostOrHostPort string) string {
 	if hostOrHostPort == "" {
 		return hostOrHostPort
 	}
-	// IPv6: [::1]:8080
-	if strings.HasPrefix(hostOrHostPort, "[") {
-		end := strings.LastIndex(hostOrHostPort, "]")
-		if end > 0 {
-			return hostOrHostPort[:end+1]
+	// Skip past scheme:// when looking for the port boundary.
+	prefixLen := 0
+	if i := strings.Index(hostOrHostPort, "://"); i >= 0 {
+		prefixLen = i + 3
+	}
+	rest := hostOrHostPort[prefixLen:]
+	// IPv6: [::1]:8080 — keep brackets, strip trailing :port.
+	if strings.HasPrefix(rest, "[") {
+		if end := strings.LastIndex(rest, "]"); end > 0 {
+			return hostOrHostPort[:prefixLen+end+1]
 		}
 	}
-	// host:port or host
-	if idx := strings.LastIndex(hostOrHostPort, ":"); idx > 0 {
-		return hostOrHostPort[:idx]
+	// host:port or host — only strip when the suffix is digits-only,
+	// otherwise a hostname like "service:dev" would be truncated.
+	if idx := strings.LastIndex(rest, ":"); idx > 0 {
+		port := rest[idx+1:]
+		allDigits := port != ""
+		for _, c := range port {
+			if c < '0' || c > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			return hostOrHostPort[:prefixLen+idx]
+		}
 	}
 	return hostOrHostPort
 }

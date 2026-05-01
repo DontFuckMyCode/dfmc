@@ -12,14 +12,8 @@ type ErrorKind int
 
 const (
 	ErrConfig ErrorKind = iota
-	ErrProvider
 	ErrRateLimit
-	ErrToolExec
-	ErrParse
-	ErrPermission
-	ErrNotFound
 	ErrTimeout
-	ErrInternal
 )
 
 type DFMCError struct {

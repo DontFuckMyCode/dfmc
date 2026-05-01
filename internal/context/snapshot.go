@@ -75,11 +75,11 @@ func (s *ContextSnapshot) MergeWith(parent *ContextSnapshot) *ContextSnapshot {
 	conf := (s.Confidence*float64(len(s.Chunks)) + parent.Confidence*float64(len(parent.Chunks))) /
 		float64(len(s.Chunks)+len(parent.Chunks))
 	return &ContextSnapshot{
-		Query:      s.Query,
-		Chunks:     merged,
-		BudgetUsed: s.BudgetUsed + parent.BudgetUsed,
-		Task:       s.Task,
-		Confidence: conf,
+		Query:       s.Query,
+		Chunks:      merged,
+		BudgetUsed:  s.BudgetUsed + parent.BudgetUsed,
+		Task:        s.Task,
+		Confidence:  conf,
 		RetrievedAt: s.RetrievedAt,
 	}
 }

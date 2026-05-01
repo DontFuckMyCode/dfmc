@@ -1,7 +1,7 @@
 // Chat/streaming handlers and shared response helpers for the web API.
 // Extracted from server.go to keep the construction/wiring lean. Ask/Chat/
-// WebSocket live together because they all drive provider streaming; writeSSE
-// and writeJSON are shared response primitives used by every other handler.
+// WebSocket live together because they all drive provider streaming;
+// writeSSEWithDeadline and writeJSON are shared response primitives.
 
 package web
 
@@ -84,7 +84,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	stream, err := s.engine.StreamAsk(r.Context(), req.Message)
 	if err != nil {
-		writeSSE(w, flusher, map[string]any{
+		writeSSEWithDeadline(w, flusher, map[string]any{
 			"type":  "error",
 			"error": err.Error(),
 		})
@@ -94,18 +94,20 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	for ev := range stream {
 		switch ev.Type {
 		case provider.StreamDelta:
-			writeSSE(w, flusher, map[string]any{
+			if !writeSSEWithDeadline(w, flusher, map[string]any{
 				"type":  "delta",
 				"delta": ev.Delta,
-			})
+			}) {
+				return
+			}
 		case provider.StreamError:
-			writeSSE(w, flusher, map[string]any{
+			writeSSEWithDeadline(w, flusher, map[string]any{
 				"type":  "error",
 				"error": ev.Err.Error(),
 			})
 			return
 		case provider.StreamDone:
-			writeSSE(w, flusher, map[string]any{
+			writeSSEWithDeadline(w, flusher, map[string]any{
 				"type": "done",
 				"ts":   time.Now().UTC().Format(time.RFC3339),
 			})
@@ -139,10 +141,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	})
 	defer unsubscribe()
 
-	writeSSE(w, flusher, map[string]any{
+	if !writeSSEWithDeadline(w, flusher, map[string]any{
 		"type": "connected",
 		"ts":   time.Now().UTC().Format(time.RFC3339),
-	})
+	}) {
+		return
+	}
 
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
@@ -152,34 +156,28 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case ev := <-ch:
-			writeSSE(w, flusher, map[string]any{
+			if !writeSSEWithDeadline(w, flusher, map[string]any{
 				"type":    "event",
 				"event":   ev.Type,
 				"source":  ev.Source,
 				"payload": ev.Payload,
 				"ts":      ev.Timestamp.UTC().Format(time.RFC3339),
-			})
+			}) {
+				// Slow / dead reader — bail before subsequent writes
+				// queue up indefinitely. Without this a slow-loris
+				// client could pin this goroutine for the lifetime of
+				// the kernel send buffer (multi-MB).
+				return
+			}
 		case <-ticker.C:
-			writeSSE(w, flusher, map[string]any{
+			if !writeSSEWithDeadline(w, flusher, map[string]any{
 				"type": "ping",
 				"ts":   time.Now().UTC().Format(time.RFC3339),
-			})
+			}) {
+				return
+			}
 		}
 	}
-}
-
-func writeSSE(w http.ResponseWriter, flusher http.Flusher, payload any) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
-		// SSE write failure is non-fatal (connection may have dropped);
-		// flusher already flushed, so we log and continue.
-		fmt.Fprintf(os.Stderr, "dfmc: writeSSE error: %v\n", err)
-		return
-	}
-	flusher.Flush()
 }
 
 // writeSSEWithDeadline writes an SSE frame with a per-chunk deadline to

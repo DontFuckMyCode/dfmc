@@ -187,7 +187,6 @@ type offlineFinding struct {
 	Evidence string
 }
 
-
 // -------------------------------------------------------------------------
 // RENDERERS + HELPERS
 

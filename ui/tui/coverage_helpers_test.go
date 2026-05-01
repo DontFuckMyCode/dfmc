@@ -570,13 +570,13 @@ func TestActivitySelectedIndex(t *testing.T) {
 		total, scroll int
 		want          int
 	}{
-		{10, 0, 9},   // first entry at top = last index
-		{10, 5, 4},   // middle
-		{10, 9, 0},   // last entry at top = first index
-		{10, 10, 0},  // clamped to 9, then 9->0
-		{10, 15, 0},  // clamped to 9, then 9->0
-		{0, 0, -1},   // total <= 0
-		{10, -1, 9},  // -1 clamped to 0, then 9
+		{10, 0, 9},  // first entry at top = last index
+		{10, 5, 4},  // middle
+		{10, 9, 0},  // last entry at top = first index
+		{10, 10, 0}, // clamped to 9, then 9->0
+		{10, 15, 0}, // clamped to 9, then 9->0
+		{0, 0, -1},  // total <= 0
+		{10, -1, 9}, // -1 clamped to 0, then 9
 	}
 	for _, tc := range tests {
 		got := activitySelectedIndex(tc.total, tc.scroll)
@@ -698,8 +698,8 @@ func TestSubagentProfileChain(t *testing.T) {
 
 func TestSubagentProfileTransition(t *testing.T) {
 	tests := []struct {
-		from, to  string
-		want      string
+		from, to string
+		want     string
 	}{
 		{"a", "b", "a -> b"},
 		{"", "b", "fallback -> b"},
@@ -1045,12 +1045,12 @@ func TestFilteredConversations_EmptyEntries(t *testing.T) {
 
 func TestFormatContextInSummaryTUI(t *testing.T) {
 	report := &engine.ContextInStatus{
-		FileCount:           5,
-		TokenCount:          1000,
-		MaxTokensTotal:      200000,
-		MaxTokensPerFile:    8000,
-		Task:                "refactor",
-		Compression:         "heuristic",
+		FileCount:            5,
+		TokenCount:           1000,
+		MaxTokensTotal:       200000,
+		MaxTokensPerFile:     8000,
+		Task:                 "refactor",
+		Compression:          "heuristic",
 		ExplicitFileMentions: 3,
 	}
 	got := formatContextInSummaryTUI(report)
@@ -1100,12 +1100,12 @@ func TestFormatContextInReasonSummaryTUI_NilReport(t *testing.T) {
 func TestParamStr(t *testing.T) {
 	params := map[string]any{
 		"str":   "hello",
-		"int":    42,
-		"int64":  int64(123),
+		"int":   42,
+		"int64": int64(123),
 		"float": 3.14,
-		"bool":   true,
-		"empty":  "",
-		"nil":    nil,
+		"bool":  true,
+		"empty": "",
+		"nil":   nil,
 	}
 
 	tests := []struct {
@@ -1178,9 +1178,9 @@ func TestFilterSuggestionsByToken(t *testing.T) {
 	}{
 		{"re", []string{"read", "refactor", "review"}}, // all have "re" as prefix or contain "re"
 		{"test", []string{"test"}},
-		{"x", []string{"explain"}},                       // "explain" contains "x"
+		{"x", []string{"explain"}}, // "explain" contains "x"
 		{"", []string{"read", "refactor", "review", "test", "explain", "doc"}},
-		{"EX", []string{"explain"}},                     // case insensitive, "doc" doesn't have "ex"
+		{"EX", []string{"explain"}}, // case insensitive, "doc" doesn't have "ex"
 	}
 
 	for _, tc := range tests {
@@ -1202,7 +1202,7 @@ func TestFilterSuggestionsByToken_EmptyItems(t *testing.T) {
 
 func TestSummarizeWorkflowTodos(t *testing.T) {
 	tests := []struct {
-		todos []toolruntime.TodoItem
+		todos                                       []toolruntime.TodoItem
 		wantTotal, wantPending, wantDoing, wantDone int
 	}{
 		{
@@ -1383,4 +1383,3 @@ func TestTruncateCommandBlock(t *testing.T) {
 		}
 	}
 }
-

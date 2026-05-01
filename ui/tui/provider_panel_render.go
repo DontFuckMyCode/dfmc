@@ -4,9 +4,9 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	"strings"
 )
 
 func formatProviderRow(row providerRow, selected bool, width int) string {
@@ -254,8 +254,6 @@ func (m Model) renderProviderListView(width int) string {
 	return strings.Join(lines, "\n")
 }
 
-
-
 // refreshProvidersRows re-reads the router and stamps the fresh rows
 // into the Model. Pure — invoked from 'r' and from the tab-switch
 // first-activation path.
@@ -305,7 +303,7 @@ func (m Model) renderProvidersMenu(width int) []string {
 	reasons := m.providers.menuDisabledReasons
 	for i, label := range labels {
 		num := fmt.Sprintf("%d. ", i+1)
-			var prefix string
+		var prefix string
 		l := label
 		isDisabled := i < len(disabled) && disabled[i]
 		isDanger := strings.Contains(strings.ToLower(label), "delete")
@@ -388,4 +386,3 @@ func (m Model) renderProvidersConfirm(width int) string {
 		Width(width - 4)
 	return frameStyle.Render(content)
 }
-

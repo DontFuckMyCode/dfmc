@@ -55,7 +55,8 @@ type BranchComparison struct {
 
 type Manager struct {
 	mu      sync.RWMutex
-	saveMu  sync.Mutex // serializes saves so snapshots are never stale
+	saveMu  sync.Mutex     // serializes saves so snapshots are never stale
+	saveWg  sync.WaitGroup // tracks in-flight SaveActiveAsync goroutines so Close drains before bbolt is shut down
 	store   *storage.Store
 	active  *Conversation
 	baseDir string
@@ -319,9 +320,14 @@ func (m *Manager) SaveActive() error {
 // SaveActiveAsync persists the active conversation without blocking the
 // caller. Failures are logged but never propagated — this is best-effort
 // durability for crash-before-shutdown scenarios. Uses saveMu to serialize
-// with the blocking SaveActive call so the two never race.
+// with the blocking SaveActive call so the two never race. saveWg lets
+// Close drain pending writes before the underlying bbolt store is shut
+// down — without it, a goroutine scheduled microseconds before Shutdown
+// could try to write to a closed handle.
 func (m *Manager) SaveActiveAsync() {
+	m.saveWg.Add(1)
 	go func() {
+		defer m.saveWg.Done()
 		m.saveMu.Lock()
 		defer m.saveMu.Unlock()
 
@@ -351,6 +357,14 @@ func (m *Manager) SaveActiveAsync() {
 			log.Printf("conversation: SaveActiveAsync log: %v", err)
 		}
 	}()
+}
+
+// Close drains any in-flight SaveActiveAsync goroutines so callers can
+// shut the underlying bbolt store down without races. Call this before
+// closing the store; otherwise an async save scheduled microseconds
+// earlier may run on a closed handle and silently lose the turn.
+func (m *Manager) Close() {
+	m.saveWg.Wait()
 }
 
 func (m *Manager) Load(id string) (*Conversation, error) {

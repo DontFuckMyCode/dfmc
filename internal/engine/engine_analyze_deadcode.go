@@ -35,6 +35,15 @@ import (
 	"strings"
 )
 
+// identifierTokenRe matches one programming-language identifier per
+// `\b\w+\b` slice. Pre-compiled at package init so the dead-code pass
+// (which ranges over every file in the project) doesn't pay the
+// MustCompile cost per call. The class covers Latin letters, digits,
+// and underscore — same shape the AST extractors emit for symbol
+// names, so identifierTokenRe.FindAllString(file).Contains(symName)
+// is a faithful proxy for the previous per-name `\bname\b` regex.
+var identifierTokenRe = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+
 func (e *Engine) detectDeadCode(ctx context.Context, paths []string) ([]DeadCodeItem, error) {
 	// Each symbol is keyed by (path, name, line) so two packages that
 	// happen to export the same identifier don't collide — the old
@@ -93,14 +102,23 @@ func (e *Engine) detectDeadCode(ctx context.Context, paths []string) ([]DeadCode
 		}
 	}
 
-	// Compile one regex per distinct name (names often repeat across
-	// packages; dedupe to save on compile cost).
-	nameRegexes := map[string]*regexp.Regexp{}
+	// Count occurrences of each distinct symbol name in one pass per
+	// file rather than N regex passes per file. Old approach was
+	// O(symbols × files × file_size) regex execution which timed out
+	// on whole-project scans (300+ files × thousands of symbols).
+	// New approach tokenises each file once with a single identifier
+	// regex, then hash-checks each token against the name set —
+	// O(files × file_size) plus O(symbols) lookup.
+	nameCounts := make(map[string]int, len(symbols))
 	for _, s := range symbols {
-		if _, ok := nameRegexes[s.Name]; ok {
-			continue
+		nameCounts[s.Name] = 0
+	}
+	for _, c := range codeContents {
+		for _, tok := range identifierTokenRe.FindAllString(c, -1) {
+			if _, ok := nameCounts[tok]; ok {
+				nameCounts[tok]++
+			}
 		}
-		nameRegexes[s.Name] = regexp.MustCompile(`\b` + regexp.QuoteMeta(s.Name) + `\b`)
 	}
 
 	out := make([]DeadCodeItem, 0)
@@ -114,14 +132,10 @@ func (e *Engine) detectDeadCode(ctx context.Context, paths []string) ([]DeadCode
 		if isTestingIdentifier(s.Name) {
 			continue
 		}
-		re := nameRegexes[s.Name]
-		total := 0
-		for _, c := range codeContents {
-			total += len(re.FindAllStringIndex(c, -1))
-		}
-		// n counts ALL occurrences in the stripped code (including
-		// the definition line itself). <= 1 means "defined but
-		// nothing else references it."
+		// Counts ALL occurrences in stripped code (including the
+		// definition line itself). <= 1 means "defined but nothing
+		// else references it."
+		total := nameCounts[s.Name]
 		if total > 1 {
 			continue
 		}

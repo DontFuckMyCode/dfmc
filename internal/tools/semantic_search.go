@@ -3,17 +3,18 @@
 // Returns structured matches with path, line, column, node type, and snippet context.
 //
 // Pattern language:
-//   FunctionDecl:<name>  — function declaration
-//   FunctionCall:<name>   — function call (treated same as FunctionDecl in regex fallback)
-//   TypeDecl:<name>       — type declaration (class/interface/type)
-//   MethodDecl:<name>    — method with receiver
-//   IfStmt               — all if statements (maps to any symbol when queried)
-//   ReturnStmt           — all return statements
-//   AssignStmt           — all assignment statements
-//   VarDecl:<name>       — variable declaration
-//   ConstDecl:<name>      — constant declaration
-//   :type=<typename>     — filter by result/var type (Go-style, e.g. error)
-//   :context=N           — include N lines before/after in snippet (default 0)
+//
+//	FunctionDecl:<name>  — function declaration
+//	FunctionCall:<name>   — function call (treated same as FunctionDecl in regex fallback)
+//	TypeDecl:<name>       — type declaration (class/interface/type)
+//	MethodDecl:<name>    — method with receiver
+//	IfStmt               — all if statements (maps to any symbol when queried)
+//	ReturnStmt           — all return statements
+//	AssignStmt           — all assignment statements
+//	VarDecl:<name>       — variable declaration
+//	ConstDecl:<name>      — constant declaration
+//	:type=<typename>     — filter by result/var type (Go-style, e.g. error)
+//	:context=N           — include N lines before/after in snippet (default 0)
 package tools
 
 import (
@@ -31,7 +32,7 @@ import (
 type SemanticSearchTool struct{}
 
 func NewSemanticSearchTool() *SemanticSearchTool { return &SemanticSearchTool{} }
-func (t *SemanticSearchTool) Name() string    { return "semantic_search" }
+func (t *SemanticSearchTool) Name() string       { return "semantic_search" }
 func (t *SemanticSearchTool) Description() string {
 	return "Structured semantic search for AST nodes by type and name pattern across files or the whole project."
 }
@@ -62,17 +63,17 @@ Pattern language:
 - :context=N          — include N lines before/after for snippet
 
 Output is capped by max_results (default 100). Each match includes the snippet and optional surrounding context lines.`,
-		Risk:  RiskRead,
-		Tags:  []string{"search", "ast", "semantic", "structure", "find"},
+		Risk: RiskRead,
+		Tags: []string{"search", "ast", "semantic", "structure", "find"},
 		Args: []Arg{
 			{Name: "query", Type: ArgString, Required: true, Description: `AST pattern (e.g. "FunctionDecl:name=foo", "TypeDecl:name=Bar", "IfStmt").`},
 			{Name: "file", Type: ArgString, Description: `Scope to a single file. Absent = full project.`},
 			{Name: "lang", Type: ArgString, Default: "go", Description: `"go" | "typescript" | "python" | "all". Default: go.`},
 			{Name: "max_results", Type: ArgInteger, Default: 100, Description: `Cap results at N. Default: 100.`},
 		},
-		Returns:        "{query, matches: [{path, line, column, node_type, name, snippet, context_lines}], total, backend}",
-		Idempotent:     true,
-		CostHint:       "cpu-bound",
+		Returns:    "{query, matches: [{path, line, column, node_type, name, snippet, context_lines}], total, backend}",
+		Idempotent: true,
+		CostHint:   "cpu-bound",
 	}
 }
 
@@ -88,10 +89,10 @@ type semanticMatch struct {
 
 // parsedQuery holds a parsed pattern query.
 type parsedQuery struct {
-	nodeType    string
-	name        string
-	typeFilter  string
-	context     int
+	nodeType   string
+	name       string
+	typeFilter string
+	context    int
 }
 
 func parseQuery(q string) parsedQuery {

@@ -241,6 +241,7 @@ func looksActionable(question string) bool {
 		"fix", "add", "implement", "edit", "refactor", "migrate", "remove",
 		"delete", "rename", "update", "create", "build", "write", "generate",
 		"wire up", "hook up", "wire", "append", "insert", "patch", "apply",
+		"ekleme", "silme", "duzeltme", "yazma",
 	}
 	for _, k := range keys {
 		if strings.Contains(l, k) {

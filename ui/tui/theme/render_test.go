@@ -88,11 +88,11 @@ func TestSplitTableRow(t *testing.T) {
 
 func TestToolChipRender(t *testing.T) {
 	chip := ToolChip{
-		Name:       "read_file",
-		Status:     "ok",
-		DurationMs: 120,
-		Preview:    "42 lines",
-		Step:       1,
+		Name:         "read_file",
+		Status:       "ok",
+		DurationMs:   120,
+		Preview:      "42 lines",
+		Step:         1,
 		OutputTokens: 300,
 	}
 	out := RenderToolChip(chip, 80)
@@ -211,7 +211,7 @@ func TestStatsPanelMode_Values(t *testing.T) {
 
 func TestToolChip_Fields(t *testing.T) {
 	chip := ToolChip{
-		Name:           "test",
+		Name:            "test",
 		CompressedChars: 50,
 		SavedChars:      25,
 		CompressionPct:  33,
@@ -972,7 +972,7 @@ func TestPlural(t *testing.T) {
 
 func TestChipIconStyle(t *testing.T) {
 	tests := []struct {
-		status string
+		status   string
 		wantIcon string
 	}{
 		{"ok", "✓"},

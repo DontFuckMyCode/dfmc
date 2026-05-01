@@ -33,8 +33,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
@@ -462,7 +462,6 @@ func sliceBody(lines []string, start, end, maxLines int) (string, bool) {
 	head := span[:keep]
 	return strings.Join(head, "\n") + fmt.Sprintf("\n// … (%d lines elided — raise body_max_lines to see the rest)", elided), true
 }
-
 
 // renderSymbolMatches produces the human-readable Output. Each match
 // gets a header "N. PATH:START-END  KIND  NAME" then (when bodies are

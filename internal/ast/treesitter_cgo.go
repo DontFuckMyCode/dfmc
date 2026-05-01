@@ -44,12 +44,12 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 
 	pool := treeSitterParserPool(lang)
 	p := pool.Get()
-	if p == nil {
-		return nil, nil, nil, true, fmt.Errorf("tree-sitter: pool returned nil for %s", lang)
+	var parser *tree_sitter.Parser
+	if p != nil {
+		parser, _ = p.(*tree_sitter.Parser)
 	}
-	parser := p.(*tree_sitter.Parser)
 	if parser == nil {
-		return nil, nil, nil, true, fmt.Errorf("tree-sitter: pool returned nil parser for %s", lang)
+		parser = tree_sitter.NewParser()
 	}
 	// healthy gates the pool return — see finalizeTreeSitterParser.
 	healthy := false
@@ -59,6 +59,15 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 		return nil, nil, nil, true, fmt.Errorf("tree-sitter %s language: %w", lang, err)
 	}
 	healthy = true
+
+	// Periodic context-check during parse. tree-sitter's ParseCtx
+	// honours ctx deadline but we check explicitly so a cancelled
+	// context surfaces immediately rather than returning stale symbols.
+	select {
+	case <-ctx.Done():
+		return nil, nil, nil, false, ctx.Err()
+	default:
+	}
 
 	tree := parser.ParseCtx(ctx, content, nil)
 	if tree == nil {
@@ -72,6 +81,14 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 	root := tree.RootNode()
 	if root == nil {
 		return nil, nil, nil, true, nil
+	}
+
+	// Check context cancellation before returning parsed results —
+	// tree-sitter's ParseCtx honours ctx but a long parse may have
+	// produced a tree before the deadline fired; prefer to surface the
+	// cancellation rather than return potentially stale symbols.
+	if err := ctx.Err(); err != nil {
+		return nil, nil, nil, false, err
 	}
 
 	switch lang {

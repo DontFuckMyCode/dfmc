@@ -476,7 +476,6 @@ func hasTrailingWhitespace(text string) bool {
 	return last == ' ' || last == '\t' || last == '\n' || last == '\r'
 }
 
-
 func filterSuggestionsByToken(items []string, token string) []string {
 	items = append([]string(nil), items...)
 	if len(items) == 0 {

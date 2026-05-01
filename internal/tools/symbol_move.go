@@ -55,8 +55,8 @@ func (t *SymbolMoveTool) Spec() ToolSpec {
 		Title:   "Move symbol",
 		Summary: "Move a function/type/variable to another file and update all project references.",
 		Purpose: `Use when you've decided to reorganize code across files. Like symbol_rename but moves the declaration to a new file while updating all references. Shows impact before mutating.`,
-		Risk:     RiskWrite,
-		Tags:     []string{"rename", "refactor", "move", "symbol", "ast", "bulk-edit"},
+		Risk:    RiskWrite,
+		Tags:    []string{"rename", "refactor", "move", "symbol", "ast", "bulk-edit"},
 		Args: []Arg{
 			{Name: "from", Type: ArgString, Required: true, Description: `Symbol name to move.`},
 			{Name: "to_file", Type: ArgString, Required: true, Description: `Destination file path (relative to project root).`},
@@ -65,9 +65,9 @@ func (t *SymbolMoveTool) Spec() ToolSpec {
 			{Name: "dry_run", Type: ArgBoolean, Default: true, Description: `Preview without writing. Default true.`},
 			{Name: "skip_tests", Type: ArgBoolean, Default: false, Description: `Skip test files when updating references. Default false.`},
 		},
-		Returns:        "Structured JSON: {impact: {files, locations}, changes: [{path, old, new, line}], dry_run: bool}",
-		Idempotent:     false,
-		CostHint:       "cpu-bound",
+		Returns:    "Structured JSON: {impact: {files, locations}, changes: [{path, old, new, line}], dry_run: bool}",
+		Idempotent: false,
+		CostHint:   "cpu-bound",
 	}
 }
 
@@ -88,12 +88,12 @@ type moveChange struct {
 
 // symbolLocation holds the precise location of a symbol in a file.
 type symbolLocation struct {
-	filePath   string
-	startLine  int // 1-based
-	endLine    int // 1-based (brace-balanced scope end)
-	signature  string
-	kind       string
-	declLine   string // the full declaration line
+	filePath  string
+	startLine int // 1-based
+	endLine   int // 1-based (brace-balanced scope end)
+	signature string
+	kind      string
+	declLine  string // the full declaration line
 }
 
 // Execute finds the symbol in the project and moves it to to_file.
@@ -405,12 +405,12 @@ func findSymbolLocation(projectRoot, name, kind string) (*symbolLocation, error)
 		endLine := extractScopeEnd(parsed.Language, lines, sym.Line)
 
 		return &symbolLocation{
-			filePath:   fpath,
-			startLine:  sym.Line,
-			endLine:    endLine,
-			signature:  sym.Signature,
-			kind:       string(sym.Kind),
-			declLine:   first.fullLine,
+			filePath:  fpath,
+			startLine: sym.Line,
+			endLine:   endLine,
+			signature: sym.Signature,
+			kind:      string(sym.Kind),
+			declLine:  first.fullLine,
 		}, nil
 	}
 	return nil, fmt.Errorf("symbol %q not found", name)

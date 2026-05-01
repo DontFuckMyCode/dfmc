@@ -192,11 +192,11 @@ func TestSymbolRename_KindFilter(t *testing.T) {
 	res, err := eng.Execute(context.Background(), "symbol_rename", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
-			"from":     "Foo",
-			"to":       "Bar",
-			"file":     "main.go",
-			"kind":     "func",
-			"dry_run":  true,
+			"from":    "Foo",
+			"to":      "Bar",
+			"file":    "main.go",
+			"kind":    "func",
+			"dry_run": true,
 		},
 	})
 	if err != nil {
@@ -280,10 +280,10 @@ func TestSymbolRenameTool_SetEngine(t *testing.T) {
 
 func TestApplyRenameInLine(t *testing.T) {
 	cases := []struct {
-		line  string
-		from  string
-		to    string
-		want  string
+		line string
+		from string
+		to   string
+		want string
 	}{
 		{"func Foo()", "Foo", "Bar", "func Bar()"},
 		{"var x = Foo", "Foo", "Bar", "var x = Bar"},

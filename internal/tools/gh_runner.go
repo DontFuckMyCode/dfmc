@@ -27,11 +27,11 @@ const (
 // error so callers know the interface is intentionally narrow rather
 // than silently falling through to an unrestricted runner.
 var ghSafeSubcommands = map[string]struct{}{
-	"pr":     {},
-	"issue":  {},
-	"run":    {},
-	"repo":   {},
-	"api":    {}, // raw API calls — limited to GET, handled in gh_api.go
+	"pr":    {},
+	"issue": {},
+	"run":   {},
+	"repo":  {},
+	"api":   {}, // raw API calls — limited to GET, handled in gh_api.go
 }
 
 // runGH executes `gh <args...>` inside projectRoot and returns

@@ -13,21 +13,17 @@ import (
 	"strings"
 )
 
-
-
 const (
 	maxIntValue = int(^uint(0) >> 1)
 	minIntValue = -maxIntValue - 1
 )
-
-
 
 type WriteFileTool struct {
 	engine *Engine
 }
 
 func NewWriteFileTool() *WriteFileTool { return &WriteFileTool{} }
-func (t *WriteFileTool) Name() string        { return "write_file" }
+func (t *WriteFileTool) Name() string  { return "write_file" }
 func (t *WriteFileTool) Description() string {
 	return "Write or create a text file."
 }
@@ -95,8 +91,6 @@ func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) 
 		Data:   data,
 	}, nil
 }
-
-
 
 // missingParamError builds the actionable "<param> is required" reply
 // for built-in tools. Pre-fix the error was just "pattern is required" —
@@ -228,11 +222,6 @@ func asBool(m map[string]any, key string, fallback bool) bool {
 	return fallback
 }
 
-
-
-
-
-
 func truncateToolTextWithMarker(s string, maxBytes int, marker string) string {
 	if maxBytes <= 0 {
 		return marker
@@ -253,5 +242,3 @@ func truncateToolTextWithMarker(s string, maxBytes int, marker string) string {
 	}
 	return body + marker
 }
-
-

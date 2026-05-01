@@ -139,8 +139,6 @@ func (e *Engine) collectSourceFiles(root string) ([]string, error) {
 	return out, nil
 }
 
-
-
 func minInt(a, b int) int {
 	if a < b {
 		return a

@@ -39,7 +39,7 @@ func (p *PlaceholderProvider) Name() string {
 	return p.name
 }
 
-func (p *PlaceholderProvider) Model() string   { return p.model }
+func (p *PlaceholderProvider) Model() string    { return p.model }
 func (p *PlaceholderProvider) Models() []string { return []string{p.model} }
 
 func (p *PlaceholderProvider) Complete(_ context.Context, req CompletionRequest) (*CompletionResponse, error) {

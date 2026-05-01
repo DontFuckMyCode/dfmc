@@ -123,6 +123,25 @@ Plan for {{project_root}}
 	}
 }
 
+// TestDecodeMarkdownFrontMatterTemplate_CRLF guards against the Windows
+// regression where CRLF-encoded prompt files (a Notepad / VSCode default
+// on Windows) silently lost their frontmatter. The strict `"---\n"` prefix
+// check used to fail on `"---\r\n"`, leaving ID/Type/Task at fallback
+// values. decodeMarkdownTemplate now normalizes line endings up front.
+func TestDecodeMarkdownFrontMatterTemplate_CRLF(t *testing.T) {
+	body := "---\r\nid: system.plan.custom\r\ntype: system\r\ntask: planning\r\nlanguage: go\r\npriority: 77\r\n---\r\nPlan for {{project_root}}\r\n"
+	tpl, ok := decodeMarkdownTemplate("system.plan.go.md", []byte(body))
+	if !ok {
+		t.Fatal("expected markdown template decode success on CRLF input")
+	}
+	if tpl.ID != "system.plan.custom" {
+		t.Fatalf("CRLF frontmatter did not parse — got ID=%q (expected system.plan.custom)", tpl.ID)
+	}
+	if tpl.Task != "planning" || tpl.Language != "go" {
+		t.Fatalf("unexpected meta from CRLF input: %+v", tpl)
+	}
+}
+
 func TestRenderComposesTaskAndProfileFragments(t *testing.T) {
 	lib := &Library{
 		templates:   []Template{},

@@ -27,8 +27,8 @@ type fakeRaceProvider struct {
 	cancelled int32
 }
 
-func (f *fakeRaceProvider) Name() string  { return f.name }
-func (f *fakeRaceProvider) Model() string { return f.name + "-model" }
+func (f *fakeRaceProvider) Name() string     { return f.name }
+func (f *fakeRaceProvider) Model() string    { return f.name + "-model" }
 func (f *fakeRaceProvider) Models() []string { return []string{f.name + "-model"} }
 func (f *fakeRaceProvider) Complete(ctx context.Context, _ CompletionRequest) (*CompletionResponse, error) {
 	atomic.AddInt32(&f.calls, 1)
@@ -64,7 +64,10 @@ func (f *fakeRaceProvider) Hints() ProviderHints {
 }
 
 func newRouterWith(providers ...Provider) *Router {
-	r := &Router{providers: map[string]Provider{}}
+	r := &Router{
+		providers: map[string]Provider{},
+		health:    map[string]*providerHealth{},
+	}
 	for _, p := range providers {
 		r.Register(p)
 	}

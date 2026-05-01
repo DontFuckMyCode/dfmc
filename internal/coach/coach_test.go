@@ -372,8 +372,8 @@ func TestLooksActionable_ReturnsTrue_English(t *testing.T) {
 
 func TestLooksActionable_ReturnsTrue_Turkish(t *testing.T) {
 	actionable := []string{
-		"ekleme yap",        // add
-		"silme islemi",      // delete operation
+		"ekleme yap",         // add
+		"silme islemi",       // delete operation
 		"duzeltme gerekiyor", // needs fix
 		"yazma zamani",       // time to write
 	}

@@ -22,7 +22,7 @@ type SymbolRenameTool struct {
 }
 
 func NewSymbolRenameTool() *SymbolRenameTool { return &SymbolRenameTool{} }
-func (t *SymbolRenameTool) Name() string    { return "symbol_rename" }
+func (t *SymbolRenameTool) Name() string     { return "symbol_rename" }
 func (t *SymbolRenameTool) Description() string {
 	return "Rename all occurrences of a symbol across a file or the whole project using AST-scope detection."
 }
@@ -51,8 +51,8 @@ Scope detection:
 
 "to" is required. "from" is required. "file" is optional (full project if absent).
 "dry_run" (default true) returns impact without mutating.`,
-		Risk:     RiskWrite,
-		Tags:     []string{"rename", "refactor", "symbol", "ast", "bulk-edit"},
+		Risk: RiskWrite,
+		Tags: []string{"rename", "refactor", "symbol", "ast", "bulk-edit"},
 		Args: []Arg{
 			{Name: "from", Type: ArgString, Required: true, Description: `Original symbol name (e.g. "OldName").`},
 			{Name: "to", Type: ArgString, Required: true, Description: `New symbol name (e.g. "NewName").`},
@@ -61,9 +61,9 @@ Scope detection:
 			{Name: "dry_run", Type: ArgBoolean, Default: true, Description: `Preview impact without writing. Default true.`},
 			{Name: "skip_tests", Type: ArgBoolean, Default: false, Description: `Skip test files (*_test.go). Default false.`},
 		},
-		Returns:        "Structured JSON: {impact: {files, locations}, changes: [{path, old, new, line}], dry_run: bool}",
-		Idempotent:     false,
-		CostHint:       "cpu-bound",
+		Returns:    "Structured JSON: {impact: {files, locations}, changes: [{path, old, new, line}], dry_run: bool}",
+		Idempotent: false,
+		CostHint:   "cpu-bound",
 	}
 }
 
@@ -156,9 +156,9 @@ func (t *SymbolRenameTool) Execute(ctx context.Context, req Request) (Result, er
 		return Result{
 			Output: fmt.Sprintf("symbol_rename: no occurrences of %q found", from),
 			Data: map[string]any{
-				"from":   from,
-				"to":     to,
-				"impact": renameImpact{Files: 0, Locations: 0},
+				"from":    from,
+				"to":      to,
+				"impact":  renameImpact{Files: 0, Locations: 0},
 				"changes": []renameChange{},
 			},
 		}, nil
@@ -224,8 +224,8 @@ func (t *SymbolRenameTool) Execute(ctx context.Context, req Request) (Result, er
 		Output: fmt.Sprintf("%s %d occurrences across %d files (impact: %d locations in %d files)",
 			action, totalMatches, len(allMatches), totalMatches, len(allMatches)),
 		Data: map[string]any{
-			"from":   from,
-			"to":     to,
+			"from": from,
+			"to":   to,
 			"impact": renameImpact{
 				Files:      len(allMatches),
 				Locations:  totalMatches,

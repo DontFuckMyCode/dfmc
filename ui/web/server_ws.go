@@ -64,7 +64,7 @@ const (
 	// interactive chat; the burst absorbs natural typing
 	// bursts/auto-saves.
 	wsRPS   rate.Limit = 5
-	wsBurst           int = 10
+	wsBurst int        = 10
 )
 
 // wsConnLimiter is the in-memory counter that bounds concurrent
@@ -185,10 +185,10 @@ type wsMessage struct {
 }
 
 type wsResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID     int64            `json:"id"`
-	Result any              `json:"result,omitempty"`
-	Error  *wsError         `json:"error,omitempty"`
+	JSONRPC string   `json:"jsonrpc"`
+	ID      int64    `json:"id"`
+	Result  any      `json:"result,omitempty"`
+	Error   *wsError `json:"error,omitempty"`
 }
 
 type wsError struct {

@@ -48,9 +48,9 @@ func makeMockWorker(results []ExecuteTaskResponse, errs []error) (*mockWorker, E
 func TestSupervisor_SingleTask_Success(t *testing.T) {
 	run := &Run{ID: "r1", Task: "test"}
 	plan := &ExecutionPlan{
-		Tasks:      []PlannedTask{{Task: Task{ID: "t1", Title: "one task"}}},
-		Layers:     [][]string{{"t1"}},
-		Roots:      []string{"t1"},
+		Tasks:       []PlannedTask{{Task: Task{ID: "t1", Title: "one task"}}},
+		Layers:      [][]string{{"t1"}},
+		Roots:       []string{"t1"},
 		MaxParallel: 1,
 	}
 	budget := &BudgetPool{TotalTokens: 0}
@@ -125,9 +125,9 @@ func TestSupervisor_TwoTasks_Dependencies(t *testing.T) {
 func TestSupervisor_RetryOnTransientFailure(t *testing.T) {
 	run := &Run{ID: "r1", Task: "test"}
 	plan := &ExecutionPlan{
-		Tasks:      []PlannedTask{{Task: Task{ID: "t1", Title: "transient"}}},
-		Layers:     [][]string{{"t1"}},
-		Roots:      []string{"t1"},
+		Tasks:       []PlannedTask{{Task: Task{ID: "t1", Title: "transient"}}},
+		Layers:      [][]string{{"t1"}},
+		Roots:       []string{"t1"},
 		MaxParallel: 1,
 	}
 	budget := &BudgetPool{TotalTokens: 0}
@@ -160,9 +160,9 @@ func TestSupervisor_RetryOnTransientFailure(t *testing.T) {
 func TestSupervisor_PermanentFailure_DoesNotRetry(t *testing.T) {
 	run := &Run{ID: "r1", Task: "test"}
 	plan := &ExecutionPlan{
-		Tasks:      []PlannedTask{{Task: Task{ID: "t1", Title: "bad"}}},
-		Layers:     [][]string{{"t1"}},
-		Roots:      []string{"t1"},
+		Tasks:       []PlannedTask{{Task: Task{ID: "t1", Title: "bad"}}},
+		Layers:      [][]string{{"t1"}},
+		Roots:       []string{"t1"},
 		MaxParallel: 1,
 	}
 	budget := &BudgetPool{TotalTokens: 0}
@@ -193,9 +193,9 @@ func TestSupervisor_PermanentFailure_DoesNotRetry(t *testing.T) {
 func TestSupervisor_CancelByContext(t *testing.T) {
 	run := &Run{ID: "r1", Task: "test"}
 	plan := &ExecutionPlan{
-		Tasks:      []PlannedTask{{Task: Task{ID: "t1", Title: "slow"}}},
-		Layers:     [][]string{{"t1"}},
-		Roots:      []string{"t1"},
+		Tasks:       []PlannedTask{{Task: Task{ID: "t1", Title: "slow"}}},
+		Layers:      [][]string{{"t1"}},
+		Roots:       []string{"t1"},
 		MaxParallel: 1,
 	}
 	budget := &BudgetPool{TotalTokens: 0}
@@ -221,9 +221,9 @@ func TestSupervisor_CancelByContext(t *testing.T) {
 func TestSupervisor_Status(t *testing.T) {
 	run := &Run{ID: "r1", Task: "test"}
 	plan := &ExecutionPlan{
-		Tasks:      []PlannedTask{{Task: Task{ID: "t1"}}},
-		Layers:     [][]string{{"t1"}},
-		Roots:      []string{"t1"},
+		Tasks:       []PlannedTask{{Task: Task{ID: "t1"}}},
+		Layers:      [][]string{{"t1"}},
+		Roots:       []string{"t1"},
 		MaxParallel: 1,
 	}
 	budget := &BudgetPool{TotalTokens: 0}
@@ -315,9 +315,9 @@ func TestSupervisor_TaskWaiting_State(t *testing.T) {
 	// When a task returns FailureWaiting, coordinator sets TaskWaiting
 	run := &Run{ID: "r1", Task: "test"}
 	plan := &ExecutionPlan{
-		Tasks:      []PlannedTask{{Task: Task{ID: "t1", Title: "waiting task"}}},
-		Layers:     [][]string{{"t1"}},
-		Roots:      []string{"t1"},
+		Tasks:       []PlannedTask{{Task: Task{ID: "t1", Title: "waiting task"}}},
+		Layers:      [][]string{{"t1"}},
+		Roots:       []string{"t1"},
 		MaxParallel: 1,
 	}
 	budget := &BudgetPool{TotalTokens: 0}
@@ -344,9 +344,9 @@ func TestSupervisor_TaskExternalReview_State(t *testing.T) {
 	// When a task returns FailureExternalReview, coordinator sets TaskExternalReview
 	run := &Run{ID: "r1", Task: "test"}
 	plan := &ExecutionPlan{
-		Tasks:      []PlannedTask{{Task: Task{ID: "t1", Title: "review task"}}},
-		Layers:     [][]string{{"t1"}},
-		Roots:      []string{"t1"},
+		Tasks:       []PlannedTask{{Task: Task{ID: "t1", Title: "review task"}}},
+		Layers:      [][]string{{"t1"}},
+		Roots:       []string{"t1"},
 		MaxParallel: 1,
 	}
 	budget := &BudgetPool{TotalTokens: 0}

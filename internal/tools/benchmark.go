@@ -21,7 +21,7 @@ type BenchmarkTool struct {
 }
 
 func NewBenchmarkTool() *BenchmarkTool { return &BenchmarkTool{} }
-func (t *BenchmarkTool) Name() string    { return "benchmark" }
+func (t *BenchmarkTool) Name() string  { return "benchmark" }
 func (t *BenchmarkTool) Description() string {
 	return "Run Go benchmark tests and return structured performance metrics."
 }
@@ -44,8 +44,8 @@ Pipeline:
 4. Return per-benchmark records sorted by name
 
 For accurate results, run twice (once warm-up, once measured) and compare the measured runs. The model should run the same benchmark twice before and after a change and compare the numbers.`,
-		Risk:     RiskRead,
-		Tags:     []string{"benchmark", "performance", "go", "test", "profiling"},
+		Risk: RiskRead,
+		Tags: []string{"benchmark", "performance", "go", "test", "profiling"},
 		Args: []Arg{
 			{Name: "target", Type: ArgString, Required: true, Description: `Go package or file to benchmark (e.g. "internal/engine", "./foo.go").`},
 			{Name: "benchmem", Type: ArgBoolean, Default: true, Description: `Include memory allocation metrics (allocs/op, bytes/op). Default true.`},
@@ -55,21 +55,21 @@ For accurate results, run twice (once warm-up, once measured) and compare the me
 			{Name: "memprofile", Type: ArgString, Description: `Write memory profile to this file path.`},
 			{Name: "timeout", Type: ArgString, Default: "60s", Description: `Maximum time for the benchmark run.`},
 		},
-		Returns:        "Structured JSON: {benchmarks: [{name, iterations, ns_per_op, allocs_per_op, bytes_per_op, mb_per_s}], warmup_runs int, count int}",
-		Idempotent:     true,
-		CostHint:       "cpu-bound",
+		Returns:    "Structured JSON: {benchmarks: [{name, iterations, ns_per_op, allocs_per_op, bytes_per_op, mb_per_s}], warmup_runs int, count int}",
+		Idempotent: true,
+		CostHint:   "cpu-bound",
 	}
 }
 
 // BenchmarkSpec is the structured result shape for one benchmark.
 type BenchmarkSpec struct {
-	Name         string  `json:"name"`
-	Iterations   int64   `json:"iterations"`
-	NsPerOp      float64 `json:"ns_per_op"`
-	AllocsPerOp  int64   `json:"allocs_per_op"`
-	BytesPerOp   int64   `json:"bytes_per_op"`
-	MBPerSec     float64 `json:"mb_per_sec"`
-	MeasuredNS   int64   `json:"measured_ns"`
+	Name        string  `json:"name"`
+	Iterations  int64   `json:"iterations"`
+	NsPerOp     float64 `json:"ns_per_op"`
+	AllocsPerOp int64   `json:"allocs_per_op"`
+	BytesPerOp  int64   `json:"bytes_per_op"`
+	MBPerSec    float64 `json:"mb_per_sec"`
+	MeasuredNS  int64   `json:"measured_ns"`
 }
 
 func (t *BenchmarkTool) Execute(ctx context.Context, req Request) (Result, error) {
@@ -135,7 +135,7 @@ func (t *BenchmarkTool) Execute(ctx context.Context, req Request) (Result, error
 	benchmarks := parseBenchmarkOutput(output)
 
 	data := map[string]any{
-		"target":   target,
+		"target":    target,
 		"exit_code": exitCode,
 	}
 

@@ -17,7 +17,6 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/commands"
 )
 
-
 // codemapSummary renders a one-paragraph snapshot of the codemap graph.
 func (m Model) codemapSummary() string {
 	if m.eng == nil || m.eng.CodeMap == nil || m.eng.CodeMap.Graph() == nil {
@@ -71,7 +70,6 @@ func (m Model) magicDocSlash(args []string) string {
 	}
 }
 
-
 // suggestSlashCommand picks the closest canonical slash command for an
 // unknown token. Prefix match first, then containment — returns "/name" form
 // or empty string when nothing is reasonably close.
@@ -120,5 +118,3 @@ func suggestSlashCommand(token string) string {
 	}
 	return ""
 }
-
-

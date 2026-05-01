@@ -79,9 +79,9 @@ func (s *Server) handleWorkspaceApply(w http.ResponseWriter, r *http.Request) {
 	if req.CheckOnly {
 		if err := applyUnifiedDiffWeb(root, patch, true); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
-				"status":    "error",
+				"status":     "error",
 				"check_only": true,
-				"error":     err.Error(),
+				"error":      err.Error(),
 			})
 			return
 		}
