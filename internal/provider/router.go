@@ -310,42 +310,53 @@ func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*Completi
 	return nil, "", errors.Join(errs...)
 }
 
-// completeWithProviderRetry tries a provider's model chain (primary + FallbackModels).
-// On ErrContextOverflow it first retries the SAME model after compacting messages,
-// then falls through to the next model in the chain. Returns (resp, providerName, error).
-func (r *Router) completeWithProviderRetry(ctx context.Context, p Provider, req CompletionRequest) (*CompletionResponse, string, error) {
+// modelChainRetry is the body shared by completeWithProviderRetry and
+// streamWithProviderRetry. It walks p.Models() trying each model with
+// a per-model throttle retry; on ErrContextOverflow it compacts the
+// request and retries the SAME model once before falling through to
+// the next. Transient (5xx/network) errors continue to the next model;
+// deterministic ones break out. Empty model chain → single throttle
+// call against the request as-is.
+func modelChainRetry[T any](
+	ctx context.Context,
+	r *Router,
+	p Provider,
+	req CompletionRequest,
+	throttle func(CompletionRequest) (T, error),
+) (T, string, error) {
+	var zero T
 	models := p.Models()
 	if len(models) == 0 {
-		resp, err := r.completeWithThrottleRetry(ctx, p, req)
-		return resp, p.Name(), err
+		v, err := throttle(req)
+		return v, p.Name(), err
 	}
 	var errs []error
 	for _, model := range models {
-		// Same per-iteration ctx check the cross-provider cascade does:
-		// once ctx is dead, every subsequent model would just echo the
-		// sentinel back, so surface it directly instead of running the
-		// rest of the chain on an already-cancelled context.
+		// Per-iteration ctx check: once ctx is dead, every subsequent
+		// model would just echo the sentinel back, so surface it
+		// directly instead of running the rest of the chain on an
+		// already-cancelled context.
 		if cerr := ctx.Err(); cerr != nil {
 			if len(errs) == 0 {
-				return nil, p.Name(), cerr
+				return zero, p.Name(), cerr
 			}
-			return nil, p.Name(), errors.Join(append(errs, cerr)...)
+			return zero, p.Name(), errors.Join(append(errs, cerr)...)
 		}
-		reqWithModel := req
-		reqWithModel.Model = model
-		resp, err := r.completeWithThrottleRetry(ctx, p, reqWithModel)
+		reqM := req
+		reqM.Model = model
+		v, err := throttle(reqM)
 		if err == nil {
-			return resp, p.Name(), nil
+			return v, p.Name(), nil
 		}
 		if isContextOverflow(err) {
-			// Compact and retry the SAME model before giving up on it.
-			compacted, trimmed := compactMessagesForRetry(reqWithModel.Messages)
+			// Compact and retry the SAME model before giving up.
+			compacted, trimmed := compactMessagesForRetry(reqM.Messages)
 			if trimmed > 0 {
-				retryReq := reqWithModel
+				retryReq := reqM
 				retryReq.Messages = compacted
-				resp, err2 := r.completeWithThrottleRetry(ctx, p, retryReq)
+				v2, err2 := throttle(retryReq)
 				if err2 == nil {
-					return resp, p.Name(), nil
+					return v2, p.Name(), nil
 				}
 				errs = append(errs, fmt.Errorf("%s (model %s, context overflow, compacted %d msgs, retry failed): %w", p.Name(), model, trimmed, err2))
 			} else {
@@ -354,16 +365,23 @@ func (r *Router) completeWithProviderRetry(ctx context.Context, p Provider, req 
 			continue // try next model in chain
 		}
 		errs = append(errs, fmt.Errorf("%s (model %s): %w", p.Name(), model, err))
-		// Transient (5xx, I/O, network) failures are exactly what the
-		// configured FallbackModels exist for — try the next model on
-		// the same provider before giving up. Auth/4xx-non-throttle and
-		// other deterministic failures break out so we don't burn the
-		// whole chain on the same root cause.
+		// Transient (5xx, I/O, network) failures are what FallbackModels
+		// exist for — try the next model. Auth/4xx-non-throttle and
+		// other deterministic failures break so we don't burn the whole
+		// chain on the same root cause.
 		if !isTransient(err) {
 			break
 		}
 	}
-	return nil, p.Name(), errors.Join(errs...)
+	return zero, p.Name(), errors.Join(errs...)
+}
+
+// completeWithProviderRetry tries a provider's model chain (primary + FallbackModels)
+// for non-streaming completions.
+func (r *Router) completeWithProviderRetry(ctx context.Context, p Provider, req CompletionRequest) (*CompletionResponse, string, error) {
+	return modelChainRetry(ctx, r, p, req, func(rq CompletionRequest) (*CompletionResponse, error) {
+		return r.completeWithThrottleRetry(ctx, p, rq)
+	})
 }
 
 // isTransient reports whether err looks recoverable by retrying — either
@@ -432,22 +450,29 @@ func isTransient(err error) bool {
 	return false
 }
 
-// completeWithThrottleRetry is the same-provider wrapper that honors
-// ThrottledError. On 429/503 we wait (Retry-After if the provider
-// supplied one, otherwise exponential backoff from 1s) and retry up to
-// maxThrottleRetries times before surfacing the error to the fallback
-// cascade. Every other error path is a straight passthrough so existing
-// caller behaviour is unchanged. Respects ctx.Done() during every
-// wait — an agent-loop cancel aborts retries immediately.
-func (r *Router) completeWithThrottleRetry(ctx context.Context, p Provider, req CompletionRequest) (*CompletionResponse, error) {
+const maxThrottleRetries = 3
+
+// throttleRetry is the body shared by completeWithThrottleRetry and
+// streamWithThrottleRetry. Honors ThrottledError with Retry-After or
+// exponential backoff up to maxThrottleRetries; respects ctx
+// cancellation during waits; emits ThrottleNotice on each retry.
+// `stream` only tags the notice; semantics are identical otherwise.
+func throttleRetry[T any](
+	ctx context.Context,
+	r *Router,
+	provName string,
+	stream bool,
+	call func() (T, error),
+) (T, error) {
+	var zero T
 	var lastErr error
 	for attempt := 0; attempt <= maxThrottleRetries; attempt++ {
-		resp, err := p.Complete(ctx, req)
+		v, err := call()
 		if err == nil {
-			return resp, nil
+			return v, nil
 		}
 		if !errors.Is(err, ErrProviderThrottled) {
-			return nil, err
+			return zero, err
 		}
 		lastErr = err
 		if attempt == maxThrottleRetries {
@@ -455,10 +480,10 @@ func (r *Router) completeWithThrottleRetry(ctx context.Context, p Provider, req 
 		}
 		wait := throttleWait(err, attempt)
 		r.emitThrottleNotice(ThrottleNotice{
-			Provider: p.Name(),
+			Provider: provName,
 			Attempt:  attempt + 1,
 			Wait:     wait,
-			Stream:   false,
+			Stream:   stream,
 			Err:      err,
 		})
 		if wait <= 0 {
@@ -466,14 +491,14 @@ func (r *Router) completeWithThrottleRetry(ctx context.Context, p Provider, req 
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return zero, ctx.Err()
 		case <-time.After(wait):
 		}
 	}
 	if lastErr != nil {
-		return nil, lastErr
+		return zero, lastErr
 	}
-	return nil, ctx.Err()
+	return zero, ctx.Err()
 }
 
 // throttleWait prefers the upstream Retry-After hint when present,
@@ -487,49 +512,26 @@ func throttleWait(err error, attempt int) time.Duration {
 	return backoffForAttempt(attempt)
 }
 
-const maxThrottleRetries = 3
+// completeWithThrottleRetry is the same-provider wrapper that honors
+// ThrottledError. On 429/503 we wait (Retry-After if supplied,
+// otherwise exponential backoff from 1s) and retry up to
+// maxThrottleRetries before surfacing the error to the fallback
+// cascade. Other error paths are passthrough.
+func (r *Router) completeWithThrottleRetry(ctx context.Context, p Provider, req CompletionRequest) (*CompletionResponse, error) {
+	return throttleRetry(ctx, r, p.Name(), false, func() (*CompletionResponse, error) {
+		return p.Complete(ctx, req)
+	})
+}
 
 // streamWithThrottleRetry mirrors completeWithThrottleRetry for the
-// streaming path. Note that providers MAY return the throttle error
-// synchronously from Stream() before the channel opens — that's the
-// path we retry here. Errors that arrive as StreamEvent values over an
-// already-open channel are delivered to the caller unchanged; retrying
-// mid-stream is unsafe because partial output has already been seen.
+// streaming path. Providers MAY return the throttle error synchronously
+// from Stream() before the channel opens — that's the path retried here.
+// Errors arriving over an already-open channel are passed through;
+// retrying mid-stream is unsafe because partial output has been seen.
 func (r *Router) streamWithThrottleRetry(ctx context.Context, p Provider, req CompletionRequest) (<-chan StreamEvent, error) {
-	var lastErr error
-	for attempt := 0; attempt <= maxThrottleRetries; attempt++ {
-		stream, err := p.Stream(ctx, req)
-		if err == nil {
-			return stream, nil
-		}
-		if !errors.Is(err, ErrProviderThrottled) {
-			return nil, err
-		}
-		lastErr = err
-		if attempt == maxThrottleRetries {
-			break
-		}
-		wait := throttleWait(err, attempt)
-		r.emitThrottleNotice(ThrottleNotice{
-			Provider: p.Name(),
-			Attempt:  attempt + 1,
-			Wait:     wait,
-			Stream:   true,
-			Err:      err,
-		})
-		if wait <= 0 {
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(wait):
-		}
-	}
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	return nil, ctx.Err()
+	return throttleRetry(ctx, r, p.Name(), true, func() (<-chan StreamEvent, error) {
+		return p.Stream(ctx, req)
+	})
 }
 
 // CompleteRaced issues req against every candidate concurrently and returns
@@ -711,56 +713,13 @@ func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 	return nil, "", errors.Join(errs...)
 }
 
-// streamWithProviderRetry tries a provider's model chain on context overflow.
-// On ErrContextOverflow it first retries the SAME model after compacting messages,
-// then falls through to the next model. Returns (stream, providerName, error).
+// streamWithProviderRetry tries a provider's model chain for streaming
+// completions. Same retry/compaction/transient-fallback semantics as
+// completeWithProviderRetry; see modelChainRetry for the body.
 func (r *Router) streamWithProviderRetry(ctx context.Context, p Provider, req CompletionRequest) (<-chan StreamEvent, string, error) {
-	models := p.Models()
-	if len(models) == 0 {
-		stream, err := r.streamWithThrottleRetry(ctx, p, req)
-		return stream, p.Name(), err
-	}
-	var errs []error
-	for _, model := range models {
-		// Mirror the non-stream path: bail early on dead ctx so we don't
-		// burn the rest of the chain echoing the sentinel back.
-		if cerr := ctx.Err(); cerr != nil {
-			if len(errs) == 0 {
-				return nil, p.Name(), cerr
-			}
-			return nil, p.Name(), errors.Join(append(errs, cerr)...)
-		}
-		reqWithModel := req
-		reqWithModel.Model = model
-		stream, err := r.streamWithThrottleRetry(ctx, p, reqWithModel)
-		if err == nil {
-			return stream, p.Name(), nil
-		}
-		if isContextOverflow(err) {
-			compacted, trimmed := compactMessagesForRetry(reqWithModel.Messages)
-			if trimmed > 0 {
-				retryReq := reqWithModel
-				retryReq.Messages = compacted
-				stream, err2 := r.streamWithThrottleRetry(ctx, p, retryReq)
-				if err2 == nil {
-					return stream, p.Name(), nil
-				}
-				errs = append(errs, fmt.Errorf("%s (model %s, context overflow, compacted %d msgs, retry failed): %w", p.Name(), model, trimmed, err2))
-			} else {
-				errs = append(errs, fmt.Errorf("%s (model %s): %w", p.Name(), model, err))
-			}
-			continue
-		}
-		errs = append(errs, fmt.Errorf("%s (model %s): %w", p.Name(), model, err))
-		// Same transient-vs-deterministic split as the non-stream path:
-		// retry transient (5xx, network, I/O) failures across the model
-		// chain, but break on auth/4xx so a misconfigured key doesn't
-		// burn through every fallback model in the profile.
-		if !isTransient(err) {
-			break
-		}
-	}
-	return nil, p.Name(), errors.Join(errs...)
+	return modelChainRetry(ctx, r, p, req, func(rq CompletionRequest) (<-chan StreamEvent, error) {
+		return r.streamWithThrottleRetry(ctx, p, rq)
+	})
 }
 
 // isContextOverflow matches either the explicit ErrContextOverflow sentinel or
