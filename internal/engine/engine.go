@@ -146,6 +146,15 @@ type Engine struct {
 	indexCancel      context.CancelFunc
 	indexWG          sync.WaitGroup
 
+	// Approval gate state. Previously held in package-level maps keyed
+	// by *Engine; moved into the struct so per-engine state goes away
+	// naturally with the *Engine instead of needing a Shutdown-time
+	// cleanup hook to keep GC happy. approvalMu is independent of mu/
+	// agentMu — neither lock should be held while taking it.
+	approvalMu         sync.RWMutex
+	registeredApprover Approver
+	recentDenials      []RecentDenial
+
 	agentMu         sync.Mutex
 	agentParked     *parkedAgentState
 	agentNotesQueue []string
@@ -441,13 +450,6 @@ func (e *Engine) Shutdown() error {
 			e.publishShutdownError("close_storage", err)
 		}
 	}
-
-	// Drop *Engine-keyed slots from the package-level approver/denials
-	// maps so a host that creates/destroys engines (web server, TUI,
-	// integration tests) doesn't leak entries forever. Without this the
-	// pinned *Engine pointer also defeats GC of every object the engine
-	// transitively holds. See REPORT.md #1.
-	e.cleanupApproverState()
 
 	e.setState(StateStopped)
 	e.EventBus.Publish(Event{Type: "engine:stopped", Source: "engine"})

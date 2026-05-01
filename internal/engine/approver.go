@@ -21,7 +21,6 @@ package engine
 import (
 	"context"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -59,15 +58,6 @@ func (f ApproverFunc) RequestApproval(ctx context.Context, req ApprovalRequest) 
 	return f(ctx, req)
 }
 
-var (
-	approverMu sync.RWMutex
-	// approverPerEngine keyed by Engine pointer — lets us add SetApprover
-	// without changing the Engine struct layout (which has many tests that
-	// construct it in assorted ways). The extra indirection is invisible
-	// outside this file.
-	approverPerEngine = map[*Engine]Approver{}
-)
-
 // SetApprover registers (or clears, when approver==nil) the Approver for
 // this engine. Safe to call at any point in the engine lifecycle; later
 // tool invocations will see the new Approver immediately.
@@ -75,20 +65,16 @@ func (e *Engine) SetApprover(approver Approver) {
 	if e == nil {
 		return
 	}
-	approverMu.Lock()
-	defer approverMu.Unlock()
-	if approver == nil {
-		delete(approverPerEngine, e)
-		return
-	}
-	approverPerEngine[e] = approver
+	e.approvalMu.Lock()
+	e.registeredApprover = approver
+	e.approvalMu.Unlock()
 }
 
 // approver returns the currently-registered Approver or nil.
 func (e *Engine) approver() Approver {
-	approverMu.RLock()
-	defer approverMu.RUnlock()
-	return approverPerEngine[e]
+	e.approvalMu.RLock()
+	defer e.approvalMu.RUnlock()
+	return e.registeredApprover
 }
 
 // requiresApproval reports whether a tool requires approval for the given
@@ -99,25 +85,25 @@ func (e *Engine) approver() Approver {
 // first, falling back to RequireApproval if the network list is empty.
 // This lets operators lock down network traffic independently from
 // agent-loop traffic.
-func (e *Engine) requiresApproval(name string, source string) bool {
+func (e *Engine) requiresApproval(name string, source Source) bool {
 	if e == nil || e.Config == nil {
 		return false
 	}
-	// "user" is always allowed — real user input at the terminal.
-	// "cli" (dfmc tool run) is the operator's own tooling — also allowed.
-	if source == "user" || source == "cli" {
+	// SourceUser is real user input at the terminal; SourceCLI is the
+	// operator's own tooling. Both bypass the gate.
+	if source.IsPrivileged() {
 		return false
 	}
 	// For web/ws/mcp, check RequireApprovalNetwork first (strictest gate).
 	// For agent/subagent, use the regular RequireApproval list.
 	var list []string
 	switch source {
-	case "web", "ws", "mcp":
+	case SourceWeb, SourceWS, SourceMCP:
 		list = e.Config.Tools.RequireApprovalNetwork
 		if len(list) == 0 {
 			list = e.Config.Tools.RequireApproval
 		}
-	default: // "agent", "subagent", or any other source
+	default: // SourceAgent, SourceSubagent, or any other source
 		list = e.Config.Tools.RequireApproval
 	}
 	if len(list) == 0 {
@@ -139,7 +125,7 @@ func (e *Engine) requiresApproval(name string, source string) bool {
 // askToolApproval consults the registered Approver. With no Approver
 // registered we deny by default — the safe failure mode. A UI that wants
 // permissive behaviour can register an auto-approver.
-func (e *Engine) askToolApproval(ctx context.Context, name string, params map[string]any, source string) ApprovalDecision {
+func (e *Engine) askToolApproval(ctx context.Context, name string, params map[string]any, source Source) ApprovalDecision {
 	ap := e.approver()
 	if ap == nil {
 		return ApprovalDecision{Approved: false, Reason: "no approver registered"}
@@ -147,7 +133,7 @@ func (e *Engine) askToolApproval(ctx context.Context, name string, params map[st
 	req := ApprovalRequest{
 		Tool:        name,
 		Params:      params,
-		Source:      source,
+		Source:      string(source),
 		ProjectRoot: e.ProjectRoot,
 	}
 	decision := ap.RequestApproval(ctx, req)
@@ -166,33 +152,26 @@ type RecentDenial struct {
 
 const recentDenialsCapacity = 8
 
-var (
-	denialsMu        sync.RWMutex
-	denialsPerEngine = map[*Engine][]RecentDenial{}
-)
-
 // recordDenial appends a RecentDenial to this engine's ring buffer.
 // Called from executeToolWithLifecycle after the Approver returns
-// Approved=false. Out-of-band storage (per-engine map) keeps the Engine
-// struct layout stable.
-func (e *Engine) recordDenial(name, source, reason string) {
+// Approved=false. RecentDenial.Source stays string for the public log
+// surface; we cast at the boundary here.
+func (e *Engine) recordDenial(name string, source Source, reason string) {
 	if e == nil {
 		return
 	}
-	denialsMu.Lock()
-	defer denialsMu.Unlock()
-	entries := denialsPerEngine[e]
-	entries = append(entries, RecentDenial{
+	e.approvalMu.Lock()
+	defer e.approvalMu.Unlock()
+	e.recentDenials = append(e.recentDenials, RecentDenial{
 		Tool:   name,
-		Source: source,
+		Source: string(source),
 		Reason: reason,
 		At:     time.Now(),
 	})
-	if len(entries) > recentDenialsCapacity {
+	if len(e.recentDenials) > recentDenialsCapacity {
 		// Drop oldest entries so we never grow unbounded.
-		entries = entries[len(entries)-recentDenialsCapacity:]
+		e.recentDenials = e.recentDenials[len(e.recentDenials)-recentDenialsCapacity:]
 	}
-	denialsPerEngine[e] = entries
 }
 
 // RecentDenials returns a copy of the current denial log, oldest first.
@@ -201,38 +180,12 @@ func (e *Engine) RecentDenials() []RecentDenial {
 	if e == nil {
 		return nil
 	}
-	denialsMu.RLock()
-	defer denialsMu.RUnlock()
-	entries := denialsPerEngine[e]
-	if len(entries) == 0 {
+	e.approvalMu.RLock()
+	defer e.approvalMu.RUnlock()
+	if len(e.recentDenials) == 0 {
 		return nil
 	}
-	out := make([]RecentDenial, len(entries))
-	copy(out, entries)
+	out := make([]RecentDenial, len(e.recentDenials))
+	copy(out, e.recentDenials)
 	return out
-}
-
-// cleanupApproverState removes this engine's slot from both global maps
-// keyed by *Engine pointer (approverPerEngine, denialsPerEngine). Called
-// from Engine.Shutdown so long-running processes (the web server, the
-// TUI host, integration test harnesses) that construct/destroy engines
-// don't leak map entries forever. Safe to call multiple times — the
-// delete on a missing key is a no-op.
-//
-// Without this hook the maps grow unbounded for the process lifetime
-// because *Engine slots are pinned by the map reference even after the
-// engine is otherwise unreachable, which also defeats GC of every
-// downstream object the engine pointer transitively holds (Approver
-// closure, denial entries, etc.). REPORT.md #1.
-func (e *Engine) cleanupApproverState() {
-	if e == nil {
-		return
-	}
-	approverMu.Lock()
-	delete(approverPerEngine, e)
-	approverMu.Unlock()
-
-	denialsMu.Lock()
-	delete(denialsPerEngine, e)
-	denialsMu.Unlock()
 }
