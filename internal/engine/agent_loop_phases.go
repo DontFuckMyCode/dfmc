@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
@@ -22,183 +21,155 @@ import (
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
+// tryBudgetAutoRecover attempts one force-compact pass against the loop
+// history. On success, mutates s.msgs and resets s.totalTokens to 0,
+// bumps s.autoRecoveries, publishes an agent:loop:auto_recover event
+// tagged with `reasonTag`, and returns true. Returns false when out of
+// recoveries OR the compactor couldn't shrink the history further.
+// Shared by preflightBudget and postStepBudget — the only difference
+// between their recovery paths was the reason tag.
+func (e *Engine) tryBudgetAutoRecover(s *loopRunState, reasonTag string) bool {
+	if s.autoRecoveries >= maxBudgetAutoRecoveries {
+		return false
+	}
+	compacted, report := e.forceCompactNativeLoopHistory(s.msgs, s.systemPrompt, s.chunks)
+	if report == nil || report.MessagesRemoved == 0 {
+		return false
+	}
+	before := s.totalTokens
+	s.autoRecoveries++
+	s.msgs = compacted
+	s.totalTokens = 0
+	e.publishAgentLoopEvent("agent:loop:auto_recover", map[string]any{
+		"step":             s.step,
+		"attempt":          s.autoRecoveries,
+		"max_attempts":     maxBudgetAutoRecoveries,
+		"tokens_before":    before,
+		"rounds_collapsed": report.RoundsCollapsed,
+		"messages_removed": report.MessagesRemoved,
+		"reason":           reasonTag,
+		"surface":          "native",
+	})
+	return true
+}
+
 // preflightBudget runs the pre-round budget gate. If we'd consume more
 // tokens than the headroom allows, try one auto-compact recovery; if
-// that fails (or we're out of recoveries), park. Returns updated msgs,
-// totalTokens, autoRecoveries, and a non-nil park sentinel only when
-// the caller must return immediately.
-func (e *Engine) preflightBudget(
-	seed *parkedAgentState,
-	msgs []provider.Message,
-	traces []nativeToolTrace,
-	chunks []types.ContextChunk,
-	systemPrompt string,
-	systemBlocks []provider.SystemBlock,
-	descriptors []provider.ToolDescriptor,
-	question, lastProvider, lastModel string,
-	totalTokens, step, autoRecoveries int,
-	lim agentLimits,
-) ([]provider.Message, int, int, *nativeToolCompletion) {
-	if lim.MaxTokens <= 0 {
-		return msgs, totalTokens, autoRecoveries, nil
+// that fails (or we're out of recoveries), park. Mutates s.msgs and
+// s.autoRecoveries on recovery (resets s.totalTokens to 0). Returns a
+// non-nil park sentinel only when the caller must return immediately.
+func (e *Engine) preflightBudget(s *loopRunState) *nativeToolCompletion {
+	if s.lim.MaxTokens <= 0 {
+		return nil
 	}
-	headroom := lim.MaxTokens / lim.BudgetHeadroomDivisor
-	if totalTokens+headroom < lim.MaxTokens {
-		return msgs, totalTokens, autoRecoveries, nil
+	headroom := s.lim.MaxTokens / s.lim.BudgetHeadroomDivisor
+	if s.totalTokens+headroom < s.lim.MaxTokens {
+		return nil
 	}
-	if autoRecoveries < maxBudgetAutoRecoveries {
-		if compacted, report := e.forceCompactNativeLoopHistory(msgs, systemPrompt, chunks); report != nil && report.MessagesRemoved > 0 {
-			before := totalTokens
-			autoRecoveries++
-			e.publishAgentLoopEvent("agent:loop:auto_recover", map[string]any{
-				"step":             step,
-				"attempt":          autoRecoveries,
-				"max_attempts":     maxBudgetAutoRecoveries,
-				"tokens_before":    before,
-				"rounds_collapsed": report.RoundsCollapsed,
-				"messages_removed": report.MessagesRemoved,
-				"reason":           "budget_headroom_preflight",
-				"surface":          "native",
-			})
-			return compacted, 0, autoRecoveries, nil
-		}
+	if e.tryBudgetAutoRecover(s, "budget_headroom_preflight") {
+		return nil
 	}
-	headline := formatBudgetExhaustedNotice(parkPhaseBefore, step, totalTokens, lim.MaxTokens, headroom, len(traces))
-	notice := composeParkedNotice(headline, traces, "")
-	parked := e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonBudgetExhausted)
-	return msgs, totalTokens, autoRecoveries, &parked
+	headline := formatBudgetExhaustedNotice(parkPhaseBefore, s.step, s.totalTokens, s.lim.MaxTokens, headroom, len(s.traces))
+	notice := composeParkedNotice(headline, s.traces, "")
+	parked := s.park(e, notice, ParkReasonBudgetExhausted)
+	return &parked
 }
 
 // postStepBudget runs the after-round budget gate. Same recovery-then-
 // park pattern as preflightBudget but uses the parkPhaseAfter notice
 // (no headroom mention because we already overshot).
-func (e *Engine) postStepBudget(
-	seed *parkedAgentState,
-	msgs []provider.Message,
-	traces []nativeToolTrace,
-	chunks []types.ContextChunk,
-	systemPrompt string,
-	systemBlocks []provider.SystemBlock,
-	descriptors []provider.ToolDescriptor,
-	question, lastProvider, lastModel string,
-	totalTokens, step, autoRecoveries int,
-	lim agentLimits,
-) ([]provider.Message, int, int, *nativeToolCompletion) {
-	if lim.MaxTokens <= 0 || totalTokens < lim.MaxTokens {
-		return msgs, totalTokens, autoRecoveries, nil
+func (e *Engine) postStepBudget(s *loopRunState) *nativeToolCompletion {
+	if s.lim.MaxTokens <= 0 || s.totalTokens < s.lim.MaxTokens {
+		return nil
 	}
-	if autoRecoveries < maxBudgetAutoRecoveries {
-		if compacted, report := e.forceCompactNativeLoopHistory(msgs, systemPrompt, chunks); report != nil && report.MessagesRemoved > 0 {
-			before := totalTokens
-			autoRecoveries++
-			e.publishAgentLoopEvent("agent:loop:auto_recover", map[string]any{
-				"step":             step,
-				"attempt":          autoRecoveries,
-				"max_attempts":     maxBudgetAutoRecoveries,
-				"tokens_before":    before,
-				"rounds_collapsed": report.RoundsCollapsed,
-				"messages_removed": report.MessagesRemoved,
-				"reason":           "budget_exhausted",
-				"surface":          "native",
-			})
-			return compacted, 0, autoRecoveries, nil
-		}
+	if e.tryBudgetAutoRecover(s, "budget_exhausted") {
+		return nil
 	}
-	headline := formatBudgetExhaustedNotice(parkPhaseAfter, step, totalTokens, lim.MaxTokens, 0, len(traces))
-	notice := composeParkedNotice(headline, traces, "")
-	parked := e.parkNativeToolLoop(question, seed, msgs, traces, chunks, systemPrompt, systemBlocks, descriptors, lastProvider, lastModel, totalTokens, step, notice, ParkReasonBudgetExhausted)
-	return msgs, totalTokens, autoRecoveries, &parked
+	headline := formatBudgetExhaustedNotice(parkPhaseAfter, s.step, s.totalTokens, s.lim.MaxTokens, 0, len(s.traces))
+	notice := composeParkedNotice(headline, s.traces, "")
+	parked := s.park(e, notice, ParkReasonBudgetExhausted)
+	return &parked
 }
 
 // handleEmptyTurn deals with the "model returned no tool calls AND no
-// text" case. First time: push a synthesis nudge and signal retry.
-// Second time: build a visible failure completion and return it. Caller
-// only invokes this when len(resp.ToolCalls)==0 && resp.Text=="". The
+// text" case. First time: push a synthesis nudge to s.msgs and return
+// (true, nil) so the caller flips the recovery flag. Second time:
+// build a visible failure completion and return it. Caller only
+// invokes this when len(resp.ToolCalls)==0 && resp.Text=="". The
 // returned completion is non-nil iff the loop must return now.
 func (e *Engine) handleEmptyTurn(
-	question string,
-	msgs []provider.Message,
-	traces []nativeToolTrace,
+	s *loopRunState,
 	resp *provider.CompletionResponse,
-	chunks []types.ContextChunk,
-	systemPrompt string,
-	lastProvider, lastModel string,
-	step, totalTokens int,
 	emptyRecoveryTried bool,
-) ([]provider.Message, bool, *nativeToolCompletion) {
+) (bool, *nativeToolCompletion) {
 	if !emptyRecoveryTried {
-		msgs = append(msgs, provider.Message{
+		s.msgs = append(s.msgs, provider.Message{
 			Role:      types.RoleAssistant,
 			Content:   resp.Text,
 			ToolCalls: resp.ToolCalls,
 		})
-		msgs = append(msgs, provider.Message{
+		s.msgs = append(s.msgs, provider.Message{
 			Role: types.RoleUser,
 			Content: "[system] Your previous response was empty. Please provide a natural-language answer to the original question based on the context you've gathered. " +
 				"If you genuinely cannot answer, say so explicitly — do not return an empty response.",
 		})
 		e.publishAgentLoopEvent("agent:loop:empty_recovery", map[string]any{
-			"step":        step,
-			"tool_rounds": len(traces),
-			"tokens_used": totalTokens,
+			"step":        s.step,
+			"tool_rounds": len(s.traces),
+			"tokens_used": s.totalTokens,
 			"surface":     "native",
 		})
-		return msgs, true, nil
+		return true, nil
 	}
 	completion := nativeToolCompletion{
 		Answer: "The model returned an empty response twice in a row even after an explicit synthesis nudge. " +
 			"Try rephrasing the question or `/continue` with a narrower scope.",
-		Provider:     lastProvider,
-		Model:        lastModel,
-		TokenCount:   totalTokens,
-		Context:      chunks,
-		ToolTraces:   traces,
-		SystemPrompt: systemPrompt,
+		Provider:     s.lastProvider,
+		Model:        s.lastModel,
+		TokenCount:   s.totalTokens,
+		Context:      s.chunks,
+		ToolTraces:   s.traces,
+		SystemPrompt: s.systemPrompt,
 	}
-	e.recordNativeAgentInteraction(question, completion)
+	e.recordNativeAgentInteraction(s.question, completion)
 	e.publishAgentLoopEvent("agent:loop:empty_final", map[string]any{
-		"step":        step,
-		"tool_rounds": len(traces),
-		"tokens_used": totalTokens,
+		"step":        s.step,
+		"tool_rounds": len(s.traces),
+		"tokens_used": s.totalTokens,
 		"surface":     "native",
 	})
-	return msgs, false, &completion
+	return false, &completion
 }
 
 // executeAndAppendToolBatch runs every tool call from the assistant's
 // turn (in parallel when safe), formats results within the elastic
 // char caps, dedupes prior identical results, and appends both the
-// assistant message and tool_result messages to msgs. Returns the
-// updated msgs, traces, and the index in traces where this round's
-// new entries start (so the trajectory-hints helper can scope to the
-// just-run batch).
+// assistant message and tool_result messages to s.msgs. Mutates s.msgs
+// and s.traces in place. Returns the index in s.traces where this
+// round's new entries start (so the trajectory-hints helper can scope
+// to the just-run batch).
 func (e *Engine) executeAndAppendToolBatch(
 	ctx context.Context,
+	s *loopRunState,
 	resp *provider.CompletionResponse,
-	msgs []provider.Message,
-	traces []nativeToolTrace,
-	toolSource string,
-	lastProvider, lastModel string,
-	step, totalTokens int,
-	lim agentLimits,
-	cache map[string]string,
-	cacheMu *sync.Mutex,
-	rangeIndex map[string][]readRangeEntry,
-) ([]provider.Message, []nativeToolTrace, int) {
-	msgs = append(msgs, provider.Message{
+) int {
+	cache := s.seed.LoopFileCache
+	rangeIndex := s.seed.LoopReadRangeIndex
+
+	s.msgs = append(s.msgs, provider.Message{
 		Role:      types.RoleAssistant,
 		Content:   resp.Text,
 		ToolCalls: resp.ToolCalls,
 	})
-	freshStart := len(traces)
+	freshStart := len(s.traces)
 
 	stepTraces := make([]nativeToolTrace, len(resp.ToolCalls))
 	for i, call := range resp.ToolCalls {
 		stepTraces[i] = nativeToolTrace{
 			Call:       call,
-			Provider:   lastProvider,
-			Model:      lastModel,
-			Step:       step,
+			Provider:   s.lastProvider,
+			Model:      s.lastModel,
+			Step:       s.step,
 			OccurredAt: time.Now(),
 		}
 		e.publishNativeToolCall(stepTraces[i])
@@ -208,7 +179,7 @@ func (e *Engine) executeAndAppendToolBatch(
 	if allParallelSafe(resp.ToolCalls) {
 		batchSize = e.parallelBatchSize()
 	}
-	results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize, toolSource, cache, cacheMu, rangeIndex)
+	results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize, s.seed.ToolSource, cache, s.cacheMu, rangeIndex)
 
 	// File cache invalidation. After a batch that includes successful
 	// edit_file/write_file/apply_patch calls, drop any cached read_file/
@@ -230,15 +201,15 @@ func (e *Engine) executeAndAppendToolBatch(
 			}
 		}
 		if len(modified) > 0 {
-			invalidateCacheForFiles(cache, cacheMu, modified, rangeIndex)
+			invalidateCacheForFiles(cache, s.cacheMu, modified, rangeIndex)
 		}
 	}
 
 	// When we're already deep in the budget, halve the per-tool char
 	// caps so new results don't accelerate bloat.
-	effectiveMaxResult := lim.MaxResultChars
-	effectiveMaxData := lim.MaxDataChars
-	if lim.MaxTokens > 0 && totalTokens*2 >= lim.MaxTokens {
+	effectiveMaxResult := s.lim.MaxResultChars
+	effectiveMaxData := s.lim.MaxDataChars
+	if s.lim.MaxTokens > 0 && s.totalTokens*2 >= s.lim.MaxTokens {
 		if effectiveMaxResult > 0 {
 			effectiveMaxResult /= 2
 		}
@@ -264,7 +235,7 @@ func (e *Engine) executeAndAppendToolBatch(
 			content = policy + "\n\n" + content
 		}
 		e.publishNativeToolResultWithPayload(trace, content)
-		traces = append(traces, trace)
+		s.traces = append(s.traces, trace)
 
 		// Cross-round dedup: replace any prior identical (name, input)
 		// tool_result with a back-reference stub. ToolCallID chains
@@ -278,17 +249,17 @@ func (e *Engine) executeAndAppendToolBatch(
 		// call. With the target inlined the model recognises "this
 		// was the read of foo.go I did earlier; the current result
 		// is the same payload" without re-walking the transcript.
-		if prev := findPriorIdenticalToolResult(msgs, call, call.ID); prev >= 0 {
-			if len(msgs[prev].Content) > toolResultDedupStubBytes {
+		if prev := findPriorIdenticalToolResult(s.msgs, call, call.ID); prev >= 0 {
+			if len(s.msgs[prev].Content) > toolResultDedupStubBytes {
 				target := dedupTargetHint(call)
-				msgs[prev].Content = fmt.Sprintf(
+				s.msgs[prev].Content = fmt.Sprintf(
 					"[deduped — same %s%s call below; payload moved to the latest result so reasoning stays current]",
 					call.Name, target,
 				)
 			}
 		}
 
-		msgs = append(msgs, provider.Message{
+		s.msgs = append(s.msgs, provider.Message{
 			Role:       types.RoleUser,
 			Content:    content,
 			ToolCallID: call.ID,
@@ -297,7 +268,7 @@ func (e *Engine) executeAndAppendToolBatch(
 		})
 	}
 
-	return msgs, traces, freshStart
+	return freshStart
 }
 
 // dedupTargetHint returns " (target)" — a short, paren-wrapped
@@ -329,30 +300,25 @@ func dedupTargetHint(call provider.ToolCall) string {
 }
 
 // injectTrajectoryHints derives coach hints from the just-run batch and
-// appends them as a system-tagged user note. Updates seed.RecentCoachHints
-// in place so the same hint can't fire twice in a single run.
-func (e *Engine) injectTrajectoryHints(
-	seed *parkedAgentState,
-	msgs []provider.Message,
-	traces []nativeToolTrace,
-	freshStart, step int,
-) []provider.Message {
-	hints := buildTrajectoryHints(traces[freshStart:], traces, seed.RecentCoachHints)
+// appends them as a system-tagged user note. Mutates s.msgs and
+// s.seed.RecentCoachHints in place so the same hint can't fire twice
+// in a single run.
+func (e *Engine) injectTrajectoryHints(s *loopRunState, freshStart int) {
+	hints := buildTrajectoryHints(s.traces[freshStart:], s.traces, s.seed.RecentCoachHints)
 	if hints == nil || len(hints.Hints) == 0 {
-		return msgs
+		return
 	}
 	block := ctxmgr.FormatTrajectoryHints(hints)
 	if strings.TrimSpace(block) == "" {
-		return msgs
+		return
 	}
-	msgs = append(msgs, provider.Message{
+	s.msgs = append(s.msgs, provider.Message{
 		Role:    types.RoleUser,
 		Content: block,
 	})
-	seed.RecentCoachHints = appendRecentHints(seed.RecentCoachHints, hints.Hints)
+	s.seed.RecentCoachHints = appendRecentHints(s.seed.RecentCoachHints, hints.Hints)
 	e.publishAgentLoopEvent("agent:coach:hint", map[string]any{
-		"step":  step,
+		"step":  s.step,
 		"hints": hints.Hints,
 	})
-	return msgs
 }
