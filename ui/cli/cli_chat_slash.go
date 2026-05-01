@@ -434,4 +434,3 @@ func estimateConversationCostUSD(provider string, totalTokens int) float64 {
 	}
 	return (float64(totalTokens) / 1_000_000.0) * rate
 }
-

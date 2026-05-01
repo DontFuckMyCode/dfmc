@@ -382,4 +382,3 @@ func resolvePluginEntry(p pluginInfo) (string, error) {
 	}
 	return entry, nil
 }
-

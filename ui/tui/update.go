@@ -596,9 +596,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+g":
 			m = m.activateDiagnosticTab("Activity")
 			return m, nil
-		case "ctrl+y":
-			m = m.activateDiagnosticTab("Plans")
-			return m, nil
 		case "tab":
 			if m.tabs[m.activeTab] != "Chat" {
 				m.activeTab = (m.activeTab + 1) % len(m.tabs)
@@ -612,49 +609,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-		case "alt+1":
-			m.activeTab = 0
-			return m, nil
-		case "alt+3":
-			m.activeTab = 2
-			return m, nil
-		case "alt+4":
-			m.activeTab = 3
-			return m, nil
-		case "alt+5":
-			m.activeTab = 4
-			m = m.refreshWorkflowOnTabEnter()
-			return m, nil
-		case "alt+6":
-			m.activeTab = 5
-			return m, nil
-		case "f1":
+		case "f1", "alt+1":
 			m.activeTab = 0
 			return m, nil
 		case "f2", "alt+2":
-			m = m.activateProvidersPanel("", true)
-			return m, nil
-		case "alt+i":
-			m = m.activateDiagnosticTab("Status")
-			return m, nil
-		case "f3":
 			m.activeTab = 2
 			return m, nil
-		case "f4":
-			m.activeTab = 3
+		case "ctrl+i":
+			m = m.activateDiagnosticTab("Status")
 			return m, nil
-		case "f5":
+		case "ctrl+y":
+			m = m.activatePlansPanel("", false)
+			return m, nil
+		case "ctrl+w":
+			// Inside the chat composer ctrl+w is the standard
+			// "kill previous word" editor binding (handled in
+			// chat_key.go's KeyCtrlW case). Only fall through to
+			// the Context panel jump when the user is not on Chat,
+			// otherwise typing-flow gets shadowed by a tab switch.
+			if m.activeTab != 0 {
+				m = m.activateContextPanel("", false)
+				return m, nil
+			}
+		case "ctrl+o":
+			m = m.activateProvidersPanel("", false)
+			return m, nil
+		case "f3", "alt+3":
+			m.activeTab = 6
+			return m, nil
+		case "f4", "alt+4":
+			m = m.activateDiagnosticTab("Providers")
+			return m, nil
+		case "f5", "alt+5":
 			m.activeTab = 4
 			m = m.refreshWorkflowOnTabEnter()
 			return m, nil
-		case "f6":
+		case "f6", "alt+6":
 			m.activeTab = 5
 			return m, nil
-		case "f7":
-			m.activeTab = 6
-			return m, nil
-		case "alt+7":
-			m.activeTab = 6
+		case "f7", "alt+7":
+			m.activeTab = 3
 			return m, nil
 		case "f8", "alt+8":
 			m.activeTab = 7
@@ -689,23 +683,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Scan is manual via `r` inside the panel so landing here is
 			// cheap; we just flip the tab and show the empty-state hint.
 			m.activeTab = 11
-			return m, nil
-		case "alt+y":
-			// Plans — no F13 on most keyboards, so use alt+y (y for "why
-			// did this split?"). Decomposition is offline and runs on
-			// enter inside the panel.
-			m = m.activatePlansPanel("", false)
-			return m, nil
-		case "alt+w":
-			// Context — w for "weigh the budget". Preview is offline so
-			// just flip the tab; the empty state teaches what e/enter do.
-			m = m.activateContextPanel("", false)
-			return m, nil
-		case "alt+o":
-			// Providers — o for "prOviders". Router walk is synchronous
-			// and cheap, so we populate on first activation rather than
-			// dispatching a tea.Cmd.
-			m = m.activateProvidersPanel("", false)
 			return m, nil
 		}
 

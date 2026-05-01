@@ -222,7 +222,7 @@ type Model struct {
 	// panel_states.go. Workspace loader writes diff/changed; parser writes
 	// latestPatch/set/files; the [/] keys move index/hunk.
 	patchView patchViewState
-	workflow workflowPanelState
+	workflow  workflowPanelState
 	// Files tab state (entries list, cursor, sticky pin, preview pane).
 	// See filesViewState in panel_states.go.
 	filesView filesViewState
@@ -264,6 +264,9 @@ type Model struct {
 	// counts. See sessionTelemetry in panel_states.go.
 	telemetry sessionTelemetry
 
+	// Tasks panel state for /tasks overlay on the chat tab.
+	tasksPanel tasksPanelState
+
 	// Latest intent layer decision (engine pre-Ask normalizer). Engine
 	// publishes "intent:decision" events on every user submit; this
 	// struct caches the most recent so the header chip + /intent show
@@ -280,7 +283,6 @@ type Model struct {
 	// the same Approver, so there's no concurrent-approval scenario.
 	pendingApproval *pendingApproval
 }
-
 
 // mouseWheelStep is the per-tick scroll distance for the chat transcript.
 // 5 lines feels responsive on a standard mouse without overshooting on a
@@ -443,10 +445,7 @@ func (m Model) projectRoot() string {
 // Update (the bubbletea reducer / message dispatcher) lives in update.go.
 // handleChatKey (chat panel keyboard router) lives in chat_key.go.
 
-
-
 // executeChatCommand (the slash-command dispatcher) lives in chat_commands.go.
-
 
 // submitChatQuestion is the single send path used by both the raw Enter key
 // and slash-command shortcuts that compose a prompt (/review, /explain, ...).
@@ -472,14 +471,11 @@ func (m Model) projectRoot() string {
 // persistProviderModelProjectConfig, ensureStringAnyMap,
 // toStringAnyMap, providerProfile) lives in provider.go.
 
-
-
 // Patch Lab (renderPatchView, patchCommandSummary, loadLatestPatchCmd,
 // applyPatchCmd, focusPatchFile, shiftPatchTarget/Hunk, the patch*
 // Model accessors, annotateAssistant{Patch,ToolUsage},
 // matchAssistantConversationMessage, markLatestPatchInTranscript)
 // lives in patch_view.go.
-
 
 func (m Model) View() string {
 	m.ensureDiagnostics()
@@ -523,14 +519,11 @@ func (m Model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
 
-
-
 // Patch parsing & apply (patchSectionPaths, totalPatchHunks,
 // patchLineCounts, extractPatchedFiles, parseUnifiedDiffSections,
 // normalizePatchPath, extractPatchHunks, gitWorkingDiff,
 // latestAssistantUnifiedDiff, extractUnifiedDiff,
 // looksLikeUnifiedDiff, applyUnifiedDiff) lives in patch_parse.go.
-
 
 // renderTUIHelp builds the /help body: the registry-backed catalog of TUI
 // verbs followed by a short section of TUI-only slash shortcuts and panel

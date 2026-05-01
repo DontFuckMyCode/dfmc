@@ -153,8 +153,8 @@ func TestConfigToMap(t *testing.T) {
 
 func TestSplitConfigPath(t *testing.T) {
 	cases := []struct {
-		path  string
-		want  []string
+		path string
+		want []string
 	}{
 		{"", nil},
 		{"a", []string{"a"}},

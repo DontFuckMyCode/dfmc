@@ -149,8 +149,8 @@ func TestParseRouteFlags_RejectsTrailingEquals(t *testing.T) {
 
 func TestTodoMarker(t *testing.T) {
 	cases := []struct {
-		status  drive.TodoStatus
-		want    string
+		status drive.TodoStatus
+		want   string
 	}{
 		{drive.TodoDone, "[x]"},
 		{drive.TodoBlocked, "[!]"},

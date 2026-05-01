@@ -354,7 +354,6 @@ type syncModelsDevMsg struct {
 	err     error
 }
 
-
 func (m Model) cycleProviderModel(name string) Model {
 	if m.eng == nil || m.eng.Config == nil {
 		return m

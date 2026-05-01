@@ -109,7 +109,7 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 			"role":             resolvedRole,
 			"project_brief":    loadPromptProjectBrief(projectRoot, budget.ProjectBriefTokens),
 			"user_query":       strings.TrimSpace(*query),
-			"context_files":   strings.TrimSpace(*contextFiles),
+			"context_files":    strings.TrimSpace(*contextFiles),
 			"injected_context": ctxmgr.BuildInjectedContextWithBudget(projectRoot, *query, budget),
 			"tools_overview":   strings.Join(eng.ListTools(), ", "),
 			"tool_call_policy": ctxmgr.BuildToolCallPolicy(resolvedTask, runtimeHints),

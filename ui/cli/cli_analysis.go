@@ -364,8 +364,6 @@ func runTool(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 	return 0
 }
 
-
-
 type depStat struct {
 	Module string `json:"module"`
 	Count  int    `json:"count"`

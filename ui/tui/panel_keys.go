@@ -39,6 +39,38 @@ func (m Model) handleFilesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, loadFilePreviewCmd(m.eng, m.selectedFile())
 	case "p", "alt+p":
 		return m.togglePinnedFile()
+	case "i":
+		path := m.selectedFile()
+		if path == "" {
+			return m, nil
+		}
+		marker := fmt.Sprintf("[[file:%s]]", path)
+		current := strings.TrimRight(m.chat.input, " ")
+		if current != "" {
+			current += " "
+		}
+		m.setChatInput(current + marker)
+		m.activeTab = 0
+		m.notice = "Inserted " + marker + " into the chat composer."
+		return m, nil
+	case "e":
+		path := m.selectedFile()
+		if path == "" {
+			return m, nil
+		}
+		m.setChatInput(fmt.Sprintf("Explain [[file:%s]] ", path))
+		m.activeTab = 0
+		m.notice = "Prepared Explain prompt for " + path + "."
+		return m, nil
+	case "v":
+		path := m.selectedFile()
+		if path == "" {
+			return m, nil
+		}
+		m.setChatInput(fmt.Sprintf("Review [[file:%s]] ", path))
+		m.activeTab = 0
+		m.notice = "Prepared Review prompt for " + path + "."
+		return m, nil
 	}
 	return m, nil
 }

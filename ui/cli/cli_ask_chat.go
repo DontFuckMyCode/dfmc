@@ -218,4 +218,3 @@ func runTUI(ctx context.Context, eng *engine.Engine, args []string, jsonMode boo
 	}
 	return 0
 }
-
