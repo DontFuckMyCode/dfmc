@@ -1,99 +1,135 @@
-# Architecture — Security Perspective
+# DFMC — Architecture & Attack Surface Map
 
-## Trust Model
+**Phase:** 1 (Recon)
+**Date:** 2026-04-30
+**Module:** `github.com/dontfuckmycode/dfmc`
+**Language:** Go 1.25.0 (single language; CGO conditionally enabled for tree-sitter)
 
-DFMC is designed as a **personal developer tool** running on a single user's workstation. The trust model assumes the operator is the sole user and has full control over the machine. This shapes the security posture: file permissions protect the store, loopback-only binding protects the web server, and config file permission checks are advisory rather than mandatory.
+---
 
-**DFMC does NOT currently support:**
-- Multi-tenant deployments (no per-client isolation)
-- Unencrypted bbolt at rest (appropriate for single-user local use)
-- Credential rotation (static bearer token, no refresh/invalidation endpoint)
+## Detected Stack
 
-## Security Layers
+| Layer | Technology |
+|-------|------------|
+| Runtime | Go 1.25, single static binary (`cmd/dfmc`) |
+| TUI | `bubbletea` 1.3.10 + `lipgloss` 1.1.0 + `termenv` 0.16.0 |
+| Web | `net/http` stdlib + `gorilla/websocket` 1.5.3 |
+| Storage | `go.etcd.io/bbolt` 1.4.3 (single embedded file lock per project) |
+| AST | `tree-sitter/go-tree-sitter` 0.25.0 + per-language grammars (Go/JS/TS/Python) — CGO required, regex fallback at `internal/ast/backend_stub.go` for `!cgo` |
+| Plugins | `tetratelabs/wazero` 1.11.0 (Wasm) + `os/exec` (subprocess JSON-RPC) |
+| Config | `gopkg.in/yaml.v3` 3.0.1 |
+| Net helpers | `golang.org/x/net` 0.53.0, `golang.org/x/time` 0.15.0 (rate limiter) |
 
-### Layer 1: Entry Point Authentication
-| Entry | Auth Method | Notes |
-|-------|-------------|-------|
-| CLI | None (local operator) | Direct execution |
-| TUI | None (local operator) | Direct execution |
-| Web `auth=token` | Bearer token (constant-time compare) | Single static token |
-| Web `auth=none` | None — loopback only enforced | Warning printed |
-| MCP stdio | None (local only) | stdio not network-exposed |
-| Remote `dfmc remote` | gRPC token or mTLS | Configurable |
+`application_type`: **multi-modal developer tool** — embedded HTTP server, CLI, TUI, MCP server, all sharing a single `engine.Engine` core.
 
-### Layer 2: Tool Approval Gate
-All tool calls (user and agent) funnel through `executeToolWithLifecycle`:
+---
+
+## Entry Points (attack surface)
+
+### CLI surface (`ui/cli/`)
+- All commands defined in `cli.go` `switch cmd`. Subcommand bodies in `cli_<domain>.go` siblings.
+- User-driven only; no network. Reads/writes project files. **Trust boundary: local user.**
+
+### TUI surface (`ui/tui/`)
+- `bubbletea` reactor; user interacts via keyboard. Same engine pointer as CLI.
+- Bracketed-paste mode + paste-window heuristic in `chat_key.go`/`paste_test.go`.
+- **Trust boundary: local user.**
+
+### Web/API surface (`ui/web/`) — `dfmc serve` on `127.0.0.1:7777`
+
+| Path | Handler | File |
+|------|---------|------|
+| `/` | Workbench HTML (embedded) | `server.go` |
+| `/api/v1/ask` | Single-turn JSON | `server_chat.go` |
+| `/api/v1/chat` | SSE stream | `server_chat.go` |
+| `/ws` | WebSocket events feed | `server_ws.go` |
+| `/api/v1/status` | Health/config | `server_status.go` |
+| `/api/v1/context/*` | Context inspection | `server_context.go` |
+| `/api/v1/tools/*`, `/api/v1/skills/*`, `/api/v1/codemap`, `/api/v1/memory/*` | Tool/skill/provider mgmt | `server_tools_skills.go` |
+| `/api/v1/conversation/*` | Conversation CRUD + branches | `server_conversation.go` |
+| `/api/v1/workspace/*` | Diff/patch/apply | `server_workspace.go` |
+| `/api/v1/files/*` | File listing/content | `server_files.go` |
+| `/api/v1/drive/*` | Drive cockpit | `server_drive.go` |
+| `/api/v1/tasks/*` | Task store CRUD | `server_task.go` |
+| `/api/v1/admin/*` | scan/doctor/hooks/config | `server_admin.go` |
+
+**Defaults:**
+
+- Bind: `127.0.0.1` (host normalized in `normalizeBindHost`); `0.0.0.0` only with `auth: token`.
+- Origin allow-list: `["http://127.0.0.1","http://localhost"]`; `*` explicitly rejected (`server.go:252-258`).
+- Auth: `none|token` (token mode requires `DFMC_WEB_TOKEN`; constant-time compare).
+- Headers: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, CSP `default-src 'self'`.
+- Rate limit: per-WS-connection `wsRPS/wsBurst`; global+per-IP connection cap (`wsConnLimiter`).
+- SSE: per-chunk write deadline 15s (`writeSSEWithDeadline`).
+
+### MCP surface (`internal/mcp/` + `cli_mcp.go`)
+
+- `dfmc mcp` exposes tool registry + 6 synthetic Drive tools over JSON-RPC (stdin/stdout).
+- Driven by IDE hosts (Claude Desktop, Cursor). Trust boundary: local IDE.
+- Env scrubbing on subprocess spawn (`security.ScrubEnv` strips API keys before forwarding).
+
+### Tool surface (`internal/tools/`)
+
+- Backend tools dispatched via meta-tool layer (`tool_search`/`tool_help`/`tool_call`/`tool_batch_call`).
+- Each tool execution funnels through `Engine.executeToolWithLifecycle` → approval gate → pre/post hooks → panic guard.
+- Path validation: `EnsureWithinRoot` + `filepath.EvalSymlinks` on both root and target (`engine.go:865-869`).
+- Read-before-mutation gate: `edit_file` lenient mode, `write_file`/`apply_patch` strict mode.
+- Git/gh runners: argv-only `exec.Command`, `rejectGitFlagInjection` on every ref/path arg.
+- Shell command: `run_command` with timeout cap 120s, blocked-binary list.
+
+### Hooks surface (`internal/hooks/`)
+
+- User-configured shell commands fired on lifecycle events.
+- Per-hook timeout (default 30s, configurable). Output capped at `hookOutputCap` per stream.
+- Env-var injection: keys sanitized via `sanitizeEnvKey`; values currently pass through unchanged when shell mode is enabled (re-verify in sc-cmdi).
+
+---
+
+## Trust Boundaries
+
+| Boundary | Direction | Mediator |
+|----------|-----------|----------|
+| User → CLI/TUI | trusted | none (full local privileges) |
+| Browser → Web API | semi-trusted | localhost bind, origin check, optional token |
+| External WS client → `/ws` | semi-trusted | origin check, rate limiter, ctx cancel cascade |
+| LLM provider → engine | untrusted | response parsing (defensive), no `eval` |
+| LLM tool call → `tools.Engine.Execute` | scoped | approval gate, hooks, panic guard |
+| Plugin subprocess → engine | untrusted | JSON-RPC frame, env scrub, output cap |
+| Filesystem | local | bbolt store (single OS file lock), config files |
+| Network egress | provider HTTP | TLS, `web_fetch` tool |
+
+---
+
+## Subsystems Owning State
+
 ```
-askToolApproval (if non-user + gated)
-  -> fire pre_tool hooks
-  -> executeToolWithPanicGuard
-  -> fire post_tool hooks
+Engine
+├── Storage      bbolt — single-file lock; ErrStoreLocked when contended
+├── Memory       3 tiers (working/episodic/semantic), bbolt buckets
+├── Conversation JSONL persisted, async save with WaitGroup drain
+├── AST          tree-sitter (CGO) or regex stub
+├── CodeMap      symbol/dependency graph
+├── Context      ranked snippet builder, token-budgeted
+├── Providers    router with primary+fallback+offline cascade
+├── Tools        backend registry + meta-tool layer + read-gate
+├── Hooks        user shell commands, sanitized env, panic-guarded
+├── TaskStore    bbolt-backed task persistence
+├── EventBus     fan-out, recover-guarded subscribers, drop-on-full
+└── Drive        autonomous plan/execute loop (planner + scheduler)
 ```
 
-`RequireApproval` and `RequireApprovalNetwork` control which tools require explicit user approval. Default: `RequireApprovalNetwork=["*"]` (all network-originated calls require approval).
+---
 
-### Layer 3: Hook Execution
-Hooks run with:
-- Minimal env (scrubbed of API keys)
-- Hard timeout (30s default)
-- Process-group kill (`Setpgid`)
-- Output cap (1 MiB per stream)
-- Panic containment (defer/recover)
+## Files Worth Auditing
 
-### Layer 4: File System Isolation
-- `EnsureWithinRoot` dual-layer: lexical `isPathWithin` + `filepath.EvalSymlinks`
-- `read_file` / `write_file` / `edit_file` / `apply_patch` all go through this gate
-- read-before-mutation: hash-checked snapshots for `write_file`/`apply_patch`, snapshot-only for `edit_file`
+| Sensitive concern | Files |
+|-------------------|-------|
+| Path traversal | `internal/tools/engine.go` (EnsureWithinRoot, EvalSymlinks), `internal/context/injected.go`, `ui/web/server_files.go`, `ui/tui/filesystem.go` |
+| Command exec | `internal/tools/builtin.go` (run_command), `internal/tools/git_runner.go`, `internal/tools/gh_runner.go`, `internal/hooks/hooks.go`, `internal/pluginexec/client.go`, `internal/tools/patch_validation.go` |
+| Auth/Authz | `ui/web/server.go` (constant-time token compare), `internal/engine/approver.go` |
+| WS/Origin | `ui/web/server_ws.go`, `ui/web/server.go` checkWebSocketOrigin |
+| Crypto/secrets | `internal/security/env_scrub.go`, `internal/memory/store.go` (crypto/rand IDs) |
+| Subprocess env | `internal/security/scrub_env.go`, `internal/mcp/client.go` |
+| Race/TOCTOU | `internal/engine/engine.go` indexer cancel/wait, `internal/conversation/manager.go` saveWg drain |
 
-### Layer 5: Network Isolation
-- `web_fetch` SSRF guard: blocks loopback (127.0.0.0/8, ::1), private (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), link-local (169.254.0.0/16)
-- DNS resolution happens before the IP check (no DNS rebinding window)
-- `X-Forwarded-For` only trusted when direct connection is from a loopback/CIDR trusted proxy
-
-## Attack Surface Summary
-
-| Surface | Risk Level | Primary Control |
-|---------|------------|-----------------|
-| Hook injection | High (if config compromised) | Config permission check |
-| bbolt at rest | Medium (physical access) | OS-level disk encryption |
-| Web SSE stream | Medium (local process) | Loopback-only bind |
-| WS event drops | Low (by design) | Documentation |
-| Intent fail-open | Low (intentional) | Main model still gated |
-| Config permission | Medium (advisory only) | File permissions |
-
-## Data Flows
-
-```
-User Input -> CLI/TUI/Web/MCP -> Intent Layer (sub-LLM) -> Engine.Ask
-                                                          |
-                                                     Tool Calls
-                                                          |
-                              +-------------+-------------+-------------+
-                              |             |             |             |
-                         executeToolWithLifecycle (approval gate + hooks)
-                              |             |             |             |
-                         Tools.Engine -> [read_file, write_file, grep,
-                                          run_command, web_fetch, etc.]
-                              |
-                         OS syscalls (file, network, process)
-```
-
-## Secrets Surface
-
-| Secret | Where Stored | Where Used | Exfiltration Risk |
-|--------|-------------|-----------|-------------------|
-| API keys | env vars, config.yaml | Provider clients | Scrubbed from hooks/MCP env |
-| Bearer token | env (DFMC_WEB_TOKEN) | bearerTokenMiddleware | Not scrubbed from own env |
-| bbolt data | ~/.dfmc/data/*.db | All subsystems | Physical access only |
-| Conversation logs | ~/.dfmc/data/artifacts/ | Conversation manager | Same as bbolt |
-| Hook output | /tmp or hook stdout | Hook system | Owner-readable only |
-
-## Intentional Trade-offs
-
-1. **Fail-open intent layer**: Intent classification errors fall back to `Fallback(raw)` rather than blocking. This prevents the intent layer from blocking the engine but could cause a confused classifier to misroute a prompt.
-
-2. **WS event channel lossy delivery**: The SSE/WebSocket event channel uses a 64-element buffer with a `default` drop. This prevents slow consumers from blocking the engine but means some events may be silently dropped during high-throughput loops.
-
-3. **Config permission advisory**: Group/world-writable config warnings fire but do not block loading. This prevents accidental breakage but allows a co-tenant with file write access to inject hooks.
-
-4. **Single-tenant web serve**: One engine instance shared across all authenticated clients. Appropriate for personal use, unsuitable for multi-user hosting.
+---

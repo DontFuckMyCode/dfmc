@@ -1,56 +1,60 @@
 # sc-graphql — GraphQL Security Assessment
 
-**Target:** D:\Codebox\PROJECTS\DFMC (Go 1.25)
-**Date:** 2026-04-25
-**Skill:** sc-graphql (performing-graphql-security-assessment)
+**Date:** 2026-04-29
+**Scope:** D:\Codebox\PROJECTS\DFMC
 **Status:** NOT APPLICABLE — no GraphQL surface exists
 
-## Result
+## Verdict
 
-**No issues found by sc-graphql** — no GraphQL libraries in `go.mod` and no `/graphql` route in `ui/web/server.go`'s `setupRoutes`.
+No findings. DFMC has no GraphQL server, no GraphQL client, no schema, no resolver, and no `/graphql` route. The mentions of "GraphQL" in the source tree are documentation strings shipped with the binary.
 
-## Evidence
+## Verification
 
-### 1. No GraphQL libraries in `go.mod`
+### 1. `go.mod` — no GraphQL libraries
 
-Searched `D:\Codebox\PROJECTS\DFMC\go.mod` (case-insensitive) for:
-- `graphql`
-- `gqlgen` / `99designs/gqlgen`
-- `gqlparser` / `vektah/gqlparser`
-- `machinebox/graphql`
-- `graph-gophers/graphql-go`
+```
+Pattern: graphql|gqlgen|graph-gophers|machinebox
+Result:  0 matches in go.mod
+```
 
-Result: **0 matches.** None of the common Go GraphQL stacks are present.
+None of the standard Go GraphQL libraries are declared:
+- `github.com/99designs/gqlgen`
+- `github.com/graphql-go/graphql`
+- `github.com/graph-gophers/graphql-go`
+- `github.com/machinebox/graphql`
+- `github.com/Khan/genqlient`
 
 ### 2. No `/graphql` route in the web server
 
-Searched `D:\Codebox\PROJECTS\DFMC\ui\web\server.go` (case-insensitive) for `graphql` or `/graphql`.
-
-Result: **0 matches.** The route table in `setupRoutes` exposes only JSON+SSE+WS handlers under `/api/v1/*` (status, chat, context, tools/skills, conversation, workspace, files, drive, task, admin) plus `/ws` SSE and a few static asset paths — consistent with the project's documented architecture (`dfmc serve` is a JSON+SSE+WS REST API).
+The HTTP route table in [ui/web/server.go:300-396](../ui/web/server.go) (the `setupRoutes` block) registers 50+ routes under `/api/v1/*`, plus `/`, `/healthz`, `/ws`. None match `/graphql` (case-insensitive) or any `Query{` / `Mutation{` / `Subscription{` schema marker.
 
 ### 3. Repo-wide `graphql` token sweep
 
-Repo-wide grep (excluding `bin/`, `vendor/`, `node_modules/`, `.dfmc/`, `.git/`, `security-report/`) returned a **single hit**:
+```
+Pattern: graphql (case-insensitive)
+Hits in production code:
+- ui/cli/cli_skills_data.go:196,202,205,206 — appears in the `api` skill's
+  description text and playbook prose ("REST, GraphQL, endpoints, schemas,
+  auth", "For GraphQL: name types after the domain, not the implementation").
+```
 
-- `ui/cli/cli_skills_data.go` lines 196, 202, 205, 206 — appears in the `api` skill's description string and playbook prose (e.g. *"REST, GraphQL, endpoints, schemas, auth"*, *"For GraphQL: name types after the domain, not the implementation."*).
+These are documentation strings displayed to the user when they invoke the `api` skill shortcut. They contain no parser, no schema, no executor, and no runtime behaviour.
 
-This is **documentation/help text shipped with the binary**, not a server, client, schema, resolver, or import. It does not introduce a GraphQL endpoint and has no runtime behaviour.
+### 4. WS / SSE channels are JSON-RPC 2.0, not GraphQL subscriptions
 
-## Discovery checks (skipped — no surface)
+`/api/v1/ws` is documented as "WebSocket JSON-RPC 2.0" in [security-report/architecture.md:134](architecture.md). Methods: `chat`, `ask`, `tool`, `drive_start`, `drive_stop`, `drive_status`, `events_subscribe`, `events_unsubscribe`. No `subscription` / `query` / `mutation` envelope.
 
-The following sc-graphql Verification phases were not run because there is no GraphQL endpoint to probe:
+## Phases not run
 
-- Introspection enabled (`__schema`, `__type`)
-- Query depth / recursion limits
-- Query batching abuse (array-of-operations)
-- Alias-based amplification / cost bypass
-- Field suggestion leakage ("Did you mean…")
-- Mutation auth gaps
-- Subscription auth gaps
-- Persisted-query / APQ bypass
+The following sc-graphql verification phases were skipped because there is no GraphQL endpoint to probe:
+- Introspection check (`__schema`, `__type` queries)
+- Field-suggestion leakage
+- Query-depth / complexity DoS
+- Aliased-batched query DoS
+- Authorisation per-resolver
+- CSRF on POST /graphql
+- WebSocket subscription authentication (graphql-ws / graphql-transport-ws)
 
-If GraphQL is added to DFMC in the future (e.g. an alternate API surface), re-run sc-graphql against the new endpoint before shipping.
+## Bottom line
 
-## Conclusion
-
-DFMC's external surface is exclusively REST+SSE+WebSocket on `/api/v1/*` and `/ws`. There is no GraphQL parser, no schema, no resolver, no `/graphql` POST handler, and no GraphQL client library compiled into the binary. **sc-graphql is not applicable to this codebase.**
+DFMC's external surface is exclusively REST+SSE+WebSocket on `/api/v1/*` and `/ws`. There is no GraphQL parser, no schema, no resolver, no `/graphql` POST handler, and no GraphQL client library in the binary. **sc-graphql is not applicable to this codebase.** Re-run if a GraphQL surface is added in the future.

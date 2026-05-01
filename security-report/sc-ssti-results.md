@@ -1,204 +1,108 @@
-# sc-ssti — Server-Side Template Injection Findings
+# sc-ssti — Server-Side Template Injection
 
-**Target**: DFMC (`D:\Codebox\PROJECTS\DFMC`)
-**Skill**: sc-ssti
-**CWE**: CWE-94 (Code Injection), CWE-1336 (Improper Neutralization of
-Special Elements Used in a Template Engine).
+**Date:** 2026-04-29
+**Scope:** D:\Codebox\PROJECTS\DFMC
+**Status:** NO ISSUES FOUND — promptlib uses a regex-based variable substituter, not a template engine
 
----
+## Verdict
 
-## Counts
+No findings. DFMC's prompt library does not use `text/template`, `html/template`, or any other expression-evaluating engine. Variable substitution in [internal/promptlib/promptlib.go](../internal/promptlib/promptlib.go) is a regex-based key→value lookup that cannot evaluate code. Template *bodies* (the strings interpreted by `Render`) are loaded from trusted on-disk locations only — embedded defaults, `~/.dfmc/prompts`, and `<project>/.dfmc/prompts`. Untrusted user query text is fed in as a *value* (`Vars["query"]`), never as a template body.
 
-| Severity | Count |
-|---|---|
-| High     | 0 |
-| Medium   | 0 |
-| Low      | 0 |
-| Info     | 2 |
-| **Total**| **2** |
+## Verification
 
-No exploitable SSTI was found. Two informational findings document the
-template-shaped surfaces that exist and the reasons they are *not* SSTI.
+### 1. No template-engine import in promptlib
 
----
+[internal/promptlib/promptlib.go:1-19](../internal/promptlib/promptlib.go) imports:
 
-## Surface map
+```go
+"embed", "encoding/json", "errors", "fmt", "io/fs", "os",
+"path/filepath", "regexp", "sort", "strings", "sync",
+"github.com/dontfuckmycode/dfmc/internal/config",
+"github.com/dontfuckmycode/dfmc/pkg/types",
+"gopkg.in/yaml.v3"
+```
 
-DFMC has three places that look superficially template-like and were each
-investigated:
+No `text/template`, no `html/template`, no `pongo2`, no `quicktemplate`, no `mustache`, no `handlebars`. The only "template engine" in DFMC is a `regexp` over `{{ name }}` placeholders.
 
-### 1. `internal/promptlib` overlay rendering — regex placeholder, NOT a template engine
+### 2. The substitution function — no expression evaluation
 
-- **File:line**: `internal/promptlib/promptlib.go:413-429`
+[internal/promptlib/promptlib.go:413-429](../internal/promptlib/promptlib.go):
 
 ```go
 var placeholderRe = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_]+)\s*\}\}`)
 
 func renderBody(body string, vars map[string]string) string {
-    if strings.TrimSpace(body) == "" { return "" }
-    if vars == nil { return body }
+    if strings.TrimSpace(body) == "" {
+        return ""
+    }
+    if vars == nil {
+        return body
+    }
     return placeholderRe.ReplaceAllStringFunc(body, func(match string) string {
         parts := placeholderRe.FindStringSubmatch(match)
-        if len(parts) != 2 { return "" }
+        if len(parts) != 2 {
+            return ""
+        }
         return strings.TrimSpace(vars[parts[1]])
     })
 }
 ```
 
-This is the only "templating" applied to prompt overlay files
-(`~/.dfmc/prompts/*.yaml`, `<project>/.dfmc/prompts/*.yaml`,
-`internal/promptlib/defaults/*.yaml`). The substitution rules:
+Reads:
+- The placeholder regex matches **only** `{{ <ident> }}` where `<ident>` is `[a-zA-Z0-9_]+`. No spaces, no dots, no pipes, no parens, no method calls.
+- Substitution is a literal `vars[name]` map lookup with `strings.TrimSpace`. No evaluation, no chained pipelines, no `printf`/`exec`/`include`.
+- Unknown placeholders resolve to the empty string.
 
-- The capture group is the strict identifier `[a-zA-Z0-9_]+`. There are
-  no field selectors, no method calls, no pipes, no expressions.
-- Lookup is a plain `map[string]string` access. Missing keys yield empty
-  string (no panic, no exposure).
-- The result is the variable's literal string value; it is **not**
-  re-rendered, so a value containing `{{x}}` is not re-evaluated (no
-  recursive expansion → no SSRF-via-template-recursion).
+This is not Go's `text/template` and **cannot invoke methods, call functions, or reach outside the `vars` map.**
 
-This is not Go's `text/template` or `html/template`. It cannot invoke
-methods, walk struct fields, or read arbitrary properties of any engine-
-internal data. The variable map is built explicitly by the engine
-(`internal/engine/engine_prompt.go`'s `promptRuntimeVars`-like builders)
-from a small allow-listed set: project root path, current working
-directory, time, model, provider, language, etc. Even a malicious
-overlay file in `~/.dfmc/prompts` cannot pivot to "introspect engine
-internals" because the renderer literally does not know how.
+### 3. Template-body loader — trusted sources only
 
-**Verdict**: not SSTI. Recorded as **Info** (SSTI-001) for documentation
-only.
+[internal/promptlib/promptlib.go:84-124](../internal/promptlib/promptlib.go) `LoadOverrides` reads from two roots:
 
-### 2. `[[file:path#Lstart-Lend]]` injection markers — regex extraction, NOT template evaluation
+1. `filepath.Join(config.UserConfigDir(), "prompts")` — `~/.dfmc/prompts` (user-owned).
+2. `filepath.Join(projectRoot, ".dfmc", "prompts")` — project local (gitignored).
 
-- **File:line**: `internal/context/injected.go:32-101`
+Plus the `//go:embed defaults/*.yaml` set baked into the binary at build time. **No HTTP body, no HTTP query parameter, and no LLM output is ever passed in as a template body** — the only ingress is local files the operator placed on disk. (Anyone who can write to your `~/.dfmc/prompts` already has full local code-execution by editing the binary path or `.dfmc/config.yaml`'s hook list.)
 
-```go
-var (
-    injectionMarker  = regexp.MustCompile(`\[\[file:([^\]#]+?)(?:#L(\d+)(?:-L?(\d+))?)?\]\]`)
-    queryCodeBlockRe = regexp.MustCompile("(?s)```([a-zA-Z0-9_+-]*)\\r?\\n(.*?)\\r?\\n?```")
-)
+### 4. `compose: replace | append` — no body interpolation
+
+[internal/promptlib/promptlib.go:175-197](../internal/promptlib/promptlib.go) `spliceAppendBeforeCacheBreak` is **string concatenation** (`strings.Join`, `strings.Cut`, `Builder.WriteString`). It splices overlay bodies around a fixed `CacheBreakMarker`. The bodies are not re-evaluated after splicing — they were rendered earlier by `renderBody` (the regex substituter above) using the same trusted sources. There is no second interpretation pass that would let an overlay body inject template syntax into another overlay's expression context.
+
+### 5. `Vars` payload — user query goes in as a value, not a body
+
+The `engine.buildSystemPrompt` callers populate `RenderRequest.Vars` with strings like `"query"`, `"project_root"`, `"language"`. These are plugged into the `vars` map and substituted by `renderBody`. Even if a user query contains `{{ ... }}` literally, it lands in the **rendered output string**, not in the template body — `placeholderRe` is only applied to `body`, not to the substitution values themselves. The substitution is single-pass; the result is not re-rendered.
+
+Confirmed: the regex runs over `body` and the `func` returns the looked-up value verbatim. No recursive expansion.
+
+### 6. `text/template` / `html/template` use across the repo — none on user data
+
+```
+Pattern: text/template|html/template (production *.go files only)
+Hits:
+- internal/langintel/go_kb.go:236-237 — knowledge-base prose strings teaching
+  the LLM about Go's templating packages. NOT a parser invocation.
 ```
 
-The user can place `[[file:internal/foo.go#L10-L40]]` markers in their
-chat query. The handler:
+There are no `template.New(...)`, `template.Parse(...)`, `template.Must(...)`, `(*template.Template).Execute(...)` calls anywhere in production code.
 
-1. Runs `injectionMarker.FindAllStringSubmatch` to extract `(rel, start,
-   end)` triples. The `rel` capture is `[^\]#]+?` — anything that is
-   not `]` or `#`, non-greedy.
-2. Validates the path with `resolvePathWithinRoot(projectRoot, rel)`
-   (`injected.go:13`, also documented in `architecture.md` §4 Sinks
-   table). This is the same symlink-aware containment guard used by
-   `read_file` and `EnsureWithinRoot` — it refuses `..`-escapes and
-   resolved-symlink escapes.
-3. Reads bytes via `os.ReadFile(abs)`; slices to the requested line
-   range; renders as a fenced block in the system prompt.
+### 7. YAML / JSON / Markdown loaders — data-mode only
 
-There is **no template parsing** of the matched filename. A filename
-containing `{{` or `{{ .Env }}` would be passed through to file I/O as
-literal bytes and rejected if the path doesn't exist. Even if a file
-*were* named `{{call .Whatever}}.go`, it would be read as a file —
-neither the path nor the file body are evaluated by `text/template`.
+The decoders in [internal/promptlib/promptlib.go:477-590](../internal/promptlib/promptlib.go) call `yaml.Unmarshal` and `json.Unmarshal` on file bytes, plus a hand-rolled YAML-frontmatter splitter for `.md`. None of them evaluate Go reflection callbacks (no `UnmarshalYAML` / `UnmarshalJSON` methods on `Template` — fields are plain strings). gopkg.in/yaml.v3 does not support YAML tag execution that could trigger code paths.
 
-**Verdict**: not SSTI. Recorded as **Info** (SSTI-002) for documentation
-only.
+## Phases not run
 
-### 3. Hooks command strings — `os/exec`, NOT a shell template
+These sc-ssti probes were skipped because there is no template engine to probe:
+- Engine-fingerprinting payloads (`{{7*7}}`, `${7*7}`, `<%= 7*7 %>`, `#{7*7}`)
+- `(System|Runtime).getRuntime().exec` chains (Java)
+- `os.popen` / `subprocess` chains (Python Jinja/Mako)
+- `__class__.__mro__` / `__subclasses__` SSTI escapes
+- Pongo2/Quicktemplate / Go `text/template` `.FuncMap` injection
 
-- **File:line**: `internal/hooks/hooks.go` (entire file); also
-  `internal/tools/command.go:296-633` for the related `run_command`
-  shell-detection guards.
+## Bottom line
 
-Hooks (`hooks.entries.<event>[]`) are user-configured strings from
-`~/.dfmc/config.yaml` (and project config when `hooks.allow_project=true`).
-These are passed to `os/exec.Cmd`-style execution with the per-event
-context as environment variables, NOT interpolated into a shell template.
-There is no `Sprintf("hook: %s") | shell-eval` pattern. Argument splitting
-uses standard tokenisation. This is properly an injection-/cmdi-domain
-concern (see sc-cmdi for full coverage); it has no SSTI surface.
+DFMC's prompt rendering is a **regex variable-substituter, not a template engine**. There is no expression evaluation, no method invocation, no function-map exposure. Template bodies come exclusively from trusted on-disk sources (embedded defaults + user/project `.dfmc/prompts` directories the operator owns). User-controlled text only enters as a *value* in the `vars` map, not as a body. **sc-ssti is not exploitable in this codebase.**
 
-### 4. `text/template` / `html/template` use across the repo — none on user data
+## Recommendations (defensive, no current finding)
 
-A repository-wide search for `template.New(`, `template.Must(`,
-`.Parse(`, `.ParseFiles`, `.ParseGlob`, `.Execute(` returned:
-
-- `internal/promptlib/*.go` — uses the word "template" as a *type name*
-  (`type Template struct`) referring to the prompt-overlay struct, not
-  Go's `text/template`. No `template.New` / `template.Parse` invocations.
-- `internal/langintel/go_kb.go:206`, `:237` — the strings
-  `"go-sql-injection"` and `"text/template does not auto-escape HTML"`
-  appear inside knowledge-base entries (`Body:` field of `langintel`
-  rule data). These are description strings the security scanner
-  surfaces as advice, not actual template parsing.
-- `ui/cli/cli_skills_data.go:205`, `:249` — the word "template" in
-  natural-language skill descriptions ("Use read_file on a similar
-  handler as a template").
-
-No imports of the `text/template` or `html/template` packages exist
-outside test code that exercises promptlib's regex placeholder.
-
----
-
-## Findings
-
-### SSTI-001 — Prompt overlay placeholder is regex, not Go template
-
-- **File:line**: `internal/promptlib/promptlib.go:413-429`
-- **Severity**: Info
-- **Confidence**: H
-- **CWE**: n/a (negative finding)
-
-Documented above. A malicious overlay file in `~/.dfmc/prompts` cannot
-escalate to template-engine introspection because the substitution
-mechanism is a closed regex over a fixed string-map.
-
-**Why this matters anyway**: the threat model still includes overlay
-poisoning *as a prompt-injection vector* (a user-controlled prompt
-overlay that re-instructs the LLM). That is a **prompt injection**
-finding (out of scope for sc-ssti — see prompt-injection skill). For
-SSTI specifically, the design is sound.
-
-### SSTI-002 — `[[file:...]]` markers are regex-extracted, not template-evaluated
-
-- **File:line**: `internal/context/injected.go:32-101`
-- **Severity**: Info
-- **Confidence**: H
-- **CWE**: n/a (negative finding)
-
-Documented above. The path-traversal guard
-(`resolvePathWithinRoot`) is the actual security surface here, and it
-is reviewed in sc-path-traversal / under "Sinks" in `architecture.md`.
-For SSTI specifically, no template engine is involved.
-
----
-
-## Negative findings (recap)
-
-- No `template.Parse` / `template.New` / `template.Must` / `.Execute` /
-  `.ParseFiles` / `.ParseGlob` invocations on user-controlled data
-  anywhere in the codebase.
-- No `html/template` import anywhere.
-- No `text/template` import anywhere outside test fixtures of langintel
-  rules (and even there, no actual template execution).
-- The web workbench's prompt-debug endpoint (`GET /api/v1/prompt/debug`)
-  surfaces *rendered* prompts (already-substituted regex output) as
-  JSON; it does not parse new templates from user input.
-- Drive planner LLM call passes the user's task to the LLM as a *string
-  message*, not as a template (`internal/drive/planner.go`).
-
----
-
-## Recommendations
-
-None — the architecture deliberately uses regex-only substitution for
-the prompt overlay surface, which is the single feature that "looks
-templatable" to a curious user. Maintain that boundary if/when the
-overlay format gains new features:
-
-- Do not introduce `text/template` parsing of any file under
-  `~/.dfmc/prompts/` or `<project>/.dfmc/prompts/` — overlays come from
-  user-writable locations and a project repo can ship a malicious
-  overlay (with `hooks.allow_project=true` analogue).
-- If template power is genuinely needed, restrict to a sandboxed
-  expression language (CEL, ucfg, or similar) and gate it behind an
-  explicit project-level opt-in similar to `hooks.allow_project`.
+- Do not introduce `text/template` or `html/template` parsing of any file under `~/.dfmc/prompts` or `.dfmc/prompts` without first re-running this scan — the current model is "values are scalars only," and a template engine would change that contract.
+- If an HTTP endpoint is ever added that lets a remote caller upload a prompt-template file, the trust assumption ("operator placed it on disk") breaks. Add such an endpoint behind an explicit "I know what I'm doing" flag and forbid expression-evaluating engines in that path.

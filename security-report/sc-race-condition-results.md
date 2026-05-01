@@ -1,239 +1,210 @@
-# sc-race-condition — DFMC Concurrency / TOCTOU Findings
+# sc-race-condition — DFMC TOCTOU and Concurrency Findings (Phase 2)
+
+**Scope:** read-before-mutation gate vs. mutation, bbolt store transactions, rate-limiter GC, WS broadcast subscriber lifecycle, agent-loop ctx guard in parallel dispatch, file ops without `O_EXCL`, supervisor task retry idempotency.
 
 **Counts**
-- Critical: 0
-- High:     2
-- Medium:   5
-- Low:      3
-- Info:     1
-- Total:    11
+- High:    3
+- Medium:  3
+- Low:     2
+- Info:    3
+- Total:   11
 
-Scope: agent loop concurrency, EventBus subscribers, drive scheduler, taskstore tree updates, conversation manager, parallel tool dispatch, read-before-mutation TOCTOU, drainage at shutdown, bbolt single-process lock.
-CWE families: CWE-362 (Concurrent Execution using Shared Resource with Improper Synchronization), CWE-367 (TOCTOU), CWE-833 (Deadlock).
+CWE families: CWE-362 (concurrent execution / TOCTOU), CWE-367 (TOCTOU on filesystem), CWE-667 (improper locking), CWE-668 (exposure via lifecycle gap), CWE-770 (resource exhaustion), CWE-833 (deadlock).
 
 ---
 
-## RACE-001 — `taskstore.UpdateTask` is read-modify-write across two transactions; concurrent updates lose writes
+## RACE-201 — `apply_patch` reads source BEFORE locking; concurrent writers win the race
 
 - **Severity:** High
 - **Confidence:** High
-- **CWE:** CWE-362
-- **File:** `internal/taskstore/store.go:74-86`
+- **CWE:** CWE-367 (TOCTOU file open vs use), CWE-362
+- **File:** `internal/tools/apply_patch.go:106-170`
 
-```go
-func (s *Store) UpdateTask(id string, fn func(*supervisor.Task) error) error {
-    t, err := s.LoadTask(id)        // bbolt View tx #1
-    if err != nil { return err }
-    if t == nil { return fmt.Errorf("task not found: %s", id) }
-    if err := fn(t); err != nil { return err }
-    return s.SaveTask(t)            // bbolt Update tx #2
-}
+**Race.** Per-file dispatch order:
+
+```
+os.Stat(abs)                                    // 106
+EnsureReadBeforeMutation(abs)                   // 110 — reads file, hashes, compares to snapshot
+original, _ := os.ReadFile(abs)                 // 142 — reads bytes used as patch base
+updated, _, _, _, _ := applyHunks(original, …)  // 149 — produces final bytes
+release := t.engine.LockPath(abs)               // 167 — LOCK ACQUIRED
+defer release()                                 // 168 — releases at FUNCTION exit, not iteration
+writeFileAtomic(abs, updated, 0o644)            // 169
 ```
 
-**Finding.** Load and Save are two separate bbolt transactions with the application-level mutator running between them. Two concurrent `UpdateTask("X", ...)` calls — easy to trigger via `PATCH /api/v1/tasks/{id}` from two browser tabs, or from `OnTaskBlocked` (line 411) walking the tree and updating multiple tasks under load — both load the same snapshot, both apply their callback, both save, and the second `Save` wins. The first writer's modification is silently lost. There is no row-level lock, no version counter, no compare-and-swap.
+Two windows are racy: (a) between line 110 (`EnsureReadBeforeMutation`'s hash read) and line 142 (`os.ReadFile original`) — a concurrent writer can mutate the file; the hunks are then computed against bytes that match neither the snapshot nor what's on disk; (b) between line 142 and line 167 — a concurrent `edit_file` (which DOES lock first) can apply a clean edit, then `apply_patch` overwrites those bytes with hunks based on pre-edit `original`. The atomic rename in `writeFileAtomic` does not save us — atomicity protects against half-written files, not against base-snapshot drift.
 
-**Concrete blast radius.**
-- `OnTaskBlocked` (line 411-431) loops over `all` tasks updating `BlockedBy`. If two TODOs block at the same time, the BlockedBy lists race.
-- `OnTaskUnblocked` (line 435-454) — same shape.
-- HTTP PATCH from a polling UI is the obvious trigger.
+`defer release()` placement is also wrong for multi-file patches: the release runs at function exit, so locks accumulate across all files. With N targets, the lock window holds N locks simultaneously, which is wasted serialisation but also opens a deadlock against any future tool that locks two files in opposite order.
 
-**Fix.** Wrap the load+mutate+save in a single `db.Update` transaction so the read and write are atomic against bbolt's own write lock. (Bbolt only allows one writer at a time, so this also serializes correctly across goroutines.)
+**Fix.** Acquire the per-file lock BEFORE the `EnsureReadBeforeMutation` and `os.ReadFile` calls; release at the end of each loop iteration (extract a per-file helper and `defer release()` inside it).
 
 ---
 
-## RACE-002 — `tools.Engine` `recordReadSnapshot` then `ensureReadBeforeMutationMode` is TOCTOU on the snapshot map
+## RACE-202 — `symbol_rename` / `symbol_move` mutate without `LockPath` and use non-atomic `os.WriteFile`
 
 - **Severity:** High
 - **Confidence:** High
-- **CWE:** CWE-367 (TOCTOU)
+- **CWE:** CWE-362, CWE-367
 - **Files:**
-  - `internal/tools/engine.go:516-546` (`ensureReadBeforeMutationMode`)
-  - `internal/tools/engine.go:650-697` (`recordReadSnapshot`)
-  - `internal/engine/agent_loop_parallel.go:91-149` (parallel dispatcher)
+  - `internal/tools/symbol_rename.go:171-216`
+  - `internal/tools/symbol_move.go:220-289`
 
-**Finding.** The read-before-mutate gate stores `readSnapshots[abs] = hash` in a map guarded by `readMu`. Strict mode (`write_file`, `apply_patch`) reads the file from disk and compares to the recorded hash. Lenient mode (`edit_file`) skips the hash comparison. Two concrete races:
+**Race.** Both tools execute:
 
-1. **Read snapshot map under parallel dispatch.** The parallel dispatcher `parallelSafeTools` whitelist includes `read_file` (line 33), so two `read_file` calls on the same path can race. `recordReadSnapshot` takes `e.readMu.Lock()` at line 693, so the map write is safe — but the *order* in which two parallel reads of the same path return is non-deterministic. If both reads happen but only one's Output reaches `recordReadSnapshot` (the other panics, or the parallel dispatcher's `out[idx]` slot gets overwritten — it doesn't, it's pre-allocated and indexed, OK), the snapshot is whichever finished last.
+```
+EnsureReadBeforeMutation(fpath)
+data, _ := os.ReadFile(fpath)
+// in-memory line edit
+os.WriteFile(fpath, …, 0644)        // ← non-atomic, no LockPath
+```
 
-   **Verdict:** map access is correctly locked; ordering is non-deterministic but only a "wrong but recent snapshot" outcome — not a corruption.
+Three problems compound:
+1. **No `LockPath`.** A concurrent `edit_file`/`apply_patch` (which DOES lock) can complete between `os.ReadFile` and `os.WriteFile`; the symbol pass overwrites it.
+2. **Non-atomic write.** Bare `os.WriteFile` is `O_TRUNC | O_WRONLY` — a crash mid-write truncates the target. `internal/tools/builtin_edit.go` and `apply_patch.go` both use `writeFileAtomic` (temp + `os.Rename`) for exactly this reason.
+3. **Cross-file ordering.** `symbol_rename` walks all referencing files in map iteration order (Go map iteration is randomised) — if it deadlocks against another tool that takes locks in a different order, results will be non-deterministic. (Currently no deadlock because there are no locks.)
 
-2. **TOCTOU between snapshot-read and disk-write — strict mode.** In `ensureReadBeforeMutationMode`:
-   ```
-   stat → readMu.RLock → fileContentHash(disk) → compare
-   ```
-   The hash is computed from disk, NOT from the snapshot. If another goroutine (or external editor) writes the file between `recordReadSnapshot` and `ensureReadBeforeMutationMode`, the gate detects drift and refuses. ✓ This is the **intended** safety net.
+The engine itself flags this in a comment: `internal/tools/engine.go:83-87` says "the window between `EnsureReadBeforeMutation` and `os.WriteFile` is a TOCTOU race" — that's the exact pattern these two tools use.
 
-   The actual TOCTOU is **between** the gate check and `tool.Execute(ctx, req)` at line 457. After the gate says "no drift", the tool's own `os.WriteFile` runs. If a third process or another goroutine writes the file in that ~microsecond gap, the in-flight write silently overwrites the third-party change. This is the classic TOCTOU on filesystem write.
-
-   In a single-process model with no parallel `write_file` (the parallel dispatcher's whitelist excludes mutating tools, line 32-43 — confirmed safe) the only racer is an external editor, which is acceptable. **But** subagents and the engine itself are *the same process* — `RunSubagent` can spawn concurrent loops, each able to call `write_file` to the same path. The serialization comes from `parallelSafeTools` excluding `write_file` *within one batch*, but two sub-agent loops dispatching at separate moments are both single-tool dispatches and not coordinated.
-
-**Impact.** Two concurrent sub-agents can both read a file, both pass the strict gate (each has a snapshot), and one's write blows away the other's write between gate-check and `os.WriteFile`. The drift check would only catch this on the *third* write — by then the data loss has happened.
-
-**Fix.** Hold a per-path mutex from gate-check through the write inside `tool.Execute`. The simplest implementation: `e.readMu.Lock()` (write lock) for the entire gate+execute+recordReadSnapshot sequence on mutating tools, accepting reduced parallelism for safety. Or: a per-absPath sync.Mutex, acquired in Execute for write_file/apply_patch.
+**Fix.** Replace each `os.WriteFile` site with:
+```go
+release := t.engine.LockPath(fpath); defer release()
+// (or hoist read+gate INSIDE the lock window)
+if err := writeFileAtomic(fpath, data, 0644); err != nil { return err }
+```
 
 ---
 
-## RACE-003 — `executeToolCallsParallel` shared cache map mutated under one mutex but never cleared between rounds
+## RACE-203 — Read-before-mutation `readGateLenient` for `edit_file` is exploitable via concurrent fabrication+race
 
 - **Severity:** Medium
 - **Confidence:** Medium
 - **CWE:** CWE-362
-- **File:** `internal/engine/agent_loop_parallel.go:91-188`
+- **Files:** `internal/tools/engine.go:484-548`, `internal/tools/builtin_edit.go:60-103`
 
-**Finding.** The cache map is allocated once per loop and threaded into `executeToolCallsParallel` along with `cacheMu`. Map access is correctly locked at lines 163-165 and 185-187. **However** the cache is keyed by `cacheableToolCallKey(c)` — let me check that function shape: it presumably hashes call name + args. Since `c.Input` is `map[string]any` deserialized from JSON, two calls with identical arg shapes share a key; if file `X` is `read_file`'d then modified externally, then `read_file`'d again in the same loop, the second read returns the cached stale output. That is a **logic** bug as much as a race, but worth noting because the mitigation (cache invalidation on every `write_file`/`edit_file`) is only wired for the engine's `Context.Invalidate` (in `engine_tools.go:32-49`), NOT for this per-loop tool cache.
+**Race.** Lenient mode requires only a prior `read_file` snapshot key for the path; hash equality is NOT checked. The reasoning (in the comment) is sound for normal use: `edit_file`'s exact-string anchor catches unsafe edits because the `old_string` must match disk verbatim.
 
-**Impact.** Stale read after a sibling write within the same agent loop. Bounded by the loop, but visible to the model.
+The race window: an attacker (or buggy parallel agent) does (1) `read_file path` to register the snapshot key, (2) waits for a co-tenant tool / human editor to mutate the file, (3) issues `edit_file` whose `old_string` happens to ALSO appear in the post-mutation bytes (e.g. a common Go import line, a function name). The lenient gate passes; the anchor matches the new bytes; the edit lands on a file the attacker never read. This is narrow — it requires `old_string` to be coincidentally unique in BOTH versions — but a small `old_string` like `package main\n` or `import "fmt"` would work.
 
-**Fix.** Invalidate the per-loop cache in `executeToolCallsParallel` whenever a write/edit/apply_patch dispatches that affects a path the cache holds.
+`builtin_edit.go:60` correctly takes `LockPath` before `os.ReadFile`, so within one process the race is closed for direct concurrency. The remaining window is between user/external editor writes and the next `edit_file`, which the lenient gate explicitly tolerates.
 
----
-
-## RACE-004 — Drive scheduler `readyBatch` with empty `file_scope` correctly serializes BUT the check is racy with worker completion
-
-- **Severity:** Medium
-- **Confidence:** Medium
-- **CWE:** CWE-362
-- **Files:**
-  - `internal/drive/scheduler.go:147-221` (`readyBatchWithPolicy`)
-  - `internal/drive/driver_loop.go:35-118` (single-goroutine main loop)
-
-**Finding.** `executeLoop` is single-goroutine — only the main loop reads `run.Todos` and dispatches; workers receive a value-typed request and write back to the buffered `results` channel. This is the *correct* design and means the scheduler's `readyBatch` is never called concurrently. ✓
-
-The narrow race window: the main loop's `readyBatchWithPolicy(run.Todos, ...)` reads the live `run.Todos` slice while a worker goroutine COULD be writing to that slice if it touched it. Workers don't (per the comment at line 22-30). ✓
-
-**However**: `applyOutcome` (`driver_loop.go:217-313`) writes to `run.Todos` AND publishes events AND can call `applySpawnedTodos` which can append to `run.Todos`. If `applyOutcome` is called from `drainAndFinalize`'s `for inFlight > 0` loop (line 340-374) while the scheduler's mental model thought the loop had exited, you have two writers to `run.Todos` — but in practice `executeLoop` only ever calls `applyOutcome` after a `<-results` receive, so it's serial. ✓
-
-**The real race:** two `RunPrepared(ctx, run)` calls on the same `*Run` pointer (e.g. two `POST /api/v1/drive/{id}/resume` calls firing concurrently before the registry registration completes). The registry guard `IsActive(run.ID)` at `driver.go:116` is checked once; if both callers race past it before either calls `register()`, both run the loop on the same `*Run` pointer. The registry itself is mutex-locked, but the gap between `IsActive` and `register` is unlocked.
-
-**Fix.** Atomic check-and-register: introduce `tryRegister(runID, task, cancel) bool` that returns false if the ID is already present, and replace the `IsActive ... register` two-step with a single atomic op.
+**Fix.** Either accept this as documented behaviour (matches the comment's "drift tolerance" rationale) or tighten to `readGateStrict` and rely on the actionable error message to teach the model to re-read on drift. The current design choice is defensible — flagged as Medium because the scenario requires a small-anchor edit which `edit_file` already discourages via its ambiguity check.
 
 ---
 
-## RACE-005 — EventBus `Publish` holds `RLock` while calling `publishToChannel` which can `recover()` on send-to-closed
+## RACE-204 — Rate limiter GC: leak fixed, but `lastSeen` is unbounded between sweeps
 
 - **Severity:** Medium
 - **Confidence:** High
-- **CWE:** CWE-362, CWE-833 (Deadlock)
-- **File:** `internal/engine/eventbus.go:73-91`, `203-214`
+- **CWE:** CWE-770
+- **File:** `ui/web/server.go:507-560`
 
-**Finding.** `Publish` takes `eb.mu.RLock()` and iterates over `subscribers[event.Type]` then `subscribers["*"]`, calling `publishToChannel(ch, event)` for each. `publishToChannel` does a non-blocking `select { case ch<-event: default: }` plus a `defer recover()` for "send on closed channel" panics.
+**Race.** The GC ticker runs every 10 minutes and removes `lastSeen[ip]` older than 10 minutes. Between sweeps, a malicious or misconfigured client iterating the IP space (e.g. via cooperating proxies that legitimately set XFF) can balloon both maps to arbitrary size — there is no upper bound and no eviction outside the timer. Recent commit `6fb5fcc fix: ... rate-limiter GC` mentions a fix; verifying:
 
-The race: `Unsubscribe` takes `eb.mu.Lock()` (write lock), removes the channel from the bucket, then `close(ch)`. Between the time `Publish` enters its for-loop and the time it actually sends to channel `ch[i]`, `Unsubscribe` cannot run (write lock blocks on the held read lock). ✓ Publish path is safe.
+The fix appears to be the GC loop deletion path itself (delete from BOTH `buckets` and `lastSeen` — earlier versions only deleted one). That is correct now. ✓
 
-**The actual issue** is the cumulative drop counter (`droppedMu` lock at line 225-235) is taken *while* `eb.mu.RLock()` is still held by the caller. Lock ordering: `eb.mu` (RLock) → `droppedMu` (Lock). If any other code path takes `droppedMu` first then tries `eb.mu`, deadlock. Searching: `noteDroppedEvent` is the only `droppedMu` user, and it never re-enters `Subscribe/Unsubscribe`. ✓ No actual deadlock today, but the lock-order is implicit and one new code path could break it.
+The remaining attack: between sweep ticks, RAM grows linearly with unique IPs seen. Trusted-proxy gating limits this to spoofers behind a real proxy (uncommon in DFMC's loopback model), so impact is small. A hard cap on map size with random/oldest eviction would close it.
 
-**Impact.** Latent deadlock potential. Document the lock order, or restructure so `noteDroppedEvent` doesn't run under the `Publish` RLock (e.g., signal a counter goroutine via channel).
-
----
-
-## RACE-006 — `forceCompactNativeLoopHistory` writes to `seed.Messages` outside the agentMu lock during auto-resume
-
-- **Severity:** Medium
-- **Confidence:** Medium
-- **CWE:** CWE-362
-- **Files:**
-  - `internal/engine/agent_loop_autonomous.go:113-184` (`attemptAutoResume`)
-  - `internal/engine/engine.go:137-138` (`agentMu` guards `agentParked`)
-
-**Finding.** `attemptAutoResume` calls `e.takeParkedAgent()` (which presumably takes `agentMu`), then mutates `seed.Messages`, `seed.CumulativeSteps`, `seed.TotalTokens`, etc. *outside* the lock. The `seed` is the live `parkedAgentState` taken from `e.agentParked`. After `takeParkedAgent` removes the pointer, no other goroutine should hold a reference, so external mutation is impossible — **but** `e.saveParkedAgent(seed)` later may be racing with another `takeParkedAgent` if a concurrent /continue fires.
-
-The pattern is: `take → maybe modify → save` (lines 114, 119-123, 138). If two callers (e.g. autonomous wrapper and a manual /continue) both call `attemptAutoResume` / `ResumeAgent` simultaneously, both `take` (one returns nil, OK), but the path that receives the seed mutates and the loser path may have observed `nil` and surfaced "no parked agent" — which is acceptable. The risk is if `takeParkedAgent` is not the only seed-clearer; let me note it for review without escalating.
-
-**Impact.** Likely benign given the `take`-style API; flagged for inspection because the mutation of `seed.*` fields is not under `agentMu` and a future code change that re-publishes `seed` back into `agentParked` mid-mutation would corrupt it.
-
-**Fix.** Document the "seed is exclusively owned after take" invariant in a comment on `parkedAgentState`.
+**Fix.** Add a `maxBuckets` cap (e.g. 10k); when adding a new IP, evict the oldest if at cap. The current 10-minute window is fine for cleanup but is not a backpressure mechanism.
 
 ---
 
-## RACE-007 — Drainage 2-second grace window is bounded but workers can still leak post-finalize
-
-- **Severity:** Low
-- **Confidence:** High
-- **CWE:** CWE-833 (Deadlock-adjacent: leaked goroutines, not deadlock)
-- **File:** `internal/drive/driver_loop.go:333-376`
-
-**Finding.** `drainAndFinalize` waits up to `cfg.DrainGraceWindow` (default 2s per the architecture doc) for in-flight workers. After the grace timer fires, the driver returns and `executeLoop` exits. The worker goroutines are still alive — they're blocked on `d.runner.ExecuteTodo(ctx, req)` which respects ctx, but a cooperative `ExecuteTodo` may not check ctx between sub-agent rounds. Workers eventually try to send on the `results` channel — the channel is **buffered to MaxParallel** (line 44), so send succeeds even with no reader, but the goroutine and any resources it holds (HTTP client connections, file handles, prompt-cache references) live until `ExecuteTodo` returns naturally.
-
-**Impact.** Goroutine leak under repeated cancel/abandon cycles. Memory grows linearly with abandoned runs until the LLM provider's HTTP timeout (default 20s) fires. Bounded but not zero.
-
-**Fix.** After the grace timer, optionally close the results channel — workers that try to send on closed will panic and the panic recovery in `dispatchTodo`'s defer (line 171-181) handles it. Simpler: log an explicit warn on each leaked worker so operators see the leak in the activity feed.
-
----
-
-## RACE-008 — bbolt process lock is advisory at the file-lock layer; stale lock detection is OS-dependent
-
-- **Severity:** Low
-- **Confidence:** Medium
-- **CWE:** CWE-362
-- **Files:**
-  - `internal/storage/store.go:71-83` (1-second `Timeout`)
-  - `cmd/dfmc/main.go:60-77` (degraded-startup allow-list)
-
-**Finding.** bbolt uses `flock` on Unix and `LockFileEx` on Windows. Both are *mandatory* for the kernel within bbolt's open call but *advisory* in the sense that a stale lock from a crashed process is released by the kernel automatically (the file handle is closed). On NFS or some Windows scenarios, file locks can persist for ~30s after a crash. The 1s timeout in `bbolt.Options{Timeout: 1*time.Second}` is short enough that legitimate startup races between two `dfmc` invocations look identical to a stale lock. The architecture treats `ErrStoreLocked` as a hard "another process owns it" signal — in the stale-lock case the user gets the same error message and is told to "close other DFMC/TUI processes" when no other process exists.
-
-**Impact.** Operator confusion. Not a security finding; included because the prompt asked.
-
-**Fix.** Detect stale lock by trying to read the file's PID marker, or surface a different message for "lock acquired by us in <N seconds" vs "lock held by PID X". Optional.
-
----
-
-## RACE-009 — `failureMu` and `readMu` independently — recordReadSnapshot under `readMu` calls helpers that don't take other locks (OK)
+## RACE-205 — WS event broadcast: drop-on-full chan is correct; subscriber lifecycle is mutex-protected
 
 - **Severity:** Info
 - **Confidence:** High
-- **File:** `internal/tools/engine.go:46-56`, `693-697`
+- **Files:** `internal/engine/eventbus.go:75-251`, `ui/web/server_ws.go:336-355`
 
-**Finding.** Confirmed: `recordReadSnapshot` only takes `readMu.Lock()`; `trackFailure` only takes `failureMu.Lock()`. Both are leaf locks. ✓ No lock-ordering hazard between them today.
+**Verdict.** `EventBus.Publish` holds an RLock during fan-out; `publishToChannel` does a non-blocking `select` with `default: noteDroppedEvent` — slow subscribers cannot block fast ones. `Unsubscribe` is idempotent (`tryRemove` returns false on second call, skips `close(ch)`) and recover-guards a buggy double-close. `SubscribeFunc` returns a `sync.Once`-guarded unsubscribe. ✓
 
-**Watch item.** The `LRU` eviction under `readMu.Lock()` is O(N) on each call (scans `readSnapshotLRU`). At `maxReadSnapshots=256` this is cheap, but a pathological agent loop with thousands of distinct file reads will spend visible CPU under the write lock.
+One subtle correctness check passed: in WS streaming chat (`server_ws.go:336-353`), `eventsCh` has buffer 64; the bus publish path has `select … default: drop`. If the WS writer goroutine is slow, events drop silently — but the bus reports drops via `DroppedCount()` and logs every `eventBusDropWarnEvery` (100 drops). No deadlock, no goroutine leak.
+
+The cleanup path on disconnect is `sync.Once`-wrapped and was a previously-fixed race per commit history (VULN-022). ✓
 
 ---
 
-## RACE-010 — `wsConn.cleanup` close-then-close-channel is racy under fast disconnect
+## RACE-206 — Agent-loop parallel dispatch: ctx guard re-checked inside worker
+
+- **Severity:** Info
+- **Confidence:** High
+- **File:** `internal/engine/agent_loop_parallel.go:91-155`
+
+**Verdict.** Recent commit `6fb5fcc fix: ctx guard in parallel dispatch` is in place. The dispatch loop checks `ctx.Err()` before acquiring a semaphore slot AND each worker re-checks at line 144-147 inside the goroutine before calling `dispatch()`. This closes the window where a cancellation arrives between the outer check and the goroutine actually starting. The `sem` channel is bounded by `batchSize`, and `wg.Wait()` synchronises before reading `out` (memory model comment is correct). ✓
+
+The only nit: when ctx is cancelled mid-batch, in-flight workers continue to run (`dispatch` does not pass ctx through to `executeToolWithLifecycle` for early abort) — but `executeToolWithLifecycle` itself respects ctx via `context.WithCancel` in approval and `tool.Execute` paths, so a long-running tool will see ctx.Done().
+
+---
+
+## RACE-207 — bbolt store transactions are correctly bounded; no parallel-write paths
+
+- **Severity:** Info
+- **Confidence:** High
+- **Files:** `internal/storage/store.go:80-130`, `internal/taskstore/store.go`, `internal/drive/persistence.go`
+
+**Verdict.** All writes use `db.Update(func(tx *bbolt.Tx) error)`; bbolt serializes writes at the file level (single-writer multi-reader). The `ErrStoreLocked` returned at process startup prevents two `dfmc` processes from racing. Inside one process, multiple goroutines concurrent-writing to different buckets is supported and safe per bbolt docs. ✓
+
+No raw `db.View` followed by `db.Update` patterns where the read result is used to compute a write key (which would be a TOCTOU at the txn level). Spot-checked taskstore CRUD and drive persistence — all reads happen inside the same Update tx that performs the write, or are independent of the write key.
+
+---
+
+## RACE-208 — `os.OpenFile`/`os.Create` callers do not use `O_EXCL`
 
 - **Severity:** Low
+- **Confidence:** High
+- **CWE:** CWE-367
+- **Files:** every `os.Create`/`os.WriteFile`/`os.OpenFile` in `internal/tools/`, `internal/storage/`, `internal/conversation/`, `internal/drive/persistence.go`
+
+**Finding.** No production code uses `O_EXCL` (verified by grep — no hits in non-test sources). For `writeFileAtomic` this is safe because the temp file goes through `os.CreateTemp` (random suffix → no clobber) followed by atomic rename. For `symbol_rename`/`symbol_move`/legacy `os.WriteFile` callers, an attacker who plants a symlink at the target path between `os.Stat` and `os.WriteFile` could redirect the write — DFMC's project-root containment via `EnsureWithinRoot` (which resolves symlinks) catches the obvious attack, but a TOCTOU between resolve and write remains.
+
+Single-user trust model bounds blast radius. Not exploitable without local code execution as the same user (which already implies game-over for a developer tool).
+
+**Fix.** Where atomic semantics matter, route through `writeFileAtomic`. New tools should never bypass it.
+
+---
+
+## RACE-209 — Supervisor retry: classification is fail-open and the loop is idempotency-blind
+
+- **Severity:** Medium
 - **Confidence:** Medium
 - **CWE:** CWE-362
-- **File:** `ui/web/server_ws.go:305-312`
+- **Files:** `internal/supervisor/policies.go:106-150` (`ClassifyFailure`), `internal/supervisor/coordinator*.go`
 
-```go
-func (c *wsConn) cleanup() {
-    c.closeMu.Lock()
-    if !c.closed.Swap(true) {
-        _ = c.conn.Close()
-    }
-    c.closeMu.Unlock()
-    close(c.sendCh)            // outside the lock
-}
-```
+**Race / logic.** `ClassifyFailure` defaults to `FailureRetryable` for any error string it doesn't recognise (test confirms: `policies_test.go:98 "Fail open: unknown errors are treated as retryable"`). With `DefaultRetryPolicy.MaxAttempts=3`, an unknown-error tool that has side effects (e.g. `run_command "rm foo"` that fails after partial deletion, or `git_commit` that succeeded server-side but timed out on response) is retried up to 3 times.
 
-**Finding.** `cleanup()` is called in the `defer` of `readLoop`. The `sendCh` close is outside the mutex. If `cleanup` is called twice (e.g. from both readLoop on connection error and from a future shutdown path), the second `close(c.sendCh)` panics with "close of closed channel". The `closed` atomic guards the conn-close but not the chan-close.
+There is no idempotency guard in the retry path — `ShouldRetry` only consults attempt count + class, not "did the previous attempt mutate state". For pure-read tools (`read_file`, `grep_codebase`) this is fine. For mutating tools, retrying after a transient error can:
+- Re-run `git_commit` and create a duplicate commit if the first one succeeded but the network reply was lost.
+- Re-run `apply_patch` on a file the previous attempt partially patched (the patch will likely fail with hunk mismatch, but in fuzzy-offset mode it could land in unexpected places).
+- Re-run `web_fetch` / `web_search` POSTs — but these are GET-only.
 
-The current code only calls `cleanup` from one site (readLoop's defer), so today this doesn't fire. Latent bug.
-
-**Fix.** Use `sync.Once` for the cleanup, or move `close(c.sendCh)` inside the `if !c.closed.Swap(true)` branch.
+**Fix.** Either narrow `ClassifyFailure` defaults to `FailurePermanent` for tools with `Risk: RiskWrite`/`RiskExecute`, or add a per-tool idempotency declaration (`ToolSpec.Idempotent` exists — wire it into the retry policy).
 
 ---
 
-## RACE-011 — `Engine.Tools.recordReadSnapshot` LRU manipulation is correct but `trackFailure`'s LRU is racier
+## RACE-210 — `BeginAutoApprove` slot restoration is not atomic with the snapshot read (cross-reference LOGIC-201)
+
+- **Severity:** High (mirror of LOGIC-201 from a concurrency lens)
+- **Confidence:** High
+- **CWE:** CWE-362
+- **File:** `internal/engine/drive_adapter.go:285-297`
+
+**Race.** Same as LOGIC-201 in the business-logic report. `prev := r.e.approver()` and `r.e.SetApprover(override)` are NOT done atomically — between them, another goroutine's `SetApprover` can land. The release closure restores `prev`, which by then may be a different (or stale) approver than what was actually installed when this `BeginAutoApprove` was called. Concurrent Drive runs reproduce this.
+
+**Fix.** Wrap snapshot+install in a mutex, or change `SetApprover` to return a typed token that `release` validates before swapping back.
+
+---
+
+## RACE-211 — Path-lock map grows unbounded (`sync.Map` never evicts)
 
 - **Severity:** Low
-- **Confidence:** Low
-- **CWE:** CWE-362
-- **File:** `internal/tools/engine.go:583-602` (`trackFailure`)
+- **Confidence:** High
+- **CWE:** CWE-770
+- **File:** `internal/tools/engine.go:87-102`
 
-**Finding.** `trackFailure` takes `failureMu.Lock()` for the whole map+slice update — correctly atomic. The slice eviction at lines 593-600 (`recentFailOrder = recentFailOrder[1:]`) re-slices without copying; if any other goroutine ever held a reference to the old slice header, they'd see disappearing data. No other goroutine does — `recentFailOrder` is only manipulated under `failureMu`. ✓
+**Finding.** `pathLocks sync.Map` stores a `*sync.Mutex` per absolute path. There is no eviction — a long-running session that touches many files (e.g. a 10k-file repo with full codebase rewrites) accumulates 10k unfreed mutexes. Each is small (~24 bytes) but grows linearly with reachable file count. No correctness bug, just a slow leak in long-lived `dfmc serve` sessions.
 
-Listed as an Info-class watch only because the slice-header re-aliasing pattern is fragile if someone later adds a "list recent failures" debug helper that escapes the lock.
+**Fix.** Replace `sync.Map` with a TTL cache, or expire entries when their refcount returns to zero. For DFMC's typical CLI single-shot usage this is irrelevant; for `serve` it might matter over weeks.
 
 ---
 
-### What was checked and OK
+## Verdict
 
-- `EventBus.Publish` non-blocking send + `recover()` shield — robust under subscriber close. ✓
-- `parallelSafeTools` whitelist excludes every mutating tool — fan-out safe by construction. ✓
-- `readyBatchWithPolicy` correctly treats empty `file_scope` as "owns everything" and refuses to schedule alongside any other TODO (`scheduler.go:202-214`, `scopeAny` sentinel). ✓
-- Two empty-scope TODOs scheduled together: the second is rejected by the `len(picked) > 0` guard at line 202. ✓
-- `Conversation.Manager.SaveActive` snapshots under RLock and writes outside lock — correct. ✓
-- bbolt write transactions are NOT held during HTTP-handler scope (each handler opens its own short Update tx via `Store.Save`/`Save`/`Update`). ✓ No HTTP-scoped deadlock potential.
-- Cron / scheduled-task firing during compaction: DFMC has **no** scheduler / cron — confirmed by architecture report section 3.6 ("None"). ✓ (Auto-compact is in-line with the agent loop, not on a timer.)
+Sharpest race: **RACE-201** + **RACE-202** are the same bug in two places — mutating tools that take `LockPath` AFTER reading the file (or never), defeating the whole point of `LockPath`. Concurrent fan-out (parallel sub-agents, drive workers `MaxParallel=3`, batched tool calls) reaches these paths in normal use. Fix is mechanical: hoist `LockPath` before the read; replace bare `os.WriteFile` with `writeFileAtomic`. **RACE-210** (= LOGIC-201) is the same priority from a different angle: the global approver slot is not atomically swapped, so concurrent Drive runs corrupt each other's restoration.

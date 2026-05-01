@@ -1,44 +1,44 @@
-# sc-jwt — JWT Implementation Flaws
+# sc-jwt Results
 
-**Target:** D:\Codebox\PROJECTS\DFMC (Go 1.25)
-**Date:** 2026-04-25
-**Result:** No issues found by sc-jwt — no JWT usage detected.
+No issues found by sc-jwt — **DFMC does not use JWTs anywhere**.
 
-## Rationale
+## Verifications
 
-DFMC does not implement, issue, parse, or verify JWTs. All authentication paths use static shared-secret bearer tokens compared in constant time, not JWTs.
+1. **Module audit:** `go.mod` has no JWT library. Grep for the common
+   names — `jwt`, `jose`, `paseto`, `golang-jwt`, `dgrijalva`,
+   `lestrrat-go`, `go-jose` — across `go.mod` and `go.sum` returns no
+   matches.
+2. **Source audit:** Grep across the entire repository for
+   `jwt`, `JWT`, `JWS`, `JWE`, `jwk`, `Bearer eyJ` (the canonical
+   JWT prefix), `alg":"`, `RS256`, `HS256`, `none` (algorithm) — no
+   JWT-shaped artifacts.
+3. **Auth surface:** The only bearer-style auth is the static
+   `DFMC_WEB_TOKEN` opaque string compared via
+   `subtle.ConstantTimeCompare` (`ui/web/server.go:661-679`). It is
+   not a JWT — it has no header, no claims, no signature, and no
+   expiry semantics encoded in the value.
+4. **MCP/CLI:** MCP uses stdio with no auth; the CLI uses the same
+   opaque bearer token as the web surface. Neither uses JWT.
+5. **LLM providers:** Anthropic uses `x-api-key`, OpenAI-compatible
+   providers use `Authorization: Bearer <opaque>`, Google uses an
+   API key in a query param. None of these are JWTs from the
+   provider's perspective; even if a future provider switched to
+   signed tokens, DFMC treats them as opaque secrets and never parses
+   them.
 
-## Evidence
+## Risk
 
-### 1. No JWT libraries in dependency graph
-Searched `go.mod` and `go.sum` for `jwt`, `JWT`, `jose`, `jwx`. Zero matches.
+There is no JWT library to be vulnerable to (`alg:none` confusion,
+RS/HS algorithm confusion, key-confusion, kid-injection, JWK header
+abuse, expired-token replay, signing-key leakage). The category is
+not applicable.
 
-Common Go JWT libraries explicitly NOT present:
-- `github.com/golang-jwt/jwt` — absent
-- `github.com/lestrrat-go/jwx` — absent
-- `github.com/square/go-jose` / `gopkg.in/square/go-jose.v2` — absent
-- `github.com/dgrijalva/jwt-go` — absent
-- `github.com/cristalhq/jwt` — absent
+## When this finding becomes obsolete
 
-### 2. No token-validation paths
-Searched all `*.go` files for `jwt`, `jsonwebtoken`, `jose`, `Bearer`, `Authorization`. Every `Authorization: Bearer` site uses static shared-secret comparison, not JWT decoding/verification:
-
-- `ui/web/server.go:400-413` — `requireAuth` middleware: builds `expected := "Bearer " + rawToken` and compares with `subtle.ConstantTimeCompare`. No parsing, no claims, no signature.
-- `ui/cli/cli_remote_server.go:66-83` — identical static-token pattern for the gRPC/WS sidecar.
-- `ui/cli/cli_remote_client.go`, `ui/cli/cli_remote_drive.go` — client side, just sets `Authorization: Bearer <token>` from local config.
-- `internal/provider/openai_compat.go:110,216`, `internal/provider/alibaba_test.go` — outbound calls to LLM provider APIs (OpenAI/Alibaba/etc.), DFMC is the client passing its own API key. Out of scope for sc-jwt.
-
-### 3. JWT-shaped strings appear only in the secrets scanner
-- `internal/security/scanner.go:243` — regex `eyJ[...].eyJ[...].[...]` flags leaked JWTs in OTHER people's code being scanned. Detection-only; no decode or verify.
-- `internal/security/astscan_credentials.go:296` — `"eyJ"` heuristic for the same leak-detection purpose.
-
-### 4. Architecture confirms no auth backend
-Per `CLAUDE.md` and `security-report/architecture.md`, DFMC is a localhost-by-default code-intelligence binary. Its only HTTP surfaces (`dfmc serve` on :7777, `dfmc remote start` on :7778/7779) accept an optional shared-secret token configured by the operator. No user accounts, no sessions, no token issuance, no third-party identity provider integration — therefore no JWT attack surface (alg=none, RS256→HS256 confusion, weak HMAC, missing exp/aud/iss, kid injection, JWK injection, localStorage theft) applies.
-
-## Findings
-
-None.
-
-## Confidence
-
-100 — verified by absence in dependency manifest, absence of JWT decode/verify call sites, and architectural fit (localhost tool, no auth backend).
+If a future contributor adds `golang-jwt/jwt/v5` (or any JWT
+library) to `go.mod`, this report MUST be re-run. JWT
+implementations are infamously easy to misuse and the controls
+needed (algorithm allowlist, key rotation, replay protection,
+audience validation) are nontrivial. Recommended posture: stay
+opaque-bearer-only unless a concrete protocol need (federation,
+short-lived auth, OIDC) requires JWT.

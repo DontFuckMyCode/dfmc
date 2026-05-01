@@ -1,104 +1,52 @@
-# sc-sqli — SQL Injection Findings
+# sc-sqli — SQL Injection
 
-**Target**: DFMC (`D:\Codebox\PROJECTS\DFMC`)
-**Skill**: sc-sqli
-**CWE**: CWE-89 (Improper Neutralization of Special Elements used in an
-SQL Command).
-
----
-
-## Counts
-
-| Severity | Count |
-|---|---|
-| High     | 0 |
-| Medium   | 0 |
-| Low      | 0 |
-| Info     | 1 |
-| **Total**| **1** |
-
----
-
-## SQLI-001 — No SQL execution surface in DFMC
-
-- **File:line**: n/a (negative finding)
-- **Severity**: Info
-- **Confidence**: H
-- **CWE**: CWE-89
-
-DFMC has **no SQL** anywhere. Confirmed by:
-
-### 1. Architecture report
-
-Per `security-report/architecture.md` §1:
-
-> **Storage**: `go.etcd.io/bbolt v1.4.3` (single-process embedded KV)
-> ...
-> No SQL, no Redis, no external DB clients.
-
-### 2. Repo-wide grep evidence
-
-A search for the standard Go SQL packages and popular ORMs / drivers
-returned **zero matches** outside string literals in security-rule
-descriptions:
-
-| Pattern | Result |
-|---|---|
-| `database/sql` | not imported anywhere |
-| `gorm.io/gorm`, `jinzhu/gorm` | not imported |
-| `github.com/jmoiron/sqlx` | not imported |
-| `github.com/lib/pq` | not imported |
-| `github.com/jackc/pgx` | not imported |
-| `github.com/mattn/go-sqlite3` / `modernc.org/sqlite` | not imported |
-| `github.com/go-sql-driver/mysql` | not imported |
-
-The single match for the substring `go-sql-injection` is at
-`internal/langintel/go_kb.go:206` — this is a string ID for a
-*scanner rule* the langintel knowledge base advertises to the LLM
-("Never interpolate user input into SQL strings — use parameterized
-queries"). It is metadata DFMC's scanner surfaces about *target*
-codebases, not SQL DFMC executes itself.
-
-### 3. Persistence model
-
-The only persistence mechanisms in DFMC are:
-
-- **bbolt** (`internal/storage/store.go`) — embedded key/value store,
-  no query language.
-- **JSONL files** for conversations (`internal/conversation/manager.go`).
-- **Plain files** for `.dfmc/knowledge.json`, `conventions.json`,
-  `magic/MAGIC_DOC.md`, prompt overlays, hooks config.
-- **Outbound HTTP** to LLM providers (which return JSON, not SQL).
-
-There is no SQL execution surface. Provider responses occasionally
-contain SQL strings as *content* (e.g., when the user is debugging an
-SQL query and the LLM returns one), but these strings flow into either
-chat output (rendered as `<pre>` text) or `read_file` / `edit_file`
-parameters (treated as opaque file content) — never into a query
-executor.
-
-### Edge case checks
-
-- **Search-style endpoints**: `GET /api/v1/conversations/search` and
-  similar — implemented as in-memory filters over JSON-decoded
-  conversation records, not SQL.
-- **`grep_codebase` tool**: pattern arg is a regex shelled to
-  ripgrep when available, otherwise a Go `regexp.Regexp`. Neither is
-  SQL.
-- **Codemap queries**: `internal/codemap/` operates on AST graph
-  structures in memory; no query language.
-- **Task store filters**: `internal/taskstore/store.go` `ListTasks`
-  walks the bucket with `b.ForEach` and applies Go-side filter
-  predicates — no SQL.
-
----
+**Date:** 2026-04-29
+**Scope:** D:\Codebox\PROJECTS\DFMC
+**Status:** NOT APPLICABLE — no SQL anywhere in the codebase
 
 ## Verdict
 
-**No SQL injection is possible** because there is no SQL. If a future
-release introduces a SQL backend (the architecture suggests this is
-unlikely — bbolt is deliberately embedded for the single-process
-locking guarantee), this finding should be revisited.
+No findings. DFMC has no SQL surface to inject against. The only persistence layer is bbolt (key-value), which has no query language.
 
-For NoSQL-style key handling concerns specific to bbolt (bucket
-namespacing, key DoS, control-byte keys), see `sc-nosqli-results.md`.
+## Verification
+
+### 1. `go.mod` — no SQL drivers
+
+[D:\Codebox\PROJECTS\DFMC\go.mod](../go.mod) was read in full (43 lines). Direct dependencies:
+
+- `github.com/charmbracelet/*` (TUI)
+- `github.com/gorilla/websocket`
+- `github.com/tetratelabs/wazero` (WASM sandbox)
+- `github.com/tree-sitter/*` (AST grammars)
+- `go.etcd.io/bbolt` (KV store, **not SQL**)
+- `golang.org/x/{net,sys,time}`
+- `gopkg.in/yaml.v3`
+
+None of `github.com/jackc/pgx`, `github.com/lib/pq`, `github.com/go-sql-driver/mysql`, `github.com/mattn/go-sqlite3`, `modernc.org/sqlite`, `github.com/denisenkom/go-mssqldb`, `github.com/jmoiron/sqlx`, `github.com/uptrace/bun`, `gorm.io/gorm`, `entgo.io/ent`, or any other SQL driver / ORM is declared.
+
+### 2. Source-code grep for SQL imports
+
+```
+Pattern: database/sql|github.com/jackc/pgx|github.com/lib/pq|go-sql-driver/mysql|mattn/go-sqlite3|modernc.org/sqlite
+Result:  0 matches in *.go files
+```
+
+No file in the repository imports `database/sql` or any third-party SQL driver.
+
+### 3. Source-code grep for query-shaped strings
+
+`SELECT `, `INSERT INTO `, `UPDATE `, `DELETE FROM ` only appear inside:
+
+- `internal/security/*.go` rule definitions (DFMC's own scanner) — these are **detection patterns shipped to audit other projects**, not queries DFMC itself executes.
+- `internal/langintel/go_kb.go` knowledge-base prose for the `go-sql-injection` lint hint shown to the LLM.
+- `ui/cli/cli_skills_data.go` skill description text.
+
+None of these are concatenations into a runtime query.
+
+### 4. Storage layer
+
+`internal/storage/store.go` opens a single bbolt file per project (`go.etcd.io/bbolt`). All access goes through `tx.Bucket([]byte(<fixed name>)).Put / Get / Delete` with byte slices. There is no query language, no string concatenation into a query, and no SQL driver in the dependency closure (verified against indirect imports as well).
+
+## Bottom line
+
+sc-sqli is not applicable to DFMC. There is no SQL parser, driver, ORM, or query string anywhere in the production path. If a future change introduces `database/sql` or any third-party SQL client, re-run this scan; until then the verdict is permanent.

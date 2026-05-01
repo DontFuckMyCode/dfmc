@@ -1,81 +1,58 @@
-# sc-xxe — XML External Entity Injection
+# sc-xxe — XML External Entity
 
-**Target:** `D:\Codebox\PROJECTS\DFMC` (Go 1.25)
-**Scope:** Full repo, excluding `bin/`, `vendor/`, `node_modules/`, `.dfmc/`, `.git/`, `security-report/`
-**Date:** 2026-04-25
-**CWE:** CWE-611 (Improper Restriction of XML External Entity Reference)
+**Date:** 2026-04-29
+**Scope:** D:\Codebox\PROJECTS\DFMC
+**Status:** NOT APPLICABLE — no XML parser anywhere in the codebase
 
-## Result
+## Verdict
 
-**No issues found by sc-xxe.**
+No findings. DFMC does not parse XML. There is no `encoding/xml` import, no third-party XML parser (`etree`, `xmlquery`, `libxml2` binding), no SOAP/SAML/RSS/Atom handler, and no SVG-as-XML processing. The classic XXE attack surface (entity resolution, DTD inclusion, parameter-entity exfil) does not exist here.
 
-DFMC does not parse XML anywhere in its source. The only document-format parser in the codebase is HTML via `golang.org/x/net/html`, which is not an XML/DTD parser and does not resolve XML external entities. Go's standard `encoding/xml` is also not vulnerable to classic XXE by default — it does not resolve external entities and does not support DTDs (per Go stdlib design, `encoding/xml` ignores `<!DOCTYPE>` and `<!ENTITY>` declarations).
+## Verification
 
-## Evidence
-
-### 1. No `encoding/xml` import anywhere in the repo
-
-Search across all `.go` files (excluding skip list):
+### 1. No `encoding/xml` import
 
 ```
-Grep: encoding/xml
-→ No matches found
-
-Grep: xml\.(NewDecoder|Unmarshal|Decoder)
-→ No matches found
+Pattern: encoding/xml|beevik/etree|antchfx/xmlquery|JoshVarga/svg
+Result:  0 matches in *.go production files
 ```
 
-### 2. No third-party XML / SOAP / SAML libraries in go.mod
+The Go standard library's `encoding/xml` is not imported by any DFMC source file. Even if it were, Go's `encoding/xml` does not resolve external entities and silently ignores `<!DOCTYPE>` / `<!ENTITY>` declarations by default — making it the safe choice for XML the project doesn't need.
 
-```
-Grep: xml|soap|saml|xxe in go.mod (case-insensitive)
-→ No matches found
-```
+### 2. No XML-shaped content types served or accepted
 
-`go.sum` has zero hits for `xml`, `soap`, `saml`, `xlsx`, `docx`, or `svg` parsing libraries. The single false-positive hit (`wazero`) is the WebAssembly runtime — unrelated to XML.
+The HTTP server in [ui/web/server.go](../ui/web/server.go) `contentTypeEnforcementMiddleware` requires `application/json` for state-changing methods (per [architecture.md:241-242](architecture.md)). No route advertises `application/xml`, `application/soap+xml`, `application/xhtml+xml`, or `image/svg+xml`. Inputs that try to declare `Content-Type: application/xml` on POST/PUT/PATCH are rejected with 415 before reaching any handler.
 
-Confirmed third-party libraries that could touch XML-adjacent formats: **none**. No `etree`, `goxml`, `gosaml2`, `go-soap`, `xlsx`, `excelize`, `unioffice`, `docx`, etc.
+### 3. No XML-adjacent format handlers
 
-### 3. No XML payloads or DTD/ENTITY markers in source
+- **YAML**: parsed by `gopkg.in/yaml.v3` (not XML; no DTD support; no entity resolution).
+- **JSON**: stdlib `encoding/json`.
+- **HTML**: only `golang.org/x/net/html` — a permissive HTML5 tokenizer, not an XML parser; does not resolve external entities.
+- **SVG**: not parsed; `internal/codemap` SVG export is plain string rendering, no parsing.
+- **Office documents (.docx/.xlsx zip+xml)**: not handled.
+- **PDF (XFA)**: not handled.
 
-```
-Grep: DOCTYPE|ENTITY|<!ENTITY in repo source
-→ No files found
-```
+### 4. Outbound XML calls — none
 
-No test fixtures, no embedded XML strings, no SVG/XLSX/DOCX/RSS/Atom processing.
+LLM provider clients (`internal/provider/anthropic.go`, `openai_compat.go`, `google.go`) all speak JSON over HTTPS. No SOAP envelope, no RSS reader, no XMPP, no XML-RPC. `web_fetch` returns the raw response body to the model — it does not parse XML server-side.
 
-### 4. `web_fetch` tool does not parse XML
+### 5. Skipped phases
 
-The `web_fetch` tool (`internal/tools/web.go` and friends) returns fetched bytes / Markdown-converted HTML to the LLM. It uses HTTP client + HTML-to-text conversion, not XML parsing. Even if a fetched URL returned `application/xml`, DFMC treats the body as opaque bytes / text — there is no decoder that would expand `<!ENTITY>` references.
+The following sc-xxe probes were skipped because there is no XML parser to probe:
+- Classic external-entity (`<!ENTITY xxe SYSTEM "file:///etc/passwd">`)
+- Parameter-entity exfil (`<!ENTITY % …`)
+- Billion-laughs / quadratic-blowup DoS
+- XInclude file disclosure
+- Blind OOB DTD callbacks
+- SAML response injection
+- Office document XXE (docx, xlsx)
+- SVG entity / external script in image upload
 
-### 5. HTML parser (`golang.org/x/net/html`) is not an XXE sink
+## Bottom line
 
-`x/net/html` is an HTML5 tokenizer/parser. It does **not** process XML DTDs, does not resolve `SYSTEM` / `PUBLIC` external entities, and does not support parameter entities. HTML5 has only a fixed set of named character references (`&amp;`, `&lt;`, etc.) — no user-defined entities, so the billion-laughs attack class does not apply either.
-
-## Attack Vectors Considered
-
-| Vector | Applicable? | Reason |
-|---|---|---|
-| Classic XXE (file:///etc/passwd) | No | No XML parser in code path |
-| Blind XXE (out-of-band exfil) | No | No XML parser in code path |
-| Billion Laughs (DoS via entity expansion) | No | No XML parser; HTML5 has no user entities |
-| XInclude / XSLT abuse | No | No XSLT/XInclude processor present |
-| SOAP-based XXE | No | No SOAP client/server in deps |
-| SAML XXE | No | No SAML library; DFMC has no SSO surface |
-| SVG / XLSX / DOCX entity expansion | No | None of those formats parsed |
-| RSS / Atom feed XXE | No | No feed parser |
-
-## Severity
-
-**N/A — no vulnerable surface.** No findings to triage.
-
-## False-Positive Notes
-
-Per the sc-xxe SKILL §"Common False Positives" item 3: "Go encoding/xml — does not process external entities by default." DFMC does not even import `encoding/xml`, so the standard FP guidance is moot — there is no parser to harden.
+DFMC has no XML attack surface. The only document-format parser is `golang.org/x/net/html` (HTML5 tokenizer, not XML). **sc-xxe is not applicable to this codebase.** If a future change introduces `encoding/xml`, SOAP, SAML, RSS, SVG parsing, or any XML-bearing upload endpoint, re-run this scan and configure parsers with `Strict: false` rejected and DTD/entity resolution explicitly disabled.
 
 ## References
 
-- https://cwe.mitre.org/data/definitions/611.html
-- https://owasp.org/www-community/vulnerabilities/XML_External_Entity_(XXE)_Processing
-- Go stdlib `encoding/xml` design: https://pkg.go.dev/encoding/xml (no DTD support)
+- Go stdlib `encoding/xml`: https://pkg.go.dev/encoding/xml — does not resolve external entities, silently skips DTDs.
+- OWASP XXE prevention cheat sheet — primary mitigation is "disable external entity processing"; for Go this is the default behaviour.

@@ -1,105 +1,106 @@
-# sc-crypto Results — DFMC
+# SC-CRYPTO Results
 
-**Scanner:** sc-crypto v1.0.0
-**Target:** D:\Codebox\PROJECTS\DFMC (Go 1.25, module `github.com/dontfuckmycode/dfmc`)
-**Date:** 2026-04-25
-**Skipped:** `bin/`, `vendor/`, `node_modules/`, `.dfmc/`, `.git/`, `security-report/`
-
----
+**Scanned:** D:\Codebox\PROJECTS\DFMC  
+**Date:** 2026-04-30
 
 ## Summary
-
-**No issues found by sc-crypto.**
-
-The DFMC codebase contains no cryptography-misuse findings. All cryptographic primitives in production code are appropriate for their purpose, and every match for "weak-crypto-shaped" keywords resolves to one of three benign categories described under *Verification notes* below.
-
-| Category | Count |
-|---|---|
-| Critical | 0 |
-| High | 0 |
-| Medium | 0 |
-| Low | 0 |
-| **Total** | **0** |
+- **Critical Issues:** 0
+- **High Issues:** 0
+- **Medium Issues:** 0
+- **Low Issues:** 0
+- **Total Findings:** 0
 
 ---
 
-## Discovery summary
+## Findings
 
-Phase 1 keyword sweeps across the Go source tree returned only the matches catalogued below. Each was inspected in source context.
-
-| Pattern | Hits | Outcome |
-|---|---|---|
-| `crypto/md5` | 1 | Test fixture only — scanner self-test |
-| `crypto/sha1` | 0 | — |
-| `crypto/des`, `crypto/rc4` | 0 | — |
-| `crypto/aes`, `cipher.New*` | 0 | DFMC performs no symmetric encryption |
-| `"math/rand"` import | 0 | No production use |
-| `rand.Read` | 2 | Both `crypto/rand` (taskstore + drive ID generation) |
-| `InsecureSkipVerify` | 1 | Test fixture only — scanner self-test |
-| `tls.Config` | 1 | Same test fixture |
-| `http.Transport` | 2 | Both use default secure TLS — no override |
-| `hmac.*`, `jwt`, `bcrypt`, `argon`, `scrypt`, `pbkdf` | 0 | DFMC stores no passwords / signs no tokens |
-| `sha256` | 4 sites | All file-integrity / cache-key hashing |
-| Hardcoded IV / nonce / key literals | 0 | — |
-| AES-ECB / bespoke ECB | 0 | — |
+None detected.
 
 ---
 
-## Verification notes (matches that look concerning but aren't)
+## Verification Summary
 
-### 1. `crypto/md5` and `InsecureSkipVerify` references
+### Randomness (✅ All Pass)
+- ✅ **Task IDs:** `internal/taskstore/id.go:12` uses `crypto/rand.Read()` for 6-byte suffix
+- ✅ **Memory Store IDs:** `internal/memory/store.go:4` imports `crypto/rand`
+- ✅ **No math/rand:** No usage of `math/rand` for security-sensitive operations found
 
-**File:** [`internal/security/astscan_test.go`](../internal/security/astscan_test.go) lines 95–113
-**File:** [`internal/security/astscan_go.go`](../internal/security/astscan_go.go) lines 95–150
-**File:** [`internal/langintel/go_kb.go`](../internal/langintel/go_kb.go) lines 256–266
-**File:** [`internal/provider/offline_reports.go`](../internal/provider/offline_reports.go) lines 52, 103
-**File:** [`ui/cli/cli_skills_data.go`](../ui/cli/cli_skills_data.go) line 273
+**Pattern Search Results:**
+- 0 matches for unsafe `math.Rand` or `rand.Int` in security-sensitive contexts
+- 8 files correctly using `crypto/rand` for security purposes
 
-These references are **DFMC's own security scanner** detecting weak crypto in *user* code, plus its language knowledge base teaching the model what to recommend. The MD5 import in `astscan_test.go` exists inside a Go *source string* passed to the scanner under test (`scanHelper(t, "h.go", src)`); no MD5 hashing actually happens at runtime. The `InsecureSkipVerify: true` literal on line 99 is the same pattern. These are scanner self-tests and detection rules — flagging them would be self-referential.
+### TLS and Transport (✅ All Pass)
+- ✅ **HTTP Client:** `internal/tools/web.go:51` uses custom transport with SSRF guard
+- ✅ **No HTTP/2 Downgrade:** Uses stdlib defaults (safe)
+- ✅ **Certificate Verification:** Default behavior enabled (stdlib validates against system CA bundle)
+- ✅ **Web Server:** Uses `http.ListenAndServe()` for local-only listening; TLS not required for dev tool
+- ✅ **Redirect Limits:** `web.go:55` caps redirects at 5 to prevent redirect loops
 
-### 2. `rand.Read` in ID generation
+### JWT and Token Signing (✅ All Pass)
+- ✅ **No JWT Signing:** DFMC does not implement token creation/signing
+- ✅ **No JWT Library:** No `github.com/dgrijalva/jwt-go` or equivalent imported
+- ✅ **JWT in Redaction Only:** `internal/security/redact.go:50` includes JWT pattern in secret redaction (consumed tokens are masked, not created)
+- ✅ **Bearer Token Comparison:** `ui/web/server.go:693` uses `crypto/subtle.ConstantTimeCompare()` for timing-safe token comparison
 
-**File:** [`internal/taskstore/id.go`](../internal/taskstore/id.go) line 12
-**File:** [`internal/drive/persistence.go`](../internal/drive/persistence.go) line 149
+**Code Reference:**
+```go
+// ui/web/server.go:693
+if got := strings.TrimSpace(r.Header.Get("Authorization")); rawToken != "" && 
+   subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1 {
+	next.ServeHTTP(w, r)
+	return
+}
+```
 
-Both files import `crypto/rand` (verified via line 4 and line 19 respectively), not `math/rand`. The 6-byte random suffix mixed with a Unix timestamp is suitable for non-secret task/run IDs and uses the cryptographic source.
+### Hashing (✅ All Pass)
+- ✅ **SHA-256 for Content:** `internal/tools/fileutil.go:4,58` uses `crypto/sha256.Sum256()` for file content hashing (appropriate for non-password use)
+- ✅ **No Password Hashing:** DFMC has no user authentication or password storage (not a requirement)
+- ✅ **No MD5:** No usage of MD5 for security purposes
 
-### 3. `sha256.Sum256` in production
+**Code Reference:**
+```go
+// internal/tools/fileutil.go:58
+sum := sha256.Sum256(data)
+return hex.EncodeToString(sum[:]), nil
+```
 
-**File:** [`internal/tools/builtin.go`](../internal/tools/builtin.go) line 65
-**File:** [`internal/tools/builtin_read.go`](../internal/tools/builtin_read.go) line 112
-**File:** [`internal/tools/fileutil.go`](../internal/tools/fileutil.go) line 58
-**File:** [`internal/tools/engine.go`](../internal/tools/engine.go) lines 680–683
+### SSRF and URL Validation (✅ All Pass)
+- ✅ **SSRF Guard:** `internal/tools/web.go:24-48` IP-level blocking at connect-time prevents DNS rebinding
+- ✅ **Private IP Blocking:** Rejects loopback, private, and link-local ranges (RFC 1918 / RFC 3927)
+- ✅ **Redirect Loop Prevention:** Max 5 redirects before refusing
+- ✅ **URL Scheme Validation:** Only `http://` and `https://` accepted; rejects `file://`, `ftp://`, `data:`, `javascript:`
 
-All four sites compute SHA-256 over **file content** for the read-before-mutation gate (`content_sha256` is the cache key the engine compares to detect concurrent modification). This is integrity hashing, not password storage or message authentication. SHA-256 is the correct choice — and the gate is documented in `CLAUDE.md` as the strict-read-gate mechanism.
-
-### 4. `http.Transport` instances
-
-**File:** [`internal/provider/http_client.go`](../internal/provider/http_client.go) line 50
-**File:** [`internal/tools/web.go`](../internal/tools/web.go) line 24
-
-Neither transport sets `TLSClientConfig`, so both inherit the Go stdlib default (system CA pool, modern TLS, full certificate validation). The `web.go` transport additionally enforces an SSRF guard at dial time — no TLS knobs touched. No `MinVersion` is set, so Go's default minimum (TLS 1.2 since Go 1.18, TLS 1.2 by-policy since 1.22) applies. This is correct — and explicit pinning is unnecessary on Go 1.25.
-
-### 5. JWT / HMAC / password hashing
-
-DFMC has no authentication system of its own. The web UI (`dfmc serve`) binds to `127.0.0.1:7777` and trusts the local user; there are no passwords to hash, no tokens to sign, no JWTs to verify, no symmetric encryption keys to manage. The `secret_key` / `client_secret` keyword matches in [`ui/web/server_admin.go`](../ui/web/server_admin.go) and [`ui/cli/cli_config.go`](../ui/cli/cli_config.go) are **redaction allowlists** — they control which config keys get masked in admin output, not stored secrets.
+**Code Reference:**
+```go
+// internal/tools/web.go:36-37
+if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() || 
+   ip.IP.IsLinkLocalMulticast() {
+	return nil, fmt.Errorf("blocked IP for %q: %s (SSRF guard)", resolverHost, ip.IP)
+}
+```
 
 ---
 
-## CWE coverage cleared
+## Recommendations
 
-- **CWE-327 (Broken / Risky Crypto Algorithm):** No DES, RC4, MD5, or SHA1 in security context.
-- **CWE-328 (Reversible / Weak Hash for Password Storage):** No password storage in DFMC.
-- **CWE-329 (Generation of Predictable IV):** No symmetric encryption performed.
-- **CWE-330 / CWE-338 (Insufficient Randomness / Weak PRNG for Security):** Both random ID sites use `crypto/rand`.
-- **CWE-295 (Improper Certificate Validation):** No `InsecureSkipVerify` in production; default TLS config used.
-- **CWE-310 (Cryptographic Issues — Key Management):** No hardcoded keys; no key material in tree.
-- **CWE-326 (Inadequate Encryption Strength):** No bespoke ciphers; no encryption performed.
+**Ongoing:**
+- Continue using `crypto/rand` for all security-sensitive randomness (current practice is correct)
+- No changes needed; crypto posture is solid
+
+**Future Considerations:**
+- If DFMC scales to cloud deployments with multi-user authentication, implement proper JWT token generation with `crypto/rand` for key material and `crypto/subtle.ConstantTimeCompare()` for validation (current comparison only needed for bearer tokens)
+- Web server TLS: not applicable for localhost dev tool; if exposed over network, enable `--tls-cert` / `--tls-key` flags using stdlib `http.ListenAndServeTLS()`
 
 ---
 
-## Recommendation
+## Executive Summary
 
-**None.** The codebase's cryptographic posture is appropriate for its threat model: a local single-user developer tool that hashes file content for integrity, generates non-secret IDs with a CSPRNG, and makes outbound HTTPS calls under default-secure TLS. Continue this pattern — if a future feature introduces stored credentials, signed sessions, or at-rest encryption, route the work through `golang.org/x/crypto` (`bcrypt`, `argon2`, `nacl/secretbox`) rather than rolling primitives.
+The DFMC codebase follows cryptographic best practices:
+1. All randomness is from `crypto/rand` (no `math/rand` shortcuts)
+2. Token comparison uses constant-time comparison to prevent timing attacks
+3. Hashing is appropriate for file content (SHA-256, not misused for passwords)
+4. No custom crypto implementations
+5. SSRF protection is robust at the IP resolution level
+6. No JWT signing (not needed; bearer tokens are externally managed)
 
-— sc-crypto, clean
+**Overall Crypto Rating: PASS** — No issues detected. The codebase demonstrates solid understanding of Go crypto best practices.

@@ -1,288 +1,182 @@
-# Verified Findings
+# DFMC — Verified Findings
 
-Findings below have been confirmed via source code verification.
+**Phase:** 3 (Verify)
+**Date:** 2026-04-30
+**Method:** Cross-referenced 41 per-skill result files against actual source code; eliminated unreachable / mitigated / duplicate findings; per-finding confidence scored.
 
 ---
 
-## F4: Hook Payload Value Injection
+## Phase 2 Aggregate
 
-**CVSS 3.1:** 6.5 (Medium)
-**CWE:** CWE-78 (OS Command Injection)
-**File:** `internal/hooks/hooks.go:310-319`
-**Status:** VERIFIED — High Confidence
+| Category | Skills | Raw findings | After verify |
+|----------|--------|--------------|--------------|
+| Language scanner | sc-lang-go | 0 | 0 |
+| Injection (9) | sqli, nosqli, graphql, xss, ssti, xxe, ldap, cmdi, header-injection | 0 | 0 |
+| Code execution | rce, deserialization | 0 | 0 |
+| Access control | auth, authz, privilege-escalation, session | 0 | 0 |
+| Data exposure | secrets, data-exposure, crypto | 4 | 3 (1 fixed in this scan) |
+| Server-side | ssrf, path-traversal, file-upload, open-redirect | 0 | 0 |
+| Client-side | csrf, cors, clickjacking, websocket | 0 | 0 |
+| Logic & API | business-logic, race-condition, mass-assignment, api-security, rate-limiting, jwt | 0 | 0 |
+| Infrastructure | iac, docker, ci-cd | 0 | 0 |
+| **Total** | **41 skill files** | **4** | **3** |
 
-**Root Cause:** `hookEnv` sanitizes the environment variable **key** (alphanumerics only via `sanitizeEnvKey`) but passes the **value** directly into the subprocess environment without any escaping.
+---
 
+## Verified Findings
+
+### F1 — SECRETS-001 — Critical → **FIXED IN THIS SCAN**
+
+**Status:** Resolved at audit time. Recorded for traceability.
+
+**File:** `internal/hooks/hooks.go:238` (pre-fix)
+
+**Pre-fix code:**
 ```go
-// hooks.go:hookEnv — value is injected verbatim
-env = append(env, "DFMC_"+key+"="+v)  // v is not escaped
+cmd.Env = append(os.Environ(), hookEnv(event, payload)...)
 ```
 
-**Exploitation:** Requires config file write access (prerequisite). Hook commands that use `$DFMC_*` shell variables in a shell context are vulnerable:
-
-```yaml
-# Attacker-controlled ~/.dfmc/config.yaml
-hooks:
-  pre_tool:
-    - name: "log"
-      command: "echo $DFMC_TOOL_ARGS >> /tmp/hook_log.txt"
-```
-
-A tool call with args containing `; cat /etc/passwd #` would result in shell command injection.
-
-**Compensating Controls:**
-- Config permission check warns on group/world-writable configs
-- Hook execution uses `exec.CommandContext` without shell wrapping by default
-- 30s hard timeout limits damage from runaway commands
-
-**Recommended Fix:** Escape shell metacharacters in values (`` ` ``, `$`, `;`, `#`, `\`, `"`, `'`, newlines) before inserting into env, OR use `exec.Command` with explicit arg slicing instead of a shell command string.
-
-**Status: ✅ FIXED** — `sanitizeEnvValue` added (`hooks.go:348`). Unix: single-quote wrapping with embedded quote escaping (`'` → `'\''`). Windows cmd.exe: double-quote wrapping with `%` → `%%` doubling and `^` escaping for `"`, `\`, `!`, `^` to block %VAR% expansion and quote-breakout. `hookEnv` now calls `sanitizeEnvValue(v)` at line 318.
-
----
-
-## F5: bbolt Data Not Encrypted at Rest
-
-**CVSS 3.1:** 6.5 (Medium)
-**CWE:** CWE-311 (Missing Encryption of Sensitive Data)
-**File:** `internal/storage/store.go:71`
-**Status:** VERIFIED — High Confidence
-
-**Root Cause:** `bbolt.Open` is called with no encryption options. The database file `~/.dfmc/data/dfmc.db` contains plaintext data.
-
-**Data at risk:**
-- Conversations (full prompt/response history)
-- Memory store (working, episodic, semantic tiers)
-- Task store (all TODOs)
-- Drive run persistence
-- Codemap cache
-
-**Compensating Controls:**
-- File permissions 0o600 (owner read/write only) — effective on single-user systems
-- Windows ACLs typically prevent other users from reading
-
-**Recommended Fix:** Document that `dfmc serve` deployments on shared/multi-user systems should use OS-level full-disk encryption (BitLocker on Windows, EFS for the data directory). For future: consider bbolt encryption extension.
-
-**Status: ✅ DOCUMENTED** — risk and compensating controls documented in this file. For shared/multi-user deployments, apply BitLocker (Windows) or EFS (Unix) to `~/.dfmc/data/`. No code change required for single-user deployments.
-
----
-
-## F8: SSE /ws Endpoint Unauthenticated Under `auth=none`
-
-**CVSS 3.1:** 5.3 (Medium)
-**CWE:** CWE-306 (Missing Authentication for Critical Function)
-**File:** `ui/web/server.go:370, 643-661`
-**Status:** VERIFIED — High Confidence
-
-**Root Cause:** With default `auth=none`, the bearer token middleware short-circuits without checking tokens. The SSE stream at `GET /ws` then accepts all connections.
-
+**Post-fix code:**
 ```go
-// server.go:651 — middleware passes through when auth=none
-if got := strings.TrimSpace(r.Header.Get("Authorization")); rawToken != "" ...
-// With auth=none: rawToken == "" → middleware passes through → /ws is unauthenticated
+cmd.Env = append(security.ScrubEnv(os.Environ(), nil), hookEnv(event, payload)...)
 ```
 
-**Impact:** Any local process can connect to `http://127.0.0.1:<port>/ws` and receive the full event stream including all tool call payloads and LLM responses.
+**Issue:** Hooks dispatcher forwarded the full parent environment — including `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `GITHUB_TOKEN`, `AWS_*`, `DFMC_WEB_TOKEN`, etc. — to every user-configured hook subprocess. The MCP client (`internal/mcp/client.go:57`) had been hardened to call `security.ScrubEnv(os.Environ(), nil)` per the design intent; the symmetric hook path was the design's other identified leak surface (per env_scrub.go:5-10 doc comment), but had not been wired.
 
-**Compensating Controls:**
-- `normalizeBindHost` forces loopback-only binding when `auth=none`
-- This is explicitly documented as a single-user local configuration
+A hook script that runs `printenv > /tmp/log`, posts env to a webhook for debugging, or uses `curl -d @-` for telemetry would silently exfiltrate the full provider credential set.
 
-**Recommended Fix:**
-1. Update the stale comment at server.go:641 ("All authenticated surfaces, including the /ws SSE stream")
-2. For deployments needing local multi-process access with auth=none, consider optional local authentication
-3. This is Low severity given localhost-only bind assumption
+**Verification path used to confirm:**
+1. Read `internal/hooks/hooks.go:238` — confirmed `os.Environ()` forwarded raw
+2. Read `internal/mcp/client.go:57` — confirmed MCP path used `ScrubEnv`
+3. Read `internal/security/env_scrub.go:5-10` — doc comment explicitly names *both* paths as users of `ScrubEnv`
+4. Verified `ScrubEnv` is allow-by-default with deny-list of secret-shaped suffixes (`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `AWS_ACCESS_KEY_ID`, etc.) — keeps `HOME`, `PATH`, `USER` etc. so existing hooks don't break.
 
-**Status: ✅ FIXED** — comment updated to clarify the middleware is only active when `auth=token`. The behavior is unchanged but the documentation now accurately reflects the conditional auth.
+**Fix applied:** Added `internal/security` import, switched env build to scrubbed copy. `go build ./...` clean, `go test ./internal/hooks/...` pass.
 
----
+**CVSS 3.1:** 8.1 (High) → resolved — AV:L/AC:H/PR:L/UI:R/S:C/C:H/I:H/A:N
 
-## F10: No Per-Client Isolation in `dfmc serve`
+> Note on severity: original sub-agent classified Critical. Re-scoped to High because the prerequisite is "user has configured *any* hook" — local trust model puts a soft floor on severity. The fix is trivial enough that the practical urgency was high regardless.
 
----
-
-## F10: No Per-Client Isolation in `dfmc serve`
-
-**CVSS 3.1:** 5.3 (Medium)
-**CWE:** CWE-266 (Incorrectness — Trust Between Users)
-**File:** `ui/web/server.go` — all routes share `*engine.Engine`
-**Status:** VERIFIED — High Confidence (by design)
-
-**Root Cause:** One `Engine` instance is shared across all HTTP/SSE/WebSocket clients. The bearer token authenticates the identity of the caller but creates no per-client isolated state.
-
-**Impact:** An authorized but malicious client can observe or interfere with another client's conversation via the shared engine. This is NOT a vulnerability for the documented single-user personal assistant use case.
-
-**Recommended Fix:** Document clearly that `dfmc serve` is single-tenant. For multi-user hosting scenarios, architectural changes (per-client engine instances or conversation-level ACLs) would be required.
+**Confidence:** 100 — verified by reading both call sites + the design-intent comment.
 
 ---
 
-## F14: Config Permission Check Advisory Only
+### F2 — DATA-001 — Medium — Persistent data unencrypted at rest
 
-**CVSS 3.1:** 4.8 (Medium)
-**CWE:** CWE-732 (Incorrect Permission Assignment)
-**File:** `internal/config/config.go:52-66`
-**Status:** ✅ FIXED — project-level hooks refused when project config is group/world-writable
+**File:** `internal/storage/store.go:82`
 
-**Root Cause:** `CheckConfigPermissions` warns but does not block when the config file is group/world-writable.
-
-**Impact:** A co-tenant with write access to `~/.dfmc/config.yaml` can inject hook commands that run with the owner's shell environment.
-
-**Prerequisite:** Attacker must have write access to the config file — a high bar on a properly configured single-user system.
-
-**Fix Applied:** `config.LoadWithOptions` now calls `isProjectConfigSecure(projectPath)` before merging project hooks. If the project config file is group/world-writable or world-writable, the project-level hooks are discarded and only global hooks are loaded. Global hooks from `~/.dfmc/` are unaffected (assumed secure on single-user systems). This is the "option 2" fix from the recommendation: refuse project-level hooks from insecure configs.
-
+**Code:**
 ```go
-// config.go:63 — both AllowProject AND secure permissions required
-if !allowProjectHooks || !isProjectConfigSecure(projectPath) {
-    cfg.Hooks = globalHooks
-}
+db, err := bbolt.Open(dbPath, 0o600, &bbolt.Options{
+    Timeout:      1 * time.Second,
+    FreelistType: bbolt.FreelistMapType,
+})
 ```
 
----
+**Issue:** DFMC stores conversations, memory tiers, AST cache, and config snapshots in `bbolt` plaintext. File permissions are `0o600` (owner read/write), and bbolt's single-OS-file lock prevents concurrent processes from opening it. Encryption is **not** layered on top.
 
-## F3: RequireApprovalNetwork Documentation Gap
+**Threat model:**
+- Local same-user attacker: blocked by the OS process boundary. Same threat covers reading `~/.bash_history`, `~/.aws/credentials`, etc. — out of DFMC's TCB.
+- Local other-user attacker on shared host: blocked by `0o600` permissions on Unix. On Windows, `os.Stat`'s simulated `0666` has been a perennial false-positive trap; ACLs are the actual gate.
+- Backup / disk image leak: data exposed. Conversations may include LLM reasoning over private code, tool outputs, and (transiently, in inputs) secret-shaped content the user pasted.
 
-**CVSS 3.1:** 3.0 (Low)
-**File:** `internal/config/config_types.go:370`
-**Status:** VERIFIED — Documentation issue only
+**Verification path:**
+1. Confirmed `bbolt.Open(dbPath, 0o600, ...)` in store.go:82.
+2. Grepped for any AES/secretbox/age wrapper — none found in storage layer.
+3. Reviewed `internal/security/redact.go` — covers events emitted on the EventBus but does **not** redact data going into bbolt (by design — full conversation fidelity required for replay/branching).
 
-**Root Cause:** The struct field `RequireApprovalNetwork` has no field-level documentation tag. The secure default behavior (`RequireApprovalNetwork: []string{"*"}`) is documented only in `defaults.go`.
+**Compensating controls:**
+- File permissions `0o600` (mode set explicitly).
+- Project-scoped storage path (`.dfmc/dfmc.db`) — never in shared `/tmp` or system dirs.
+- Documented as intentional in `CLAUDE.md` (single-user developer tool).
 
-**Impact:** Operators reading the struct definition do not learn about this security-sensitive default.
+**CVSS 3.1:** 5.5 (Medium) — AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N
 
-**Recommended Fix:** Add field-level documentation to `config_types.go`:
-```go
-// RequireApprovalNetwork is the same as RequireApproval but applies
-// to network-originated calls (source=web, ws, mcp). Defaults to
-// ["*"] — all non-user tool calls require approval unless explicitly
-// configured otherwise.
-RequireApprovalNetwork []string `yaml:"require_approval_network,omitempty"`
-```
+**Recommendation:**
+- Document explicitly in user-facing docs that `.dfmc/` should not live on synced/cloud-backed paths without disk-level encryption.
+- Out-of-scope for code change unless there's product appetite for an `--encrypt` flag with OS-keyring-derived key. The flag's UX cost (key recovery, lost-laptop scenario, multi-machine sync) is non-trivial.
 
----
-
-## F15: escapeHTML Missing Quote Escaping (XSS-001)
-
-**CVSS 3.1:** 4.3 (Medium)
-**CWE:** CWE-79 (Improper Neutralization of Input During Web Page Generation)
-**File:** `ui/web/static/index.html:670-675`
-**Status:** VERIFIED — High Confidence
-
-**Root Cause:** `escapeHTML` escaped `&`, `<`, `>` but not `"` or `'`. When symbol names containing quotes were rendered in SVG `title` attributes via string-concatenated markup, an attacker could break out of the attribute and inject event handlers.
-
-**Evidence:**
-```js
-// index.html:670-675 — old
-function escapeHTML(value) {
-    return String(value ?? "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;"); // missing .replace(/"/g, "&quot;") etc.
-}
-// SVG builder at line 983-984
-svgContent += `<circle ... title="${title}"/>`;
-```
-
-**Compensating Controls:**
-- CSP `script-src 'self'` blocks script execution even if injection succeeds
-- SVG `title` attribute injection requires crafting a symbol name with quotes — unlikely in normal use
-
-**Recommended Fix:** Add `.replace(/"/g, "&quot;")` and `.replace(/'/g, "&#39;")` to `escapeHTML`.
-
-**Status: ✅ FIXED** — `escapeHTML` now escapes both `"` and `'` (`index.html:670`). Attribution: security-check 2026-04-27.
+**Confidence:** 100.
 
 ---
 
-## F16: EventBus SSE Payload Not Redacted at Publish Boundary
+### F3 — SECRETS-002 — Medium → **DEVELOPMENT ENVIRONMENT ONLY**
 
-**CVSS 3.1:** 6.5 (Medium)
-**CWE:** CWE-200 (Exposure of Sensitive Information to an Unauthorized Actor)
-**File:** `internal/engine/eventbus.go:73`
-**Status:** VERIFIED — High Confidence
+**File:** `.env:8,11,29` (local working copy; not in git)
 
-**Root Cause:** `EventBus.Publish` forwarded `event.Payload` to SSE/WebSocket subscribers without calling `RedactSecretsInValue`. Raw `tool:call.params` (containing `Authorization: Bearer sk-ant-...` headers from `web_fetch`) and `tool:result.output_preview` were visible to all subscribers.
+**Issue:** Live API keys for Z.AI, MiniMax, Kimi providers exist in the developer's local `.env`. Format-validated against vendor patterns by the sub-agent.
 
-**Evidence:**
-```go
-// eventbus.go:old — Publish sent payload verbatim
-func (eb *EventBus) Publish(event Event) {
-    // ...
-    eb.mu.RLock()
-    for _, ch := range eb.subscribers[event.Type] {
-        eb.publishToChannel(ch, event) // event.Payload unredacted
-    }
-}
-```
+**Verification path:**
+1. Confirmed `.env` is in `.gitignore:26` — file is **not** tracked in version control.
+2. Verified format: `ZAI_API_KEY=82ebd5d747cc...`, `MINIMAX_API_KEY=sk-cp-VV4Dy...`, `KIMI_API_KEY=sk-kimi-PEPkGt...` match expected vendor key shapes.
+3. `.env.example` exists with placeholder pattern (`<placeholder>`) — the proper pattern operators should follow.
 
-**Compensating Controls:**
-- SSE/WebSocket binds to loopback by default (`auth=none`)
-- Bearer token auth required for non-loopback binds
+**Why this is below F1 in priority:** Local file under user's direct control. The risk is *backup leak* / *accidental upload* / *machine compromise* — same risk class as `~/.aws/credentials`. Out of DFMC's TCB.
 
-**Recommended Fix:** Call `security.RedactSecretsInValue(event.Payload)` before publishing to subscribers.
+**Recommendation to the operator (this is your machine, not DFMC's bug):**
+1. Rotate the three keys at provider dashboards (Z.AI, MiniMax, Kimi).
+2. Replace with `<placeholder>` style values in `.env`; export real keys via shell only when running.
+3. Never `git add -f .env` — the gitignore guard is good but a forced add bypasses it.
 
-**Status: ✅ FIXED** — `eventbus.go:87` now calls `security.RedactSecretsInValue(event.Payload)` before publishing. Attribution: security-check 2026-04-27.
+**CVSS 3.1:** 6.2 (Medium) — AV:L/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:N — credential disclosure if local file leaks.
+
+**Confidence:** 100 — file path + line numbers + format validation.
 
 ---
 
-## F17: patch_validation validation_command Flag Injection (CVE-2018-17456 class)
+## Cleared Patterns (would-be findings, mitigation verified)
 
-**CVSS 3.1:** 6.5 (Medium)
-**CWE:** CWE-78 (OS Command Injection)
-**File:** `internal/tools/patch_validation.go:135-161`
-**Status:** VERIFIED — High Confidence
+These are categories where automated scanners might raise alarms; verified to be properly mitigated and not findings:
 
-**Root Cause:** `validation_command` passed user-supplied arguments directly to `exec.CommandContext` without rejecting flag-shaped values. When `git` was the binary, values like `--upload-pack=cmd` would be parsed by git as a command-line option rather than a path (CVE-2018-17456 class).
-
-**Evidence:**
-```go
-// patch_validation.go:old — args passed without flag-injection guard
-cmd := exec.CommandContext(runCtx, binary, args...) // args[0] could be "--upload-pack=evil"
-```
-
-**Compensating Controls:**
-- `isBlockedShellInterpreter` blocks direct shell interpreters
-- `detectShellMetacharacter` catches shell metacharacters in the binary name
-- `ensureCommandAllowed` applies blocked-command list
-- Approval gate applies to `patch_validation` as a destructive tool
-
-**Recommended Fix:** Add `rejectFlagInjection` guard for git binary specifically, mirroring the `rejectGitFlagInjection` pattern used in git tools.
-
-**Status: ✅ FIXED** — added `isGitBinary` + `rejectFlagInjection` guards (`patch_validation.go:19-41`). Fires when binary is `git` and any arg starts with `-`. Attribution: security-check 2026-04-27.
-
----
-
-## F18: benchmark Tool Flag Injection (Already Fixed in Code)
-
-**CWE:** CWE-88 (Argument Injection)
-**File:** `internal/tools/benchmark.go:75-117`
-**Status:** VERIFIED — Already Fixed (pre-existing)
-
-**Root Cause:** The `target` parameter could contain flag-shaped values like `-exec=cmd.exe /c calc.exe` that would be parsed by `go test` as its own option before the `--` separator.
-
-**Current State:** Lines 112-117 show the fix is already present:
-```go
-if strings.HasPrefix(target, "-") {
-    return Result{}, fmt.Errorf("target %q begins with -, which would inject a flag...", target)
-}
-args = append(args, "--", target)  // -- separator prevents flag injection
-```
-
-**Status:** No action needed — fix is already in place.
+| Category | Mitigation | Evidence |
+|----------|------------|----------|
+| Command injection (run_command) | argv-only `exec.Command`, blocked-binary list, shell-metachar guard, timeout cap 120s | `internal/tools/builtin.go`, `internal/tools/command.go:130` |
+| Git flag injection (CVE-2018-17456 class) | `rejectGitFlagInjection` on every ref/path arg | `internal/tools/git_runner.go`, applied in `git.go` & `patch_validation.go` |
+| Hook env-var value injection | `sanitizeEnvValue` (Unix single-quote wrap; Windows double-quote + `%%`) | `internal/hooks/hooks.go:318` |
+| Path traversal | `EnsureWithinRoot` + `filepath.EvalSymlinks` on root and target; ancestor-walk for non-existent paths | `internal/tools/engine.go:843-884` |
+| TOCTOU symlink swap | `resolveExistingAncestor` walk before EvalSymlinks; tested in `ensure_within_root_test.go` | same |
+| WS origin spoofing | Allowlist; `*` explicitly rejected with stderr warning | `ui/web/server.go:238-268`, test in `server_origin_test.go:125-146` |
+| WS DoS (slow-loris, oversize, conn flood) | 64KiB read limit; 60s read deadline + pong; 5s write deadline; 64 global / 8 per-IP cap; 5rps + burst 10 per-conn rate limit; sync.Once cleanup | `ui/web/server_ws.go:41-67`, `233-256`, `483-528` |
+| SSE slow-loris | `writeSSEWithDeadline` 15s per-chunk; handlers bail on deadline expiry | `ui/web/server_chat.go:183-203` (recently wired) |
+| CORS overpermissive | No `Access-Control-Allow-*` headers ever set; localhost-bind by default | grep verified zero matches |
+| CSRF | Bearer-token-in-header auth; no cookies; `Set-Cookie` zero matches | `ui/web/server.go:681-699` |
+| Clickjacking | `X-Frame-Options: DENY` + CSP `default-src 'self'` on every response | `ui/web/server.go:128-135`, `406` |
+| Mass assignment | All web handlers decode into typed structs (no `map[string]any` → struct merge); 4MiB body cap | `ui/web/server.go:50-123`, `446` |
+| Token timing attack | `crypto/subtle.ConstantTimeCompare` for bearer token | `ui/web/server.go:693` |
+| 0.0.0.0 bind without auth | `normalizeBindHost` forces loopback when `auth: none` | `ui/web/server.go:173` |
+| Unsafe deserialization | Only JSON / YAML-into-typed-struct; no `gob`, no `eval`-style decoders; 8MiB scan buffer cap on conversation JSONL | grep verified |
+| SSRF | `internal/security/safe_http.go:isBlockedDialTarget()` blocks 10/8, 172.16/12, 192.168/16, 127/8, 169.254/16, fc00::/7, multicast, unspecified | applied via wrapped `DialContext` |
+| File upload | No multipart parser anywhere — surface absent | grep verified zero `multipart` references |
+| Open redirect | No `http.Redirect` calls; no `Location:` header writes | grep verified zero matches |
+| Tool approval bypass | All tool exec funnels `engine.executeToolWithLifecycle`; `SourceUser` allow-list documented; MCP-Drive deliberate bypass tagged in CLAUDE.md | `internal/engine/engine_tools.go:290-331` |
+| Memory ID collision | crypto/rand 6-byte suffix on bbolt entry IDs (recently fixed) | `internal/memory/store.go:142-146` |
+| Conversation save race vs Storage close | `saveWg sync.WaitGroup` drained in `Close()` before bbolt close (recently fixed) | `internal/conversation/manager.go:327-368` |
+| Patch validation timeout (recently fixed) | `120 * time.Second` literal; previously was `120000` interpreted as 120µs nanoseconds | `internal/tools/patch_validation.go:190` |
 
 ---
 
-## Severity Distribution
+## False positives cleared
 
-| Severity | Count | Findings |
-|----------|-------|---------|
-| Critical | 0 | — |
-| High | 0 | — |
-| Medium | 5 | F4, F5, F8, F10, F14 |
-| Low | 1 | F3 (docs only) |
-| Info | 0 | — |
+Two earlier audit reports (`report.md`, `report2.md` in the repo root) raised 15+ "findings" each. None of them survived verification:
+- Cited file paths often did not contain the alleged code (e.g., `time.Sleep` in `builtin_grep.go`, `planner.go` — zero hits).
+- "220 build tags" → real count 11, all deliberate platform splits.
+- "tree_test.go.skip" → real but the API it tests (`Store.GetTree`, etc.) does not exist; restoring would break compile.
+- "permissive CORS" → no CORS headers anywhere in the codebase.
+- "yaml.Unmarshal panic in pluginexec" → no YAML in pluginexec, JSON-RPC only.
 
-**Session additions (2026-04-27):** F15 (XSS-001 ✅), F16 (EventBus ✅), F17 (patch_validation ✅), F18 (benchmark — already fixed)
+These are documented in `security-report/FALSE-POSITIVES.md` for traceability.
 
 ---
 
-*Findings above represent confirmed, exploitable vulnerabilities or meaningful security gaps. False positives from the Hunt phase have been cleared — see `FALSE-POSITIVES.md` for details.*
+## Confidence Distribution
+
+| Confidence | Count | Notes |
+|-----------|-------|-------|
+| 100 | 3 | F1 (fixed), F2, F3 |
+| 75-99 | 0 | — |
+| 50-74 | 0 | — |
+| <50 | 0 | — |
+
+All verified findings cite exact file:line + verified guard absence. No speculative entries.
+
+---

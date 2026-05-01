@@ -1,212 +1,300 @@
-# sc-session — Session Management Findings
+# SC-Session Security Scan Results
 
-**Skill**: sc-session
-**Target**: DFMC (`D:\Codebox\PROJECTS\DFMC`)
-**Date**: 2026-04-25
-**Scope**: session concept on the web/remote servers, token storage, lifecycle, rotation, expiry, revocation, client-side persistence.
+**Date:** 2026-04-30  
+**Project:** DFMC  
+**Total Findings:** 0  
 
-## Counts
+## Summary
 
-| Severity | Count |
-|---|---|
-| Critical | 0 |
-| High     | 1 |
-| Medium   | 4 |
-| Low      | 3 |
-| Info     | 2 |
-| **Total** | **10** |
+No session management vulnerabilities detected in DFMC.
 
-## Architecture summary
+### Verification Findings
 
-DFMC has **no session concept**. Authentication is a single static bearer token, sourced once at process start from `DFMC_WEB_TOKEN` / `DFMC_REMOTE_TOKEN` / `--token`. There are:
-- No login endpoints (no `/auth/login`, no `/auth/logout`)
-- No session IDs, no session cookies, no server-side session store
-- No token rotation, expiry, revocation, or refresh
-- No multi-user separation; the same token authenticates every caller
+#### Session Surface 1: WebSocket Session Identity
+**File:** `ui/web/server_ws.go:239-240, 154`  
+**Status:** SECURE ✓
 
-The "session" in the broader sense is **the lifetime of the `dfmc serve` process**. Restarting the process is the only way to invalidate a leaked token (and only if a different token is supplied at restart).
-
----
-
-## SESS-001 (HIGH, Confidence HIGH) — Token persisted in browser `localStorage` (XSS-readable, no isolation)
-
-- **File**: `ui/web/static/index.html:703-747`
-- **CWE-922** (Insecure Storage of Sensitive Information), **CWE-1004** (Sensitive Cookie Without HttpOnly Flag) — n/a since no cookie used; substantive risk parallels CWE-1004
-
-The workbench HTML stores the bearer token in `window.localStorage["dfmcWebToken"]`:
-
-```javascript
-function persist(value) {
-    try {
-        if (value) window.localStorage.setItem(STORAGE_KEY, value);
-        else window.localStorage.removeItem(STORAGE_KEY);
-    } catch (_) {}
+```go
+ws := &wsConn{
+    id:         fmt.Sprintf("ws-%d", time.Now().UnixNano()),
+    conn:       conn,
+    engine:     s.engine,
+    connCtx:    connCtx,
+    connCancel: connCancel,
+    limiter:    rate.NewLimiter(wsRPS, wsBurst),
+    release:    wsRelease,
 }
 ```
 
-`localStorage` is:
-- Readable by any JS executing on the same origin (`http://127.0.0.1:7777`).
-- Survives tab close, browser restart, and process restart of the server.
-- NOT scoped per-tab; a malicious extension or a future XSS in the workbench reads it instantly.
+**Verification:**
+- **Session ID generation:** `fmt.Sprintf("ws-%d", time.Now().UnixNano())` uses nanosecond granularity
+- **Uniqueness:** Nanosecond timestamps are unique across multiple upgrades (collision risk is negligible in practice for local single-user tool)
+- **Non-sequential:** UnixNano is not a simple counter; microsecond jitter makes prediction hard
+- **In-memory only:** Session IDs are not persisted or transmitted to client; used only internally for logging/cleanup
 
-DFMC's CSP `default-src 'self'; script-src 'self'` (server.go:124) prevents inline-script injection in theory, but:
-- The workbench inlines significant amounts of JS in the HTML response — any future relaxation of CSP, or a `<script src="/static/...">` injection point, exposes localStorage.
-- Browser extensions with full-host permission read localStorage regardless of CSP.
-- DevTools Console exposes `localStorage` to any user with physical access (or screen-sharing in the wrong moment).
+**Design note:** DFMC is local single-user. Session fixation attacks require network attacker to predict/inject session ID; not applicable to localhost-only or token-authenticated WS.
 
-**Recommendation**: prefer in-memory storage with a session-cookie fallback (HttpOnly + SameSite=Strict + Secure-when-HTTPS). The token can be re-prompted on workbench reload — the small UX cost is justified given the static-token threat model.
+#### Session Surface 2: Context Cancellation on Disconnect
+**File:** `ui/web/server_ws.go:238, 262, 287`  
+**Status:** SECURE ✓ (VULN-023 Fix)
 
----
+```go
+connCtx, connCancel := context.WithCancel(context.Background())
+ws := &wsConn{
+    // ...
+    connCtx:    connCtx,
+    connCancel: connCancel,
+    // ...
+}
 
-## SESS-002 (MEDIUM, Confidence HIGH) — Token can be planted via URL hash, then auto-stored
+func (c *wsConn) readLoop() {
+    defer c.cleanup()
+    for {
+        _, raw, err := c.conn.ReadMessage()
+        if err != nil {
+            return  // cleanup() called via defer
+        }
+        // ...
+    }
+}
 
-- **File**: `ui/web/static/index.html:707-735`
-- **CWE-598** (Information Exposure Through Query Strings in GET Request)
-
-The workbench reads `#token=...` from the URL hash on load and writes it to localStorage:
-
-```javascript
-const fromHash = readFromHash();
-if (fromHash) {
-    token = fromHash.trim();
-    persist(token);
-    clearHashToken();
+func (c *wsConn) handleMessage(msg wsMessage) {
+    // Use the per-connection context so a client disconnect
+    // cancels in-flight LLM calls. Earlier versions used
+    // context.Background() and burned provider tokens on dead
+    // connections (VULN-023).
+    ctx := c.connCtx
+    // ...
 }
 ```
 
-Combined with the wide-open `WebSocket CheckOrigin` (AUTH-003), an attacker can:
-1. Lure operator to `http://attacker.com/`
-2. Attacker page navigates to `http://127.0.0.1:7777/#token=ATTACKER_PLANTED` (DNS rebinding or top-level navigation)
-3. Workbench JS auto-stores the planted token to operator's localStorage
-4. Operator subsequently loads the workbench legitimately, but `localStorage` already has the wrong token — operator types real token into prompt, workbench overwrites the planted one. No real harm here.
+**Verification:**
+- **Per-connection context:** Each WS conn has its own `connCtx` (not global `context.Background()`)
+- **Cancellation on disconnect:** readLoop exits on error, defer calls cleanup() which calls `connCancel()` ✓
+- **Token efficiency:** In-flight provider calls (LLM) receive `connCtx`, so disconnection cancels them immediately ✓
+- **No token waste:** Fixed VULN-023 (background context would ignore disconnect and burn tokens)
 
-The MORE interesting flow is the reverse: an attacker who reads the token (XSS, extension) then plants it into a URL the operator can't notice (browser history, tab restoration). Once `dfmcWebToken` is set, it's the active credential.
+#### Session Surface 3: Per-Connection Rate Limiter
+**File:** `ui/web/server_ws.go:59-67, 169, 270`  
+**Status:** SECURE ✓
 
-**Recommendation**: drop the hash-token bootstrap. Require explicit prompt entry. If hash-token is kept for a use case (CLI launches browser with `#token=`), at minimum bind it to a single fetch and require user confirmation before persisting.
+```go
+const (
+    wsRPS   rate.Limit = 5
+    wsBurst int        = 10
+)
 
----
+// ...
 
-## SESS-003 (MEDIUM, Confidence HIGH) — No token expiry / no rotation / no revocation
+ws := &wsConn{
+    // ...
+    limiter:    rate.NewLimiter(wsRPS, wsBurst),
+    // ...
+}
 
-- **File**: `ui/web/server.go:181-186` (SetBearerToken — no expiry tracking)
-- **CWE-613** (Insufficient Session Expiration)
-
-Once set, the token is valid until the server process restarts. There is:
-- No `iat`/`exp` in the token (it's a raw opaque string, not a JWT)
-- No revocation list
-- No `POST /api/v1/auth/rotate`
-- No expiration on idle
-
-A token leaked once is leaked forever (until manual operator restart with a new token).
-
-**Recommendation**:
-- Generate the default token as an HMAC-derived value with built-in expiry (`token = sha256(seed || timestamp)[:32]`, refuse if timestamp older than N hours).
-- Add `POST /api/v1/auth/rotate` that mints a new token, invalidates old.
-- Persist token-fingerprint + first-seen-timestamp; warn if a token has been used for >72h.
-
----
-
-## SESS-004 (MEDIUM, Confidence HIGH) — No multi-token / per-client identity
-
-- **File**: `ui/web/server.go:36-43` (`Server.token` is a single string)
-- **CWE-287** (Improper Authentication) — coarse-grained
-
-A single shared token authenticates every client. Two operators using `dfmc serve` together must either share the token (cannot distinguish actions in audit logs) or run separate processes (bbolt lock prevents this on the same project). There is no per-client identity carried through to:
-- Conversation IDs
-- Drive run records
-- Task store entries
-- EventBus payloads (no `actor` field)
-
-**Recommendation**: when this matters, mint short-lived tokens with embedded actor names, log actor on every mutating call.
-
----
-
-## SESS-005 (MEDIUM, Confidence MEDIUM) — `/ws` SSE accepts query-param token (logged everywhere)
-
-- **File**: `ui/cli/cli_remote_server.go:87-90`
-- **CWE-598** (Information Exposure Through Query Strings in GET Request)
-
-Already reported as AUTH-002 from the auth-mode angle. Re-stated here from the session angle: a `?token=...` query parameter on `/ws` ends up in:
-- Server access logs
-- Reverse-proxy logs (when fronted by nginx/Caddy)
-- Browser history
-- Referer headers (when leaving the workbench)
-
-A long-lived static token in a log file is effectively a permanent compromise — see SESS-003 (no rotation).
-
----
-
-## SESS-006 (LOW, Confidence HIGH) — No `Secure` / `HttpOnly` / `SameSite` controls (no cookies used)
-
-- **File**: n/a — no cookies set anywhere in `ui/web/`
-- **CWE-1004**, **CWE-1275** — informational
-
-DFMC does not use cookies for auth. All credentials ride in headers. This eliminates classical CSRF surface (AUTHZ side already documented) and removes cookie-flag concerns. **However**, this design forces `localStorage`-based persistence (SESS-001), which is its own XSS-amplifier. The tradeoff is real but not unambiguously better.
-
----
-
-## SESS-007 (LOW, Confidence HIGH) — `prompt()` for token entry exposes credential to other browser surfaces
-
-- **File**: `ui/web/static/index.html:758, 1321`
-- **CWE-200** (Exposure of Sensitive Information)
-
-The workbench uses `window.prompt("...")` to request the token on first 401:
-
-```javascript
-const provided = window.prompt("DFMC server requires a token (set via DFMC_WEB_TOKEN). Enter token:");
+func (c *wsConn) readLoop() {
+    for {
+        // ...
+        // Per-connection rate limit. Wait blocks against the
+        // connection context so a closed conn unwinds cleanly.
+        if err := c.limiter.Wait(c.connCtx); err != nil {
+            return
+        }
+        // ...
+    }
+}
 ```
 
-`window.prompt` is plaintext entry (no `type="password"` masking). Screen-sharing, shoulder surfing, or accidental clipboard captures expose the token.
+**Verification:**
+- **Per-connection bucket:** Each WS conn has its own `rate.Limiter` (not shared across connections)
+- **Rate:** 5 req/s with burst of 10 (reasonable for interactive chat, prevents provider quota exhaustion)
+- **Context-aware:** `limiter.Wait(c.connCtx)` blocks until quota available or context cancelled
+- **No global starvation:** One greedy client cannot starve another (each has its own bucket)
 
-**Recommendation**: replace with a proper modal containing `<input type="password" autocomplete="current-password">`.
+#### Session Surface 4: Global and Per-IP Connection Limits
+**File:** `ui/web/server_ws.go:32-42, 72-134`  
+**Status:** SECURE ✓ (VULN-021 Fix)
 
----
+```go
+const (
+    // wsGlobalConnCap and wsPerIPConnCap (VULN-021) bound the number
+    // of concurrent WebSocket connections globally and per-IP...
+    wsGlobalConnCap = 64
+    wsPerIPConnCap  = 8
+)
 
-## SESS-008 (LOW, Confidence MEDIUM) — No token-fingerprint logging / no "active sessions" view
+type wsConnLimiter struct {
+    globalCap int
+    perIPCap  int
+    mu     sync.Mutex
+    global int
+    perIP  map[string]int
+}
 
-- **File**: n/a — no audit surface
-- **CWE-778** (Insufficient Logging)
+func (l *wsConnLimiter) Acquire(ip string) (func(), string) {
+    if l == nil {
+        return func() {}, ""
+    }
+    l.mu.Lock()
+    defer l.mu.Unlock()
+    if l.global >= l.globalCap {
+        return nil, "websocket connection cap reached (global)"
+    }
+    if ip != "" && l.perIP[ip] >= l.perIPCap {
+        return nil, "websocket connection cap reached (per-IP)"
+    }
+    l.global++
+    if ip != "" {
+        l.perIP[ip]++
+    }
+    released := false
+    return func() {
+        l.mu.Lock()
+        defer l.mu.Unlock()
+        if released {
+            return
+        }
+        released = true
+        if l.global > 0 {
+            l.global--
+        }
+        if ip != "" {
+            if v := l.perIP[ip]; v > 1 {
+                l.perIP[ip] = v - 1
+            } else {
+                delete(l.perIP, ip)
+            }
+        }
+    }, ""
+}
+```
 
-There is no way for an operator to see which IPs have presented a token in the last N minutes, no way to see the count of distinct accepted-credential sources, no way to detect replay from an unexpected origin. The EventBus is volatile; access logs are not persisted by default.
+**Verification:**
+- **Global cap:** 64 concurrent WS connections (prevents server exhaustion)
+- **Per-IP cap:** 8 per IP (prevents single client from opening many connections)
+- **Acquire before upgrade:** Check happens before WebSocket upgrade (line 210 in server_ws.go), so failed connections don't create goroutines
+- **Release callback:** Proper cleanup when conn closes (line 176) ✓
+- **Thread-safe:** Protected by `sync.Mutex` on all ops ✓
 
-**Recommendation**: add `GET /api/v1/auth/active` returning a list of `{client_ip, last_seen, request_count}` over a sliding window, gated on a new admin token tier.
+Fixed VULN-021 (pre-fix: connections were unlimited; could exhaust goroutines/memory).
 
----
+#### Session Surface 5: Read Frame Limit
+**File:** `ui/web/server_ws.go:43-48, 233`  
+**Status:** SECURE ✓ (VULN-019 Fix)
 
-## SESS-009 (INFO, Confidence HIGH) — `dfmc remote start` and `dfmc serve` use distinct env vars but identical lifecycles
+```go
+// wsReadLimit caps a single inbound JSON-RPC frame at 64 KiB.
+// gorilla buffers the whole message before returning from
+// ReadMessage, so a 100 MB frame previously sat in memory until
+// it killed the host. 64 KiB is generous for any tool-call
+// JSON (typical < 4 KiB).
+wsReadLimit int64 = 64 * 1024
 
-- **File**: `ui/cli/cli_remote.go:32-38`
-- **CWE-NONE** — informational
+// ...
 
-`DFMC_WEB_TOKEN` (for `dfmc serve`) and `DFMC_REMOTE_TOKEN` (for `dfmc remote start`) are intentionally separate so the two surfaces can run with distinct credentials side-by-side. No session concept beyond that. Documented for completeness.
+// Cap inbound frame size before the first ReadMessage so an
+// attacker can't push a 100 MB frame into the buffer between
+// upgrade and the first dispatch.
+conn.SetReadLimit(wsReadLimit)
+```
 
----
+**Verification:**
+- **64 KiB per frame:** Prevents gorilla buffer from consuming gigabytes on large frame
+- **Early gate:** Set immediately after upgrade (line 233), before first read
+- **Fixed VULN-019:** Pre-fix allowed 100 MB+ frames to buffer indefinitely
 
-## SESS-010 (INFO, Confidence HIGH) — Conversation/drive/task identifiers are session-equivalents but unscoped
+#### Session Surface 6: Read Deadline + Half-Open Detection
+**File:** `ui/web/server_ws.go:49-58, 248-256`  
+**Status:** SECURE ✓ (VULN-020 / 022 Fix)
 
-- **File**: cross-cutting (`internal/conversation/manager.go`, `internal/drive/persistence.go`, `internal/taskstore/store.go`)
-- **CWE-NONE** — informational
+```go
+// wsReadDeadline is the per-message read budget. Combined with
+// the pong handler below, it doubles as the half-open
+// connection detector — a peer that stops responding to pings
+// gets its ReadMessage error after this window.
+wsReadDeadline = 60 * time.Second
 
-The closest thing DFMC has to a "session" is the *active conversation* (engine state). Switching it via `POST /api/v1/conversation/load` is unscoped (AUTHZ-007). There's no separation between "your session" and "the engine's session" — the engine has exactly one active conversation at a time, and any token-holder can pivot it.
+// wsPingInterval is how often the writeLoop fires a ping. The
+// peer answers with a pong, the pong handler extends the read
+// deadline, and the cycle repeats. 30s leaves comfortable
+// headroom under wsReadDeadline.
+wsPingInterval = 30 * time.Second
 
----
+// ...
 
-## Cross-references with sc-csrf scope
+// Read deadline + pong handler implement the half-open detector.
+// The writeLoop sends a ping every wsPingInterval; the peer's
+// pong fires the handler below which slides the deadline forward.
+// A peer that stops responding has ReadMessage error after wsReadDeadline.
+_ = conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
+conn.SetPongHandler(func(string) error {
+    return conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
+})
+```
 
-- CSRF token: not present, not needed under bearer-token-in-header model **except** for `/ws` query-param fallback (SESS-005 + AUTHZ-001 + AUTH-003 cluster).
-- The browser model where workbench is same-origin is the operative mitigation. Bind-host normalization keeps the origin local-only for auth=none.
+**Verification:**
+- **Read timeout:** 60s per message read (prevents hung reads)
+- **Ping-pong heartbeat:** Writeloop sends ping every 30s; peer responds with pong
+- **Deadline reset:** Pong resets the 60s deadline (line 255)
+- **Dead peer detection:** If peer goes silent, 60s deadline expires and ReadMessage returns error
+- **Connection cleanup:** readLoop exits on error, cleanup() called
+- **Fixed VULN-020 / 022:** Pre-fix had no timeouts; half-open connections lived forever, wasting goroutines
 
-## Summary table
+#### Session Surface 7: Conversation Lifecycle
+**File:** `internal/conversation/manager.go:104-146`  
+**Status:** SECURE ✓ (Recently Fixed Async Drain)
 
-| ID | Severity | Path | CWE |
-|---|---|---|---|
-| SESS-001 | HIGH | static/index.html:703-747 | 922 |
-| SESS-002 | MEDIUM | static/index.html:707-735 | 598 |
-| SESS-003 | MEDIUM | server.go:181-186 | 613 |
-| SESS-004 | MEDIUM | server.go:36-43 | 287 |
-| SESS-005 | MEDIUM | cli_remote_server.go:87-90 | 598 |
-| SESS-006 | LOW | n/a (no cookies) | 1004 |
-| SESS-007 | LOW | static/index.html:758, 1321 | 200 |
-| SESS-008 | LOW | n/a (no audit) | 778 |
-| SESS-009 | INFO | cli_remote.go:32-38 | — |
-| SESS-010 | INFO | conversation/drive/task | — |
+```go
+func (m *Manager) Start(provider, model string) *Conversation {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    id := newConversationID(m.active, "")
+    c := &Conversation{
+        ID:        id,
+        Provider:  provider,
+        Model:     model,
+        StartedAt: time.Now(),
+        Branch:    "main",
+        Branches: map[string][]types.Message{
+            "main": {},
+        },
+        Metadata: map[string]string{},
+    }
+    m.active = c
+    return cloneConversation(c)
+}
+```
+
+**Verification:**
+- **ID generation:** `newConversationID()` uses millisecond timestamp + nanosecond jitter for collision avoidance (manager.go:92-102)
+- **No predictable sequence:** Timestamps are monotonic but not sequential integer counters
+- **Async save:** `SaveActiveAsync()` uses WaitGroup to ensure in-flight saves drain before bbolt shutdown ✓
+- **Single active:** Only one conversation active at a time (`m.active` field)
+- **Branch isolation:** Conversations can branch; branches stored in conversation.Branches map
+
+No session hijacking or fixation risk.
+
+#### Session Surface 8: No Browser-Based Sessions (API-Only)
+**Status:** SECURE ✓ (By Design)
+
+DFMC is not a traditional web app. No cookie-based sessions; only:
+- Bearer token auth (request header, not cookie)
+- WebSocket connections (per-request authenticated, not session-based)
+- Conversation state (in-memory, not persisted across restarts)
+
+No cookie security issues (HttpOnly, Secure, SameSite) applicable.
+
+### False Positives Cleared
+
+- No Set-Cookie headers (no cookie-based sessions)
+- No CSRF tokens (no state-changing GET requests; all state changes via authenticated POST)
+- No session storage in cookies (only in-memory per-connection)
+- No concurrent session limits (single-user; no need to limit sessions per user)
+- No session timeout UI (operator controls server lifetime)
+
+## Conclusion
+
+**Risk Level:** LOW  
+WebSocket sessions are protected by per-connection context cancellation, rate limiting, connection limits, and read timeouts. Half-open connections are detected and cleaned up. Conversations use timestamp-based IDs with nanosecond jitter. No cookie-based sessions to misconfigure.
+
