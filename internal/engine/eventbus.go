@@ -226,13 +226,23 @@ func (eb *EventBus) publishToChannel(ch chan Event, event Event) {
 // eventBusDropWarnEvery, logs the event type that has accumulated the
 // most drops. droppedByType is locked separately from eb.mu so the
 // RLock on Publish is not held during the log call.
+//
+// The O(n) topType scan over droppedByType only runs at the log
+// threshold (every eventBusDropWarnEvery drops), not on every drop —
+// the per-drop hot path is just an atomic increment and a single map
+// bump under droppedMu.
 func (eb *EventBus) noteDroppedEvent(eventType string) {
 	if eb == nil {
 		return
 	}
 	total := atomic.AddUint64(&eb.dropped, 1)
+	logThreshold := total%eventBusDropWarnEvery == 0
 	eb.droppedMu.Lock()
 	eb.droppedByType[eventType]++
+	if !logThreshold {
+		eb.droppedMu.Unlock()
+		return
+	}
 	topType := eventType
 	topCount := eb.droppedByType[eventType]
 	for t, c := range eb.droppedByType {
@@ -242,10 +252,8 @@ func (eb *EventBus) noteDroppedEvent(eventType string) {
 		}
 	}
 	eb.droppedMu.Unlock()
-	if total%eventBusDropWarnEvery == 0 {
-		if topType == "" {
-			topType = "(untyped)"
-		}
-		log.Printf("dfmc: event bus dropped %d events so far; most-dropped type %q (%d drops) — a subscriber is lagging", total, topType, topCount)
+	if topType == "" {
+		topType = "(untyped)"
 	}
+	log.Printf("dfmc: event bus dropped %d events so far; most-dropped type %q (%d drops) — a subscriber is lagging", total, topType, topCount)
 }
