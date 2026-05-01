@@ -509,17 +509,11 @@ func (e *Engine) requireReady(op string) error {
 	switch state {
 	case StateReady, StateServing, StateShuttingDown:
 		return nil
-	default:
-		if state == StateCreated || state == StateInitializing {
-			if e.Tools != nil || e.Providers != nil || e.Conversation != nil || e.Memory != nil || e.AST != nil || e.CodeMap != nil {
-				return nil
-			}
-		}
-		if strings.TrimSpace(op) == "" {
-			op = "operation"
-		}
-		return fmt.Errorf("engine not initialized for %s (state=%v)", op, state)
 	}
+	if strings.TrimSpace(op) == "" {
+		op = "operation"
+	}
+	return fmt.Errorf("engine not initialized for %s (state=%v)", op, state)
 }
 
 // BackgroundContext returns the engine-owned lifecycle context for
