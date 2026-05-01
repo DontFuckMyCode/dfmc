@@ -314,12 +314,12 @@ func cloneParkedAgentState(seed *parkedAgentState) *parkedAgentState {
 	return &clone
 }
 
-func normalizeToolSource(raw string) string {
+func normalizeToolSource(raw string) Source {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "agent"
+		return SourceAgent
 	}
-	return raw
+	return Source(raw)
 }
 
 func appendFallbackReason(reasons []string, err error) []string {
