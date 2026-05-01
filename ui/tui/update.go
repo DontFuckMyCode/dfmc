@@ -503,7 +503,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// composer still honours alt+<letter> as a real shortcut.
 		if m.activeTab == 0 && msg.Alt && msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
 			if unicode.IsLetter(msg.Runes[0]) && (len(m.chat.input) > 0 || len(m.chat.pasteBlocks) > 0) {
-				return m.handleChatKey(msg)
+				// Allow stats-panel mode switches through even while typing;
+				// these specific alt combos are not Turkish-character inputs.
+				switch msg.String() {
+				case "alt+a", "alt+s", "alt+d", "alt+f", "alt+p":
+					// fall through to global shortcut handler
+				default:
+					return m.handleChatKey(msg)
+				}
 			}
 		}
 		switch msg.String() {

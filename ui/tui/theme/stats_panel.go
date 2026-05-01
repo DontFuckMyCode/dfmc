@@ -280,7 +280,7 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 		addSection("◈", "TASKS", body)
 	case StatsPanelModeSubagents:
 		addSection(providerIcon, "PROVIDER", providerBody)
-		addSection("?", "CONTEXT", contextBody)
+		addSection("▦", "CONTEXT", contextBody)
 		addSection(agentIcon, "TOOL LOOP", agentBody)
 		body := []string{}
 		if len(info.SubagentLines) == 0 || (len(info.SubagentLines) == 1 && strings.EqualFold(strings.TrimSpace(info.SubagentLines[0]), "idle")) {
@@ -290,7 +290,7 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 		} else {
 			body = append(body, info.SubagentLines...)
 		}
-		addSection("?", "SUBAGENTS", body)
+		addSection("✦", "SUBAGENTS", body)
 	case StatsPanelModeProviders:
 		addSection(providerIcon, "PROVIDER", providerBody)
 		addSection("▦", "CONTEXT", contextBody)
@@ -327,22 +327,22 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 			}
 		}
 		addSection("◉", "PROVIDERS", body)
-		addSection("?", "SESSION", sessionBody)
+		addSection("◷", "SESSION", sessionBody)
 	default:
 		addSection(providerIcon, "PROVIDER", providerBody)
-		addSection("?", "CONTEXT", contextBody)
+		addSection("▦", "CONTEXT", contextBody)
 		addSection(agentIcon, "TOOL LOOP", agentBody)
-		addSection("?", "TOOLS", toolsBody)
+		addSection("⚒", "TOOLS", toolsBody)
 		if len(workflowBody) == 0 {
 			workflowBody = append(workflowBody, "No workflow state yet.")
 			workflowBody = append(workflowBody, "This fills from todo_write, autonomy plans, drive runs, and subagent fan-out.")
 			workflowBody = append(workflowBody, "Use alt+s for todos, alt+d for tasks, alt+f for subagents.")
 		}
-		addSection("?", "WORKFLOW", workflowBody)
+		addSection("◈", "WORKFLOW", workflowBody)
 		if len(gitBody) > 0 {
-			addSection("?", "GIT", gitBody)
+			addSection("✦", "GIT", gitBody)
 		}
-		addSection("?", "SESSION", sessionBody)
+		addSection("◷", "SESSION", sessionBody)
 	}
 	footerText := "  ctrl+s hide ? alt+a/s/d/f/p switch ? ctrl+h keys"
 	if info.FocusLocked {

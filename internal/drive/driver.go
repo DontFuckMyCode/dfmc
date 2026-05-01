@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -327,6 +328,7 @@ func (d *Driver) persist(run *Run) {
 			"status": string(run.Status),
 			"error":  err.Error(),
 		})
+		log.Printf("drive: persist failed for run %s (status=%s): %v", run.ID, run.Status, err)
 	}
 }
 

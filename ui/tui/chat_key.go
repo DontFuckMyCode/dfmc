@@ -541,6 +541,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if question == "" {
 			return m, nil
 		}
+		m.setChatInput("")
 		return m.submitChatQuestion(question, suggestions.quickActions)
 	}
 	// Defensive catch-all for keys that didn't match any explicit case but

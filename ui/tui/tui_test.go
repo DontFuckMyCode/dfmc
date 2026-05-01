@@ -3837,8 +3837,8 @@ func TestStatsPanelBoostAllowsWiderTemporaryPanel(t *testing.T) {
 	if got := m.statsPanelRenderWidth(120); got <= statsPanelWidth {
 		t.Fatalf("boosted stats panel should render wider than default, got %d", got)
 	}
-	if got := m.statsPanelRenderWidth(120); got < 56 {
-		t.Fatalf("boosted stats panel should get close to half-width, got %d", got)
+	if got := m.statsPanelRenderWidth(120); got > 64 {
+		t.Fatalf("boosted stats panel should be capped, got %d", got)
 	}
 	m.ui.statsPanelFocusLocked = true
 	if !m.statsPanelBoostActive(time.Now()) {

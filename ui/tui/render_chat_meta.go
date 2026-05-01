@@ -488,11 +488,14 @@ func (m Model) statsPanelRenderWidth(contentWidth int) int {
 // inside this reserved column — unused slack appears as right-side
 // padding in the outer frame, not as a re-wrap of the chat text.
 func (m Model) statsPanelReservedWidth(contentWidth int) int {
-	width := contentWidth/2 + 2
+	width := contentWidth*2/5 + 2
 	if width < statsPanelBoostWidthMin {
 		width = statsPanelBoostWidthMin
 	}
-	maxWidth := contentWidth - 28
+	if width > 64 {
+		width = 64
+	}
+	maxWidth := contentWidth - 56
 	if maxWidth < statsPanelWidth {
 		maxWidth = statsPanelWidth
 	}
