@@ -157,27 +157,7 @@ const (
 )
 
 func (e *Engine) CallTool(ctx context.Context, name string, params map[string]any) (tools.Result, error) {
-	if err := e.requireReady("tool call"); err != nil {
-		return tools.Result{}, err
-	}
-	res, err := e.executeToolWithLifecycle(ctx, name, params, string(SourceUser))
-	if err != nil {
-		e.EventBus.Publish(Event{
-			Type:    "tool:error",
-			Source:  "engine",
-			Payload: err.Error(),
-		})
-		return res, err
-	}
-	e.EventBus.Publish(Event{
-		Type:   "tool:complete",
-		Source: "engine",
-		Payload: map[string]any{
-			"name":       name,
-			"durationMs": res.DurationMs,
-		},
-	})
-	return res, nil
+	return e.callToolFromSource(ctx, name, params, SourceUser)
 }
 
 // CallToolFromSource is the network-surface entry point. Unlike CallTool
@@ -186,10 +166,17 @@ func (e *Engine) CallTool(ctx context.Context, name string, params map[string]an
 // traffic originating from web/WS/MCP surfaces. Network sources that
 // bypass the gate would let any browser tab drive run_command.
 func (e *Engine) CallToolFromSource(ctx context.Context, name string, params map[string]any, source Source) (tools.Result, error) {
+	return e.callToolFromSource(ctx, name, params, source)
+}
+
+// callToolFromSource is the shared body for CallTool / CallToolFromSource.
+// Owns the readiness gate, lifecycle dispatch, and tool:error / tool:complete
+// event emission so the two public entry points stay one-liners.
+func (e *Engine) callToolFromSource(ctx context.Context, name string, params map[string]any, source Source) (tools.Result, error) {
 	if err := e.requireReady("tool call"); err != nil {
 		return tools.Result{}, err
 	}
-	res, err := e.executeToolWithLifecycle(ctx, name, params, string(source))
+	res, err := e.executeToolWithLifecycle(ctx, name, params, source)
 	if err != nil {
 		e.EventBus.Publish(Event{
 			Type:    "tool:error",
@@ -287,10 +274,11 @@ func truncateStackForError(stack []byte) string {
 	return string(stack[:maxStackLen]) + "\n[stack truncated]"
 }
 
-func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, params map[string]any, source string) (tools.Result, error) {
+func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, params map[string]any, source Source) (tools.Result, error) {
 	if e.Tools == nil {
 		return tools.Result{}, errors.New("tool engine is not initialized")
 	}
+	sourceStr := string(source)
 	// Sub-agent allowlist gate — fires before approval so unlisted tools
 	// are refused without prompting even when the approver is permissive.
 	if denial := checkSubagentAllowlist(ctx, name, metaInnerNames(name, params)); denial != "" {
@@ -301,7 +289,7 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 			Payload: map[string]any{
 				"name":   name,
 				"reason": denial,
-				"source": source,
+				"source": sourceStr,
 			},
 		})
 		return tools.Result{}, fmt.Errorf("tool %s denied: %s", name, denial)
@@ -309,7 +297,7 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 	// Approval gate — only engages for non-user sources and only when
 	// the tool is on the approval list. Blocks until the Approver
 	// responds or returns an implicit deny on timeout. See approver.go.
-	if source != "user" && e.requiresApproval(name, source) {
+	if !source.IsUser() && e.requiresApproval(name, source) {
 		decision := e.askToolApproval(ctx, name, params, source)
 		if !decision.Approved {
 			reason := decision.Reason
@@ -323,7 +311,7 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 				Payload: map[string]any{
 					"name":   name,
 					"reason": reason,
-					"source": source,
+					"source": sourceStr,
 				},
 			})
 			return tools.Result{}, fmt.Errorf("tool %s denied: %s", name, reason)
@@ -335,17 +323,31 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 	// so a 4-tool batch doesn't fire 4 prompts, but hooks fan out so an
 	// operator-configured pre_tool for e.g. run_command still sees the
 	// call. See engine_meta_hooks.go for the unwrap logic.
-	innerNames := metaInnerNames(name, params)
+	//
+	// metaInnerNames does a small param walk; lazy-compute it so the
+	// common "no hooks configured" path doesn't pay the cost. Both
+	// branches below need the same slice, so cache once on first use.
+	var (
+		innerNames    []string
+		innerComputed bool
+	)
+	getInnerNames := func() []string {
+		if !innerComputed {
+			innerNames = metaInnerNames(name, params)
+			innerComputed = true
+		}
+		return innerNames
+	}
 	if e.Hooks != nil && e.Hooks.Count(hooks.EventPreTool) > 0 {
 		e.Hooks.Fire(ctx, hooks.EventPreTool, hooks.Payload{
 			"tool_name":    name,
-			"tool_source":  source,
+			"tool_source":  sourceStr,
 			"project_root": e.ProjectRoot,
 		})
-		for _, inner := range innerNames {
+		for _, inner := range getInnerNames() {
 			e.Hooks.Fire(ctx, hooks.EventPreTool, hooks.Payload{
 				"tool_name":    inner,
-				"tool_source":  source,
+				"tool_source":  sourceStr,
 				"wrapped_by":   name,
 				"project_root": e.ProjectRoot,
 			})
@@ -379,7 +381,7 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 				Payload: map[string]any{
 					"name":     tte.Name,
 					"limit_ms": tte.Limit.Milliseconds(),
-					"source":   source,
+					"source":   sourceStr,
 				},
 			})
 		}
@@ -391,7 +393,7 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 		}
 		e.Hooks.Fire(ctx, hooks.EventPostTool, hooks.Payload{
 			"tool_name":        name,
-			"tool_source":      source,
+			"tool_source":      sourceStr,
 			"tool_success":     success,
 			"tool_duration_ms": fmt.Sprintf("%d", res.DurationMs),
 			"project_root":     e.ProjectRoot,
@@ -402,10 +404,10 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 		// (the batch returns each entry's success separately). Hooks
 		// that need per-inner granularity should subscribe to the
 		// engine event bus's tool:step events instead.
-		for _, inner := range innerNames {
+		for _, inner := range getInnerNames() {
 			e.Hooks.Fire(ctx, hooks.EventPostTool, hooks.Payload{
 				"tool_name":        inner,
-				"tool_source":      source,
+				"tool_source":      sourceStr,
 				"tool_success":     success,
 				"tool_duration_ms": fmt.Sprintf("%d", res.DurationMs),
 				"wrapped_by":       name,
