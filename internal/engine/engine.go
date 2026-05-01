@@ -105,10 +105,7 @@ type Engine struct {
 	// activeSupervisor holds a supervisor instance during a drive run.
 	// Sub-agent budget halving uses the pool when non-nil. Set by
 	// SetSupervisor and cleared by ClearSupervisor.
-	activeSupervisor interface {
-		AllocTokens(int) int
-		RestoreTokens(int)
-	}
+	activeSupervisor tokenAllocator
 
 	providerOverride string
 	modelOverride    string

@@ -33,8 +33,9 @@ func (e *Engine) NewSupervisor(run *supervisor.Run, plan *supervisor.ExecutionPl
 			AllowedTools:      req.AllowedTools,
 			MaxSteps:          req.MaxSteps,
 		}
-		// Use the drive runner from the engine's drive adapter
-		dr := e.newDriveRunner()
+		// Drive runner from the engine's drive adapter (same one used by
+		// drive.Driver).
+		dr := e.NewDriveRunner()
 		result, err := dr.ExecuteTodo(ctx, driveReq)
 		if err != nil {
 			return supervisor.ExecuteTaskResponse{}, err
@@ -47,42 +48,27 @@ func (e *Engine) NewSupervisor(run *supervisor.Run, plan *supervisor.ExecutionPl
 			Model:           result.Model,
 			Attempts:        result.Attempts,
 			TokensUsed:      int(result.DurationMs / 100), // rough estimate; real accounting needs instrumentation
-			FallbackUsed:   result.FallbackUsed,
+			FallbackUsed:    result.FallbackUsed,
 			FallbackReasons: result.FallbackReasons,
 		}, nil
 	})
 	return sup
 }
 
-// newDriveRunner returns a drive.Runner backed by this engine.
-// This is the same adapter used by drive.Driver.
-func (e *Engine) newDriveRunner() drive.Runner {
-	return &engineDriveRunner{e: e}
-}
-
-type engineDriveRunner struct {
-	e *Engine
-}
-
-func (r *engineDriveRunner) PlannerCall(ctx context.Context, req drive.PlannerRequest) (drive.PlannerResponse, error) {
-	return r.e.NewDriveRunner().PlannerCall(ctx, req)
-}
-
-func (r *engineDriveRunner) ExecuteTodo(ctx context.Context, req drive.ExecuteTodoRequest) (drive.ExecuteTodoResponse, error) {
-	return r.e.NewDriveRunner().ExecuteTodo(ctx, req)
-}
-
-func (r *engineDriveRunner) BeginAutoApprove(tools []string) func() {
-	return r.e.NewDriveRunner().BeginAutoApprove(tools)
+// tokenAllocator is the budget-pool capability the engine needs from an
+// active supervisor: alloc/restore tokens for sub-agent budget halving.
+// Optional capabilities (Status, Remaining) are sniffed via type
+// assertion at the call site so a supervisor that doesn't expose them
+// still satisfies the required core.
+type tokenAllocator interface {
+	AllocTokens(int) int
+	RestoreTokens(int)
 }
 
 // SetSupervisor registers the active supervisor for budget accounting.
 // Sub-agent budget halving uses the supervisor pool when non-nil.
 // Called by the supervisor start path; cleared when the supervisor finishes.
-func (e *Engine) SetSupervisor(supervisor interface {
-	AllocTokens(int) int
-	RestoreTokens(int)
-}) {
+func (e *Engine) SetSupervisor(supervisor tokenAllocator) {
 	e.activeSupervisor = supervisor
 }
 
