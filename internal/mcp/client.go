@@ -215,6 +215,9 @@ func (c *Client) handshake(ctx context.Context) error {
 
 // sendSync sends a request and waits for its response.
 func (c *Client) sendSync(ctx context.Context, req *Request, resp *Response) error {
+	if c.stdin == nil || c.stdout == nil {
+		return errors.New("client not started")
+	}
 	if err := json.NewEncoder(c.stdin).Encode(req); err != nil {
 		return fmt.Errorf("send %s: %w", req.Method, err)
 	}

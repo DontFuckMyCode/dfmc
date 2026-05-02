@@ -70,6 +70,9 @@ func (b *MCPToolBridge) List() []ToolDescriptor {
 	if b.clients == nil {
 		return nil
 	}
+	if len(b.clients) == 0 {
+		return []ToolDescriptor{}
+	}
 	seen := make(map[string]struct{})
 	var out []ToolDescriptor
 	for _, c := range b.clients {
@@ -102,8 +105,11 @@ func (b *MCPToolBridge) Call(ctx context.Context, name string, arguments []byte)
 // LoadClientsFromConfig parses a list of MCP server configs and spawns
 // clients for each. Returns empty slice on nil/empty config (no error).
 func LoadClientsFromConfig(servers []config.MCPServerConfig) ([]*Client, error) {
-	if servers == nil || len(servers) == 0 {
+	if servers == nil {
 		return nil, nil
+	}
+	if len(servers) == 0 {
+		return []*Client{}, nil
 	}
 	out := make([]*Client, 0, len(servers))
 	for _, s := range servers {
