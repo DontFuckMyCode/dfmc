@@ -103,21 +103,67 @@ func (s *Server) Serve(ctx context.Context) error {
 
 // handleRaw decodes one frame and dispatches. Malformed frames yield a
 // parse-error response with null ID, per JSON-RPC 2.0.
+// Handles both single requests and JSON-RPC 2.0 batch arrays ([req, req, ...]).
 func (s *Server) handleRaw(ctx context.Context, raw json.RawMessage) {
+	// Fast path: only treat as single request if JSONRPC field is present and "2.0".
+	// A batch array element has no top-level JSONRPC field, so this check
+	// correctly distinguishes batch from single-request frames.
 	var req Request
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := json.Unmarshal(raw, &req); err == nil && req.JSONRPC == "2.0" {
+		s.handleRequest(ctx, &req)
+		return
+	}
+	// Batch path: raw JSON array
+	var batch []json.RawMessage
+	if err := json.Unmarshal(raw, &batch); err != nil {
 		s.writeResponse(NewErrorResponse(nil, ErrParseError, "invalid frame: "+err.Error(), nil))
 		return
 	}
+	responses := make([]*Response, 0, len(batch))
+	for _, rawReq := range batch {
+		var req Request
+		if err := json.Unmarshal(rawReq, &req); err != nil {
+			responses = append(responses, NewErrorResponse(nil, ErrParseError, "invalid batch member: "+err.Error(), nil))
+			continue
+		}
+		if req.JSONRPC != "2.0" {
+			if !req.IsNotification() {
+				responses = append(responses, NewErrorResponse(req.ID, ErrInvalidRequest, "jsonrpc must be \"2.0\"", nil))
+			}
+			continue
+		}
+		resp := s.dispatch(ctx, &req)
+		if req.IsNotification() {
+			continue
+		}
+		if resp == nil {
+			resp = NewErrorResponse(req.ID, ErrInternalError, "handler returned nil response", nil)
+		}
+		responses = append(responses, resp)
+	}
+	if len(responses) > 0 {
+		for _, resp := range responses {
+			buf, err := json.Marshal(resp)
+			if err != nil {
+				buf, _ = json.Marshal(NewErrorResponse(nil, ErrInternalError, "encode response: "+err.Error(), nil))
+			}
+			s.writeMu.Lock()
+			_, _ = s.out.Write(buf)
+			_, _ = s.out.Write([]byte{'\n'})
+			s.writeMu.Unlock()
+		}
+	}
+}
+
+func (s *Server) handleRequest(ctx context.Context, req *Request) {
 	if req.JSONRPC != "2.0" {
 		if !req.IsNotification() {
 			s.writeResponse(NewErrorResponse(req.ID, ErrInvalidRequest, "jsonrpc must be \"2.0\"", nil))
 		}
 		return
 	}
-	resp := s.dispatch(ctx, &req)
+	resp := s.dispatch(ctx, req)
 	if req.IsNotification() {
-		// Notifications never get a response, even on error. JSON-RPC 2.0 §4.1.
 		return
 	}
 	if resp == nil {
