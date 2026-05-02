@@ -8,6 +8,9 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
+	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 func (m Model) statusCommandSummary() string {
@@ -129,4 +132,61 @@ func (m Model) contextCommandDetailedSummary() string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+// contextCommandInspectorSummary uses ContextInspector to provide detailed
+// breakdown of what's currently in the context window.
+func (m Model) contextCommandInspectorSummary() string {
+	st := m.status
+	if m.eng != nil {
+		st = m.eng.Status()
+	}
+	report := st.ContextIn
+	if report == nil || len(report.Files) == 0 {
+		return "No context built yet. Run a query to see context inspection."
+	}
+
+	chunks := make([]types.ContextChunk, 0, len(report.Files))
+	for _, f := range report.Files {
+		chunks = append(chunks, types.ContextChunk{
+			Path:       f.Path,
+			TokenCount: f.TokenCount,
+			Score:      f.Score,
+			Source:     f.Reason,
+			LineStart:  f.LineStart,
+			LineEnd:    f.LineEnd,
+		})
+	}
+
+	inspector := ctxmgr.NewInspector(st.ProjectRoot, chunks)
+	result := inspector.Inspect()
+
+	return result.Text()
+}
+
+// contextCommandInspectorJSON returns raw JSON inspection for programmatic use.
+func (m Model) contextCommandInspectorJSON() string {
+	st := m.status
+	if m.eng != nil {
+		st = m.eng.Status()
+	}
+	report := st.ContextIn
+	if report == nil || len(report.Files) == 0 {
+		return `{"error": "no context built yet"}`
+	}
+
+	chunks := make([]types.ContextChunk, 0, len(report.Files))
+	for _, f := range report.Files {
+		chunks = append(chunks, types.ContextChunk{
+			Path:       f.Path,
+			TokenCount: f.TokenCount,
+			Score:      f.Score,
+			Source:     f.Reason,
+			LineStart:  f.LineStart,
+			LineEnd:    f.LineEnd,
+		})
+	}
+
+	inspector := ctxmgr.NewInspector(st.ProjectRoot, chunks)
+	return inspector.Inspect().JSON()
 }

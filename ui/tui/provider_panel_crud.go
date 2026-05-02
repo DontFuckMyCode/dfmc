@@ -192,17 +192,5 @@ func (m *Model) deleteProvider(name string) error {
 	if err := m.reloadEngineConfig(); err != nil {
 		return err
 	}
-	if m.eng != nil {
-		if strings.EqualFold(m.eng.Config.Providers.Primary, name) {
-			m.eng.Config.Providers.Primary = ""
-		}
-		var newFallback []string
-		for _, fb := range m.eng.Config.Providers.Fallback {
-			if !strings.EqualFold(fb, name) {
-				newFallback = append(newFallback, fb)
-			}
-		}
-		m.eng.Config.Providers.Fallback = newFallback
-	}
-	return nil
+	return m.persistProvidersPrimaryFallback()
 }

@@ -5,6 +5,8 @@ import (
 	"sync"
 )
 
+// Node represents a code entity (function, type, file, etc.) in the graph.
+// Node represents a code entity (function, type, file, etc.) in the graph.
 type Node struct {
 	ID       string            `json:"id"`
 	Name     string            `json:"name"`
@@ -32,6 +34,8 @@ type edgeKey struct {
 	Type string
 }
 
+// Graph stores a directed graph of code dependencies and relationships.
+// Graph stores a directed graph of code dependencies and relationships.
 type Graph struct {
 	mu       sync.RWMutex
 	nodes    map[string]Node

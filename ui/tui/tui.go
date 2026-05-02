@@ -311,9 +311,10 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 		// park a duplicate banner in the footer notice slot (signal density).
 		sessionStart: time.Now(),
 		ui: uiToggles{
-			showStatsPanel: true,
-			statsPanelMode: statsPanelModeOverview,
-			keyLogEnabled:  os.Getenv("DFMC_KEYLOG") == "1",
+			showStatsPanel:     true,
+			statsPanelMode:     statsPanelModeOverview,
+			keyLogEnabled:      os.Getenv("DFMC_KEYLOG") == "1",
+			toolStripExpanded:  true, // expanded by default; /tools toggles to collapsed
 		},
 	}
 	// Seed status synchronously so the chat header renders with real

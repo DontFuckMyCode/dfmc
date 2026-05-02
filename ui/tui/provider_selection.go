@@ -231,14 +231,62 @@ func (m Model) projectConfigPath() (string, error) {
 	return filepath.Join(root, config.DefaultDirName, "config.yaml"), nil
 }
 
+func (m *Model) persistProvidersPrimaryFallback() error {
+	if m.eng == nil || m.eng.Config == nil {
+		return nil
+	}
+	path, err := m.projectConfigPath()
+	if err != nil {
+		return err
+	}
+
+	doc := map[string]any{}
+	if data, readErr := os.ReadFile(path); readErr == nil {
+		if len(strings.TrimSpace(string(data))) > 0 {
+			if unmarshalErr := yaml.Unmarshal(data, &doc); unmarshalErr != nil {
+				return fmt.Errorf("parse project config: %w", unmarshalErr)
+			}
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return fmt.Errorf("read project config: %w", readErr)
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	if _, ok := doc["version"]; !ok {
+		doc["version"] = 1
+	}
+
+	providersNode := ensureStringAnyMap(doc, "providers")
+	if strings.TrimSpace(m.eng.Config.Providers.Primary) != "" {
+		providersNode["primary"] = m.eng.Config.Providers.Primary
+	}
+	if len(m.eng.Config.Providers.Fallback) > 0 {
+		providersNode["fallback"] = m.eng.Config.Providers.Fallback
+	}
+
+	out, marshalErr := yaml.Marshal(doc)
+	if marshalErr != nil {
+		return fmt.Errorf("marshal project config: %w", marshalErr)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create project config dir: %w", err)
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return fmt.Errorf("write project config: %w", err)
+	}
+	return nil
+}
+
 func (m *Model) reloadEngineConfig() error {
 	if m.eng == nil {
 		return fmt.Errorf("engine is unavailable")
 	}
-	cwd := strings.TrimSpace(m.eng.ProjectRoot)
-	if cwd == "" {
-		cwd = strings.TrimSpace(m.status.ProjectRoot)
+	projectRoot := strings.TrimSpace(m.eng.ProjectRoot)
+	if projectRoot == "" {
+		projectRoot = strings.TrimSpace(m.status.ProjectRoot)
 	}
+	cwd := projectRoot
 	if cwd == "" {
 		cwd = "."
 	}

@@ -117,9 +117,13 @@ func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
 			if m.eng != nil {
 				m.eng.SetPrimaryProvider(name)
 			}
+			if err := m.persistProvidersPrimaryFallback(); err != nil {
+				m.notice = "set primary: " + name + " (save failed: " + err.Error() + ")"
+			} else {
+				m.notice = "set primary: " + name
+			}
 			m = m.refreshProvidersRows()
 			m = m.focusProviderRow(name)
-			m.notice = "set primary: " + name
 		}
 	case "toggle_fallback":
 		scroll := clampScroll(m.providers.scroll, len(m.providers.rows))
@@ -197,9 +201,13 @@ func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
 		}
 		prof.Model = models[idx]
 		m.eng.Config.Providers.Profiles[m.providers.detailProvider] = prof
+		if _, err := m.persistProviderModelProjectConfig(m.providers.detailProvider, prof.Model); err != nil {
+			m.notice = fmt.Sprintf("set active model → %s (save failed: %v)", prof.Model, err)
+		} else {
+			m.notice = fmt.Sprintf("set active model → %s", prof.Model)
+		}
 		m = m.refreshProvidersRows()
 		m = m.focusProviderRow(m.providers.detailProvider)
-		m.notice = fmt.Sprintf("set active model → %s", prof.Model)
 	case "delete_model":
 		if m.eng == nil || m.eng.Config == nil {
 			m.notice = "engine not ready"

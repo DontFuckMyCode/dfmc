@@ -7,6 +7,8 @@ import (
 	"log"
 	"strings"
 	"testing"
+
+	"github.com/dontfuckmycode/dfmc/internal/config"
 )
 
 // TestMCPToolBridge_FirstWinsOnNameCollision regresses a bug where two
@@ -116,5 +118,80 @@ func TestMCPToolBridge_CallRoutesToFirstWins(t *testing.T) {
 	}
 	if _, ok := err.(*unknownToolError); !ok {
 		t.Fatalf("expected *unknownToolError, got %T: %v", err, err)
+	}
+}
+
+// TestMCPToolBridge_NilClientsListOnly exercises the nil-safe path for List.
+func TestMCPToolBridge_NilClientsListOnly(t *testing.T) {
+	b := NewMCPToolBridge(nil)
+	if b.List() != nil {
+		t.Error("nil clients: List() should return nil")
+	}
+}
+
+// TestMCPToolBridge_EmptyClients exercises the empty-safe path.
+func TestMCPToolBridge_EmptyClients(t *testing.T) {
+	b := NewMCPToolBridge([]*Client{})
+	got := b.List()
+	if got == nil {
+		t.Error("empty clients: List() should return empty slice, not nil")
+	}
+}
+
+// TestMCPToolBridge_CallMalformedArguments verifies that a JSON parse error
+// in the arguments is surfaced as a well-formed error.
+func TestMCPToolBridge_CallMalformedArguments(t *testing.T) {
+	c := &Client{Name: "test"}
+	b := NewMCPToolBridge([]*Client{c})
+	b.toolIndex["bad-args"] = c
+
+	_, err := b.Call(context.Background(), "bad-args", []byte(`{not json`))
+	if err == nil {
+		t.Fatal("expected error for malformed JSON")
+	}
+}
+
+// TestMCPToolBridge_CallNilArguments exercises the nil arguments path.
+func TestMCPToolBridge_CallNilArguments(t *testing.T) {
+	c := &Client{Name: "test"}
+	b := NewMCPToolBridge([]*Client{c})
+	b.toolIndex["echo"] = c
+
+	// nil arguments should not cause an unmarshal error
+	_, err := b.Call(context.Background(), "echo", nil)
+	// err will be something like "client closed" since subprocess isn't started,
+	// but the args parsing path should not fail
+	if err != nil && err.Error() == "malformed tool arguments: unexpected end of JSON input" {
+		t.Errorf("nil args should not trigger JSON parse error: %v", err)
+	}
+}
+
+// TestUnknownToolError_Error checks the formatted message.
+func TestUnknownToolError_Error(t *testing.T) {
+	err := &unknownToolError{Name: "my-tool"}
+	got := err.Error()
+	want := "mcp: unknown tool: my-tool"
+	if got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadClientsFromConfig_NilInput(t *testing.T) {
+	got, err := LoadClientsFromConfig(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("LoadClientsFromConfig(nil) = %v, want nil", got)
+	}
+}
+
+func TestLoadClientsFromConfig_EmptyInput(t *testing.T) {
+	got, err := LoadClientsFromConfig([]config.MCPServerConfig{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Error("LoadClientsFromConfig({}) = nil, want empty slice")
 	}
 }

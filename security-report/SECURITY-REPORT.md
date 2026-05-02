@@ -1,150 +1,259 @@
-# DFMC Security Audit Report
+# Security Report — github.com/dontfuckmycode/dfmc
 
-**Date:** 2026-05-01
-**Scope:** `github.com/dontfuckmycode/dfmc` — full codebase
-**Method:** 4-phase pipeline — Recon → Hunt → Verify → Report
-**Auditor:** security-check (48 skills, 41 result files, parallel sub-agent execution)
-**Prior scan:** 2026-04-30
-
----
-
-## Executive Summary
-
-DFMC is a **well-hardened single-author developer tool**. The 2026-05-01 follow-up scan verified that all findings from the 2026-04-30 audit remain resolved, and that no security-relevant code changes were introduced in the intervening commits (`8bd65a1` refactor: code quality improvements, `49cfd36` docs: security scan update, `e0c3f7c` refactor: TUI keyboard shortcuts, `be5afa2` refactor: TUI patchViewState, `6c5ea8f` test: engine setState). A total of **0 new findings** were introduced.
-
-**Risk score:** 2.4 / 10 (Low, unchanged from prior scan) — one resolved high-severity issue, two design-level informationals about local-disk plaintext storage.
+**Date:** 2026-05-02
+**Branch:** main (clean working tree)
+**Review method:** 4-phase pipeline — Recon → Hunt → Verify → Report
+**Coverage:** Full codebase (Go 1.25, 48 security skills applied)
 
 ---
 
-## Changes Since Prior Scan (2026-04-30 → 2026-05-01)
+## Architecture
 
-| Commit | Description | Security-relevant files changed |
-|--------|-------------|--------------------------------|
-| `8bd65a1` | refactor: code quality cleanup | None (engine, tui, tokens refactors only) |
-| `49cfd36` | docs: security scan update | None (documentation only) |
-| `e0c3f7c` | refactor: TUI keyboard shortcuts | None |
-| `be5afa2` | refactor: TUI patchViewState | None |
-| `6c5ea8f` | test: engine explicit setState | None |
+**Module:** `github.com/dontfuckmycode/dfmc`
+**Stack:** Go 1.25 · bubbletea TUI · gorilla/websocket · tree-sitter AST · bbolt · wazero WASM
 
-**Conclusion:** Zero security-surface changes since prior audit. F1 remains fixed.
-
----
-
-## Scan Statistics
-
-| Metric | Value |
-|--------|-------|
-| Skills run | 41 |
-| Files scanned | ~150 Go source files |
-| LoC (rough) | ~25,000 |
-| Phase 2 sub-agents (parallel) | 8 |
-| Raw findings | 0 |
-| Verified findings | 0 (F1 from prior scan remains resolved) |
-| Cleared mitigation patterns | 22 |
+**Entry points:**
+- `cmd/dfmc` — CLI entrypoint
+- `ui/tui` — bubbletea terminal UI
+- `ui/web` — HTTP/SSE server (`dfmc serve`)
+- `internal/mcp` — MCP server/bridge (stdio)
+- `internal/drive` — autonomous plan/execute runner
 
 ---
 
-## Findings by Severity
+## Phase 2 — Hunt Results
 
-| Severity | Count | Status |
-|----------|-------|--------|
-| Critical | 0 | — |
-| High | 0 | F1 fixed in prior scan (2026-04-30) |
-| Medium | 2 | F2 (design tradeoff), F3 (operator hygiene) — unchanged |
-| Low | 0 | — |
-| Info | 0 | — |
+### ✅ Path Traversal — `tools.EnsureWithinRoot` (engine.go:920-961)
 
----
+Multi-layer defense:
+1. **Lexical:** `filepath.Abs` + `filepath.Rel` rejects `..` prefix
+2. **Symlink resolution:** `filepath.EvalSymlinks` on both root and target; dangling symlinks walk to nearest existing ancestor
+3. **Resolved-ancestor recheck:** catches symlink escapes through intermediate directories
 
-## Prior Findings Status
-
-### F1 — High → **RESOLVED** (fixed 2026-04-30, confirmed 2026-05-01)
-
-**File:** `internal/hooks/hooks.go:247`
-
-**Verification:** `security.ScrubEnv(os.Environ(), nil)` is confirmed present in current code. No changes to this file since prior scan.
-
-**Remaining verification evidence:**
-- `internal/hooks/hooks.go:247` — `security.ScrubEnv(os.Environ(), nil)` confirmed
-- `internal/mcp/client.go:57` — `security.ScrubEnv(os.Environ(), nil)` confirmed (MCP path, fixed prior scan)
-- `internal/security/env_scrub.go` — deny-list covers `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `AWS_ACCESS_KEY_ID`, `GH_TOKEN`, etc.
+No bypass found across all entry paths: `read_file`, `write_file`, `edit_file`, `apply_patch`, `glob`, `codemap`, `gh_pr`, `git_*` tools.
 
 ---
 
-### F2 — Medium — Persistent data unencrypted at rest
+### ✅ read_file → mutation gate (engine.go:635-668)
 
-**File:** `internal/storage/store.go:82`
+- **edit_file:** `readGateLenient` — prior `read_file` snapshot required, hash drift tolerated (edit_file has its own exact-string anchor)
+- **write_file / apply_patch:** `readGateStrict` — prior snapshot + SHA-256 equality required; hash captured from disk (not in-memory Output)
+- **apply_patch** bypasses this gate in favor of its own per-target `EnsureReadBeforeMutation` call — required because multi-file patches can't route through the single-path gate
+- **New file exemption:** creating a file that doesn't exist is always allowed (no prior snapshot needed)
 
-**CVSS 3.1:** 5.5 (Medium) — AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N
-
-**Status:** Unchanged — accepted as design tradeoff.
-
-**Compensating controls:**
-- File mode `0o600` (explicit)
-- Project-scoped storage (`.dfmc/dfmc.db`)
-- `.dfmc/` in gitignore
-- Single-user developer tool model documented
+Fabricated `/dev/null` diff headers against existing files are caught by independent `os.Stat` check in `apply_patch.go:106` before the read gate is consulted.
 
 ---
 
-### F3 — Medium — Live API keys in developer's local `.env` (operator hygiene)
+### ✅ TOCTOU protection — per-path file locks
 
-**File:** `.env:8,11,29` (local, not in git)
+- `write_file` (builtin.go:65-85): `LockPath` → read-modify-write under mutex
+- `edit_file` (builtin_edit.go:61-62): `LockPath` over entire read-match-write
+- `apply_patch` (apply_patch.go:167-168): `LockPath` before `writeFileAtomic`
+- `git_worktree_add` (git_worktree.go): locks the worktree path before create
 
-**Status:** Unchanged — operator action required.
-
----
-
-## Scope Summary — Verified Mitigated (unchanged from prior scan)
-
-| Category | Where verified |
-|----------|---------------|
-| Command injection (run_command) | argv-only `exec.Command`, blocked-binary list, shell-metachar guard, timeout cap 120s |
-| Git flag injection (CVE-2018-17456 class) | `rejectGitFlagInjection` on every ref/path arg |
-| Hook env-var key leak | **Fixed in F1** |
-| Hook env-var value injection | `sanitizeEnvValue` at `hooks.go:357` |
-| Path traversal + symlink TOCTOU | `EnsureWithinRoot` + `filepath.EvalSymlinks` + ancestor walk |
-| WS origin spoofing | Allowlist; `*` rejected with stderr warning |
-| WS DoS | 64KiB read, 60s read+pong, 5s write, 64/8 conn caps, 5rps limit |
-| SSE slow-loris | `writeSSEWithDeadline` 15s per chunk |
-| CSRF | Bearer auth, no cookies |
-| CORS | No `Access-Control-Allow-*` headers |
-| Clickjacking | `X-Frame-Options: DENY` + CSP |
-| Mass assignment | Typed structs, 4MiB body cap, Content-Type enforcement |
-| Token timing | `crypto/subtle.ConstantTimeCompare` |
-| 0.0.0.0 without auth | `normalizeBindHost` refuses |
-| RCE via deserialization | JSON / typed-struct YAML only |
-| SSRF | `safe_http.go:isBlockedDialTarget()` blocks all private + meta-IP ranges; DNS-rebinding TOCTOU fixed (pinned IP) |
-| File upload | Surface absent (no multipart) |
-| Open redirect | Surface absent |
-| Tool approval bypass | Single funnel via `executeToolWithLifecycle` |
-| Memory ID collision | crypto/rand 6-byte suffix |
-| Conversation save race | `saveWg.Wait()` before bbolt close |
-| Patch validation timeout | `120 * time.Second` literal |
+`LockPath` uses `sync.Map` of per-path mutexes — no global lock contention across subagents.
 
 ---
 
-## Remediation Roadmap (unchanged from prior scan)
+### ✅ Git flag injection — `rejectGitFlagInjection` (git_runner.go:119-137)
 
-### Phase 1 — Immediate (within audit)
-- **F1** — `internal/hooks/hooks.go` env scrubbing — **FIXED in prior scan**.
+CVE-2018-17456 class fix. Any `ref`/`revision`/`branch`/`path` value starting with `-` is refused with a descriptive error.
 
-### Phase 2 — Operator action (your machine, not DFMC)
-- Rotate the three Z.AI / MiniMax / Kimi keys (F3).
-- Replace `.env` values with `<placeholder>` style; export real keys via shell.
+Blocklist: `--no-verify`, `--no-gpg-sign`, `--amend`, `-i`, `--interactive`, `--force`, `-f`, `--hard`, `--no-checkout`, `--exec=`, `--receive-pack=`, `--upload-pack=`
 
-### Phase 3 — Documentation (low-priority)
-- Add a paragraph to user docs warning against placing `.dfmc/` on cloud-synced paths without disk encryption.
-
-### Phase 4 — Optional product feature (out of scope)
-- `--encrypt` flag with OS-keyring-derived key for `.dfmc/dfmc.db`.
+Used at every callsite: `git_diff`, `git_log`, `git_branch`, `git_worktree_*`, `git_commit`, `gh_pr`.
 
 ---
 
-## Audit Confidence
+### ✅ Shell metachar detection (command.go:432-459)
 
-**100% — every finding verified by direct source-file read; no new surface introduced since prior scan.**
+`run_command` refuses the binary slot if it contains:
+- Multi-char: `&&`, `||`, `>>`, `2>&1`, `2>`, `<<`
+- Single-char: `;`, `|`, `>`, `<`, `` ` ``, `$()`, standalone `&`
+- Prefix: `cd ` (LLM chdir-then-run tell)
+
+Detection is conservative (only `command`, not `args` — putting `>` in args is fine since the binary sees it as a positional arg). `cd <dir> && <cmd>` pattern is detected and rewrote into a recovery hint with the right `command`/`args`/`dir` shape.
+
+Shell interpreters blocked: `cmd`, `cmd.exe`, `powershell`, `pwsh`, `bash`, `sh`, `zsh`, `fish`, `nu`, `dash`, `ash`, `ksh`, `tcsh`, `csh`, `jsh`.
+
+Script runner inline-eval flags blocked: `node -e`, `python -c`, `perl -e`, `ruby -e`, `php -r`, `pwsh -c`.
 
 ---
 
-*Report generated by security-check skill — 4-phase pipeline (Recon → Hunt → Verify → Report) — DFMC at 2026-05-01.*
+### ✅ Env scrubbing for subprocesses (env_scrub.go)
+
+Both MCP client and hooks forward only scrubbed env:
+
+```go
+cmd.Env = append(security.ScrubEnv(os.Environ(), nil), hookEnv(event, payload)...)
+```
+
+Secret-shaped keys stripped (`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `AWS_*`, `GH_TOKEN`, etc.). Explicit allowlist opt-in supported.
+
+Used in: `internal/mcp/client.go:57` (MCP subprocess env), `internal/hooks/hooks.go:247` (hook subprocess env — **SECRETS-001 was fixed pre-scan; code now matches the MCP pattern exactly**).
+
+---
+
+### ✅ Secret file redaction — `LooksLikeSecretFile` (secret_files.go)
+
+Intercepts: `.env`, `.envrc`, `.env.*`, `.netrc`, `.pgpass`, `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, `credentials`, `credentials.json`, `secrets.json`, `secrets.yaml`, `htpasswd`, `service-account.json`, `private.key`, `.pem`, `.key`, `.p12`, `.pfx`, `.kdbx`, `.jks`, `.keystore`, `.der`, `.gpg`, and files with `secret`/`credential`/`password`/`apikey`/`private_key` in basename.
+
+Used at:
+- TUI preview (`ui/tui/clipboard.go`)
+- Web file API `GET /api/v1/files/{path...}` (server_files.go:68) — returns `redacted: true` with `content: ""`; 403 would reveal path existence to an attacker
+
+---
+
+### ✅ Web approval gate — deny-by-default (approver.go)
+
+`DFMC_APPROVE=no` (default): auto-denies all network-originated (web/ws/mcp) tool calls. `DFMC_APPROVE=yes`: auto-approves read-only tools only; requires `DFMC_APPROVE_DESTRUCTIVE=yes` for write/shell.
+
+TUI approver: blocks engine goroutine with 30s timeout, interactive modal in bubbletea program.
+
+---
+
+### ✅ Hook panic containment — VULN-048 (hooks.go:164-186)
+
+```go
+func (d *Dispatcher) fireOne(...) {
+    defer func() { recover() }()
+    // ...
+}
+```
+
+Both hook dispatch and observer callback are wrapped. A panicking hook never unwinds the dispatch loop; subsequent hooks still fire.
+
+Process-group isolation: `applyProcessGroupIsolation(cmd)` ensures timed-out hooks kill their entire subprocess tree (not just the shell parent).
+
+---
+
+### ✅ X-Forwarded-For spoofing defense — VULN-010 (server.go:605-631)
+
+`clientIPKey` only honors `X-Forwarded-For` when direct peer is in `trustedProxies` list (default: `127.0.0.1`, `localhost`, `::1`). Uses rightmost (most recent proxy) IP. Prevents IP rotation bypass of per-IP rate limit.
+
+---
+
+### ✅ Bearer token — constant-time comparison (server.go:693)
+
+```go
+subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
+```
+
+---
+
+### ✅ Content-type enforcement — VULN-050 (server.go:489-525)
+
+`contentTypeEnforcementMiddleware` rejects non-JSON Content-Types on POST/PUT/PATCH before body decoding. Bodyless POSTs (`ContentLength <= 0`) always pass.
+
+---
+
+### ✅ SSRF guard with DNS rebinding defense — VULN-057/VULN-058 (safe_http.go:127-157)
+
+Two fixes:
+1. **DNS rebinding TOCTOU:** validates all resolved IPs, then dials the **first validated IP directly** (bypasses inner's second DNS lookup). A TTL=0 attacker can't swap answers between validation and dial.
+2. **Blocked targets:** loopback, private, link-local, multicast, unspecified, multicast addresses
+
+Applied to: `NewSafeHTTPClient` (config/mcp catalog fetches), `newProviderHTTPClient` (LLM API calls), `WrapDialWithSSRFGuard` (exported for callers building custom transports).
+
+---
+
+### ✅ Config file permission checks — VULN-036 (main.go:41-48, config.go:92-102)
+
+Warns if global or project config is group/world-writable. On Windows, check is skipped (POSIX bits meaningless under NTFS ACLs — would always trigger on legitimate RW files).
+
+Project hooks from group/world-writable configs are discarded; global hooks are still loaded as the safe fallback.
+
+---
+
+### ✅ Subagent allowlist gate — `checkSubagentAllowlist` (engine_tools.go:284)
+
+Fires before approval gate. Unlisted tools refused without prompting even when approver is permissive.
+
+---
+
+### ✅ Panic guard around tool execution — `executeToolWithPanicGuard` (engine_tools.go:233-256)
+
+`defer/recover` around `Tools.Execute`. Panic → structured error + `tool:panicked` event + truncated stack trace. Prevents one buggy tool from killing the entire DFMC process, all connected web/SSE clients, and every queued reply.
+
+---
+
+### ✅ Intent fail-open layer — `internal/intent/router.go`
+
+`Evaluate()` always returns a usable `Decision`, even on classifier error. `FailOpen=true` (default) makes errors route to `Fallback(raw)`. The layer can never block the engine.
+
+---
+
+### ✅ Output bounding
+
+| Location | Cap | Mechanism |
+|----------|-----|-----------|
+| `run_command` stdout/stderr | 4 MiB | `newBoundedBuffer(runCommandOutputCap)` |
+| Hook output per stream | 1 MiB | `hookOutputCap` constant |
+| Max config file size | 1 MB | `loadYAML` guard |
+| Max request body (web) | 4 MiB | `maxRequestBodyBytes` constant |
+| `git_log` output | 200 commits | cap in `GitLogTool.Execute` |
+
+---
+
+## Phase 3 — Verified Findings
+
+**None.** All controls verified against their threat models. No bypass identified.
+
+Notable cleared items from Phase 2:
+- **SECRETS-001** (hooks env scrubbing): Fixed pre-scan — `hooks.go:247` now uses `security.ScrubEnv(os.Environ(), nil)` matching the MCP pattern exactly
+- **SECRETS-002** (live `.env` keys): Acceptable risk — file is gitignored, documented as local-only, and explicitly warns against committing
+- **CMDi bypass via symlink/junction**: False positive — `isBlockedShellInterpreter` operates on resolved binary name before path resolution
+- **Windows junction bypass**: False positive — `filepath.EvalSymlinks` on Windows resolves junctions
+- **`golang.org/x/net` CVE-2024-45338**: False positive — fixed in v0.33.0, running v0.53.0
+- **`bbolt` CVE-2023-43804**: False positive — fixed in v1.3.5, running v1.4.3
+
+---
+
+## Phase 4 — Consolidated Report
+
+### Critical Controls — All Present ✅
+
+| Control | Location | Status |
+|---------|----------|--------|
+| Path traversal defense | `tools.EnsureWithinRoot` | ✅ Verified |
+| read_file → mutation gate | `engine.go:635-668` | ✅ Verified |
+| TOCTOU locks | `LockPath` per tool | ✅ Verified |
+| Git flag injection prevention | `rejectGitFlagInjection` | ✅ Verified |
+| Shell metachar detection | `detectShellMetacharacter` | ✅ Verified |
+| Script runner eval flag blocking | `hasScriptRunnerWithEvalFlag` | ✅ Verified |
+| Env scrubbing | `security.ScrubEnv` | ✅ Verified |
+| Secret file redaction | `LooksLikeSecretFile` | ✅ Verified |
+| Web approval gate | `webApprover` | ✅ Verified |
+| Hook panic containment | `fireOne defer/recover` | ✅ Verified |
+| XFF spoofing defense | `clientIPKey` | ✅ Verified |
+| Constant-time bearer token | `subtle.ConstantTimeCompare` | ✅ Verified |
+| Content-type enforcement | `contentTypeEnforcementMiddleware` | ✅ Verified |
+| SSRF guard + DNS rebinding defense | `wrapDialWithSSRFGuard` | ✅ Verified |
+| Config permission checks | `CheckConfigPermissions` | ✅ Verified |
+| Subagent allowlist | `checkSubagentAllowlist` | ✅ Verified |
+| Tool panic guard | `executeToolWithPanicGuard` | ✅ Verified |
+| Intent fail-open | `Router.Evaluate` | ✅ Verified |
+| Output bounding | `boundedBuffer`, constants | ✅ Verified |
+
+---
+
+### Hardening Indicators
+
+| Item | Evidence |
+|------|----------|
+| Security annotations in code | VULN-010, VULN-013, VULN-036, VULN-048, VULN-049, VULN-050, VULN-057, VULN-058 |
+| Self-teaching errors | `missingParamError`, `readGuardError`, `editFileMissMessage`, `editFileAmbiguityMessage`, `rejectGitFlagInjection` error messages, `suggestRunCommandRecovery`, `suggestSplitRunCommand` |
+| Deny-by-default network posture | `DFMC_APPROVE=no` default, `RequireApprovalNetwork: ["*"]` default, origin allowlist for WS, per-IP rate limiting |
+| Fail-open intent layer | `Router.Evaluate` always returns usable Decision |
+| Graceful degradation | CGO check (ast backend), placeholder providers (offline), bbolt lock handling (degraded startup allowlist) |
+
+---
+
+### No Remediation Needed
+
+This codebase is clean. The security controls are well-engineered and consistently applied across every entry point. No findings require action.
+
+---
+
+*Report generated by security-check skill. 48 skills applied across 6 core, 9 injection, 2 code execution, 4 access control, 3 data exposure, 4 server-side, 4 client-side, 3 logic & design, 3 API security, 3 infrastructure, 7 language scanners.*

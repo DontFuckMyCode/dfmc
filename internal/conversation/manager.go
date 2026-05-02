@@ -18,6 +18,8 @@ import (
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
+// Conversation represents a single AI conversation session with branch support.
+// Conversation represents a single AI conversation session with branch support.
 type Conversation struct {
 	ID        string                     `json:"id"`
 	Provider  string                     `json:"provider"`

@@ -75,6 +75,17 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 		}
 		content = body
 	}
+	if m.ui.selectionModeActive {
+		// When selection mode is active the mouse is released to the
+		// terminal so native drag-select works on the chat column.
+		// Omit the frame border+background (they block terminal selection)
+		// and prepend a one-line spacer so the top of the transcript
+		// is not flush against the terminal edge.
+		div := lipgloss.NewStyle().
+			Foreground(pal.Border).
+			Render(strings.Repeat("─", max(contentWidth-4, 20)))
+		return div + "\n" + content
+	}
 	frame := lipgloss.NewStyle().
 		Padding(1, 2).
 		Background(colorPanelBg).

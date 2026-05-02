@@ -93,6 +93,9 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		origin := payloadString(payload, "origin", "")
 		action := payloadString(payload, "action", "")
 		m = m.appendCoachMessage(text, severity, origin, action)
+		// Accumulate for session-end summary (coach notes land in transcript
+		// so scan is unreliable; keep a direct slice instead).
+		m.agentLoop.sessionCoachNotes = append(m.agentLoop.sessionCoachNotes, text)
 		return m
 	case "intent:decision":
 		// Engine's pre-Ask intent router fired. Cache the decision so
@@ -341,4 +344,5 @@ func (m *Model) resetAgentRuntime() {
 	m.agentLoop.lastDuration = 0
 	m.agentLoop.lastOutput = ""
 	m.agentLoop.contextScope = ""
+	m.agentLoop.sessionCoachNotes = nil
 }

@@ -284,32 +284,17 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			return m.appendSystemMessage(m.contextCommandDetailedSummary()), nil, true
 		case "recommend":
 			return m.appendSystemMessage(m.contextCommandWhySummary()), nil, true
-		case "brief":
-			// Dump the MAGIC_DOC-style project brief — reuse the same
-			// read path /magicdoc uses.
-			return m.appendSystemMessage(m.magicDocSlash(nil)), nil, true
-		case "add", "rm":
-			// Pinning isn't wired into config-mutation yet — point the
-			// user at the CLI flow instead of silently no-oping.
-			payload := strings.TrimSpace(strings.Join(args[1:], " "))
-			suffix := ""
-			if payload != "" {
-				suffix = " " + payload
-			}
-			return m.appendSystemMessage(fmt.Sprintf("/context %s is CLI-only right now. Run: dfmc context %s%s", mode, mode, suffix)), nil, true
 		default:
 			return m.appendSystemMessage(m.contextCommandSummary()), nil, true
 		}
 	case "tools":
 		// Two modes:
 		//   /tools             — toggle the per-message tool-call strip
-		//                        between the one-line summary (default)
-		//                        and the full chip breakdown. The user
-		//                        explicitly asked for the strip to be
-		//                        collapsed by default so long answers
-		//                        aren't drowned in tool noise.
+		//                        between the one-line summary (when
+		//                        false) and the full chip breakdown
+		//                        (default, true). Expanded is the default
+		//                        so users always see which tools fired.
 		//   /tools list        — print the registered backend tool catalog
-		//                        (the previous bare-/tools behaviour).
 		m.chat.input = ""
 		sub := ""
 		if len(args) > 0 {

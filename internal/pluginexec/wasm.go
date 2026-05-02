@@ -29,11 +29,13 @@ type WasmModule struct {
 	mu      sync.Mutex
 }
 
+var ErrWasmModuleEmpty = errors.New("WASM module is empty")
+
 // WasmLoader creates a wazero runtime, compiles the module, instantiates
 // it, and returns a WasmModule handle. The caller must call Close when done.
 func WasmLoader(ctx context.Context, spec WasmSpec) (*WasmModule, error) {
 	if len(spec.Module) == 0 {
-		return nil, errors.New("WASM module is empty")
+		return nil, ErrWasmModuleEmpty
 	}
 	if spec.Name == "" {
 		return nil, errors.New("WASM plugin name is required")

@@ -378,9 +378,15 @@ func (m Model) cycleProviderModel(name string) Model {
 	idx = (idx + 1) % len(models)
 	prof.Model = models[idx]
 	m.eng.Config.Providers.Profiles[name] = prof
+	path, err := m.persistProviderModelProjectConfig(name, prof.Model)
+	if err != nil {
+		m.notice = "cycle " + name + " model → " + prof.Model + " (save failed: " + err.Error() + ")"
+	} else {
+		m.notice = "cycle " + name + " model → " + prof.Model
+		_ = path
+	}
 	m = m.refreshProvidersRows()
 	m = m.focusProviderRow(name)
-	m.notice = fmt.Sprintf("%s model → %s", name, prof.Model)
 	return m
 }
 
@@ -404,13 +410,15 @@ func (m Model) toggleFallbackProvider(name string) Model {
 	if m.eng != nil && m.eng.Providers != nil {
 		m.eng.Providers.SetFallback(newFallback)
 	}
-	m = m.refreshProvidersRows()
-	m = m.focusProviderRow(name)
-	if found {
+	if err := m.persistProvidersPrimaryFallback(); err != nil {
+		m.notice = "fallback toggle failed: " + err.Error()
+	} else if found {
 		m.notice = "removed " + name + " from fallback"
 	} else {
 		m.notice = "added " + name + " to fallback"
 	}
+	m = m.refreshProvidersRows()
+	m = m.focusProviderRow(name)
 	return m
 }
 

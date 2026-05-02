@@ -21,6 +21,7 @@ type ParseError struct {
 	Message string `json:"message"`
 }
 
+// ParseResult holds the extracted symbols and metadata for a single parsed file.
 type ParseResult struct {
 	Path     string         `json:"path"`
 	Language string         `json:"language"`
@@ -37,6 +38,8 @@ type ParseResult struct {
 	Backend string `json:"backend,omitempty"`
 }
 
+// Engine provides caching AST parsing with tree-sitter and regex fallback.
+// Thread-safe for concurrent use.
 type Engine struct {
 	// extToLang is built once in NewWithCacheSize and never mutated after
 	// construction. Concurrent reads of an unmodified map are race-free

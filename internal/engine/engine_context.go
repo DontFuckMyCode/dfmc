@@ -146,6 +146,40 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 	return chunks
 }
 
+// InspectLastContext returns a detailed breakdown of the most recently
+// built context chunks. Use this to show context composition in TUI or CLI.
+func (e *Engine) InspectLastContext() ctxmgr.InspectionResult {
+	runtime := e.promptRuntime()
+	opts := e.contextBuildOptionsWithRuntime("inspect context", runtime)
+	if e.Context == nil {
+		return ctxmgr.InspectionResult{}
+	}
+	chunks, err := e.Context.BuildWithOptions("inspect context", opts)
+	if err != nil || len(chunks) == 0 {
+		// Fall back to last status info if no chunks available
+		e.mu.RLock()
+		status := e.lastContextIn
+		e.mu.RUnlock()
+		if len(status.Files) == 0 {
+			return ctxmgr.InspectionResult{Budget: ctxmgr.BudgetStatus{Total: opts.MaxTokensTotal}}
+		}
+		// Reconstruct minimal chunks from status
+		typesChunks := make([]types.ContextChunk, 0, len(status.Files))
+		for _, f := range status.Files {
+			typesChunks = append(typesChunks, types.ContextChunk{
+				Path:       f.Path,
+				LineStart:  f.LineStart,
+				LineEnd:    f.LineEnd,
+				TokenCount: f.TokenCount,
+				Score:      f.Score,
+				Source:     f.Reason,
+			})
+		}
+		return ctxmgr.Inspect(e.ProjectRoot, typesChunks, opts.MaxTokensTotal)
+	}
+	return ctxmgr.Inspect(e.ProjectRoot, chunks, opts.MaxTokensTotal)
+}
+
 func (e *Engine) contextBuildOptions(question string) ctxmgr.BuildOptions {
 	return e.contextBuildOptionsWithRuntime(question, e.promptRuntime())
 }

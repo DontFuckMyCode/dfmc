@@ -115,7 +115,7 @@ When NOT to use:
 		Risk: RiskRead,
 		Tags: []string{"search", "read", "symbol", "ast", "scope"},
 		Args: []Arg{
-			{Name: "name", Type: ArgString, Required: true, Description: "Symbol name to locate."},
+			
 			{Name: "kind", Type: ArgString, Description: "function | method | class | interface | type | variable | constant | html_id | html_class | tag."},
 			{Name: "parent", Type: ArgString, Description: `Disambiguate by enclosing scope: receiver type for Go ("Server"), enclosing class for Python/JS/TS/Java ("UserService"). Drops matches whose parent doesn't equal this value.`},
 			{Name: "path", Type: ArgString, Description: "Restrict search to a subdirectory."},

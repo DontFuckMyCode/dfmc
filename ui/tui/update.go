@@ -387,7 +387,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clearStreamCancel()
 		m.resetAgentRuntime()
 		m.chat.pendingNoteCount = 0
-		m.notice = "" // happy-path completion narrates itself via the transcript; no need to park a banner in the footer
+		m.notice = ""
+		// Build and append session summary BEFORE draining pending queue so it
+		// lands at the BOTTOM of the transcript (after explanation, tools,
+		// errors, coach notes — in that render order).
+		m = m.appendSessionDoneSummary()
 		next, drainCmd := m.drainPendingQueue()
 		return next, tea.Batch(loadStatusCmd(m.eng), loadLatestPatchCmd(m.eng), loadGitInfoCmd(m.projectRoot()), drainCmd)
 

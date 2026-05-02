@@ -338,11 +338,11 @@ type uiToggles struct {
 	selectionRestoreStats bool // previous showStatsPanel before selection mode
 	selectionRestoreMouse bool // previous mouseCaptureEnabled before selection mode
 	// toolStripExpanded controls whether the per-message tool-call
-	// strip renders as a one-line summary table (default, false) or as
-	// the full per-call chip block (when true). Default is collapsed
-	// because long sessions otherwise drown the actual answer in tool
-	// noise — the user can /tools (or ctrl+y) to flip it for a session
-	// when they want the breakdown.
+	// strip renders as a one-line summary table (when false) or as
+	// the full per-call chip block (default, true). Default is expanded
+	// because seeing which tools fired and their outcomes is essential
+	// for trust and transparency — the user can /tools (or ctrl+y) to
+	// flip it when they want a quieter view.
 	toolStripExpanded bool
 	showTasksPanel    bool // /tasks: floating tasks panel on chat tab
 }
@@ -491,6 +491,9 @@ type agentLoopState struct {
 	lastOutput   string
 	contextScope string
 	toolTimeline []toolChip
+	// sessionCoachNotes accumulates coach:note text during the current round so
+	// appendSessionDoneSummary can render them at the bottom of the transcript.
+	sessionCoachNotes []string
 }
 
 // workflowPanelState — Drive TODO tree panel state for the Workflow tab.

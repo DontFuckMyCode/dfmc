@@ -65,6 +65,67 @@ func (m Model) appendCoachMessage(text string, severity coachSeverity, origin st
 	return m
 }
 
+// appendSessionDoneSummary builds a compact block summarizing what the agent did
+// in the just-completed round: tools used, tool errors, and any coach notes that
+// fired. It appends as a chatRoleSystem line so it lands at the bottom of the
+// transcript — after the explanation, tools, errors, and coach notes that the
+// render pass outputs in order. This makes "what just happened?" scannable at
+// a glance instead of hunting through the activity log.
+//
+// Coach notes are identified by scanning the transcript for chatRoleCoach lines
+// from this round. An empty summary is silently skipped so the transcript stays
+// clean on reads with no tools/errors/notes.
+func (m Model) appendSessionDoneSummary() Model {
+	lines := []string{}
+
+	// Collect tools used in this round from toolTimeline.
+	if len(m.agentLoop.toolTimeline) > 0 {
+		toolNames := make([]string, 0, len(m.agentLoop.toolTimeline))
+		for _, chip := range m.agentLoop.toolTimeline {
+			if chip.Name != "" {
+				toolNames = append(toolNames, chip.Name)
+			}
+		}
+		if len(toolNames) > 0 {
+			lines = append(lines, "Tools used: "+strings.Join(toolNames, " → "))
+		}
+	}
+
+	// Collect tool errors (Status "error" means failure).
+	var errLines []string
+	for _, chip := range m.agentLoop.toolTimeline {
+		if chip.Status == "error" {
+			preview := chip.Preview
+			if preview == "" {
+				preview = chip.Verb
+			}
+			if preview != "" {
+				errLines = append(errLines, chip.Name+": "+preview)
+			} else {
+				errLines = append(errLines, chip.Name)
+			}
+		}
+	}
+	if len(errLines) > 0 {
+		lines = append(lines, "Tool errors: "+strings.Join(errLines, " | "))
+	}
+
+	// Collect coach notes from this round (accumulated directly by handleEngineEvent
+	// on "coach:note" events, so we don't need to scan the transcript).
+	if notes := m.agentLoop.sessionCoachNotes; len(notes) > 0 {
+		lines = append(lines, "Coach: "+strings.Join(notes, " · "))
+	}
+
+	if len(lines) == 0 {
+		return m
+	}
+
+	body := strings.Join(lines, "\n")
+	m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleSystem, body))
+	m.chat.scrollback = 0
+	return m
+}
+
 // scrollTranscript shifts the chat head backwards by delta *lines* (negative
 // = older/upward, positive = newer/downward) and clamps to a rough ceiling
 // derived from the transcript size. The render layer (fitChatBody) clamps

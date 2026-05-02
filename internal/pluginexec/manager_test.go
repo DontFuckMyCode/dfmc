@@ -283,3 +283,46 @@ func TestManagerStderrLoaded(t *testing.T) {
 		t.Errorf("Stderr on echo plugin: got %q", got)
 	}
 }
+
+func TestManagerSpawn_MissingEntry(t *testing.T) {
+	m := NewManager()
+	spec := Spec{Name: "no-such-binary", Entry: "/nonexistent/binary/xyz123", Type: "exec"}
+	err := m.Spawn(context.Background(), spec)
+	if err == nil {
+		t.Error("expected error for missing entry")
+	}
+}
+
+func TestManagerClose_RemoveFromList(t *testing.T) {
+	m := NewManager()
+	spec := Spec{Name: "closetest", Entry: os.Args[0], Type: "exec", Env: []string{"DFMC_TEST_PLUGIN_MODE=echo"}, Args: []string{"-test.run=^$"}}
+	if err := m.Spawn(context.Background(), spec); err != nil {
+		t.Skip("spawn failed: " + err.Error())
+	}
+	if err := m.Close(context.Background(), "closetest"); err != nil {
+		t.Errorf("close: %v", err)
+	}
+	names := m.List()
+	if len(names) != 0 {
+		t.Errorf("List after close: got %v want empty", names)
+	}
+}
+
+func TestManagerSpawn_EnvVarOverrides(t *testing.T) {
+	m := NewManager()
+	spec := Spec{
+		Name:  "env2",
+		Entry: os.Args[0],
+		Type:  "exec",
+		Env:   []string{"DFMC_TEST_PLUGIN_MODE=echo", "ANOTHER_VAR=value"},
+		Args:  []string{"-test.run=^$"},
+	}
+	if err := m.Spawn(context.Background(), spec); err != nil {
+		t.Skip("spawn failed: " + err.Error())
+	}
+	defer m.CloseAll(context.Background())
+	names := m.List()
+	if len(names) != 1 || names[0] != "env2" {
+		t.Errorf("List: got %v", names)
+	}
+}

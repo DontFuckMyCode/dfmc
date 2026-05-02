@@ -19,10 +19,11 @@ RUN --mount=type=cache,target=/go/mod,sharing=locked \
 # Copy source and build
 COPY . .
 
+ARG VERSION=dev
 ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=1 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
-    -ldflags "-s -w" \
+    -ldflags "-s -w -X main.version=${VERSION}" \
     -o /dfmc ./cmd/dfmc
 
 # Runtime stage — minimal Alpine

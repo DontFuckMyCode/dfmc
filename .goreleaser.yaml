@@ -63,6 +63,20 @@ changelog:
       - "^test:"
       - "^chore:"
 
+# GHCR image: builds and pushes to GitHub Container Registry on each tagged release.
+# Users pull with: docker pull ghcr.io/dontfuckmycode/dfmc:latest
+# Tag scheme: :amd64 (arch-specific on disk), :{{.Version}} + :latest (from goreleaser)
+dockers:
+  - image: ghcr.io/dontfuckmycode/dfmc
+    dockerfile: Dockerfile
+    goos: linux
+    goarch: amd64
+    build:
+      args:
+        VERSION: "{{.Version}}"
+    extra_files:
+      - README.md
+
 # Homebrew: publishes a formula to the dedicated tap repo on each stable
 # release. Users install with `brew install dontfuckmycode/tap/dfmc`.
 # Pre-releases (tagged -rc / -beta) skip the tap automatically.
