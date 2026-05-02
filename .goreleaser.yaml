@@ -64,8 +64,11 @@ changelog:
       - "^chore:"
 
 # GHCR image: builds and pushes to GitHub Container Registry on each tagged release.
+# Tag scheme (auto-applied by GoReleaser to the image name):
+#   ghcr.io/dontfuckmycode/dfmc:{{.Version}}
+#   ghcr.io/dontfuckmycode/dfmc:latest
+#   ghcr.io/dontfuckmycode/dfmc:{{.Arch}}  (arch-specific, e.g. :amd64 on disk)
 # Users pull with: docker pull ghcr.io/dontfuckmycode/dfmc:latest
-# Tag scheme: :amd64 (arch-specific on disk), :{{.Version}} + :latest (from goreleaser)
 dockers:
   - image: ghcr.io/dontfuckmycode/dfmc
     dockerfile: Dockerfile

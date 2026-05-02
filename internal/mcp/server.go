@@ -105,15 +105,16 @@ func (s *Server) Serve(ctx context.Context) error {
 // parse-error response with null ID, per JSON-RPC 2.0.
 // Handles both single requests and JSON-RPC 2.0 batch arrays ([req, req, ...]).
 func (s *Server) handleRaw(ctx context.Context, raw json.RawMessage) {
-	// Fast path: only treat as single request if JSONRPC field is present and "2.0".
-	// A batch array element has no top-level JSONRPC field, so this check
-	// correctly distinguishes batch from single-request frames.
+	// Try to unmarshal as a single request. If successful, always route
+	// through handleRequest — it will validate JSONRPC version and return
+	// ErrInvalidRequest if it's not "2.0". Only try batch parsing if the
+	// Request struct itself doesn't unmarshal (malformed JSON, not a request).
 	var req Request
-	if err := json.Unmarshal(raw, &req); err == nil && req.JSONRPC == "2.0" {
+	if err := json.Unmarshal(raw, &req); err == nil {
 		s.handleRequest(ctx, &req)
 		return
 	}
-	// Batch path: raw JSON array
+	// Not a valid request — try batch array.
 	var batch []json.RawMessage
 	if err := json.Unmarshal(raw, &batch); err != nil {
 		s.writeResponse(NewErrorResponse(nil, ErrParseError, "invalid frame: "+err.Error(), nil))
