@@ -19,27 +19,44 @@ func (fb *fakeBridgeForBatch) Call(ctx context.Context, name string, args []byte
 	return CallToolResult{Content: []ContentBlock{TextContent("ok")}}, nil
 }
 
-// batchHarness is a server harness that supports batch requests via io.Pipe.
+// batchHarness is a server harness that supports batch requests via
+// buffered channel (avoids io.Pipe deadlock with concurrent responses).
 type batchHarness struct {
 	t      *testing.T
 	stdin  *io.PipeWriter
-	stdout *io.PipeReader
+	respCh chan []byte
+	respBuf []byte // carries over bytes between recv calls
 	done   chan error
 	cancel context.CancelFunc
 }
 
 func newBatchHarness(t *testing.T, bridge ToolBridge) *batchHarness {
+	respCh := make(chan []byte, 200)
 	inR, inW := io.Pipe()
-	outR, outW := io.Pipe()
-	srv := NewServer(inR, outW, bridge, ServerInfo{Name: "batch-test", Version: "0.0.0"})
+	srv := NewServer(inR, &batchChannelWriter{respCh}, bridge, ServerInfo{Name: "batch-test", Version: "0.0.0"})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		err := srv.Serve(ctx)
-		_ = outW.Close()
-		done <- err
+		done <- srv.Serve(ctx)
+		_ = inW.Close()
+		close(respCh)
 	}()
-	return &batchHarness{t: t, stdin: inW, stdout: outR, done: done, cancel: cancel}
+	return &batchHarness{t: t, stdin: inW, respCh: respCh, done: done, cancel: cancel}
+}
+
+type batchChannelWriter struct {
+	ch chan<- []byte
+}
+
+func (w *batchChannelWriter) Write(p []byte) (int, error) {
+	cp := make([]byte, len(p))
+	copy(cp, p)
+	select {
+	case w.ch <- cp:
+		return len(p), nil
+	default:
+		return len(p), nil
+	}
 }
 
 func (h *batchHarness) sendBatch(msgs []any) {
@@ -53,7 +70,7 @@ func (h *batchHarness) sendBatch(msgs []any) {
 		if _, err := h.stdin.Write(frame); err != nil {
 			h.t.Fatalf("stdin write: %v", err)
 		}
-		time.Sleep(10 * time.Millisecond) // small delay between frames
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -71,57 +88,92 @@ func (h *batchHarness) send(v any) {
 
 func (h *batchHarness) recv() Response {
 	h.t.Helper()
-	br := newBufferedReader(h.stdout)
-	line, err := br.ReadBytes('\n')
-	if err != nil && err != io.EOF {
-		h.t.Fatalf("recv: %v", err)
+	deadline := time.After(5 * time.Second)
+	var buf []byte
+	// Prepend any leftover bytes from previous recv.
+	if len(h.respBuf) > 0 {
+		buf = h.respBuf
+		h.respBuf = nil
 	}
-	line = []byte(stripNL(string(line)))
-	if len(line) == 0 {
-		return Response{}
+	for {
+		select {
+		case <-deadline:
+			h.t.Fatalf("recv timed out after 5s; buffer: %q", string(buf))
+		case resp, ok := <-h.respCh:
+			if !ok {
+				h.t.Fatalf("respCh closed")
+			}
+			buf = append(buf, resp...)
+			// Look for newline.
+			for i, b := range buf {
+				if b == '\n' {
+					result := make([]byte, i)
+					copy(result, buf[:i])
+					rest := make([]byte, len(buf)-i-1)
+					copy(rest, buf[i+1:])
+					var r Response
+					if err := json.Unmarshal(result, &r); err != nil {
+						h.t.Fatalf("decode response %q: %v", string(result), err)
+					}
+					h.respBuf = rest
+					return r
+				}
+			}
+			// No newline yet, continue reading.
+		}
 	}
-	var r Response
-	if err := json.Unmarshal(line, &r); err != nil {
-		h.t.Fatalf("decode response %q: %v", string(line), err)
-	}
-	return r
 }
 
 func (h *batchHarness) recvAll() []Response {
 	h.t.Helper()
 	var responses []Response
-	br := newBufferedReader(h.stdout)
-	for {
-		line, err := br.ReadBytes('\n')
-		if err == io.EOF {
-			break
+	deadline := time.After(5 * time.Second)
+	var buf []byte
+	for len(responses) < 10 { // safety cap, will naturally stop
+		select {
+		case <-deadline:
+			return responses
+		case resp, ok := <-h.respCh:
+			if !ok {
+				return responses
+			}
+			buf = append(buf, resp...)
+			// Extract all complete lines.
+			for {
+				found := -1
+				for i, b := range buf {
+					if b == '\n' {
+						found = i
+						break
+					}
+				}
+				if found < 0 {
+					break
+				}
+				line := make([]byte, found)
+				copy(line, buf[:found])
+				buf = buf[found+1:]
+				if len(line) == 0 {
+					continue
+				}
+				var r Response
+				if err := json.Unmarshal(line, &r); err != nil {
+					h.t.Fatalf("decode response %q: %v", string(line), err)
+				}
+				responses = append(responses, r)
+			}
 		}
-		if err != nil {
-			break
-		}
-		line = []byte(stripNL(string(line)))
-		if len(line) == 0 {
-			continue
-		}
-		var r Response
-		if err := json.Unmarshal(line, &r); err != nil {
-			h.t.Fatalf("decode response %q: %v", string(line), err)
-		}
-		responses = append(responses, r)
 	}
 	return responses
 }
 
 func (h *batchHarness) close() {
 	h.t.Helper()
-	// Close stdin write end — scanner Read() gets EOF and Serve() exits.
 	_ = h.stdin.Close()
-	timer := time.NewTimer(2 * time.Second)
+	h.cancel()
 	select {
 	case <-h.done:
-		timer.Stop()
-	case <-timer.C:
-		h.cancel()
+	case <-time.After(2 * time.Second):
 		<-h.done
 	}
 }
@@ -166,10 +218,7 @@ func stripNL(s string) string {
 
 // TestServer_BatchRequest_ValidRequests tests that the server handles
 // a batch of valid requests and returns an array of responses in order.
-// Skipped: harness issue — recvAll() blocks on pipe read when server
-// responses are consumed in a different code path.
 func TestServer_BatchRequest_ValidRequests(t *testing.T) {
-	t.Skip("harness: recvAll blocks on pipe read when server writes match test reader offset")
 	bridge := &fakeBridgeForBatch{
 		tools: []ToolDescriptor{
 			{Name: "echo", Description: "echo tool", InputSchema: map[string]any{"type": "object"}},
@@ -215,21 +264,21 @@ func TestServer_BatchRequest_ValidRequests(t *testing.T) {
 		t.Fatalf("expected 2 responses, got %d", len(responses))
 	}
 
-	// Responses must be in same order as requests (batch order preserved)
-	if string(responses[0].ID) != "10" {
-		t.Errorf("first response id: got %s want 10", string(responses[0].ID))
+	// Responses must be in same order as requests (batch order preserved).
+	// IDs are json.RawMessage — when unmarshaled from JSON "10" they become
+	// []byte(`"10"`), so we compare as string with quotes.
+	if string(responses[0].ID) != `"10"` {
+		t.Errorf("first response id: got %s want \"10\"", string(responses[0].ID))
 	}
-	if string(responses[1].ID) != "11" {
-		t.Errorf("second response id: got %s want 11", string(responses[1].ID))
+	if string(responses[1].ID) != `"11"` {
+		t.Errorf("second response id: got %s want \"11\"", string(responses[1].ID))
 	}
 }
 
 // TestServer_BatchRequest_MixedNotificationsAndRequests tests that the
 // server correctly handles a batch containing both notifications and
 // requests — notifications produce no response.
-// Skipped: same harness issue as TestServer_BatchRequest_ValidRequests.
 func TestServer_BatchRequest_MixedNotificationsAndRequests(t *testing.T) {
-	t.Skip("harness: recvAll blocks when server response timing doesn't match reader")
 	bridge := &fakeBridgeForBatch{}
 	h := newBatchHarness(t, bridge)
 	defer h.close()
@@ -262,15 +311,13 @@ func TestServer_BatchRequest_MixedNotificationsAndRequests(t *testing.T) {
 	if len(responses) != 1 {
 		t.Fatalf("expected 1 response (notifications suppressed), got %d", len(responses))
 	}
-	if string(responses[0].ID) != "20" {
-		t.Errorf("response id: got %s want 20", string(responses[0].ID))
+	if string(responses[0].ID) != `"20"` {
+		t.Errorf("response id: got %s want \"20\"", string(responses[0].ID))
 	}
 }
 
 // TestServer_BatchRequest_AllNotifications returns no responses (empty array).
-// Skipped: same harness issue as TestServer_BatchRequest_ValidRequests.
 func TestServer_BatchRequest_AllNotifications(t *testing.T) {
-	t.Skip("harness: recvAll blocks when server response timing doesn't match reader")
 	bridge := &fakeBridgeForBatch{}
 	h := newBatchHarness(t, bridge)
 	defer h.close()
@@ -311,9 +358,7 @@ func TestServer_BatchRequest_AllNotifications(t *testing.T) {
 
 // TestServer_BatchRequest_PartialErrors tests that if some requests in a
 // batch fail, the others still get processed and returned.
-// Skipped: same harness issue as TestServer_BatchRequest_ValidRequests.
 func TestServer_BatchRequest_PartialErrors(t *testing.T) {
-	t.Skip("harness: recvAll blocks when server response timing doesn't match reader")
 	bridge := &fakeBridgeForBatch{}
 	h := newBatchHarness(t, bridge)
 	defer h.close()
@@ -347,26 +392,24 @@ func TestServer_BatchRequest_PartialErrors(t *testing.T) {
 	}
 
 	// First and third should succeed
-	if string(responses[0].ID) != "30" || responses[0].Error != nil {
+	if string(responses[0].ID) != `"30"` || responses[0].Error != nil {
 		t.Errorf("resp 0: id=%s err=%v", string(responses[0].ID), responses[0].Error)
 	}
 	// Second should be method not found
-	if string(responses[1].ID) != "31" {
-		t.Errorf("resp 1 id: got %s want 31", string(responses[1].ID))
+	if string(responses[1].ID) != `"31"` {
+		t.Errorf("resp 1 id: got %s want \"31\"", string(responses[1].ID))
 	}
 	if responses[1].Error == nil || responses[1].Error.Code != ErrMethodNotFound {
 		t.Errorf("resp 1 error code: got %v want %d", responses[1].Error, ErrMethodNotFound)
 	}
 	// Third should succeed
-	if string(responses[2].ID) != "32" || responses[2].Error != nil {
+	if string(responses[2].ID) != `"32"` || responses[2].Error != nil {
 		t.Errorf("resp 2: id=%s err=%v", string(responses[2].ID), responses[2].Error)
 	}
 }
 
 // TestServer_BatchRequest_EmptyBatch returns empty array "[]".
-// Skipped: same harness issue as TestServer_BatchRequest_ValidRequests.
 func TestServer_BatchRequest_EmptyBatch(t *testing.T) {
-	t.Skip("harness: recvAll blocks when server response timing doesn't match reader")
 	bridge := &fakeBridgeForBatch{}
 	h := newBatchHarness(t, bridge)
 	defer h.close()

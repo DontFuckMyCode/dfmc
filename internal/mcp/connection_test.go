@@ -4,31 +4,83 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"sync"
 	"testing"
 	"time"
 )
 
+// channelWriter implements io.Writer by sending data to a chan.
+type channelWriter struct {
+	ch chan<- []byte
+}
+
+func (w *channelWriter) Write(p []byte) (int, error) {
+	cp := make([]byte, len(p))
+	copy(cp, p)
+	select {
+	case w.ch <- cp:
+		return len(p), nil
+	default:
+		// Drop if channel is full — test reader must keep up.
+		// In practice respCh is buffered with 200 slots.
+		return len(p), nil
+	}
+}
+
+// mockResponseReader is an io.Reader backed by a chan of byte slices,
+// used in tests to avoid the io.Pipe blocking-read deadlock.
+type mockResponseReader struct {
+	t       *testing.T
+	respCh  <-chan []byte
+	pending []byte
+	mu      sync.Mutex
+}
+
+func newMockResponseReader(t *testing.T, respCh <-chan []byte) *mockResponseReader {
+	return &mockResponseReader{t: t, respCh: respCh}
+}
+
+func (r *mockResponseReader) Read(p []byte) (int, error) {
+	if len(r.pending) == 0 {
+		select {
+		case resp, ok := <-r.respCh:
+			if !ok {
+				return 0, io.EOF
+			}
+			r.pending = resp
+		case <-time.After(5 * time.Second):
+			r.t.Fatalf("mockResponseReader.Read timed out waiting for response")
+			return 0, io.ErrClosedPipe
+		}
+	}
+	n := copy(p, r.pending)
+	r.pending = r.pending[n:]
+	return n, nil
+}
+
 // connectionHarness is a server harness for connection tests.
 type connectionHarness struct {
-	t      *testing.T
-	stdin  *io.PipeWriter
-	stdout *io.PipeReader
-	done   chan error
-	cancel context.CancelFunc
+	t       *testing.T
+	stdin   *io.PipeWriter
+	respCh  chan []byte
+	respBuf []byte // carries over bytes between recvResponse calls
+	done    chan error
+	cancel  context.CancelFunc
 }
 
 func newConnectionHarness(t *testing.T, bridge ToolBridge) *connectionHarness {
+	respCh := make(chan []byte, 200)
 	inR, inW := io.Pipe()
-	outR, outW := io.Pipe()
-	srv := NewServer(inR, outW, bridge, ServerInfo{Name: "conn-test", Version: "0.0.0"})
+	srv := NewServer(inR, &channelWriter{respCh}, bridge, ServerInfo{Name: "conn-test", Version: "0.0.0"})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
 		err := srv.Serve(ctx)
-		_ = outW.Close()
+		_ = inW.Close()
+		close(respCh)
 		done <- err
 	}()
-	return &connectionHarness{t: t, stdin: inW, stdout: outR, done: done, cancel: cancel}
+	return &connectionHarness{t: t, stdin: inW, respCh: respCh, done: done, cancel: cancel}
 }
 
 func (h *connectionHarness) sendRequest(method string, id interface{}, params interface{}) {
@@ -53,37 +105,61 @@ func (h *connectionHarness) sendRequest(method string, id interface{}, params in
 func (h *connectionHarness) recvResponse() Response {
 	h.t.Helper()
 	buf := make([]byte, 0, 4096)
-	tmp := make([]byte, 1)
+	// Prepend any leftover bytes from previous recvResponse call.
+	if len(h.respBuf) > 0 {
+		buf = h.respBuf
+		h.respBuf = nil
+	}
+	deadline := time.After(5 * time.Second)
 	for {
-		n, err := h.stdout.Read(tmp)
-		if n > 0 {
-			if tmp[0] == '\n' {
-				goto done
+		select {
+		case <-deadline:
+			h.t.Fatalf("recvResponse timed out after 5s; buffer so far: %q", string(buf))
+		default:
+		}
+		// Drain any buffered bytes first.
+		if len(buf) > 0 {
+			if len(buf) > 32768 {
+				h.t.Fatalf("response too large")
 			}
-			buf = append(buf, tmp[0])
+			// Already have bytes, check if we have a complete line.
+			for i, b := range buf {
+				if b == '\n' {
+					result := make([]byte, len(buf[:i]))
+					copy(result, buf[:i])
+					// Keep remainder for next call.
+					h.respBuf = buf[i+1:]
+					var r Response
+					if err := json.Unmarshal(result, &r); err != nil {
+						h.t.Fatalf("unmarshal: %v", err)
+					}
+					return r
+				}
+			}
+			// No newline yet, continue reading.
 		}
-		if err != nil {
-			h.t.Fatalf("read: %v", err)
-		}
-		if len(buf) > 32768 {
-			h.t.Fatalf("response too large")
+		select {
+		case resp, ok := <-h.respCh:
+			if !ok {
+				if len(buf) > 0 {
+					h.t.Fatalf("recvResponse: respCh closed with %d bytes left: %q", len(buf), string(buf))
+				}
+				h.t.Fatalf("recvResponse: respCh closed unexpectedly")
+			}
+			buf = append(buf, resp...)
+		case <-time.After(10 * time.Millisecond):
+			// Keep checking deadline.
 		}
 	}
-done:
-	var r Response
-	if err := json.Unmarshal(buf, &r); err != nil {
-		h.t.Fatalf("unmarshal: %v", err)
-	}
-	return r
 }
 
 func (h *connectionHarness) close() {
 	h.t.Helper()
 	_ = h.stdin.Close()
+	h.cancel()
 	select {
 	case <-h.done:
 	case <-time.After(2 * time.Second):
-		h.cancel()
 		<-h.done
 	}
 }
