@@ -1,0 +1,1 @@
+fix(mcp): replace io.Pipe with buffered channel in test harnesses
