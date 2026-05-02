@@ -71,6 +71,9 @@ func (m *WasmModule) Run(ctx context.Context, arg string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.mod == nil {
+		return "", errors.New("WASM module is not initialized")
+	}
 	mem := m.mod.Memory()
 	if mem == nil {
 		return "", errors.New("WASM module has no memory export")

@@ -6,9 +6,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 func TestRunConfigSyncModels(t *testing.T) {
@@ -271,6 +273,13 @@ func TestSetConfigPath(t *testing.T) {
 }
 
 func TestParseConfigValue(t *testing.T) {
+	// Use yaml.Unmarshal to decode expected values so comparison is consistent
+	// (yaml.Unmarshal returns int64 for small integers, not float64)
+	decode := func(s string) any {
+		var v any
+		_ = yaml.Unmarshal([]byte(s), &v)
+		return v
+	}
 	tests := []struct {
 		input string
 		want  any
@@ -282,7 +291,7 @@ func TestParseConfigValue(t *testing.T) {
 		{"true", true},
 		{"false", false},
 		{"\"hello\"", "hello"},
-		{"[1,2,3]", []any{float64(1), float64(2), float64(3)}},
+		{"[1,2,3]", decode("[1,2,3]")},
 		{"plain string", "plain string"},
 	}
 	for _, tc := range tests {
@@ -291,7 +300,7 @@ func TestParseConfigValue(t *testing.T) {
 			t.Errorf("parseConfigValue(%q): error %v", tc.input, err)
 			continue
 		}
-		if got != tc.want {
+		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("parseConfigValue(%q) = %v (%T), want %v (%T)", tc.input, got, got, tc.want, tc.want)
 		}
 	}
