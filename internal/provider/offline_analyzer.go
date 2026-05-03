@@ -37,12 +37,10 @@ import (
 // fallbacks so a raw `/review this file` in chat still routes correctly.
 //
 // Slash-command markers are anchored at the start of a line (after
-// optional leading whitespace). The previous unanchored
-// strings.Contains check would fire on `/explain` inside a doc
-// comment, `/plan` inside a path like `tests/plans/`, or `/debug`
-// inside an `// XXX: debug me` note — and `/debug` was checked
-// before `/review` so the order also mattered. Anchored matching
-// makes the trigger position-determined rather than soup-like.
+// optional leading whitespace). An unanchored Contains("/debug")
+// would fire on a doc comment like "// XXX: debug me" in source.
+// Anchored matching makes the trigger position-determined rather
+// than soup-like.
 func detectOfflineTask(systemPrompt, question string) string {
 	// M2 fix: don't lowercase + concatenate the whole system prompt
 	// on every offline query. System prompts routinely run to several
