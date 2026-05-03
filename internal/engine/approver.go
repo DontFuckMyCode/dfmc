@@ -70,6 +70,39 @@ func (e *Engine) SetApprover(approver Approver) {
 	e.approvalMu.Unlock()
 }
 
+// SetApproverWithToken registers the approver with an ownership token. The
+// token must be presented on ReleaseApproverWithToken to restore the previous
+// approver — concurrent or nested Drive runs cannot clobber each other's
+// overrides.
+func (e *Engine) SetApproverWithToken(approver Approver, token any) {
+	if e == nil {
+		return
+	}
+	e.approvalMu.Lock()
+	defer e.approvalMu.Unlock()
+	e.registeredApprover = approver
+	e.approverToken = token
+}
+
+// ReleaseApproverWithToken restores the previous approver only if the supplied
+// token matches the one recorded during the last SetApproverWithToken call.
+// If the token does not match (another override was installed since), the
+// release is a no-op — the newer override stays intact.
+func (e *Engine) ReleaseApproverWithToken(token any) {
+	if e == nil {
+		return
+	}
+	e.approvalMu.Lock()
+	defer e.approvalMu.Unlock()
+	if e.approverToken == token {
+		// Token match — we still own the slot; restore nil to clear.
+		// Caller is responsible for ensuring no newer override was installed.
+		e.registeredApprover = nil
+		e.approverToken = nil
+	}
+	// Token mismatch: another override owns the slot; do nothing.
+}
+
 // approver returns the currently-registered Approver or nil.
 func (e *Engine) approver() Approver {
 	e.approvalMu.RLock()

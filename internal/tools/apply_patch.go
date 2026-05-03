@@ -103,15 +103,27 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 		if t.engine == nil {
 			return Result{}, fmt.Errorf("apply_patch: engine is not wired — read-before-mutate gate is unavailable; refusing to apply without an engine (caller must call SetEngine before use)")
 		}
+		// Serialize the entire read→write sequence per path so no concurrent
+		// goroutine can delete-and-recreate the file between our stat check
+		// (which gates EnsureReadBeforeMutation) and our write. The lock
+		// covers all mutations: stat, read-before-mutation, read, write.
+		var release func()
+		if !dryRun {
+			release = t.engine.LockPath(abs)
+		}
 		if _, statErr := os.Stat(abs); statErr == nil {
 			// Only gate on read-before-mutation when actually writing.
 			// Dry-run has no side effects, so the snapshot isn't required.
 			if !dryRun {
 				if guardErr := t.engine.EnsureReadBeforeMutation(abs); guardErr != nil {
+					release()
 					return Result{}, fmt.Errorf("apply_patch %s: %w (read the file first via read_file, then retry)", targetPath, guardErr)
 				}
 			}
 		} else if !os.IsNotExist(statErr) {
+			if !dryRun {
+				release()
+			}
 			return Result{}, fmt.Errorf("apply_patch %s: stat target: %w", targetPath, statErr)
 		}
 
@@ -129,8 +141,10 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 					entry["error"] = err.Error()
 					applied = append(applied, entry)
 					outLines = append(outLines, fmt.Sprintf("DEL  %s  FAIL %s", targetPath, err))
+					release()
 					continue
 				}
+				release() // unlock after delete
 			}
 			outLines = append(outLines, fmt.Sprintf("DEL  %s", targetPath))
 			applied = append(applied, entry)
@@ -151,6 +165,9 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 			entry["error"] = err.Error()
 			applied = append(applied, entry)
 			outLines = append(outLines, fmt.Sprintf("FAIL %s  %s", targetPath, err))
+			if !dryRun {
+				release()
+			}
 			continue
 		}
 		entry["hunks_applied"] = applied1
@@ -160,15 +177,17 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 		}
 
 		if !dryRun {
+			// release is already held from above — LockPath was called before
+			// stat to serialize the entire read→write sequence.
 			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+				release()
 				return Result{}, err
 			}
-			// Serialize write to prevent TOCTOU races with concurrent mutation tools.
-			release := t.engine.LockPath(abs)
-			defer release()
 			if err := writeFileAtomic(abs, []byte(updated), 0o644); err != nil {
+				release()
 				return Result{}, fmt.Errorf("write %s: %w", targetPath, err)
 			}
+			release() // unlock after write
 		}
 		action := "EDIT"
 		if f.IsNew {

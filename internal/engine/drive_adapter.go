@@ -282,17 +282,22 @@ func (e *Engine) PublishDriveEvent(eventType string, payload map[string]any) {
 //
 // Returns a no-op release when tools is empty so callers can always
 // `defer release()` regardless of config.
+// beginAutoApproveToken holds the ownership token for an active auto-approve
+// override. Only the owner can release it.
+type beginAutoApproveToken struct{}
+
 func (r *driveRunner) BeginAutoApprove(tools []string) func() {
 	if r == nil || r.e == nil || len(tools) == 0 {
 		return func() {}
 	}
 	prev := r.e.approver()
 	override := newDriveAutoApprover(prev, tools, "drive")
-	r.e.SetApprover(override)
+	token := &beginAutoApproveToken{}
+	r.e.SetApproverWithToken(override, token)
 	return func() {
-		// Restore the previous approver. Nil prev correctly clears
-		// the slot (SetApprover deletes when passed nil).
-		r.e.SetApprover(prev)
+		// Only restore if we are still the owner — prevents a concurrent
+		// Drive run's release from clobbering our override.
+		r.e.ReleaseApproverWithToken(token)
 	}
 }
 

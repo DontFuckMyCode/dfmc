@@ -75,14 +75,14 @@ func (s *Store) Persist() error {
 	if s.storage == nil || s.storage.DB() == nil {
 		return nil
 	}
-	s.mu.RLock()
+	s.mu.Lock()
 	wm := WorkingMemory{
 		RecentFiles:   append([]string(nil), s.working.RecentFiles...),
 		RecentSymbols: append([]string(nil), s.working.RecentSymbols...),
 		LastQuestion:  s.working.LastQuestion,
 		LastAnswer:    s.working.LastAnswer,
 	}
-	s.mu.RUnlock()
+	s.mu.Unlock()
 	data, err := json.Marshal(wm)
 	if err != nil {
 		return err

@@ -374,6 +374,8 @@ func (m *Manager) Load(id string) (*Conversation, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Hold the write lock for the entire swap so concurrent Active()
+	// readers see an consistent pointer, not a partial write.
 	m.mu.Lock()
 	m.active = c
 	m.mu.Unlock()
