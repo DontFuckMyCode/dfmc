@@ -566,6 +566,7 @@ func (t *toolBatchCallTool) Execute(ctx context.Context, req Request) (Result, e
 	// reads below. Do NOT add any access to results / lines above this
 	// line outside the dispatch loop — it would introduce a data race.
 	wg.Wait()
+	batchCancel()
 
 	joined := make([]string, 0, len(lines))
 	for _, l := range lines {

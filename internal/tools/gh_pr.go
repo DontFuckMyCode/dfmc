@@ -17,7 +17,8 @@ import (
 type GHPullRequestTool struct{}
 
 func NewGHPullRequestTool() *GHPullRequestTool { return &GHPullRequestTool{} }
-func (t *GHPullRequestTool) Name() string      { return "gh_pr" }
+
+func (t *GHPullRequestTool) Name() string        { return "gh_pr" }
 func (t *GHPullRequestTool) Description() string {
 	return "Query GitHub pull requests: list, view, diff, checks, and status summaries."
 }

@@ -49,7 +49,6 @@ func (m Model) runTemplateSlash(verb string, args []string, raw string) (Model, 
 	if verb == "" {
 		return m, nil, false
 	}
-	_ = raw
 	payload := strings.TrimSpace(strings.Join(args, " "))
 	targets, tail := splitTargetsAndTail(args)
 	if verb == "review" {

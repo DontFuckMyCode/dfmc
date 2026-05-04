@@ -9,7 +9,6 @@ package tui
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -27,10 +26,10 @@ func gitChangedFiles(projectRoot string, limit int) ([]string, error) {
 	cmd := exec.Command("git", "-C", root, "status", "--short", "--")
 	out, err := cmd.Output()
 	if err != nil {
-		if ee := (&exec.ExitError{}); errors.As(err, &ee) {
-			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("git status --short: exit %d", exitErr.ExitCode())
 		}
-		return nil, err
+		return nil, fmt.Errorf("git status --short: %w", err)
 	}
 	text := strings.ReplaceAll(string(out), "\r\n", "\n")
 	lines := strings.Split(text, "\n")
