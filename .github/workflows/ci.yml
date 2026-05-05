@@ -23,10 +23,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab00eb68f20aedd27de2f3d3f
+        uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@0a12ed9e1a4ce729c53f80fc1f1472bca80d2f2d
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -69,10 +69,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab00eb68f20aedd27de2f3d3f
+        uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@0a12ed9e1a4ce729c53f80fc1f1472bca80d2f2d
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -88,10 +88,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab00eb68f20aedd27de2f3d3f
+        uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@0a12ed9e1a4ce729c53f80fc1f1472bca80d2f2d
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
