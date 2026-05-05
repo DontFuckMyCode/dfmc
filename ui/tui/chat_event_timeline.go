@@ -467,11 +467,17 @@ func toolResultTimelineLines(toolName string, payload map[string]any, preview st
 		}
 	case "write_file":
 		lines = append(lines, mutationResultCardLine(toolName, success))
+		if impact := mutationImpactTimelineLine(payload); impact != "" {
+			lines = append(lines, "impact: "+impact)
+		}
 		if files := changedFilesTimelineLine(payload); files != "" {
 			lines = append(lines, "files: "+files)
 		}
 		if diff := diffTimelineLine(payload); diff != "" {
 			lines = append(lines, "diff: "+diff)
+		}
+		if outcome := toolOutcomeTimelineLine(toolName, payload); outcome != "" {
+			lines = append(lines, "outcome: "+outcome)
 		}
 		if bytes := payloadInt(payload, "written_bytes", 0); bytes > 0 {
 			lines = append(lines, fmt.Sprintf("payload: wrote %d bytes; file content hidden", bytes))
@@ -481,6 +487,9 @@ func toolResultTimelineLines(toolName string, payload map[string]any, preview st
 		lines = append(lines, "review: /diff shows the actual workspace change")
 	case "edit_file", "apply_patch":
 		lines = append(lines, mutationResultCardLine(toolName, success))
+		if impact := mutationImpactTimelineLine(payload); impact != "" {
+			lines = append(lines, "impact: "+impact)
+		}
 		if files := changedFilesTimelineLine(payload); files != "" {
 			lines = append(lines, "files: "+files)
 		}
@@ -489,6 +498,9 @@ func toolResultTimelineLines(toolName string, payload map[string]any, preview st
 		}
 		if hunks := payloadIntAny(payload, 0, "hunks_applied", "hunks"); hunks > 0 {
 			lines = append(lines, fmt.Sprintf("summary: %d hunk%s applied", hunks, pluralSuffix(hunks)))
+		}
+		if outcome := toolOutcomeTimelineLine(toolName, payload); outcome != "" {
+			lines = append(lines, "outcome: "+outcome)
 		}
 		lines = append(lines, "review: /diff or Patch tab shows side-by-side changes")
 	case "run_command":
@@ -506,8 +518,10 @@ func toolResultTimelineLines(toolName string, payload map[string]any, preview st
 			lines = append(lines, "error: "+timelineEventFieldLimit(errText, 220))
 		}
 		lines = append(lines, failureNextActionLine(toolName))
-	} else if outcome := toolOutcomeTimelineLine(toolName, payload); outcome != "" {
-		lines = append(lines, "outcome: "+outcome)
+	} else if !isMutationTimelineTool(toolName) {
+		if outcome := toolOutcomeTimelineLine(toolName, payload); outcome != "" {
+			lines = append(lines, "outcome: "+outcome)
+		}
 	}
 	if success && isMutationTimelineTool(toolName) {
 		lines = append(lines, "verify: inspect diff, then run focused tests")
@@ -524,7 +538,7 @@ func toolResultTimelineLines(toolName string, payload map[string]any, preview st
 
 func toolResultTimelineLineLimit(toolName string) int {
 	if isMutationTimelineTool(toolName) {
-		return 10
+		return 12
 	}
 	switch strings.ToLower(strings.TrimSpace(toolName)) {
 	case "read_file", "run_command", "grep_codebase", "semantic_search", "ast_query", "glob", "list_dir":
@@ -599,6 +613,35 @@ func mutationResultCardLine(toolName string, success bool) string {
 	default:
 		return ""
 	}
+}
+
+func mutationImpactTimelineLine(payload map[string]any) string {
+	files := payloadStringSlice(payload, "changed_files")
+	added := payloadInt(payload, "added_lines", 0)
+	removed := payloadInt(payload, "removed_lines", 0)
+	hunks := payloadIntAny(payload, 0, "hunks_applied", "hunks")
+	replacements := payloadInt(payload, "replacements", 0)
+	parts := []string{}
+	switch len(files) {
+	case 0:
+	case 1:
+		parts = append(parts, "1 file")
+	default:
+		parts = append(parts, fmt.Sprintf("%d files", len(files)))
+	}
+	if added > 0 || removed > 0 {
+		parts = append(parts, fmt.Sprintf("+%d -%d lines", added, removed))
+	}
+	if hunks > 0 {
+		parts = append(parts, fmt.Sprintf("%d hunk%s", hunks, pluralSuffix(hunks)))
+	}
+	if replacements > 0 {
+		parts = append(parts, fmt.Sprintf("%d replacement%s", replacements, pluralSuffix(replacements)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " | ")
 }
 
 func changedFilesTimelineLine(payload map[string]any) string {

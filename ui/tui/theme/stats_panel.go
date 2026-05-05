@@ -84,11 +84,13 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 		b.section("NEXT", nextRows(info, mode))
 		b.section("PROVIDERS", providerListRows(info))
 		b.section("CONTEXT", contextRows(info))
+		b.section("TOKENS", tokenRows(info))
 		b.section("SESSION", sessionRows(info))
 	default:
 		b.section("PROVIDER", providerRows(info))
 		b.section("NEXT", nextRows(info, mode))
 		b.section("CONTEXT", contextRows(info))
+		b.section("TOKENS", tokenRows(info))
 		b.section("TOOL LOOP", loopRows(info))
 		b.section("TOOLS", toolsRows(info))
 		b.section("WORKFLOW", workflowRows(info, inner))
@@ -313,56 +315,16 @@ func contextRows(info StatsPanelInfo) []string {
 	}
 	if info.ContextSystemTokens > 0 || info.ContextHistoryTokens > 0 || info.ContextResponseTokens > 0 || info.ContextToolTokens > 0 {
 		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
-			"budget sys %s | hist %s | evidence %s",
+			"window sys %s | hist %s",
 			CompactTokens(info.ContextSystemTokens),
 			CompactTokens(info.ContextHistoryTokens),
-			CompactTokens(info.ContextTokens),
 		)))
 		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
-			"reserve resp %s | tools %s",
+			"evidence %s | resp %s | tools %s",
+			CompactTokens(info.ContextTokens),
 			CompactTokens(info.ContextResponseTokens),
 			CompactTokens(info.ContextToolTokens),
 		)))
-	}
-	if info.Streaming && (info.LiveInputTokens > 0 || info.LiveOutputTokens > 0 || info.LiveTotalTokens > 0) {
-		total := info.LiveTotalTokens
-		if total <= 0 {
-			total = info.LiveInputTokens + info.LiveOutputTokens
-		}
-		rows = append(rows, InfoStyle.Bold(true).Render(fmt.Sprintf(
-			"live in ~%s | out ~%s",
-			CompactTokens(info.LiveInputTokens),
-			CompactTokens(info.LiveOutputTokens),
-		)))
-		rows = append(rows, InfoStyle.Render(fmt.Sprintf(
-			"live total ~%s | estimating",
-			CompactTokens(total),
-		)))
-		rows = append(rows, SubtleStyle.Render("estimate until provider done"))
-	}
-	if info.LastInputTokens > 0 || info.LastOutputTokens > 0 || info.LastTotalTokens > 0 {
-		rows = append(rows, InfoStyle.Render(fmt.Sprintf(
-			"last in %s | out %s | total %s",
-			CompactTokens(info.LastInputTokens),
-			CompactTokens(info.LastOutputTokens),
-			CompactTokens(info.LastTotalTokens),
-		)))
-	}
-	if info.SessionInputTokens > 0 || info.SessionOutputTokens > 0 || info.SessionTotalTokens > 0 {
-		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
-			"session in %s | out %s | total %s",
-			CompactTokens(info.SessionInputTokens),
-			CompactTokens(info.SessionOutputTokens),
-			CompactTokens(info.SessionTotalTokens),
-		)))
-		if info.CostPer1kTokens > 0 && info.SessionTotalTokens > 0 {
-			cost := (float64(info.SessionTotalTokens) / 1000) * info.CostPer1kTokens
-			rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
-				"cost %s @ %s/1k",
-				FormatUSDCost(cost),
-				FormatUSDCost(info.CostPer1kTokens),
-			)))
-		}
 	}
 	if len(info.ContextTopFiles) > 0 {
 		files := make([]string, 0, len(info.ContextTopFiles))
@@ -377,6 +339,65 @@ func contextRows(info StatsPanelInfo) []string {
 	}
 	if len(info.ContextReasons) > 0 {
 		rows = append(rows, SubtleStyle.Render("why: "+TruncateSingleLine(info.ContextReasons[0], 42)))
+	}
+	return rows
+}
+
+func tokenRows(info StatsPanelInfo) []string {
+	rows := []string{}
+	if info.Streaming && (info.LiveInputTokens > 0 || info.LiveOutputTokens > 0 || info.LiveTotalTokens > 0) {
+		total := info.LiveTotalTokens
+		if total <= 0 {
+			total = info.LiveInputTokens + info.LiveOutputTokens
+		}
+		rows = append(rows, InfoStyle.Bold(true).Render(fmt.Sprintf(
+			"live input ~%s | output ~%s",
+			CompactTokens(info.LiveInputTokens),
+			CompactTokens(info.LiveOutputTokens),
+		)))
+		rows = append(rows, InfoStyle.Render(fmt.Sprintf(
+			"live total ~%s | estimating",
+			CompactTokens(total),
+		)))
+		rows = append(rows, SubtleStyle.Render("estimate until provider done"))
+	}
+	if info.LastInputTokens > 0 || info.LastOutputTokens > 0 || info.LastTotalTokens > 0 {
+		rows = append(rows, InfoStyle.Render(fmt.Sprintf(
+			"last input %s | output %s",
+			CompactTokens(info.LastInputTokens),
+			CompactTokens(info.LastOutputTokens),
+		)))
+		if info.LastTotalTokens > 0 {
+			rows = append(rows, SubtleStyle.Render("last total "+CompactTokens(info.LastTotalTokens)))
+		}
+	}
+	if info.SessionInputTokens > 0 || info.SessionOutputTokens > 0 || info.SessionTotalTokens > 0 {
+		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
+			"session input %s | output %s",
+			CompactTokens(info.SessionInputTokens),
+			CompactTokens(info.SessionOutputTokens),
+		)))
+		if info.SessionTotalTokens > 0 {
+			rows = append(rows, SubtleStyle.Render("session total "+CompactTokens(info.SessionTotalTokens)))
+		}
+		if info.CostPer1kTokens > 0 && info.SessionTotalTokens > 0 {
+			cost := (float64(info.SessionTotalTokens) / 1000) * info.CostPer1kTokens
+			rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
+				"cost %s @ %s/1k",
+				FormatUSDCost(cost),
+				FormatUSDCost(info.CostPer1kTokens),
+			)))
+		}
+	}
+	if info.TranscriptInputTokens > 0 || info.TranscriptOutputTokens > 0 || info.ComposerTokens > 0 {
+		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
+			"visible user %s | assistant %s",
+			CompactTokens(info.TranscriptInputTokens),
+			CompactTokens(info.TranscriptOutputTokens),
+		)))
+		if info.ComposerTokens > 0 {
+			rows = append(rows, SubtleStyle.Render("composer "+CompactTokens(info.ComposerTokens)))
+		}
 	}
 	return rows
 }

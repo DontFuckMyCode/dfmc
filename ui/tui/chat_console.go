@@ -326,7 +326,7 @@ func timelineEventRowStyle(row, content string) lipgloss.Style {
 		return subtleStyle
 	case strings.HasPrefix(trimmed, "target:"), strings.HasPrefix(trimmed, "range:"), strings.HasPrefix(trimmed, "command:"), strings.HasPrefix(trimmed, "cwd:"), strings.HasPrefix(trimmed, "files:"):
 		return infoStyle
-	case strings.HasPrefix(trimmed, "diff:"), strings.HasPrefix(trimmed, "review:"), strings.HasPrefix(trimmed, "next:"), strings.HasPrefix(trimmed, "verify:"):
+	case strings.HasPrefix(trimmed, "diff:"), strings.HasPrefix(trimmed, "impact:"), strings.HasPrefix(trimmed, "review:"), strings.HasPrefix(trimmed, "next:"), strings.HasPrefix(trimmed, "verify:"):
 		return accentStyle
 	case strings.HasPrefix(trimmed, "card:"):
 		return ToolStyle

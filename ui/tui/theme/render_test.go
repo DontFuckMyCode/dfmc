@@ -882,9 +882,38 @@ func TestRenderStatsPanelShowsContextDiagnostics(t *testing.T) {
 		ContextToolTokens:       512,
 	}
 	out := RenderStatsPanelSized(info, 30, 56)
-	for _, want := range []string{"files 4/8", "evidence 3.2k/16k tok", "task review", "zip standard", "available 120k tok", "budget sys 900", "hist 1.2k", "reserve resp 2.0k", "tools 512", "manager.go", "why:"} {
+	for _, want := range []string{"files 4/8", "evidence 3.2k/16k tok", "task review", "zip standard", "available 120k tok", "window sys 900", "hist 1.2k", "resp 2.0k", "tools 512", "manager.go", "why:"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected context diagnostic %q, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderStatsPanelShowsTokenLedger(t *testing.T) {
+	info := StatsPanelInfo{
+		Provider:               "openai",
+		Model:                  "gpt-5.4",
+		Configured:             true,
+		MaxContext:             200000,
+		ContextWindowTokens:    16000,
+		Streaming:              true,
+		LiveInputTokens:        12000,
+		LiveOutputTokens:       800,
+		LastInputTokens:        9000,
+		LastOutputTokens:       1000,
+		LastTotalTokens:        10000,
+		SessionInputTokens:     25000,
+		SessionOutputTokens:    4000,
+		SessionTotalTokens:     29000,
+		TranscriptInputTokens:  700,
+		TranscriptOutputTokens: 300,
+		ComposerTokens:         42,
+		CostPer1kTokens:        0.002,
+	}
+	out := RenderStatsPanelSized(info, 44, 58)
+	for _, want := range []string{"TOKENS", "live input ~12k", "output ~800", "last input 9k", "last total 10k", "session input 25k", "session total 29k", "visible user 700", "assistant 300", "composer 42", "cost $0.058"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected token ledger %q, got:\n%s", want, out)
 		}
 	}
 }

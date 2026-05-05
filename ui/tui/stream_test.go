@@ -128,7 +128,7 @@ func TestStatsPanelShowsLiveStreamingTokenLedger(t *testing.T) {
 	m.chat.streamIndex = 1
 
 	panel := stripANSI(renderStatsPanel(m.statsPanelInfo(), 28))
-	for _, want := range []string{"live in ~42k", "out ~17", "total ~42.0k", "estimate until provider done"} {
+	for _, want := range []string{"live input ~42k", "output ~17", "total ~42.0k", "estimate until provider done"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("stats panel missing live token ledger %q, got:\n%s", want, panel)
 		}
