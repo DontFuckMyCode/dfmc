@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -20,7 +21,7 @@ func TestHeartbeatTickCmd(t *testing.T) {
 }
 
 func TestDrainPendingQueue_EmptyQueue(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	// Empty queue should return (m, nil)
 	next, cmd := m.drainPendingQueue()
 	if next.chat.input != m.chat.input {
@@ -32,7 +33,7 @@ func TestDrainPendingQueue_EmptyQueue(t *testing.T) {
 }
 
 func TestApplyCommandPickerProvider_EmptySelection(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.commandPicker.persist = false
 	next, cmd := m.applyCommandPickerProvider("")
 	nm := next.(Model)
@@ -45,7 +46,7 @@ func TestApplyCommandPickerProvider_EmptySelection(t *testing.T) {
 }
 
 func TestApplyCommandPickerModel_EmptySelection(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.commandPicker.persist = false
 	next, cmd := m.applyCommandPickerModel("")
 	nm := next.(Model)
@@ -58,7 +59,7 @@ func TestApplyCommandPickerModel_EmptySelection(t *testing.T) {
 }
 
 func TestContextCommandWhySummary_NoReport(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	// No engine, no status contextIn set - should return "No context report available yet."
 	got := m.contextCommandWhySummary()
 	if got == "" {
@@ -67,7 +68,7 @@ func TestContextCommandWhySummary_NoReport(t *testing.T) {
 }
 
 func TestDescribeLastIntent_NoDecisionsYet(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	got := m.describeLastIntent()
 	if got == "" {
 		t.Fatal("expected non-empty description")
@@ -75,7 +76,7 @@ func TestDescribeLastIntent_NoDecisionsYet(t *testing.T) {
 }
 
 func TestDeleteInputBeforeCursor_EmptyInput(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.chat.input = ""
 	m.chat.cursor = 0
 	m.deleteInputBeforeCursor()
@@ -83,7 +84,7 @@ func TestDeleteInputBeforeCursor_EmptyInput(t *testing.T) {
 }
 
 func TestDeleteInputAtCursor_EmptyInput(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.chat.input = ""
 	m.chat.cursor = 0
 	m.deleteInputAtCursor()
@@ -91,7 +92,7 @@ func TestDeleteInputAtCursor_EmptyInput(t *testing.T) {
 }
 
 func TestDeleteInputAtCursor_AlreadyAtEnd(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.chat.input = "hello"
 	m.chat.cursor = 5 // past the end
 	m.deleteInputAtCursor()
@@ -102,14 +103,14 @@ func TestDeleteInputAtCursor_AlreadyAtEnd(t *testing.T) {
 }
 
 func TestExitInputHistoryNavigation_AlreadyInactive(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	// index is already -1 by default, so should return early
 	m.exitInputHistoryNavigation()
 	// Should not panic - this is the default state
 }
 
 func TestExitInputHistoryNavigation_ResetsIndex(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.inputHistory.index = 2 // actively navigating
 	m.inputHistory.draft = "draft text"
 	m.exitInputHistoryNavigation()
@@ -122,7 +123,7 @@ func TestExitInputHistoryNavigation_ResetsIndex(t *testing.T) {
 }
 
 func TestConversationBranchSlash_UnknownSubcommand(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	// Unknown subcommand should return error without needing engine
 	got := conversationBranchSlash(m, []string{"unknown-subcommand"})
 	if got == "" {
@@ -846,7 +847,7 @@ func TestGitCmdError_MultipleArgs(t *testing.T) {
 }
 
 func TestActivityFocusSelectionFile_NoSelection(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	// No activity entries, so should return notice
 	next, cmd := m.activityFocusSelectionFile()
 	nm := next.(Model)

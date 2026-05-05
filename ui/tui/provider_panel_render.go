@@ -9,36 +9,6 @@ import (
 	"strings"
 )
 
-func formatProviderRow(row providerRow, selected bool, width int) string {
-	marker := "  "
-	if selected {
-		marker = accentStyle.Render("▶ ")
-	}
-	tag := providerStatusStyle(row.Status)
-	name := row.Name
-	if row.IsPrimary {
-		name = accentStyle.Render(name) + subtleStyle.Render("*")
-	}
-	tools := "tools=off"
-	if row.SupportsTools {
-		tools = "tools=on"
-	}
-	model := row.Model
-	if strings.TrimSpace(model) == "" {
-		model = "(no model)"
-	}
-	line := marker + tag + "  " + name + "  " + subtleStyle.Render(model) +
-		"  " + subtleStyle.Render(fmt.Sprintf("max=%d", row.MaxContext)) +
-		"  " + subtleStyle.Render(tools)
-	if row.ToolStyle != "" {
-		line += "  " + subtleStyle.Render(row.ToolStyle)
-	}
-	if width > 0 {
-		line = truncateSingleLine(line, width)
-	}
-	return line
-}
-
 // formatProviderRowNumbered renders one numbered line. Shape:
 // `▶ 1. [READY] anthropic*  claude-opus-4  [key:ok]  max=200k  tools=on`.
 func formatProviderRowNumbered(row providerRow, num int, selected bool, fallbackPos map[string]int, width int) string {

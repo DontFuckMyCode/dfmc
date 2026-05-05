@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -38,7 +39,7 @@ func sampleProviderRows() []providerRow {
 // --- provider CRUD ---
 
 func TestCreateProvider_EmptyNameError(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.eng = &engine.Engine{Config: config.DefaultConfig()}
 	err := m.createProvider("")
 	if err == nil {
@@ -50,7 +51,7 @@ func TestCreateProvider_EmptyNameError(t *testing.T) {
 }
 
 func TestCreateProvider_NilEngineError(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	err := m.createProvider("anthropic")
 	if err == nil {
 		t.Fatal("expected error when engine is nil")
@@ -64,7 +65,7 @@ func TestCreateProvider_AlreadyExistsError(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers.Profiles["anthropic"] = config.ModelConfig{Protocol: "anthropic"}
 	eng := &engine.Engine{Config: cfg, ProjectRoot: t.TempDir()}
-	m := NewModel(nil, eng)
+	m := NewModel(context.TODO(), eng)
 	err := m.createProvider("anthropic")
 	if err == nil {
 		t.Fatal("expected error for duplicate provider")
@@ -72,7 +73,7 @@ func TestCreateProvider_AlreadyExistsError(t *testing.T) {
 }
 
 func TestDeleteProvider_EmptyNameError(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	err := m.deleteProvider("")
 	if err == nil {
 		t.Fatal("expected error for empty name")
@@ -80,7 +81,7 @@ func TestDeleteProvider_EmptyNameError(t *testing.T) {
 }
 
 func TestDeleteProvider_NilEngineError(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	err := m.deleteProvider("anthropic")
 	if err == nil {
 		t.Fatal("expected error when engine is nil")
@@ -91,7 +92,7 @@ func TestDeleteProvider_Success(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers.Profiles["testprov"] = config.ModelConfig{Protocol: "openai-compatible"}
 	eng := &engine.Engine{Config: cfg, ProjectRoot: t.TempDir()}
-	m := NewModel(nil, eng)
+	m := NewModel(context.TODO(), eng)
 	err := m.deleteProvider("testprov")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -102,7 +103,7 @@ func TestDeleteProvider_Success(t *testing.T) {
 }
 
 func TestCycleProviderModel_NilEngine(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m = m.cycleProviderModel("anthropic")
 	if m.notice != "" {
 		t.Errorf("nil engine notice: %s", m.notice)
@@ -116,7 +117,7 @@ func TestCycleProviderModel_UnknownProvider(t *testing.T) {
 		Models: []string{"sonnet", "opus"},
 	}
 	eng := &engine.Engine{Config: cfg, ProjectRoot: t.TempDir()}
-	m := NewModel(nil, eng)
+	m := NewModel(context.TODO(), eng)
 	m = m.cycleProviderModel("unknown")
 	if m.notice != "" && !strings.Contains(m.notice, "unknown") {
 		t.Errorf("unexpected notice: %s", m.notice)
@@ -130,7 +131,7 @@ func TestCycleProviderModel_SingleModel(t *testing.T) {
 		Models: []string{"only-model"},
 	}
 	eng := &engine.Engine{Config: cfg, ProjectRoot: t.TempDir()}
-	m := NewModel(nil, eng)
+	m := NewModel(context.TODO(), eng)
 	m = m.cycleProviderModel("single")
 	if m.notice != "cycle single model → only-model" {
 		t.Errorf("notice: %s", m.notice)
@@ -138,7 +139,7 @@ func TestCycleProviderModel_SingleModel(t *testing.T) {
 }
 
 func TestToggleFallbackProvider_NilEngine(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m = m.toggleFallbackProvider("offline")
 	if m.notice != "" {
 		t.Errorf("nil engine notice: %s", m.notice)
@@ -149,7 +150,7 @@ func TestToggleFallbackProvider_AddToFallback(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers.Fallback = nil
 	eng := &engine.Engine{Config: cfg, ProjectRoot: t.TempDir()}
-	m := NewModel(nil, eng)
+	m := NewModel(context.TODO(), eng)
 	m = m.toggleFallbackProvider("offline")
 	if m.eng.Config.Providers.Fallback == nil {
 		t.Fatal("fallback list should not be nil")
@@ -163,7 +164,7 @@ func TestToggleFallbackProvider_RemoveFromFallback(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers.Fallback = []string{"offline", "deepseek"}
 	eng := &engine.Engine{Config: cfg, ProjectRoot: t.TempDir()}
-	m := NewModel(nil, eng)
+	m := NewModel(context.TODO(), eng)
 	m = m.toggleFallbackProvider("offline")
 	if len(m.eng.Config.Providers.Fallback) != 1 {
 		t.Fatalf("expected 1 fallback after removal, got %d", len(m.eng.Config.Providers.Fallback))
@@ -171,7 +172,7 @@ func TestToggleFallbackProvider_RemoveFromFallback(t *testing.T) {
 }
 
 func TestSavePipelineDraft_EmptyNameError(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.providers.pipelineDraftName = ""
 	err := m.savePipelineDraft()
 	if err == nil {
@@ -183,7 +184,7 @@ func TestSavePipelineDraft_EmptyNameError(t *testing.T) {
 }
 
 func TestSavePipelineDraft_NoStepsError(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.providers.pipelineDraftName = "my-pipeline"
 	m.providers.pipelineDraftSteps = nil
 	err := m.savePipelineDraft()
@@ -196,7 +197,7 @@ func TestSavePipelineDraft_NoStepsError(t *testing.T) {
 }
 
 func TestSavePipelineDraft_MissingProviderError(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.providers.pipelineDraftName = "my-pipeline"
 	m.providers.pipelineDraftSteps = []config.PipelineStep{{Provider: "", Model: "sonnet"}}
 	err := m.savePipelineDraft()
@@ -206,7 +207,7 @@ func TestSavePipelineDraft_MissingProviderError(t *testing.T) {
 }
 
 func TestDeletePipeline_EmptyNameError(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	err := m.deletePipeline("")
 	if err == nil {
 		t.Fatal("expected error for empty name")
@@ -217,7 +218,7 @@ func TestDeletePipeline_EmptyNameError(t *testing.T) {
 }
 
 func TestDeletePipeline_NilEngineError(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.eng = &engine.Engine{Config: config.DefaultConfig()}
 	err := m.deletePipeline("some-pipeline")
 	if err == nil {
@@ -226,7 +227,7 @@ func TestDeletePipeline_NilEngineError(t *testing.T) {
 }
 
 func TestDeleteActiveModel_NilEngine(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m = m.deleteActiveModel()
 	if m.notice != "engine not ready" {
 		t.Errorf("notice: %s", m.notice)
@@ -240,7 +241,7 @@ func TestDeleteActiveModel_UnknownProvider(t *testing.T) {
 		Models: []string{"sonnet"},
 	}
 	eng := &engine.Engine{Config: cfg, ProjectRoot: t.TempDir()}
-	m := NewModel(nil, eng)
+	m := NewModel(context.TODO(), eng)
 	m.providers.detailProvider = "unknown"
 	m = m.deleteActiveModel()
 	if m.notice != "provider not found" {
@@ -249,7 +250,7 @@ func TestDeleteActiveModel_UnknownProvider(t *testing.T) {
 }
 
 func TestAddModelToProvider_NilEngine(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.addModelToProvider("anthropic", "sonnet")
 }
 
@@ -257,7 +258,7 @@ func TestAddModelToProvider_UnknownProvider(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers.Profiles["known"] = config.ModelConfig{Model: "sonnet", Models: []string{"sonnet"}}
 	eng := &engine.Engine{Config: cfg}
-	m := NewModel(nil, eng)
+	m := NewModel(context.TODO(), eng)
 	m.addModelToProvider("unknown", "model")
 	if len(m.eng.Config.Providers.Profiles["known"].Models) != 1 {
 		t.Errorf("unknown provider should not modify models: %v", m.eng.Config.Providers.Profiles["known"].Models)
@@ -268,7 +269,7 @@ func TestAddModelToProvider_Success(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers.Profiles["test"] = config.ModelConfig{Model: "sonnet", Models: []string{"sonnet"}}
 	eng := &engine.Engine{Config: cfg}
-	m := NewModel(nil, eng)
+	m := NewModel(context.TODO(), eng)
 	m.addModelToProvider("test", "opus")
 	if len(m.eng.Config.Providers.Profiles["test"].Models) != 2 {
 		t.Errorf("expected 2 models, got %d", len(m.eng.Config.Providers.Profiles["test"].Models))

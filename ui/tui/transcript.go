@@ -70,67 +70,6 @@ func (m Model) appendCoachMessage(text string, severity coachSeverity, origin st
 	return m
 }
 
-// appendSessionDoneSummary builds a compact block summarizing what the agent did
-// in the just-completed round: tools used, tool errors, and any coach notes that
-// fired. It appends as a chatRoleSystem line so it lands at the bottom of the
-// transcript — after the explanation, tools, errors, and coach notes that the
-// render pass outputs in order. This makes "what just happened?" scannable at
-// a glance instead of hunting through the activity log.
-//
-// Coach notes are identified by scanning the transcript for chatRoleCoach lines
-// from this round. An empty summary is silently skipped so the transcript stays
-// clean on reads with no tools/errors/notes.
-func (m Model) appendSessionDoneSummary() Model {
-	lines := []string{}
-
-	// Collect tools used in this round from toolTimeline.
-	if len(m.agentLoop.toolTimeline) > 0 {
-		toolNames := make([]string, 0, len(m.agentLoop.toolTimeline))
-		for _, chip := range m.agentLoop.toolTimeline {
-			if chip.Name != "" {
-				toolNames = append(toolNames, chip.Name)
-			}
-		}
-		if len(toolNames) > 0 {
-			lines = append(lines, "Tools used: "+strings.Join(toolNames, " → "))
-		}
-	}
-
-	// Collect tool errors (Status "error" means failure).
-	var errLines []string
-	for _, chip := range m.agentLoop.toolTimeline {
-		if chip.Status == "error" {
-			preview := chip.Preview
-			if preview == "" {
-				preview = chip.Verb
-			}
-			if preview != "" {
-				errLines = append(errLines, chip.Name+": "+preview)
-			} else {
-				errLines = append(errLines, chip.Name)
-			}
-		}
-	}
-	if len(errLines) > 0 {
-		lines = append(lines, "Tool errors: "+strings.Join(errLines, " | "))
-	}
-
-	// Collect coach notes from this round (accumulated directly by handleEngineEvent
-	// on "coach:note" events, so we don't need to scan the transcript).
-	if notes := m.agentLoop.sessionCoachNotes; len(notes) > 0 {
-		lines = append(lines, "Coach: "+strings.Join(notes, " · "))
-	}
-
-	if len(lines) == 0 {
-		return m
-	}
-
-	body := strings.Join(lines, "\n")
-	m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleSystem, body))
-	m.chat.scrollback = 0
-	return m
-}
-
 func (m *Model) moveStreamingAssistantToTranscriptEnd() {
 	idx := m.chat.streamIndex
 	if idx < 0 || idx >= len(m.chat.transcript) || idx == len(m.chat.transcript)-1 {
@@ -164,40 +103,6 @@ func (m *Model) scrollTranscript(delta int) {
 	} else {
 		m.notice = fmt.Sprintf("Transcript: %d lines back (PgDown/End = forward)", next)
 	}
-}
-
-// maxScrollbackSteps returns how many previous user turns exist above the
-// current anchor. Used as the scrollback ceiling so the user can scroll back
-// through all prior turns to reach the very first one.
-func maxScrollbackSteps(transcript []chatLine) int {
-	if len(transcript) == 0 {
-		return 0
-	}
-	anchorIdx := -1
-	for i := len(transcript) - 1; i >= 0; i-- {
-		if transcript[i].Role.Eq(chatRoleUser) {
-			anchorIdx = i
-			break
-		}
-	}
-	if anchorIdx < 0 {
-		return 0
-	}
-	// Count all user turns from index 0 to anchorIdx (inclusive).
-	// This includes the anchor itself, so scrolling back by N steps gets
-	// you to the first user turn (when N = maxScrollbackSteps).
-	count := 0
-	for i := 0; i <= anchorIdx; i++ {
-		if transcript[i].Role.Eq(chatRoleUser) {
-			count++
-		}
-	}
-	// Subtract 1 because the anchor turn itself is always visible at scrollback=0.
-	// With count=11 (turns 0..10, anchor at 10), max scrollback = 10 gets to turn 0.
-	if count > 0 {
-		count--
-	}
-	return count
 }
 
 // estimateTranscriptLines returns a rough upper bound on the number of

@@ -93,13 +93,13 @@ func runSkill(ctx context.Context, eng *engine.Engine, args []string, jsonMode b
 		input := strings.TrimSpace(strings.Join(args[2:], " "))
 		return runNamedSkill(ctx, eng, name, input, jsonMode)
 
-	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc skill [list|info <name>|run <name> [input]]")
-		return 2
 	case "export":
 		return runSkillExport(args[1:])
 	case "install":
 		return runSkillInstall(args[1:])
+	default:
+		fmt.Fprintln(os.Stderr, "usage: dfmc skill [list|info <name>|run <name> [input]]")
+		return 2
 	}
 }
 

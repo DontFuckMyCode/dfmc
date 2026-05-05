@@ -4,11 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/charmbracelet/lipgloss"
 )
-
-const maxChatEventLines = 48
 
 func (m *Model) upsertStreamingChatEvent(ev chatEventLine) {
 	ev.Key = strings.TrimSpace(ev.Key)
@@ -155,71 +151,6 @@ func toolChatEventKey(toolName string, step int) string {
 	return toolNameKey(toolName)
 }
 
-func renderChatEventTimeline(events []chatEventLine, width int) string {
-	if len(events) == 0 {
-		return ""
-	}
-	if width < 32 {
-		width = 32
-	}
-	maxRows := len(events)
-	if maxRows > 10 {
-		maxRows = 10
-	}
-	start := len(events) - maxRows
-	lines := []string{subtleStyle.Render("    RUN LOG")}
-	for _, ev := range events[start:] {
-		title := strings.TrimSpace(ev.Title)
-		if title == "" {
-			continue
-		}
-		status := chatEventStatusLabel(ev.Status)
-		head := fmt.Sprintf("    %s %-7s %s", chatEventMarker(ev.Status), status, title)
-		if ev.Duration > 0 {
-			head += fmt.Sprintf(" %dms", ev.Duration)
-		}
-		if detail := strings.TrimSpace(ev.Detail); detail != "" {
-			head += " | " + detail
-		}
-		head = truncateSingleLine(head, width)
-		lines = append(lines, renderChatEventLine(ev.Status, head))
-	}
-	if len(events) > maxRows {
-		lines = append(lines, subtleStyle.Render(fmt.Sprintf("    ... %d earlier run events", len(events)-maxRows)))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func chatEventMarker(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "running":
-		return "..."
-	case "ok", "done":
-		return "ok "
-	case "failed", "error":
-		return "!! "
-	case "warn", "throttle":
-		return "!! "
-	default:
-		return "?? "
-	}
-}
-
-func chatEventStatusLabel(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "running":
-		return "RUN"
-	case "ok", "done":
-		return "DONE"
-	case "failed", "error":
-		return "FAIL"
-	case "warn", "throttle":
-		return "WARN"
-	default:
-		return "INFO"
-	}
-}
-
 // elapsedLabel returns a compact elapsed-time string for a running tool.
 // Returns "" if the event is not running or the delta is not positive.
 func elapsedLabel(startTime time.Time) string {
@@ -237,17 +168,6 @@ func elapsedLabel(startTime time.Time) string {
 	minutes := seconds / 60
 	seconds = seconds % 60
 	return fmt.Sprintf("+%dm%02ds", minutes, seconds)
-}
-
-func renderChatEventLine(status, line string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "ok", "done":
-		return okStyle.Render(line)
-	case "failed", "error", "warn", "throttle":
-		return warnStyle.Render(line)
-	default:
-		return subtleStyle.Render(line)
-	}
 }
 
 func compactMetric(n int) string {
@@ -449,41 +369,4 @@ func payloadMap(payload map[string]any, key string) map[string]any {
 		return nil
 	}
 	return m
-}
-
-func truncateTimelineSingleLine(s string, maxLen int) string {
-	if maxLen < 4 {
-		maxLen = 4
-	}
-	if lipgloss.Width(s) <= maxLen {
-		return s
-	}
-	// Account for the "…" character width.
-	ellipsis := "…"
-	ellipsisWidth := lipgloss.Width(ellipsis)
-	available := maxLen - ellipsisWidth
-	if available < 1 {
-		return ellipsis
-	}
-	// Walk backwards to avoid cutting mid-rune.
-	clipped := s
-	for lipgloss.Width(clipped) > available {
-		if len(clipped) <= 1 {
-			break
-		}
-		clipped = clipped[:len(clipped)-1]
-	}
-	return clipTimelineRunes(clipped) + ellipsis
-}
-
-func clipTimelineRunes(s string) string {
-	if s == "" {
-		return s
-	}
-	// Drop trailing whitespace that would look awkward before "…".
-	clipped := strings.TrimRight(s, " \t")
-	if clipped == "" {
-		return s[:1]
-	}
-	return clipped
 }

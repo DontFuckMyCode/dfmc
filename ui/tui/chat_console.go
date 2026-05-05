@@ -380,14 +380,6 @@ func (m Model) renderTimelineSuggestions(width int, suggestions chatSuggestionSt
 	return lines
 }
 
-func timelineHeader(label string, width int) string {
-	return subtleStyle.Render(truncateSingleLine("── "+label+" "+strings.Repeat("─", max(width-len(label)-5, 0)), width))
-}
-
-func plainTimelineRender(strs ...string) string {
-	return strings.Join(strs, "")
-}
-
 func consoleWidgetTitle(label, text string, width int) string {
 	label = strings.ToUpper(strings.TrimSpace(label))
 	if label == "" {

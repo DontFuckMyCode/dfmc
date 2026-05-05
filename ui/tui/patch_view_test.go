@@ -1,11 +1,12 @@
 package tui
 
 import (
+	"context"
 	"testing"
 )
 
 func TestPatchHunkSummary(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 
 	// Nil section returns "(none)"
 	if got := m.patchHunkSummary(); got != "(none)" {
@@ -58,7 +59,7 @@ func TestPatchHunkSummary(t *testing.T) {
 }
 
 func TestBestPatchIndex(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 
 	// Empty set returns 0
 	if got := m.bestPatchIndex(); got != 0 {
@@ -92,7 +93,7 @@ func TestBestPatchIndex(t *testing.T) {
 }
 
 func TestBestPatchIndex_MatchesPinnedFile(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.patchView.set = []patchSection{
 		{Path: "a.txt"},
 		{Path: "b.txt"},
@@ -106,7 +107,7 @@ func TestBestPatchIndex_MatchesPinnedFile(t *testing.T) {
 }
 
 func TestBestPatchIndex_CaseInsensitive(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.patchView.set = []patchSection{
 		{Path: "a.txt"},
 		{Path: "b.txt"},

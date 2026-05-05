@@ -10,16 +10,16 @@ import (
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
-// transientErr is a string-only error that isTransient() classifies as
+// errTransient is a string-only error that isTransient() classifies as
 // retryable via its substring fallback (status 503). Useful in tests
 // where we don't want to construct StatusError values.
-var transientErr = errors.New("upstream returned status 503: service unavailable")
+var errTransient = errors.New("upstream returned status 503: service unavailable")
 
 // TestCircuitOpensAfterThreeConsecutiveFailures asserts the breaker
 // trips after exactly breakerThreshold transient failures and then
 // short-circuits subsequent calls without touching the provider.
 func TestCircuitOpensAfterThreeConsecutiveFailures(t *testing.T) {
-	primary := &stubProvider{name: "primary", err: transientErr, supportsTools: true}
+	primary := &stubProvider{name: "primary", err: errTransient, supportsTools: true}
 	fallback := &stubProvider{name: "fallback", text: "ok", supportsTools: true}
 	r := newRouterWith(primary, fallback)
 	r.primary = "primary"
@@ -114,7 +114,7 @@ func TestCircuitHalfOpenAndCloseOnSuccess(t *testing.T) {
 
 // TestCircuitObserverFires asserts the observer hook receives transitions.
 func TestCircuitObserverFires(t *testing.T) {
-	primary := &stubProvider{name: "primary", err: transientErr, supportsTools: true}
+	primary := &stubProvider{name: "primary", err: errTransient, supportsTools: true}
 	fallback := &stubProvider{name: "fallback", text: "ok", supportsTools: true}
 	r := newRouterWith(primary, fallback)
 	r.primary = "primary"
@@ -156,7 +156,7 @@ func TestOfflineProviderNeverBroken(t *testing.T) {
 	if r.shouldSkipForCircuit("offline") {
 		t.Error("offline must never be circuit-broken")
 	}
-	r.recordProviderHealth("offline", transientErr)
+	r.recordProviderHealth("offline", errTransient)
 	if r.shouldSkipForCircuit("offline") {
 		t.Error("offline must never be circuit-broken even after explicit failure record")
 	}

@@ -18,8 +18,6 @@ import (
 
 type (
 	toolChip          = theme.ToolChip
-	todoStripItem     = theme.TodoStripItem
-	runtimeSummary    = theme.RuntimeSummary
 	messageHeaderInfo = theme.MessageHeaderInfo
 	chatHeaderInfo    = theme.ChatHeaderInfo
 	statsPanelInfo    = theme.StatsPanelInfo
@@ -77,26 +75,11 @@ const (
 
 // --- re-export functions -------------------------------------------------
 
-func sectionHeader(icon, label string) string        { return theme.SectionHeader(icon, label) }
-func renderMarkdownBlocks(text string, width int) []string { return theme.RenderMarkdownBlocks(text, width) }
-func renderMarkdownTable(lines []string, width int) (int, []string) { return theme.RenderMarkdownTable(lines, width) }
-func renderMarkdownLite(text string) string { return theme.RenderMarkdownLite(text) }
-func renderToolChip(chip toolChip, width int) string { return theme.RenderToolChip(chip, width) }
-func renderInlineToolChips(chips []toolChip, width int) string {
-	return theme.RenderInlineToolChips(chips, width)
+func sectionHeader(icon, label string) string { return theme.SectionHeader(icon, label) }
+func renderMarkdownBlocks(text string, width int) []string {
+	return theme.RenderMarkdownBlocks(text, width)
 }
-func renderInlineToolChipsSummary(chips []toolChip, width int) string {
-	return theme.RenderInlineToolChipsSummary(chips, width)
-}
-func renderTodoStrip(items []todoStripItem, width int) string {
-	return theme.RenderTodoStrip(items, width)
-}
-func renderRuntimeCard(rs runtimeSummary, width int) string {
-	return theme.RenderRuntimeCard(rs, width)
-}
-func renderChatWorkflowFocusCard(info statsPanelInfo, width int) string {
-	return theme.RenderChatWorkflowFocusCard(info, width)
-}
+func renderToolChip(chip toolChip, width int) string    { return theme.RenderToolChip(chip, width) }
 func spinnerFrame(frame int) string                     { return theme.SpinnerFrame(frame) }
 func renderMessageHeader(info messageHeaderInfo) string { return theme.RenderMessageHeader(info) }
 func renderMessageBubble(role, content, header string, width int) string {

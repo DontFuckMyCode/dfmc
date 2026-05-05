@@ -322,49 +322,6 @@ func (m Model) chatPatchSummary(item chatLine) string {
 	return strings.Join(parts, " | ")
 }
 
-func (m Model) renderChatDiffPreview(item chatLine, width int) string {
-	if !item.IsLatestPatch && len(item.PatchFiles) == 0 {
-		return ""
-	}
-	patch := strings.TrimSpace(m.patchView.latestPatch)
-	if patch == "" {
-		patch = extractUnifiedDiff(item.Content)
-	}
-	if patch == "" {
-		return ""
-	}
-	add, del := patchLineCounts(patch)
-	title := fmt.Sprintf("    DIFF +%d -%d", add, del)
-	if len(item.PatchFiles) > 0 {
-		title += " | " + truncateSingleLine(strings.Join(item.PatchFiles, ", "), 80)
-	}
-	out := []string{subtleStyle.Render(title)}
-	lines := strings.Split(strings.ReplaceAll(patch, "\r\n", "\n"), "\n")
-	kept := 0
-	for _, line := range lines {
-		if kept >= 12 {
-			break
-		}
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		switch {
-		case strings.HasPrefix(line, "diff --git "),
-			strings.HasPrefix(line, "--- "),
-			strings.HasPrefix(line, "+++ "),
-			strings.HasPrefix(line, "@@"),
-			strings.HasPrefix(line, "+"),
-			strings.HasPrefix(line, "-"):
-			out = append(out, subtleStyle.Render("    "+truncateSingleLine(line, width-4)))
-			kept++
-		}
-	}
-	if len(lines) > kept {
-		out = append(out, subtleStyle.Render("    ... open Patch tab for full diff"))
-	}
-	return strings.Join(out, "\n")
-}
-
 func (m *Model) annotateAssistantPatch(index int) {
 	if index < 0 || index >= len(m.chat.transcript) {
 		return

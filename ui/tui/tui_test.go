@@ -246,14 +246,6 @@ func TestChatSlashProviderPersistWritesProjectConfig(t *testing.T) {
 	}
 }
 
-func withToolStripExpanded(t *testing.T, m *Model) {
-	t.Helper()
-	m.ui.toolStripExpanded = true
-	if !m.ui.toolStripExpanded {
-		t.Fatal("toolStripExpanded helper failed to enable chip rendering")
-	}
-}
-
 func TestChatSlashMenuTabCompletesAndRunsCommand(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)

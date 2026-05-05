@@ -502,8 +502,8 @@ type agentLoopState struct {
 	lastOutput   string
 	contextScope string
 	toolTimeline []toolChip
-	// sessionCoachNotes accumulates coach:note text during the current round so
-	// appendSessionDoneSummary can render them at the bottom of the transcript.
+	// sessionCoachNotes accumulates coach:note text during the current round for
+	// runtime visibility and test assertions.
 	sessionCoachNotes []string
 }
 

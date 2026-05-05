@@ -293,7 +293,7 @@ case "v":
 **Files:** `ui/tui/transcript.go:31-66`, `ui/tui/engine_events.go`
 
 **Problem:**
-`appendCoachMessage` (transcript.go:31-66) appends to transcript AND calls `m.appendActivity()`. The `sessionCoachNotes` slice is populated by `handleEngineEvent` on `coach:note` events (engine_events.go), NOT by `appendCoachMessage`. Then `appendSessionDoneSummary` reads from `sessionCoachNotes`, not from transcript scan.
+`appendCoachMessage` (transcript.go:31-66) appends to transcript, calls `m.appendActivity()`, and accumulates `sessionCoachNotes`.
 
 Two sources of truth for coach notes — if the engine_events path fails or is bypassed, summary is empty even if transcript has coach lines.
 
@@ -312,7 +312,7 @@ func (m Model) appendCoachMessage(text string, severity coachSeverity, origin st
 }
 ```
 
-Remove the parallel accumulation from `handleEngineEvent` or verify they serve different purposes (one for transcript, one for event bus). Keep event bus reporting but remove the `sessionCoachNotes` accumulation from engine_events since `appendCoachMessage` already handles it.
+Keep `appendCoachMessage` as the single accumulation point and avoid adding a second `sessionCoachNotes` writer in `handleEngineEvent`.
 
 ---
 

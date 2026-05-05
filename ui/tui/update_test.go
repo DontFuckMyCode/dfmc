@@ -5,19 +5,19 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
 	"github.com/dontfuckmycode/dfmc/internal/security"
-	"github.com/dontfuckmycode/dfmc/pkg/types"
 	toolruntime "github.com/dontfuckmycode/dfmc/internal/tools"
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 // --- Update reducer tests ---
 
 func TestUpdate_WindowSizeMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := tea.WindowSizeMsg{Width: 120, Height: 40}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -27,7 +27,7 @@ func TestUpdate_WindowSizeMsg(t *testing.T) {
 }
 
 func TestUpdate_NonChatTab_MouseWheelIgnored(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.activeTab = 1 // Status tab, not Chat
 	msg := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp}
 	m2, _ := m.Update(msg)
@@ -38,7 +38,7 @@ func TestUpdate_NonChatTab_MouseWheelIgnored(t *testing.T) {
 }
 
 func TestUpdate_MouseWheelPressNotWheel(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.activeTab = 0
 	m.chat.scrollback = 5
 	msg := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown}
@@ -50,7 +50,7 @@ func TestUpdate_MouseWheelPressNotWheel(t *testing.T) {
 }
 
 func TestUpdate_eventSubscribedMsg_NilChannel(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := eventSubscribedMsg{ch: nil}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -60,7 +60,7 @@ func TestUpdate_eventSubscribedMsg_NilChannel(t *testing.T) {
 }
 
 func TestUpdate_eventSubscribedMsg_ValidChannel(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	ch := make(chan engine.Event, 1)
 	msg := eventSubscribedMsg{ch: ch}
 	m2, _ := m.Update(msg)
@@ -71,7 +71,7 @@ func TestUpdate_eventSubscribedMsg_ValidChannel(t *testing.T) {
 }
 
 func TestUpdate_statusLoadedMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	status := engine.Status{Provider: "anthropic", Model: "sonnet"}
 	msg := statusLoadedMsg{status: status}
 	m2, _ := m.Update(msg)
@@ -82,7 +82,7 @@ func TestUpdate_statusLoadedMsg(t *testing.T) {
 }
 
 func TestUpdate_workspaceLoadedMsg_NoDiff(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := workspaceLoadedMsg{diff: "", changed: nil, err: nil}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -92,7 +92,7 @@ func TestUpdate_workspaceLoadedMsg_NoDiff(t *testing.T) {
 }
 
 func TestUpdate_workspaceLoadedMsg_WithChanged(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := workspaceLoadedMsg{diff: "diff content", changed: []string{"foo.go", "bar.go"}, err: nil}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -105,7 +105,7 @@ func TestUpdate_workspaceLoadedMsg_WithChanged(t *testing.T) {
 }
 
 func TestUpdate_workspaceLoadedMsg_Error(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := workspaceLoadedMsg{err: &errReader{msg: "read error"}}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -115,7 +115,7 @@ func TestUpdate_workspaceLoadedMsg_Error(t *testing.T) {
 }
 
 func TestUpdate_latestPatchLoadedMsg_Empty(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := latestPatchLoadedMsg{patch: ""}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -125,7 +125,7 @@ func TestUpdate_latestPatchLoadedMsg_Empty(t *testing.T) {
 }
 
 func TestUpdate_latestPatchLoadedMsg_WithContent(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := latestPatchLoadedMsg{patch: "--- a/foo.go\n+++ b/foo.go\n@@ -1 +1 @@"}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -135,7 +135,7 @@ func TestUpdate_latestPatchLoadedMsg_WithContent(t *testing.T) {
 }
 
 func TestUpdate_filesLoadedMsg_Empty(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := filesLoadedMsg{files: nil, err: nil}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -145,7 +145,7 @@ func TestUpdate_filesLoadedMsg_Empty(t *testing.T) {
 }
 
 func TestUpdate_filesLoadedMsg_WithFiles(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := filesLoadedMsg{files: []string{"main.go", "foo.go"}, err: nil}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -155,7 +155,7 @@ func TestUpdate_filesLoadedMsg_WithFiles(t *testing.T) {
 }
 
 func TestUpdate_filePreviewLoadedMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := filePreviewLoadedMsg{path: "main.go", content: "package main", size: 12, err: nil}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -168,7 +168,7 @@ func TestUpdate_filePreviewLoadedMsg(t *testing.T) {
 }
 
 func TestUpdate_filePreviewLoadedMsg_Error(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := filePreviewLoadedMsg{err: &errReader{msg: "preview error"}}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -178,7 +178,7 @@ func TestUpdate_filePreviewLoadedMsg_Error(t *testing.T) {
 }
 
 func TestUpdate_memoryLoadedMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.memory.scroll = 100 // beyond new entries
 	msg := memoryLoadedMsg{entries: []types.MemoryEntry{{ID: "1", Tier: types.MemoryWorking, Value: "entry1"}}, tier: "working", err: nil}
 	m2, _ := m.Update(msg)
@@ -192,7 +192,7 @@ func TestUpdate_memoryLoadedMsg(t *testing.T) {
 }
 
 func TestUpdate_memoryLoadedMsg_Error(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := memoryLoadedMsg{err: &errReader{msg: "memory error"}}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -202,7 +202,7 @@ func TestUpdate_memoryLoadedMsg_Error(t *testing.T) {
 }
 
 func TestUpdate_codemapLoadedMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.codemap.scroll = 100
 	msg := codemapLoadedMsg{snap: codemapSnapshot{}, err: nil}
 	m2, _ := m.Update(msg)
@@ -216,7 +216,7 @@ func TestUpdate_codemapLoadedMsg(t *testing.T) {
 }
 
 func TestUpdate_codemapLoadedMsg_Error(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := codemapLoadedMsg{err: &errReader{msg: "codemap error"}}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -226,7 +226,7 @@ func TestUpdate_codemapLoadedMsg_Error(t *testing.T) {
 }
 
 func TestUpdate_conversationsLoadedMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.conversations.scroll = 100
 	msg := conversationsLoadedMsg{entries: []conversation.Summary{{ID: "c1"}}, err: nil}
 	m2, _ := m.Update(msg)
@@ -240,7 +240,7 @@ func TestUpdate_conversationsLoadedMsg(t *testing.T) {
 }
 
 func TestUpdate_conversationPreviewMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := conversationPreviewMsg{id: "c1", msgs: []types.Message{}, err: nil}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -253,7 +253,7 @@ func TestUpdate_conversationPreviewMsg(t *testing.T) {
 }
 
 func TestUpdate_conversationPreviewMsg_Error(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := conversationPreviewMsg{err: &errReader{msg: "preview error"}}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -263,7 +263,7 @@ func TestUpdate_conversationPreviewMsg_Error(t *testing.T) {
 }
 
 func TestUpdate_promptsLoadedMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.prompts.scroll = 100
 	msg := promptsLoadedMsg{templates: []promptlib.Template{{ID: "test"}}, err: nil}
 	m2, _ := m.Update(msg)
@@ -274,7 +274,7 @@ func TestUpdate_promptsLoadedMsg(t *testing.T) {
 }
 
 func TestUpdate_securityLoadedMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := securityLoadedMsg{report: &security.Report{}, err: nil}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -287,7 +287,7 @@ func TestUpdate_securityLoadedMsg(t *testing.T) {
 }
 
 func TestUpdate_syncModelsDevMsg_Error(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := syncModelsDevMsg{err: &errReader{msg: "sync error"}}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -300,7 +300,7 @@ func TestUpdate_syncModelsDevMsg_Error(t *testing.T) {
 }
 
 func TestUpdate_patchApplyMsg_CheckOnly(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := patchApplyMsg{checkOnly: true, err: nil}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -310,7 +310,7 @@ func TestUpdate_patchApplyMsg_CheckOnly(t *testing.T) {
 }
 
 func TestUpdate_patchApplyMsg_ApplyError(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := patchApplyMsg{checkOnly: false, err: &errReader{msg: "apply failed"}}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -320,7 +320,7 @@ func TestUpdate_patchApplyMsg_ApplyError(t *testing.T) {
 }
 
 func TestUpdate_conversationUndoMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := conversationUndoMsg{removed: 3, err: nil}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -330,7 +330,7 @@ func TestUpdate_conversationUndoMsg(t *testing.T) {
 }
 
 func TestUpdate_conversationUndoMsg_Error(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := conversationUndoMsg{err: &errReader{msg: "undo error"}}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -340,7 +340,7 @@ func TestUpdate_conversationUndoMsg_Error(t *testing.T) {
 }
 
 func TestUpdate_toolRunMsg_Error(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.chat.toolPending = true
 	m.chat.toolName = "read_file"
 	msg := toolRunMsg{name: "read_file", params: nil, result: toolruntime.Result{}, err: &errReader{msg: "tool failed"}}
@@ -355,7 +355,7 @@ func TestUpdate_toolRunMsg_Error(t *testing.T) {
 }
 
 func TestUpdate_toolRunMsg_Success(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := toolRunMsg{name: "read_file", params: map[string]any{"path": "foo.go"}, result: toolruntime.Result{Success: true, DurationMs: 50}}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -365,14 +365,14 @@ func TestUpdate_toolRunMsg_Success(t *testing.T) {
 }
 
 func TestUpdate_toolRunMsg_MutationTool(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := toolRunMsg{name: "write_file", params: nil, result: toolruntime.Result{Success: true}, err: nil}
 	_, _ = m.Update(msg)
 	// write_file is a mutation tool - should trigger workspace reload
 }
 
 func TestUpdate_chatDeltaMsg_NoActiveStream(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.chat.streamIndex = -1
 	msg := chatDeltaMsg{delta: "hello"}
 	m2, _ := m.Update(msg)
@@ -381,7 +381,7 @@ func TestUpdate_chatDeltaMsg_NoActiveStream(t *testing.T) {
 }
 
 func TestUpdate_chatDeltaMsg_WithActiveStream(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.chat.streamIndex = 0
 	m.chat.transcript = []chatLine{{Content: ""}}
 	msg := chatDeltaMsg{delta: "hello"}
@@ -393,7 +393,7 @@ func TestUpdate_chatDeltaMsg_WithActiveStream(t *testing.T) {
 }
 
 func TestUpdate_spinnerTickMsg_NotSending(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.chat.spinnerFrame = 0
 	msg := spinnerTickMsg{}
 	m2, _ := m.Update(msg)
@@ -404,7 +404,7 @@ func TestUpdate_spinnerTickMsg_NotSending(t *testing.T) {
 }
 
 func TestUpdate_spinnerTickMsg_Sending(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.chat.sending = true
 	m.chat.spinnerTicking = true
 	msg := spinnerTickMsg{}
@@ -416,7 +416,7 @@ func TestUpdate_spinnerTickMsg_Sending(t *testing.T) {
 }
 
 func TestUpdate_chatDoneMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.chat.sending = true
 	m.chat.streamIndex = 0
 	m.chat.streamStartedAt = time.Now().Add(-100 * time.Millisecond)
@@ -432,7 +432,7 @@ func TestUpdate_chatDoneMsg(t *testing.T) {
 }
 
 func TestUpdate_chatErrMsg_UserCancelled(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.chat.sending = true
 	m.chat.userCancelledStream = true
 	msg := chatErrMsg{err: context.Canceled}
@@ -447,7 +447,7 @@ func TestUpdate_chatErrMsg_UserCancelled(t *testing.T) {
 }
 
 func TestUpdate_chatErrMsg_RealError(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.chat.sending = true
 	msg := chatErrMsg{err: &errReader{msg: "connection reset"}}
 	m2, _ := m.Update(msg)
@@ -458,7 +458,7 @@ func TestUpdate_chatErrMsg_RealError(t *testing.T) {
 }
 
 func TestUpdate_streamClosedMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.chat.sending = true
 	ch := make(chan tea.Msg, 1)
 	ch <- nil // populate so receive doesn't block
@@ -474,7 +474,7 @@ func TestUpdate_streamClosedMsg(t *testing.T) {
 }
 
 func TestUpdate_heartbeatTickMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := heartbeatTickMsg{}
 	m2, _ := m.Update(msg)
 	// Heartbeat just returns a cmd, model unchanged
@@ -485,7 +485,7 @@ func TestUpdate_heartbeatTickMsg(t *testing.T) {
 }
 
 func TestUpdate_gitInfoLoadedMsg(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	msg := gitInfoLoadedMsg{info: gitWorkspaceInfo{Branch: "main", Inserted: 2, Deleted: 1}}
 	m2, _ := m.Update(msg)
 	nm := m2.(Model)
@@ -495,7 +495,7 @@ func TestUpdate_gitInfoLoadedMsg(t *testing.T) {
 }
 
 func TestUpdate_approvalRequestedMsg_SecondApproval(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	// First approval - use real pendingApproval type
 	resp := make(chan engine.ApprovalDecision, 1)
 	m.pendingApproval = &pendingApproval{
@@ -520,7 +520,7 @@ func TestUpdate_approvalRequestedMsg_SecondApproval(t *testing.T) {
 }
 
 func TestUpdate_approvalRequestedMsg_SwitchesToChat(t *testing.T) {
-	m := NewModel(nil, nil)
+	m := NewModel(context.TODO(), nil)
 	m.activeTab = 5 // some non-Chat tab
 	resp := make(chan engine.ApprovalDecision, 1)
 	msg := approvalRequestedMsg{Pending: &pendingApproval{

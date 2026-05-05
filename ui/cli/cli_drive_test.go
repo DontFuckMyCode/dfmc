@@ -57,8 +57,7 @@ func TestParseAutoApproveFlag_AllEmpty(t *testing.T) {
 }
 
 func TestMultiString_String(t *testing.T) {
-	var m multiString
-	m = []string{"a", "b", "c"}
+	m := multiString{"a", "b", "c"}
 	if got := m.String(); got != "a,b,c" {
 		t.Errorf("String(): got %q want 'a,b,c'", got)
 	}
