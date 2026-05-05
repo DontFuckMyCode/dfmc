@@ -31,9 +31,10 @@ type WorkingMemory struct {
 }
 
 type Store struct {
-	mu      sync.RWMutex
-	storage *storage.Store
-	working WorkingMemory
+	mu        sync.RWMutex
+	persistMu sync.Mutex // serializes Persist disk I/O; prevents lost-write races between concurrent Persist calls
+	storage   *storage.Store
+	working   WorkingMemory
 }
 
 func New(store *storage.Store) *Store {
@@ -75,6 +76,11 @@ func (s *Store) Persist() error {
 	if s.storage == nil || s.storage.DB() == nil {
 		return nil
 	}
+	// persistMu serializes the entire snapshot + marshal + bbolt write
+	// sequence so concurrent calls cannot silently lose each other's updates.
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
 	s.mu.Lock()
 	wm := WorkingMemory{
 		RecentFiles:   append([]string(nil), s.working.RecentFiles...),

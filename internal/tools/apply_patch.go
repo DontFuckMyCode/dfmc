@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -393,13 +394,16 @@ func parseRange(r string) (int, int, error) {
 }
 
 func atoiSafe(s string) (int, error) {
-	n := 0
 	if s == "" {
 		return 0, fmt.Errorf("empty number")
 	}
+	n := 0
 	for _, r := range s {
 		if r < '0' || r > '9' {
 			return 0, fmt.Errorf("not a number: %q", s)
+		}
+		if n > math.MaxInt/10 {
+			return 0, fmt.Errorf("number overflow: %q", s)
 		}
 		n = n*10 + int(r-'0')
 	}

@@ -20,6 +20,10 @@ type LoadOptions struct {
 	GlobalPath  string
 	ProjectPath string
 	CWD         string
+	// DataDirPath, when non-empty, overrides the default ~/.dfmc/data path.
+	// Intended for multi-instance deployments where each project has its
+	// own bbolt store to avoid file-lock contention.
+	DataDirPath string
 }
 
 func Load() (*Config, error) {
@@ -86,12 +90,11 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 // group-writable or world-writable. Dumping hooks from a group/world-writable
 // config file is dangerous because any co-tenant who can make the file
 // group/world-writable could inject arbitrary shell commands via hook entries.
-// On Windows the POSIX group/world bits are not meaningful — Go simulates
-// 0o666 for any read-write file regardless of ACLs — so the check would
-// always return false and break legitimate project hooks. Skip there.
+// On Windows the POSIX group/world bits are not meaningful — Go simulates 0o666
+// for any read-write file regardless of ACLs — so we check the DACL instead.
 func isProjectConfigSecure(path string) bool {
 	if runtime.GOOS == "windows" {
-		return true
+		return isWindowsSecureACL(path)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -100,6 +103,8 @@ func isProjectConfigSecure(path string) bool {
 	mode := info.Mode().Perm()
 	return mode&0020 == 0 && mode&0002 == 0
 }
+
+// isWindowsSecureACL lives in config_windows.go (build-tagged for Windows).
 
 func cloneHooksConfig(in HooksConfig) HooksConfig {
 	out := HooksConfig{
@@ -187,6 +192,9 @@ func FindProjectRoot(start string) string {
 }
 
 func (c *Config) DataDir() string {
+	if c.DataDirPath != "" {
+		return c.DataDirPath
+	}
 	return filepath.Join(UserConfigDir(), "data")
 }
 

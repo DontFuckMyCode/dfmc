@@ -67,26 +67,35 @@ func WasmLoader(ctx context.Context, spec WasmSpec) (*WasmModule, error) {
 // The "run" export must have the signature (i32, i32) -> (i32, i32), where
 // each pair is (pointer, length) into WASM linear memory for argument and result.
 // It returns the result string or an error.
+//
+// Security: all memory operations are bounds-checked against mem.Size() before
+// reading or writing. A malicious WASM module can only read/write within its own
+// linear memory allocation — it cannot read host memory or memory belonging to
+// other WASM modules.
 func (m *WasmModule) Run(ctx context.Context, arg string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.mod == nil {
-		return "", errors.New("WASM module is not initialized")
+		return "", errors.New("WASM module has no memory export")
 	}
 	mem := m.mod.Memory()
 	if mem == nil {
 		return "", errors.New("WASM module has no memory export")
 	}
 
-	// Allocate argument in WASM linear memory at offset 0.
-	// We write the string bytes directly.
+	memSize := mem.Size()
+	argLen := uint32(len(arg))
+
+	// Guard 1: argument must fit entirely within the module's linear memory.
+	if argLen > memSize {
+		return "", errors.New("WASM argument too long for module memory")
+	}
+
+	// Write arg bytes at offset 0, then write ptr (0) and argLen at offsets 0 and 4.
 	if !mem.Write(0, []byte(arg)) {
 		return "", errors.New("WASM memory write failed for argument")
 	}
-	argLen := uint32(len(arg))
-
-	// Write arg ptr (0) and argLen at offsets 0 and 4.
 	_ = mem.WriteUint32Le(0, 0)
 	_ = mem.WriteUint32Le(4, argLen)
 
@@ -109,6 +118,13 @@ func (m *WasmModule) Run(ctx context.Context, arg string) (string, error) {
 
 	if resPtr == 0 || resLen == 0 {
 		return "", nil
+	}
+
+	// Guard 2: result pointer and length must both be within bounds.
+	// Check resPtr >= memSize first (caught before the addition overflows),
+	// then check that the region [resPtr, resPtr+resLen) doesn't wrap or exceed memSize.
+	if resPtr >= memSize || uint64(resPtr)+uint64(resLen) > uint64(memSize) {
+		return "", errors.New("WASM result pointer/length out of bounds")
 	}
 
 	buf, ok := mem.Read(resPtr, resLen)

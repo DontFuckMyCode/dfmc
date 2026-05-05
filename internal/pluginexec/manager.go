@@ -10,9 +10,54 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
+
+// isValidHookName returns true if name contains no shell metacharacters.
+// Hook names from plugin initialize responses are untrusted input
+// interpolated into a command string — validate before registration.
+// Rejects: ; | & $ ` and shell operators detected by detectShellMetacharacter.
+func isValidHookName(name string) bool {
+	if name == "" {
+		return false
+	}
+	// Multi-char operators first so e.g. `&&` doesn't get reported as `&`.
+	for _, op := range []string{"&&", "||", ">>", "2>&1", "2>", "<<"} {
+		if strings.Contains(name, op) {
+			return false
+		}
+	}
+	// Single-char shell operators.
+	for _, c := range name {
+		switch c {
+		case ';', '|', '&', '`', '$', '(':
+			return false
+		}
+	}
+	// Bare standalone & (shell bg operator).
+	if hasStandaloneShellAmpersand(name) {
+		return false
+	}
+	return true
+}
+
+// hasStandaloneShellAmpersand returns true if name contains a bare &
+// that is not part of a && or || operator already handled above.
+func hasStandaloneShellAmpersand(name string) bool {
+	for i, r := range name {
+		if r != '&' {
+			continue
+		}
+		prevWS := i == 0 || name[i-1] == ' ' || name[i-1] == '\t'
+		nextWS := i == len(name)-1 || name[i+1] == ' ' || name[i+1] == '\t'
+		if prevWS || nextWS {
+			return true
+		}
+	}
+	return false
+}
 
 // ManageReq is the request shape for dfmc plugin run <name>.
 type ManageReq struct {
@@ -154,13 +199,19 @@ func (m *Manager) CloseAll(ctx context.Context) error {
 	var errs []error
 	for _, c := range clients {
 		if err := c.Close(ctx); err != nil {
-			errs = append(errs, err)
+			if !isForcedKillCloseError(err) {
+				errs = append(errs, err)
+			}
 		}
 	}
 	if len(errs) > 0 {
 		return errs[0]
 	}
 	return nil
+}
+
+func isForcedKillCloseError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "did not exit within") && strings.Contains(err.Error(), "killed")
 }
 
 // ProbeAndRegister sends the handshake to a newly spawned plugin and
@@ -218,7 +269,13 @@ func (m *Manager) ProbeAndRegister(ctx context.Context, name string) error {
 	if m.hookRegistry != nil && len(caps.Capabilities.Hooks) > 0 {
 		for _, hook := range caps.Capabilities.Hooks {
 			// Hooks are registered as shell commands that delegate to the plugin.
+			// Reject names containing shell metacharacters — plugin-controlled
+			// hook names are untrusted input interpolated into a command string.
 			h := hook
+			if !isValidHookName(h) || !isValidHookName(name) {
+				log.Printf("pluginexec: %s hook %q rejected: name contains shell metacharacters", name, h)
+				continue
+			}
 			if err := m.hookRegistry(h, fmt.Sprintf("dfmc plugin run %s hook.%s", name, h), 30); err != nil {
 				log.Printf("pluginexec: %s hook %q registration failed: %v", name, h, err)
 			}

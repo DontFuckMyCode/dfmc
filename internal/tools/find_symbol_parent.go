@@ -23,9 +23,29 @@ package tools
 import (
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
+
+// parentRECache prevents per-call regex compilation for parent resolution.
+// Since the set of patterns is small and bounded by the language dispatch
+// above, caching eliminates redundant compilations and prevents a
+// pathological parent value from causing exponential backtracking.
+var parentRECache sync.Map
+
+// getCachedRegex compiles and caches a regex. Thread-safe via sync.Map.
+func getCachedRegex(pattern string) (*regexp.Regexp, error) {
+	if re, ok := parentRECache.Load(pattern); ok {
+		return re.(*regexp.Regexp), nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+	parentRECache.Store(pattern, re)
+	return re, nil
+}
 
 // detectParent returns the enclosing-scope name for a symbol — receiver
 // type for Go methods, enclosing class for class-shaped languages
@@ -84,7 +104,7 @@ func enclosingByIndent(lines []string, at int, pattern string) string {
 	if at < 1 || at > len(lines) {
 		return ""
 	}
-	re, err := regexp.Compile(pattern)
+	re, err := getCachedRegex(pattern)
 	if err != nil {
 		return ""
 	}
@@ -116,7 +136,7 @@ func enclosingByBraces(lines []string, at int, pattern string) string {
 	if at < 1 || at > len(lines) {
 		return ""
 	}
-	re, err := regexp.Compile(pattern)
+	re, err := getCachedRegex(pattern)
 	if err != nil {
 		return ""
 	}

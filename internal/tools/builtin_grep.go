@@ -43,6 +43,29 @@ func formatGrepRegexError(pattern string, err error) error {
 // one-line "use this RE2 form instead" suggestion. Empty when the
 // pattern doesn't match a known footgun — caller falls back to the
 // generic RE2 link.
+// knownCatastrophicRE tracks regex patterns that cause exponential
+// backtracking in RE2. These are self-DOS vectors — the model
+// generating them would only hurt its own session.
+var knownCatastrophicRE = []string{
+	`\(.\+\)\+\$`,   // (a+)+$
+	`\(.\+\)\*\$`,   // (a+)*$
+	`\(.\+\)\?\$`,   // (a+)?$
+	`\.\*\(.\+\)\+\$`, // .*(a+)+$
+}
+
+// isLikelyCatastrophic returns true if pattern contains constructs
+// known to cause exponential backtracking in RE2. The check is cheap
+// and prevents the model from hanging its own session with a crafted
+// pattern like "^(a+)+$".
+func isLikelyCatastrophic(pattern string) bool {
+	for _, c := range knownCatastrophicRE {
+		if strings.Contains(pattern, c) {
+			return true
+		}
+	}
+	return false
+}
+
 func grepRE2Hint(pattern, errMsg string) string {
 	switch {
 	case strings.Contains(pattern, "(?P<"):
@@ -92,6 +115,9 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 	// (?i) the model wrote — don't double-prefix.
 	if !caseSensitive && !strings.HasPrefix(strings.TrimSpace(compilePattern), "(?i)") {
 		compilePattern = "(?i)" + compilePattern
+	}
+	if isLikelyCatastrophic(compilePattern) {
+		return Result{}, fmt.Errorf("grep_codebase: pattern may cause exponential backtracking; simplify or use literal search")
 	}
 	re, err := regexp.Compile(compilePattern)
 	if err != nil {
