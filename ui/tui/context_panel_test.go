@@ -181,6 +181,55 @@ func TestRenderContextViewErrorBanner(t *testing.T) {
 	}
 }
 
+func TestRenderContextViewSizedActiveContextShowsContent(t *testing.T) {
+	m := newContextTestModel()
+	m.contextPanel.showActive = true
+	m.contextPanel.active = &engine.ContextDebugStatus{
+		Query:      "why is context flat",
+		Task:       "debug",
+		Provider:   "minimax",
+		Model:      "M2.7",
+		TokenCount: 4,
+		FileCount:  1,
+		Reasons:    []string{"task=debug"},
+		Files: []engine.ContextDebugFileStatus{{
+			Path:       "ui/tui/context_panel.go",
+			Language:   "go",
+			LineStart:  10,
+			LineEnd:    11,
+			TokenCount: 4,
+			Reason:     "explicitly inspecting active context",
+			Content:    "func renderContextView() {}\n// visible payload",
+		}},
+	}
+
+	out := m.renderContextViewSized(140, 80)
+	for _, want := range []string{
+		"active context debug",
+		"why is context flat",
+		"task=debug",
+		"ui/tui/context_panel.go:10-11",
+		"explicitly inspecting active context",
+		"func renderContextView() {}",
+		"visible payload",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("active context view missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderContextPanelLinesScrollsBodyButKeepsHeader(t *testing.T) {
+	lines := []string{"h1", "h2", "h3", "h4", "b1", "b2", "b3", "b4"}
+	out := renderContextPanelLines(lines, 2, 6)
+	if !strings.Contains(out, "h1") || !strings.Contains(out, "h4") {
+		t.Fatalf("fixed header lines should stay visible:\n%s", out)
+	}
+	if strings.Contains(out, "b1") {
+		t.Fatalf("scroll should skip early body lines:\n%s", out)
+	}
+}
+
 func TestRunContextPreviewRejectsEmpty(t *testing.T) {
 	m := newContextTestModel()
 	m.contextPanel.query = "   "
@@ -265,6 +314,9 @@ func TestContextClearResetsAll(t *testing.T) {
 	info := sampleContextBudgetInfo()
 	m.contextPanel.preview = &info
 	m.contextPanel.hints = []engine.ContextRecommendation{{Severity: "info", Code: "X", Message: "Y"}}
+	m.contextPanel.active = &engine.ContextDebugStatus{Query: "active"}
+	m.contextPanel.showActive = true
+	m.contextPanel.scroll = 10
 	m.contextPanel.err = "stale"
 	m2, _ := m.handleContextKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 	m = m2.(Model)
@@ -276,6 +328,9 @@ func TestContextClearResetsAll(t *testing.T) {
 	}
 	if m.contextPanel.hints != nil {
 		t.Fatalf("c should drop hints")
+	}
+	if m.contextPanel.active != nil || m.contextPanel.showActive || m.contextPanel.scroll != 0 {
+		t.Fatalf("c should reset active context state")
 	}
 	if m.contextPanel.err != "" {
 		t.Fatalf("c should clear error")

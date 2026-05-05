@@ -9,6 +9,7 @@ package drive
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -34,7 +35,9 @@ import (
 // "first done", which is the channel idiom.
 func (d *Driver) executeLoop(ctx context.Context, run *Run) {
 	deadline := run.CreatedAt.Add(d.cfg.MaxWallTime)
-	if !run.EndedAt.IsZero() {
+	if ctxDeadline, ok := ctx.Deadline(); ok {
+		deadline = ctxDeadline
+	} else if !run.EndedAt.IsZero() {
 		// Resume path may have cleared EndedAt; deadline is from
 		// resume time when the original deadline already passed.
 		deadline = time.Now().Add(d.cfg.MaxWallTime)
@@ -51,7 +54,7 @@ func (d *Driver) executeLoop(ctx context.Context, run *Run) {
 		// actually executed.
 		if err := ctx.Err(); err != nil {
 			d.drainAndFinalize(ctx, run, results, inFlight, RunStopped,
-				fmt.Sprintf("ctx cancelled: %v", err))
+				driveContextStopReason(ctx, d.cfg.MaxWallTime, err))
 			return
 		}
 		if time.Now().After(deadline) {
@@ -108,13 +111,20 @@ func (d *Driver) executeLoop(ctx context.Context, run *Run) {
 		select {
 		case <-ctx.Done():
 			d.drainAndFinalize(ctx, run, results, inFlight, RunStopped,
-				fmt.Sprintf("ctx cancelled: %v", ctx.Err()))
+				driveContextStopReason(ctx, d.cfg.MaxWallTime, ctx.Err()))
 			return
 		case res := <-results:
 			inFlight--
 			d.applyOutcome(run, res, &consecutiveBlocked)
 		}
 	}
+}
+
+func driveContextStopReason(ctx context.Context, maxWallTime time.Duration, err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Sprintf("max_wall_time exceeded (%s)", maxWallTime)
+	}
+	return fmt.Sprintf("ctx cancelled: %v", err)
 }
 
 // dispatchTodo marks the TODO at idx as Running, publishes the start

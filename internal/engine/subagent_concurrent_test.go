@@ -1,9 +1,15 @@
 package engine
 
 import (
+	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
 // TestEnterSubagentProtectsParentParkedState verifies the reference-counted
@@ -84,4 +90,115 @@ func TestEnterSubagentNestedCallsKeepCounterConsistent(t *testing.T) {
 	if !e.HasParkedAgent() {
 		t.Fatal("parent should be restored once the outermost sub-agent exits")
 	}
+}
+
+func TestTryEnterSubagentEnforcesMaxConcurrent(t *testing.T) {
+	e := &Engine{}
+	first, err := e.tryEnterSubagent(1)
+	if err != nil {
+		t.Fatalf("first sub-agent should enter: %v", err)
+	}
+	if _, err := e.tryEnterSubagent(1); err == nil || !strings.Contains(err.Error(), "concurrency limit") {
+		t.Fatalf("second sub-agent should hit limit, got %v", err)
+	}
+	first()
+
+	second, err := e.tryEnterSubagent(1)
+	if err != nil {
+		t.Fatalf("slot should reopen after release: %v", err)
+	}
+	second()
+}
+
+func TestStatusReportsSubagentRuntimeCapacity(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.ParallelBatchSize = 2
+	e, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+
+	release, err := e.tryEnterSubagent(e.subagentConcurrencyLimit())
+	if err != nil {
+		t.Fatalf("sub-agent should enter: %v", err)
+	}
+	st := e.Status()
+	if st.SubagentsActive != 1 || st.SubagentsLimit != 2 {
+		t.Fatalf("unexpected subagent status active/limit: %d/%d", st.SubagentsActive, st.SubagentsLimit)
+	}
+	release()
+
+	st = e.Status()
+	if st.SubagentsActive != 0 || st.SubagentsLimit != 2 {
+		t.Fatalf("release should clear active count and keep limit, got %d/%d", st.SubagentsActive, st.SubagentsLimit)
+	}
+}
+
+func TestRunSubagentRejectsWhenConcurrencyLimitReached(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.ParallelBatchSize = 1
+	cfg.Providers.Primary = "stub"
+	cfg.Providers.Profiles["stub"] = config.ModelConfig{Model: "stub-model", MaxContext: 128000}
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	stub := &scriptedProvider{
+		name:      "stub",
+		model:     "stub-model",
+		hints:     newNativeHints(),
+		responses: []scriptedResponse{{Text: "should not be called"}},
+	}
+	router.Register(stub)
+	bus := NewEventBus()
+	events := bus.Subscribe("*")
+	defer bus.Unsubscribe("*", events)
+	e := &Engine{
+		Config:      cfg,
+		EventBus:    bus,
+		ProjectRoot: t.TempDir(),
+		Providers:   router,
+		Tools:       tools.New(*cfg),
+	}
+
+	release, err := e.tryEnterSubagent(e.subagentConcurrencyLimit())
+	if err != nil {
+		t.Fatalf("fixture sub-agent should enter: %v", err)
+	}
+	defer release()
+
+	_, err = e.RunSubagent(context.Background(), tools.SubagentRequest{Task: "overflow"})
+	if err == nil || !strings.Contains(err.Error(), "concurrency limit") {
+		t.Fatalf("RunSubagent should reject at concurrency limit, got %v", err)
+	}
+	if len(stub.requests) != 0 {
+		t.Fatalf("provider should not be called after concurrency rejection, got %d request(s)", len(stub.requests))
+	}
+	var sawFailure bool
+drain:
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type != "agent:subagent:done" {
+				continue
+			}
+			payload, _ := ev.Payload.(map[string]any)
+			if strings.Contains(errStringFromPayload(payload), "concurrency limit") {
+				sawFailure = true
+			}
+		default:
+			break drain
+		}
+	}
+	if !sawFailure {
+		t.Fatalf("expected subagent failure event for concurrency limit")
+	}
+}
+
+func errStringFromPayload(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	s, _ := payload["err"].(string)
+	return s
 }

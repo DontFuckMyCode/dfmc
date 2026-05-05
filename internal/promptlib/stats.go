@@ -101,18 +101,21 @@ func BuildStatsReport(templates []Template, opts StatsOptions) StatsReport {
 
 func DefaultKnownVars() map[string]struct{} {
 	return map[string]struct{}{
-		"project_root":     {},
-		"task":             {},
-		"language":         {},
-		"profile":          {},
-		"role":             {},
-		"project_brief":    {},
-		"user_query":       {},
-		"context_files":    {},
-		"injected_context": {},
-		"tools_overview":   {},
-		"tool_call_policy": {},
-		"response_policy":  {},
+		"project_root":                   {},
+		"task":                           {},
+		"language":                       {},
+		"profile":                        {},
+		"role":                           {},
+		"project_brief":                  {},
+		"project_brief_relevant_section": {},
+		"user_query":                     {},
+		"context_files":                  {},
+		"injected_context":               {},
+		"tools_overview":                 {},
+		"tool_call_policy":               {},
+		"response_policy":                {},
+		"active_skills":                  {},
+		"skills_inventory":               {},
 	}
 }
 

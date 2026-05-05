@@ -1659,14 +1659,18 @@ func TestGrepPickerEnterPreparesGrepCommand(t *testing.T) {
 
 func TestHandleEngineEventContextBuiltUpdatesActivity(t *testing.T) {
 	m := NewModel(context.Background(), nil)
+	m.status.ProviderProfile.MaxContext = 200000
 
 	next := m.handleEngineEvent(engine.Event{
 		Type: "context:built",
 		Payload: map[string]any{
 			"files":       4,
 			"tokens":      980,
+			"budget":      16000,
+			"per_file":    1200,
 			"task":        "review",
 			"compression": "aggressive",
+			"reasons":     []string{"query matched review task"},
 		},
 	})
 	if len(next.activityLog) == 0 {
@@ -1674,6 +1678,16 @@ func TestHandleEngineEventContextBuiltUpdatesActivity(t *testing.T) {
 	}
 	if !strings.Contains(next.activityLog[len(next.activityLog)-1], "Context built: 4 files, 980 tokens") {
 		t.Fatalf("unexpected context activity line: %#v", next.activityLog[len(next.activityLog)-1])
+	}
+	if next.status.ContextIn == nil {
+		t.Fatal("context:built should update local ContextIn status for header/stats")
+	}
+	if next.status.ContextIn.TokenCount != 980 || next.status.ContextIn.ProviderMaxContext != 200000 || next.status.ContextIn.MaxTokensTotal != 16000 {
+		t.Fatalf("unexpected ContextIn after event: %#v", next.status.ContextIn)
+	}
+	info := next.statsPanelInfo()
+	if info.ContextTokens != 980 || info.ContextFileCount != 4 || len(info.ContextReasons) == 0 {
+		t.Fatalf("stats panel did not receive context build details: %#v", info)
 	}
 }
 
@@ -4364,13 +4378,15 @@ func TestRenderStatsPanelFocusedModesShowWorkflowDetails(t *testing.T) {
 	}
 
 	subagentsPanel := renderStatsPanel(statsPanelInfo{
-		Mode:          theme.StatsPanelMode(statsPanelModeSubagents),
-		Provider:      "openai",
-		Model:         "gpt-5.4",
-		Configured:    true,
-		SubagentLines: []string{"2 active now", "Subagent (coder) started: auth fix", "Subagent done: 5 rounds (1234ms)."},
+		Mode:            theme.StatsPanelMode(statsPanelModeSubagents),
+		Provider:        "openai",
+		Model:           "gpt-5.4",
+		Configured:      true,
+		ActiveSubagents: 2,
+		SubagentLimit:   4,
+		SubagentLines:   []string{"2 active now", "Subagent (coder) started: auth fix", "Subagent done: 5 rounds (1234ms)."},
 	}, 18)
-	for _, want := range []string{"SUBAGENTS", "2 active now", "auth fix"} {
+	for _, want := range []string{"SUBAGENTS", "capacity 2/4", "2 active now", "auth fix"} {
 		if !strings.Contains(subagentsPanel, want) {
 			t.Fatalf("subagents mode should surface %q, got:\n%s", want, subagentsPanel)
 		}
@@ -4866,6 +4882,18 @@ func TestSubagentFallbackEventSurfacesTransition(t *testing.T) {
 	if !foundReason {
 		t.Fatalf("expected fallback chip verb to surface the reason, got %#v", m.agentLoop.toolTimeline)
 	}
+	info := m.statsPanelInfo()
+	joined := strings.Join(info.SubagentLines, "\n")
+	for _, want := range []string{
+		"[done] security_auditor - audit auth boundary",
+		"+- route openai-fast/gpt-5.4-mini",
+		"+- candidates anthropic-review > openai-fast",
+		"+- 2 attempts | 4 rounds | fallback used",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("subagent tree missing %q, got:\n%s", want, joined)
+		}
+	}
 }
 
 func TestDriveTodoDoneSurfacesFallbackReason(t *testing.T) {
@@ -4937,8 +4965,8 @@ func TestBatchToolTimelineExpandsInnerCalls(t *testing.T) {
 			"step": 1,
 			"params": map[string]any{
 				"calls": []any{
-					map[string]any{"name": "read_file", "args": map[string]any{"path": "a.go", "line_start": 1, "line_end": 40}},
-					map[string]any{"name": "grep_codebase", "args": map[string]any{"pattern": "OpenDatabase"}},
+					map[string]any{"name": "read_file", "args": map[string]any{"path": "a.go", "line_start": 1, "line_end": 40, "_reason": "inspect first file boundary"}},
+					map[string]any{"name": "grep_codebase", "args": map[string]any{"pattern": "OpenDatabase", "_reason": "find references before editing"}},
 					map[string]any{"name": "run_command", "args": map[string]any{"command": "go", "args": []any{"test", "./ui/tui"}}},
 				},
 			},
@@ -4958,8 +4986,8 @@ func TestBatchToolTimelineExpandsInnerCalls(t *testing.T) {
 		"_reason: fan out independent reads before deciding the fix",
 		"summary: 3 planned calls",
 		"calls:",
-		"1. read_file - Read a.go (lines 1-40)",
-		`2. grep_codebase - Search "OpenDatabase"`,
+		"1. read_file - Read a.go (lines 1-40) | why: inspect first file boundary",
+		`2. grep_codebase - Search "OpenDatabase" | why: find references before editing`,
 		"3. run_command - $ go test ./ui/tui",
 	} {
 		if !strings.Contains(running, want) {

@@ -56,7 +56,7 @@ type DelegateTaskTool struct {
 func NewDelegateTaskTool() *DelegateTaskTool { return &DelegateTaskTool{} }
 func (t *DelegateTaskTool) Name() string     { return "delegate_task" }
 func (t *DelegateTaskTool) Description() string {
-	return "Spawn a bounded sub-agent to handle a focused task."
+	return "Spawn a bounded sub-agent for a focused, independently verifiable task. Best for parallel codebase research, scoped reviews, isolated implementation slices, or long scans that should not bloat the parent context. Provide a self-contained task, optional role/model/max_steps, and allowed_tools when the work should be least-privilege. Avoid delegation for tightly coupled next-step work the parent must do immediately."
 }
 
 func (t *DelegateTaskTool) SetRunner(r SubagentRunner) {

@@ -479,7 +479,11 @@ func RenderChatHeader(info ChatHeaderInfo, width int) string {
 		segments = append(segments, InfoStyle.Bold(true).Render(fmt.Sprintf("◌ tools %d", info.ActiveTools)))
 	}
 	if info.ActiveSubagents > 0 {
-		segments = append(segments, AccentStyle.Bold(true).Render(fmt.Sprintf("◈ subagents %d", info.ActiveSubagents)))
+		label := fmt.Sprintf("subagents %d", info.ActiveSubagents)
+		if summary := strings.TrimSpace(info.SubagentSummary); summary != "" {
+			label += " " + summary
+		}
+		segments = append(segments, AccentStyle.Bold(true).Render(label))
 	}
 	if info.QueuedCount > 0 {
 		segments = append(segments, AccentStyle.Bold(true).Render(fmt.Sprintf("▸ queued %d", info.QueuedCount)))

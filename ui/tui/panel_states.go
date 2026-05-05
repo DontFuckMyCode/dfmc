@@ -133,6 +133,9 @@ type contextPanelState struct {
 	preview     *engine.ContextBudgetInfo
 	breakdown   *engine.ContextBreakdown
 	hints       []engine.ContextRecommendation
+	active      *engine.ContextDebugStatus
+	showActive  bool
+	scroll      int
 	err         string
 	inputActive bool
 }
@@ -390,6 +393,8 @@ type sessionTelemetry struct {
 	compressionRawChars   int
 	activeToolCount       int
 	activeSubagentCount   int
+	subagents             map[string]subagentRuntimeItem
+	subagentOrder         []string
 
 	// drive* fields track the most recently active drive run so the
 	// chat header can show "▸ drive 3/12 · T5" while the run is in
@@ -402,6 +407,26 @@ type sessionTelemetry struct {
 	driveDone    int
 	driveTotal   int
 	driveBlocked int
+}
+
+type subagentRuntimeItem struct {
+	Key        string
+	Task       string
+	Role       string
+	Status     string
+	Provider   string
+	Model      string
+	Candidates []string
+	Tried      []string
+	Attempt    int
+	Attempts   int
+	Rounds     int
+	DurationMs int
+	Fallback   bool
+	Error      string
+	LastReason string
+	StartedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // tasksPanelState — floating tasks overlay on the chat tab.

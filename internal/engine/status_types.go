@@ -77,6 +77,13 @@ type Status struct {
 	// SubagentRetries5m stays at 0; the windowed view is the
 	// page-the-oncall signal.
 	SubagentRetries5m int `json:"subagent_retries_5m,omitempty"`
+
+	// SubagentsActive is the number of RunSubagent calls currently inside
+	// the engine. SubagentsLimit is the hard ceiling used by RunSubagent
+	// before it starts a new worker. Both are snapshot values for status
+	// surfaces; lifecycle events remain the timeline source of truth.
+	SubagentsActive int `json:"subagents_active,omitempty"`
+	SubagentsLimit  int `json:"subagents_limit,omitempty"`
 }
 
 // ActiveDriveStatus is the status-surface projection of a single
@@ -118,6 +125,33 @@ type ContextInFileStatus struct {
 	Score       float64 `json:"score,omitempty"`
 	Compression string  `json:"compression,omitempty"`
 	Reason      string  `json:"reason,omitempty"`
+}
+
+type ContextDebugStatus struct {
+	Query              string                   `json:"query,omitempty"`
+	Task               string                   `json:"task,omitempty"`
+	BuiltAt            time.Time                `json:"built_at,omitempty"`
+	Provider           string                   `json:"provider,omitempty"`
+	Model              string                   `json:"model,omitempty"`
+	ProviderMaxContext int                      `json:"provider_max_context,omitempty"`
+	MaxTokensTotal     int                      `json:"max_tokens_total,omitempty"`
+	TokenCount         int                      `json:"token_count,omitempty"`
+	FileCount          int                      `json:"file_count,omitempty"`
+	Reasons            []string                 `json:"reasons,omitempty"`
+	Files              []ContextDebugFileStatus `json:"files,omitempty"`
+}
+
+type ContextDebugFileStatus struct {
+	Path        string  `json:"path"`
+	Language    string  `json:"language,omitempty"`
+	LineStart   int     `json:"line_start,omitempty"`
+	LineEnd     int     `json:"line_end,omitempty"`
+	TokenCount  int     `json:"token_count,omitempty"`
+	Score       float64 `json:"score,omitempty"`
+	Compression string  `json:"compression,omitempty"`
+	Source      string  `json:"source,omitempty"`
+	Reason      string  `json:"reason,omitempty"`
+	Content     string  `json:"content,omitempty"`
 }
 
 type ProviderProfileStatus struct {

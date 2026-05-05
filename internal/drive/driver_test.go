@@ -31,6 +31,9 @@ type fakeRunner struct {
 	// ExecFunc is called per TODO. Tests override to fail specific
 	// TODOs or assert the brief seeded into req.
 	ExecFunc func(req ExecuteTodoRequest) (ExecuteTodoResponse, error)
+	// ExecCtxFunc is the context-aware variant used by deadline/cancel
+	// tests. When set, it takes precedence over ExecFunc.
+	ExecCtxFunc func(ctx context.Context, req ExecuteTodoRequest) (ExecuteTodoResponse, error)
 
 	// Calls log every ExecuteTodo invocation in order, so tests can
 	// assert the scheduler walked TODOs in the expected sequence.
@@ -61,10 +64,13 @@ func (f *fakeRunner) PlannerCall(_ context.Context, req PlannerRequest) (Planner
 	}, nil
 }
 
-func (f *fakeRunner) ExecuteTodo(_ context.Context, req ExecuteTodoRequest) (ExecuteTodoResponse, error) {
+func (f *fakeRunner) ExecuteTodo(ctx context.Context, req ExecuteTodoRequest) (ExecuteTodoResponse, error) {
 	f.mu.Lock()
 	f.Calls = append(f.Calls, req)
 	f.mu.Unlock()
+	if f.ExecCtxFunc != nil {
+		return f.ExecCtxFunc(ctx, req)
+	}
 	if f.ExecFunc != nil {
 		return f.ExecFunc(req)
 	}
@@ -413,6 +419,44 @@ func TestDriverDeadlineStopsRun(t *testing.T) {
 	}
 	if !strings.Contains(run.Reason, "max_wall_time") {
 		t.Fatalf("expected reason to cite max_wall_time, got %q", run.Reason)
+	}
+}
+
+func TestDriverPassesMaxWallTimeDeadlineToTodoContext(t *testing.T) {
+	seenDeadline := make(chan time.Time, 1)
+	runner := &fakeRunner{
+		PlanFunc: func(_ PlannerRequest) (string, error) {
+			return `{"todos":[{"id":"T1","title":"deadline","detail":"inspect ctx"}]}`, nil
+		},
+		ExecCtxFunc: func(ctx context.Context, _ ExecuteTodoRequest) (ExecuteTodoResponse, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				return ExecuteTodoResponse{}, fmt.Errorf("missing context deadline")
+			}
+			seenDeadline <- deadline
+			return ExecuteTodoResponse{Summary: "ok"}, nil
+		},
+	}
+	maxWall := 200 * time.Millisecond
+	start := time.Now()
+	d := NewDriver(runner, nil, nil, Config{MaxWallTime: maxWall})
+	run, err := d.Run(context.Background(), "task")
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if run.Status != RunDone {
+		t.Fatalf("expected RunDone, got %s: %s", run.Status, run.Reason)
+	}
+	select {
+	case deadline := <-seenDeadline:
+		if deadline.Before(start.Add(maxWall / 2)) {
+			t.Fatalf("deadline too early: start=%s deadline=%s", start, deadline)
+		}
+		if deadline.After(start.Add(2 * maxWall)) {
+			t.Fatalf("deadline too late: start=%s deadline=%s", start, deadline)
+		}
+	default:
+		t.Fatalf("ExecuteTodo did not observe a deadline")
 	}
 }
 

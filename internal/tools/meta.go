@@ -288,10 +288,10 @@ func (t *toolCallTool) Spec() ToolSpec {
 		Tags:    []string{"meta", "execute"},
 		Args: []Arg{
 			{Name: "name", Type: ArgString, Required: true, Description: "Backend tool name."},
-			{Name: "args", Type: ArgObject, Required: true, Description: "Argument object matching the tool's schema."},
+			{Name: "args", Type: ArgObject, Required: true, Description: "Argument object matching the tool's schema. Include `_reason` here too when the backend call has a more specific reason than the wrapper call."},
 		},
 		Returns:  "The backend tool's Result (output, data, truncated, duration_ms).",
-		Examples: []string{`{"name":"read_file","args":{"path":"main.go","line_start":1,"line_end":40}}`},
+		Examples: []string{`{"name":"read_file","args":{"path":"main.go","line_start":1,"line_end":40,"_reason":"checking the function before editing it"}}`},
 		CostHint: "io-bound",
 	}
 }
@@ -348,6 +348,7 @@ func (t *toolCallTool) Execute(ctx context.Context, req Request) (Result, error)
 		if aerr != nil {
 			return Result{}, aerr
 		}
+		inheritToolReason(ctx, innerArgs)
 		sub := Request{ProjectRoot: req.ProjectRoot, Params: innerArgs}
 		res, err := t.engine.Execute(ctx, innerName, sub)
 		hint := fmt.Sprintf("[tool_call: auto-unwrapped redundant outer tool_call → dispatched %s. Next time call %s directly: {\"name\":%q,\"args\":{...}}]\n", innerName, innerName, innerName)
@@ -364,6 +365,7 @@ func (t *toolCallTool) Execute(ctx context.Context, req Request) (Result, error)
 	if err != nil {
 		return Result{}, err
 	}
+	inheritToolReason(ctx, args)
 	sub := Request{ProjectRoot: req.ProjectRoot, Params: args}
 	res, err := t.engine.Execute(ctx, name, sub)
 	if err != nil {
@@ -419,12 +421,12 @@ func (t *toolBatchCallTool) Spec() ToolSpec {
 		Args: []Arg{
 			{
 				Name: "calls", Type: ArgArray, Required: true,
-				Description: "Array of {name, args} objects.",
-				Items:       &Arg{Type: ArgObject, Description: "{name:string, args:object}"},
+				Description: "Array of {name, args} objects. Give each args object its own `_reason` when possible; otherwise the batch-level `_reason` is inherited.",
+				Items:       &Arg{Type: ArgObject, Description: "{name:string, args:object}; args may include _reason"},
 			},
 		},
 		Returns:  "{count, results:[{name, success, output, data, error, duration_ms}]}",
-		Examples: []string{`{"calls":[{"name":"read_file","args":{"path":"a.go"}},{"name":"read_file","args":{"path":"b.go"}}]}`},
+		Examples: []string{`{"calls":[{"name":"read_file","args":{"path":"a.go","_reason":"compare first implementation"}},{"name":"read_file","args":{"path":"b.go","_reason":"compare second implementation"}}]}`},
 		CostHint: "io-bound",
 	}
 }
@@ -479,6 +481,7 @@ func (t *toolBatchCallTool) Execute(ctx context.Context, req Request) (Result, e
 	var wg sync.WaitGroup
 
 	for i, call := range calls {
+		reason := inheritToolReason(ctx, call.Args)
 		// target = one-line preview of the most identifying arg
 		// (path / pattern / command / ...). Lets downstream renderers
 		// show "✓ read_file foo.go" instead of an opaque "✓ read_file".
@@ -488,6 +491,9 @@ func (t *toolBatchCallTool) Execute(ctx context.Context, req Request) (Result, e
 		entry := map[string]any{"name": call.Name}
 		if target != "" {
 			entry["target"] = target
+		}
+		if reason != "" {
+			entry["reason"] = reason
 		}
 		if isMetaTool(call.Name) {
 			// Self-teaching error: name the right shape for the next
@@ -696,6 +702,44 @@ func previewCommandArgs(raw any) string {
 	default:
 		return strings.TrimSpace(fmt.Sprint(v))
 	}
+}
+
+func currentToolReason(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	reason, _ := ctx.Value(toolReasonContextKey{}).(string)
+	return strings.TrimSpace(reason)
+}
+
+func inheritToolReason(ctx context.Context, args map[string]any) string {
+	if args == nil {
+		return ""
+	}
+	if reason := reasonFromParams(args); reason != "" {
+		return reason
+	}
+	reason := currentToolReason(ctx)
+	if reason == "" {
+		return ""
+	}
+	args[ReasonField] = reason
+	return reason
+}
+
+func reasonFromParams(args map[string]any) string {
+	if args == nil {
+		return ""
+	}
+	raw, ok := args[ReasonField]
+	if !ok {
+		return ""
+	}
+	reason, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(reason)
 }
 
 // missingNameError builds the actionable "name is required" reply for

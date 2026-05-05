@@ -159,6 +159,9 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (retRun *Run, retErr
 	defer unregister(run.ID)
 	defer cancel()
 	ctx = cancelCtx
+	deadlineCtx, deadlineCancel := context.WithDeadline(ctx, run.CreatedAt.Add(d.cfg.MaxWallTime))
+	defer deadlineCancel()
+	ctx = deadlineCtx
 
 	d.publish(EventRunStart, map[string]any{"run_id": run.ID, "task": run.Task})
 
@@ -264,6 +267,9 @@ func (d *Driver) Resume(ctx context.Context, runID string) (*Run, error) {
 	defer unregister(run.ID)
 	defer cancel()
 	ctx = cancelCtx
+	deadlineCtx, deadlineCancel := context.WithTimeout(ctx, d.cfg.MaxWallTime)
+	defer deadlineCancel()
+	ctx = deadlineCtx
 
 	d.publish(EventRunStart, map[string]any{
 		"run_id":  run.ID,

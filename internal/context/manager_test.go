@@ -153,6 +153,50 @@ func TestBuildSystemPromptWithRuntimeToolPolicy(t *testing.T) {
 	if !strings.Contains(prompt, "near 25600 tokens") {
 		t.Fatalf("expected runtime-aware tool output budget in prompt, got: %s", prompt)
 	}
+	for _, want := range []string{"Tool Calling Protocol:", "`_reason`", "Shell boundary:"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected enriched tool-call policy %q in prompt, got: %s", want, prompt)
+		}
+	}
+}
+
+func TestBuildSystemPromptUsesRichToolAndSkillInventory(t *testing.T) {
+	tmp := t.TempDir()
+	mgr := New(codemap.New(ast.New()))
+
+	prompt := mgr.BuildSystemPromptWithRuntime(
+		tmp,
+		"security audit auth flow",
+		nil,
+		[]string{"read_file", "grep_codebase", "run_command", "delegate_task", "tool_help"},
+		PromptRuntime{MaxContext: 128000},
+	)
+
+	for _, want := range []string{
+		"Tool catalog:",
+		"[Read/search]",
+		"read_file (recommended) - read focused file ranges",
+		"grep_codebase (recommended) - search code text",
+		"[Execute/verify]",
+		"run_command - run build/test/lint",
+		"Skills inventory:",
+		"Active: audit",
+		"audit (active)",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected rich prompt inventory %q, got:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestResolvePromptProfileSupportsExplicitTierAndEnvOverride(t *testing.T) {
+	if got := ResolvePromptProfile("#tier: thorough\nsummarize quickly", "general", PromptRuntime{}); got != "deep" {
+		t.Fatalf("tier thorough should force deep, got %q", got)
+	}
+	t.Setenv("DFMC_PROFILE", "fast")
+	if got := ResolvePromptProfile("security audit auth deeply", "security", PromptRuntime{MaxContext: 128000}); got != "compact" {
+		t.Fatalf("DFMC_PROFILE=fast should force compact before query keywords, got %q", got)
+	}
 }
 
 func TestBuildSystemPromptInjectsFileMarkerContext(t *testing.T) {
@@ -245,6 +289,36 @@ func TestBuildSystemPromptInjectsProjectBrief(t *testing.T) {
 	prompt := mgr.BuildSystemPrompt(tmp, "review auth flow", nil, nil)
 	if !strings.Contains(prompt, "Critical note: auth boundary is strict.") {
 		t.Fatalf("expected project brief in prompt, got: %s", prompt)
+	}
+}
+
+func TestBuildSystemPromptFiltersProjectBriefByTaskAndQuery(t *testing.T) {
+	tmp := t.TempDir()
+	magicDir := filepath.Join(tmp, ".dfmc", "magic")
+	if err := os.MkdirAll(magicDir, 0o755); err != nil {
+		t.Fatalf("mkdir magic dir: %v", err)
+	}
+	magic := strings.Join([]string{
+		"# MAGIC DOC: Test",
+		"General project overview that should not dominate narrow prompts.",
+		"## UI Notes",
+		"Buttons and panels are mostly cosmetic right now.",
+		"## Security Hotspots",
+		"Auth token persistence and credential handling need concrete evidence before edits.",
+		"## Documentation",
+		"README examples need polish.",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(magicDir, "MAGIC_DOC.md"), []byte(magic), 0o644); err != nil {
+		t.Fatalf("write magic doc: %v", err)
+	}
+
+	mgr := New(nil)
+	prompt := mgr.BuildSystemPrompt(tmp, "security audit auth token storage", nil, nil)
+	if !strings.Contains(prompt, "Project brief filtered for task=security") {
+		t.Fatalf("expected filtered project brief marker, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "Auth token persistence") {
+		t.Fatalf("expected security-relevant project brief section, got: %s", prompt)
 	}
 }
 

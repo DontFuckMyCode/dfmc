@@ -145,6 +145,38 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		perFile := payloadInt(payload, "per_file", 0)
 		task := payloadString(payload, "task", "general")
 		comp := payloadString(payload, "compression", "-")
+		maxCtx := m.status.ProviderProfile.MaxContext
+		if maxCtx == 0 && m.status.ContextIn != nil {
+			maxCtx = m.status.ContextIn.ProviderMaxContext
+		}
+		prev := m.status.ContextIn
+		query := ""
+		available := 0
+		maxFiles := files
+		var contextFiles []engine.ContextInFileStatus
+		if prev != nil {
+			query = prev.Query
+			available = prev.ContextAvailable
+			maxFiles = prev.MaxFiles
+			contextFiles = append([]engine.ContextInFileStatus(nil), prev.Files...)
+		}
+		if maxFiles <= 0 {
+			maxFiles = files
+		}
+		m.status.ContextIn = &engine.ContextInStatus{
+			Query:              query,
+			Task:               task,
+			TokenCount:         tokens,
+			ProviderMaxContext: maxCtx,
+			ContextAvailable:   available,
+			MaxTokensTotal:     budget,
+			MaxTokensPerFile:   perFile,
+			Compression:        comp,
+			FileCount:          files,
+			MaxFiles:           maxFiles,
+			Files:              contextFiles,
+			Reasons:            payloadStringSlice(payload, "reasons"),
+		}
 		m.upsertStreamingChatEvent(chatEventLine{
 			Key:    "context:built",
 			Kind:   "context",

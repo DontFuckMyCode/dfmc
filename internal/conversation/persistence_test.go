@@ -153,7 +153,11 @@ func TestBranchCreate_AcceptsValidNames(t *testing.T) {
 // to disambiguate; pin the contract so a future cleanup doesn't
 // re-introduce the collision.
 func TestNewConversationID_DisambiguatesOnCollision(t *testing.T) {
-	now := time.Now()
+	now := time.Date(2026, 5, 5, 16, 47, 55, 765123456, time.Local)
+	prevNow := conversationIDNow
+	conversationIDNow = func() time.Time { return now }
+	t.Cleanup(func() { conversationIDNow = prevNow })
+
 	base := "conv_" + now.Format("20060102_150405.000")
 	active := &Conversation{ID: base}
 	got := newConversationID(active, "")

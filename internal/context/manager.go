@@ -391,6 +391,7 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 	runtime.ActiveSkills = activeSkillNames
 	limits := ResolvePromptRenderBudget(task, profile, runtime)
 	injected := BuildInjectedContextWithBudget(projectRoot, cleanQuery, limits)
+	projectBrief := loadProjectBrief(projectRoot, cleanQuery, task, limits.ProjectBriefTokens)
 	bundle := m.prompts.RenderBundle(promptlib.RenderRequest{
 		Type:     "system",
 		Task:     task,
@@ -398,22 +399,25 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 		Profile:  profile,
 		Role:     role,
 		Vars: map[string]string{
-			"project_root":     projectRoot,
-			"task":             task,
-			"language":         language,
-			"profile":          profile,
-			"role":             role,
-			"project_brief":    loadProjectBrief(projectRoot, limits.ProjectBriefTokens),
-			"user_query":       strings.TrimSpace(cleanQuery),
-			"context_files":    summarizeContextFiles(projectRoot, chunks, limits.ContextFiles),
-			"injected_context": injected,
-			"tools_overview":   summarizeTools(tools, limits.ToolList),
-			"tool_call_policy": BuildToolCallPolicy(task, runtime),
-			"response_policy":  BuildResponsePolicy(task, profile),
-			"active_skills":    summarizeActiveSkills(skillSelection.Skills),
+			"project_root":                   projectRoot,
+			"task":                           task,
+			"language":                       language,
+			"profile":                        profile,
+			"role":                           role,
+			"project_brief":                  projectBrief,
+			"project_brief_relevant_section": projectBrief,
+			"user_query":                     strings.TrimSpace(cleanQuery),
+			"context_files":                  summarizeContextFiles(projectRoot, chunks, limits.ContextFiles),
+			"injected_context":               injected,
+			"tools_overview":                 summarizeTools(tools, limits.ToolList, task),
+			"tool_call_policy":               BuildToolCallPolicy(task, runtime),
+			"response_policy":                BuildResponsePolicy(task, profile),
+			"active_skills":                  summarizeActiveSkills(skillSelection.Skills),
+			"skills_inventory":               summarizeSkillInventory(projectRoot, skillSelection.Skills, 10),
 		},
 	})
 	bundle = appendSkillSections(bundle, skillSelection.Skills)
+	bundle = appendSkillInventorySection(bundle, summarizeActiveSkills(skillSelection.Skills), summarizeSkillInventory(projectRoot, skillSelection.Skills, 10))
 	if budget := PromptTokenBudget(task, profile, runtime); budget > 0 {
 		bundle = trimBundleToBudget(bundle, budget)
 	}
@@ -424,6 +428,41 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 			Cacheable: false,
 		}}, bundle.Sections...)
 	}
+	return bundle
+}
+
+func appendSkillInventorySection(bundle *promptlib.PromptBundle, active, inventory string) *promptlib.PromptBundle {
+	if bundle == nil {
+		return bundle
+	}
+	inventory = strings.TrimSpace(inventory)
+	if inventory == "" || inventory == "(none)" {
+		return bundle
+	}
+	active = strings.TrimSpace(active)
+	if active == "" {
+		active = "(none active)"
+	}
+	text := "Skills inventory:\nActive: " + active + "\n" + inventory
+	section := promptlib.PromptSection{
+		Label:     "skills-inventory",
+		Text:      text,
+		Cacheable: true,
+	}
+	sections := make([]promptlib.PromptSection, 0, len(bundle.Sections)+1)
+	inserted := false
+	for _, existing := range bundle.Sections {
+		if !inserted && existing.Label == "system" {
+			sections = append(sections, existing, section)
+			inserted = true
+			continue
+		}
+		sections = append(sections, existing)
+	}
+	if !inserted {
+		sections = append([]promptlib.PromptSection{section}, sections...)
+	}
+	bundle.Sections = sections
 	return bundle
 }
 
@@ -462,7 +501,7 @@ func appendSkillSections(bundle *promptlib.PromptBundle, active []skills.Skill) 
 
 func summarizeActiveSkills(active []skills.Skill) string {
 	if len(active) == 0 {
-		return ""
+		return "(none active)"
 	}
 	names := make([]string, 0, len(active))
 	for _, skill := range active {
@@ -471,6 +510,45 @@ func summarizeActiveSkills(active []skills.Skill) string {
 		}
 	}
 	return strings.Join(names, ", ")
+}
+
+func summarizeSkillInventory(projectRoot string, active []skills.Skill, limit int) string {
+	if limit <= 0 {
+		limit = 10
+	}
+	activeSet := make(map[string]struct{}, len(active))
+	for _, skill := range active {
+		if name := strings.ToLower(strings.TrimSpace(skill.Name)); name != "" {
+			activeSet[name] = struct{}{}
+		}
+	}
+	items := skills.Discover(projectRoot)
+	lines := make([]string, 0, min(limit, len(items)))
+	for _, skill := range items {
+		name := strings.TrimSpace(skill.Name)
+		if name == "" {
+			continue
+		}
+		desc := strings.TrimSpace(skill.Description)
+		if desc == "" {
+			desc = strings.TrimSpace(skill.Task)
+		}
+		if desc == "" {
+			desc = "project-specific guidance"
+		}
+		marker := ""
+		if _, ok := activeSet[strings.ToLower(name)]; ok {
+			marker = " (active)"
+		}
+		lines = append(lines, "- "+name+marker+" - "+desc)
+		if len(lines) >= limit {
+			break
+		}
+	}
+	if len(lines) == 0 {
+		return "(none)"
+	}
+	return strings.Join(lines, "\n")
 }
 
 // trimBundleToBudget applies a token cap across the bundle. The dynamic

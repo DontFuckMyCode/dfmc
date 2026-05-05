@@ -50,3 +50,21 @@ func TestFinalizeTreeSitterParser_UnhealthySkipsPoolAndCloses(t *testing.T) {
 		t.Fatalf("unhealthy parser MUST NOT return to pool, Put=%d", pool.puts)
 	}
 }
+
+func TestTreeSitterParserRegistrySeparatesLanguages(t *testing.T) {
+	registry := newTreeSitterParserRegistry()
+
+	goPool := registry.pool("go")
+	pythonPool := registry.pool("python")
+	goPoolAgain := registry.pool("go")
+
+	if goPool == nil || pythonPool == nil {
+		t.Fatalf("expected non-nil pools")
+	}
+	if goPool != goPoolAgain {
+		t.Fatalf("same language should reuse the same pool")
+	}
+	if goPool == pythonPool {
+		t.Fatalf("different languages must not share a parser pool")
+	}
+}

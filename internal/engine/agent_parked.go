@@ -12,6 +12,7 @@ package engine
 // provider round-trip.
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -236,10 +237,23 @@ func (e *Engine) saveParkedAgent(p *parkedAgentState) {
 // (counter 1→0). Any parked state produced by a subagent's own loop is
 // discarded on exit — subagents don't park-resume; the parent does.
 func (e *Engine) enterSubagent() func() {
+	release, _ := e.tryEnterSubagent(0)
+	return release
+}
+
+// tryEnterSubagent is enterSubagent with an optional hard ceiling. A
+// non-positive max keeps the legacy no-limit behavior used by low-level tests
+// and by callers that deliberately manage concurrency elsewhere.
+func (e *Engine) tryEnterSubagent(maxConcurrent int) (func(), error) {
 	if e == nil {
-		return func() {}
+		return func() {}, nil
 	}
 	e.agentMu.Lock()
+	if maxConcurrent > 0 && e.subagentInFlight >= maxConcurrent {
+		active := e.subagentInFlight
+		e.agentMu.Unlock()
+		return nil, fmt.Errorf("sub-agent concurrency limit reached (active=%d max=%d)", active, maxConcurrent)
+	}
 	if e.subagentInFlight == 0 {
 		e.subagentStashed = e.agentParked
 		e.agentParked = nil
@@ -257,7 +271,27 @@ func (e *Engine) enterSubagent() func() {
 			e.subagentStashed = nil
 		}
 		e.agentMu.Unlock()
+	}, nil
+}
+
+func (e *Engine) subagentRuntimeStatus() (active int, limit int) {
+	if e == nil {
+		return 0, 0
 	}
+	limit = e.subagentConcurrencyLimit()
+	e.agentMu.Lock()
+	active = e.subagentInFlight
+	e.agentMu.Unlock()
+	return active, limit
+}
+
+func (e *Engine) currentSubagentCount() int {
+	if e == nil {
+		return 0
+	}
+	e.agentMu.Lock()
+	defer e.agentMu.Unlock()
+	return e.subagentInFlight
 }
 
 // itoaInt is a tiny allocation-free int formatter for status strings, to

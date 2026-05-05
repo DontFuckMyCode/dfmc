@@ -333,10 +333,18 @@ func batchToolCallPreviewLine(index int, raw any) string {
 	}
 	args, _ := call["args"].(map[string]any)
 	target := batchToolCallTarget(name, args)
+	reason := batchToolCallReason(args, call)
 	if target == "" {
+		if reason != "" {
+			return fmt.Sprintf("%d. %s | why: %s", index, name, reason)
+		}
 		return fmt.Sprintf("%d. %s", index, name)
 	}
-	return fmt.Sprintf("%d. %s - %s", index, name, target)
+	line := fmt.Sprintf("%d. %s - %s", index, name, target)
+	if reason != "" {
+		line += " | why: " + reason
+	}
+	return line
 }
 
 func batchToolCallTarget(name string, args map[string]any) string {
@@ -408,6 +416,16 @@ func batchToolArgsList(raw any) string {
 	default:
 		return strings.TrimSpace(fmt.Sprint(v))
 	}
+}
+
+func batchToolCallReason(args map[string]any, call map[string]any) string {
+	for _, raw := range []any{args["_reason"], call["_reason"], call["reason"]} {
+		reason := strings.TrimSpace(fmt.Sprint(raw))
+		if reason != "" && reason != "<nil>" {
+			return timelineEventField(reason)
+		}
+	}
+	return ""
 }
 
 func pickPayloadInt(raw any) (int, bool) {

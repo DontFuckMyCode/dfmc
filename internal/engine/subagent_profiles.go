@@ -31,10 +31,48 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 		return tools.SubagentResult{}, fmt.Errorf("sub-agent requires a provider with tool support (current: %s)", e.provider())
 	}
 
-	defer e.enterSubagent()()
+	releaseSubagent, err := e.tryEnterSubagent(e.subagentConcurrencyLimit())
+	if err != nil {
+		e.publishAgentLoopEvent("agent:subagent:done", map[string]any{
+			"duration_ms":      0,
+			"tool_rounds":      0,
+			"parked":           false,
+			"err":              errString(err),
+			"role":             req.Role,
+			"attempts":         0,
+			"fallback_used":    false,
+			"subagents_active": e.currentSubagentCount(),
+			"subagents_limit":  e.subagentConcurrencyLimit(),
+		})
+		return tools.SubagentResult{}, err
+	}
+	defer releaseSubagent()
+
+	firstProvider, firstModel, err := e.resolveSubagentProfileTarget(profiles[0])
+	if err != nil {
+		return tools.SubagentResult{}, err
+	}
+	lim := e.agentLimits()
+	if req.MaxSteps > 0 && req.MaxSteps < lim.MaxSteps {
+		lim.MaxSteps = req.MaxSteps
+	}
+	if lim.MaxTokens > 0 {
+		lim.MaxTokens = lim.MaxTokens / 2
+		if lim.MaxTokens < 10000 {
+			lim.MaxTokens = 10000
+		}
+	}
 
 	skillTexts := resolveSubagentSkillTexts(e.ProjectRoot, req.Skills)
-	task := buildSubagentPrompt(req, skillTexts)
+	backendSpecs := e.Tools.BackendSpecs()
+	task := buildSubagentPrompt(req, skillTexts, subagentPromptEnvironment{
+		ProjectRoot:      e.ProjectRoot,
+		Provider:         firstProvider,
+		Model:            firstModel,
+		MaxSteps:         lim.MaxSteps,
+		BackendToolCount: len(backendSpecs),
+		BackendToolNames: subagentPromptToolSample(backendSpecs, 16),
+	})
 	preflight := e.prepareAutonomyPreflight(ctx, task, "subagent", false)
 	chunks := e.buildContextChunks(task)
 	systemPrompt, systemBlocks := e.buildNativeToolSystemPromptBundle(task, chunks, preflight)
@@ -45,10 +83,6 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 		contextTokens += c.TokenCount
 	}
 
-	firstProvider, firstModel, err := e.resolveSubagentProfileTarget(profiles[0])
-	if err != nil {
-		return tools.SubagentResult{}, err
-	}
 	baseSeed := &parkedAgentState{
 		Question:      task,
 		Messages:      e.buildToolLoopRequestMessages(task, chunks, systemPrompt, nil),
@@ -62,17 +96,6 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 		LastProvider:  firstProvider,
 		LastModel:     firstModel,
 		ToolSource:    normalizeToolSource(req.ToolSource),
-	}
-
-	lim := e.agentLimits()
-	if req.MaxSteps > 0 && req.MaxSteps < lim.MaxSteps {
-		lim.MaxSteps = req.MaxSteps
-	}
-	if lim.MaxTokens > 0 {
-		lim.MaxTokens = lim.MaxTokens / 2
-		if lim.MaxTokens < 10000 {
-			lim.MaxTokens = 10000
-		}
 	}
 
 	start := time.Now()

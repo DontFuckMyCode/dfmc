@@ -206,10 +206,17 @@ func (m Model) describeTodos() string {
 // events mirrored into the Activity feed.
 func (m Model) describeSubagents() string {
 	lines := []string{"▸ Subagent activity"}
-	if m.telemetry.activeSubagentCount > 0 {
-		lines = append(lines, fmt.Sprintf("  active:     %d subagent(s) currently running", m.telemetry.activeSubagentCount))
+	active := m.telemetry.activeSubagentCount
+	if m.status.SubagentsActive > active {
+		active = m.status.SubagentsActive
+	}
+	if active > 0 {
+		lines = append(lines, fmt.Sprintf("  active:     %d subagent(s) currently running", active))
 	} else {
 		lines = append(lines, "  active:     no subagents currently running")
+	}
+	if m.status.SubagentsLimit > 0 {
+		lines = append(lines, fmt.Sprintf("  capacity:   %d/%d", active, m.status.SubagentsLimit))
 	}
 
 	recent := m.recentWorkflowActivity("agent:subagent:", 6)

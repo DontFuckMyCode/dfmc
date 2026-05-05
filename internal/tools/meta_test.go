@@ -58,6 +58,15 @@ func newTestEngine(t *testing.T) (*Engine, string) {
 	return eng, tmp
 }
 
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestEngineRegistersMetaTools(t *testing.T) {
 	eng, _ := newTestEngine(t)
 	for _, name := range []string{"tool_search", "tool_help", "tool_call", "tool_batch_call"} {
@@ -160,6 +169,32 @@ func TestToolCallDispatchesToBackend(t *testing.T) {
 	}
 }
 
+func TestToolCallInheritsWrapperReasonToBackend(t *testing.T) {
+	eng, tmp := newTestEngine(t)
+	var seen []string
+	eng.SetReasoningPublisher(func(name, reason string) {
+		seen = append(seen, name+":"+reason)
+	})
+
+	_, err := eng.Execute(context.Background(), "tool_call", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"name":      "read_file",
+			ReasonField: "checking the fixture before deciding the edit",
+			"args":      map[string]any{"path": "hello.go"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("tool_call: %v", err)
+	}
+
+	wantMeta := "tool_call:checking the fixture before deciding the edit"
+	wantBackend := "read_file:checking the fixture before deciding the edit"
+	if !containsString(seen, wantMeta) || !containsString(seen, wantBackend) {
+		t.Fatalf("expected wrapper and backend reasoning events, got %#v", seen)
+	}
+}
+
 func TestToolCallRefusesMetaTarget(t *testing.T) {
 	eng, tmp := newTestEngine(t)
 	_, err := eng.Execute(context.Background(), "tool_call", Request{
@@ -237,6 +272,51 @@ func TestToolCallTripleWrapAutoUnwraps(t *testing.T) {
 	}
 	if !strings.Contains(res.Output, "package main") {
 		t.Fatalf("expected actual file contents after triple unwrap, got %q", res.Output)
+	}
+}
+
+func TestToolBatchCallInheritsReasonAndAllowsPerCallOverride(t *testing.T) {
+	eng, tmp := newTestEngine(t)
+	var seen []string
+	eng.SetReasoningPublisher(func(name, reason string) {
+		seen = append(seen, name+":"+reason)
+	})
+
+	res, err := eng.Execute(context.Background(), "tool_batch_call", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			ReasonField: "read the fixtures in parallel before planning",
+			"calls": []any{
+				map[string]any{"name": "read_file", "args": map[string]any{"path": "hello.go"}},
+				map[string]any{"name": "read_file", "args": map[string]any{
+					"path":      "hello.go",
+					ReasonField: "specific second read reason",
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("tool_batch_call: %v", err)
+	}
+
+	if !containsString(seen, "tool_batch_call:read the fixtures in parallel before planning") {
+		t.Fatalf("expected batch-level reasoning event, got %#v", seen)
+	}
+	if !containsString(seen, "read_file:read the fixtures in parallel before planning") {
+		t.Fatalf("expected inherited backend reasoning event, got %#v", seen)
+	}
+	if !containsString(seen, "read_file:specific second read reason") {
+		t.Fatalf("expected per-call backend reasoning override, got %#v", seen)
+	}
+	results, _ := res.Data["results"].([]map[string]any)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 result entries, got %#v", res.Data["results"])
+	}
+	if results[0]["reason"] != "read the fixtures in parallel before planning" {
+		t.Fatalf("expected inherited result reason, got %#v", results[0])
+	}
+	if results[1]["reason"] != "specific second read reason" {
+		t.Fatalf("expected per-call result reason, got %#v", results[1])
 	}
 }
 

@@ -32,6 +32,10 @@ func (m Model) chatHeaderInfo() chatHeaderInfo {
 	if m.eng != nil && m.eng.Config != nil {
 		gated = len(m.eng.Config.Tools.RequireApproval) > 0
 	}
+	activeSubagents := m.telemetry.activeSubagentCount
+	if m.status.SubagentsActive > activeSubagents {
+		activeSubagents = m.status.SubagentsActive
+	}
 	return chatHeaderInfo{
 		Provider:        provider,
 		Model:           model,
@@ -49,7 +53,7 @@ func (m Model) chatHeaderInfo() chatHeaderInfo {
 		Parked:          parked,
 		PendingNotes:    m.chat.pendingNoteCount,
 		ActiveTools:     m.telemetry.activeToolCount,
-		ActiveSubagents: m.telemetry.activeSubagentCount,
+		ActiveSubagents: activeSubagents,
 		PlanMode:        m.ui.planMode,
 		ApprovalGated:   gated,
 		ApprovalPending: m.pendingApproval != nil,
@@ -59,6 +63,7 @@ func (m Model) chatHeaderInfo() chatHeaderInfo {
 		DriveDone:       m.telemetry.driveDone,
 		DriveTotal:      m.telemetry.driveTotal,
 		DriveBlocked:    m.telemetry.driveBlocked,
+		SubagentSummary: m.activeSubagentSummary(),
 	}
 }
 
@@ -218,9 +223,9 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 			buildTree = func(t *supervisor.Task, indent int, isLast bool) {
 				prefix := ""
 				if indent > 0 {
-					treeChar := "├─"
+					treeChar := "+-"
 					if isLast {
-						treeChar = "└─"
+						treeChar = "`-"
 					}
 					prefix = strings.Repeat("  ", indent-1) + treeChar + " "
 				}
@@ -396,13 +401,16 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 	collectWorkflowRecent("agent:loop:error", 1)
 	collectWorkflowRecent("provider:throttle:retry", 1)
 
-	subagentLines := []string{}
-	if head.ActiveSubagents > 0 {
-		subagentLines = append(subagentLines, fmt.Sprintf("%d active now", head.ActiveSubagents))
-	} else {
-		subagentLines = append(subagentLines, "idle")
+	subagentLines := m.subagentTreeLines(now, 10)
+	if len(subagentLines) == 0 {
+		if head.ActiveSubagents > 0 {
+			subagentLines = append(subagentLines, fmt.Sprintf("%d active now", head.ActiveSubagents))
+		} else {
+			subagentLines = append(subagentLines, "idle")
+		}
 	}
 	if recent := m.recentWorkflowActivity("agent:subagent:", 8); len(recent) > 0 {
+		subagentLines = append(subagentLines, "recent:")
 		subagentLines = append(subagentLines, recent...)
 	}
 
@@ -482,6 +490,8 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		BoostSeconds:            boostSeconds,
 		FocusLocked:             m.ui.statsPanelFocusLocked,
 		SubagentLines:           subagentLines,
+		SubagentSummary:         head.SubagentSummary,
+		SubagentLimit:           m.status.SubagentsLimit,
 		DriveRunID:              head.DriveRunID,
 		DriveDone:               head.DriveDone,
 		DriveTotal:              head.DriveTotal,

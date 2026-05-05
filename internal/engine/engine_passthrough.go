@@ -52,6 +52,7 @@ func (e *Engine) Status() Status {
 	if e.Providers != nil {
 		openCircuits = e.Providers.CircuitState()
 	}
+	subagentsActive, subagentsLimit := e.subagentRuntimeStatus()
 	return Status{
 		State:             e.state,
 		ProjectRoot:       e.ProjectRoot,
@@ -72,6 +73,8 @@ func (e *Engine) Status() Status {
 		OpenCircuits:      openCircuits,
 		SubagentRetries:   tools.SubagentRetriesTotal(),
 		SubagentRetries5m: tools.SubagentRetriesInWindow(5 * time.Minute),
+		SubagentsActive:   subagentsActive,
+		SubagentsLimit:    subagentsLimit,
 	}
 }
 

@@ -5,13 +5,18 @@ package tui
 // the active-subagent counter, and the notice line share one home.
 // engine_events.go dispatches prefix-matched events here.
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 func (m Model) handleSubagentEvent(eventType string, payload map[string]any) (Model, string) {
 	line := ""
+	now := time.Now()
 	switch eventType {
 	case "agent:subagent:start":
 		m.autoActivateStatsPanelMode(statsPanelModeSubagents, "subagents")
+		m.startSubagentRuntime(payload, now)
 		task := payloadString(payload, "task", "task")
 		role := payloadString(payload, "role", "")
 		candidates := payloadStringSlice(payload, "provider_candidates")
@@ -49,6 +54,7 @@ func (m Model) handleSubagentEvent(eventType string, payload map[string]any) (Mo
 			line += " [" + targetLabel + "]"
 		}
 	case "agent:subagent:fallback":
+		m.fallbackSubagentRuntime(payload, now)
 		role := payloadString(payload, "role", "")
 		attempt := payloadInt(payload, "attempt", 0)
 		fromProfile := payloadString(payload, "from_profile", "")
@@ -84,6 +90,7 @@ func (m Model) handleSubagentEvent(eventType string, payload map[string]any) (Mo
 			line += " - " + truncateSingleLine(errText, 120)
 		}
 	case "agent:subagent:done":
+		m.finishSubagentRuntime(payload, now)
 		if m.telemetry.activeSubagentCount > 0 {
 			m.telemetry.activeSubagentCount--
 		}

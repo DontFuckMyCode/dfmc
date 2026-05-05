@@ -47,7 +47,7 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 	case "Plans":
 		content = fitPanelContentHeight(m.renderPlansView(contentWidth), innerHeight)
 	case "Context":
-		content = fitPanelContentHeight(m.renderContextView(contentWidth), innerHeight)
+		content = fitPanelContentHeight(m.renderContextViewSized(contentWidth, innerHeight), innerHeight)
 	case "Providers":
 		content = fitPanelContentHeight(m.renderProvidersView(contentWidth), innerHeight)
 	default:

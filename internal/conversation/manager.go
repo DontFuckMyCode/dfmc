@@ -19,7 +19,6 @@ import (
 )
 
 // Conversation represents a single AI conversation session with branch support.
-// Conversation represents a single AI conversation session with branch support.
 type Conversation struct {
 	ID        string                     `json:"id"`
 	Provider  string                     `json:"provider"`
@@ -85,6 +84,8 @@ func New(store *storage.Store) *Manager {
 	}
 }
 
+var conversationIDNow = time.Now
+
 // newConversationID returns a fresh conversation ID that is guaranteed not
 // to collide with the currently-active conversation (if any). The base is a
 // human-friendly millisecond timestamp; on collision we fall back to the
@@ -92,7 +93,7 @@ func New(store *storage.Store) *Manager {
 // firing in the same millisecond the previous session was created — still
 // produce unique IDs.
 func newConversationID(active *Conversation, tag string) string {
-	now := time.Now()
+	now := conversationIDNow()
 	base := "conv_" + now.Format("20060102_150405.000")
 	if tag != "" {
 		base += "_" + tag

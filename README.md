@@ -112,6 +112,8 @@ Chat slash commands:
 
 When a configured provider is tool-capable, DFMC can now run a bounded local tool loop during chat turns: the model may request one tool at a time, receive the tool result, and continue toward a final answer.
 
+Sub-agent fan-out uses the same bounded loop through `delegate_task` and `orchestrate`. Each sub-agent gets a fresh scoped prompt with runtime context, provider/model, available backend-tool hints, and its effective step budget. Concurrent sub-agents are capped by `agent.parallel_batch_size` (default `4`); `/subagents` and the TUI stats panel show the live `active/limit` capacity so runaway delegation is visible instead of silent.
+
 ### 3.2) Terminal workbench
 
 ```bash
@@ -218,7 +220,7 @@ go run ./cmd/dfmc drive resume <run-id>
 go run ./cmd/dfmc drive stop <run-id>
 ```
 
-Drive decomposes a task into a DAG of TODOs, then schedules ready ones in parallel through the sub-agent surface. Per-tag provider routing (`--route <tag>=<profile>`) sends each TODO to the best profile for that work — `plan`, `code`, `review`, `test`, `research`. Runs persist to bbolt and are resumable after Ctrl+C.
+Drive decomposes a task into a DAG of TODOs, then schedules ready ones in parallel through the sub-agent surface. Per-tag provider routing (`--route <tag>=<profile>`) sends each TODO to the best profile for that work — `plan`, `code`, `review`, `test`, `research`. Runs persist to bbolt and are resumable after Ctrl+C. Drive worker fan-out still goes through the global sub-agent capacity guard, so capacity pressure surfaces as a bounded sub-agent rejection instead of unbounded worker growth.
 
 ### 6.1) Run Web API
 

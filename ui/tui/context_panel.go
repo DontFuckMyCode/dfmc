@@ -283,6 +283,168 @@ func (m Model) renderContextView(width int) string {
 	return strings.Join(lines, "\n")
 }
 
+// renderContextActiveBlock shows the exact chunks from the last LLM request.
+func renderContextActiveBlock(debug engine.ContextDebugStatus, width int) []string {
+	out := []string{}
+	meta := []string{}
+	if debug.Provider != "" || debug.Model != "" {
+		provider := nonEmpty(debug.Provider, "?")
+		if debug.Model != "" {
+			provider += "/" + debug.Model
+		}
+		meta = append(meta, provider)
+	}
+	if !debug.BuiltAt.IsZero() {
+		meta = append(meta, "built="+debug.BuiltAt.Format("15:04:05"))
+	}
+	if debug.Task != "" {
+		meta = append(meta, "task="+debug.Task)
+	}
+	if debug.ProviderMaxContext > 0 {
+		meta = append(meta, fmt.Sprintf("window=%d", debug.ProviderMaxContext))
+	}
+	if debug.MaxTokensTotal > 0 {
+		meta = append(meta, fmt.Sprintf("budget=%d", debug.MaxTokensTotal))
+	}
+	if debug.TokenCount > 0 || debug.FileCount > 0 {
+		meta = append(meta, fmt.Sprintf("used=%d tok / %d files", debug.TokenCount, debug.FileCount))
+	}
+	if len(meta) > 0 {
+		out = append(out, "  "+accentStyle.Render(strings.Join(meta, "  |  ")))
+	}
+	if strings.TrimSpace(debug.Query) != "" {
+		out = append(out, "  "+subtleStyle.Render("query: ")+debug.Query)
+	}
+	if len(debug.Reasons) > 0 {
+		out = append(out, "", "  "+subtleStyle.Render("why this context shape:"))
+		for _, reason := range debug.Reasons {
+			if strings.TrimSpace(reason) == "" {
+				continue
+			}
+			out = append(out, "   "+subtleStyle.Render("- "+reason))
+		}
+	}
+	if len(debug.Files) == 0 {
+		out = append(out, "", warnStyle.Render("  no active context chunks captured yet"))
+		return out
+	}
+	out = append(out, "", "  "+subtleStyle.Render("active chunks (exact content sent to the model):"))
+	for i, file := range debug.Files {
+		out = append(out, "")
+		rangeLabel := ""
+		if file.LineStart > 0 || file.LineEnd > 0 {
+			rangeLabel = fmt.Sprintf(":%d-%d", file.LineStart, file.LineEnd)
+		}
+		header := fmt.Sprintf("[%02d] %s%s", i+1, nonEmpty(file.Path, "(unknown)"), rangeLabel)
+		stats := []string{}
+		if file.Language != "" {
+			stats = append(stats, "lang="+file.Language)
+		}
+		if file.TokenCount > 0 {
+			stats = append(stats, fmt.Sprintf("tok=%d", file.TokenCount))
+		}
+		if file.Score > 0 {
+			stats = append(stats, fmt.Sprintf("score=%.2f", file.Score))
+		}
+		if file.Compression != "" {
+			stats = append(stats, "compression="+file.Compression)
+		}
+		if file.Source != "" {
+			stats = append(stats, "source="+file.Source)
+		}
+		if len(stats) > 0 {
+			header += "  " + subtleStyle.Render(strings.Join(stats, "  "))
+		}
+		out = append(out, "  "+accentStyle.Render(header))
+		if strings.TrimSpace(file.Reason) != "" {
+			out = append(out, "  "+subtleStyle.Render("reason: ")+file.Reason)
+		}
+		content := strings.ReplaceAll(file.Content, "\r\n", "\n")
+		if strings.TrimSpace(content) == "" {
+			out = append(out, "  "+warnStyle.Render("(chunk content is empty)"))
+			continue
+		}
+		for lineIdx, line := range strings.Split(content, "\n") {
+			if file.LineStart > 0 {
+				out = append(out, fmt.Sprintf("  %5d | %s", file.LineStart+lineIdx, line))
+			} else {
+				out = append(out, "        | "+line)
+			}
+		}
+	}
+	_ = width
+	return out
+}
+
+func renderContextPanelLines(lines []string, scroll, maxLines int) string {
+	if maxLines <= 0 || len(lines) <= maxLines {
+		return strings.Join(lines, "\n")
+	}
+	fixed := 4
+	if fixed > len(lines) {
+		fixed = len(lines)
+	}
+	bodySlots := maxLines - fixed
+	if bodySlots <= 0 {
+		return strings.Join(lines[:maxLines], "\n")
+	}
+	body := lines[fixed:]
+	maxScroll := len(body) - bodySlots
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	scroll = clampInt(scroll, 0, maxScroll)
+	end := scroll + bodySlots
+	if end > len(body) {
+		end = len(body)
+	}
+	out := append([]string{}, lines[:fixed]...)
+	out = append(out, body[scroll:end]...)
+	if end < len(body) && len(out) > fixed {
+		out[len(out)-1] = subtleStyle.Render(fmt.Sprintf("... more (%d lines), use pgdn/down", len(body)-end))
+	}
+	return strings.Join(out, "\n")
+}
+
+func (m Model) renderContextViewSized(width, height int) string {
+	width = clampInt(width, 24, 1000)
+	if !m.contextPanel.showActive {
+		return renderContextPanelLines(strings.Split(m.renderContextView(width), "\n"), m.contextPanel.scroll, height)
+	}
+
+	header := sectionHeader("CTX", "Context")
+	hint := subtleStyle.Render("active full context | e preview query | enter preview | c clear | up/down/pg scroll")
+	queryLine := subtleStyle.Render("query: ")
+	if strings.TrimSpace(m.contextPanel.query) != "" {
+		queryLine += m.contextPanel.query
+	} else {
+		queryLine += subtleStyle.Render("(active context from last LLM request)")
+	}
+	lines := []string{header, hint, queryLine, renderDivider(width - 2)}
+
+	if m.contextPanel.err != "" {
+		lines = append(lines, "", warnStyle.Render("error - "+m.contextPanel.err))
+		return renderContextPanelLines(lines, m.contextPanel.scroll, height)
+	}
+
+	active := m.contextPanel.active
+	if m.eng != nil {
+		debug := m.eng.ActiveContextDebug()
+		active = &debug
+	}
+	lines = append(lines, "", subtleStyle.Render("active context debug"))
+	if active == nil || (strings.TrimSpace(active.Query) == "" && len(active.Files) == 0 && len(active.Reasons) == 0) {
+		lines = append(lines,
+			"",
+			warnStyle.Render("  no active context captured yet"),
+			subtleStyle.Render("  Run a chat request first; this view shows the exact chunks from the last LLM request."),
+		)
+		return renderContextPanelLines(lines, m.contextPanel.scroll, height)
+	}
+	lines = append(lines, renderContextActiveBlock(*active, width)...)
+	return renderContextPanelLines(lines, m.contextPanel.scroll, height)
+}
+
 // runContextPreview recomputes the budget info, hints, and real-time
 // context breakdown for the current query. Pure (no goroutines) —
 // all called functions read only config/state, so no tea.Cmd needed.
@@ -314,6 +476,22 @@ func (m Model) runContextPreview() Model {
 	m.contextPanel.breakdown = new(engine.ContextBreakdown)
 	*m.contextPanel.breakdown = m.eng.ContextBreakdown(q)
 	m.contextPanel.hints = m.eng.ContextRecommendations(q)
+	m.contextPanel.showActive = false
+	m.contextPanel.scroll = 0
+	return m
+}
+
+func (m Model) loadActiveContextDebug() Model {
+	m.contextPanel.showActive = true
+	m.contextPanel.scroll = 0
+	m.contextPanel.err = ""
+	if m.eng == nil {
+		m.contextPanel.active = nil
+		m.contextPanel.err = "engine not ready - active context is unavailable"
+		return m
+	}
+	active := m.eng.ActiveContextDebug()
+	m.contextPanel.active = &active
 	return m
 }
 
@@ -322,6 +500,9 @@ func (m Model) handleContextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleContextInputKey(msg)
 	}
 	switch msg.String() {
+	case "a", "f":
+		m = m.loadActiveContextDebug()
+		return m, nil
 	case "e":
 		m.contextPanel.inputActive = true
 		return m, nil
@@ -335,7 +516,24 @@ func (m Model) handleContextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.contextPanel.preview = nil
 		m.contextPanel.breakdown = nil
 		m.contextPanel.hints = nil
+		m.contextPanel.active = nil
+		m.contextPanel.showActive = false
+		m.contextPanel.scroll = 0
 		m.contextPanel.err = ""
+		return m, nil
+	case "up", "k":
+		if m.contextPanel.scroll > 0 {
+			m.contextPanel.scroll--
+		}
+		return m, nil
+	case "down", "j":
+		m.contextPanel.scroll++
+		return m, nil
+	case "pgup":
+		m.contextPanel.scroll = maxInt(0, m.contextPanel.scroll-10)
+		return m, nil
+	case "pgdown":
+		m.contextPanel.scroll += 10
 		return m, nil
 	}
 	return m, nil

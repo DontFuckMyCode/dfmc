@@ -31,10 +31,41 @@ import (
 // parser failed mid-parse it must be Close()d instead of returned to
 // the pool, otherwise a corrupt parser will infect the next caller
 // of the same language.
-var (
-	treeSitterParserPoolsMu sync.RWMutex
-	treeSitterParserPools   = map[string]*sync.Pool{}
-)
+var treeSitterParsers = newTreeSitterParserRegistry()
+
+type treeSitterParserRegistry struct {
+	mu     sync.RWMutex
+	pools  map[string]*sync.Pool
+	newOne func() any
+}
+
+func newTreeSitterParserRegistry() *treeSitterParserRegistry {
+	return &treeSitterParserRegistry{
+		pools: map[string]*sync.Pool{},
+		newOne: func() any {
+			return tree_sitter.NewParser()
+		},
+	}
+}
+
+func (r *treeSitterParserRegistry) pool(lang string) *sync.Pool {
+	r.mu.RLock()
+	if pool, ok := r.pools[lang]; ok {
+		r.mu.RUnlock()
+		return pool
+	}
+	r.mu.RUnlock()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if pool, ok := r.pools[lang]; ok {
+		return pool
+	}
+
+	pool := &sync.Pool{New: r.newOne}
+	r.pools[lang] = pool
+	return pool
+}
 
 func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte) ([]types.Symbol, []string, []ParseError, bool, error) {
 	language, handled, err := treeSitterLanguageFor(lang)
@@ -145,27 +176,7 @@ func finalizeTreeSitterParser(pool parserReturner, parser *tree_sitter.Parser, h
 }
 
 func treeSitterParserPool(lang string) *sync.Pool {
-	treeSitterParserPoolsMu.RLock()
-	if pool, ok := treeSitterParserPools[lang]; ok {
-		treeSitterParserPoolsMu.RUnlock()
-		return pool
-	}
-	treeSitterParserPoolsMu.RUnlock()
-
-	treeSitterParserPoolsMu.Lock()
-	defer treeSitterParserPoolsMu.Unlock()
-	// Double-check after acquiring write lock
-	if pool, ok := treeSitterParserPools[lang]; ok {
-		return pool
-	}
-
-	pool := &sync.Pool{
-		New: func() any {
-			return tree_sitter.NewParser()
-		},
-	}
-	treeSitterParserPools[lang] = pool
-	return pool
+	return treeSitterParsers.pool(lang)
 }
 
 func treeSitterLanguageFor(lang string) (*tree_sitter.Language, bool, error) {

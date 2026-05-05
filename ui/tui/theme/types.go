@@ -97,6 +97,7 @@ type ChatHeaderInfo struct {
 	Slim            bool
 	ActiveTools     int
 	ActiveSubagents int
+	SubagentSummary string
 	PlanMode        bool
 	ApprovalGated   bool
 	ApprovalPending bool
@@ -186,7 +187,9 @@ type StatsPanelInfo struct {
 	BoostSeconds            int
 	FocusLocked             bool
 	SubagentLines           []string
+	SubagentSummary         string
 	ActiveSubagents         int
+	SubagentLimit           int
 	ActiveTools             int
 	DriveRunID              string
 	DriveDone               int

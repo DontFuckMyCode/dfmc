@@ -108,11 +108,18 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 	opts := e.contextBuildOptionsWithRuntime(question, runtime)
 	chunks, err := e.Context.BuildWithOptions(question, opts)
 	if err != nil {
-		e.setLastContextInStatus(ContextInStatus{
+		status := ContextInStatus{
 			Query:   strings.TrimSpace(question),
 			Task:    detectContextTask(question),
 			BuiltAt: time.Now(),
 			Reasons: []string{"Context build failed: " + strings.TrimSpace(err.Error())},
+		}
+		e.setLastContextInStatus(status)
+		e.setLastContextDebugStatus(ContextDebugStatus{
+			Query:   status.Query,
+			Task:    status.Task,
+			BuiltAt: status.BuiltAt,
+			Reasons: append([]string(nil), status.Reasons...),
 		})
 		e.EventBus.Publish(Event{
 			Type:    "context:error",
@@ -123,6 +130,7 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 	}
 	report := e.buildContextInStatus(question, runtime, opts, chunks)
 	e.setLastContextInStatus(report)
+	e.setLastContextDebugStatus(buildContextDebugStatus(report, chunks))
 	total := 0
 	for _, c := range chunks {
 		total += c.TokenCount
@@ -292,6 +300,68 @@ func (e *Engine) setLastContextInStatus(status ContextInStatus) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.lastContextIn = status
+}
+
+func (e *Engine) setLastContextDebugStatus(status ContextDebugStatus) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.lastContextDebug = cloneContextDebugStatus(status)
+}
+
+func (e *Engine) ActiveContextDebug() ContextDebugStatus {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return cloneContextDebugStatus(e.lastContextDebug)
+}
+
+func buildContextDebugStatus(report ContextInStatus, chunks []types.ContextChunk) ContextDebugStatus {
+	files := make([]ContextDebugFileStatus, 0, len(chunks))
+	for i, chunk := range chunks {
+		reason := ""
+		path := chunk.Path
+		if i < len(report.Files) {
+			reason = report.Files[i].Reason
+			if report.Files[i].Path != "" {
+				path = report.Files[i].Path
+			}
+		}
+		files = append(files, ContextDebugFileStatus{
+			Path:        path,
+			Language:    chunk.Language,
+			LineStart:   chunk.LineStart,
+			LineEnd:     chunk.LineEnd,
+			TokenCount:  chunk.TokenCount,
+			Score:       chunk.Score,
+			Compression: chunk.Compression,
+			Source:      chunk.Source,
+			Reason:      reason,
+			Content:     chunk.Content,
+		})
+	}
+	return ContextDebugStatus{
+		Query:              report.Query,
+		Task:               report.Task,
+		BuiltAt:            report.BuiltAt,
+		Provider:           report.Provider,
+		Model:              report.Model,
+		ProviderMaxContext: report.ProviderMaxContext,
+		MaxTokensTotal:     report.MaxTokensTotal,
+		TokenCount:         report.TokenCount,
+		FileCount:          report.FileCount,
+		Reasons:            append([]string(nil), report.Reasons...),
+		Files:              files,
+	}
+}
+
+func cloneContextDebugStatus(src ContextDebugStatus) ContextDebugStatus {
+	copyStatus := src
+	if len(src.Reasons) > 0 {
+		copyStatus.Reasons = append([]string(nil), src.Reasons...)
+	}
+	if len(src.Files) > 0 {
+		copyStatus.Files = append([]ContextDebugFileStatus(nil), src.Files...)
+	}
+	return copyStatus
 }
 
 func (e *Engine) buildContextInStatus(question string, runtime ctxmgr.PromptRuntime, opts ctxmgr.BuildOptions, chunks []types.ContextChunk) ContextInStatus {

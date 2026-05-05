@@ -249,9 +249,9 @@ func (e *Engine) buildSystemPrompt(question string, chunks []types.ContextChunk)
 // keeps it optional for provider compatibility, but this runtime instruction
 // treats it as required UI metadata.
 func toolReasoningSystemNotice() string {
-	return "[Tool self-narration: every tool call must include the virtual `_reason` string in args. " +
-		"Use one concise sentence (<=140 chars) explaining why this tool is needed now and what signal you expect; " +
-		"the TUI shows it in the debug tool timeline. Example: " +
+	return "[Tool self-narration REQUIRED: every tool call must include the virtual `_reason` string in args; every model-initiated tool call must provide it. " +
+		"Treat missing `_reason` as an invalid tool-call shape. Use one concise sentence (<=140 chars) explaining why this tool is needed now and what signal you expect; " +
+		"the TUI shows it in the debug tool timeline, and batch calls need a reason both for the batch and for each inner call when possible. Example: " +
 		`{"name":"read_file","args":{"path":"server.go","_reason":"checking how the SSE handler closes the stream before editing it"}}.` +
 		" `_reason` is stripped before dispatch and never reaches the tool implementation.]"
 }
@@ -266,7 +266,8 @@ func hostOSSystemNotice() string {
 	case "windows":
 		return "[Host: Windows. run_command executes binaries directly (no cmd.exe / no PowerShell): " +
 			"`&&`, `||`, `;`, `|`, `>`, and `cd ...` chains are NOT interpreted. " +
-			"Pass {command, args, dir} separately. Forward slashes work fine for `go`, `git`, `npm`, etc.]"
+			"Pass {command, args, dir} separately, and set dir to an absolute path. " +
+			"Prefer forward slashes for cross-platform tools (`go`, `git`, `npm`, `python`); use escaped backslashes only when explicitly invoking Windows-native built-ins via cmd.exe/PowerShell.]"
 	case "darwin":
 		return "[Host: macOS (darwin). run_command executes binaries directly — no shell — so " +
 			"`&&`, `||`, `;`, `|`, `>`, redirects do NOT work. Use {command, args, dir} and " +

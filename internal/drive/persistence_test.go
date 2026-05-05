@@ -1,6 +1,7 @@
 package drive
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -56,6 +57,39 @@ func TestStoreSaveLoadRoundTrip(t *testing.T) {
 	}
 	if loaded.Todos[1].Status != TodoPending {
 		t.Fatalf("status lost: %s", loaded.Todos[1].Status)
+	}
+}
+
+func TestStoreSaveUsesReadableJSONBlob(t *testing.T) {
+	db := openTestDB(t)
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	run := &Run{ID: "drv-json", Task: "inspect persistence", Status: RunRunning, CreatedAt: time.Now()}
+	if err := store.Save(run); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	var raw []byte
+	if err := db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(driveBucket))
+		if b == nil {
+			t.Fatalf("missing %s bucket", driveBucket)
+		}
+		v := b.Get([]byte(run.ID))
+		if v == nil {
+			t.Fatalf("missing run blob")
+		}
+		raw = append([]byte(nil), v...)
+		return nil
+	}); err != nil {
+		t.Fatalf("read raw blob: %v", err)
+	}
+	if !json.Valid(raw) {
+		t.Fatalf("drive persistence should remain human-readable JSON, got %q", string(raw))
+	}
+	if raw[0] != '{' {
+		t.Fatalf("expected JSON object blob, got %q", string(raw[:1]))
 	}
 }
 

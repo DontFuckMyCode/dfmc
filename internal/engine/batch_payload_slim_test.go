@@ -166,7 +166,7 @@ func TestFormatNativeToolResultPayload_ErrorWithOutputSurfacesBoth(t *testing.T)
 func TestBatchFanoutSummary_EmitsPerCallInnerLines(t *testing.T) {
 	data := map[string]any{
 		"results": []map[string]any{
-			{"name": "read_file", "target": "foo.go", "success": true, "duration_ms": 5},
+			{"name": "read_file", "target": "foo.go", "success": true, "duration_ms": 5, "reason": "checking foo before editing"},
 			{"name": "read_file", "target": "bar.go", "success": true, "duration_ms": 7},
 			{"name": "grep_codebase", "target": "TODO", "success": false, "duration_ms": 3, "error": "pattern not found in any file"},
 		},
@@ -185,6 +185,9 @@ func TestBatchFanoutSummary_EmitsPerCallInnerLines(t *testing.T) {
 	}
 	if !strings.Contains(inner[2], "✗") || !strings.Contains(inner[2], "grep_codebase") || !strings.Contains(inner[2], "pattern not found") {
 		t.Fatalf("failed-call inner line should surface the error tail: %q", inner[2])
+	}
+	if !strings.Contains(inner[0], "why: checking foo before editing") {
+		t.Fatalf("first inner line should include reason: %q", inner[0])
 	}
 	// Counts still must agree with inner.
 	if got, _ := out["batch_count"].(int); got != 3 {

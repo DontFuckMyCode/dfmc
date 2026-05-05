@@ -124,6 +124,10 @@ type Engine struct {
 	seenFiles     map[string]struct{}  // absolute paths already read via read_file in this session
 
 	lastContextIn ContextInStatus
+	// lastContextDebug holds the exact content chunks from the most recent
+	// LLM context build. Status only exposes metadata; this powers the TUI
+	// debug/full context view without recomputing a different retrieval.
+	lastContextDebug ContextDebugStatus
 
 	// memoryDegraded is set when Memory.Load() failed during Init. The
 	// engine keeps running with an empty in-memory store so the user

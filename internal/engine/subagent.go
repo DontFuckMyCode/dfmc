@@ -10,6 +10,7 @@ package engine
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/provider"
@@ -23,12 +24,21 @@ func (e *Engine) RunSubagent(ctx context.Context, req tools.SubagentRequest) (to
 	return e.runSubagentProfiles(ctx, req, nil)
 }
 
+type subagentPromptEnvironment struct {
+	ProjectRoot      string
+	Provider         string
+	Model            string
+	MaxSteps         int
+	BackendToolCount int
+	BackendToolNames []string
+}
+
 // buildSubagentPrompt stitches role and allowed-tool hints onto the raw task
 // so the sub-agent sees them as part of its user-facing question. Keeping
 // these in the user prompt (rather than inventing a parallel system-prompt
 // variant) means behavior degrades gracefully on providers we haven't
 // specially tuned for.
-func buildSubagentPrompt(req tools.SubagentRequest, skillTexts []string) string {
+func buildSubagentPrompt(req tools.SubagentRequest, skillTexts []string, env subagentPromptEnvironment) string {
 	var b strings.Builder
 	if len(skillTexts) > 0 {
 		for _, text := range skillTexts {
@@ -44,15 +54,73 @@ func buildSubagentPrompt(req tools.SubagentRequest, skillTexts []string) string 
 	} else {
 		b.WriteString("You are a bounded sub-agent. Complete the task and return a concise summary.\n\n")
 	}
+	if env.ProjectRoot != "" || env.Provider != "" || env.Model != "" || env.MaxSteps > 0 || env.BackendToolCount > 0 {
+		b.WriteString("Runtime context:\n")
+		if env.ProjectRoot != "" {
+			b.WriteString("- project_root: ")
+			b.WriteString(env.ProjectRoot)
+			b.WriteString("\n")
+		}
+		if env.Provider != "" || env.Model != "" {
+			b.WriteString("- provider/model: ")
+			if env.Provider != "" {
+				b.WriteString(env.Provider)
+			}
+			if env.Model != "" {
+				if env.Provider != "" {
+					b.WriteString(" / ")
+				}
+				b.WriteString(env.Model)
+			}
+			b.WriteString("\n")
+		}
+		if env.MaxSteps > 0 {
+			b.WriteString("- max_tool_steps: ")
+			b.WriteString(itoaInt(env.MaxSteps))
+			b.WriteString("\n")
+		}
+		if env.BackendToolCount > 0 {
+			b.WriteString("- backend_tools: ")
+			b.WriteString(itoaInt(env.BackendToolCount))
+			if len(env.BackendToolNames) > 0 {
+				b.WriteString(" available through tool_call/tool_batch_call; sample: ")
+				b.WriteString(strings.Join(env.BackendToolNames, ", "))
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
 	if len(req.AllowedTools) > 0 {
-		b.WriteString("Preferred tools: ")
+		b.WriteString("Allowed tools for this delegation: ")
 		b.WriteString(strings.Join(req.AllowedTools, ", "))
-		b.WriteString(". Avoid tools outside this list unless essential.\n\n")
+		b.WriteString(". Treat this as the hard scoped tool set; ask for a narrower follow-up if you need something outside it.\n\n")
 	}
 	b.WriteString("Work autonomously until the scoped task is genuinely complete. If the task clearly decomposes, prefer orchestrate or delegate_task fan-out instead of serializing every survey step yourself.\n\n")
 	b.WriteString("Task:\n")
 	b.WriteString(strings.TrimSpace(req.Task))
 	return b.String()
+}
+
+func subagentPromptToolSample(specs []tools.ToolSpec, limit int) []string {
+	if limit <= 0 || len(specs) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		name := strings.TrimSpace(spec.Name)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if len(names) > limit {
+		names = names[:limit]
+	}
+	return names
+}
+
+func (e *Engine) subagentConcurrencyLimit() int {
+	return e.parallelBatchSize()
 }
 
 func errString(err error) string {

@@ -167,6 +167,8 @@ func (e *Engine) LockPath(abs string) func() {
 // engine package — that would create a cycle.
 type ReasoningPublisher func(toolName, reason string)
 
+type toolReasonContextKey struct{}
+
 // SetReasoningPublisher installs the self-narration callback. Safe to
 // call before or after registration; the publisher is consulted on
 // every Execute(). Pass nil to disable.
@@ -538,6 +540,7 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 		if pub != nil {
 			pub(name, reason)
 		}
+		ctx = context.WithValue(ctx, toolReasonContextKey{}, reason)
 	}
 	if mode := readBeforeMutationMode(name); mode != readGateNone {
 		path := asString(req.Params, "path", "")

@@ -246,6 +246,8 @@ func contextRows(info StatsPanelInfo) []string {
 			files += fmt.Sprintf(" | code %s/%s tok", CompactTokens(info.ContextTokens), CompactTokens(info.ContextBudgetTokens))
 		}
 		rows = append(rows, InfoStyle.Render(files))
+	} else {
+		rows = append(rows, SubtleStyle.Render("no context build reported yet"))
 	}
 	dials := []string{}
 	if task := strings.TrimSpace(info.ContextTask); task != "" {
@@ -368,7 +370,11 @@ func workflowRows(info StatsPanelInfo, width int) []string {
 		}
 	}
 	if info.ActiveSubagents > 0 {
-		rows = append(rows, AccentStyle.Bold(true).Render(fmt.Sprintf("subagents %d active", info.ActiveSubagents)))
+		label := fmt.Sprintf("subagents %d active", info.ActiveSubagents)
+		if summary := strings.TrimSpace(info.SubagentSummary); summary != "" {
+			label += " " + summary
+		}
+		rows = append(rows, AccentStyle.Bold(true).Render(label))
 	}
 	if strings.TrimSpace(info.DriveRunID) != "" && info.DriveTotal > 0 {
 		drive := fmt.Sprintf("drive %d/%d", info.DriveDone, info.DriveTotal)
@@ -455,19 +461,40 @@ func taskRows(info StatsPanelInfo) []string {
 }
 
 func subagentRows(info StatsPanelInfo) []string {
+	capacity := ""
+	if info.SubagentLimit > 0 {
+		capacity = fmt.Sprintf("capacity %d/%d", info.ActiveSubagents, info.SubagentLimit)
+	}
+	summary := strings.TrimSpace(info.SubagentSummary)
 	if len(info.SubagentLines) == 0 || (len(info.SubagentLines) == 1 && strings.EqualFold(strings.TrimSpace(info.SubagentLines[0]), "idle")) {
-		return []string{
+		rows := []string{}
+		if capacity != "" {
+			rows = append(rows, capacity)
+		}
+		if summary != "" {
+			rows = append(rows, AccentStyle.Bold(true).Render(summary))
+		}
+		return append(rows,
 			"No subagent activity yet.",
 			"Appears when the model delegates or fans out work.",
 			"Short asks usually stay in one tool loop.",
-		}
+		)
 	}
 	rows := make([]string, 0, len(info.SubagentLines))
+	if capacity != "" {
+		rows = append(rows, capacity)
+	}
+	if summary != "" {
+		rows = append(rows, AccentStyle.Bold(true).Render(summary))
+	}
 	for _, line := range info.SubagentLines {
 		line = strings.TrimSpace(line)
+		if strings.EqualFold(line, "recent:") {
+			rows = append(rows, SubtleStyle.Render(line))
+			continue
+		}
 		line = strings.TrimPrefix(line, "Subagent ")
 		line = strings.ReplaceAll(line, "started: ", "start: ")
-		line = strings.ReplaceAll(line, "done: ", "done: ")
 		rows = append(rows, line)
 	}
 	return rows

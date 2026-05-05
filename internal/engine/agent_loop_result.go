@@ -324,6 +324,9 @@ func formatBatchInnerLine(r map[string]any, success bool) string {
 	if target != "" {
 		body += " " + target
 	}
+	if reason, _ := r["reason"].(string); strings.TrimSpace(reason) != "" {
+		body += " | why: " + strings.Join(strings.Fields(reason), " ")
+	}
 	if durMs > 0 {
 		body += fmt.Sprintf(" (%dms)", durMs)
 	}
