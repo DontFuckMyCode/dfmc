@@ -512,7 +512,7 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 			"tool not found: %q. "+
 				"Discover the right name with tool_search: "+
 				`{"name":"tool_search","args":{"query":"%s"}}. `+
-				"Common backend tools: read_file, write_file, edit_file, list_dir, grep_codebase, glob, find_symbol, codemap, ast_query, run_command, web_fetch, todo_write.",
+				"Common backend tools: read_file, write_file, edit_file, list_dir, grep_codebase, glob, find_symbol, codemap, ast_query, run_command, web_fetch, todo_write",
 			name, name)
 	}
 
@@ -692,13 +692,13 @@ func readGuardError(absPath, kind string) error {
 			"edit refused: %s changed on disk since your last read_file (an editor, formatter, "+
 				"or another tool wrote to it). The snapshot you held is now stale — apply the diff "+
 				"against the current bytes by re-reading first: %s. Then retry your edit/apply_patch "+
-				"with the same arguments.",
+				"with the same arguments",
 			relHint, example)
 	default:
 		return fmt.Errorf(
 			"edit refused: %s has no prior read_file snapshot in this session. The engine requires "+
 				"you to read a file before mutating it (so the model is editing what's actually on "+
-				"disk, not a guess). Recover by calling: %s. Then retry your edit/apply_patch.",
+				"disk, not a guess). Recover by calling: %s. Then retry your edit/apply_patch",
 			relHint, example)
 	}
 }

@@ -56,7 +56,7 @@ func (t *ASTQueryTool) Execute(ctx context.Context, req Request) (Result, error)
 		return Result{}, fmt.Errorf(
 			"ast_query needs a FILE path, not a directory (%q is a folder). "+
 				"Use glob first to discover files (e.g. {\"pattern\":\"%s/**/*.go\"}), "+
-				"then call ast_query on each match. For a quick directory listing use list_dir.",
+				"then call ast_query on each match. For a quick directory listing use list_dir",
 			path, strings.TrimRight(path, "/\\"))
 	}
 	result, err := t.getEngine().ParseFile(ctx, abs)

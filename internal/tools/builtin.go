@@ -52,7 +52,7 @@ func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) 
 				"write_file refused: %s already exists. "+
 					"To replace it intentionally, set overwrite=true (and read it first via read_file so the engine knows the prior contents). "+
 					"To make a small edit, use edit_file instead — it only needs old_string/new_string and preserves the rest. "+
-					`Recover (overwrite shape): {"name":"write_file","args":{"path":%q,"content":"...","overwrite":true}}.`,
+					`Recover (overwrite shape): {"name":"write_file","args":{"path":%q,"content":"...","overwrite":true}}`,
 				rel, rel)
 		}
 	}

@@ -251,7 +251,7 @@ func (t *toolHelpTool) Execute(_ context.Context, req Request) (Result, error) {
 			"tool_help: unknown tool %q. "+
 				"Discover the right name first by calling tool_search: "+
 				`{"name":"tool_search","args":{"query":"%s"}}. `+
-				"tool_search returns matching tool names; pass one back to tool_help for the schema.",
+				"tool_search returns matching tool names; pass one back to tool_help for the schema",
 			name, name)
 	}
 	return Result{
@@ -437,13 +437,13 @@ func (t *toolBatchCallTool) Execute(ctx context.Context, req Request) (Result, e
 		return Result{}, fmt.Errorf(
 			`tool_batch_call: calls is empty. Pass at least one {name, args} object: ` +
 				`{"calls":[{"name":"read_file","args":{"path":"a.go"}},{"name":"read_file","args":{"path":"b.go"}}]}. ` +
-				`For a single call, use tool_call directly — batch is for parallel fan-out.`)
+				`For a single call, use tool_call directly — batch is for parallel fan-out`)
 	}
 	if len(calls) > maxBatchCalls {
 		return Result{}, fmt.Errorf(
 			"tool_batch_call: too many calls (%d, max %d). "+
 				"Split the work into sequential batches of <= %d each — the agent loop will compact tool output between batches, which would not happen inside a single oversized call. "+
-				"Typical healthy fan-out is 2-8 calls; anything in the dozens usually means the planner is doing inside one round what should be spread across rounds.",
+				"Typical healthy fan-out is 2-8 calls; anything in the dozens usually means the planner is doing inside one round what should be spread across rounds",
 			len(calls), maxBatchCalls, maxBatchCalls)
 	}
 	ctx, release, budgetErr := enterMetaBudget(ctx, len(calls))

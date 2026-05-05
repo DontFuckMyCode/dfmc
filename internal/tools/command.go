@@ -64,7 +64,7 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 			return Result{}, fmt.Errorf(
 				"run_command does not invoke a shell — `command` must be a single binary, not a shell line. "+
 					"Found shell syntax %q in command. Recover by calling: %s. "+
-					"`dir` sets the working directory (no `cd` needed); for sequential steps issue separate tool_calls.",
+					"`dir` sets the working directory (no `cd` needed); for sequential steps issue separate tool_calls",
 				token, hint)
 		}
 		return Result{}, fmt.Errorf(
@@ -72,7 +72,7 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 				"Found shell syntax %q in command. Pass the binary in `command` and arguments in `args`, e.g. "+
 				`{"command":"go","args":["build","./..."]}. `+
 				"To run in a subdirectory, use the `dir` parameter (not `cd`). "+
-				"For dependent steps, issue separate tool_calls (the engine runs them in order).",
+				"For dependent steps, issue separate tool_calls (the engine runs them in order)",
 			token)
 	}
 
@@ -84,7 +84,7 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 		return Result{}, fmt.Errorf(
 			"run_command args are passed literally to the target binary; shell substitution is never expanded. "+
 				"Found shell syntax %q in args element %q. If you intended a literal value, keep it exactly as text; "+
-				"if you intended command substitution, resolve it in a prior tool call and pass the concrete result here.",
+				"if you intended command substitution, resolve it in a prior tool call and pass the concrete result here",
 			token, value)
 	}
 	if hasScriptRunnerWithEvalFlag(args) {

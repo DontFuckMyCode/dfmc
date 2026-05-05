@@ -132,7 +132,7 @@ func rejectGitFlagInjection(kind, value string) error {
 	return fmt.Errorf(
 		"git: %s value %q starts with `-`; refused to prevent flag injection (CVE-2018-17456 class). "+
 			"git would parse this as a command-line option, not as a %s. "+
-			"If the value is legitimate, rename it or invoke git via run_command with explicit `--` quoting.",
+			"If the value is legitimate, rename it or invoke git via run_command with explicit `--` quoting",
 		kind, value, kind)
 }
 

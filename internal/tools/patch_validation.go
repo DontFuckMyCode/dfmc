@@ -181,7 +181,7 @@ func (t *PatchValidationTool) Execute(ctx context.Context, req Request) (Result,
 			// etc. as command-line options rather than positional arguments.
 			// Apply the same guard git tools use when git is the binary.
 			if isGitBinary(binary) && rejectFlagInjection(arg) {
-				return Result{}, fmt.Errorf("validation_command arg %q starts with %q; refused to prevent flag injection (CVE-2018-17456 class). git parses flag-shaped args as options. Use -- to separate git options from positional args, or invoke git via run_command.", arg, firstChar(arg))
+				return Result{}, fmt.Errorf("validation_command arg %q starts with %q; refused to prevent flag injection (CVE-2018-17456 class). git parses flag-shaped args as options. Use -- to separate git options from positional args, or invoke git via run_command", arg, firstChar(arg))
 			}
 		}
 		blocked := t.engine.cfg.Tools.Shell.BlockedCommands

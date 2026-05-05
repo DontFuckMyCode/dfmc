@@ -46,7 +46,7 @@ func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
 			`path is the file to edit (relative to project root).`)
 	}
 	if oldStr == newStr {
-		return Result{}, fmt.Errorf(`edit_file: old_string and new_string are identical — nothing to do. Either change new_string, or use read_file if you only wanted to view the section.`)
+		return Result{}, fmt.Errorf(`edit_file: old_string and new_string are identical — nothing to do. Either change new_string, or use read_file if you only wanted to view the section`)
 	}
 
 	absPath, err := EnsureWithinRoot(req.ProjectRoot, path)

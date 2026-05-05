@@ -119,7 +119,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, req Request) (Result, error)
 		return Result{}, fmt.Errorf(
 			"web_fetch: url must be a full http(s) URL, got %q (scheme=%q). "+
 				"Use the absolute form: %s. "+
-				"file://, ftp://, data:, javascript:, and bare hostnames without a scheme are rejected.",
+				"file://, ftp://, data:, javascript:, and bare hostnames without a scheme are rejected",
 			raw, scheme,
 			`{"name":"web_fetch","args":{"url":"https://example.com/path"}}`)
 	}

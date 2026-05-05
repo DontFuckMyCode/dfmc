@@ -64,7 +64,7 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 			"apply_patch: patch parsed but contained no file diffs. " +
 				"A unified diff must have at least one `--- a/path` / `+++ b/path` header followed by `@@ ... @@` hunks. " +
 				"Example: `--- a/foo.go\\n+++ b/foo.go\\n@@ -1,3 +1,3 @@\\n-old\\n+new\\n unchanged\\n`. " +
-				"For a single-line replacement, prefer edit_file (no diff format needed).")
+				"For a single-line replacement, prefer edit_file (no diff format needed)")
 	}
 
 	var applied []map[string]any
@@ -77,7 +77,7 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 		if targetPath == "" {
 			return Result{}, fmt.Errorf(
 				"apply_patch: diff entry has no target path — both `--- a/<path>` and `+++ b/<path>` headers are missing. " +
-					"Each file diff in the patch must have at least one of those headers naming the file relative to the project root.")
+					"Each file diff in the patch must have at least one of those headers naming the file relative to the project root")
 		}
 		// C2: normalize before EnsureWithinRoot. filepath.Clean collapses
 		// `a/../b` and adjacent slashes so a hostile diff that wrote
