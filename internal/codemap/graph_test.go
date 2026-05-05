@@ -94,6 +94,43 @@ func TestGraph_AddNodesWithEdges_BatchesNodesAndEdges(t *testing.T) {
 	}
 }
 
+func BenchmarkGraphAddNodeEdgeIndividual(b *testing.B) {
+	const symbolsPerFile = 64
+	nodes, edges := graphBenchmarkFixture(symbolsPerFile)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		g := NewGraph()
+		g.AddNode(nodes[0])
+		for j := 0; j < symbolsPerFile; j++ {
+			g.AddNode(nodes[j+1])
+			g.AddEdge(edges[j])
+		}
+	}
+}
+
+func BenchmarkGraphAddNodesWithEdgesBatch(b *testing.B) {
+	const symbolsPerFile = 64
+	nodes, edges := graphBenchmarkFixture(symbolsPerFile)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		g := NewGraph()
+		g.AddNodesWithEdges(nodes, edges)
+	}
+}
+
+func graphBenchmarkFixture(symbolsPerFile int) ([]Node, []Edge) {
+	fileID := "file:bench.go"
+	nodes := make([]Node, 0, symbolsPerFile+1)
+	edges := make([]Edge, 0, symbolsPerFile)
+	nodes = append(nodes, Node{ID: fileID, Name: "bench.go", Kind: "file"})
+	for j := 0; j < symbolsPerFile; j++ {
+		symID := fmt.Sprintf("sym:bench:%d", j)
+		nodes = append(nodes, Node{ID: symID, Name: fmt.Sprintf("Sym%d", j), Kind: "function"})
+		edges = append(edges, Edge{From: fileID, To: symID, Type: "defines"})
+	}
+	return nodes, edges
+}
+
 func TestGraphCycles(t *testing.T) {
 	g := NewGraph()
 	g.AddNode(Node{ID: "A", Name: "A"})

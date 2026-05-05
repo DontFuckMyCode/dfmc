@@ -2,6 +2,7 @@ package codemap
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -79,6 +80,44 @@ def hello():
 	}
 	if metrics.RecentDirectories[goDirKey] != 1 || metrics.RecentDirectories[pyDirKey] != 1 {
 		t.Fatalf("expected recent directory trends for %q and %q, got %#v", goDirKey, pyDirKey, metrics.RecentDirectories)
+	}
+}
+
+func BenchmarkBuildFromFilesGoProject(b *testing.B) {
+	tmp := b.TempDir()
+	paths := make([]string, 0, 48)
+	for i := 0; i < cap(paths); i++ {
+		path := filepath.Join(tmp, "pkg", "file"+strconv.Itoa(i)+".go")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			b.Fatalf("mkdir: %v", err)
+		}
+		src := fmt.Sprintf(`package pkg
+
+import "fmt"
+
+type Type%d struct { Name string }
+
+func NewType%d(name string) Type%d {
+	return Type%d{Name: name}
+}
+
+func (t Type%d) String() string {
+	return fmt.Sprintf("%%s", t.Name)
+}
+`, i, i, i, i, i)
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			b.Fatalf("write file: %v", err)
+		}
+		paths = append(paths, path)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		engine := New(ast.NewWithCacheSize(0))
+		if err := engine.BuildFromFiles(context.Background(), paths); err != nil {
+			b.Fatalf("build files: %v", err)
+		}
 	}
 }
 
