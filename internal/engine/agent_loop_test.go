@@ -1103,4 +1103,13 @@ func TestFormatToolParamsPreview_RendersClaudeCodeStyleVerbs(t *testing.T) {
 			}
 		})
 	}
+
+	longQuery := strings.Repeat("x", 260)
+	got := formatToolParamsPreview(map[string]any{
+		"name": "tool_search",
+		"args": map[string]any{"query": longQuery},
+	}, 0)
+	if !strings.Contains(got, longQuery) || strings.Contains(got, "...") {
+		t.Fatalf("limit=0 should keep full tool call preview, got %q", got)
+	}
 }

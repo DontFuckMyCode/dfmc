@@ -137,9 +137,14 @@ func TestToolReasoningOffSuppressesEvent(t *testing.T) {
 // when off. Important because it's a token cost and a behaviour change.
 func TestToolReasoningSystemNoticeGated(t *testing.T) {
 	on := newReasoningTestEngine(t, "auto")
-	_, blocksOn := on.buildSystemPrompt("hello", nil)
+	textOn, blocksOn := on.buildSystemPrompt("hello", nil)
 	if !hasSystemBlockLabel(blocksOn, "tool-reasoning") {
 		t.Error("with knob=auto the tool-reasoning system block must be present")
+	}
+	for _, want := range []string{"every tool call must include", "_reason", "debug tool timeline"} {
+		if !strings.Contains(textOn, want) {
+			t.Errorf("tool reasoning prompt should contain %q, got %q", want, textOn)
+		}
 	}
 
 	off := newReasoningTestEngine(t, "off")

@@ -92,12 +92,12 @@ type Specer interface {
 // serializers use this as-is (Anthropic tool_use.input_schema, OpenAI
 // tool.parameters).
 //
-// Every schema gets a virtual `_reason` (optional string) field. The model is
-// nudged in the system prompt to fill it with a one-sentence justification
-// for the call ("reading config to find the API key location"); the engine
+// Every schema gets a virtual `_reason` (optional string) field. The system
+// prompt tells the model to include it on every call with a concise
+// justification ("reading config to find the API key location"); the engine
 // strips it before dispatch and republishes it as a tool:reasoning event so
-// UIs can render the why above each tool result. Optional means models that
-// don't supply it cost us nothing.
+// UIs can render the why above each tool result. It remains schema-optional
+// for provider compatibility.
 func (s ToolSpec) JSONSchema() map[string]any {
 	properties := map[string]any{}
 	required := []string{}
@@ -109,7 +109,7 @@ func (s ToolSpec) JSONSchema() map[string]any {
 	}
 	properties[ReasonField] = map[string]any{
 		"type":        "string",
-		"description": "Optional one-sentence explanation of WHY this tool is being called now. Surfaced in the UI; never sent to the tool implementation. Keep under ~140 chars.",
+		"description": "Include on every model-initiated call: one concise explanation of why this tool is needed now and what signal you expect. Surfaced in the UI; never sent to the tool implementation. Keep under ~140 chars.",
 	}
 	schema := map[string]any{
 		"type":       "object",

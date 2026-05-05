@@ -219,7 +219,7 @@ func guessTestPattern(target string) string {
 	return ""
 }
 
-var skipDirs = []string{".git", "node_modules", "vendor", "bin", "dist", ".dfmc", "__pycache__", ".venv", ".venv36", "site-packages", "build", "target", "__tests__", "tests"}
+var skipDirs = []string{".git", "node_modules", "vendor", "bin", "dist", ".dfmc", "__pycache__", ".venv", ".venv36", "site-packages", "build", "target"}
 
 func shouldSkipDir(path string) bool {
 	rel := filepath.ToSlash(path)
@@ -246,8 +246,11 @@ func findTestFilesByPattern(root, pattern, language string, maxFiles int) []stri
 			if err != nil || info.IsDir() || shouldSkipDir(path) {
 				return nil
 			}
-			matched, _ := filepath.Match(filepath.ToSlash(pattern), filepath.ToSlash(path))
-			if matched {
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return nil
+			}
+			if globMatch(pattern, filepath.ToSlash(rel), doublestar) {
 				results = append(results, path)
 				if len(results) >= maxFiles {
 					return fs.SkipDir

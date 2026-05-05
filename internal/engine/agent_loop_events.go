@@ -104,7 +104,7 @@ func (e *Engine) publishNativeToolCall(trace nativeToolTrace) {
 	payload := map[string]any{
 		"tool":           trace.Call.Name,
 		"params":         trace.Call.Input,
-		"params_preview": formatToolParamsPreview(trace.Call.Input, 180),
+		"params_preview": formatToolParamsPreview(trace.Call.Input, 0),
 		"step":           trace.Step,
 		"provider":       trace.Provider,
 		"model":          trace.Model,

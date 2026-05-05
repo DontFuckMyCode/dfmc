@@ -105,10 +105,11 @@ func (m Model) renderTimelineMessages(width int) []string {
 }
 
 func (m Model) renderTimelineMessage(item chatLine, width int, streaming bool, durationMs, copyIdx int) []string {
-	header := renderChatHistoryMessageHeader(item, streaming, durationMs, copyIdx, m.chat.spinnerFrame)
 	if isTimelineEventMessage(item) {
+		header := renderTimelineEventHeader(item, streaming, durationMs, m.chat.spinnerFrame)
 		return renderTimelineEventMessage(item, header, width)
 	}
+	header := renderChatHistoryMessageHeader(item, streaming, durationMs, copyIdx, m.chat.spinnerFrame)
 	return []string{renderMessageBubble(string(item.Role), chatBubbleContent(item, streaming), header, width)}
 }
 
@@ -134,8 +135,11 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 		content = strings.TrimSpace(item.Content)
 	}
 	badge := timelineEventBadge(item.Role)
-	head := subtleStyle.Render(header)
-	prefix := badge + " " + head + "  "
+	prefix := badge
+	if strings.TrimSpace(header) != "" {
+		prefix += " " + subtleStyle.Render(header)
+	}
+	prefix += "  "
 
 	// Show elapsed time for running tools (e.g. "+3s") so the user can see the tool is still alive.
 	if strings.HasPrefix(strings.ToLower(content), "running:") {
@@ -146,17 +150,28 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 
 	prefixWidth := lipgloss.Width(prefix)
 	limit := max(width-prefixWidth, 18)
-	rows := wrapBubbleLine(content, limit)
+	rows := wrapTimelineEventContent(content, limit)
 	if len(rows) == 0 {
 		return []string{prefix}
 	}
-	style := timelineEventStyle(content)
-	out := []string{prefix + style.Render(rows[0])}
+	out := []string{prefix + timelineEventRowStyle(rows[0], content).Render(rows[0])}
 	indent := strings.Repeat(" ", prefixWidth)
 	for _, row := range rows[1:] {
-		out = append(out, subtleStyle.Render(indent)+style.Render(row))
+		out = append(out, subtleStyle.Render(indent)+timelineEventRowStyle(row, content).Render(row))
 	}
 	return out
+}
+
+func wrapTimelineEventContent(content string, limit int) []string {
+	rows := []string{}
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimRight(line, " \t\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		rows = append(rows, wrapBubbleLine(line, limit)...)
+	}
+	return rows
 }
 
 func timelineEventBadge(role chatRole) string {
@@ -181,6 +196,42 @@ func timelineEventStyle(content string) lipgloss.Style {
 	default:
 		return subtleStyle
 	}
+}
+
+func timelineEventRowStyle(row, content string) lipgloss.Style {
+	trimmed := strings.ToLower(strings.TrimSpace(row))
+	switch {
+	case strings.HasPrefix(trimmed, "_reason:"):
+		return subtleStyle
+	case strings.HasPrefix(trimmed, "params:"):
+		return ToolStyle
+	case strings.HasPrefix(trimmed, "summary:"), strings.HasPrefix(trimmed, "calls:"):
+		return subtleStyle
+	case strings.HasPrefix(row, "  "):
+		return subtleStyle
+	default:
+		return timelineEventStyle(content)
+	}
+}
+
+func renderTimelineEventHeader(item chatLine, streaming bool, durationMs, spinner int) string {
+	parts := []string{}
+	if !item.Timestamp.IsZero() {
+		parts = append(parts, item.Timestamp.Format("15:04:05"))
+	}
+	if item.TokenCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d tok", item.TokenCount))
+	}
+	if durationMs > 0 {
+		parts = append(parts, fmt.Sprintf("%dms", durationMs))
+	}
+	if item.ToolCalls > 0 || item.ToolFailures > 0 {
+		parts = append(parts, fmt.Sprintf("tools %d fail %d", item.ToolCalls, item.ToolFailures))
+	}
+	if streaming {
+		parts = append(parts, spinnerFrame(spinner)+" streaming")
+	}
+	return strings.Join(parts, "  |  ")
 }
 
 func renderChatHistoryMessageHeader(item chatLine, streaming bool, durationMs, copyIdx, spinner int) string {

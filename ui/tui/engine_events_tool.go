@@ -32,6 +32,16 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
 		m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
 		paramsPreview := payloadString(payload, "params_preview", "")
+		reason := payloadString(payload, "reason", "")
+		displayName := displayToolName(toolName, payload)
+		callDetail := toolCallChatDetail(payload, step, paramsPreview)
+		runningLog := []string(nil)
+		if strings.EqualFold(strings.TrimSpace(toolName), "tool_batch_call") {
+			runningLog = batchToolCallPreviewLines(payload)
+			if len(runningLog) > 0 {
+				callDetail = fmt.Sprintf("%d planned calls", len(runningLog))
+			}
+		}
 		// Verb carries the action line (e.g. "Read foo.go (lines N-M)")
 		// separately from Preview so the result-side merge can keep both
 		// on the finished chip's two-line shape — Preview becomes the
@@ -45,11 +55,16 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		m.pushToolChip(toolCallChip)
 		m.pushStreamingMessageToolChip(toolCallChip)
 		m.upsertStreamingChatEvent(chatEventLine{
-			Key:    toolChatEventKey(toolName, step),
-			Kind:   "tool",
-			Status: "running",
-			Title:  toolName,
-			Detail: toolCallChatDetail(payload, step, paramsPreview),
+			Key:           toolChatEventKey(toolName, step),
+			Kind:          "tool",
+			Status:        "running",
+			Title:         toolName,
+			Detail:        callDetail,
+			ToolName:      displayName,
+			ParamsPreview: paramsPreview,
+			Reason:        reason,
+			Step:          step,
+			RunningLog:    runningLog,
 		})
 		m.telemetry.activeToolCount++
 		if step > 0 {
@@ -86,12 +101,14 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		}
 		m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
 		m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
+		displayName := displayToolName(toolName, payload)
 		chipPreview := preview
 		if chipPreview == "" && !success {
 			chipPreview = payloadString(payload, "error", "")
 		}
 		var batchInner []string
-		if batchCount := payloadInt(payload, "batch_count", 0); batchCount > 0 {
+		batchCount := payloadInt(payload, "batch_count", 0)
+		if batchCount > 0 {
 			batchParallel := payloadInt(payload, "batch_parallel", 0)
 			batchOK := payloadInt(payload, "batch_ok", 0)
 			batchFail := payloadInt(payload, "batch_fail", 0)
@@ -136,13 +153,27 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		}
 		m.finishToolChip(finishedChip)
 		m.finishStreamingMessageToolChip(finishedChip)
+		resultDetail := toolResultChatDetail(payload, preview, success, compressionPct)
+		if batchCount > 0 {
+			resultDetail = batchResultSummaryDetail(payload, resultDetail)
+		}
+		if strings.EqualFold(strings.TrimSpace(toolName), "tool_batch_call") && batchToolCallNameSummary(payload) == "" {
+			displayName = ""
+		}
+		if isMetaToolName(toolName) && strings.EqualFold(displayName, toolName) {
+			displayName = ""
+		}
 		m.upsertStreamingChatEvent(chatEventLine{
-			Key:      toolChatEventKey(toolName, step),
-			Kind:     "tool",
-			Status:   status,
-			Title:    toolName,
-			Detail:   toolResultChatDetail(payload, preview, success, compressionPct),
-			Duration: duration,
+			Key:        toolChatEventKey(toolName, step),
+			Kind:       "tool",
+			Status:     status,
+			Title:      toolName,
+			Detail:     resultDetail,
+			Duration:   duration,
+			ToolName:   displayName,
+			Reason:     payloadString(payload, "reason", ""),
+			Step:       step,
+			RunningLog: batchInner,
 		})
 		if m.telemetry.activeToolCount > 0 {
 			m.telemetry.activeToolCount--

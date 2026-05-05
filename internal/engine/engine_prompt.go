@@ -244,17 +244,16 @@ func (e *Engine) buildSystemPrompt(question string, chunks []types.ContextChunk)
 	return text, blocks
 }
 
-// toolReasoningSystemNotice is the cacheable system-prompt block that
-// nudges the model to fill the optional `_reason` virtual field on every
-// tool call. Kept short (one sentence + an example) so the prompt cost
-// stays under ~40 tokens — the UI win comes from clearer surfaces, not
-// from chatty self-narration.
+// toolReasoningSystemNotice is the cacheable system-prompt block that tells
+// the model to fill the `_reason` virtual field on every tool call. The schema
+// keeps it optional for provider compatibility, but this runtime instruction
+// treats it as required UI metadata.
 func toolReasoningSystemNotice() string {
-	return "[Tool self-narration: every tool's schema accepts an optional `_reason` string. " +
-		"Fill it with one short sentence (≤140 chars) saying WHY you're calling this tool now — " +
-		"the UI shows it above the result. Example: " +
-		`{"name":"read_file","args":{"path":"server.go","_reason":"checking how the SSE handler closes the stream"}}.` +
-		" The field is stripped before dispatch and never reaches the tool implementation.]"
+	return "[Tool self-narration: every tool call must include the virtual `_reason` string in args. " +
+		"Use one concise sentence (<=140 chars) explaining why this tool is needed now and what signal you expect; " +
+		"the TUI shows it in the debug tool timeline. Example: " +
+		`{"name":"read_file","args":{"path":"server.go","_reason":"checking how the SSE handler closes the stream before editing it"}}.` +
+		" `_reason` is stripped before dispatch and never reaches the tool implementation.]"
 }
 
 // hostOSSystemNotice returns the runtime.GOOS-aware reminder injected

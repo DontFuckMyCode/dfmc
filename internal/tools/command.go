@@ -333,7 +333,8 @@ func canonicalCommandBinary(command string) string {
 		// guard, but keep this defensive.
 		return ""
 	}
-	binary := strings.ToLower(filepath.Base(trimmed))
+	normalized := strings.ReplaceAll(trimmed, `\`, `/`)
+	binary := strings.ToLower(filepath.Base(normalized))
 	return strings.TrimSuffix(binary, ".exe")
 }
 
@@ -524,7 +525,7 @@ func suggestRunCommandRecovery(command string) string {
 	}
 	// Strip surrounding quotes from dir, normalize separators.
 	dir = strings.Trim(dir, `"'`)
-	dir = filepath.ToSlash(dir)
+	dir = slashPath(dir)
 	// Split tail into binary + args using whitespace; keep it simple
 	// (no quote-aware tokenization) since the goal is a hint, not an
 	// exec.
@@ -543,6 +544,10 @@ func suggestRunCommandRecovery(command string) string {
 		`{"name":"run_command","args":{"command":%q,"args":[%s],"dir":%q}}`,
 		bin, strings.Join(argLits, ","), dir,
 	)
+}
+
+func slashPath(path string) string {
+	return strings.ReplaceAll(filepath.ToSlash(path), `\`, `/`)
 }
 
 // detectBinaryArgsPacking flags the `command:"go build ./..."` shape:

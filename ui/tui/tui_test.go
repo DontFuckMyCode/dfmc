@@ -1883,6 +1883,167 @@ func TestToolCallsMirrorOntoStreamingAssistantMessage(t *testing.T) {
 	}
 }
 
+func TestToolTimelineRendersDebugLinesWithReason(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.sending = true
+	m.chat.transcript = []chatLine{
+		{Role: "user", Content: "inspect note"},
+		{Role: "assistant", Content: ""},
+	}
+	m.chat.streamIndex = 1
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool":           "read_file",
+			"step":           1,
+			"params_preview": "path=note.txt line_start=1 line_end=40 filter=abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrstuvwxyz-0123456789",
+		},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:reasoning",
+		Payload: map[string]any{
+			"tool":   "read_file",
+			"reason": "checking the note content before deciding the edit with a deliberately long reason that should remain visible instead of being truncated by the timeline renderer",
+		},
+	})
+
+	if got := len(m.chat.transcript); got != 3 {
+		t.Fatalf("expected user/assistant/tool rows, got %#v", m.chat.transcript)
+	}
+	running := m.chat.transcript[2].Content
+	runningLines := strings.Split(running, "\n")
+	if len(runningLines) < 3 || len(runningLines) > 4 {
+		t.Fatalf("expected compact 3-4 line running detail, got %d lines:\n%s", len(runningLines), running)
+	}
+	for _, want := range []string{
+		"running: read_file",
+		"params: path=note.txt",
+		"abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrstuvwxyz-0123456789",
+		"_reason: checking the note content before deciding the edit",
+		"should remain visible instead of being truncated by the timeline renderer",
+	} {
+		if !strings.Contains(running, want) {
+			t.Fatalf("expected running timeline to contain %q, got:\n%s", want, running)
+		}
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":           "read_file",
+			"step":           1,
+			"durationMs":     42,
+			"success":        true,
+			"output_preview": "alpha beta",
+		},
+	})
+	done := m.chat.transcript[2].Content
+	doneLines := strings.Split(done, "\n")
+	if len(doneLines) < 4 || len(doneLines) > 4 {
+		t.Fatalf("expected 4 line done detail, got %d lines:\n%s", len(doneLines), done)
+	}
+	for _, want := range []string{
+		"done: read_file | step 1 | 42ms",
+		"params: path=note.txt",
+		"_reason: checking the note content before deciding the edit",
+		"result: alpha beta",
+	} {
+		if !strings.Contains(done, want) {
+			t.Fatalf("expected done timeline to contain %q, got:\n%s", want, done)
+		}
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool":           "run_command",
+			"step":           2,
+			"params_preview": "command=go test ./ui/tui",
+		},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:reasoning",
+		Payload: map[string]any{
+			"tool":   "run_command",
+			"reason": "verifying the TUI package after the timeline rendering change",
+		},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":       "run_command",
+			"step":       2,
+			"durationMs": 11,
+			"success":    false,
+			"error":      "exit status 1",
+		},
+	})
+	failed := m.chat.transcript[len(m.chat.transcript)-1].Content
+	for _, want := range []string{
+		"failed: run_command | step 2 | 11ms",
+		"params: command=go test ./ui/tui",
+		"_reason: verifying the TUI package after the timeline rendering change",
+		"result: exit status 1",
+	} {
+		if !strings.Contains(failed, want) {
+			t.Fatalf("expected failed timeline to contain %q, got:\n%s", want, failed)
+		}
+	}
+
+	view := m.renderChatView(120)
+	for _, want := range []string{"TOOL", "done: read_file", "_reason: checking"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected rendered chat view to contain %q, got:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "TOOL TOOL") {
+		t.Fatalf("timeline event header should not duplicate role labels, got:\n%s", view)
+	}
+}
+
+func TestMetaToolCallTimelineUsesBackendName(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.sending = true
+	m.chat.transcript = []chatLine{
+		{Role: "user", Content: "check diff"},
+		{Role: "assistant", Content: ""},
+	}
+	m.chat.streamIndex = 1
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool":           "tool_call",
+			"step":           2,
+			"params_preview": "git_diff D:/Codebox/PROJECTS/DFMC",
+			"params": map[string]any{
+				"name": "git_diff",
+				"args": map[string]any{"path": "D:/Codebox/PROJECTS/DFMC"},
+			},
+		},
+	})
+	running := m.chat.transcript[len(m.chat.transcript)-1].Content
+	if !strings.Contains(running, "running: git_diff | step 2") {
+		t.Fatalf("tool_call timeline should foreground backend tool name, got:\n%s", running)
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":           "tool_call",
+			"step":           2,
+			"success":        true,
+			"durationMs":     50,
+			"output_preview": "diff --git a/file b/file",
+		},
+	})
+	done := m.chat.transcript[len(m.chat.transcript)-1].Content
+	if !strings.Contains(done, "done: git_diff | step 2 | 50ms") {
+		t.Fatalf("tool_call result should preserve backend display name, got:\n%s", done)
+	}
+}
+
 func TestStreamingAssistantRunLogUpdatesToolLineInPlace(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.chat.sending = true
@@ -4714,6 +4875,85 @@ func TestBatchFanoutSurfacesInChipPreview(t *testing.T) {
 	for _, want := range []string{"4 calls", "4 parallel", "3 ok", "1 fail"} {
 		if !strings.Contains(chip.Preview, want) {
 			t.Fatalf("batch chip preview missing %q, got %q", want, chip.Preview)
+		}
+	}
+}
+
+func TestBatchToolTimelineExpandsInnerCalls(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.sending = true
+	m.chat.transcript = []chatLine{
+		{Role: "user", Content: "inspect several files"},
+		{Role: "assistant", Content: ""},
+	}
+	m.chat.streamIndex = 1
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool": "tool_batch_call",
+			"step": 1,
+			"params": map[string]any{
+				"calls": []any{
+					map[string]any{"name": "read_file", "args": map[string]any{"path": "a.go", "line_start": 1, "line_end": 40}},
+					map[string]any{"name": "grep_codebase", "args": map[string]any{"pattern": "OpenDatabase"}},
+					map[string]any{"name": "run_command", "args": map[string]any{"command": "go", "args": []any{"test", "./ui/tui"}}},
+				},
+			},
+		},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:reasoning",
+		Payload: map[string]any{
+			"tool":   "tool_batch_call",
+			"reason": "fan out independent reads before deciding the fix",
+		},
+	})
+
+	running := m.chat.transcript[len(m.chat.transcript)-1].Content
+	for _, want := range []string{
+		"running: batch [3: read_file, grep_codebase, run_command] | step 1",
+		"_reason: fan out independent reads before deciding the fix",
+		"summary: 3 planned calls",
+		"calls:",
+		"1. read_file - Read a.go (lines 1-40)",
+		`2. grep_codebase - Search "OpenDatabase"`,
+		"3. run_command - $ go test ./ui/tui",
+	} {
+		if !strings.Contains(running, want) {
+			t.Fatalf("expected running batch timeline to contain %q, got:\n%s", want, running)
+		}
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":           "tool_batch_call",
+			"step":           1,
+			"success":        false,
+			"durationMs":     90,
+			"batch_count":    3,
+			"batch_parallel": 3,
+			"batch_ok":       2,
+			"batch_fail":     1,
+			"batch_inner": []string{
+				"ok read_file a.go (8ms)",
+				"ok grep_codebase OpenDatabase (15ms)",
+				"fail run_command go test ./ui/tui - exit status 1",
+			},
+		},
+	})
+
+	done := m.chat.transcript[len(m.chat.transcript)-1].Content
+	for _, want := range []string{
+		"failed: batch [3: read_file, grep_codebase, run_command] | step 1 | 90ms",
+		"_reason: fan out independent reads before deciding the fix",
+		"summary: 3 calls | 3 parallel | 2 ok | 1 fail",
+		"ok read_file a.go (8ms)",
+		"fail run_command go test ./ui/tui - exit status 1",
+	} {
+		if !strings.Contains(done, want) {
+			t.Fatalf("expected completed batch timeline to contain %q, got:\n%s", want, done)
 		}
 	}
 }

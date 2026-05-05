@@ -386,6 +386,9 @@ func compactToolPayload(raw string, maxChars int) string {
 		}
 		text = first + " ..."
 	}
+	if maxChars <= 0 {
+		return text
+	}
 	return truncateRunesWithMarker(text, maxChars, "...")
 }
 

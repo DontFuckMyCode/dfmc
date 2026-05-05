@@ -69,15 +69,168 @@ func (m *Model) updateToolEventLine(ev chatEventLine) {
 }
 
 func chatEventTranscriptText(ev chatEventLine) string {
+	if isBatchToolEvent(ev) {
+		return batchChatEventTranscriptText(ev)
+	}
 	status := chatEventTranscriptStatusLabel(ev.Status)
-	parts := []string{status + ": " + ev.Title}
+	name := strings.TrimSpace(ev.ToolName)
+	if name == "" {
+		name = strings.TrimSpace(ev.Title)
+	}
+	if name == "" {
+		name = "tool"
+	}
+	head := []string{status + ": " + name}
+	if ev.Step > 0 {
+		head = append(head, fmt.Sprintf("step %d", ev.Step))
+	}
+	if ev.Round > 0 {
+		head = append(head, fmt.Sprintf("round %d", ev.Round))
+	}
 	if ev.Duration > 0 {
-		parts = append(parts, fmt.Sprintf("%dms", ev.Duration))
+		head = append(head, fmt.Sprintf("%dms", ev.Duration))
 	}
-	if ev.Detail != "" {
-		parts = append(parts, ev.Detail)
+
+	lines := []string{strings.Join(head, " | ")}
+	if params := strings.TrimSpace(ev.ParamsPreview); params != "" {
+		lines = append(lines, "params: "+timelineEventField(params))
 	}
-	return strings.Join(parts, " | ")
+	if reason := strings.TrimSpace(ev.Reason); reason != "" {
+		lines = append(lines, "_reason: "+timelineEventField(reason))
+	}
+	if detail := strings.TrimSpace(ev.Detail); detail != "" && !toolDetailDuplicatesParams(detail, ev.ParamsPreview) {
+		label := "detail"
+		if status == "done" || status == "failed" {
+			label = "result"
+		}
+		lines = append(lines, label+": "+timelineEventField(detail))
+	}
+	if len(ev.RunningLog) > 0 && len(lines) < 4 {
+		log := strings.TrimSpace(ev.RunningLog[len(ev.RunningLog)-1])
+		if log != "" {
+			lines = append(lines, "log: "+timelineEventField(log))
+		}
+	}
+	return strings.Join(limitToolEventLines(lines, 4), "\n")
+}
+
+func batchChatEventTranscriptText(ev chatEventLine) string {
+	status := chatEventTranscriptStatusLabel(ev.Status)
+	name := strings.TrimSpace(ev.ToolName)
+	if name == "" {
+		name = strings.TrimSpace(ev.Title)
+	}
+	if name == "" {
+		name = "tool_batch_call"
+	}
+	head := []string{status + ": " + name}
+	if ev.Step > 0 {
+		head = append(head, fmt.Sprintf("step %d", ev.Step))
+	}
+	if ev.Duration > 0 {
+		head = append(head, fmt.Sprintf("%dms", ev.Duration))
+	}
+
+	lines := []string{strings.Join(head, " | ")}
+	if reason := strings.TrimSpace(ev.Reason); reason != "" {
+		lines = append(lines, "_reason: "+timelineEventField(reason))
+	}
+	if detail := strings.TrimSpace(ev.Detail); detail != "" {
+		lines = append(lines, "summary: "+timelineEventField(detail))
+	}
+	if len(ev.RunningLog) > 0 {
+		lines = append(lines, "calls:")
+		for _, log := range ev.RunningLog {
+			if log = timelineEventField(log); log != "" {
+				lines = append(lines, "  "+log)
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func isBatchToolEvent(ev chatEventLine) bool {
+	return strings.EqualFold(strings.TrimSpace(ev.ToolName), "tool_batch_call") ||
+		strings.EqualFold(strings.TrimSpace(ev.Title), "tool_batch_call")
+}
+
+func displayToolName(toolName string, payload map[string]any) string {
+	canonical := strings.TrimSpace(toolName)
+	switch strings.ToLower(canonical) {
+	case "tool_call":
+		if target := metaToolCallTarget(payload); target != "" {
+			return target
+		}
+	case "tool_batch_call":
+		if summary := batchToolCallNameSummary(payload); summary != "" {
+			return "batch " + summary
+		}
+		return "batch"
+	}
+	return canonical
+}
+
+func isMetaToolName(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "tool_call", "tool_batch_call":
+		return true
+	default:
+		return false
+	}
+}
+
+func metaToolCallTarget(payload map[string]any) string {
+	params, _ := payload["params"].(map[string]any)
+	if params == nil {
+		return ""
+	}
+	name := strings.TrimSpace(fmt.Sprint(params["name"]))
+	if name == "" {
+		name = strings.TrimSpace(fmt.Sprint(params["tool"]))
+	}
+	return name
+}
+
+func batchToolCallNameSummary(payload map[string]any) string {
+	calls := batchToolCallsFromPayload(payload)
+	if len(calls) == 0 {
+		return ""
+	}
+	counts := map[string]int{}
+	order := make([]string, 0, len(calls))
+	for _, raw := range calls {
+		call, _ := raw.(map[string]any)
+		name := strings.TrimSpace(fmt.Sprint(call["name"]))
+		if name == "" {
+			name = strings.TrimSpace(fmt.Sprint(call["tool"]))
+		}
+		if name == "" {
+			name = "tool"
+		}
+		if _, seen := counts[name]; !seen {
+			order = append(order, name)
+		}
+		counts[name]++
+	}
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		if count := counts[name]; count > 1 {
+			parts = append(parts, fmt.Sprintf("%s x%d", name, count))
+		} else {
+			parts = append(parts, name)
+		}
+	}
+	return fmt.Sprintf("[%d: %s]", len(calls), strings.Join(parts, ", "))
+}
+
+func timelineEventField(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(text), " ")
 }
 
 func chatEventTranscriptStatusLabel(status string) string {
@@ -95,48 +248,215 @@ func chatEventTranscriptStatusLabel(status string) string {
 	}
 }
 
-func mergeChatEventLine(old, next chatEventLine) chatEventLine {
-	if next.Key == "" {
-		next.Key = old.Key
-	}
-	if next.Kind == "" {
-		next.Kind = old.Kind
-	}
-	if next.Status == "" {
-		next.Status = old.Status
-	}
-	if next.Title == "" {
-		next.Title = old.Title
-	}
-	if next.Detail == "" {
-		next.Detail = old.Detail
-	}
-	if next.At.IsZero() {
-		next.At = old.At
-	}
-	if next.Duration == 0 {
-		next.Duration = old.Duration
-	}
-	return next
-}
-
 func (m *Model) attachReasonToStreamingChatEvent(toolName, reason string) {
 	toolName = strings.TrimSpace(toolName)
 	reason = strings.TrimSpace(reason)
-	if toolName == "" || reason == "" || m.chat.streamIndex < 0 || m.chat.streamIndex >= len(m.chat.transcript) {
+	if toolName == "" || reason == "" {
 		return
 	}
-	line := &m.chat.transcript[m.chat.streamIndex]
-	for i := len(line.EventLines) - 1; i >= 0; i-- {
-		ev := line.EventLines[i]
-		if ev.Kind != "tool" || !strings.EqualFold(ev.Title, toolName) {
+	for lineIndex := len(m.chat.transcript) - 1; lineIndex >= 0; lineIndex-- {
+		line := &m.chat.transcript[lineIndex]
+		for i := len(line.EventLines) - 1; i >= 0; i-- {
+			ev := line.EventLines[i]
+			if ev.Kind != "tool" || !chatEventToolNameMatches(ev, toolName) {
+				continue
+			}
+			ev.Reason = reason
+			line.EventLines[i] = ev
+			line.Content = chatEventTranscriptText(ev)
+			return
+		}
+	}
+}
+
+func chatEventToolNameMatches(ev chatEventLine, toolName string) bool {
+	return strings.EqualFold(strings.TrimSpace(ev.Title), toolName) ||
+		strings.EqualFold(strings.TrimSpace(ev.ToolName), toolName)
+}
+
+func toolDetailDuplicatesParams(detail, params string) bool {
+	detail = strings.TrimSpace(detail)
+	params = strings.TrimSpace(params)
+	return detail != "" && params != "" && strings.Contains(detail, params)
+}
+
+func batchToolCallPreviewLines(payload map[string]any) []string {
+	calls := batchToolCallsFromPayload(payload)
+	if len(calls) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(calls))
+	for i, raw := range calls {
+		line := batchToolCallPreviewLine(i+1, raw)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func batchToolCallsFromPayload(payload map[string]any) []any {
+	if payload == nil {
+		return nil
+	}
+	if calls, ok := payload["calls"].([]any); ok {
+		return calls
+	}
+	params, _ := payload["params"].(map[string]any)
+	if params == nil {
+		return nil
+	}
+	switch calls := params["calls"].(type) {
+	case []any:
+		return calls
+	case []map[string]any:
+		out := make([]any, 0, len(calls))
+		for _, call := range calls {
+			out = append(out, call)
+		}
+		return out
+	}
+	return nil
+}
+
+func batchToolCallPreviewLine(index int, raw any) string {
+	call, _ := raw.(map[string]any)
+	if call == nil {
+		return fmt.Sprintf("%d. tool", index)
+	}
+	name := strings.TrimSpace(fmt.Sprint(call["name"]))
+	if name == "" {
+		name = strings.TrimSpace(fmt.Sprint(call["tool"]))
+	}
+	if name == "" {
+		name = "tool"
+	}
+	args, _ := call["args"].(map[string]any)
+	target := batchToolCallTarget(name, args)
+	if target == "" {
+		return fmt.Sprintf("%d. %s", index, name)
+	}
+	return fmt.Sprintf("%d. %s - %s", index, name, target)
+}
+
+func batchToolCallTarget(name string, args map[string]any) string {
+	if args == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "run_command":
+		cmd := strings.TrimSpace(fmt.Sprint(args["command"]))
+		if rest := batchToolArgsList(args["args"]); rest != "" {
+			return "$ " + strings.TrimSpace(cmd+" "+rest)
+		}
+		if cmd != "" {
+			return "$ " + cmd
+		}
+	case "read_file":
+		path := strings.TrimSpace(fmt.Sprint(args["path"]))
+		if path == "" {
+			return ""
+		}
+		start, hasStart := pickPayloadInt(args["line_start"])
+		end, hasEnd := pickPayloadInt(args["line_end"])
+		if hasStart && hasEnd && end > 0 {
+			return fmt.Sprintf("Read %s (lines %d-%d)", path, start, end)
+		}
+		return "Read " + path
+	case "edit_file":
+		return "Edit " + strings.TrimSpace(fmt.Sprint(args["path"]))
+	case "write_file":
+		return "Write " + strings.TrimSpace(fmt.Sprint(args["path"]))
+	case "list_dir":
+		path := strings.TrimSpace(fmt.Sprint(args["path"]))
+		if path == "" {
+			path = "."
+		}
+		return "List " + path
+	case "grep_codebase":
+		pattern := strings.TrimSpace(fmt.Sprint(args["pattern"]))
+		if pattern != "" {
+			return `Search "` + pattern + `"`
+		}
+	case "glob":
+		return "Glob " + strings.TrimSpace(fmt.Sprint(args["pattern"]))
+	}
+	for _, key := range []string{"path", "pattern", "query", "command", "url"} {
+		if value := strings.TrimSpace(fmt.Sprint(args[key])); value != "" && value != "<nil>" {
+			return value
+		}
+	}
+	return ""
+}
+
+func batchToolArgsList(raw any) string {
+	switch v := raw.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case []string:
+		return strings.Join(v, " ")
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if s := strings.TrimSpace(fmt.Sprint(item)); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, " ")
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
+func pickPayloadInt(raw any) (int, bool) {
+	switch v := raw.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case float32:
+		return int(v), true
+	default:
+		return 0, false
+	}
+}
+
+func batchResultSummaryDetail(payload map[string]any, fallback string) string {
+	count := payloadInt(payload, "batch_count", 0)
+	if count <= 0 {
+		return fallback
+	}
+	parts := []string{fmt.Sprintf("%d calls", count)}
+	if parallel := payloadInt(payload, "batch_parallel", 0); parallel > 0 {
+		parts = append(parts, fmt.Sprintf("%d parallel", parallel))
+	}
+	parts = append(parts, fmt.Sprintf("%d ok", payloadInt(payload, "batch_ok", 0)))
+	if fail := payloadInt(payload, "batch_fail", 0); fail > 0 {
+		parts = append(parts, fmt.Sprintf("%d fail", fail))
+	}
+	return strings.Join(parts, " | ")
+}
+
+func limitToolEventLines(lines []string, maxLines int) []string {
+	if maxLines <= 0 {
+		return nil
+	}
+	out := make([]string, 0, min(len(lines), maxLines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
-		ev.Detail = reason
-		line.EventLines[i] = ev
-		line.Content = chatEventTranscriptText(ev)
-		return
+		out = append(out, line)
+		if len(out) == maxLines {
+			break
+		}
 	}
+	return out
 }
 
 func toolNameKey(toolName string) string {
@@ -192,7 +512,7 @@ func toolCallChatDetail(payload map[string]any, step int, paramsPreview string) 
 		parts = append(parts, mutation)
 	}
 	if paramsPreview = strings.TrimSpace(paramsPreview); paramsPreview != "" {
-		parts = append(parts, truncateSingleLine(paramsPreview, 120))
+		parts = append(parts, timelineEventField(paramsPreview))
 	}
 	if provider := payloadString(payload, "provider", ""); provider != "" {
 		model := payloadString(payload, "model", "")

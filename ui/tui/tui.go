@@ -138,22 +138,6 @@ type chatLine struct {
 	DurationMs    int
 }
 
-type chatEventLine struct {
-	Key      string
-	Kind     string
-	Status   string
-	Title    string
-	Detail   string
-	At       time.Time
-	Duration int
-}
-
-type slashCommandItem struct {
-	Command     string
-	Template    string
-	Description string
-}
-
 type patchSection struct {
 	Path      string
 	Content   string

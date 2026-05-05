@@ -69,7 +69,16 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 	default:
 	}
 
-	tree := parser.ParseCtx(ctx, content, nil)
+	tree := parser.ParseWithOptions(func(byteIndex int, _ tree_sitter.Point) []byte {
+		if byteIndex >= len(content) {
+			return nil
+		}
+		return content[byteIndex:]
+	}, nil, &tree_sitter.ParseOptions{
+		ProgressCallback: func(tree_sitter.ParseState) bool {
+			return ctx.Err() != nil
+		},
+	})
 	if tree == nil {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, nil, true, err
