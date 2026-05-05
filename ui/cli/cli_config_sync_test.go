@@ -186,7 +186,7 @@ func TestGetConfigPath(t *testing.T) {
 			"primary": "anthropic",
 			"profiles": map[string]any{
 				"anthropic": map[string]any{
-					"model": "claude-sonnet-4-6",
+					"model":   "claude-sonnet-4-6",
 					"api_key": "secret-key",
 				},
 			},

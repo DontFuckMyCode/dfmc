@@ -20,7 +20,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@0a12ed9e1a4ce729c53f80fc1f1472bca80d2f2d
         with:
-          go-version: "1.25"
+          go-version: "1.26.2"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

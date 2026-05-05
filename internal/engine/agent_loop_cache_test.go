@@ -174,10 +174,10 @@ func TestExecuteToolCallsParallel_CacheHitSkipsExecution(t *testing.T) {
 // path, and leaves unrelated entries intact.
 func TestInvalidateCacheForFiles_RemovesMatchingPath(t *testing.T) {
 	cache := map[string]string{
-		"read_file|" + `{"path":"foo.go"}`:    "old foo content",
-		"read_file|" + `{"path":"bar.go"}`:    "bar content",
-		"list_dir|" + `{"path":"internal"}`:   "listing",
-		"grep_codebase|" + `{"q":"foo.go"}`:   "grep result mentioning foo.go via path arg substring",
+		"read_file|" + `{"path":"foo.go"}`:  "old foo content",
+		"read_file|" + `{"path":"bar.go"}`:  "bar content",
+		"list_dir|" + `{"path":"internal"}`: "listing",
+		"grep_codebase|" + `{"q":"foo.go"}`: "grep result mentioning foo.go via path arg substring",
 	}
 	mu := &sync.Mutex{}
 

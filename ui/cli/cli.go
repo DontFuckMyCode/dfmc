@@ -28,12 +28,12 @@ import (
 )
 
 type globalOptions struct {
-	Provider string
-	Model    string
-	Profile  string
-	Verbose  bool
-	JSON     bool
-	NoColor  bool
+	Provider    string
+	Model       string
+	Profile     string
+	Verbose     bool
+	JSON        bool
+	NoColor     bool
 	Project     string
 	DataDir     string
 	DataDirPath string

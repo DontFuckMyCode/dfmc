@@ -19,12 +19,12 @@ type flakyStreamProvider struct {
 	err  error
 }
 
-func (p *flakyStreamProvider) Name() string                   { return p.name }
-func (p *flakyStreamProvider) Model() string                  { return p.name + "-model" }
-func (p *flakyStreamProvider) Models() []string               { return []string{p.name + "-model"} }
-func (p *flakyStreamProvider) CountTokens(text string) int    { return len(text) / 4 }
-func (p *flakyStreamProvider) MaxContext() int                { return 100_000 }
-func (p *flakyStreamProvider) Hints() ProviderHints           { return ProviderHints{SupportsTools: true} }
+func (p *flakyStreamProvider) Name() string                { return p.name }
+func (p *flakyStreamProvider) Model() string               { return p.name + "-model" }
+func (p *flakyStreamProvider) Models() []string            { return []string{p.name + "-model"} }
+func (p *flakyStreamProvider) CountTokens(text string) int { return len(text) / 4 }
+func (p *flakyStreamProvider) MaxContext() int             { return 100_000 }
+func (p *flakyStreamProvider) Hints() ProviderHints        { return ProviderHints{SupportsTools: true} }
 func (p *flakyStreamProvider) Complete(_ context.Context, _ CompletionRequest) (*CompletionResponse, error) {
 	return nil, p.err
 }
@@ -42,12 +42,12 @@ type healthyStreamProvider struct {
 	text string
 }
 
-func (p *healthyStreamProvider) Name() string                   { return p.name }
-func (p *healthyStreamProvider) Model() string                  { return p.name + "-model" }
-func (p *healthyStreamProvider) Models() []string               { return []string{p.name + "-model"} }
-func (p *healthyStreamProvider) CountTokens(text string) int    { return len(text) / 4 }
-func (p *healthyStreamProvider) MaxContext() int                { return 100_000 }
-func (p *healthyStreamProvider) Hints() ProviderHints           { return ProviderHints{SupportsTools: true} }
+func (p *healthyStreamProvider) Name() string                { return p.name }
+func (p *healthyStreamProvider) Model() string               { return p.name + "-model" }
+func (p *healthyStreamProvider) Models() []string            { return []string{p.name + "-model"} }
+func (p *healthyStreamProvider) CountTokens(text string) int { return len(text) / 4 }
+func (p *healthyStreamProvider) MaxContext() int             { return 100_000 }
+func (p *healthyStreamProvider) Hints() ProviderHints        { return ProviderHints{SupportsTools: true} }
 func (p *healthyStreamProvider) Complete(_ context.Context, _ CompletionRequest) (*CompletionResponse, error) {
 	return &CompletionResponse{Text: p.text, Model: p.Model()}, nil
 }
@@ -119,10 +119,10 @@ done:
 // than letting the caller decide what to do.
 func TestStreamNoRecoveryWhenContentDelivered(t *testing.T) {
 	mid := &midStreamFailProvider{
-		name:        "primary",
-		preContent:  "partial answer",
-		failAfter:   true,
-		failureErr:  errors.New("upstream returned status 503 after partial"),
+		name:       "primary",
+		preContent: "partial answer",
+		failAfter:  true,
+		failureErr: errors.New("upstream returned status 503 after partial"),
 	}
 	fallback := &healthyStreamProvider{name: "fallback", text: "should-not-see-this"}
 	r := newRouterWith(mid, fallback)
@@ -270,12 +270,12 @@ type midStreamFailProvider struct {
 	failureErr error
 }
 
-func (p *midStreamFailProvider) Name() string                   { return p.name }
-func (p *midStreamFailProvider) Model() string                  { return p.name + "-model" }
-func (p *midStreamFailProvider) Models() []string               { return []string{p.name + "-model"} }
-func (p *midStreamFailProvider) CountTokens(text string) int    { return len(text) / 4 }
-func (p *midStreamFailProvider) MaxContext() int                { return 100_000 }
-func (p *midStreamFailProvider) Hints() ProviderHints           { return ProviderHints{SupportsTools: true} }
+func (p *midStreamFailProvider) Name() string                { return p.name }
+func (p *midStreamFailProvider) Model() string               { return p.name + "-model" }
+func (p *midStreamFailProvider) Models() []string            { return []string{p.name + "-model"} }
+func (p *midStreamFailProvider) CountTokens(text string) int { return len(text) / 4 }
+func (p *midStreamFailProvider) MaxContext() int             { return 100_000 }
+func (p *midStreamFailProvider) Hints() ProviderHints        { return ProviderHints{SupportsTools: true} }
 func (p *midStreamFailProvider) Complete(_ context.Context, _ CompletionRequest) (*CompletionResponse, error) {
 	return nil, errors.New("not used in this test")
 }

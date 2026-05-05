@@ -107,11 +107,11 @@ func DefaultConfig() *Config {
 			Enabled:   []string{},
 		},
 		TUI: TUIConfig{
-			Theme:            "dark",
-			VimKeys:          true,
-			ShowTokens:       true,
+			Theme:             "dark",
+			VimKeys:           true,
+			ShowTokens:        true,
 			ToolStripExpanded: true,
-			MouseCapture:     true,
+			MouseCapture:      true,
 		},
 		Web: WebConfig{
 			Port:        7777,

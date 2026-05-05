@@ -70,8 +70,8 @@ func TestWasmModule_RunNilMemory(t *testing.T) {
 // TestKindFromExt_AllCases tests all file extension cases.
 func TestKindFromExt_AllCases(t *testing.T) {
 	cases := []struct {
-		path  string
-		want  string
+		path string
+		want string
 	}{
 		{"plugin.py", "python"},
 		{"plugin.js", "node"},

@@ -47,9 +47,9 @@ func formatGrepRegexError(pattern string, err error) error {
 // backtracking in RE2. These are self-DOS vectors — the model
 // generating them would only hurt its own session.
 var knownCatastrophicRE = []string{
-	`\(.\+\)\+\$`,   // (a+)+$
-	`\(.\+\)\*\$`,   // (a+)*$
-	`\(.\+\)\?\$`,   // (a+)?$
+	`\(.\+\)\+\$`,     // (a+)+$
+	`\(.\+\)\*\$`,     // (a+)*$
+	`\(.\+\)\?\$`,     // (a+)?$
 	`\.\*\(.\+\)\+\$`, // .*(a+)+$
 }
 

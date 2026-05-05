@@ -164,8 +164,8 @@ func Spawn(ctx context.Context, spec Spec) (*Client, error) {
 	}
 
 	c := &Client{
-		cmd:      cmd,
-		stdin:    stdin,
+		cmd:           cmd,
+		stdin:         stdin,
 		stdout:        stdout,
 		stderr:        stderr,
 		pending:       map[int64]chan rpcResponse{},

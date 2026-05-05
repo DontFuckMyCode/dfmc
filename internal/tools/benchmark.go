@@ -160,8 +160,8 @@ func (t *BenchmarkTool) Execute(ctx context.Context, req Request) (Result, error
 // parseBenchmarkOutput extracts benchmark rows from `go test -bench` output.
 // The output format is:
 //
-//   BenchmarkFoo-8    1234567      987 ns/op     123 B/op     4 allocs/op
-//   BenchmarkBar-8    123456      9876 ns/op   12345 B/op    12 allocs/op
+//	BenchmarkFoo-8    1234567      987 ns/op     123 B/op     4 allocs/op
+//	BenchmarkBar-8    123456      9876 ns/op   12345 B/op    12 allocs/op
 //
 // Some lines may also include MB/s at the end when -benchmem is used.
 func parseBenchmarkOutput(output string) []BenchmarkSpec {
@@ -185,11 +185,12 @@ func parseBenchmarkOutput(output string) []BenchmarkSpec {
 
 // parseBenchmarkLine parses a single benchmark output line.
 // Examples:
-//   BenchmarkHash-8    1234567      987 ns/op
-//   BenchmarkHash-8    1234567      987 ns/op     1.23 MB/s
-//   BenchmarkHash-8    1234567      987 ns/op     123 B/op     4 allocs/op
-//   BenchmarkHash-8    1234567      987 ns/op     1.23 MB/s   123 B/op     4 allocs/op
-//   BenchmarkMap-8      10000    123456 ns/op   1024 B/op      2 allocs/op
+//
+//	BenchmarkHash-8    1234567      987 ns/op
+//	BenchmarkHash-8    1234567      987 ns/op     1.23 MB/s
+//	BenchmarkHash-8    1234567      987 ns/op     123 B/op     4 allocs/op
+//	BenchmarkHash-8    1234567      987 ns/op     1.23 MB/s   123 B/op     4 allocs/op
+//	BenchmarkMap-8      10000    123456 ns/op   1024 B/op      2 allocs/op
 func parseBenchmarkLine(line string) BenchmarkSpec {
 	var b BenchmarkSpec
 	// Regex: BenchmarkName-8  iterations  time/op  [extra]...

@@ -362,7 +362,7 @@ func TestDescribe(t *testing.T) {
 }
 
 // TestSanitizeEnvValue_UnixBehavior — on Unix, values are wrapped in single
-// quotes with embedded single-quotes escaped as '\''. Shell expansion ($(), ``,
+// quotes with embedded single-quotes escaped as '\”. Shell expansion ($(), “,
 // ;, #, etc.) is entirely blocked by the single-quote wrapper.
 func TestSanitizeEnvValue_UnixBehavior(t *testing.T) {
 	if runtime.GOOS == "windows" {

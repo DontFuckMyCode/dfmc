@@ -38,9 +38,9 @@ func NewInspectorWithBudget(projectRoot string, chunks []types.ContextChunk, max
 // InspectionResult is the structured output of context inspection.
 type InspectionResult struct {
 	// Summary counts
-	TotalFiles  int            `json:"total_files"`
-	TotalTokens int            `json:"total_tokens"`
-	TotalLines  int            `json:"total_lines"`
+	TotalFiles  int `json:"total_files"`
+	TotalTokens int `json:"total_tokens"`
+	TotalLines  int `json:"total_lines"`
 
 	// Breakdown by source type
 	BySource map[string]SourceStats `json:"by_source"`
@@ -174,10 +174,10 @@ func (ci *ContextInspector) Inspect() InspectionResult {
 
 	// Budget status
 	r.Budget = BudgetStatus{
-		Total:     ci.maxTokens,
-		Used:      r.TotalTokens,
-		Remaining: ci.maxTokens - r.TotalTokens,
-		UsedPct:   float64(r.TotalTokens) / float64(ci.maxTokens) * 100,
+		Total:      ci.maxTokens,
+		Used:       r.TotalTokens,
+		Remaining:  ci.maxTokens - r.TotalTokens,
+		UsedPct:    float64(r.TotalTokens) / float64(ci.maxTokens) * 100,
 		AvgPerFile: float64(r.TotalTokens) / float64(r.TotalFiles),
 	}
 

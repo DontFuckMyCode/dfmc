@@ -350,7 +350,7 @@ func sanitizeEnvKey(raw string) string {
 
 // sanitizeEnvValue quotes the value so that shell expansion cannot break out
 // of the env-var assignment. Unix uses single-quote wrapping with embedded
-// quote escaping (' -> '\''); Windows cmd.exe uses double-quote wrapping with
+// quote escaping (' -> '\”); Windows cmd.exe uses double-quote wrapping with
 // % doubling (%%) to block %VAR% expansion inside quoted strings, and ^
 // escaping for other specials. This prevents payload injection when a hook
 // command references $DFMC_<KEY> in a shell context.

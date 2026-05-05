@@ -37,7 +37,7 @@ type Config struct {
 	// under this directory instead of the global data dir. This allows
 	// multiple concurrent DFMC instances — each pointed at a different
 	// project directory — to run without file-lock conflicts.
-	DataDirPath string                    `yaml:"data_dir"`
+	DataDirPath string `yaml:"data_dir"`
 }
 
 // ASTConfig holds runtime knobs for the AST engine. Today only the
@@ -444,10 +444,10 @@ type PluginsConfig struct {
 }
 
 type TUIConfig struct {
-	Theme           string `yaml:"theme"`
-	VimKeys         bool   `yaml:"vim_keys"`
-	ShowTokens      bool   `yaml:"show_tokens"`
-	ToolStripExpanded bool `yaml:"tool_strip_expanded"`
+	Theme             string `yaml:"theme"`
+	VimKeys           bool   `yaml:"vim_keys"`
+	ShowTokens        bool   `yaml:"show_tokens"`
+	ToolStripExpanded bool   `yaml:"tool_strip_expanded"`
 	// MouseCapture toggles bubbletea's mouse-event capture. When true
 	// the wheel scrolls the transcript natively but the terminal's
 	// drag-to-select / right-click-copy is disabled — most terminals

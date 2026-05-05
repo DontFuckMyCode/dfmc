@@ -150,10 +150,10 @@ func TestHandleEngineEvent_CoachNote(t *testing.T) {
 	event := engine.Event{
 		Type: "coach:note",
 		Payload: map[string]any{
-			"text":    "Consider breaking this into smaller steps",
+			"text":     "Consider breaking this into smaller steps",
 			"severity": "hint",
-			"origin":  "trajectory",
-			"action":  "split",
+			"origin":   "trajectory",
+			"action":   "split",
 		},
 	}
 	m2 := m.handleEngineEvent(event)
@@ -197,12 +197,12 @@ func TestHandleEngineEvent_IntentDecision(t *testing.T) {
 	event := engine.Event{
 		Type: "intent:decision",
 		Payload: map[string]any{
-			"intent":   "resume",
-			"source":   "llm",
-			"raw":      "fix the bug",
-			"enriched": "fix the bug in server.go",
-			"reasoning": "user referred to previous conversation",
-			"follow_up": "clarify",
+			"intent":     "resume",
+			"source":     "llm",
+			"raw":        "fix the bug",
+			"enriched":   "fix the bug in server.go",
+			"reasoning":  "user referred to previous conversation",
+			"follow_up":  "clarify",
 			"latency_ms": 150,
 		},
 	}
@@ -224,11 +224,11 @@ func TestHandleEngineEvent_IntentDecisionVerboseRewrite(t *testing.T) {
 	event := engine.Event{
 		Type: "intent:decision",
 		Payload: map[string]any{
-			"intent":   "new",
-			"source":   "llm",
-			"raw":      "do it",
-			"enriched": "refactor the auth module",
-			"reasoning": "clear directive",
+			"intent":     "new",
+			"source":     "llm",
+			"raw":        "do it",
+			"enriched":   "refactor the auth module",
+			"reasoning":  "clear directive",
 			"latency_ms": 50,
 		},
 	}
@@ -242,10 +242,10 @@ func TestHandleEngineEvent_IntentDecisionNonVerboseNoMirror(t *testing.T) {
 	event := engine.Event{
 		Type: "intent:decision",
 		Payload: map[string]any{
-			"intent":   "resume",
-			"source":   "llm",
-			"raw":      "fix it",
-			"enriched": "fix the bug",
+			"intent":     "resume",
+			"source":     "llm",
+			"raw":        "fix it",
+			"enriched":   "fix the bug",
 			"latency_ms": 50,
 		},
 	}
@@ -276,9 +276,9 @@ func TestHandleEngineEvent_ProviderComplete(t *testing.T) {
 	event := engine.Event{
 		Type: "provider:complete",
 		Payload: map[string]any{
-			"tokens":      1200,
-			"provider":     "anthropic",
-			"model":        "sonnet",
+			"tokens":   1200,
+			"provider": "anthropic",
+			"model":    "sonnet",
 		},
 	}
 	m2 := m.handleEngineEvent(event)
@@ -384,10 +384,10 @@ func TestHandleEngineEvent_ContextLifecycleCompacted(t *testing.T) {
 	event := engine.Event{
 		Type: "context:lifecycle:compacted",
 		Payload: map[string]any{
-			"before_tokens":     100000,
-			"after_tokens":      25000,
-			"rounds_collapsed":  3,
-			"messages_removed":  15,
+			"before_tokens":    100000,
+			"after_tokens":     25000,
+			"rounds_collapsed": 3,
+			"messages_removed": 15,
 		},
 	}
 	m2 := m.handleEngineEvent(event)
@@ -401,10 +401,10 @@ func TestHandleEngineEvent_ContextLifecycleHandoff(t *testing.T) {
 	event := engine.Event{
 		Type: "context:lifecycle:handoff",
 		Payload: map[string]any{
-			"history_tokens":    80000,
-			"brief_tokens":      5000,
-			"messages_sealed":   20,
-			"new_conversation":  "conv-123",
+			"history_tokens":   80000,
+			"brief_tokens":     5000,
+			"messages_sealed":  20,
+			"new_conversation": "conv-123",
 		},
 	}
 	m2 := m.handleEngineEvent(event)
@@ -435,7 +435,7 @@ func TestHandleEngineEvent_ProviderRaceFailed(t *testing.T) {
 	event := engine.Event{
 		Type: "provider:race:failed",
 		Payload: map[string]any{
-			"error":        "all providers errored",
+			"error":       "all providers errored",
 			"duration_ms": 5000,
 		},
 	}
