@@ -45,13 +45,23 @@ jobs:
           CGO_ENABLED: 0
         run: go build -ldflags "-s -w" -o dfmc-nocgo ./cmd/dfmc
 
-      - name: dfmc version
+      - name: dfmc version (Unix)
+        if: runner.os != 'Windows'
         run: ./dfmc version
-        shell: ${{ matrix.os == 'windows-latest' && 'pwsh' || 'bash' }}
 
-      - name: dfmc doctor
+      - name: dfmc version (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\dfmc version
+
+      - name: dfmc doctor (Unix)
+        if: runner.os != 'Windows'
         run: ./dfmc doctor
-        shell: ${{ matrix.os == 'windows-latest' && 'pwsh' || 'bash' }}
+
+      - name: dfmc doctor (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\dfmc doctor
 
   race:
     name: Race Test (Linux)
