@@ -41,10 +41,9 @@ func (m Model) handleProvidersMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		n, _ := strconv.Atoi(msg.String())
 		if n > 0 && n <= total {
 			idx := n - 1
+			m.providers.menuIndex = idx
 			if idx < len(m.providers.menuDisabled) && m.providers.menuDisabled[idx] {
 				m.notice = "that action is not available"
-			} else {
-				m.providers.menuIndex = idx
 			}
 		}
 	case "enter":

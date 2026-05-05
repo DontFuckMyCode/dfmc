@@ -8,6 +8,7 @@ package tui
 // "given the mode and this keystroke, where does it go?" routing.
 
 import (
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -101,16 +102,83 @@ func (m Model) handleProvidersListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		m.providers.query = ""
 		m.providers.scroll = 0
-	case "enter":
-		labels, actions, disabled, reasons := m.buildListMenu()
-		if len(labels) > 0 {
-			m.providers.menuActive = true
-			m.providers.menuLabels = labels
-			m.providers.menuActions = actions
-			m.providers.menuDisabled = disabled
-			m.providers.menuDisabledReasons = reasons
-			m.providers.menuIndex = 0
+	case "p":
+		// Set selected provider as primary
+		scroll := clampScroll(m.providers.scroll, len(m.providers.rows))
+		if scroll >= 0 && scroll < len(m.providers.rows) {
+			name := m.providers.rows[scroll].Name
+			m = m.setPrimaryProvider(name)
+			m.notice = name + " set as primary"
 		}
+	case "f":
+		// Toggle fallback membership
+		scroll := clampScroll(m.providers.scroll, len(m.providers.rows))
+		if scroll >= 0 && scroll < len(m.providers.rows) {
+			name := m.providers.rows[scroll].Name
+			m = m.toggleFallbackProvider(name)
+		}
+	case "m":
+		// Cycle model for selected provider
+		scroll := clampScroll(m.providers.scroll, len(m.providers.rows))
+		if scroll >= 0 && scroll < len(m.providers.rows) {
+			name := m.providers.rows[scroll].Name
+			m = m.cycleProviderModel(name)
+			if m.providers.err == "" {
+				m.notice = name + " model cycled"
+			}
+		}
+	case "s":
+		// Save config for selected provider
+		scroll := clampScroll(m.providers.scroll, len(m.providers.rows))
+		if scroll >= 0 && scroll < len(m.providers.rows) {
+			name := m.providers.rows[scroll].Name
+			model := m.providers.rows[scroll].Model
+			path, err := m.persistProviderModelProjectConfig(name, model)
+			if err != nil {
+				m.notice = "save failed: " + err.Error()
+			} else {
+				m.notice = "saved → " + filepath.Base(path)
+			}
+		}
+	case "d", "enter":
+		// View detail (enter also opens menu for power users)
+		scroll := clampScroll(m.providers.scroll, len(m.providers.rows))
+		if scroll >= 0 && scroll < len(m.providers.rows) {
+			name := m.providers.rows[scroll].Name
+			m.providers.detailProvider = name
+			m.providers.viewMode = "detail"
+			m.providers.scroll = 0
+			m.notice = "viewing " + name
+		}
+	case "n":
+		// New provider
+		m.providers.viewMode = "new_provider"
+		m.providers.newProviderDraft = ""
+		m.notice = "new provider — type name and enter"
+	case "r":
+		// Refresh provider list
+		m = m.refreshProvidersRows()
+		m.providers.loaded = true
+		m.notice = "providers refreshed"
+	default:
+		// For anything else, open the action menu (backwards compat for
+		// users used to pressing enter for the menu)
+		if msg.Type == tea.KeyEnter {
+			goto openMenu
+		}
+		return m, nil
+	}
+	return m, nil
+
+openMenu:
+	labels, actions, disabled, reasons := m.buildListMenu()
+	if len(labels) > 0 {
+		m.providers.menuActive = true
+		m.providers.menuLabels = labels
+		m.providers.menuActions = actions
+		m.providers.menuDisabled = disabled
+		m.providers.menuDisabledReasons = reasons
+		m.providers.menuIndex = 0
 	}
 	return m, nil
 }

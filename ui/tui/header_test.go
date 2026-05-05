@@ -205,11 +205,11 @@ func TestRenderChatViewUsesStarterPromptsWhenEmpty(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.status = engine.Status{Provider: "anthropic", Model: "claude-opus-4-6"}
 	view := m.renderChatView(120)
-	if !strings.Contains(view, "Welcome") {
-		t.Fatalf("empty transcript should render welcome block, got:\n%s", view)
+	if !strings.Contains(view, "paste text, type a prompt") {
+		t.Fatalf("empty transcript should render compact ready state, got:\n%s", view)
 	}
-	if !strings.Contains(view, "/review") || !strings.Contains(view, "/map") {
-		t.Fatalf("empty transcript should render starter commands, got:\n%s", view)
+	if strings.Contains(view, "Welcome") || strings.Contains(view, "/review") || strings.Contains(view, "/map") {
+		t.Fatalf("empty transcript should not flood chat with starter commands, got:\n%s", view)
 	}
 }
 

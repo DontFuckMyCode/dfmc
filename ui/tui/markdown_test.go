@@ -7,7 +7,7 @@ import (
 
 func TestRenderMarkdownBlocks_CodeFenceIsolatesLines(t *testing.T) {
 	in := "before\n```go\nfunc foo() {}\n```\nafter"
-	lines := renderMarkdownBlocks(in)
+	lines := renderMarkdownBlocks(in, 80)
 	if len(lines) != 5 {
 		t.Fatalf("expected 5 rendered lines (before, open-fence, code, close-fence, after), got %d: %q", len(lines), lines)
 	}
@@ -22,7 +22,7 @@ func TestRenderMarkdownBlocks_CodeFenceIsolatesLines(t *testing.T) {
 
 func TestRenderMarkdownBlocks_BulletsAndHeaders(t *testing.T) {
 	in := "## Summary\n- first\n- second\n1. numbered\nbody text"
-	lines := renderMarkdownBlocks(in)
+	lines := renderMarkdownBlocks(in, 80)
 	if len(lines) != 5 {
 		t.Fatalf("expected 5 lines, got %d: %q", len(lines), lines)
 	}

@@ -106,7 +106,7 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 					}
 					activeTodoIndex = idx + 1
 				}
-			default:
+			case "pending", "blocked", "skipped", "waiting", "verifying", "external_review":
 				todoPending++
 			}
 		}

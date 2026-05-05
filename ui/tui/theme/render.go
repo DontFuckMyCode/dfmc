@@ -327,7 +327,7 @@ func RenderMessageBubble(role, content, header string, width int) string {
 		out = append(out, bar+" "+style.Render(content))
 		return strings.Join(out, "\n")
 	}
-	for _, line := range RenderMarkdownBlocks(content) {
+	for _, line := range RenderMarkdownBlocks(content, width) {
 		for _, wrapped := range WrapBubbleLine(line, width-2) {
 			out = append(out, bar+" "+wrapped)
 		}

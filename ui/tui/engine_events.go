@@ -93,9 +93,6 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		origin := payloadString(payload, "origin", "")
 		action := payloadString(payload, "action", "")
 		m = m.appendCoachMessage(text, severity, origin, action)
-		// Accumulate for session-end summary (coach notes land in transcript
-		// so scan is unreliable; keep a direct slice instead).
-		m.agentLoop.sessionCoachNotes = append(m.agentLoop.sessionCoachNotes, text)
 		return m
 	case "intent:decision":
 		// Engine's pre-Ask intent router fired. Cache the decision so
@@ -144,8 +141,17 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 	case "context:built":
 		files := payloadInt(payload, "files", 0)
 		tokens := payloadInt(payload, "tokens", 0)
+		budget := payloadInt(payload, "budget", 0)
+		perFile := payloadInt(payload, "per_file", 0)
 		task := payloadString(payload, "task", "general")
 		comp := payloadString(payload, "compression", "-")
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "context:built",
+			Kind:   "context",
+			Status: "ok",
+			Title:  "context",
+			Detail: contextBuiltChatDetail(files, tokens, budget, perFile, task, comp),
+		})
 		line = fmt.Sprintf("Context built: %d files, %d tokens (%s, %s)", files, tokens, task, comp)
 	case "provider:complete":
 		if m.agentLoop.active {
@@ -154,6 +160,23 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			tokens := payloadInt(payload, "tokens", 0)
 			providerName := payloadString(payload, "provider", m.agentLoop.provider)
 			modelName := payloadString(payload, "model", m.agentLoop.model)
+			detail := ""
+			if tokens > 0 {
+				detail = "out " + compactMetric(tokens) + " tok"
+			}
+			if providerName != "" || modelName != "" {
+				if detail != "" {
+					detail += " | "
+				}
+				detail += strings.Trim(strings.TrimSpace(providerName+"/"+modelName), "/")
+			}
+			m.upsertStreamingChatEvent(chatEventLine{
+				Key:    "provider:complete",
+				Kind:   "provider",
+				Status: "ok",
+				Title:  "provider complete",
+				Detail: detail,
+			})
 			line = fmt.Sprintf("Provider complete: %s/%s (%dtok)", providerName, modelName, tokens)
 		}
 	case "provider:throttle:retry":
@@ -169,16 +192,32 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		if waitMs > 0 {
 			waitText = fmt.Sprintf("in %s", (time.Duration(waitMs) * time.Millisecond).Round(100*time.Millisecond))
 		}
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    fmt.Sprintf("provider:throttle:%s:%d", providerName, attempt),
+			Kind:   "provider",
+			Status: "warn",
+			Title:  "provider throttle",
+			Detail: fmt.Sprintf("%s %s retry #%d %s", providerName, label, attempt, waitText),
+		})
 		line = fmt.Sprintf("Provider throttled: %s %s retry #%d %s.", providerName, label, attempt, waitText)
 	case "provider:circuit:open":
 		providerName := payloadString(payload, "provider", "?")
 		cooldownMs := payloadInt(payload, "cooldown_ms", 0)
+		detail := providerName + " falling back"
 		if cooldownMs > 0 {
 			cooldown := (time.Duration(cooldownMs) * time.Millisecond).Round(time.Second)
+			detail = fmt.Sprintf("%s skip for %s | falling back", providerName, cooldown)
 			line = fmt.Sprintf("Provider %s circuit open — skipping for %s, falling back.", providerName, cooldown)
 		} else {
 			line = fmt.Sprintf("Provider %s circuit open — falling back.", providerName)
 		}
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "provider:circuit:" + providerName,
+			Kind:   "provider",
+			Status: "warn",
+			Title:  "provider circuit",
+			Detail: detail,
+		})
 	case "provider:circuit:closed":
 		providerName := payloadString(payload, "provider", "?")
 		line = fmt.Sprintf("Provider %s circuit closed — recovered.", providerName)
@@ -208,6 +247,13 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			Name:    "auto-compact",
 			Status:  "compact",
 			Preview: preview,
+		})
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "context:compact",
+			Kind:   "context",
+			Status: "ok",
+			Title:  "context compact",
+			Detail: fmt.Sprintf("%s -> %s tok | %d rounds | %d msgs removed", compactMetric(before), compactMetric(after), collapsed, removed),
 		})
 		if collapsed > 0 {
 			line = fmt.Sprintf("Context auto-compacted: %d→%d tokens (%d rounds, %d msgs removed).", before, after, collapsed, removed)
@@ -257,6 +303,13 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			Status:  "handoff",
 			Preview: preview,
 		})
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "context:handoff",
+			Kind:   "context",
+			Status: "ok",
+			Title:  "context handoff",
+			Detail: fmt.Sprintf("%s -> %s tok | %d msgs sealed", compactMetric(historyTokens), compactMetric(briefTokens), sealed),
+		})
 		if newConv != "" {
 			line = fmt.Sprintf("Auto-new-session: rotated to %s (%d→%d tokens, %d msgs sealed).", newConv, historyTokens, briefTokens, sealed)
 		} else {
@@ -275,12 +328,6 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 	m.appendActivity(line)
 	m.notice = line
 	mirror := shouldMirrorEventToTranscript(eventType)
-	// Tool failures are rare but critical — never silently drop them from
-	// the transcript. A failed chip alone in a long turn is easy to miss,
-	// so mirror the error event with its preview/error text.
-	if !mirror && eventType == "tool:result" && !payloadBool(payload, "success", true) {
-		mirror = true
-	}
 	if m.chat.sending && mirror {
 		m = m.appendToolEventMessage(line)
 	}
@@ -288,11 +335,10 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 }
 
 // shouldMirrorEventToTranscript decides which engine events earn a system
-// message in the chat transcript. Per-step tool:call / tool:result chatter is
-// deliberately excluded — the tool-chip row, footer notice slot, and activity
-// log already carry that; duplicating into the transcript floods scrollback.
-// Only events that reflect a real state change the user needs in history
-// pass this filter.
+// message in the chat transcript. tool:result is excluded — tool activity
+// lives in the assistant message chip strip, not as separate TOOL lines.
+// Other events are mirrored selectively — only real state changes the user
+// needs in history.
 func shouldMirrorEventToTranscript(eventType string) bool {
 	switch strings.TrimSpace(strings.ToLower(eventType)) {
 	case "agent:loop:error", "agent:loop:max_steps", "agent:loop:parked",

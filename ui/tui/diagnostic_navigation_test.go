@@ -58,6 +58,7 @@ func TestActivateDiagnosticTabSelectsProviders(t *testing.T) {
 func TestActivateProvidersPanelFocusesRequestedProvider(t *testing.T) {
 	m := newProvidersTestModel()
 	m.providers.rows = sampleProviderRows()
+	m.providers.loaded = true // mark already loaded so refresh is skipped
 	m = m.activateProvidersPanel("offline", false)
 	if m.activeTab != 14 {
 		t.Fatalf("expected Providers tab active, got %d", m.activeTab)

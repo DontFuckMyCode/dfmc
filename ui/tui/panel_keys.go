@@ -39,39 +39,32 @@ func (m Model) handleFilesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, loadFilePreviewCmd(m.eng, m.selectedFile())
 	case "p", "alt+p":
 		return m.togglePinnedFile()
-	case "i":
-		path := m.selectedFile()
-		if path == "" {
-			return m, nil
-		}
-		marker := fmt.Sprintf("[[file:%s]]", path)
-		current := strings.TrimRight(m.chat.input, " ")
-		if current != "" {
-			current += " "
-		}
-		m.setChatInput(current + marker)
-		m.activeTab = 0
-		m.notice = "Inserted " + marker + " into the chat composer."
-		return m, nil
-	case "e":
-		path := m.selectedFile()
-		if path == "" {
-			return m, nil
-		}
-		m.setChatInput(fmt.Sprintf("Explain [[file:%s]] ", path))
-		m.activeTab = 0
-		m.notice = "Prepared Explain prompt for " + path + "."
-		return m, nil
-	case "v":
-		path := m.selectedFile()
-		if path == "" {
-			return m, nil
-		}
-		m.setChatInput(fmt.Sprintf("Review [[file:%s]] ", path))
-		m.activeTab = 0
-		m.notice = "Prepared Review prompt for " + path + "."
+	case "i", "e", "v":
+		return m.insertFileIntoComposer(msg.String())
+	}
+	return m, nil
+}
+
+// insertFileIntoComposer handles i/e/v keys in the Files panel.
+// Each key builds a different prompt prefix but all follow the same
+// pattern: get selected file → switch to Chat tab → set chat input.
+func (m Model) insertFileIntoComposer(key string) (Model, tea.Cmd) {
+	path := m.selectedFile()
+	if path == "" {
 		return m, nil
 	}
+	prefix := map[string]string{
+		"i": fmt.Sprintf("[[file:%s]]", path),
+		"e": fmt.Sprintf("Explain [[file:%s]] ", path),
+		"v": fmt.Sprintf("Review [[file:%s]] ", path),
+	}[key]
+	current := strings.TrimRight(m.chat.input, " ")
+	if current != "" {
+		current += " "
+	}
+	m.setChatInput(current + prefix)
+	m.activeTab = 0
+	m.notice = "Switched to Chat with " + prefix + "."
 	return m, nil
 }
 

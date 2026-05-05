@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 )
 
 func (m Model) appendSystemMessage(text string) Model {
@@ -57,6 +59,9 @@ func (m Model) appendCoachMessage(text string, severity coachSeverity, origin st
 	m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleCoach, body))
 	m.chat.scrollback = 0
 	m.appendActivity("coach: " + text)
+	// Also accumulate for session-end summary — appendCoachMessage is the
+	// single source of truth; handleEngineEvent no longer duplicates this.
+	m.agentLoop.sessionCoachNotes = append(m.agentLoop.sessionCoachNotes, text)
 	if action != "" {
 		m.notice = text + " | Suggested: " + action
 	} else {
@@ -126,33 +131,73 @@ func (m Model) appendSessionDoneSummary() Model {
 	return m
 }
 
-// scrollTranscript shifts the chat head backwards by delta *lines* (negative
-// = older/upward, positive = newer/downward) and clamps to a rough ceiling
-// derived from the transcript size. The render layer (fitChatBody) clamps
-// tighter based on actual rendered line count — scroll just tracks intent.
+func (m *Model) moveStreamingAssistantToTranscriptEnd() {
+	idx := m.chat.streamIndex
+	if idx < 0 || idx >= len(m.chat.transcript) || idx == len(m.chat.transcript)-1 {
+		return
+	}
+	line := m.chat.transcript[idx]
+	m.chat.transcript = append(m.chat.transcript[:idx], m.chat.transcript[idx+1:]...)
+	m.chat.transcript = append(m.chat.transcript, line)
+	m.chat.streamIndex = len(m.chat.transcript) - 1
+}
+
+// scrollTranscript shifts the chat head. delta < 0 scrolls UP toward older
+// content ( PgUp / shift+up / wheel up). delta > 0 scrolls DOWN toward newer
+// content (PgDown / shift+down / wheel down). Clamps to the ceiling derived
+// from user-turn count above the anchor.
 func (m *Model) scrollTranscript(delta int) {
 	next := m.chat.scrollback - delta
 	if next < 0 {
 		next = 0
 	}
+	// Ceiling is maxScrollbackSteps — each unit = one prior user turn.
 	maxBack := estimateTranscriptLines(m.chat.transcript)
 	if next > maxBack {
 		next = maxBack
 	}
-	if next == m.chat.scrollback {
-		if next == 0 {
-			m.notice = "Transcript: already at latest"
-		} else {
-			m.notice = "Transcript: at top of history"
-		}
-		return
-	}
 	m.chat.scrollback = next
 	if next == 0 {
 		m.notice = "Transcript: back to latest"
+	} else if next >= maxBack {
+		m.notice = "Transcript: at top of history"
 	} else {
-		m.notice = fmt.Sprintf("Transcript: scrolled back %d lines (PageDown / End resumes)", next)
+		m.notice = fmt.Sprintf("Transcript: %d lines back (PgDown/End = forward)", next)
 	}
+}
+
+// maxScrollbackSteps returns how many previous user turns exist above the
+// current anchor. Used as the scrollback ceiling so the user can scroll back
+// through all prior turns to reach the very first one.
+func maxScrollbackSteps(transcript []chatLine) int {
+	if len(transcript) == 0 {
+		return 0
+	}
+	anchorIdx := -1
+	for i := len(transcript) - 1; i >= 0; i-- {
+		if transcript[i].Role.Eq(chatRoleUser) {
+			anchorIdx = i
+			break
+		}
+	}
+	if anchorIdx < 0 {
+		return 0
+	}
+	// Count all user turns from index 0 to anchorIdx (inclusive).
+	// This includes the anchor itself, so scrolling back by N steps gets
+	// you to the first user turn (when N = maxScrollbackSteps).
+	count := 0
+	for i := 0; i <= anchorIdx; i++ {
+		if transcript[i].Role.Eq(chatRoleUser) {
+			count++
+		}
+	}
+	// Subtract 1 because the anchor turn itself is always visible at scrollback=0.
+	// With count=11 (turns 0..10, anchor at 10), max scrollback = 10 gets to turn 0.
+	if count > 0 {
+		count--
+	}
+	return count
 }
 
 // estimateTranscriptLines returns a rough upper bound on the number of
@@ -161,8 +206,14 @@ func (m *Model) scrollTranscript(delta int) {
 func estimateTranscriptLines(transcript []chatLine) int {
 	total := 0
 	for _, item := range transcript {
-		// Header bar + content lines + spacer between messages.
-		total += 2 + strings.Count(item.Content, "\n")
+		// Console header + content + spacer. This is deliberately generous:
+		// it is only a scroll ceiling, while fitChatBody clamps against the
+		// actual rendered feed window.
+		total += 6 + strings.Count(item.Content, "\n")
+		if len(item.EventLines) > 0 {
+			total += 1 + min(len(item.EventLines), 10)
+		}
+		total += len(item.ToolChips) * 3
 	}
 	return total
 }
@@ -174,9 +225,24 @@ func estimateTranscriptLines(transcript []chatLine) int {
 // through one of the chatRole* constants and the compiler catches typos.
 func newChatLine(role chatRole, content string) chatLine {
 	return chatLine{
-		Role:      role,
-		Content:   content,
-		Preview:   chatDigest(content),
-		Timestamp: time.Now(),
+		Role:       role,
+		Content:    content,
+		Preview:    chatDigest(content),
+		TokenCount: estimatedChatTokens(content),
+		Timestamp:  time.Now(),
 	}
+}
+
+func estimatedChatTokens(content string) int {
+	if strings.TrimSpace(content) == "" {
+		return 0
+	}
+	return tokens.Estimate(content)
+}
+
+func (m *Model) refreshChatLineTokenCount(index int) {
+	if index < 0 || index >= len(m.chat.transcript) {
+		return
+	}
+	m.chat.transcript[index].TokenCount = estimatedChatTokens(m.chat.transcript[index].Content)
 }

@@ -69,7 +69,7 @@ func TestRenderMarkdownBlocks_AlignsTableColumns(t *testing.T) {
 		"| backend.go | ~40 | BackendStatus |",
 	}, "\n")
 
-	blocks := renderMarkdownBlocks(src)
+	blocks := renderMarkdownBlocks(src, 80)
 	if len(blocks) < 4 {
 		t.Fatalf("expected at least 4 output lines (header + underline + 2 rows), got %d:\n%v", len(blocks), blocks)
 	}
@@ -97,7 +97,7 @@ func TestRenderMarkdownBlocks_NonTablePipesPassThrough(t *testing.T) {
 	// A lone line with pipes but no separator must render normally —
 	// this is the pipe-in-prose case.
 	src := "this | pipe | is just text"
-	blocks := renderMarkdownBlocks(src)
+	blocks := renderMarkdownBlocks(src, 80)
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 line out, got %d", len(blocks))
 	}
@@ -154,7 +154,7 @@ func TestRenderMarkdownBlocks_AlignsBoxDrawingTable(t *testing.T) {
 		"│ algorithms.go  │ 75    │ Tam      │",
 	}, "\n")
 
-	blocks := renderMarkdownBlocks(src)
+	blocks := renderMarkdownBlocks(src, 80)
 	if len(blocks) < 4 {
 		t.Fatalf("expected 4+ output lines, got %d:\n%v", len(blocks), blocks)
 	}
@@ -214,7 +214,7 @@ func TestRenderMarkdownBlocks_AlignsTableWithBacktickedBody(t *testing.T) {
 		"| Tree-sitter Python | `treesitter_cgo.go:215-253` | Tam |",
 	}, "\n")
 
-	blocks := renderMarkdownBlocks(src)
+	blocks := renderMarkdownBlocks(src, 80)
 	if len(blocks) < 4 {
 		t.Fatalf("expected 4+ output lines, got %d", len(blocks))
 	}
@@ -253,7 +253,7 @@ func TestRenderMarkdownBlocks_AlignsTableWithBoldBody(t *testing.T) {
 		"| Style drift | Low | later |",
 	}, "\n")
 
-	blocks := renderMarkdownBlocks(src)
+	blocks := renderMarkdownBlocks(src, 80)
 	plain := make([]string, 0, len(blocks))
 	for _, b := range blocks {
 		plain = append(plain, stripANSI(b))
@@ -278,13 +278,28 @@ func TestRenderMarkdownBlocks_TableFollowedByProseKeepsBoth(t *testing.T) {
 		"",
 		"some prose below the table",
 	}, "\n")
-	blocks := renderMarkdownBlocks(src)
+	blocks := renderMarkdownBlocks(src, 80)
 	joined := stripANSI(strings.Join(blocks, "\n"))
 	if !strings.Contains(joined, "some prose below the table") {
 		t.Fatalf("prose after table must survive, got:\n%s", joined)
 	}
 	if !strings.Contains(joined, "A") || !strings.Contains(joined, "1") {
 		t.Fatalf("table cells must survive, got:\n%s", joined)
+	}
+}
+
+func TestRenderMarkdownBlocks_RaggedTableDoesNotPanic(t *testing.T) {
+	src := strings.Join([]string{
+		"| A | B | C |",
+		"|---|---|---|",
+		"| 1 | 2 |",
+		"| 3 | 4 | 5 |",
+	}, "\n")
+
+	blocks := renderMarkdownBlocks(src, 80)
+	joined := stripANSI(strings.Join(blocks, "\n"))
+	if !strings.Contains(joined, "1") || !strings.Contains(joined, "5") {
+		t.Fatalf("ragged table cells must survive, got:\n%s", joined)
 	}
 }
 

@@ -53,6 +53,27 @@ func TestOpen_CreatesDirectories(t *testing.T) {
 	}
 }
 
+func TestOpen_LockedDatabaseWrapsSentinel(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	store, err := Open(dir)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	second, err := Open(dir)
+	if err == nil {
+		_ = second.Close()
+		t.Fatal("expected lock error from second Open")
+	}
+	if !errors.Is(err, ErrStoreLocked) {
+		t.Fatalf("expected ErrStoreLocked, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "close other DFMC/TUI processes") {
+		t.Fatalf("expected actionable lock guidance, got %q", err.Error())
+	}
+}
+
 // T6: BackupTo must not follow a symlink at the temp file path.
 // CreateTemp uses the .dfmc-backup-*.tmp pattern so even if an attacker
 // pre-creates a symlink at the predicted path, os.CreateTemp generates

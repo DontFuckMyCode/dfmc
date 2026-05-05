@@ -51,13 +51,23 @@ func runEchoPlugin() {
 		if err := dec.Decode(&req); err != nil {
 			return
 		}
+		result := any(map[string]any{
+			"method": req.Method,
+			"params": req.Params,
+		})
+		if req.Method == "initialize" {
+			result = map[string]any{
+				"capabilities": map[string]any{
+					"tools":  []string{"echo_tool"},
+					"hooks":  []string{"echo_hook"},
+					"skills": []string{"echo_skill"},
+				},
+			}
+		}
 		resp := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      req.ID,
-			"result": map[string]any{
-				"method": req.Method,
-				"params": req.Params,
-			},
+			"result":  result,
 		}
 		_ = enc.Encode(resp)
 	}

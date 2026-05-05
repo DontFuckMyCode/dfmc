@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -15,6 +16,23 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/storage"
 	"github.com/dontfuckmycode/dfmc/ui/cli"
 )
+
+// extractDataDir scans args for --data-dir before flag parsing and
+// returns the value so LoadOptions can be populated before config.Load.
+// This lets the user point multiple DFMC instances at different data
+// dirs without file-lock contention on dfmc.db.
+func extractDataDir(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--data-dir" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(arg, "--data-dir=") {
+			return strings.TrimPrefix(arg, "--data-dir=")
+		}
+	}
+	return ""
+}
 
 var version = "dev"
 
@@ -32,7 +50,13 @@ func run() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	cfg, err := config.Load()
+	dataDir := extractDataDir(os.Args[1:])
+	loadOpts := config.LoadOptions{}
+	if dataDir != "" {
+		loadOpts.DataDirPath = dataDir
+	}
+
+	cfg, err := config.LoadWithOptions(loadOpts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		return 1
@@ -44,6 +68,32 @@ func run() int {
 	for _, path := range []string{globalPath, projectPath} {
 		if msg := hooks.CheckConfigPermissions(path); msg != "" {
 			fmt.Fprintf(os.Stderr, "[DFMC] %s\n", msg)
+		}
+	}
+
+	// Auto-init: if no storage exists at DataDir, run the init sequence
+	// so `dfmc ask` just works in a new project without an explicit
+	// `dfmc init` call first. Mirrors runInit but keeps the process alive.
+	dd := cfg.DataDir()
+	dbPath := filepath.Join(dd, "dfmc.db")
+	if _, statErr := os.Stat(dbPath); os.IsNotExist(statErr) {
+		projectRoot := config.FindProjectRoot("")
+		if projectRoot == "" {
+			if cwd, err := os.Getwd(); err == nil {
+				projectRoot = cwd
+			}
+		}
+		if projectRoot != "" {
+			dfmcDir := filepath.Join(projectRoot, ".dfmc")
+			if mkdirErr := os.MkdirAll(dfmcDir, 0o755); mkdirErr == nil {
+				localCfg := config.DefaultConfig()
+				localCfg.DataDirPath = dd
+				if cfgPathErr := localCfg.Save(filepath.Join(dfmcDir, "config.yaml")); cfgPathErr == nil {
+					os.WriteFile(filepath.Join(dfmcDir, "knowledge.json"), []byte("{}\n"), 0o644)
+					os.WriteFile(filepath.Join(dfmcDir, "conventions.json"), []byte("{}\n"), 0o644)
+					fmt.Fprintf(os.Stderr, "[DFMC] initialized project at %s\n", projectRoot)
+				}
+			}
 		}
 	}
 

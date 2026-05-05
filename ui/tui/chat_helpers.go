@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -128,6 +129,30 @@ func blankFallback(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func pasteLineCount(content string) int {
+	if content == "" {
+		return 0
+	}
+	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	return strings.Count(normalized, "\n") + 1
+}
+
+func renderPasteAttachmentStrip(blocks []pasteBlock, width int) string {
+	if len(blocks) == 0 {
+		return ""
+	}
+	if width < 30 {
+		width = 30
+	}
+	lines := []string{sectionHeader("::", "Attachments")}
+	for _, block := range blocks {
+		label := fmt.Sprintf("  %s  %d bytes", block.placeholder(), len([]byte(block.content)))
+		lines = append(lines, subtleStyle.Render(truncateSingleLine(label, width)))
+	}
+	lines = append(lines, subtleStyle.Render("  delete any placeholder character to remove its stored content"))
+	return strings.Join(lines, "\n")
 }
 
 func composeChatPrompt(current, addition string) string {

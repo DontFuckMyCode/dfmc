@@ -44,6 +44,13 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		}
 		m.pushToolChip(toolCallChip)
 		m.pushStreamingMessageToolChip(toolCallChip)
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    toolChatEventKey(toolName, step),
+			Kind:   "tool",
+			Status: "running",
+			Title:  toolName,
+			Detail: toolCallChatDetail(payload, step, paramsPreview),
+		})
 		m.telemetry.activeToolCount++
 		if step > 0 {
 			line = fmt.Sprintf("Agent tool call: %s (step %d)", toolName, step)
@@ -129,6 +136,14 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		}
 		m.finishToolChip(finishedChip)
 		m.finishStreamingMessageToolChip(finishedChip)
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:      toolChatEventKey(toolName, step),
+			Kind:     "tool",
+			Status:   status,
+			Title:    toolName,
+			Detail:   toolResultChatDetail(payload, preview, success, compressionPct),
+			Duration: duration,
+		})
 		if m.telemetry.activeToolCount > 0 {
 			m.telemetry.activeToolCount--
 		}
@@ -178,6 +193,7 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		reason := payloadString(payload, "reason", "")
 		if toolName != "" && reason != "" {
 			m.attachReasonToLastChip(toolName, reason)
+			m.attachReasonToStreamingChatEvent(toolName, reason)
 			line = fmt.Sprintf("%s · %s", toolName, truncateForLine(reason, 90))
 		}
 	}

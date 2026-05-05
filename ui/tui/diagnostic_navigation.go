@@ -37,8 +37,11 @@ func (m Model) activateContextPanel(query string, refresh bool) Model {
 
 func (m Model) activateProvidersPanel(provider string, refresh bool) Model {
 	m = m.activateDiagnosticTab("Providers")
+	// refreshProvidersRows is cheap and idempotent — re-run whenever
+	// rows are empty (first visit or after a clear) or refresh is forced.
 	if refresh || len(m.providers.rows) == 0 {
 		m = m.refreshProvidersRows()
+		m.providers.loaded = true
 	}
 	if focused := strings.TrimSpace(provider); focused != "" {
 		m = m.focusProviderRow(focused)

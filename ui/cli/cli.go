@@ -34,7 +34,9 @@ type globalOptions struct {
 	Verbose  bool
 	JSON     bool
 	NoColor  bool
-	Project  string
+	Project     string
+	DataDir     string
+	DataDirPath string
 }
 
 func Run(ctx context.Context, eng *engine.Engine, args []string, version string) int {
@@ -173,6 +175,7 @@ func parseGlobalFlags(args []string) (globalOptions, []string, error) {
 	fs.BoolVar(&opts.JSON, "json", false, "json output mode")
 	fs.BoolVar(&opts.NoColor, "no-color", false, "disable colors")
 	fs.StringVar(&opts.Project, "project", "", "project root path")
+	fs.StringVar(&opts.DataDirPath, "data-dir", "", "data directory override (for multi-instance deployments)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

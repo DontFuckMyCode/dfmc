@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -83,6 +84,9 @@ type providersPanelState struct {
 	// confirm state — destructive actions ask for y/n before executing
 	confirmAction string // e.g. "delete_provider", "delete_model", "delete_pipeline"
 	confirmTarget string // name of the thing being deleted
+	// loaded guard — refreshProvidersRows is idempotent so we gate on
+	// first activation rather than re-reading on every ctrl+o press.
+	loaded bool
 }
 
 // diagnosticPanelsState groups the cold, mostly read-only diagnostic tabs.
@@ -241,13 +245,14 @@ type chatState struct {
 	scrollback          int
 	toolPending         bool
 	toolName            string
-	// pasteBlocks holds multi-line paste segments. Each block stores the
-	// original content and a compact display placeholder so the composer
-	// shows "[pasted text #N +L lines]" instead of 500 raw lines.
-	// Backspace at a block boundary deletes the whole block.
-	// Enter submits all blocks + any regular text as one message.
-	pasteBlocks    []pasteBlock
-	pasteWindowEnd time.Time // if set, paste chunks arriving before this time accumulate into current block
+	// pasteBlocks stores atomic multi-line paste segments. The composer
+	// only contains their placeholders; composeInput replaces placeholders
+	// with the original text at submit time. pasteBurst* catches terminals
+	// that send multi-line paste as "line text" + Enter events while a
+	// stream is active, so pasted lines do not become many queued messages.
+	pasteBlocks     []pasteBlock
+	pasteBurstUntil time.Time
+	pasteBurstBlock int
 }
 
 // pasteBlock represents one multi-line paste operation.
@@ -286,15 +291,21 @@ func (m Model) composeInput() string {
 			continue
 		}
 		// No placeholder match — take one character
-		full.WriteByte(rest[0])
-		rest = rest[1:]
+		r, size := utf8.DecodeRuneInString(rest)
+		if r == utf8.RuneError && size == 0 {
+			break
+		}
+		full.WriteRune(r)
+		rest = rest[size:]
 	}
 	return full.String()
 }
 
-// placeholder returns the compact display string for this block.
+// placeholder returns the compact display string for this block. Keep this
+// ASCII and visually atomic; deleteInputRange treats any edit inside it as a
+// deletion of the stored paste content too.
 func (b pasteBlock) placeholder() string {
-	return fmt.Sprintf("[pasted text #%d +%d lines]", b.blockNum, b.lineCount)
+	return fmt.Sprintf("[Pasted text#%d %d lines]", b.blockNum, b.lineCount)
 }
 
 // intentState — most recent decision from the engine's intent router,

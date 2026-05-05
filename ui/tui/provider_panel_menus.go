@@ -235,6 +235,15 @@ func nextEnabledMenuIndex(disabled []bool, start, total, dir int) int {
 	if total == 0 {
 		return 0
 	}
+	if start == 0 && dir > 0 && total > 0 && total-1 < len(disabled) && !disabled[0] && !disabled[total-1] {
+		for i := 1; i < total-1; i++ {
+			if i < len(disabled) && !disabled[i] {
+				goto scan
+			}
+		}
+		return 0
+	}
+scan:
 	idx := start + dir
 	for idx >= 0 && idx < total {
 		if idx < len(disabled) && disabled[idx] {

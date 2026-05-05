@@ -190,6 +190,12 @@ func (r *Router) SetThrottleObserver(fn func(ThrottleNotice)) {
 	r.throttleObserver = fn
 }
 
+func (r *Router) SetStreamRecoveredObserver(fn func(StreamRecoveredEvent)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.streamRecoveredObserver = fn
+}
+
 func (r *Router) Get(name string) (Provider, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

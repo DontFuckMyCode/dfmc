@@ -53,6 +53,8 @@ var (
 	failStyle               = theme.FailStyle
 	warnStyle               = theme.WarnStyle
 	infoStyle               = theme.InfoStyle
+	ToolStyle               = theme.ToolStyle
+	ToolLineStyle           = theme.ToolLineStyle
 	disabledStyle           = theme.DisabledStyle
 	mentionPickerStyle      = theme.MentionPickerStyle
 	mentionSelectedRowStyle = theme.MentionSelectedRowStyle
@@ -76,7 +78,9 @@ const (
 // --- re-export functions -------------------------------------------------
 
 func sectionHeader(icon, label string) string        { return theme.SectionHeader(icon, label) }
-func renderMarkdownBlocks(text string) []string      { return theme.RenderMarkdownBlocks(text) }
+func renderMarkdownBlocks(text string, width int) []string { return theme.RenderMarkdownBlocks(text, width) }
+func renderMarkdownTable(lines []string, width int) (int, []string) { return theme.RenderMarkdownTable(lines, width) }
+func renderMarkdownLite(text string) string { return theme.RenderMarkdownLite(text) }
 func renderToolChip(chip toolChip, width int) string { return theme.RenderToolChip(chip, width) }
 func renderInlineToolChips(chips []toolChip, width int) string {
 	return theme.RenderInlineToolChips(chips, width)

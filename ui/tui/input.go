@@ -13,7 +13,12 @@ package tui
 // file's Update/handleChatKey switch still drives every keystroke,
 // these helpers just stop crowding it.
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
+
+const pasteBurstWindow = 250 * time.Millisecond
 
 // syncChatCursor reconciles the visible cursor with the current input
 // buffer. The cursor is "manual" once the user has explicitly moved
@@ -40,9 +45,89 @@ func (m *Model) syncChatCursor() {
 
 func (m *Model) setChatInput(text string) {
 	m.chat.input = text
+	m.prunePasteBlocksForInput()
 	m.chat.cursorManual = false
-	m.chat.cursor = len([]rune(text))
-	m.chat.cursorInput = text
+	m.chat.cursor = len([]rune(m.chat.input))
+	m.chat.cursorInput = m.chat.input
+}
+
+func (m *Model) addPasteBlock(content string) pasteBlock {
+	content = normalizePastedText(content)
+	block := pasteBlock{
+		content:   content,
+		blockNum:  len(m.chat.pasteBlocks) + 1,
+		lineCount: pasteLineCount(content),
+	}
+	m.chat.pasteBlocks = append(m.chat.pasteBlocks, block)
+	m.insertInputText(block.placeholder())
+	return block
+}
+
+func (m *Model) armPasteBurstCandidate(now time.Time) {
+	m.chat.pasteBurstUntil = now.Add(pasteBurstWindow)
+	m.chat.pasteBurstBlock = 0
+}
+
+func (m *Model) pasteBurstActive(now time.Time) bool {
+	return m.chat.pasteBurstBlock > 0 && !m.chat.pasteBurstUntil.IsZero() && now.Before(m.chat.pasteBurstUntil)
+}
+
+func (m *Model) pasteBurstCandidateActive(now time.Time) bool {
+	return m.chat.pasteBurstBlock == 0 && !m.chat.pasteBurstUntil.IsZero() && now.Before(m.chat.pasteBurstUntil)
+}
+
+func (m *Model) clearPasteBurst() {
+	m.chat.pasteBurstUntil = time.Time{}
+	m.chat.pasteBurstBlock = 0
+}
+
+func (m *Model) startPasteBurstFromInput(now time.Time) bool {
+	content := normalizePastedText(m.chat.input)
+	if strings.TrimSpace(content) == "" {
+		m.clearPasteBurst()
+		return false
+	}
+	m.chat.input = ""
+	m.chat.cursor = 0
+	m.chat.cursorManual = false
+	m.chat.cursorInput = ""
+	block := m.addPasteBlock(content + "\n")
+	m.chat.pasteBurstBlock = block.blockNum
+	m.chat.pasteBurstUntil = now.Add(pasteBurstWindow)
+	return true
+}
+
+func (m *Model) appendPasteBurstText(text string, now time.Time) bool {
+	if !m.pasteBurstActive(now) {
+		return false
+	}
+	idx := m.chat.pasteBurstBlock - 1
+	if idx < 0 || idx >= len(m.chat.pasteBlocks) {
+		m.clearPasteBurst()
+		return false
+	}
+	text = normalizePastedText(text)
+	old := m.chat.pasteBlocks[idx].placeholder()
+	m.chat.pasteBlocks[idx].content += text
+	m.chat.pasteBlocks[idx].lineCount = pasteLineCount(m.chat.pasteBlocks[idx].content)
+	next := m.chat.pasteBlocks[idx].placeholder()
+	if old != next {
+		m.chat.input = strings.Replace(m.chat.input, old, next, 1)
+	}
+	m.chat.pasteBurstUntil = now.Add(pasteBurstWindow)
+	m.syncChatCursor()
+	return true
+}
+
+func normalizePastedText(content string) string {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+	return content
+}
+
+func (m *Model) clearPasteBlocks() {
+	m.chat.pasteBlocks = nil
+	m.clearPasteBurst()
 }
 
 func (m *Model) insertInputText(text string) {
@@ -69,9 +154,9 @@ func (m *Model) insertInputText(text string) {
 	m.chat.cursorInput = m.chat.input
 }
 
-// deleteInputBeforeCursor removes the character before the cursor. When the
-// cursor sits at the end of a paste-block placeholder, the entire block is
-// removed (content + placeholder) and subsequent blocks renumbered.
+// deleteInputBeforeCursor removes the character before the cursor. Paste
+// placeholders are atomic: deleting any rune inside one removes both the
+// visible placeholder and its stored backing text.
 func (m *Model) deleteInputBeforeCursor() {
 	m.syncChatCursor()
 	runes := []rune(m.chat.input)
@@ -82,39 +167,10 @@ func (m *Model) deleteInputBeforeCursor() {
 	if cursor > len(runes) {
 		cursor = len(runes)
 	}
-	// Check if cursor is at the end of a paste block placeholder.
-	if m.chat.cursor == cursor && cursor > 0 {
-		before := string(runes[:cursor])
-		for i, b := range m.chat.pasteBlocks {
-			ph := b.placeholder()
-			if strings.HasSuffix(before, ph) {
-				// Cursor is at the end of this placeholder — delete whole block.
-				m.chat.pasteBlocks = append(m.chat.pasteBlocks[:i], m.chat.pasteBlocks[i+1:]...)
-				// Renumber remaining blocks.
-				for j := i; j < len(m.chat.pasteBlocks); j++ {
-					m.chat.pasteBlocks[j].blockNum = j + 1
-				}
-				// Remove placeholder from input.
-				newBefore := before[:len(before)-len(ph)]
-				after := string(runes[cursor:])
-				m.chat.input = newBefore + after
-				m.chat.cursor = len([]rune(newBefore))
-				m.chat.cursorManual = true
-				m.chat.cursorInput = m.chat.input
-				return
-			}
-		}
-	}
-	updated := append([]rune(nil), runes[:cursor-1]...)
-	updated = append(updated, runes[cursor:]...)
-	m.chat.input = string(updated)
-	m.chat.cursor = cursor - 1
-	m.chat.cursorManual = true
-	m.chat.cursorInput = m.chat.input
+	m.deleteInputRange(cursor-1, cursor)
 }
 
-// deleteInputAtCursor removes the rune after the cursor. When the cursor sits
-// at the start of a paste block placeholder, the entire block is removed.
+// deleteInputAtCursor removes the rune after the cursor. Paste placeholders are atomic, matching deleteInputBeforeCursor.
 func (m *Model) deleteInputAtCursor() {
 	m.syncChatCursor()
 	runes := []rune(m.chat.input)
@@ -128,30 +184,106 @@ func (m *Model) deleteInputAtCursor() {
 	if cursor >= len(runes) {
 		return
 	}
-	// Check if cursor is at the start of a paste block placeholder.
-	after := string(runes[cursor:])
-	for i, b := range m.chat.pasteBlocks {
-		if strings.HasPrefix(after, b.placeholder()) {
-			// Cursor is at the start of this placeholder — delete whole block.
-			m.chat.pasteBlocks = append(m.chat.pasteBlocks[:i], m.chat.pasteBlocks[i+1:]...)
-			for j := i; j < len(m.chat.pasteBlocks); j++ {
-				m.chat.pasteBlocks[j].blockNum = j + 1
-			}
-			// Remove placeholder from input.
-			before := string(runes[:cursor])
-			m.chat.input = before + after[len(b.placeholder()):]
-			m.chat.cursor = cursor
-			m.chat.cursorManual = true
-			m.chat.cursorInput = m.chat.input
-			return
-		}
+	m.deleteInputRange(cursor, cursor+1)
+}
+
+type pastePlaceholderSpan struct {
+	blockIndex int
+	start      int
+	end        int
+}
+
+func (m *Model) pastePlaceholderSpans() []pastePlaceholderSpan {
+	if len(m.chat.pasteBlocks) == 0 || m.chat.input == "" {
+		return nil
 	}
-	updated := append([]rune(nil), runes[:cursor]...)
-	updated = append(updated, runes[cursor+1:]...)
+	spans := make([]pastePlaceholderSpan, 0, len(m.chat.pasteBlocks))
+	for i, b := range m.chat.pasteBlocks {
+		ph := b.placeholder()
+		byteStart := strings.Index(m.chat.input, ph)
+		if byteStart < 0 {
+			continue
+		}
+		start := len([]rune(m.chat.input[:byteStart]))
+		spans = append(spans, pastePlaceholderSpan{
+			blockIndex: i,
+			start:      start,
+			end:        start + len([]rune(ph)),
+		})
+	}
+	return spans
+}
+
+func (m *Model) deleteInputRange(start, end int) {
+	m.syncChatCursor()
+	runes := []rune(m.chat.input)
+	if len(runes) == 0 {
+		return
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end > len(runes) {
+		end = len(runes)
+	}
+	if start >= end {
+		return
+	}
+	for {
+		hit := -1
+		for _, span := range m.pastePlaceholderSpans() {
+			if start < span.end && end > span.start {
+				if span.start < start {
+					start = span.start
+				}
+				if span.end > end {
+					end = span.end
+				}
+				hit = span.blockIndex
+				break
+			}
+		}
+		if hit < 0 {
+			break
+		}
+		m.chat.pasteBlocks = append(m.chat.pasteBlocks[:hit], m.chat.pasteBlocks[hit+1:]...)
+	}
+	runes = []rune(m.chat.input)
+	updated := append([]rune(nil), runes[:start]...)
+	updated = append(updated, runes[end:]...)
 	m.chat.input = string(updated)
-	m.chat.cursor = cursor
+	m.renumberPastePlaceholders()
+	m.chat.cursor = start
 	m.chat.cursorManual = true
 	m.chat.cursorInput = m.chat.input
+}
+
+func (m *Model) prunePasteBlocksForInput() {
+	if len(m.chat.pasteBlocks) == 0 {
+		return
+	}
+	kept := m.chat.pasteBlocks[:0]
+	for _, b := range m.chat.pasteBlocks {
+		if strings.Contains(m.chat.input, b.placeholder()) {
+			kept = append(kept, b)
+		}
+	}
+	m.chat.pasteBlocks = kept
+	m.renumberPastePlaceholders()
+}
+
+func (m *Model) renumberPastePlaceholders() {
+	if len(m.chat.pasteBlocks) == 0 {
+		return
+	}
+	for i := range m.chat.pasteBlocks {
+		old := m.chat.pasteBlocks[i].placeholder()
+		m.chat.pasteBlocks[i].blockNum = i + 1
+		next := m.chat.pasteBlocks[i].placeholder()
+		if old != next {
+			m.chat.input = strings.Replace(m.chat.input, old, next, 1)
+		}
+	}
 }
 
 func (m *Model) moveChatCursor(delta int) {
@@ -351,12 +483,7 @@ func (m *Model) deleteInputWordBeforeCursor() {
 		cursor = len(runes)
 	}
 	start := chatInputWordBoundaryLeft(runes, cursor)
-	updated := append([]rune(nil), runes[:start]...)
-	updated = append(updated, runes[cursor:]...)
-	m.chat.input = string(updated)
-	m.chat.cursor = start
-	m.chat.cursorManual = true
-	m.chat.cursorInput = m.chat.input
+	m.deleteInputRange(start, cursor)
 }
 
 // deleteInputToEndOfLine implements Ctrl+K: kill text from the cursor to
@@ -371,10 +498,7 @@ func (m *Model) deleteInputToEndOfLine() {
 	if cursor >= len(runes) {
 		return
 	}
-	m.chat.input = string(runes[:cursor])
-	m.chat.cursor = cursor
-	m.chat.cursorManual = true
-	m.chat.cursorInput = m.chat.input
+	m.deleteInputRange(cursor, len(runes))
 }
 
 func (m *Model) pushInputHistory(raw string) {

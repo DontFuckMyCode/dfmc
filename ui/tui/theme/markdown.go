@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 )
 
 func RenderMarkdownLite(text string) string {
@@ -20,9 +22,12 @@ func RenderMarkdownLite(text string) string {
 	return out
 }
 
-func RenderMarkdownBlocks(text string) []string {
+func RenderMarkdownBlocks(text string, width int) []string {
 	if text == "" {
 		return nil
+	}
+	if width <= 0 {
+		width = 120
 	}
 	rawLines := strings.Split(text, "\n")
 	out := make([]string, 0, len(rawLines))
@@ -46,7 +51,7 @@ func RenderMarkdownBlocks(text string) []string {
 			continue
 		}
 		if IsTableHeader(line) && i+1 < len(rawLines) && IsTableSeparator(rawLines[i+1]) {
-			consumed, rendered := renderMarkdownTable(rawLines[i:])
+			consumed, rendered := RenderMarkdownTable(rawLines[i:], width)
 			out = append(out, rendered...)
 			i += consumed - 1
 			continue
@@ -123,7 +128,7 @@ func ContainsBoxSeparator(t string) bool {
 	return hasDash
 }
 
-func renderMarkdownTable(lines []string) (int, []string) {
+func RenderMarkdownTable(lines []string, width int) (int, []string) {
 	if len(lines) < 2 {
 		return 0, nil
 	}
@@ -157,20 +162,21 @@ func renderMarkdownTable(lines []string) (int, []string) {
 		return 0, nil
 	}
 
+	// Calculate raw column widths from content (in visual cells)
 	rendered := make([][]string, len(rows))
-	visibleWidth := make([][]int, len(rows))
+	cellWidth := make([][]int, len(rows))
 	colWidths := make([]int, 0, len(rows[0]))
 	for ri, row := range rows {
 		rendered[ri] = make([]string, len(row))
-		visibleWidth[ri] = make([]int, len(row))
+		cellWidth[ri] = make([]int, len(row))
 		for ci, cell := range row {
 			styled := RenderMarkdownLite(cell)
 			if ri == 0 {
 				styled = BoldStyle.Render(AccentStyle.Render(styled))
 			}
-			w := lipgloss.Width(styled)
+			w := runewidth.StringWidth(styled)
 			rendered[ri][ci] = styled
-			visibleWidth[ri][ci] = w
+			cellWidth[ri][ci] = w
 			if ci >= len(colWidths) {
 				colWidths = append(colWidths, w)
 				continue
@@ -181,22 +187,104 @@ func renderMarkdownTable(lines []string) (int, []string) {
 		}
 	}
 
-	out := make([]string, 0, len(rows)+1)
-	for ri := range rendered {
-		parts := make([]string, 0, len(rendered[ri]))
-		for ci, styled := range rendered[ri] {
-			pad := 0
-			if ci < len(colWidths) {
-				pad = colWidths[ci] - visibleWidth[ri][ci]
-			}
-			padded := styled + strings.Repeat(" ", Max0(pad))
-			parts = append(parts, padded)
+	// Clamp column widths so the full table fits within terminal width
+	numCols := len(colWidths)
+	if numCols == 0 {
+		return 0, nil
+	}
+	// "  │  " = 3 runes, plus leading "  " = 2 runes
+	separatorBudget := 2 + 3*(numCols-1) // "  " + (numCols-1) * "│"
+	minColWidth := 4
+	available := width - separatorBudget
+	if available < minColWidth*numCols {
+		available = minColWidth * numCols
+	}
+	totalRaw := 0
+	for _, cw := range colWidths {
+		totalRaw += cw
+	}
+	scale := 1.0
+	if totalRaw > available {
+		scale = float64(available) / float64(totalRaw)
+	}
+	colW := make([]int, numCols)
+	for ci, cw := range colWidths {
+		scaled := int(float64(cw) * scale)
+		if scaled < minColWidth {
+			scaled = minColWidth
 		}
-		joined := "  " + strings.Join(parts, SubtleStyle.Render("  │  "))
-		out = append(out, joined)
+		colW[ci] = scaled
+	}
+
+	// Wrap overflowing cells into multiple lines
+	type cellLines []string
+	cellContent := make([][]cellLines, len(rows))
+	for ri := range rendered {
+		cellContent[ri] = make([]cellLines, numCols)
+		for ci := 0; ci < numCols; ci++ {
+			cell := ""
+			origW := 0
+			if ci < len(rendered[ri]) {
+				cell = rendered[ri][ci]
+				origW = cellWidth[ri][ci]
+			}
+			limit := colW[ci]
+			if origW > limit && limit > 0 {
+				wrapped := ansi.Wrap(cell, limit, " 	,;:.!?/\\_-")
+				parts := strings.Split(wrapped, "\n")
+				cellContent[ri][ci] = parts
+			} else {
+				cellContent[ri][ci] = cellLines{cell}
+			}
+		}
+	}
+
+	// Compute max lines per column for vertical alignment
+	maxLines := make([]int, numCols)
+	for ri := range cellContent {
+		for ci := range cellContent[ri] {
+			if len(cellContent[ri][ci]) > maxLines[ci] {
+				maxLines[ci] = len(cellContent[ri][ci])
+			}
+		}
+	}
+
+	sep := SubtleStyle.Render("  │  ")
+	out := make([]string, 0, len(rows)+len(rows)*3) // rough over-alloc
+	for ri := range rendered {
+		rowOut := make([][]string, numCols)
+		for ci := range rowOut {
+			rowOut[ci] = make([]string, maxLines[ci])
+			for li := range rowOut[ci] {
+				parts := cellContent[ri][ci]
+				if li < len(parts) {
+					padded := parts[li] + strings.Repeat(" ", Max0(colW[ci]-runewidth.StringWidth(parts[li])))
+					rowOut[ci][li] = padded
+				} else {
+					rowOut[ci][li] = strings.Repeat(" ", colW[ci])
+				}
+			}
+		}
+		totalRowLines := 1
+		for _, cl := range rowOut {
+			if len(cl) > totalRowLines {
+				totalRowLines = len(cl)
+			}
+		}
+		for lineIdx := 0; lineIdx < totalRowLines; lineIdx++ {
+			parts := make([]string, 0, numCols)
+			for ci := range rowOut {
+				if lineIdx < len(rowOut[ci]) {
+					parts = append(parts, rowOut[ci][lineIdx])
+				} else {
+					parts = append(parts, strings.Repeat(" ", colW[ci]))
+				}
+			}
+			out = append(out, "  "+strings.Join(parts, sep))
+		}
 		if ri == 0 {
-			sepParts := make([]string, 0, len(colWidths))
-			for _, w := range colWidths {
+			sepParts := make([]string, 0, numCols)
+			for _, w := range colW {
 				sepParts = append(sepParts, strings.Repeat("─", w))
 			}
 			out = append(out, SubtleStyle.Render("  "+strings.Join(sepParts, "──┼──")))

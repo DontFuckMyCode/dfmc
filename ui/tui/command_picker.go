@@ -137,6 +137,7 @@ func (m Model) startCommandPicker(kind, query string, persist bool) Model {
 	m.commandPicker.query = query
 	m.commandPicker.index = 0
 	m.commandPicker.all = m.commandPickerBaseItems(kind)
+	m.commandPicker.index = m.defaultCommandPickerIndex(kind, m.commandPicker.all)
 	m.syncInputWithCommandPicker()
 	label := strings.TrimSpace(kind)
 	if label != "" {
@@ -147,6 +148,27 @@ func (m Model) startCommandPicker(kind, query string, persist bool) Model {
 	}
 	m.notice = label + " picker ready. Enter to apply, Ctrl+S toggle persist."
 	return m
+}
+
+func (m Model) defaultCommandPickerIndex(kind string, items []commandPickerItem) int {
+	if len(items) == 0 {
+		return 0
+	}
+	var preferred string
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "provider":
+		preferred = m.currentProvider()
+	case "model":
+		preferred = m.currentModel()
+	default:
+		return 0
+	}
+	for i, item := range items {
+		if strings.EqualFold(strings.TrimSpace(item.Value), strings.TrimSpace(preferred)) {
+			return i
+		}
+	}
+	return 0
 }
 
 func (m Model) closeCommandPicker() Model {

@@ -93,7 +93,7 @@ func tabFKeyHint(tab string) string {
 	case "Activity":
 		return "F7"
 	case "Providers":
-		return "F2"
+		return "Ctrl+O"
 	case "Files":
 		return "F3"
 	case "Patch":
@@ -113,7 +113,7 @@ func tabFKeyHint(tab string) string {
 	case "Security":
 		return "F12"
 	case "Status":
-		return "Alt+I"
+		return "F2/Alt+I"
 	case "Plans":
 		return "Alt+Y"
 	case "Context":

@@ -28,13 +28,142 @@ func TestPasteBlockDetection(t *testing.T) {
 	}
 
 	// Input should contain the placeholder
-	if !strings.Contains(m2.chat.input, "[pasted text #1") {
+	if !strings.Contains(m2.chat.input, "[Pasted text#1 3 lines]") {
 		t.Fatalf("expected placeholder in input, got %q", m2.chat.input)
 	}
 
 	// Notice should confirm paste
 	if !strings.Contains(m2.notice, "PASTE") {
 		t.Fatalf("expected paste notice, got %q", m2.notice)
+	}
+}
+
+func TestLinePasteWhileStreamingQueuesAsOneMessage(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.chat.sending = true
+	m.chat.streamIndex = 1
+	m.chat.transcript = []chatLine{
+		newChatLine(chatRoleUser, "working"),
+		newChatLine(chatRoleAssistant, ""),
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("first line")})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+
+	if len(m.chat.pendingQueue) != 0 {
+		t.Fatalf("line-paste enter must not queue first line, got %#v", m.chat.pendingQueue)
+	}
+	if len(m.chat.pasteBlocks) != 1 {
+		t.Fatalf("expected active paste block after first paste enter, got %d", len(m.chat.pasteBlocks))
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("second line")})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+
+	if len(m.chat.pendingQueue) != 0 {
+		t.Fatalf("line-paste enter must keep collecting, got queued %#v", m.chat.pendingQueue)
+	}
+	if got := m.chat.pasteBlocks[0].content; !strings.Contains(got, "first line\nsecond line\n") {
+		t.Fatalf("expected one collected paste block, got %q", got)
+	}
+
+	m.chat.pasteBurstUntil = time.Now().Add(-time.Second)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+
+	if len(m.chat.pendingQueue) != 1 {
+		t.Fatalf("expected exactly one queued paste message, got %#v", m.chat.pendingQueue)
+	}
+	if got := m.chat.pendingQueue[0]; !strings.Contains(got, "first line") || !strings.Contains(got, "second line") {
+		t.Fatalf("queued paste should contain all lines, got %q", got)
+	}
+	if len(m.chat.pasteBlocks) != 0 || strings.TrimSpace(m.chat.input) != "" {
+		t.Fatalf("paste state should clear after queueing, blocks=%d input=%q", len(m.chat.pasteBlocks), m.chat.input)
+	}
+}
+
+func TestLinePasteWhileIdleDoesNotSubmitEachLine(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("first line")})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+
+	if len(m.chat.transcript) != 0 {
+		t.Fatalf("first pasted line should not submit immediately, got transcript %#v", m.chat.transcript)
+	}
+	if len(m.chat.pasteBlocks) != 1 {
+		t.Fatalf("expected active paste block after first paste enter, got %d", len(m.chat.pasteBlocks))
+	}
+	if !strings.Contains(m.chat.input, "[Pasted text#1 2 lines]") {
+		t.Fatalf("expected paste placeholder in input, got %q", m.chat.input)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("second line")})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+
+	if len(m.chat.transcript) != 0 {
+		t.Fatalf("second pasted line should still be collected, got transcript %#v", m.chat.transcript)
+	}
+	if got := m.chat.pasteBlocks[0].content; got != "first line\nsecond line\n" {
+		t.Fatalf("expected collected paste content, got %q", got)
+	}
+
+	m.chat.pasteBurstUntil = time.Now().Add(-time.Second)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+
+	if len(m.chat.pasteBlocks) != 0 {
+		t.Fatalf("paste blocks should clear after submit, got %d", len(m.chat.pasteBlocks))
+	}
+	if len(m.chat.transcript) == 0 || !strings.Contains(m.chat.transcript[0].Content, "first line\nsecond line") {
+		t.Fatalf("expected one submitted multiline message, got %#v", m.chat.transcript)
+	}
+}
+
+func TestBracketedPasteWhileStreamingStaysInInputUntilEnter(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.chat.sending = true
+	m.chat.streamIndex = 1
+	m.chat.transcript = []chatLine{
+		newChatLine(chatRoleUser, "working"),
+		newChatLine(chatRoleAssistant, ""),
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("alpha\nbeta\ngamma"), Paste: true})
+	m = next.(Model)
+
+	if len(m.chat.pendingQueue) != 0 {
+		t.Fatalf("paste should stay in input until explicit Enter, got queue %#v", m.chat.pendingQueue)
+	}
+	if len(m.chat.pasteBlocks) != 1 {
+		t.Fatalf("expected one stored paste block, got %d", len(m.chat.pasteBlocks))
+	}
+	if !strings.Contains(m.chat.input, "[Pasted text#1 3 lines]") {
+		t.Fatalf("expected visible atomic placeholder, got %q", m.chat.input)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+
+	if len(m.chat.pendingQueue) != 1 {
+		t.Fatalf("explicit Enter should queue exactly one paste message, got %#v", m.chat.pendingQueue)
+	}
+	if got := m.chat.pendingQueue[0]; got != "alpha\nbeta\ngamma" {
+		t.Fatalf("queued paste should preserve original content, got %q", got)
+	}
+	if len(m.chat.pasteBlocks) != 0 || m.chat.input != "" {
+		t.Fatalf("paste input should clear after queueing, blocks=%d input=%q", len(m.chat.pasteBlocks), m.chat.input)
 	}
 }
 
@@ -104,9 +233,7 @@ func TestPasteBlockMultiplePastes(t *testing.T) {
 	if len(m2.chat.pasteBlocks) != 1 {
 		t.Fatalf("expected 1 paste block, got %d", len(m2.chat.pasteBlocks))
 	}
-
-	// Simulate the paste window expiring, then paste a second block.
-	m2.chat.pasteWindowEnd = time.Time{}
+	// Paste a second independent block.
 	next2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("block2\nblock2b")})
 	m3, ok := next2.(Model)
 	if !ok {
@@ -124,93 +251,71 @@ func TestPasteBlockMultiplePastes(t *testing.T) {
 	}
 }
 
-// TestPasteWindowsTerminal simulates Windows Terminal where multi-line paste
-// arrives as separate KeyRunes chunks (one per line) with KeyEnter events
-// between them. Everything must accumulate into ONE paste block.
-func TestPasteWindowsTerminal(t *testing.T) {
+func TestPastePlaceholderBackspaceDeletesStoredBlock(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
 
-	// First line triggers paste detection (long enough).
-	next1, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("this is the first line")})
-	m2, _ := next1.(Model)
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("one\ntwo\nthree"), Paste: true})
+	m2 := next.(Model)
 	if len(m2.chat.pasteBlocks) != 1 {
-		t.Fatalf("expected 1 paste block, got %d", len(m2.chat.pasteBlocks))
+		t.Fatalf("expected paste block, got %d", len(m2.chat.pasteBlocks))
 	}
 
-	// Terminal sends Enter as separate KeyEnter event.
-	t.Logf("before Enter: pasteBlocks=%d windowEnd=%v", len(m2.chat.pasteBlocks), m2.chat.pasteWindowEnd)
-	next2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m3, _ := next2.(Model)
-	t.Logf("after Enter: pasteBlocks=%d windowEnd=%v input=%q", len(m3.chat.pasteBlocks), m3.chat.pasteWindowEnd, m3.chat.input)
+	// Move into the middle of the compact placeholder and delete one rune.
+	m2.chat.cursor = len([]rune("[Pasted text#1"))
+	m2.chat.cursorManual = true
+	m2.chat.cursorInput = m2.chat.input
+	m2.deleteInputBeforeCursor()
+
+	if len(m2.chat.pasteBlocks) != 0 {
+		t.Fatalf("stored paste block should be removed after placeholder edit, got %d", len(m2.chat.pasteBlocks))
+	}
+	if strings.Contains(m2.chat.input, "Pasted") {
+		t.Fatalf("placeholder should be removed from input, got %q", m2.chat.input)
+	}
+}
+
+func TestPastePlaceholderRenumbersAfterDelete(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+
+	next1, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("first\nblock"), Paste: true})
+	m2 := next1.(Model)
+	m2.insertInputText(" ")
+	next2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("second\nblock"), Paste: true})
+	m3 := next2.(Model)
+	if len(m3.chat.pasteBlocks) != 2 {
+		t.Fatalf("expected 2 paste blocks, got %d", len(m3.chat.pasteBlocks))
+	}
+
+	m3.chat.cursor = len([]rune(m3.chat.pasteBlocks[0].placeholder()))
+	m3.chat.cursorManual = true
+	m3.chat.cursorInput = m3.chat.input
+	m3.deleteInputBeforeCursor()
+
 	if len(m3.chat.pasteBlocks) != 1 {
-		t.Fatalf("expected 1 paste block after Enter, got %d", len(m3.chat.pasteBlocks))
+		t.Fatalf("expected one remaining block, got %d", len(m3.chat.pasteBlocks))
 	}
-	if strings.Count(m3.chat.pasteBlocks[0].content, "\n") != 1 {
-		t.Fatalf("expected 1 newline in block, got %q", m3.chat.pasteBlocks[0].content)
+	if !strings.Contains(m3.chat.input, "[Pasted text#1 2 lines]") {
+		t.Fatalf("remaining placeholder should be renumbered, got %q", m3.chat.input)
 	}
+	full := m3.composeInput()
+	if strings.Contains(full, "first") || !strings.Contains(full, "second") {
+		t.Fatalf("composeInput kept wrong paste content: %q", full)
+	}
+}
 
-	// Second line is short but inside paste window.
-	next3, _ := m3.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("line two")})
-	m4, _ := next3.(Model)
-	if len(m4.chat.pasteBlocks) != 1 {
-		t.Fatalf("expected 1 paste block, got %d", len(m4.chat.pasteBlocks))
-	}
-	if !strings.Contains(m4.chat.pasteBlocks[0].content, "line two") {
-		t.Fatalf("expected second line accumulated, got %q", m4.chat.pasteBlocks[0].content)
-	}
+func TestPasteLongSingleLineTypingDoesNotBecomePaste(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
 
-	// Another Enter.
-	next4, _ := m4.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m5, _ := next4.(Model)
-	if strings.Count(m5.chat.pasteBlocks[0].content, "\n") != 2 {
-		t.Fatalf("expected 2 newlines, got %q", m5.chat.pasteBlocks[0].content)
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("this is the first line")})
+	m2 := next.(Model)
+	if len(m2.chat.pasteBlocks) != 0 {
+		t.Fatalf("plain long typing must not create paste blocks, got %d", len(m2.chat.pasteBlocks))
 	}
-
-	// Third line.
-	next5, _ := m5.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("line three")})
-	m6, _ := next5.(Model)
-	if !strings.Contains(m6.chat.pasteBlocks[0].content, "line three") {
-		t.Fatalf("expected third line, got %q", m6.chat.pasteBlocks[0].content)
-	}
-
-	// Wait for paste window to close, then manual Enter submits as ONE message.
-	// Note: prior to the Enter-extends-window fix, this required a 250ms sleep
-	// because every swallowed Enter re-opened the window. With the fix the
-	// window decays naturally and the user-perceived behavior is "press Enter
-	// after a brief pause and it submits"; we still wait the full 200ms here
-	// to assert the natural decay path, not the in-window path.
-	t.Logf("before final Enter: pasteBlocks=%d windowEnd=%v now=%v", len(m6.chat.pasteBlocks), m6.chat.pasteWindowEnd, time.Now())
-	time.Sleep(220 * time.Millisecond)
-	t.Logf("after sleep: now=%v", time.Now())
-	next6, _ := m6.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m7, _ := next6.(Model)
-	t.Logf("after final Enter: pasteBlocks=%d windowEnd=%v input=%q sending=%v", len(m7.chat.pasteBlocks), m7.chat.pasteWindowEnd, m7.chat.input, m7.chat.sending)
-
-	if len(m7.chat.pasteBlocks) != 0 {
-		t.Fatalf("expected blocks cleared, got %d", len(m7.chat.pasteBlocks))
-	}
-
-	userCount := 0
-	for _, line := range m7.chat.transcript {
-		if line.Role == "user" {
-			userCount++
-		}
-	}
-	if userCount != 1 {
-		t.Fatalf("expected 1 user message, got %d", userCount)
-	}
-
-	found := false
-	for _, line := range m7.chat.transcript {
-		if line.Role == "user" && strings.Contains(line.Content, "first line") &&
-			strings.Contains(line.Content, "line two") && strings.Contains(line.Content, "line three") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected single message with all lines, got: %v", m7.chat.transcript)
+	if m2.chat.input != "this is the first line" {
+		t.Fatalf("expected text inserted normally, got %q", m2.chat.input)
 	}
 }
 
@@ -244,49 +349,22 @@ func TestPasteBlockCtrlCCancels(t *testing.T) {
 	}
 }
 
-// TestPasteEnterDoesNotExtendWindow captures the regression where every
-// swallowed Enter pushed pasteWindowEnd forward 200ms, trapping the user
-// in the window forever — every subsequent Enter would still be inside
-// it, so the message could never submit. The fix removes the window
-// extension on Enter; the natural 200ms expiry is what releases us.
-func TestPasteEnterDoesNotExtendWindow(t *testing.T) {
+func TestPasteEnterSubmitsInsteadOfWaitingOnWindow(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
 
-	// A long chunk with no internal newline trips the >=16 char heuristic
-	// and opens the paste window (lines 94-95 in chat_key.go).
-	next1, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("this is a long chunk without newline")})
-	m2, _ := next1.(Model)
-	if m2.chat.pasteWindowEnd.IsZero() {
-		t.Fatalf("expected paste window opened for >=16 char chunk")
+	for _, r := range "this is the first line" {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(Model)
 	}
-	windowBefore := m2.chat.pasteWindowEnd
-
-	// Press Enter inside the window. It should be swallowed as a newline,
-	// but pasteWindowEnd must NOT move forward.
-	time.Sleep(20 * time.Millisecond)
+	m2 := m
+	if len(m2.chat.pasteBlocks) != 0 {
+		t.Fatalf("plain long input should not open paste mode, got %d blocks", len(m2.chat.pasteBlocks))
+	}
 	next2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m3, _ := next2.(Model)
-
-	if !windowBefore.Equal(m3.chat.pasteWindowEnd) {
-		t.Fatalf("Enter inside paste window must not extend it: before=%v after=%v (delta %v)",
-			windowBefore, m3.chat.pasteWindowEnd, m3.chat.pasteWindowEnd.Sub(windowBefore))
-	}
-	if len(m3.chat.pasteBlocks) != 1 {
-		t.Fatalf("expected paste block preserved, got %d", len(m3.chat.pasteBlocks))
-	}
-	if !strings.Contains(m3.chat.pasteBlocks[0].content, "\n") {
-		t.Fatalf("expected swallowed Enter folded as newline, got %q", m3.chat.pasteBlocks[0].content)
-	}
-
-	// The bug was that subsequent Enters kept re-extending the window,
-	// so submission was impossible. With the fix, after the natural
-	// 200ms expiry the next Enter must submit.
-	time.Sleep(220 * time.Millisecond)
-	next3, _ := m3.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m4, _ := next3.(Model)
-	if len(m4.chat.pasteBlocks) != 0 {
-		t.Fatalf("expected blocks cleared on submit after window expiry, got %d", len(m4.chat.pasteBlocks))
+	m3 := next2.(Model)
+	if len(m3.chat.transcript) == 0 || !strings.Contains(m3.chat.transcript[0].Content, "first line") {
+		t.Fatalf("expected Enter to submit normal long input, got %#v", m3.chat.transcript)
 	}
 }
 
@@ -324,7 +402,7 @@ func TestPasteBracketedPaste(t *testing.T) {
 	if len(m2.chat.pasteBlocks) != 1 {
 		t.Fatalf("expected 1 paste block, got %d", len(m2.chat.pasteBlocks))
 	}
-	if !strings.Contains(m2.chat.input, "[pasted text #1") {
+	if !strings.Contains(m2.chat.input, "[Pasted text#1 3 lines]") {
 		t.Fatalf("expected placeholder in input, got %q", m2.chat.input)
 	}
 

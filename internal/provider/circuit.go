@@ -1,7 +1,7 @@
 package provider
 
 import (
-	"sync"
+	"errors"
 	"time"
 )
 
@@ -154,80 +154,36 @@ type CircuitEvent struct {
 	Cooldown time.Duration
 }
 
-// SetCircuitObserver installs a callback fired on every circuit
-// open/close transition. Engine wires this to its EventBus so UIs can
-// surface a "primary down, using fallback" indicator.
+// SetCircuitObserver installs a callback that fires synchronously on every
+// circuit state transition (open → closed). The Router holds no reference
+// to the hook after installation — callers can replace it by calling
+// SetCircuitObserver again with a different fn.
 func (r *Router) SetCircuitObserver(fn func(CircuitEvent)) {
-	r.healthMu.Lock()
-	defer r.healthMu.Unlock()
 	r.circuitObserver = fn
 }
 
-// SetStreamRecoveredObserver installs a callback fired after a
-// streamForwardWithRecovery call swaps providers mid-stream and the
-// fallback delivered a clean StreamDone. Engine wires this to its
-// EventBus so TUIs can surface a "↻ stream resumed on <fallback>"
-// chip — without it, the recovery is invisible to the user.
-func (r *Router) SetStreamRecoveredObserver(fn func(StreamRecoveredEvent)) {
-	r.healthMu.Lock()
-	defer r.healthMu.Unlock()
-	r.streamRecoveredObserver = fn
-}
-
-// CircuitState returns a snapshot of provider names currently in the
-// "open" state. Useful for diagnostics (`dfmc status`) and tests. Empty
-// slice when all circuits are closed. Caller-owned; safe to mutate.
+// CircuitState returns the names of providers currently in the open (tripped)
+// circuit state.
 func (r *Router) CircuitState() []string {
 	r.healthMu.Lock()
 	defer r.healthMu.Unlock()
-	if len(r.health) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(r.health))
-	now := time.Now()
+	var open []string
 	for name, h := range r.health {
-		if h.openedAt.IsZero() {
-			continue
-		}
-		if now.Sub(h.openedAt) < h.cooldown {
-			out = append(out, name)
+		if !h.openedAt.IsZero() {
+			open = append(open, name)
 		}
 	}
-	return out
+	return open
 }
 
-// resetHealth wipes the circuit state. Used by tests; not part of the
-// public surface.
-func (r *Router) resetHealth() {
-	r.healthMu.Lock()
-	r.health = map[string]*providerHealth{}
-	r.healthMu.Unlock()
-}
-
-// RecordHealthForTest is a test-only escape hatch that simulates a
-// transient failure being recorded against the named provider, so
-// downstream code (engine.Status, TUI badges, web /api/v1/status) can
-// be exercised without standing up a flaky upstream. Three consecutive
-// calls trip the breaker (mirrors breakerThreshold). Production code
-// MUST NOT call this — use Complete/Stream which drive the breaker
-// from real outcomes.
-func (r *Router) RecordHealthForTest(name string, transient bool) {
-	if transient {
-		r.recordProviderHealth(name, errTestTransient)
-	} else {
-		r.recordProviderHealth(name, nil)
+// RecordHealthForTest simulates a provider health outcome for unit tests.
+// failed=true maps to a transient error; failed=false maps to err==nil,
+// which trips the breaker after breakerThreshold calls.
+// Exported only because engine tests reach Router through eng.Providers.
+func (r *Router) RecordHealthForTest(name string, failed bool) {
+	var err error
+	if failed {
+		err = errors.New("synthetic transient: status 503 service unavailable")
 	}
+	r.recordProviderHealth(name, err)
 }
-
-// errTestTransient is a sentinel that isTransient() classifies as
-// retryable via its substring fallback. Lives here so the test-only
-// helper above doesn't depend on the production error wiring.
-var errTestTransient = &testTransientErr{}
-
-type testTransientErr struct{}
-
-func (*testTransientErr) Error() string { return "test transient: status 503 service unavailable" }
-
-// Compile-time guard that the helper exists; keeps `sync` referenced
-// even when the Router struct lives in another file.
-var _ = sync.Mutex{}

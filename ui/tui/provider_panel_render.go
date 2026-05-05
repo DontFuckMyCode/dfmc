@@ -146,7 +146,7 @@ func (m Model) renderProvidersView(width int) string {
 
 func (m Model) renderProviderListView(width int) string {
 	width = clampInt(width, 24, 1000)
-	hint := subtleStyle.Render("j/k scroll · g/G/home/end top/bottom · pgup/pgdown page · enter menu · / search · c clear")
+	hint := subtleStyle.Render("j/k scroll · p primary · f fallback · m model · s save · n new · enter menu · / search · c clear · r refresh")
 	header := sectionHeader("⚑", "Providers")
 
 	rows := filteredProviderRows(m.providers.rows, m.providers.query)
@@ -235,14 +235,15 @@ func (m Model) renderProviderListView(width int) string {
 
 	scroll := clampScroll(m.providers.scroll, len(rows))
 	lastStatus := ""
-	for i, row := range rows {
+	for i, row := range rows[scroll:] {
+		idx := scroll + i
 		if lastStatus != "" && row.Status != lastStatus {
 			label := strings.ToUpper(row.Status)
 			lines = append(lines, subtleStyle.Render("  ─── "+label+" ───"))
 		}
 		lastStatus = row.Status
-		selected := i == scroll
-		lines = append(lines, formatProviderRowNumbered(row, i+1, selected, fallbackPos, width-2))
+		selected := idx == m.providers.scroll
+		lines = append(lines, formatProviderRowNumbered(row, idx+1, selected, fallbackPos, width-2))
 	}
 
 	if scroll >= 0 && scroll < len(rows) {

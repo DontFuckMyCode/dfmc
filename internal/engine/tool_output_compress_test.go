@@ -180,3 +180,94 @@ func TestPublishNativeToolResult_SkipsStatsWhenPayloadMissing(t *testing.T) {
 		t.Fatal("tool:result event was not published in time")
 	}
 }
+
+func TestPublishNativeToolCall_IncludesReadMetadata(t *testing.T) {
+	eng := &Engine{EventBus: NewEventBus()}
+	ch := eng.EventBus.Subscribe("tool:call")
+	defer eng.EventBus.Unsubscribe("tool:call", ch)
+
+	trace := nativeToolTrace{
+		Call: provider.ToolCall{
+			ID:   "c3",
+			Name: "read_file",
+			Input: map[string]any{
+				"path":       "ui/tui/render_layout.go",
+				"line_start": 20,
+				"line_end":   40,
+			},
+		},
+	}
+	eng.publishNativeToolCall(trace)
+
+	select {
+	case ev := <-ch:
+		p, _ := ev.Payload.(map[string]any)
+		if got, _ := p["read_path"].(string); got != "ui/tui/render_layout.go" {
+			t.Fatalf("expected read_path metadata, got %+v", p)
+		}
+		if got, _ := p["read_line_start"].(int); got != 20 {
+			t.Fatalf("expected read_line_start=20, got %+v", p)
+		}
+		if got, _ := p["read_line_end"].(int); got != 40 {
+			t.Fatalf("expected read_line_end=40, got %+v", p)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("tool:call event was not published in time")
+	}
+}
+
+func TestPublishNativeToolResult_IncludesMutationLineStats(t *testing.T) {
+	eng := &Engine{EventBus: NewEventBus()}
+	ch := eng.EventBus.Subscribe("tool:result")
+	defer eng.EventBus.Unsubscribe("tool:result", ch)
+
+	patch := strings.Join([]string{
+		"--- a/ui/tui/render_layout.go",
+		"+++ b/ui/tui/render_layout.go",
+		"@@ -1,3 +1,4 @@",
+		" package tui",
+		"-old",
+		"+new",
+		"+extra",
+		"",
+	}, "\n")
+	trace := nativeToolTrace{
+		Call: provider.ToolCall{
+			ID:    "c4",
+			Name:  "apply_patch",
+			Input: map[string]any{"patch": patch},
+		},
+		Result: tools.Result{
+			Output: "patched",
+			Data: map[string]any{
+				"files": []map[string]any{
+					{"path": "ui/tui/render_layout.go", "hunks_applied": 1, "hunks_rejected": 0},
+				},
+			},
+		},
+	}
+	eng.publishNativeToolResultWithPayload(trace, "patched")
+
+	select {
+	case ev := <-ch:
+		p, _ := ev.Payload.(map[string]any)
+		files, _ := p["changed_files"].([]string)
+		if len(files) != 1 || files[0] != "ui/tui/render_layout.go" {
+			t.Fatalf("expected changed file metadata, got %+v", p)
+		}
+		if got, _ := p["added_lines"].(int); got != 2 {
+			t.Fatalf("expected added_lines=2, got %+v", p)
+		}
+		if got, _ := p["removed_lines"].(int); got != 1 {
+			t.Fatalf("expected removed_lines=1, got %+v", p)
+		}
+		if got, _ := p["hunks"].(int); got != 1 {
+			t.Fatalf("expected hunks=1, got %+v", p)
+		}
+		if got, _ := p["hunks_applied"].(int); got != 1 {
+			t.Fatalf("expected hunks_applied=1, got %+v", p)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("tool:result event was not published in time")
+	}
+}

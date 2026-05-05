@@ -132,9 +132,20 @@ type chatLine struct {
 	ToolCalls     int
 	ToolFailures  int
 	ToolChips     []toolChip
+	EventLines    []chatEventLine
 	Timestamp     time.Time
 	TokenCount    int
 	DurationMs    int
+}
+
+type chatEventLine struct {
+	Key      string
+	Kind     string
+	Status   string
+	Title    string
+	Detail   string
+	At       time.Time
+	Duration int
 }
 
 type slashCommandItem struct {
@@ -294,6 +305,15 @@ const (
 	mouseWheelPageStep = 15
 )
 
+// scrollPageStep is the number of transcript lines PgUp/PgDown scrolls.
+// 8 is one "page" in a typical terminal after header+input are accounted
+// for — enough to see one full screen of history without being jarring.
+const scrollPageStep = 8
+
+// scrollFineStep is the finer scroll for Shift+PgUp/PgDown or Shift+Up/Down.
+// Matches the mouse wheel single-tick step so keyboard and wheel feel consistent.
+const scrollFineStep = 3
+
 func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	if ctx == nil {
 		ctx = context.Background()
@@ -311,10 +331,10 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 		// park a duplicate banner in the footer notice slot (signal density).
 		sessionStart: time.Now(),
 		ui: uiToggles{
-			showStatsPanel:     true,
-			statsPanelMode:     statsPanelModeOverview,
-			keyLogEnabled:      os.Getenv("DFMC_KEYLOG") == "1",
-			toolStripExpanded:  true, // expanded by default; /tools toggles to collapsed
+			showStatsPanel:    true,
+			statsPanelMode:    statsPanelModeOverview,
+			keyLogEnabled:     os.Getenv("DFMC_KEYLOG") == "1",
+			toolStripExpanded: true, // expanded by default; /tools toggles to collapsed
 		},
 	}
 	// Seed status synchronously so the chat header renders with real
@@ -355,9 +375,14 @@ func Run(ctx context.Context, eng *engine.Engine, opts Options) error {
 	// works via Shift+drag in most terminals, and /mouse flips capture at
 	// runtime (or set tui.mouse_capture: false in .dfmc/config.yaml to
 	// make the "off" behavior the default).
-	if eng.Config != nil && eng.Config.TUI.MouseCapture {
-		model.ui.mouseCaptureEnabled = true
-		programOpts = append(programOpts, tea.WithMouseCellMotion())
+	if eng.Config != nil {
+		if eng.Config.TUI.MouseCapture {
+			model.ui.mouseCaptureEnabled = true
+			programOpts = append(programOpts, tea.WithMouseCellMotion())
+		}
+		// Tool strip (per-message tool chips) defaults to expanded (true).
+		// Set tui.tool_strip_expanded: false in config to default to collapsed.
+		model.ui.toolStripExpanded = eng.Config.TUI.ToolStripExpanded
 	}
 	if opts.AltScreen {
 		programOpts = append(programOpts, tea.WithAltScreen())

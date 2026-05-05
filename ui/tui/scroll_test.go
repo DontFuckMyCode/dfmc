@@ -49,6 +49,9 @@ func TestScrollTranscriptClampsAndPages(t *testing.T) {
 	}
 
 	// Further PageUps clamp at the top — notice should say so.
+	for m.chat.scrollback < ceiling {
+		m.scrollTranscript(-8)
+	}
 	before := m.chat.scrollback
 	m.scrollTranscript(-8)
 	if m.chat.scrollback != before {
@@ -244,6 +247,20 @@ func TestFitChatBodyScrollbackShiftsWindow(t *testing.T) {
 	}
 	if !strings.Contains(outBack, "earlier lines") || !strings.Contains(outBack, "newer lines") {
 		t.Fatalf("expected both scrollback hints, got:\n%s", outBack)
+	}
+}
+
+func TestFitChatBodyUnifiedFeedShowsScrollbar(t *testing.T) {
+	headLines := []string{}
+	for i := 1; i <= 20; i++ {
+		headLines = append(headLines, "L"+itoaSmall(i))
+	}
+	out := fitChatBodyWithScrollbar(strings.Join(headLines, "\n"), "", 6, 0, 40)
+	if !strings.Contains(out, "L20") {
+		t.Fatalf("unified feed should stay pinned to latest, got:\n%s", out)
+	}
+	if !strings.Contains(out, "█") {
+		t.Fatalf("unified feed should render a scrollbar thumb, got:\n%s", out)
 	}
 }
 

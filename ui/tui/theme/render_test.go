@@ -258,14 +258,14 @@ func containsHelper(s, substr string) bool {
 // --- markdown.go tests ---
 
 func TestRenderMarkdownBlocks_Empty(t *testing.T) {
-	out := RenderMarkdownBlocks("")
+	out := RenderMarkdownBlocks("", 80)
 	if out != nil {
 		t.Fatalf("RenderMarkdownBlocks(%q) = %v, want nil", "", out)
 	}
 }
 
 func TestRenderMarkdownBlocks_PlainText(t *testing.T) {
-	out := RenderMarkdownBlocks("hello world")
+	out := RenderMarkdownBlocks("hello world", 80)
 	if len(out) == 0 {
 		t.Fatal("RenderMarkdownBlocks returned empty for plain text")
 	}
@@ -275,21 +275,21 @@ func TestRenderMarkdownBlocks_PlainText(t *testing.T) {
 }
 
 func TestRenderMarkdownBlocks_Headers(t *testing.T) {
-	out := RenderMarkdownBlocks("# Hello\n## World\n### Test")
+	out := RenderMarkdownBlocks("# Hello\n## World\n### Test", 80)
 	if len(out) < 3 {
 		t.Fatalf("expected at least 3 lines for headers, got %d", len(out))
 	}
 }
 
 func TestRenderMarkdownBlocks_Bullet(t *testing.T) {
-	out := RenderMarkdownBlocks("- item1\n- item2")
+	out := RenderMarkdownBlocks("- item1\n- item2", 80)
 	if len(out) < 2 {
 		t.Fatalf("expected at least 2 lines for bullets, got %d", len(out))
 	}
 }
 
 func TestRenderMarkdownBlocks_CodeFence(t *testing.T) {
-	out := RenderMarkdownBlocks("```go\nfunc main() {}\n```")
+	out := RenderMarkdownBlocks("```go\nfunc main() {}\n```", 80)
 	if len(out) == 0 {
 		t.Fatal("RenderMarkdownBlocks returned empty for code fence")
 	}

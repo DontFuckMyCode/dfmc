@@ -366,11 +366,8 @@ func TestRenderChatViewShowsQuickActionsForNaturalLanguage(t *testing.T) {
 	m.chat.input = "read note.txt"
 
 	view := m.renderChatView(120)
-	if !strings.Contains(view, "Quick actions") || !strings.Contains(view, "/read note.txt 1 200") {
-		t.Fatalf("expected quick actions block in chat view, got:\n%s", view)
-	}
-	if !strings.Contains(view, "/grep note") {
-		t.Fatalf("expected secondary grep quick action in chat view, got:\n%s", view)
+	if strings.Contains(view, "Quick actions") || strings.Contains(view, "/read note.txt 1 200") {
+		t.Fatalf("natural-language quick actions should stay hidden in the simplified chat view, got:\n%s", view)
 	}
 }
 
@@ -816,10 +813,7 @@ func TestAutoToolIntentFromQuestionTurkishList(t *testing.T) {
 	}
 }
 
-func TestHandleEngineEventToolCallUpdatesActivityWithoutTranscriptNoise(t *testing.T) {
-	// Signal-density rule: tool:call events feed chips + activity log +
-	// runtime card, but must not flood the transcript with narration — the
-	// transcript is reserved for real state changes (errors, parks, compactions).
+func TestHandleEngineEventToolCallAppendsTimelineEntry(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.chat.sending = true
 	m.chat.transcript = []chatLine{
@@ -839,8 +833,12 @@ func TestHandleEngineEventToolCallUpdatesActivityWithoutTranscriptNoise(t *testi
 	if len(next.activityLog) == 0 || !strings.Contains(next.activityLog[len(next.activityLog)-1], "read_file") {
 		t.Fatalf("expected activity log update, got %#v", next.activityLog)
 	}
-	if len(next.chat.transcript) != 2 {
-		t.Fatalf("expected transcript untouched by tool:call, got %#v", next.chat.transcript)
+	if len(next.chat.transcript) != 3 {
+		t.Fatalf("expected tool:call timeline entry, got %#v", next.chat.transcript)
+	}
+	last := next.chat.transcript[len(next.chat.transcript)-1]
+	if last.Role != chatRoleTool || !strings.Contains(last.Content, "running: read_file") {
+		t.Fatalf("expected tool-tagged running line, got %#v", last)
 	}
 }
 
@@ -1351,10 +1349,7 @@ func TestHandleEngineEventToolResultFailureMirrorsToTranscript(t *testing.T) {
 	}
 }
 
-// TestHandleEngineEventToolResultSuccessSkipsTranscript — the inverse of the
-// above: a successful tool call must not flood the transcript. The chip
-// strip already handles successful progress.
-func TestHandleEngineEventToolResultSuccessSkipsTranscript(t *testing.T) {
+func TestHandleEngineEventToolResultSuccessAppendsTimelineEntry(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.chat.sending = true
 	m.chat.transcript = []chatLine{
@@ -1371,8 +1366,12 @@ func TestHandleEngineEventToolResultSuccessSkipsTranscript(t *testing.T) {
 			"durationMs": 12,
 		},
 	})
-	if len(next.chat.transcript) != 2 {
-		t.Fatalf("successful tool should not append transcript, got %d entries: %+v", len(next.chat.transcript), next.chat.transcript)
+	if len(next.chat.transcript) != 3 {
+		t.Fatalf("successful tool should append one timeline entry, got %d entries: %+v", len(next.chat.transcript), next.chat.transcript)
+	}
+	last := next.chat.transcript[len(next.chat.transcript)-1]
+	if last.Role != chatRoleTool || !strings.Contains(last.Content, "done: read_file") {
+		t.Fatalf("expected successful tool timeline line, got %#v", last)
 	}
 }
 
@@ -1396,10 +1395,7 @@ func TestHandleEngineEventToolResultUpdatesActivityWithoutTranscriptWhenIdle(t *
 	}
 }
 
-func TestRenderChatViewSurfacesToolEventsViaRuntimeCard(t *testing.T) {
-	// Signal-density rule: tool progress lives in the runtime card and chips,
-	// not in the transcript. Legacy side panels (Live Activity / Tool Timeline)
-	// are gone, and the transcript no longer echoes every call.
+func TestRenderChatViewSurfacesToolEventsInTimeline(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.chat.sending = true
 	m.chat.transcript = []chatLine{
@@ -1418,17 +1414,17 @@ func TestRenderChatViewSurfacesToolEventsViaRuntimeCard(t *testing.T) {
 
 	view := m.renderChatView(120)
 	if !strings.Contains(view, "read_file") {
-		t.Fatalf("expected read_file chip/card visible in chat view, got:\n%s", view)
+		t.Fatalf("expected read_file timeline line visible in chat view, got:\n%s", view)
 	}
-	if strings.Contains(view, "Agent tool call: read_file") {
-		t.Fatalf("tool:call should not narrate into the transcript, got:\n%s", view)
+	if !strings.Contains(view, "running: read_file") {
+		t.Fatalf("tool:call should render at its timeline position, got:\n%s", view)
 	}
 	if strings.Contains(view, "Live Activity") || strings.Contains(view, "Tool Timeline") {
 		t.Fatalf("legacy side panels should be removed, got:\n%s", view)
 	}
 }
 
-func TestRenderChatViewShowsSlashAssistForProviderCommand(t *testing.T) {
+func TestRenderChatViewShowsCompactProviderSuggestions(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
@@ -1436,8 +1432,11 @@ func TestRenderChatViewShowsSlashAssistForProviderCommand(t *testing.T) {
 	m.chat.input = "/provider "
 
 	view := m.renderChatView(120)
-	if !strings.Contains(view, "Slash Assist") || !strings.Contains(view, "Usage: /provider NAME [MODEL] [--persist]") {
-		t.Fatalf("expected provider slash assist hints in chat view, got:\n%s", view)
+	if strings.Contains(view, "Slash Assist") || strings.Contains(view, "Usage: /provider") {
+		t.Fatalf("slash assist should not fill the simplified chat view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "> anthropic") {
+		t.Fatalf("expected compact provider suggestions with active provider first, got:\n%s", view)
 	}
 }
 
@@ -1454,8 +1453,11 @@ func TestRenderChatViewShowsCommandArgSuggestions(t *testing.T) {
 	m.chat.input = "/provider op"
 
 	view := m.renderChatView(120)
-	if !strings.Contains(view, "Command args") || !strings.Contains(view, "openai") {
-		t.Fatalf("expected command arg suggestion section in chat view, got:\n%s", view)
+	if strings.Contains(view, "Command args") {
+		t.Fatalf("command arg suggestions should render compactly, got:\n%s", view)
+	}
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "openai") {
+		t.Fatalf("expected compact command arg suggestions in chat view, got:\n%s", view)
 	}
 }
 
@@ -1467,8 +1469,11 @@ func TestRenderChatViewShowsToolCommandArgSuggestions(t *testing.T) {
 	m.chat.input = "/tool read_file p"
 
 	view := m.renderChatView(120)
-	if !strings.Contains(view, "Command args") || !strings.Contains(view, "path=") {
-		t.Fatalf("expected tool command arg suggestion section in chat view, got:\n%s", view)
+	if strings.Contains(view, "Command args") {
+		t.Fatalf("tool arg suggestions should render compactly, got:\n%s", view)
+	}
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "path=") {
+		t.Fatalf("expected compact tool arg suggestions in chat view, got:\n%s", view)
 	}
 }
 
@@ -1761,7 +1766,7 @@ func TestHandleEngineEventProviderThrottleRetry(t *testing.T) {
 	}
 }
 
-func TestRenderChatViewShowsAgentRuntimeCard(t *testing.T) {
+func TestRenderChatViewDoesNotShowGroupedAgentRuntimeCard(t *testing.T) {
 	// Signal-density rule: the header owns phase/step/provider/model so the
 	// runtime card only surfaces what the header doesn't — tool rounds and
 	// the last tool's status/duration.
@@ -1779,16 +1784,14 @@ func TestRenderChatViewShowsAgentRuntimeCard(t *testing.T) {
 	m.agentLoop.lastDuration = 42
 
 	view := m.renderChatView(140)
-	// Header surfaces phase + step + provider/model.
-	for _, want := range []string{"tool-result", "2/6", "openai", "gpt-5.4"} {
+	for _, want := range []string{"DFMC CHAT", "running", "openai", "gpt-5.4"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("expected header to contain %q, got:\n%s", want, view)
+			t.Fatalf("expected chat header to contain %q, got:\n%s", want, view)
 		}
 	}
-	// Runtime card adds only what the header lacks: round count and last tool chip.
-	for _, want := range []string{"tools 2", "read_file", "42"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("expected runtime card to contain %q, got:\n%s", want, view)
+	for _, unwanted := range []string{"Working", "tool-result", "step 2/6", "tools 2", "last read_file"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("chat view should not render grouped runtime text %q, got:\n%s", unwanted, view)
 		}
 	}
 }
@@ -1879,16 +1882,218 @@ func TestToolCallsMirrorOntoStreamingAssistantMessage(t *testing.T) {
 		t.Fatalf("expected token delta + truncated flag on chip, got %#v", chip)
 	}
 
-	// Force-expand the tool strip — collapsed-by-default (the new UX
-	// default) only renders an aggregated summary that omits the per-
-	// chip "+1.3k tok" delta this regression test pins.
-	withToolStripExpanded(t, &m)
 	view := m.renderChatView(140)
 	if !strings.Contains(view, "list_dir") || !strings.Contains(view, "73ms") {
-		t.Fatalf("assistant bubble should render the tool chip strip inline; got:\n%s", view)
+		t.Fatalf("chat timeline should render the tool result line; got:\n%s", view)
 	}
-	if !strings.Contains(view, "+1.3k tok") {
-		t.Fatalf("assistant bubble should render the tool token delta; got:\n%s", view)
+	if !strings.Contains(view, "out 1.3k tok") {
+		t.Fatalf("tool result timeline should render the token delta; got:\n%s", view)
+	}
+}
+
+func TestStreamingAssistantRunLogUpdatesToolLineInPlace(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.sending = true
+	m.chat.transcript = []chatLine{
+		{Role: "user", Content: "inspect auth"},
+		{Role: "assistant", Content: ""},
+	}
+	m.chat.streamIndex = 1
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "context:built",
+		Payload: map[string]any{
+			"files":       3,
+			"tokens":      4200,
+			"budget":      21000,
+			"per_file":    1600,
+			"task":        "review",
+			"compression": "balanced",
+		},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool":            "read_file",
+			"step":            1,
+			"params_preview":  "path=internal/auth/service.go line_start=1 line_end=120",
+			"read_path":       "internal/auth/service.go",
+			"read_line_start": 1,
+			"read_line_end":   120,
+			"provider":        "openai",
+			"model":           "gpt-5.4",
+		},
+	})
+	if got := len(m.chat.transcript); got != 4 {
+		t.Fatalf("context + tool call should append timeline rows, got %d", got)
+	}
+	if row := m.chat.transcript[2]; row.Role != chatRoleSystem || !strings.Contains(row.Content, "context") {
+		t.Fatalf("expected context timeline row, got %#v", row)
+	}
+	if row := m.chat.transcript[3]; row.Role != chatRoleTool || !strings.Contains(row.Content, "running: read_file") || !strings.Contains(row.Content, "path=internal/auth/service.go") {
+		t.Fatalf("expected running read_file timeline row, got %#v", row)
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":                    "read_file",
+			"step":                    1,
+			"success":                 true,
+			"durationMs":              73,
+			"output_preview":          "package auth",
+			"output_tokens":           1280,
+			"payload_tokens":          320,
+			"output_chars":            6400,
+			"compression_saved_chars": 4800,
+			"compression_ratio":       0.25,
+			"read_path":               "internal/auth/service.go",
+			"read_line_start":         1,
+			"read_line_end":           120,
+			"read_returned_lines":     120,
+			"read_total_lines":        220,
+		},
+	})
+	if got := len(m.chat.transcript); got != 4 {
+		t.Fatalf("tool result should update the running timeline row, got %#v", m.chat.transcript)
+	}
+	resultLine := m.chat.transcript[3].Content
+	for _, want := range []string{"read internal/auth/service.go:1-120 (120/220 lines)", "out 1.3k tok", "model 320 tok", "rtk saved 4.8k chars (75%)", "package auth"} {
+		if !strings.Contains(resultLine, want) {
+			t.Fatalf("expected result timeline detail to contain %q, got %#v", want, resultLine)
+		}
+	}
+	m.chat.transcript[3].Timestamp = time.Now().Add(-90 * time.Second)
+	if view := m.renderChatView(140); strings.Contains(view, "running: read_file") || strings.Contains(view, "+1m") {
+		t.Fatalf("completed tool row should not keep rendering as running with elapsed time, got:\n%s", view)
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool":          "apply_patch",
+			"step":          2,
+			"changed_files": []string{"internal/auth/service.go"},
+			"added_lines":   2,
+			"removed_lines": 1,
+			"hunks":         1,
+		},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":           "apply_patch",
+			"step":           2,
+			"success":        true,
+			"durationMs":     41,
+			"changed_files":  []string{"internal/auth/service.go"},
+			"added_lines":    2,
+			"removed_lines":  1,
+			"hunks":          1,
+			"hunks_applied":  1,
+			"hunks_rejected": 0,
+		},
+	})
+	if got := len(m.chat.transcript); got != 5 {
+		t.Fatalf("expected context/read/apply_patch timeline rows, got %#v", m.chat.transcript)
+	}
+	if row := m.chat.transcript[4]; row.Role != chatRoleTool || !strings.Contains(row.Content, "done: apply_patch") || !strings.Contains(row.Content, "changed internal/auth/service.go +2 -1 lines") {
+		t.Fatalf("expected mutation line stats in apply_patch row, got %#v", row)
+	}
+
+	view := m.renderChatView(140)
+	if strings.Contains(view, "RUN LOG") {
+		t.Fatalf("run log grouping should not render in timeline view:\n%s", view)
+	}
+	for _, want := range []string{"context", "20% budget", "read_file", "apply_patch", "done", "73ms", "out 1.3k tok", "+2 -1 lines"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected timeline view to contain %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestChatLiveFeedSurfacesToolMutationInTimeline(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.chat.sending = true
+	m.chat.streamIndex = 1
+	m.chat.transcript = []chatLine{
+		newChatLine(chatRoleUser, "patch this"),
+		newChatLine(chatRoleAssistant, ""),
+	}
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool":          "apply_patch",
+			"step":          1,
+			"changed_files": []string{"a.go"},
+			"added_lines":   2,
+			"removed_lines": 1,
+		},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":          "apply_patch",
+			"step":          1,
+			"success":       true,
+			"durationMs":    31,
+			"changed_files": []string{"a.go"},
+			"added_lines":   2,
+			"removed_lines": 1,
+		},
+	})
+
+	view := m.renderChatView(120)
+	for _, want := range []string{"TOOL", "done: apply_patch", "changed a.go +2 -1 lines"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected live feed to contain %q, got:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"Working", "RUN LOG", "diff ready:", "running: apply_patch"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("chat view should not render grouped live feed text %q, got:\n%s", unwanted, view)
+		}
+	}
+}
+
+func TestChatInputShowsPasteAttachments(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("one\ntwo\nthree"), Paste: true})
+	m = next.(Model)
+
+	view := m.renderChatView(100)
+	for _, want := range []string{"Attachments", "[Pasted text#1 3 lines]", "delete any placeholder character"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected paste attachment surface %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestRenderChatViewUsesAgentConsoleLayout(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.status = engine.Status{
+		Provider: "openai",
+		Model:    "gpt-5.4",
+		ContextIn: &engine.ContextInStatus{
+			TokenCount:         45_000,
+			ProviderMaxContext: 200_000,
+		},
+	}
+	m.chat.transcript = []chatLine{
+		{Role: chatRoleUser, Content: "review this file", Timestamp: time.Now(), TokenCount: 4},
+		{Role: chatRoleAssistant, Content: "reading now", Timestamp: time.Now(), TokenCount: 2},
+	}
+
+	view := m.renderChatView(120)
+	for _, want := range []string{"DFMC CHAT", "Chat History", "context 45k/200k 22%", "2 messages", "USER", "ASSISTANT", "Input"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected console chat view to contain %q, got:\n%s", want, view)
+		}
+	}
+	if !strings.Contains(view, "Chat History") {
+		t.Fatalf("console chat view should render the chat history section:\n%s", view)
 	}
 }
 
@@ -3140,7 +3345,7 @@ func TestRenderChatAndFilesViewShowPinnedFile(t *testing.T) {
 	m.filesView.entries = []string{"internal/auth/service.go"}
 
 	chatView := m.renderChatView(80)
-	if !strings.Contains(chatView, "pinned: [[file:internal/auth/service.go]]") {
+	if !strings.Contains(chatView, "pinned: internal/auth/service.go") {
 		t.Fatalf("expected chat view to show pinned context, got:\n%s", chatView)
 	}
 
@@ -3356,7 +3561,7 @@ func TestShiftPatchHunkAndReviewHints(t *testing.T) {
 	}
 }
 
-func TestRenderChatViewShowsPatchSummary(t *testing.T) {
+func TestRenderChatViewDoesNotShowGroupedPatchSummary(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.width = 100
 	m.patchView.set = []patchSection{{Path: "internal/auth/service.go", HunkCount: 1}}
@@ -3372,12 +3577,15 @@ func TestRenderChatViewShowsPatchSummary(t *testing.T) {
 	}
 
 	view := m.renderChatView(90)
-	if !strings.Contains(view, "patch: internal/auth/service.go | hunks=1 | latest | current target") {
-		t.Fatalf("expected patch summary in chat view, got:\n%s", view)
+	if !strings.Contains(view, "Applied the fix.") {
+		t.Fatalf("expected assistant message in chat view, got:\n%s", view)
+	}
+	if strings.Contains(view, "patch: internal/auth/service.go") {
+		t.Fatalf("chat view should not render grouped patch summary, got:\n%s", view)
 	}
 }
 
-func TestRenderChatViewShowsWorkflowFocusCard(t *testing.T) {
+func TestRenderChatViewDoesNotShowWorkflowFocusCard(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
 	m.ui.statsPanelMode = statsPanelModeTasks
@@ -3401,9 +3609,9 @@ func TestRenderChatViewShowsWorkflowFocusCard(t *testing.T) {
 	}
 
 	view := m.renderChatView(120)
-	for _, want := range []string{"Workflow Focus", "TASKS", "live now", "task 2/2", "Patch renderer", "Inspect handler", "live log:", "autonomy kickoff", "subagent started", "recent:", "tool done - read_file"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("expected chat workflow focus card to contain %q, got:\n%s", want, view)
+	for _, unwanted := range []string{"Working", "tool-call", "step 2/6", "read_file"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("chat view should not render grouped workflow focus text %q, got:\n%s", unwanted, view)
 		}
 	}
 }
@@ -3854,6 +4062,15 @@ func TestStatsPanelBoostAllowsWiderTemporaryPanel(t *testing.T) {
 	}
 }
 
+func TestStatsPanelReservedPadAnchorsPanelRight(t *testing.T) {
+	if got := reservedPanelLeftPad(58, statsPanelWidth); len(got) != 58-statsPanelWidth {
+		t.Fatalf("expected left padding to fill reserved column, got %d spaces", len(got))
+	}
+	if got := reservedPanelLeftPad(58, 58); got != "" {
+		t.Fatalf("expanded panel should consume the reserved column without left pad, got %q", got)
+	}
+}
+
 func TestRenderStatsPanelShowsLockedFocusHints(t *testing.T) {
 	panel := renderStatsPanel(statsPanelInfo{
 		Mode:        theme.StatsPanelMode(statsPanelModeTasks),
@@ -3867,6 +4084,33 @@ func TestRenderStatsPanelShowsLockedFocusHints(t *testing.T) {
 	for _, want := range []string{"FOCUS MODE", "locked", "esc unlock", "retarget"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("locked focus panel should surface %q, got:\n%s", want, panel)
+		}
+	}
+}
+
+func TestRenderStatsPanelOverviewShowsOperationalState(t *testing.T) {
+	panel := renderStatsPanel(statsPanelInfo{
+		Mode:           theme.StatsPanelMode(statsPanelModeOverview),
+		Provider:       "openai",
+		Model:          "gpt-5.4",
+		Configured:     true,
+		AgentActive:    true,
+		AgentPhase:     "tool-call",
+		AgentStep:      3,
+		AgentMaxSteps:  10,
+		LastTool:       "apply_patch",
+		LastStatus:     "ok",
+		LastDurationMs: 41,
+		ContextTokens:  42000,
+		MaxContext:     128000,
+		Branch:         "main",
+		Dirty:          true,
+		Inserted:       12,
+		Deleted:        4,
+	}, 42)
+	for _, want := range []string{"WORKFLOW", "tool loop tool-call - 3/10", "apply_patch", "CONTEXT", "main*"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("overview stats panel should show %q, got:\n%s", want, panel)
 		}
 	}
 }

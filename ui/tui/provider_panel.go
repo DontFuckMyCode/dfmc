@@ -242,7 +242,7 @@ func (m *Model) addModelToProvider(provider, model string) {
 	}
 	models := prof.AllModels()
 	prof.Models = append(models, model)
-	prof.Model = prof.Models[0]
+	prof.Model = model
 	m.eng.Config.Providers.Profiles[provider] = prof
 	m.notice = fmt.Sprintf("added model %s to %s", model, provider)
 }
@@ -390,6 +390,24 @@ func (m Model) cycleProviderModel(name string) Model {
 	return m
 }
 
+func (m Model) setPrimaryProvider(name string) Model {
+	if m.eng == nil || m.eng.Config == nil {
+		return m
+	}
+	m.eng.Config.Providers.Primary = name
+	if m.eng.Providers != nil {
+		m.eng.Providers.SetPrimary(name)
+	}
+	if err := m.persistProvidersPrimaryFallback(); err != nil {
+		m.notice = "primary set failed: " + err.Error()
+	} else {
+		m.notice = name + " is now primary"
+	}
+	m = m.refreshProvidersRows()
+	m = m.focusProviderRow(name)
+	return m
+}
+
 func (m Model) toggleFallbackProvider(name string) Model {
 	if m.eng == nil || m.eng.Config == nil {
 		return m
@@ -404,7 +422,7 @@ func (m Model) toggleFallbackProvider(name string) Model {
 		newFallback = append(newFallback, fb)
 	}
 	if !found {
-		newFallback = append(newFallback, name)
+		newFallback = []string{name}
 	}
 	m.eng.Config.Providers.Fallback = newFallback
 	if m.eng != nil && m.eng.Providers != nil {
@@ -424,10 +442,12 @@ func (m Model) toggleFallbackProvider(name string) Model {
 
 func (m Model) deleteActiveModel() Model {
 	if m.eng == nil || m.eng.Config == nil {
+		m.notice = "engine not ready"
 		return m
 	}
 	prof, ok := m.eng.Config.Providers.Profiles[m.providers.detailProvider]
 	if !ok {
+		m.notice = "provider not found"
 		return m
 	}
 	models := prof.AllModels()

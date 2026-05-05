@@ -57,6 +57,7 @@ func (m Model) activeSlashArgSuggestions() []string {
 		if len(providers) == 0 {
 			return nil
 		}
+		providers = prioritizeSuggestion(providers, m.currentProvider())
 		if len(args) == 0 {
 			return providers
 		}
@@ -71,6 +72,11 @@ func (m Model) activeSlashArgSuggestions() []string {
 		if len(models) == 0 {
 			return nil
 		}
+		if strings.EqualFold(providerName, m.currentProvider()) {
+			models = prioritizeSuggestion(models, m.currentModel())
+		} else {
+			models = prioritizeSuggestion(models, m.defaultModelForProvider(providerName))
+		}
 		if len(args) >= 2 && !trailingSpace {
 			return filterSuggestionsByToken(models, args[len(args)-1])
 		}
@@ -80,6 +86,7 @@ func (m Model) activeSlashArgSuggestions() []string {
 		if len(models) == 0 {
 			return nil
 		}
+		models = prioritizeSuggestion(models, m.currentModel())
 		if len(args) > 0 && !trailingSpace {
 			return filterSuggestionsByToken(models, strings.Join(args, " "))
 		}
@@ -135,6 +142,28 @@ func (m Model) activeSlashArgSuggestions() []string {
 	default:
 		return nil
 	}
+}
+
+func prioritizeSuggestion(values []string, preferred string) []string {
+	preferred = strings.TrimSpace(preferred)
+	if preferred == "" || len(values) == 0 {
+		return values
+	}
+	idx := -1
+	for i, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), preferred) {
+			idx = i
+			break
+		}
+	}
+	if idx <= 0 {
+		return values
+	}
+	out := make([]string, 0, len(values))
+	out = append(out, values[idx])
+	out = append(out, values[:idx]...)
+	out = append(out, values[idx+1:]...)
+	return out
 }
 
 func (m Model) autocompleteSlashArg() (string, bool) {

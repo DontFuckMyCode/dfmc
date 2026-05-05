@@ -87,7 +87,7 @@ func Open(dataDir string) (*Store, error) {
 		if errors.Is(err, berrors.ErrTimeout) {
 			return nil, &OpenError{
 				Path:  dbPath,
-				Cause: fmt.Errorf("storage database is locked: %w", err),
+				Cause: fmt.Errorf("%w: %w", ErrStoreLocked, err),
 			}
 		}
 		return nil, &OpenError{Path: dbPath, Cause: err}
