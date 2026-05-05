@@ -2019,7 +2019,7 @@ func TestToolTimelineRendersDebugLinesWithReason(t *testing.T) {
 	}
 	for _, want := range []string{
 		"running: read_file",
-		"params: path=note.txt",
+		"input: path=note.txt",
 		"abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrstuvwxyz-0123456789",
 		"_reason: checking the note content before deciding the edit",
 		"should remain visible instead of being truncated by the timeline renderer",
@@ -2051,7 +2051,7 @@ func TestToolTimelineRendersDebugLinesWithReason(t *testing.T) {
 	for _, want := range []string{
 		"done: read_file | step 1 | 42ms",
 		"state: completed in 42ms",
-		"params: path=note.txt",
+		"input: path=note.txt",
 		"_reason: checking the note content before deciding the edit",
 		"card: READ OK",
 		"result: alpha beta",
@@ -2090,7 +2090,7 @@ func TestToolTimelineRendersDebugLinesWithReason(t *testing.T) {
 	for _, want := range []string{
 		"failed: run_command | step 2 | 11ms",
 		"state: failed after 11ms",
-		"params: command=go test ./ui/tui",
+		"input: command=go test ./ui/tui",
 		"_reason: verifying the TUI package after the timeline rendering change",
 		"card: RUN FAILED",
 		"error: exit status 1",
@@ -3731,7 +3731,7 @@ func TestRuntimeStripShowsContextBudgetWhenPanelHidden(t *testing.T) {
 		"budget:",
 		"task review",
 		"ctx files 4/8",
-		"code 42.0k/160.0k",
+		"evidence 42.0k/160.0k",
 		"window 42.0k/1.1m",
 		"left 1.0m",
 		"available 120.0k",
@@ -3762,8 +3762,8 @@ func TestRuntimeStripTopUsesWindowContextTokens(t *testing.T) {
 		t.Fatalf("top strip should show live window usage, got:\n%s", top)
 	}
 	budget := stripANSI(strings.Join(runtimeStripBudgetParts(vm), " "))
-	if !strings.Contains(budget, "code 42.0k/160.0k") || !strings.Contains(budget, "window 88.5k/200.0k") {
-		t.Fatalf("budget strip should keep code and window separate, got:\n%s", budget)
+	if !strings.Contains(budget, "evidence 42.0k/160.0k") || !strings.Contains(budget, "window 88.5k/200.0k") {
+		t.Fatalf("budget strip should keep evidence and window separate, got:\n%s", budget)
 	}
 }
 

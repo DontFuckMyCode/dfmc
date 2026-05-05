@@ -96,7 +96,7 @@ func chatEventTranscriptText(ev chatEventLine) string {
 		lines = append(lines, state)
 	}
 	if params := timelineEventParamsField(ev.ParamsPreview); params != "" {
-		lines = append(lines, "params: "+params)
+		lines = append(lines, "input: "+params)
 	}
 	if reason := strings.TrimSpace(ev.Reason); reason != "" {
 		lines = append(lines, "_reason: "+timelineEventFieldLimit(reason, 260))

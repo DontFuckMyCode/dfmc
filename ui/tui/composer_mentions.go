@@ -7,9 +7,11 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/tokens"
 )
 
-// renderContextStrip summarizes what will be attached to the next message:
-// pinned file, inline [[file:...]] markers, fenced code blocks, and the
-// provider-facing token estimate/budget percentage when available.
+// renderContextStrip summarizes the next send in the same vocabulary as
+// code-agent context managers: conversation window first, workspace evidence
+// second. Pinned files, [[file:...]] markers, fenced code, and paste blocks
+// are explicit evidence; broad workspace retrieval is not implied by this
+// strip.
 func (m Model) renderContextStrip(width int) string {
 	if width < 40 {
 		width = 40
@@ -24,27 +26,15 @@ func (m Model) renderContextStrip(width int) string {
 	markerCount := countFileMarkers(statsInput)
 	fenceCount := countFencedBlocks(statsInput)
 	atMentions := countAtMentions(statsInput)
+	pasteBlocks, pasteLines, pasteBytes := pasteBlockTotals(m.chat.pasteBlocks)
 
 	if pinned == "" && markerCount == 0 && fenceCount == 0 && atMentions == 0 && strings.TrimSpace(statsInput) == "" {
 		return ""
 	}
 
-	parts := []string{accentStyle.Render("📎 context")}
-	if pinned != "" {
-		parts = append(parts, subtleStyle.Render("pinned:")+" "+boldStyle.Render(pinned))
-	}
-	if markerCount > 0 {
-		parts = append(parts, subtleStyle.Render("markers:")+" "+boldStyle.Render(fmt.Sprintf("%d", markerCount)))
-	}
-	if atMentions > 0 {
-		parts = append(parts, subtleStyle.Render("@refs:")+" "+boldStyle.Render(fmt.Sprintf("%d", atMentions)))
-	}
-	if fenceCount > 0 {
-		parts = append(parts, subtleStyle.Render("fenced:")+" "+boldStyle.Render(fmt.Sprintf("%d", fenceCount)))
-	}
+	lines := []string{}
 	if trimmed := strings.TrimSpace(statsInput); trimmed != "" {
 		chars := len([]rune(trimmed))
-		parts = append(parts, subtleStyle.Render("chars:")+" "+boldStyle.Render(fmt.Sprintf("%d", chars)))
 		tok := tokens.Estimate(trimmed)
 		budget := m.status.ProviderProfile.MaxContext
 		if budget <= 0 && m.status.ContextIn != nil {
@@ -55,11 +45,72 @@ func (m Model) renderContextStrip(width int) string {
 			pct := int(float64(tok) / float64(budget) * 100)
 			tokenLabel = fmt.Sprintf("~%d (%d%% of %d)", tok, pct, budget)
 		}
-		parts = append(parts, subtleStyle.Render("tokens:")+" "+boldStyle.Render(tokenLabel))
+		parts := []string{
+			accentStyle.Render("CTX conversation"),
+			subtleStyle.Render("chars:") + " " + boldStyle.Render(fmt.Sprintf("%d", chars)),
+			subtleStyle.Render("tokens:") + " " + boldStyle.Render(tokenLabel),
+		}
+		if live := m.liveContextSnapshot(); live.ok {
+			if live.maxContext > 0 && live.windowTokens > 0 {
+				pct := int((int64(live.windowTokens) * 100) / int64(live.maxContext))
+				parts = append(parts, subtleStyle.Render("window:")+" "+boldStyle.Render(fmt.Sprintf("~%s/%s (%d%%)", compactMetric(live.windowTokens), compactMetric(live.maxContext), pct)))
+			} else if live.windowTokens > 0 {
+				parts = append(parts, subtleStyle.Render("window:")+" "+boldStyle.Render("~"+compactMetric(live.windowTokens)))
+			}
+			if live.available > 0 {
+				parts = append(parts, subtleStyle.Render("left:")+" "+boldStyle.Render(compactMetric(live.available)))
+			}
+		}
+		lines = append(lines, "  "+truncateSingleLine(strings.Join(parts, subtleStyle.Render("  |  ")), width-2))
 	}
 
-	joined := strings.Join(parts, subtleStyle.Render("  ·  "))
-	return "  " + truncateSingleLine(joined, width-2)
+	evidence := []string{
+		accentStyle.Render("CTX evidence"),
+		subtleStyle.Render("mode:") + " " + boldStyle.Render(m.contextStripEvidenceMode()),
+	}
+	if pinned != "" {
+		evidence = append(evidence, subtleStyle.Render("pinned:")+" "+boldStyle.Render(pinned))
+	}
+	if markerCount > 0 {
+		evidence = append(evidence, subtleStyle.Render("markers:")+" "+boldStyle.Render(fmt.Sprintf("%d", markerCount)))
+	}
+	if atMentions > 0 {
+		evidence = append(evidence, subtleStyle.Render("@refs:")+" "+boldStyle.Render(fmt.Sprintf("%d", atMentions)))
+	}
+	if fenceCount > 0 {
+		evidence = append(evidence, subtleStyle.Render("fenced:")+" "+boldStyle.Render(fmt.Sprintf("%d", fenceCount)))
+	}
+	if pasteBlocks > 0 {
+		evidence = append(evidence, subtleStyle.Render("pasted:")+" "+boldStyle.Render(fmt.Sprintf("%d blocks / %d lines / %s bytes", pasteBlocks, pasteLines, compactMetric(pasteBytes))))
+	}
+	lines = append(lines, "  "+truncateSingleLine(strings.Join(evidence, subtleStyle.Render("  |  ")), width-2))
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) contextStripEvidenceMode() string {
+	if m.status.ContextIn != nil && m.status.ContextIn.FileCount > 0 {
+		return fmt.Sprintf("workspace %d file(s)", m.status.ContextIn.FileCount)
+	}
+	if m.status.ContextIn != nil {
+		for _, reason := range m.status.ContextIn.Reasons {
+			if strings.Contains(strings.ToLower(reason), "conversation history only") {
+				return "explicit/tool"
+			}
+		}
+	}
+	return "explicit/tool"
+}
+
+func pasteBlockTotals(blocks []pasteBlock) (count, lines, bytes int) {
+	for _, block := range blocks {
+		if strings.TrimSpace(block.content) == "" {
+			continue
+		}
+		count++
+		lines += block.lineCount
+		bytes += len([]byte(block.content))
+	}
+	return count, lines, bytes
 }
 
 func countFileMarkers(s string) int {
@@ -92,10 +143,10 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 		width = 40
 	}
 	title := accentStyle.Bold(true).Render("◆ File Picker") +
-		subtleStyle.Render("  —  ") +
+		subtleStyle.Render("  -  ") +
 		boldStyle.Render("@"+s.MentionQuery())
 	if s.MentionRange() != "" {
-		title += subtleStyle.Render(" · range " + s.MentionRange())
+		title += subtleStyle.Render(" | range " + s.MentionRange())
 	}
 
 	countLine := ""
@@ -103,7 +154,7 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 	case len(s.MentionSuggestions()) > 0:
 		countLine = subtleStyle.Render(fmt.Sprintf("%d/%d files match", len(s.MentionSuggestions()), totalFiles))
 	case totalFiles == 0 && s.MentionQuery() == "":
-		countLine = subtleStyle.Render("indexing project files…")
+		countLine = subtleStyle.Render("indexing project files...")
 	case totalFiles == 0:
 		countLine = warnStyle.Render("file index empty")
 	default:
@@ -114,7 +165,7 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 	switch {
 	case totalFiles == 0 && s.MentionQuery() == "":
 		bodyLines = append(bodyLines,
-			subtleStyle.Render("Project files are still being indexed…"),
+			subtleStyle.Render("Project files are still being indexed..."),
 			subtleStyle.Render("If this persists, press Ctrl+T or use /file to reopen the picker after the index loads."),
 		)
 	case len(s.MentionSuggestions()) > 0:
@@ -122,7 +173,7 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 		for i, row := range s.MentionSuggestions() {
 			label := truncateSingleLine(row.Path, width-6)
 			if row.Recent {
-				label += " " + subtleStyle.Render("· recent")
+				label += " " + subtleStyle.Render("| recent")
 			}
 			if i == selected {
 				bodyLines = append(bodyLines, mentionSelectedRowStyle.Render("▶ "+label))
@@ -132,7 +183,7 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 		}
 	case totalFiles == 0:
 		bodyLines = append(bodyLines,
-			subtleStyle.Render("Indexing project files…"),
+			subtleStyle.Render("Indexing project files..."),
 			subtleStyle.Render("If this persists, open the Files tab (F3) and press r to reload,"),
 			subtleStyle.Render("or confirm you launched dfmc from a project root."),
 		)
@@ -148,7 +199,7 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 		)
 	}
 
-	footer := subtleStyle.Render("↑/↓ move · tab/enter insert as [[file:…]] · esc cancel")
+	footer := subtleStyle.Render("up/down move | tab/enter insert as [[file:...]] | esc cancel")
 
 	parts := []string{title, countLine, ""}
 	parts = append(parts, bodyLines...)

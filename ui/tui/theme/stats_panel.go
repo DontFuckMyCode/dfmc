@@ -313,7 +313,7 @@ func contextRows(info StatsPanelInfo) []string {
 	}
 	if info.ContextSystemTokens > 0 || info.ContextHistoryTokens > 0 || info.ContextResponseTokens > 0 || info.ContextToolTokens > 0 {
 		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
-			"budget sys %s | hist %s | code %s",
+			"budget sys %s | hist %s | evidence %s",
 			CompactTokens(info.ContextSystemTokens),
 			CompactTokens(info.ContextHistoryTokens),
 			CompactTokens(info.ContextTokens),

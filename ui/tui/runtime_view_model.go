@@ -475,7 +475,7 @@ func runtimeStripBudgetParts(vm runtimeViewModel) []string {
 		parts = append(parts, label)
 	}
 	if vm.ContextBudgetTokens > 0 {
-		parts = append(parts, fmt.Sprintf("code %s/%s", compactMetric(vm.ContextTokens), compactMetric(vm.ContextBudgetTokens)))
+		parts = append(parts, fmt.Sprintf("evidence %s/%s", compactMetric(vm.ContextTokens), compactMetric(vm.ContextBudgetTokens)))
 	}
 	if used, remaining := runtimeWindowUsage(vm); used > 0 {
 		if vm.MaxContext > 0 {
