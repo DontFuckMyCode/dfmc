@@ -12,7 +12,7 @@ func TestBackendStatus_ReportsCorrectActiveBackend(t *testing.T) {
 	if status.Preferred != "tree-sitter" {
 		t.Fatalf("Preferred must be tree-sitter, got %q", status.Preferred)
 	}
-	knownBackends := map[string]bool{"tree-sitter": true, "regex": true}
+	knownBackends := map[string]bool{"tree-sitter": true, "regex": true, "hybrid": true}
 	if !knownBackends[status.Active] {
 		t.Fatalf("Active must be one of known backends, got %q", status.Active)
 	}
