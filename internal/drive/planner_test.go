@@ -157,6 +157,37 @@ func TestParsePlanOutput_WithPrefixCommentary(t *testing.T) {
 	}
 }
 
+func TestParsePlanOutput_CleansDepsAndFileScope(t *testing.T) {
+	raw := `{
+		"todos": [
+			{
+				"id": "T1",
+				"title": "Inspect",
+				"detail": "Read the file",
+				"file_scope": [" ./internal\\auth.go ", "internal/auth.go", "", "   "],
+				"depends_on": []
+			},
+			{
+				"id": "T2",
+				"title": "Patch",
+				"detail": "Patch the file",
+				"file_scope": ["internal/auth.go"],
+				"depends_on": [" T1 ", "T1", ""]
+			}
+		]
+	}`
+	todos, err := parsePlannerOutput(raw)
+	if err != nil {
+		t.Fatalf("parse planner output: %v", err)
+	}
+	if got := todos[0].FileScope; len(got) != 1 || got[0] != "internal/auth.go" {
+		t.Fatalf("expected normalized deduped file scope, got %#v", got)
+	}
+	if got := todos[1].DependsOn; len(got) != 1 || got[0] != "T1" {
+		t.Fatalf("expected trimmed deduped depends_on, got %#v", got)
+	}
+}
+
 func TestValidateTodos_Cycles(t *testing.T) {
 	// 1 -> 2 -> 3 -> 1
 	todos := []Todo{

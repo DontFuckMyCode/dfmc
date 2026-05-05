@@ -143,6 +143,8 @@ func parsePlannerOutput(raw string) ([]Todo, error) {
 			t.Kind = normalizeTodoKind(t.Kind, t.Verification, t.ProviderTag, t.WorkerClass)
 			t.Title = strings.TrimSpace(t.Title)
 			t.Detail = strings.TrimSpace(t.Detail)
+			t.DependsOn = cleanList(t.DependsOn)
+			t.FileScope = cleanFileScope(t.FileScope)
 			t.ProviderTag = strings.TrimSpace(t.ProviderTag)
 			if t.ProviderTag == "" {
 				t.ProviderTag = "code"
@@ -316,6 +318,34 @@ func cleanList(in []string) []string {
 	seen := make(map[string]struct{}, len(in))
 	for _, item := range in {
 		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		key := strings.ToLower(item)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, item)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func cleanFileScope(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, item := range in {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		item = normalizeScope(item)
 		if item == "" {
 			continue
 		}
