@@ -239,6 +239,33 @@ func TestListByCategory_OmitsEmptyGroups(t *testing.T) {
 	}
 }
 
+func TestForSurface_PreservesUnknownCategoriesAfterKnownGroups(t *testing.T) {
+	r := NewRegistry()
+	if _, err := r.MustRegister(Command{Name: "ask", Summary: "x", Surfaces: SurfaceCLI, Category: CategoryQuery}); err != nil {
+		t.Fatalf("mustregister ask: %v", err)
+	}
+	custom := Category("z-custom")
+	if _, err := r.MustRegister(Command{Name: "custom", Summary: "x", Surfaces: SurfaceCLI, Category: custom}); err != nil {
+		t.Fatalf("mustregister custom: %v", err)
+	}
+
+	cmds := r.ForSurface(SurfaceCLI)
+	if len(cmds) != 2 {
+		t.Fatalf("expected known and unknown category commands, got %d", len(cmds))
+	}
+	if cmds[0].Name != "ask" || cmds[1].Name != "custom" {
+		t.Fatalf("unexpected category ordering: %q then %q", cmds[0].Name, cmds[1].Name)
+	}
+
+	groups := r.ListByCategory(SurfaceCLI)
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups including unknown category, got %d", len(groups))
+	}
+	if groups[1].Category != custom || groups[1].Label != string(custom) {
+		t.Fatalf("unknown category should be preserved with fallback label, got %+v", groups[1])
+	}
+}
+
 func TestSurface_String(t *testing.T) {
 	if got := (SurfaceCLI | SurfaceWeb).String(); got != "cli,web" {
 		t.Fatalf("expected cli,web got %q", got)

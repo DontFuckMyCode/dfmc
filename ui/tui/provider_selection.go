@@ -186,6 +186,14 @@ func (m Model) applyProviderModelSelection(providerName, model string) Model {
 		m.eng.SetProviderModel(providerName, model)
 		m.status = m.eng.Status()
 		m.notice = formatProviderSwitchNotice(m.status.ProviderProfile)
+
+		// Persist provider + model selection to config so it survives restart.
+		if m.eng.Config != nil && strings.TrimSpace(m.eng.Config.Providers.Primary) != providerName {
+			m.eng.SetPrimaryProvider(providerName)
+		}
+		if err := m.persistProvidersPrimaryFallback(); err != nil {
+			m.notice += " (save failed: " + err.Error() + ")"
+		}
 	}
 	return m
 }

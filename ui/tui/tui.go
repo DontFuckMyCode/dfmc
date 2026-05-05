@@ -517,7 +517,11 @@ func (m Model) View() string {
 	strip := renderTopTabStrip(m.tabs, m.activeTab, planMode, width)
 	// Keep the canonical brand string in the rendered output so
 	// downstream tests / scrollback grep continue to work.
-	brandTag := subtleStyle.Render("DFMC WORKBENCH · " + tabName)
+	brandLine := "DFMC WORKBENCH · " + tabName
+	if runtime := strings.TrimSpace(m.workbenchRuntimeStatus()); runtime != "" {
+		brandLine += " · " + runtime
+	}
+	brandTag := subtleStyle.Render(brandLine)
 	header := strip + "\n" + brandTag
 	footer := statusBarStyle.Width(width).Render(m.renderFooter(width))
 	bodyHeight := height - lipgloss.Height(header) - lipgloss.Height(footer)

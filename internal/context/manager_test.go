@@ -2,6 +2,7 @@ package context
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -181,6 +182,27 @@ func VerifyToken(token string) bool {
 	}
 	if !strings.Contains(prompt, "VerifyToken") {
 		t.Fatalf("expected injected code snippet in prompt, got: %s", prompt)
+	}
+}
+
+func TestExtractInjectedContextCapsHugeFileRanges(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "big.go")
+	var b strings.Builder
+	b.WriteString("package big\n")
+	for i := 1; i <= absoluteInjectedFileLines+25; i++ {
+		b.WriteString(fmt.Sprintf("var Line%d = %d\n", i, i))
+	}
+	if err := os.WriteFile(target, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	block := extractInjectedContext(tmp, "inspect [[file:big.go#L1-L999999]]", 1, 999999)
+	if !strings.Contains(block, fmt.Sprintf("[[file:big.go#L1-L%d]]", absoluteInjectedFileLines)) {
+		t.Fatalf("expected absolute line cap in marker, got:\n%s", block)
+	}
+	if strings.Contains(block, fmt.Sprintf("Line%d", absoluteInjectedFileLines+1)) {
+		t.Fatalf("expected lines after cap to be omitted, got:\n%s", block)
 	}
 }
 

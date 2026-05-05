@@ -82,41 +82,53 @@ func (e *Engine) BuildFromFiles(ctx context.Context, paths []string, onProgress 
 		}
 		directoryCounts[filepath.ToSlash(filepath.Dir(path))]++
 
-		fileNodeID := "file:" + filepath.ToSlash(path)
-		e.graph.AddNode(Node{
+		filePath := filepath.ToSlash(path)
+		fileNodeID := "file:" + filePath
+		nodes := []Node{{
 			ID:       fileNodeID,
 			Name:     filepath.Base(path),
-			Path:     filepath.ToSlash(path),
+			Path:     filePath,
 			Kind:     "file",
 			Language: result.Language,
-		})
+		}}
+		edges := make([]Edge, 0, len(result.Imports)+len(result.Symbols)*2)
 
 		for _, imp := range result.Imports {
 			impID := "module:" + imp
-			e.graph.AddNode(Node{
+			nodes = append(nodes, Node{
 				ID:   impID,
 				Name: imp,
 				Kind: "module",
 			})
-			e.graph.AddEdge(Edge{
+			edges = append(edges, Edge{
 				From: fileNodeID,
 				To:   impID,
 				Type: "imports",
 			})
 		}
 
+		typeNodes := make(map[string]string)
 		for _, sym := range result.Symbols {
-			symID := fmt.Sprintf("sym:%s:%s:%d", filepath.ToSlash(path), sym.Name, sym.Line)
+			switch sym.Kind {
+			case types.SymbolClass, types.SymbolInterface, types.SymbolType:
+				if name := strings.ToLower(strings.TrimSpace(sym.Name)); name != "" {
+					typeNodes[name] = fmt.Sprintf("sym:%s:%s:%d", filePath, sym.Name, sym.Line)
+				}
+			}
+		}
+
+		for _, sym := range result.Symbols {
+			symID := fmt.Sprintf("sym:%s:%s:%d", filePath, sym.Name, sym.Line)
 			node := Node{
 				ID:       symID,
 				Name:     sym.Name,
-				Path:     filepath.ToSlash(path),
+				Path:     filePath,
 				Kind:     string(sym.Kind),
 				Language: sym.Language,
 				Meta:     sym.Metadata,
 			}
-			e.graph.AddNode(node)
-			e.graph.AddEdge(Edge{
+			nodes = append(nodes, node)
+			edges = append(edges, Edge{
 				From: fileNodeID,
 				To:   symID,
 				Type: "defines",
@@ -125,8 +137,8 @@ func (e *Engine) BuildFromFiles(ctx context.Context, paths []string, onProgress 
 			// gets a "method_of" edge to the type symbol found in the same file.
 			if sym.Kind == types.SymbolMethod && sym.Metadata != nil {
 				if receiver := sym.Metadata["receiver"]; receiver != "" {
-					if typeNode := findTypeNodeForReceiver(e.graph, receiver, filepath.ToSlash(path)); typeNode != "" {
-						e.graph.AddEdge(Edge{
+					if typeNode := typeNodes[receiverTypeName(receiver)]; typeNode != "" {
+						edges = append(edges, Edge{
 							From: symID,
 							To:   typeNode,
 							Type: "method_of",
@@ -135,6 +147,7 @@ func (e *Engine) BuildFromFiles(ctx context.Context, paths []string, onProgress 
 				}
 			}
 		}
+		e.graph.AddNodesWithEdges(nodes, edges)
 
 		// Progress callback every 50 processed files, plus the final
 		// iteration. Cancellation is already polled at the top of the
@@ -207,12 +220,10 @@ func (e *Engine) InvalidateFile(path string) {
 // method→type ownership edges ("method_of") so that codemap queries like
 // "what methods does *Server own?" can traverse the graph directly.
 func findTypeNodeForReceiver(graph *Graph, receiver, filePath string) string {
-	rec := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(receiver), "*"), "&")
-	rec = strings.TrimLeft(rec, "() ")
+	rec := receiverTypeName(receiver)
 	if rec == "" {
 		return ""
 	}
-	recLower := strings.ToLower(rec)
 	var candidates []string
 	for _, n := range graph.Nodes() {
 		if n.Path != filePath {
@@ -220,7 +231,7 @@ func findTypeNodeForReceiver(graph *Graph, receiver, filePath string) string {
 		}
 		switch n.Kind {
 		case "class", "interface", "type":
-			if strings.ToLower(n.Name) == recLower {
+			if strings.ToLower(n.Name) == rec {
 				candidates = append(candidates, n.ID)
 			}
 		}
@@ -237,4 +248,10 @@ func findTypeNodeForReceiver(graph *Graph, receiver, filePath string) string {
 		}
 	}
 	return candidates[0]
+}
+
+func receiverTypeName(receiver string) string {
+	rec := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(receiver), "*"), "&")
+	rec = strings.TrimLeft(rec, "() ")
+	return strings.ToLower(strings.TrimSpace(rec))
 }

@@ -76,6 +76,55 @@ func intentChipLabel(s intentState) string {
 func (m Model) statsPanelInfo() statsPanelInfo {
 	now := time.Now()
 	head := m.chatHeaderInfo()
+	contextTask := ""
+	contextFileCount := 0
+	contextMaxFiles := 0
+	contextBudgetTokens := 0
+	contextAvailableTokens := 0
+	contextMaxTokensPerFile := 0
+	contextCompression := ""
+	contextReasons := []string{}
+	contextTopFiles := []string{}
+	contextSystemTokens := 0
+	contextHistoryTokens := 0
+	contextResponseTokens := 0
+	contextToolTokens := 0
+	if report := m.status.ContextIn; report != nil {
+		contextTask = strings.TrimSpace(report.Task)
+		contextFileCount = report.FileCount
+		contextMaxFiles = report.MaxFiles
+		contextBudgetTokens = report.MaxTokensTotal
+		contextAvailableTokens = report.ContextAvailable
+		contextMaxTokensPerFile = report.MaxTokensPerFile
+		contextCompression = strings.TrimSpace(report.Compression)
+		for _, reason := range report.Reasons {
+			reason = strings.TrimSpace(reason)
+			if reason == "" {
+				continue
+			}
+			contextReasons = append(contextReasons, reason)
+			if len(contextReasons) >= 2 {
+				break
+			}
+		}
+		for _, file := range report.Files {
+			path := strings.TrimSpace(file.Path)
+			if path == "" {
+				continue
+			}
+			contextTopFiles = append(contextTopFiles, path)
+			if len(contextTopFiles) >= 2 {
+				break
+			}
+		}
+		if m.eng != nil && m.eng.Config != nil && strings.TrimSpace(report.Query) != "" {
+			breakdown := m.eng.ContextBreakdown(report.Query)
+			contextSystemTokens = breakdown.SystemPrompt
+			contextHistoryTokens = breakdown.History
+			contextResponseTokens = breakdown.Response
+			contextToolTokens = breakdown.ToolReserve
+		}
+	}
 	elapsed := time.Duration(0)
 	if !m.sessionStart.IsZero() {
 		elapsed = now.Sub(m.sessionStart)
@@ -371,64 +420,78 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 	}
 
 	return statsPanelInfo{
-		Mode:                   theme.StatsPanelMode(mode),
-		Provider:               head.Provider,
-		Model:                  head.Model,
-		Configured:             head.Configured,
-		ContextTokens:          head.ContextTokens,
-		MaxContext:             head.MaxContext,
-		Streaming:              head.Streaming,
-		AgentActive:            head.AgentActive,
-		AgentPhase:             head.AgentPhase,
-		AgentStep:              head.AgentStep,
-		AgentMaxSteps:          head.AgentMax,
-		ToolRounds:             m.agentLoop.toolRounds,
-		LastTool:               m.agentLoop.lastTool,
-		LastStatus:             m.agentLoop.lastStatus,
-		LastDurationMs:         m.agentLoop.lastDuration,
-		Parked:                 head.Parked,
-		QueuedCount:            head.QueuedCount,
-		PendingNotes:           head.PendingNotes,
-		ActiveSubagents:        head.ActiveSubagents,
-		ToolsEnabled:           head.ToolsEnabled,
-		ToolCount:              toolCount,
-		Branch:                 m.gitInfo.Branch,
-		Dirty:                  m.gitInfo.Dirty,
-		Detached:               m.gitInfo.Detached,
-		Inserted:               m.gitInfo.Inserted,
-		Deleted:                m.gitInfo.Deleted,
-		SessionElapsed:         elapsed,
-		MessageCount:           len(m.chat.transcript),
-		Pinned:                 head.Pinned,
-		CompressionSavedChars:  m.telemetry.compressionSavedChars,
-		CompressionRawChars:    m.telemetry.compressionRawChars,
-		TodoTotal:              todoTotal,
-		TodoPending:            todoPending,
-		TodoDoing:              todoDoing,
-		TodoDone:               todoDone,
-		TodoActive:             todoActive,
-		TodoLines:              todoLines,
-		TaskLines:              taskLines,
-		TaskTreeLines:          taskTreeLines,
-		WorkflowStatus:         workflowStatus,
-		WorkflowMeter:          workflowMeter,
-		WorkflowExecution:      workflowExecution,
-		WorkflowTimeline:       workflowTimeline,
-		WorkflowRecent:         workflowRecent,
-		Boosted:                boosted,
-		BoostSeconds:           boostSeconds,
-		FocusLocked:            m.ui.statsPanelFocusLocked,
-		SubagentLines:          subagentLines,
-		DriveRunID:             head.DriveRunID,
-		DriveDone:              head.DriveDone,
-		DriveTotal:             head.DriveTotal,
-		DriveBlocked:           head.DriveBlocked,
-		PlanSubtasks:           planSubtasks,
-		PlanParallel:           planParallel,
-		PlanConfidence:         planConfidence,
-		SpinnerFrame:           m.chat.spinnerFrame,
-		Providers:              m.providerPanelRows(),
-		ProvidersSelectedIndex: m.providers.selectedIndex,
+		Mode:                    theme.StatsPanelMode(mode),
+		Provider:                head.Provider,
+		Model:                   head.Model,
+		Configured:              head.Configured,
+		ContextTokens:           head.ContextTokens,
+		MaxContext:              head.MaxContext,
+		ContextTask:             contextTask,
+		ContextFileCount:        contextFileCount,
+		ContextMaxFiles:         contextMaxFiles,
+		ContextBudgetTokens:     contextBudgetTokens,
+		ContextAvailableTokens:  contextAvailableTokens,
+		ContextMaxTokensPerFile: contextMaxTokensPerFile,
+		ContextCompression:      contextCompression,
+		ContextReasons:          contextReasons,
+		ContextTopFiles:         contextTopFiles,
+		ContextSystemTokens:     contextSystemTokens,
+		ContextHistoryTokens:    contextHistoryTokens,
+		ContextResponseTokens:   contextResponseTokens,
+		ContextToolTokens:       contextToolTokens,
+		Streaming:               head.Streaming,
+		AgentActive:             head.AgentActive,
+		AgentPhase:              head.AgentPhase,
+		AgentStep:               head.AgentStep,
+		AgentMaxSteps:           head.AgentMax,
+		ToolRounds:              m.agentLoop.toolRounds,
+		LastTool:                m.agentLoop.lastTool,
+		LastStatus:              m.agentLoop.lastStatus,
+		LastDurationMs:          m.agentLoop.lastDuration,
+		Parked:                  head.Parked,
+		QueuedCount:             head.QueuedCount,
+		PendingNotes:            head.PendingNotes,
+		ActiveSubagents:         head.ActiveSubagents,
+		ActiveTools:             head.ActiveTools,
+		ToolsEnabled:            head.ToolsEnabled,
+		ToolCount:               toolCount,
+		Branch:                  m.gitInfo.Branch,
+		Dirty:                   m.gitInfo.Dirty,
+		Detached:                m.gitInfo.Detached,
+		Inserted:                m.gitInfo.Inserted,
+		Deleted:                 m.gitInfo.Deleted,
+		SessionElapsed:          elapsed,
+		MessageCount:            len(m.chat.transcript),
+		Pinned:                  head.Pinned,
+		CompressionSavedChars:   m.telemetry.compressionSavedChars,
+		CompressionRawChars:     m.telemetry.compressionRawChars,
+		TodoTotal:               todoTotal,
+		TodoPending:             todoPending,
+		TodoDoing:               todoDoing,
+		TodoDone:                todoDone,
+		TodoActive:              todoActive,
+		TodoLines:               todoLines,
+		TaskLines:               taskLines,
+		TaskTreeLines:           taskTreeLines,
+		WorkflowStatus:          workflowStatus,
+		WorkflowMeter:           workflowMeter,
+		WorkflowExecution:       workflowExecution,
+		WorkflowTimeline:        workflowTimeline,
+		WorkflowRecent:          workflowRecent,
+		Boosted:                 boosted,
+		BoostSeconds:            boostSeconds,
+		FocusLocked:             m.ui.statsPanelFocusLocked,
+		SubagentLines:           subagentLines,
+		DriveRunID:              head.DriveRunID,
+		DriveDone:               head.DriveDone,
+		DriveTotal:              head.DriveTotal,
+		DriveBlocked:            head.DriveBlocked,
+		PlanSubtasks:            planSubtasks,
+		PlanParallel:            planParallel,
+		PlanConfidence:          planConfidence,
+		SpinnerFrame:            m.chat.spinnerFrame,
+		Providers:               m.providerPanelRows(),
+		ProvidersSelectedIndex:  m.providers.selectedIndex,
 	}
 }
 

@@ -34,6 +34,8 @@ var (
 	queryCodeBlockRe = regexp.MustCompile("(?s)```([a-zA-Z0-9_+-]*)\\r?\\n(.*?)\\r?\\n?```")
 )
 
+const absoluteInjectedFileLines = 500
+
 func extractInjectedContext(projectRoot, query string, maxBlocks, maxLines int) string {
 	if strings.TrimSpace(query) == "" {
 		return "(none)"
@@ -44,6 +46,9 @@ func extractInjectedContext(projectRoot, query string, maxBlocks, maxLines int) 
 	}
 	if maxLines <= 0 {
 		maxLines = 120
+	}
+	if maxLines > absoluteInjectedFileLines {
+		maxLines = absoluteInjectedFileLines
 	}
 
 	blocks := make([]string, 0, maxBlocks)

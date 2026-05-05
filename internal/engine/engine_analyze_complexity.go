@@ -43,6 +43,9 @@ import (
 )
 
 func (e *Engine) computeComplexity(ctx context.Context, paths []string) (ComplexityReport, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	report := ComplexityReport{Files: len(paths)}
 	functions := make([]FunctionComplexity, 0, 128)
 	fileScores := make([]FunctionComplexity, 0, len(paths))
@@ -52,9 +55,15 @@ func (e *Engine) computeComplexity(ctx context.Context, paths []string) (Complex
 	scannedSymbols := 0
 
 	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return report, err
+		}
 		content, err := os.ReadFile(path)
 		if err != nil {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return report, err
 		}
 		text := string(content)
 		fileScore := complexityScore(text)

@@ -51,6 +51,39 @@ func TestRegistryUnregisterRemovesEntry(t *testing.T) {
 	}
 }
 
+func TestRegistryTryRegisterRejectsDuplicateAtomically(t *testing.T) {
+	const runID = "drv-try-register"
+	unregister(runID)
+
+	_, firstCancel := context.WithCancel(context.Background())
+	if !tryRegister(runID, "first", firstCancel) {
+		t.Fatal("first tryRegister should win")
+	}
+	defer unregister(runID)
+	defer firstCancel()
+
+	_, secondCancel := context.WithCancel(context.Background())
+	if tryRegister(runID, "second", secondCancel) {
+		secondCancel()
+		t.Fatal("duplicate tryRegister should fail")
+	}
+	secondCancel()
+
+	active := ListActive()
+	found := false
+	for _, run := range active {
+		if run.RunID == runID {
+			found = true
+			if run.Task != "first" {
+				t.Fatalf("duplicate registration overwrote task: got %q", run.Task)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s to remain active after duplicate rejection", runID)
+	}
+}
+
 func TestRegistryListActiveSnapshot(t *testing.T) {
 	// Snapshot count before so concurrent runs (other tests in race
 	// mode) don't break the assertion. We only assert "our entries

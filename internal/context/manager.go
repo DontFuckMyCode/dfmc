@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -19,6 +20,7 @@ import (
 
 // Manager coordinates context building, retrieval, and symbol-aware indexing.
 type Manager struct {
+	mu      sync.RWMutex
 	codemap *codemap.Engine
 	prompts *promptlib.Library
 }
@@ -97,6 +99,8 @@ func (m *Manager) Invalidate(path string) {
 	if m == nil || path == "" || m.codemap == nil {
 		return
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.codemap.InvalidateFile(path)
 }
 
@@ -117,6 +121,8 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 	if m == nil || m.codemap == nil || m.codemap.Graph() == nil {
 		return nil, nil
 	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if opts.MaxFiles <= 0 {
 		opts.MaxFiles = 6
 	}
@@ -348,6 +354,8 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 			},
 		}
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	overrideWarning := ""
 	if err := m.prompts.LoadOverrides(projectRoot); err != nil {
 		overrideWarning = "Prompt override warning: " + err.Error() + ". Falling back to embedded defaults for unreadable override roots."

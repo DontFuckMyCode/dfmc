@@ -676,6 +676,35 @@ func contextBuiltChatDetail(files, tokens, budget, perFile int, task, compressio
 	return strings.Join(parts, " | ")
 }
 
+func contextLifecycleChatDetail(payload map[string]any) string {
+	before := payloadInt(payload, "before_tokens", 0)
+	after := payloadInt(payload, "after_tokens", 0)
+	rounds := payloadInt(payload, "rounds_collapsed", 0)
+	removed := payloadInt(payload, "messages_removed", 0)
+	keepRecent := payloadInt(payload, "keep_recent", 0)
+	step := payloadInt(payload, "step", 0)
+	parts := []string{}
+	if before > 0 || after > 0 {
+		parts = append(parts, fmt.Sprintf("%s -> %s tok", compactMetric(before), compactMetric(after)))
+		if before > after {
+			parts = append(parts, "saved "+compactMetric(before-after)+" tok")
+		}
+	}
+	if rounds > 0 {
+		parts = append(parts, fmt.Sprintf("%d rounds summarized", rounds))
+	}
+	if removed > 0 {
+		parts = append(parts, fmt.Sprintf("%d msgs removed", removed))
+	}
+	if keepRecent > 0 {
+		parts = append(parts, fmt.Sprintf("kept last %d rounds", keepRecent))
+	}
+	if step > 0 {
+		parts = append(parts, fmt.Sprintf("step %d", step))
+	}
+	return strings.Join(parts, " | ")
+}
+
 func payloadMap(payload map[string]any, key string) map[string]any {
 	if payload == nil {
 		return nil

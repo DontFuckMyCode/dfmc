@@ -114,9 +114,6 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (retRun *Run, retErr
 	if strings.TrimSpace(run.ID) == "" {
 		run.ID = newRunID()
 	}
-	if IsActive(run.ID) {
-		return run, fmt.Errorf("run %q already active in this process", run.ID)
-	}
 	if run.CreatedAt.IsZero() {
 		run.CreatedAt = time.Now()
 	}
@@ -155,7 +152,10 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (retRun *Run, retErr
 	// deferred too — without it the wrapper goroutine would leak
 	// on every successful run.
 	cancelCtx, cancel := context.WithCancel(ctx)
-	register(run.ID, run.Task, cancel)
+	if !tryRegister(run.ID, run.Task, cancel) {
+		cancel()
+		return run, fmt.Errorf("run %q already active in this process", run.ID)
+	}
 	defer unregister(run.ID)
 	defer cancel()
 	ctx = cancelCtx
@@ -241,9 +241,6 @@ func (d *Driver) Resume(ctx context.Context, runID string) (*Run, error) {
 	if run == nil {
 		return nil, fmt.Errorf("run %q not found", runID)
 	}
-	if IsActive(runID) {
-		return run, fmt.Errorf("run %q already active in this process", runID)
-	}
 	switch run.Status {
 	case RunDone, RunFailed:
 		return run, fmt.Errorf("run %q already terminal (status=%s)", runID, run.Status)
@@ -260,7 +257,10 @@ func (d *Driver) Resume(ctx context.Context, runID string) (*Run, error) {
 	// Same registry hook as Run(). Use the original run ID so
 	// `dfmc drive stop <id>` works on a resumed run too.
 	cancelCtx, cancel := context.WithCancel(ctx)
-	register(run.ID, run.Task, cancel)
+	if !tryRegister(run.ID, run.Task, cancel) {
+		cancel()
+		return run, fmt.Errorf("run %q already active in this process", run.ID)
+	}
 	defer unregister(run.ID)
 	defer cancel()
 	ctx = cancelCtx

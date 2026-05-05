@@ -116,6 +116,20 @@ func (m Model) contextCommandDetailedSummary() string {
 		fmt.Sprintf("Runtime cap: provider_ctx=%d available_ctx=%d", report.ProviderMaxContext, report.ContextAvailable),
 		fmt.Sprintf("Flags: include_tests=%t include_docs=%t compression=%s", report.IncludeTests, report.IncludeDocs, blankFallback(strings.TrimSpace(report.Compression), "-")),
 	)
+	if m.eng != nil && strings.TrimSpace(report.Query) != "" {
+		bd := m.eng.ContextBreakdown(report.Query)
+		parts = append(parts,
+			fmt.Sprintf("Budget breakdown: system=%d history=%d code=%d response=%d tools=%d available=%d",
+				bd.SystemPrompt, bd.History, bd.ContextChunks, bd.Response, bd.ToolReserve, bd.Available),
+			fmt.Sprintf("Budget percentages: system=%.1f%% history=%.1f%% code=%.1f%% response=%.1f%%",
+				bd.SystemPromptPct*100, bd.HistoryPct*100, bd.ContextChunksPct*100, bd.ResponsePct*100),
+		)
+	} else {
+		parts = append(parts,
+			fmt.Sprintf("Budget breakdown: code=%d max_code=%d per_file=%d available=%d",
+				report.TokenCount, report.MaxTokensTotal, report.MaxTokensPerFile, report.ContextAvailable),
+		)
+	}
 	if why := formatContextInReasonSummaryTUI(report); why != "" {
 		parts = append(parts, "Why summary: "+why)
 	}

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -269,6 +270,36 @@ func TestHandleEngineEvent_ContextBuilt(t *testing.T) {
 	}
 }
 
+func TestHandleEngineEvent_ContextLifecycleCompacted(t *testing.T) {
+	m := newCoverageModel(t)
+	m.chat.sending = true
+	event := engine.Event{
+		Type: "context:lifecycle:compacted",
+		Payload: map[string]any{
+			"step":             9,
+			"before_tokens":    72000,
+			"after_tokens":     21000,
+			"rounds_collapsed": 6,
+			"messages_removed": 18,
+			"keep_recent":      3,
+		},
+	}
+	m2 := m.handleEngineEvent(event)
+	if len(m2.chat.transcript) == 0 {
+		t.Fatal("context lifecycle event should append transcript row")
+	}
+	contents := make([]string, 0, len(m2.chat.transcript))
+	for _, line := range m2.chat.transcript {
+		contents = append(contents, line.Content)
+	}
+	got := strings.Join(contents, "\n")
+	for _, want := range []string{"context compacted", "72.0k -> 21.0k tok", "6 rounds summarized", "_reason:"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected compact lifecycle detail %q, got:\n%s", want, got)
+		}
+	}
+}
+
 func TestHandleEngineEvent_ProviderComplete(t *testing.T) {
 	m := newCoverageModel(t)
 	m.agentLoop.active = true
@@ -376,23 +407,6 @@ func TestHandleEngineEvent_ConfigReloadAutoFailed(t *testing.T) {
 	m2 := m.handleEngineEvent(event)
 	if m2.notice == "" {
 		t.Error("config reload failed should set notice")
-	}
-}
-
-func TestHandleEngineEvent_ContextLifecycleCompacted(t *testing.T) {
-	m := newCoverageModel(t)
-	event := engine.Event{
-		Type: "context:lifecycle:compacted",
-		Payload: map[string]any{
-			"before_tokens":    100000,
-			"after_tokens":     25000,
-			"rounds_collapsed": 3,
-			"messages_removed": 15,
-		},
-	}
-	m2 := m.handleEngineEvent(event)
-	if len(m2.agentLoop.toolTimeline) == 0 {
-		t.Error("compacted event should push a tool chip")
 	}
 }
 

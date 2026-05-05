@@ -237,11 +237,16 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		if errText != "" {
 			line = fmt.Sprintf("Config auto-reload failed: %s", truncateSingleLine(errText, 120))
 		}
-	case "context:lifecycle:compacted":
+	case "context:lifecycle:compacted", "context:lifecycle:proactive_compacted":
 		before := payloadInt(payload, "before_tokens", 0)
 		after := payloadInt(payload, "after_tokens", 0)
 		collapsed := payloadInt(payload, "rounds_collapsed", 0)
 		removed := payloadInt(payload, "messages_removed", 0)
+		step := payloadInt(payload, "step", 0)
+		title := "context compacted"
+		if eventType == "context:lifecycle:proactive_compacted" {
+			title = "context proactive compact"
+		}
 		preview := fmt.Sprintf("%d→%d tok · %d rounds", before, after, collapsed)
 		m.pushToolChip(toolChip{
 			Name:    "auto-compact",
@@ -249,11 +254,13 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			Preview: preview,
 		})
 		m.upsertStreamingChatEvent(chatEventLine{
-			Key:    "context:compact",
+			Key:    fmt.Sprintf("%s:%d", eventType, step),
 			Kind:   "context",
 			Status: "ok",
-			Title:  "context compact",
-			Detail: fmt.Sprintf("%s -> %s tok | %d rounds | %d msgs removed", compactMetric(before), compactMetric(after), collapsed, removed),
+			Title:  title,
+			Detail: contextLifecycleChatDetail(payload),
+			Step:   step,
+			Reason: "tool-loop history was summarized to keep provider context headroom",
 		})
 		if collapsed > 0 {
 			line = fmt.Sprintf("Context auto-compacted: %d→%d tokens (%d rounds, %d msgs removed).", before, after, collapsed, removed)

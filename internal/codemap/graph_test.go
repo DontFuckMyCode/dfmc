@@ -72,6 +72,28 @@ func TestGraph_AddEdge_DuplicateExactEdgeDeduplicates(t *testing.T) {
 	}
 }
 
+func TestGraph_AddNodesWithEdges_BatchesNodesAndEdges(t *testing.T) {
+	g := NewGraph()
+	g.AddNodesWithEdges(
+		[]Node{
+			{ID: "file:a.go", Name: "a.go"},
+			{ID: "sym:a.go:Foo:3", Name: "Foo"},
+			{ID: "module:fmt", Name: "fmt"},
+		},
+		[]Edge{
+			{From: "file:a.go", To: "sym:a.go:Foo:3", Type: "defines"},
+			{From: "file:a.go", To: "module:fmt", Type: "imports"},
+		},
+	)
+
+	if counts := g.Counts(); counts.Nodes != 3 || counts.Edges != 2 {
+		t.Fatalf("batch insert counts mismatch: %#v", counts)
+	}
+	if _, ok := g.GetNode("sym:a.go:Foo:3"); !ok {
+		t.Fatal("batched symbol node was not inserted")
+	}
+}
+
 func TestGraphCycles(t *testing.T) {
 	g := NewGraph()
 	g.AddNode(Node{ID: "A", Name: "A"})

@@ -54,6 +54,23 @@ func register(runID, task string, cancel context.CancelFunc) {
 	registryMu.Unlock()
 }
 
+// tryRegister atomically stores a new active run entry. It returns false when
+// the run ID is already active, closing the IsActive -> register race for
+// RunPrepared/Resume callers that may start the same persisted run from two
+// goroutines.
+func tryRegister(runID, task string, cancel context.CancelFunc) bool {
+	if runID == "" || cancel == nil {
+		return false
+	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if _, exists := registry[runID]; exists {
+		return false
+	}
+	registry[runID] = &regEntry{Cancel: cancel, Task: task}
+	return true
+}
+
 // unregister removes the entry. Called by Driver in defer so even
 // panics clean up. Idempotent; removing an absent ID is a no-op.
 func unregister(runID string) {

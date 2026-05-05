@@ -296,6 +296,9 @@ func (m Model) footerSegments() []string {
 		maxCtx = m.status.ProviderProfile.MaxContext
 	}
 	out = append(out, renderContextBar(tokens, maxCtx, 10))
+	if runtime := strings.TrimSpace(m.footerRuntimeSegment()); runtime != "" {
+		out = append(out, runtime)
+	}
 
 	info := m.gitInfo
 	if strings.TrimSpace(info.Branch) != "" {
@@ -319,6 +322,92 @@ func (m Model) footerSegments() []string {
 		out = append(out, subtleStyle.Render("⏱ ")+boldStyle.Render(formatSessionDuration(time.Since(m.sessionStart))))
 	}
 	return out
+}
+
+func (m Model) footerRuntimeSegment() string {
+	info := m.statsPanelInfo()
+	parts := []string{}
+	switch {
+	case info.AgentActive:
+		phase := strings.TrimSpace(info.AgentPhase)
+		if phase == "" {
+			phase = "working"
+		}
+		label := spinnerFrame(m.chat.spinnerFrame) + " " + humanizeAgentPhase(phase)
+		if info.AgentMaxSteps > 0 {
+			label += fmt.Sprintf(" %d/%d", max(info.AgentStep, 1), info.AgentMaxSteps)
+		} else if info.AgentStep > 0 {
+			label += fmt.Sprintf(" step %d", info.AgentStep)
+		}
+		parts = append(parts, accentStyle.Render(label))
+	case info.Streaming:
+		parts = append(parts, infoStyle.Render(spinnerFrame(m.chat.spinnerFrame)+" streaming"))
+	case info.Parked:
+		parts = append(parts, warnStyle.Render("parked"))
+	}
+	if info.ActiveTools > 0 {
+		parts = append(parts, infoStyle.Render(fmt.Sprintf("tools %d", info.ActiveTools)))
+	}
+	if info.ActiveSubagents > 0 {
+		parts = append(parts, accentStyle.Render(fmt.Sprintf("agents %d", info.ActiveSubagents)))
+	}
+	if tool := strings.TrimSpace(info.LastTool); tool != "" && (info.Streaming || info.AgentActive || info.LastStatus == "failed") {
+		label := "last " + tool
+		if info.LastStatus != "" {
+			label += " " + info.LastStatus
+		}
+		if info.LastDurationMs > 0 {
+			label += fmt.Sprintf(" %dms", info.LastDurationMs)
+		}
+		if info.LastStatus == "failed" {
+			parts = append(parts, warnStyle.Render(label))
+		} else {
+			parts = append(parts, subtleStyle.Render(label))
+		}
+	}
+	if info.QueuedCount > 0 {
+		parts = append(parts, accentStyle.Render(fmt.Sprintf("queue %d", info.QueuedCount)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, subtleStyle.Render(" / "))
+}
+
+func (m Model) workbenchRuntimeStatus() string {
+	info := m.statsPanelInfo()
+	parts := []string{}
+	switch {
+	case info.AgentActive:
+		phase := strings.TrimSpace(info.AgentPhase)
+		if phase == "" {
+			phase = "working"
+		}
+		label := "working " + humanizeAgentPhase(phase)
+		if info.AgentMaxSteps > 0 {
+			label += fmt.Sprintf(" %d/%d", max(info.AgentStep, 1), info.AgentMaxSteps)
+		} else if info.AgentStep > 0 {
+			label += fmt.Sprintf(" step %d", info.AgentStep)
+		}
+		parts = append(parts, label)
+	case info.Streaming:
+		parts = append(parts, "streaming")
+	case info.Parked:
+		parts = append(parts, "parked")
+	}
+	if info.ActiveTools > 0 {
+		parts = append(parts, fmt.Sprintf("tools %d", info.ActiveTools))
+	}
+	if info.ActiveSubagents > 0 {
+		parts = append(parts, fmt.Sprintf("agents %d", info.ActiveSubagents))
+	}
+	if tool := strings.TrimSpace(info.LastTool); tool != "" && (info.Streaming || info.AgentActive) {
+		parts = append(parts, "last "+tool)
+	}
+	if info.QueuedCount > 0 {
+		parts = append(parts, fmt.Sprintf("queue %d", info.QueuedCount))
+	}
+	return strings.Join(parts, " / ")
 }
 
 func (m Model) renderHelpOverlay(width int) string {

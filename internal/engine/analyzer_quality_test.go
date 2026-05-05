@@ -6,6 +6,10 @@
 package engine
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -65,6 +69,21 @@ func TestComplexityScore_CountsEachBranch(t *testing.T) {
 	got := complexityScore(src)
 	if got < 7 {
 		t.Fatalf("expected at least 7 decision points, got %d", got)
+	}
+}
+
+func TestComputeComplexityHonorsCancelledContext(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "main.go")
+	if err := os.WriteFile(path, []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := (&Engine{}).computeComplexity(ctx, []string{path})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("computeComplexity should return context.Canceled, got %v", err)
 	}
 }
 

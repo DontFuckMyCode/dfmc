@@ -60,6 +60,14 @@ var categoryOrder = []Category{
 	CategorySystem,
 }
 
+var categoryOrderIndex = func() map[Category]int {
+	out := make(map[Category]int, len(categoryOrder))
+	for i, cat := range categoryOrder {
+		out[cat] = i
+	}
+	return out
+}()
+
 // CategoryLabels maps category keys to human-readable section headings.
 var CategoryLabels = map[Category]string{
 	CategoryQuery:   "Ask & chat",
@@ -292,7 +300,7 @@ func (r *Registry) ForSurface(s Surface) []*Command {
 		byCategory[cmd.Category] = append(byCategory[cmd.Category], cmd)
 	}
 	out := make([]*Command, 0, len(r.order))
-	for _, cat := range categoryOrder {
+	for _, cat := range orderedCommandCategories(byCategory) {
 		group := byCategory[cat]
 		sort.SliceStable(group, func(i, j int) bool { return group[i].Name < group[j].Name })
 		out = append(out, group...)
@@ -309,18 +317,50 @@ func (r *Registry) ListByCategory(s Surface) []CategoryGroup {
 		byCategory[cmd.Category] = append(byCategory[cmd.Category], cmd)
 	}
 	out := make([]CategoryGroup, 0, len(categoryOrder))
-	for _, cat := range categoryOrder {
+	for _, cat := range orderedCommandCategories(byCategory) {
 		group := byCategory[cat]
 		if len(group) == 0 {
 			continue
 		}
+		label := CategoryLabels[cat]
+		if strings.TrimSpace(label) == "" {
+			label = string(cat)
+		}
 		out = append(out, CategoryGroup{
 			Category: cat,
-			Label:    CategoryLabels[cat],
+			Label:    label,
 			Commands: group,
 		})
 	}
 	return out
+}
+
+func orderedCommandCategories(byCategory map[Category][]*Command) []Category {
+	out := make([]Category, 0, len(byCategory))
+	seen := map[Category]struct{}{}
+	for _, cat := range categoryOrder {
+		if len(byCategory[cat]) == 0 {
+			continue
+		}
+		out = append(out, cat)
+		seen[cat] = struct{}{}
+	}
+
+	extras := make([]Category, 0)
+	for cat, group := range byCategory {
+		if len(group) == 0 {
+			continue
+		}
+		if _, known := categoryOrderIndex[cat]; known {
+			continue
+		}
+		if _, ok := seen[cat]; ok {
+			continue
+		}
+		extras = append(extras, cat)
+	}
+	sort.Slice(extras, func(i, j int) bool { return extras[i] < extras[j] })
+	return append(out, extras...)
 }
 
 // CategoryGroup is the shape ListByCategory returns. Help renderers iterate

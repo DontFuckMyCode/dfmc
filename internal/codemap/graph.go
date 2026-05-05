@@ -90,15 +90,35 @@ func (g *Graph) AddNodeWithEdges(node Node, edges []Edge) {
 	defer g.mu.Unlock()
 	g.nodes[node.ID] = node
 	for _, e := range edges {
-		if g.outgoing[e.From] == nil {
-			g.outgoing[e.From] = map[edgeKey]Edge{}
-		}
-		g.outgoing[e.From][edgeKey{Node: e.To, Type: e.Type}] = e
-		if g.incoming[e.To] == nil {
-			g.incoming[e.To] = map[edgeKey]Edge{}
-		}
-		g.incoming[e.To][edgeKey{Node: e.From, Type: e.Type}] = e
+		g.addEdgeLocked(e)
 	}
+}
+
+// AddNodesWithEdges adds a batch of nodes and edges in one lock scope.
+// Codemap builds can emit a file node, module nodes, symbol nodes, and
+// all their relationships at once; batching avoids a lock/unlock pair per
+// import and symbol while preserving the same overwrite semantics as
+// AddNode/AddEdge.
+func (g *Graph) AddNodesWithEdges(nodes []Node, edges []Edge) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, node := range nodes {
+		g.nodes[node.ID] = node
+	}
+	for _, e := range edges {
+		g.addEdgeLocked(e)
+	}
+}
+
+func (g *Graph) addEdgeLocked(e Edge) {
+	if g.outgoing[e.From] == nil {
+		g.outgoing[e.From] = map[edgeKey]Edge{}
+	}
+	g.outgoing[e.From][edgeKey{Node: e.To, Type: e.Type}] = e
+	if g.incoming[e.To] == nil {
+		g.incoming[e.To] = map[edgeKey]Edge{}
+	}
+	g.incoming[e.To][edgeKey{Node: e.From, Type: e.Type}] = e
 }
 
 // RemoveEdge deletes one specific (from, to, type) triple from both

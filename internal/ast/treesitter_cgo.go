@@ -46,7 +46,11 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 	p := pool.Get()
 	var parser *tree_sitter.Parser
 	if p != nil {
-		parser, _ = p.(*tree_sitter.Parser)
+		var ok bool
+		parser, ok = p.(*tree_sitter.Parser)
+		if !ok {
+			parser = nil
+		}
 	}
 	if parser == nil {
 		parser = tree_sitter.NewParser()

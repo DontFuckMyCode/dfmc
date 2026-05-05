@@ -1,6 +1,7 @@
 package theme
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -859,6 +860,32 @@ func TestRenderStatsPanelModeTabs(t *testing.T) {
 	out := RenderStatsPanelModeTabs(StatsPanelModeOverview, 100)
 	if out == "" {
 		t.Fatal("RenderStatsPanelModeTabs returned empty")
+	}
+}
+
+func TestRenderStatsPanelShowsContextDiagnostics(t *testing.T) {
+	info := StatsPanelInfo{
+		ContextTokens:           3200,
+		MaxContext:              128000,
+		ContextTask:             "review",
+		ContextFileCount:        4,
+		ContextMaxFiles:         8,
+		ContextBudgetTokens:     16000,
+		ContextAvailableTokens:  120000,
+		ContextMaxTokensPerFile: 1200,
+		ContextCompression:      "standard",
+		ContextTopFiles:         []string{"internal/context/manager.go"},
+		ContextReasons:          []string{"task=review profile(total x1.20, files x1.10, per-file x1.00)"},
+		ContextSystemTokens:     900,
+		ContextHistoryTokens:    1200,
+		ContextResponseTokens:   2048,
+		ContextToolTokens:       512,
+	}
+	out := RenderStatsPanelSized(info, 30, 56)
+	for _, want := range []string{"files 4/8", "code 3.2k/16k tok", "task review", "zip standard", "available 120k tok", "budget sys 900", "hist 1.2k", "reserve resp 2.0k", "tools 512", "manager.go", "why:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected context diagnostic %q, got:\n%s", want, out)
+		}
 	}
 }
 

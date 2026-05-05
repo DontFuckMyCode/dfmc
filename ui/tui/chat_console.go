@@ -56,10 +56,12 @@ func (m Model) renderTimelineTop(width int, slimHeader bool) []string {
 	if pinned := strings.TrimSpace(m.filesView.pinned); pinned != "" {
 		parts = append(parts, subtleStyle.Render("pinned: "+fileMarker(pinned)))
 	}
-	return []string{
+	lines := []string{
 		truncateSingleLine(strings.Join(parts, subtleStyle.Render("  |  ")), width),
 		renderDivider(min(width, 140)),
 	}
+	lines = append(lines, renderTimelineOps(info, width, slimHeader)...)
+	return lines
 }
 
 func timelineContextLabel(tokens, maxTokens int) string {
@@ -74,7 +76,7 @@ func timelineContextLabel(tokens, maxTokens int) string {
 }
 
 func (m Model) renderTimelineMessages(width int) []string {
-	lines := []string{subtleStyle.Render("Chat History")}
+	lines := []string{m.renderTimelineHistoryHeader(width)}
 	if len(m.chat.transcript) == 0 {
 		lines = append(lines,
 			subtleStyle.Render("  paste text, type a prompt, or use /commands"),
@@ -102,6 +104,168 @@ func (m Model) renderTimelineMessages(width int) []string {
 		lines = append(lines, m.renderTimelineMessage(item, width, streaming, durationMs, copyIdx)...)
 	}
 	return lines
+}
+
+func renderTimelineOps(info statsPanelInfo, width int, slimHeader bool) []string {
+	rows := []string{}
+	now := strings.TrimSpace(info.WorkflowStatus)
+	if now == "" {
+		switch {
+		case info.Streaming:
+			now = "streaming model reply"
+		case info.AgentActive:
+			phase := strings.TrimSpace(info.AgentPhase)
+			if phase == "" {
+				phase = "working"
+			}
+			now = "agent " + humanizeAgentPhase(phase)
+		default:
+			now = "ready for input"
+		}
+	}
+	now = humanizeWorkflowText(now)
+	loop := []string{"now: " + now}
+	if meter := strings.TrimSpace(info.WorkflowMeter); meter != "" {
+		loop = append(loop, meter)
+	}
+	if info.AgentActive && info.AgentMaxSteps > 0 {
+		loop = append(loop, fmt.Sprintf("call %d/%d", max(info.AgentStep, 1), info.AgentMaxSteps))
+	}
+	if tool := strings.TrimSpace(info.LastTool); tool != "" {
+		label := "last tool: " + tool
+		if info.LastStatus != "" {
+			label += " " + info.LastStatus
+		}
+		if info.LastDurationMs > 0 {
+			label += fmt.Sprintf(" %dms", info.LastDurationMs)
+		}
+		loop = append(loop, label)
+	}
+	if info.ActiveSubagents > 0 {
+		loop = append(loop, fmt.Sprintf("%d subagents", info.ActiveSubagents))
+	}
+	rows = append(rows, truncateSingleLine(accentStyle.Render(strings.Join(loop, subtleStyle.Render("  |  "))), width))
+
+	if slimHeader {
+		return rows
+	}
+
+	work := []string{}
+	if execution := strings.TrimSpace(info.WorkflowExecution); execution != "" {
+		work = append(work, "doing: "+humanizeWorkflowText(execution))
+	}
+	if info.TodoTotal > 0 {
+		work = append(work, fmt.Sprintf("todos %d/%d done, %d doing", info.TodoDone, info.TodoTotal, info.TodoDoing))
+	}
+	if len(info.WorkflowRecent) > 0 {
+		work = append(work, "recent: "+humanizeWorkflowText(strings.TrimSpace(info.WorkflowRecent[0])))
+	}
+	if len(work) > 0 {
+		rows = append(rows, truncateSingleLine(strings.Join(work, subtleStyle.Render("  |  ")), width))
+	}
+
+	stats := []string{}
+	if info.ContextFileCount > 0 || info.ContextBudgetTokens > 0 {
+		ctxLine := "ctx"
+		if info.ContextFileCount > 0 {
+			ctxLine += fmt.Sprintf(" %d files", info.ContextFileCount)
+		}
+		if info.ContextBudgetTokens > 0 {
+			ctxLine += fmt.Sprintf(" %s/%s code", compactMetric(info.ContextTokens), compactMetric(info.ContextBudgetTokens))
+		}
+		if info.ContextCompression != "" {
+			ctxLine += " " + info.ContextCompression
+		}
+		stats = append(stats, ctxLine)
+	}
+	if info.ContextHistoryTokens > 0 || info.ContextSystemTokens > 0 {
+		stats = append(stats, fmt.Sprintf("request sys %s hist %s", compactMetric(info.ContextSystemTokens), compactMetric(info.ContextHistoryTokens)))
+	}
+	if info.ToolCount > 0 {
+		stats = append(stats, fmt.Sprintf("tools %d", info.ToolCount))
+	}
+	if info.CompressionSavedChars > 0 {
+		pct := 0
+		if info.CompressionRawChars > 0 {
+			pct = int((int64(info.CompressionSavedChars) * 100) / int64(info.CompressionRawChars))
+		}
+		label := "rtk saved " + compactMetric(info.CompressionSavedChars)
+		if pct > 0 {
+			label += fmt.Sprintf(" (%d%%)", pct)
+		}
+		stats = append(stats, label)
+	}
+	if info.Dirty || info.Inserted > 0 || info.Deleted > 0 {
+		branch := strings.TrimSpace(info.Branch)
+		if branch == "" {
+			branch = "worktree"
+		}
+		stats = append(stats, fmt.Sprintf("git %s +%d -%d", branch, info.Inserted, info.Deleted))
+	}
+	if info.MessageCount > 0 {
+		stats = append(stats, fmt.Sprintf("%d msgs", info.MessageCount))
+	}
+	if len(stats) > 0 {
+		rows = append(rows, truncateSingleLine(subtleStyle.Render("stats: ")+strings.Join(stats, subtleStyle.Render("  |  ")), width))
+	}
+	return rows
+}
+
+func humanizeWorkflowText(text string) string {
+	replacer := strings.NewReplacer(
+		"tool-call", "calling tool",
+		"tool-result", "reading tool result",
+		"tool-error", "tool error",
+		"agent:loop", "agent loop",
+	)
+	return replacer.Replace(text)
+}
+
+func humanizeAgentPhase(phase string) string {
+	phase = strings.TrimSpace(phase)
+	switch phase {
+	case "tool-call":
+		return "calling tool"
+	case "tool-result":
+		return "reading tool result"
+	case "tool-error":
+		return "tool error"
+	case "":
+		return "working"
+	default:
+		return phase
+	}
+}
+
+func (m Model) renderTimelineHistoryHeader(width int) string {
+	user, assistant, toolRows := 0, 0, 0
+	for _, line := range m.chat.transcript {
+		switch {
+		case line.Role.Eq(chatRoleUser):
+			user++
+		case line.Role.Eq(chatRoleAssistant):
+			assistant++
+		case line.Role.Eq(chatRoleTool):
+			toolRows++
+		}
+	}
+	parts := []string{"Chat History"}
+	if total := len(m.chat.transcript); total > 0 {
+		parts = append(parts, fmt.Sprintf("%d rows", total))
+	}
+	if user > 0 || assistant > 0 {
+		parts = append(parts, fmt.Sprintf("%d user / %d assistant", user, assistant))
+	}
+	if toolRows > 0 {
+		parts = append(parts, fmt.Sprintf("%d tool events", toolRows))
+	}
+	if len(m.chat.transcript) > 0 {
+		parts = append(parts, "model sees budgeted recent history")
+	}
+	if m.chat.sending {
+		parts = append(parts, spinnerFrame(m.chat.spinnerFrame)+" live")
+	}
+	return truncateSingleLine(subtleStyle.Render(strings.Join(parts, "  |  ")), width)
 }
 
 func (m Model) renderTimelineMessage(item chatLine, width int, streaming bool, durationMs, copyIdx int) []string {

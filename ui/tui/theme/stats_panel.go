@@ -237,6 +237,59 @@ func providerRows(info StatsPanelInfo) []string {
 
 func contextRows(info StatsPanelInfo) []string {
 	rows := []string{RenderContextBarFrame(info.ContextTokens, info.MaxContext, 12, info.SpinnerFrame)}
+	if info.ContextFileCount > 0 || info.ContextBudgetTokens > 0 {
+		files := fmt.Sprintf("files %d", info.ContextFileCount)
+		if info.ContextMaxFiles > 0 {
+			files += fmt.Sprintf("/%d", info.ContextMaxFiles)
+		}
+		if info.ContextBudgetTokens > 0 {
+			files += fmt.Sprintf(" | code %s/%s tok", CompactTokens(info.ContextTokens), CompactTokens(info.ContextBudgetTokens))
+		}
+		rows = append(rows, InfoStyle.Render(files))
+	}
+	dials := []string{}
+	if task := strings.TrimSpace(info.ContextTask); task != "" {
+		dials = append(dials, "task "+task)
+	}
+	if compression := strings.TrimSpace(info.ContextCompression); compression != "" {
+		dials = append(dials, "zip "+compression)
+	}
+	if info.ContextMaxTokensPerFile > 0 {
+		dials = append(dials, fmt.Sprintf("slice %s", CompactTokens(info.ContextMaxTokensPerFile)))
+	}
+	if len(dials) > 0 {
+		rows = append(rows, SubtleStyle.Render(strings.Join(dials, " | ")))
+	}
+	if info.ContextAvailableTokens > 0 {
+		rows = append(rows, SubtleStyle.Render(fmt.Sprintf("available %s tok", CompactTokens(info.ContextAvailableTokens))))
+	}
+	if info.ContextSystemTokens > 0 || info.ContextHistoryTokens > 0 || info.ContextResponseTokens > 0 || info.ContextToolTokens > 0 {
+		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
+			"budget sys %s | hist %s | code %s",
+			CompactTokens(info.ContextSystemTokens),
+			CompactTokens(info.ContextHistoryTokens),
+			CompactTokens(info.ContextTokens),
+		)))
+		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
+			"reserve resp %s | tools %s",
+			CompactTokens(info.ContextResponseTokens),
+			CompactTokens(info.ContextToolTokens),
+		)))
+	}
+	if len(info.ContextTopFiles) > 0 {
+		files := make([]string, 0, len(info.ContextTopFiles))
+		for _, path := range info.ContextTopFiles {
+			if path = strings.TrimSpace(path); path != "" {
+				files = append(files, TruncateSingleLine(path, 28))
+			}
+		}
+		if len(files) > 0 {
+			rows = append(rows, AccentStyle.Render("top: "+strings.Join(files, ", ")))
+		}
+	}
+	if len(info.ContextReasons) > 0 {
+		rows = append(rows, SubtleStyle.Render("why: "+TruncateSingleLine(info.ContextReasons[0], 42)))
+	}
 	return rows
 }
 

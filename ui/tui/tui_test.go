@@ -2512,6 +2512,9 @@ func TestChatSlashContextFullIncludesDetailedFileEvidence(t *testing.T) {
 	if !strings.Contains(last.Content, "Context report:") || !strings.Contains(last.Content, "File evidence:") {
 		t.Fatalf("expected detailed context report output, got:\n%s", last.Content)
 	}
+	if !strings.Contains(last.Content, "Budget breakdown:") || !strings.Contains(last.Content, "code=580") || !strings.Contains(last.Content, "max_code=1600") {
+		t.Fatalf("expected budget breakdown in context report, got:\n%s", last.Content)
+	}
 	if !strings.Contains(last.Content, "matched query terms and explicit file markers") {
 		t.Fatalf("expected file reason in context report, got:\n%s", last.Content)
 	}
@@ -3336,6 +3339,45 @@ func TestRenderFooterShowsStateAndTabHints(t *testing.T) {
 	}
 }
 
+func TestChatSurfaceMirrorsStatsWhenPanelHidden(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.ui.showStatsPanel = false
+	m.status = engine.Status{Provider: "openai", Model: "gpt-5.4"}
+	m.chat.sending = true
+	m.agentLoop.active = true
+	m.agentLoop.phase = "tool-call"
+	m.agentLoop.step = 4
+	m.agentLoop.maxToolStep = 12
+	m.agentLoop.lastTool = "read_file"
+	m.agentLoop.lastStatus = "running"
+	m.telemetry.activeToolCount = 2
+	m.telemetry.activeSubagentCount = 1
+	m.chat.transcript = []chatLine{
+		{Role: "user", Content: "review"},
+		{Role: "assistant", Content: "working"},
+		{Role: chatRoleTool, Content: "running: read_file\nparams: path=main.go"},
+	}
+
+	view := m.renderChatView(140)
+	for _, want := range []string{"now:", "calling tool", "call 4/12", "last tool: read_file", "Chat History", "3 rows", "1 tool events"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("chat view should mirror live stats %q when panel is hidden, got:\n%s", want, view)
+		}
+	}
+
+	footer := m.renderFooter(160)
+	for _, want := range []string{"calling tool 4/12", "tools 2", "agents 1", "last read_file"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("footer should carry live runtime %q, got:\n%s", want, footer)
+		}
+	}
+
+	if runtime := m.workbenchRuntimeStatus(); !strings.Contains(runtime, "working calling tool 4/12") || !strings.Contains(runtime, "tools 2") {
+		t.Fatalf("workbench runtime status should stay current, got %q", runtime)
+	}
+}
+
 func TestHelpOverlayShowsTabKeysWhenToggled(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	if m.ui.showHelpOverlay {
@@ -3762,7 +3804,7 @@ func TestRenderChatViewDoesNotShowWorkflowFocusCard(t *testing.T) {
 	}
 
 	view := m.renderChatView(120)
-	for _, unwanted := range []string{"Working", "tool-call", "step 2/6", "read_file"} {
+	for _, unwanted := range []string{"Working", "tool-call", "step 2/6"} {
 		if strings.Contains(view, unwanted) {
 			t.Fatalf("chat view should not render grouped workflow focus text %q, got:\n%s", unwanted, view)
 		}

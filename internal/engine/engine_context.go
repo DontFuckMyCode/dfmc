@@ -142,7 +142,10 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 		},
 	})
 	// Capture snapshot for task-attached context reuse.
-	e.lastContextSnapshot = e.buildContextSnapshot(question, task, total, chunks)
+	snapshot := e.buildContextSnapshot(question, task, total, chunks)
+	e.mu.Lock()
+	e.lastContextSnapshot = snapshot
+	e.mu.Unlock()
 	return chunks
 }
 
@@ -258,7 +261,10 @@ func (e *Engine) contextBuildOptionsWithRuntime(question string, runtime ctxmgr.
 	// next retrieval with deeper graph traversal and fewer but more thoroughly
 	// explored files. This triggers "uncertainty-aware retrieval": when
 	// confidence is low, the next round does expanded graph exploration.
-	if prev := e.lastContextSnapshot; prev != nil && prev.Confidence < 0.5 {
+	e.mu.RLock()
+	prevSnapshot := e.lastContextSnapshot
+	e.mu.RUnlock()
+	if prev := prevSnapshot; prev != nil && prev.Confidence < 0.5 {
 		opts.GraphDepth += 1
 		if opts.MaxFiles > 1 {
 			opts.MaxFiles = maxInt(1, opts.MaxFiles/2)

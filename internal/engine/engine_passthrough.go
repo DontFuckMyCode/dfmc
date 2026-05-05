@@ -776,9 +776,12 @@ func (e *Engine) ContextBreakdown(question string) ContextBreakdown {
 	// Collect file paths from the last context build.
 	var filesInContext []string
 	var contextChunksTokens int
-	if e.lastContextIn.FileCount > 0 && e.lastContextIn.Files != nil {
-		filesInContext = make([]string, 0, len(e.lastContextIn.Files))
-		for _, f := range e.lastContextIn.Files {
+	e.mu.RLock()
+	lastContextIn := cloneContextInStatus(e.lastContextIn)
+	e.mu.RUnlock()
+	if lastContextIn != nil && lastContextIn.FileCount > 0 && lastContextIn.Files != nil {
+		filesInContext = make([]string, 0, len(lastContextIn.Files))
+		for _, f := range lastContextIn.Files {
 			filesInContext = append(filesInContext, f.Path)
 			contextChunksTokens += f.TokenCount
 		}
