@@ -16,11 +16,13 @@ package tui
 // produced the patch.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/security"
@@ -207,20 +209,29 @@ func extractPatchHunks(diff string) []patchHunk {
 	return hunks
 }
 
-func gitWorkingDiff(projectRoot string, maxBytes int64) (string, error) {
+func gitWorkingDiff(projectRoot string, maxBytes int64, timeout time.Duration) (string, error) {
 	root, err := security.SanitizeGitRoot(projectRoot)
 	if err != nil {
 		return "", err
+	}
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 	// Use cmd.Dir instead of `-C <root>` so the path is never parsed
 	// as a git CLI flag. A root that starts with `-` would otherwise
 	// be interpreted as an option (e.g. `--upload-pack=...`) — real
 	// exec.Command doesn't spawn a shell, but avoiding argument-
 	// injection surface is still worth the single line.
-	cmd := exec.Command("git", "diff", "--")
+	cmd := exec.CommandContext(ctx, "git", "diff", "--")
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("git diff timed out after %s; raise tui.git_diff_timeout_seconds or narrow the workspace diff", timeout.Round(time.Second))
+		}
 		if ee := (&exec.ExitError{}); errors.As(err, &ee) {
 			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
 		}

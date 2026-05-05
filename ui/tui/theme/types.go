@@ -79,35 +79,36 @@ type MessageHeaderInfo struct {
 // --- chat header --------------------------------------------------------
 
 type ChatHeaderInfo struct {
-	Provider        string
-	Model           string
-	Configured      bool
-	MaxContext      int
-	ContextTokens   int
-	Pinned          string
-	ToolsEnabled    bool
-	Streaming       bool
-	AgentActive     bool
-	AgentPhase      string
-	AgentStep       int
-	AgentMax        int
-	QueuedCount     int
-	Parked          bool
-	PendingNotes    int
-	Slim            bool
-	ActiveTools     int
-	ActiveSubagents int
-	SubagentSummary string
-	PlanMode        bool
-	ApprovalGated   bool
-	ApprovalPending bool
-	SpinnerFrame    int
-	IntentLast      string
-	DriveRunID      string
-	DriveTodoID     string
-	DriveDone       int
-	DriveTotal      int
-	DriveBlocked    int
+	Provider            string
+	Model               string
+	Configured          bool
+	MaxContext          int
+	ContextTokens       int
+	ContextWindowTokens int
+	Pinned              string
+	ToolsEnabled        bool
+	Streaming           bool
+	AgentActive         bool
+	AgentPhase          string
+	AgentStep           int
+	AgentMax            int
+	QueuedCount         int
+	Parked              bool
+	PendingNotes        int
+	Slim                bool
+	ActiveTools         int
+	ActiveSubagents     int
+	SubagentSummary     string
+	PlanMode            bool
+	ApprovalGated       bool
+	ApprovalPending     bool
+	SpinnerFrame        int
+	IntentLast          string
+	DriveRunID          string
+	DriveTodoID         string
+	DriveDone           int
+	DriveTotal          int
+	DriveBlocked        int
 }
 
 // --- stats panel info ---------------------------------------------------
@@ -131,7 +132,9 @@ type StatsPanelInfo struct {
 	Provider                string
 	Model                   string
 	Configured              bool
+	CostPer1kTokens         float64
 	ContextTokens           int
+	ContextWindowTokens     int
 	MaxContext              int
 	ContextTask             string
 	ContextFileCount        int
@@ -146,6 +149,18 @@ type StatsPanelInfo struct {
 	ContextHistoryTokens    int
 	ContextResponseTokens   int
 	ContextToolTokens       int
+	ComposerTokens          int
+	TranscriptInputTokens   int
+	TranscriptOutputTokens  int
+	LiveInputTokens         int
+	LiveOutputTokens        int
+	LiveTotalTokens         int
+	LastInputTokens         int
+	LastOutputTokens        int
+	LastTotalTokens         int
+	SessionInputTokens      int
+	SessionOutputTokens     int
+	SessionTotalTokens      int
 	Streaming               bool
 	AgentActive             bool
 	AgentPhase              string

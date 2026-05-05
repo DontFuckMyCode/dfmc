@@ -1,15 +1,10 @@
 package ast
 
 import (
-	"container/list"
 	"context"
 	"fmt"
 	"hash/fnv"
 	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -41,13 +36,6 @@ type ParseResult struct {
 // Engine provides caching AST parsing with tree-sitter and regex fallback.
 // Thread-safe for concurrent use.
 type Engine struct {
-	// extToLang is built once in NewWithCacheSize and never mutated after
-	// construction. Concurrent reads of an unmodified map are race-free
-	// under Go's memory model, so detectLanguage reads it without a lock.
-	// If a future change ever needs to mutate this map at runtime — e.g.
-	// dynamic language registration — add the lock back at THAT point,
-	// not pre-emptively. The internal parseCache and metrics tracker
-	// carry their own locks for their mutable state.
 	extToLang map[string]string
 	cache     *parseCache
 	metrics   *parseMetricsTracker
@@ -60,52 +48,12 @@ type Engine struct {
 // at runtime via the AST cache config knob (config.AST.CacheSize).
 const defaultParseCacheSize = 10000
 
-// Pre-compiled regex patterns for extractSymbols â hoisted from function
-// scope to package level so they are compiled exactly once, not on every call.
-var (
-	// JavaScript / TypeScript patterns
-	reJSFunc       = regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?function\s+([A-Za-z_]\w*)\s*\(`)
-	reJSClass      = regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_]\w*)\b`)
-	reJSInterface  = regexp.MustCompile(`^\s*(?:export\s+)?interface\s+([A-Za-z_]\w*)\b`)
-	reJSType       = regexp.MustCompile(`^\s*(?:export\s+)?type\s+([A-Za-z_]\w*)\b`)
-	reJSEnum       = regexp.MustCompile(`^\s*(?:export\s+)?const\s+enum\s+([A-Za-z_]\w*)\b|^\s*(?:export\s+)?enum\s+([A-Za-z_]\w*)\b`)
-	reJSConstArrow = regexp.MustCompile(`^\s*(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_]\w*)\s*=>`)
-
-	// Python patterns
-	rePyAsyncFunc = regexp.MustCompile(`^\s*async\s+def\s+([A-Za-z_]\w*)\s*\(`)
-	rePyFunc      = regexp.MustCompile(`^\s*def\s+([A-Za-z_]\w*)\s*\(`)
-	rePyClass     = regexp.MustCompile(`^\s*class\s+([A-Za-z_]\w*)\s*[:(]`)
-
-	// Rust patterns
-	reRustFunc   = regexp.MustCompile(`^\s*(?:pub\s+)?fn\s+([A-Za-z_]\w*)\s*\(`)
-	reRustStruct = regexp.MustCompile(`^\s*(?:pub\s+)?struct\s+([A-Za-z_]\w*)\b`)
-	reRustEnum   = regexp.MustCompile(`^\s*(?:pub\s+)?enum\s+([A-Za-z_]\w*)\b`)
-	reRustTrait  = regexp.MustCompile(`^\s*(?:pub\s+)?trait\s+([A-Za-z_]\w*)\b`)
-
-	// Import regexes for the extractImports fallback path (JS/TS, Python,
-	// Rust). Hoisted alongside the symbol regexes above; pre-fix these
-	// were rebuilt on every extractImports call, multiplying the
-	// regex-compile cost on !cgo builds and on tree-sitter parse-failure
-	// fallbacks.
-	reJSImport   = regexp.MustCompile(`^\s*import\s+.*from\s+['"]([^'"]+)['"]`)
-	reJSRequire  = regexp.MustCompile(`require\(['"]([^'"]+)['"]\)`)
-	rePyImport   = regexp.MustCompile(`^\s*import\s+([A-Za-z0-9_\.]+)`)
-	rePyFrom     = regexp.MustCompile(`^\s*from\s+([A-Za-z0-9_\.]+)\s+import`)
-	reRustUseDep = regexp.MustCompile(`^\s*use\s+([A-Za-z0-9_:]+)`)
-)
-
 // New constructs an AST engine with the default parse-cache capacity.
-// Most call sites (tests, ad-hoc tools) want this; the long-running
-// engine wires NewWithCacheSize so operators can override the cap from
-// config without rebuilding.
 func New() *Engine {
 	return NewWithCacheSize(defaultParseCacheSize)
 }
 
-// NewWithCacheSize constructs an AST engine with an explicit LRU
-// capacity. A non-positive value falls back to defaultParseCacheSize so
-// a misconfigured `ast.cache_size: 0` doesn't disable parse caching
-// (which would silently 100x the AST CPU cost on every codemap rebuild).
+// NewWithCacheSize constructs an AST engine with an explicit LRU capacity.
 func NewWithCacheSize(cacheSize int) *Engine {
 	if cacheSize <= 0 {
 		cacheSize = defaultParseCacheSize
@@ -117,9 +65,7 @@ func NewWithCacheSize(cacheSize int) *Engine {
 	}
 }
 
-// Close releases cache-held memory for long-running sessions that are tearing
-// down the owning tools/engine. Package-level parser tables remain shared, but
-// per-Engine ParseResult caches can otherwise stay live until process exit.
+// Close releases cache-held memory.
 func (e *Engine) Close() error {
 	if e == nil {
 		return nil
@@ -184,79 +130,15 @@ func (e *Engine) ParseContent(ctx context.Context, path string, content []byte) 
 	}
 
 	e.cache.Set(path, res)
-	e.metrics.recordParse(lang, backend, time.Since(start))
+	e.metrics.recordParse(lang, backend, res.Duration)
 	return res, nil
 }
 
 func (e *Engine) detectLanguage(path string, content []byte) string {
-	ext := strings.ToLower(filepath.Ext(path))
-	base := filepath.Base(path)
-
-	if lang, ok := e.extToLang[ext]; ok {
+	if lang := detectLanguage(path); lang != "" {
 		return lang
 	}
-	if lang, ok := e.extToLang[base]; ok {
-		return lang
-	}
-
-	if len(content) > 2 && content[0] == '#' && content[1] == '!' {
-		firstLine := string(content)
-		if idx := strings.IndexByte(firstLine, '\n'); idx >= 0 {
-			firstLine = firstLine[:idx]
-		}
-		switch {
-		case strings.Contains(firstLine, "python"):
-			return "python"
-		case strings.Contains(firstLine, "node"):
-			return "javascript"
-		case strings.Contains(firstLine, "bash"), strings.Contains(firstLine, "/sh"):
-			return "bash"
-		}
-	}
-
-	return ""
-}
-
-func extensionLanguageMap() map[string]string {
-	return map[string]string{
-		".go":           "go",
-		".ts":           "typescript",
-		".tsx":          "tsx",
-		".js":           "javascript",
-		".jsx":          "jsx",
-		".mjs":          "javascript",
-		".cjs":          "javascript",
-		".py":           "python",
-		".rs":           "rust",
-		".java":         "java",
-		".cs":           "csharp",
-		".php":          "php",
-		".rb":           "ruby",
-		".c":            "c",
-		".h":            "c",
-		".cpp":          "cpp",
-		".cc":           "cpp",
-		".hpp":          "cpp",
-		".swift":        "swift",
-		".kt":           "kotlin",
-		".kts":          "kotlin",
-		".scala":        "scala",
-		".sh":           "bash",
-		".bash":         "bash",
-		".zsh":          "bash",
-		".html":         "html",
-		".css":          "css",
-		".yaml":         "yaml",
-		".yml":          "yaml",
-		".toml":         "toml",
-		".sql":          "sql",
-		".lua":          "lua",
-		".hcl":          "hcl",
-		".tf":           "hcl",
-		"Dockerfile":    "dockerfile",
-		"dockerfile":    "dockerfile",
-		"Containerfile": "dockerfile",
-	}
+	return detectLanguageFromContent(content)
 }
 
 func hashContent(content []byte) uint64 {
@@ -265,210 +147,5 @@ func hashContent(content []byte) uint64 {
 	return h.Sum64()
 }
 
-func extractSymbols(path, lang string, content []byte) []types.Symbol {
-	if lang == "go" {
-		return extractGoSymbols(path, lang, content)
-	}
-
-	lines := strings.Split(string(content), "\n")
-	var symbols []types.Symbol
-
-	add := func(kind types.SymbolKind, name string, line int, signature string) {
-		if strings.TrimSpace(name) == "" {
-			return
-		}
-		symbols = append(symbols, types.Symbol{
-			Name:      name,
-			Kind:      kind,
-			Path:      path,
-			Line:      line,
-			Column:    1,
-			Language:  lang,
-			Signature: signature,
-		})
-	}
-
-	switch lang {
-	case "typescript", "tsx", "javascript", "jsx":
-		for i, line := range lines {
-			switch {
-			case reJSFunc.MatchString(line):
-				m := reJSFunc.FindStringSubmatch(line)
-				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
-			case reJSClass.MatchString(line):
-				m := reJSClass.FindStringSubmatch(line)
-				add(types.SymbolClass, m[1], i+1, strings.TrimSpace(line))
-			case reJSInterface.MatchString(line):
-				m := reJSInterface.FindStringSubmatch(line)
-				add(types.SymbolInterface, m[1], i+1, strings.TrimSpace(line))
-			case reJSType.MatchString(line):
-				m := reJSType.FindStringSubmatch(line)
-				add(types.SymbolType, m[1], i+1, strings.TrimSpace(line))
-			case reJSEnum.MatchString(line):
-				m := reJSEnum.FindStringSubmatch(line)
-				name := ""
-				for _, candidate := range m[1:] {
-					if strings.TrimSpace(candidate) != "" {
-						name = candidate
-						break
-					}
-				}
-				add(types.SymbolEnum, name, i+1, strings.TrimSpace(line))
-			case reJSConstArrow.MatchString(line):
-				m := reJSConstArrow.FindStringSubmatch(line)
-				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
-			}
-		}
-	case "python":
-		for i, line := range lines {
-			if m := rePyClass.FindStringSubmatch(line); len(m) > 1 {
-				add(types.SymbolClass, m[1], i+1, strings.TrimSpace(line))
-				continue
-			}
-			if m := rePyAsyncFunc.FindStringSubmatch(line); len(m) > 1 {
-				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
-				continue
-			}
-			if m := rePyFunc.FindStringSubmatch(line); len(m) > 1 {
-				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
-				continue
-			}
-		}
-	case "rust":
-		for i, line := range lines {
-			switch {
-			case reRustFunc.MatchString(line):
-				m := reRustFunc.FindStringSubmatch(line)
-				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
-			case reRustStruct.MatchString(line):
-				m := reRustStruct.FindStringSubmatch(line)
-				add(types.SymbolType, m[1], i+1, strings.TrimSpace(line))
-			case reRustEnum.MatchString(line):
-				m := reRustEnum.FindStringSubmatch(line)
-				add(types.SymbolEnum, m[1], i+1, strings.TrimSpace(line))
-			case reRustTrait.MatchString(line):
-				m := reRustTrait.FindStringSubmatch(line)
-				add(types.SymbolInterface, m[1], i+1, strings.TrimSpace(line))
-			}
-		}
-	}
-
-	return symbols
-}
-
-func extractImports(lang string, content []byte) []string {
-	if lang == "go" {
-		return extractGoImports(content)
-	}
-
-	lines := strings.Split(string(content), "\n")
-	set := map[string]struct{}{}
-
-	add := func(v string) {
-		v = strings.TrimSpace(v)
-		v = strings.Trim(v, `"`)
-		v = strings.Trim(v, `'`)
-		if v != "" {
-			set[v] = struct{}{}
-		}
-	}
-
-	switch lang {
-	case "typescript", "tsx", "javascript", "jsx":
-		for _, line := range lines {
-			if m := reJSImport.FindStringSubmatch(line); len(m) > 1 {
-				add(m[1])
-			}
-			if m := reJSRequire.FindStringSubmatch(line); len(m) > 1 {
-				add(m[1])
-			}
-		}
-	case "python":
-		for _, line := range lines {
-			if m := rePyImport.FindStringSubmatch(line); len(m) > 1 {
-				add(m[1])
-			}
-			if m := rePyFrom.FindStringSubmatch(line); len(m) > 1 {
-				add(m[1])
-			}
-		}
-	case "rust":
-		for _, line := range lines {
-			if m := reRustUseDep.FindStringSubmatch(line); len(m) > 1 {
-				add(m[1])
-			}
-		}
-	}
-
-	imports := make([]string, 0, len(set))
-	for k := range set {
-		imports = append(imports, k)
-	}
-	return imports
-}
-
-type parseCache struct {
-	maxSize int
-	mu      sync.RWMutex
-	entries map[string]*cacheEntry
-	order   *list.List
-	index   map[string]*list.Element
-}
-
-type cacheEntry struct {
-	result *ParseResult
-	hash   uint64
-}
-
-func newParseCache(maxSize int) *parseCache {
-	return &parseCache{
-		maxSize: maxSize,
-		entries: map[string]*cacheEntry{},
-		order:   list.New(),
-		index:   make(map[string]*list.Element, maxSize),
-	}
-}
-
-func (c *parseCache) Get(path string, hash uint64) *ParseResult {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	entry, ok := c.entries[path]
-	if !ok || entry.hash != hash {
-		return nil
-	}
-	// Move to back (most-recently-used) on hit
-	if elem, ok := c.index[path]; ok {
-		c.order.MoveToBack(elem)
-	}
-	return entry.result
-}
-
-func (c *parseCache) Set(path string, res *ParseResult) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if elem, ok := c.index[path]; ok {
-		c.order.MoveToBack(elem)
-	} else {
-		c.order.PushBack(path)
-	}
-	c.index[path] = c.order.Back()
-	c.entries[path] = &cacheEntry{result: res, hash: res.Hash}
-
-	for len(c.entries) > c.maxSize {
-		oldestElem := c.order.Front()
-		oldest := oldestElem.Value.(string)
-		c.order.Remove(oldestElem)
-		delete(c.entries, oldest)
-		delete(c.index, oldest)
-	}
-}
-
-func (c *parseCache) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = map[string]*cacheEntry{}
-	c.order.Init()
-	c.index = make(map[string]*list.Element, c.maxSize)
-}
+// extensionLanguageMap returns the extension → language tag map used
+// both for initial extension-based detection and for Engine extToLang fields.

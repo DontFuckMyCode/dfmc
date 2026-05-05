@@ -111,6 +111,63 @@ func (m Model) currentProvider() string {
 	return strings.TrimSpace(m.eng.Status().Provider)
 }
 
+func (m Model) hydrateStatusProviderFromConfig() Model {
+	if m.eng == nil || m.eng.Config == nil {
+		return m
+	}
+	cfg := m.eng.Config.Providers
+	providerName := strings.TrimSpace(m.status.Provider)
+	if providerName == "" {
+		providerName = strings.TrimSpace(cfg.Primary)
+		m.status.Provider = providerName
+	}
+	if providerName == "" {
+		return m
+	}
+	profile, ok := cfg.Profiles[providerName]
+	if !ok {
+		return m
+	}
+	if strings.TrimSpace(m.status.Model) == "" {
+		m.status.Model = strings.TrimSpace(profile.Model)
+	}
+	if strings.TrimSpace(m.status.ProviderProfile.Name) == "" {
+		m.status.ProviderProfile.Name = providerName
+	}
+	if strings.TrimSpace(m.status.ProviderProfile.Model) == "" {
+		m.status.ProviderProfile.Model = strings.TrimSpace(profile.Model)
+	}
+	if strings.TrimSpace(m.status.ProviderProfile.Protocol) == "" {
+		m.status.ProviderProfile.Protocol = strings.TrimSpace(profile.Protocol)
+	}
+	if strings.TrimSpace(m.status.ProviderProfile.BaseURL) == "" {
+		m.status.ProviderProfile.BaseURL = strings.TrimSpace(profile.BaseURL)
+	}
+	if m.status.ProviderProfile.MaxTokens <= 0 {
+		m.status.ProviderProfile.MaxTokens = profile.MaxTokens
+	}
+	if m.status.ProviderProfile.MaxContext <= 0 {
+		m.status.ProviderProfile.MaxContext = profile.MaxContext
+	}
+	if m.status.ProviderProfile.CostPer1kTokens <= 0 {
+		m.status.ProviderProfile.CostPer1kTokens = profile.CostPer1kTokens
+	}
+	if !m.status.ProviderProfile.Configured {
+		m.status.ProviderProfile.Configured = providerProfileLooksConfigured(providerName, profile)
+	}
+	return m
+}
+
+func providerProfileLooksConfigured(name string, profile config.ModelConfig) bool {
+	if strings.EqualFold(strings.TrimSpace(name), "offline") {
+		return true
+	}
+	if strings.TrimSpace(profile.APIKey) != "" {
+		return true
+	}
+	return strings.TrimSpace(profile.BaseURL) != ""
+}
+
 func (m Model) currentModel() string {
 	if model := strings.TrimSpace(m.status.Model); model != "" {
 		return model
@@ -226,7 +283,7 @@ func formatProviderSwitchNotice(p engine.ProviderProfileStatus) string {
 }
 
 func (m Model) projectConfigPath() (string, error) {
-	root := "."
+	root := ""
 	if m.eng != nil {
 		root = strings.TrimSpace(m.eng.ProjectRoot)
 	}
@@ -234,7 +291,11 @@ func (m Model) projectConfigPath() (string, error) {
 		root = strings.TrimSpace(m.status.ProjectRoot)
 	}
 	if strings.TrimSpace(root) == "" {
-		return "", fmt.Errorf("project root unavailable")
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("project root unavailable: %w", err)
+		}
+		root = cwd
 	}
 	return filepath.Join(root, config.DefaultDirName, "config.yaml"), nil
 }
@@ -271,6 +332,14 @@ func (m *Model) persistProvidersPrimaryFallback() error {
 	}
 	if len(m.eng.Config.Providers.Fallback) > 0 {
 		providersNode["fallback"] = m.eng.Config.Providers.Fallback
+	}
+	primary := strings.TrimSpace(m.eng.Config.Providers.Primary)
+	if primary != "" {
+		if prof, ok := m.eng.Config.Providers.Profiles[primary]; ok {
+			profilesNode := ensureStringAnyMap(providersNode, "profiles")
+			profileNode := ensureStringAnyMap(profilesNode, primary)
+			writeProviderProfileProjectConfig(profileNode, prof)
+		}
 	}
 
 	out, marshalErr := yaml.Marshal(doc)
@@ -352,18 +421,8 @@ func (m Model) persistProviderConfigProjectConfig(providerName, model, primary s
 	profileNode["model"] = model
 	if m.eng != nil && m.eng.Config != nil {
 		if prof, ok := m.eng.Config.Providers.Profiles[providerName]; ok {
-			if strings.TrimSpace(prof.Protocol) != "" {
-				profileNode["protocol"] = strings.TrimSpace(prof.Protocol)
-			}
-			if strings.TrimSpace(prof.BaseURL) != "" {
-				profileNode["base_url"] = strings.TrimSpace(prof.BaseURL)
-			}
-			if prof.MaxTokens > 0 {
-				profileNode["max_tokens"] = prof.MaxTokens
-			}
-			if prof.MaxContext > 0 {
-				profileNode["max_context"] = prof.MaxContext
-			}
+			prof.Model = model
+			writeProviderProfileProjectConfig(profileNode, prof)
 		}
 	}
 
@@ -378,6 +437,27 @@ func (m Model) persistProviderConfigProjectConfig(providerName, model, primary s
 		return "", fmt.Errorf("write project config: %w", err)
 	}
 	return path, nil
+}
+
+func writeProviderProfileProjectConfig(profileNode map[string]any, prof config.ModelConfig) {
+	if profileNode == nil {
+		return
+	}
+	if model := strings.TrimSpace(prof.Model); model != "" {
+		profileNode["model"] = model
+	}
+	if protocol := strings.TrimSpace(prof.Protocol); protocol != "" {
+		profileNode["protocol"] = protocol
+	}
+	if baseURL := strings.TrimSpace(prof.BaseURL); baseURL != "" {
+		profileNode["base_url"] = baseURL
+	}
+	if prof.MaxTokens > 0 {
+		profileNode["max_tokens"] = prof.MaxTokens
+	}
+	if prof.MaxContext > 0 {
+		profileNode["max_context"] = prof.MaxContext
+	}
 }
 
 func (m Model) loadDriveRoutingFromProjectConfig() map[string]string {
@@ -544,12 +624,13 @@ func (m Model) providerProfile(name string) engine.ProviderProfileStatus {
 		return engine.ProviderProfileStatus{Name: strings.TrimSpace(name)}
 	}
 	return engine.ProviderProfileStatus{
-		Name:       strings.TrimSpace(name),
-		Model:      strings.TrimSpace(profile.Model),
-		Protocol:   strings.TrimSpace(profile.Protocol),
-		BaseURL:    strings.TrimSpace(profile.BaseURL),
-		MaxTokens:  profile.MaxTokens,
-		MaxContext: profile.MaxContext,
-		Configured: strings.TrimSpace(profile.APIKey) != "" || strings.TrimSpace(profile.BaseURL) != "",
+		Name:            strings.TrimSpace(name),
+		Model:           strings.TrimSpace(profile.Model),
+		Protocol:        strings.TrimSpace(profile.Protocol),
+		BaseURL:         strings.TrimSpace(profile.BaseURL),
+		MaxTokens:       profile.MaxTokens,
+		MaxContext:      profile.MaxContext,
+		CostPer1kTokens: profile.CostPer1kTokens,
+		Configured:      strings.TrimSpace(profile.APIKey) != "" || strings.TrimSpace(profile.BaseURL) != "",
 	}
 }

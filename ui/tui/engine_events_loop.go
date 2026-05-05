@@ -77,7 +77,7 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		// autonomous_pending=true means the autonomous-resume wrapper will
 		// immediately re-enter the loop after this park. In that case we
 		// MUST NOT flip into the parked UI (no phase change, no resume
-		// prompt) — otherwise the "press Enter to resume" affordance and
+		// prompt) — otherwise the "press Ctrl+X to resume" affordance and
 		// the spinner-stop flash through, the user types /continue, and by
 		// the time it lands the wrapper has already cleared the park
 		// state. The 2026-04-18 screenshot ("No parked agent loop"
@@ -100,7 +100,7 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		if payloadString(payload, "reason", "") == "budget_exhausted" {
 			return m, ""
 		}
-		line = fmt.Sprintf("Agent loop parked at step %d/%d - press Enter to resume, Esc to dismiss.", step, maxSteps)
+		line = fmt.Sprintf("Agent loop parked at step %d/%d - press Ctrl+X to resume, Esc to dismiss.", step, maxSteps)
 	case "agent:loop:budget_exhausted":
 		m.agentLoop.phase = "budget-exhausted"
 		used := payloadInt(payload, "tokens_used", 0)

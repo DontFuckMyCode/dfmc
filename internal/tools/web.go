@@ -21,11 +21,23 @@ const userAgent = "DFMC/1.0 (+https://github.com/dontfuckmycode/dfmc)"
 
 // safeTransport dials with an IP-level SSRF guard. The resolved IP is
 // checked at connect time (not before), closing the DNS rebinding window.
+// CRIT-003 / VULN-059 fix: after resolving all IPs and checking them, we
+// PIN the first validated IP so a malicious DNS server cannot rebind between
+// our check and the actual connection. TLS SNI is driven by Request.Host,
+// not the dial address, so HTTPS still validates the certificate against
+// the original hostname.
 var safeTransport = &http.Transport{
 	DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid address %q: %w", addr, err)
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+				return nil, fmt.Errorf("SSRF guard: refusing dial to blocked IP %q", ip)
+			}
+			// addr is already an IP — no DNS lookup needed, no rebinding window.
+			return net.DialTimeout(network, addr, 10*time.Second)
 		}
 		resolverHost := normalizeResolverHost(host)
 		ips, err := net.DefaultResolver.LookupIPAddr(ctx, resolverHost)
@@ -34,16 +46,16 @@ var safeTransport = &http.Transport{
 		}
 		for _, ip := range ips {
 			if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() || ip.IP.IsLinkLocalMulticast() {
-				return nil, fmt.Errorf("blocked IP for %q: %s (SSRF guard)", resolverHost, ip.IP)
+				return nil, fmt.Errorf("SSRF guard: %q resolves to blocked IP %s", resolverHost, ip.IP)
 			}
 		}
-		for _, ip := range ips {
-			conn, err := net.DialTimeout(network, net.JoinHostPort(ip.IP.String(), port), 10*time.Second)
-			if err == nil {
-				return conn, nil
-			}
-		}
-		return nil, fmt.Errorf("no reachable IP for %q", host)
+		// CRIT-003 fix (mirrors safe_http.go): pin the validated first IP so
+		// a TTL=0 DNS rebind cannot swap between check and dial. TLS SNI (Server
+		// Name Indication) is driven by http.Request.Host → http.Transport sets
+		// it from the original URL, NOT from the dial address, so HTTPS still
+		// verifies the certificate against the hostname.
+		pinnedAddr := net.JoinHostPort(ips[0].IP.String(), port)
+		return net.DialTimeout(network, pinnedAddr, 10*time.Second)
 	},
 }
 
@@ -54,6 +66,15 @@ var httpClient = &http.Client{
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return fmt.Errorf("stopped after 5 redirects")
+		}
+		// HIGH-007 fix: validate the redirect destination URL's host before
+		// following. Without this, a public result that redirects through a
+		// private IP could slip past the transport-level SSRF guard if the
+		// redirect URL itself isn't a direct private-IP URL.
+		if req.URL != nil && req.URL.Host != "" {
+			if isBlockedHost(req.URL.Host) {
+				return fmt.Errorf("SSRF guard: redirect target %q resolves to blocked address", req.URL.Host)
+			}
 		}
 		return nil
 	},

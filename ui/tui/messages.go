@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/provider"
 	toolruntime "github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
@@ -63,7 +64,9 @@ type chatDeltaMsg struct {
 	delta string
 }
 
-type chatDoneMsg struct{}
+type chatDoneMsg struct {
+	usage *provider.Usage
+}
 
 type chatErrMsg struct {
 	err error

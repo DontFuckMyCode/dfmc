@@ -223,6 +223,7 @@ func findBalancedJSONObjectEnd(raw string, start int) (int, bool) {
 // self-loops or cycles. A planner that violates these would crash the
 // scheduler later - fail loudly here with a message the model can
 // learn from on retry.
+
 func validateTodos(todos []Todo) error {
 	if len(todos) == 0 {
 		return fmt.Errorf("zero TODOs")

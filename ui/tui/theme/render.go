@@ -19,9 +19,9 @@ func RoleBadge(role string) string {
 	role = strings.ToLower(strings.TrimSpace(role))
 	switch role {
 	case "user":
-		return BadgeUserStyle.Render("YOU")
+		return BadgeUserStyle.Render("USER")
 	case "assistant":
-		return BadgeAssistantStyle.Render("DFMC")
+		return BadgeAssistantStyle.Render("ASSISTANT")
 	case "tool":
 		return BadgeToolStyle.Render("TOOL")
 	case "coach":
@@ -449,7 +449,7 @@ func RenderChatHeader(info ChatHeaderInfo, width int) string {
 			providerPill = WarnStyle.Bold(true).Render(provider + "⚠")
 		}
 		who := providerPill + SubtleStyle.Render(" / ") + modelPill
-		meter := RenderTokenMeter(info.ContextTokens, info.MaxContext)
+		meter := RenderTokenMeter(chatHeaderContextUsed(info), info.MaxContext)
 
 		tools := SubtleStyle.Render("tools off")
 		if info.ToolsEnabled {
@@ -513,6 +513,13 @@ func RenderChatHeader(info ChatHeaderInfo, width int) string {
 		return head + "\n" + pinLine
 	}
 	return head
+}
+
+func chatHeaderContextUsed(info ChatHeaderInfo) int {
+	if info.ContextWindowTokens > 0 {
+		return info.ContextWindowTokens
+	}
+	return info.ContextTokens
 }
 
 // FileMarker returns a rel path with a file:// prefix for display.
@@ -610,7 +617,7 @@ func RenderStarterPrompts(width int, configured bool) []string {
 	}
 	lines = append(lines,
 		"",
-		SubtleStyle.Render("  Tips: "+AccentStyle.Render("enter")+" send · "+AccentStyle.Render("@")+" file mention · "+AccentStyle.Render("/")+" commands · "+AccentStyle.Render("ctrl+p")+" palette · "+AccentStyle.Render("f1-f12 / alt+i/y/w/t/o")+" tabs"),
+		SubtleStyle.Render("  Tips: "+AccentStyle.Render("ctrl+x")+" send · "+AccentStyle.Render("enter")+" newline · "+AccentStyle.Render("@")+" file mention · "+AccentStyle.Render("/")+" commands · "+AccentStyle.Render("ctrl+p")+" palette · "+AccentStyle.Render("f1-f12 / alt+i/y/w/t/o")+" tabs"),
 	)
 	return lines
 }
@@ -637,7 +644,7 @@ func RenderResumeBanner(step, maxSteps, width int) string {
 	} else if step > 0 {
 		progress = SubtleStyle.Render(fmt.Sprintf(" at step %d", step))
 	}
-	hint := SubtleStyle.Render("  ↵ enter resumes") + SubtleStyle.Render(" · ") +
+	hint := SubtleStyle.Render("  ctrl+x resumes") + SubtleStyle.Render(" · ") +
 		SubtleStyle.Render("esc dismisses") + SubtleStyle.Render(" · ") +
 		SubtleStyle.Render("type a note first to steer /continue")
 	head := TruncateSingleLine(title+progress, width)

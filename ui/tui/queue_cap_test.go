@@ -1,7 +1,7 @@
 package tui
 
 // Pin two safety properties that REPORT.md called out:
-//   - pendingQueue must not grow without bound (a user who holds Enter
+//   - pendingQueue must not grow without bound (a user who holds Ctrl+X
 //     while a long stream is in flight could otherwise OOM the TUI).
 //   - cancelActiveStream must nil-guard streamCancel so a race between
 //     "stream finished" and "user pressed Esc" doesn't panic.
@@ -22,12 +22,12 @@ func TestPendingQueueIsBoundedAtCap(t *testing.T) {
 	// already in flight.
 	m.chat.sending = true
 
-	// Push way past the cap. Each Enter feeds one entry through the
+	// Push way past the cap. Each send key feeds one entry through the
 	// chat-key handler.
 	pushes := pendingQueueCap + 50
 	for i := 0; i < pushes; i++ {
 		m.setChatInput("flooded entry " + itoaSmall(i))
-		next, _ := m.handleChatKey(tea.KeyMsg{Type: tea.KeyEnter})
+		next, _ := m.handleChatKey(tea.KeyMsg{Type: tea.KeyCtrlX})
 		nm, ok := next.(Model)
 		if !ok {
 			t.Fatalf("handleChatKey must return Model, got %T", next)

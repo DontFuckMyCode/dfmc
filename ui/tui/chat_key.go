@@ -23,6 +23,9 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.commandPicker.active {
 		return m.handleCommandPickerKey(msg)
 	}
+	if isAtMentionOpenKey(msg) {
+		return m.openMentionPickerFromKey()
+	}
 	// Dump the incoming key so we can see what bubbletea delivered. We
 	// intentionally dump BEFORE the switch: the notice reflects the
 	// arrival, then the render re-runs and shows the picker/input state
@@ -58,19 +61,47 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.notice = "PASTE collecting..."
 			return m, nil
 		}
-		m.insertInputText(inserted)
-		if len([]rune(inserted)) > 1 {
-			m.armPasteBurstCandidate(now)
-		} else if !m.pasteBurstCandidateActive(now) && !m.pasteBurstActive(now) {
+		insertedRunes := len([]rune(inserted))
+		if insertedRunes >= pasteChunkRuneThreshold {
+			m.clearPasteBurst()
+			block := m.addPasteBlock(inserted)
+			m.activatePasteBurstBlock(block, now)
+			m.notice = fmt.Sprintf("PASTE #%d: %d lines, %d bytes", block.blockNum, block.lineCount, len(block.content))
+			return m, nil
+		}
+		start, end := m.insertInputTextRange(inserted)
+		if insertedRunes > 1 {
+			m.armPasteBurstCandidateMode(start, end, insertedRunes, true, now)
+		} else {
+			m.extendPasteBurstCandidate(start, end, insertedRunes, false, now)
+		}
+		if m.shouldPromotePasteCandidateDuringInput(now) && m.promotePasteCandidateDuringInput(now) {
+			m.notice = "PASTE collecting..."
+			return m, nil
+		}
+		if !m.pasteBurstCandidateActive(now) && !m.pasteBurstActive(now) {
 			m.clearPasteBurst()
 		}
-		if strings.ContainsRune(string(msg.Runes), '@') && len(m.filesView.entries) == 0 && m.eng != nil {
-			return m, loadFilesCmd(m.eng)
+		if strings.ContainsRune(string(msg.Runes), '@') {
+			m.chat.mentionPickerOpen = true
+			if len(m.filesView.entries) == 0 && m.eng != nil {
+				return m, loadFilesCmd(m.eng)
+			}
 		}
 		return m, nil
 	case tea.KeySpace:
 		m.exitInputHistoryNavigation()
-		m.insertInputText(" ")
+		now := time.Now()
+		if m.appendPasteBurstText(" ", now) {
+			m.notice = "PASTE collecting..."
+			return m, nil
+		}
+		start, end := m.insertInputTextRange(" ")
+		m.extendPasteBurstCandidate(start, end, 1, false, now)
+		if m.shouldPromotePasteCandidateDuringInput(now) && m.promotePasteCandidateDuringInput(now) {
+			m.notice = "PASTE collecting..."
+			return m, nil
+		}
 		m.slashMenu.command = 0
 		m.slashMenu.commandArg = 0
 		m.slashMenu.mention = 0
@@ -79,6 +110,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyBackspace, tea.KeyCtrlH:
 		m.exitInputHistoryNavigation()
 		m.deleteInputBeforeCursor()
+		m.refreshMentionPickerOpen()
 		m.slashMenu.command = 0
 		m.slashMenu.commandArg = 0
 		m.slashMenu.mention = 0
@@ -87,6 +119,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyDelete:
 		m.exitInputHistoryNavigation()
 		m.deleteInputAtCursor()
+		m.refreshMentionPickerOpen()
 		m.slashMenu.command = 0
 		m.slashMenu.commandArg = 0
 		m.slashMenu.mention = 0
@@ -118,38 +151,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveChatCursorWordRight()
 		return m, nil
 	case tea.KeyCtrlT:
-		// Ctrl+T — open the file mention picker without typing '@'.
-		// Turkish keyboards (Q layout) + MinTTY deliver '@' as alt+q
-		// which can silently drop the '@' rune; users couldn't reach the
-		// picker via @ at all. Ctrl+T is the guaranteed-deliverable
-		// alternative — identical to typing '@' mid-composer except it
-		// inserts a leading space when needed so the trailing token
-		// becomes exactly '@', which is what activeMentionQuery checks.
-		if !m.chat.sending {
-			m.exitInputHistoryNavigation()
-			// Ensure the '@' we insert is the start of a fresh mention
-			// token. If the cursor is mid-word (e.g. "helloX|") prepend
-			// a space so we get "helloX @|" rather than "helloX@|"
-			// (which would treat the whole word as the mention).
-			m.syncChatCursor()
-			runes := []rune(m.chat.input)
-			needSpace := m.chat.cursor > 0 && m.chat.cursor <= len(runes) &&
-				!unicode.IsSpace(runes[m.chat.cursor-1])
-			if needSpace {
-				m.insertInputText(" @")
-			} else {
-				m.insertInputText("@")
-			}
-			m.slashMenu.mention = 0
-			m.notice = "File picker open — type to filter, tab/enter inserts, esc cancels."
-			// Kick a refresh if the index is empty, same as the typed-@
-			// path does, so the picker isn't stuck on "Indexing…".
-			if len(m.filesView.entries) == 0 && m.eng != nil {
-				return m, loadFilesCmd(m.eng)
-			}
-			return m, nil
-		}
-		return m, nil
+		return m.openMentionPickerFromKey()
 	case tea.KeyCtrlW:
 		// Ctrl+W — kill word before cursor. Whitespace-only separator
 		// keeps @mentions and [[file:...]] markers atomic.
@@ -170,6 +172,9 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.slashMenu.mention = 0
 		m.slashMenu.quickAction = 0
 		return m, nil
+	case tea.KeyCtrlX:
+		suggestions := m.buildChatSuggestionState()
+		return m.submitChatComposer(suggestions)
 	case tea.KeyPgUp:
 		m.scrollTranscript(-scrollPageStep)
 		return m, nil
@@ -186,6 +191,12 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.ui.resumePromptActive {
 			m.ui.resumePromptActive = false
 			m.notice = "Resume prompt dismissed — /continue re-opens it."
+			return m, nil
+		}
+		if m.chat.mentionPickerOpen {
+			m.chat.mentionPickerOpen = false
+			m.slashMenu.mention = 0
+			m.notice = "File picker closed."
 			return m, nil
 		}
 		return m, nil
@@ -335,6 +346,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if next, ok := autocompleteMentionSelectionFromSuggestions(m.chat.input, m.slashMenu.mention, suggestions.mentionSuggestions); ok {
 				m.setChatInput(next)
 				m.slashMenu.mention = 0
+				m.chat.mentionPickerOpen = false
 				return m, nil
 			}
 			if next, ok := m.autocompleteSlashArg(); ok {
@@ -386,6 +398,20 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if next, ok := autocompleteMentionSelectionFromSuggestions(m.chat.input, m.slashMenu.mention, suggestions.mentionSuggestions); ok {
 				m.setChatInput(next)
 				m.slashMenu.mention = 0
+				m.chat.mentionPickerOpen = false
+				return m, nil
+			}
+		}
+		if !m.chat.sending && suggestions.slashMenuActive && len(suggestions.slashCommands) > 0 {
+			if next, ok := m.expandSlashSelection(strings.TrimSpace(m.chat.input)); ok {
+				m.setChatInput(next)
+				return m, nil
+			}
+		}
+		if !m.chat.sending && hasTrailingWhitespace(m.chat.input) && len(suggestions.slashArgSuggestions) > 0 {
+			if next, ok := m.autocompleteSlashArg(); ok {
+				m.setChatInput(next)
+				m.slashMenu.commandArg = 0
 				return m, nil
 			}
 		}
@@ -396,94 +422,21 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		if m.pasteBurstCandidateActive(now) && m.startPasteBurstFromInput(now) {
+		if m.shouldStartPasteBurstOnEnter(now) && m.startPasteBurstFromInput(now) {
 			m.notice = "PASTE collecting..."
 			return m, nil
 		}
+		if len(m.chat.pasteBlocks) == 0 && strings.HasPrefix(strings.TrimSpace(m.chat.input), "/") {
+			return m.submitChatComposer(suggestions)
+		}
+		m.exitInputHistoryNavigation()
+		m.insertInputText("\n")
 		m.clearPasteBurst()
-		// If there are paste blocks, reconstruct full text and submit as one.
-		if len(m.chat.pasteBlocks) > 0 {
-			full := m.composeInput()
-			n := len(m.chat.pasteBlocks)
-			m.clearPasteBlocks()
-			m.setChatInput("")
-			m.notice = fmt.Sprintf("pasted text · %d block%s", n, _s(n))
-			if m.chat.sending {
-				if len(m.chat.pendingQueue) >= pendingQueueCap {
-					block := m.addPasteBlock(full)
-					m.notice = fmt.Sprintf("Queue full (%d max) - PASTE #%d kept in input.", pendingQueueCap, block.blockNum)
-					return m, nil
-				}
-				m.chat.pendingQueue = append(m.chat.pendingQueue, full)
-				m.notice = fmt.Sprintf("Pasted text queued as one message (#%d)", len(m.chat.pendingQueue))
-				m = m.appendSystemMessage(fmt.Sprintf("queued paste #%d: %s", len(m.chat.pendingQueue), truncateSingleLine(full, 80)))
-				return m, nil
-			}
-			next, cmdOut := m.submitChatQuestion(full, nil)
-			return next, cmdOut
-		}
-		// Normal submit path (no paste blocks).
-		raw := m.chat.input
-		startsWithNewline := len(raw) > 0 && raw[0] == '\n'
-		raw = strings.TrimSpace(raw)
-		if !m.chat.sending && m.ui.resumePromptActive && m.eng != nil && m.eng.HasParkedAgent() {
-			m.setChatInput("")
-			return m.startChatResume(raw)
-		}
-		if raw == "" && !startsWithNewline {
-			if len(m.chat.input) > 0 {
-				m.notice = "input is whitespace-only — type a message or press Esc to clear"
-			}
-			return m, nil
-		}
-		// User is typing a multi-line message (starts with newline) — insert
-		// another newline, don't submit yet.
-		if startsWithNewline {
-			m.exitInputHistoryNavigation()
-			m.insertInputText("\n")
-			m.slashMenu.command = 0
-			m.slashMenu.commandArg = 0
-			m.slashMenu.mention = 0
-			m.slashMenu.quickAction = 0
-			return m, nil
-		}
-		if m.chat.sending {
-			if strings.HasPrefix(raw, "/") {
-				cmd, _, _, err := parseChatCommandInput(raw)
-				if err != nil || !isKnownChatCommandToken(cmd) || isImmediateChatSlashCommand(cmd) {
-					m.pushInputHistory(raw)
-					m.setChatInput("")
-					next, cmdOut, _ := m.executeChatCommand(raw)
-					return next, cmdOut
-				}
-			}
-			// Cap the queue so a user spamming Enter while a long stream
-			// is in flight can't grow unbounded memory. 64 is enough
-			// headroom for normal "ask three follow-ups in a row" flow
-			// without becoming a DOS vector.
-			if len(m.chat.pendingQueue) >= pendingQueueCap {
-				m.notice = fmt.Sprintf("Queue full (%d max) — wait for the current reply, then send again.", pendingQueueCap)
-				return m, nil
-			}
-			m.chat.pendingQueue = append(m.chat.pendingQueue, raw)
-			m.notice = fmt.Sprintf("Queued (%d/%d) — will send after the current reply finishes.", len(m.chat.pendingQueue), pendingQueueCap)
-			m = m.appendSystemMessage(fmt.Sprintf("▸ queued #%d: %s", len(m.chat.pendingQueue), raw))
-			m.setChatInput("")
-			return m, nil
-		}
-		if expanded, ok := m.expandSlashSelection(raw); ok {
-			raw = expanded
-		}
-		m.pushInputHistory(raw)
-		if next, cmd, handled := m.executeChatCommand(raw); handled {
-			return next, cmd
-		}
-		question := m.chatPrompt()
-		if question == "" {
-			return m, nil
-		}
-		m.setChatInput("")
-		return m.submitChatQuestion(question, suggestions.quickActions)
+		m.slashMenu.command = 0
+		m.slashMenu.commandArg = 0
+		m.slashMenu.mention = 0
+		m.slashMenu.quickAction = 0
+		return m, nil
 	}
 	// Defensive catch-all for keys that didn't match any explicit case but
 	// still carry printable runes. On Windows with non-standard keyboard
@@ -504,6 +457,9 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if printable {
 			m.exitInputHistoryNavigation()
 			m.insertInputText(string(msg.Runes))
+			if strings.ContainsRune(string(msg.Runes), '@') {
+				m.chat.mentionPickerOpen = true
+			}
 			m.slashMenu.command = 0
 			m.slashMenu.commandArg = 0
 			m.slashMenu.mention = 0
@@ -518,6 +474,118 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func isAtMentionOpenKey(msg tea.KeyMsg) bool {
+	if len(msg.Runes) > 0 {
+		return false
+	}
+	if msg.Alt && msg.Type == tea.KeyCtrlQ {
+		return true
+	}
+	key := strings.ToLower(strings.TrimSpace(msg.String()))
+	return key == "alt+q" || key == "alt+ctrl+q"
+}
+
+func (m Model) openMentionPickerFromKey() (tea.Model, tea.Cmd) {
+	if m.chat.sending {
+		return m, nil
+	}
+	m.exitInputHistoryNavigation()
+	m.syncChatCursor()
+	runes := []rune(m.chat.input)
+	needSpace := m.chat.cursor > 0 && m.chat.cursor <= len(runes) &&
+		!unicode.IsSpace(runes[m.chat.cursor-1])
+	if needSpace {
+		m.insertInputText(" @")
+	} else {
+		m.insertInputText("@")
+	}
+	m.chat.mentionPickerOpen = true
+	m.slashMenu.mention = 0
+	m.notice = "File picker open - type to filter, tab/enter inserts, esc cancels."
+	if len(m.filesView.entries) == 0 && m.eng != nil {
+		return m, loadFilesCmd(m.eng)
+	}
+	return m, nil
+}
+
+func (m *Model) refreshMentionPickerOpen() {
+	if m == nil {
+		return
+	}
+	if _, _, ok := activeMentionQuery(m.chat.input); !ok {
+		m.chat.mentionPickerOpen = false
+	}
+}
+
+func (m Model) submitChatComposer(suggestions chatSuggestionState) (tea.Model, tea.Cmd) {
+	m.clearPasteBurst()
+	if len(m.chat.pasteBlocks) > 0 {
+		full := m.composeInput()
+		n := len(m.chat.pasteBlocks)
+		m.clearPasteBlocks()
+		m.setChatInput("")
+		m.notice = fmt.Sprintf("pasted text · %d block%s", n, _s(n))
+		if m.chat.sending {
+			if len(m.chat.pendingQueue) >= pendingQueueCap {
+				block := m.addPasteBlock(full)
+				m.notice = fmt.Sprintf("Queue full (%d max) - PASTE #%d kept in input.", pendingQueueCap, block.blockNum)
+				return m, nil
+			}
+			m.chat.pendingQueue = append(m.chat.pendingQueue, full)
+			m.notice = fmt.Sprintf("Pasted text queued as one message (#%d)", len(m.chat.pendingQueue))
+			m = m.appendSystemMessage(fmt.Sprintf("queued paste #%d: %s", len(m.chat.pendingQueue), truncateSingleLine(full, 80)))
+			return m, nil
+		}
+		next, cmdOut := m.submitChatQuestion(full, nil)
+		return next, cmdOut
+	}
+
+	raw := strings.TrimSpace(m.chat.input)
+	if !m.chat.sending && m.ui.resumePromptActive && m.eng != nil && m.eng.HasParkedAgent() {
+		m.setChatInput("")
+		return m.startChatResume(raw)
+	}
+	if raw == "" {
+		if len(m.chat.input) > 0 {
+			m.notice = "input is whitespace-only - type a message or press Esc to clear"
+		}
+		return m, nil
+	}
+	if m.chat.sending {
+		if strings.HasPrefix(raw, "/") {
+			cmd, _, _, err := parseChatCommandInput(raw)
+			if err != nil || !isKnownChatCommandToken(cmd) || isImmediateChatSlashCommand(cmd) {
+				m.pushInputHistory(raw)
+				m.setChatInput("")
+				next, cmdOut, _ := m.executeChatCommand(raw)
+				return next, cmdOut
+			}
+		}
+		if len(m.chat.pendingQueue) >= pendingQueueCap {
+			m.notice = fmt.Sprintf("Queue full (%d max) - wait for the current reply, then send again.", pendingQueueCap)
+			return m, nil
+		}
+		m.chat.pendingQueue = append(m.chat.pendingQueue, raw)
+		m.notice = fmt.Sprintf("Queued (%d/%d) - will send after the current reply finishes.", len(m.chat.pendingQueue), pendingQueueCap)
+		m = m.appendSystemMessage(fmt.Sprintf("queued #%d: %s", len(m.chat.pendingQueue), raw))
+		m.setChatInput("")
+		return m, nil
+	}
+	if expanded, ok := m.expandSlashSelection(raw); ok {
+		raw = expanded
+	}
+	m.pushInputHistory(raw)
+	if next, cmd, handled := m.executeChatCommand(raw); handled {
+		return next, cmd
+	}
+	question := m.chatPrompt()
+	if question == "" {
+		return m, nil
+	}
+	m.setChatInput("")
+	return m.submitChatQuestion(question, suggestions.quickActions)
 }
 
 // _s returns "s" for plural, "" for singular.

@@ -120,18 +120,32 @@ func truncateRunesWithMarker(s string, maxRunes int, marker string) string {
 	return strings.TrimSpace(string(r[:cut])) + marker
 }
 
-func (e *Engine) publishProviderComplete(providerName, model string, tokenCount int) {
+func (e *Engine) publishProviderComplete(providerName, model string, tokenCount int, usageParts ...provider.Usage) {
 	if e.EventBus == nil {
 		return
 	}
+	payload := map[string]any{
+		"provider": providerName,
+		"model":    model,
+		"tokens":   tokenCount,
+	}
+	if len(usageParts) > 0 {
+		usage := usageParts[0]
+		if usage.InputTokens > 0 {
+			payload["input_tokens"] = usage.InputTokens
+		}
+		if usage.OutputTokens > 0 {
+			payload["output_tokens"] = usage.OutputTokens
+		}
+		if usage.TotalTokens > 0 {
+			payload["total_tokens"] = usage.TotalTokens
+			payload["tokens"] = usage.TotalTokens
+		}
+	}
 	e.EventBus.Publish(Event{
-		Type:   "provider:complete",
-		Source: "engine",
-		Payload: map[string]any{
-			"provider": providerName,
-			"model":    model,
-			"tokens":   tokenCount,
-		},
+		Type:    "provider:complete",
+		Source:  "engine",
+		Payload: payload,
 	})
 }
 

@@ -19,6 +19,12 @@ import (
 )
 
 const pasteBurstWindow = 250 * time.Millisecond
+const pasteLineEnterWindow = 100 * time.Millisecond
+const pasteChunkRuneThreshold = 24
+const charwisePasteImmediateRuneThreshold = 24
+const charwisePasteLineBaseWindow = 140 * time.Millisecond
+const charwisePasteLinePerRuneWindow = 12 * time.Millisecond
+const charwisePasteLineMaxWindow = 900 * time.Millisecond
 
 // syncChatCursor reconciles the visible cursor with the current input
 // buffer. The cursor is "manual" once the user has explicitly moved
@@ -63,9 +69,37 @@ func (m *Model) addPasteBlock(content string) pasteBlock {
 	return block
 }
 
-func (m *Model) armPasteBurstCandidate(now time.Time) {
+func (m *Model) armPasteBurstCandidate(start, end, runeCount int, now time.Time) {
+	m.armPasteBurstCandidateMode(start, end, runeCount, runeCount > 1, now)
+}
+
+func (m *Model) armPasteBurstCandidateMode(start, end, runeCount int, bulk bool, now time.Time) {
+	if start < 0 {
+		start = 0
+	}
+	if end < start {
+		end = start
+	}
 	m.chat.pasteBurstUntil = now.Add(pasteBurstWindow)
 	m.chat.pasteBurstBlock = 0
+	m.chat.pasteCandidateStart = start
+	m.chat.pasteCandidateEnd = end
+	m.chat.pasteCandidateRunes = runeCount
+	m.chat.pasteCandidateBulk = bulk
+	m.chat.pasteCandidateSince = now
+	m.chat.pasteCandidateLast = now
+}
+
+func (m *Model) extendPasteBurstCandidate(start, end, runeCount int, bulk bool, now time.Time) {
+	if m.pasteBurstCandidateActive(now) && start == m.chat.pasteCandidateEnd {
+		m.chat.pasteCandidateEnd = end
+		m.chat.pasteCandidateRunes += runeCount
+		m.chat.pasteCandidateBulk = m.chat.pasteCandidateBulk || bulk
+		m.chat.pasteCandidateLast = now
+		m.chat.pasteBurstUntil = now.Add(pasteBurstWindow)
+		return
+	}
+	m.armPasteBurstCandidateMode(start, end, runeCount, bulk, now)
 }
 
 func (m *Model) pasteBurstActive(now time.Time) bool {
@@ -79,22 +113,129 @@ func (m *Model) pasteBurstCandidateActive(now time.Time) bool {
 func (m *Model) clearPasteBurst() {
 	m.chat.pasteBurstUntil = time.Time{}
 	m.chat.pasteBurstBlock = 0
+	m.chat.pasteCandidateStart = 0
+	m.chat.pasteCandidateEnd = 0
+	m.chat.pasteCandidateRunes = 0
+	m.chat.pasteCandidateBulk = false
+	m.chat.pasteCandidateSince = time.Time{}
+	m.chat.pasteCandidateLast = time.Time{}
 }
 
 func (m *Model) startPasteBurstFromInput(now time.Time) bool {
-	content := normalizePastedText(m.chat.input)
+	return m.startPasteBurstFromInputWithSuffix(now, "\n")
+}
+
+func (m *Model) promotePasteCandidateDuringInput(now time.Time) bool {
+	return m.startPasteBurstFromInputWithSuffix(now, "")
+}
+
+func (m *Model) startPasteBurstFromInputWithSuffix(now time.Time, suffix string) bool {
+	content, start, end := m.pasteCandidateText()
 	if strings.TrimSpace(content) == "" {
 		m.clearPasteBurst()
 		return false
 	}
-	m.chat.input = ""
-	m.chat.cursor = 0
-	m.chat.cursorManual = false
-	m.chat.cursorInput = ""
-	block := m.addPasteBlock(content + "\n")
+	block := m.replaceInputRangeWithPasteBlock(start, end, content+suffix)
 	m.chat.pasteBurstBlock = block.blockNum
 	m.chat.pasteBurstUntil = now.Add(pasteBurstWindow)
+	m.chat.pasteCandidateStart = 0
+	m.chat.pasteCandidateEnd = 0
+	m.chat.pasteCandidateRunes = 0
+	m.chat.pasteCandidateBulk = false
+	m.chat.pasteCandidateSince = time.Time{}
+	m.chat.pasteCandidateLast = time.Time{}
 	return true
+}
+
+func (m *Model) activatePasteBurstBlock(block pasteBlock, now time.Time) {
+	m.chat.pasteBurstBlock = block.blockNum
+	m.chat.pasteBurstUntil = now.Add(pasteBurstWindow)
+	m.chat.pasteCandidateStart = 0
+	m.chat.pasteCandidateEnd = 0
+	m.chat.pasteCandidateRunes = 0
+	m.chat.pasteCandidateBulk = false
+	m.chat.pasteCandidateSince = time.Time{}
+	m.chat.pasteCandidateLast = time.Time{}
+}
+
+func (m *Model) pasteCandidateText() (content string, start int, end int) {
+	runes := []rune(m.chat.input)
+	start = m.chat.pasteCandidateStart
+	end = m.chat.pasteCandidateEnd
+	if start < 0 || end > len(runes) || start >= end {
+		return normalizePastedText(m.chat.input), 0, len(runes)
+	}
+	return normalizePastedText(string(runes[start:end])), start, end
+}
+
+func (m *Model) shouldStartPasteBurstOnEnter(now time.Time) bool {
+	if !m.pasteBurstCandidateActive(now) {
+		return false
+	}
+	if m.chat.pasteCandidateBulk {
+		return true
+	}
+	return m.chat.pasteCandidateRunes >= 3 &&
+		!m.chat.pasteCandidateSince.IsZero() &&
+		!m.chat.pasteCandidateLast.IsZero() &&
+		now.Sub(m.chat.pasteCandidateSince) <= charwisePasteWindow(m.chat.pasteCandidateRunes) &&
+		now.Sub(m.chat.pasteCandidateLast) <= pasteLineEnterWindow
+}
+
+func (m *Model) shouldPromotePasteCandidateDuringInput(now time.Time) bool {
+	if !m.pasteBurstCandidateActive(now) {
+		return false
+	}
+	if m.chat.pasteCandidateRunes < charwisePasteImmediateRuneThreshold {
+		return false
+	}
+	if m.chat.pasteCandidateBulk {
+		return true
+	}
+	return !m.chat.pasteCandidateSince.IsZero() &&
+		!m.chat.pasteCandidateLast.IsZero() &&
+		now.Sub(m.chat.pasteCandidateSince) <= charwisePasteWindow(m.chat.pasteCandidateRunes)
+}
+
+func charwisePasteWindow(runeCount int) time.Duration {
+	if runeCount < 0 {
+		runeCount = 0
+	}
+	window := charwisePasteLineBaseWindow + time.Duration(runeCount)*charwisePasteLinePerRuneWindow
+	if window > charwisePasteLineMaxWindow {
+		return charwisePasteLineMaxWindow
+	}
+	return window
+}
+
+func (m *Model) replaceInputRangeWithPasteBlock(start, end int, content string) pasteBlock {
+	runes := []rune(m.chat.input)
+	if start < 0 {
+		start = 0
+	}
+	if end > len(runes) {
+		end = len(runes)
+	}
+	if start > end {
+		start = end
+	}
+	content = normalizePastedText(content)
+	block := pasteBlock{
+		content:   content,
+		blockNum:  len(m.chat.pasteBlocks) + 1,
+		lineCount: pasteLineCount(content),
+	}
+	m.chat.pasteBlocks = append(m.chat.pasteBlocks, block)
+	placeholder := []rune(block.placeholder())
+	updated := make([]rune, 0, len(runes)-(end-start)+len(placeholder))
+	updated = append(updated, runes[:start]...)
+	updated = append(updated, placeholder...)
+	updated = append(updated, runes[end:]...)
+	m.chat.input = string(updated)
+	m.chat.cursor = start + len(placeholder)
+	m.chat.cursorManual = true
+	m.chat.cursorInput = m.chat.input
+	return block
 }
 
 func (m *Model) appendPasteBurstText(text string, now time.Time) bool {
@@ -108,14 +249,19 @@ func (m *Model) appendPasteBurstText(text string, now time.Time) bool {
 	}
 	text = normalizePastedText(text)
 	old := m.chat.pasteBlocks[idx].placeholder()
+	addedLines := strings.Count(text, "\n")
 	m.chat.pasteBlocks[idx].content += text
-	m.chat.pasteBlocks[idx].lineCount = pasteLineCount(m.chat.pasteBlocks[idx].content)
+	if addedLines > 0 {
+		m.chat.pasteBlocks[idx].lineCount += addedLines
+	}
 	next := m.chat.pasteBlocks[idx].placeholder()
 	if old != next {
 		m.chat.input = strings.Replace(m.chat.input, old, next, 1)
+		m.syncChatCursor()
+	} else {
+		m.chat.suppressPasteRender = true
 	}
 	m.chat.pasteBurstUntil = now.Add(pasteBurstWindow)
-	m.syncChatCursor()
 	return true
 }
 
@@ -131,8 +277,13 @@ func (m *Model) clearPasteBlocks() {
 }
 
 func (m *Model) insertInputText(text string) {
+	m.insertInputTextRange(text)
+}
+
+func (m *Model) insertInputTextRange(text string) (start, end int) {
 	if text == "" {
-		return
+		m.syncChatCursor()
+		return m.chat.cursor, m.chat.cursor
 	}
 	m.syncChatCursor()
 	runes := []rune(m.chat.input)
@@ -152,6 +303,7 @@ func (m *Model) insertInputText(text string) {
 	m.chat.cursor = cursor + len(insert)
 	m.chat.cursorManual = true
 	m.chat.cursorInput = m.chat.input
+	return cursor, m.chat.cursor
 }
 
 // deleteInputBeforeCursor removes the character before the cursor. Paste

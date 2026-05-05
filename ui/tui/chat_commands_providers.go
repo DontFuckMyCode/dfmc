@@ -49,7 +49,6 @@ func (m Model) runProviderCommand(cmd string, args []string) (tea.Model, tea.Cmd
 			m.notice = fmt.Sprintf("Provider set to %s (%s), saved to %s", name, blankFallback(model, "-"), filepath.ToSlash(path))
 			return m.appendSystemMessage(fmt.Sprintf("Provider set to %s (%s)\nSaved project config: %s", name, blankFallback(model, "-"), filepath.ToSlash(path))), loadStatusCmd(m.eng), true
 		}
-		m.notice = fmt.Sprintf("Provider set to %s (%s)", name, blankFallback(model, "-"))
 		return m.appendSystemMessage(fmt.Sprintf("Provider set to %s (%s)", name, blankFallback(model, "-"))), loadStatusCmd(m.eng), true
 	case "models":
 		current := m.currentProvider()
@@ -86,7 +85,6 @@ func (m Model) runProviderCommand(cmd string, args []string) (tea.Model, tea.Cmd
 			m.notice = fmt.Sprintf("Model set to %s (%s), saved to %s", model, blankFallback(providerName, "-"), filepath.ToSlash(path))
 			return m.appendSystemMessage(fmt.Sprintf("Model set to %s (%s)\nSaved project config: %s", model, blankFallback(providerName, "-"), filepath.ToSlash(path))), loadStatusCmd(m.eng), true
 		}
-		m.notice = fmt.Sprintf("Model set to %s (%s)", model, blankFallback(providerName, "-"))
 		return m.appendSystemMessage(fmt.Sprintf("Model set to %s (%s)", model, blankFallback(providerName, "-"))), loadStatusCmd(m.eng), true
 	}
 	return m, nil, false

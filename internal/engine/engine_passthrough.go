@@ -514,6 +514,7 @@ func (e *Engine) providerProfileStatusLocked() ProviderProfileStatus {
 		status.BaseURL = strings.TrimSpace(profile.BaseURL)
 		status.MaxTokens = profile.MaxTokens
 		status.MaxContext = profile.MaxContext
+		status.CostPer1kTokens = profile.CostPer1kTokens
 		status.Configured = providerProfileConfigured(status.Name, profile)
 		status.Advisories = config.ProviderProfileAdvisories(status.Name, profile)
 	}

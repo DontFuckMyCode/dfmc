@@ -277,6 +277,15 @@ type Model struct {
 	// time — the agent loop is sequential, and subagents are fed from
 	// the same Approver, so there's no concurrent-approval scenario.
 	pendingApproval *pendingApproval
+
+	viewCache *viewCacheState
+}
+
+type viewCacheState struct {
+	width     int
+	height    int
+	activeTab int
+	value     string
 }
 
 // mouseWheelStep is the per-tick scroll distance for the chat transcript.
@@ -320,6 +329,7 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 			keyLogEnabled:     os.Getenv("DFMC_KEYLOG") == "1",
 			toolStripExpanded: true, // expanded by default; /tools toggles to collapsed
 		},
+		viewCache: &viewCacheState{},
 	}
 	// Seed status synchronously so the chat header renders with real
 	// provider info on the first paint, before the async loadStatusCmd
@@ -327,6 +337,7 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	// message loop processes statusLoadedMsg.
 	if eng != nil {
 		m.status = eng.Status()
+		m = m.hydrateStatusProviderFromConfig()
 	}
 	return m
 }
@@ -488,7 +499,6 @@ func (m Model) projectRoot() string {
 // lives in patch_view.go.
 
 func (m Model) View() string {
-	m.ensureDiagnostics()
 	width := m.width
 	if width <= 0 {
 		width = 100
@@ -497,6 +507,11 @@ func (m Model) View() string {
 	if height <= 0 {
 		height = 30
 	}
+	if m.chat.suppressPasteRender && m.viewCache != nil && m.viewCache.value != "" &&
+		m.viewCache.width == width && m.viewCache.height == height && m.viewCache.activeTab == m.activeTab {
+		return m.viewCache.value
+	}
+	m.ensureDiagnostics()
 	bodyWidth := width - 4
 	if bodyWidth < 20 {
 		bodyWidth = width
@@ -530,7 +545,14 @@ func (m Model) View() string {
 	}
 	body := m.renderActiveView(bodyWidth, bodyHeight, pal)
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	out := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	if m.viewCache != nil {
+		m.viewCache.width = width
+		m.viewCache.height = height
+		m.viewCache.activeTab = m.activeTab
+		m.viewCache.value = out
+	}
+	return out
 }
 
 // Patch parsing & apply (patchSectionPaths, totalPatchHunks,

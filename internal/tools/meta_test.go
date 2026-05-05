@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -277,8 +278,11 @@ func TestToolCallTripleWrapAutoUnwraps(t *testing.T) {
 
 func TestToolBatchCallInheritsReasonAndAllowsPerCallOverride(t *testing.T) {
 	eng, tmp := newTestEngine(t)
+	var seenMu sync.Mutex
 	var seen []string
 	eng.SetReasoningPublisher(func(name, reason string) {
+		seenMu.Lock()
+		defer seenMu.Unlock()
 		seen = append(seen, name+":"+reason)
 	})
 
@@ -299,14 +303,18 @@ func TestToolBatchCallInheritsReasonAndAllowsPerCallOverride(t *testing.T) {
 		t.Fatalf("tool_batch_call: %v", err)
 	}
 
-	if !containsString(seen, "tool_batch_call:read the fixtures in parallel before planning") {
-		t.Fatalf("expected batch-level reasoning event, got %#v", seen)
+	seenMu.Lock()
+	gotSeen := append([]string(nil), seen...)
+	seenMu.Unlock()
+
+	if !containsString(gotSeen, "tool_batch_call:read the fixtures in parallel before planning") {
+		t.Fatalf("expected batch-level reasoning event, got %#v", gotSeen)
 	}
-	if !containsString(seen, "read_file:read the fixtures in parallel before planning") {
-		t.Fatalf("expected inherited backend reasoning event, got %#v", seen)
+	if !containsString(gotSeen, "read_file:read the fixtures in parallel before planning") {
+		t.Fatalf("expected inherited backend reasoning event, got %#v", gotSeen)
 	}
-	if !containsString(seen, "read_file:specific second read reason") {
-		t.Fatalf("expected per-call backend reasoning override, got %#v", seen)
+	if !containsString(gotSeen, "read_file:specific second read reason") {
+		t.Fatalf("expected per-call backend reasoning override, got %#v", gotSeen)
 	}
 	results, _ := res.Data["results"].([]map[string]any)
 	if len(results) != 2 {

@@ -92,26 +92,30 @@ func chatEventTranscriptText(ev chatEventLine) string {
 	}
 
 	lines := []string{strings.Join(head, " | ")}
-	if params := strings.TrimSpace(ev.ParamsPreview); params != "" {
-		lines = append(lines, "params: "+timelineEventField(params))
+	if state := toolEventStateLine(ev, status); state != "" {
+		lines = append(lines, state)
+	}
+	if params := timelineEventParamsField(ev.ParamsPreview); params != "" {
+		lines = append(lines, "params: "+params)
 	}
 	if reason := strings.TrimSpace(ev.Reason); reason != "" {
-		lines = append(lines, "_reason: "+timelineEventField(reason))
+		lines = append(lines, "_reason: "+timelineEventFieldLimit(reason, 260))
 	}
+	lines = append(lines, ev.DetailLines...)
 	if detail := strings.TrimSpace(ev.Detail); detail != "" && !toolDetailDuplicatesParams(detail, ev.ParamsPreview) {
 		label := "detail"
 		if status == "done" || status == "failed" {
 			label = "result"
 		}
-		lines = append(lines, label+": "+timelineEventField(detail))
+		lines = append(lines, label+": "+timelineEventFieldLimit(detail, 240))
 	}
-	if len(ev.RunningLog) > 0 && len(lines) < 4 {
+	if len(ev.RunningLog) > 0 && len(lines) < 7 {
 		log := strings.TrimSpace(ev.RunningLog[len(ev.RunningLog)-1])
 		if log != "" {
-			lines = append(lines, "log: "+timelineEventField(log))
+			lines = append(lines, "log: "+timelineEventFieldLimit(log, 180))
 		}
 	}
-	return strings.Join(limitToolEventLines(lines, 4), "\n")
+	return strings.Join(limitToolEventLines(lines, toolEventLineLimit(ev)), "\n")
 }
 
 func batchChatEventTranscriptText(ev chatEventLine) string {
@@ -133,15 +137,15 @@ func batchChatEventTranscriptText(ev chatEventLine) string {
 
 	lines := []string{strings.Join(head, " | ")}
 	if reason := strings.TrimSpace(ev.Reason); reason != "" {
-		lines = append(lines, "_reason: "+timelineEventField(reason))
+		lines = append(lines, "_reason: "+timelineEventFieldLimit(reason, 260))
 	}
 	if detail := strings.TrimSpace(ev.Detail); detail != "" {
-		lines = append(lines, "summary: "+timelineEventField(detail))
+		lines = append(lines, "summary: "+timelineEventFieldLimit(detail, 240))
 	}
 	if len(ev.RunningLog) > 0 {
 		lines = append(lines, "calls:")
 		for _, log := range ev.RunningLog {
-			if log = timelineEventField(log); log != "" {
+			if log = timelineEventFieldLimit(log, 220); log != "" {
 				lines = append(lines, "  "+log)
 			}
 		}
@@ -152,6 +156,71 @@ func batchChatEventTranscriptText(ev chatEventLine) string {
 func isBatchToolEvent(ev chatEventLine) bool {
 	return strings.EqualFold(strings.TrimSpace(ev.ToolName), "tool_batch_call") ||
 		strings.EqualFold(strings.TrimSpace(ev.Title), "tool_batch_call")
+}
+
+func toolEventLineLimit(ev chatEventLine) int {
+	name := strings.ToLower(strings.TrimSpace(ev.ToolName))
+	if name == "" {
+		name = strings.ToLower(strings.TrimSpace(ev.Title))
+	}
+	switch name {
+	case "write_file":
+		return 13
+	case "edit_file", "apply_patch":
+		return 13
+	default:
+		return 8
+	}
+}
+
+func toolEventStateLine(ev chatEventLine, status string) string {
+	name := strings.ToLower(strings.TrimSpace(ev.ToolName))
+	if name == "" {
+		name = strings.ToLower(strings.TrimSpace(ev.Title))
+	}
+	switch status {
+	case "running":
+		action := toolEventActionVerb(name)
+		if action == "" {
+			action = "dispatching"
+		}
+		return "state: " + action + " -> waiting for result"
+	case "done":
+		if ev.Duration > 0 {
+			return fmt.Sprintf("state: completed in %dms", ev.Duration)
+		}
+		return "state: completed"
+	case "failed":
+		if ev.Duration > 0 {
+			return fmt.Sprintf("state: failed after %dms", ev.Duration)
+		}
+		return "state: failed"
+	case "warn":
+		return "state: warning"
+	default:
+		return ""
+	}
+}
+
+func toolEventActionVerb(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "read_file", "list_dir", "glob":
+		return "reading"
+	case "grep_codebase", "semantic_search", "ast_query":
+		return "searching"
+	case "run_command":
+		return "running command"
+	case "write_file":
+		return "writing file"
+	case "edit_file":
+		return "editing file"
+	case "apply_patch":
+		return "applying patch"
+	case "tool_batch_call":
+		return "dispatching batch"
+	default:
+		return ""
+	}
 }
 
 func displayToolName(toolName string, payload map[string]any) string {
@@ -226,11 +295,526 @@ func batchToolCallNameSummary(payload map[string]any) string {
 func timelineEventField(text string) string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
+	text = strings.ReplaceAll(text, `\r\n`, " ")
+	text = strings.ReplaceAll(text, `\n`, " ")
+	text = strings.ReplaceAll(text, `\t`, " ")
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return ""
 	}
 	return strings.Join(strings.Fields(text), " ")
+}
+
+func timelineEventFieldLimit(text string, width int) string {
+	field := timelineEventField(text)
+	if field == "" {
+		return ""
+	}
+	if width <= 0 {
+		return field
+	}
+	return truncateSingleLine(field, width)
+}
+
+func timelineEventParamsField(params string) string {
+	params = strings.TrimSpace(params)
+	if params == "" {
+		return ""
+	}
+	field := timelineEventField(params)
+	if field == "" {
+		return ""
+	}
+	if shouldHideTimelineParams(params, field) {
+		if target := timelineEventMutationTarget(field); target != "" {
+			return target
+		}
+		return ""
+	}
+	return truncateSingleLine(field, 220)
+}
+
+func shouldHideTimelineParams(params, field string) bool {
+	lower := strings.ToLower(field)
+	heavyMutationPayload := strings.Contains(lower, "old_string=") ||
+		strings.Contains(lower, "new_string=") ||
+		strings.Contains(lower, "content=") ||
+		strings.Contains(lower, "patch=")
+	if !heavyMutationPayload {
+		return false
+	}
+	return len([]rune(field)) > 160 ||
+		strings.Count(params, `\n`) > 1 ||
+		strings.Count(params, "\n") > 1
+}
+
+func timelineEventMutationTarget(field string) string {
+	if path := timelineEventKVValue(field, "path"); path != "" {
+		return "path=" + truncateSingleLine(path, 180)
+	}
+	if file := timelineEventKVValue(field, "file"); file != "" {
+		return "file=" + truncateSingleLine(file, 180)
+	}
+	if strings.Contains(strings.ToLower(field), "patch=") {
+		return "patch payload hidden"
+	}
+	return ""
+}
+
+func timelineEventKVValue(field, key string) string {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if key == "" {
+		return ""
+	}
+	lower := strings.ToLower(field)
+	marker := key + "="
+	idx := strings.LastIndex(lower, " "+marker)
+	if idx >= 0 {
+		idx++
+	} else if strings.HasPrefix(lower, marker) {
+		idx = 0
+	}
+	if idx < 0 {
+		return ""
+	}
+	value := strings.TrimSpace(field[idx+len(marker):])
+	if value == "" {
+		return ""
+	}
+	if quote := value[0]; quote == '"' || quote == '\'' {
+		value = value[1:]
+		if end := strings.IndexRune(value, rune(quote)); end >= 0 {
+			value = value[:end]
+		}
+		return strings.TrimSpace(value)
+	}
+	if fields := strings.Fields(value); len(fields) > 0 {
+		return strings.Trim(fields[0], `"'`)
+	}
+	return strings.Trim(value, `"'`)
+}
+
+func toolCallTimelineLines(toolName string, payload map[string]any, paramsPreview string) []string {
+	toolName = strings.ToLower(strings.TrimSpace(toolName))
+	params := payloadMap(payload, "params")
+	lines := []string{}
+	if target := toolTimelineTarget(toolName, payload, params); target != "" {
+		lines = append(lines, "target: "+target)
+	}
+	switch toolName {
+	case "read_file":
+		lines = append(lines, toolCallCardLine(toolName))
+		if r := readRangeTimelineLine(payload, params); r != "" {
+			lines = append(lines, r)
+		}
+	case "grep_codebase", "semantic_search", "ast_query", "glob", "list_dir":
+		lines = append(lines, toolCallCardLine(toolName))
+	case "run_command":
+		lines = append(lines, toolCallCardLine(toolName))
+		if cmd := commandTimelineLine(params, payload); cmd != "" {
+			lines = append(lines, "command: "+cmd)
+		}
+		if dir := firstTimelineString(payload, params, "dir", "cwd", "working_dir"); dir != "" {
+			lines = append(lines, "cwd: "+dir)
+		}
+	case "write_file":
+		lines = append(lines, "card: WRITE | content hidden | diff after result")
+		mode := "create"
+		if firstTimelineBool(payload, params, "overwrite", "overwrote_existing") {
+			mode = "overwrite"
+		}
+		content := firstTimelineString(nil, params, "content")
+		parts := []string{mode, "content hidden"}
+		if linesCount := pasteLineCount(content); linesCount > 0 {
+			parts = append(parts, fmt.Sprintf("%d lines", linesCount))
+		}
+		if content != "" {
+			parts = append(parts, fmt.Sprintf("%d bytes", len([]byte(content))))
+		}
+		lines = append(lines, "mode: "+strings.Join(parts, " | "))
+	case "edit_file", "apply_patch":
+		lines = append(lines, mutationCallCardLine(toolName))
+		if diff := diffTimelineLine(payload); diff != "" {
+			lines = append(lines, "diff: "+diff)
+		}
+		if toolName == "apply_patch" {
+			lines = append(lines, "review: unified patch hidden here; open /diff or Patch tab for the real hunk view")
+		}
+	default:
+		if params := timelineEventParamsField(paramsPreview); params != "" && len(lines) == 0 {
+			lines = append(lines, "target: "+params)
+		}
+	}
+	return compactTimelineLines(lines, 4)
+}
+
+func toolResultTimelineLines(toolName string, payload map[string]any, preview string, success bool, compressionPct int) []string {
+	toolName = strings.ToLower(strings.TrimSpace(toolName))
+	lines := []string{}
+	if target := toolTimelineTarget(toolName, payload, payloadMap(payload, "params")); target != "" {
+		lines = append(lines, "target: "+target)
+	}
+	switch toolName {
+	case "read_file":
+		lines = append(lines, toolResultCardLine(toolName, success))
+		if detail := readChatDetail(payload); detail != "" {
+			lines = append(lines, "returned: "+detail)
+		}
+	case "grep_codebase", "semantic_search", "ast_query", "glob", "list_dir":
+		lines = append(lines, toolResultCardLine(toolName, success))
+		if preview = strings.TrimSpace(preview); preview != "" {
+			lines = append(lines, "output: "+timelineEventFieldLimit(preview, 220))
+		}
+	case "write_file":
+		lines = append(lines, mutationResultCardLine(toolName, success))
+		if files := changedFilesTimelineLine(payload); files != "" {
+			lines = append(lines, "files: "+files)
+		}
+		if diff := diffTimelineLine(payload); diff != "" {
+			lines = append(lines, "diff: "+diff)
+		}
+		if bytes := payloadInt(payload, "written_bytes", 0); bytes > 0 {
+			lines = append(lines, fmt.Sprintf("payload: wrote %d bytes; file content hidden", bytes))
+		} else {
+			lines = append(lines, "payload: file content hidden")
+		}
+		lines = append(lines, "review: /diff shows the actual workspace change")
+	case "edit_file", "apply_patch":
+		lines = append(lines, mutationResultCardLine(toolName, success))
+		if files := changedFilesTimelineLine(payload); files != "" {
+			lines = append(lines, "files: "+files)
+		}
+		if diff := diffTimelineLine(payload); diff != "" {
+			lines = append(lines, "diff: "+diff)
+		}
+		if hunks := payloadIntAny(payload, 0, "hunks_applied", "hunks"); hunks > 0 {
+			lines = append(lines, fmt.Sprintf("summary: %d hunk%s applied", hunks, pluralSuffix(hunks)))
+		}
+		lines = append(lines, "review: /diff or Patch tab shows side-by-side changes")
+	case "run_command":
+		lines = append(lines, toolResultCardLine(toolName, success))
+		if preview = strings.TrimSpace(preview); preview != "" {
+			lines = append(lines, "output: "+timelineEventFieldLimit(preview, 220))
+		}
+	default:
+		if preview = strings.TrimSpace(preview); preview != "" {
+			lines = append(lines, "output: "+timelineEventFieldLimit(preview, 220))
+		}
+	}
+	if !success {
+		if errText := payloadString(payload, "error", ""); errText != "" {
+			lines = append(lines, "error: "+timelineEventFieldLimit(errText, 220))
+		}
+		lines = append(lines, failureNextActionLine(toolName))
+	} else if outcome := toolOutcomeTimelineLine(toolName, payload); outcome != "" {
+		lines = append(lines, "outcome: "+outcome)
+	}
+	if success && isMutationTimelineTool(toolName) {
+		lines = append(lines, "verify: inspect diff, then run focused tests")
+	}
+	if saved := payloadInt(payload, "compression_saved_chars", 0); saved > 0 {
+		if compressionPct > 0 {
+			lines = append(lines, fmt.Sprintf("summary: display compressed by %s chars (%d%%)", compactMetric(saved), compressionPct))
+		} else {
+			lines = append(lines, "summary: display compressed by "+compactMetric(saved)+" chars")
+		}
+	}
+	return compactTimelineLines(lines, toolResultTimelineLineLimit(toolName))
+}
+
+func toolResultTimelineLineLimit(toolName string) int {
+	if isMutationTimelineTool(toolName) {
+		return 10
+	}
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "read_file", "run_command", "grep_codebase", "semantic_search", "ast_query", "glob", "list_dir":
+		return 7
+	}
+	return 5
+}
+
+func toolCallCardLine(toolName string) string {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "read_file":
+		return "card: READ | waiting for file slice"
+	case "list_dir":
+		return "card: LIST | waiting for entries"
+	case "glob":
+		return "card: GLOB | waiting for paths"
+	case "grep_codebase", "semantic_search", "ast_query":
+		return "card: SEARCH | waiting for matches"
+	case "run_command":
+		return "card: RUN | waiting for exit"
+	default:
+		return ""
+	}
+}
+
+func toolResultCardLine(toolName string, success bool) string {
+	state := "OK"
+	if !success {
+		state = "FAILED"
+	}
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "read_file":
+		return "card: READ " + state + " | output summarized"
+	case "list_dir":
+		return "card: LIST " + state + " | entries summarized"
+	case "glob":
+		return "card: GLOB " + state + " | paths summarized"
+	case "grep_codebase", "semantic_search", "ast_query":
+		return "card: SEARCH " + state + " | matches summarized"
+	case "run_command":
+		return "card: RUN " + state + " | output summarized"
+	default:
+		return ""
+	}
+}
+
+func mutationCallCardLine(toolName string) string {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "write_file":
+		return "card: WRITE | content hidden | diff after result"
+	case "edit_file":
+		return "card: EDIT | strings hidden | diff after result"
+	case "apply_patch":
+		return "card: PATCH | hunks hidden | diff after result"
+	default:
+		return ""
+	}
+}
+
+func mutationResultCardLine(toolName string, success bool) string {
+	state := "OK"
+	if !success {
+		state = "FAILED"
+	}
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "write_file":
+		return "card: WRITE " + state + " | raw content hidden"
+	case "edit_file":
+		return "card: EDIT " + state + " | raw strings hidden"
+	case "apply_patch":
+		return "card: PATCH " + state + " | raw hunks hidden"
+	default:
+		return ""
+	}
+}
+
+func changedFilesTimelineLine(payload map[string]any) string {
+	files := payloadStringSlice(payload, "changed_files")
+	if len(files) == 0 {
+		return ""
+	}
+	shown := make([]string, 0, min(len(files), 3))
+	for _, file := range files {
+		file = strings.TrimSpace(file)
+		if file != "" {
+			shown = append(shown, file)
+		}
+		if len(shown) == 3 {
+			break
+		}
+	}
+	if len(shown) == 0 {
+		return ""
+	}
+	line := strings.Join(shown, ", ")
+	if len(files) > len(shown) {
+		line += fmt.Sprintf(" (+%d more)", len(files)-len(shown))
+	}
+	return truncateSingleLine(line, 180)
+}
+
+func isMutationTimelineTool(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "write_file", "edit_file", "apply_patch":
+		return true
+	default:
+		return false
+	}
+}
+
+func toolOutcomeTimelineLine(toolName string, payload map[string]any) string {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "read_file":
+		return ""
+	case "run_command":
+		if code := payloadIntAny(payload, -1, "exit_code", "code"); code >= 0 {
+			return fmt.Sprintf("exit %d", code)
+		}
+	case "write_file":
+		if bytes := payloadInt(payload, "written_bytes", 0); bytes > 0 {
+			return fmt.Sprintf("workspace updated, %d bytes written", bytes)
+		}
+	case "edit_file", "apply_patch":
+		if diff := diffTimelineLine(payload); diff != "" {
+			return "changed " + strings.Replace(diff, " | ", " ", 1)
+		}
+	case "grep_codebase", "semantic_search", "ast_query":
+		if n := payloadIntAny(payload, 0, "matches", "result_count", "count"); n > 0 {
+			return fmt.Sprintf("%d match%s", n, pluralSuffix(n))
+		}
+	}
+	return ""
+}
+
+func failureNextActionLine(toolName string) string {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "run_command":
+		return "next: inspect command output, fix the cause, then retry"
+	case "read_file", "list_dir", "glob":
+		return "next: check path/range and retry"
+	case "write_file", "edit_file", "apply_patch":
+		return "next: open /diff or Patch tab, resolve conflict, then retry"
+	default:
+		return "next: inspect error details and retry if needed"
+	}
+}
+
+func toolTimelineTarget(toolName string, payload, params map[string]any) string {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "read_file", "write_file", "edit_file", "apply_patch":
+		if files := payloadStringSlice(payload, "changed_files"); len(files) > 0 {
+			if len(files) == 1 {
+				return files[0]
+			}
+			return fmt.Sprintf("%d files: %s", len(files), truncateSingleLine(strings.Join(files, ", "), 180))
+		}
+		if path := firstTimelineString(payload, params, "read_path", "path", "file"); path != "" {
+			return path
+		}
+	case "grep_codebase":
+		if pattern := firstTimelineString(payload, params, "pattern"); pattern != "" {
+			return `pattern "` + truncateSingleLine(pattern, 120) + `"`
+		}
+	case "glob":
+		if pattern := firstTimelineString(payload, params, "pattern"); pattern != "" {
+			return pattern
+		}
+	case "list_dir":
+		if path := firstTimelineString(payload, params, "path", "dir"); path != "" {
+			return path
+		}
+		return "."
+	case "run_command":
+		return firstTimelineString(payload, params, "dir", "cwd", "working_dir")
+	}
+	for _, key := range []string{"path", "file", "query", "url", "pattern"} {
+		if value := firstTimelineString(payload, params, key); value != "" {
+			return truncateSingleLine(value, 180)
+		}
+	}
+	return ""
+}
+
+func readRangeTimelineLine(payload, params map[string]any) string {
+	start := firstTimelineInt(payload, params, "read_line_start", "line_start")
+	end := firstTimelineInt(payload, params, "read_line_end", "line_end")
+	if start > 0 && end > 0 {
+		return fmt.Sprintf("range: lines %d-%d", start, end)
+	}
+	return ""
+}
+
+func commandTimelineLine(params, payload map[string]any) string {
+	cmd := firstTimelineString(payload, params, "command")
+	if args := firstTimelineString(payload, params, "args"); args != "" && args != "<nil>" {
+		cmd = strings.TrimSpace(cmd + " " + args)
+	}
+	return truncateSingleLine(cmd, 220)
+}
+
+func diffTimelineLine(payload map[string]any) string {
+	files := payloadStringSlice(payload, "changed_files")
+	added := payloadInt(payload, "added_lines", 0)
+	removed := payloadInt(payload, "removed_lines", 0)
+	hunks := payloadIntAny(payload, 0, "hunks_applied", "hunks")
+	parts := []string{}
+	if len(files) == 1 {
+		parts = append(parts, files[0])
+	} else if len(files) > 1 {
+		parts = append(parts, fmt.Sprintf("%d files", len(files)))
+	}
+	if hunks > 0 {
+		parts = append(parts, fmt.Sprintf("%d hunk%s", hunks, pluralSuffix(hunks)))
+	}
+	if added > 0 || removed > 0 {
+		parts = append(parts, fmt.Sprintf("+%d -%d lines", added, removed))
+	}
+	if replacements := payloadInt(payload, "replacements", 0); replacements > 0 {
+		parts = append(parts, fmt.Sprintf("%d replacement%s", replacements, pluralSuffix(replacements)))
+	}
+	if mode := payloadString(payload, "mutation_mode", ""); mode != "" {
+		parts = append(parts, mode)
+	}
+	return strings.Join(parts, " | ")
+}
+
+func compactTimelineLines(lines []string, limit int) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || seen[line] {
+			continue
+		}
+		seen[line] = true
+		out = append(out, line)
+		if limit > 0 && len(out) == limit {
+			break
+		}
+	}
+	return out
+}
+
+func firstTimelineString(primary, secondary map[string]any, keys ...string) string {
+	for _, data := range []map[string]any{primary, secondary} {
+		if data == nil {
+			continue
+		}
+		for _, key := range keys {
+			if value := payloadString(data, key, ""); value != "" && value != "<nil>" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func firstTimelineInt(primary, secondary map[string]any, keys ...string) int {
+	for _, data := range []map[string]any{primary, secondary} {
+		if data == nil {
+			continue
+		}
+		for _, key := range keys {
+			if value := payloadInt(data, key, 0); value > 0 {
+				return value
+			}
+		}
+	}
+	return 0
+}
+
+func firstTimelineBool(primary, secondary map[string]any, keys ...string) bool {
+	for _, data := range []map[string]any{primary, secondary} {
+		if data == nil {
+			continue
+		}
+		for _, key := range keys {
+			if payloadBool(data, key, false) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pluralSuffix(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func chatEventTranscriptStatusLabel(status string) string {
@@ -529,8 +1113,8 @@ func toolCallChatDetail(payload map[string]any, step int, paramsPreview string) 
 	if mutation := mutationChatDetail(payload, "will change"); mutation != "" {
 		parts = append(parts, mutation)
 	}
-	if paramsPreview = strings.TrimSpace(paramsPreview); paramsPreview != "" {
-		parts = append(parts, timelineEventField(paramsPreview))
+	if paramsPreview = timelineEventParamsField(paramsPreview); paramsPreview != "" {
+		parts = append(parts, paramsPreview)
 	}
 	if provider := payloadString(payload, "provider", ""); provider != "" {
 		model := payloadString(payload, "model", "")

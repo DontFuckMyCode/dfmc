@@ -14,9 +14,9 @@ package tui
 //                    (provider | model | tool | read | run | grep)
 //   - query        — what the user has typed since the picker opened;
 //                    drives the substring/prefix filter
-//   - persist      — when true, the apply* helpers also rewrite
-//                    .dfmc/config.yaml; otherwise the change is
-//                    session-only (Ctrl+S toggles)
+//   - persist      — when true, the apply* helpers also print the
+//                    saved config path; provider/model selections are
+//                    auto-saved either way (Ctrl+S toggles)
 //   - all/items    — base list snapshotted at open time, then filtered
 //                    on every keystroke (no live model lookup mid-typing)
 
@@ -40,9 +40,9 @@ func (m Model) handleCommandPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlS:
 		m.commandPicker.persist = !m.commandPicker.persist
 		if m.commandPicker.persist {
-			m.notice = "Picker apply mode: persist to .dfmc/config.yaml"
+			m.notice = "Picker apply mode: show saved config path"
 		} else {
-			m.notice = "Picker apply mode: session only"
+			m.notice = "Picker apply mode: auto-save quietly"
 		}
 		return m, nil
 	case tea.KeyUp:
@@ -469,7 +469,6 @@ func (m Model) applyCommandPickerProvider(selected string) (tea.Model, tea.Cmd) 
 		m.notice = fmt.Sprintf("Provider set to %s (%s), saved to %s", selected, blankFallback(model, "-"), filepath.ToSlash(path))
 		return m.appendSystemMessage(fmt.Sprintf("Provider set to %s (%s)\nSaved project config: %s", selected, blankFallback(model, "-"), filepath.ToSlash(path))), loadStatusCmd(m.eng)
 	}
-	m.notice = fmt.Sprintf("Provider set to %s (%s)", selected, blankFallback(model, "-"))
 	return m.appendSystemMessage(fmt.Sprintf("Provider set to %s (%s)", selected, blankFallback(model, "-"))), loadStatusCmd(m.eng)
 }
 
@@ -492,7 +491,6 @@ func (m Model) applyCommandPickerModel(selected string) (tea.Model, tea.Cmd) {
 		m.notice = fmt.Sprintf("Model set to %s (%s), saved to %s", selected, blankFallback(providerName, "-"), filepath.ToSlash(path))
 		return m.appendSystemMessage(fmt.Sprintf("Model set to %s (%s)\nSaved project config: %s", selected, blankFallback(providerName, "-"), filepath.ToSlash(path))), loadStatusCmd(m.eng)
 	}
-	m.notice = fmt.Sprintf("Model set to %s (%s)", selected, blankFallback(providerName, "-"))
 	return m.appendSystemMessage(fmt.Sprintf("Model set to %s (%s)", selected, blankFallback(providerName, "-"))), loadStatusCmd(m.eng)
 }
 

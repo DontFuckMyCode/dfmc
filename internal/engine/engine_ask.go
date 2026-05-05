@@ -593,9 +593,12 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 		Type:   "provider:complete",
 		Source: "engine",
 		Payload: map[string]any{
-			"provider": usedProvider,
-			"model":    resp.Model,
-			"tokens":   resp.Usage.TotalTokens,
+			"provider":      usedProvider,
+			"model":         resp.Model,
+			"tokens":        resp.Usage.TotalTokens,
+			"input_tokens":  resp.Usage.InputTokens,
+			"output_tokens": resp.Usage.OutputTokens,
+			"total_tokens":  resp.Usage.TotalTokens,
 		},
 	})
 	return resp.Text, nil
@@ -673,6 +676,19 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 		System:       systemPrompt,
 		SystemBlocks: systemBlocks,
 	}
+	requestInputTokens := estimateRequestTokens(systemPrompt, chunks, req.Messages)
+	if e.EventBus != nil {
+		e.EventBus.Publish(Event{
+			Type:   "provider:stream:start",
+			Source: "engine",
+			Payload: map[string]any{
+				"provider":     req.Provider,
+				"model":        req.Model,
+				"input_tokens": requestInputTokens,
+				"tokens":       requestInputTokens,
+			},
+		})
+	}
 
 	stream, usedProvider, err := e.Providers.Stream(ctx, req)
 	if err != nil {
@@ -716,15 +732,30 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 			if ev.Type == provider.StreamDone {
 				answer := acc.String()
 				if strings.TrimSpace(answer) != "" {
-					tokenEstimate := tokens.Estimate(prompt) + tokens.Estimate(answer)
-					e.recordInteraction(prompt, answer, usedProvider, req.Model, tokenEstimate, chunks)
+					usage := provider.Usage{}
+					if ev.Usage != nil {
+						usage = *ev.Usage
+					}
+					if usage.InputTokens <= 0 {
+						usage.InputTokens = requestInputTokens
+					}
+					if usage.OutputTokens <= 0 {
+						usage.OutputTokens = tokens.Estimate(answer)
+					}
+					if usage.TotalTokens <= 0 {
+						usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+					}
+					e.recordInteraction(prompt, answer, usedProvider, req.Model, usage.TotalTokens, chunks)
 					e.EventBus.Publish(Event{
 						Type:   "provider:complete",
 						Source: "engine",
 						Payload: map[string]any{
-							"provider": usedProvider,
-							"model":    req.Model,
-							"tokens":   tokenEstimate,
+							"provider":      usedProvider,
+							"model":         req.Model,
+							"tokens":        usage.TotalTokens,
+							"input_tokens":  usage.InputTokens,
+							"output_tokens": usage.OutputTokens,
+							"total_tokens":  usage.TotalTokens,
 						},
 					})
 				}

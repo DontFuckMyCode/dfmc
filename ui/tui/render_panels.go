@@ -295,6 +295,14 @@ func (m Model) footerSegments() []string {
 	if maxCtx == 0 {
 		maxCtx = m.status.ProviderProfile.MaxContext
 	}
+	if live := m.liveContextSnapshot(); live.ok {
+		if live.windowTokens > 0 {
+			tokens = live.windowTokens
+		}
+		if live.maxContext > 0 {
+			maxCtx = live.maxContext
+		}
+	}
 	out = append(out, renderContextBar(tokens, maxCtx, 10))
 	if runtime := strings.TrimSpace(m.footerRuntimeSegment()); runtime != "" {
 		out = append(out, runtime)
@@ -452,10 +460,10 @@ func helpOverlayTabHints(tab string) []string {
 	switch strings.TrimSpace(strings.ToLower(tab)) {
 	case "chat":
 		return []string{
-			"enter send · ctrl+j or alt+enter newline · / commands · @ mention",
+			"ctrl+x send · enter newline · / commands · @ mention",
 			"wheel · shift+↑/↓ · pgup/pgdn scroll transcript",
 			"alt+a overview · alt+s todos · alt+d tasks · alt+f subagents · alt+p providers in the right stats panel",
-			"when parked: enter resumes · esc dismisses · type a note first to steer",
+			"when parked: ctrl+x resumes · esc dismisses · type a note first to steer",
 		}
 	case "status":
 		return []string{"r refresh status"}

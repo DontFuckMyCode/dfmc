@@ -26,6 +26,9 @@ func (m Model) buildChatSuggestionState() chatSuggestionState {
 		state.mentionQuery = query
 		state.mentionRange = rangeSuffix
 		state.mentionSuggestions = m.mentionSuggestions(query, 8)
+	} else if m.chat.mentionPickerOpen {
+		state.mentionActive = true
+		state.mentionSuggestions = m.mentionSuggestions("", 8)
 	}
 	if !state.slashMenuActive && !state.mentionActive && !m.commandPicker.active && !m.chat.sending {
 		state.quickActions = m.quickActionsForCurrentInput()

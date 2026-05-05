@@ -471,6 +471,28 @@ func TestAtKeyWithNonRunesKeyType_StillInsertsAt(t *testing.T) {
 // TestControlKeyWithNoRunesIsIgnored — the fallback must NOT insert
 // anything for bare control sequences (e.g. Ctrl+C with Runes=nil).
 // Otherwise we'd double-fire on every control key.
+func TestAltGrQWithoutRuneOpensMentionPicker(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.filesView.entries = []string{"ui/tui/tui.go"}
+
+	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlQ, Alt: true})
+	if cmd != nil {
+		t.Fatalf("altgr @ key must not quit or run a command")
+	}
+	mm := out.(Model)
+	if mm.chat.input != "@" {
+		t.Fatalf("altgr @ key should seed @ in the composer, got %q", mm.chat.input)
+	}
+	if !mm.chat.mentionPickerOpen {
+		t.Fatalf("altgr @ key should explicitly open the mention picker")
+	}
+	view := mm.renderChatView(120)
+	if !strings.Contains(view, "File Picker") {
+		t.Fatalf("mention picker must render after altgr @ fallback, got:\n%s", view)
+	}
+}
+
 func TestControlKeyWithNoRunesIsIgnored(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0

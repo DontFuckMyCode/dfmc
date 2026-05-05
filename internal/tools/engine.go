@@ -45,9 +45,11 @@ const (
 )
 
 type Engine struct {
+	lifecycleMu     sync.RWMutex
 	mu              sync.RWMutex
 	registry        map[string]Tool
 	cfg             config.Config
+	closed          bool
 	failureMu       sync.Mutex
 	recentFailures  map[string]int
 	recentFailOrder []string
@@ -86,6 +88,10 @@ type Engine struct {
 	// EnsureReadBeforeMutation and os.WriteFile is a TOCTOU race.
 	pathLocks sync.Map
 }
+
+// ErrEngineClosed is returned when callers try to execute a tool after the
+// tools engine has begun shutdown.
+var ErrEngineClosed = errors.New("tools engine is closed")
 
 // selfManagedTimeoutTools is the static set of tools whose Execute owns
 // its own deadline — wrapping them with the engine-level cap either
@@ -384,6 +390,16 @@ func (e *Engine) BackendSpecs() []ToolSpec {
 }
 
 func (e *Engine) Register(tool Tool) {
+	if tool == nil {
+		return
+	}
+	e.lifecycleMu.RLock()
+	if e.closed {
+		e.lifecycleMu.RUnlock()
+		return
+	}
+	defer e.lifecycleMu.RUnlock()
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.registry[tool.Name()] = tool
@@ -415,6 +431,14 @@ type toolCloser interface {
 // Most tools are stateless, but AST-backed tools retain parse caches that can
 // otherwise live until process exit in long-running TUI/web sessions.
 func (e *Engine) Close() error {
+	e.lifecycleMu.Lock()
+	if e.closed {
+		e.lifecycleMu.Unlock()
+		return nil
+	}
+	e.closed = true
+	e.lifecycleMu.Unlock()
+
 	e.mu.RLock()
 	// Registry is append-only at runtime; there is no Unregister path, so
 	// taking a snapshot of closers under the read lock is sufficient.
@@ -432,7 +456,23 @@ func (e *Engine) Close() error {
 			errs = append(errs, err)
 		}
 	}
+	e.clearSessionState()
 	return errors.Join(errs...)
+}
+
+func (e *Engine) clearSessionState() {
+	e.failureMu.Lock()
+	e.recentFailures = map[string]int{}
+	e.recentFailOrder = nil
+	e.failureOrderIdx = map[string]int{}
+	e.failureMu.Unlock()
+
+	e.readMu.Lock()
+	e.readSnapshots = map[string]string{}
+	e.readSnapshotLRU = nil
+	e.readMu.Unlock()
+
+	e.pathLocks.Clear()
 }
 
 // Specs returns a stable-sorted slice of ToolSpec for every registered tool.
@@ -507,6 +547,13 @@ func specForTool(tool Tool) ToolSpec {
 }
 
 func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result, error) {
+	e.lifecycleMu.RLock()
+	if e.closed {
+		e.lifecycleMu.RUnlock()
+		return Result{}, ErrEngineClosed
+	}
+	defer e.lifecycleMu.RUnlock()
+
 	start := time.Now()
 	tool, ok := e.Get(name)
 	if !ok {

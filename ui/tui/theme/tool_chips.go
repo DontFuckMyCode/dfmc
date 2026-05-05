@@ -18,11 +18,12 @@ func RenderToolChip(chip ToolChip, width int) string {
 	if name == "" {
 		name = "tool"
 	}
+	status := strings.TrimSpace(chip.Status)
 	var head string
 	if isSubagentToolChip(chip) {
 		head = styleFor.Render(icon+" ") + AccentStyle.Render("SUBAGENT") + " " + styleFor.Render(name)
 	} else {
-		head = styleFor.Render(icon + " " + name)
+		head = styleFor.Render(icon+" ") + chipNameStyle(name, status).Render(name)
 	}
 	meta := []string{}
 	if chip.Step > 0 {
@@ -45,7 +46,6 @@ func RenderToolChip(chip ToolChip, width int) string {
 			meta = append(meta, fmt.Sprintf("rtk −%s", FormatToolTokenCount(chip.SavedChars)))
 		}
 	}
-	status := strings.TrimSpace(chip.Status)
 	if status != "" && status != "ok" && status != "running" {
 		meta = append(meta, status)
 	}
@@ -289,5 +289,26 @@ func chipIconStyle(status string) (string, lipgloss.Style) {
 		return "◈", FailStyle
 	default:
 		return "•", SubtleStyle
+	}
+}
+
+func chipNameStyle(name, status string) lipgloss.Style {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "fail":
+		return FailStyle
+	case "running", "start", "pending":
+		return InfoStyle
+	}
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "write_file", "edit_file", "apply_patch":
+		return WarnStyle
+	case "read_file", "list_dir", "glob":
+		return InfoStyle
+	case "grep_codebase", "semantic_search", "ast_query":
+		return AccentStyle
+	case "run_command":
+		return ToolStyle
+	default:
+		return OkStyle
 	}
 }

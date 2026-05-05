@@ -400,8 +400,8 @@ func TestRenderMessageHeader_Basic(t *testing.T) {
 	if out == "" {
 		t.Fatal("RenderMessageHeader returned empty")
 	}
-	if !contains(out, "DFMC") {
-		t.Fatalf("expected 'DFMC' badge in output, got %q", out)
+	if !contains(out, "ASSISTANT") {
+		t.Fatalf("expected 'ASSISTANT' badge in output, got %q", out)
 	}
 }
 
@@ -885,6 +885,89 @@ func TestRenderStatsPanelShowsContextDiagnostics(t *testing.T) {
 	for _, want := range []string{"files 4/8", "code 3.2k/16k tok", "task review", "zip standard", "available 120k tok", "budget sys 900", "hist 1.2k", "reserve resp 2.0k", "tools 512", "manager.go", "why:"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected context diagnostic %q, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderStatsPanelShowsOrchestrationMap(t *testing.T) {
+	info := StatsPanelInfo{
+		Mode:            StatsPanelModeTasks,
+		Provider:        "openai",
+		Model:           "gpt-5.4",
+		Configured:      true,
+		TodoTotal:       4,
+		TodoDone:        1,
+		TodoDoing:       1,
+		PlanSubtasks:    3,
+		PlanParallel:    true,
+		DriveDone:       2,
+		DriveTotal:      4,
+		ActiveSubagents: 1,
+		SubagentLimit:   3,
+	}
+	out := RenderStatsPanelSized(info, 42, 58)
+	for _, want := range []string{
+		"ORCHESTRATION MAP",
+		"todo:",
+		"shared checklist",
+		"task:",
+		"split/graph",
+		"workflow:",
+		"drive:",
+		"subagent:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("orchestration map missing %q, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderStatsPanelFocusedModesShowNextActions(t *testing.T) {
+	todos := RenderStatsPanelSized(StatsPanelInfo{
+		Mode:       StatsPanelModeTodos,
+		Provider:   "openai",
+		Model:      "gpt-5.4",
+		Configured: true,
+		TodoTotal:  3,
+		TodoDoing:  1,
+		TodoActive: "patch status panel",
+	}, 32, 58)
+	for _, want := range []string{"NEXT", "finish active todo", "todo_write"} {
+		if !strings.Contains(todos, want) {
+			t.Fatalf("todos next actions missing %q, got:\n%s", want, todos)
+		}
+	}
+
+	tasks := RenderStatsPanelSized(StatsPanelInfo{
+		Mode:          StatsPanelModeTasks,
+		Provider:      "openai",
+		Model:         "gpt-5.4",
+		Configured:    true,
+		PlanSubtasks:  4,
+		PlanParallel:  true,
+		DriveRunID:    "drv-1",
+		DriveDone:     1,
+		DriveTotal:    4,
+		TaskTreeLines: []string{"[running] wire next actions"},
+	}, 36, 58)
+	for _, want := range []string{"NEXT", "/tasks tree", "/drive active"} {
+		if !strings.Contains(tasks, want) {
+			t.Fatalf("tasks next actions missing %q, got:\n%s", want, tasks)
+		}
+	}
+
+	providers := RenderStatsPanelSized(StatsPanelInfo{
+		Mode:       StatsPanelModeProviders,
+		Provider:   "minimax",
+		Model:      "MiniMax-M2.7",
+		Configured: true,
+		Providers: []ProviderPanelRow{
+			{Name: "minimax", Active: true, Primary: true, Models: []string{"MiniMax-M2.7"}, Status: "ready"},
+		},
+	}, 32, 58)
+	for _, want := range []string{"NEXT", "enter switches selected provider", "/reload"} {
+		if !strings.Contains(providers, want) {
+			t.Fatalf("providers next actions missing %q, got:\n%s", want, providers)
 		}
 	}
 }

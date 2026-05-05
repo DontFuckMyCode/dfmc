@@ -65,7 +65,7 @@ func (m Model) runFileCommand(cmd string, args []string) (tea.Model, tea.Cmd, bo
 				root = "."
 			}
 		}
-		diff, err := gitWorkingDiff(root, 32_000)
+		diff, err := gitWorkingDiff(root, 32_000, tuiGitDiffTimeout(m.eng))
 		if err != nil {
 			m.notice = "diff: " + err.Error()
 			return m.appendSystemMessage("Diff error: " + err.Error()), nil, true

@@ -125,6 +125,19 @@ func CompactTokens(n int) string {
 	return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
 }
 
+func FormatUSDCost(cost float64) string {
+	switch {
+	case cost <= 0:
+		return "$0.00"
+	case cost < 0.01:
+		return fmt.Sprintf("$%.4f", cost)
+	case cost < 1:
+		return fmt.Sprintf("$%.3f", cost)
+	default:
+		return fmt.Sprintf("$%.2f", cost)
+	}
+}
+
 func FormatThousands(n int) string {
 	neg := n < 0
 	if neg {

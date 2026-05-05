@@ -561,7 +561,6 @@ func (m Model) handleStatsPanelProviderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 				if len(row.Models) > 0 {
 					model := row.Models[m.providers.modelEditIdx]
 					m = m.applyProviderModelSelection(row.Name, model)
-					m.notice = formatProviderSwitchNotice(m.providerProfile(row.Name))
 				}
 				m.providers.editMode = ""
 			} else if m.providers.editMode == "fallback" {
@@ -575,7 +574,6 @@ func (m Model) handleStatsPanelProviderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 					model = row.Models[0]
 				}
 				m = m.applyProviderModelSelection(row.Name, model)
-				m.notice = formatProviderSwitchNotice(m.providerProfile(row.Name))
 			}
 		}
 	case "m":

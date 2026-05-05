@@ -31,8 +31,12 @@ func (g *Graph) sccLocked() [][]string {
 		stack = append(stack, v)
 		onStack[v] = true
 
-		for k := range g.outgoing[v] {
-			w := k.Node
+		for _, edgeIdx := range g.outIdx[v] {
+			edge := g.edges[edgeIdx]
+			w := edge.To
+			if edge.From == "" || w == "" {
+				continue
+			}
 			if _, seen := indices[w]; !seen {
 				strongConnect(w)
 				if lowlink[w] < lowlink[v] {
@@ -89,8 +93,9 @@ func (g *Graph) Cycles() [][]string {
 // hold g.mu (read or write). Used by Cycles() to keep SCC + self-loop
 // inspection inside a single RLock.
 func (g *Graph) hasSelfLoopLocked(id string) bool {
-	for k := range g.outgoing[id] {
-		if k.Node == id {
+	for _, edgeIdx := range g.outIdx[id] {
+		edge := g.edges[edgeIdx]
+		if edge.From != "" && edge.To == id {
 			return true
 		}
 	}

@@ -70,46 +70,7 @@ func NewClient(name string, command string, args []string, env map[string]string
 //  3. Bind stdin/stdout pipes
 //  4. Send initialize, read response, send notifications/initialized
 //  5. Send tools/list and cache the result
-func (c *Client) Start(ctx context.Context) error {
-	if c.closed.Load() {
-		return errors.New("client already closed")
-	}
 
-	// Create stdout pipe before process start
-	stdoutR, stdoutW, err := os.Pipe()
-	if err != nil {
-		return fmt.Errorf("stdout pipe: %w", err)
-	}
-	c.cmd.Stdout = stdoutW
-
-	if err := c.cmd.Start(); err != nil {
-		stdoutR.Close()
-		stdoutW.Close()
-		return fmt.Errorf("start %s: %w", c.Name, err)
-	}
-
-	var err2 error
-	c.stdin, err2 = c.cmd.StdinPipe()
-	if err2 != nil {
-		stdoutR.Close()
-		stdoutW.Close()
-		c.cmd.Process.Kill()
-		return fmt.Errorf("stdin pipe: %w", err2)
-	}
-	c.stdout = stdoutR
-	c.outBuf = bufio.NewReader(c.stdout)
-
-	if err := c.handshake(ctx); err != nil {
-		stdoutR.Close()
-		stdoutW.Close()
-		c.cmd.Process.Kill()
-		c.stdin.Close()
-		return fmt.Errorf("handshake: %w", err)
-	}
-	// stdoutW ownership transferred to the child process; only close on error paths above
-	_ = stdoutW
-	return nil
-}
 
 // Stop terminates the server process and releases resources.
 func (c *Client) Stop() error {

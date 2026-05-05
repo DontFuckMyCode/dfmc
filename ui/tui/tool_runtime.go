@@ -13,12 +13,22 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	toolruntime "github.com/dontfuckmycode/dfmc/internal/tools"
 )
+
+const defaultGitDiffTimeout = 30 * time.Second
+
+func tuiGitDiffTimeout(eng *engine.Engine) time.Duration {
+	if eng == nil || eng.Config == nil || eng.Config.TUI.GitDiffTimeoutSeconds <= 0 {
+		return defaultGitDiffTimeout
+	}
+	return time.Duration(eng.Config.TUI.GitDiffTimeoutSeconds) * time.Second
+}
 
 func loadStatusCmd(eng *engine.Engine) tea.Cmd {
 	return func() tea.Msg {
@@ -38,7 +48,7 @@ func loadWorkspaceCmd(eng *engine.Engine) tea.Cmd {
 		if root == "" {
 			root = "."
 		}
-		diff, err := gitWorkingDiff(root, 120_000)
+		diff, err := gitWorkingDiff(root, 120_000, tuiGitDiffTimeout(eng))
 		if err != nil {
 			return workspaceLoadedMsg{err: err}
 		}

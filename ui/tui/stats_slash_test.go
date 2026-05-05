@@ -53,6 +53,34 @@ func TestSlashStats_TokensAndCostAreAliases(t *testing.T) {
 	}
 }
 
+func TestSlashStatsShowsTokenLedgerAndCostWhenConfigured(t *testing.T) {
+	m := newStatsTestModel(t, func(mm *Model) {
+		mm.status.Provider = "openai"
+		mm.status.ProviderProfile = engine.ProviderProfileStatus{
+			Name:            "openai",
+			Model:           "gpt-5.4",
+			CostPer1kTokens: 0.002,
+			Configured:      true,
+		}
+		mm.telemetry.sessionInputTokens = 12_000
+		mm.telemetry.sessionOutputTokens = 3_000
+		mm.telemetry.sessionTotalTokens = 15_000
+	})
+	next, _, _ := m.executeChatCommand("/cost")
+	nm := next.(Model)
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
+	for _, want := range []string{
+		"tokens:      in 12,000",
+		"out 3,000",
+		"total 15,000",
+		"cost:        approx $0.030 @ $0.0020/1k tokens",
+	} {
+		if !strings.Contains(last, want) {
+			t.Fatalf("stats card should surface token cost %q, got:\n%s", want, last)
+		}
+	}
+}
+
 func TestSlashStats_SurfacesCompressionWhenPresent(t *testing.T) {
 	m := newStatsTestModel(t, func(mm *Model) {
 		mm.telemetry.compressionRawChars = 10_000
@@ -87,6 +115,28 @@ func TestSlashStats_ShowsAgentProgressWhenActive(t *testing.T) {
 	}
 	if !strings.Contains(last, "read_file") {
 		t.Fatalf("last tool line should include read_file, got:\n%s", last)
+	}
+}
+
+func TestSlashWorkflowExplainsOrchestrationConcepts(t *testing.T) {
+	m := newStatsTestModel(t, nil)
+	next, _, handled := m.executeChatCommand("/workflow")
+	if !handled {
+		t.Fatalf("/workflow must be handled")
+	}
+	nm := next.(Model)
+	last := nm.chat.transcript[len(nm.chat.transcript)-1].Content
+	for _, want := range []string{
+		"What is what:",
+		"todo: shared checklist",
+		"task: planned split",
+		"workflow: live cockpit",
+		"drive: long-running autonomous driver",
+		"subagent: delegated worker",
+	} {
+		if !strings.Contains(last, want) {
+			t.Fatalf("/workflow should explain %q, got:\n%s", want, last)
+		}
 	}
 }
 

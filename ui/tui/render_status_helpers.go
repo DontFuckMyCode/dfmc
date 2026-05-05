@@ -217,6 +217,9 @@ func formatProviderProfileSummaryTUI(profile engine.ProviderProfileStatus) strin
 	if profile.MaxTokens > 0 {
 		parts = append(parts, fmt.Sprintf("out=%d", profile.MaxTokens))
 	}
+	if profile.CostPer1kTokens > 0 {
+		parts = append(parts, fmt.Sprintf("cost=%s/1k", formatUSDCost(profile.CostPer1kTokens)))
+	}
 	if baseURL != "" {
 		parts = append(parts, "endpoint="+baseURL)
 	}

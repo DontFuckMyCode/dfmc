@@ -310,6 +310,38 @@ func TestValidate_ASTCacheSizeMustNotBeNegative(t *testing.T) {
 	}
 }
 
+func TestValidate_TUIGitDiffTimeoutMustNotBeNegative(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TUI.GitDiffTimeoutSeconds = -1
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for tui.git_diff_timeout_seconds < 0")
+	}
+}
+
+func TestLoadWithOptions_TUIGitDiffTimeoutOverride(t *testing.T) {
+	tmp := t.TempDir()
+	projectRoot := filepath.Join(tmp, "project")
+	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte("version: 1\ntui:\n  git_diff_timeout_seconds: 7\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		ProjectPath: projectPath,
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got := cfg.TUI.GitDiffTimeoutSeconds; got != 7 {
+		t.Fatalf("expected git diff timeout override 7, got %d", got)
+	}
+}
+
 func TestValidate_NonOfflineProfileMustHaveModel(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Providers.Profiles["custom"] = ModelConfig{BaseURL: "https://custom.example/v1"}

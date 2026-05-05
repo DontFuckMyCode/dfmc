@@ -1,7 +1,7 @@
 VERSION := $(shell git describe --tags --always --dirty 2> NUL || echo dev)
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 
-.PHONY: build build-cgo test test-race lint vuln clean
+.PHONY: build build-cgo test test-race lint vuln security clean
 
 build:
 	go build $(LDFLAGS) -o bin/dfmc ./cmd/dfmc
@@ -18,9 +18,13 @@ test-race:
 lint:
 	go vet ./...
 	staticcheck ./...
+	golangci-lint run ./...
 
 vuln:
 	govulncheck ./...
+
+security: vuln
+	gosec ./...
 
 clean:
 	@if exist bin rmdir /s /q bin

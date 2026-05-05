@@ -26,6 +26,16 @@ func (m Model) chatHeaderInfo() chatHeaderInfo {
 			maxCtx = m.status.ContextIn.ProviderMaxContext
 		}
 	}
+	windowTokens := 0
+	if live := m.liveContextSnapshot(); live.ok {
+		if live.maxContext > 0 {
+			maxCtx = live.maxContext
+		}
+		if live.codeTokens > 0 {
+			tokens = live.codeTokens
+		}
+		windowTokens = live.windowTokens
+	}
 	toolsEnabled := m.eng != nil && m.eng.Tools != nil
 	parked := m.eng != nil && m.eng.HasParkedAgent()
 	gated := false
@@ -37,33 +47,34 @@ func (m Model) chatHeaderInfo() chatHeaderInfo {
 		activeSubagents = m.status.SubagentsActive
 	}
 	return chatHeaderInfo{
-		Provider:        provider,
-		Model:           model,
-		Configured:      configured || strings.EqualFold(provider, "offline"),
-		MaxContext:      maxCtx,
-		ContextTokens:   tokens,
-		Pinned:          strings.TrimSpace(m.filesView.pinned),
-		ToolsEnabled:    toolsEnabled,
-		Streaming:       m.chat.sending,
-		AgentActive:     m.agentLoop.active,
-		AgentPhase:      m.agentLoop.phase,
-		AgentStep:       m.agentLoop.step,
-		AgentMax:        m.agentLoop.maxToolStep,
-		QueuedCount:     len(m.chat.pendingQueue),
-		Parked:          parked,
-		PendingNotes:    m.chat.pendingNoteCount,
-		ActiveTools:     m.telemetry.activeToolCount,
-		ActiveSubagents: activeSubagents,
-		PlanMode:        m.ui.planMode,
-		ApprovalGated:   gated,
-		ApprovalPending: m.pendingApproval != nil,
-		IntentLast:      intentChipLabel(m.intent),
-		DriveRunID:      m.telemetry.driveRunID,
-		DriveTodoID:     m.telemetry.driveTodoID,
-		DriveDone:       m.telemetry.driveDone,
-		DriveTotal:      m.telemetry.driveTotal,
-		DriveBlocked:    m.telemetry.driveBlocked,
-		SubagentSummary: m.activeSubagentSummary(),
+		Provider:            provider,
+		Model:               model,
+		Configured:          configured || strings.EqualFold(provider, "offline"),
+		MaxContext:          maxCtx,
+		ContextTokens:       tokens,
+		ContextWindowTokens: windowTokens,
+		Pinned:              strings.TrimSpace(m.filesView.pinned),
+		ToolsEnabled:        toolsEnabled,
+		Streaming:           m.chat.sending,
+		AgentActive:         m.agentLoop.active,
+		AgentPhase:          m.agentLoop.phase,
+		AgentStep:           m.agentLoop.step,
+		AgentMax:            m.agentLoop.maxToolStep,
+		QueuedCount:         len(m.chat.pendingQueue),
+		Parked:              parked,
+		PendingNotes:        m.chat.pendingNoteCount,
+		ActiveTools:         m.telemetry.activeToolCount,
+		ActiveSubagents:     activeSubagents,
+		PlanMode:            m.ui.planMode,
+		ApprovalGated:       gated,
+		ApprovalPending:     m.pendingApproval != nil,
+		IntentLast:          intentChipLabel(m.intent),
+		DriveRunID:          m.telemetry.driveRunID,
+		DriveTodoID:         m.telemetry.driveTodoID,
+		DriveDone:           m.telemetry.driveDone,
+		DriveTotal:          m.telemetry.driveTotal,
+		DriveBlocked:        m.telemetry.driveBlocked,
+		SubagentSummary:     m.activeSubagentSummary(),
 	}
 }
 
@@ -94,6 +105,7 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 	contextHistoryTokens := 0
 	contextResponseTokens := 0
 	contextToolTokens := 0
+	contextWindowTokens := head.ContextWindowTokens
 	if report := m.status.ContextIn; report != nil {
 		contextTask = strings.TrimSpace(report.Task)
 		contextFileCount = report.FileCount
@@ -122,18 +134,48 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 				break
 			}
 		}
-		if m.eng != nil && m.eng.Config != nil && strings.TrimSpace(report.Query) != "" {
-			breakdown := m.eng.ContextBreakdown(report.Query)
-			contextSystemTokens = breakdown.SystemPrompt
-			contextHistoryTokens = breakdown.History
-			contextResponseTokens = breakdown.Response
-			contextToolTokens = breakdown.ToolReserve
+	}
+	if live := m.liveContextSnapshot(); live.ok {
+		if live.codeTokens > 0 {
+			head.ContextTokens = live.codeTokens
+		}
+		if live.maxContext > 0 {
+			head.MaxContext = live.maxContext
+		}
+		contextWindowTokens = live.windowTokens
+		contextAvailableTokens = live.available
+		contextSystemTokens = live.systemTokens
+		contextHistoryTokens = live.historyTokens
+		contextResponseTokens = live.responseTokens
+		contextToolTokens = live.toolTokens
+		if live.task != "" {
+			contextTask = live.task
+		}
+		if live.compression != "" {
+			contextCompression = live.compression
+		}
+		if len(live.topFiles) > 0 {
+			contextTopFiles = live.topFiles
 		}
 	}
 	elapsed := time.Duration(0)
 	if !m.sessionStart.IsZero() {
 		elapsed = now.Sub(m.sessionStart)
 	}
+	liveInputTokens := 0
+	liveOutputTokens := 0
+	if m.chat.sending {
+		liveInputTokens = m.chat.streamInputTokens
+		if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) {
+			line := m.chat.transcript[m.chat.streamIndex]
+			liveOutputTokens = line.TokenCount
+			if liveOutputTokens <= 0 && strings.TrimSpace(line.Content) != "" {
+				liveOutputTokens = estimatedChatTokens(line.Content)
+			}
+		}
+	}
+	transcriptInputTokens, transcriptOutputTokens := transcriptTokenTotals(m.chat.transcript)
+	composerTokens := estimatedChatTokens(m.composeInput())
 
 	toolCount := 0
 	if m.eng != nil && m.eng.Tools != nil {
@@ -432,7 +474,9 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		Provider:                head.Provider,
 		Model:                   head.Model,
 		Configured:              head.Configured,
+		CostPer1kTokens:         m.currentCostPer1kTokens(),
 		ContextTokens:           head.ContextTokens,
+		ContextWindowTokens:     contextWindowTokens,
 		MaxContext:              head.MaxContext,
 		ContextTask:             contextTask,
 		ContextFileCount:        contextFileCount,
@@ -447,6 +491,18 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		ContextHistoryTokens:    contextHistoryTokens,
 		ContextResponseTokens:   contextResponseTokens,
 		ContextToolTokens:       contextToolTokens,
+		ComposerTokens:          composerTokens,
+		TranscriptInputTokens:   transcriptInputTokens,
+		TranscriptOutputTokens:  transcriptOutputTokens,
+		LiveInputTokens:         liveInputTokens,
+		LiveOutputTokens:        liveOutputTokens,
+		LiveTotalTokens:         liveInputTokens + liveOutputTokens,
+		LastInputTokens:         m.telemetry.lastInputTokens,
+		LastOutputTokens:        m.telemetry.lastOutputTokens,
+		LastTotalTokens:         m.telemetry.lastTotalTokens,
+		SessionInputTokens:      max(m.telemetry.sessionInputTokens, transcriptInputTokens),
+		SessionOutputTokens:     max(m.telemetry.sessionOutputTokens, transcriptOutputTokens),
+		SessionTotalTokens:      max(m.telemetry.sessionTotalTokens, transcriptInputTokens+transcriptOutputTokens),
 		Streaming:               head.Streaming,
 		AgentActive:             head.AgentActive,
 		AgentPhase:              head.AgentPhase,
@@ -524,6 +580,22 @@ func (m Model) latestWorkflowActivity(now time.Time) (string, time.Duration) {
 		}
 	}
 	return "", 0
+}
+
+func transcriptTokenTotals(lines []chatLine) (inputTokens, outputTokens int) {
+	for _, line := range lines {
+		tokens := line.TokenCount
+		if tokens <= 0 {
+			tokens = estimatedChatTokens(line.Content)
+		}
+		switch {
+		case line.Role.Eq(chatRoleUser):
+			inputTokens += tokens
+		case line.Role.Eq(chatRoleAssistant):
+			outputTokens += tokens
+		}
+	}
+	return inputTokens, outputTokens
 }
 
 // statsPanelVisible returns true when the chat tab should render the

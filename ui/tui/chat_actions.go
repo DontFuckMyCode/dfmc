@@ -64,7 +64,7 @@ func (m Model) refreshToolMutationState(path string) Model {
 	if files, err := listProjectFiles(root, 500); err == nil {
 		m.filesView.entries = files
 	}
-	if diff, err := gitWorkingDiff(root, 120_000); err == nil {
+	if diff, err := gitWorkingDiff(root, 120_000, tuiGitDiffTimeout(m.eng)); err == nil {
 		m.patchView.diff = diff
 	}
 	if changed, err := gitChangedFiles(root, 12); err == nil {

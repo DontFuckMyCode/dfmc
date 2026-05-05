@@ -92,6 +92,9 @@ func (c *Config) Validate() error {
 	if c.Remote.WSPort <= 0 || c.Remote.WSPort > 65535 {
 		return fmt.Errorf("remote.ws_port out of range: %d", c.Remote.WSPort)
 	}
+	if c.TUI.GitDiffTimeoutSeconds < 0 {
+		return fmt.Errorf("tui.git_diff_timeout_seconds must be >= 0")
+	}
 
 	switch c.Web.Auth {
 	case "none", "token":

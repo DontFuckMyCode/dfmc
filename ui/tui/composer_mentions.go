@@ -15,13 +15,17 @@ func (m Model) renderContextStrip(width int) string {
 		width = 40
 	}
 	input := m.chat.input
+	statsInput := input
+	if len(m.chat.pasteBlocks) > 0 {
+		statsInput = m.composeInput()
+	}
 
 	pinned := strings.TrimSpace(m.filesView.pinned)
-	markerCount := countFileMarkers(input)
-	fenceCount := countFencedBlocks(input)
-	atMentions := countAtMentions(input)
+	markerCount := countFileMarkers(statsInput)
+	fenceCount := countFencedBlocks(statsInput)
+	atMentions := countAtMentions(statsInput)
 
-	if pinned == "" && markerCount == 0 && fenceCount == 0 && atMentions == 0 && strings.TrimSpace(input) == "" {
+	if pinned == "" && markerCount == 0 && fenceCount == 0 && atMentions == 0 && strings.TrimSpace(statsInput) == "" {
 		return ""
 	}
 
@@ -38,7 +42,7 @@ func (m Model) renderContextStrip(width int) string {
 	if fenceCount > 0 {
 		parts = append(parts, subtleStyle.Render("fenced:")+" "+boldStyle.Render(fmt.Sprintf("%d", fenceCount)))
 	}
-	if trimmed := strings.TrimSpace(input); trimmed != "" {
+	if trimmed := strings.TrimSpace(statsInput); trimmed != "" {
 		chars := len([]rune(trimmed))
 		parts = append(parts, subtleStyle.Render("chars:")+" "+boldStyle.Render(fmt.Sprintf("%d", chars)))
 		tok := tokens.Estimate(trimmed)

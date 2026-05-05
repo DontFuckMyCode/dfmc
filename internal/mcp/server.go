@@ -40,6 +40,11 @@ type Server struct {
 	// should not lower this — 16 MiB is already generous and the protocol
 	// is unrecoverable past a truncation.
 	maxFrameBytes int
+
+	// CRIT-001 / VULN-060 fix: per-connection ID registry to catch duplicate
+	// and null IDs on non-notification requests.
+	handledMu sync.Mutex
+	handled   map[string]bool // dedup: already-written IDs get ErrInternalError ("already handled")
 }
 
 // NewServer builds a Server. `info` is advertised back to the client during
@@ -64,16 +69,17 @@ func (s *Server) Serve(ctx context.Context) error {
 	if frameCap <= 0 {
 		frameCap = MaxFrameBytes
 	}
-	// Initial buffer is the smaller of 64 KiB (avoids realloc for common
-	// frame sizes) and frameCap. bufio.Scanner.Buffer's effective cap is
-	// max(maxArg, cap(initBuf)), so an initial buffer larger than frameCap
-	// would silently raise the limit.
+	// CRIT-001 fix: init the per-connection ID registry. Capacity 1024 is
+	// generous for any legitimate MCP session (tools/list once, then a few
+	// tools/call). The cap prevents a buggy/malicious client from growing
+	// the map unbounded.
 	initSize := 64 * 1024
 	if initSize > frameCap {
 		initSize = frameCap
 	}
 	sc := bufio.NewScanner(s.in)
 	sc.Buffer(make([]byte, 0, initSize), frameCap)
+	s.handled = make(map[string]bool, 1024)
 	for sc.Scan() {
 		if err := ctx.Err(); err != nil {
 			return nil
@@ -104,6 +110,12 @@ func (s *Server) Serve(ctx context.Context) error {
 // handleRaw decodes one frame and dispatches. Malformed frames yield a
 // parse-error response with null ID, per JSON-RPC 2.0.
 // Handles both single requests and JSON-RPC 2.0 batch arrays ([req, req, ...]).
+//
+// CRIT-001 / VULN-060 fix: every non-notification request MUST have a non-null,
+// unique ID. Duplicate IDs cause state confusion in concurrent handler
+// goroutines; null IDs on non-notification requests violate JSON-RPC 2.0 §4.1.
+// We validate per-connection (not per-batch) because a batch is one logical
+// unit.
 func (s *Server) handleRaw(ctx context.Context, raw json.RawMessage) {
 	// Try to unmarshal as a single request. If successful, always route
 	// through handleRequest — it will validate JSONRPC version and return
@@ -129,9 +141,16 @@ func (s *Server) handleRaw(ctx context.Context, raw json.RawMessage) {
 		}
 		if req.JSONRPC != "2.0" {
 			if !req.IsNotification() {
-				responses = append(responses, NewErrorResponse(req.ID, ErrInvalidRequest, "jsonrpc must be \"2.0\"", nil))
+				responses = append(responses, NewErrorResponse(req.ID, ErrInvalidRequest, `jsonrpc must be "2.0"`, nil))
 			}
 			continue
+		}
+		// CRIT-001: validate ID before dispatch.
+		if !req.IsNotification() {
+			if errResp := s.validateRequestID(&req); errResp != nil {
+				responses = append(responses, errResp)
+				continue
+			}
 		}
 		resp := s.dispatch(ctx, &req)
 		if req.IsNotification() {
@@ -159,9 +178,16 @@ func (s *Server) handleRaw(ctx context.Context, raw json.RawMessage) {
 func (s *Server) handleRequest(ctx context.Context, req *Request) {
 	if req.JSONRPC != "2.0" {
 		if !req.IsNotification() {
-			s.writeResponse(NewErrorResponse(req.ID, ErrInvalidRequest, "jsonrpc must be \"2.0\"", nil))
+			s.writeResponse(NewErrorResponse(req.ID, ErrInvalidRequest, `jsonrpc must be "2.0"`, nil))
 		}
 		return
+	}
+	// CRIT-001: validate ID before dispatch.
+	if !req.IsNotification() {
+		if errResp := s.validateRequestID(req); errResp != nil {
+			s.writeResponse(errResp)
+			return
+		}
 	}
 	resp := s.dispatch(ctx, req)
 	if req.IsNotification() {
@@ -260,6 +286,33 @@ func (s *Server) requireInit(_ *Request) bool {
 	s.initMu.Lock()
 	defer s.initMu.Unlock()
 	return s.inited
+}
+
+// validateRequestID checks that req is a valid JSON-RPC 2.0 request:
+//   - Notifications may have no ID or id=null.
+//   - Non-notification calls MUST have a non-null, non-empty ID.
+//   - Duplicate IDs that already got written get ErrInternalError
+//     (idempotency guard — prevents a client that re-sends on timeout
+//     from getting two side-effects for one logical call).
+//
+// Returns an error Response if invalid (caller writes it), or nil if OK.
+func (s *Server) validateRequestID(req *Request) *Response {
+	idStr := string(req.ID)
+	if req.IsNotification() {
+		return nil
+	}
+	// Non-notification: require non-null, non-empty ID.
+	if idStr == "" || idStr == "null" {
+		return NewErrorResponse(req.ID, ErrInvalidRequest, "request id must be a non-null value", nil)
+	}
+	// Idempotency guard.
+	s.handledMu.Lock()
+	defer s.handledMu.Unlock()
+	if s.handled[idStr] {
+		return NewErrorResponse(req.ID, ErrInternalError, "duplicate request id (already handled)", nil)
+	}
+	s.handled[idStr] = true
+	return nil
 }
 
 // writeResponse serialises `resp` and writes one frame. Writes are mutex-

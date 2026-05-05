@@ -1,0 +1,23 @@
+providers:
+    fallback:
+        - openai
+        - deepseek
+    primary: openai
+    profiles:
+        anthropic:
+            max_context: 1000000
+            max_tokens: 64000
+            model: claude-sonnet-4-6
+            protocol: anthropic
+        deepseek:
+            base_url: https://api.deepseek.com/v1
+            max_context: 131072
+            max_tokens: 8192
+            model: deepseek-chat
+            protocol: openai-compatible
+        openai:
+            max_context: 1050000
+            max_tokens: 128000
+            model: gpt-5.4
+            protocol: openai
+version: 1

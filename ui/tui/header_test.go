@@ -306,14 +306,14 @@ func TestRenderStreamingIndicatorAnimatesFrames(t *testing.T) {
 
 func TestRenderResumeBannerMentionsKeysAndProgress(t *testing.T) {
 	out := renderResumeBanner(25, 25, 80)
-	for _, want := range []string{"parked", "25/25", "enter resumes", "esc dismisses"} {
+	for _, want := range []string{"parked", "25/25", "ctrl+x resumes", "esc dismisses"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("resume banner missing %q, got %q", want, out)
 		}
 	}
 }
 
-func TestParkedEventSetsResumePromptAndEnterResumes(t *testing.T) {
+func TestParkedEventSetsResumePromptAndSendKeyResumes(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.status = engine.Status{Provider: "anthropic", Model: "claude-opus-4-6"}
 
@@ -333,7 +333,7 @@ func TestParkedEventSetsResumePromptAndEnterResumes(t *testing.T) {
 
 	// Banner must render in the tail above the input.
 	view := m.renderChatView(160)
-	if !strings.Contains(view, "parked") || !strings.Contains(view, "enter resumes") {
+	if !strings.Contains(view, "parked") || !strings.Contains(view, "ctrl+x resumes") {
 		t.Fatalf("banner should surface above input while parked, got:\n%s", view)
 	}
 }
@@ -372,7 +372,7 @@ func TestParkedEventBudgetReasonArmsResumeWithoutDuplicateLine(t *testing.T) {
 // 2026-04-18 race: when the autonomous-resume wrapper will immediately
 // re-enter the loop after a budget-exhausted park, the parked event must
 // NOT flip the TUI into the parked UI state. Doing so flashed a "press
-// Enter to resume" prompt the user could act on before the wrapper got
+// Ctrl+X to resume" prompt the user could act on before the wrapper got
 // to the next round, producing the "No parked agent loop" /continue race.
 func TestParkedEventAutonomousPendingSuppressesUIFlip(t *testing.T) {
 	m := NewModel(context.Background(), nil)
@@ -400,7 +400,7 @@ func TestParkedEventAutonomousPendingSuppressesUIFlip(t *testing.T) {
 // TestAutoResumeEventClearsStaleResumePrompt is belt-and-braces: even if
 // an old engine emits parked-without-autonomous_pending, the moment
 // auto_resume fires the prompt must clear so the user doesn't see "press
-// Enter to resume" sitting under an actively-running loop.
+// Ctrl+X to resume" sitting under an actively-running loop.
 func TestAutoResumeEventClearsStaleResumePrompt(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.ui.resumePromptActive = true

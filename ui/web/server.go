@@ -150,6 +150,11 @@ func New(eng *engine.Engine, host string, port int) *Server {
 			allowedHosts = eng.Config.Web.AllowedHosts
 		}
 	}
+	// HIGH-002 fix: trust configured proxies; fall back to loopback-only.
+	trustedProxies := []string{"127.0.0.1", "localhost", "::1"}
+	if eng != nil && eng.Config != nil && len(eng.Config.Web.TrustedProxies) > 0 {
+		trustedProxies = eng.Config.Web.TrustedProxies
+	}
 	host = normalizeBindHost(authMode, host)
 	s := &Server{
 		engine:         eng,
@@ -159,7 +164,7 @@ func New(eng *engine.Engine, host string, port int) *Server {
 		token:          strings.TrimSpace(os.Getenv("DFMC_WEB_TOKEN")),
 		allowedOrigins: allowedOrigins,
 		allowedHosts:   allowedHosts,
-		trustedProxies: []string{"127.0.0.1", "localhost", "::1"},
+		trustedProxies: trustedProxies,
 		wsConnLimiter:  newWSConnLimiter(wsGlobalConnCap, wsPerIPConnCap),
 	}
 	// Register a deny-by-default approver so a publicly-reachable serve

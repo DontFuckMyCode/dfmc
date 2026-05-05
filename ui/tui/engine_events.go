@@ -186,15 +186,31 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		})
 		line = fmt.Sprintf("Context built: %d files, %d tokens (%s, %s)", files, tokens, task, comp)
 	case "provider:complete":
+		tokens := payloadIntAny(payload, 0, "total_tokens", "tokens")
+		inputTokens := payloadInt(payload, "input_tokens", 0)
+		outputTokens := payloadInt(payload, "output_tokens", 0)
+		if tokens <= 0 {
+			tokens = inputTokens + outputTokens
+		}
+		if inputTokens > 0 || outputTokens > 0 || tokens > 0 {
+			m.telemetry.lastInputTokens = inputTokens
+			m.telemetry.lastOutputTokens = outputTokens
+			m.telemetry.lastTotalTokens = tokens
+			m.telemetry.sessionInputTokens += inputTokens
+			m.telemetry.sessionOutputTokens += outputTokens
+			m.telemetry.sessionTotalTokens += tokens
+		}
 		if m.agentLoop.active {
 			m.agentLoop.phase = "complete"
 			m.agentLoop.active = false
-			tokens := payloadInt(payload, "tokens", 0)
 			providerName := payloadString(payload, "provider", m.agentLoop.provider)
 			modelName := payloadString(payload, "model", m.agentLoop.model)
 			detail := ""
 			if tokens > 0 {
-				detail = "out " + compactMetric(tokens) + " tok"
+				detail = "total " + compactMetric(tokens) + " tok"
+			}
+			if inputTokens > 0 || outputTokens > 0 {
+				detail = fmt.Sprintf("in %s | out %s | total %s tok", compactMetric(inputTokens), compactMetric(outputTokens), compactMetric(tokens))
 			}
 			if providerName != "" || modelName != "" {
 				if detail != "" {
@@ -210,6 +226,12 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 				Detail: detail,
 			})
 			line = fmt.Sprintf("Provider complete: %s/%s (%dtok)", providerName, modelName, tokens)
+		}
+	case "provider:stream:start":
+		inputTokens := payloadIntAny(payload, 0, "input_tokens", "tokens")
+		if inputTokens > 0 {
+			m.chat.streamInputTokens = inputTokens
+			m.telemetry.lastInputTokens = inputTokens
 		}
 	case "provider:throttle:retry":
 		providerName := payloadString(payload, "provider", "?")

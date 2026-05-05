@@ -215,41 +215,6 @@ func (e *Engine) InvalidateFile(path string) {
 	}
 }
 
-// findTypeNodeForReceiver locates the type symbol (class/interface/type)
-// whose name matches the receiver string within the same file. This wires
-// method→type ownership edges ("method_of") so that codemap queries like
-// "what methods does *Server own?" can traverse the graph directly.
-func findTypeNodeForReceiver(graph *Graph, receiver, filePath string) string {
-	rec := receiverTypeName(receiver)
-	if rec == "" {
-		return ""
-	}
-	var candidates []string
-	for _, n := range graph.Nodes() {
-		if n.Path != filePath {
-			continue
-		}
-		switch n.Kind {
-		case "class", "interface", "type":
-			if strings.ToLower(n.Name) == rec {
-				candidates = append(candidates, n.ID)
-			}
-		}
-	}
-	if len(candidates) == 0 {
-		return ""
-	}
-	if len(candidates) == 1 {
-		return candidates[0]
-	}
-	for _, id := range candidates {
-		if id == rec {
-			return id
-		}
-	}
-	return candidates[0]
-}
-
 func receiverTypeName(receiver string) string {
 	rec := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(receiver), "*"), "&")
 	rec = strings.TrimLeft(rec, "() ")

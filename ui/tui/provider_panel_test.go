@@ -36,6 +36,33 @@ func sampleProviderRows() []providerRow {
 	}
 }
 
+func TestStatusLoadedHydratesPrimaryProviderFromConfig(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers.Primary = "minimax"
+	cfg.Providers.Profiles["minimax"] = config.ModelConfig{
+		Model:      "MiniMax-M2.7",
+		Protocol:   "anthropic",
+		BaseURL:    "https://api.minimax.io/anthropic/v1",
+		MaxContext: 204800,
+		MaxTokens:  131072,
+	}
+	eng := &engine.Engine{Config: cfg, EventBus: engine.NewEventBus()}
+	m := NewModel(context.Background(), nil)
+	m.eng = eng
+
+	nextModel, _ := m.Update(statusLoadedMsg{})
+	next := nextModel.(Model)
+	if next.status.Provider != "minimax" {
+		t.Fatalf("expected provider hydrated from config primary, got %q", next.status.Provider)
+	}
+	if next.status.Model != "MiniMax-M2.7" {
+		t.Fatalf("expected model hydrated from primary profile, got %q", next.status.Model)
+	}
+	if next.status.ProviderProfile.MaxContext != 204800 {
+		t.Fatalf("expected provider profile context hydrated, got %d", next.status.ProviderProfile.MaxContext)
+	}
+}
+
 // --- provider CRUD ---
 
 func TestCreateProvider_EmptyNameError(t *testing.T) {

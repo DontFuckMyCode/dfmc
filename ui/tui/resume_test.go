@@ -38,12 +38,12 @@ func TestChatHeaderShowsParkedBadge(t *testing.T) {
 	}
 }
 
-func TestEnterWhileSendingQueuesMessage(t *testing.T) {
+func TestSendKeyWhileSendingQueuesMessage(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.chat.sending = true
 	m.setChatInput("follow-up question")
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
 	mm, ok := next.(Model)
 	if !ok {
 		t.Fatalf("expected Model, got %T", next)

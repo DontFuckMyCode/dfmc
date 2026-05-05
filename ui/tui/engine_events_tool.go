@@ -65,6 +65,7 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 			Reason:        reason,
 			Step:          step,
 			RunningLog:    runningLog,
+			DetailLines:   toolCallTimelineLines(toolName, payload, paramsPreview),
 		})
 		m.telemetry.activeToolCount++
 		if step > 0 {
@@ -164,16 +165,17 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 			displayName = ""
 		}
 		m.upsertStreamingChatEvent(chatEventLine{
-			Key:        toolChatEventKey(toolName, step),
-			Kind:       "tool",
-			Status:     status,
-			Title:      toolName,
-			Detail:     resultDetail,
-			Duration:   duration,
-			ToolName:   displayName,
-			Reason:     payloadString(payload, "reason", ""),
-			Step:       step,
-			RunningLog: batchInner,
+			Key:         toolChatEventKey(toolName, step),
+			Kind:        "tool",
+			Status:      status,
+			Title:       toolName,
+			Detail:      resultDetail,
+			Duration:    duration,
+			ToolName:    displayName,
+			Reason:      payloadString(payload, "reason", ""),
+			Step:        step,
+			RunningLog:  batchInner,
+			DetailLines: toolResultTimelineLines(toolName, payload, preview, success, compressionPct),
 		})
 		if m.telemetry.activeToolCount > 0 {
 			m.telemetry.activeToolCount--

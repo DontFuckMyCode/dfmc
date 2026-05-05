@@ -155,14 +155,15 @@ type ContextDebugFileStatus struct {
 }
 
 type ProviderProfileStatus struct {
-	Name       string   `json:"name,omitempty"`
-	Model      string   `json:"model,omitempty"`
-	Protocol   string   `json:"protocol,omitempty"`
-	BaseURL    string   `json:"base_url,omitempty"`
-	MaxTokens  int      `json:"max_tokens,omitempty"`
-	MaxContext int      `json:"max_context,omitempty"`
-	Configured bool     `json:"configured"`
-	Advisories []string `json:"advisories,omitempty"`
+	Name            string   `json:"name,omitempty"`
+	Model           string   `json:"model,omitempty"`
+	Protocol        string   `json:"protocol,omitempty"`
+	BaseURL         string   `json:"base_url,omitempty"`
+	MaxTokens       int      `json:"max_tokens,omitempty"`
+	MaxContext      int      `json:"max_context,omitempty"`
+	CostPer1kTokens float64  `json:"cost_per_1k_tokens,omitempty"`
+	Configured      bool     `json:"configured"`
+	Advisories      []string `json:"advisories,omitempty"`
 }
 
 type ModelsDevCacheStatus struct {

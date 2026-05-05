@@ -31,11 +31,19 @@ var (
 
 func extractWithPreferredBackend(ctx context.Context, path, lang string, content []byte) ([]types.Symbol, []string, []ParseError, string, error) {
 	if symbols, imports, errs, handled, err := parseWithTreeSitter(ctx, path, lang, content); handled && err == nil {
-		return symbols, imports, errs, "tree-sitter", nil
+		if len(symbols) > 0 || len(imports) > 0 {
+			if len(imports) == 0 {
+				imports = extractGoImports(content)
+			}
+			return symbols, imports, errs, "tree-sitter", nil
+		}
 	} else if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, nil, nil, "", err
 		}
+	}
+	if lang == "go" {
+		return extractGoSymbols(path, lang, content), extractGoImports(content), nil, "regex", nil
 	}
 	return extractSymbols(path, lang, content), extractImports(lang, content), nil, "regex", nil
 }

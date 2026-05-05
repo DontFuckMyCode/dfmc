@@ -53,7 +53,7 @@ func startChatStream(ctx context.Context, eng *engine.Engine, question string) <
 				}
 				return
 			case provider.StreamDone:
-				sendChatStreamMsg(ctx, out, chatDoneMsg{})
+				sendChatStreamMsg(ctx, out, chatDoneMsg{usage: ev.Usage})
 				return
 			}
 		}

@@ -62,6 +62,7 @@ func (m *Model) autoActivateStatsPanelMode(mode statsPanelMode, label string) {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.ensureDiagnostics()
+	m.chat.suppressPasteRender = false
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -117,6 +118,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case statusLoadedMsg:
 		m.status = msg.status
+		m = m.hydrateStatusProviderFromConfig()
 		return m, nil
 
 	case workspaceLoadedMsg:
@@ -383,9 +385,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.annotateAssistantToolUsage(m.chat.streamIndex)
 		if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) && !m.chat.streamStartedAt.IsZero() {
 			m.chat.transcript[m.chat.streamIndex].DurationMs = int(time.Since(m.chat.streamStartedAt).Milliseconds())
+			if msg.usage != nil && msg.usage.OutputTokens > 0 {
+				m.chat.transcript[m.chat.streamIndex].TokenCount = msg.usage.OutputTokens
+			}
 		}
 		m.moveStreamingAssistantToTranscriptEnd()
 		m.chat.streamStartedAt = time.Time{}
+		m.chat.streamInputTokens = 0
 		m.chat.sending = false
 		m.chat.streamMessages = nil
 		m.chat.streamIndex = -1
@@ -404,6 +410,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.sending = false
 		m.chat.streamMessages = nil
 		m.chat.streamIndex = -1
+		m.chat.streamInputTokens = 0
 		m.clearStreamCancel()
 		m.resetAgentRuntime()
 		m.chat.pendingNoteCount = 0
@@ -434,6 +441,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.sending = false
 		m.chat.streamMessages = nil
 		m.chat.streamIndex = -1
+		m.chat.streamInputTokens = 0
 		m.clearStreamCancel()
 		m.resetAgentRuntime()
 		m.chat.pendingNoteCount = 0
@@ -517,6 +525,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m.handleChatKey(msg)
 				}
 			}
+		}
+		if m.activeTab == 0 && isAtMentionOpenKey(msg) {
+			return m.handleChatKey(msg)
 		}
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":

@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
 func TestChatBubbleContentShowsFullContentByDefault(t *testing.T) {
@@ -54,6 +57,80 @@ func TestRenderChatView_StreamingBubbleShowsFullContentAndCaret(t *testing.T) {
 	for _, want := range []string{"Here is line one.", "And line two.", "▎"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected chat view to include %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestRenderChatView_StreamingHeaderShowsInputOutputTokensNotElapsedMs(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.sending = true
+	m.chat.streamInputTokens = 42000
+	m.chat.streamStartedAt = time.Now().Add(-28 * time.Second)
+	m.chat.transcript = []chatLine{
+		{Role: "user", Content: "what happens next?"},
+		{Role: "assistant", Content: "partial answer", TokenCount: 17},
+	}
+	m.chat.streamIndex = 1
+
+	view := m.renderChatView(140)
+	for _, want := range []string{"in ~42.0k tok", "out ~17 tok", "streaming"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("streaming header missing %q, got:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "28000ms") || strings.Contains(view, "28") && strings.Contains(view, "ms") {
+		t.Fatalf("streaming header should not show elapsed milliseconds, got:\n%s", view)
+	}
+}
+
+func TestRenderChatView_RoleHeadersUseLiteralColoredRoleNames(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.transcript = []chatLine{
+		{Role: "user", Content: "question"},
+		{Role: "assistant", Content: "answer"},
+		{Role: "coach", Content: "hint"},
+	}
+
+	view := m.renderChatView(140)
+	for _, want := range []string{"USER", "ASSISTANT", "COACH"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("chat view should surface colored role label %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestProviderStreamStartEventUpdatesLiveInputTokens(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.sending = true
+	m.chat.streamIndex = 0
+
+	m = m.handleEngineEvent(engine.Event{
+		Type:   "provider:stream:start",
+		Source: "engine",
+		Payload: map[string]any{
+			"input_tokens": 12345,
+		},
+	})
+
+	if m.chat.streamInputTokens != 12345 {
+		t.Fatalf("expected live input token count to update, got %d", m.chat.streamInputTokens)
+	}
+}
+
+func TestStatsPanelShowsLiveStreamingTokenLedger(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.sending = true
+	m.chat.streamInputTokens = 42000
+	m.chat.transcript = []chatLine{
+		{Role: "user", Content: "what happens next?"},
+		{Role: "assistant", Content: "partial answer", TokenCount: 17},
+	}
+	m.chat.streamIndex = 1
+
+	panel := stripANSI(renderStatsPanel(m.statsPanelInfo(), 28))
+	for _, want := range []string{"live in ~42k", "out ~17", "total ~42.0k", "estimate until provider done"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("stats panel missing live token ledger %q, got:\n%s", want, panel)
 		}
 	}
 }

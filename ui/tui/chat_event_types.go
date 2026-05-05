@@ -21,7 +21,8 @@ type chatEventLine struct {
 	Round         int
 
 	// Realtime log lines appended during execution
-	RunningLog []string
+	RunningLog  []string
+	DetailLines []string
 }
 
 type slashCommandItem struct {
@@ -72,6 +73,9 @@ func mergeChatEventLine(old, next chatEventLine) chatEventLine {
 	}
 	if len(next.RunningLog) == 0 && len(old.RunningLog) > 0 {
 		next.RunningLog = old.RunningLog
+	}
+	if len(next.DetailLines) == 0 && len(old.DetailLines) > 0 {
+		next.DetailLines = old.DetailLines
 	}
 	return next
 }

@@ -37,7 +37,7 @@ func TestDetectLanguage_ExtensionMap(t *testing.T) {
 		{"Main.java", "java"},
 		{"Program.cs", "csharp"},
 		{"index.php", "php"},
-		{"script.sh", "bash"},
+		{"script.sh", "shell"},
 		{"playbook.yaml", "yaml"},
 		{"Dockerfile", "dockerfile"},
 		{"Containerfile", "dockerfile"},

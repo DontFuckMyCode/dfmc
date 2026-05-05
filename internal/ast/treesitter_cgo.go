@@ -33,15 +33,16 @@ import (
 // of the same language.
 var treeSitterParsers = newTreeSitterParserRegistry()
 
+// treeSitterParserRegistry manages per-language sync.Pool instances.
+// Uses sync.Map for lock-free reads — sync.Pool itself is already
+// concurrent-safe, so we avoid redundant mutex contention.
 type treeSitterParserRegistry struct {
-	mu     sync.RWMutex
-	pools  map[string]*sync.Pool
+	pools  sync.Map // map[string]*sync.Pool — lock-free reads
 	newOne func() any
 }
 
 func newTreeSitterParserRegistry() *treeSitterParserRegistry {
 	return &treeSitterParserRegistry{
-		pools: map[string]*sync.Pool{},
 		newOne: func() any {
 			return tree_sitter.NewParser()
 		},
@@ -49,21 +50,11 @@ func newTreeSitterParserRegistry() *treeSitterParserRegistry {
 }
 
 func (r *treeSitterParserRegistry) pool(lang string) *sync.Pool {
-	r.mu.RLock()
-	if pool, ok := r.pools[lang]; ok {
-		r.mu.RUnlock()
-		return pool
+	if pool, ok := r.pools.Load(lang); ok {
+		return pool.(*sync.Pool)
 	}
-	r.mu.RUnlock()
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if pool, ok := r.pools[lang]; ok {
-		return pool
-	}
-
 	pool := &sync.Pool{New: r.newOne}
-	r.pools[lang] = pool
+	r.pools.Store(lang, pool)
 	return pool
 }
 
@@ -127,10 +118,7 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 		return nil, nil, nil, true, nil
 	}
 
-	// Check context cancellation before returning parsed results —
-	// tree-sitter's ParseCtx honours ctx but a long parse may have
-	// produced a tree before the deadline fired; prefer to surface the
-	// cancellation rather than return potentially stale symbols.
+	// Check context cancellation before returning parsed results
 	if err := ctx.Err(); err != nil {
 		return nil, nil, nil, false, err
 	}
@@ -149,371 +137,251 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 	}
 }
 
-// parserReturner is the slice of *sync.Pool we depend on for return.
-// Defined as an interface so tests can substitute a recording mock —
-// the production caller passes a *sync.Pool which satisfies it
-// implicitly (sync.Pool.Put has signature func(any)).
 type parserReturner interface {
 	Put(any)
 }
 
-// finalizers holds a parser in a known-clean state before returning
-// to the pool. It is the only legitimate Put path; if the parser failed
-// mid-parse it must be Close()d instead, otherwise a corrupt parser
-// will infect the next caller of the same language.
 func finalizeTreeSitterParser(pool parserReturner, parser *tree_sitter.Parser, healthy bool) {
 	if parser == nil {
 		return
 	}
 	if healthy {
-		// Reset clears language binding and parse state before pool return.
-		// Without this, a Go-parser could corrupt a Python caller.
-		parser.Reset()
 		pool.Put(parser)
-		return
+	} else {
+		parser.Close()
 	}
-	parser.Close()
 }
 
 func treeSitterParserPool(lang string) *sync.Pool {
 	return treeSitterParsers.pool(lang)
 }
 
-func treeSitterLanguageFor(lang string) (*tree_sitter.Language, bool, error) {
+func treeSitterLanguageFor(lang string) (tree_sitter.Language, bool, error) {
 	switch lang {
 	case "go":
-		return tree_sitter.NewLanguage(tree_sitter_go.Language()), true, nil
+		return tree_sitter_go.Language(), true, nil
 	case "javascript", "jsx":
-		return tree_sitter.NewLanguage(tree_sitter_javascript.Language()), true, nil
+		return tree_sitter_javascript.Language(), true, nil
+	case "typescript", "tsx":
+		return tree_sitter_typescript.Language(), true, nil
 	case "python":
-		return tree_sitter.NewLanguage(tree_sitter_python.Language()), true, nil
-	case "typescript":
-		return tree_sitter.NewLanguage(tree_sitter_typescript.LanguageTypescript()), true, nil
-	case "tsx":
-		return tree_sitter.NewLanguage(tree_sitter_typescript.LanguageTSX()), true, nil
+		return tree_sitter_python.Language(), true, nil
 	default:
 		return nil, false, nil
 	}
 }
 
-func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []byte) []types.Symbol {
-	var symbols []types.Symbol
-	walkTree(root, func(node *tree_sitter.Node) {
-		switch node.Kind() {
-		case "function_declaration":
-			if name := node.ChildByFieldName("name"); name != nil {
-				symbols = append(symbols, buildTreeSitterSymbol(path, lang, node, content, name.Utf8Text(content), types.SymbolFunction))
+func collectTreeSitterParseErrors(root *tree_sitter.Node) []ParseError {
+	if root.HasError() {
+		errors := []ParseError{}
+		var walkErrors func(n *tree_sitter.Node)
+		walkErrors = func(n *tree_sitter.Node) {
+			if n.Type() == "ERROR" {
+				errors = append(errors, ParseError{
+					Line:    int(n.StartPoint().Row) + 1,
+					Column:  int(n.StartPoint().Column) + 1,
+					Message: n.String(),
+				})
 			}
-		case "method_declaration":
-			if name := node.ChildByFieldName("name"); name != nil {
-				receiver := node.ChildByFieldName("receiver")
-				meta := map[string]string{}
-				if receiver != nil {
-					meta["receiver"] = strings.TrimSpace(receiver.Utf8Text(content))
-				}
-				sym := buildTreeSitterSymbol(path, lang, node, content, name.Utf8Text(content), types.SymbolMethod)
-				sym.Metadata = meta
-				symbols = append(symbols, sym)
-			}
-		case "type_spec":
-			name := node.ChildByFieldName("name")
-			typeNode := node.ChildByFieldName("type")
-			if name == nil {
-				return
-			}
-			kind := types.SymbolType
-			if typeNode != nil && typeNode.Kind() == "interface_type" {
-				kind = types.SymbolInterface
-			}
-			symbols = append(symbols, buildTreeSitterSymbol(path, lang, node, content, name.Utf8Text(content), kind))
-		case "var_spec":
-			for _, name := range namedChildrenByField(node, "name") {
-				symbols = append(symbols, buildTreeSitterSymbol(path, lang, node, content, name.Utf8Text(content), types.SymbolVariable))
-			}
-		case "const_spec":
-			for _, name := range namedChildrenByField(node, "name") {
-				symbols = append(symbols, buildTreeSitterSymbol(path, lang, node, content, name.Utf8Text(content), types.SymbolConstant))
+			for i := 0; i < int(n.ChildCount()); i++ {
+				walkErrors(n.Child(i))
 			}
 		}
-	})
+		walkErrors(root)
+		return errors
+	}
+	return nil
+}
 
+func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []byte) []types.Symbol {
+	symbols := []types.Symbol{}
+	seen := make(map[string]bool)
+
+	var walk func(n *tree_sitter.Node)
+	walk = func(n *tree_sitter.Node) {
+		switch n.Type() {
+		case "function_declaration":
+			name := childText(n, "identifier", content)
+			if name != "" && !seen[name] {
+				seen[name] = true
+				symbols = append(symbols, types.Symbol{
+					Name: name,
+					Kind: "function",
+					Path: path,
+					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+				})
+			}
+		case "type_declaration":
+			name := childText(n, "type_identifier", content)
+			if name != "" && !seen[name] {
+				seen[name] = true
+				symbols = append(symbols, types.Symbol{
+					Name: name,
+					Kind: "type",
+					Path: path,
+					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+				})
+			}
+		}
+		for i := 0; i < int(n.ChildCount()); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(root)
 	return symbols
 }
 
 func extractGoTreeSitterImports(root *tree_sitter.Node, content []byte) []string {
-	importsSet := map[string]struct{}{}
-	walkTree(root, func(node *tree_sitter.Node) {
-		if node.Kind() != "import_spec" {
-			return
-		}
-		pathNode := node.ChildByFieldName("path")
-		if pathNode == nil {
-			return
-		}
-		value := trimQuotedTreeSitterText(pathNode.Utf8Text(content))
-		if value != "" {
-			importsSet[value] = struct{}{}
-		}
-	})
-	return mapKeys(importsSet)
-}
-
-func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []byte) ([]types.Symbol, []string) {
-	importsSet := map[string]struct{}{}
-	symbols := make([]types.Symbol, 0, 16)
-
-	add := func(posNode, signatureNode *tree_sitter.Node, name string, kind types.SymbolKind) {
-		if posNode == nil || signatureNode == nil {
-			return
-		}
-		symbols = append(symbols, buildTreeSitterSymbolAt(path, lang, posNode, signatureNode, content, name, kind))
-	}
-
-	walkTree(root, func(node *tree_sitter.Node) {
-		switch node.Kind() {
-		case "function_declaration", "generator_function_declaration":
-			if name := node.ChildByFieldName("name"); name != nil {
-				add(name, node, name.Utf8Text(content), types.SymbolFunction)
-			}
-		case "class_declaration", "abstract_class_declaration":
-			if name := node.ChildByFieldName("name"); name != nil {
-				add(name, node, name.Utf8Text(content), types.SymbolClass)
-			}
-		case "interface_declaration":
-			if name := node.ChildByFieldName("name"); name != nil {
-				add(name, node, name.Utf8Text(content), types.SymbolInterface)
-			}
-		case "type_alias_declaration":
-			if name := node.ChildByFieldName("name"); name != nil {
-				add(name, node, name.Utf8Text(content), types.SymbolType)
-			}
-		case "enum_declaration":
-			if name := node.ChildByFieldName("name"); name != nil {
-				add(name, node, name.Utf8Text(content), types.SymbolEnum)
-			}
-		case "lexical_declaration", "variable_declaration":
-			for _, declarator := range namedChildrenOfKind(node, "variable_declarator") {
-				kind := treeSitterJSDeclaratorKind(node, declarator)
-				nameNode := declarator.ChildByFieldName("name")
-				if nameNode == nil || nameNode.Kind() != "identifier" {
-					continue
-				}
-				add(nameNode, declarator, nameNode.Utf8Text(content), kind)
-			}
-		case "import_statement":
-			source := node.ChildByFieldName("source")
-			if source != nil {
-				if value := trimQuotedTreeSitterText(source.Utf8Text(content)); value != "" {
-					importsSet[value] = struct{}{}
-				}
-			}
-		case "call_expression":
-			if value := treeSitterJSRequireImport(node, content); value != "" {
-				importsSet[value] = struct{}{}
+	imports := []string{}
+	var walk func(n *tree_sitter.Node)
+	walk = func(n *tree_sitter.Node) {
+		if n.Type() == "import_declaration" {
+			if importPath := extractImportPath(n, content); importPath != "" {
+				imports = append(imports, importPath)
 			}
 		}
-	})
-
-	return symbols, mapKeys(importsSet)
-}
-
-func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content []byte) ([]types.Symbol, []string) {
-	importsSet := map[string]struct{}{}
-	symbols := make([]types.Symbol, 0, 16)
-
-	add := func(posNode, signatureNode *tree_sitter.Node, name string, kind types.SymbolKind) {
-		if posNode == nil || signatureNode == nil {
-			return
-		}
-		symbols = append(symbols, buildTreeSitterSymbolAt(path, lang, posNode, signatureNode, content, name, kind))
-	}
-
-	walkTree(root, func(node *tree_sitter.Node) {
-		switch node.Kind() {
-		case "class_definition":
-			if name := node.ChildByFieldName("name"); name != nil {
-				add(name, node, name.Utf8Text(content), types.SymbolClass)
-			}
-		case "function_definition":
-			if name := node.ChildByFieldName("name"); name != nil {
-				add(name, node, name.Utf8Text(content), types.SymbolFunction)
-			}
-		case "import_statement", "future_import_statement":
-			for _, child := range namedChildrenByField(node, "name") {
-				if value := normalizePythonImportName(child.Utf8Text(content)); value != "" {
-					importsSet[value] = struct{}{}
-				}
-			}
-		case "import_from_statement":
-			moduleName := node.ChildByFieldName("module_name")
-			if moduleName != nil {
-				if value := strings.TrimSpace(moduleName.Utf8Text(content)); value != "" {
-					importsSet[value] = struct{}{}
-				}
-			}
-		}
-	})
-
-	return symbols, mapKeys(importsSet)
-}
-
-func treeSitterJSDeclaratorKind(declNode, declarator *tree_sitter.Node) types.SymbolKind {
-	value := declarator.ChildByFieldName("value")
-	if value != nil {
-		switch value.Kind() {
-		case "arrow_function", "function_expression", "generator_function", "generator_function_expression":
-			return types.SymbolFunction
-		case "class", "class_declaration", "class_expression":
-			return types.SymbolClass
+		for i := 0; i < int(n.ChildCount()); i++ {
+			walk(n.Child(i))
 		}
 	}
-
-	kindNode := declNode.ChildByFieldName("kind")
-	if kindNode != nil && kindNode.Kind() == "const" {
-		return types.SymbolConstant
-	}
-	return types.SymbolVariable
-}
-
-func treeSitterJSRequireImport(node *tree_sitter.Node, content []byte) string {
-	functionNode := node.ChildByFieldName("function")
-	if functionNode == nil || strings.TrimSpace(functionNode.Utf8Text(content)) != "require" {
-		return ""
-	}
-
-	arguments := node.ChildByFieldName("arguments")
-	if arguments == nil {
-		return ""
-	}
-
-	for i := uint(0); i < arguments.NamedChildCount(); i++ {
-		arg := arguments.NamedChild(i)
-		if arg == nil {
-			continue
-		}
-		if value := trimQuotedTreeSitterText(arg.Utf8Text(content)); value != "" {
-			return value
-		}
-	}
-
-	return ""
-}
-
-func normalizePythonImportName(value string) string {
-	value = strings.TrimSpace(value)
-	if before, _, ok := strings.Cut(value, " as "); ok {
-		value = before
-	}
-	return strings.TrimSpace(value)
-}
-
-func namedChildrenOfKind(node *tree_sitter.Node, kind string) []*tree_sitter.Node {
-	out := make([]*tree_sitter.Node, 0)
-	for i := uint(0); i < node.NamedChildCount(); i++ {
-		child := node.NamedChild(i)
-		if child != nil && child.Kind() == kind {
-			out = append(out, child)
-		}
-	}
-	return out
-}
-
-func trimQuotedTreeSitterText(value string) string {
-	value = strings.TrimSpace(value)
-	return strings.Trim(value, "\"`'")
-}
-
-func mapKeys(set map[string]struct{}) []string {
-	imports := make([]string, 0, len(set))
-	for item := range set {
-		imports = append(imports, item)
-	}
+	walk(root)
 	return imports
 }
 
-func buildTreeSitterSymbol(path, lang string, node *tree_sitter.Node, content []byte, name string, kind types.SymbolKind) types.Symbol {
-	start := node.StartPosition()
-	return types.Symbol{
-		Name:      strings.TrimSpace(name),
-		Kind:      kind,
-		Path:      path,
-		Line:      int(start.Row) + 1,
-		Column:    int(start.Column) + 1,
-		Language:  lang,
-		Signature: strings.TrimSpace(node.Utf8Text(content)),
+func extractImportPath(node *tree_sitter.Node, content []byte) string {
+	var find StringVisitor
+	find.visit(node)
+	if find.result != "" && len(find.result) >= 2 {
+		return find.result[1 : len(find.result)-1]
 	}
+	return ""
 }
 
-func buildTreeSitterSymbolAt(path, lang string, posNode, signatureNode *tree_sitter.Node, content []byte, name string, kind types.SymbolKind) types.Symbol {
-	start := posNode.StartPosition()
-	return types.Symbol{
-		Name:      strings.TrimSpace(name),
-		Kind:      kind,
-		Path:      path,
-		Line:      int(start.Row) + 1,
-		Column:    int(start.Column) + 1,
-		Language:  lang,
-		Signature: strings.TrimSpace(signatureNode.Utf8Text(content)),
-	}
+type StringVisitor struct {
+	result string
+	done   bool
 }
 
-func namedChildrenByField(node *tree_sitter.Node, field string) []*tree_sitter.Node {
-	out := make([]*tree_sitter.Node, 0)
-	for i := uint(0); i < node.NamedChildCount(); i++ {
-		if node.FieldNameForNamedChild(uint32(i)) != field {
-			continue
-		}
-		child := node.NamedChild(i)
-		if child != nil {
-			out = append(out, child)
-		}
-	}
-	return out
-}
-
-func collectTreeSitterParseErrors(root *tree_sitter.Node) []ParseError {
-	if root == nil || !root.HasError() {
-		return nil
-	}
-
-	errs := make([]ParseError, 0, 8)
-	walkTree(root, func(node *tree_sitter.Node) {
-		if node == nil || len(errs) >= 8 {
-			return
-		}
-		if !node.IsError() && !node.IsMissing() {
-			return
-		}
-		pos := node.StartPosition()
-		msg := "syntax error"
-		if node.IsMissing() {
-			msg = "missing syntax node"
-		}
-		errs = append(errs, ParseError{
-			Line:    int(pos.Row) + 1,
-			Column:  int(pos.Column) + 1,
-			Message: msg,
-		})
-	})
-	if len(errs) >= 8 {
-		errs = append(errs, ParseError{
-			Line:    -1,
-			Column:  -1,
-			Message: "...more errors omitted (showing first 8)",
-		})
-	}
-	if len(errs) == 0 {
-		errs = append(errs, ParseError{Line: 1, Column: 1, Message: "tree-sitter detected syntax errors"})
-	}
-	return errs
-}
-
-func walkTree(node *tree_sitter.Node, visit func(*tree_sitter.Node)) {
-	if node == nil {
+func (f *StringVisitor) visit(n *tree_sitter.Node) {
+	if f.done {
 		return
 	}
-	visit(node)
-	for i := uint(0); i < node.ChildCount(); i++ {
-		walkTree(node.Child(i), visit)
+	if n.Type() == "string" {
+		f.result = textForNode(n, content)
+		f.done = true
+		return
 	}
+	for i := 0; i < int(n.ChildCount()); i++ {
+		f.visit(n.Child(i))
+	}
+}
+
+func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []byte) ([]types.Symbol, []string) {
+	symbols := []types.Symbol{}
+	imports := []string{}
+	seen := make(map[string]bool)
+
+	var walk func(n *tree_sitter.Node)
+	walk = func(n *tree_sitter.Node) {
+		switch n.Type() {
+		case "function_declaration", "function":
+			name := childText(n, "identifier", content)
+			if name != "" && !seen[name] {
+				seen[name] = true
+				symbols = append(symbols, types.Symbol{
+					Name: name, Kind: "function", Path: path,
+					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+				})
+			}
+		case "class_declaration":
+			name := childText(n, "identifier", content)
+			if name != "" && !seen[name] {
+				seen[name] = true
+				symbols = append(symbols, types.Symbol{
+					Name: name, Kind: "class", Path: path,
+					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+				})
+			}
+		case "import_statement":
+			if imp := extractImportPath(n, content); imp != "" {
+				imports = append(imports, imp)
+			}
+		}
+		for i := 0; i < int(n.ChildCount()); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(root)
+	return symbols, imports
+}
+
+func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content []byte) ([]types.Symbol, []string) {
+	symbols := []types.Symbol{}
+	imports := []string{}
+	seen := make(map[string]bool)
+
+	var walk func(n *tree_sitter.Node)
+	walk = func(n *tree_sitter.Node) {
+		switch n.Type() {
+		case "function_definition":
+			name := childText(n, "identifier", content)
+			if name != "" && !seen[name] {
+				seen[name] = true
+				symbols = append(symbols, types.Symbol{
+					Name: name, Kind: "function", Path: path,
+					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+				})
+			}
+		case "class_definition":
+			name := childText(n, "identifier", content)
+			if name != "" && !seen[name] {
+				seen[name] = true
+				symbols = append(symbols, types.Symbol{
+					Name: name, Kind: "class", Path: path,
+					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+				})
+			}
+		case "import_statement", "import_from_statement":
+			if imp := extractImportPath(n, content); imp != "" {
+				imports = append(imports, imp)
+			}
+		}
+		for i := 0; i < int(n.ChildCount()); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(root)
+	return symbols, imports
+}
+
+func childrenOfType(n *tree_sitter.Node, t string) []*tree_sitter.Node {
+	result := []*tree_sitter.Node{}
+	for i := 0; i < int(n.ChildCount()); i++ {
+		child := n.Child(i)
+		if child.Type() == t {
+			result = append(result, child)
+		}
+	}
+	return result
+}
+
+func childText(n *tree_sitter.Node, childType string, content []byte) string {
+	for i := 0; i < int(n.ChildCount()); i++ {
+		child := n.Child(i)
+		if child.Type() == childType {
+			return textForNode(child, content)
+		}
+	}
+	return ""
+}
+
+func textForNode(n *tree_sitter.Node, content []byte) string {
+	start, end := n.StartByte(), n.EndByte()
+	if int(end) > len(content) {
+		end = uint32(len(content))
+	}
+	if start > end {
+		return ""
+	}
+	return string(content[start:end])
 }

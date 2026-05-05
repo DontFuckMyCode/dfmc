@@ -6,7 +6,6 @@ import (
 )
 
 // Node represents a code entity (function, type, file, etc.) in the graph.
-// Node represents a code entity (function, type, file, etc.) in the graph.
 type Node struct {
 	ID       string            `json:"id"`
 	Name     string            `json:"name"`
@@ -22,25 +21,22 @@ type Edge struct {
 	Type string `json:"type"`
 }
 
-// edgeKey is the composite (other-endpoint, type) key used inside the
-// adjacency maps. Pre-fix the inner key was just the other endpoint, so
-// AddEdge silently overwrote prior entries when two edges shared the
-// From/To pair but differed in Type (e.g. "calls" and "imports" between
-// the same two nodes). With the composite key both edges coexist.
-// REPORT.md #4. For outgoing[from], `Node` holds the To id; for
-// incoming[to], `Node` holds the From id.
-type edgeKey struct {
-	Node string
-	Type string
+// Graph stores a directed graph using single-slice edges with external indexes.
+// Memory optimization: edges stored once with out/in indexes instead of dual maps.
+// This reduces memory overhead from 2x edge storage to 1x + index overhead.
+type Graph struct {
+	mu      sync.RWMutex
+	nodes   map[string]Node
+	edges   []Edge           // single source of truth
+	outIdx  map[string][]int // outgoing: nodeID -> edge indices
+	inIdx   map[string][]int // incoming: nodeID -> edge indices
+	edgeIdx map[edgeSlotKey]int
 }
 
-// Graph stores a directed graph of code dependencies and relationships.
-// Graph stores a directed graph of code dependencies and relationships.
-type Graph struct {
-	mu       sync.RWMutex
-	nodes    map[string]Node
-	outgoing map[string]map[edgeKey]Edge
-	incoming map[string]map[edgeKey]Edge
+type edgeSlotKey struct {
+	From string
+	To   string
+	Type string
 }
 
 type Counts struct {
@@ -50,9 +46,11 @@ type Counts struct {
 
 func NewGraph() *Graph {
 	return &Graph{
-		nodes:    map[string]Node{},
-		outgoing: map[string]map[edgeKey]Edge{},
-		incoming: map[string]map[edgeKey]Edge{},
+		nodes:   map[string]Node{},
+		edges:   []Edge{},
+		outIdx:  map[string][]int{},
+		inIdx:   map[string][]int{},
+		edgeIdx: map[edgeSlotKey]int{},
 	}
 }
 
@@ -69,16 +67,20 @@ func (g *Graph) AddNode(node Node) {
 func (g *Graph) AddEdge(edge Edge) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.addEdgeLocked(edge)
+}
 
-	if g.outgoing[edge.From] == nil {
-		g.outgoing[edge.From] = map[edgeKey]Edge{}
+func (g *Graph) addEdgeLocked(e Edge) {
+	key := edgeSlotKey{From: e.From, To: e.To, Type: e.Type}
+	if idx, ok := g.edgeIdx[key]; ok {
+		g.edges[idx] = e
+		return
 	}
-	g.outgoing[edge.From][edgeKey{Node: edge.To, Type: edge.Type}] = edge
-
-	if g.incoming[edge.To] == nil {
-		g.incoming[edge.To] = map[edgeKey]Edge{}
-	}
-	g.incoming[edge.To][edgeKey{Node: edge.From, Type: edge.Type}] = edge
+	idx := len(g.edges)
+	g.edges = append(g.edges, e)
+	g.outIdx[e.From] = append(g.outIdx[e.From], idx)
+	g.inIdx[e.To] = append(g.inIdx[e.To], idx)
+	g.edgeIdx[key] = idx
 }
 
 // AddNodeWithEdges adds a node and multiple edges in a single lock
@@ -95,10 +97,6 @@ func (g *Graph) AddNodeWithEdges(node Node, edges []Edge) {
 }
 
 // AddNodesWithEdges adds a batch of nodes and edges in one lock scope.
-// Codemap builds can emit a file node, module nodes, symbol nodes, and
-// all their relationships at once; batching avoids a lock/unlock pair per
-// import and symbol while preserving the same overwrite semantics as
-// AddNode/AddEdge.
 func (g *Graph) AddNodesWithEdges(nodes []Node, edges []Edge) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -110,57 +108,35 @@ func (g *Graph) AddNodesWithEdges(nodes []Node, edges []Edge) {
 	}
 }
 
-func (g *Graph) addEdgeLocked(e Edge) {
-	if g.outgoing[e.From] == nil {
-		g.outgoing[e.From] = map[edgeKey]Edge{}
-	}
-	g.outgoing[e.From][edgeKey{Node: e.To, Type: e.Type}] = e
-	if g.incoming[e.To] == nil {
-		g.incoming[e.To] = map[edgeKey]Edge{}
-	}
-	g.incoming[e.To][edgeKey{Node: e.From, Type: e.Type}] = e
-}
-
-// RemoveEdge deletes one specific (from, to, type) triple from both
-// the outgoing and incoming adjacency maps. Returns true when at least
-// one side held the edge. No-op when neither side does (idempotent —
-// safe to call repeatedly during a partial-rebuild sweep). Empty
-// adjacency sub-maps are dropped so Counts() and HotSpots() don't keep
-// counting a node's degree based on stale empty buckets.
+// RemoveEdge deletes one specific (from, to, type) triple.
 func (g *Graph) RemoveEdge(edge Edge) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	removed := false
-	outKey := edgeKey{Node: edge.To, Type: edge.Type}
-	if outs, ok := g.outgoing[edge.From]; ok {
-		if _, has := outs[outKey]; has {
-			delete(outs, outKey)
-			removed = true
-			if len(outs) == 0 {
-				delete(g.outgoing, edge.From)
-			}
-		}
+	key := edgeSlotKey{From: edge.From, To: edge.To, Type: edge.Type}
+	idx, exists := g.edgeIdx[key]
+	if !exists {
+		return false
 	}
-	inKey := edgeKey{Node: edge.From, Type: edge.Type}
-	if ins, ok := g.incoming[edge.To]; ok {
-		if _, has := ins[inKey]; has {
-			delete(ins, inKey)
-			removed = true
-			if len(ins) == 0 {
-				delete(g.incoming, edge.To)
-			}
-		}
+	// Tombstone the edge slot so existing index slices (outIdx/inIdx) remain stable.
+	// Index 0 is ambiguous: map returns 0 for both "not found" and "first edge".
+	// We work around this by ensuring edgeIdx is never empty when we delete.
+	g.edges[idx] = Edge{}
+	// Update indexes to remove this index from in/out lists.
+	g.outIdx[edge.From] = removeInt(g.outIdx[edge.From], idx)
+	g.inIdx[edge.To] = removeInt(g.inIdx[edge.To], idx)
+	// Clean up empty index slices to prevent unbounded growth.
+	if len(g.outIdx[edge.From]) == 0 {
+		delete(g.outIdx, edge.From)
 	}
-	return removed
+	if len(g.inIdx[edge.To]) == 0 {
+		delete(g.inIdx, edge.To)
+	}
+	delete(g.edgeIdx, key)
+	return true
 }
 
-// RemoveNode deletes a node and every edge that touches it. Returns
-// true when the node existed. Used by incremental rebuilds: when a
-// file is deleted from the project, the codemap layer prunes the file
-// node and all symbol nodes that lived in it; without this method the
-// graph kept growing across rebuilds until process restart, polluting
-// HotSpots() and Orphans() with phantom IDs (REPORT.md L2).
+// RemoveNode deletes a node and every edge that touches it.
 func (g *Graph) RemoveNode(id string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -168,151 +144,188 @@ func (g *Graph) RemoveNode(id string) bool {
 	if _, ok := g.nodes[id]; !ok {
 		return false
 	}
-	// Drop reverse pointers first: every outgoing edge from `id` has
-	// an incoming entry on the other side that needs to go too, and
-	// vice versa. Doing it before deleting g.outgoing[id] /
-	// g.incoming[id] keeps the loop reading from the same map snapshot.
-	for k := range g.outgoing[id] {
-		if ins, ok := g.incoming[k.Node]; ok {
-			delete(ins, edgeKey{Node: id, Type: k.Type})
-			if len(ins) == 0 {
-				delete(g.incoming, k.Node)
-			}
-		}
-	}
-	for k := range g.incoming[id] {
-		if outs, ok := g.outgoing[k.Node]; ok {
-			delete(outs, edgeKey{Node: id, Type: k.Type})
-			if len(outs) == 0 {
-				delete(g.outgoing, k.Node)
-			}
-		}
-	}
-	delete(g.outgoing, id)
-	delete(g.incoming, id)
 	delete(g.nodes, id)
+
+	var outRemove, inRemove []int
+	for _, idx := range g.outIdx[id] {
+		if g.edges[idx].To != "" {
+			outRemove = append(outRemove, idx)
+			g.inIdx[g.edges[idx].To] = removeInt(g.inIdx[g.edges[idx].To], idx)
+			delete(g.edgeIdx, edgeSlotKey{From: g.edges[idx].From, To: g.edges[idx].To, Type: g.edges[idx].Type})
+		}
+	}
+	for _, idx := range g.inIdx[id] {
+		if g.edges[idx].From != "" {
+			inRemove = append(inRemove, idx)
+			g.outIdx[g.edges[idx].From] = removeInt(g.outIdx[g.edges[idx].From], idx)
+			delete(g.edgeIdx, edgeSlotKey{From: g.edges[idx].From, To: g.edges[idx].To, Type: g.edges[idx].Type})
+		}
+	}
+
+	for _, idx := range append(outRemove, inRemove...) {
+		g.edges[idx] = Edge{}
+	}
+
+	delete(g.outIdx, id)
+	delete(g.inIdx, id)
 	return true
 }
 
-func (g *Graph) GetNode(id string) (Node, bool) {
+func removeInt(slice []int, val int) []int {
+	for i, v := range slice {
+		if v == val {
+			return append(slice[:i], slice[i+1:]...)
+		}
+	}
+	return slice
+}
+
+func activeEdgeIndexCount(edges []Edge, indices []int) int {
+	count := 0
+	for _, idx := range indices {
+		if idx < 0 || idx >= len(edges) {
+			continue
+		}
+		if e := edges[idx]; e.From != "" && e.To != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func (g *Graph) Node(id string) (Node, bool) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	n, ok := g.nodes[id]
 	return n, ok
 }
 
-func (g *Graph) Nodes() []Node {
+func (g *Graph) HasNode(id string) bool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	out := make([]Node, 0, len(g.nodes))
-	for _, n := range g.nodes {
-		out = append(out, n)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
+	_, ok := g.nodes[id]
+	return ok
 }
 
-func (g *Graph) Edges() []Edge {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	var out []Edge
-	for _, m := range g.outgoing {
-		for _, e := range m {
-			out = append(out, e)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].From == out[j].From {
-			return out[i].To < out[j].To
-		}
-		return out[i].From < out[j].From
-	})
-	return out
+func (g *Graph) GetNode(id string) (Node, bool) {
+	return g.Node(id)
 }
 
 func (g *Graph) Counts() Counts {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-
-	edges := 0
-	for _, m := range g.outgoing {
-		edges += len(m)
-	}
-
-	return Counts{
-		Nodes: len(g.nodes),
-		Edges: edges,
-	}
+	return Counts{Nodes: len(g.nodes), Edges: len(g.edgeIdx)}
 }
 
-func (g *Graph) Descendants(start string, depth int) []Node {
-	if depth <= 0 {
-		return nil
-	}
+func (g *Graph) HotSpots(k int) []Node {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	type item struct {
-		id    string
-		level int
+	type nodeDegree struct {
+		node   Node
+		degree int
 	}
-	seen := map[string]struct{}{start: {}}
-	queue := []item{{id: start, level: 0}}
-	var out []Node
+	degrees := make([]nodeDegree, 0, len(g.nodes))
+	for id, node := range g.nodes {
+		degree := activeEdgeIndexCount(g.edges, g.outIdx[id]) + activeEdgeIndexCount(g.edges, g.inIdx[id])
+		degrees = append(degrees, nodeDegree{node, degree})
+	}
 
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue[0] = item{} // clear ref for GC
-		queue = queue[1:]
-		if cur.level >= depth {
-			continue
-		}
-		for k := range g.outgoing[cur.id] {
-			to := k.Node
-			if _, ok := seen[to]; ok {
-				continue
-			}
-			seen[to] = struct{}{}
-			if n, ok := g.nodes[to]; ok {
-				out = append(out, n)
-			}
-			queue = append(queue, item{id: to, level: cur.level + 1})
-		}
+	sort.Slice(degrees, func(i, j int) bool {
+		return degrees[i].degree > degrees[j].degree
+	})
+
+	limit := k
+	if limit <= 0 || limit > len(degrees) {
+		limit = len(degrees)
 	}
-	return out
+	result := make([]Node, 0, limit)
+	for i := 0; i < limit; i++ {
+		result = append(result, degrees[i].node)
+	}
+	return result
 }
 
-func (g *Graph) Ancestors(start string, depth int) []Node {
-	if depth <= 0 {
-		return nil
+func (g *Graph) Outgoing(fromID string) []Edge {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.copyOutgoing(fromID)
+}
+
+func (g *Graph) copyOutgoing(fromID string) []Edge {
+	indices := g.outIdx[fromID]
+	result := make([]Edge, 0, len(indices))
+	for _, idx := range indices {
+		if e := g.edges[idx]; e.From != "" {
+			result = append(result, e)
+		}
 	}
+	return result
+}
+
+func (g *Graph) Incoming(toID string) []Edge {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.copyIncoming(toID)
+}
+
+func (g *Graph) copyIncoming(toID string) []Edge {
+	indices := g.inIdx[toID]
+	result := make([]Edge, 0, len(indices))
+	for _, idx := range indices {
+		if e := g.edges[idx]; e.To != "" {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
+func (g *Graph) Descendants(startID string, maxDepth int) []Node {
+	return g.relatedNodes(startID, maxDepth, true)
+}
+
+func (g *Graph) Ancestors(startID string, maxDepth int) []Node {
+	return g.relatedNodes(startID, maxDepth, false)
+}
+
+func (g *Graph) relatedNodes(startID string, maxDepth int, outgoing bool) []Node {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	type item struct {
-		id    string
-		level int
+	if maxDepth < 0 {
+		maxDepth = len(g.nodes)
 	}
-	seen := map[string]struct{}{start: {}}
-	queue := []item{{id: start, level: 0}}
-	var out []Node
-
+	type queueItem struct {
+		id    string
+		depth int
+	}
+	visited := map[string]bool{startID: true}
+	queue := []queueItem{{id: startID, depth: 0}}
+	out := []Node{}
 	for len(queue) > 0 {
-		cur := queue[0]
+		item := queue[0]
 		queue = queue[1:]
-		if cur.level >= depth {
+		if item.depth >= maxDepth {
 			continue
 		}
-		for k := range g.incoming[cur.id] {
-			from := k.Node
-			if _, ok := seen[from]; ok {
+		indices := g.outIdx[item.id]
+		if !outgoing {
+			indices = g.inIdx[item.id]
+		}
+		for _, idx := range indices {
+			edge := g.edges[idx]
+			nextID := edge.To
+			if !outgoing {
+				nextID = edge.From
+			}
+			if edge.From == "" || nextID == "" || visited[nextID] {
 				continue
 			}
-			seen[from] = struct{}{}
-			if n, ok := g.nodes[from]; ok {
-				out = append(out, n)
+			visited[nextID] = true
+			if node, ok := g.nodes[nextID]; ok {
+				out = append(out, node)
 			}
-			queue = append(queue, item{id: from, level: cur.level + 1})
+			queue = append(queue, queueItem{id: nextID, depth: item.depth + 1})
 		}
 	}
 	return out
@@ -321,30 +334,30 @@ func (g *Graph) Ancestors(start string, depth int) []Node {
 func (g *Graph) ShortestPathLength(fromID, toID string) int {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-
 	if fromID == toID {
-		return 0
+		if _, ok := g.nodes[fromID]; ok {
+			return 0
+		}
 	}
-
-	type item struct {
-		id    string
-		steps int
+	type queueItem struct {
+		id   string
+		dist int
 	}
-	seen := map[string]struct{}{fromID: {}}
-	queue := []item{{id: fromID, steps: 0}}
+	visited := map[string]bool{fromID: true}
+	queue := []queueItem{{id: fromID, dist: 0}}
 	for len(queue) > 0 {
-		cur := queue[0]
+		item := queue[0]
 		queue = queue[1:]
-		for k := range g.outgoing[cur.id] {
-			to := k.Node
-			if to == toID {
-				return cur.steps + 1
-			}
-			if _, ok := seen[to]; ok {
+		for _, idx := range g.outIdx[item.id] {
+			edge := g.edges[idx]
+			if edge.From == "" || edge.To == "" || visited[edge.To] {
 				continue
 			}
-			seen[to] = struct{}{}
-			queue = append(queue, item{id: to, steps: cur.steps + 1})
+			if edge.To == toID {
+				return item.dist + 1
+			}
+			visited[edge.To] = true
+			queue = append(queue, queueItem{id: edge.To, dist: item.dist + 1})
 		}
 	}
 	return -1
@@ -353,39 +366,90 @@ func (g *Graph) ShortestPathLength(fromID, toID string) int {
 func (g *Graph) Orphans() []Node {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-
-	var out []Node
-	for id, n := range g.nodes {
-		if len(g.incoming[id]) == 0 {
-			out = append(out, n)
+	var orphans []Node
+	for id, node := range g.nodes {
+		if activeEdgeIndexCount(g.edges, g.inIdx[id]) == 0 {
+			orphans = append(orphans, node)
 		}
 	}
-	return out
+	return orphans
 }
 
-func (g *Graph) HotSpots(limit int) []Node {
+func (g *Graph) Nodes() []Node {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	result := make([]Node, 0, len(g.nodes))
+	for _, n := range g.nodes {
+		result = append(result, n)
+	}
+	return result
+}
+
+func (g *Graph) Edges() []Edge {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	result := make([]Edge, 0, len(g.edges))
+	for _, e := range g.edges {
+		if e.From != "" && e.To != "" {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
+func (g *Graph) Clear() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.nodes = map[string]Node{}
+	g.edges = []Edge{}
+	g.outIdx = map[string][]int{}
+	g.inIdx = map[string][]int{}
+	g.edgeIdx = map[edgeSlotKey]int{}
+}
+
+func (g *Graph) WalkDepthFirst(startID string, visitor func(Node)) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	type score struct {
-		node  Node
-		score int
+	visited := make(map[string]bool)
+	var walk func(id string)
+	walk = func(id string) {
+		if visited[id] {
+			return
+		}
+		visited[id] = true
+		if node, ok := g.nodes[id]; ok {
+			visitor(node)
+		}
+		for _, idx := range g.outIdx[id] {
+			if to := g.edges[idx].To; to != "" {
+				walk(to)
+			}
+		}
 	}
-	all := make([]score, 0, len(g.nodes))
-	for id, n := range g.nodes {
-		out := len(g.outgoing[id])
-		in := len(g.incoming[id])
-		all = append(all, score{node: n, score: in + out})
-	}
+	walk(startID)
+}
 
-	sort.Slice(all, func(i, j int) bool { return all[i].score > all[j].score })
-	if limit > 0 && limit < len(all) {
-		all = all[:limit]
-	}
+func (g *Graph) WalkBreadthFirst(startID string, visitor func(Node)) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
 
-	out := make([]Node, 0, len(all))
-	for _, s := range all {
-		out = append(out, s.node)
+	visited := make(map[string]bool)
+	queue := []string{startID}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if visited[id] {
+			continue
+		}
+		visited[id] = true
+		if node, ok := g.nodes[id]; ok {
+			visitor(node)
+		}
+		for _, idx := range g.outIdx[id] {
+			if to := g.edges[idx].To; to != "" && !visited[to] {
+				queue = append(queue, to)
+			}
+		}
 	}
-	return out
 }

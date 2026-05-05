@@ -81,6 +81,7 @@ func renderMarkdownBlocks(text string, width int) []string {
 }
 func renderToolChip(chip toolChip, width int) string    { return theme.RenderToolChip(chip, width) }
 func spinnerFrame(frame int) string                     { return theme.SpinnerFrame(frame) }
+func roleBadge(role string) string                      { return theme.RoleBadge(role) }
 func renderMessageHeader(info messageHeaderInfo) string { return theme.RenderMessageHeader(info) }
 func renderMessageBubble(role, content, header string, width int) string {
 	return theme.RenderMessageBubble(role, content, header, width)
@@ -126,7 +127,8 @@ func formatInputBoxContent(content string, limit int) string {
 var _ = fileMarker
 
 // formatThousands re-exported from theme subpackage.
-func formatThousands(n int) string { return theme.FormatThousands(n) }
+func formatThousands(n int) string      { return theme.FormatThousands(n) }
+func formatUSDCost(cost float64) string { return theme.FormatUSDCost(cost) }
 
 // helper functions re-exported from theme subpackage.
 func headerLevel(trimmed string) int                        { return theme.HeaderLevel(trimmed) }

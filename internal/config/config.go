@@ -58,13 +58,12 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	// inject hook commands. Global hooks are still loaded — only project hooks
 	// from an insecure file are discarded. This supplements the existing
 	// AllowProject flag; both must pass for project hooks to load.
-	projectHooksSecure := true
 	if projectPath != "" {
 		if err := loadYAML(projectPath, cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("load project config: %w", err)
 		}
 		cfg.normalizeAliases()
-		projectHooksSecure = isProjectConfigSecure(projectPath)
+		projectHooksSecure := isProjectConfigSecure(projectPath)
 		if !allowProjectHooks || !projectHooksSecure {
 			cfg.Hooks = globalHooks
 		}

@@ -243,19 +243,28 @@ type chatState struct {
 	pendingQueue        []string
 	pendingNoteCount    int
 	streamStartedAt     time.Time
+	streamInputTokens   int
 	spinnerFrame        int
 	spinnerTicking      bool
 	scrollback          int
 	toolPending         bool
 	toolName            string
+	mentionPickerOpen   bool
 	// pasteBlocks stores atomic multi-line paste segments. The composer
 	// only contains their placeholders; composeInput replaces placeholders
 	// with the original text at submit time. pasteBurst* catches terminals
 	// that send multi-line paste as "line text" + Enter events while a
 	// stream is active, so pasted lines do not become many queued messages.
-	pasteBlocks     []pasteBlock
-	pasteBurstUntil time.Time
-	pasteBurstBlock int
+	pasteBlocks         []pasteBlock
+	pasteBurstUntil     time.Time
+	pasteBurstBlock     int
+	pasteCandidateStart int
+	pasteCandidateEnd   int
+	pasteCandidateRunes int
+	pasteCandidateBulk  bool
+	pasteCandidateSince time.Time
+	pasteCandidateLast  time.Time
+	suppressPasteRender bool
 }
 
 // pasteBlock represents one multi-line paste operation.
@@ -276,7 +285,7 @@ func (m Model) composeInput() string {
 		return m.chat.input
 	}
 	// The visible m.chat.input contains placeholders like
-	// "[pasted text #1 +3 lines]" interleaved with regular typed text.
+	// "[Pasted #1 3 lines]" interleaved with regular typed text.
 	// We reconstruct by scanning the input left-to-right and substituting.
 	rest := m.chat.input
 	for len(rest) > 0 {
@@ -308,7 +317,7 @@ func (m Model) composeInput() string {
 // ASCII and visually atomic; deleteInputRange treats any edit inside it as a
 // deletion of the stored paste content too.
 func (b pasteBlock) placeholder() string {
-	return fmt.Sprintf("[Pasted text#%d %d lines]", b.blockNum, b.lineCount)
+	return fmt.Sprintf("[Pasted #%d %d lines]", b.blockNum, b.lineCount)
 }
 
 // intentState — most recent decision from the engine's intent router,
@@ -393,6 +402,12 @@ type sessionTelemetry struct {
 	compressionRawChars   int
 	activeToolCount       int
 	activeSubagentCount   int
+	lastInputTokens       int
+	lastOutputTokens      int
+	lastTotalTokens       int
+	sessionInputTokens    int
+	sessionOutputTokens   int
+	sessionTotalTokens    int
 	subagents             map[string]subagentRuntimeItem
 	subagentOrder         []string
 

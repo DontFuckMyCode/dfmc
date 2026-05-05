@@ -87,6 +87,7 @@ func (m Model) submitChatQuestion(question string, quickActions []quickActionSug
 	m.chat.streamIndex = len(m.chat.transcript) - 1
 	m.chat.sending = true
 	m.chat.streamStartedAt = time.Now()
+	m.chat.streamInputTokens = m.estimateLiveInputTokens(question)
 	m.notice = "Streaming answer... (esc cancels)"
 	// Per-stream context so esc can cancel this turn without killing the
 	// whole TUI's ctx (which would kill timers and subscriptions too).
@@ -94,6 +95,21 @@ func (m Model) submitChatQuestion(question string, quickActions []quickActionSug
 	m.chat.streamCancel = cancel
 	m.chat.streamMessages = startChatStream(streamCtx, m.eng, question)
 	return m, tea.Batch(waitForStreamMsg(m.chat.streamMessages), m.ensureSpinnerTick())
+}
+
+func (m Model) estimateLiveInputTokens(question string) int {
+	questionTokens := estimatedChatTokens(question)
+	if m.eng != nil {
+		breakdown := m.eng.ContextBreakdown(question)
+		total := breakdown.SystemPrompt + breakdown.History + breakdown.ContextChunks + questionTokens
+		if total > 0 {
+			return total
+		}
+	}
+	if m.status.ContextIn != nil && m.status.ContextIn.TokenCount > 0 {
+		return m.status.ContextIn.TokenCount + questionTokens
+	}
+	return questionTokens
 }
 
 // ensureSpinnerTick schedules the spinner tick when needed, but only if one
@@ -147,6 +163,7 @@ func (m Model) startChatResume(note string) (Model, tea.Cmd) {
 	m.chat.streamIndex = len(m.chat.transcript) - 1
 	m.chat.sending = true
 	m.chat.streamStartedAt = time.Now()
+	m.chat.streamInputTokens = m.estimateLiveInputTokens(note)
 	m.notice = "Resuming agent loop..."
 	m.chat.streamMessages = startChatResumeStream(m.ctx, m.eng, note)
 	return m, tea.Batch(waitForStreamMsg(m.chat.streamMessages), m.ensureSpinnerTick())

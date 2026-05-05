@@ -63,24 +63,31 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 
 	switch mode {
 	case StatsPanelModeTodos:
-		b.section("PROVIDER", providerRows(info))
+		b.section("TODO STATE", todoRows(info, inner))
+		b.section("NEXT", nextRows(info, mode))
+		b.section("LIVE LOOP", loopRows(info))
 		b.section("CONTEXT", contextRows(info))
-		b.section("TODO FLOW", todoRows(info, inner))
 	case StatsPanelModeTasks:
-		b.section("PROVIDER", providerRows(info))
-		b.section("TOOL LOOP", loopRows(info))
-		b.section("TASKS", taskRows(info))
+		b.section("TASK GRAPH", taskRows(info))
+		b.section("DRIVE", driveRows(info))
+		b.section("NEXT", nextRows(info, mode))
+		b.section("ORCHESTRATION MAP", orchestrationMapRows(info, inner))
+		b.section("LIVE LOOP", loopRows(info))
 	case StatsPanelModeSubagents:
-		b.section("PROVIDER", providerRows(info))
-		b.section("TOOL LOOP", loopRows(info))
 		b.section("SUBAGENTS", subagentRows(info))
+		b.section("NEXT", nextRows(info, mode))
+		b.section("LIVE LOOP", loopRows(info))
+		b.section("RECENT", recentRows(info, 4))
 	case StatsPanelModeProviders:
-		b.section("ACTIVE", providerRows(info))
+		b.section("ACTIVE", providerActiveRows(info))
+		b.section("ROUTING", providerRoutingRows(info))
+		b.section("NEXT", nextRows(info, mode))
 		b.section("PROVIDERS", providerListRows(info))
 		b.section("CONTEXT", contextRows(info))
 		b.section("SESSION", sessionRows(info))
 	default:
 		b.section("PROVIDER", providerRows(info))
+		b.section("NEXT", nextRows(info, mode))
 		b.section("CONTEXT", contextRows(info))
 		b.section("TOOL LOOP", loopRows(info))
 		b.section("TOOLS", toolsRows(info))
@@ -91,11 +98,11 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 		b.section("SESSION", sessionRows(info))
 	}
 
-	footerRows := []string{"ctrl+s hide | ctrl+h keys", "alt+a/s/d/f/p switch"}
+	footerRows := statsPanelFooterRows(mode)
 	if info.FocusLocked {
-		footerRows = []string{"esc unlock | retarget", "ctrl+s hide | alt+a/s/d/f/p"}
+		footerRows = []string{"esc unlock | retarget alt+a/s/d/f/p", statsPanelModeActionHint(mode) + " | ctrl+h"}
 	} else if info.Boosted {
-		footerRows = []string{"alt+a/s/d/f/p again locks", "ctrl+s hide | ctrl+h keys"}
+		footerRows = []string{"alt+a/s/d/f/p again locks", "ctrl+s hide | ctrl+h | " + statsPanelModeActionHint(mode)}
 	}
 	b.footer(footerRows, height)
 
@@ -194,7 +201,7 @@ func statsPanelStateLine(info StatsPanelInfo, width int) string {
 		style = FailStyle
 	}
 	left := style.Bold(true).Render(state)
-	right := statsPanelContextLabel(info.ContextTokens, info.MaxContext)
+	right := statsPanelContextLabel(statsPanelContextUsed(info), info.MaxContext)
 	if info.MessageCount > 0 {
 		right += fmt.Sprintf(" | %d msgs", info.MessageCount)
 	}
@@ -235,8 +242,26 @@ func providerRows(info StatsPanelInfo) []string {
 	}
 }
 
+func providerActiveRows(info StatsPanelInfo) []string {
+	rows := providerRows(info)
+	meta := []string{}
+	if info.MaxContext > 0 {
+		meta = append(meta, "window "+CompactTokens(info.MaxContext))
+	}
+	if info.CostPer1kTokens > 0 {
+		meta = append(meta, FormatUSDCost(info.CostPer1kTokens)+"/1k tok")
+	}
+	if info.ContextWindowTokens > 0 {
+		meta = append(meta, "used "+CompactTokens(info.ContextWindowTokens))
+	}
+	if len(meta) > 0 {
+		rows = append(rows, SubtleStyle.Render(strings.Join(meta, " | ")))
+	}
+	return rows
+}
+
 func contextRows(info StatsPanelInfo) []string {
-	rows := []string{RenderContextBarFrame(info.ContextTokens, info.MaxContext, 12, info.SpinnerFrame)}
+	rows := []string{RenderContextBarFrame(statsPanelContextUsed(info), info.MaxContext, 12, info.SpinnerFrame)}
 	if info.ContextFileCount > 0 || info.ContextBudgetTokens > 0 {
 		files := fmt.Sprintf("files %d", info.ContextFileCount)
 		if info.ContextMaxFiles > 0 {
@@ -265,6 +290,19 @@ func contextRows(info StatsPanelInfo) []string {
 	if info.ContextAvailableTokens > 0 {
 		rows = append(rows, SubtleStyle.Render(fmt.Sprintf("available %s tok", CompactTokens(info.ContextAvailableTokens))))
 	}
+	if used, remaining := statsPanelWindowUsage(info); used > 0 {
+		if info.MaxContext > 0 {
+			line := fmt.Sprintf("window %s/%s tok", CompactTokens(used), CompactTokens(info.MaxContext))
+			if remaining >= 0 {
+				line += " | left " + CompactTokens(remaining)
+			} else {
+				line += " | over " + CompactTokens(-remaining)
+			}
+			rows = append(rows, SubtleStyle.Render(line))
+		} else {
+			rows = append(rows, SubtleStyle.Render(fmt.Sprintf("window %s tok", CompactTokens(used))))
+		}
+	}
 	if info.ContextSystemTokens > 0 || info.ContextHistoryTokens > 0 || info.ContextResponseTokens > 0 || info.ContextToolTokens > 0 {
 		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
 			"budget sys %s | hist %s | code %s",
@@ -277,6 +315,46 @@ func contextRows(info StatsPanelInfo) []string {
 			CompactTokens(info.ContextResponseTokens),
 			CompactTokens(info.ContextToolTokens),
 		)))
+	}
+	if info.Streaming && (info.LiveInputTokens > 0 || info.LiveOutputTokens > 0 || info.LiveTotalTokens > 0) {
+		total := info.LiveTotalTokens
+		if total <= 0 {
+			total = info.LiveInputTokens + info.LiveOutputTokens
+		}
+		rows = append(rows, InfoStyle.Bold(true).Render(fmt.Sprintf(
+			"live in ~%s | out ~%s",
+			CompactTokens(info.LiveInputTokens),
+			CompactTokens(info.LiveOutputTokens),
+		)))
+		rows = append(rows, InfoStyle.Render(fmt.Sprintf(
+			"live total ~%s | estimating",
+			CompactTokens(total),
+		)))
+		rows = append(rows, SubtleStyle.Render("estimate until provider done"))
+	}
+	if info.LastInputTokens > 0 || info.LastOutputTokens > 0 || info.LastTotalTokens > 0 {
+		rows = append(rows, InfoStyle.Render(fmt.Sprintf(
+			"last in %s | out %s | total %s",
+			CompactTokens(info.LastInputTokens),
+			CompactTokens(info.LastOutputTokens),
+			CompactTokens(info.LastTotalTokens),
+		)))
+	}
+	if info.SessionInputTokens > 0 || info.SessionOutputTokens > 0 || info.SessionTotalTokens > 0 {
+		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
+			"session in %s | out %s | total %s",
+			CompactTokens(info.SessionInputTokens),
+			CompactTokens(info.SessionOutputTokens),
+			CompactTokens(info.SessionTotalTokens),
+		)))
+		if info.CostPer1kTokens > 0 && info.SessionTotalTokens > 0 {
+			cost := (float64(info.SessionTotalTokens) / 1000) * info.CostPer1kTokens
+			rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
+				"cost %s @ %s/1k",
+				FormatUSDCost(cost),
+				FormatUSDCost(info.CostPer1kTokens),
+			)))
+		}
 	}
 	if len(info.ContextTopFiles) > 0 {
 		files := make([]string, 0, len(info.ContextTopFiles))
@@ -293,6 +371,30 @@ func contextRows(info StatsPanelInfo) []string {
 		rows = append(rows, SubtleStyle.Render("why: "+TruncateSingleLine(info.ContextReasons[0], 42)))
 	}
 	return rows
+}
+
+func statsPanelWindowUsage(info StatsPanelInfo) (int, int) {
+	used := info.ContextWindowTokens
+	if used <= 0 {
+		used = info.ContextSystemTokens + info.ContextHistoryTokens + info.ContextTokens + info.ContextResponseTokens + info.ContextToolTokens
+	}
+	if used <= 0 {
+		used = info.ContextTokens
+	}
+	if used <= 0 {
+		return 0, 0
+	}
+	if info.MaxContext <= 0 {
+		return used, -1
+	}
+	return used, info.MaxContext - used
+}
+
+func statsPanelContextUsed(info StatsPanelInfo) int {
+	if used, _ := statsPanelWindowUsage(info); used > 0 {
+		return used
+	}
+	return info.ContextTokens
 }
 
 func loopRows(info StatsPanelInfo) []string {
@@ -355,6 +457,56 @@ func toolsRows(info StatsPanelInfo) []string {
 	return rows
 }
 
+func orchestrationMapRows(info StatsPanelInfo, width int) []string {
+	status := func(active bool, text string) string {
+		if active {
+			return AccentStyle.Bold(true).Render(text)
+		}
+		return SubtleStyle.Render(text)
+	}
+	todoState := "idle"
+	if info.TodoTotal > 0 {
+		todoState = fmt.Sprintf("%d total, %d doing", info.TodoTotal, info.TodoDoing)
+	}
+	taskState := "idle"
+	switch {
+	case len(info.TaskTreeLines) > 0:
+		taskState = fmt.Sprintf("%d stored", len(info.TaskTreeLines))
+	case info.PlanSubtasks > 0:
+		mode := "serial"
+		if info.PlanParallel {
+			mode = "parallel"
+		}
+		taskState = fmt.Sprintf("%d planned, %s", info.PlanSubtasks, mode)
+	}
+	driveState := "idle"
+	if strings.TrimSpace(info.DriveRunID) != "" || info.DriveTotal > 0 {
+		driveState = fmt.Sprintf("%d/%d done", info.DriveDone, info.DriveTotal)
+		if info.DriveBlocked > 0 {
+			driveState += fmt.Sprintf(", %d blocked", info.DriveBlocked)
+		}
+	}
+	agentState := "idle"
+	if info.ActiveSubagents > 0 {
+		agentState = fmt.Sprintf("%d active", info.ActiveSubagents)
+		if info.SubagentLimit > 0 {
+			agentState = fmt.Sprintf("%d/%d active", info.ActiveSubagents, info.SubagentLimit)
+		}
+	}
+	rows := []string{
+		status(info.TodoTotal > 0, "todo: "+todoState+" | shared checklist | /todos"),
+		status(taskState != "idle", "task: "+taskState+" | split/graph | /tasks"),
+		status(strings.TrimSpace(info.WorkflowStatus) != "" || info.TodoTotal > 0 || info.PlanSubtasks > 0 || info.ActiveSubagents > 0 || info.DriveTotal > 0,
+			"workflow: live cockpit | F5 | /workflow"),
+		status(driveState != "idle", "drive: "+driveState+" | persisted run | /drive"),
+		status(info.ActiveSubagents > 0, "subagent: "+agentState+" | delegated worker | /subagents"),
+	}
+	for i, row := range rows {
+		rows[i] = TruncateSingleLine(row, width)
+	}
+	return rows
+}
+
 func workflowRows(info StatsPanelInfo, width int) []string {
 	rows := []string{}
 	if status := strings.TrimSpace(info.WorkflowStatus); status != "" {
@@ -407,8 +559,12 @@ func workflowRows(info StatsPanelInfo, width int) []string {
 }
 
 func todoRows(info StatsPanelInfo, width int) []string {
-	rows := []string{
-		fmt.Sprintf("%d total | %d done | %d doing | %d pending", info.TodoTotal, info.TodoDone, info.TodoDoing, info.TodoPending),
+	rows := []string{}
+	if info.TodoTotal > 0 {
+		rows = append(rows, RenderStepBar(info.TodoDone, info.TodoTotal, 12, info.SpinnerFrame))
+		rows = append(rows, fmt.Sprintf("%d total | %d done | %d doing | %d pending", info.TodoTotal, info.TodoDone, info.TodoDoing, info.TodoPending))
+	} else {
+		rows = append(rows, "0 total | no shared checklist")
 	}
 	if status := strings.TrimSpace(info.WorkflowStatus); status != "" {
 		rows = append(rows, AccentStyle.Bold(true).Render(status))
@@ -419,11 +575,13 @@ func todoRows(info StatsPanelInfo, width int) []string {
 	if active := strings.TrimSpace(info.TodoActive); active != "" {
 		rows = append(rows, InfoStyle.Render("active: "+TruncateSingleLine(active, width-10)))
 	}
+	rows = append(rows, SubtleStyle.Render("source: todo_write | autonomy | drive plan"))
+	rows = append(rows, SubtleStyle.Render("watch: /todos | F5 Workflow | Activity"))
 	if len(info.TodoLines) == 0 {
 		rows = append(rows,
 			"No shared todo list yet.",
-			"Appears after todo_write or autonomy preflight.",
-			"Try a multi-step ask, /split, or /todos.",
+			"Appears after todo_write, autonomy preflight, or Drive planning.",
+			"Try a multi-step ask, /split <task>, or /drive <task>.",
 		)
 	} else {
 		rows = append(rows, info.TodoLines...)
@@ -442,47 +600,52 @@ func taskRows(info StatsPanelInfo) []string {
 	if meter := strings.TrimSpace(info.WorkflowMeter); meter != "" {
 		rows = append(rows, meter)
 	}
+	if info.PlanSubtasks > 0 {
+		mode := "serial"
+		if info.PlanParallel {
+			mode = "parallel"
+		}
+		rows = append(rows, AccentStyle.Render(fmt.Sprintf("plan: %d subtasks | %s | %.2f confidence", info.PlanSubtasks, mode, info.PlanConfidence)))
+	}
+	if execution := strings.TrimSpace(info.WorkflowExecution); execution != "" {
+		rows = append(rows, InfoStyle.Render("now: "+execution))
+	}
 	if len(info.TaskTreeLines) > 0 {
-		rows = append(rows, fmt.Sprintf("%d task(s) in store", len(info.TaskTreeLines)))
+		rows = append(rows, fmt.Sprintf("store: %d task(s)", len(info.TaskTreeLines)))
 		rows = append(rows, info.TaskTreeLines...)
 	} else if len(info.TaskLines) > 0 {
 		rows = append(rows, info.TaskLines...)
 	} else {
 		rows = append(rows,
 			"No active task graph yet.",
-			"Fills from autonomy preflight, /split, or drive planning.",
-			"Broad asks create task breakdowns.",
+			"Fills from autonomy preflight, /split, task store, or Drive planning.",
+			"Broad asks create task breakdowns; /tasks shows full graph.",
 		)
 	}
-	for _, line := range info.WorkflowRecent {
+	for _, line := range firstNNonEmpty(info.WorkflowRecent, 3) {
 		rows = append(rows, SubtleStyle.Render("recent: "+line))
 	}
 	return rows
 }
 
 func subagentRows(info StatsPanelInfo) []string {
-	capacity := ""
+	rows := []string{}
 	if info.SubagentLimit > 0 {
-		capacity = fmt.Sprintf("capacity %d/%d", info.ActiveSubagents, info.SubagentLimit)
+		rows = append(rows, RenderStepBar(info.ActiveSubagents, info.SubagentLimit, 12, info.SpinnerFrame))
+		rows = append(rows, fmt.Sprintf("capacity %d/%d", info.ActiveSubagents, info.SubagentLimit))
+	} else {
+		rows = append(rows, fmt.Sprintf("active %d", info.ActiveSubagents))
 	}
 	summary := strings.TrimSpace(info.SubagentSummary)
 	if len(info.SubagentLines) == 0 || (len(info.SubagentLines) == 1 && strings.EqualFold(strings.TrimSpace(info.SubagentLines[0]), "idle")) {
-		rows := []string{}
-		if capacity != "" {
-			rows = append(rows, capacity)
-		}
 		if summary != "" {
 			rows = append(rows, AccentStyle.Bold(true).Render(summary))
 		}
 		return append(rows,
 			"No subagent activity yet.",
-			"Appears when the model delegates or fans out work.",
+			"Appears from orchestrate, delegate_task, Drive, or model fan-out.",
 			"Short asks usually stay in one tool loop.",
 		)
-	}
-	rows := make([]string, 0, len(info.SubagentLines))
-	if capacity != "" {
-		rows = append(rows, capacity)
 	}
 	if summary != "" {
 		rows = append(rows, AccentStyle.Bold(true).Render(summary))
@@ -500,6 +663,31 @@ func subagentRows(info StatsPanelInfo) []string {
 	return rows
 }
 
+func driveRows(info StatsPanelInfo) []string {
+	rows := []string{}
+	if strings.TrimSpace(info.DriveRunID) != "" || info.DriveTotal > 0 {
+		if info.DriveTotal > 0 {
+			rows = append(rows, RenderStepBar(info.DriveDone, info.DriveTotal, 12, info.SpinnerFrame))
+		}
+		label := "run " + blankFallback(strings.TrimSpace(info.DriveRunID), "(active)")
+		if info.DriveTotal > 0 {
+			label += fmt.Sprintf(" | %d/%d done", info.DriveDone, info.DriveTotal)
+		}
+		if info.DriveBlocked > 0 {
+			label += fmt.Sprintf(" | %d blocked", info.DriveBlocked)
+		}
+		rows = append(rows, AccentStyle.Render(label))
+		rows = append(rows, SubtleStyle.Render("watch: F5 Workflow | /drive active | Activity"))
+		return rows
+	}
+	rows = append(rows,
+		"No drive run active.",
+		"Start one with /drive <task> for persisted autonomous TODO execution.",
+		"Use /drive list to inspect saved runs.",
+	)
+	return rows
+}
+
 func providerListRows(info StatsPanelInfo) []string {
 	if len(info.Providers) == 0 {
 		return []string{
@@ -507,7 +695,7 @@ func providerListRows(info StatsPanelInfo) []string {
 			"Configure providers in .dfmc/config.yaml or dfmc providers setup.",
 		}
 	}
-	rows := make([]string, 0, len(info.Providers)*2)
+	rows := []string{SubtleStyle.Render("* active | + primary | - available")}
 	for i, row := range info.Providers {
 		cursor := "  "
 		if i == info.ProvidersSelectedIndex {
@@ -528,6 +716,19 @@ func providerListRows(info StatsPanelInfo) []string {
 			line += SubtleStyle.Render(" | " + strings.Join(row.Models, " > "))
 		}
 		rows = append(rows, line)
+		meta := []string{}
+		if row.Protocol != "" {
+			meta = append(meta, row.Protocol)
+		}
+		if row.MaxContext > 0 {
+			meta = append(meta, "ctx "+CompactTokens(row.MaxContext))
+		}
+		if row.Status != "" {
+			meta = append(meta, row.Status)
+		}
+		if len(meta) > 0 {
+			rows = append(rows, SubtleStyle.Render("    "+strings.Join(meta, " | ")))
+		}
 		if row.Status == "no-key" {
 			rows = append(rows, SubtleStyle.Render("    no API key: providers.profiles."+row.Name+".api_key"))
 		}
@@ -536,6 +737,163 @@ func providerListRows(info StatsPanelInfo) []string {
 		}
 	}
 	return rows
+}
+
+func providerRoutingRows(info StatsPanelInfo) []string {
+	rows := []string{}
+	if provider := strings.TrimSpace(info.Provider); provider != "" {
+		rows = append(rows, "active: "+provider+" / "+blankFallback(strings.TrimSpace(info.Model), "-"))
+	} else {
+		rows = append(rows, FailStyle.Render("active: none"))
+	}
+	primary := ""
+	fallbacks := []string{}
+	for _, row := range info.Providers {
+		if row.Primary {
+			primary = row.Name
+		}
+		if !row.Active && !row.Primary && row.Status != "no-key" {
+			fallbacks = append(fallbacks, row.Name)
+		}
+	}
+	if primary != "" {
+		rows = append(rows, "primary: "+primary)
+	}
+	if len(fallbacks) > 0 {
+		rows = append(rows, "ready fallback: "+strings.Join(firstNNonEmpty(fallbacks, 3), ", "))
+	}
+	rows = append(rows, SubtleStyle.Render("change: /provider or alt+p then enter"))
+	return rows
+}
+
+func nextRows(info StatsPanelInfo, mode StatsPanelMode) []string {
+	rows := criticalNextRows(info)
+	switch mode {
+	case StatsPanelModeTodos:
+		switch {
+		case info.TodoDoing > 0 && strings.TrimSpace(info.TodoActive) != "":
+			rows = append(rows, AccentStyle.Render("finish active todo: "+info.TodoActive))
+		case info.TodoPending > 0:
+			rows = append(rows, AccentStyle.Render("pick next pending todo | /todos"))
+		case info.TodoTotal > 0:
+			rows = append(rows, OkStyle.Render("todo list is clear enough to continue"))
+		default:
+			rows = append(rows, "seed work with /split <task> or /drive <task>")
+		}
+		rows = append(rows, SubtleStyle.Render("todo_write is the shared checklist source"))
+	case StatsPanelModeTasks:
+		switch {
+		case len(info.TaskTreeLines) > 0:
+			rows = append(rows, AccentStyle.Render("inspect graph: /tasks tree"))
+		case info.PlanSubtasks > 0:
+			rows = append(rows, AccentStyle.Render("run planned subtasks | ctrl+y Plans"))
+		default:
+			rows = append(rows, "create graph with /split <task>")
+		}
+		if strings.TrimSpace(info.DriveRunID) != "" || info.DriveTotal > 0 {
+			rows = append(rows, SubtleStyle.Render("drive is executing this graph | /drive active"))
+		} else {
+			rows = append(rows, SubtleStyle.Render("drive persists multi-step execution"))
+		}
+	case StatsPanelModeSubagents:
+		if info.ActiveSubagents > 0 {
+			rows = append(rows, AccentStyle.Render("watch live agents in F7 Activity"))
+		} else {
+			rows = append(rows, "subagents appear when work fans out")
+		}
+		rows = append(rows, SubtleStyle.Render("broad tasks can delegate via Drive/orchestrate"))
+	case StatsPanelModeProviders:
+		if len(info.Providers) > 0 {
+			rows = append(rows, AccentStyle.Render("enter switches selected provider"))
+			rows = append(rows, SubtleStyle.Render("/model changes model | /reload refreshes config"))
+		} else {
+			rows = append(rows, "configure .dfmc/config.yaml providers")
+		}
+	default:
+		if len(rows) == 0 {
+			return nil
+		}
+	}
+	return firstNNonEmpty(rows, 5)
+}
+
+func criticalNextRows(info StatsPanelInfo) []string {
+	rows := []string{}
+	provider := strings.TrimSpace(info.Provider)
+	switch {
+	case provider == "":
+		rows = append(rows, FailStyle.Render("select a provider with /provider"))
+	case !info.Configured:
+		rows = append(rows, WarnStyle.Render("add API key for "+provider+" then /reload"))
+	}
+	if info.Parked {
+		rows = append(rows, WarnStyle.Render("/continue resumes parked agent"))
+	}
+	if info.QueuedCount > 0 {
+		rows = append(rows, AccentStyle.Render(fmt.Sprintf("%d queued prompt(s) after current turn", info.QueuedCount)))
+	}
+	if info.Streaming {
+		rows = append(rows, InfoStyle.Render("streaming now | ctrl+c cancels | tokens live"))
+	}
+	if pct := contextUsagePct(statsPanelContextUsed(info), info.MaxContext); pct >= 85 {
+		rows = append(rows, WarnStyle.Render(fmt.Sprintf("context hot %d%% | /compact or Ctrl+I", pct)))
+	}
+	return rows
+}
+
+func contextUsagePct(tokens, maxTokens int) int {
+	if tokens <= 0 || maxTokens <= 0 {
+		return 0
+	}
+	return int((int64(tokens) * 100) / int64(maxTokens))
+}
+
+func statsPanelFooterRows(mode StatsPanelMode) []string {
+	return []string{statsPanelModeActionHint(mode), "ctrl+s hide | ctrl+h keys"}
+}
+
+func statsPanelModeActionHint(mode StatsPanelMode) string {
+	switch mode {
+	case StatsPanelModeTodos:
+		return "/todos | /split task | /drive task"
+	case StatsPanelModeTasks:
+		return "/tasks tree | ctrl+y Plans | F5 Workflow"
+	case StatsPanelModeSubagents:
+		return "/subagents | F7 Activity | /drive active"
+	case StatsPanelModeProviders:
+		return "/provider | /model | /reload"
+	default:
+		return "alt+a/s/d/f/p switch | F7 Activity"
+	}
+}
+
+func recentRows(info StatsPanelInfo, limit int) []string {
+	rows := []string{}
+	for _, line := range firstNNonEmpty(info.WorkflowRecent, limit) {
+		rows = append(rows, line)
+	}
+	if len(rows) == 0 {
+		rows = append(rows, "No recent workflow/subagent event.")
+	}
+	return rows
+}
+
+func firstNNonEmpty(items []string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]string, 0, min(len(items), limit))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		out = append(out, item)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out
 }
 
 func gitRows(info StatsPanelInfo) []string {

@@ -53,6 +53,19 @@ func (m Model) describeStats() string {
 	} else {
 		lines = append(lines, "  context in:  (no provider window info yet)")
 	}
+	sessionInput, sessionOutput, sessionTotal := m.sessionTokenTotals()
+	if sessionInput > 0 || sessionOutput > 0 || sessionTotal > 0 {
+		lines = append(lines, fmt.Sprintf("  tokens:      in %s · out %s · total %s",
+			formatThousands(sessionInput),
+			formatThousands(sessionOutput),
+			formatThousands(sessionTotal)))
+		if costPer1k := m.currentCostPer1kTokens(); costPer1k > 0 {
+			cost := (float64(sessionTotal) / 1000) * costPer1k
+			lines = append(lines, fmt.Sprintf("  cost:        approx %s @ %s/1k tokens",
+				formatUSDCost(cost),
+				formatUSDCost(costPer1k)))
+		}
+	}
 
 	// Agent loop progress (cumulative across turns).
 	if m.agentLoop.toolRounds > 0 || m.agentLoop.step > 0 {
@@ -128,6 +141,11 @@ func (m Model) describeStats() string {
 func (m Model) describeWorkflow() string {
 	lines := []string{"▸ Workflow snapshot"}
 
+	lines = append(lines, "", "What is what:")
+	for _, line := range m.workflowConceptRows() {
+		lines = append(lines, "  "+line)
+	}
+
 	todos := m.workflowTodos()
 	total, pending, doing, done := summarizeWorkflowTodos(todos)
 	switch {
@@ -179,6 +197,16 @@ func (m Model) describeWorkflow() string {
 	return strings.Join(lines, "\n")
 }
 
+func (m Model) workflowConceptRows() []string {
+	return []string{
+		"todo: shared checklist the agent updates while working; visible in /todos and stats alt+s.",
+		"task: planned split or stored task graph; visible in /tasks, Plans, and stats alt+d.",
+		"workflow: live cockpit joining todos, tasks, drive, tools, and subagents; visible in F5 and /workflow.",
+		"drive: long-running autonomous driver started with /drive <task>; persists runs and TODO progress; visible in F5, /drive active, Activity.",
+		"subagent: delegated worker/fan-out job from orchestrate, delegate_task, or drive; visible in /subagents, stats alt+f, Activity.",
+	}
+}
+
 // describeTodos prints the current shared todo_write state directly into the
 // chat transcript so the user can inspect the agent's checklist in-place.
 func (m Model) describeTodos() string {
@@ -188,7 +216,8 @@ func (m Model) describeTodos() string {
 	if total == 0 {
 		lines = append(lines,
 			"  no todo list is active right now.",
-			"  The autonomy preflight seeds this automatically for multi-step asks; /split can also preview a plan.",
+			"  A todo appears when the model uses todo_write, autonomy seeds a multi-step ask, or Drive plans TODOs.",
+			"  Watch it in the right stats panel (alt+s), /todos, and Activity.",
 		)
 		return strings.Join(lines, "\n")
 	}
@@ -223,7 +252,8 @@ func (m Model) describeSubagents() string {
 	if len(recent) == 0 {
 		lines = append(lines,
 			"  recent:     no subagent events recorded this session",
-			"  Tip: multi-step tasks can fan out through autonomy preflight, /split, orchestrate, or delegate_task.",
+			"  A subagent appears when work is delegated through orchestrate, delegate_task, or a Drive run.",
+			"  Watch it in stats alt+f, /subagents, and Activity.",
 		)
 		return strings.Join(lines, "\n")
 	}
