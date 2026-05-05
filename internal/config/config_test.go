@@ -292,6 +292,13 @@ func TestValidate_ContextMaxTokensTotalMustBePositive(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_ContextAutoIncludeFilesOff(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Context.AutoIncludeFiles {
+		t.Fatal("default context.auto_include_files must stay false; workspace files should be explicit/tool-driven")
+	}
+}
+
 func TestValidate_ContextMaxHistoryTokensMustBePositive(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Context.MaxHistoryTokens = 0

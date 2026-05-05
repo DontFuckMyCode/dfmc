@@ -55,11 +55,16 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 			mustPrintJSON(preview)
 			return 0
 		}
-		fmt.Printf("context budget: provider=%s model=%s task=%s mentions=%d scale[t=%.2f f=%.2f pf=%.2f] provider_max=%d available=%d reserve_total=%d reserve[prompt=%d history=%d response=%d tools=%d] total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
+		workspaceFiles := "explicit/tool"
+		if preview.AutoIncludeFiles {
+			workspaceFiles = "auto"
+		}
+		fmt.Printf("context budget: provider=%s model=%s task=%s mentions=%d workspace_files=%s scale[t=%.2f f=%.2f pf=%.2f] provider_max=%d available=%d reserve_total=%d reserve[prompt=%d history=%d response=%d tools=%d] total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
 			preview.Provider,
 			preview.Model,
 			preview.Task,
 			preview.ExplicitFileMentions,
+			workspaceFiles,
 			preview.TaskTotalScale,
 			preview.TaskFileScale,
 			preview.TaskPerFileScale,

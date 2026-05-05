@@ -882,10 +882,31 @@ func TestRenderStatsPanelShowsContextDiagnostics(t *testing.T) {
 		ContextToolTokens:       512,
 	}
 	out := RenderStatsPanelSized(info, 30, 56)
-	for _, want := range []string{"files 4/8", "code 3.2k/16k tok", "task review", "zip standard", "available 120k tok", "budget sys 900", "hist 1.2k", "reserve resp 2.0k", "tools 512", "manager.go", "why:"} {
+	for _, want := range []string{"files 4/8", "evidence 3.2k/16k tok", "task review", "zip standard", "available 120k tok", "budget sys 900", "hist 1.2k", "reserve resp 2.0k", "tools 512", "manager.go", "why:"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected context diagnostic %q, got:\n%s", want, out)
 		}
+	}
+}
+
+func TestRenderStatsPanelShowsConversationOnlyContext(t *testing.T) {
+	info := StatsPanelInfo{
+		ContextWindowTokens:  2400,
+		MaxContext:           128000,
+		ContextBudgetTokens:  16000,
+		ContextMaxFiles:      50,
+		ContextReasons:       []string{"conversation history only; workspace evidence auto-attach is off"},
+		ContextSystemTokens:  900,
+		ContextHistoryTokens: 1500,
+	}
+	out := RenderStatsPanelSized(info, 30, 56)
+	for _, want := range []string{"conversation history only", "workspace evidence off"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected conversation-only context diagnostic %q, got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "files 0/50") {
+		t.Fatalf("conversation-only mode should not look like file context, got:\n%s", out)
 	}
 }
 

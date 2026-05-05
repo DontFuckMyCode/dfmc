@@ -12,6 +12,7 @@ type ContextConfig struct {
 	MaxTokensPerFile int    `yaml:"max_tokens_per_file"`
 	MaxHistoryTokens int    `yaml:"max_history_tokens"`
 	Compression      string `yaml:"compression"`
+	AutoIncludeFiles bool   `yaml:"auto_include_files"`
 	IncludeTests     bool   `yaml:"include_tests"`
 	IncludeDocs      bool   `yaml:"include_docs"`
 	SymbolAware      bool   `yaml:"symbol_aware"`

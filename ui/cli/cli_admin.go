@@ -183,8 +183,13 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 	fmt.Printf("project: %s\n", projectRoot)
 	fmt.Printf("providers: %d loaded\n", len(loadedProviders))
 	fmt.Printf("tools: %d, skills: %d, prompt templates: %d\n", len(tools), len(skills), len(templates.List()))
-	fmt.Printf("context budget: task=%s total=%d per_file=%d files=%d reserve=%d available=%d\n",
+	workspaceFiles := "explicit/tool"
+	if contextPreview.AutoIncludeFiles {
+		workspaceFiles = "auto"
+	}
+	fmt.Printf("context budget: task=%s workspace_files=%s total=%d per_file=%d files=%d reserve=%d available=%d\n",
 		contextPreview.Task,
+		workspaceFiles,
 		contextPreview.MaxTokensTotal,
 		contextPreview.MaxTokensPerFile,
 		contextPreview.MaxFiles,

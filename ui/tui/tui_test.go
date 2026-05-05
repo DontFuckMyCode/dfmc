@@ -3783,7 +3783,7 @@ func TestStatsPanelContextBarUsesWindowTokens(t *testing.T) {
 	if !strings.Contains(panel, "ctx 88.5k/200k 44%") {
 		t.Fatalf("stats header should show live window usage, got:\n%s", panel)
 	}
-	if !strings.Contains(panel, "code 42k/160k tok") || !strings.Contains(panel, "window 88.5k/200k tok") {
+	if !strings.Contains(panel, "evidence 42k/160k tok") || !strings.Contains(panel, "window 88.5k/200k tok") {
 		t.Fatalf("stats panel should keep code and window separate, got:\n%s", panel)
 	}
 }

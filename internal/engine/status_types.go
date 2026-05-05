@@ -195,6 +195,7 @@ type ContextBudgetInfo struct {
 	MaxTokensPerFile int    `json:"max_tokens_per_file"`
 	MaxHistoryTokens int    `json:"max_history_tokens"`
 	Compression      string `json:"compression"`
+	AutoIncludeFiles bool   `json:"auto_include_files"`
 	IncludeTests     bool   `json:"include_tests"`
 	IncludeDocs      bool   `json:"include_docs"`
 }

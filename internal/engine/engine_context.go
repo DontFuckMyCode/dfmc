@@ -63,6 +63,7 @@ func (e *Engine) ContextBudgetPreviewWithRuntime(question string, overrides ctxm
 		MaxTokensPerFile:       opts.MaxTokensPerFile,
 		MaxHistoryTokens:       e.conversationHistoryBudget(),
 		Compression:            opts.Compression,
+		AutoIncludeFiles:       e.Config != nil && e.Config.Context.AutoIncludeFiles,
 		IncludeTests:           opts.IncludeTests,
 		IncludeDocs:            opts.IncludeDocs,
 	}
@@ -101,11 +102,43 @@ type contextReserveBreakdown struct {
 }
 
 func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
-	if e.Context == nil {
-		return nil
-	}
 	runtime := e.promptRuntime()
 	opts := e.contextBuildOptionsWithRuntime(question, runtime)
+	if !e.shouldBuildWorkspaceContext(question) {
+		status := e.buildWorkspaceContextSkippedStatus(question, runtime, opts)
+		e.setLastContextInStatus(status)
+		e.setLastContextDebugStatus(ContextDebugStatus{
+			Query:              status.Query,
+			Task:               status.Task,
+			BuiltAt:            status.BuiltAt,
+			Provider:           status.Provider,
+			Model:              status.Model,
+			ProviderMaxContext: status.ProviderMaxContext,
+			MaxTokensTotal:     status.MaxTokensTotal,
+			TokenCount:         status.TokenCount,
+			FileCount:          status.FileCount,
+			Reasons:            append([]string(nil), status.Reasons...),
+		})
+		e.clearLastContextSnapshot()
+		return nil
+	}
+	if e.Context == nil {
+		status := e.buildWorkspaceContextSkippedStatus(question, runtime, opts)
+		status.Reasons = []string{"workspace evidence requested, but context index is unavailable"}
+		e.setLastContextInStatus(status)
+		e.setLastContextDebugStatus(ContextDebugStatus{
+			Query:              status.Query,
+			Task:               status.Task,
+			BuiltAt:            status.BuiltAt,
+			Provider:           status.Provider,
+			Model:              status.Model,
+			ProviderMaxContext: status.ProviderMaxContext,
+			MaxTokensTotal:     status.MaxTokensTotal,
+			Reasons:            append([]string(nil), status.Reasons...),
+		})
+		e.clearLastContextSnapshot()
+		return nil
+	}
 	chunks, err := e.Context.BuildWithOptions(question, opts)
 	if err != nil {
 		status := ContextInStatus{
@@ -155,6 +188,73 @@ func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
 	e.lastContextSnapshot = snapshot
 	e.mu.Unlock()
 	return chunks
+}
+
+func (e *Engine) shouldBuildWorkspaceContext(question string) bool {
+	if e == nil || e.Config == nil {
+		return false
+	}
+	if e.Config.Context.AutoIncludeFiles {
+		return true
+	}
+	q := strings.ToLower(strings.TrimSpace(question))
+	return strings.Contains(q, "[[workspace-context]]") ||
+		strings.Contains(q, "#context:on") ||
+		strings.Contains(q, "#ctx-files")
+}
+
+func (e *Engine) buildWorkspaceContextSkippedStatus(question string, runtime ctxmgr.PromptRuntime, opts ctxmgr.BuildOptions) ContextInStatus {
+	query := strings.TrimSpace(question)
+	task := detectContextTask(query)
+	providerLimit := e.providerMaxContextForRuntime(runtime)
+	if providerLimit <= 0 {
+		providerLimit = defaultProviderContextTokens
+	}
+	reserve := e.contextReserveBreakdownWithRuntime(query, runtime)
+	available := providerLimit - reserve.Total
+	if available < minContextTotalBudgetTokens {
+		available = minContextTotalBudgetTokens
+	}
+	providerName := strings.TrimSpace(runtime.Provider)
+	if providerName == "" {
+		providerName = e.provider()
+	}
+	modelName := strings.TrimSpace(runtime.Model)
+	if modelName == "" {
+		modelName = e.model()
+	}
+	explicitMentions := countExplicitFileMentions(query)
+	reasons := []string{
+		"conversation history only; workspace evidence auto-attach is off",
+		"code enters context through @file/[[file:...]], pasted blocks, or read/search tools",
+		"set context.auto_include_files=true or add [[workspace-context]] to opt into broad retrieval",
+	}
+	if explicitMentions > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d explicit file marker(s) will be injected separately", explicitMentions))
+	}
+	return ContextInStatus{
+		Query:                query,
+		Task:                 task,
+		BuiltAt:              time.Now(),
+		Provider:             providerName,
+		Model:                modelName,
+		ProviderMaxContext:   providerLimit,
+		ContextAvailable:     available,
+		ExplicitFileMentions: explicitMentions,
+		MaxFiles:             opts.MaxFiles,
+		MaxTokensTotal:       opts.MaxTokensTotal,
+		MaxTokensPerFile:     opts.MaxTokensPerFile,
+		Compression:          opts.Compression,
+		IncludeTests:         opts.IncludeTests,
+		IncludeDocs:          opts.IncludeDocs,
+		Reasons:              reasons,
+	}
+}
+
+func (e *Engine) clearLastContextSnapshot() {
+	e.mu.Lock()
+	e.lastContextSnapshot = nil
+	e.mu.Unlock()
 }
 
 // InspectLastContext returns a detailed breakdown of the most recently

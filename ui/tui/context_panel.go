@@ -122,6 +122,11 @@ func renderContextBudgetBlock(info engine.ContextBudgetInfo, width int) []string
 	if info.Compression != "" {
 		modes = append(modes, "compression="+info.Compression)
 	}
+	if info.AutoIncludeFiles {
+		modes = append(modes, "workspace_files=auto")
+	} else {
+		modes = append(modes, "workspace_files=explicit/tool")
+	}
 	if info.IncludeTests {
 		modes = append(modes, "tests=on")
 	} else {

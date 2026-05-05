@@ -132,6 +132,54 @@ func TestContextBudgetPreview_ReflectsEffectiveOptions(t *testing.T) {
 	}
 }
 
+func TestBuildContextChunks_DefaultSkipsWorkspaceEvidence(t *testing.T) {
+	cfg := config.DefaultConfig()
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	eng := &Engine{Config: cfg, Providers: router}
+	chunks := eng.buildContextChunks("explain the provider router")
+
+	if len(chunks) != 0 {
+		t.Fatalf("expected no automatic workspace chunks, got %d", len(chunks))
+	}
+	eng.mu.RLock()
+	status := eng.lastContextIn
+	debug := eng.lastContextDebug
+	snapshot := eng.lastContextSnapshot
+	eng.mu.RUnlock()
+	if status.FileCount != 0 || status.TokenCount != 0 {
+		t.Fatalf("expected skipped file context, got files=%d tokens=%d", status.FileCount, status.TokenCount)
+	}
+	if !strings.Contains(strings.Join(status.Reasons, " "), "conversation history only") {
+		t.Fatalf("expected conversation-only reason, got %#v", status.Reasons)
+	}
+	if debug.FileCount != 0 || !strings.Contains(strings.Join(debug.Reasons, " "), "conversation history only") {
+		t.Fatalf("expected debug skipped status, got %#v", debug)
+	}
+	if snapshot != nil {
+		t.Fatalf("expected skipped context to clear snapshot, got %#v", snapshot)
+	}
+}
+
+func TestShouldBuildWorkspaceContext_OptInOnly(t *testing.T) {
+	cfg := config.DefaultConfig()
+	eng := &Engine{Config: cfg}
+
+	if eng.shouldBuildWorkspaceContext("debug [[file:internal/provider/router.go]]") {
+		t.Fatal("explicit file markers should not enable broad workspace retrieval")
+	}
+	if !eng.shouldBuildWorkspaceContext("debug provider router [[workspace-context]]") {
+		t.Fatal("workspace marker should enable broad workspace retrieval")
+	}
+	cfg.Context.AutoIncludeFiles = true
+	if !eng.shouldBuildWorkspaceContext("debug provider router") {
+		t.Fatal("context.auto_include_files should enable broad workspace retrieval")
+	}
+}
+
 func TestContextBuildOptions_TaskAdaptiveScaling(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Context.MaxFiles = 20

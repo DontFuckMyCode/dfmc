@@ -115,7 +115,7 @@ func TestRenderContextBudgetBlockSections(t *testing.T) {
 		"prompt=2000", "history=8000", "response=30000", "tool=10000",
 		"available for context: 150000",
 		"files=20", "total=120000", "per_file=8000", "history=8000",
-		"compression=sectional", "tests=on", "docs=off",
+		"compression=sectional", "workspace_files=explicit/tool", "tests=on", "docs=off",
 		"task scale", "total=1.25",
 	} {
 		if !strings.Contains(joined, want) {

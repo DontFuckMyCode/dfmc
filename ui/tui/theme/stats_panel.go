@@ -262,15 +262,23 @@ func providerActiveRows(info StatsPanelInfo) []string {
 
 func contextRows(info StatsPanelInfo) []string {
 	rows := []string{RenderContextBarFrame(statsPanelContextUsed(info), info.MaxContext, 12, info.SpinnerFrame)}
-	if info.ContextFileCount > 0 || info.ContextBudgetTokens > 0 {
+	workspaceEvidenceOff := contextReasonContains(info.ContextReasons, "conversation history only")
+	if workspaceEvidenceOff {
+		rows = append(rows, InfoStyle.Render("conversation history only"))
+		rows = append(rows, SubtleStyle.Render("workspace evidence off"))
+	} else if info.ContextFileCount > 0 || info.ContextBudgetTokens > 0 {
 		files := fmt.Sprintf("files %d", info.ContextFileCount)
 		if info.ContextMaxFiles > 0 {
 			files += fmt.Sprintf("/%d", info.ContextMaxFiles)
 		}
-		if info.ContextBudgetTokens > 0 {
-			files += fmt.Sprintf(" | code %s/%s tok", CompactTokens(info.ContextTokens), CompactTokens(info.ContextBudgetTokens))
-		}
 		rows = append(rows, InfoStyle.Render(files))
+		if info.ContextBudgetTokens > 0 {
+			rows = append(rows, InfoStyle.Render(fmt.Sprintf(
+				"evidence %s/%s tok",
+				CompactTokens(info.ContextTokens),
+				CompactTokens(info.ContextBudgetTokens),
+			)))
+		}
 	} else {
 		rows = append(rows, SubtleStyle.Render("no context build reported yet"))
 	}
@@ -371,6 +379,19 @@ func contextRows(info StatsPanelInfo) []string {
 		rows = append(rows, SubtleStyle.Render("why: "+TruncateSingleLine(info.ContextReasons[0], 42)))
 	}
 	return rows
+}
+
+func contextReasonContains(reasons []string, needle string) bool {
+	needle = strings.ToLower(strings.TrimSpace(needle))
+	if needle == "" {
+		return false
+	}
+	for _, reason := range reasons {
+		if strings.Contains(strings.ToLower(reason), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func statsPanelWindowUsage(info StatsPanelInfo) (int, int) {
