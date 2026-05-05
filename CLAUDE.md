@@ -19,7 +19,7 @@ CGO_ENABLED=1 go build -o bin/dfmc.exe ./cmd/dfmc
 # Fast dev run (no binary)
 go run ./cmd/dfmc <command> [args]
 
-# Full test suite (what Makefile uses)
+# Full test suite (what Makefile/CI use; requires gcc when -race is enabled)
 CGO_ENABLED=1 go test -race -count=1 ./...
 
 # Single package / single test
@@ -28,10 +28,12 @@ go test ./internal/engine -run TestAgentLoop -v
 
 # Lint / format
 go vet ./...
-gofmt -w .
+gofmt -w $(git ls-files '*.go')
 ```
 
 **CGO matters.** Tree-sitter bindings (`tree-sitter-go`, `-javascript`, `-typescript`, `-python`) require CGO. With `CGO_ENABLED=0` the build still succeeds but AST silently falls back to the regex extractor in `internal/ast/backend_stub.go`, and `dfmc status` / `dfmc doctor` will report `ast_backend: regex`. If AST behavior looks wrong, check the backend before blaming the code.
+
+On Windows, `CGO_ENABLED=1` and `go test -race` require a C compiler on `PATH` (`gcc --version` should work). MSYS2 MinGW is the usual setup; without it, regular `go test ./...` and non-CGO builds still run, but race tests cannot start.
 
 ## Architecture
 

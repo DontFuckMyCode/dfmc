@@ -83,12 +83,3 @@ func (s *ContextSnapshot) MergeWith(parent *ContextSnapshot) *ContextSnapshot {
 		RetrievedAt: s.RetrievedAt,
 	}
 }
-
-// chunkMap returns a map from Path to Chunk for the receiver.
-func (s *ContextSnapshot) chunkMap() map[string]ContextChunkRef {
-	m := make(map[string]ContextChunkRef)
-	for _, c := range s.Chunks {
-		m[c.Path] = c
-	}
-	return m
-}

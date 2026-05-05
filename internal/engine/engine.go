@@ -151,6 +151,7 @@ type Engine struct {
 	approvalMu         sync.RWMutex
 	registeredApprover Approver
 	approverToken      any // ownership token for ReleaseApproverWithToken
+	approverLeases     map[any]*approverLease
 	recentDenials      []RecentDenial
 
 	agentMu         sync.Mutex

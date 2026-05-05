@@ -261,6 +261,9 @@ func (m *Model) handleTasksPanelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	key := msg.String()
 	switch key {
+	case "esc":
+		m.ui.showTasksPanel = false
+		m.notice = "Tasks panel closed."
 	case "up", "k":
 		if m.tasksPanel.selectedIndex > 0 {
 			m.tasksPanel.selectedIndex--
@@ -330,7 +333,7 @@ func (m Model) renderTasksPanelOverlay(body string, contentWidth int, innerHeigh
 }
 
 // tasksSlash is the /tasks slash command handler.
-func (m Model) tasksSlash(args []string) string {
+func (m Model) tasksSlash(args []string) (Model, string) {
 	sub := ""
 	if len(args) > 0 {
 		sub = strings.ToLower(strings.TrimSpace(args[0]))
@@ -344,47 +347,47 @@ func (m Model) tasksSlash(args []string) string {
 				m.tasksPanel.expanded = make(map[string]bool)
 			}
 		}
-		return ""
+		return m, ""
 	case "tree":
 		if m.eng == nil {
-			return "Engine unavailable."
+			return m, "Engine unavailable."
 		}
 		store := m.eng.Tools.TaskStore()
 		if store == nil {
-			return "Task store not initialized."
+			return m, "Task store not initialized."
 		}
-		return renderTasksInlineTree(store, "")
+		return m, renderTasksInlineTree(store, "")
 	case "show":
 		if len(args) < 2 {
-			return "Usage: /tasks show <id>"
+			return m, "Usage: /tasks show <id>"
 		}
 		id := strings.TrimSpace(args[1])
 		if m.eng == nil {
-			return "Engine unavailable."
+			return m, "Engine unavailable."
 		}
 		store := m.eng.Tools.TaskStore()
 		if store == nil {
-			return "Task store not initialized."
+			return m, "Task store not initialized."
 		}
 		t, err := store.LoadTask(id)
 		if err != nil {
-			return "load error: " + err.Error()
+			return m, "load error: " + err.Error()
 		}
 		if t == nil {
-			return "task not found: " + id
+			return m, "task not found: " + id
 		}
-		return formatTaskDetailInline(t)
+		return m, formatTaskDetailInline(t)
 	case "roots":
 		if m.eng == nil {
-			return "Engine unavailable."
+			return m, "Engine unavailable."
 		}
 		store := m.eng.Tools.TaskStore()
 		if store == nil {
-			return "Task store not initialized."
+			return m, "Task store not initialized."
 		}
 		all, err := store.ListTasks(taskstore.ListOptions{})
 		if err != nil {
-			return "error: " + err.Error()
+			return m, "error: " + err.Error()
 		}
 		var roots []*supervisor.Task
 		for _, t := range all {
@@ -392,9 +395,9 @@ func (m Model) tasksSlash(args []string) string {
 				roots = append(roots, t)
 			}
 		}
-		return renderTasksInlineList(roots)
+		return m, renderTasksInlineList(roots)
 	default:
-		return "tasks: unknown subcommand. Try: /tasks [list|tree|show <id>|roots]"
+		return m, "tasks: unknown subcommand. Try: /tasks [list|tree|show <id>|roots]"
 	}
 }
 

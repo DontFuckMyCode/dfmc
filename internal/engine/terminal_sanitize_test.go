@@ -31,11 +31,22 @@ func TestStripTerminalControlBytes_NeutralisesANSIExploits(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			out := stripTerminalControlBytes(c.in)
-			if strings.ContainsAny(out, "\x1b\x9b\x9d\x07\x00\x0b\x0c") {
+			if containsAnyByte(out, []byte{0x1b, 0x9b, 0x9d, 0x07, 0x00, 0x0b, 0x0c}) {
 				t.Errorf("output still contains terminal-control bytes: %q (in=%q)", out, c.in)
 			}
 		})
 	}
+}
+
+func containsAnyByte(s string, needles []byte) bool {
+	for i := 0; i < len(s); i++ {
+		for _, needle := range needles {
+			if s[i] == needle {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // TestStripTerminalControlBytes_PreservesContent confirms the filter

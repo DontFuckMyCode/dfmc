@@ -85,12 +85,6 @@ func (g *Graph) Cycles() [][]string {
 	return out
 }
 
-func (g *Graph) hasSelfLoop(id string) bool {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	return g.hasSelfLoopLocked(id)
-}
-
 // hasSelfLoopLocked is the lock-free body of hasSelfLoop. Caller must
 // hold g.mu (read or write). Used by Cycles() to keep SCC + self-loop
 // inspection inside a single RLock.

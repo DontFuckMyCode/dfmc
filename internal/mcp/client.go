@@ -26,10 +26,9 @@ type Client struct {
 	stdout io.Reader
 	outBuf *bufio.Reader
 
-	mu      sync.RWMutex
-	tools   []ToolDescriptor
-	closed  atomic.Bool
-	initErr error
+	mu     sync.RWMutex
+	tools  []ToolDescriptor
+	closed atomic.Bool
 }
 
 // NewClient builds a client that will spawn `command args` and connect to it

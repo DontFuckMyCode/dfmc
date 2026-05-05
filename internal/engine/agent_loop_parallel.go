@@ -275,10 +275,8 @@ func invalidateCacheForFiles(cache map[string]string, mu *sync.Mutex, paths []st
 			for k := range cache {
 				delete(cache, k)
 			}
-			if rangeIndex != nil {
-				for k := range rangeIndex {
-					delete(rangeIndex, k)
-				}
+			for k := range rangeIndex {
+				delete(rangeIndex, k)
 			}
 			return
 		}

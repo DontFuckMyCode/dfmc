@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -140,6 +141,114 @@ func TestSetApprover_DenyBlocksExecution(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatalf("expected tool:denied event within 1s")
+	}
+}
+
+func TestSetApproverWithToken_RestoresPreviousApprover(t *testing.T) {
+	eng := newApproverTestEngine(t)
+	eng.SetApprover(ApproverFunc(func(context.Context, ApprovalRequest) ApprovalDecision {
+		return ApprovalDecision{Approved: false, Reason: "base"}
+	}))
+	token := &struct{}{}
+	eng.SetApproverWithToken(ApproverFunc(func(context.Context, ApprovalRequest) ApprovalDecision {
+		return ApprovalDecision{Approved: true, Reason: "override"}
+	}), token)
+
+	eng.ReleaseApproverWithToken(token)
+
+	ap := eng.approver()
+	if ap == nil {
+		t.Fatalf("release should restore the previous approver, got nil")
+	}
+	if got := ap.RequestApproval(context.Background(), ApprovalRequest{Tool: "read_file"}).Reason; got != "base" {
+		t.Fatalf("release restored wrong approver: %q", got)
+	}
+}
+
+func TestSetApproverWithToken_OutOfOrderReleaseDoesNotResurrect(t *testing.T) {
+	eng := newApproverTestEngine(t)
+	eng.SetApprover(ApproverFunc(func(context.Context, ApprovalRequest) ApprovalDecision {
+		return ApprovalDecision{Reason: "base"}
+	}))
+	tokenA := &struct{ name string }{"a"}
+	tokenB := &struct{ name string }{"b"}
+	eng.SetApproverWithToken(ApproverFunc(func(context.Context, ApprovalRequest) ApprovalDecision {
+		return ApprovalDecision{Reason: "a"}
+	}), tokenA)
+	eng.SetApproverWithToken(ApproverFunc(func(context.Context, ApprovalRequest) ApprovalDecision {
+		return ApprovalDecision{Reason: "b"}
+	}), tokenB)
+
+	eng.ReleaseApproverWithToken(tokenA)
+	if got := eng.approver().RequestApproval(context.Background(), ApprovalRequest{Tool: "read_file"}).Reason; got != "b" {
+		t.Fatalf("early release should leave current override intact, got %q", got)
+	}
+	eng.ReleaseApproverWithToken(tokenB)
+	if got := eng.approver().RequestApproval(context.Background(), ApprovalRequest{Tool: "read_file"}).Reason; got != "base" {
+		t.Fatalf("later release resurrected stale override, got %q", got)
+	}
+}
+
+func TestSetApproverWithToken_LIFOReleaseRestoresNestedOverride(t *testing.T) {
+	eng := newApproverTestEngine(t)
+	eng.SetApprover(ApproverFunc(func(context.Context, ApprovalRequest) ApprovalDecision {
+		return ApprovalDecision{Reason: "base"}
+	}))
+	tokenA := &struct{ name string }{"a"}
+	tokenB := &struct{ name string }{"b"}
+	eng.SetApproverWithToken(ApproverFunc(func(context.Context, ApprovalRequest) ApprovalDecision {
+		return ApprovalDecision{Reason: "a"}
+	}), tokenA)
+	eng.SetApproverWithToken(ApproverFunc(func(context.Context, ApprovalRequest) ApprovalDecision {
+		return ApprovalDecision{Reason: "b"}
+	}), tokenB)
+
+	eng.ReleaseApproverWithToken(tokenB)
+	if got := eng.approver().RequestApproval(context.Background(), ApprovalRequest{Tool: "read_file"}).Reason; got != "a" {
+		t.Fatalf("nested release should restore previous override, got %q", got)
+	}
+	eng.ReleaseApproverWithToken(tokenA)
+	if got := eng.approver().RequestApproval(context.Background(), ApprovalRequest{Tool: "read_file"}).Reason; got != "base" {
+		t.Fatalf("final release should restore base approver, got %q", got)
+	}
+}
+
+func TestSetApproverWithToken_ConcurrentReleasesRestoreBase(t *testing.T) {
+	eng := newApproverTestEngine(t)
+	eng.SetApprover(ApproverFunc(func(context.Context, ApprovalRequest) ApprovalDecision {
+		return ApprovalDecision{Reason: "base"}
+	}))
+
+	const n = 32
+	tokens := make([]any, n)
+	for i := 0; i < n; i++ {
+		token := &struct{ id int }{id: i}
+		tokens[i] = token
+		reason := "override"
+		eng.SetApproverWithToken(ApproverFunc(func(context.Context, ApprovalRequest) ApprovalDecision {
+			return ApprovalDecision{Reason: reason}
+		}), token)
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for _, token := range tokens {
+		wg.Add(1)
+		go func(token any) {
+			defer wg.Done()
+			<-start
+			eng.ReleaseApproverWithToken(token)
+		}(token)
+	}
+	close(start)
+	wg.Wait()
+
+	ap := eng.approver()
+	if ap == nil {
+		t.Fatalf("concurrent releases should restore base approver, got nil")
+	}
+	if got := ap.RequestApproval(context.Background(), ApprovalRequest{Tool: "read_file"}).Reason; got != "base" {
+		t.Fatalf("concurrent releases restored wrong approver: %q", got)
 	}
 }
 

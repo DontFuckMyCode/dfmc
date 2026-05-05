@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"sync"
 	"testing"
 	"time"
 )
@@ -25,37 +24,6 @@ func (w *channelWriter) Write(p []byte) (int, error) {
 		// In practice respCh is buffered with 200 slots.
 		return len(p), nil
 	}
-}
-
-// mockResponseReader is an io.Reader backed by a chan of byte slices,
-// used in tests to avoid the io.Pipe blocking-read deadlock.
-type mockResponseReader struct {
-	t       *testing.T
-	respCh  <-chan []byte
-	pending []byte
-	mu      sync.Mutex
-}
-
-func newMockResponseReader(t *testing.T, respCh <-chan []byte) *mockResponseReader {
-	return &mockResponseReader{t: t, respCh: respCh}
-}
-
-func (r *mockResponseReader) Read(p []byte) (int, error) {
-	if len(r.pending) == 0 {
-		select {
-		case resp, ok := <-r.respCh:
-			if !ok {
-				return 0, io.EOF
-			}
-			r.pending = resp
-		case <-time.After(5 * time.Second):
-			r.t.Fatalf("mockResponseReader.Read timed out waiting for response")
-			return 0, io.ErrClosedPipe
-		}
-	}
-	n := copy(p, r.pending)
-	r.pending = r.pending[n:]
-	return n, nil
 }
 
 // connectionHarness is a server harness for connection tests.
@@ -305,7 +273,7 @@ func TestServer_ToolsCall_ValidCall(t *testing.T) {
 
 	// Call echo tool
 	h.sendRequest("tools/call", "3", map[string]any{
-		"name": "echo",
+		"name":      "echo",
 		"arguments": map[string]any{"msg": "hello"},
 	})
 	resp := h.recvResponse()

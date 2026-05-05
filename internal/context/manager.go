@@ -733,11 +733,6 @@ func isLikelyEntryPoint(name string) bool {
 // findImportCycles returns a set of module IDs that are part of import
 // cycles using Tarjan's strongly connected components algorithm.
 func findImportCycles(graph *codemap.Graph) map[string]bool {
-	type state struct {
-		index   int
-		lowlink int
-		onStack bool
-	}
 	indices := make(map[string]int)
 	var stack []string
 	onStack := make(map[string]bool)

@@ -49,6 +49,13 @@ func (m Model) runPanelCommand(cmd string, args []string) (tea.Model, tea.Cmd, b
 		m.chat.input = ""
 		m.notice = "Shared todo list below."
 		return m.appendSystemMessage(m.describeTodos()), nil, true
+	case "tasks":
+		m.chat.input = ""
+		next, out := m.tasksSlash(args)
+		if strings.TrimSpace(out) == "" {
+			return next, nil, true
+		}
+		return next.appendSystemMessage(out), nil, true
 	case "subagents", "workers":
 		m.chat.input = ""
 		m.notice = "Subagent activity below."
@@ -134,6 +141,13 @@ func (m Model) runPanelCommand(cmd string, args []string) (tea.Model, tea.Cmd, b
 	case "status":
 		m.chat.input = ""
 		return m.appendSystemMessage(m.statusCommandSummary()), loadStatusCmd(m.eng), true
+	case "providers":
+		// Open the Providers diagnostic panel (Ctrl+O shortcut).
+		// Use /provider to switch the active model, /models lists them.
+		m.chat.input = ""
+		m = m.activateProvidersPanel("", false)
+		m.notice = "Providers panel — ctrl+o also opens it."
+		return m, nil, true
 	case "reload":
 		m.chat.input = ""
 		if err := m.reloadEngineConfig(); err != nil {

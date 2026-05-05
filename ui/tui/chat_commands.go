@@ -259,7 +259,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 	case "approve", "approvals", "permissions",
 		"hooks", "stats", "tokens", "cost",
 		"workflow", "todos", "todo",
-		"subagents", "workers", "queue",
+		"tasks", "subagents", "workers", "queue",
 		"keylog", "coach", "hints", "intent",
 		"copy", "yank", "mouse", "select",
 		"status", "reload":

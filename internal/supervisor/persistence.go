@@ -44,6 +44,13 @@ type Embedder interface {
 // Save persists the supervisor run state to storage. It marshals the
 // supervisor-specific fields and embeds them into the drive run JSON.
 func Save(emb Embedder, runID string, fields *supervisorFields, baseJSON []byte) error {
+	if fields == nil {
+		fields = &supervisorFields{}
+	}
+	outFields := *fields
+	if outFields.Version == 0 {
+		outFields.Version = supervisorVersion
+	}
 	var base map[string]any
 	if len(baseJSON) > 0 {
 		if err := json.Unmarshal(baseJSON, &base); err != nil {
@@ -52,7 +59,7 @@ func Save(emb Embedder, runID string, fields *supervisorFields, baseJSON []byte)
 	} else {
 		base = make(map[string]any)
 	}
-	base["sv"] = fields
+	base["sv"] = &outFields
 	merged, err := json.Marshal(base)
 	if err != nil {
 		return fmt.Errorf("marshal merged: %w", err)

@@ -421,15 +421,7 @@ func (t *TodoWriteTool) Snapshot() []TodoItem {
 	}
 	out := make([]TodoItem, len(t.state.items))
 	for i, it := range t.state.items {
-		out[i] = TodoItem{
-			Content:    it.Content,
-			Detail:     it.Detail,
-			Status:     it.Status,
-			ActiveForm: it.ActiveForm,
-			Priority:   it.Priority,
-			Labels:     it.Labels,
-			ParentID:   it.ParentID,
-		}
+		out[i] = TodoItem(it)
 	}
 	return out
 }

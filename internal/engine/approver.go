@@ -58,6 +58,12 @@ func (f ApproverFunc) RequestApproval(ctx context.Context, req ApprovalRequest) 
 	return f(ctx, req)
 }
 
+type approverLease struct {
+	prev      Approver
+	prevToken any
+	active    bool
+}
+
 // SetApprover registers (or clears, when approver==nil) the Approver for
 // this engine. Safe to call at any point in the engine lifecycle; later
 // tool invocations will see the new Approver immediately.
@@ -67,6 +73,8 @@ func (e *Engine) SetApprover(approver Approver) {
 	}
 	e.approvalMu.Lock()
 	e.registeredApprover = approver
+	e.approverToken = nil
+	e.approverLeases = nil
 	e.approvalMu.Unlock()
 }
 
@@ -80,6 +88,14 @@ func (e *Engine) SetApproverWithToken(approver Approver, token any) {
 	}
 	e.approvalMu.Lock()
 	defer e.approvalMu.Unlock()
+	if e.approverLeases == nil {
+		e.approverLeases = make(map[any]*approverLease)
+	}
+	e.approverLeases[token] = &approverLease{
+		prev:      e.registeredApprover,
+		prevToken: e.approverToken,
+		active:    true,
+	}
 	e.registeredApprover = approver
 	e.approverToken = token
 }
@@ -94,13 +110,37 @@ func (e *Engine) ReleaseApproverWithToken(token any) {
 	}
 	e.approvalMu.Lock()
 	defer e.approvalMu.Unlock()
-	if e.approverToken == token {
-		// Token match — we still own the slot; restore nil to clear.
-		// Caller is responsible for ensuring no newer override was installed.
-		e.registeredApprover = nil
-		e.approverToken = nil
+	lease, ok := e.approverLeases[token]
+	if !ok {
+		return
 	}
-	// Token mismatch: another override owns the slot; do nothing.
+	lease.active = false
+	if e.approverToken != token {
+		return
+	}
+	prev, prevToken := e.nextActiveApproverLocked(lease)
+	e.registeredApprover = prev
+	e.approverToken = prevToken
+	if prevToken == nil {
+		e.approverLeases = nil
+	}
+}
+
+func (e *Engine) nextActiveApproverLocked(lease *approverLease) (Approver, any) {
+	prev := lease.prev
+	prevToken := lease.prevToken
+	for prevToken != nil {
+		prevLease, ok := e.approverLeases[prevToken]
+		if !ok {
+			return nil, nil
+		}
+		if prevLease.active {
+			return prev, prevToken
+		}
+		prev = prevLease.prev
+		prevToken = prevLease.prevToken
+	}
+	return prev, nil
 }
 
 // approver returns the currently-registered Approver or nil.

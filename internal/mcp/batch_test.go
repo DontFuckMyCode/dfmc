@@ -22,12 +22,12 @@ func (fb *fakeBridgeForBatch) Call(ctx context.Context, name string, args []byte
 // batchHarness is a server harness that supports batch requests via
 // buffered channel (avoids io.Pipe deadlock with concurrent responses).
 type batchHarness struct {
-	t      *testing.T
-	stdin  *io.PipeWriter
-	respCh chan []byte
+	t       *testing.T
+	stdin   *io.PipeWriter
+	respCh  chan []byte
 	respBuf []byte // carries over bytes between recv calls
-	done   chan error
-	cancel context.CancelFunc
+	done    chan error
+	cancel  context.CancelFunc
 }
 
 func newBatchHarness(t *testing.T, bridge ToolBridge) *batchHarness {
@@ -37,9 +37,11 @@ func newBatchHarness(t *testing.T, bridge ToolBridge) *batchHarness {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- srv.Serve(ctx)
+		err := srv.Serve(ctx)
 		_ = inW.Close()
 		close(respCh)
+		done <- err
+		close(done)
 	}()
 	return &batchHarness{t: t, stdin: inW, respCh: respCh, done: done, cancel: cancel}
 }
@@ -56,21 +58,6 @@ func (w *batchChannelWriter) Write(p []byte) (int, error) {
 		return len(p), nil
 	default:
 		return len(p), nil
-	}
-}
-
-func (h *batchHarness) sendBatch(msgs []any) {
-	h.t.Helper()
-	for _, m := range msgs {
-		buf, err := json.Marshal(m)
-		if err != nil {
-			h.t.Fatalf("marshal: %v", err)
-		}
-		frame := append(buf, '\n')
-		if _, err := h.stdin.Write(frame); err != nil {
-			h.t.Fatalf("stdin write: %v", err)
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -178,44 +165,6 @@ func (h *batchHarness) close() {
 	}
 }
 
-// bufferedReader lets us read line-by-line from a reader with timeout.
-type bufferedReader struct {
-	r   *io.PipeReader
-	buf []byte
-}
-
-func newBufferedReader(r *io.PipeReader) *bufferedReader {
-	return &bufferedReader{r: r}
-}
-
-func (br *bufferedReader) ReadBytes(delim byte) ([]byte, error) {
-	// Simple line read using a small buffer
-	buf := make([]byte, 0, 4096)
-	tmp := make([]byte, 1)
-	for {
-		n, err := br.r.Read(tmp)
-		if n > 0 {
-			buf = append(buf, tmp[0])
-			if tmp[0] == delim {
-				return buf, nil
-			}
-		}
-		if err != nil {
-			return buf, err
-		}
-		if len(buf) > 32000 {
-			return buf, io.ErrShortBuffer
-		}
-	}
-}
-
-func stripNL(s string) string {
-	for len(s) > 0 && (s[len(s)-1] == '\n' || s[len(s)-1] == '\r') {
-		s = s[:len(s)-1]
-	}
-	return s
-}
-
 // TestServer_BatchRequest_ValidRequests tests that the server handles
 // a batch of valid requests and returns an array of responses in order.
 func TestServer_BatchRequest_ValidRequests(t *testing.T) {
@@ -295,9 +244,9 @@ func TestServer_BatchRequest_MixedNotificationsAndRequests(t *testing.T) {
 
 	// Batch with: notification (no response) + ping (response) + notification (no response)
 	batch := []map[string]any{
-		{"jsonrpc": "2.0", "method": "ping"},                                        // notification — no ID
-		{"jsonrpc": "2.0", "id": "20", "method": "ping"},                             // request — gets response
-		{"jsonrpc": "2.0", "method": "notifications/initialized"},                  // notification — no ID
+		{"jsonrpc": "2.0", "method": "ping"},                      // notification — no ID
+		{"jsonrpc": "2.0", "id": "20", "method": "ping"},          // request — gets response
+		{"jsonrpc": "2.0", "method": "notifications/initialized"}, // notification — no ID
 	}
 
 	buf, _ := json.Marshal(batch)

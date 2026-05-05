@@ -79,6 +79,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.tabs[m.activeTab] != "Chat" {
 			return m, nil
 		}
+		if len(m.chat.transcript) == 0 {
+			return m, nil
+		}
 		if msg.Action != tea.MouseActionPress {
 			return m, nil
 		}
@@ -357,6 +360,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) {
 			m.chat.transcript[m.chat.streamIndex].Content += msg.delta
 			m.chat.transcript[m.chat.streamIndex].Preview = chatDigest(m.chat.transcript[m.chat.streamIndex].Content)
+			m.refreshChatLineTokenCount(m.chat.streamIndex)
 		}
 		return m, waitForStreamMsg(m.chat.streamMessages)
 
@@ -380,6 +384,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) && !m.chat.streamStartedAt.IsZero() {
 			m.chat.transcript[m.chat.streamIndex].DurationMs = int(time.Since(m.chat.streamStartedAt).Milliseconds())
 		}
+		m.moveStreamingAssistantToTranscriptEnd()
 		m.chat.streamStartedAt = time.Time{}
 		m.chat.sending = false
 		m.chat.streamMessages = nil
@@ -388,10 +393,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resetAgentRuntime()
 		m.chat.pendingNoteCount = 0
 		m.notice = ""
-		// Build and append session summary BEFORE draining pending queue so it
-		// lands at the BOTTOM of the transcript (after explanation, tools,
-		// errors, coach notes — in that render order).
-		m = m.appendSessionDoneSummary()
 		next, drainCmd := m.drainPendingQueue()
 		return next, tea.Batch(loadStatusCmd(m.eng), loadLatestPatchCmd(m.eng), loadGitInfoCmd(m.projectRoot()), drainCmd)
 
@@ -519,20 +520,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
-			// Ctrl+C cancels paste blocks; otherwise rage-quits.
+			// Ctrl+C cancels paste blocks first; then cancels streaming
+			// (if actively sending); finally rage-quits.
 			if m.activeTab == 0 && len(m.chat.pasteBlocks) > 0 {
-				m.chat.pasteBlocks = nil
-				m.chat.pasteWindowEnd = time.Time{}
+				m.clearPasteBlocks()
 				m.setChatInput("")
 				m.notice = "Paste cancelled."
 				return m, nil
+			}
+			if m.chat.sending {
+				if m.cancelActiveStream() {
+					m.notice = "Cancelling…"
+					return m, nil
+				}
 			}
 			return m, tea.Quit
 		case "ctrl+u":
 			// Unix readline-style "clear input line". Only useful on the
 			// Chat tab — other panels don't have a live composer.
 			if m.activeTab == 0 {
-				m.chat.pasteBlocks = nil // also cancel any active paste
+				m.clearPasteBlocks()
 				m.setChatInput("")
 				m.chat.cursor = 0
 				m.slashMenu.mention = 0
@@ -546,6 +553,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ui.showHelpOverlay = !m.ui.showHelpOverlay
 			return m, nil
 		case "esc":
+			if m.activeTab == 0 && m.ui.showTasksPanel {
+				return m.handleTasksPanelKey(msg)
+			}
+			if m.chat.sending && m.cancelActiveStream() {
+				m.notice = "Cancelling…"
+				return m, nil
+			}
 			if m.activeTab == 0 && m.ui.statsPanelFocusLocked {
 				m.ui.statsPanelFocusLocked = false
 				m.ui.statsPanelBoostUntil = time.Time{}
@@ -553,20 +567,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "j", "k", "up", "down", "enter", "m", "f", "s", "g", "G", "r":
+			if m.activeTab == 0 && m.ui.showTasksPanel {
+				return m.handleTasksPanelKey(msg)
+			}
 			// Route to stats panel handler when providers sub-mode is focused
 			if m.activeTab == 0 && m.ui.statsPanelFocusLocked && m.ui.statsPanelMode == statsPanelModeProviders {
 				return m.handleStatsPanelProviderKey(msg)
 			}
 		case "ctrl+s":
 			m.ui.selectionModeActive = false
-			if !m.ui.showStatsPanel {
-				m.ui.statsPanelFocusLocked = false
-				m.ui.statsPanelBoostUntil = time.Time{}
-			} else {
-				m.ui.statsPanelFocusLocked = false
-				m.ui.statsPanelBoostUntil = time.Time{}
-			}
+			m.ui.statsPanelFocusLocked = false
+			m.ui.statsPanelBoostUntil = time.Time{}
 			m.ui.showStatsPanel = !m.ui.showStatsPanel
+			if m.ui.showStatsPanel && m.ui.statsPanelMode == "" {
+				m.ui.statsPanelMode = statsPanelModeOverview
+			}
 			return m, nil
 		case "alt+x":
 			if m.activeTab == 0 {
@@ -623,59 +638,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "f1", "alt+1":
 			m.activeTab = 0
 			return m, nil
-		case "f2", "alt+2":
+		case "f2":
+			m.activeTab = 1
+			return m, nil
+		case "f3", "alt+2":
 			m.activeTab = 2
 			return m, nil
-		case "ctrl+i":
-			m = m.activateDiagnosticTab("Status")
+		case "f4", "alt+3":
+			m.activeTab = 3
 			return m, nil
-		case "ctrl+y":
-			m = m.activatePlansPanel("", false)
-			return m, nil
-		case "ctrl+w":
-			// Inside the chat composer ctrl+w is the standard
-			// "kill previous word" editor binding (handled in
-			// chat_key.go's KeyCtrlW case). Only fall through to
-			// the Context panel jump when the user is not on Chat,
-			// otherwise typing-flow gets shadowed by a tab switch.
-			if m.activeTab != 0 {
-				m = m.activateContextPanel("", false)
-				return m, nil
-			}
-		case "ctrl+o":
-			m = m.activateProvidersPanel("", false)
-			return m, nil
-		case "f3", "alt+3":
-			m.activeTab = 6
-			return m, nil
-		case "f4", "alt+4":
-			m = m.activateDiagnosticTab("Providers")
-			return m, nil
-		case "f5", "alt+5":
+		case "f5", "alt+4":
 			m.activeTab = 4
 			m = m.refreshWorkflowOnTabEnter()
 			return m, nil
-		case "f6", "alt+6":
+		case "f6", "alt+5", "alt+6":
 			m.activeTab = 5
 			return m, nil
-		case "f7", "alt+7":
-			m.activeTab = 3
+		case "f7":
+			m.activeTab = 6
 			return m, nil
-		case "f8", "alt+8":
+		case "f8", "alt+7":
 			m.activeTab = 7
 			if m.memory.entries == nil && !m.memory.loading {
 				m.memory.loading = true
 				return m, loadMemoryCmd(m.eng, m.memory.tier)
 			}
 			return m, nil
-		case "f9", "alt+9":
+		case "f9", "alt+8":
 			m.activeTab = 8
 			if !m.codemap.loaded && !m.codemap.loading {
 				m.codemap.loading = true
 				return m, loadCodemapCmd(m.eng)
 			}
 			return m, nil
-		case "f10", "alt+0":
+		case "f10", "alt+9", "alt+0":
 			m.activeTab = 9
 			if !m.conversations.loaded && !m.conversations.loading {
 				m.conversations.loading = true
@@ -690,10 +686,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "f12":
-			// Security — no alt alias (alt+s is taken by stats panel toggle).
-			// Scan is manual via `r` inside the panel so landing here is
-			// cheap; we just flip the tab and show the empty-state hint.
 			m.activeTab = 11
+			return m, nil
+		case "ctrl+i":
+			m = m.activateDiagnosticTab("Status")
+			return m, nil
+		case "ctrl+y":
+			m = m.activatePlansPanel("", false)
+			return m, nil
+		case "ctrl+w":
+			if m.activeTab != 0 {
+				m = m.activateContextPanel("", false)
+				return m, nil
+			}
+		case "ctrl+o":
+			m = m.activateProvidersPanel("", false)
 			return m, nil
 		}
 
