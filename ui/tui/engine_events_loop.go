@@ -114,6 +114,12 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		// this reset, a long previous turn that hit 95% would suppress
 		// the warning for the new turn until usage drops back below 70.
 		m.agentLoop.headroomThresholdsHit = 0
+		// Compacts-this-turn counter resets so the runtime badge shows
+		// 0 again at the start of each ask. Without this a turn that
+		// needed 3 compacts would carry the "×3" badge into the next
+		// turn even though that turn might compact 0 times.
+		m.agentLoop.compactsThisTurn = 0
+		m.agentLoop.compactReclaimedTurn = 0
 		// A fresh loop start means any previously parked banner is obsolete.
 		m.ui.resumePromptActive = false
 		files := payloadInt(payload, "context_files", 0)

@@ -376,6 +376,11 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		removed := payloadInt(payload, "messages_removed", 0)
 		step := payloadInt(payload, "step", 0)
 		reclaimed := max(before-after, 0) // defensive: compact never grows the buffer
+		// Per-turn counter — feeds the runtime card "compacts ×N" badge
+		// so the user sees the engine is actively fighting the budget
+		// without scanning event-by-event in the activity feed.
+		m.agentLoop.compactsThisTurn++
+		m.agentLoop.compactReclaimedTurn += reclaimed
 		title := "context compacted"
 		if eventType == "context:lifecycle:proactive_compacted" {
 			title = "context proactive compact"

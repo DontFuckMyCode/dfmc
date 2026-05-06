@@ -96,6 +96,15 @@ type runtimeViewModel struct {
 	LiveLoopTokens    int
 	LiveLoopBudgetCap int
 
+	// CompactsThisTurn / CompactReclaimedThisTurn track how many
+	// auto-compact cycles have fired during the current turn and how
+	// many tokens they reclaimed. Drawn as "compacts ×N · -Mk" in the
+	// runtime strip when N > 0 — surfaces a budget-thrashing turn
+	// without requiring the user to read individual compact events
+	// from the activity feed. Reset on every agent:loop:start.
+	CompactsThisTurn         int
+	CompactReclaimedThisTurn int
+
 	Parked          bool
 	ApprovalPending bool
 	QueuedCount     int
@@ -192,6 +201,9 @@ func (m Model) runtimeViewModel() runtimeViewModel {
 		LastToolReason:         m.agentLoop.lastToolReason,
 		LiveLoopTokens:         m.agentLoop.liveLoopTokens,
 		LiveLoopBudgetCap:      m.agentLoop.liveLoopBudgetCap,
+
+		CompactsThisTurn:         m.agentLoop.compactsThisTurn,
+		CompactReclaimedThisTurn: m.agentLoop.compactReclaimedTurn,
 		StuckTool:              m.agentLoop.stuckTool,
 		StuckCount:             m.agentLoop.stuckCount,
 		StuckErrClass:          m.agentLoop.stuckErrClass,
@@ -364,6 +376,13 @@ func runtimeStripNowParts(vm runtimeViewModel) []string {
 	if badge := liveLoopTokensBadge(vm); badge != "" {
 		parts = append(parts, badge)
 	}
+	// Compacts-this-turn badge — when N > 0 the engine has actively
+	// fought the budget at least once this turn. Showing it surfaces
+	// "thrashing" turns (compacts ×3 + reclaimed 28k) where the user
+	// might want to scope down to give the loop more headroom.
+	if badge := compactsThisTurnBadge(vm); badge != "" {
+		parts = append(parts, badge)
+	}
 	// Auto-resume progress: show ceiling proximity continuously during a
 	// long autonomous run. Style escalates from info → warn as headroom
 	// disappears so the user knows when to /continue with a refined
@@ -461,6 +480,34 @@ func liveLoopTokensBadge(vm runtimeViewModel) string {
 		return infoStyle.Render(label)
 	default:
 		return subtleStyle.Render(label)
+	}
+}
+
+// compactsThisTurnBadge renders "compacts ×N · -Mk" when the engine has
+// run at least one auto-compact during the current turn. Surfaces a
+// budget-thrashing turn so the user can spot one without watching the
+// activity feed event-by-event. Style escalates: 1 = info nudge,
+// 2-3 = info bumped, 4+ = warn (the loop is barely keeping up and a
+// scope refinement is probably warranted).
+//
+// Returns "" when the turn hasn't compacted yet (CompactsThisTurn == 0)
+// so the strip stays quiet on healthy short turns.
+func compactsThisTurnBadge(vm runtimeViewModel) string {
+	if vm.CompactsThisTurn <= 0 {
+		return ""
+	}
+	label := fmt.Sprintf("compacts ×%d", vm.CompactsThisTurn)
+	if vm.CompactReclaimedThisTurn > 0 {
+		label = fmt.Sprintf("compacts ×%d · -%s reclaimed",
+			vm.CompactsThisTurn,
+			formatTokenCount(vm.CompactReclaimedThisTurn),
+		)
+	}
+	switch {
+	case vm.CompactsThisTurn >= 4:
+		return warnStyle.Render(label)
+	default:
+		return infoStyle.Render(label)
 	}
 }
 

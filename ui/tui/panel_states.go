@@ -618,6 +618,16 @@ type agentLoopState struct {
 	// ONCE per turn per band. Reset on agent:loop:start.
 	// Bit 0 = 70%, bit 1 = 85%, bit 2 = 95%.
 	headroomThresholdsHit uint8
+
+	// compactsThisTurn counts how many times the engine has run an
+	// auto-compact cycle during the CURRENT turn (reactive + proactive
+	// combined). A turn that needed multiple compacts is fighting hard
+	// for budget — the runtime card shows a "compacts ×N" badge so
+	// the user can spot a loop that's barely keeping its head above
+	// water without watching the activity feed event-by-event. Reset
+	// on agent:loop:start.
+	compactsThisTurn      int
+	compactReclaimedTurn  int // cumulative tokens reclaimed by compacts this turn
 }
 
 // workflowPanelState — Drive TODO tree panel state for the Workflow tab.

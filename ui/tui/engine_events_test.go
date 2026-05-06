@@ -1230,6 +1230,45 @@ func TestRuntimeStrip_LiveLoopTokens_WithoutBudget(t *testing.T) {
 	}
 }
 
+// TestRuntimeStrip_CompactsThisTurnBadge pins the "compacts ×N · -Mk
+// reclaimed" badge that surfaces a budget-thrashing turn. Style
+// escalates: 1-3 = info, 4+ = warn. Hidden when zero compacts have
+// fired this turn so healthy short turns stay quiet.
+func TestRuntimeStrip_CompactsThisTurnBadge(t *testing.T) {
+	cases := []struct {
+		name      string
+		count     int
+		reclaimed int
+		want      string // substring expected in strip
+		wantEmpty bool   // overrides the substring check
+	}{
+		{name: "zero compacts → hidden", count: 0, wantEmpty: true},
+		{name: "one compact with reclaim", count: 1, reclaimed: 8_000, want: "compacts ×1 · -8.0k reclaimed"},
+		{name: "three compacts (info)", count: 3, reclaimed: 24_000, want: "compacts ×3 · -24k reclaimed"},
+		{name: "four compacts (warn)", count: 4, reclaimed: 32_000, want: "compacts ×4 · -32k reclaimed"},
+		{name: "compacts without reclaim total", count: 2, reclaimed: 0, want: "compacts ×2"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			vm := runtimeViewModel{
+				AgentActive:              true,
+				CompactsThisTurn:         tc.count,
+				CompactReclaimedThisTurn: tc.reclaimed,
+			}
+			joined := strings.Join(runtimeStripNowParts(vm), " | ")
+			if tc.wantEmpty {
+				if strings.Contains(joined, "compacts ×") {
+					t.Errorf("zero compacts should not render badge, got %q", joined)
+				}
+				return
+			}
+			if !strings.Contains(joined, tc.want) {
+				t.Errorf("expected %q in strip, got %q", tc.want, joined)
+			}
+		})
+	}
+}
+
 func TestRuntimeStrip_NoLiveLoopBadgeWhenIdle(t *testing.T) {
 	vm := runtimeViewModel{AgentActive: false, LiveLoopTokens: 0}
 	joined := strings.Join(runtimeStripNowParts(vm), " | ")
