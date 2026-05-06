@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // renderStatusView is the legacy F2 panel renderer. Kept around as a
@@ -29,104 +27,7 @@ func (m Model) renderFilesViewSized(width, height int) string {
 }
 
 func (m Model) renderToolsView(width int) string {
-	tools := m.availableTools()
-	m.toolView.index = clampIndex(m.toolView.index, len(tools))
-
-	listWidth := width / 3
-	if listWidth < 24 {
-		listWidth = 24
-	}
-	if listWidth > width-28 {
-		listWidth = width / 2
-	}
-	detailWidth := width - listWidth - 3
-	if detailWidth < 24 {
-		detailWidth = 24
-	}
-
-	listLines := []string{
-		sectionHeader("⚒", "Tools"),
-		subtleStyle.Render("enter run · e edit params · x reset · ctrl+h keys"),
-		renderDivider(listWidth - 2),
-		"",
-	}
-	if len(tools) == 0 {
-		listLines = append(listLines,
-			warnStyle.Render("No registered tools."),
-			"",
-			subtleStyle.Render("Tool engine isn't wired up. Check the engine was started with"),
-			subtleStyle.Render("tools enabled in ")+codeStyle.Render(".dfmc/config.yaml")+subtleStyle.Render(" or rerun ")+codeStyle.Render("dfmc init")+subtleStyle.Render("."),
-		)
-	} else {
-		for i, name := range tools {
-			prefix := "  "
-			label := truncateSingleLine(name, listWidth-4)
-			if i == m.toolView.index {
-				prefix = "> "
-				label = titleStyle.Render(label)
-			}
-			listLines = append(listLines, prefix+label)
-		}
-	}
-
-	detailLines := []string{
-		sectionHeader("▸", "Tool Detail"),
-		renderDivider(detailWidth - 2),
-	}
-	if len(tools) == 0 {
-		detailLines = append(detailLines, subtleStyle.Render("Tool engine unavailable."))
-	} else {
-		selected := tools[m.toolView.index]
-		if m.eng != nil && m.eng.Tools != nil {
-			if spec, ok := m.eng.Tools.Spec(selected); ok {
-				detailLines = append(detailLines,
-					highlightToolSpecLines(formatToolSpec(spec), detailWidth)...,
-				)
-			} else {
-				detailLines = append(detailLines,
-					fmt.Sprintf("Name:        %s", selected),
-					subtleStyle.Render("(no spec registered)"),
-				)
-			}
-		} else {
-			detailLines = append(detailLines,
-				fmt.Sprintf("Name:        %s", selected),
-				fmt.Sprintf("Description: %s", truncateForPanel(m.toolDescription(selected), detailWidth)),
-			)
-		}
-		detailLines = append(detailLines,
-			"",
-			subtleStyle.Render("Effective params"),
-			truncateForPanelSized(m.toolPresetSummary(selected), detailWidth, 6),
-			"",
-		)
-		if selected == "run_command" {
-			if suggestions := m.runCommandSuggestions(); len(suggestions) > 0 {
-				detailLines = append(detailLines, subtleStyle.Render("Suggested presets"))
-				for _, suggestion := range suggestions {
-					detailLines = append(detailLines, truncateForPanel("- "+suggestion, detailWidth))
-				}
-				detailLines = append(detailLines, "")
-			}
-		}
-		if m.toolView.editing {
-			detailLines = append(detailLines,
-				subtleStyle.Render("Param Editor"),
-				truncateForPanel(m.toolView.draft, detailWidth),
-				"",
-			)
-		}
-		detailLines = append(detailLines, sectionHeader("✓", "Last Result"))
-		resultText := strings.TrimSpace(m.toolView.output)
-		if resultText == "" {
-			resultText = subtleStyle.Render("No tool run yet — press enter to run the selected tool.")
-		}
-		detailLines = append(detailLines, truncateForPanel(resultText, detailWidth))
-	}
-
-	left := lipgloss.NewStyle().Width(listWidth).Render(strings.Join(listLines, "\n"))
-	right := lipgloss.NewStyle().Width(detailWidth).Render(strings.Join(detailLines, "\n"))
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, "   ", right)
+	return m.renderToolsViewV2(width)
 }
 
 func (m Model) renderFooter(width int) string {
@@ -348,6 +249,7 @@ func helpOverlayTabHints(tab string) []string {
 	case "tools":
 		return []string{
 			"j/k select · enter run · e edit params · x reset · r rerun",
+			"banner shows EDITING when param editor is open",
 		}
 	case "activity":
 		return []string{
