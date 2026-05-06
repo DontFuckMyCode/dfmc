@@ -1040,6 +1040,30 @@ function classifyActivityEvent(ev) {
 		if (type === "agent:loop:error") {
 			return { kind: "error", icon: "\u2717", text: "agent error \u00b7 " + (payload.error || "") };
 		}
+		if (type === "agent:loop:stuck_force_stop") {
+			// Stuck-streak hard stop \u2014 engine has flipped tool_choice to
+			// "none" because the trajectory hit N consecutive same-error
+			// rounds. Visible-prominence so the user knows why the loop
+			// suddenly stopped trying tools.
+			return { kind: "error", icon: "\u29d6",
+				text: "stuck force-stop \u00b7 streak=" + (payload.stuck_streak || 0) + "/" + (payload.threshold || 0) + " (step " + (payload.step || 0) + ")" };
+		}
+		if (type === "agent:coach:stuck") {
+			var stTool = payload.tool || "tool";
+			var stCount = payload.failure_count || 0;
+			var stErr = payload.error_class || "";
+			return { kind: "agent", icon: "\u26a0",
+				text: "coach: stuck \u00b7 " + stTool + " \u00d7" + stCount + (stErr ? (" [" + stErr + "]") : "") };
+		}
+		if (type === "agent:coach:unverified") {
+			return { kind: "agent", icon: "\u26a0",
+				text: "coach: unverified \u00b7 " + (payload.file_count || 0) + " files mutated, no validation" };
+		}
+		if (type === "agent:coach:hint") {
+			var hintCount = (payload.hints && payload.hints.length) || 0;
+			return { kind: "agent", icon: "\u21b3",
+				text: "coach: " + hintCount + " hint(s) injected (step " + (payload.step || 0) + ")" };
+		}
 		return { kind: "agent", icon: "\u25c9", text: type };
 	}
 	if (type.startsWith("tool:")) {
@@ -1078,6 +1102,21 @@ function classifyActivityEvent(ev) {
 		if (type === "context:lifecycle:compacted") {
 			return { kind: "ctx", icon: "\u25c8",
 				text: "context compacted \u00b7 " + (payload.tokens_before || 0) + " \u2192 " + (payload.tokens_after || 0) + " tok" };
+		}
+		return { kind: "ctx", icon: "\u25c8", text: type };
+	}
+	if (type.startsWith("history:")) {
+		if (type === "history:trimmed") {
+			// Mirror the TUI's chat-event line so users on web get the
+			// same visibility into "we kept N turns and summarized M
+			// older ones" \u2014 without it, a long session looks like
+			// silent memory loss.
+			var kept = payload.kept_messages || 0;
+			var keptTok = payload.kept_tokens || 0;
+			var omitted = payload.omitted_messages || 0;
+			var sumTok = payload.summary_tokens || 0;
+			return { kind: "ctx", icon: "\u25c8",
+				text: "history trimmed \u00b7 kept " + kept + " (" + keptTok + " tok) \u00b7 summarized " + omitted + " into " + sumTok + " tok" };
 		}
 		return { kind: "ctx", icon: "\u25c8", text: type };
 	}
