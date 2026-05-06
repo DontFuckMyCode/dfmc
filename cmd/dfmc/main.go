@@ -112,9 +112,32 @@ func run() int {
 			fmt.Fprintf(os.Stderr, "init error: %s\n", formatInitError(err))
 			return 1
 		}
-		fmt.Fprintf(os.Stderr, "init warning: %s\n", formatInitError(err))
+		if !suppressInitWarning(os.Args[1:]) {
+			fmt.Fprintf(os.Stderr, "init warning: %s\n", formatInitError(err))
+		}
 	}
 	return cli.Run(ctx, eng, os.Args[1:], version)
+}
+
+// suppressInitWarning silences the "init warning: storage is locked"
+// banner for pure meta commands that never touch the store. doctor and
+// update legitimately want the lock context as diagnostic signal, but
+// help/version/completion/man are read-only catalogs — leading them with
+// a scary warning header trains users to ignore the line entirely.
+func suppressInitWarning(args []string) bool {
+	for _, arg := range args {
+		trimmed := strings.TrimSpace(arg)
+		if trimmed == "" || strings.HasPrefix(trimmed, "-") {
+			continue
+		}
+		switch trimmed {
+		case "help", "version", "completion", "man":
+			return true
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func allowsDegradedStartup(args []string) bool {

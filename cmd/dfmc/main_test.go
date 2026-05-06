@@ -172,3 +172,44 @@ func TestRun_DegradedWithSecondaryCommandVariants(t *testing.T) {
 		}
 	}
 }
+
+// Pure meta commands (read-only catalogs) suppress the lock warning so
+// `dfmc help` and friends don't lead with a scary `init warning:` header
+// for a store they were never going to open.
+func TestSuppressInitWarning_QuietMetaCommands(t *testing.T) {
+	for _, cmd := range []string{"help", "version", "completion", "man"} {
+		if !suppressInitWarning([]string{cmd}) {
+			t.Errorf("suppressInitWarning(%q) = false, want true", cmd)
+		}
+	}
+}
+
+// Diagnostic commands keep the warning — the lock state IS the signal.
+func TestSuppressInitWarning_KeepsDiagnostics(t *testing.T) {
+	for _, cmd := range []string{"doctor", "update"} {
+		if suppressInitWarning([]string{cmd}) {
+			t.Errorf("suppressInitWarning(%q) = true, want false (diagnostic should still print warning)", cmd)
+		}
+	}
+}
+
+// Real commands (`ask`, `chat`, ...) never reach this path — they hit
+// the non-degraded `init error` branch instead — but if they did, the
+// warning must NOT be suppressed.
+func TestSuppressInitWarning_KeepsForRealCommands(t *testing.T) {
+	for _, cmd := range []string{"ask", "chat", "review", "drive"} {
+		if suppressInitWarning([]string{cmd}) {
+			t.Errorf("suppressInitWarning(%q) = true, want false", cmd)
+		}
+	}
+}
+
+// Global flags before a quiet command don't change the verdict.
+func TestSuppressInitWarning_FlagsBeforeCommand(t *testing.T) {
+	if !suppressInitWarning([]string{"--verbose", "--json", "help"}) {
+		t.Error("flags before help should still suppress")
+	}
+	if suppressInitWarning([]string{"--verbose", "ask"}) {
+		t.Error("flags before ask should not suppress")
+	}
+}
