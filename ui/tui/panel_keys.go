@@ -13,6 +13,10 @@ import (
 )
 
 func (m Model) handleFilesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Action menu has priority — when open it owns arrows/enter/esc.
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
 	switch msg.String() {
 	case "r", "alt+r":
 		return m, loadFilesCmd(m.eng)
@@ -32,17 +36,58 @@ func (m Model) handleFilesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filesView.index--
 		}
 		return m, loadFilePreviewCmd(m.eng, m.selectedFile())
-	case "enter":
-		if len(m.filesView.entries) == 0 {
-			return m, nil
-		}
-		return m, loadFilePreviewCmd(m.eng, m.selectedFile())
+	case "enter", "right", "l":
+		// Enter (or Right) opens the action menu — discoverable path
+		// for users who don't know p/r/i/e/v. Single-letter
+		// accelerators below stay registered for power users.
+		return m.openFilesActionMenu(), loadFilePreviewCmd(m.eng, m.selectedFile())
 	case "p", "alt+p":
 		return m.togglePinnedFile()
 	case "i", "e", "v":
 		return m.insertFileIntoComposer(msg.String())
 	}
 	return m, nil
+}
+
+// openFilesActionMenu builds the contextual action list for the
+// currently-selected file row and opens the menu. Pin/Unpin label
+// flips based on whether the row is already pinned so the user sees
+// the actual outcome.
+func (m Model) openFilesActionMenu() Model {
+	path := m.selectedFile()
+	if path == "" {
+		return m
+	}
+	pinned := strings.TrimSpace(m.filesView.pinned) == path
+	pinLabel := "Pin to chat context"
+	if pinned {
+		pinLabel = "Unpin from chat context"
+	}
+	actions := []panelAction{
+		{Label: "Open preview", Accel: "enter", Handler: func(m Model) (Model, tea.Cmd) {
+			return m, loadFilePreviewCmd(m.eng, m.selectedFile())
+		}},
+		{Label: pinLabel, Accel: "p", Handler: func(m Model) (Model, tea.Cmd) {
+			nm, cmd := m.togglePinnedFile()
+			if mm, ok := nm.(Model); ok {
+				return mm, cmd
+			}
+			return m, cmd
+		}},
+		{Label: "Insert [[file:…]] into chat", Accel: "i", Handler: func(m Model) (Model, tea.Cmd) {
+			return m.insertFileIntoComposer("i")
+		}},
+		{Label: "Explain this file in chat", Accel: "e", Handler: func(m Model) (Model, tea.Cmd) {
+			return m.insertFileIntoComposer("e")
+		}},
+		{Label: "Review this file in chat", Accel: "v", Handler: func(m Model) (Model, tea.Cmd) {
+			return m.insertFileIntoComposer("v")
+		}},
+		{Label: "Reload index", Accel: "r", Handler: func(m Model) (Model, tea.Cmd) {
+			return m, loadFilesCmd(m.eng)
+		}},
+	}
+	return m.openActionMenu("Files", "Actions for "+truncateForLine(path, 32), actions)
 }
 
 // insertFileIntoComposer handles i/e/v keys in the Files panel.

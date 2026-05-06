@@ -233,8 +233,8 @@ func helpOverlayTabHints(tab string) []string {
 		}
 	case "files":
 		return []string{
-			"j/k move · enter load preview · r reload index · p toggle pin",
-			"i insert [[file:…]] · e explain · v review · ctrl+w context",
+			"↑↓ move · enter / → opens action menu · esc closes",
+			"menu: ↑↓ pick · enter run · letters in [brackets] are accelerators",
 		}
 	case "patch":
 		return []string{

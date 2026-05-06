@@ -46,20 +46,28 @@ func (m Model) renderFilesViewV2(width, height int) string {
 
 	listBlock := m.renderFilesListPane(listW, height, pal)
 	previewBlock := m.renderFilesPreviewPane(previewW, height, pal)
+	var body string
 	if threePane {
 		metaBlock := m.renderFilesMetaPane(metaW, height, pal)
-		return lipgloss.JoinHorizontal(lipgloss.Top,
+		body = lipgloss.JoinHorizontal(lipgloss.Top,
 			listBlock, "  ", previewBlock, "  ", metaBlock)
-	}
-	if twoPane {
+	} else if twoPane {
 		// Metadata folded into a footer strip under the preview so
 		// the most-useful info still shows on medium terminals.
 		footer := m.renderFilesMetaInline(width)
 		previewBlock = previewBlock + "\n" + footer
-		return lipgloss.JoinHorizontal(lipgloss.Top, listBlock, "  ", previewBlock)
+		body = lipgloss.JoinHorizontal(lipgloss.Top, listBlock, "  ", previewBlock)
+	} else {
+		// Single-pane: stack list above preview, drop metadata.
+		body = listBlock + "\n" + previewBlock
 	}
-	// Single-pane: stack list above preview, drop metadata.
-	return listBlock + "\n" + previewBlock
+	// Discoverable arrow-key path: when the action menu is open it
+	// stacks under the panel as a visible overlay so the user sees
+	// every action (pin/explain/review/...) without memorising keys.
+	if m.actionMenu.open && m.actionMenu.owner == "Files" {
+		body += "\n\n" + m.renderActionMenu(width)
+	}
+	return body
 }
 
 // filesPanelWidths splits the available width into list/preview/meta

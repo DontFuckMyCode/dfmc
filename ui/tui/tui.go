@@ -222,6 +222,13 @@ type Model struct {
 	// See filesViewState in panel_states.go.
 	filesView filesViewState
 
+	// actionMenu is the shared list-panel action picker. Any panel
+	// that wants to expose secondary actions (pin/explain/reload/etc.)
+	// without forcing the user to memorise single-letter shortcuts
+	// opens it via openActionMenu(...) when Right/Enter is pressed on
+	// a row. Arrows + enter + esc drive it. See panel_action_menu.go.
+	actionMenu panelActionMenu
+
 	// Tools-tab state (cursor position, current output, in-place editor
 	// for param overrides). See toolViewState in panel_states.go.
 	toolView toolViewState
