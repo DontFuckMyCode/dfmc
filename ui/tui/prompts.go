@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
@@ -183,18 +184,18 @@ func nonEmpty(a, fallback string) string {
 
 func (m Model) renderPromptsView(width int) string {
 	width = clampInt(width, 24, 1000)
-	hint := subtleStyle.Render("j/k scroll · enter preview · / search · r refresh · c clear search")
-	header := sectionHeader("✎", "Prompts")
-	queryLine := subtleStyle.Render("query: ")
+	banner := m.promptsTopBanner(width)
+	hint := subtleStyle.Render("j/k scroll · enter preview · / search · r refresh · c clear")
+	queryLine := subtleStyle.Render("query ")
 	if strings.TrimSpace(m.prompts.query) != "" {
-		queryLine += m.prompts.query
+		queryLine += boldStyle.Render(m.prompts.query)
 	} else {
 		queryLine += subtleStyle.Render("(none)")
 	}
 	if m.prompts.searchActive {
 		queryLine += subtleStyle.Render("  · typing, enter to commit")
 	}
-	lines := []string{header, hint, queryLine, renderDivider(width - 2)}
+	lines := []string{banner, queryLine, hint, renderDivider(width - 2)}
 
 	if m.prompts.err != "" {
 		lines = append(lines, "", warnStyle.Render("error · "+m.prompts.err))
@@ -240,6 +241,25 @@ func (m Model) renderPromptsView(width int) string {
 		len(filtered), len(m.prompts.templates),
 	)))
 	return strings.Join(lines, "\n")
+}
+
+// promptsTopBanner — title + count chip + state chip.
+func (m Model) promptsTopBanner(width int) string {
+	title := titleStyle.Bold(true).Render("✎ PROMPTS")
+	chipText, chipStyle := " HEALTHY ", okStyle
+	switch {
+	case m.prompts.err != "":
+		chipText, chipStyle = " ERROR ", warnStyle
+	case m.prompts.loading:
+		chipText, chipStyle = " LOADING ", infoStyle
+	case len(m.prompts.templates) == 0:
+		chipText, chipStyle = " EMPTY ", subtleStyle
+	}
+	chip := chipStyle.Render(chipText)
+	countChip := subtleStyle.Render(fmt.Sprintf(" %d ", len(m.prompts.templates)))
+	chipStrip := countChip + " " + chip
+	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
+	return title + strings.Repeat(" ", gap) + chipStrip
 }
 
 func (m Model) handlePromptsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

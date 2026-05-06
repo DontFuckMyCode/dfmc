@@ -140,7 +140,7 @@ func TestWrapPromptLinesSplitsToWidth(t *testing.T) {
 func TestRenderPromptsViewEmptyState(t *testing.T) {
 	m := newPromptsTestModel()
 	out := m.renderPromptsView(80)
-	if !strings.Contains(out, "Prompts") {
+	if !strings.Contains(out, "PROMPTS") {
 		t.Fatalf("header missing: %s", out)
 	}
 	if !strings.Contains(out, "No prompt templates loaded") {
