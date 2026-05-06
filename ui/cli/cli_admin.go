@@ -595,11 +595,33 @@ func runInit(jsonMode bool, projectOverride string) int {
 			"status":       "ok",
 			"project_root": root,
 			"config_path":  cfgPath,
+			"next_steps":   initNextSteps(),
 		})
 		return 0
 	}
 
 	fmt.Printf("Initialized DFMC project at %s\n", root)
 	fmt.Printf("Created %s\n", cfgPath)
+	fmt.Println("        " + filepath.Join(dfmcDir, "knowledge.json") + "  (project facts, populated by `dfmc analyze`)")
+	fmt.Println("        " + filepath.Join(dfmcDir, "conventions.json") + "  (style/conventions, populated by `dfmc analyze`)")
+	fmt.Println()
+	fmt.Println("Next steps:")
+	for _, step := range initNextSteps() {
+		fmt.Println("  · " + step)
+	}
+	fmt.Println()
+	fmt.Println("Tip: `dfmc doctor` reports any missing API keys or config issues; `dfmc agents` lists the sub-agent roles + provider profiles available to you.")
 	return 0
+}
+
+// initNextSteps is the short, ordered checklist printed after `dfmc init`
+// (and surfaced in --json mode for scripted onboarding flows). Lives as a
+// helper so CLI text output and the JSON payload stay aligned.
+func initNextSteps() []string {
+	return []string{
+		"Set a provider API key (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY) in your shell or a project-root .env — DFMC auto-loads .env at startup.",
+		"Run `dfmc config sync-models` to refresh provider profiles from models.dev (preserves any API keys you already set).",
+		"Try `dfmc ask \"summarise this project\"` for a one-shot answer, or `dfmc tui` for the interactive workbench.",
+		"For autonomous multi-step work, `dfmc drive \"<task>\"` plans + executes a DAG of TODOs end-to-end.",
+	}
 }

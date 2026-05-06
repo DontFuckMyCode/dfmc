@@ -97,6 +97,48 @@ func TestRunInit_EmptyOverrideFallsBackToFindProjectRoot(t *testing.T) {
 	}
 }
 
+// TestRunInit_TextOutputTeachesNextSteps asserts the post-init banner
+// names the artifacts it created AND points the user at the canonical
+// next steps (api key, sync-models, ask, drive). Without this, the
+// init output is just two lines and a fresh user has to grep docs to
+// learn what to do next.
+func TestRunInit_TextOutputTeachesNextSteps(t *testing.T) {
+	proj := t.TempDir()
+	out := captureStdout(t, func() {
+		if code := runInit(false, proj); code != 0 {
+			t.Fatalf("runInit exit=%d", code)
+		}
+	})
+	for _, want := range []string{
+		"Next steps:",
+		"API key",
+		"sync-models",
+		"dfmc ask",
+		"dfmc drive",
+		"knowledge.json",
+		"conventions.json",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("init output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRunInit_JSONIncludesNextSteps keeps text and JSON outputs
+// aligned: scripted onboarding flows should be able to read the same
+// step list the human sees.
+func TestRunInit_JSONIncludesNextSteps(t *testing.T) {
+	proj := t.TempDir()
+	out := captureStdout(t, func() {
+		if code := runInit(true, proj); code != 0 {
+			t.Fatalf("runInit json exit=%d", code)
+		}
+	})
+	if !containsJSONKey(out, "next_steps") {
+		t.Fatalf("expected next_steps in json output: %s", out)
+	}
+}
+
 func TestSummarizeHooks_NilEngine(t *testing.T) {
 	got := summarizeHooks(nil)
 	if got.Total != 0 || len(got.PerEvent) != 0 {
