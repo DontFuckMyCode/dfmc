@@ -103,8 +103,14 @@ func runChat(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 	fs := flag.NewFlagSet("chat", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	branch := fs.String("branch", "", "start/switch to branch name")
+	verbose := fs.Bool("v", false, "stream high-signal engine events to stderr (failures, denials, trims, guards)")
+	fs.BoolVar(verbose, "verbose", false, "alias of -v")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *verbose {
+		stop := streamVerboseEvents(eng)
+		defer stop()
 	}
 	if eng.ConversationActive() == nil {
 		_ = eng.ConversationStart()
@@ -138,6 +144,9 @@ func runChat(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 
 	fmt.Println("DFMC interactive chat (type /exit to quit)")
 	fmt.Println("Type /help for slash commands.")
+	if *verbose {
+		fmt.Fprintln(os.Stderr, "(verbose mode: high-signal engine events stream to stderr)")
+	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	// Pasting a multi-line prompt or a file snippet can easily exceed
