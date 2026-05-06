@@ -256,9 +256,17 @@ func (m Model) contextTopBanner(width int) string {
 }
 
 func (m Model) renderContextView(width int) string {
+	out := m.renderContextViewInner(width)
+	if m.actionMenu.open && m.actionMenu.owner == "Context" {
+		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
+}
+
+func (m Model) renderContextViewInner(width int) string {
 	width = clampInt(width, 24, 1000)
 	banner := m.contextTopBanner(width)
-	hint := subtleStyle.Render("e edit · enter preview · esc cancel · c clear")
+	hint := subtleStyle.Render("↑↓ scroll · → action menu · enter preview · e edit · esc cancel")
 
 	queryLine := subtleStyle.Render("query ")
 	if strings.TrimSpace(m.contextPanel.query) != "" {
@@ -519,9 +527,50 @@ func (m Model) loadActiveContextDebug() Model {
 	return m
 }
 
+// openContextActionMenu — arrow-driven discovery for the Context tab.
+func (m Model) openContextActionMenu() Model {
+	actions := []panelAction{
+		{Label: "Edit query (opens text input)", Accel: "e",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.contextPanel.inputActive = true
+				return m, nil
+			}},
+		{Label: "Re-run preview with current query", Accel: "enter",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				if strings.TrimSpace(m.contextPanel.query) != "" {
+					m = m.runContextPreview()
+				}
+				return m, nil
+			}},
+		{Label: "Show active context (last engine snapshot)", Accel: "a",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m.loadActiveContextDebug(), nil
+			}},
+		{Label: "Clear query and preview", Accel: "c",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.contextPanel.query = ""
+				m.contextPanel.preview = nil
+				m.contextPanel.breakdown = nil
+				m.contextPanel.hints = nil
+				m.contextPanel.active = nil
+				m.contextPanel.showActive = false
+				m.contextPanel.scroll = 0
+				m.contextPanel.err = ""
+				return m, nil
+			}},
+	}
+	return m.openActionMenu("Context", "Context actions", actions)
+}
+
 func (m Model) handleContextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.contextPanel.inputActive {
 		return m.handleContextInputKey(msg)
+	}
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
+	if s := msg.String(); s == "right" || s == "l" {
+		return m.openContextActionMenu(), nil
 	}
 	switch msg.String() {
 	case "a", "f":

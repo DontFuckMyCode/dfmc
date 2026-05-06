@@ -36,18 +36,23 @@ func (m Model) renderToolsViewV2(width int) string {
 	banner := m.toolsTopBanner(width, len(tools))
 	listBlock := m.renderToolsListPane(listW, height, pal, tools)
 	specBlock := m.renderToolsSpecPane(specW, height, pal, tools)
+	var out string
 	if threePane {
 		metaBlock := m.renderToolsMetaPane(metaW, height, pal, tools)
 		body := lipgloss.JoinHorizontal(lipgloss.Top,
 			listBlock, "  ", specBlock, "  ", metaBlock)
-		return banner + "\n" + body
-	}
-	if twoPane {
+		out = banner + "\n" + body
+	} else if twoPane {
 		footer := m.renderToolsMetaInline(width, tools)
 		body := lipgloss.JoinHorizontal(lipgloss.Top, listBlock, "  ", specBlock)
-		return banner + "\n" + body + "\n" + footer
+		out = banner + "\n" + body + "\n" + footer
+	} else {
+		out = banner + "\n" + listBlock + "\n" + specBlock
 	}
-	return banner + "\n" + listBlock + "\n" + specBlock
+	if m.actionMenu.open && m.actionMenu.owner == "Tools" {
+		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
 }
 
 func toolsPanelWidths(total int, threePane, twoPane bool) (listW, specW, metaW int) {

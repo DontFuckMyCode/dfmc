@@ -62,7 +62,101 @@ func (m Model) handleProvidersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// openProvidersActionMenu — arrow-driven discovery for the Providers
+// list. Mirrors the existing single-letter shortcut surface
+// (p/f/m/s/n/r/d) so the user doesn't have to memorise them.
+func (m Model) openProvidersActionMenu() Model {
+	scroll := clampScroll(m.providers.scroll, len(m.providers.rows))
+	hasRow := scroll >= 0 && scroll < len(m.providers.rows)
+	rowName := ""
+	if hasRow {
+		rowName = m.providers.rows[scroll].Name
+	}
+
+	actions := []panelAction{}
+	if hasRow {
+		actions = append(actions,
+			panelAction{Label: "View detail · " + rowName, Accel: "d",
+				Handler: func(m Model) (Model, tea.Cmd) {
+					m.providers.detailProvider = rowName
+					m.providers.viewMode = "detail"
+					m.providers.scroll = 0
+					m.notice = "viewing " + rowName
+					return m, nil
+				}},
+			panelAction{Label: "Set " + rowName + " as primary", Accel: "p",
+				Handler: func(m Model) (Model, tea.Cmd) {
+					m = m.setPrimaryProvider(rowName)
+					m.notice = rowName + " set as primary"
+					return m, nil
+				}},
+			panelAction{Label: "Toggle " + rowName + " in fallback chain", Accel: "f",
+				Handler: func(m Model) (Model, tea.Cmd) {
+					m = m.toggleFallbackProvider(rowName)
+					return m, nil
+				}},
+			panelAction{Label: "Cycle model for " + rowName, Accel: "m",
+				Handler: func(m Model) (Model, tea.Cmd) {
+					m = m.cycleProviderModel(rowName)
+					if m.providers.err == "" {
+						m.notice = rowName + " model cycled"
+					}
+					return m, nil
+				}},
+			panelAction{Label: "Save " + rowName + " model to project config", Accel: "s",
+				Handler: func(m Model) (Model, tea.Cmd) {
+					model := m.providers.rows[scroll].Model
+					path, err := m.persistProviderModelProjectConfig(rowName, model)
+					if err != nil {
+						m.notice = "save failed: " + err.Error()
+					} else {
+						m.notice = "saved → " + filepath.Base(path)
+					}
+					return m, nil
+				}},
+		)
+	}
+	actions = append(actions,
+		panelAction{Label: "Add new provider", Accel: "n",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.providers.viewMode = "new_provider"
+				m.providers.newProviderDraft = ""
+				m.notice = "new provider — type name and enter"
+				return m, nil
+			}},
+		panelAction{Label: "Refresh provider list", Accel: "r",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m = m.refreshProvidersRows()
+				m.providers.loaded = true
+				m.notice = "providers refreshed"
+				return m, nil
+			}},
+		panelAction{Label: "Search providers…", Accel: "/",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.providers.searchActive = true
+				return m, nil
+			}},
+		panelAction{Label: "Clear search query", Accel: "c",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.providers.query = ""
+				m.providers.scroll = 0
+				return m, nil
+			}},
+	)
+	title := "Providers actions"
+	if rowName != "" {
+		title = "Actions · " + rowName
+	}
+	return m.openActionMenu("Providers", title, actions)
+}
+
 func (m Model) handleProvidersListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
+	if s := msg.String(); s == "right" || s == "l" {
+		return m.openProvidersActionMenu(), nil
+	}
 	filtered := filteredProviderRows(m.providers.rows, m.providers.query)
 	total := len(filtered)
 	step := 1

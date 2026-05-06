@@ -114,9 +114,17 @@ func (m Model) plansTopBanner(width int) string {
 }
 
 func (m Model) renderPlansView(width int) string {
+	out := m.renderPlansViewInner(width)
+	if m.actionMenu.open && m.actionMenu.owner == "Plans" {
+		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
+}
+
+func (m Model) renderPlansViewInner(width int) string {
 	width = clampInt(width, 24, 1000)
 	banner := m.plansTopBanner(width)
-	hint := subtleStyle.Render("e edit · enter run · esc cancel · j/k scroll · c clear")
+	hint := subtleStyle.Render("↑↓ scroll · → action menu · enter re-run · e edit · esc cancel")
 
 	queryLine := subtleStyle.Render("task ")
 	if strings.TrimSpace(m.plans.query) != "" {
@@ -206,9 +214,42 @@ func (m Model) runPlansSplit() Model {
 	return m
 }
 
+// openPlansActionMenu — arrow-driven discovery for Plans.
+func (m Model) openPlansActionMenu() Model {
+	actions := []panelAction{
+		{Label: "Edit task (opens text input)", Accel: "e",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.plans.inputActive = true
+				return m, nil
+			}},
+		{Label: "Re-run split with current task", Accel: "enter",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				if strings.TrimSpace(m.plans.query) != "" {
+					m = m.runPlansSplit()
+				}
+				return m, nil
+			}},
+		{Label: "Clear task and result", Accel: "c",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.plans.query = ""
+				m.plans.plan = nil
+				m.plans.err = ""
+				m.plans.scroll = 0
+				return m, nil
+			}},
+	}
+	return m.openActionMenu("Plans", "Plans actions", actions)
+}
+
 func (m Model) handlePlansKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.plans.inputActive {
 		return m.handlePlansInputKey(msg)
+	}
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
+	if s := msg.String(); s == "right" || s == "l" {
+		return m.openPlansActionMenu(), nil
 	}
 	total := 0
 	if m.plans.plan != nil {

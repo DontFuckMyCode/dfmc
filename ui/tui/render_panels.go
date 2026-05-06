@@ -248,12 +248,13 @@ func helpOverlayTabHints(tab string) []string {
 		}
 	case "tools":
 		return []string{
-			"j/k select · enter run · e edit params · x reset · r rerun",
-			"banner shows EDITING when param editor is open",
+			"↑↓ select · enter runs current · → opens action menu",
+			"menu: run · edit params · reset · rerun — banner shows EDITING when active",
 		}
 	case "activity":
 		return []string{
-			"j/k scroll · pgup/pgdn page · g/G top/tail · p toggle follow · c clear",
+			"↑↓ scroll · pgup/pgdn page · g/G top/tail · → action menu",
+			"menu: pause/resume · cycle filter · 1-6 filters · search · clear · open / focus / copy",
 		}
 	case "memory":
 		return []string{
@@ -282,15 +283,16 @@ func helpOverlayTabHints(tab string) []string {
 		}
 	case "plans":
 		return []string{
-			"e edit task · enter run · esc cancel edit · j/k scroll · c clear",
+			"↑↓ scroll · enter re-runs split · → action menu (edit · run · clear)",
 		}
 	case "context":
 		return []string{
-			"e edit query · enter preview · esc cancel edit · c clear",
+			"↑↓ scroll · enter previews · → action menu (edit · preview · active · clear)",
 		}
 	case "providers":
 		return []string{
-			"j/k scroll · r refresh · g/G top/bottom",
+			"↑↓ scroll · enter views detail · → action menu",
+			"menu: detail · primary · fallback · cycle model · save · new · refresh · search",
 		}
 	case "orchestrate":
 		return []string{

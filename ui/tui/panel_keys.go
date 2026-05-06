@@ -113,11 +113,73 @@ func (m Model) insertFileIntoComposer(key string) (Model, tea.Cmd) {
 	return m, nil
 }
 
+// openToolsActionMenu — arrow-driven discovery for the Tools tab.
+// Run / edit / reset / rerun all reachable from one menu so the user
+// doesn't memorise enter/r/e/x.
+func (m Model) openToolsActionMenu() Model {
+	tools := m.availableTools()
+	if len(tools) == 0 {
+		return m
+	}
+	if m.toolView.index < 0 || m.toolView.index >= len(tools) {
+		m.toolView.index = 0
+	}
+	name := tools[m.toolView.index]
+	actions := []panelAction{
+		{Label: "Run with current params", Accel: "enter",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				params, err := m.toolPresetParams(name)
+				if err != nil {
+					m.toolView.output = fmt.Sprintf("Tool: %s\nStatus: blocked\n\n%s", name, err.Error())
+					m.notice = "tool preset: " + err.Error()
+					return m, nil
+				}
+				m.notice = "Running tool: " + name
+				return m, runToolCmd(m.ctx, m.eng, name, params)
+			}},
+		{Label: "Edit params (opens param editor)", Accel: "e",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.toolView.editing = true
+				m.toolView.draft = m.toolPresetSummary(name)
+				m.notice = "Editing params for " + name
+				return m, nil
+			}},
+		{Label: "Reset params to default", Accel: "x",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				if m.toolView.overrides != nil {
+					delete(m.toolView.overrides, name)
+				}
+				m.toolView.draft = ""
+				m.notice = "Reset params for " + name
+				return m, nil
+			}},
+		{Label: "Re-run last invocation", Accel: "r",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				params, err := m.toolPresetParams(name)
+				if err != nil {
+					m.toolView.output = fmt.Sprintf("Tool: %s\nStatus: blocked\n\n%s", name, err.Error())
+					return m, nil
+				}
+				m.notice = "Re-running tool: " + name
+				return m, runToolCmd(m.ctx, m.eng, name, params)
+			}},
+	}
+	return m.openActionMenu("Tools", "Actions for "+name, actions)
+}
+
 func (m Model) handleToolsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	tools := m.availableTools()
 	if len(tools) == 0 {
 		m.notice = "No tools registered."
 		return m, nil
+	}
+	if !m.toolView.editing {
+		if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+			return nm, cmd
+		}
+		if s := msg.String(); s == "right" || s == "l" {
+			return m.openToolsActionMenu(), nil
+		}
 	}
 	m.toolView.index = clampIndex(m.toolView.index, len(tools))
 	if m.toolView.editing {

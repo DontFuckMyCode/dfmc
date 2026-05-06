@@ -99,6 +99,14 @@ func formatProviderDetail(row providerRow, width int) []string {
 }
 
 func (m Model) renderProvidersView(width int) string {
+	out := m.renderProvidersViewInner(width)
+	if m.actionMenu.open && m.actionMenu.owner == "Providers" {
+		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
+}
+
+func (m Model) renderProvidersViewInner(width int) string {
 	if m.providers.confirmAction != "" {
 		return m.renderProvidersConfirm(width)
 	}

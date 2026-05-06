@@ -101,7 +101,11 @@ func (m Model) renderActivityViewV2(width, height int) string {
 	if !m.activity.follow {
 		lines = append(lines, warnStyle.Render("paused — press G to jump to tail and resume follow"))
 	}
-	return strings.Join(lines, "\n")
+	out := strings.Join(lines, "\n")
+	if m.actionMenu.open && m.actionMenu.owner == "Activity" {
+		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
 }
 
 // activityTopBanner — title + LIVE/PAUSED chip right-aligned. Matches
