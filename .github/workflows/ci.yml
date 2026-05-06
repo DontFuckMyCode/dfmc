@@ -120,3 +120,46 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+
+  coverage:
+    name: Coverage report (informational)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Coverage is informational, NOT a gate. We publish the per-package
+      # numbers so a PR reviewer can scan them in the action log without
+      # running the suite locally — but a hard threshold would either be
+      # set artificially low (no signal) or break unrelated PRs that
+      # happen to cross the line. Trust the reviewer's eye on the
+      # report; gate on tests passing instead.
+      - name: Run tests with coverage
+        env:
+          CGO_ENABLED: 1
+        shell: bash
+        run: |
+          go test -count=1 -covermode=atomic -coverprofile=coverage.out ./... || true
+          if [ -f coverage.out ]; then
+            echo "::group::Per-package coverage"
+            go tool cover -func=coverage.out | tail -50
+            echo "::endgroup::"
+            total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}')
+            echo "Total coverage: $total"
+            echo "TOTAL_COVERAGE=$total" >> $GITHUB_ENV
+          fi
+
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-profile
+          path: coverage.out
+          if-no-files-found: warn
