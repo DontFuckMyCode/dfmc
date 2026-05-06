@@ -226,7 +226,7 @@ func TestRenderActivityViewEmptyState(t *testing.T) {
 	if !strings.Contains(out, "No events yet") {
 		t.Fatalf("empty state missing copy:\n%s", out)
 	}
-	if !strings.Contains(out, "Activity") {
+	if !strings.Contains(out, "ACTIVITY") {
 		t.Fatalf("empty state missing header:\n%s", out)
 	}
 }
@@ -351,7 +351,7 @@ func TestRenderActivityViewShowsInspectorAndQuery(t *testing.T) {
 	if !strings.Contains(out, "INSPECTOR") {
 		t.Fatalf("expected inspector pane in activity view:\n%s", out)
 	}
-	if !strings.Contains(out, "query:") || !strings.Contains(out, "provider") {
+	if !strings.Contains(out, "query") || !strings.Contains(out, "provider") {
 		t.Fatalf("expected query line in activity view:\n%s", out)
 	}
 	if !strings.Contains(out, "TIMELINE") {

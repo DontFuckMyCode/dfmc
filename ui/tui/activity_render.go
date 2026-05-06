@@ -259,108 +259,11 @@ func (m Model) renderActivityView(width int) string {
 	return m.renderActivityViewSized(width, activityDefaultRenderHeight)
 }
 
-func (m Model) renderActivityViewSized(width int, height int) string {
-	width = clampInt(width, 24, 1000)
-	height = clampInt(height, 10, 1000)
-
-	mode := m.activity.mode
-	if mode == "" {
-		mode = activityViewAll
-	}
-	query := strings.TrimSpace(m.activity.query)
-	allCounts := activityKindCounts(m.activity.entries)
-	filtered := m.filteredActivityEntries()
-	scroll := clampActivityOffset(m.activity.scroll, len(filtered))
-	selected := activitySelectedIndex(len(filtered), scroll)
-	followState := okStyle.Render("live")
-	if !m.activity.follow {
-		followState = warnStyle.Render("paused")
-	}
-
-	hint := "j/k older-newer · pgup/pgdn page · enter/o open · r refresh · f file · y copy · 1-6 filter"
-	if m.activity.searchActive {
-		hint = "typing search · enter commit · esc stop · backspace delete"
-	}
-	queryLine := subtleStyle.Render("view: ") +
-		accentStyle.Render(activityModeLabel(mode)) +
-		subtleStyle.Render(" ["+activityModeShortcut(mode)+"] · query: ")
-	if query != "" {
-		queryLine += boldStyle.Render(query)
-	} else {
-		queryLine += subtleStyle.Render("(none)")
-	}
-	queryLine += subtleStyle.Render(" · follow: ") + followState
-
-	summary := fmt.Sprintf(
-		"%d total · %d shown · tool %d · agent %d · err %d · ctx %d",
-		len(m.activity.entries),
-		len(filtered),
-		allCounts[activityKindTool],
-		allCounts[activityKindAgent],
-		allCounts[activityKindError],
-		allCounts[activityKindCtx]+allCounts[activityKindIndex],
-	)
-
-	lines := []string{
-		sectionHeader("✦", "Activity"),
-		subtleStyle.Render(hint),
-		queryLine,
-		subtleStyle.Render(summary),
-		renderDivider(width - 2),
-	}
-
-	if len(m.activity.entries) == 0 {
-		lines = append(lines,
-			"",
-			subtleStyle.Render("No events yet."),
-			subtleStyle.Render("Tool calls, subagent fan-out, drive progress, provider retries, and context lifecycle stream here live."),
-		)
-		return strings.Join(lines, "\n")
-	}
-	if len(filtered) == 0 {
-		lines = append(lines,
-			"",
-			warnStyle.Render("No events match this filter/query."),
-			subtleStyle.Render("Press c to clear the query or v / 1-6 to change the view."),
-		)
-		return strings.Join(lines, "\n")
-	}
-
-	remainingHeight := height - len(lines)
-	if remainingHeight < 4 {
-		remainingHeight = 4
-	}
-
-	selectedEntry := filtered[selected]
-	if width >= 110 && remainingHeight >= 8 {
-		leftWidth := int(float64(width-2) * 0.58)
-		if leftWidth < 42 {
-			leftWidth = 42
-		}
-		rightWidth := width - 2 - leftWidth - 2
-		if rightWidth < 28 {
-			rightWidth = 28
-			leftWidth = width - 2 - rightWidth - 2
-		}
-		timeline := renderActivityTimeline(filtered, selected, leftWidth, remainingHeight)
-		inspector := renderActivityInspector(selectedEntry, rightWidth, remainingHeight)
-		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, timeline, "  ", inspector))
-	} else {
-		timelineHeight := remainingHeight / 2
-		if timelineHeight < 5 {
-			timelineHeight = 5
-		}
-		inspectorHeight := remainingHeight - timelineHeight - 1
-		if inspectorHeight < 4 {
-			inspectorHeight = 4
-		}
-		lines = append(lines, renderActivityTimeline(filtered, selected, width-2, timelineHeight))
-		lines = append(lines, renderDivider(width-2))
-		lines = append(lines, renderActivityInspector(selectedEntry, width-2, inspectorHeight))
-	}
-
-	if !m.activity.follow {
-		lines = append(lines, warnStyle.Render("paused - press G to jump to tail and resume follow"))
-	}
-	return strings.Join(lines, "\n")
+// renderActivityViewSized delegates to the V2 wrapper in
+// render_activity_v2.go which adds a banner + LIVE/PAUSED chip.
+// The legacy stack-shape stays here as legacyRenderActivityViewSized
+// (unused) for git-history reference.
+func (m Model) renderActivityViewSized(width, height int) string {
+	return m.renderActivityViewV2(width, height)
 }
+
