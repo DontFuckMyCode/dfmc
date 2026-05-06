@@ -36,8 +36,8 @@ func TestViewIncludesWorkbenchPanels(t *testing.T) {
 	}
 	// New top strip surfaces the active tab as a badge plus its
 	// immediate neighbours by F-key. Default starts on Chat (idx 0)
-	// so prev wraps to the LAST tab (Orchestrate) and next is Status.
-	for _, needle := range []string{"CHAT", "Status", "Orchestrate", "F1", "F2"} {
+	// so prev wraps to the LAST tab (Shortcuts) and next is Status.
+	for _, needle := range []string{"CHAT", "Status", "Shortcuts", "F1", "F2"} {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("expected new tab strip to contain %q, got:\n%s", needle, view)
 		}

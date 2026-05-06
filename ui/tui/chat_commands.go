@@ -263,7 +263,8 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		"keylog", "coach", "hints", "intent",
 		"copy", "yank", "mouse", "select",
 		"status", "reload",
-		"cancel", "abort", "stop":
+		"cancel", "abort", "stop",
+		"shortcuts", "keys", "cheatsheet":
 		return m.runPanelCommand(cmd, args)
 	case "context":
 		m.chat.input = ""

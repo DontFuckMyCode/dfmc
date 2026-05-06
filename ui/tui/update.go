@@ -716,6 +716,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "alt+r":
 			m = m.activateDiagnosticTab("Orchestrate")
 			return m, nil
+		case "alt+h":
+			m = m.activateDiagnosticTab("Shortcuts")
+			return m, nil
 		}
 
 		if m.activeTab < 0 || m.activeTab >= len(m.tabs) {

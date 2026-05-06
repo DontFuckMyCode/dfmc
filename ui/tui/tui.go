@@ -314,7 +314,7 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	m := Model{
 		ctx:                   ctx,
 		eng:                   eng,
-		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Workflow", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers", "Orchestrate"},
+		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Workflow", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers", "Orchestrate", "Shortcuts"},
 		activity:              activityPanelState{follow: true},
 		diagnosticPanelsState: newDiagnosticPanelsState(),
 		chat:                  chatState{streamIndex: -1},

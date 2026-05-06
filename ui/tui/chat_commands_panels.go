@@ -166,6 +166,15 @@ func (m Model) runPanelCommand(cmd string, args []string) (tea.Model, tea.Cmd, b
 		}
 		st := m.status
 		return m.appendSystemMessage(fmt.Sprintf("Runtime reloaded.\nProvider/Model: %s / %s", blankFallback(st.Provider, "-"), blankFallback(st.Model, "-"))), loadStatusCmd(m.eng), true
+	case "shortcuts", "keys", "cheatsheet":
+		// Jump to the Shortcuts tab — single-screen cheat sheet of
+		// every panel + every keyboard shortcut + the everyday slash
+		// commands. Same as Alt+H from any tab; the slash form helps
+		// users who reached for /help and want a more visual layout.
+		m.chat.input = ""
+		m = m.activateDiagnosticTab("Shortcuts")
+		m.notice = "Shortcuts panel — alt+h also opens it from any tab."
+		return m, nil, true
 	case "cancel", "abort", "stop":
 		// Slash equivalent of Ctrl+C: cancel the active stream / agent
 		// loop. Subagents auto-terminate when the parent context cancels.

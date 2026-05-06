@@ -525,6 +525,11 @@ func helpOverlayTabHints(tab string) []string {
 			"alt+r jumps here · live hierarchy of agents/subagents/todos/drive/tokens",
 			"read-only panel — drive control from chat (/drive) · todo control via agent",
 		}
+	case "shortcuts":
+		return []string{
+			"alt+h jumps here from any tab · /shortcuts and /keys also open this",
+			"per-tab quick hints: ctrl+h overlay · /help in chat for the full catalog",
+		}
 	default:
 		return []string{"f1=chat f2=files f3=activity f4=providers f5=patch f6=tools f7=workflow f8=memory f9=codemap f10=conversations f11=prompts f12=security · ctrl+p palette · ctrl+q quit"}
 	}

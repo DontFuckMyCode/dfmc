@@ -65,6 +65,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "tasks clear", Template: "/tasks clear", Description: "wipe non-drive tasks from the store · drive-owned tasks kept"},
 		{Command: "subagents", Template: "/subagents", Description: "show current subagent fan-out and recent delegation activity"},
 		{Command: "cancel", Template: "/cancel", Description: "cancel the active agent turn (slash equivalent of Ctrl+C) · /drive stop for drive runs"},
+		{Command: "shortcuts", Template: "/shortcuts", Description: "open the Shortcuts cheat sheet (alt+h) · /keys is an alias"},
 		{Command: "queue", Template: "/queue", Description: "inspect or clear queued follow-up prompts"},
 		{Command: "export", Template: "/export", Description: "save the current transcript to .dfmc/exports/*.md (or /export path.md)"},
 		{Command: "quit", Template: "/quit", Description: "exit DFMC"},

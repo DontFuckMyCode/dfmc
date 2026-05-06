@@ -129,6 +129,7 @@ func renderTUIHelp() string {
 		"  /doctor          In-chat health snapshot",
 		"  /stats           Session metrics (alias /tokens, /cost)",
 		"  /workflow        Show todos, subagents, drive progress",
+		"  /shortcuts       Open the Shortcuts cheat sheet (alt+h tab)",
 		"  /todos [clear]   Print or wipe the shared todo list",
 		"  /tasks [list|tree|show|roots|clear]  Task store panel + ops",
 		"  /subagents       Show subagent fan-out",
