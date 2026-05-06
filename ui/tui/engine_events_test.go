@@ -729,6 +729,134 @@ func TestHandleEngineEvent_AutoResumePersistsCumulative(t *testing.T) {
 	}
 }
 
+func TestTrackMutationOrValidation_EditAccumulates(t *testing.T) {
+	m := newCoverageModel(t)
+	m = m.trackMutationOrValidation("edit_file", map[string]any{
+		"changed_files": []any{"internal/auth/token.go"},
+	}, 5)
+	if got := len(m.agentLoop.unvalidatedEdits); got != 1 {
+		t.Fatalf("expected 1 unvalidated edit, got %d", got)
+	}
+	if m.agentLoop.unvalidatedSinceStep != 5 {
+		t.Errorf("expected unvalidatedSinceStep=5, got %d", m.agentLoop.unvalidatedSinceStep)
+	}
+	// Second edit on a different file → count grows.
+	m = m.trackMutationOrValidation("write_file", map[string]any{
+		"changed_files": []any{"internal/auth/handler.go"},
+	}, 8)
+	if got := len(m.agentLoop.unvalidatedEdits); got != 2 {
+		t.Errorf("expected 2 unvalidated edits, got %d", got)
+	}
+	// since-step should pin to the FIRST edit, not move with each new one.
+	if m.agentLoop.unvalidatedSinceStep != 5 {
+		t.Errorf("unvalidatedSinceStep should pin to first edit, got %d", m.agentLoop.unvalidatedSinceStep)
+	}
+	// Re-editing the same file → no double-count.
+	m = m.trackMutationOrValidation("edit_file", map[string]any{
+		"changed_files": []any{"internal/auth/token.go"},
+	}, 10)
+	if got := len(m.agentLoop.unvalidatedEdits); got != 2 {
+		t.Errorf("re-edit should not double-count, got %d", got)
+	}
+}
+
+func TestTrackMutationOrValidation_BuildClears(t *testing.T) {
+	m := newCoverageModel(t)
+	m.agentLoop.unvalidatedEdits = []string{"a.go", "b.go", "c.go"}
+	m.agentLoop.unvalidatedSinceStep = 5
+	m = m.trackMutationOrValidation("run_command", map[string]any{
+		"command": "go test ./internal/auth/...",
+	}, 12)
+	if len(m.agentLoop.unvalidatedEdits) != 0 {
+		t.Errorf("validation command should clear ledger, got %v", m.agentLoop.unvalidatedEdits)
+	}
+	if m.agentLoop.unvalidatedSinceStep != 0 {
+		t.Errorf("since-step should reset, got %d", m.agentLoop.unvalidatedSinceStep)
+	}
+}
+
+func TestTrackMutationOrValidation_NonValidationCmdLeavesLedger(t *testing.T) {
+	m := newCoverageModel(t)
+	m.agentLoop.unvalidatedEdits = []string{"a.go"}
+	m = m.trackMutationOrValidation("run_command", map[string]any{
+		"command": "git status",
+	}, 5)
+	if len(m.agentLoop.unvalidatedEdits) != 1 {
+		t.Errorf("non-validation command should NOT clear ledger, got %v", m.agentLoop.unvalidatedEdits)
+	}
+}
+
+func TestIsValidationCommand(t *testing.T) {
+	yes := []string{
+		"go test",
+		"go test ./...",
+		"go test -race ./internal/engine",
+		"go vet ./...",
+		"go build",
+		"npm test",
+		"pnpm test",
+		"yarn test",
+		"npm run test",
+		"pytest",
+		"pytest tests/",
+		"cargo test",
+		"cargo check",
+		"tsc",
+		"tsc --noEmit",
+		"eslint .",
+		"biome check",
+		"make build",
+		"make test",
+	}
+	no := []string{
+		"",
+		"git status",
+		"ls -la",
+		"go run main.go", // run, not test/build/vet
+		"npm install",
+		"echo done",
+	}
+	for _, c := range yes {
+		if !isValidationCommand(c) {
+			t.Errorf("isValidationCommand(%q) = false, want true", c)
+		}
+	}
+	for _, c := range no {
+		if isValidationCommand(c) {
+			t.Errorf("isValidationCommand(%q) = true, want false", c)
+		}
+	}
+}
+
+func TestRuntimeStrip_UnverifiedEditsBadgeEscalates(t *testing.T) {
+	cases := []struct {
+		count    int
+		want     string
+		variant  string
+		wantSubs []string
+	}{
+		{1, "unverified: 1 edit", "info", []string{"unverified: 1 edit"}},
+		{2, "unverified: 2 edits", "info", []string{"unverified: 2 edits"}},
+		{3, "unverified: 3 edits", "warn", []string{"unverified: 3 edits"}},
+		{7, "unverified: 7 edits", "warn", []string{"unverified: 7 edits"}},
+	}
+	for _, c := range cases {
+		vm := runtimeViewModel{AgentActive: true, UnvalidatedEdits: c.count}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		for _, sub := range c.wantSubs {
+			if !strings.Contains(joined, sub) {
+				t.Errorf("count=%d expected %q in %q", c.count, sub, joined)
+			}
+		}
+	}
+	// Zero edits → no badge.
+	vm := runtimeViewModel{AgentActive: true}
+	joined := strings.Join(runtimeStripNowParts(vm), " | ")
+	if strings.Contains(joined, "unverified") {
+		t.Errorf("zero edits → no badge, got %q", joined)
+	}
+}
+
 func TestRuntimeStrip_NoBadgeWhenNotStuck(t *testing.T) {
 	vm := runtimeViewModel{AgentActive: true, AgentStep: 5, AgentMaxSteps: 60}
 	parts := runtimeStripNowParts(vm)

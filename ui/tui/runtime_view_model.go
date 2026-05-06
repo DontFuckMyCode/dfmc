@@ -74,6 +74,13 @@ type runtimeViewModel struct {
 	CumulativeTokens int
 	TokenCeiling     int
 
+	// UnvalidatedEdits is the count of files mutated since the last
+	// successful build/test/vet command. Surfaces as
+	// "unverified: N edits" in the runtime strip. Style escalates with
+	// count: 1-2 = info nudge, 3+ = warn. Cleared by the first
+	// validation command after the streak.
+	UnvalidatedEdits int
+
 	Parked          bool
 	ApprovalPending bool
 	QueuedCount     int
@@ -174,6 +181,7 @@ func (m Model) runtimeViewModel() runtimeViewModel {
 		StepCeiling:            m.agentLoop.stepCeiling,
 		CumulativeTokens:       m.agentLoop.cumulativeTokens,
 		TokenCeiling:           m.agentLoop.tokenCeiling,
+		UnvalidatedEdits:       len(m.agentLoop.unvalidatedEdits),
 		Parked:                 info.Parked,
 		ApprovalPending:        m.pendingApproval != nil,
 		QueuedCount:            info.QueuedCount,
@@ -346,6 +354,22 @@ func runtimeStripNowParts(vm runtimeViewModel) []string {
 			badge += " · " + cls
 		}
 		parts = append(parts, warnStyle.Render(badge))
+	}
+	// Unvalidated-edits badge: lights up when the agent has been editing
+	// without running a build/test/vet. info at 1-2, warn at 3+ — three
+	// edits without a single validation pass is the quiet failure mode
+	// the user explicitly worries about ("don't break the code while
+	// running for hours"). Cleared by the next successful validation.
+	if vm.UnvalidatedEdits > 0 {
+		badge := fmt.Sprintf("unverified: %d edit", vm.UnvalidatedEdits)
+		if vm.UnvalidatedEdits != 1 {
+			badge += "s"
+		}
+		if vm.UnvalidatedEdits >= 3 {
+			parts = append(parts, warnStyle.Render(badge))
+		} else {
+			parts = append(parts, infoStyle.Render(badge))
+		}
 	}
 	if tool := strings.TrimSpace(vm.LastTool); tool != "" {
 		label := "last tool: " + tool

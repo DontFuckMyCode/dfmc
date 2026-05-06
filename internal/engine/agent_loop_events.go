@@ -228,6 +228,14 @@ func nativeToolEventMetadata(toolName string, params map[string]any, data map[st
 		if bytes := firstIntAny(data, nil, "bytes"); bytes > 0 {
 			out["written_bytes"] = bytes
 		}
+	case "run_command":
+		// Surface the command string so downstream surfaces (TUI
+		// validation tracker, web activity feed) can recognise build/
+		// test/vet runs without scraping params_preview. We keep it
+		// short — full args list lives in params_preview already.
+		if cmd := firstStringAny(nil, params, "command"); cmd != "" {
+			out["command"] = cmd
+		}
 	case "apply_patch":
 		patch := firstStringAny(nil, params, "patch")
 		files, added, removed, hunks := summarizeUnifiedDiffPatch(patch)

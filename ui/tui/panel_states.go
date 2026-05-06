@@ -565,6 +565,21 @@ type agentLoopState struct {
 	stepCeiling      int
 	cumulativeTokens int
 	tokenCeiling     int
+
+	// unvalidatedEdits tracks files mutated since the last successful
+	// build/test/vet command. The trajectory layer already nudges the
+	// model with a "validate this" hint per turn, but never escalates
+	// when the unvalidated count keeps climbing across rounds. The TUI
+	// surface compensates: a warn badge "unverified: N edits" lights up
+	// from the third edit onward so a multi-hour run that has been
+	// happily editing for 20 rounds without a single test pass becomes
+	// visually obvious. Cleared by successful build/test/vet, reset on
+	// agent:loop:start.
+	unvalidatedEdits []string
+	// unvalidatedSinceStep records the step where the first edit in the
+	// current unvalidated batch landed; useful for "edited 5 files
+	// across the last 12 steps" signals if we ever surface duration.
+	unvalidatedSinceStep int
 }
 
 // workflowPanelState — Drive TODO tree panel state for the Workflow tab.

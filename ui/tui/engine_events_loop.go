@@ -30,6 +30,10 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		m.agentLoop.stepCeiling = 0
 		m.agentLoop.cumulativeTokens = 0
 		m.agentLoop.tokenCeiling = 0
+		// And the unvalidated-edits ledger — a fresh ask gets a clean
+		// slate. Edits the new turn produces will accumulate from zero.
+		m.agentLoop.unvalidatedEdits = nil
+		m.agentLoop.unvalidatedSinceStep = 0
 		// A fresh loop start means any previously parked banner is obsolete.
 		m.ui.resumePromptActive = false
 		files := payloadInt(payload, "context_files", 0)

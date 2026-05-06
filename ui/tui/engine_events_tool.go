@@ -110,6 +110,14 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 			m.agentLoop.stuckCount = 0
 			m.agentLoop.stuckErrClass = ""
 		}
+		// Mutation/validation tracking. Successful edits accumulate on
+		// agentLoop.unvalidatedEdits; a successful build/test/vet run
+		// clears the slate. The runtime strip surfaces the count as a
+		// "unverified: N edits" badge so a long autonomous run that
+		// keeps editing without ever validating becomes visually obvious.
+		if success {
+			m = m.trackMutationOrValidation(toolName, payload, step)
+		}
 		m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
 		m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
 		displayName := displayToolName(toolName, payload)
@@ -241,4 +249,88 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		}
 	}
 	return m, line
+}
+
+// trackMutationOrValidation updates the unvalidated-edits ledger from
+// a successful tool:result. Edits append (de-duped) to the slice;
+// build/test/vet runs clear it. Caller must already have checked
+// success=true so we don't have to re-validate here.
+//
+// `payload` carries `changed_files` (engine populates for edit_file/
+// write_file/apply_patch via nativeToolEventMetadata) and `command`
+// (populated for run_command). Tools that touch neither are silently
+// ignored — the ledger only changes on signal events.
+func (m Model) trackMutationOrValidation(toolName string, payload map[string]any, step int) Model {
+	switch toolName {
+	case "edit_file", "write_file", "apply_patch":
+		paths := payloadStringSlice(payload, "changed_files")
+		if len(paths) == 0 {
+			return m
+		}
+		if len(m.agentLoop.unvalidatedEdits) == 0 {
+			m.agentLoop.unvalidatedSinceStep = step
+		}
+		seen := make(map[string]struct{}, len(m.agentLoop.unvalidatedEdits))
+		for _, p := range m.agentLoop.unvalidatedEdits {
+			seen[p] = struct{}{}
+		}
+		for _, p := range paths {
+			if p = strings.TrimSpace(p); p == "" {
+				continue
+			}
+			if _, dup := seen[p]; dup {
+				continue
+			}
+			m.agentLoop.unvalidatedEdits = append(m.agentLoop.unvalidatedEdits, p)
+			seen[p] = struct{}{}
+		}
+	case "run_command":
+		cmd := strings.TrimSpace(payloadString(payload, "command", ""))
+		if cmd == "" {
+			return m
+		}
+		if isValidationCommand(cmd) {
+			m.agentLoop.unvalidatedEdits = nil
+			m.agentLoop.unvalidatedSinceStep = 0
+		}
+	}
+	return m
+}
+
+// isValidationCommand recognises shell commands that constitute a
+// validation pass — running one of these clears the unvalidated-edits
+// ledger because the model has at least attempted to verify its work.
+// We match on the leading token so flag variants ("go test ./...",
+// "go test -race -count=1 ./internal/engine/...") all count.
+//
+// The list mirrors coach.answerMentionsValidation in spirit but
+// matches command syntax instead of free-form prose. Keep them in
+// rough sync — both surfaces ask the same question ("did the agent
+// actually validate this?") just at different layers.
+func isValidationCommand(cmd string) bool {
+	cmd = strings.TrimSpace(strings.ToLower(cmd))
+	if cmd == "" {
+		return false
+	}
+	// Validation prefixes — first one or two tokens. Order matters: more
+	// specific multi-word prefixes (e.g. "go test") come before the
+	// single-word match so "go run" doesn't accidentally count.
+	multi := []string{
+		"go test", "go vet", "go build",
+		"npm test", "pnpm test", "yarn test",
+		"npm run test", "pnpm run test", "yarn run test",
+		"cargo test", "cargo check", "cargo build", "cargo clippy",
+	}
+	for _, prefix := range multi {
+		if cmd == prefix || strings.HasPrefix(cmd, prefix+" ") {
+			return true
+		}
+	}
+	single := []string{"pytest", "tsc", "eslint", "biome", "mypy", "ruff", "make"}
+	for _, prefix := range single {
+		if cmd == prefix || strings.HasPrefix(cmd, prefix+" ") {
+			return true
+		}
+	}
+	return false
 }
