@@ -1230,6 +1230,60 @@ func TestRuntimeStrip_LiveLoopTokens_WithoutBudget(t *testing.T) {
 	}
 }
 
+// TestHandleEngineEvent_CacheHit_IncrementsTurnCounter pins the new
+// cache_hit handler: the engine has been publishing this since the
+// parallel-tool cache landed, but the dispatcher dropped it. Now the
+// per-turn counter increments and a chat-event line surfaces the
+// silent token savings inline.
+func TestHandleEngineEvent_CacheHit_IncrementsTurnCounter(t *testing.T) {
+	m := newCoverageModel(t)
+	if m.agentLoop.cacheHitsThisTurn != 0 {
+		t.Fatalf("setup: counter should start at 0, got %d", m.agentLoop.cacheHitsThisTurn)
+	}
+	m = m.handleEngineEvent(engine.Event{
+		Type:    "agent:tool:cache_hit",
+		Payload: map[string]any{"name": "read_file"},
+	})
+	if m.agentLoop.cacheHitsThisTurn != 1 {
+		t.Errorf("first hit should bump counter to 1, got %d", m.agentLoop.cacheHitsThisTurn)
+	}
+	// Three more hits → counter == 4
+	for i := 0; i < 3; i++ {
+		m = m.handleEngineEvent(engine.Event{
+			Type:    "agent:tool:cache_hit",
+			Payload: map[string]any{"name": "grep_codebase"},
+		})
+	}
+	if m.agentLoop.cacheHitsThisTurn != 4 {
+		t.Errorf("after 4 total hits, counter should be 4, got %d", m.agentLoop.cacheHitsThisTurn)
+	}
+	// New ask resets.
+	m = m.handleEngineEvent(engine.Event{
+		Type:    "agent:loop:start",
+		Payload: map[string]any{},
+	})
+	if m.agentLoop.cacheHitsThisTurn != 0 {
+		t.Errorf("loop start should reset counter, got %d", m.agentLoop.cacheHitsThisTurn)
+	}
+}
+
+// TestRuntimeStrip_CacheHitsBadge_RendersAndHidesAtZero pins the
+// "cache ×N" badge in the runtime strip.
+func TestRuntimeStrip_CacheHitsBadge_RendersAndHidesAtZero(t *testing.T) {
+	// Hidden at zero
+	vm := runtimeViewModel{AgentActive: true, CacheHitsThisTurn: 0}
+	joined := strings.Join(runtimeStripNowParts(vm), " | ")
+	if strings.Contains(joined, "cache ×") {
+		t.Errorf("zero hits should hide badge, got %q", joined)
+	}
+	// Visible with count
+	vm.CacheHitsThisTurn = 5
+	joined = strings.Join(runtimeStripNowParts(vm), " | ")
+	if !strings.Contains(joined, "cache ×5") {
+		t.Errorf("expected 'cache ×5' in strip, got %q", joined)
+	}
+}
+
 // TestRuntimeStrip_CompactsThisTurnBadge pins the "compacts ×N · -Mk
 // reclaimed" badge that surfaces a budget-thrashing turn. Style
 // escalates: 1-3 = info, 4+ = warn. Hidden when zero compacts have

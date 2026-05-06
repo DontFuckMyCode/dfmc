@@ -628,6 +628,15 @@ type agentLoopState struct {
 	// on agent:loop:start.
 	compactsThisTurn      int
 	compactReclaimedTurn  int // cumulative tokens reclaimed by compacts this turn
+
+	// cacheHitsThisTurn counts how many sub-agent / parallel-tool cache
+	// hits the current turn served. A cache hit is a tool call that the
+	// engine answered from a prior result without re-running the tool —
+	// silent token savings the user wouldn't otherwise see (no
+	// tool:call → no chip → no signal). Surfaced as "cache ×N" in the
+	// runtime strip so a savings-heavy turn registers visibly. Reset
+	// on agent:loop:start.
+	cacheHitsThisTurn int
 }
 
 // workflowPanelState — Drive TODO tree panel state for the Workflow tab.

@@ -1066,6 +1066,12 @@ function classifyActivityEvent(ev) {
 		if (type === "agent:loop:error") {
 			return { kind: "error", icon: "\u2717", text: "agent error \u00b7 " + (payload.error || "") };
 		}
+		if (type === "agent:tool:cache_hit") {
+			// Silent token savings — sub-agent / parallel-tool cache
+			// served the answer without re-running the tool.
+			return { kind: "info", icon: "⚡",
+				text: "cache hit · " + (payload.name || "tool") + " (saved a round-trip)" };
+		}
 		if (type === "agent:loop:resume") {
 			return { kind: "agent", icon: "↻",
 				text: "loop resumed · from step " + (payload.resumed_from_step || 0) + " (" + (payload.tool_rounds || 0) + " prior rounds)" };

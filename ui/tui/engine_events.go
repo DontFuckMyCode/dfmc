@@ -477,6 +477,24 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		} else {
 			line = fmt.Sprintf("Auto-new-session: fresh conversation seeded (%d→%d tokens).", historyTokens, briefTokens)
 		}
+	case "agent:tool:cache_hit":
+		// Sub-agent / parallel-tool cache hit — the engine reused a
+		// prior result instead of re-running the tool. Silent token
+		// savings otherwise (no tool:call → no chip → no signal).
+		// Increment per-turn counter for the runtime badge AND push a
+		// chat-event line so the savings show inline with the turn.
+		toolName := strings.TrimSpace(payloadString(payload, "name", "tool"))
+		m.agentLoop.cacheHitsThisTurn++
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    fmt.Sprintf("agent:tool:cache_hit:%s:%d", toolName, m.agentLoop.cacheHitsThisTurn),
+			Kind:   "tool",
+			Status: "ok",
+			Title:  "cache hit",
+			Detail: toolName + " · reused a prior result, saved a round-trip",
+		})
+		// Subtle activity-feed line; not a footer notice (would flood
+		// during a turn with many cache hits).
+		line = fmt.Sprintf("Cache hit: %s (turn ×%d)", toolName, m.agentLoop.cacheHitsThisTurn)
 	case "provider:fallback":
 		// Provider cascade fell over from primary to next in the order.
 		// Distinct from provider:stream:recovered (mid-stream swap) and

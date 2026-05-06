@@ -120,6 +120,9 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		// turn even though that turn might compact 0 times.
 		m.agentLoop.compactsThisTurn = 0
 		m.agentLoop.compactReclaimedTurn = 0
+		// Cache hits also reset per-turn so the badge tells the user
+		// "this turn saved N tool calls via cache" cleanly.
+		m.agentLoop.cacheHitsThisTurn = 0
 		// A fresh loop start means any previously parked banner is obsolete.
 		m.ui.resumePromptActive = false
 		files := payloadInt(payload, "context_files", 0)

@@ -105,6 +105,12 @@ type runtimeViewModel struct {
 	CompactsThisTurn         int
 	CompactReclaimedThisTurn int
 
+	// CacheHitsThisTurn counts sub-agent / parallel-tool cache hits
+	// during the current turn. Drawn as "cache ×N" in the runtime
+	// strip when N > 0 so silent token savings register visibly.
+	// Reset on agent:loop:start.
+	CacheHitsThisTurn int
+
 	Parked          bool
 	ApprovalPending bool
 	QueuedCount     int
@@ -204,6 +210,7 @@ func (m Model) runtimeViewModel() runtimeViewModel {
 
 		CompactsThisTurn:         m.agentLoop.compactsThisTurn,
 		CompactReclaimedThisTurn: m.agentLoop.compactReclaimedTurn,
+		CacheHitsThisTurn:        m.agentLoop.cacheHitsThisTurn,
 		StuckTool:              m.agentLoop.stuckTool,
 		StuckCount:             m.agentLoop.stuckCount,
 		StuckErrClass:          m.agentLoop.stuckErrClass,
@@ -382,6 +389,12 @@ func runtimeStripNowParts(vm runtimeViewModel) []string {
 	// might want to scope down to give the loop more headroom.
 	if badge := compactsThisTurnBadge(vm); badge != "" {
 		parts = append(parts, badge)
+	}
+	// Cache-hits badge — silent token savings made visible. A turn
+	// with many cache hits has been efficient; this badge surfaces
+	// that so the user sees the system working in their favour.
+	if vm.CacheHitsThisTurn > 0 {
+		parts = append(parts, infoStyle.Render(fmt.Sprintf("cache ×%d", vm.CacheHitsThisTurn)))
 	}
 	// Auto-resume progress: show ceiling proximity continuously during a
 	// long autonomous run. Style escalates from info → warn as headroom
