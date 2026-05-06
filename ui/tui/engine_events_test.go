@@ -1896,6 +1896,138 @@ func TestHandleEngineEvent_CoachStuck_IgnoresEmptyTool(t *testing.T) {
 	}
 }
 
+// TestHandleEngineEvent_IndexErrorSurfacesChatEvent pins the new
+// classifier for index:error. Engine publishes the error string as
+// the raw Payload (not a map) — the handler must read event.Payload
+// directly when it's a string. Without a chat-event line, a stale
+// codemap silently degrades context retrieval and "wrong answer"
+// becomes hard to diagnose.
+func TestHandleEngineEvent_IndexErrorSurfacesChatEvent(t *testing.T) {
+	m := newCoverageModel(t)
+	m.chat.sending = true
+	m = m.handleEngineEvent(engine.Event{
+		Type:    "index:error",
+		Payload: "tree-sitter: parse failed at pkg/foo/bar.go:42",
+	})
+	if m.notice == "" {
+		t.Fatal("index:error should set notice line")
+	}
+	if !strings.Contains(strings.ToLower(m.notice), "workspace index failed") {
+		t.Errorf("notice should mention 'workspace index failed': %q", m.notice)
+	}
+	if !strings.Contains(m.notice, "tree-sitter") {
+		t.Errorf("notice should include the underlying error: %q", m.notice)
+	}
+	// Chat-event line should land in the transcript with warn status.
+	found := false
+	for _, line := range m.chat.transcript {
+		for _, ev := range line.EventLines {
+			if ev.Key == "index:error" && ev.Status == "warn" &&
+				strings.Contains(strings.ToLower(ev.Title), "workspace index failed") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("index:error should produce a warn chat-event line titled 'workspace index failed'")
+	}
+}
+
+// TestHandleEngineEvent_AgentNoteQueuedSurfacesChatEvent pins the
+// /btw mid-flight buffer signal. Without it the user types a note,
+// sees the composer clear, and has no confirmation it landed.
+func TestHandleEngineEvent_AgentNoteQueuedSurfacesChatEvent(t *testing.T) {
+	m := newCoverageModel(t)
+	m.chat.sending = true
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:note:queued",
+		Payload: map[string]any{
+			"note":  "remember to check error path on retry",
+			"queue": 2,
+		},
+	})
+	if m.notice == "" {
+		t.Fatal("agent:note:queued should set notice")
+	}
+	if !strings.Contains(strings.ToLower(m.notice), "note queued") {
+		t.Errorf("notice should mention 'note queued': %q", m.notice)
+	}
+	found := false
+	for _, line := range m.chat.transcript {
+		for _, ev := range line.EventLines {
+			if strings.HasPrefix(ev.Key, "agent:note:queued:") &&
+				strings.Contains(ev.Title, "note queued") &&
+				strings.Contains(ev.Detail, "queue depth 2") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("agent:note:queued should produce a chat-event line with queue depth in detail")
+	}
+}
+
+// TestHandleEngineEvent_ConfigReloadSurfacesChatEvent pins both
+// auto-reload paths. A silently changed provider profile would
+// otherwise look like the model started behaving differently for
+// no reason; a silent reload-failed leaves the user thinking their
+// edits applied when they didn't.
+func TestHandleEngineEvent_ConfigReloadSurfacesChatEvent(t *testing.T) {
+	t.Run("auto success", func(t *testing.T) {
+		m := newCoverageModel(t)
+		m.chat.sending = true
+		m = m.handleEngineEvent(engine.Event{
+			Type: "config:reload:auto",
+			Payload: map[string]any{
+				"path":       "/some/path/.dfmc/config.yaml",
+				"updated_at": int64(1700000000),
+			},
+		})
+		if !strings.Contains(strings.ToLower(m.notice), "auto-reloaded") {
+			t.Errorf("notice should mention auto-reloaded: %q", m.notice)
+		}
+		found := false
+		for _, line := range m.chat.transcript {
+			for _, ev := range line.EventLines {
+				if ev.Key == "config:reload:auto" && ev.Status == "ok" &&
+					strings.Contains(ev.Detail, "config.yaml") {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Error("config:reload:auto should produce ok chat-event line with basename in detail")
+		}
+	})
+	t.Run("auto failed", func(t *testing.T) {
+		m := newCoverageModel(t)
+		m.chat.sending = true
+		m = m.handleEngineEvent(engine.Event{
+			Type: "config:reload:auto_failed",
+			Payload: map[string]any{
+				"path":  "/some/path/.dfmc/config.yaml",
+				"error": "invalid provider profile: missing api_key",
+			},
+		})
+		if !strings.Contains(strings.ToLower(m.notice), "config auto-reload failed") {
+			t.Errorf("notice should mention reload failed: %q", m.notice)
+		}
+		found := false
+		for _, line := range m.chat.transcript {
+			for _, ev := range line.EventLines {
+				if ev.Key == "config:reload:auto_failed" && ev.Status == "warn" &&
+					strings.Contains(ev.Detail, "still on previous config") &&
+					strings.Contains(ev.Detail, "missing api_key") {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Error("config:reload:auto_failed should produce warn chat-event line including 'still on previous config' and the error")
+		}
+	})
+}
+
 func TestPayloadInt(t *testing.T) {
 	cases := []struct {
 		data     map[string]any

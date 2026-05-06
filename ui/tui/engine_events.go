@@ -358,13 +358,52 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		to := payloadString(payload, "to", "?")
 		line = fmt.Sprintf("↻ Stream resumed on %s after %s blip.", to, from)
 	case "config:reload:auto":
+		// .dfmc/config.yaml was edited mid-session and the engine hot-
+		// reloaded providers/tools/limits. The user MUST see this — a
+		// quietly-changed provider profile would otherwise look like
+		// "the model started behaving differently for no reason." Show
+		// the path basename so they can see WHICH config flipped.
 		path := payloadString(payload, "path", "")
+		display := path
+		if idx := strings.LastIndexAny(display, "/\\"); idx >= 0 && idx+1 < len(display) {
+			display = display[idx+1:]
+		}
+		if strings.TrimSpace(display) == "" {
+			display = "config"
+		}
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "config:reload:auto",
+			Kind:   "system",
+			Status: "ok",
+			Title:  "config reloaded",
+			Detail: display + " · providers/tools/limits refreshed",
+		})
 		line = "Config auto-reloaded."
 		if path != "" {
 			line = fmt.Sprintf("Config auto-reloaded from %s.", truncateSingleLine(path, 96))
 		}
 	case "config:reload:auto_failed":
-		errText := payloadString(payload, "error", "")
+		// Auto-reload tripped on validation or provider construction.
+		// The OLD config is still live so the session keeps working,
+		// but the user's edits are NOT applied. They need to see this
+		// or they'll think the session is using their new settings
+		// when it isn't.
+		path := payloadString(payload, "path", "")
+		display := path
+		if idx := strings.LastIndexAny(display, "/\\"); idx >= 0 && idx+1 < len(display) {
+			display = display[idx+1:]
+		}
+		if strings.TrimSpace(display) == "" {
+			display = "config"
+		}
+		errText := strings.TrimSpace(payloadString(payload, "error", "reload failed"))
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "config:reload:auto_failed",
+			Kind:   "system",
+			Status: "warn",
+			Title:  "config reload failed",
+			Detail: fmt.Sprintf("%s · still on previous config · %s", display, truncateSingleLine(errText, 100)),
+		})
 		line = "Config auto-reload failed."
 		if errText != "" {
 			line = fmt.Sprintf("Config auto-reload failed: %s", truncateSingleLine(errText, 120))
@@ -688,6 +727,48 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		} else {
 			line = fmt.Sprintf("History trimmed: %s.", detail)
 		}
+	case "index:error":
+		// Workspace indexer (codemap build) failed. Context retrieval that
+		// would normally rank symbols / files against the user query falls
+		// back to a degraded path — answer quality is impaired but the
+		// session continues. Surface so a "wrong answer" can be diagnosed
+		// as "stale or partial codemap" rather than a model failure.
+		// Payload here is a plain string (err.Error()), not a map.
+		errText := ""
+		if s, ok := event.Payload.(string); ok {
+			errText = strings.TrimSpace(s)
+		}
+		if errText == "" {
+			errText = payloadString(payload, "error", "index failed")
+		}
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "index:error",
+			Kind:   "context",
+			Status: "warn",
+			Title:  "workspace index failed",
+			Detail: truncateSingleLine(errText, 160),
+		})
+		line = "Workspace index failed (codemap may be stale): " + truncateSingleLine(errText, 140)
+	case "agent:note:queued":
+		// User typed `/btw <note>` while the agent was busy — message was
+		// buffered into the agent-notes queue and will be drained at the
+		// next step boundary. Without a chat-event the user has no signal
+		// the message landed; they just see the composer clear and might
+		// retype thinking the input was eaten.
+		note := strings.TrimSpace(payloadString(payload, "note", ""))
+		queue := payloadInt(payload, "queue", 0)
+		detail := truncateSingleLine(note, 120)
+		if queue > 1 {
+			detail = fmt.Sprintf("queue depth %d · %s", queue, detail)
+		}
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    fmt.Sprintf("agent:note:queued:%d", queue),
+			Kind:   "context",
+			Status: "ok",
+			Title:  "note queued for agent",
+			Detail: detail,
+		})
+		line = "Note queued for agent: " + truncateSingleLine(note, 140)
 	case "drive:run:start", "drive:plan:done", "drive:plan:failed",
 		"drive:todo:start", "drive:todo:done", "drive:todo:blocked",
 		"drive:todo:skipped", "drive:todo:retry",
@@ -723,7 +804,7 @@ func shouldMirrorEventToTranscript(eventType string) bool {
 		"conversation:save:error", "coach:note", "tool:denied",
 		"runtime:panic", "tool:panicked", "security:config_permissions",
 		"memory:degraded", "context:error", "engine:shutdown_error",
-		"provider:fallback":
+		"provider:fallback", "config:reload:auto_failed", "index:error":
 		return true
 	default:
 		return false

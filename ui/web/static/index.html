@@ -1276,8 +1276,42 @@ function classifyActivityEvent(ev) {
 	}
 	if (type.startsWith("index:")) {
 		if (type === "index:done") return { kind: "index", icon: "\u25a4", text: "index done \u00b7 " + (payload.files || 0) + " files" };
-		if (type === "index:error") return { kind: "error", icon: "\u2717", text: "index error \u00b7 " + (payload.error || "") };
+		if (type === "index:error") {
+			// engine_ask.go publishes index:error with the raw error
+			// string as Payload (not a map), so read ev.payload when
+			// it's a string before falling back to payload.error.
+			var ixErr = (typeof ev.payload === "string") ? ev.payload : (payload.error || "");
+			return { kind: "error", icon: "\u2717", text: "workspace index failed \u00b7 " + ixErr };
+		}
 		return { kind: "index", icon: "\u25a4", text: type };
+	}
+	if (type === "agent:note:queued") {
+		// User typed /btw mid-flight \u2014 message buffered into the
+		// agent-notes queue. Without a feed line they have no signal
+		// the message landed.
+		var anqNote = payload.note || "";
+		var anqDepth = payload.queue || 0;
+		var anqText = "note queued for agent";
+		if (anqDepth > 1) anqText += " (queue depth " + anqDepth + ")";
+		if (anqNote) anqText += " \u00b7 " + anqNote;
+		return { kind: "info", icon: "\u270e", text: anqText };
+	}
+	if (type.startsWith("config:reload:")) {
+		// .dfmc/config.yaml hot-reload path. auto = success (providers/
+		// tools/limits refreshed); auto_failed = old config still live,
+		// edits NOT applied. Both must surface or the user thinks the
+		// session reflects their new settings when it doesn't.
+		var crPath = payload.path || "";
+		var crBase = crPath.split(/[\/\\]/).pop() || "config";
+		if (type === "config:reload:auto") {
+			return { kind: "info", icon: "\u21bb",
+				text: "config reloaded \u00b7 " + crBase };
+		}
+		if (type === "config:reload:auto_failed") {
+			return { kind: "error", icon: "\u2717",
+				text: "config reload failed \u00b7 " + crBase + " \u00b7 still on previous config \u00b7 " + (payload.error || "") };
+		}
+		return { kind: "info", icon: "\u21bb", text: type };
 	}
 	if (type.startsWith("drive:")) {
 		const rid = payload.run_id ? String(payload.run_id).slice(-8) : "";
