@@ -62,7 +62,47 @@ func (e *Engine) buildRequestMessages(question string, chunks []types.ContextChu
 			}
 		}
 	}
+	if len(omitted) > 0 {
+		e.publishHistoryTrimmedEvent(msgs, omitted, summary, historyBudget, summaryBudget)
+	}
 	return msgs
+}
+
+// publishHistoryTrimmedEvent surfaces the history-trim decision so the
+// TUI / web can render a "we kept N turns and summarized M older ones"
+// hint instead of silently losing context. Without this event the
+// trim is invisible — the user assumes the assistant simply forgot.
+func (e *Engine) publishHistoryTrimmedEvent(kept []provider.Message, omitted []types.Message, summary string, historyBudget, summaryBudget int) {
+	if e == nil || e.EventBus == nil {
+		return
+	}
+	keptCount := 0
+	keptTokens := 0
+	for _, m := range kept {
+		if m.Role != types.RoleUser && m.Role != types.RoleAssistant {
+			continue
+		}
+		keptCount++
+		keptTokens += tokens.Estimate(m.Content)
+	}
+	preview := summary
+	const maxPreview = 240
+	if len(preview) > maxPreview {
+		preview = preview[:maxPreview] + "…"
+	}
+	e.EventBus.Publish(Event{
+		Type:   "history:trimmed",
+		Source: "engine",
+		Payload: map[string]any{
+			"kept_messages":    keptCount,
+			"kept_tokens":      keptTokens,
+			"omitted_messages": len(omitted),
+			"summary_tokens":   tokens.Estimate(summary),
+			"summary_budget":   summaryBudget,
+			"history_budget":   historyBudget,
+			"summary_preview":  preview,
+		},
+	})
 }
 
 func (e *Engine) conversationHistoryBudget() int {

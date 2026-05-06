@@ -449,6 +449,26 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		} else {
 			line = fmt.Sprintf("Auto-new-session: fresh conversation seeded (%d→%d tokens).", historyTokens, briefTokens)
 		}
+	case "history:trimmed":
+		keptMsgs := payloadInt(payload, "kept_messages", 0)
+		keptTokens := payloadInt(payload, "kept_tokens", 0)
+		omitted := payloadInt(payload, "omitted_messages", 0)
+		summaryTokens := payloadInt(payload, "summary_tokens", 0)
+		preview := strings.TrimSpace(payloadString(payload, "summary_preview", ""))
+		detail := fmt.Sprintf("kept %d msgs (%s tok) · summarized %d older into %s tok",
+			keptMsgs, compactMetric(keptTokens), omitted, compactMetric(summaryTokens))
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "history:trimmed",
+			Kind:   "context",
+			Status: "ok",
+			Title:  "history trimmed",
+			Detail: detail,
+		})
+		if preview != "" {
+			line = fmt.Sprintf("History trimmed: %s — %s", detail, truncateSingleLine(preview, 120))
+		} else {
+			line = fmt.Sprintf("History trimmed: %s.", detail)
+		}
 	case "drive:run:start", "drive:plan:done", "drive:plan:failed",
 		"drive:todo:start", "drive:todo:done", "drive:todo:blocked",
 		"drive:todo:skipped", "drive:todo:retry",

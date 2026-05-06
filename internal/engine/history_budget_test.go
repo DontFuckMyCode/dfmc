@@ -308,6 +308,67 @@ func TestBuildHistorySummary_RichBudgetCarriesMoreDetail(t *testing.T) {
 	}
 }
 
+// TestBuildRequestMessages_PublishesHistoryTrimmedEvent pins the new
+// visibility wire: when buildRequestMessages drops older turns to fit
+// the budget, an "history:trimmed" event fires with structural fields
+// the TUI / web can render. Without this event the trim is silent —
+// the user assumes the assistant simply forgot.
+func TestBuildRequestMessages_PublishesHistoryTrimmedEvent(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Context.MaxHistoryTokens = 200
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	bus := NewEventBus()
+	eventsCh := bus.Subscribe("history:trimmed")
+	defer bus.Unsubscribe("history:trimmed", eventsCh)
+
+	eng := &Engine{
+		Config:       cfg,
+		EventBus:     bus,
+		Providers:    router,
+		Conversation: conversation.New(nil),
+	}
+	now := time.Now()
+	for i := 0; i < 16; i++ {
+		eng.Conversation.AddMessage("offline", "offline-analyzer-v1", types.Message{
+			Role:      types.RoleUser,
+			Content:   strings.Repeat("inspect auth middleware token rotation ", 4),
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+		})
+		eng.Conversation.AddMessage("offline", "offline-analyzer-v1", types.Message{
+			Role:      types.RoleAssistant,
+			Content:   strings.Repeat("traced session token persistence findings ", 4),
+			Timestamp: now.Add(time.Duration(i)*time.Second + time.Millisecond),
+		})
+	}
+
+	_ = eng.buildRequestMessages("follow-up question", nil, "")
+
+	select {
+	case ev := <-eventsCh:
+		if ev.Type != "history:trimmed" {
+			t.Fatalf("unexpected event type %q", ev.Type)
+		}
+		payload, ok := ev.Payload.(map[string]any)
+		if !ok {
+			t.Fatalf("expected map payload, got %T", ev.Payload)
+		}
+		for _, key := range []string{"kept_messages", "kept_tokens", "omitted_messages", "summary_tokens", "summary_budget", "history_budget", "summary_preview"} {
+			if _, present := payload[key]; !present {
+				t.Errorf("expected payload key %q", key)
+			}
+		}
+		omitted, _ := payload["omitted_messages"].(int)
+		if omitted <= 0 {
+			t.Errorf("expected omitted_messages > 0, got %v", payload["omitted_messages"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for history:trimmed event")
+	}
+}
+
 func TestBuildHistorySummary_RespectsTokenLimit(t *testing.T) {
 	omitted := []types.Message{
 		{Role: types.RoleUser, Content: strings.Repeat("user asks about auth middleware and tokens ", 20) + "?"},
