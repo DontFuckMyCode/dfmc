@@ -102,6 +102,20 @@ type diagnosticPanelsState struct {
 	plans         plansPanelState
 	contextPanel  contextPanelState
 	providers     providersPanelState
+	statusPanel   statusPanelState
+}
+
+// statusPanelState — arrow-key navigation state for the Status (F2)
+// tab's card grid. Each card has an index; arrow keys move the
+// selection, Enter on a selected card jumps to the related detail
+// panel (Provider card → Providers tab, AST card → CodeMap tab, etc.)
+// or runs an action. Reset implicitly when the panel re-renders.
+type statusPanelState struct {
+	selectedCard int
+	// cardCount is updated by the renderer so navigation knows how
+	// many cards are live (depends on optional sections like
+	// Memory-degraded or Context-In appearing only when populated).
+	cardCount int
 }
 
 func newDiagnosticPanelsState() *diagnosticPanelsState {

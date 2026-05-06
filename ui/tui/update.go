@@ -729,9 +729,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "Chat":
 			return m.handleChatKey(msg)
 		case "Status":
-			if msg.String() == "r" {
-				return m, loadStatusCmd(m.eng)
-			}
+			return m.handleStatusKey(msg)
 		case "Files":
 			return m.handleFilesKey(msg)
 		case "Patch":

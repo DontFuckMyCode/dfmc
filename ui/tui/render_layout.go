@@ -23,7 +23,7 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 	var content string
 	switch m.tabs[m.activeTab] {
 	case "Status":
-		content = fitPanelContentHeight(m.renderStatusView(contentWidth), innerHeight)
+		content = fitPanelContentHeight(m.renderStatusViewV2(contentWidth), innerHeight)
 	case "Files":
 		content = fitPanelContentHeight(m.renderFilesViewSized(contentWidth, innerHeight), innerHeight)
 	case "Patch":

@@ -8,69 +8,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// renderStatusView is the legacy F2 panel renderer. Kept around as a
+// reference for the panel rebuild — render_status.go has the active
+// implementation (renderStatusViewV2). Deleted-after-stabilization; do
+// NOT route through this. Tests still call it for the old text-shape
+// regression so the new one stays comparable.
 func (m Model) renderStatusView(width int) string {
-	inner := min(width, 80)
-	divider := renderDivider(inner)
-	group := func(icon, title string, rows []string) []string {
-		out := []string{accentStyle.Bold(true).Render(icon) + " " + sectionTitleStyle.Render(strings.ToUpper(title))}
-		for _, r := range rows {
-			if strings.TrimSpace(r) == "" {
-				continue
-			}
-			out = append(out, "  "+truncateForPanel(r, width-2))
-		}
-		return out
-	}
-	parts := []string{
-		sectionHeader("◉", "Status"),
-		subtleStyle.Render("r refresh · ctrl+h keys"),
-		divider,
-		"",
-	}
-	parts = append(parts, group("◉", "Project", []string{
-		"Root:     " + blankFallback(m.status.ProjectRoot, "(none)"),
-	})...)
-	parts = append(parts, "")
-	parts = append(parts, group("⎈", "Provider", []string{
-		"Provider: " + blankFallback(m.status.Provider, "-") + " / " + blankFallback(m.status.Model, "-"),
-		"Profile:  " + formatProviderProfileSummaryTUI(m.status.ProviderProfile),
-		"Runtime:  " + providerConnectivityHintTUI(m.status),
-		"Catalog:  " + formatModelsDevCacheSummaryTUI(m.status.ModelsDevCache),
-	})...)
-	parts = append(parts, "")
-	parts = append(parts, group("≡", "AST", []string{
-		"Backend:  " + blankFallback(m.status.ASTBackend, "-"),
-		"Langs:    " + formatASTLanguageSummaryTUI(m.status.ASTLanguages),
-		"Metrics:  " + formatASTMetricsSummaryTUI(m.status.ASTMetrics),
-		"CodeMap:  " + formatCodeMapMetricsSummaryTUI(m.status.CodeMap),
-	})...)
-	if m.status.MemoryDegraded {
-		reason := strings.TrimSpace(m.status.MemoryLoadErr)
-		if reason == "" {
-			reason = "load failed"
-		}
-		parts = append(parts, "", warnStyle.Render("⚠ memory degraded — "+reason+" (running with empty store)"))
-	}
-	if summary := formatContextInSummaryTUI(m.status.ContextIn); summary != "" {
-		parts = append(parts, "")
-		rows := []string{"Last:     " + summary}
-		if why := formatContextInReasonSummaryTUI(m.status.ContextIn); why != "" {
-			rows = append(rows, "Why:      "+why)
-		}
-		if files := formatContextInTopFilesTUI(m.status.ContextIn, 3); files != "" {
-			rows = append(rows, "Top:      "+files)
-		}
-		if details := formatContextInDetailedFileLinesTUI(m.status.ContextIn, 2); len(details) > 0 {
-			for _, line := range details {
-				rows = append(rows, "File:     "+line)
-			}
-		}
-		parts = append(parts, group("▦", "Context In", rows)...)
-	}
-	if note := strings.TrimSpace(m.notice); note != "" {
-		parts = append(parts, "", subtleStyle.Render(note))
-	}
-	return strings.Join(parts, "\n")
+	return m.renderStatusViewV2(width)
 }
 
 func (m Model) renderFilesView(width int) string {
@@ -466,7 +410,10 @@ func helpOverlayTabHints(tab string) []string {
 			"when parked: ctrl+x resumes · esc dismisses · type a note first to steer",
 		}
 	case "status":
-		return []string{"r refresh status"}
+		return []string{
+			"← → / h l move between cards · ↑ ↓ / j k row jump · home/g end/G",
+			"enter jumps to detail tab · r refresh",
+		}
 	case "files":
 		return []string{
 			"j/k or alt+j/alt+k move · p pin · i insert marker",
