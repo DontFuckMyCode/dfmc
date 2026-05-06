@@ -23,6 +23,19 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		m.agentLoop.lastTool = toolName
 		m.agentLoop.lastStatus = "running"
 		m.agentLoop.lastDuration = 0
+		// Capture the model's _reason on the call event itself when it
+		// arrives bundled (some providers ship it on the call payload
+		// directly rather than emitting a separate tool:reasoning).
+		// Empty reason here doesn't clear an existing one — we let the
+		// fall-through tool:reasoning case overwrite if a richer
+		// narration comes in later in the round.
+		if r := strings.TrimSpace(payloadString(payload, "reason", "")); r != "" {
+			m.agentLoop.lastToolReason = r
+		} else {
+			// New tool call with no reason → previous narration is
+			// stale. Clear so the strip doesn't carry the OLD intent.
+			m.agentLoop.lastToolReason = ""
+		}
 		if step > 0 {
 			m.agentLoop.step = step
 		}
@@ -245,6 +258,10 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		if toolName != "" && reason != "" {
 			m.attachReasonToLastChip(toolName, reason)
 			m.attachReasonToStreamingChatEvent(toolName, reason)
+			// Mirror onto agentLoopState so the runtime "now" strip
+			// shows the model's current intent inline alongside last-
+			// tool. Truncated render-side; we keep the full text here.
+			m.agentLoop.lastToolReason = reason
 			line = fmt.Sprintf("%s · %s", toolName, truncateForLine(reason, 90))
 		}
 	}

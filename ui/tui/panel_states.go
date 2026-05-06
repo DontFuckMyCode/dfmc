@@ -541,6 +541,14 @@ type agentLoopState struct {
 	lastDuration int
 	lastOutput   string
 	contextScope string
+	// lastToolReason is the model's `_reason` field on the most recent
+	// tool call — its self-narration of WHY this call. Surfaced in the
+	// runtime "now" strip as "→ thinking: <reason>" so a user watching
+	// a long autonomous run can see the model's current intent at a
+	// glance without scrolling through chips. Cleared on each new
+	// tool:call (previous intent is now stale); refreshed on each
+	// tool:reasoning event.
+	lastToolReason string
 	toolTimeline []toolChip
 	// sessionCoachNotes accumulates coach:note text during the current round for
 	// runtime visibility and test assertions.

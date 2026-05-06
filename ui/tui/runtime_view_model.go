@@ -56,6 +56,11 @@ type runtimeViewModel struct {
 	LastTool      string
 	LastStatus    string
 	LastDuration  int
+	// LastToolReason is the model's `_reason` self-narration on the
+	// most recent tool call. Rendered as "→ thinking: <reason>" in the
+	// runtime "now" strip so a user watching a long autonomous run can
+	// see WHY without scrolling back through chips. Empty → no badge.
+	LastToolReason string
 
 	// Stuck* — populated when the trajectory coach has flagged a
 	// repeated-failure pattern that hasn't been cleared by a successful
@@ -174,6 +179,7 @@ func (m Model) runtimeViewModel() runtimeViewModel {
 		LastTool:               info.LastTool,
 		LastStatus:             info.LastStatus,
 		LastDuration:           info.LastDurationMs,
+		LastToolReason:         m.agentLoop.lastToolReason,
 		StuckTool:              m.agentLoop.stuckTool,
 		StuckCount:             m.agentLoop.stuckCount,
 		StuckErrClass:          m.agentLoop.stuckErrClass,
@@ -344,6 +350,14 @@ func runtimeStripNowParts(vm runtimeViewModel) []string {
 	// scope before the engine refuses further work.
 	if badge := autoResumeBadge(vm); badge != "" {
 		parts = append(parts, badge)
+	}
+	// Self-narration: the model's `_reason` on the latest tool call,
+	// truncated to fit. Renders as "→ <reason>" so a user can see
+	// what the agent is currently trying to accomplish without having
+	// to scroll back through chips. Subtle-styled because it's
+	// supplementary commentary, not a state indicator.
+	if reason := strings.TrimSpace(vm.LastToolReason); reason != "" {
+		parts = append(parts, subtleStyle.Render("→ "+truncateSingleLine(reason, 64)))
 	}
 	// Stuck-loop badge: warn-styled, ahead of last-tool so it lands in
 	// the eyeline of someone scanning a long-running run for "is it

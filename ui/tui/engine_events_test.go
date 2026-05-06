@@ -729,6 +729,91 @@ func TestHandleEngineEvent_AutoResumePersistsCumulative(t *testing.T) {
 	}
 }
 
+func TestToolReasoningUpdatesRuntimeStrip(t *testing.T) {
+	m := newCoverageModel(t)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:reasoning",
+		Payload: map[string]any{
+			"tool":   "read_file",
+			"reason": "checking how the SSE handler closes the stream",
+		},
+	})
+	if m.agentLoop.lastToolReason == "" {
+		t.Fatal("tool:reasoning should populate lastToolReason")
+	}
+	if !strings.Contains(m.agentLoop.lastToolReason, "SSE handler") {
+		t.Errorf("reason should be stored verbatim, got %q", m.agentLoop.lastToolReason)
+	}
+}
+
+func TestToolCallClearsStaleReason(t *testing.T) {
+	// Round 1: tool:reasoning lands a reason. Round 2: a new tool:call
+	// without a bundled reason → previous reason MUST clear so the
+	// runtime strip doesn't show stale intent from the previous call.
+	m := newCoverageModel(t)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:reasoning",
+		Payload: map[string]any{
+			"tool":   "read_file",
+			"reason": "checking the SSE handler",
+		},
+	})
+	if m.agentLoop.lastToolReason == "" {
+		t.Fatal("setup: reason should be set")
+	}
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool": "edit_file",
+			"step": 5,
+		},
+	})
+	if m.agentLoop.lastToolReason != "" {
+		t.Errorf("new tool:call without reason should clear stale reason, got %q",
+			m.agentLoop.lastToolReason)
+	}
+}
+
+func TestToolCallCarriesReasonInline(t *testing.T) {
+	m := newCoverageModel(t)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool":   "grep_codebase",
+			"reason": "locate the parking-state save site",
+			"step":   3,
+		},
+	})
+	if !strings.Contains(m.agentLoop.lastToolReason, "parking-state save site") {
+		t.Errorf("inline reason on tool:call should populate state, got %q",
+			m.agentLoop.lastToolReason)
+	}
+}
+
+func TestRuntimeStrip_RendersToolReasonBadge(t *testing.T) {
+	vm := runtimeViewModel{
+		AgentActive:    true,
+		AgentStep:      8,
+		AgentMaxSteps:  60,
+		LastToolReason: "investigating the SSE close behaviour",
+	}
+	joined := strings.Join(runtimeStripNowParts(vm), " | ")
+	if !strings.Contains(joined, "→ ") {
+		t.Errorf("expected narration arrow in strip, got %q", joined)
+	}
+	if !strings.Contains(joined, "SSE close behaviour") {
+		t.Errorf("expected reason text in strip, got %q", joined)
+	}
+}
+
+func TestRuntimeStrip_NoReasonBadgeWhenEmpty(t *testing.T) {
+	vm := runtimeViewModel{AgentActive: true, AgentStep: 1, AgentMaxSteps: 60}
+	joined := strings.Join(runtimeStripNowParts(vm), " | ")
+	if strings.Contains(joined, "→ ") {
+		t.Errorf("no reason → no narration badge, got %q", joined)
+	}
+}
+
 func TestAutonomyHealthLine_QuietWhenHealthy(t *testing.T) {
 	if got := autonomyHealthLine(agentLoopState{}); got != "" {
 		t.Errorf("empty state → empty line, got %q", got)
