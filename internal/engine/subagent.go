@@ -96,6 +96,11 @@ func buildSubagentPrompt(req tools.SubagentRequest, skillTexts []string, env sub
 		b.WriteString(". Treat this as the hard scoped tool set; ask for a narrower follow-up if you need something outside it.\n\n")
 	}
 	b.WriteString("Work autonomously until the scoped task is genuinely complete. If the task clearly decomposes, prefer orchestrate or delegate_task fan-out instead of serializing every survey step yourself.\n\n")
+	b.WriteString("Return shape — what the parent session needs from you:\n")
+	b.WriteString("- A direct answer to the scoped task (one paragraph, not a recap of every step).\n")
+	b.WriteString("- Concrete evidence: file:line citations, key snippets, or exact tool output excerpts behind your claim.\n")
+	b.WriteString("- Open questions or assumptions you had to make, listed separately so the parent can decide whether to probe further.\n")
+	b.WriteString("- Skip narration of intermediate tool calls — the parent already sees the trace; your job is the synthesis.\n\n")
 	b.WriteString("Task:\n")
 	b.WriteString(strings.TrimSpace(req.Task))
 	return b.String()

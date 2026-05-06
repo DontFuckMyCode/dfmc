@@ -344,7 +344,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 					step, len(s.traces), s.totalTokens,
 				)
 				notice := composeParkedNotice(headline, s.traces,
-					`Type "devam" / "continue" or /continue to resume — your work is saved.`)
+					`Type /continue (or just "continue") to resume — your work is saved.`)
 				e.publishAgentLoopEvent("agent:loop:interrupted", map[string]any{
 					"step":        step,
 					"tool_rounds": len(s.traces),
@@ -437,7 +437,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 				step, len(s.traces), s.totalTokens,
 			)
 			notice := composeParkedNotice(headline, s.traces,
-				`Type "devam" / "continue" or /continue to resume — add a note to redirect (e.g. "devam, focus on the test file").`)
+				`Type /continue to resume — add a note to redirect (e.g. "/continue focus on the test file").`)
 			return s.park(e, notice, ParkReasonStepCap), nil
 		}
 	}

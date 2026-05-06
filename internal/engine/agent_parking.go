@@ -124,7 +124,7 @@ func summarizeTraces(traces []nativeToolTrace) string {
 // one without the others was a regression magnet flagged in the
 // REPORT.md walk. headroom is ignored when phase == parkPhaseAfter.
 func formatBudgetExhaustedNotice(phase parkPhase, step, tokens, maxTokens, headroom, rounds int) string {
-	suffix := `Type "devam" / "continue" or /continue to resume — add a note to narrow focus (e.g. "devam, just finish the test file").`
+	suffix := `Type /continue to resume — add a note to narrow focus (e.g. "/continue just finish the test file").`
 	switch phase {
 	case parkPhaseBefore:
 		return fmt.Sprintf(

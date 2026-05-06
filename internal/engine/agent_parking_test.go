@@ -91,7 +91,7 @@ func TestComposeParkedNotice_SkipsEmptyTraceSummary(t *testing.T) {
 
 func TestFormatBudgetExhaustedNotice_BeforeAndAfter(t *testing.T) {
 	before := formatBudgetExhaustedNotice(parkPhaseBefore, 7, 12000, 15000, 1000, 5)
-	for _, want := range []string{"before step 7", "12000/15000", "need ~1000", "5 rounds", "devam"} {
+	for _, want := range []string{"before step 7", "12000/15000", "need ~1000", "5 rounds", "/continue"} {
 		if !strings.Contains(before, want) {
 			t.Errorf("before-notice missing %q: %s", want, before)
 		}

@@ -33,7 +33,7 @@ func TestPasteBlockDetection(t *testing.T) {
 	}
 
 	// Notice should confirm paste
-	if !strings.Contains(m2.notice, "PASTE") {
+	if !strings.Contains(m2.notice, "Pasted") {
 		t.Fatalf("expected paste notice, got %q", m2.notice)
 	}
 }

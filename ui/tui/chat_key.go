@@ -53,12 +53,12 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.Paste || strings.ContainsAny(inserted, "\r\n") {
 			m.clearPasteBurst()
 			block := m.addPasteBlock(inserted)
-			m.notice = fmt.Sprintf("PASTE #%d: %d lines, %d bytes", block.blockNum, block.lineCount, len(block.content))
+			m.notice = formatPasteNotice(block)
 			return m, nil
 		}
 		now := time.Now()
 		if m.appendPasteBurstText(inserted, now) {
-			m.notice = "PASTE collecting..."
+			m.notice = pasteCollectingNotice
 			return m, nil
 		}
 		insertedRunes := len([]rune(inserted))
@@ -66,7 +66,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.clearPasteBurst()
 			block := m.addPasteBlock(inserted)
 			m.activatePasteBurstBlock(block, now)
-			m.notice = fmt.Sprintf("PASTE #%d: %d lines, %d bytes", block.blockNum, block.lineCount, len(block.content))
+			m.notice = formatPasteNotice(block)
 			return m, nil
 		}
 		start, end := m.insertInputTextRange(inserted)
@@ -76,7 +76,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.extendPasteBurstCandidate(start, end, insertedRunes, false, now)
 		}
 		if m.shouldPromotePasteCandidateDuringInput(now) && m.promotePasteCandidateDuringInput(now) {
-			m.notice = "PASTE collecting..."
+			m.notice = pasteCollectingNotice
 			return m, nil
 		}
 		if !m.pasteBurstCandidateActive(now) && !m.pasteBurstActive(now) {
@@ -93,13 +93,13 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.exitInputHistoryNavigation()
 		now := time.Now()
 		if m.appendPasteBurstText(" ", now) {
-			m.notice = "PASTE collecting..."
+			m.notice = pasteCollectingNotice
 			return m, nil
 		}
 		start, end := m.insertInputTextRange(" ")
 		m.extendPasteBurstCandidate(start, end, 1, false, now)
 		if m.shouldPromotePasteCandidateDuringInput(now) && m.promotePasteCandidateDuringInput(now) {
-			m.notice = "PASTE collecting..."
+			m.notice = pasteCollectingNotice
 			return m, nil
 		}
 		m.slashMenu.command = 0
@@ -418,12 +418,12 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		now := time.Now()
 		if m.pasteBurstActive(now) {
 			if m.appendPasteBurstText("\n", now) {
-				m.notice = "PASTE collecting..."
+				m.notice = pasteCollectingNotice
 				return m, nil
 			}
 		}
 		if m.shouldStartPasteBurstOnEnter(now) && m.startPasteBurstFromInput(now) {
-			m.notice = "PASTE collecting..."
+			m.notice = pasteCollectingNotice
 			return m, nil
 		}
 		if len(m.chat.pasteBlocks) == 0 && strings.HasPrefix(strings.TrimSpace(m.chat.input), "/") {
@@ -465,7 +465,7 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.slashMenu.mention = 0
 			m.slashMenu.quickAction = 0
 			if m.ui.keyLogEnabled {
-				m.notice = fmt.Sprintf("FALLBACK inserted %q → input=%q", string(msg.Runes), m.chat.input)
+				m.notice = fmt.Sprintf("[keylog] inserted %q", string(msg.Runes))
 			}
 			if strings.ContainsRune(string(msg.Runes), '@') && len(m.filesView.entries) == 0 && m.eng != nil {
 				return m, loadFilesCmd(m.eng)
@@ -503,7 +503,7 @@ func (m Model) openMentionPickerFromKey() (tea.Model, tea.Cmd) {
 	}
 	m.chat.mentionPickerOpen = true
 	m.slashMenu.mention = 0
-	m.notice = "File picker open - type to filter, tab/enter inserts, esc cancels."
+	m.notice = "File picker — type to filter · tab inserts · esc closes."
 	if len(m.filesView.entries) == 0 && m.eng != nil {
 		return m, loadFilesCmd(m.eng)
 	}
@@ -530,7 +530,7 @@ func (m Model) submitChatComposer(suggestions chatSuggestionState) (tea.Model, t
 		if m.chat.sending {
 			if len(m.chat.pendingQueue) >= pendingQueueCap {
 				block := m.addPasteBlock(full)
-				m.notice = fmt.Sprintf("Queue full (%d max) - PASTE #%d kept in input.", pendingQueueCap, block.blockNum)
+				m.notice = fmt.Sprintf("Queue full (%d max) — paste #%d kept in input.", pendingQueueCap, block.blockNum)
 				return m, nil
 			}
 			m.chat.pendingQueue = append(m.chat.pendingQueue, full)
@@ -594,6 +594,19 @@ func _s(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// pasteCollectingNotice is the single quiet message shown while a multi-chunk
+// paste is still being assembled. We don't broadcast per-chunk byte/line
+// counts — those are debug-grade signals that flooded the notice line and
+// hid genuinely-actionable feedback.
+const pasteCollectingNotice = "Collecting paste…"
+
+// formatPasteNotice renders the one-line confirmation shown after a paste
+// block lands in the input. The placeholder in the input box already carries
+// the line count, so the notice stays terse: id + size hint only.
+func formatPasteNotice(b pasteBlock) string {
+	return fmt.Sprintf("Pasted #%d · %d line%s · %d bytes", b.blockNum, b.lineCount, _s(b.lineCount), len(b.content))
 }
 
 // Chat composer input editing (cursor, word boundaries, Ctrl+W/K,

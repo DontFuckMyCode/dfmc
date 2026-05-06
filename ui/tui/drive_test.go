@@ -126,7 +126,7 @@ func TestHandleDriveStopSlash_NoActiveRuns(t *testing.T) {
 		t.Fatal("handleDriveStopSlash should be handled")
 	}
 	last := next.chat.transcript[len(next.chat.transcript)-1].Content
-	if !strings.Contains(last, "no active drive runs") {
+	if !strings.Contains(strings.ToLower(last), "no active drive runs") {
 		t.Fatalf("expected no active runs message, got:\n%s", last)
 	}
 }
@@ -155,7 +155,7 @@ func TestHandleDriveActiveSlash_NoActiveRuns(t *testing.T) {
 		t.Fatal("handleDriveActiveSlash should be handled")
 	}
 	last := next.chat.transcript[len(next.chat.transcript)-1].Content
-	if !strings.Contains(last, "no active drive runs") {
+	if !strings.Contains(strings.ToLower(last), "no active drive runs") {
 		t.Fatalf("expected no active runs message, got:\n%s", last)
 	}
 }

@@ -64,8 +64,8 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		// for users who want to share a session out of DFMC.
 		m.chat.input = ""
 		if len(m.chat.transcript) == 0 {
-			m.notice = "Nothing to export yet."
-			return m.appendSystemMessage("Transcript is empty; nothing to export."), nil, true
+			m.notice = "Nothing to export yet — start a conversation first."
+			return m.appendSystemMessage("Nothing to export yet. Send a message, then /export to save the transcript."), nil, true
 		}
 		target := strings.TrimSpace(strings.Join(args, " "))
 		path, err := m.exportTranscript(target)
@@ -94,8 +94,8 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			}
 		}
 		if lastUser < 0 {
-			m.notice = "Nothing to retry yet."
-			return m.appendSystemMessage("No prior user message in this transcript to retry. Type a question first."), nil, true
+			m.notice = "No prior user message to retry — type a question first."
+			return m.appendSystemMessage("/retry needs a prior user message in the transcript. Send a message first, then /retry rebuilds the assistant reply."), nil, true
 		}
 		question := strings.TrimSpace(m.chat.transcript[lastUser].Content)
 		if question == "" {
@@ -130,8 +130,8 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		}
 		if lastUserIdx < 0 {
 			m.chat.input = ""
-			m.notice = "Nothing to edit yet."
-			return m.appendSystemMessage("No prior user message to edit. Type a question first."), nil, true
+			m.notice = "No prior user message to edit — type a question first."
+			return m.appendSystemMessage("/edit needs a prior user message to pull back into the composer. Send a message first, then /edit lets you tweak and resend."), nil, true
 		}
 		prior := m.chat.transcript[lastUserIdx].Content
 		m.chat.transcript = m.chat.transcript[:lastUserIdx]
@@ -207,8 +207,8 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 				if err != nil {
 					return m.appendSystemMessage("/drive resume error: " + err.Error()), nil, true
 				}
-				m.notice = "Drive resumed — watch the activity panel for resumed TODO progress."
-				return m.appendSystemMessage("▸ Drive resume requested: " + runID + "\n   Progress will continue in the activity panel below."), nil, true
+				m.notice = "Drive [" + shortRunID(runID) + "] resumed — pinned to Activity below."
+				return m.appendSystemMessage("▸ Drive resume requested · run_id: " + runID + "\n   Progress will continue in the activity panel below."), nil, true
 			}
 		}
 		task := strings.TrimSpace(strings.Join(args, " "))
@@ -224,8 +224,8 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		if err != nil {
 			return m.appendSystemMessage("/drive error: " + err.Error()), nil, true
 		}
-		m.notice = "Drive started — watch the activity panel for plan + per-TODO progress."
-		return m.appendSystemMessage("▸ Drive started: " + truncateForLine(task, 100) + "\n   run_id: " + runID + "\n   Plan and per-TODO progress stream into the activity panel below."), nil, true
+		m.notice = "Drive [" + shortRunID(runID) + "] started — pinned to Activity below."
+		return m.appendSystemMessage("▸ Drive started · run_id: " + runID + "\n   Task: " + truncateForLine(task, 100) + "\n   Plan and per-TODO progress stream into the Activity panel below."), nil, true
 	case "compact":
 		// Collapse older transcript entries into a single summary line so
 		// long sessions stay scannable. Purely a view-layer operation —
@@ -248,8 +248,8 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		}
 		collapsed, collapsedCount, ok := compactTranscript(m.chat.transcript, keep)
 		if !ok {
-			m.notice = "Nothing to compact yet."
-			return m.appendSystemMessage(fmt.Sprintf("Transcript has only %d lines (keep=%d) — nothing to compact yet.", len(m.chat.transcript), keep)), nil, true
+			m.notice = "Nothing to compact yet — transcript too short."
+			return m.appendSystemMessage(fmt.Sprintf("Nothing to compact yet — transcript has only %d line%s. /compact starts trimming once you've got more than %d. Older history always stays in the Conversations panel.", len(m.chat.transcript), _s(len(m.chat.transcript)), keep)), nil, true
 		}
 		m.chat.transcript = collapsed
 		m.chat.scrollback = 0
@@ -371,7 +371,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.chat.input = ""
 		if m.eng == nil || !m.eng.HasParkedAgent() {
 			m.notice = "Nothing to resume — no parked agent loop."
-			return m.appendSystemMessage("No parked agent loop. /continue only works after the loop pauses at its step cap."), nil, true
+			return m.appendSystemMessage("Nothing to resume — the agent isn't paused. /continue only works after a turn pauses at its step or token budget."), nil, true
 		}
 		note := strings.TrimSpace(strings.Join(args, " "))
 		next, cmdOut := m.startChatResume(note)
@@ -454,6 +454,18 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.notice = "Unknown chat command: " + raw
 		return m.appendSystemMessage("Unknown chat command: " + raw + "\nRun /help for the catalog."), nil, true
 	}
+}
+
+// shortRunID returns the leading 8 chars of a Drive run id so the user has
+// a stable, scannable handle ("Drive [abc12345] started") that still maps
+// 1-to-1 to the persisted run. Drive run ids are unique by their first
+// 8 chars in practice; the full id always lands in the system message line
+// so /drive resume <id> remains unambiguous.
+func shortRunID(runID string) string {
+	if len(runID) <= 8 {
+		return runID
+	}
+	return runID[:8]
 }
 
 func (m Model) toggleSelectionMode() (tea.Model, tea.Cmd, bool) {

@@ -108,10 +108,10 @@ func renderTUIHelp() string {
 		"─────────────────────────────────────────",
 		"KEYBOARD NOTES",
 		"─────────────────────────────────────────",
-		"  Turkish-Q keyboards on MinTTY / Windows Terminal:",
-		"    @ comes as Alt+Q — use Ctrl+T to open file picker",
-		"    Alt+<letter> shortcuts may not work reliably",
-		"    Use letter-key alternatives (j/k/g/G etc.) instead",
+		"  Layouts where '@' lives behind AltGr / Alt+Q (international",
+		"  keyboards on MinTTY / Windows Terminal): use Ctrl+T to open",
+		"  the file picker; prefer letter shortcuts (j/k/g/G) when Alt",
+		"  combinations are unreliable.",
 	}
 
 	slashSection := strings.Join([]string{

@@ -165,22 +165,22 @@ func (m Model) handleDriveStopSlash(args []string) (Model, tea.Cmd, bool) {
 	if id == "" {
 		active := drive.ListActive()
 		if len(active) == 0 {
-			return m.appendSystemMessage("/drive stop: no active drive runs in this process."), nil, true
+			return m.appendSystemMessage("No active drive runs in this process. /drive list shows historical runs."), nil, true
 		}
 		if len(active) > 1 {
-			lines := []string{"/drive stop: multiple active runs — pass an explicit ID:"}
+			lines := []string{"Multiple active runs — pass an explicit ID to /drive stop:"}
 			for _, a := range active {
-				lines = append(lines, "  "+a.RunID+"  "+truncateForLine(a.Task, 60))
+				lines = append(lines, "  "+shortRunID(a.RunID)+"  "+a.RunID+"  "+truncateForLine(a.Task, 60))
 			}
 			return m.appendSystemMessage(strings.Join(lines, "\n")), nil, true
 		}
 		id = active[0].RunID
 	}
 	if drive.Cancel(id) {
-		m.notice = "Drive cancellation signal sent — loop stops after the current TODO."
-		return m.appendSystemMessage("▸ Drive " + id + ": cancellation signal sent. The loop stops after the current TODO finishes; watch for drive:run:stopped."), nil, true
+		m.notice = "Drive [" + shortRunID(id) + "] stopping — finishes current TODO first."
+		return m.appendSystemMessage("▸ Drive [" + shortRunID(id) + "] cancellation sent · run_id: " + id + "\n   The loop stops after the current TODO finishes; watch the Activity panel for drive:run:stopped."), nil, true
 	}
-	return m.appendSystemMessage("/drive stop: " + id + " is not active in this process (already done or wrong ID)."), nil, true
+	return m.appendSystemMessage("/drive stop: " + id + " is not active in this process — already done, or wrong ID. Try /drive list to see persisted runs."), nil, true
 }
 
 // handleDriveActiveSlash lists currently-running drives. Useful when
@@ -189,12 +189,13 @@ func (m Model) handleDriveStopSlash(args []string) (Model, tea.Cmd, bool) {
 func (m Model) handleDriveActiveSlash() (Model, tea.Cmd, bool) {
 	active := drive.ListActive()
 	if len(active) == 0 {
-		return m.appendSystemMessage("(no active drive runs)"), nil, true
+		return m.appendSystemMessage("No active drive runs. Start one with /drive <task>, or /drive list to see persisted runs."), nil, true
 	}
-	lines := []string{"Active drive runs:"}
+	lines := []string{fmt.Sprintf("Active drive runs (%d):", len(active))}
 	for _, a := range active {
-		lines = append(lines, "  "+a.RunID+"  "+truncateForLine(a.Task, 80))
+		lines = append(lines, "  ["+shortRunID(a.RunID)+"]  "+truncateForLine(a.Task, 80))
 	}
+	lines = append(lines, "", "Tip: /drive stop <id> cancels a specific run.")
 	return m.appendSystemMessage(strings.Join(lines, "\n")), nil, true
 }
 
@@ -213,13 +214,14 @@ func (m Model) handleDriveListSlash() (Model, tea.Cmd, bool) {
 		return m.appendSystemMessage("/drive list error: " + err.Error()), nil, true
 	}
 	if len(runs) == 0 {
-		return m.appendSystemMessage("(no drive runs yet)"), nil, true
+		return m.appendSystemMessage("No drive runs yet. Start one with /drive <task>."), nil, true
 	}
-	lines := []string{"Drive runs (newest first):"}
+	lines := []string{fmt.Sprintf("Drive runs (%d, newest first):", len(runs))}
 	for _, r := range runs {
 		done, blocked, skipped, _ := r.Counts()
-		lines = append(lines, fmt.Sprintf("  %s  %s  %d done · %d blocked · %d skipped  %s",
-			r.ID, r.Status, done, blocked, skipped, truncateForLine(r.Task, 60)))
+		lines = append(lines, fmt.Sprintf("  [%s]  %-7s  %d done · %d blocked · %d skipped  %s",
+			shortRunID(r.ID), r.Status, done, blocked, skipped, truncateForLine(r.Task, 60)))
 	}
+	lines = append(lines, "", "Tip: /drive resume <id> restarts a stopped run · /drive stop <id> cancels an active one.")
 	return m.appendSystemMessage(strings.Join(lines, "\n")), nil, true
 }

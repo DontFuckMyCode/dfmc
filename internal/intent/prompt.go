@@ -33,6 +33,11 @@ Routing rules:
   - intent="new" when the user is starting an unrelated task, OR when
     PARKED_AGENT=no, OR when the user explicitly abandons the parked
     work ("forget that, do X instead", "actually let's...", "skip that").
+  - Stale-park nuance: when PARKED_AGENT=yes but parked_age is large
+    (>30 minutes) AND the user's message doesn't reference the parked
+    task by topic, lean toward "new" — the user has likely moved on. A
+    short generic continuation like "devam"/"go on" with a fresh-feeling
+    parked_age (<10 minutes) still routes "resume".
   - intent="clarify" ONLY when the message is genuinely too vague to act
     on AND there is no recent state to anchor it (e.g. "fix it" but
     LAST_ASSISTANT shows no error). When clarify, set follow_up_question

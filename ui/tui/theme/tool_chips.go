@@ -228,7 +228,8 @@ func RenderInlineToolChipsSummary(chips []ToolChip, width int) string {
 	if totalMs > 0 {
 		parts = append(parts, fmt.Sprintf("%dms", totalMs))
 	}
-	headline := SubtleStyle.Render("▸ tools · " + strings.Join(parts, " · "))
+	headline := SubtleStyle.Render("▸ tools · "+strings.Join(parts, " · ")) + "  " +
+		AccentStyle.Render("[/tools]") + SubtleStyle.Render(" expand")
 
 	breakdown := []string{}
 	for _, name := range order {
@@ -239,9 +240,8 @@ func RenderInlineToolChipsSummary(chips []ToolChip, width int) string {
 			breakdown = append(breakdown, fmt.Sprintf("%s ×%d", name, n))
 		}
 	}
-	hint := SubtleStyle.Render("— /tools to expand")
 	body := strings.Join(breakdown, ", ")
-	bodyLine := SubtleStyle.Render("  ") + TruncateSingleLine(body+" "+hint, inner)
+	bodyLine := SubtleStyle.Render("  ") + SubtleStyle.Render(TruncateSingleLine(body, inner-2))
 
 	var b strings.Builder
 	b.WriteString(indent)

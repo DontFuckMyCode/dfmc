@@ -340,8 +340,8 @@ func TestEditWithoutPriorUserMessage(t *testing.T) {
 		t.Fatalf("/edit on empty transcript should emit a transcript line")
 	}
 	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
-	if !strings.Contains(strings.ToLower(last), "no prior user message") {
-		t.Fatalf("/edit on empty transcript should say 'no prior user message', got:\n%s", last)
+	if !strings.Contains(strings.ToLower(last), "prior user message") {
+		t.Fatalf("/edit on empty transcript should explain it needs a prior user message, got:\n%s", last)
 	}
 }
 
@@ -409,8 +409,8 @@ func TestRetryWithoutPriorUserMessage(t *testing.T) {
 		t.Fatalf("/retry should emit a transcript line")
 	}
 	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
-	if !strings.Contains(strings.ToLower(last), "no prior user message") {
-		t.Fatalf("/retry on empty transcript should say 'no prior user message', got:\n%s", last)
+	if !strings.Contains(strings.ToLower(last), "prior user message") {
+		t.Fatalf("/retry on empty transcript should explain it needs a prior user message, got:\n%s", last)
 	}
 	if mm.chat.sending {
 		t.Fatalf("/retry with nothing to retry must not flip sending=true")

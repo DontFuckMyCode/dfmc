@@ -439,6 +439,16 @@ templates:
         `returned_lines` from the response to ask for the next slice
         via `line_start` / `line_end`. Do NOT re-grep for the same data.
 
+      - tool result ending with `[output truncated at N bytes]` or
+        `[grep output truncated - refine pattern or narrow path]` or
+        `(output truncated by sandbox)`
+        → The byte-budget cap fired BEFORE you saw all the data. The
+        tool ran to completion, but only the first N bytes of its
+        output reached you. Do NOT re-run the identical call hoping
+        for more — the cap will trip again. Narrow the call (tighter
+        grep pattern, smaller line range, more specific path) or run
+        the tool against the specific subset you actually need.
+
       - grep_codebase response with many matches, no context fields set
         → Add `include` / `exclude` globs to narrow, or `context: N` to
         widen a specific match. Do not re-run the same pattern without
@@ -469,8 +479,15 @@ templates:
         trajectory brief replacing older history — treat it as ground
         truth about what already happened. Don't restart the task from
         scratch; pick up where the brief ends.
+      - On resume, do NOT re-read files or re-run searches you already
+        completed before the park — the brief lists what you observed.
+        If a specific fact is missing from the brief, re-fetch ONLY that
+        narrow slice (one `find_symbol` or one `read_file` with a tight
+        range), not the broader exploration you did originally.
       - A resume does NOT reset tool budgets — the cumulative ceiling is
-        `resume_max_multiplier` × base caps. Stay frugal after a resume.
+        `resume_max_multiplier` × base caps. Stay frugal after a resume:
+        prefer one decisive edit + verify over another wide discovery
+        sweep.
 
       Intent-routed follow-ups:
       - Short follow-ups like "fix it", "devam et", "yes do that" are
