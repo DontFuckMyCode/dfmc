@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -142,13 +143,13 @@ func (m Model) renderMemoryView(width int) string {
 	if tier == "" {
 		tier = memoryTierAll
 	}
-	hint := subtleStyle.Render("j/k scroll · t toggle tier · / search · r refresh · c clear search")
-	header := sectionHeader("◈", "Memory")
-	tierLine := subtleStyle.Render("tier: ") + accentStyle.Render(tier)
+	banner := m.memoryTopBanner(width, tier)
+	hint := subtleStyle.Render("j/k scroll · t toggle tier · / search · r refresh · c clear")
+	tierLine := subtleStyle.Render("tier ") + accentStyle.Render(tier)
 	if strings.TrimSpace(m.memory.query) != "" {
-		tierLine += subtleStyle.Render("  query: ") + m.memory.query
+		tierLine += subtleStyle.Render(" · query ") + boldStyle.Render(m.memory.query)
 	}
-	lines := []string{header, hint, tierLine, renderDivider(width - 2)}
+	lines := []string{banner, tierLine, hint, renderDivider(width - 2)}
 
 	if m.memory.err != "" {
 		lines = append(lines, "", warnStyle.Render("error · "+m.memory.err))
@@ -193,6 +194,26 @@ func (m Model) renderMemoryView(width int) string {
 		len(filtered), len(m.memory.entries), tier,
 	)))
 	return strings.Join(lines, "\n")
+}
+
+// memoryTopBanner draws the title + a status chip on the right.
+// Chip: HEALTHY (entries loaded), EMPTY, ERROR, LOADING.
+func (m Model) memoryTopBanner(width int, tier string) string {
+	title := titleStyle.Bold(true).Render("◈ MEMORY")
+	chipText, chipStyle := " HEALTHY ", okStyle
+	switch {
+	case m.memory.err != "":
+		chipText, chipStyle = " ERROR ", warnStyle
+	case m.memory.loading:
+		chipText, chipStyle = " LOADING ", infoStyle
+	case len(m.memory.entries) == 0:
+		chipText, chipStyle = " EMPTY ", subtleStyle
+	}
+	chip := chipStyle.Render(chipText)
+	tierChip := subtleStyle.Render(" tier=" + tier + " ")
+	chipStrip := tierChip + " " + chip
+	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
+	return title + strings.Repeat(" ", gap) + chipStrip
 }
 
 // handleMemoryKey drives the Memory panel. The search input mode owns

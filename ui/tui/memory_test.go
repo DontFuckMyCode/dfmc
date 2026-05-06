@@ -156,7 +156,7 @@ func TestMemorySearchInputFlow(t *testing.T) {
 func TestRenderMemoryViewEmptyState(t *testing.T) {
 	m := newMemoryTestModel()
 	out := m.renderMemoryView(80)
-	if !strings.Contains(out, "Memory") {
+	if !strings.Contains(out, "MEMORY") {
 		t.Fatalf("empty view missing header:\n%s", out)
 	}
 	if !strings.Contains(out, "No memory entries") {
