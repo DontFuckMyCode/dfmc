@@ -208,6 +208,30 @@ func autonomyUnverifiedLine(s agentLoopState) string {
 		len(s.unvalidatedEdits), severity, strings.Join(preview, ", "), tail)
 }
 
+// todoCountsForSummary returns (total, done, pending) over the active
+// todo_write snapshot at the moment the turn finalises. Done counts
+// completed/done; pending counts pending/blocked/skipped/waiting/
+// verifying/external_review (mirrors the live render path so the
+// summary number matches what the user has been seeing in /workflow).
+// Doing/in-progress is excluded from "pending" so an explicit ABC
+// status doesn't get rolled into a "still queued" bucket. Returns
+// zeros when the engine or tools registry is nil (early init / tests).
+func todoCountsForSummary(m Model) (total, done, pending int) {
+	if m.eng == nil || m.eng.Tools == nil {
+		return 0, 0, 0
+	}
+	for _, it := range m.eng.Tools.TodoSnapshot() {
+		total++
+		switch strings.ToLower(strings.TrimSpace(it.Status)) {
+		case "completed", "done":
+			done++
+		case "pending", "blocked", "skipped", "waiting", "verifying", "external_review":
+			pending++
+		}
+	}
+	return total, done, pending
+}
+
 // buildTurnSummary renders a multi-line recap of an agent turn that
 // finished. Surfaces what the user actually wants to know after a long
 // unattended run: how long did it take, how many tool calls, what
@@ -228,13 +252,14 @@ func autonomyUnverifiedLine(s agentLoopState) string {
 //
 // Each row only appears when the value is non-zero so the card
 // adapts to what actually happened.
-func buildTurnSummary(s agentLoopState) string {
+func buildTurnSummary(s agentLoopState, todoTotal, todoDone, todoPending int) string {
 	hasEdits := len(s.turnEditedFiles) > 0
 	hasValidation := s.turnValidationPasses > 0
 	hasCoach := s.turnCoachInterventions > 0
 	hasCeiling := s.stepCeiling > 0 && s.cumulativeSteps > 0
+	hasTodos := todoTotal > 0
 
-	if !hasEdits && !hasValidation && !hasCoach && !hasCeiling && s.toolRounds == 0 {
+	if !hasEdits && !hasValidation && !hasCoach && !hasCeiling && !hasTodos && s.toolRounds == 0 {
 		return ""
 	}
 
@@ -281,6 +306,17 @@ func buildTurnSummary(s agentLoopState) string {
 		pct := (s.cumulativeSteps * 100) / s.stepCeiling
 		lines = append(lines, fmt.Sprintf("  ceiling:     %d/%d cumulative steps used (%d%%)",
 			s.cumulativeSteps, s.stepCeiling, pct))
+	}
+	if hasTodos {
+		// Plan progress, surfaced when the agent used todo_write to
+		// shard its work. Mention pending separately so the user can
+		// tell "all done" from "halfway, more to go" at a glance.
+		pendingHint := ""
+		if todoPending > 0 {
+			pendingHint = fmt.Sprintf(" · %d still pending", todoPending)
+		}
+		lines = append(lines, fmt.Sprintf("  todos:       %d of %d done%s",
+			todoDone, todoTotal, pendingHint))
 	}
 
 	if len(lines) == 1 {

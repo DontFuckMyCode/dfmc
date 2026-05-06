@@ -732,7 +732,7 @@ func TestHandleEngineEvent_AutoResumePersistsCumulative(t *testing.T) {
 
 func TestBuildTurnSummary_QuietForTrivialTurn(t *testing.T) {
 	// Zero-effort turn (e.g. one-shot Q+A with no tools) → no card.
-	if got := buildTurnSummary(agentLoopState{}); got != "" {
+	if got := buildTurnSummary(agentLoopState{}, 0, 0, 0); got != "" {
 		t.Errorf("trivial turn → no summary, got %q", got)
 	}
 }
@@ -746,7 +746,7 @@ func TestBuildTurnSummary_EditsAndValidationRecap(t *testing.T) {
 		turnCoachInterventions: 0,
 		unvalidatedEdits:       nil, // all validated
 	}
-	got := buildTurnSummary(s)
+	got := buildTurnSummary(s, 0, 0, 0)
 	if !strings.Contains(got, "Turn summary") {
 		t.Errorf("missing header in %q", got)
 	}
@@ -782,7 +782,7 @@ func TestBuildTurnSummary_IncludesCoachAndCeiling(t *testing.T) {
 		cumulativeSteps:        78,
 		stepCeiling:            600,
 	}
-	got := buildTurnSummary(s)
+	got := buildTurnSummary(s, 0, 0, 0)
 	if !strings.Contains(got, "2 interventions") {
 		t.Errorf("expected coach interventions row, got %q", got)
 	}
@@ -804,9 +804,53 @@ func TestBuildTurnSummary_SingularCoachWording(t *testing.T) {
 		turnEditedFiles:        []string{"a.go"},
 		turnCoachInterventions: 1,
 	}
-	got := buildTurnSummary(s)
+	got := buildTurnSummary(s, 0, 0, 0)
 	if !strings.Contains(got, "1 intervention ") {
 		t.Errorf("expected singular 'intervention', got %q", got)
+	}
+}
+
+func TestBuildTurnSummary_IncludesTodos(t *testing.T) {
+	// Turn that used todo_write — summary should call out plan progress
+	// alongside edits/validation/coach.
+	s := agentLoopState{
+		toolRounds:           10,
+		turnEditedFiles:      []string{"auth/token.go"},
+		turnValidationPasses: 1,
+	}
+	got := buildTurnSummary(s, 5, 3, 2) // 5 total, 3 done, 2 still pending
+	if !strings.Contains(got, "todos:") {
+		t.Errorf("expected todos row, got %q", got)
+	}
+	if !strings.Contains(got, "3 of 5 done") {
+		t.Errorf("expected '3 of 5 done', got %q", got)
+	}
+	if !strings.Contains(got, "2 still pending") {
+		t.Errorf("expected pending hint, got %q", got)
+	}
+}
+
+func TestBuildTurnSummary_TodosAllDone(t *testing.T) {
+	// All TODOs completed — no pending hint.
+	s := agentLoopState{toolRounds: 8, turnEditedFiles: []string{"a.go"}}
+	got := buildTurnSummary(s, 4, 4, 0)
+	if !strings.Contains(got, "4 of 4 done") {
+		t.Errorf("expected '4 of 4 done', got %q", got)
+	}
+	if strings.Contains(got, "still pending") {
+		t.Errorf("zero pending → no pending hint, got %q", got)
+	}
+}
+
+func TestBuildTurnSummary_TodosAlone(t *testing.T) {
+	// Pure-planning turn (no edits/validation/coach/ceiling) but used
+	// todo_write — should still produce the summary card.
+	got := buildTurnSummary(agentLoopState{}, 3, 1, 2)
+	if got == "" {
+		t.Fatal("turn with TODOs should produce a summary card even without edits")
+	}
+	if !strings.Contains(got, "1 of 3 done") {
+		t.Errorf("expected todo counter, got %q", got)
 	}
 }
 

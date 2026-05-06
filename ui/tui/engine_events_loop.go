@@ -82,7 +82,8 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		// banner. Suppressed for trivial turns (zero edits, zero
 		// validation, no coach interventions) where the answer itself
 		// is the report and a card would be noise.
-		if summary := buildTurnSummary(m.agentLoop); summary != "" {
+		todoTotal, todoDone, todoPending := todoCountsForSummary(m)
+		if summary := buildTurnSummary(m.agentLoop, todoTotal, todoDone, todoPending); summary != "" {
 			line = summary
 		} else {
 			line = fmt.Sprintf("Agent loop finalizing answer after %d tool call(s).", m.agentLoop.toolRounds)
