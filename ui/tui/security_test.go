@@ -128,7 +128,7 @@ func TestFormatVulnRowContainsCWEAndSnippet(t *testing.T) {
 func TestRenderSecurityViewNeedsScanCopy(t *testing.T) {
 	m := newSecurityTestModel()
 	out := m.renderSecurityView(100)
-	if !strings.Contains(out, "Security") {
+	if !strings.Contains(out, "SECURITY") {
 		t.Fatalf("header missing: %s", out)
 	}
 	if !strings.Contains(out, "Press r to run a security scan") {

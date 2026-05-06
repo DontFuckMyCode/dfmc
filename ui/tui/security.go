@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/security"
@@ -211,19 +212,47 @@ func minInt(a, b int) int {
 	return b
 }
 
+// securityTopBanner — title + view chip + state chip. State chip
+// flips: NOT SCANNED / SCANNING / CLEAN / SECRETS / VULNS / ERROR.
+func (m Model) securityTopBanner(width int, viewLabel string) string {
+	title := titleStyle.Bold(true).Render("⚠ SECURITY")
+	chipText, chipStyle := " NOT SCANNED ", subtleStyle
+	switch {
+	case m.security.err != "":
+		chipText, chipStyle = " ERROR ", warnStyle
+	case m.security.loading:
+		chipText, chipStyle = " SCANNING ", infoStyle
+	case m.security.report != nil:
+		secrets := len(m.security.report.Secrets)
+		vulns := len(m.security.report.Vulnerabilities)
+		switch {
+		case secrets > 0:
+			chipText, chipStyle = fmt.Sprintf(" %d SECRETS ", secrets), warnStyle
+		case vulns > 0:
+			chipText, chipStyle = fmt.Sprintf(" %d VULNS ", vulns), warnStyle
+		default:
+			chipText, chipStyle = " CLEAN ", okStyle
+		}
+	}
+	chip := chipStyle.Render(chipText)
+	viewChip := accentStyle.Render(" view=" + viewLabel + " ")
+	chipStrip := viewChip + " " + chip
+	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
+	return title + strings.Repeat(" ", gap) + chipStrip
+}
+
 func (m Model) renderSecurityView(width int) string {
 	width = clampInt(width, 24, 1000)
-	hint := subtleStyle.Render("j/k scroll · v toggle secrets/vulns · / search · r rescan · c clear search")
-	header := sectionHeader("⚠", "Security")
 	viewLabel := "secrets"
 	if m.security.view == securityViewVulns {
 		viewLabel = "vulns"
 	}
-	viewLine := subtleStyle.Render("view: ") + accentStyle.Render(viewLabel)
+	banner := m.securityTopBanner(width, viewLabel)
+	hint := subtleStyle.Render("j/k scroll · v toggle secrets/vulns · / search · r rescan · c clear")
 
-	queryLine := subtleStyle.Render("query: ")
+	queryLine := subtleStyle.Render("query ")
 	if strings.TrimSpace(m.security.query) != "" {
-		queryLine += m.security.query
+		queryLine += boldStyle.Render(m.security.query)
 	} else {
 		queryLine += subtleStyle.Render("(none)")
 	}
@@ -231,7 +260,7 @@ func (m Model) renderSecurityView(width int) string {
 		queryLine += subtleStyle.Render("  · typing, enter to commit")
 	}
 
-	lines := []string{header, hint, viewLine, queryLine, renderDivider(width - 2)}
+	lines := []string{banner, queryLine, hint, renderDivider(width - 2)}
 
 	if m.security.err != "" {
 		lines = append(lines, "", warnStyle.Render("error · "+m.security.err))
