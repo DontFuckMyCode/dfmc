@@ -88,6 +88,116 @@ func TestTrajectoryHints_RepeatedFailures_NotTriggeredOnDifferentErrors(t *testi
 	}
 }
 
+func TestCountUnvalidatedMutations_AccumulatesAcrossRounds(t *testing.T) {
+	all := []TraceEntry{
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "a.go"}, Ok: true, Step: 1},
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "b.go"}, Ok: true, Step: 2},
+		{Tool: "tool_call", Inner: "write_file", Args: map[string]any{"path": "c.go"}, Ok: true, Step: 3},
+	}
+	count, paths := countUnvalidatedMutations(all)
+	if count != 3 {
+		t.Errorf("expected count=3, got %d", count)
+	}
+	if len(paths) != 3 || paths[0] != "a.go" || paths[2] != "c.go" {
+		t.Errorf("unexpected path order: %v", paths)
+	}
+}
+
+func TestCountUnvalidatedMutations_ResetByValidationCommand(t *testing.T) {
+	all := []TraceEntry{
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "a.go"}, Ok: true, Step: 1},
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "b.go"}, Ok: true, Step: 2},
+		{Tool: "tool_call", Inner: "run_command", Args: map[string]any{"command": "go test ./..."}, Ok: true, Step: 3},
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "c.go"}, Ok: true, Step: 4},
+	}
+	count, paths := countUnvalidatedMutations(all)
+	if count != 1 {
+		t.Errorf("validation should reset; expected count=1 (just c.go), got %d", count)
+	}
+	if len(paths) != 1 || paths[0] != "c.go" {
+		t.Errorf("expected only c.go after validation, got %v", paths)
+	}
+}
+
+func TestCountUnvalidatedMutations_DedupsRepeatedEditsToSameFile(t *testing.T) {
+	all := []TraceEntry{
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "a.go"}, Ok: true, Step: 1},
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "a.go"}, Ok: true, Step: 2},
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "a.go"}, Ok: true, Step: 3},
+	}
+	count, _ := countUnvalidatedMutations(all)
+	if count != 1 {
+		t.Errorf("re-editing one file should de-dup to count=1, got %d", count)
+	}
+}
+
+func TestCountUnvalidatedMutations_FailedEditsDontCount(t *testing.T) {
+	all := []TraceEntry{
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "a.go"}, Ok: false, Err: "anchor not found", Step: 1},
+		{Tool: "tool_call", Inner: "write_file", Args: map[string]any{"path": "b.go"}, Ok: true, Step: 2},
+	}
+	count, _ := countUnvalidatedMutations(all)
+	if count != 1 {
+		t.Errorf("failed edit shouldn't count; expected 1 (just b.go), got %d", count)
+	}
+}
+
+func TestCountUnvalidatedMutations_NonValidationCmdDoesNotReset(t *testing.T) {
+	all := []TraceEntry{
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "a.go"}, Ok: true, Step: 1},
+		{Tool: "tool_call", Inner: "run_command", Args: map[string]any{"command": "git status"}, Ok: true, Step: 2},
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "b.go"}, Ok: true, Step: 3},
+	}
+	count, _ := countUnvalidatedMutations(all)
+	if count != 2 {
+		t.Errorf("non-validation command should NOT reset; expected 2, got %d", count)
+	}
+}
+
+func TestTrajectoryHints_MutationEscalates(t *testing.T) {
+	// Three+ unvalidated edits across the running history and a fresh
+	// edit this round → directive "STOP editing, run a test" hint.
+	all := []TraceEntry{
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "a.go"}, Ok: true, Step: 1},
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "b.go"}, Ok: true, Step: 2},
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "c.go"}, Ok: true, Step: 3},
+	}
+	fresh := all[2:]
+	out := TrajectoryHints(fresh, all, nil)
+	if out == nil || len(out.Hints) == 0 {
+		t.Fatalf("expected at least one hint")
+	}
+	first := out.Hints[0]
+	if !strings.Contains(first, "3 files") {
+		t.Errorf("escalated hint should cite count, got %q", first)
+	}
+	if !strings.Contains(first, "STOP editing") {
+		t.Errorf("escalated hint should be directive (STOP editing), got %q", first)
+	}
+	if !strings.Contains(first, "a.go") {
+		t.Errorf("escalated hint should preview paths, got %q", first)
+	}
+}
+
+func TestTrajectoryHints_MutationGentleAtCountOne(t *testing.T) {
+	// Exactly one unvalidated edit → the gentle "validate this" wording,
+	// NOT the directive "STOP editing" form.
+	all := []TraceEntry{
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "auth/token.go"}, Ok: true, Step: 1},
+	}
+	out := TrajectoryHints(all, all, nil)
+	if out == nil || len(out.Hints) == 0 {
+		t.Fatalf("expected at least one hint")
+	}
+	first := out.Hints[0]
+	if strings.Contains(first, "STOP editing") {
+		t.Errorf("count=1 should use gentle wording, got %q", first)
+	}
+	if !strings.Contains(first, "auth/token.go") {
+		t.Errorf("gentle hint should still cite the path, got %q", first)
+	}
+}
+
 func TestErrorFingerprint_NormalizesClass(t *testing.T) {
 	cases := map[string]string{
 		"":                                       "",

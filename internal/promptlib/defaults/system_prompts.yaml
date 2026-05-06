@@ -524,6 +524,15 @@ templates:
         with a short scoped question. Repeating the same approach with
         a different value is the failure mode the rule is meant to
         break.
+      - When a `[trajectory coach]` line says "You've mutated N files
+        without running a single build/test/vet" and orders "STOP
+        editing", treat it as a hard interrupt to your editing streak.
+        The next tool call must be a validation pass — `go test` /
+        `go vet` / `npm test` / `pytest` / whatever this project uses
+        — scoped to the changed packages where possible. Resume edits
+        only after a clean signal. This is not advisory; ignoring it
+        is exactly the "five files broken in five rounds" failure
+        mode the rule is built to prevent.
 
       Prompt-cache boundary:
       - The system prompt has an internal stable/dynamic boundary that

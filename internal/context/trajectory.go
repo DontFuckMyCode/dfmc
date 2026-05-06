@@ -154,8 +154,15 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 		break // one failure hint per turn
 	}
 
-	// Rule 2: wrote/edited a file → remind about validation. Only the
-	// most recent successful mutation to avoid spam across multi-file edits.
+	// Rule 2: wrote/edited a file → remind about validation. Wording
+	// escalates with the running unvalidated-edit count — a single edit
+	// gets the gentle "validate this" nudge; three or more across recent
+	// rounds (without a build/test pass clearing the streak) gets a
+	// directive "you're shipping unverified work, run a test NOW".
+	// Only fires on a fresh mutation in the current round so it doesn't
+	// spam between successful turns.
+	freshMutated := false
+	freshPath := ""
 	for i := len(fresh) - 1; i >= 0; i-- {
 		t := fresh[i]
 		if !t.Ok {
@@ -163,21 +170,46 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 		}
 		switch t.EffectiveTool() {
 		case "edit_file", "write_file", "apply_patch":
-			path := strings.TrimSpace(argAsString(t.Args, "path"))
-			if path == "" {
-				path = strings.TrimSpace(argAsString(t.Args, "file"))
+			freshMutated = true
+			freshPath = strings.TrimSpace(argAsString(t.Args, "path"))
+			if freshPath == "" {
+				freshPath = strings.TrimSpace(argAsString(t.Args, "file"))
 			}
+		}
+		// Only consider the most recent successful trace.
+		if t.Ok {
+			break
+		}
+	}
+	if freshMutated {
+		count, paths := countUnvalidatedMutations(all)
+		var hint string
+		switch {
+		case count >= 3:
+			tail := ""
+			if len(paths) > 0 {
+				preview := paths
+				if len(preview) > 4 {
+					preview = preview[:4]
+					tail = fmt.Sprintf(" (%s, +%d more)", strings.Join(preview, ", "), len(paths)-4)
+				} else {
+					tail = " (" + strings.Join(preview, ", ") + ")"
+				}
+			}
+			hint = fmt.Sprintf(
+				"You've mutated %d files%s without running a single build/test/vet. The risk of compounding regression is real — STOP editing and run the smallest validation that exercises these changes (e.g. `go test ./<changed-package>/...`, `go vet ./...`, the project's test command). Resume edits only after you have a clean signal.",
+				count, tail,
+			)
+			openQuestions = append(openQuestions, fmt.Sprintf("%d unvalidated mutations queued — verification is overdue", count))
+		default:
+			path := freshPath
 			if path == "" {
 				path = "the file you just changed"
 			}
-			hint := "Just mutated " + path + ". Validate with the smallest targeted check (build/vet/test that touches it) before declaring done — don't trust edits on faith."
-			if push(hint) {
-				return build()
-			}
+			hint = "Just mutated " + path + ". Validate with the smallest targeted check (build/vet/test that touches it) before declaring done — don't trust edits on faith."
 		}
-		// Only consider the most recent mutation.
-		if t.Ok {
-			break
+		if push(hint) {
+			return build()
 		}
 	}
 
@@ -423,6 +455,88 @@ func detectRepeatedFailures(all []TraceEntry) repeatedFailure {
 		return repeatedFailure{tool: name, count: b.count, errSample: sample}
 	}
 	return repeatedFailure{}
+}
+
+// countUnvalidatedMutations walks the running trace history and returns
+// the number of distinct successful edits since the last successful
+// validation command (build/test/vet/etc), plus the per-file path list
+// (de-duped, in first-seen order). Walking history-wide rather than the
+// single round is exactly what makes the rule state-aware: a model
+// editing one file per round across 5 rounds will see count=5 even
+// though each round's `fresh` only has one mutation.
+//
+// "Validation command" is recognised by the leading verb of the
+// run_command call's `command` arg — kept in rough sync with the TUI's
+// isValidationCommand. Any successful run_command matching this set
+// resets the count, so the helper effectively returns "edits since the
+// most recent good test pass". When no validation has ever happened
+// the count covers every successful mutation in the history.
+func countUnvalidatedMutations(all []TraceEntry) (int, []string) {
+	if len(all) == 0 {
+		return 0, nil
+	}
+	// Walk forward, but reset on each validation. Final count = edits
+	// since last validation event (or beginning, whichever later).
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, len(all))
+	for _, t := range all {
+		if !t.Ok {
+			continue
+		}
+		switch t.EffectiveTool() {
+		case "edit_file", "write_file", "apply_patch":
+			path := strings.TrimSpace(argAsString(t.Args, "path"))
+			if path == "" {
+				path = strings.TrimSpace(argAsString(t.Args, "file"))
+			}
+			// apply_patch may not carry a single path arg; fall back to
+			// a synthetic placeholder so the count is still accurate.
+			if path == "" {
+				path = fmt.Sprintf("(patch@step%d)", t.Step)
+			}
+			if _, dup := seen[path]; dup {
+				continue
+			}
+			seen[path] = struct{}{}
+			paths = append(paths, path)
+		case "run_command":
+			cmd := strings.TrimSpace(argAsString(t.Args, "command"))
+			if isValidationVerb(cmd) {
+				seen = map[string]struct{}{}
+				paths = paths[:0]
+			}
+		}
+	}
+	return len(paths), paths
+}
+
+// isValidationVerb mirrors the TUI's isValidationCommand. Kept here so
+// the trajectory layer is self-contained (no UI imports). Both surfaces
+// answer the same question — "did this command count as a verification
+// pass?" — so update them together when adding a new test runner.
+func isValidationVerb(cmd string) bool {
+	cmd = strings.TrimSpace(strings.ToLower(cmd))
+	if cmd == "" {
+		return false
+	}
+	multi := []string{
+		"go test", "go vet", "go build",
+		"npm test", "pnpm test", "yarn test",
+		"npm run test", "pnpm run test", "yarn run test",
+		"cargo test", "cargo check", "cargo build", "cargo clippy",
+	}
+	for _, prefix := range multi {
+		if cmd == prefix || strings.HasPrefix(cmd, prefix+" ") {
+			return true
+		}
+	}
+	single := []string{"pytest", "tsc", "eslint", "biome", "mypy", "ruff", "make"}
+	for _, prefix := range single {
+		if cmd == prefix || strings.HasPrefix(cmd, prefix+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // errorFingerprint normalizes an error message for repeat-detection. We
