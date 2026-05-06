@@ -791,7 +791,21 @@ func runtimeStripTokenParts(vm runtimeViewModel) []string {
 		if total <= 0 {
 			total = vm.LastInputTokens + vm.LastOutputTokens
 		}
-		parts = append(parts, fmt.Sprintf("last in %s out %s total %s", compactMetric(vm.LastInputTokens), compactMetric(vm.LastOutputTokens), compactMetric(total)))
+		// Include the per-turn cost inline when a price is configured —
+		// a user iterating on a question wants to know whether they
+		// just spent $0.001 or $0.30 on the last turn, not just on the
+		// whole session. Without this they have to subtract before/
+		// after of the cumulative number.
+		lastSegment := fmt.Sprintf("last in %s out %s total %s",
+			compactMetric(vm.LastInputTokens),
+			compactMetric(vm.LastOutputTokens),
+			compactMetric(total),
+		)
+		if vm.CostPer1kTokens > 0 && total > 0 {
+			lastCost := (float64(total) / 1000) * vm.CostPer1kTokens
+			lastSegment += " · " + formatUSDCost(lastCost)
+		}
+		parts = append(parts, lastSegment)
 	}
 	sessionTotal := vm.SessionTotalTokens
 	if sessionTotal <= 0 {

@@ -1284,6 +1284,35 @@ func TestRuntimeStrip_CacheHitsBadge_RendersAndHidesAtZero(t *testing.T) {
 	}
 }
 
+// TestRuntimeStrip_LastTurnInlineCost pins the per-turn cost
+// rendering on the "last in X out Y total Z" line. A user
+// iterating on a question wants to know whether the last turn
+// cost $0.001 or $0.30 — without inline cost they had to subtract
+// session totals before/after which is impractical.
+func TestRuntimeStrip_LastTurnInlineCost(t *testing.T) {
+	// $5/Mtok = $0.005/ktok. 4_000 tokens = $0.020.
+	vm := runtimeViewModel{
+		LastInputTokens:  3_000,
+		LastOutputTokens: 1_000,
+		LastTotalTokens:  4_000,
+		CostPer1kTokens:  0.005,
+	}
+	joined := strings.Join(runtimeStripTokenParts(vm), " | ")
+	if !strings.Contains(joined, "last in 3.0k out 1.0k total 4.0k") {
+		t.Errorf("expected last-turn token line, got %q", joined)
+	}
+	if !strings.Contains(joined, "$0.02") {
+		t.Errorf("expected inline cost ~$0.02, got %q", joined)
+	}
+
+	// Without a price configured: no cost segment, just counts.
+	vm.CostPer1kTokens = 0
+	joined = strings.Join(runtimeStripTokenParts(vm), " | ")
+	if strings.Contains(joined, "$") {
+		t.Errorf("zero CostPer1kTokens should hide cost, got %q", joined)
+	}
+}
+
 // TestRuntimeStrip_CompactsThisTurnBadge pins the "compacts ×N · -Mk
 // reclaimed" badge that surfaces a budget-thrashing turn. Style
 // escalates: 1-3 = info, 4+ = warn. Hidden when zero compacts have
