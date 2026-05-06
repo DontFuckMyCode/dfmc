@@ -396,8 +396,53 @@ func (m Model) tasksSlash(args []string) (Model, string) {
 			}
 		}
 		return m, renderTasksInlineList(roots)
+	case "clear", "reset":
+		// Wipe every task in the store. Walks the list and DeleteTask's
+		// each entry so the operation is observable through the same
+		// path /api/v1/task uses, and so children of deleted parents
+		// are explicitly removed (no implicit cascade in the store).
+		// Drive-managed tasks (RunID != "") are kept — those are owned
+		// by drive runs and removing them would orphan the run state.
+		if m.eng == nil || m.eng.Tools == nil {
+			return m, "Engine unavailable."
+		}
+		store := m.eng.Tools.TaskStore()
+		if store == nil {
+			return m, "Task store not initialized."
+		}
+		all, err := store.ListTasks(taskstore.ListOptions{})
+		if err != nil {
+			return m, "/tasks clear failed: " + err.Error()
+		}
+		if len(all) == 0 {
+			return m, "/tasks clear: store is already empty."
+		}
+		deleted := 0
+		skipped := 0
+		var firstErr error
+		for _, t := range all {
+			if t.RunID != "" {
+				skipped++
+				continue
+			}
+			if delErr := store.DeleteTask(t.ID); delErr != nil {
+				if firstErr == nil {
+					firstErr = delErr
+				}
+				continue
+			}
+			deleted++
+		}
+		out := fmt.Sprintf("▸ Cleared %d task(s) from the store.", deleted)
+		if skipped > 0 {
+			out += fmt.Sprintf(" %d drive-owned task(s) kept (use /drive stop <id> to cancel a run).", skipped)
+		}
+		if firstErr != nil {
+			out += "\n   First error: " + firstErr.Error()
+		}
+		return m, out
 	default:
-		return m, "tasks: unknown subcommand. Try: /tasks [list|tree|show <id>|roots]"
+		return m, "tasks: unknown subcommand. Try: /tasks [list|tree|show <id>|roots|clear]"
 	}
 }
 

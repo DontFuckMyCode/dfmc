@@ -47,6 +47,16 @@ func (m Model) runPanelCommand(cmd string, args []string) (tea.Model, tea.Cmd, b
 		return m.appendSystemMessage(m.describeWorkflow()), nil, true
 	case "todos", "todo":
 		m.chat.input = ""
+		// /todos clear erases the shared todo list (uses the todo_write
+		// tool's "clear" action so the engine state and the task store
+		// stay in sync). Without this the user has no way to wipe the
+		// list themselves — only the agent can write to it.
+		if len(args) > 0 {
+			sub := strings.ToLower(strings.TrimSpace(args[0]))
+			if sub == "clear" || sub == "reset" {
+				return m.handleTodosClear()
+			}
+		}
 		m.notice = "Shared todo list below."
 		return m.appendSystemMessage(m.describeTodos()), nil, true
 	case "tasks":
@@ -156,6 +166,40 @@ func (m Model) runPanelCommand(cmd string, args []string) (tea.Model, tea.Cmd, b
 		}
 		st := m.status
 		return m.appendSystemMessage(fmt.Sprintf("Runtime reloaded.\nProvider/Model: %s / %s", blankFallback(st.Provider, "-"), blankFallback(st.Model, "-"))), loadStatusCmd(m.eng), true
+	case "cancel", "abort", "stop":
+		// Slash equivalent of Ctrl+C: cancel the active stream / agent
+		// loop. Subagents auto-terminate when the parent context cancels.
+		// /drive runs are NOT cancelled here — use /drive stop for those
+		// (deliberate: drive runs survive across chat turns and may be
+		// running independently of the current ask).
+		m.chat.input = ""
+		if !m.chat.sending {
+			return m.appendSystemMessage("/cancel: nothing to cancel — main agent is idle. Drive runs use /drive stop."), nil, true
+		}
+		if m.cancelActiveStream() {
+			m.notice = "Cancelling…"
+			return m.appendSystemMessage("▸ Cancellation sent to the active turn. Subagents will unwind through their parent context. /drive runs are NOT affected — use /drive stop for those."), nil, true
+		}
+		return m.appendSystemMessage("/cancel: no cancellable stream attached. The turn may be between rounds — try again in a second or hit Ctrl+C."), nil, true
 	}
 	return m, nil, false
+}
+
+// handleTodosClear wipes the shared todo list via the todo_write tool's
+// "clear" action so both the in-memory state and the task store are
+// reset together. Bound to `/todos clear`.
+func (m Model) handleTodosClear() (tea.Model, tea.Cmd, bool) {
+	if m.eng == nil || m.eng.Tools == nil {
+		return m.appendSystemMessage("/todos clear: engine not initialized — try /reload."), nil, true
+	}
+	before := len(m.eng.Tools.TodoSnapshot())
+	if before == 0 {
+		return m.appendSystemMessage("/todos clear: list is already empty."), nil, true
+	}
+	_, err := m.eng.CallTool(m.ctx, "todo_write", map[string]any{"action": "clear"})
+	if err != nil {
+		return m.appendSystemMessage("/todos clear failed: " + err.Error()), nil, true
+	}
+	m.notice = fmt.Sprintf("Cleared %d todo(s).", before)
+	return m.appendSystemMessage(fmt.Sprintf("▸ Cleared %d todo(s) — agent will start fresh on the next turn.", before)), nil, true
 }
