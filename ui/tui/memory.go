@@ -193,7 +193,11 @@ func (m Model) renderMemoryView(width int) string {
 		"%d shown · %d loaded · tier=%s",
 		len(filtered), len(m.memory.entries), tier,
 	)))
-	return strings.Join(lines, "\n")
+	body := strings.Join(lines, "\n")
+	if m.actionMenu.open && m.actionMenu.owner == "Memory" {
+		body += "\n\n" + m.renderActionMenu(width)
+	}
+	return body
 }
 
 // memoryTopBanner draws the title + a status chip on the right.
@@ -216,11 +220,53 @@ func (m Model) memoryTopBanner(width int, tier string) string {
 	return title + strings.Repeat(" ", gap) + chipStrip
 }
 
+// openMemoryActionMenu builds the contextual action list for the
+// Memory panel. Mirrors the F2-F6 ACTIONS card content but routes
+// every entry through the shared arrow-driven menu.
+func (m Model) openMemoryActionMenu() Model {
+	actions := []panelAction{
+		{Label: "Cycle tier (all → episodic → semantic)", Accel: "t",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.memory.tier = nextMemoryTier(m.memory.tier)
+				m.memory.scroll = 0
+				m.memory.loading = true
+				m.memory.err = ""
+				return m, loadMemoryCmd(m.eng, m.memory.tier)
+			}},
+		{Label: "Refresh from store", Accel: "r",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.memory.loading = true
+				m.memory.err = ""
+				return m, loadMemoryCmd(m.eng, m.memory.tier)
+			}},
+		{Label: "Search…", Accel: "/",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.memory.searchActive = true
+				return m, nil
+			}},
+		{Label: "Clear search query", Accel: "c",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.memory.query = ""
+				m.memory.scroll = 0
+				return m, nil
+			}},
+	}
+	return m.openActionMenu("Memory", "Memory actions", actions)
+}
+
 // handleMemoryKey drives the Memory panel. The search input mode owns
 // the keyboard while active; returning Cmd(nil) keeps the model as-is.
 func (m Model) handleMemoryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.memory.searchActive {
 		return m.handleMemorySearchKey(msg)
+	}
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
+	// Enter / Right opens the action menu (cycle tier · refresh ·
+	// search · clear) so the user doesn't need to memorise t/r/// c.
+	if s := msg.String(); s == "enter" || s == "right" || s == "l" {
+		return m.openMemoryActionMenu(), nil
 	}
 	total := len(filteredMemoryEntries(m.memory.entries, m.memory.query))
 	step := 1

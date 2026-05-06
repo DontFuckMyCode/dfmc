@@ -257,23 +257,28 @@ func helpOverlayTabHints(tab string) []string {
 		}
 	case "memory":
 		return []string{
-			"j/k scroll · t cycle tier · / search · r refresh · c clear",
+			"↑↓ scroll · enter / → opens action menu (cycle tier · refresh · search · clear)",
+			"single-letter accelerators (t/r//c) still work for power users",
 		}
 	case "codemap":
 		return []string{
-			"j/k scroll · v cycle view (overview/hotspots/orphans/cycles) · r refresh",
+			"↑↓ scroll · enter / → opens action menu (cycle view · refresh · top/bottom)",
+			"accelerators: v/r/g/G",
 		}
 	case "conversations":
 		return []string{
-			"j/k scroll · enter preview (loads as active) · / search · r refresh · c clear search",
+			"↑↓ scroll · enter previews · → opens action menu (refresh · search · clear)",
+			"accelerators: r/// c",
 		}
 	case "prompts":
 		return []string{
-			"j/k scroll · enter preview · / search · r refresh · c clear search",
+			"↑↓ scroll · enter previews · → opens action menu (refresh · search · clear)",
+			"accelerators: r/// c",
 		}
 	case "security":
 		return []string{
-			"r rescan · v toggle secrets/vulns · j/k scroll · / search · c clear search",
+			"↑↓ scroll · enter / → opens action menu (toggle view · rescan · search · clear)",
+			"accelerators: v/r/// c",
 		}
 	case "plans":
 		return []string{

@@ -178,7 +178,11 @@ func (m Model) renderCodemapView(width int) string {
 		subtleStyle.Render(fmt.Sprintf("%d orphans", len(snap.Orphans))),
 	}
 	lines = append(lines, "", strings.Join(summaryParts, subtleStyle.Render(" · ")))
-	return strings.Join(lines, "\n")
+	out := strings.Join(lines, "\n")
+	if m.actionMenu.open && m.actionMenu.owner == "CodeMap" {
+		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
 }
 
 // codemapTopBanner — title + view chip + status chip on the right.
@@ -328,7 +332,45 @@ func nextCodemapView(current string) string {
 	}
 }
 
+// openCodemapActionMenu — arrow-driven action surface for CodeMap.
+func (m Model) openCodemapActionMenu() Model {
+	actions := []panelAction{
+		{Label: "Cycle view (overview → hotspots → orphans → cycles)", Accel: "v",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.codemap.view = nextCodemapView(m.codemap.view)
+				m.codemap.scroll = 0
+				return m, nil
+			}},
+		{Label: "Refresh graph", Accel: "r",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.codemap.loading = true
+				m.codemap.err = ""
+				return m, loadCodemapCmd(m.eng)
+			}},
+		{Label: "Jump to top", Accel: "g",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.codemap.scroll = 0
+				return m, nil
+			}},
+		{Label: "Jump to bottom", Accel: "G",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				total := codemapViewRowCount(m.codemap.view, m.codemap.snap)
+				if total > 0 {
+					m.codemap.scroll = total - 1
+				}
+				return m, nil
+			}},
+	}
+	return m.openActionMenu("CodeMap", "CodeMap actions", actions)
+}
+
 func (m Model) handleCodemapKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
+	if s := msg.String(); s == "enter" || s == "right" || s == "l" {
+		return m.openCodemapActionMenu(), nil
+	}
 	// Total for scroll clamping depends on active view.
 	total := codemapViewRowCount(m.codemap.view, m.codemap.snap)
 	step := 1

@@ -242,6 +242,14 @@ func (m Model) securityTopBanner(width int, viewLabel string) string {
 }
 
 func (m Model) renderSecurityView(width int) string {
+	out := m.renderSecurityViewInner(width)
+	if m.actionMenu.open && m.actionMenu.owner == "Security" {
+		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
+}
+
+func (m Model) renderSecurityViewInner(width int) string {
 	width = clampInt(width, 24, 1000)
 	viewLabel := "secrets"
 	if m.security.view == securityViewVulns {
@@ -356,9 +364,49 @@ func (m Model) securityViewTotal() int {
 	return len(filterSecrets(m.security.report.Secrets, m.security.query))
 }
 
+// openSecurityActionMenu — arrow-driven action surface for Security.
+func (m Model) openSecurityActionMenu() Model {
+	actions := []panelAction{
+		{Label: "Toggle view (secrets ↔ vulns)", Accel: "v",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				if m.security.view == securityViewVulns {
+					m.security.view = securityViewSecrets
+				} else {
+					m.security.view = securityViewVulns
+				}
+				m.security.scroll = 0
+				return m, nil
+			}},
+		{Label: "Run / re-run scan", Accel: "r",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.security.loading = true
+				m.security.err = ""
+				return m, loadSecurityCmd(m.eng)
+			}},
+		{Label: "Search…", Accel: "/",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.security.searchActive = true
+				return m, nil
+			}},
+		{Label: "Clear search query", Accel: "c",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.security.query = ""
+				m.security.scroll = 0
+				return m, nil
+			}},
+	}
+	return m.openActionMenu("Security", "Security actions", actions)
+}
+
 func (m Model) handleSecurityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.security.searchActive {
 		return m.handleSecuritySearchKey(msg)
+	}
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
+	if s := msg.String(); s == "enter" || s == "right" || s == "l" {
+		return m.openSecurityActionMenu(), nil
 	}
 	total := m.securityViewTotal()
 	step := 1

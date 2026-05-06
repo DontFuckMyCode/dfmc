@@ -240,7 +240,11 @@ func (m Model) renderPromptsView(width int) string {
 		"%d shown · %d loaded",
 		len(filtered), len(m.prompts.templates),
 	)))
-	return strings.Join(lines, "\n")
+	out := strings.Join(lines, "\n")
+	if m.actionMenu.open && m.actionMenu.owner == "Prompts" {
+		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
 }
 
 // promptsTopBanner — title + count chip + state chip.
@@ -262,9 +266,49 @@ func (m Model) promptsTopBanner(width int) string {
 	return title + strings.Repeat(" ", gap) + chipStrip
 }
 
+// openPromptsActionMenu — arrow-driven action surface for Prompts.
+// Enter still loads the preview; Right opens the menu.
+func (m Model) openPromptsActionMenu() Model {
+	actions := []panelAction{
+		{Label: "Load preview", Accel: "enter",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				filtered := filteredPrompts(m.prompts.templates, m.prompts.query)
+				if len(filtered) == 0 || m.prompts.scroll < 0 || m.prompts.scroll >= len(filtered) {
+					return m, nil
+				}
+				m.prompts.previewID = filtered[m.prompts.scroll].ID
+				return m, nil
+			}},
+		{Label: "Refresh templates", Accel: "r",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.prompts.loading = true
+				m.prompts.err = ""
+				return m, loadPromptsCmd(m.eng)
+			}},
+		{Label: "Search…", Accel: "/",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.prompts.searchActive = true
+				return m, nil
+			}},
+		{Label: "Clear search query", Accel: "c",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.prompts.query = ""
+				m.prompts.scroll = 0
+				return m, nil
+			}},
+	}
+	return m.openActionMenu("Prompts", "Prompt actions", actions)
+}
+
 func (m Model) handlePromptsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.prompts.searchActive {
 		return m.handlePromptsSearchKey(msg)
+	}
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
+	if s := msg.String(); s == "right" || s == "l" {
+		return m.openPromptsActionMenu(), nil
 	}
 	total := len(filteredPrompts(m.prompts.templates, m.prompts.query))
 	step := 1

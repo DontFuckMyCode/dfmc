@@ -225,7 +225,11 @@ func (m Model) renderConversationsView(width int) string {
 		"%d shown · %d loaded",
 		len(filtered), len(m.conversations.entries),
 	)))
-	return strings.Join(lines, "\n")
+	out := strings.Join(lines, "\n")
+	if m.actionMenu.open && m.actionMenu.owner == "Conversations" {
+		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
 }
 
 // conversationsTopBanner — title + count chip + state chip on the
@@ -250,9 +254,52 @@ func (m Model) conversationsTopBanner(width int) string {
 
 // handleConversationsKey dispatches panel keys. Search mode consumes the
 // keyboard while active.
+// openConversationsActionMenu — arrow-driven action surface for the
+// Conversations panel. Enter still loads the preview directly; the
+// menu sits behind Right Arrow for users who want to discover the rest.
+func (m Model) openConversationsActionMenu() Model {
+	actions := []panelAction{
+		{Label: "Load preview", Accel: "enter",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				filtered := filteredConversations(m.conversations.entries, m.conversations.query)
+				if len(filtered) == 0 || m.conversations.scroll < 0 || m.conversations.scroll >= len(filtered) {
+					return m, nil
+				}
+				selected := filtered[m.conversations.scroll]
+				m.conversations.previewID = selected.ID
+				m.conversations.preview = nil
+				return m, loadConversationPreviewCmd(m.eng, selected.ID)
+			}},
+		{Label: "Refresh list", Accel: "r",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.conversations.loading = true
+				m.conversations.err = ""
+				return m, loadConversationsCmd(m.eng)
+			}},
+		{Label: "Search…", Accel: "/",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.conversations.searchActive = true
+				return m, nil
+			}},
+		{Label: "Clear search query", Accel: "c",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.conversations.query = ""
+				m.conversations.scroll = 0
+				return m, nil
+			}},
+	}
+	return m.openActionMenu("Conversations", "Conversation actions", actions)
+}
+
 func (m Model) handleConversationsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.conversations.searchActive {
 		return m.handleConversationsSearchKey(msg)
+	}
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
+	if s := msg.String(); s == "right" || s == "l" {
+		return m.openConversationsActionMenu(), nil
 	}
 	total := len(filteredConversations(m.conversations.entries, m.conversations.query))
 	step := 1
