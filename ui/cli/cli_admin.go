@@ -118,6 +118,20 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 	hooksSummary := summarizeHooks(eng)
 	denialCount := len(eng.RecentDenials())
 
+	// Conversation memory snapshot — surfaces the stored-message count
+	// alongside the configured ceilings so users can verify their
+	// MaxHistoryTokens / MaxHistoryMessages knobs took effect and see
+	// how close they are to the trim window.
+	storedMsgs := 0
+	if active := eng.ConversationActive(); active != nil {
+		storedMsgs = len(active.Messages())
+	}
+	conversationMemory := map[string]any{
+		"stored_msgs":          storedMsgs,
+		"max_history_tokens":   contextPreview.MaxHistoryTokens,
+		"max_history_messages": contextPreview.MaxHistoryMessages,
+	}
+
 	payload := map[string]any{
 		"name":                       "dfmc",
 		"version":                    version,
@@ -147,6 +161,7 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 		"hooks":                      hooksSummary,
 		"recent_denials":             denialCount,
 		"open_circuits":              st.OpenCircuits,
+		"conversation_memory":        conversationMemory,
 	}
 
 	if jsonMode {
@@ -212,6 +227,11 @@ func runStatus(eng *engine.Engine, version string, args []string, jsonMode bool)
 			fmt.Printf("  context files: %d\n", len(contextBreakdown.FilesInContext))
 		}
 	}
+	fmt.Printf("conversation memory: stored=%d msgs · max_tokens=%d max_msgs=%d\n",
+		storedMsgs,
+		contextPreview.MaxHistoryTokens,
+		contextPreview.MaxHistoryMessages,
+	)
 	fmt.Printf("prompt recommendation: profile=%s role=%s budget=%d tool_style=%s\n",
 		promptRecommendation.Profile,
 		promptRecommendation.Role,

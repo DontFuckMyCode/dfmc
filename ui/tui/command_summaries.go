@@ -32,6 +32,9 @@ func (m Model) statusCommandSummary() string {
 	if why := formatContextInReasonSummaryTUI(st.ContextIn); why != "" {
 		parts = append(parts, "Context Why: "+why)
 	}
+	if line := m.historyConfigLine(); line != "" {
+		parts = append(parts, line)
+	}
 	return strings.Join(parts, "\n")
 }
 
