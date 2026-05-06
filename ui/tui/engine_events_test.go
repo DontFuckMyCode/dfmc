@@ -626,6 +626,109 @@ func TestRuntimeStrip_StalledBadge(t *testing.T) {
 	}
 }
 
+func TestRuntimeStrip_AutoResumeBadgeProgresses(t *testing.T) {
+	// Ceiling proximity escalates: <50% subtle, 50-80% info, >=80% warn.
+	// We can't easily check the lipgloss style applied, but the label
+	// content is fixed and that's what the user reads.
+	cases := []struct {
+		cum, ceil int
+		wantSub   string
+	}{
+		{60, 600, "auto 60/600"},
+		{310, 600, "auto 310/600"},
+		{540, 600, "auto 540/600"},
+	}
+	for _, c := range cases {
+		vm := runtimeViewModel{
+			AgentActive:     true,
+			AgentStep:       12,
+			CumulativeSteps: c.cum, StepCeiling: c.ceil,
+		}
+		parts := runtimeStripNowParts(vm)
+		joined := strings.Join(parts, " | ")
+		if !strings.Contains(joined, c.wantSub) {
+			t.Errorf("cum=%d ceil=%d: expected %q in strip, got %q", c.cum, c.ceil, c.wantSub, joined)
+		}
+	}
+}
+
+func TestRuntimeStrip_AutoResumeBadgeIncludesTokenWindow(t *testing.T) {
+	vm := runtimeViewModel{
+		AgentActive:     true,
+		CumulativeSteps: 120, StepCeiling: 600,
+		CumulativeTokens: 480_000, TokenCeiling: 2_500_000,
+	}
+	parts := runtimeStripNowParts(vm)
+	joined := strings.Join(parts, " | ")
+	if !strings.Contains(joined, "auto 120/600") {
+		t.Errorf("badge should show step counts, got %q", joined)
+	}
+	if !strings.Contains(joined, "480k") {
+		t.Errorf("badge should compactly format cumulative tokens, got %q", joined)
+	}
+	if !strings.Contains(joined, "2.5M") {
+		t.Errorf("badge should compactly format token ceiling, got %q", joined)
+	}
+}
+
+func TestRuntimeStrip_NoAutoResumeBadgeWhenNotEngaged(t *testing.T) {
+	vm := runtimeViewModel{AgentActive: true, AgentStep: 5}
+	parts := runtimeStripNowParts(vm)
+	joined := strings.Join(parts, " | ")
+	if strings.Contains(joined, "auto ") {
+		t.Errorf("no auto-resume yet → no badge, got %q", joined)
+	}
+}
+
+func TestFormatTokenCount(t *testing.T) {
+	cases := map[int]string{
+		0:         "0",
+		999:       "999",
+		1234:      "1.2k",
+		9_999:     "10.0k",
+		12_345:    "12k",
+		999_999:   "999k",
+		1_234_567: "1.2M",
+	}
+	for in, want := range cases {
+		if got := formatTokenCount(in); got != want {
+			t.Errorf("formatTokenCount(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestHandleEngineEvent_AutoResumePersistsCumulative(t *testing.T) {
+	m := newCoverageModel(t)
+	event := engine.Event{
+		Type: "agent:loop:auto_resume",
+		Payload: map[string]any{
+			"cumulative_steps":  120,
+			"step_ceiling":      600,
+			"cumulative_tokens": 480_000,
+			"token_ceiling":     2_500_000,
+		},
+	}
+	m2 := m.handleEngineEvent(event)
+	if m2.agentLoop.cumulativeSteps != 120 {
+		t.Errorf("cumulativeSteps = %d, want 120", m2.agentLoop.cumulativeSteps)
+	}
+	if m2.agentLoop.stepCeiling != 600 {
+		t.Errorf("stepCeiling = %d, want 600", m2.agentLoop.stepCeiling)
+	}
+	if m2.agentLoop.tokenCeiling != 2_500_000 {
+		t.Errorf("tokenCeiling = %d, want 2_500_000", m2.agentLoop.tokenCeiling)
+	}
+	// A fresh agent:loop:start zeros them again.
+	m3 := m2.handleEngineEvent(engine.Event{
+		Type:    "agent:loop:start",
+		Payload: map[string]any{"max_tool_steps": 60},
+	})
+	if m3.agentLoop.cumulativeSteps != 0 || m3.agentLoop.stepCeiling != 0 {
+		t.Errorf("agent:loop:start should reset cumulative counters, got steps=%d ceil=%d",
+			m3.agentLoop.cumulativeSteps, m3.agentLoop.stepCeiling)
+	}
+}
+
 func TestRuntimeStrip_NoBadgeWhenNotStuck(t *testing.T) {
 	vm := runtimeViewModel{AgentActive: true, AgentStep: 5, AgentMaxSteps: 60}
 	parts := runtimeStripNowParts(vm)

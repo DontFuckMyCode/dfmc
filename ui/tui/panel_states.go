@@ -553,6 +553,18 @@ type agentLoopState struct {
 	stuckCount     int
 	stuckErrClass  string
 	stuckClearedAt int // step number where the stall was last cleared (0=never)
+	// cumulative* — running totals across auto-resume cycles within a
+	// single root ask. The autonomous wrapper accumulates these on
+	// every park→compact→resume transition, and the engine refuses
+	// further resumes when cumulativeSteps >= stepCeiling (or tokens
+	// hit tokenCeiling). Surfacing them in the runtime strip lets the
+	// user see "I'm 240/600 cumulative steps in" at a glance during a
+	// multi-hour run instead of having to read auto-resume chips that
+	// scroll out of view. Reset on agent:loop:start (fresh ask).
+	cumulativeSteps  int
+	stepCeiling      int
+	cumulativeTokens int
+	tokenCeiling     int
 }
 
 // workflowPanelState — Drive TODO tree panel state for the Workflow tab.

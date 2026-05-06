@@ -23,6 +23,13 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		m.agentLoop.toolRounds = payloadInt(payload, "tool_rounds", 0)
 		m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
 		m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
+		// Fresh ask zeros the cumulative counters — the prior /continue
+		// chain is over. Without this reset the runtime strip would keep
+		// showing yesterday's 540/600 progress on tomorrow's first turn.
+		m.agentLoop.cumulativeSteps = 0
+		m.agentLoop.stepCeiling = 0
+		m.agentLoop.cumulativeTokens = 0
+		m.agentLoop.tokenCeiling = 0
 		// A fresh loop start means any previously parked banner is obsolete.
 		m.ui.resumePromptActive = false
 		files := payloadInt(payload, "context_files", 0)
@@ -126,6 +133,15 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		m.agentLoop.phase = "auto-resuming"
 		cumSteps := payloadInt(payload, "cumulative_steps", 0)
 		stepCeiling := payloadInt(payload, "step_ceiling", 0)
+		cumTokens := payloadInt(payload, "cumulative_tokens", 0)
+		tokenCeiling := payloadInt(payload, "token_ceiling", 0)
+		// Persist the counters on agentLoopState so the runtime strip can
+		// render a continuous "auto · 240/600" badge between resumes,
+		// instead of the user only seeing it for one frame on each chip.
+		m.agentLoop.cumulativeSteps = cumSteps
+		m.agentLoop.stepCeiling = stepCeiling
+		m.agentLoop.cumulativeTokens = cumTokens
+		m.agentLoop.tokenCeiling = tokenCeiling
 		preview := "compacted, continuing"
 		if stepCeiling > 0 {
 			preview = fmt.Sprintf("compacted, continuing · %d/%d steps", cumSteps, stepCeiling)

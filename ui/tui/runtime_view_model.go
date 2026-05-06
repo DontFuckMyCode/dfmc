@@ -64,6 +64,16 @@ type runtimeViewModel struct {
 	StuckCount    int
 	StuckErrClass string
 
+	// Cumulative* — running totals across every auto-resume cycle for
+	// this root ask. Both ceiling fields zero means no auto-resume has
+	// fired yet (badge stays hidden). Drawn as "auto · S/SCeil · TokK/Ceil"
+	// in the runtime strip so a multi-hour run shows ceiling proximity
+	// continuously, not just on each transient resume chip.
+	CumulativeSteps  int
+	StepCeiling      int
+	CumulativeTokens int
+	TokenCeiling     int
+
 	Parked          bool
 	ApprovalPending bool
 	QueuedCount     int
@@ -160,6 +170,10 @@ func (m Model) runtimeViewModel() runtimeViewModel {
 		StuckTool:              m.agentLoop.stuckTool,
 		StuckCount:             m.agentLoop.stuckCount,
 		StuckErrClass:          m.agentLoop.stuckErrClass,
+		CumulativeSteps:        m.agentLoop.cumulativeSteps,
+		StepCeiling:            m.agentLoop.stepCeiling,
+		CumulativeTokens:       m.agentLoop.cumulativeTokens,
+		TokenCeiling:           m.agentLoop.tokenCeiling,
 		Parked:                 info.Parked,
 		ApprovalPending:        m.pendingApproval != nil,
 		QueuedCount:            info.QueuedCount,
@@ -316,6 +330,13 @@ func runtimeStripNowParts(vm runtimeViewModel) []string {
 	if vm.ActiveTools > 0 {
 		parts = append(parts, fmt.Sprintf("tools %d", vm.ActiveTools))
 	}
+	// Auto-resume progress: show ceiling proximity continuously during a
+	// long autonomous run. Style escalates from info → warn as headroom
+	// disappears so the user knows when to /continue with a refined
+	// scope before the engine refuses further work.
+	if badge := autoResumeBadge(vm); badge != "" {
+		parts = append(parts, badge)
+	}
 	// Stuck-loop badge: warn-styled, ahead of last-tool so it lands in
 	// the eyeline of someone scanning a long-running run for "is it
 	// stuck?" Cleared automatically by the next successful tool result.
@@ -349,6 +370,60 @@ func runtimeStripNowParts(vm runtimeViewModel) []string {
 		parts = append(parts, infoStyle.Render(fmt.Sprintf("notes %d", vm.PendingNotes)))
 	}
 	return parts
+}
+
+// autoResumeBadge renders a one-token "auto · S/SCeil" badge when the
+// autonomous wrapper has accumulated work across resumes. Style ramps
+// from neutral → info → warn as proximity to the ceiling grows: under
+// 50% reads as a quiet status counter, 50-80% bumps to info to invite
+// attention, ≥80% switches to warn so the user can refine scope before
+// the engine refuses. Empty string when no auto-resume has fired
+// (StepCeiling==0) so the badge stays hidden in the common case.
+func autoResumeBadge(vm runtimeViewModel) string {
+	if vm.StepCeiling <= 0 || vm.CumulativeSteps <= 0 {
+		return ""
+	}
+	stepPct := (vm.CumulativeSteps * 100) / vm.StepCeiling
+	tokPct := 0
+	if vm.TokenCeiling > 0 && vm.CumulativeTokens > 0 {
+		tokPct = (vm.CumulativeTokens * 100) / vm.TokenCeiling
+	}
+	hottest := stepPct
+	if tokPct > hottest {
+		hottest = tokPct
+	}
+	label := fmt.Sprintf("auto %d/%d", vm.CumulativeSteps, vm.StepCeiling)
+	if vm.TokenCeiling > 0 {
+		label = fmt.Sprintf("auto %d/%d · %s/%s",
+			vm.CumulativeSteps, vm.StepCeiling,
+			formatTokenCount(vm.CumulativeTokens),
+			formatTokenCount(vm.TokenCeiling),
+		)
+	}
+	switch {
+	case hottest >= 80:
+		return warnStyle.Render(label)
+	case hottest >= 50:
+		return infoStyle.Render(label)
+	default:
+		return subtleStyle.Render(label)
+	}
+}
+
+// formatTokenCount renders a token total compactly (1234 → "1.2k",
+// 12345 → "12k") for the auto-resume badge. The badge sits in a
+// crowded strip; raw five-digit numbers wash out the rest of the line.
+func formatTokenCount(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	if n < 10000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	if n < 1_000_000 {
+		return fmt.Sprintf("%dk", n/1000)
+	}
+	return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
 }
 
 func runtimeStripWorkParts(vm runtimeViewModel) []string {
