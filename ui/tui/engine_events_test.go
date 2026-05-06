@@ -1427,6 +1427,67 @@ func TestComputeTurnElapsedSec(t *testing.T) {
 	})
 }
 
+// TestRuntimeStrip_ToolPaceBadge pins the rolling tools-per-minute
+// pace indicator. Gated on >=10s elapsed AND >=2 rounds so first-
+// tool-call spikes don't dominate the rate.
+func TestRuntimeStrip_ToolPaceBadge(t *testing.T) {
+	t.Run("hidden under elapsed gate", func(t *testing.T) {
+		vm := runtimeViewModel{AgentActive: true, TurnElapsedSec: 5, ToolRounds: 4}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if strings.Contains(joined, "/min") {
+			t.Errorf("under elapsed gate should hide pace, got %q", joined)
+		}
+	})
+	t.Run("hidden under rounds gate", func(t *testing.T) {
+		vm := runtimeViewModel{AgentActive: true, TurnElapsedSec: 30, ToolRounds: 1}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if strings.Contains(joined, "/min") {
+			t.Errorf("under rounds gate should hide pace, got %q", joined)
+		}
+	})
+	t.Run("visible at 12 rounds in 30s = 24/min", func(t *testing.T) {
+		vm := runtimeViewModel{AgentActive: true, TurnElapsedSec: 30, ToolRounds: 12}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if !strings.Contains(joined, "≈24/min") {
+			t.Errorf("expected '≈24/min', got %q", joined)
+		}
+	})
+	t.Run("clamps to zero on truncation", func(t *testing.T) {
+		// 2 rounds in 121s = 0.99 → integer-truncates to 0, suppress.
+		vm := runtimeViewModel{AgentActive: true, TurnElapsedSec: 121, ToolRounds: 2}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if strings.Contains(joined, "/min") {
+			t.Errorf("truncated-to-zero pace should hide, got %q", joined)
+		}
+	})
+}
+
+// TestHumanizeAgentPhase_VerbMappings pins the explicit phase→verb
+// mappings so a future engine rename can break them loudly. Phases
+// that don't have an explicit case pass through unchanged.
+func TestHumanizeAgentPhase_VerbMappings(t *testing.T) {
+	cases := []struct{ phase, want string }{
+		{"", "working"},
+		{"tool-call", "calling tool"},
+		{"tool-result", "reading tool result"},
+		{"tool-error", "tool error"},
+		{"thinking", "thinking"},
+		{"complete", "complete"},
+		{"finalizing", "finalizing answer"},
+		{"auto-resuming", "compacting + resuming"},
+		{"parked", "parked"},
+		{"budget-exhausted", "budget exhausted"},
+		{"max-steps", "max steps reached"},
+		{"error", "error"},
+		{"some-future-phase", "some-future-phase"}, // pass-through
+	}
+	for _, tc := range cases {
+		if got := humanizeAgentPhase(tc.phase); got != tc.want {
+			t.Errorf("phase %q: got %q, want %q", tc.phase, got, tc.want)
+		}
+	}
+}
+
 // TestRuntimeStrip_SubagentBadgeInNowStrip pins promoting the
 // "agents ×N" badge from the workflow sub-strip into the prominent
 // runtime "now" line so parallel fan-out registers at a glance.

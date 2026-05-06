@@ -20,6 +20,21 @@ func computeTurnElapsedSec(s agentLoopState) int {
 	return int(d.Seconds())
 }
 
+// toolPacePerMinute returns the rolling tools-per-minute pace for the
+// current turn, or 0 when not enough data has accumulated to give a
+// stable rate. Gated on >=10s elapsed AND >=2 rounds because first-
+// tool-call spikes dominate the rate at low elapsed.
+func toolPacePerMinute(vm runtimeViewModel) int {
+	if vm.TurnElapsedSec < 10 || vm.ToolRounds < 2 {
+		return 0
+	}
+	pace := (vm.ToolRounds * 60) / vm.TurnElapsedSec
+	if pace <= 0 {
+		return 0
+	}
+	return pace
+}
+
 // formatTurnElapsed renders an int-seconds duration as "2m 34s" /
 // "47s" / "1h 12m". Drops sub-minute precision past 60m so a long
 // autonomous run reads cleanly instead of "73m 14s".
@@ -467,6 +482,14 @@ func runtimeStripNowParts(vm runtimeViewModel) []string {
 		default:
 			parts = append(parts, subtleStyle.Render(label))
 		}
+	}
+	// Tool pace badge — "≈18/min" gives the reader a feel for how fast
+	// the agent is doing work. Gated on >=10s elapsed AND >=2 rounds so
+	// the rate isn't dominated by the first-tool-call spike. Hidden
+	// when the loop isn't running tools (rounds==0) so the badge
+	// never appears for a pure-text answer.
+	if pace := toolPacePerMinute(vm); pace > 0 {
+		parts = append(parts, subtleStyle.Render(fmt.Sprintf("≈%d/min", pace)))
 	}
 	// Files-edited-this-turn badge: a refactor that fans out across 12
 	// files registers as one persistent count instead of 12 chips that

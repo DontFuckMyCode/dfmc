@@ -75,6 +75,22 @@ func humanizeAgentPhase(phase string) string {
 		return "reading tool result"
 	case "tool-error":
 		return "tool error"
+	case "thinking":
+		return "thinking"
+	case "complete":
+		return "complete"
+	case "finalizing":
+		return "finalizing answer"
+	case "auto-resuming":
+		return "compacting + resuming"
+	case "parked":
+		return "parked"
+	case "budget-exhausted":
+		return "budget exhausted"
+	case "max-steps":
+		return "max steps reached"
+	case "error":
+		return "error"
 	case "":
 		return "working"
 	default:
