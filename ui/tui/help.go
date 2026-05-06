@@ -150,6 +150,7 @@ func renderTUIHelp() string {
 		"  /run COMMAND [ARGS...]      Run a shell command",
 		"  /continue        Resume parked agent loop",
 		"  /split TASK      Decompose a broad task into subtasks",
+		"  /agents [show NAME]  List sub-agent roles + provider profiles",
 		"  /btw NOTE        Inject a note at the next agent step",
 		"  /analyze [--flag] [path]     Full analysis",
 		"  /scan [--flag] [path]        Security-only scan",

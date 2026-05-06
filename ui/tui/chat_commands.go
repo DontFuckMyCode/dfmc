@@ -434,6 +434,9 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 	case "skill":
 		m.chat.input = ""
 		return m.appendSystemMessage(m.skillSlash(args)), nil, true
+	case "agents", "agent":
+		m.chat.input = ""
+		return m.appendSystemMessage(m.agentsSlash(args)), nil, true
 	case "init", "completion", "man", "serve", "remote", "plugin", "config",
 		"debug", "generate", "onboard", "audit", "mcp", "update", "tui":
 		// CLI-only commands — surface a friendly pointer instead of
