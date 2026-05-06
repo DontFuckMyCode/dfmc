@@ -30,6 +30,24 @@ type Router struct {
 	// TUI/web/CLI can render a "↻ stream resumed on <fallback>" chip
 	// instead of letting the recovery be invisible.
 	streamRecoveredObserver func(StreamRecoveredEvent)
+
+	// fallbackObserver fires when Complete / Stream walks past a failing
+	// provider in the resolved order to the next one. Optional; nil = no
+	// telemetry. Engine wires this to publish a provider:fallback event
+	// so the TUI / web / CLI -v stream show "primary failed, retrying on
+	// <next>" instead of the cascade being invisible.
+	fallbackObserver func(FallbackEvent)
+}
+
+// FallbackEvent describes a single provider→provider transition during
+// fallback cascade. From is the provider that just failed (with Err);
+// To is the next provider the router will try. Attempt is 0-indexed in
+// the resolved order — Attempt=0 means primary failed → first fallback.
+type FallbackEvent struct {
+	From    string
+	To      string
+	Err     error
+	Attempt int
 }
 
 // StreamRecoveredEvent describes a successful mid-stream provider swap.
@@ -190,6 +208,22 @@ func (r *Router) SetThrottleObserver(fn func(ThrottleNotice)) {
 	r.throttleObserver = fn
 }
 
+func (r *Router) SetFallbackObserver(fn func(FallbackEvent)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fallbackObserver = fn
+}
+
+func (r *Router) emitFallback(from, to string, err error, attempt int) {
+	r.mu.RLock()
+	fn := r.fallbackObserver
+	r.mu.RUnlock()
+	if fn == nil {
+		return
+	}
+	fn(FallbackEvent{From: from, To: to, Err: err, Attempt: attempt})
+}
+
 func (r *Router) SetStreamRecoveredObserver(fn func(StreamRecoveredEvent)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -279,7 +313,7 @@ func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*Completi
 	}
 	var errs []error
 
-	for _, name := range order {
+	for i, name := range order {
 		// If the caller's context is already dead, there is no point
 		// trying the next provider — each attempt would just immediately
 		// return ctx.Err() and the real cancel/deadline reason would get
@@ -298,11 +332,17 @@ func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*Completi
 		// attempt on every fresh ask while the upstream is down.
 		if r.shouldSkipForCircuit(name) {
 			errs = append(errs, fmt.Errorf("%s: %w", name, ErrProviderUnavailable))
+			if next := nextProviderName(order, i+1); next != "" {
+				r.emitFallback(name, next, ErrProviderUnavailable, i)
+			}
 			continue
 		}
 		p, ok := r.Get(name)
 		if !ok {
 			errs = append(errs, fmt.Errorf("%w: %s", ErrProviderNotFound, name))
+			if next := nextProviderName(order, i+1); next != "" {
+				r.emitFallback(name, next, ErrProviderNotFound, i)
+			}
 			continue
 		}
 		resp, usedModel, err := r.completeWithProviderRetry(ctx, p, req)
@@ -311,9 +351,26 @@ func (r *Router) Complete(ctx context.Context, req CompletionRequest) (*Completi
 			return resp, usedModel, nil
 		}
 		errs = append(errs, fmt.Errorf("%s: %w", p.Name(), err))
+		// Fire fallback transition only when there's actually a next
+		// provider to try — the last-attempt failure isn't a "fallback,"
+		// it's terminal.
+		if next := nextProviderName(order, i+1); next != "" {
+			r.emitFallback(p.Name(), next, err, i)
+		}
 	}
 
 	return nil, "", errors.Join(errs...)
+}
+
+// nextProviderName returns the next provider name in the order list at
+// index `from`, or "" when from is past the end. Used to detect "is there
+// somewhere to fall back to" before firing the observer — the LAST failure
+// in the cascade is terminal, not a transition.
+func nextProviderName(order []string, from int) string {
+	if from < 0 || from >= len(order) {
+		return ""
+	}
+	return order[from]
 }
 
 // modelChainRetry is the body shared by completeWithProviderRetry and

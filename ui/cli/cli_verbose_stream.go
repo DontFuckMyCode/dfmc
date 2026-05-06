@@ -99,6 +99,7 @@ var verboseAllowlist = map[string]struct{}{
 	// Provider issues (failures only)
 	"provider:throttle:retry": {},
 	"provider:race:failed":    {},
+	"provider:fallback":       {},
 }
 
 func formatVerboseEvent(ev engine.Event) string {

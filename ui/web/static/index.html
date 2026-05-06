@@ -1148,6 +1148,16 @@ function classifyActivityEvent(ev) {
 		}
 		return { kind: "ctx", icon: "\u25c8", text: type };
 	}
+	if (type === "provider:fallback") {
+		// Cascade transition — primary failed, retrying on next. Warn
+		// styling so users debugging cost/latency notice the fallback
+		// is what served the response, not their configured primary.
+		var pfFrom = payload.from || "";
+		var pfTo = payload.to || "";
+		var pfErr = payload.error || "";
+		return { kind: "error", icon: "↪",
+			text: "provider fallback · " + pfFrom + " → " + pfTo + (pfErr ? (" · " + pfErr) : "") };
+	}
 	if (type === "context:error") {
 		// context:error payload is a plain string (err.Error()), so
 		// the classifier reads `ev.payload` directly when it's a

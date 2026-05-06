@@ -36,6 +36,67 @@ func TestRouterFallsBackToOffline(t *testing.T) {
 	}
 }
 
+// TestFallbackObserver_FiresOnCascade pins the new fallback wire:
+// when Complete walks past failing providers in the resolved order
+// to a working one, the observer fires once per transition with
+// from/to/attempt/err. Without this signal the cascade was invisible
+// — the user saw the offline provider's response with no clue that
+// anthropic and openai had errored along the way.
+func TestFallbackObserver_FiresOnCascade(t *testing.T) {
+	cfg := config.ProvidersConfig{
+		Primary:  "anthropic",
+		Fallback: []string{"openai"},
+		Profiles: map[string]config.ModelConfig{
+			"anthropic": {Model: "claude-sonnet-4-6"},
+			"openai":    {Model: "gpt-5.4"},
+		},
+	}
+	router, err := NewRouter(cfg)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	type call struct {
+		from    string
+		to      string
+		attempt int
+	}
+	calls := make([]call, 0, 4)
+	router.SetFallbackObserver(func(ev FallbackEvent) {
+		calls = append(calls, call{from: ev.From, to: ev.To, attempt: ev.Attempt})
+	})
+
+	// Both anthropic and openai are placeholder providers (no API key
+	// in test env), so they fail and the cascade falls through to
+	// offline. Expect TWO observer fires: anthropic→openai and
+	// openai→offline.
+	if _, _, err := router.Complete(context.Background(), CompletionRequest{
+		Messages: []Message{{Role: types.RoleUser, Content: "hi"}},
+	}); err != nil {
+		t.Fatalf("router complete: %v", err)
+	}
+
+	if len(calls) < 2 {
+		t.Fatalf("expected at least 2 fallback events, got %d: %#v", len(calls), calls)
+	}
+	// First transition: primary → first fallback
+	if calls[0].from != "anthropic" || calls[0].to != "openai" {
+		t.Errorf("first transition: got %s→%s, want anthropic→openai", calls[0].from, calls[0].to)
+	}
+	if calls[0].attempt != 0 {
+		t.Errorf("first transition attempt: got %d, want 0", calls[0].attempt)
+	}
+	// Second transition: first fallback → next (offline)
+	if calls[1].from != "openai" || calls[1].to != "offline" {
+		t.Errorf("second transition: got %s→%s, want openai→offline", calls[1].from, calls[1].to)
+	}
+	// No third event — offline succeeded, last attempt is terminal
+	// not a fallback transition.
+	if len(calls) > 2 {
+		t.Errorf("expected NO transition past the successful offline call, got %d extra: %#v", len(calls)-2, calls[2:])
+	}
+}
+
 func TestOfflineStream(t *testing.T) {
 	p := NewOfflineProvider()
 	stream, err := p.Stream(context.Background(), CompletionRequest{

@@ -546,6 +546,29 @@ func TestHandleEngineEvent_CoachStuck_FiresIndependentOfVerbose(t *testing.T) {
 	}
 }
 
+// TestHandleEngineEvent_ProviderFallback_SurfacesNotice pins the
+// new provider:fallback classifier — distinct from circuit:open
+// (cooldown) and stream:recovered (mid-stream swap), this fires
+// when the cascade walks past a failing provider to the next.
+func TestHandleEngineEvent_ProviderFallback_SurfacesNotice(t *testing.T) {
+	m := newCoverageModel(t)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "provider:fallback",
+		Payload: map[string]any{
+			"from":    "anthropic",
+			"to":      "openai",
+			"attempt": 0,
+			"error":   "503 service unavailable",
+		},
+	})
+	notice := strings.ToLower(m.notice)
+	for _, want := range []string{"provider fallback", "anthropic", "openai", "503"} {
+		if !strings.Contains(notice, strings.ToLower(want)) {
+			t.Errorf("expected %q in notice, got %q", want, m.notice)
+		}
+	}
+}
+
 // TestHandleEngineEvent_ContextErrorAndShutdownAndResume rounds out
 // the audit by pinning three more events the dispatcher used to
 // drop: context:error (string-payload special case), engine:

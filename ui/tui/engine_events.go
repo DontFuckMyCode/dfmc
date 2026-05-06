@@ -454,6 +454,29 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		} else {
 			line = fmt.Sprintf("Auto-new-session: fresh conversation seeded (%d→%d tokens).", historyTokens, briefTokens)
 		}
+	case "provider:fallback":
+		// Provider cascade fell over from primary to next in the order.
+		// Distinct from provider:stream:recovered (mid-stream swap) and
+		// from provider:circuit:open (cooldown skip). Surface compactly
+		// so the user knows the answer came from a fallback, not the
+		// primary they configured — relevant for cost / latency
+		// debugging since fallbacks often have different pricing.
+		from := payloadString(payload, "from", "")
+		to := payloadString(payload, "to", "")
+		errText := strings.TrimSpace(payloadString(payload, "error", ""))
+		attempt := payloadInt(payload, "attempt", 0)
+		detail := fmt.Sprintf("%s → %s (attempt %d)", from, to, attempt)
+		if errText != "" {
+			detail += " · " + truncateSingleLine(errText, 80)
+		}
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "provider:fallback:" + from + "-" + to,
+			Kind:   "system",
+			Status: "warn",
+			Title:  "provider fallback",
+			Detail: detail,
+		})
+		line = "Provider fallback: " + detail
 	case "context:error":
 		// Context build failed — the chunk-ranking pass couldn't
 		// produce a budget-respecting set. The Ask path falls back
@@ -658,7 +681,8 @@ func shouldMirrorEventToTranscript(eventType string) bool {
 		"context:lifecycle:compacted", "context:lifecycle:handoff",
 		"conversation:save:error", "coach:note", "tool:denied",
 		"runtime:panic", "tool:panicked", "security:config_permissions",
-		"memory:degraded", "context:error", "engine:shutdown_error":
+		"memory:degraded", "context:error", "engine:shutdown_error",
+		"provider:fallback":
 		return true
 	default:
 		return false
