@@ -217,7 +217,33 @@ func asBool(m map[string]any, key string, fallback bool) bool {
 	case bool:
 		return vv
 	case string:
-		return strings.EqualFold(vv, "true") || vv == "1"
+		// Trim+lower so " True ", "TRUE", "yes", etc. don't fall
+		// through to the fallback. Earlier the EqualFold/== checks
+		// matched only bare "true"/"1" — a model passing `"True"` for
+		// case_sensitive silently got false, which is exactly the
+		// kind of provider-side serialization variance the asInt /
+		// asString helpers already tolerate.
+		s := strings.ToLower(strings.TrimSpace(vv))
+		switch s {
+		case "true", "yes", "y", "1", "on":
+			return true
+		case "false", "no", "n", "0", "off", "":
+			return false
+		}
+		return fallback
+	case int:
+		return vv != 0
+	case int32:
+		return vv != 0
+	case int64:
+		return vv != 0
+	case float64:
+		// Tolerate JSON-decoded `1`/`0` which arrive as float64 here.
+		// Reject NaN to avoid the surprising `NaN != 0 == true` case.
+		if vv != vv { // NaN check
+			return fallback
+		}
+		return vv != 0
 	}
 	return fallback
 }
