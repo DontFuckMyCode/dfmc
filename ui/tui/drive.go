@@ -152,40 +152,117 @@ func (r *tuiDriveResources) listRuns() ([]*drive.Run, error) {
 	return r.store.List()
 }
 
-// handleDriveStopSlash powers `/drive stop [id]`. Without an ID,
-// stops the unique active run; with an ID, stops that one. Reports
-// success/failure as a system message because the cancellation
-// itself doesn't emit a transcript line directly — the driver's
-// own drive:run:stopped event handles that asynchronously.
-func (m Model) handleDriveStopSlash(args []string) (Model, tea.Cmd, bool) {
-	id := ""
-	if len(args) > 0 {
-		id = strings.TrimSpace(args[0])
+// resolveDriveRunID accepts either a full run ID or a short prefix
+// (typically the 8-char chunk we display) and returns the matching
+// full ID. Returns:
+//   - exact match  → (id, true, "")
+//   - unique prefix match across `candidates` → (full_id, true, "")
+//   - no match     → ("", false, "no run matches …")
+//   - ambiguous prefix → ("", false, "multiple runs match …")
+//
+// Lets users copy the visible short ID and paste it into /drive stop /
+// /drive resume without hunting for the full one.
+func resolveDriveRunID(input string, candidates []string) (string, bool, string) {
+	q := strings.TrimSpace(input)
+	if q == "" {
+		return "", false, "missing run id"
 	}
-	if id == "" {
-		active := drive.ListActive()
+	// Exact match wins.
+	for _, c := range candidates {
+		if c == q {
+			return c, true, ""
+		}
+	}
+	// Prefix match — case-insensitive so the user can be sloppy.
+	qLow := strings.ToLower(q)
+	var matches []string
+	for _, c := range candidates {
+		if strings.HasPrefix(strings.ToLower(c), qLow) {
+			matches = append(matches, c)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", false, fmt.Sprintf("no run matches %q — try /drive list to see all runs", q)
+	case 1:
+		return matches[0], true, ""
+	default:
+		return "", false, fmt.Sprintf("%q is ambiguous — matches %d runs (%s …) — paste a longer prefix", q, len(matches), strings.Join(matches[:min(3, len(matches))], ", "))
+	}
+}
+
+// activeDriveRunIDs returns the IDs of every currently running drive
+// in this process. Used as the candidate set for /drive stop's prefix
+// resolver.
+func activeDriveRunIDs() []string {
+	active := drive.ListActive()
+	ids := make([]string, 0, len(active))
+	for _, a := range active {
+		ids = append(ids, a.RunID)
+	}
+	return ids
+}
+
+// allDriveRunIDs returns every persisted run ID (active + historical)
+// from the engine's drive store. Used as the candidate set for
+// /drive resume's prefix resolver.
+func (m Model) allDriveRunIDs() []string {
+	if m.eng == nil || m.eng.Storage == nil {
+		return nil
+	}
+	store, err := drive.NewStore(m.eng.Storage.DB())
+	if err != nil {
+		return nil
+	}
+	runs, err := store.List()
+	if err != nil {
+		return nil
+	}
+	ids := make([]string, 0, len(runs))
+	for _, r := range runs {
+		ids = append(ids, r.ID)
+	}
+	return ids
+}
+
+// handleDriveStopSlash powers `/drive stop [id]`. Without an ID,
+// stops the unique active run; with an ID, accepts a prefix and
+// resolves it to the full run ID. Reports success/failure as a
+// system message because the cancellation itself doesn't emit a
+// transcript line directly — the driver's own drive:run:stopped
+// event handles that asynchronously.
+func (m Model) handleDriveStopSlash(args []string) (Model, tea.Cmd, bool) {
+	idArg := ""
+	if len(args) > 0 {
+		idArg = strings.TrimSpace(args[0])
+	}
+	active := drive.ListActive()
+	if idArg == "" {
 		if len(active) == 0 {
 			return m.appendSystemMessage("No active drive runs in this process. /drive list shows historical runs."), nil, true
 		}
 		if len(active) > 1 {
-			lines := []string{"Multiple active runs — pass an explicit ID to /drive stop:"}
+			lines := []string{"Multiple active runs — pass an explicit ID (or prefix) to /drive stop:"}
 			for _, a := range active {
-				lines = append(lines, "  "+shortRunID(a.RunID)+"  "+a.RunID+"  "+truncateForLine(a.Task, 60))
+				lines = append(lines, "  "+a.RunID+"  ·  "+truncateForLine(a.Task, 60))
 			}
 			return m.appendSystemMessage(strings.Join(lines, "\n")), nil, true
 		}
-		id = active[0].RunID
+		idArg = active[0].RunID
+	}
+	id, ok, errMsg := resolveDriveRunID(idArg, activeDriveRunIDs())
+	if !ok {
+		return m.appendSystemMessage("/drive stop: " + errMsg), nil, true
 	}
 	if drive.Cancel(id) {
 		m.notice = "Drive [" + shortRunID(id) + "] stopping — finishes current TODO first."
-		return m.appendSystemMessage("▸ Drive [" + shortRunID(id) + "] cancellation sent · run_id: " + id + "\n   The loop stops after the current TODO finishes; watch the Activity panel for drive:run:stopped."), nil, true
+		return m.appendSystemMessage("▸ Drive cancellation sent\n   run_id: " + id + "\n   The loop stops after the current TODO finishes; watch the Activity panel for drive:run:stopped."), nil, true
 	}
-	return m.appendSystemMessage("/drive stop: " + id + " is not active in this process — already done, or wrong ID. Try /drive list to see persisted runs."), nil, true
+	return m.appendSystemMessage("/drive stop: " + id + " is not active anymore. Try /drive list to see persisted runs."), nil, true
 }
 
-// handleDriveActiveSlash lists currently-running drives. Useful when
-// the user has lost track of what was started or wants the ID for a
-// `/drive stop`.
+// handleDriveActiveSlash lists currently-running drives with their
+// FULL run IDs (so the user can copy/paste into /drive stop).
 func (m Model) handleDriveActiveSlash() (Model, tea.Cmd, bool) {
 	active := drive.ListActive()
 	if len(active) == 0 {
@@ -193,14 +270,15 @@ func (m Model) handleDriveActiveSlash() (Model, tea.Cmd, bool) {
 	}
 	lines := []string{fmt.Sprintf("Active drive runs (%d):", len(active))}
 	for _, a := range active {
-		lines = append(lines, "  ["+shortRunID(a.RunID)+"]  "+truncateForLine(a.Task, 80))
+		lines = append(lines, "  "+a.RunID+"  ·  "+truncateForLine(a.Task, 80))
 	}
-	lines = append(lines, "", "Tip: /drive stop <id> cancels a specific run.")
+	lines = append(lines, "", "Tip: /drive stop <id-or-prefix> cancels a specific run. The 8-char prefix is enough.")
 	return m.appendSystemMessage(strings.Join(lines, "\n")), nil, true
 }
 
-// handleDriveListSlash shows every persisted run (active + historical).
-// Newest first; truncates the task to fit the chat panel.
+// handleDriveListSlash shows every persisted run (active + historical)
+// with FULL run IDs so the user can copy/paste them into /drive stop /
+// /drive resume. Newest first; truncates the task to fit chat width.
 func (m Model) handleDriveListSlash() (Model, tea.Cmd, bool) {
 	if m.eng == nil || m.eng.Storage == nil {
 		return m.appendSystemMessage("/drive list: storage not initialized."), nil, true
@@ -219,9 +297,11 @@ func (m Model) handleDriveListSlash() (Model, tea.Cmd, bool) {
 	lines := []string{fmt.Sprintf("Drive runs (%d, newest first):", len(runs))}
 	for _, r := range runs {
 		done, blocked, skipped, _ := r.Counts()
-		lines = append(lines, fmt.Sprintf("  [%s]  %-7s  %d done · %d blocked · %d skipped  %s",
-			shortRunID(r.ID), r.Status, done, blocked, skipped, truncateForLine(r.Task, 60)))
+		lines = append(lines, fmt.Sprintf("  %s  %-8s  %d done · %d blocked · %d skipped  %s",
+			r.ID, r.Status, done, blocked, skipped, truncateForLine(r.Task, 60)))
 	}
-	lines = append(lines, "", "Tip: /drive resume <id> restarts a stopped run · /drive stop <id> cancels an active one.")
+	lines = append(lines, "",
+		"Tip: /drive stop <id-or-prefix> cancels active · /drive resume <id-or-prefix> restarts stopped.",
+		"     The first 8 chars are usually unique enough — the resolver matches on prefix.")
 	return m.appendSystemMessage(strings.Join(lines, "\n")), nil, true
 }

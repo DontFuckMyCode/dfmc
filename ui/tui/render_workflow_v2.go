@@ -49,18 +49,23 @@ func (m Model) renderWorkflowViewV2(width int) string {
 	banner := m.workflowTopBanner(width)
 	listBlock := m.renderWorkflowRunsPane(listW, height, pal)
 	treeBlock := m.renderWorkflowTreePane(treeW, height, pal)
+	var out string
 	if threePane {
 		metaBlock := m.renderWorkflowMetaPane(metaW, height, pal)
 		body := lipgloss.JoinHorizontal(lipgloss.Top,
 			listBlock, "  ", treeBlock, "  ", metaBlock)
-		return banner + "\n" + body
-	}
-	if twoPane {
+		out = banner + "\n" + body
+	} else if twoPane {
 		footer := m.renderWorkflowMetaInline(width)
 		body := lipgloss.JoinHorizontal(lipgloss.Top, listBlock, "  ", treeBlock)
-		return banner + "\n" + body + "\n" + footer
+		out = banner + "\n" + body + "\n" + footer
+	} else {
+		out = banner + "\n" + listBlock + "\n" + treeBlock
 	}
-	return banner + "\n" + listBlock + "\n" + treeBlock
+	if m.actionMenu.open && m.actionMenu.owner == "Workflow" {
+		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
 }
 
 func workflowPanelWidths(total int, threePane, twoPane bool) (listW, treeW, metaW int) {
@@ -187,10 +192,26 @@ func (m Model) renderWorkflowRunRow(i, width int, pal tabPaletteEntry, cursorIdx
 		cursor = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render("▶ ")
 	}
 	statusChip := renderRunStatusChip(r.Status)
-	idLabel := truncateForLine(r.ID, 8)
+	// Show the FULL run ID — users need it for /drive stop and
+	// /drive resume. The 8-char truncation made cancel/remove
+	// impossible because there was no way to copy the full one. The
+	// row gets two lines on narrow widths instead.
+	idLabel := r.ID
 
-	chrome := lipgloss.Width(cursor) + lipgloss.Width(statusChip) + len(idLabel) + 4
-	taskWidth := max(width-chrome, 8)
+	chrome := lipgloss.Width(cursor) + lipgloss.Width(statusChip) + 4
+	idWidth := lipgloss.Width(idLabel)
+	taskWidth := width - chrome - idWidth - 2
+	if taskWidth < 12 {
+		// Two-line layout: ID on its own line above, task + status on
+		// the next so the ID stays whole on narrow terminals.
+		taskWidth = max(width-chrome, 12)
+		task := truncateForLine(r.Task, taskWidth)
+		if selected {
+			task = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render(task)
+		}
+		return cursor + subtleStyle.Render(idLabel) + "\n  " +
+			"  " + task + "  " + statusChip
+	}
 	task := truncateForLine(r.Task, taskWidth)
 	if selected {
 		task = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render(task)

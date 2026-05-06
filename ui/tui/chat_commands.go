@@ -201,14 +201,21 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 				return m.handleDriveListSlash()
 			case "resume":
 				if len(args) < 2 {
-					return m.appendSystemMessage("/drive resume <id> — pass a run ID to resume."), nil, true
+					return m.appendSystemMessage("/drive resume <id-or-prefix> — pass a run ID (or its 8-char prefix) to resume."), nil, true
 				}
-				runID, err := runDriveResumeAsync(m.eng, args[1])
+				// Accept short prefix — resolve against every persisted
+				// run so the user can paste the visible chunk from
+				// /drive list.
+				resolved, ok, errMsg := resolveDriveRunID(args[1], m.allDriveRunIDs())
+				if !ok {
+					return m.appendSystemMessage("/drive resume: " + errMsg), nil, true
+				}
+				runID, err := runDriveResumeAsync(m.eng, resolved)
 				if err != nil {
 					return m.appendSystemMessage("/drive resume error: " + err.Error()), nil, true
 				}
 				m.notice = "Drive [" + shortRunID(runID) + "] resumed — pinned to Activity below."
-				return m.appendSystemMessage("▸ Drive resume requested · run_id: " + runID + "\n   Progress will continue in the activity panel below."), nil, true
+				return m.appendSystemMessage("▸ Drive resume requested\n   run_id: " + runID + "\n   Progress will continue in the activity panel below."), nil, true
 			}
 		}
 		task := strings.TrimSpace(strings.Join(args, " "))

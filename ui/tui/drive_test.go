@@ -141,8 +141,11 @@ func TestHandleDriveStopSlash_WithArgs(t *testing.T) {
 		t.Fatal("handleDriveStopSlash should be handled")
 	}
 	last := next.chat.transcript[len(next.chat.transcript)-1].Content
-	if !strings.Contains(last, "not active") {
-		t.Fatalf("expected not active message, got:\n%s", last)
+	// Resolver replies with "no run matches" when the prefix is bogus
+	// AND there are no active runs to scan; either phrasing means the
+	// stop didn't fire.
+	if !strings.Contains(last, "not active") && !strings.Contains(last, "no run matches") {
+		t.Fatalf("expected not-found-style message, got:\n%s", last)
 	}
 }
 
@@ -208,7 +211,12 @@ func TestDriveSlashResumeShowsMissingRunError(t *testing.T) {
 		t.Fatal("expected transcript error entry")
 	}
 	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
-	if !strings.Contains(strings.ToLower(last), "not found") {
+	low := strings.ToLower(last)
+	// Resolver returns "no run matches …" when the prefix doesn't
+	// hit anything in the persisted store; the legacy "not found"
+	// phrasing also passes for backwards compat with any callers
+	// still wired to runDriveResumeAsync directly.
+	if !strings.Contains(low, "not found") && !strings.Contains(low, "no run matches") {
 		t.Fatalf("expected not-found error, got:\n%s", last)
 	}
 }

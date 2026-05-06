@@ -208,15 +208,138 @@ func (m Model) renderWorkflowTodoDetail(run *drive.Run, width int) []string {
 // Two-level navigation: run selector (left column, no run selected) →
 // TODO tree (right column, run selected). 'r' opens the routing editor
 // overlay when no run is selected, letting the user configure the
-// drive.Config.Routing map (ProviderTag → profile name).
+// openWorkflowActionMenu builds the contextual action list for the
+// Workflow / Drive cockpit panel. Actions depend on whether a run is
+// currently selected — when one is, "Stop" / "Resume" / "Copy ID" all
+// target it. When no run is selected, the menu still exposes the
+// global routing editor + refresh.
+func (m Model) openWorkflowActionMenu() Model {
+	run := m.selectedRunForWorkflow()
+
+	// When the selected run is a placeholder slot (cursor without
+	// committed selection), fall back to the cursor-pointed run from
+	// the list so the actions still target something useful.
+	if run == nil && len(m.workflow.runs) > 0 &&
+		m.workflow.selectedIndex >= 0 && m.workflow.selectedIndex < len(m.workflow.runs) {
+		run = m.workflow.runs[m.workflow.selectedIndex]
+	}
+
+	actions := []panelAction{}
+	title := "Workflow actions"
+	if run != nil {
+		title = "Run actions · " + truncateForLine(run.ID, 32)
+		runID := run.ID
+
+		actions = append(actions, panelAction{
+			Label: "Open run · view TODO tree",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.workflow.selectedRunID = runID
+				m.workflow.scrollY = 0
+				return m, nil
+			},
+		})
+		actions = append(actions, panelAction{
+			Label: "Stop / cancel this run",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				if drive.Cancel(runID) {
+					m.notice = "Drive [" + shortRunID(runID) + "] stopping — finishes current TODO first."
+				} else {
+					m.notice = "Run " + shortRunID(runID) + " is not active in this process."
+				}
+				return m, nil
+			},
+		})
+		actions = append(actions, panelAction{
+			Label: "Resume this run",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				if _, err := runDriveResumeAsync(m.eng, runID); err != nil {
+					m.notice = "Resume error: " + err.Error()
+					return m, nil
+				}
+				m.notice = "Drive [" + shortRunID(runID) + "] resumed."
+				return m, nil
+			},
+		})
+		actions = append(actions, panelAction{
+			Label: "Copy full run ID into chat composer",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				current := strings.TrimRight(m.chat.input, " ")
+				if current != "" {
+					current += " "
+				}
+				m.setChatInput(current + runID)
+				m.activeTab = 0
+				m.notice = "Copied run ID to chat: " + runID
+				return m, nil
+			},
+		})
+		actions = append(actions, panelAction{
+			Label: "Deselect run · back to run list",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.workflow.selectedRunID = ""
+				m.workflow.scrollY = 0
+				m.workflow.selectedTodoID = ""
+				return m, nil
+			},
+		})
+	}
+
+	// Always-on actions.
+	actions = append(actions,
+		panelAction{
+			Label: "Routing editor (provider tag → profile)", Accel: "r",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.workflow.showRoutingEditor = true
+				m.workflow.routingEditTag = ""
+				m.workflow.routingEditProfile = ""
+				m.workflow.routingEditIndex = 0
+				m.workflow.routingEditMode = false
+				if m.workflow.routingDraft == nil {
+					m.workflow.routingDraft = m.loadDriveRoutingFromProjectConfig()
+					if m.workflow.routingDraft == nil {
+						m.workflow.routingDraft = make(map[string]string)
+					}
+				}
+				return m, nil
+			},
+		},
+		panelAction{
+			Label: "Refresh runs from store",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				if m.eng != nil && m.eng.Storage != nil {
+					if store, err := drive.NewStore(m.eng.Storage.DB()); err == nil {
+						if runs, err := store.List(); err == nil {
+							m.workflow.runs = runs
+							m.notice = fmt.Sprintf("Drive runs reloaded · %d total", len(runs))
+						}
+					}
+				}
+				return m, nil
+			},
+		},
+	)
+	return m.openActionMenu("Workflow", title, actions)
+}
+
 func (m Model) handleWorkflowKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Routing editor has its own key handler
 	if m.workflow.showRoutingEditor {
 		return m.handleRoutingEditorKey(msg)
 	}
+	// Action menu owns arrows/enter/esc when open.
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
 
 	total := len(m.workflow.runs)
 	step := 1
+
+	// Right arrow opens the action menu — covers stop / resume /
+	// copy ID / focus run / open routing editor without the user
+	// having to memorise letters or copy the ID elsewhere.
+	if s := msg.String(); s == "right" || s == "l" {
+		return m.openWorkflowActionMenu(), nil
+	}
 
 	switch msg.String() {
 	case "j", "down":
