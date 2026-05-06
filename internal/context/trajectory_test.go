@@ -179,6 +179,77 @@ func TestTrajectoryHints_MutationEscalates(t *testing.T) {
 	}
 }
 
+func TestTrajectoryHints_UnverifiedFieldsExposed(t *testing.T) {
+	// Even when the count is low (gentle wording), the structured
+	// UnverifiedCount/Paths must still be set so engine telemetry sees
+	// the running streak, not just the escalation point.
+	all := []TraceEntry{
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "a.go"}, Ok: true, Step: 1},
+	}
+	out := TrajectoryHints(all, all, nil)
+	if out == nil {
+		t.Fatal("expected output")
+	}
+	if out.UnverifiedCount != 1 {
+		t.Errorf("UnverifiedCount = %d, want 1", out.UnverifiedCount)
+	}
+	if len(out.UnverifiedPaths) != 1 || out.UnverifiedPaths[0] != "a.go" {
+		t.Errorf("UnverifiedPaths = %v, want [a.go]", out.UnverifiedPaths)
+	}
+	if out.UnverifiedEscalated {
+		t.Errorf("count=1 must NOT mark UnverifiedEscalated")
+	}
+}
+
+func TestTrajectoryHints_UnverifiedEscalatedFlag(t *testing.T) {
+	// Count >= 3 with a fresh edit → directive form fires AND
+	// UnverifiedEscalated flips so the engine can publish a structured
+	// agent:coach:unverified event in the same round.
+	all := []TraceEntry{
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "a.go"}, Ok: true, Step: 1},
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "b.go"}, Ok: true, Step: 2},
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "c.go"}, Ok: true, Step: 3},
+	}
+	fresh := all[2:]
+	out := TrajectoryHints(fresh, all, nil)
+	if out == nil {
+		t.Fatal("expected output")
+	}
+	if !out.UnverifiedEscalated {
+		t.Errorf("count=3 with fresh edit must flip UnverifiedEscalated")
+	}
+	if out.UnverifiedCount != 3 {
+		t.Errorf("UnverifiedCount = %d, want 3", out.UnverifiedCount)
+	}
+	if len(out.UnverifiedPaths) != 3 {
+		t.Errorf("UnverifiedPaths len = %d, want 3", len(out.UnverifiedPaths))
+	}
+}
+
+func TestTrajectoryHints_UnverifiedNotEscalatedWithoutFreshEdit(t *testing.T) {
+	// Count is high but the current round had no mutation — the
+	// directive hint must NOT fire (it's tied to a fresh edit), but
+	// the count should still appear on the structured fields so the
+	// TUI badge stays accurate.
+	all := []TraceEntry{
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "a.go"}, Ok: true, Step: 1},
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "b.go"}, Ok: true, Step: 2},
+		{Tool: "tool_call", Inner: "edit_file", Args: map[string]any{"path": "c.go"}, Ok: true, Step: 3},
+		{Tool: "tool_call", Inner: "read_file", Args: map[string]any{"path": "d.go"}, Ok: true, Step: 4},
+	}
+	fresh := all[3:] // just a read this round
+	out := TrajectoryHints(fresh, all, nil)
+	if out == nil {
+		t.Fatal("expected output")
+	}
+	if out.UnverifiedEscalated {
+		t.Errorf("no fresh edit → must NOT escalate, got UnverifiedEscalated=true")
+	}
+	if out.UnverifiedCount != 3 {
+		t.Errorf("UnverifiedCount = %d, want 3", out.UnverifiedCount)
+	}
+}
+
 func TestTrajectoryHints_MutationGentleAtCountOne(t *testing.T) {
 	// Exactly one unvalidated edit → the gentle "validate this" wording,
 	// NOT the directive "STOP editing" form.

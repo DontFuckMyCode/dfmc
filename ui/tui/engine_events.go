@@ -179,6 +179,34 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		}
 		m = m.appendCoachMessage(notice, coachSeverityWarn, "stuck-loop", "")
 		return m
+	case "agent:coach:unverified":
+		// Engine fired the directive "STOP editing, validate" hint.
+		// Drop a matching warn-level notice in the transcript so the
+		// always-visible "unverified: N" badge has a chat scrollback
+		// counterpart explaining what the agent has just been told.
+		fileCount := payloadInt(payload, "file_count", 0)
+		if fileCount < 3 {
+			return m
+		}
+		samplePaths := payloadStringSlice(payload, "sample_paths")
+		preview := ""
+		if len(samplePaths) > 0 {
+			truncated := samplePaths
+			if len(truncated) > 3 {
+				truncated = truncated[:3]
+			}
+			preview = " (" + strings.Join(truncated, ", ")
+			if len(samplePaths) > 3 {
+				preview += fmt.Sprintf(", +%d more", len(samplePaths)-3)
+			}
+			preview += ")"
+		}
+		notice := fmt.Sprintf(
+			"⚠ %d unverified edits%s — agent has been told to STOP editing and run a validation pass before continuing.",
+			fileCount, preview,
+		)
+		m = m.appendCoachMessage(notice, coachSeverityWarn, "unverified-edits", "")
+		return m
 	case "agent:subagent:start", "agent:subagent:fallback", "agent:subagent:done":
 		m, line = m.handleSubagentEvent(eventType, payload)
 	case "context:built":

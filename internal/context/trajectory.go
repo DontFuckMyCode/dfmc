@@ -56,6 +56,17 @@ type TrajectoryOutput struct {
 	StuckTool      string
 	StuckCount     int
 	StuckErrSample string
+
+	// Unverified* fields surface the running unvalidated-edits count,
+	// computed every round (not just when Rule 2 escalates). Engine
+	// publishes a separate agent:coach:unverified event when the count
+	// crosses the escalation threshold so the TUI / web feed can
+	// correlate the always-visible "unverified: N" badge with a
+	// matching warn notice in the chat scrollback. UnverifiedCount==0
+	// means no current streak.
+	UnverifiedCount     int
+	UnverifiedPaths     []string
+	UnverifiedEscalated bool // true when Rule 2 fired its directive form
 }
 
 // TrajectoryHints returns up to 2 short coaching lines derived from the
@@ -101,6 +112,12 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 	// signal for a fresh `agent:coach:stuck` event so the TUI surfaces
 	// the count even on subsequent rounds.
 	stuck := detectRepeatedFailures(all)
+	// Unvalidated mutations across the whole history. We compute it
+	// once up-front so build() can attach it to every return — Rule 2
+	// is the only place the *escalated* directive hint fires, but the
+	// COUNT is structural data the engine should always surface.
+	unverifiedCount, unverifiedPaths := countUnvalidatedMutations(all)
+	unverifiedEscalated := false
 	build := func() *TrajectoryOutput {
 		o := &TrajectoryOutput{
 			Hints:         out,
@@ -112,6 +129,11 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 			o.StuckTool = stuck.tool
 			o.StuckCount = stuck.count
 			o.StuckErrSample = stuck.errSample
+		}
+		if unverifiedCount > 0 {
+			o.UnverifiedCount = unverifiedCount
+			o.UnverifiedPaths = append([]string(nil), unverifiedPaths...)
+			o.UnverifiedEscalated = unverifiedEscalated
 		}
 		return o
 	}
@@ -182,25 +204,25 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 		}
 	}
 	if freshMutated {
-		count, paths := countUnvalidatedMutations(all)
 		var hint string
 		switch {
-		case count >= 3:
+		case unverifiedCount >= 3:
+			unverifiedEscalated = true
 			tail := ""
-			if len(paths) > 0 {
-				preview := paths
+			if len(unverifiedPaths) > 0 {
+				preview := unverifiedPaths
 				if len(preview) > 4 {
 					preview = preview[:4]
-					tail = fmt.Sprintf(" (%s, +%d more)", strings.Join(preview, ", "), len(paths)-4)
+					tail = fmt.Sprintf(" (%s, +%d more)", strings.Join(preview, ", "), len(unverifiedPaths)-4)
 				} else {
 					tail = " (" + strings.Join(preview, ", ") + ")"
 				}
 			}
 			hint = fmt.Sprintf(
 				"You've mutated %d files%s without running a single build/test/vet. The risk of compounding regression is real — STOP editing and run the smallest validation that exercises these changes (e.g. `go test ./<changed-package>/...`, `go vet ./...`, the project's test command). Resume edits only after you have a clean signal.",
-				count, tail,
+				unverifiedCount, tail,
 			)
-			openQuestions = append(openQuestions, fmt.Sprintf("%d unvalidated mutations queued — verification is overdue", count))
+			openQuestions = append(openQuestions, fmt.Sprintf("%d unvalidated mutations queued — verification is overdue", unverifiedCount))
 		default:
 			path := freshPath
 			if path == "" {

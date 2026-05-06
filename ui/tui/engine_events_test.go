@@ -729,6 +729,52 @@ func TestHandleEngineEvent_AutoResumePersistsCumulative(t *testing.T) {
 	}
 }
 
+func TestHandleEngineEvent_CoachUnverified_FiresAtThreshold(t *testing.T) {
+	m := newCoverageModel(t)
+	event := engine.Event{
+		Type: "agent:coach:unverified",
+		Payload: map[string]any{
+			"step":         8,
+			"file_count":   4,
+			"sample_paths": []any{"a.go", "b.go", "c.go", "d.go"},
+		},
+	}
+	m2 := m.handleEngineEvent(event)
+	if len(m2.agentLoop.sessionCoachNotes) == 0 {
+		t.Fatal("unverified event should add a coach note")
+	}
+	last := m2.agentLoop.sessionCoachNotes[len(m2.agentLoop.sessionCoachNotes)-1]
+	if !strings.Contains(last, "4 unverified edits") {
+		t.Errorf("note should cite count, got %q", last)
+	}
+	if !strings.Contains(last, "STOP editing") {
+		t.Errorf("note should be directive, got %q", last)
+	}
+	if !strings.Contains(last, "a.go") {
+		t.Errorf("note should preview paths, got %q", last)
+	}
+	tail := m2.chat.transcript[len(m2.chat.transcript)-1]
+	if !strings.Contains(tail.Content, "⚠") {
+		t.Errorf("notice should carry warn marker, got %q", tail.Content)
+	}
+}
+
+func TestHandleEngineEvent_CoachUnverified_BelowThresholdDropped(t *testing.T) {
+	m := newCoverageModel(t)
+	before := len(m.agentLoop.sessionCoachNotes)
+	event := engine.Event{
+		Type: "agent:coach:unverified",
+		Payload: map[string]any{
+			"file_count":   2, // below threshold
+			"sample_paths": []any{"a.go", "b.go"},
+		},
+	}
+	m2 := m.handleEngineEvent(event)
+	if len(m2.agentLoop.sessionCoachNotes) != before {
+		t.Errorf("count<3 should not surface a notice, got %d new notes", len(m2.agentLoop.sessionCoachNotes)-before)
+	}
+}
+
 func TestTrackMutationOrValidation_EditAccumulates(t *testing.T) {
 	m := newCoverageModel(t)
 	m = m.trackMutationOrValidation("edit_file", map[string]any{

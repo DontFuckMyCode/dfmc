@@ -271,6 +271,21 @@ func (e *Engine) executeAndAppendToolBatch(
 	return freshStart
 }
 
+// clipPathsForEvent caps a path slice for event-payload inclusion. We
+// don't want to ship 100 paths into every event when the count is
+// large; subscribers only need a representative sample for "show me a
+// few of them". The full list lives in the trajectory output struct.
+func clipPathsForEvent(paths []string, max int) []string {
+	if len(paths) <= max {
+		out := make([]string, len(paths))
+		copy(out, paths)
+		return out
+	}
+	out := make([]string, 0, max)
+	out = append(out, paths[:max]...)
+	return out
+}
+
 // dedupTargetHint returns " (target)" — a short, paren-wrapped
 // identifier for the deduped call so the back-reference stub can name
 // the file/pattern/command instead of the opaque tool name alone.
@@ -324,6 +339,20 @@ func (e *Engine) injectTrajectoryHints(s *loopRunState, freshStart int) {
 			"error_class":       hints.StuckErrSample,
 			"hint_text_emitted": len(hints.Hints) > 0,
 			"surface":           "native",
+		})
+	}
+	// Unverified-mutations escalation. The TUI's always-visible
+	// "unverified: N" badge shows the count via its own tool:result
+	// counting; this event correlates the badge with a transcript
+	// notice the FIRST round Rule 2 takes its directive form, so the
+	// user sees a matching warn line right when the engine has
+	// effectively told the model "STOP editing, validate now".
+	if hints.UnverifiedEscalated {
+		e.publishAgentLoopEvent("agent:coach:unverified", map[string]any{
+			"step":         s.step,
+			"file_count":   hints.UnverifiedCount,
+			"sample_paths": clipPathsForEvent(hints.UnverifiedPaths, 4),
+			"surface":      "native",
 		})
 	}
 	if len(hints.Hints) == 0 {
