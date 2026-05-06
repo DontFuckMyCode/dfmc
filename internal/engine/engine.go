@@ -278,6 +278,23 @@ func (e *Engine) Init(ctx context.Context) error {
 		})
 	}
 	e.Conversation = conversation.New(e.Storage)
+	// Surface async-save failures on the bus so the TUI / web can
+	// render "your last turn didn't persist" instead of having the
+	// error vanish into log.Printf — the user otherwise has no
+	// signal when crash-before-shutdown actually loses work.
+	e.Conversation.SetErrorReporter(func(stage string, err error) {
+		if e.EventBus == nil || err == nil {
+			return
+		}
+		e.EventBus.Publish(Event{
+			Type:   "conversation:save:error",
+			Source: "engine",
+			Payload: map[string]any{
+				"stage": stage,
+				"error": err.Error(),
+			},
+		})
+	})
 	e.Security = security.New()
 	e.LangIntel = langintel.NewRegistry()
 

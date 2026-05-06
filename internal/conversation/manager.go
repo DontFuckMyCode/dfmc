@@ -54,13 +54,21 @@ type BranchComparison struct {
 	OnlyB         int    `json:"only_b"`
 }
 
+// ErrorReporter is the optional callback the Manager calls when an
+// async save fails. The engine wires this to publish a
+// conversation:save:error event on its bus so the TUI / web can
+// surface "your last turn didn't persist" instead of letting the
+// failure vanish into log.Printf. Nil reporter falls back to log.
+type ErrorReporter func(stage string, err error)
+
 type Manager struct {
-	mu      sync.RWMutex
-	saveMu  sync.Mutex     // serializes saves so snapshots are never stale
-	saveWg  sync.WaitGroup // tracks in-flight SaveActiveAsync goroutines so Close drains before bbolt is shut down
-	store   *storage.Store
-	active  *Conversation
-	baseDir string
+	mu       sync.RWMutex
+	saveMu   sync.Mutex     // serializes saves so snapshots are never stale
+	saveWg   sync.WaitGroup // tracks in-flight SaveActiveAsync goroutines so Close drains before bbolt is shut down
+	store    *storage.Store
+	active   *Conversation
+	baseDir  string
+	reporter ErrorReporter
 }
 
 type persistedConversation struct {
@@ -353,13 +361,38 @@ func (m *Manager) SaveActiveAsync() {
 			Metadata:  snapshot.Metadata,
 		}
 		if err := store.SaveConversationState(snapshot.ID, state); err != nil {
-			log.Printf("conversation: SaveActiveAsync state: %v", err)
+			m.reportError("state", err)
 			return
 		}
 		if err := store.SaveConversationLog(snapshot.ID, snapshot.Branches[snapshot.Branch]); err != nil {
-			log.Printf("conversation: SaveActiveAsync log: %v", err)
+			m.reportError("log", err)
 		}
 	}()
+}
+
+// SetErrorReporter wires an optional callback that fires when an
+// async save step fails. The engine passes a reporter that publishes
+// a conversation:save:error event on the bus; tests pass nil to
+// keep the fallback log path. Safe to call after Manager has been
+// in use — single store under m.mu.
+func (m *Manager) SetErrorReporter(r ErrorReporter) {
+	m.mu.Lock()
+	m.reporter = r
+	m.mu.Unlock()
+}
+
+func (m *Manager) reportError(stage string, err error) {
+	if err == nil {
+		return
+	}
+	m.mu.RLock()
+	r := m.reporter
+	m.mu.RUnlock()
+	if r != nil {
+		r(stage, err)
+		return
+	}
+	log.Printf("conversation: SaveActiveAsync %s: %v", stage, err)
 }
 
 // Close drains any in-flight SaveActiveAsync goroutines so callers can

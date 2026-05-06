@@ -1105,6 +1105,16 @@ function classifyActivityEvent(ev) {
 		}
 		return { kind: "ctx", icon: "\u25c8", text: type };
 	}
+	if (type.startsWith("conversation:")) {
+		if (type === "conversation:save:error") {
+			// Persistence failures are visible on the workbench so a
+			// crash-before-shutdown that lost the turn doesn't look
+			// like the assistant just forgot.
+			return { kind: "error", icon: "✗",
+				text: "conversation save failed · " + (payload.stage || "save") + ": " + (payload.error || "") };
+		}
+		return { kind: "info", icon: "·", text: type };
+	}
 	if (type.startsWith("history:")) {
 		if (type === "history:trimmed") {
 			// Mirror the TUI's chat-event line so users on web get the

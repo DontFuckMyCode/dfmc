@@ -13,6 +13,50 @@ import (
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
+// TestErrorReporter_RoutesErrorToCallback pins the reporter wire:
+// when reportError is called with a non-nil err, the registered
+// callback fires with stage + err. The engine relies on this wire
+// to publish conversation:save:error events; nil reporter falls
+// back to log.Printf (verified by side: not crashing).
+func TestErrorReporter_RoutesErrorToCallback(t *testing.T) {
+	mgr := New(nil)
+	type call struct {
+		stage string
+		err   error
+	}
+	calls := make(chan call, 4)
+	mgr.SetErrorReporter(func(stage string, err error) {
+		calls <- call{stage: stage, err: err}
+	})
+
+	wantErr := errors.New("disk full")
+	mgr.reportError("state", wantErr)
+
+	select {
+	case c := <-calls:
+		if c.stage != "state" {
+			t.Errorf("expected stage=state, got %q", c.stage)
+		}
+		if c.err != wantErr {
+			t.Errorf("expected wrapped err, got %v", c.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for reporter callback")
+	}
+
+	// Nil err must not invoke the reporter (would create noise).
+	mgr.reportError("state", nil)
+	select {
+	case c := <-calls:
+		t.Fatalf("nil err should not fire reporter, got %#v", c)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Nil reporter must not panic — falls through to log.Printf.
+	mgr.SetErrorReporter(nil)
+	mgr.reportError("state", wantErr)
+}
+
 func TestConversationManagerSaveLoadSearch(t *testing.T) {
 	dir := t.TempDir()
 	store, err := storage.Open(filepath.Join(dir, "data"))

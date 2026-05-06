@@ -449,6 +449,17 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		} else {
 			line = fmt.Sprintf("Auto-new-session: fresh conversation seeded (%d→%d tokens).", historyTokens, briefTokens)
 		}
+	case "conversation:save:error":
+		stage := payloadString(payload, "stage", "save")
+		errText := payloadString(payload, "error", "save failed")
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "conversation:save:error",
+			Kind:   "context",
+			Status: "error",
+			Title:  "conversation save failed",
+			Detail: fmt.Sprintf("%s: %s", stage, truncateSingleLine(errText, 120)),
+		})
+		line = fmt.Sprintf("Conversation save failed [%s]: %s", stage, truncateSingleLine(errText, 160))
 	case "history:trimmed":
 		keptMsgs := payloadInt(payload, "kept_messages", 0)
 		keptTokens := payloadInt(payload, "kept_tokens", 0)
@@ -498,7 +509,7 @@ func shouldMirrorEventToTranscript(eventType string) bool {
 	case "agent:loop:error", "agent:loop:max_steps", "agent:loop:parked",
 		"agent:loop:budget_exhausted", "provider:throttle:retry",
 		"context:lifecycle:compacted", "context:lifecycle:handoff",
-		"coach:note":
+		"conversation:save:error", "coach:note":
 		return true
 	default:
 		return false
