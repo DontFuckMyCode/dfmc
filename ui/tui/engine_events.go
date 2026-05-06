@@ -449,6 +449,43 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		} else {
 			line = fmt.Sprintf("Auto-new-session: fresh conversation seeded (%d→%d tokens).", historyTokens, briefTokens)
 		}
+	case "hook:run":
+		// Hooks are best-effort lifecycle shell commands — the engine
+		// never blocks on them, but a misconfigured hook (typo,
+		// missing binary, non-zero exit) used to fall through to the
+		// generic info fallback with just the raw event type. Now we
+		// distinguish success vs failure so a user can spot a broken
+		// hook in the activity feed without reading log files.
+		hookEvent := payloadString(payload, "event", "")
+		hookName := payloadString(payload, "name", "")
+		exitCode := payloadInt(payload, "exit_code", 0)
+		durMs := payloadInt(payload, "duration_ms", 0)
+		errText := strings.TrimSpace(payloadString(payload, "err", ""))
+		failed := exitCode != 0 || errText != ""
+		title := "hook ok"
+		status := "ok"
+		if failed {
+			title = "hook failed"
+			status = "error"
+		}
+		display := strings.TrimSpace(hookName)
+		if display == "" {
+			display = "hook"
+		}
+		detail := fmt.Sprintf("%s · %s (%dms, exit=%d)", display, hookEvent, durMs, exitCode)
+		if errText != "" {
+			detail += " · " + truncateSingleLine(errText, 80)
+		}
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "hook:run:" + display,
+			Kind:   "system",
+			Status: status,
+			Title:  title,
+			Detail: detail,
+		})
+		if failed {
+			line = fmt.Sprintf("Hook failed [%s/%s]: exit=%d %s", hookEvent, display, exitCode, truncateSingleLine(errText, 120))
+		}
 	case "conversation:save:error":
 		stage := payloadString(payload, "stage", "save")
 		errText := payloadString(payload, "error", "save failed")

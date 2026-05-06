@@ -546,6 +546,51 @@ func TestHandleEngineEvent_CoachStuck_FiresIndependentOfVerbose(t *testing.T) {
 	}
 }
 
+// TestHandleEngineEvent_HookRun_FailureSurfacesNotice pins the new
+// hook:run classifier: a non-zero exit code or err string must
+// produce a footer notice + transcript-friendly line, while a
+// success run stays quiet (no notice noise per round).
+func TestHandleEngineEvent_HookRun_FailureSurfacesNotice(t *testing.T) {
+	m := newCoverageModel(t)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "hook:run",
+		Payload: map[string]any{
+			"event":       "pre_tool",
+			"name":        "lint",
+			"command":     "eslint .",
+			"exit_code":   1,
+			"duration_ms": 250,
+			"err":         "exit status 1",
+		},
+	})
+	if !strings.Contains(strings.ToLower(m.notice), "hook failed") {
+		t.Errorf("expected failure notice, got %q", m.notice)
+	}
+	if !strings.Contains(m.notice, "lint") {
+		t.Errorf("expected hook name in notice, got %q", m.notice)
+	}
+}
+
+func TestHandleEngineEvent_HookRun_SuccessIsQuiet(t *testing.T) {
+	m := newCoverageModel(t)
+	m.notice = "" // baseline
+	m = m.handleEngineEvent(engine.Event{
+		Type: "hook:run",
+		Payload: map[string]any{
+			"event":       "post_tool",
+			"name":        "audit",
+			"exit_code":   0,
+			"duration_ms": 80,
+		},
+	})
+	// Successful hook should leave footer notice empty — chat-event
+	// line in the activity feed is enough; surfacing every success
+	// would drown out real signal.
+	if strings.Contains(strings.ToLower(m.notice), "hook failed") {
+		t.Errorf("success hook should not produce failure notice, got %q", m.notice)
+	}
+}
+
 func TestHandleEngineEvent_CoachStuck_ClearedBySuccessfulTool(t *testing.T) {
 	// Stall badge should disappear automatically once the model recovers
 	// — a single successful tool call after the stuck signal is the

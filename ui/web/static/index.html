@@ -1105,6 +1105,27 @@ function classifyActivityEvent(ev) {
 		}
 		return { kind: "ctx", icon: "\u25c8", text: type };
 	}
+	if (type.startsWith("hook:")) {
+		if (type === "hook:run") {
+			// Hooks are best-effort; only failures (non-zero exit
+			// or err string) get error styling. Success rows still
+			// land in the activity feed but with a low-key glyph
+			// so a working hook chain doesn't drown out real signal.
+			var hookEvent = payload.event || "";
+			var hookName = payload.name || "hook";
+			var exitCode = payload.exit_code || 0;
+			var dur = payload.duration_ms || 0;
+			var errMsg = payload.err || "";
+			var failed = exitCode !== 0 || (errMsg && errMsg.length > 0);
+			if (failed) {
+				return { kind: "error", icon: "✗",
+					text: "hook failed · " + hookName + "/" + hookEvent + " (exit=" + exitCode + ", " + dur + "ms)" + (errMsg ? (" · " + errMsg) : "") };
+			}
+			return { kind: "info", icon: "⚙",
+				text: "hook ok · " + hookName + "/" + hookEvent + " (" + dur + "ms)" };
+		}
+		return { kind: "info", icon: "⚙", text: type };
+	}
 	if (type.startsWith("conversation:")) {
 		if (type === "conversation:save:error") {
 			// Persistence failures are visible on the workbench so a
