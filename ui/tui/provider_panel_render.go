@@ -154,6 +154,23 @@ func (m Model) providersTopBanner(width int) string {
 }
 
 func (m Model) renderProviderListView(width int) string {
+	// V2 layout: clean 3-pane explorer with banner + per-provider
+	// detail card + ROUTING/ACTIONS cards. Falls back to legacy when
+	// the action menu's built-in confirm or pipeline editor needs the
+	// older inline shape (handled in the wrapper above).
+	if !m.providers.menuActive {
+		out := m.renderProviderListViewV2(width)
+		// Keep the legacy overlay menu rendering compatibility for
+		// users mid-flow — it doesn't show unless menuActive=true.
+		if extras := m.renderProvidersMenu(width - 2); len(extras) > 0 {
+			out += "\n" + strings.Join(extras, "\n")
+		}
+		return out
+	}
+	return m.renderProviderListViewLegacy(width)
+}
+
+func (m Model) renderProviderListViewLegacy(width int) string {
 	width = clampInt(width, 24, 1000)
 	banner := m.providersTopBanner(width)
 	hint := subtleStyle.Render("j/k scroll · p primary · f fallback · m model · s save · n new · enter menu · / search · r refresh")
