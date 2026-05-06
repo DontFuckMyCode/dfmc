@@ -90,6 +90,17 @@ func TestFormatVerboseEvent_AllowlistFiltering(t *testing.T) {
 			wantSubs: []string{"tool:denied", "run_command", "user denied"},
 		},
 		{
+			name: "tool:timeout renders (structural fact, not chatter)",
+			ev: engine.Event{
+				Type: "tool:timeout",
+				Payload: map[string]any{
+					"name":     "run_command",
+					"limit_ms": 30000,
+				},
+			},
+			wantSubs: []string{"tool:timeout", "run_command"},
+		},
+		{
 			name: "agent:loop:safety_bound renders",
 			ev: engine.Event{
 				Type: "agent:loop:safety_bound",

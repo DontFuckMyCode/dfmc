@@ -72,8 +72,9 @@ var verboseAllowlist = map[string]struct{}{
 	"tool:panicked":                {},
 	"security:config_permissions":  {},
 	"memory:degraded":              {},
-	// Approval gate
-	"tool:denied": {},
+	// Approval gate + tool execution faults
+	"tool:denied":  {},
+	"tool:timeout": {}, // structural: per-tool deadline gate fired
 	// Hooks (only failures, filtered below)
 	"hook:run": {},
 	// Loop guards
