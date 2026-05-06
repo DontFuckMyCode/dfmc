@@ -275,6 +275,39 @@ func TestBuildHistorySummary_ContainsStructuredSignal(t *testing.T) {
 	}
 }
 
+// TestBuildHistorySummary_RichBudgetCarriesMoreDetail pins the new
+// scaling behavior: when the summary budget has real headroom (the
+// post-2025 maxHistorySummaryTokens=1024 regime), per-field caps grow
+// so Primary/Progress carry a paragraph of gist instead of the legacy
+// 12-token fragment. This is the second half of the conversation-
+// memory fix — bumping the active history floor only matters if the
+// summary builder also keeps richer detail for what gets trimmed.
+func TestBuildHistorySummary_RichBudgetCarriesMoreDetail(t *testing.T) {
+	long := strings.Repeat("inspect auth middleware refresh token rotation logic carefully ", 8)
+	omitted := []types.Message{
+		{Role: types.RoleUser, Content: long + "?"},
+		{Role: types.RoleAssistant, Content: strings.Repeat("traced session token persistence across refresh boundary in middleware.go ", 8)},
+	}
+	tight := buildHistorySummary(omitted, 120)
+	rich := buildHistorySummary(omitted, 1024)
+	if rich == "" || tight == "" {
+		t.Fatal("expected both summaries non-empty")
+	}
+	tightLen := len(strings.Fields(tight))
+	richLen := len(strings.Fields(rich))
+	// At 1024-token headroom we expect substantially more detail than
+	// the legacy tight regime — at least 3x because primary+progress
+	// caps go from 12 to 96 each (8x each, but other fields and
+	// formatting dilute the overall ratio).
+	if richLen < tightLen*3 {
+		t.Fatalf("expected rich summary >= 3x tight (rich=%d, tight=%d)", richLen, tightLen)
+	}
+	// Sanity: the rich summary still respects its own ceiling.
+	if richLen > 1024 {
+		t.Fatalf("rich summary %d words exceeds budget 1024", richLen)
+	}
+}
+
 func TestBuildHistorySummary_RespectsTokenLimit(t *testing.T) {
 	omitted := []types.Message{
 		{Role: types.RoleUser, Content: strings.Repeat("user asks about auth middleware and tokens ", 20) + "?"},

@@ -237,6 +237,21 @@ func trimToTokenBudget(content string, maxTokens int) string {
 	return tokens.TrimToBudget(content, maxTokens, "")
 }
 
+// scaleSummaryCap linearly interpolates a per-field cap between lo
+// (legacy tight floor for ~512-token summary budgets) and hi (rich
+// floor for >=1024-token budgets). Returns lo for budget <= 512 so
+// the legacy "RespectsTokenLimit" contract still holds, and hi once
+// the summary budget gives us real headroom.
+func scaleSummaryCap(budget, lo, hi int) int {
+	if budget <= 512 {
+		return lo
+	}
+	if budget >= 1024 {
+		return hi
+	}
+	return lo + (hi-lo)*(budget-512)/512
+}
+
 func buildHistorySummary(omitted []types.Message, maxTokens int) string {
 	if maxTokens <= 0 || len(omitted) == 0 {
 		return ""
@@ -251,11 +266,24 @@ func buildHistorySummary(omitted []types.Message, maxTokens int) string {
 			assistantN++
 		}
 	}
-	terms := topTermsFromMessages(omitted, 3)
-	files := topFileMentions(omitted, 2)
-	primary := latestOmittedByRole(omitted, types.RoleUser, 12)
-	progress := latestOmittedByRole(omitted, types.RoleAssistant, 12)
-	openItems := recentUserQuestions(omitted, 1, 10)
+	// Per-field caps scale with the overall summary budget so larger
+	// budgets carry more semantic detail. Legacy ~120-token tests pin
+	// the lo end; the post-2025 1024-token regime now keeps roughly a
+	// short paragraph for primary/progress instead of a sentence
+	// fragment, which is what made the assistant feel amnesiac after
+	// trimming.
+	primaryCap := scaleSummaryCap(maxTokens, 12, 96)
+	progressCap := scaleSummaryCap(maxTokens, 12, 96)
+	openCap := scaleSummaryCap(maxTokens, 10, 32)
+	openLimit := scaleSummaryCap(maxTokens, 1, 3)
+	topicLimit := scaleSummaryCap(maxTokens, 3, 6)
+	fileLimit := scaleSummaryCap(maxTokens, 2, 5)
+
+	terms := topTermsFromMessages(omitted, topicLimit)
+	files := topFileMentions(omitted, fileLimit)
+	primary := latestOmittedByRole(omitted, types.RoleUser, primaryCap)
+	progress := latestOmittedByRole(omitted, types.RoleAssistant, progressCap)
+	openItems := recentUserQuestions(omitted, openLimit, openCap)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "[History summary] Scope=%d msgs (%dU/%dA).", len(omitted), userN, assistantN)
