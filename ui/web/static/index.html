@@ -1040,6 +1040,34 @@ function classifyActivityEvent(ev) {
 		if (type === "agent:loop:error") {
 			return { kind: "error", icon: "\u2717", text: "agent error \u00b7 " + (payload.error || "") };
 		}
+		if (type === "agent:loop:tools_force_stop") {
+			return { kind: "error", icon: "⧖",
+				text: "tool round hard cap · " + (payload.tool_rounds || 0) + "/" + (payload.hard_cap || 0) + " — text-only reply forced" };
+		}
+		if (type === "agent:loop:interrupted") {
+			return { kind: "agent", icon: "⏸",
+				text: "loop interrupted · " + (payload.tool_rounds || 0) + " rounds — work parked" };
+		}
+		if (type === "agent:loop:shutdown_parked") {
+			return { kind: "agent", icon: "⏸",
+				text: "loop parked for shutdown · step " + (payload.step || 0) };
+		}
+		if (type === "agent:loop:resume_refused") {
+			return { kind: "error", icon: "✗",
+				text: "resume refused · " + (payload.reason || "ceiling") };
+		}
+		if (type === "agent:loop:safety_bound") {
+			return { kind: "error", icon: "🛑",
+				text: "safety bound reached · " + (payload.safety_bound || 0) + " (source=" + (payload.source || "") + ")" };
+		}
+		if (type === "agent:loop:empty_recovery") {
+			return { kind: "agent", icon: "↻",
+				text: "empty response · synthesis nudge sent" };
+		}
+		if (type === "agent:loop:empty_final") {
+			return { kind: "error", icon: "✗",
+				text: "empty response twice · giving up after " + (payload.tool_rounds || 0) + " rounds" };
+		}
 		if (type === "agent:loop:stuck_force_stop") {
 			// Stuck-streak hard stop \u2014 engine has flipped tool_choice to
 			// "none" because the trajectory hit N consecutive same-error

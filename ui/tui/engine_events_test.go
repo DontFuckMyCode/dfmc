@@ -546,6 +546,93 @@ func TestHandleEngineEvent_CoachStuck_FiresIndependentOfVerbose(t *testing.T) {
 	}
 }
 
+// TestHandleEngineEvent_AgentLoopGuards_SurfaceNotices pins the
+// seven agent:loop:* guard events the TUI dispatcher used to drop:
+// tools_force_stop, interrupted, shutdown_parked, resume_refused,
+// safety_bound, empty_recovery, empty_final. These are rare but
+// critical — a fired safety_bound or resume_refused without a
+// visible signal leaves the user wondering why the loop stopped.
+func TestHandleEngineEvent_AgentLoopGuards_SurfaceNotices(t *testing.T) {
+	cases := []struct {
+		name      string
+		evType    string
+		payload   map[string]any
+		wantInMsg []string
+	}{
+		{
+			name:   "tools_force_stop",
+			evType: "agent:loop:tools_force_stop",
+			payload: map[string]any{
+				"tool_rounds": 30,
+				"hard_cap":    30,
+			},
+			wantInMsg: []string{"hard cap", "30/30"},
+		},
+		{
+			name:   "interrupted",
+			evType: "agent:loop:interrupted",
+			payload: map[string]any{
+				"tool_rounds": 12,
+				"error":       "context canceled",
+			},
+			wantInMsg: []string{"interrupted", "12 rounds", "/continue"},
+		},
+		{
+			name:   "shutdown_parked",
+			evType: "agent:loop:shutdown_parked",
+			payload: map[string]any{
+				"step": 8,
+			},
+			wantInMsg: []string{"shutting down", "step 8"},
+		},
+		{
+			name:   "resume_refused",
+			evType: "agent:loop:resume_refused",
+			payload: map[string]any{
+				"reason": "cumulative ceiling",
+			},
+			wantInMsg: []string{"resume refused", "cumulative ceiling"},
+		},
+		{
+			name:   "safety_bound",
+			evType: "agent:loop:safety_bound",
+			payload: map[string]any{
+				"safety_bound": 100,
+				"source":       "autonomous",
+			},
+			wantInMsg: []string{"safety bound", "extremely rare"},
+		},
+		{
+			name:   "empty_recovery",
+			evType: "agent:loop:empty_recovery",
+			payload: map[string]any{
+				"tool_rounds": 4,
+			},
+			wantInMsg: []string{"empty response", "synthesis nudge"},
+		},
+		{
+			name:   "empty_final",
+			evType: "agent:loop:empty_final",
+			payload: map[string]any{
+				"tool_rounds": 6,
+			},
+			wantInMsg: []string{"empty response", "giving up"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newCoverageModel(t)
+			m = m.handleEngineEvent(engine.Event{Type: tc.evType, Payload: tc.payload})
+			notice := strings.ToLower(m.notice)
+			for _, want := range tc.wantInMsg {
+				if !strings.Contains(notice, strings.ToLower(want)) {
+					t.Errorf("expected notice to contain %q, got %q", want, m.notice)
+				}
+			}
+		})
+	}
+}
+
 // TestHandleEngineEvent_CriticalSafetyEvents_SurfaceNotices pins
 // the four "engine publishes but UI ignored" safety-critical events
 // the activity-feed audit found: runtime panics, tool panics,

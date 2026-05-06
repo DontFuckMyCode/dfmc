@@ -10,6 +10,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -218,6 +219,92 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		} else {
 			line = "Auto-recover: budget trip, transcript slimmed. Retrying."
 		}
+	case "agent:loop:tools_force_stop":
+		// Hard round-cap fired — distinct from stuck_force_stop (which
+		// is the trajectory-detector guard) and from max_steps. Surface
+		// it so the user knows the loop cap is what cut off tool
+		// access, not a model decision.
+		rounds := payloadInt(payload, "tool_rounds", 0)
+		hardCap := payloadInt(payload, "hard_cap", 0)
+		m.pushToolChip(toolChip{
+			Name:    "force-stop",
+			Status:  "warn",
+			Preview: fmt.Sprintf("%d rounds · hard cap %d", rounds, hardCap),
+		})
+		line = fmt.Sprintf("Tool round hard cap reached (%d/%d) — forcing text-only reply. Refine scope or raise agent.tool_round_hard_cap.", rounds, hardCap)
+	case "agent:loop:interrupted":
+		// User cancelled mid-loop (Ctrl-C / parent ctx cancelled). The
+		// loop parked the work; surface a distinct line so the user
+		// knows the interrupt landed cleanly vs. having to guess from
+		// "agent: parked".
+		rounds := payloadInt(payload, "tool_rounds", 0)
+		errText := strings.TrimSpace(payloadString(payload, "error", ""))
+		m.pushToolChip(toolChip{
+			Name:    "interrupted",
+			Status:  "warn",
+			Preview: fmt.Sprintf("%d rounds · cancelled", rounds),
+		})
+		if errText != "" {
+			line = fmt.Sprintf("Loop interrupted (%d rounds, %s) — work parked; /continue to resume.", rounds, errText)
+		} else {
+			line = fmt.Sprintf("Loop interrupted (%d rounds) — work parked; /continue to resume.", rounds)
+		}
+	case "agent:loop:shutdown_parked":
+		// Engine is shutting down mid-loop. Different from "interrupted"
+		// — this is engine-initiated, not user-initiated. The work is
+		// saved; user must restart dfmc and resume.
+		step := payloadInt(payload, "step", 0)
+		m.pushToolChip(toolChip{
+			Name:    "shutdown-park",
+			Status:  "warn",
+			Preview: fmt.Sprintf("step %d", step),
+		})
+		line = fmt.Sprintf("Engine shutting down — loop parked at step %d. Restart dfmc to resume.", step)
+	case "agent:loop:resume_refused":
+		// Manual /continue was rejected because cumulative ceiling has
+		// been reached or some other resume guard fired. Distinct from
+		// auto_resume_refused (which is the autonomous-mode equivalent)
+		// because the user explicitly asked this time and deserves a
+		// clear "no, here's why" instead of a quiet refusal.
+		reason := payloadString(payload, "reason", "ceiling")
+		m.pushToolChip(toolChip{
+			Name:    "resume",
+			Status:  "failed",
+			Preview: "refused: " + reason,
+		})
+		line = fmt.Sprintf("Resume refused: %s. Refine the question or start a fresh /ask.", reason)
+	case "agent:loop:safety_bound":
+		// Outer safety net — should fire approximately never given the
+		// cumulative ceiling kicks in earlier. If it DOES fire it means
+		// the autonomous loop reached its absolute upper bound and the
+		// user must intervene. High-prominence so they don't miss it.
+		bound := payloadInt(payload, "safety_bound", 0)
+		source := payloadString(payload, "source", "")
+		m.pushToolChip(toolChip{
+			Name:    "safety-bound",
+			Status:  "failed",
+			Preview: fmt.Sprintf("hit %d", bound),
+		})
+		line = fmt.Sprintf("Safety bound reached (%d, source=%s) — autonomous loop forced to stop. This should be extremely rare.", bound, source)
+	case "agent:loop:empty_recovery":
+		// Model returned an empty response; the loop sent a synthesis
+		// nudge ("please answer in natural language") and is retrying.
+		// Quiet info-level line; only surfaces because users wonder
+		// what's happening when the assistant pauses with no output.
+		rounds := payloadInt(payload, "tool_rounds", 0)
+		line = fmt.Sprintf("Empty response detected (%d rounds) — sending synthesis nudge and retrying.", rounds)
+	case "agent:loop:empty_final":
+		// Model returned empty twice in a row. The loop gives up with a
+		// canned message; user must rephrase or scope down. Distinct
+		// from auto_recover because there's no compaction to retry —
+		// the model just isn't answering.
+		rounds := payloadInt(payload, "tool_rounds", 0)
+		m.pushToolChip(toolChip{
+			Name:    "empty-final",
+			Status:  "failed",
+			Preview: fmt.Sprintf("%d rounds", rounds),
+		})
+		line = fmt.Sprintf("Empty response twice in a row after %d rounds — giving up. Try rephrasing or narrowing scope.", rounds)
 	case "agent:loop:stuck_force_stop":
 		// Stuck-streak guard fired — the loop forced tool_choice="none"
 		// for the next call because the same failure pattern persisted

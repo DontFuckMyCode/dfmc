@@ -49,7 +49,11 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 	case "agent:loop:start", "agent:loop:thinking", "agent:loop:final",
 		"agent:loop:max_steps", "agent:loop:error", "agent:loop:parked",
 		"agent:loop:budget_exhausted", "agent:loop:auto_resume",
-		"agent:loop:auto_resume_refused", "agent:loop:auto_recover":
+		"agent:loop:auto_resume_refused", "agent:loop:auto_recover",
+		"agent:loop:tools_force_stop", "agent:loop:interrupted",
+		"agent:loop:shutdown_parked", "agent:loop:resume_refused",
+		"agent:loop:safety_bound", "agent:loop:empty_recovery",
+		"agent:loop:empty_final", "agent:loop:stuck_force_stop":
 		m, line = m.handleAgentLoopEvent(eventType, payload)
 	case "tool:call", "tool:result", "tool:error", "tool:reasoning", "tool:timeout", "tool:denied":
 		m, line = m.handleToolEvent(eventType, event, payload)
@@ -608,7 +612,10 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 func shouldMirrorEventToTranscript(eventType string) bool {
 	switch strings.TrimSpace(strings.ToLower(eventType)) {
 	case "agent:loop:error", "agent:loop:max_steps", "agent:loop:parked",
-		"agent:loop:budget_exhausted", "provider:throttle:retry",
+		"agent:loop:budget_exhausted", "agent:loop:tools_force_stop",
+		"agent:loop:interrupted", "agent:loop:shutdown_parked",
+		"agent:loop:resume_refused", "agent:loop:safety_bound",
+		"agent:loop:empty_final", "provider:throttle:retry",
 		"context:lifecycle:compacted", "context:lifecycle:handoff",
 		"conversation:save:error", "coach:note", "tool:denied",
 		"runtime:panic", "tool:panicked", "security:config_permissions",
