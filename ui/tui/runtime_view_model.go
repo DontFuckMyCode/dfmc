@@ -3,7 +3,38 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 )
+
+// computeTurnElapsedSec returns the seconds since the current turn's
+// agent:loop:start. Returns 0 when no turn is active (turnStartedAt zero
+// or agentLoop inactive) so the badge stays hidden between turns.
+func computeTurnElapsedSec(s agentLoopState) int {
+	if !s.active || s.turnStartedAt.IsZero() {
+		return 0
+	}
+	d := time.Since(s.turnStartedAt)
+	if d < 0 {
+		return 0
+	}
+	return int(d.Seconds())
+}
+
+// formatTurnElapsed renders an int-seconds duration as "2m 34s" /
+// "47s" / "1h 12m". Drops sub-minute precision past 60m so a long
+// autonomous run reads cleanly instead of "73m 14s".
+func formatTurnElapsed(sec int) string {
+	if sec <= 0 {
+		return ""
+	}
+	if sec < 60 {
+		return fmt.Sprintf("%ds", sec)
+	}
+	if sec < 3600 {
+		return fmt.Sprintf("%dm %02ds", sec/60, sec%60)
+	}
+	return fmt.Sprintf("%dh %02dm", sec/3600, (sec%3600)/60)
+}
 
 type runtimeViewModel struct {
 	State      string
@@ -111,6 +142,29 @@ type runtimeViewModel struct {
 	// Reset on agent:loop:start.
 	CacheHitsThisTurn int
 
+	// ToolErrorsThisTurn tracks how many tool:result events arrived
+	// with success=false in the current turn. Renders as "errs ×N"
+	// in the runtime strip — info at 1-2, warn at 3+ — so a fragile
+	// turn surfaces while it's still happening, not just in the
+	// post-hoc summary card. Reset on agent:loop:start.
+	ToolErrorsThisTurn int
+
+	// TurnElapsedSec is the seconds elapsed since the current turn's
+	// agent:loop:start. Drawn as "running 2m 34s" in the runtime "now"
+	// strip when AgentActive is true. Updates on every UI event (tool
+	// call, thinking, provider stream chunk) so on busy turns the
+	// reader sees live motion; on quiet stretches (provider thinking)
+	// it ticks via the spinner Tick. Zero between turns hides the
+	// badge entirely.
+	TurnElapsedSec int
+
+	// TurnFilesEdited is the count of distinct files touched by
+	// successful edit/write tools this turn. Shown live as
+	// "edits ×N" so a fan-out turn (refactor across 12 files)
+	// registers visibly without scrolling chips. Capped to len of the
+	// agentLoop.turnEditedFiles slice. Reset on agent:loop:start.
+	TurnFilesEdited int
+
 	Parked          bool
 	ApprovalPending bool
 	QueuedCount     int
@@ -211,6 +265,9 @@ func (m Model) runtimeViewModel() runtimeViewModel {
 		CompactsThisTurn:         m.agentLoop.compactsThisTurn,
 		CompactReclaimedThisTurn: m.agentLoop.compactReclaimedTurn,
 		CacheHitsThisTurn:        m.agentLoop.cacheHitsThisTurn,
+		ToolErrorsThisTurn:       m.agentLoop.toolErrorsThisTurn,
+		TurnElapsedSec:           computeTurnElapsedSec(m.agentLoop),
+		TurnFilesEdited:          len(m.agentLoop.turnEditedFiles),
 		StuckTool:              m.agentLoop.stuckTool,
 		StuckCount:             m.agentLoop.stuckCount,
 		StuckErrClass:          m.agentLoop.stuckErrClass,
@@ -395,6 +452,44 @@ func runtimeStripNowParts(vm runtimeViewModel) []string {
 	// that so the user sees the system working in their favour.
 	if vm.CacheHitsThisTurn > 0 {
 		parts = append(parts, infoStyle.Render(fmt.Sprintf("cache ×%d", vm.CacheHitsThisTurn)))
+	}
+	// Live turn duration — shows momentum. Updates on every tool call,
+	// thinking event, or stream chunk so a busy turn ticks visibly.
+	// Hidden between turns. Style escalates with duration so a
+	// runaway autonomous run signals "still going" louder over time.
+	if vm.TurnElapsedSec > 0 {
+		label := "running " + formatTurnElapsed(vm.TurnElapsedSec)
+		switch {
+		case vm.TurnElapsedSec >= 600: // 10 minutes
+			parts = append(parts, warnStyle.Render(label))
+		case vm.TurnElapsedSec >= 120: // 2 minutes
+			parts = append(parts, infoStyle.Render(label))
+		default:
+			parts = append(parts, subtleStyle.Render(label))
+		}
+	}
+	// Files-edited-this-turn badge: a refactor that fans out across 12
+	// files registers as one persistent count instead of 12 chips that
+	// scroll. Hidden at zero; pluralized correctly.
+	if vm.TurnFilesEdited > 0 {
+		word := "files"
+		if vm.TurnFilesEdited == 1 {
+			word = "file"
+		}
+		parts = append(parts, infoStyle.Render(fmt.Sprintf("edits ×%d %s", vm.TurnFilesEdited, word)))
+	}
+	// Tool-errors-this-turn badge: info at 1-2, warn at 3+. A retry-
+	// heavy turn with the model recovering between failures is the
+	// "is everything fine?" question users glance at the runtime strip
+	// to answer; a visible badge converts a chip-stream-of-failures
+	// into one persistent counter instead of the user counting chips.
+	if vm.ToolErrorsThisTurn > 0 {
+		label := fmt.Sprintf("errs ×%d", vm.ToolErrorsThisTurn)
+		if vm.ToolErrorsThisTurn >= 3 {
+			parts = append(parts, warnStyle.Render(label))
+		} else {
+			parts = append(parts, infoStyle.Render(label))
+		}
 	}
 	// Auto-resume progress: show ceiling proximity continuously during a
 	// long autonomous run. Style escalates from info → warn as headroom

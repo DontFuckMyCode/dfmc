@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1303,6 +1304,127 @@ func TestHandleEngineEvent_ToolErrorIncrementsTurnCounter(t *testing.T) {
 	if m.agentLoop.toolErrorsThisTurn != 0 {
 		t.Errorf("loop start should reset counter, got %d", m.agentLoop.toolErrorsThisTurn)
 	}
+}
+
+// TestRuntimeStrip_ToolErrorsBadge_StyleEscalation pins "errs ×N"
+// — info at 1-2, warn at 3+. A retry-heavy turn shows up while it's
+// still happening, not just in the post-hoc summary card.
+func TestRuntimeStrip_ToolErrorsBadge_StyleEscalation(t *testing.T) {
+	for _, tc := range []struct {
+		count   int
+		visible bool
+	}{
+		{0, false}, // hidden
+		{1, true},  // info
+		{2, true},  // info
+		{3, true},  // warn
+		{8, true},  // warn
+	} {
+		vm := runtimeViewModel{AgentActive: true, ToolErrorsThisTurn: tc.count}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		hasBadge := strings.Contains(joined, fmt.Sprintf("errs ×%d", tc.count))
+		if tc.visible && !hasBadge {
+			t.Errorf("count=%d: expected 'errs ×%d' badge, got %q", tc.count, tc.count, joined)
+		}
+		if !tc.visible && hasBadge {
+			t.Errorf("count=%d: expected no badge, got %q", tc.count, joined)
+		}
+	}
+}
+
+// TestRuntimeStrip_LiveTurnDurationBadge pins the "running 2m 34s"
+// badge that ticks during an active turn so a long autonomous run
+// signals momentum without scrolling the activity feed. Hidden
+// between turns; style escalates at 2m and 10m.
+func TestRuntimeStrip_LiveTurnDurationBadge(t *testing.T) {
+	t.Run("hidden when zero", func(t *testing.T) {
+		vm := runtimeViewModel{AgentActive: true, TurnElapsedSec: 0}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if strings.Contains(joined, "running ") {
+			t.Errorf("zero elapsed should hide badge, got %q", joined)
+		}
+	})
+	t.Run("ticks on short turn", func(t *testing.T) {
+		vm := runtimeViewModel{AgentActive: true, TurnElapsedSec: 47}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if !strings.Contains(joined, "running 47s") {
+			t.Errorf("expected 'running 47s', got %q", joined)
+		}
+	})
+	t.Run("formats minutes-seconds", func(t *testing.T) {
+		vm := runtimeViewModel{AgentActive: true, TurnElapsedSec: 154} // 2m 34s
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if !strings.Contains(joined, "running 2m 34s") {
+			t.Errorf("expected 'running 2m 34s', got %q", joined)
+		}
+	})
+	t.Run("formats hours past 1h", func(t *testing.T) {
+		vm := runtimeViewModel{AgentActive: true, TurnElapsedSec: 4392} // 1h 13m
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if !strings.Contains(joined, "running 1h 13m") {
+			t.Errorf("expected 'running 1h 13m', got %q", joined)
+		}
+	})
+}
+
+// TestRuntimeStrip_FilesEditedBadge pins "edits ×N file(s)" — a
+// fan-out refactor across many files registers as one persistent
+// counter instead of N chips that scroll out.
+func TestRuntimeStrip_FilesEditedBadge(t *testing.T) {
+	for _, tc := range []struct {
+		count int
+		want  string
+	}{
+		{0, ""}, // hidden
+		{1, "edits ×1 file"},
+		{5, "edits ×5 files"},
+		{12, "edits ×12 files"},
+	} {
+		vm := runtimeViewModel{AgentActive: true, TurnFilesEdited: tc.count}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if tc.want == "" {
+			if strings.Contains(joined, "edits ×") {
+				t.Errorf("count=%d: expected no badge, got %q", tc.count, joined)
+			}
+			continue
+		}
+		if !strings.Contains(joined, tc.want) {
+			t.Errorf("count=%d: expected %q in strip, got %q", tc.count, tc.want, joined)
+		}
+	}
+}
+
+// TestComputeTurnElapsedSec pins the helper — zero when the loop is
+// inactive or turnStartedAt is unset; positive when the turn is in
+// flight; never negative even if the system clock walks backwards.
+func TestComputeTurnElapsedSec(t *testing.T) {
+	t.Run("zero when inactive", func(t *testing.T) {
+		s := agentLoopState{active: false, turnStartedAt: time.Now().Add(-time.Minute)}
+		if got := computeTurnElapsedSec(s); got != 0 {
+			t.Errorf("inactive turn: expected 0, got %d", got)
+		}
+	})
+	t.Run("zero when turnStartedAt unset", func(t *testing.T) {
+		s := agentLoopState{active: true} // turnStartedAt zero
+		if got := computeTurnElapsedSec(s); got != 0 {
+			t.Errorf("unset turnStartedAt: expected 0, got %d", got)
+		}
+	})
+	t.Run("positive when active", func(t *testing.T) {
+		s := agentLoopState{active: true, turnStartedAt: time.Now().Add(-30 * time.Second)}
+		got := computeTurnElapsedSec(s)
+		if got < 28 || got > 32 {
+			t.Errorf("expected ~30s, got %d", got)
+		}
+	})
+	t.Run("never negative on clock skew", func(t *testing.T) {
+		// Future turnStartedAt (clock moved backwards). Should clamp to 0
+		// rather than rendering "running -3s".
+		s := agentLoopState{active: true, turnStartedAt: time.Now().Add(time.Minute)}
+		if got := computeTurnElapsedSec(s); got != 0 {
+			t.Errorf("future timestamp: expected 0, got %d", got)
+		}
+	})
 }
 
 // TestRuntimeStrip_CacheHitsBadge_RendersAndHidesAtZero pins the
