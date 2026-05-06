@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -153,18 +154,18 @@ func formatConversationPreview(msgs []types.Message, width int) []string {
 
 func (m Model) renderConversationsView(width int) string {
 	width = clampInt(width, 24, 1000)
-	hint := subtleStyle.Render("j/k scroll · enter preview (read-only) · / search · r refresh · c clear search")
-	header := sectionHeader("⎔", "Conversations")
-	queryLine := subtleStyle.Render("query: ")
+	banner := m.conversationsTopBanner(width)
+	hint := subtleStyle.Render("j/k scroll · enter preview · / search · r refresh · c clear")
+	queryLine := subtleStyle.Render("query ")
 	if strings.TrimSpace(m.conversations.query) != "" {
-		queryLine += m.conversations.query
+		queryLine += boldStyle.Render(m.conversations.query)
 	} else {
 		queryLine += subtleStyle.Render("(none)")
 	}
 	if m.conversations.searchActive {
 		queryLine += subtleStyle.Render("  · typing, enter to commit")
 	}
-	lines := []string{header, hint, queryLine, renderDivider(width - 2)}
+	lines := []string{banner, queryLine, hint, renderDivider(width - 2)}
 
 	if m.conversations.err != "" {
 		lines = append(lines, "", warnStyle.Render("error · "+m.conversations.err))
@@ -225,6 +226,26 @@ func (m Model) renderConversationsView(width int) string {
 		len(filtered), len(m.conversations.entries),
 	)))
 	return strings.Join(lines, "\n")
+}
+
+// conversationsTopBanner — title + count chip + state chip on the
+// right. State: HEALTHY / EMPTY / ERROR / LOADING.
+func (m Model) conversationsTopBanner(width int) string {
+	title := titleStyle.Bold(true).Render("⎔ CONVERSATIONS")
+	chipText, chipStyle := " HEALTHY ", okStyle
+	switch {
+	case m.conversations.err != "":
+		chipText, chipStyle = " ERROR ", warnStyle
+	case m.conversations.loading:
+		chipText, chipStyle = " LOADING ", infoStyle
+	case len(m.conversations.entries) == 0:
+		chipText, chipStyle = " EMPTY ", subtleStyle
+	}
+	chip := chipStyle.Render(chipText)
+	countChip := subtleStyle.Render(fmt.Sprintf(" %d ", len(m.conversations.entries)))
+	chipStrip := countChip + " " + chip
+	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
+	return title + strings.Repeat(" ", gap) + chipStrip
 }
 
 // handleConversationsKey dispatches panel keys. Search mode consumes the

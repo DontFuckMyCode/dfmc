@@ -105,7 +105,7 @@ func TestFormatConversationPreviewEmpty(t *testing.T) {
 func TestRenderConversationsViewEmptyState(t *testing.T) {
 	m := newConversationsTestModel()
 	out := m.renderConversationsView(80)
-	if !strings.Contains(out, "Conversations") {
+	if !strings.Contains(out, "CONVERSATIONS") {
 		t.Fatalf("header missing:\n%s", out)
 	}
 	if !strings.Contains(out, "No conversations persisted yet") {
