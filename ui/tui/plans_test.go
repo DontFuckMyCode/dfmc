@@ -90,7 +90,7 @@ func TestFormatPlansSubtaskRowHighlightsSelected(t *testing.T) {
 func TestRenderPlansViewEmptyState(t *testing.T) {
 	m := newPlansTestModel()
 	out := m.renderPlansView(100)
-	if !strings.Contains(out, "Plans") {
+	if !strings.Contains(out, "PLANS") {
 		t.Fatalf("header missing: %s", out)
 	}
 	if !strings.Contains(out, "press e to enter a task") {

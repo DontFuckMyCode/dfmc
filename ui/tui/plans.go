@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dontfuckmycode/dfmc/internal/planning"
 )
@@ -94,15 +95,32 @@ func formatPlansPreview(s planning.Subtask, width int) []string {
 	return out
 }
 
+// plansTopBanner — title + state chip. EMPTY (no plan), TYPING (input
+// active), READY (plan loaded), ERROR.
+func (m Model) plansTopBanner(width int) string {
+	title := titleStyle.Bold(true).Render("⇄ PLANS")
+	chipText, chipStyle := " EMPTY ", subtleStyle
+	switch {
+	case m.plans.err != "":
+		chipText, chipStyle = " ERROR ", warnStyle
+	case m.plans.inputActive:
+		chipText, chipStyle = " TYPING ", infoStyle
+	case m.plans.plan != nil:
+		chipText, chipStyle = " READY ", okStyle
+	}
+	chip := chipStyle.Render(chipText)
+	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chip)-4, 1)
+	return title + strings.Repeat(" ", gap) + chip
+}
+
 func (m Model) renderPlansView(width int) string {
 	width = clampInt(width, 24, 1000)
-	hint := subtleStyle.Render("e edit · enter run · esc cancel edit · j/k scroll · c clear")
-	header := sectionHeader("⇄", "Plans")
+	banner := m.plansTopBanner(width)
+	hint := subtleStyle.Render("e edit · enter run · esc cancel · j/k scroll · c clear")
 
-	// Query line: mirror the search-style "typing" badge from other panels.
-	queryLine := subtleStyle.Render("task: ")
+	queryLine := subtleStyle.Render("task ")
 	if strings.TrimSpace(m.plans.query) != "" {
-		queryLine += m.plans.query
+		queryLine += boldStyle.Render(m.plans.query)
 	} else {
 		queryLine += subtleStyle.Render("(none — press e to enter a task)")
 	}
@@ -110,7 +128,7 @@ func (m Model) renderPlansView(width int) string {
 		queryLine += subtleStyle.Render("  · typing, enter to run")
 	}
 
-	lines := []string{header, hint, queryLine, renderDivider(width - 2)}
+	lines := []string{banner, queryLine, hint, renderDivider(width - 2)}
 
 	if m.plans.err != "" {
 		lines = append(lines, "", warnStyle.Render("error · "+m.plans.err))

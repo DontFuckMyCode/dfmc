@@ -114,15 +114,46 @@ func (m Model) renderProvidersView(width int) string {
 	}
 }
 
+// providersTopBanner — title + ready/no-key/offline chip summary on
+// the right. Mirrors the F2-F11 banner pattern.
+func (m Model) providersTopBanner(width int) string {
+	title := titleStyle.Bold(true).Render("⚑ PROVIDERS")
+	ready, noKey := 0, 0
+	for _, r := range m.providers.rows {
+		switch r.Status {
+		case "ready":
+			ready++
+		case "no-key":
+			noKey++
+		}
+	}
+	offline := len(m.providers.rows) - ready - noKey
+	chips := []string{
+		okStyle.Render(fmt.Sprintf(" %d ready ", ready)),
+	}
+	if noKey > 0 {
+		chips = append(chips, warnStyle.Render(fmt.Sprintf(" %d no-key ", noKey)))
+	}
+	if offline > 0 {
+		chips = append(chips, subtleStyle.Render(fmt.Sprintf(" %d offline ", offline)))
+	}
+	if m.providers.syncing {
+		chips = append(chips, infoStyle.Render(" SYNCING "))
+	}
+	chipStrip := strings.Join(chips, " ")
+	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
+	return title + strings.Repeat(" ", gap) + chipStrip
+}
+
 func (m Model) renderProviderListView(width int) string {
 	width = clampInt(width, 24, 1000)
-	hint := subtleStyle.Render("j/k scroll · p primary · f fallback · m model · s save · n new · enter menu · / search · c clear · r refresh")
-	header := sectionHeader("⚑", "Providers")
+	banner := m.providersTopBanner(width)
+	hint := subtleStyle.Render("j/k scroll · p primary · f fallback · m model · s save · n new · enter menu · / search · r refresh")
 
 	rows := filteredProviderRows(m.providers.rows, m.providers.query)
 	order := resolveProviderOrder(m.eng)
 
-	lines := []string{header, hint}
+	lines := []string{banner, hint}
 
 	if m.providers.activePipeline != "" {
 		lines = append(lines, subtleStyle.Render("active pipeline: ")+accentStyle.Render(m.providers.activePipeline))

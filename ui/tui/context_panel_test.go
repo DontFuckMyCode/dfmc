@@ -127,7 +127,7 @@ func TestRenderContextBudgetBlockSections(t *testing.T) {
 func TestRenderContextViewEmptyState(t *testing.T) {
 	m := newContextTestModel()
 	out := m.renderContextView(100)
-	if !strings.Contains(out, "Context") {
+	if !strings.Contains(out, "CONTEXT") {
 		t.Fatalf("header missing: %s", out)
 	}
 	if !strings.Contains(out, "press e to enter a query") {

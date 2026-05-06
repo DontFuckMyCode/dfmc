@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
@@ -236,14 +237,32 @@ func renderContextBreakdownBlock(bd engine.ContextBreakdown, width int) []string
 	return out
 }
 
+// contextTopBanner — title + state chip. EMPTY (no preview), TYPING,
+// READY (preview computed), ERROR.
+func (m Model) contextTopBanner(width int) string {
+	title := titleStyle.Bold(true).Render("⚖ CONTEXT")
+	chipText, chipStyle := " EMPTY ", subtleStyle
+	switch {
+	case m.contextPanel.err != "":
+		chipText, chipStyle = " ERROR ", warnStyle
+	case m.contextPanel.inputActive:
+		chipText, chipStyle = " TYPING ", infoStyle
+	case m.contextPanel.preview != nil:
+		chipText, chipStyle = " READY ", okStyle
+	}
+	chip := chipStyle.Render(chipText)
+	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chip)-4, 1)
+	return title + strings.Repeat(" ", gap) + chip
+}
+
 func (m Model) renderContextView(width int) string {
 	width = clampInt(width, 24, 1000)
-	hint := subtleStyle.Render("e edit · enter preview · esc cancel edit · c clear")
-	header := sectionHeader("⚖", "Context")
+	banner := m.contextTopBanner(width)
+	hint := subtleStyle.Render("e edit · enter preview · esc cancel · c clear")
 
-	queryLine := subtleStyle.Render("query: ")
+	queryLine := subtleStyle.Render("query ")
 	if strings.TrimSpace(m.contextPanel.query) != "" {
-		queryLine += m.contextPanel.query
+		queryLine += boldStyle.Render(m.contextPanel.query)
 	} else {
 		queryLine += subtleStyle.Render("(none — press e to enter a query)")
 	}
@@ -251,7 +270,7 @@ func (m Model) renderContextView(width int) string {
 		queryLine += subtleStyle.Render("  · typing, enter to preview")
 	}
 
-	lines := []string{header, hint, queryLine, renderDivider(width - 2)}
+	lines := []string{banner, queryLine, hint, renderDivider(width - 2)}
 
 	if m.contextPanel.err != "" {
 		lines = append(lines, "", warnStyle.Render("error · "+m.contextPanel.err))
