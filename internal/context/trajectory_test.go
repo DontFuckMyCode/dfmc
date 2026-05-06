@@ -38,6 +38,71 @@ func TestTrajectoryHints_MutationRemindsValidation(t *testing.T) {
 	}
 }
 
+func TestTrajectoryHints_RepeatedFailuresFlagged(t *testing.T) {
+	// Model keeps trying read_file with bad paths — same error class on
+	// every miss. The trajectory layer should escalate from "don't retry
+	// with same inputs" (Rule 1) to "switch tactic, you're stuck" (Rule 0).
+	all := []TraceEntry{
+		{Tool: "tool_call", Inner: "read_file", Args: map[string]any{"path": "internal/auth.go"}, Ok: false, Err: "file does not exist", Step: 1},
+		{Tool: "tool_call", Inner: "read_file", Args: map[string]any{"path": "internal/auth/auth.go"}, Ok: false, Err: "file does not exist", Step: 2},
+		{Tool: "tool_call", Inner: "read_file", Args: map[string]any{"path": "auth/handler.go"}, Ok: false, Err: "file does not exist", Step: 3},
+	}
+	fresh := all[2:]
+	out := TrajectoryHints(fresh, all, nil)
+	if out == nil || len(out.Hints) == 0 {
+		t.Fatalf("expected at least one hint")
+	}
+	first := out.Hints[0]
+	if !strings.Contains(first, "read_file") {
+		t.Errorf("hint should name the stuck tool, got %q", first)
+	}
+	if !strings.Contains(strings.ToLower(first), "switch tactic") {
+		t.Errorf("hint should advise tactic switch, got %q", first)
+	}
+	if !strings.Contains(first, "3 times") {
+		t.Errorf("hint should cite the failure count, got %q", first)
+	}
+	// Confidence should reflect the all-failures round.
+	if out.Confidence > 0.2 {
+		t.Errorf("confidence should be low for all-fail round, got %.2f", out.Confidence)
+	}
+}
+
+func TestTrajectoryHints_RepeatedFailures_NotTriggeredOnDifferentErrors(t *testing.T) {
+	// Three failures, three DIFFERENT error classes — not a stuck-loop
+	// pattern, so Rule 0 must NOT fire (would mis-advise "stop retrying").
+	all := []TraceEntry{
+		{Tool: "tool_call", Inner: "run_command", Args: map[string]any{"command": "go test"}, Ok: false, Err: "go: cannot find main module", Step: 1},
+		{Tool: "tool_call", Inner: "run_command", Args: map[string]any{"command": "go vet"}, Ok: false, Err: "exit status 2", Step: 2},
+		{Tool: "tool_call", Inner: "run_command", Args: map[string]any{"command": "make build"}, Ok: false, Err: "make: command not found", Step: 3},
+	}
+	fresh := all[2:]
+	out := TrajectoryHints(fresh, all, nil)
+	if out == nil {
+		t.Fatalf("expected non-nil output")
+	}
+	for _, h := range out.Hints {
+		if strings.Contains(strings.ToLower(h), "switch tactic") {
+			t.Errorf("Rule 0 should not fire when error fingerprints all differ, got %q", h)
+		}
+	}
+}
+
+func TestErrorFingerprint_NormalizesClass(t *testing.T) {
+	cases := map[string]string{
+		"":                                       "",
+		"  File not Found":                       "file not found",
+		"file   not\tfound":                      "file not found",
+		"FILE NOT FOUND: /tmp/zzz/aaa/path.go":   "file not found: /tmp/zzz/aaa/p",
+		"permission denied: /var/run/something": "permission denied: /var/run/so",
+	}
+	for in, want := range cases {
+		if got := errorFingerprint(in); got != want {
+			t.Errorf("errorFingerprint(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestTrajectoryHints_RepeatedCallsFlagged(t *testing.T) {
 	all := []TraceEntry{
 		{Tool: "tool_call", Inner: "read_file", Args: map[string]any{"path": "auth.go"}, Ok: true, Step: 1},

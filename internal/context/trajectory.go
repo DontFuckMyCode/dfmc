@@ -87,6 +87,30 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 	// Collect open questions.
 	var openQuestions []string
 
+	// Rule 0: same effective tool failed N times across recent rounds.
+	// This is the stuck-in-a-loop pattern — model keeps guessing paths
+	// with read_file, or keeps re-running a command with the same broken
+	// syntax. Single-shot Rule 1 below catches one failure per turn but
+	// never escalates when the FAILURE keeps repeating across rounds, so
+	// a long autonomous run can silently burn dozens of steps re-trying
+	// the same approach. Fires before Rule 1 so the stronger pattern
+	// hint takes precedence over the generic one.
+	if stuck := detectRepeatedFailures(all); stuck.tool != "" {
+		hint := fmt.Sprintf(
+			"%s has failed %d times across recent rounds with the same kind of error (%s). Stop retrying — switch tactic: confirm the input differently (e.g. `glob` to locate a file before `read_file`, `grep_codebase` to find the right symbol before guessing a path), or pick a different tool entirely.",
+			stuck.tool, stuck.count, stuck.errSample,
+		)
+		openQuestions = append(openQuestions, fmt.Sprintf("%s stuck — %d consecutive failures", stuck.tool, stuck.count))
+		if push(hint) {
+			return &TrajectoryOutput{
+				Hints:         out,
+				RoundSummary:  roundSummary,
+				OpenQuestions: openQuestions,
+				Confidence:    computeConfidence(fresh),
+			}
+		}
+	}
+
 	// Rule 1: any failed tool this round → retry-safely hint. Highest
 	// priority because silent retries burn budget fast.
 	for _, t := range fresh {
@@ -326,6 +350,116 @@ func detectRepeatedCalls(all []TraceEntry) string {
 		}
 	}
 	return ""
+}
+
+// repeatedFailure summarizes a "same tool keeps failing" pattern detected
+// across the running history window. errSample is the first failure's
+// error fingerprint (first ~80 chars) — naming the error class helps the
+// model recognise the pattern instead of just being told "stop".
+type repeatedFailure struct {
+	tool      string
+	count     int
+	errSample string
+}
+
+// detectRepeatedFailures returns the effective tool name that failed 3+
+// times across the last ~8 traces with similar error fingerprints. The
+// window is wider than detectRepeatedCalls (6) because failure loops
+// often interleave a recovery attempt or two, and we want to catch the
+// pattern before it has burned 10+ rounds. Empty when no such pattern.
+//
+// "Similar error fingerprint" means the first ~30 chars of the error
+// message (lowercased, whitespace-collapsed) are identical for at least
+// 2 of the failures — this catches genuine "same-cause" loops without
+// false-positiving on legitimate retries that hit different errors.
+func detectRepeatedFailures(all []TraceEntry) repeatedFailure {
+	if len(all) < 3 {
+		return repeatedFailure{}
+	}
+	window := all
+	if len(window) > 8 {
+		window = window[len(window)-8:]
+	}
+	type bucket struct {
+		count    int
+		errs     map[string]int
+		firstErr string
+	}
+	buckets := map[string]*bucket{}
+	for _, t := range window {
+		if t.Ok {
+			continue
+		}
+		name := t.EffectiveTool()
+		if name == "" {
+			continue
+		}
+		b, ok := buckets[name]
+		if !ok {
+			b = &bucket{errs: map[string]int{}}
+			buckets[name] = b
+		}
+		b.count++
+		fp := errorFingerprint(t.Err)
+		b.errs[fp]++
+		if b.firstErr == "" {
+			b.firstErr = firstLine(t.Err)
+		}
+	}
+	for name, b := range buckets {
+		if b.count < 3 {
+			continue
+		}
+		// At least one fingerprint must repeat — otherwise the failures
+		// are unrelated and a "stop retrying" hint would be wrong advice.
+		repeats := false
+		for _, n := range b.errs {
+			if n >= 2 {
+				repeats = true
+				break
+			}
+		}
+		if !repeats {
+			continue
+		}
+		sample := b.firstErr
+		if sample == "" {
+			sample = "unknown error"
+		}
+		return repeatedFailure{tool: name, count: b.count, errSample: sample}
+	}
+	return repeatedFailure{}
+}
+
+// errorFingerprint normalizes an error message for repeat-detection. We
+// keep the leading prefix (the error CLASS — "file not found", "no such
+// file", "permission denied") and drop trailing path/value tails that
+// vary per call. Lowercase + collapsed whitespace makes "File not Found"
+// and "file not  found" hash the same.
+func errorFingerprint(err string) string {
+	s := strings.ToLower(strings.TrimSpace(err))
+	if s == "" {
+		return ""
+	}
+	// Collapse runs of whitespace to single spaces.
+	var b strings.Builder
+	prevSpace := false
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if !prevSpace {
+				b.WriteByte(' ')
+				prevSpace = true
+			}
+			continue
+		}
+		prevSpace = false
+		b.WriteRune(r)
+	}
+	out := b.String()
+	if len(out) > 30 {
+		out = out[:30]
+	}
+	return out
 }
 
 // canonicalArgFingerprint returns a stable string for similar-looking args.

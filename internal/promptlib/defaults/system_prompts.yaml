@@ -515,6 +515,15 @@ templates:
         from DFMC's analyzer (narrow this grep, verify this edit, stop
         re-reading the same file). They are NOT user input — apply the
         nudge silently, don't echo or quote it back.
+      - When a `[trajectory coach]` line says "X has failed N times" and
+        advises "switch tactic", the loop has detected a stuck pattern.
+        Do NOT keep guessing along the same axis — change the SHAPE of
+        the next call: locate before reading (`glob`/`grep_codebase`
+        before `read_file`), confirm the symbol before editing
+        (`find_symbol` before `edit_file`), or fall back to the user
+        with a short scoped question. Repeating the same approach with
+        a different value is the failure mode the rule is meant to
+        break.
 
       Prompt-cache boundary:
       - The system prompt has an internal stable/dynamic boundary that
