@@ -59,7 +59,11 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 		if preview.AutoIncludeFiles {
 			workspaceFiles = "auto"
 		}
-		fmt.Printf("context budget: provider=%s model=%s task=%s mentions=%d workspace_files=%s scale[t=%.2f f=%.2f pf=%.2f] provider_max=%d available=%d reserve_total=%d reserve[prompt=%d history=%d response=%d tools=%d] total=%d per_file=%d history=%d files=%d compression=%s tests=%t docs=%t\n",
+		storedMsgs := 0
+		if active := eng.ConversationActive(); active != nil {
+			storedMsgs = len(active.Messages())
+		}
+		fmt.Printf("context budget: provider=%s model=%s task=%s mentions=%d workspace_files=%s scale[t=%.2f f=%.2f pf=%.2f] provider_max=%d available=%d reserve_total=%d reserve[prompt=%d history=%d response=%d tools=%d] total=%d per_file=%d history=%d history_msgs=%d stored_msgs=%d files=%d compression=%s tests=%t docs=%t\n",
 			preview.Provider,
 			preview.Model,
 			preview.Task,
@@ -78,6 +82,8 @@ func runContext(ctx context.Context, eng *engine.Engine, args []string, jsonMode
 			preview.MaxTokensTotal,
 			preview.MaxTokensPerFile,
 			preview.MaxHistoryTokens,
+			preview.MaxHistoryMessages,
+			storedMsgs,
 			preview.MaxFiles,
 			preview.Compression,
 			preview.IncludeTests,

@@ -193,8 +193,13 @@ type ContextBudgetInfo struct {
 	MaxFiles         int    `json:"max_files"`
 	MaxTokensTotal   int    `json:"max_tokens_total"`
 	MaxTokensPerFile int    `json:"max_tokens_per_file"`
-	MaxHistoryTokens int    `json:"max_history_tokens"`
-	Compression      string `json:"compression"`
+	MaxHistoryTokens   int `json:"max_history_tokens"`
+	// MaxHistoryMessages is the resolved trim-window message ceiling
+	// (config override or engine default). Surfaced so CLI/HTTP/remote
+	// consumers can show "you're at N/M stored messages" without
+	// duplicating the resolution logic.
+	MaxHistoryMessages int    `json:"max_history_messages"`
+	Compression        string `json:"compression"`
 	AutoIncludeFiles bool   `json:"auto_include_files"`
 	IncludeTests     bool   `json:"include_tests"`
 	IncludeDocs      bool   `json:"include_docs"`

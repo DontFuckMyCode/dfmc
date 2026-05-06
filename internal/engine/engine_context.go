@@ -62,6 +62,7 @@ func (e *Engine) ContextBudgetPreviewWithRuntime(question string, overrides ctxm
 		MaxTokensTotal:         opts.MaxTokensTotal,
 		MaxTokensPerFile:       opts.MaxTokensPerFile,
 		MaxHistoryTokens:       e.conversationHistoryBudget(),
+		MaxHistoryMessages:     e.conversationHistoryMaxMessages(),
 		Compression:            opts.Compression,
 		AutoIncludeFiles:       e.Config != nil && e.Config.Context.AutoIncludeFiles,
 		IncludeTests:           opts.IncludeTests,

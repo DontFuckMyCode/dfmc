@@ -114,6 +114,13 @@ func TestContextBudgetPreview_ReflectsEffectiveOptions(t *testing.T) {
 	if preview.MaxHistoryTokens != 700 {
 		t.Fatalf("expected history budget 700, got %d", preview.MaxHistoryTokens)
 	}
+	// MaxHistoryMessages should reflect the resolved trim window even when
+	// the user hasn't set it — falling back to the engine default. Without
+	// this field the CLI/HTTP/remote consumers would have to duplicate the
+	// resolution logic to surface "stored msgs / N max" displays.
+	if preview.MaxHistoryMessages <= 0 {
+		t.Fatalf("expected MaxHistoryMessages > 0 (engine default), got %d", preview.MaxHistoryMessages)
+	}
 	if preview.ExplicitFileMentions != 0 {
 		t.Fatalf("expected explicit file mentions 0, got %d", preview.ExplicitFileMentions)
 	}
