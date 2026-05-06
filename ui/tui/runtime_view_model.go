@@ -841,21 +841,26 @@ func runtimeContextPressureActions(vm runtimeViewModel) []string {
 		return nil
 	}
 	pct := int((int64(used) * 100) / int64(vm.MaxContext))
+	// Hint copy reflects what actually frees engine context (NOT the
+	// TUI-only /compact slash command — that only collapses visible
+	// transcript lines, the engine's running working set is untouched).
+	// Real reducers: narrow @file mentions, drop pinned files, /chat
+	// new for a fresh conversation, or wait for auto-compact to fire.
 	switch {
 	case pct >= 100:
 		return []string{
 			fmt.Sprintf("context over window: %s/%s", compactMetric(used), compactMetric(vm.MaxContext)),
-			"/compact now or narrow @files",
+			"/conv new or narrow @files / drop pins",
 		}
 	case pct >= 90:
 		return []string{
 			fmt.Sprintf("context critical: %d%% full", pct),
-			"/compact or Ctrl+I Context budget",
+			"/conv new for fresh window · Ctrl+I to inspect budget",
 		}
 	case pct >= 70:
 		return []string{
 			fmt.Sprintf("context high: %d%% full", pct),
-			"Ctrl+I Context budget before the next big ask",
+			"Ctrl+I Context budget — narrow @files before the next big ask",
 		}
 	default:
 		return nil

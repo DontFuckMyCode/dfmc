@@ -1048,11 +1048,11 @@ function classifyActivityEvent(ev) {
 			if (loopBudgetState.cap > 0 && used > 0) {
 				const pct = Math.floor((used * 100) / loopBudgetState.cap);
 				if (pct >= 95) {
-					suffix = " \u00b7 \u26a0 ctx " + pct + "% (compact urgent)";
+					suffix = " \u00b7 \u26a0 ctx " + pct + "% (next turn may park)";
 				} else if (pct >= 85) {
 					suffix = " \u00b7 \u26a0 ctx " + pct + "% (narrow scope)";
 				} else if (pct >= 70) {
-					suffix = " \u00b7 ctx " + pct + "% (compact pending)";
+					suffix = " \u00b7 ctx " + pct + "% (auto-compact pending)";
 				} else if (pct >= 50) {
 					suffix = " \u00b7 ctx " + pct + "%";
 				}

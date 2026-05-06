@@ -3997,7 +3997,7 @@ func TestRuntimeStripWarnsWhenContextWindowIsHot(t *testing.T) {
 	}
 
 	view := m.renderChatView(220)
-	for _, want := range []string{"next:", "context critical: 92% full", "/compact or Ctrl+I Context budget"} {
+	for _, want := range []string{"next:", "context critical: 92% full", "/conv new for fresh window"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("runtime strip should warn about context pressure %q, got:\n%s", want, view)
 		}

@@ -26,9 +26,15 @@ var headroomThresholds = []struct {
 	headline string
 	hint     string
 }{
-	{pct: 70, bit: 1 << 0, status: "warn", headline: "context 70% full", hint: "auto-compact will fire next round (or /compact now)"},
-	{pct: 85, bit: 1 << 1, status: "warn", headline: "context 85% full", hint: "narrow the question or /compact — only ~15% headroom left"},
-	{pct: 95, bit: 1 << 2, status: "error", headline: "context 95% full", hint: "/compact now — next turn may park on budget"},
+	// Hint copy reflects what actually reduces ENGINE context (not the
+	// TUI-only /compact slash command, which only collapses visible
+	// transcript lines without affecting the running loop's working
+	// set). Auto-compact fires reactively at 0.7 ratio; /chat new
+	// rotates to a fresh conversation; narrowing @file mentions and
+	// dropping pinned files reduces the per-Ask context payload.
+	{pct: 70, bit: 1 << 0, status: "warn", headline: "context 70% full", hint: "auto-compact will fire next round — or narrow @files / drop pins"},
+	{pct: 85, bit: 1 << 1, status: "warn", headline: "context 85% full", hint: "tighten scope: drop @files, fewer pins, or /conv new"},
+	{pct: 95, bit: 1 << 2, status: "error", headline: "context 95% full", hint: "next turn may park on budget — /conv new for a fresh window"},
 }
 
 // maybeNotifyHeadroomThreshold pushes a chat-event line when the live
