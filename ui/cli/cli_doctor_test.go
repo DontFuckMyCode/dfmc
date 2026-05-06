@@ -382,3 +382,56 @@ body: |
 		}
 	})
 }
+
+// TestRenderDoctorReport_GroupsFailFirst keeps the doctor renderer
+// honest about ordering: failing checks must surface before warnings,
+// which surface before passing checks. That's the contract the user
+// relies on when scanning the output for what needs attention.
+func TestRenderDoctorReport_GroupsFailFirst(t *testing.T) {
+	checks := []doctorCheck{
+		{Name: "config.valid", Status: "pass", Details: "ok"},
+		{Name: "ast.backend", Status: "warn", Details: "regex fallback"},
+		{Name: "api_key.anthropic", Status: "fail", Details: "missing"},
+		{Name: "providers.profiles", Status: "pass", Details: "loaded"},
+	}
+	out := captureStdout(t, func() {
+		renderDoctorReport(checks, "fail", 2, 1, 1)
+	})
+	failIdx := strings.Index(out, "Failing checks")
+	warnIdx := strings.Index(out, "Warnings")
+	passIdx := strings.Index(out, "Passing")
+	if failIdx < 0 || warnIdx < 0 || passIdx < 0 {
+		t.Fatalf("expected all three section labels:\n%s", out)
+	}
+	if !(failIdx < warnIdx && warnIdx < passIdx) {
+		t.Fatalf("ordering must be fail → warn → pass; got fail=%d warn=%d pass=%d:\n%s",
+			failIdx, warnIdx, passIdx, out)
+	}
+	for _, want := range []string{"✗", "⚠", "✓", "issues found", "--fix"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor report missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRenderDoctorReport_AllPassClean asserts the all-green path: no
+// "Failing" / "Warnings" sections, no nag text, just the headline +
+// pass list + "All checks passed."
+func TestRenderDoctorReport_AllPassClean(t *testing.T) {
+	checks := []doctorCheck{
+		{Name: "config.valid", Status: "pass", Details: "ok"},
+		{Name: "providers.profiles", Status: "pass", Details: "loaded"},
+	}
+	out := captureStdout(t, func() {
+		renderDoctorReport(checks, "ok", 2, 0, 0)
+	})
+	if strings.Contains(out, "Failing checks") || strings.Contains(out, "Warnings:") {
+		t.Errorf("all-pass run must not show empty fail/warn sections:\n%s", out)
+	}
+	if !strings.Contains(out, "all systems go") {
+		t.Errorf("expected all-clear headline, got:\n%s", out)
+	}
+	if !strings.Contains(out, "All checks passed") {
+		t.Errorf("expected closing line, got:\n%s", out)
+	}
+}
