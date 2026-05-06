@@ -136,6 +136,44 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			}
 		}
 		return m
+	case "agent:coach:stuck":
+		// Loop-stall detector. Always surface — this is exactly the
+		// signal a user wants when monitoring a long autonomous run.
+		// Push a distinct chip so the runtime card / activity strip
+		// shows the stall pattern at a glance, and drop one warn-level
+		// transcript line per detection so the user can act on it
+		// (refine the question, /continue with focus, or interrupt).
+		tool := payloadString(payload, "tool", "")
+		count := payloadInt(payload, "failure_count", 0)
+		errClass := payloadString(payload, "error_class", "")
+		if tool == "" || count == 0 {
+			return m
+		}
+		preview := fmt.Sprintf("%s ×%d failures", tool, count)
+		if errClass != "" {
+			truncated := errClass
+			if len(truncated) > 28 {
+				truncated = truncated[:25] + "..."
+			}
+			preview = fmt.Sprintf("%s ×%d · %s", tool, count, truncated)
+		}
+		m.pushToolChip(toolChip{
+			Name:    "stuck-loop",
+			Status:  "warn",
+			Preview: preview,
+		})
+		notice := fmt.Sprintf(
+			"⚠ Loop stalled — %s failed %d times with the same error class. The agent has been told to switch tactic.",
+			tool, count,
+		)
+		if errClass != "" {
+			notice = fmt.Sprintf(
+				"⚠ Loop stalled — %s failed %d times (%s). The agent has been told to switch tactic.",
+				tool, count, errClass,
+			)
+		}
+		m = m.appendCoachMessage(notice, coachSeverityWarn, "stuck-loop", "")
+		return m
 	case "agent:subagent:start", "agent:subagent:fallback", "agent:subagent:done":
 		m, line = m.handleSubagentEvent(eventType, payload)
 	case "context:built":

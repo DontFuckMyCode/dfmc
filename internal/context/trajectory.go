@@ -48,6 +48,14 @@ type TrajectoryOutput struct {
 	RoundSummary  string   // one-line recap of the round
 	OpenQuestions []string // unresolved issues for the next round
 	Confidence    float64  // 0-1; low triggers expanded retrieval on next round
+
+	// Stuck* fields are populated when Rule 0 (repeated-failure) fires.
+	// They give downstream surfaces (TUI chip, web activity feed, metrics)
+	// a structured way to render the pattern without grepping the hint
+	// text. Empty StuckTool means no stuck pattern this round.
+	StuckTool      string
+	StuckCount     int
+	StuckErrSample string
 }
 
 // TrajectoryHints returns up to 2 short coaching lines derived from the
@@ -87,6 +95,27 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 	// Collect open questions.
 	var openQuestions []string
 
+	// Detect stuck pattern up-front so the structured fields can ride
+	// every return — even when Rule 0's TEXT was deduped out (already
+	// emitted earlier in the run), the engine should still receive the
+	// signal for a fresh `agent:coach:stuck` event so the TUI surfaces
+	// the count even on subsequent rounds.
+	stuck := detectRepeatedFailures(all)
+	build := func() *TrajectoryOutput {
+		o := &TrajectoryOutput{
+			Hints:         out,
+			RoundSummary:  roundSummary,
+			OpenQuestions: openQuestions,
+			Confidence:    computeConfidence(fresh),
+		}
+		if stuck.tool != "" {
+			o.StuckTool = stuck.tool
+			o.StuckCount = stuck.count
+			o.StuckErrSample = stuck.errSample
+		}
+		return o
+	}
+
 	// Rule 0: same effective tool failed N times across recent rounds.
 	// This is the stuck-in-a-loop pattern — model keeps guessing paths
 	// with read_file, or keeps re-running a command with the same broken
@@ -95,19 +124,14 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 	// a long autonomous run can silently burn dozens of steps re-trying
 	// the same approach. Fires before Rule 1 so the stronger pattern
 	// hint takes precedence over the generic one.
-	if stuck := detectRepeatedFailures(all); stuck.tool != "" {
+	if stuck.tool != "" {
 		hint := fmt.Sprintf(
 			"%s has failed %d times across recent rounds with the same kind of error (%s). Stop retrying — switch tactic: confirm the input differently (e.g. `glob` to locate a file before `read_file`, `grep_codebase` to find the right symbol before guessing a path), or pick a different tool entirely.",
 			stuck.tool, stuck.count, stuck.errSample,
 		)
 		openQuestions = append(openQuestions, fmt.Sprintf("%s stuck — %d consecutive failures", stuck.tool, stuck.count))
 		if push(hint) {
-			return &TrajectoryOutput{
-				Hints:         out,
-				RoundSummary:  roundSummary,
-				OpenQuestions: openQuestions,
-				Confidence:    computeConfidence(fresh),
-			}
+			return build()
 		}
 	}
 
@@ -125,12 +149,7 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 		msg := fmt.Sprintf("Prior call %s failed (%s). Don't retry with the same inputs — read the error, adjust arguments, or pick a different tool.", et, brief)
 		openQuestions = append(openQuestions, fmt.Sprintf("%s failed: %s", et, brief))
 		if push(msg) {
-			return &TrajectoryOutput{
-				Hints:         out,
-				RoundSummary:  roundSummary,
-				OpenQuestions: openQuestions,
-				Confidence:    computeConfidence(fresh),
-			}
+			return build()
 		}
 		break // one failure hint per turn
 	}
@@ -153,12 +172,7 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 			}
 			hint := "Just mutated " + path + ". Validate with the smallest targeted check (build/vet/test that touches it) before declaring done — don't trust edits on faith."
 			if push(hint) {
-				return &TrajectoryOutput{
-					Hints:         out,
-					RoundSummary:  roundSummary,
-					OpenQuestions: openQuestions,
-					Confidence:    computeConfidence(fresh),
-				}
+				return build()
 			}
 		}
 		// Only consider the most recent mutation.
@@ -180,12 +194,7 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 		}
 		hint := "grep_codebase returned a lot. Narrow with a tighter regex or `glob` filter before expanding — wide scans waste the context budget."
 		if push(hint) {
-			return &TrajectoryOutput{
-				Hints:         out,
-				RoundSummary:  roundSummary,
-				OpenQuestions: openQuestions,
-				Confidence:    computeConfidence(fresh),
-			}
+			return build()
 		}
 	}
 
@@ -193,12 +202,7 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 	if dup := detectRepeatedCalls(all); dup != "" {
 		hint := "You've called " + dup + " several times on similar inputs. Consolidate via tool_batch_call, or rethink whether another tool would answer the question in one shot."
 		if push(hint) {
-			return &TrajectoryOutput{
-				Hints:         out,
-				RoundSummary:  roundSummary,
-				OpenQuestions: openQuestions,
-				Confidence:    computeConfidence(fresh),
-			}
+			return build()
 		}
 	}
 
@@ -218,22 +222,12 @@ func TrajectoryHints(fresh, all []TraceEntry, recent []string) *TrajectoryOutput
 		if alt := preferDedicatedTool(cmd); alt != "" {
 			hint := "run_command was used for a task with a dedicated tool: prefer " + alt + " next time — it's safer and the output is structured."
 			if push(hint) {
-				return &TrajectoryOutput{
-					Hints:         out,
-					RoundSummary:  roundSummary,
-					OpenQuestions: openQuestions,
-					Confidence:    computeConfidence(fresh),
-				}
+				return build()
 			}
 		}
 	}
 
-	return &TrajectoryOutput{
-		Hints:         out,
-		RoundSummary:  roundSummary,
-		OpenQuestions: openQuestions,
-		Confidence:    computeConfidence(fresh),
-	}
+	return build()
 }
 
 // buildRoundSummary produces a one-line recap of the round's activity.

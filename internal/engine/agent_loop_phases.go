@@ -303,9 +303,30 @@ func dedupTargetHint(call provider.ToolCall) string {
 // appends them as a system-tagged user note. Mutates s.msgs and
 // s.seed.RecentCoachHints in place so the same hint can't fire twice
 // in a single run.
+//
+// Two events fan out from one detection pass:
+//   - agent:coach:hint — list of advisory lines (silent when verbose=off)
+//   - agent:coach:stuck — first-class loop-stall signal, fires whenever
+//     the trajectory layer detected the repeated-failure pattern, even
+//     when the textual hint was deduped out. The TUI / web feed surface
+//     this one by default because it's the signal you want when staring
+//     at a long autonomous run wondering "is it making progress?".
 func (e *Engine) injectTrajectoryHints(s *loopRunState, freshStart int) {
 	hints := buildTrajectoryHints(s.traces[freshStart:], s.traces, s.seed.RecentCoachHints)
-	if hints == nil || len(hints.Hints) == 0 {
+	if hints == nil {
+		return
+	}
+	if hints.StuckTool != "" {
+		e.publishAgentLoopEvent("agent:coach:stuck", map[string]any{
+			"step":              s.step,
+			"tool":              hints.StuckTool,
+			"failure_count":     hints.StuckCount,
+			"error_class":       hints.StuckErrSample,
+			"hint_text_emitted": len(hints.Hints) > 0,
+			"surface":           "native",
+		})
+	}
+	if len(hints.Hints) == 0 {
 		return
 	}
 	block := ctxmgr.FormatTrajectoryHints(hints)

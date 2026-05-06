@@ -502,6 +502,65 @@ func TestHandleEngineEvent_CoachHintNotVerbose(t *testing.T) {
 	}
 }
 
+func TestHandleEngineEvent_CoachStuck_FiresIndependentOfVerbose(t *testing.T) {
+	// The stuck-loop signal must surface even when hintsVerbose=false —
+	// it's the "your long autonomous run is wasting steps" signal that
+	// users explicitly want during multi-hour Drive operations.
+	m := newCoverageModel(t)
+	m.ui.hintsVerbose = false
+	event := engine.Event{
+		Type: "agent:coach:stuck",
+		Payload: map[string]any{
+			"step":          12,
+			"tool":          "read_file",
+			"failure_count": 4,
+			"error_class":   "file does not exist",
+		},
+	}
+	m2 := m.handleEngineEvent(event)
+	if len(m2.agentLoop.sessionCoachNotes) == 0 {
+		t.Fatal("stuck-loop event should surface a coach note even when hintsVerbose=false")
+	}
+	last := m2.agentLoop.sessionCoachNotes[len(m2.agentLoop.sessionCoachNotes)-1]
+	if !strings.Contains(last, "Loop stalled") {
+		t.Errorf("note should describe the stall, got %q", last)
+	}
+	if !strings.Contains(last, "read_file") {
+		t.Errorf("note should name the stuck tool, got %q", last)
+	}
+	if !strings.Contains(last, "4 times") {
+		t.Errorf("note should cite the failure count, got %q", last)
+	}
+	// Severity is encoded into the rendered transcript as a leading
+	// warn marker; sessionCoachNotes stores the raw text only, so we
+	// assert the warn marker landed on the chat line.
+	tail := m2.chat.transcript[len(m2.chat.transcript)-1]
+	if !strings.Contains(tail.Content, "⚠") {
+		t.Errorf("transcript line should carry warn marker, got %q", tail.Content)
+	}
+	// Chip strip must show the structured indicator.
+	timeline := m2.agentLoop.toolTimeline
+	if len(timeline) == 0 || timeline[len(timeline)-1].Name != "stuck-loop" {
+		t.Errorf("expected a stuck-loop chip, got %+v", timeline)
+	}
+}
+
+func TestHandleEngineEvent_CoachStuck_IgnoresEmptyTool(t *testing.T) {
+	// Defensive: malformed payload (missing tool name or zero count)
+	// should not produce a chip or a note — better to drop the event
+	// than to render an empty "× failures" box.
+	m := newCoverageModel(t)
+	before := len(m.agentLoop.sessionCoachNotes)
+	event := engine.Event{
+		Type:    "agent:coach:stuck",
+		Payload: map[string]any{"failure_count": 4},
+	}
+	m2 := m.handleEngineEvent(event)
+	if len(m2.agentLoop.sessionCoachNotes) != before {
+		t.Errorf("malformed stuck event should not add a note")
+	}
+}
+
 func TestPayloadInt(t *testing.T) {
 	cases := []struct {
 		data     map[string]any
