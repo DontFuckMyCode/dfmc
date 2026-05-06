@@ -161,40 +161,50 @@ func isTimelineEventMessage(item chatLine) bool {
 	return false
 }
 
+// renderTimelineEventMessage lays out a tool / system event as a header
+// row + 2-char-indented body. Earlier this function rendered the FIRST
+// content line on the same row as the badge+pill+header, then indented
+// subsequent rows by the full prefix width (~50 chars on a typical tool
+// event). The result was a deep right-aligned column that wasted
+// horizontal space and made multi-line tool blocks read like an
+// envelope return-address. The new layout keeps the prefix on its own
+// header line and indents every content row by exactly 2 spaces — the
+// user's request and the standard "log entry with details below" shape
+// most CLIs use.
 func renderTimelineEventMessage(item chatLine, header string, width int) []string {
 	content := strings.TrimSpace(chatBubbleContent(item, false))
 	if content == "" {
 		content = strings.TrimSpace(item.Content)
 	}
 	badge := timelineEventBadgeForItem(item)
-	prefix := badge
+	headerLine := badge
 	if item.Role.Eq(chatRoleTool) && len(item.EventLines) > 0 {
 		if pill := timelineToolStatusPill(item.EventLines[0]); pill != "" {
-			prefix += " " + pill
+			headerLine += " " + pill
 		}
 	}
 	if strings.TrimSpace(header) != "" {
-		prefix += " " + subtleStyle.Render(header)
+		headerLine += "  " + subtleStyle.Render(header)
 	}
-	prefix += "  "
 
-	// Show elapsed time for running tools (e.g. "+3s") so the user can see the tool is still alive.
+	// "+Ns" elapsed marker for running tools — kept on the header line
+	// because it's part of the event identity, not body content.
 	if strings.HasPrefix(strings.ToLower(content), "running:") {
 		if elapsed := elapsedLabel(item.Timestamp); elapsed != "" {
-			prefix += ToolStyle.Render(" "+elapsed+" ") + "  "
+			headerLine += "  " + ToolStyle.Render(" "+elapsed+" ")
 		}
 	}
 
-	prefixWidth := lipgloss.Width(prefix)
-	limit := max(width-prefixWidth, 18)
+	const bodyIndent = "  "
+	limit := max(width-len(bodyIndent), 18)
 	rows := wrapTimelineEventContent(content, limit)
 	if len(rows) == 0 {
-		return []string{prefix}
+		return []string{headerLine}
 	}
-	out := []string{prefix + timelineEventRowStyle(rows[0], content).Render(rows[0])}
-	indent := strings.Repeat(" ", prefixWidth)
-	for _, row := range rows[1:] {
-		out = append(out, subtleStyle.Render(indent)+timelineEventRowStyle(row, content).Render(row))
+	out := make([]string, 0, len(rows)+1)
+	out = append(out, headerLine)
+	for _, row := range rows {
+		out = append(out, subtleStyle.Render(bodyIndent)+timelineEventRowStyle(row, content).Render(row))
 	}
 	return out
 }
