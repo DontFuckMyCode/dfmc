@@ -35,49 +35,11 @@ func (m Model) patchCommandSummary() string {
 	return strings.Join(parts, "\n")
 }
 
+// renderPatchView delegates to the rebuilt 3-pane Patch Lab in
+// render_patch.go. The legacy stack-rendering implementation lives in
+// git history; the V2 renderer is the active F4 panel.
 func (m Model) renderPatchView(width int) string {
-	// Worktree diff and the assistant's pending hunk both render as
-	// side-by-side (before | after) so the eye can visually pair a
-	// removed line with the line that replaced it. The unified-text
-	// stack we used before forced the user to scroll between `-` and
-	// `+` halves of the same change. 18-row cap each pane mirrors
-	// the previous truncateForPanel budget.
-	diffSide := renderDiffSideBySide(strings.TrimSpace(m.patchView.diff), width, 18)
-	patchSide := renderDiffSideBySide(m.patchPreviewText(), width, 18)
-	if strings.TrimSpace(m.patchPreviewText()) == "" {
-		patchSide = subtleStyle.Render("No assistant patch yet. Ask DFMC to refactor, fix, or rewrite a file in Chat — the generated diff lands here.")
-	}
-
-	changed := "(none)"
-	if len(m.patchView.changed) > 0 {
-		changed = strings.Join(m.patchView.changed, ", ")
-	}
-	parts := []string{
-		sectionHeader("◈", "Patch Lab"),
-		subtleStyle.Render("a apply · u undo · c check · ctrl+h keys · side-by-side: red=removed, green=added"),
-		renderDivider(min(width, 100)),
-		"",
-		"Changed:      " + truncateForPanel(changed, width),
-		"Patch files:  " + truncateForPanel(strings.Join(m.patchFilesOrNone(), ", "), width),
-		"Focus file:   " + truncateForPanel(m.patchTargetSummary(), width),
-		"Focus hunk:   " + truncateForPanel(m.patchHunkSummary(), width),
-		"",
-		sectionHeader("⇄", "Worktree Diff"),
-		diffSide,
-		"",
-		sectionHeader("◇", "Current Hunk"),
-		patchSide,
-	}
-	if info := m.patchFocusSummary(); info != "" {
-		parts = append(parts, "", subtleStyle.Render(info))
-	}
-	if hints := m.patchReviewHints(); len(hints) > 0 {
-		parts = append(parts, "", subtleStyle.Render("Review cues: "+strings.Join(hints, " | ")))
-	}
-	if note := strings.TrimSpace(m.notice); note != "" {
-		parts = append(parts, "", subtleStyle.Render(note))
-	}
-	return strings.Join(parts, "\n")
+	return m.renderPatchViewV2(width)
 }
 
 func loadLatestPatchCmd(eng *engine.Engine) tea.Cmd {

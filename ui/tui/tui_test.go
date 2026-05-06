@@ -4305,11 +4305,10 @@ func TestRenderPatchViewShowsPatchFiles(t *testing.T) {
 	}
 
 	view := m.renderPatchView(100)
-	if !strings.Contains(view, "Patch files:") || !strings.Contains(view, "internal/auth/service.go") {
-		t.Fatalf("expected patch files line in patch view, got:\n%s", view)
-	}
-	if !strings.Contains(view, "Pinned file is touched by latest patch.") {
-		t.Fatalf("expected patch overlap hint in patch view, got:\n%s", view)
+	// The rebuilt V2 panel surfaces the patched file in the banner +
+	// FILES list rather than as a "Patch files:" label.
+	if !strings.Contains(view, "PATCH LAB") || !strings.Contains(view, "service.go") {
+		t.Fatalf("expected patch view to surface the patched file, got:\n%s", view)
 	}
 }
 
@@ -4342,11 +4341,15 @@ func TestShiftPatchTargetAndRenderPatchViewUsesCurrentSection(t *testing.T) {
 	}
 
 	view := next.renderPatchView(100)
-	if !strings.Contains(view, "Focus file:") || !strings.Contains(view, "b.go (2/2, hunks=1)") {
-		t.Fatalf("expected patch target summary for second section, got:\n%s", view)
+	// V2 shows the active hunk header (with X/Y position) in the DIFF
+	// header, and the per-section position in the FILES list footer
+	// ("2 / 2 files"). The diff body still mirrors only the current
+	// section.
+	if !strings.Contains(view, "@@ -1 +1 @@") {
+		t.Fatalf("expected hunk header in diff pane, got:\n%s", view)
 	}
-	if !strings.Contains(view, "Focus hunk:") || !strings.Contains(view, "@@ -1 +1 @@ (1/1)") {
-		t.Fatalf("expected hunk target summary, got:\n%s", view)
+	if !strings.Contains(view, "2 / 2 files") {
+		t.Fatalf("expected files-position footer for second section, got:\n%s", view)
 	}
 	if !strings.Contains(view, "+++ b/b.go") || strings.Contains(view, "+++ b/a.go") {
 		t.Fatalf("expected patch preview to show only current section, got:\n%s", view)
@@ -4378,8 +4381,11 @@ func TestShiftPatchHunkAndReviewHints(t *testing.T) {
 	}
 
 	view := next.renderPatchView(100)
-	if !strings.Contains(view, "Focus hunk:") || !strings.Contains(view, "@@ -10 +10 @@ (2/2)") {
-		t.Fatalf("expected second hunk target, got:\n%s", view)
+	// V2 surfaces the hunk position as "(2/2)" in the DIFF header and
+	// review hints in the inline footer (medium widths) or REVIEW
+	// card (wide widths).
+	if !strings.Contains(view, "@@ -10 +10 @@") || !strings.Contains(view, "(2/2)") {
+		t.Fatalf("expected second hunk header (2/2) in diff pane, got:\n%s", view)
 	}
 	if !strings.Contains(view, "contains TODO/FIXME") || !strings.Contains(view, "check debug or panic statements") {
 		t.Fatalf("expected review cues for current hunk, got:\n%s", view)
