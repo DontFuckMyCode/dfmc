@@ -60,11 +60,11 @@ func TestSlashAgents_ShowKnownRoleBody(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
 
-	roles := m.collectAgentRoles()
-	if len(roles) == 0 {
+	cat := m.eng.Agents()
+	if len(cat.Roles) == 0 {
 		t.Skip("no roles loaded — embedded defaults missing")
 	}
-	target := roles[0].Role
+	target := cat.Roles[0].Role
 	out := m.agentsSlash([]string{"show", target})
 	if !strings.Contains(out, target) {
 		t.Fatalf("show body should contain role name %q:\n%s", target, out)

@@ -337,6 +337,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/providers", s.handleProviders)
 	s.mux.HandleFunc("GET /api/v1/langintel", s.handleLangIntel)
 	s.mux.HandleFunc("GET /api/v1/skills", s.handleSkills)
+	s.mux.HandleFunc("GET /api/v1/agents", s.handleAgents)
 	s.mux.HandleFunc("GET /api/v1/tools", s.handleTools)
 	s.mux.HandleFunc("GET /api/v1/tools/{name}", s.handleToolSpec)
 	s.mux.HandleFunc("POST /api/v1/tools/{name}", s.handleToolExec)

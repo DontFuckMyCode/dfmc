@@ -145,3 +145,24 @@ func remoteSkills(eng *engine.Engine, args []string, jsonMode bool) int {
 	mustPrintJSON(payload)
 	return 0
 }
+
+func remoteAgents(eng *engine.Engine, args []string, jsonMode bool) int {
+	fs := flag.NewFlagSet("remote agents", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	baseURL := fs.String("url", defaultURL, "remote base URL")
+	token := addRemoteTokenFlag(fs)
+	timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/agents"
+	payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "remote agents error: %v\n", err)
+		return 1
+	}
+	_ = jsonMode
+	mustPrintJSON(payload)
+	return 0
+}

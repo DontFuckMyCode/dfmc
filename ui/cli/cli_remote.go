@@ -158,6 +158,9 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 	case "skills":
 		return remoteSkills(eng, args[1:], jsonMode)
 
+	case "agents":
+		return remoteAgents(eng, args[1:], jsonMode)
+
 	case "prompt":
 		return remotePrompt(eng, args[1:], jsonMode)
 

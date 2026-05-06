@@ -113,6 +113,8 @@ func Run(ctx context.Context, eng *engine.Engine, args []string, version string)
 		return runPlugin(ctx, eng, cmdArgs, opts.JSON)
 	case "skill":
 		return runSkill(ctx, eng, cmdArgs, opts.JSON)
+	case "agents", "agent":
+		return runAgents(ctx, eng, cmdArgs, opts.JSON)
 	case "review", "explain", "refactor", "debug", "test", "doc",
 		"generate", "audit", "onboard":
 		return runSkillShortcut(ctx, eng, cmd, cmdArgs, opts.JSON)

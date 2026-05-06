@@ -270,6 +270,18 @@ func defaultCommands() []Command {
 			Usage:    "skill SUBCOMMAND [args...]",
 		},
 		{
+			Name:     "agents",
+			Aliases:  []string{"agent"},
+			Summary:  "Show sub-agent catalog: roles (planner, reviewer, ...) and provider profiles.",
+			Category: CategoryTools,
+			Surfaces: SurfaceAll,
+			Usage:    "agents [list | show NAME]",
+			Subcommands: []Subcommand{
+				{Name: "list", Summary: "List roles and provider profiles (default)."},
+				{Name: "show", Summary: "Show one role overlay body or profile detail."},
+			},
+		},
+		{
 			Name:     "plugin",
 			Summary:  "List or manage plugin bundles; call plugin methods over JSON-RPC.",
 			Category: CategoryTools,

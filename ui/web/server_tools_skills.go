@@ -131,6 +131,13 @@ func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// handleAgents serves the sub-agent catalog: roles (personality overlays
+// from the prompt library) plus profiles (provider runtimes eligible for
+// sub-agent dispatch). Mirrors `dfmc agents` and the TUI /agents card.
+func (s *Server) handleAgents(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.engine.Agents())
+}
+
 func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 	tier := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("tier")))
 	limit := 50

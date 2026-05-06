@@ -15,39 +15,10 @@ package tui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
-	"github.com/dontfuckmycode/dfmc/internal/promptlib"
+	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
-
-// agentRoleEntry collapses every overlay that targets a given role into one
-// row. The most descriptive overlay (longest non-empty Description, falling
-// back to the first sentence of the longest Body) wins for the summary.
-type agentRoleEntry struct {
-	Role    string
-	Summary string
-	Bodies  []agentRoleBody
-}
-
-type agentRoleBody struct {
-	ID       string
-	Task     string
-	Priority int
-	Body     string
-}
-
-// agentProfileEntry is one provider profile with the bits a user cares about
-// when picking a sub-agent runtime: name, model, tool support, configured
-// state.
-type agentProfileEntry struct {
-	Name       string
-	Model      string
-	Protocol   string
-	Tools      bool
-	Configured bool
-	Active     bool
-}
 
 func (m Model) agentsSlash(args []string) string {
 	sub := "list"
@@ -57,8 +28,12 @@ func (m Model) agentsSlash(args []string) string {
 		rest = args[1:]
 	}
 
-	roles := m.collectAgentRoles()
-	profiles := m.collectAgentProfiles()
+	if m.eng == nil {
+		return "Engine unavailable."
+	}
+	cat := m.eng.Agents()
+	roles := cat.Roles
+	profiles := cat.Profiles
 
 	switch sub {
 	case "", "list", "ls":
@@ -84,83 +59,20 @@ func (m Model) agentsSlash(args []string) string {
 	}
 }
 
-func (m Model) collectAgentRoles() []agentRoleEntry {
-	lib := promptlib.New()
-	if m.eng != nil {
-		_ = lib.LoadOverrides(m.eng.ProjectRoot)
-	}
-	byRole := map[string]*agentRoleEntry{}
-	for _, t := range lib.List() {
-		role := strings.TrimSpace(t.Role)
-		if role == "" || strings.EqualFold(role, "generalist") {
-			continue
-		}
-		entry := byRole[role]
-		if entry == nil {
-			entry = &agentRoleEntry{Role: role}
-			byRole[role] = entry
-		}
-		entry.Bodies = append(entry.Bodies, agentRoleBody{
-			ID:       t.ID,
-			Task:     t.Task,
-			Priority: t.Priority,
-			Body:     t.Body,
-		})
-		if entry.Summary == "" {
-			if d := strings.TrimSpace(t.Description); d != "" {
-				entry.Summary = d
-			} else if s := firstSentence(t.Body); s != "" {
-				entry.Summary = s
-			}
-		}
-	}
-	out := make([]agentRoleEntry, 0, len(byRole))
-	for _, v := range byRole {
-		sort.Slice(v.Bodies, func(i, j int) bool { return v.Bodies[i].Priority > v.Bodies[j].Priority })
-		out = append(out, *v)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Role < out[j].Role })
-	return out
+// FormatAgentsList renders the public AgentCatalog as the multi-line block
+// shown in /agents and `dfmc agents`. Exported so the CLI surface can reuse
+// the exact same rendering without re-implementing.
+func FormatAgentsList(roles []engine.AgentRole, profiles []engine.AgentProfile) string {
+	return formatAgentsList(roles, profiles)
 }
 
-func (m Model) collectAgentProfiles() []agentProfileEntry {
-	if m.eng == nil || m.eng.Config == nil {
-		return nil
-	}
-	out := make([]agentProfileEntry, 0, len(m.eng.Config.Providers.Profiles))
-	for name, prof := range m.eng.Config.Providers.Profiles {
-		entry := agentProfileEntry{
-			Name:       name,
-			Model:      strings.TrimSpace(prof.BestModel()),
-			Protocol:   strings.TrimSpace(prof.Protocol),
-			Configured: strings.TrimSpace(prof.APIKey) != "",
-		}
-		if m.eng.Providers != nil {
-			if p, ok := m.eng.Providers.Get(name); ok && p != nil {
-				entry.Tools = p.Hints().SupportsTools
-				if entry.Model == "" {
-					entry.Model = strings.TrimSpace(p.Model())
-				}
-			}
-			if strings.EqualFold(name, m.eng.Providers.Primary()) {
-				entry.Active = true
-			}
-		}
-		out = append(out, entry)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Active != out[j].Active {
-			return out[i].Active
-		}
-		if out[i].Tools != out[j].Tools {
-			return out[i].Tools
-		}
-		return out[i].Name < out[j].Name
-	})
-	return out
-}
+// FormatAgentRoleShow renders one role.
+func FormatAgentRoleShow(r engine.AgentRole) string { return formatAgentRoleShow(r) }
 
-func formatAgentsList(roles []agentRoleEntry, profiles []agentProfileEntry) string {
+// FormatAgentProfileShow renders one profile.
+func FormatAgentProfileShow(p engine.AgentProfile) string { return formatAgentProfileShow(p) }
+
+func formatAgentsList(roles []engine.AgentRole, profiles []engine.AgentProfile) string {
 	var b strings.Builder
 	b.WriteString("▸ Sub-agent catalog\n\n")
 
@@ -206,7 +118,7 @@ func formatAgentsList(roles []agentRoleEntry, profiles []agentProfileEntry) stri
 	return b.String()
 }
 
-func formatAgentRoleShow(r agentRoleEntry) string {
+func formatAgentRoleShow(r engine.AgentRole) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "▸ Role: %s\n", r.Role)
 	if r.Summary != "" {
@@ -230,7 +142,7 @@ func formatAgentRoleShow(r agentRoleEntry) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func formatAgentProfileShow(p agentProfileEntry) string {
+func formatAgentProfileShow(p engine.AgentProfile) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "▸ Profile: %s", p.Name)
 	if p.Active {
@@ -256,24 +168,3 @@ func formatAgentProfileShow(p agentProfileEntry) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// firstSentence pulls the first sentence-like fragment out of a body so a
-// dense YAML overlay still gives a usable one-line summary in the catalog.
-// Splits on the first ". " or newline and strips leading list markers /
-// extra whitespace.
-func firstSentence(body string) string {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return ""
-	}
-	if i := strings.Index(body, "\n"); i >= 0 {
-		body = body[:i]
-	}
-	if i := strings.Index(body, ". "); i >= 0 {
-		body = body[:i+1]
-	}
-	body = strings.TrimSpace(body)
-	body = strings.TrimPrefix(body, "- ")
-	body = strings.TrimPrefix(body, "* ")
-	body = strings.TrimPrefix(body, "• ")
-	return body
-}
