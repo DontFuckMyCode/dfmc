@@ -66,16 +66,24 @@ func (e *Engine) buildRequestMessages(question string, chunks []types.ContextChu
 }
 
 func (e *Engine) conversationHistoryBudget() int {
-	budget := e.Config.Context.MaxHistoryTokens
+	// User-set Context.MaxHistoryTokens is authoritative — bypass the
+	// auto-compute cap so a user on a 1M-window Opus can extend memory
+	// well beyond the safe-floor default. The cap exists to keep the
+	// auto-compute path from overshooting on huge windows; once the
+	// user has explicitly chosen a number, trust it.
+	if userSet := e.Config.Context.MaxHistoryTokens; userSet > 0 {
+		if userSet < minContextPerFileTokens {
+			return minContextPerFileTokens
+		}
+		return userSet
+	}
+	limit := e.providerMaxContext()
+	if limit <= 0 {
+		limit = defaultProviderContextTokens
+	}
+	budget := limit / historyBudgetDivisor
 	if budget <= 0 {
-		limit := e.providerMaxContext()
-		if limit <= 0 {
-			limit = defaultProviderContextTokens
-		}
-		budget = limit / historyBudgetDivisor
-		if budget <= 0 {
-			budget = defaultHistoryBudgetTokens
-		}
+		budget = defaultHistoryBudgetTokens
 	}
 	if budget < minContextPerFileTokens {
 		budget = minContextPerFileTokens
@@ -84,6 +92,21 @@ func (e *Engine) conversationHistoryBudget() int {
 		budget = maxHistoryBudgetTokens
 	}
 	return budget
+}
+
+// conversationHistoryMaxMessages resolves the message-count cap for the
+// trim window. User-set values pass through; zero falls back to the
+// engine's compiled-in floor. Floor is the same constant the trim
+// loop uses directly when this returns its default — keeping a single
+// source of truth.
+func (e *Engine) conversationHistoryMaxMessages() int {
+	if e == nil || e.Config == nil {
+		return maxHistoryMessages
+	}
+	if n := e.Config.Context.MaxHistoryMessages; n > 0 {
+		return n
+	}
+	return maxHistoryMessages
 }
 
 func (e *Engine) trimmedConversationMessages(budget int) ([]provider.Message, []types.Message) {
@@ -116,12 +139,13 @@ func (e *Engine) trimmedConversationMessages(budget int) ([]provider.Message, []
 		return nil, nil
 	}
 
-	out := make([]provider.Message, 0, minInt(maxHistoryMessages, len(history)))
+	maxMsgs := e.conversationHistoryMaxMessages()
+	out := make([]provider.Message, 0, minInt(maxMsgs, len(history)))
 	used := 0
 	cutoff := -1
 
 	for i := len(history) - 1; i >= 0; i-- {
-		if len(out) >= maxHistoryMessages || used >= budget {
+		if len(out) >= maxMsgs || used >= budget {
 			cutoff = i
 			break
 		}

@@ -22,13 +22,22 @@ func DefaultConfig() *Config {
 			MaxFiles:         50,
 			MaxTokensTotal:   16000,
 			MaxTokensPerFile: 2000,
-			MaxHistoryTokens: 1200,
-			Compression:      "standard",
-			AutoIncludeFiles: false,
-			IncludeTests:     false,
-			IncludeDocs:      true,
-			SymbolAware:      true,
-			GraphDepth:       2,
+			// 4096 tokens of conversation history is roughly 8 detailed
+			// turn pairs — enough to keep framing across a working
+			// session on a 200k+ window. Users on bigger-context models
+			// can crank this much higher; the engine no longer caps
+			// user-set values to the legacy 2k floor.
+			MaxHistoryTokens: 4096,
+			// 60 messages = 30 user/assistant pairs. Old default was 12
+			// which made the assistant feel amnesiac after ~6 turns even
+			// when the token budget had headroom.
+			MaxHistoryMessages: 60,
+			Compression:        "standard",
+			AutoIncludeFiles:   false,
+			IncludeTests:       false,
+			IncludeDocs:        true,
+			SymbolAware:        true,
+			GraphDepth:         2,
 		},
 		Memory: MemoryConfig{
 			Enabled:               true,

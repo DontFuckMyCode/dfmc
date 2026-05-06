@@ -77,11 +77,20 @@ const (
 	maxContextFiles              = 64
 	defaultProviderContextTokens = 32000
 	defaultResponseReserveTokens = 2048
-	defaultHistoryBudgetTokens   = 1200
-	maxHistoryBudgetTokens       = 2048
-	maxHistoryMessages           = 12
-	minHistorySummaryTokens      = 64
-	maxHistorySummaryTokens      = 512
+	// Conversation-history retention floors. The previous values
+	// (defaultHistoryBudgetTokens=1200, maxHistoryBudgetTokens=2048,
+	// maxHistoryMessages=12) were sized for the 8k-window era and made
+	// the assistant feel amnesiac after 3-4 substantive turns on
+	// 200k+/1M-window models. New floors target "remember the framing
+	// across a 30-turn working session" by default while staying well
+	// under any provider's hard limit. Both can be raised further via
+	// agent.history_budget_tokens / agent.history_max_messages config
+	// overrides for users on big-context models.
+	defaultHistoryBudgetTokens = 4096
+	maxHistoryBudgetTokens     = 32768
+	maxHistoryMessages         = 60
+	minHistorySummaryTokens    = 64
+	maxHistorySummaryTokens    = 1024
 	maxResponseReserveTokens     = 16384
 	basePromptReserveTokens      = 900
 	baseToolReserveTokens        = 512

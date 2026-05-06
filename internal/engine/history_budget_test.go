@@ -57,7 +57,14 @@ func TestTrimmedConversationMessages_RespectsBudgetAndRoleFilter(t *testing.T) {
 		Conversation:     conversation.New(nil),
 	}
 	now := time.Now()
-	for i := 0; i < 20; i++ {
+	// Generate enough conversation to exceed the post-2025-bump
+	// defaults (budget=4096 tokens, maxMsgs=60). Each pair below is
+	// ~360 chars / ~90 tokens; 80 pairs = 160 messages / ~14400 tokens
+	// which should clearly trip both ceilings and produce omitted
+	// entries. Old defaults (1200/12) would have tripped on round 6;
+	// the new generous floors mean we need a bigger fixture to assert
+	// "trimming actually happens for long sessions".
+	for i := 0; i < 80; i++ {
 		eng.Conversation.AddMessage("offline", "offline-analyzer-v1", types.Message{
 			Role:      types.RoleUser,
 			Content:   strings.Repeat("u ", 90) + "msg",
@@ -118,6 +125,54 @@ func TestConversationHistoryBudget_UsesConfigOverride(t *testing.T) {
 
 	if got := eng.conversationHistoryBudget(); got != 300 {
 		t.Fatalf("expected history budget override 300, got %d", got)
+	}
+}
+
+// TestConversationHistoryBudget_UserSetBypassesAutoCap pins the new
+// behavior: users on big-context models can crank Context.MaxHistory
+// Tokens above the auto-compute safety ceiling. Without the bypass a
+// 1M-window Opus user setting MaxHistoryTokens=200000 would still get
+// trimmed to ~32k regardless of intent.
+func TestConversationHistoryBudget_UserSetBypassesAutoCap(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Context.MaxHistoryTokens = 200_000 // far above maxHistoryBudgetTokens cap
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{
+		Config:       cfg,
+		Providers:    router,
+		Conversation: conversation.New(nil),
+	}
+	if got := eng.conversationHistoryBudget(); got != 200_000 {
+		t.Errorf("user-set value should bypass auto-cap, got %d (expected 200000)", got)
+	}
+}
+
+// TestConversationHistoryMaxMessages_HonorsConfigOverride verifies the
+// new MaxHistoryMessages knob takes precedence over the compiled-in
+// floor. Without the override, the trim window stays at 60 messages
+// even on a 1M-window model where the user might want 200+.
+func TestConversationHistoryMaxMessages_HonorsConfigOverride(t *testing.T) {
+	cases := []struct {
+		name string
+		set  int
+		want int
+	}{
+		{name: "zero falls to default", set: 0, want: maxHistoryMessages},
+		{name: "user value used", set: 200, want: 200},
+		{name: "small value passes through", set: 6, want: 6},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.DefaultConfig()
+			cfg.Context.MaxHistoryMessages = tc.set
+			eng := &Engine{Config: cfg}
+			if got := eng.conversationHistoryMaxMessages(); got != tc.want {
+				t.Errorf("set=%d: got %d, want %d", tc.set, got, tc.want)
+			}
+		})
 	}
 }
 

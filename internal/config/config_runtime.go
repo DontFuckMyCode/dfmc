@@ -7,16 +7,25 @@ type ProvidersConfig struct {
 }
 
 type ContextConfig struct {
-	MaxFiles         int    `yaml:"max_files"`
-	MaxTokensTotal   int    `yaml:"max_tokens_total"`
-	MaxTokensPerFile int    `yaml:"max_tokens_per_file"`
-	MaxHistoryTokens int    `yaml:"max_history_tokens"`
-	Compression      string `yaml:"compression"`
-	AutoIncludeFiles bool   `yaml:"auto_include_files"`
-	IncludeTests     bool   `yaml:"include_tests"`
-	IncludeDocs      bool   `yaml:"include_docs"`
-	SymbolAware      bool   `yaml:"symbol_aware"`
-	GraphDepth       int    `yaml:"graph_depth"`
+	MaxFiles         int `yaml:"max_files"`
+	MaxTokensTotal   int `yaml:"max_tokens_total"`
+	MaxTokensPerFile int `yaml:"max_tokens_per_file"`
+	// MaxHistoryTokens is the soft ceiling on prior-turn tokens
+	// spliced into each Ask. Set to 0 to use the engine's auto-
+	// compute (max_context / divisor, capped to a safe floor). User-
+	// set values bypass the auto-compute cap so users on big-context
+	// models can extend memory beyond the default floor.
+	MaxHistoryTokens int `yaml:"max_history_tokens"`
+	// MaxHistoryMessages caps the prior-turn MESSAGE count regardless
+	// of token size, so a single huge message can't crowd out the
+	// rest. Set to 0 to use the engine's compiled-in floor.
+	MaxHistoryMessages int    `yaml:"max_history_messages"`
+	Compression        string `yaml:"compression"`
+	AutoIncludeFiles   bool   `yaml:"auto_include_files"`
+	IncludeTests       bool   `yaml:"include_tests"`
+	IncludeDocs        bool   `yaml:"include_docs"`
+	SymbolAware        bool   `yaml:"symbol_aware"`
+	GraphDepth         int    `yaml:"graph_depth"`
 }
 
 type SecurityConfig struct {
