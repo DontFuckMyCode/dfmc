@@ -546,6 +546,128 @@ func TestHandleEngineEvent_CoachStuck_FiresIndependentOfVerbose(t *testing.T) {
 	}
 }
 
+// TestHandleEngineEvent_HeadroomThresholdNotifications pins the
+// pre-compact context-fill warnings: when tokens_used crosses 70/85/
+// 95% of the live loop budget for the FIRST time in a turn, the
+// dispatcher pushes a chat-event "context X% full" notification.
+// Each band fires at most once per turn (bitmask dedupe) and the
+// tracker resets on agent:loop:start so a fresh ask gets a clean
+// slate.
+func TestHandleEngineEvent_HeadroomThresholdNotifications(t *testing.T) {
+	m := newCoverageModel(t)
+
+	// Loop start primes the budget cap.
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:start",
+		Payload: map[string]any{
+			"max_tool_steps":  60,
+			"max_tool_tokens": 100_000,
+		},
+	})
+	if m.agentLoop.headroomThresholdsHit != 0 {
+		t.Fatalf("loop start should reset thresholds, got %d", m.agentLoop.headroomThresholdsHit)
+	}
+
+	// First thinking round at 50% — under all thresholds, no notification.
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:thinking",
+		Payload: map[string]any{
+			"step":        2,
+			"tokens_used": 50_000,
+		},
+	})
+	if m.agentLoop.headroomThresholdsHit != 0 {
+		t.Errorf("under 70%%: should not fire, got bitmask %d", m.agentLoop.headroomThresholdsHit)
+	}
+
+	// Second round at 72% — should hit 70% band.
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:thinking",
+		Payload: map[string]any{
+			"step":        3,
+			"tokens_used": 72_000,
+		},
+	})
+	if m.agentLoop.headroomThresholdsHit&1 == 0 {
+		t.Errorf("70%% band should fire at 72%%, bitmask=%d", m.agentLoop.headroomThresholdsHit)
+	}
+
+	// Third round still at 75% — 70 already fired, should NOT re-fire.
+	beforeMask := m.agentLoop.headroomThresholdsHit
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:thinking",
+		Payload: map[string]any{
+			"step":        4,
+			"tokens_used": 75_000,
+		},
+	})
+	if m.agentLoop.headroomThresholdsHit != beforeMask {
+		t.Errorf("70%% should not re-fire, bitmask drift %d→%d", beforeMask, m.agentLoop.headroomThresholdsHit)
+	}
+
+	// Jump to 96% — both 85 and 95 bands should now be set.
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:thinking",
+		Payload: map[string]any{
+			"step":        10,
+			"tokens_used": 96_000,
+		},
+	})
+	if m.agentLoop.headroomThresholdsHit&(1|2|4) != (1 | 2 | 4) {
+		t.Errorf("at 96%%: all three bands should be set, got bitmask %d", m.agentLoop.headroomThresholdsHit)
+	}
+
+	// New ask resets.
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:start",
+		Payload: map[string]any{
+			"max_tool_steps":  60,
+			"max_tool_tokens": 100_000,
+		},
+	})
+	if m.agentLoop.headroomThresholdsHit != 0 {
+		t.Errorf("loop start should reset thresholds, got %d", m.agentLoop.headroomThresholdsHit)
+	}
+}
+
+// TestHandleEngineEvent_CompactClearsCrossedThresholds pins the
+// re-arm behaviour: after a compact drops usage below a previously-
+// crossed band, that band's bit clears so a subsequent climb back
+// over the threshold fires the warning again. Without this, a long
+// turn that hit 95% → compacted to 30% → climbed back to 75% would
+// stay silent on the second crossing.
+func TestHandleEngineEvent_CompactClearsCrossedThresholds(t *testing.T) {
+	m := newCoverageModel(t)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:start",
+		Payload: map[string]any{
+			"max_tool_tokens": 100_000,
+		},
+	})
+	// Climb to 96%.
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:thinking",
+		Payload: map[string]any{
+			"tokens_used": 96_000,
+		},
+	})
+	if m.agentLoop.headroomThresholdsHit != (1 | 2 | 4) {
+		t.Fatalf("setup: expected all bands set, got %d", m.agentLoop.headroomThresholdsHit)
+	}
+	// Compact reclaims to 30%.
+	m = m.handleEngineEvent(engine.Event{
+		Type: "context:lifecycle:compacted",
+		Payload: map[string]any{
+			"before_tokens": 96_000,
+			"after_tokens":  30_000,
+		},
+	})
+	// All three bands should now be cleared (30 < 70 < 85 < 95).
+	if m.agentLoop.headroomThresholdsHit != 0 {
+		t.Errorf("compact to 30%% should clear all bands, got %d", m.agentLoop.headroomThresholdsHit)
+	}
+}
+
 // TestHandleEngineEvent_ProviderFallback_SurfacesNotice pins the
 // new provider:fallback classifier — distinct from circuit:open
 // (cooldown) and stream:recovered (mid-stream swap), this fires

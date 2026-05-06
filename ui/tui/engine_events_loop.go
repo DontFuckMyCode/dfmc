@@ -14,6 +14,63 @@ import (
 	"time"
 )
 
+// headroomThresholds defines the (pct, bit, severity, hint) bands the
+// pre-compact warning notifies on. bit indices match the bitmask in
+// agentLoopState.headroomThresholdsHit so each band fires at most once
+// per turn — a long loop that ticks 71→72→73 over many rounds only
+// shows the 70% notification ONCE.
+var headroomThresholds = []struct {
+	pct      int
+	bit      uint8
+	status   string // chat-event Status (warn, error)
+	headline string
+	hint     string
+}{
+	{pct: 70, bit: 1 << 0, status: "warn", headline: "context 70% full", hint: "auto-compact will fire next round (or /compact now)"},
+	{pct: 85, bit: 1 << 1, status: "warn", headline: "context 85% full", hint: "narrow the question or /compact — only ~15% headroom left"},
+	{pct: 95, bit: 1 << 2, status: "error", headline: "context 95% full", hint: "/compact now — next turn may park on budget"},
+}
+
+// maybeNotifyHeadroomThreshold pushes a chat-event line when the live
+// loop tokens cross a 70/85/95 band for the first time this turn.
+// Uses the live loop budget when available (max_tool_tokens), falling
+// back to MaxContext from the live context snapshot when not — that
+// way a non-loop Ask still gets a warning if the request itself fills
+// the window. Caller is the agent:loop:thinking handler so this fires
+// once per round at most; the bitmask dedupes within the turn.
+func (m Model) maybeNotifyHeadroomThreshold() Model {
+	used := m.agentLoop.liveLoopTokens
+	cap := m.agentLoop.liveLoopBudgetCap
+	if cap <= 0 {
+		// Fall back to provider context window when the loop didn't
+		// report a budget — better than nothing for non-tool-loop asks.
+		if live := m.liveContextSnapshot(); live.ok && live.maxContext > 0 {
+			cap = live.maxContext
+		}
+	}
+	if used <= 0 || cap <= 0 {
+		return m
+	}
+	pct := int((int64(used) * 100) / int64(cap))
+	for _, band := range headroomThresholds {
+		if pct < band.pct {
+			continue
+		}
+		if m.agentLoop.headroomThresholdsHit&band.bit != 0 {
+			continue // already fired this turn
+		}
+		m.agentLoop.headroomThresholdsHit |= band.bit
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    fmt.Sprintf("context:headroom:%d", band.pct),
+			Kind:   "context",
+			Status: band.status,
+			Title:  band.headline,
+			Detail: fmt.Sprintf("%d / %d tokens · %s", used, cap, band.hint),
+		})
+	}
+	return m
+}
+
 func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (Model, string) {
 	line := ""
 	switch eventType {
@@ -46,6 +103,11 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		// right denominator. Cleared together with the rest.
 		m.agentLoop.liveLoopTokens = 0
 		m.agentLoop.liveLoopBudgetCap = payloadInt(payload, "max_tool_tokens", 0)
+		// Reset the per-turn threshold-warnings tracker so the new ask
+		// gets a fresh chance to show 70/85/95% notifications. Without
+		// this reset, a long previous turn that hit 95% would suppress
+		// the warning for the new turn until usage drops back below 70.
+		m.agentLoop.headroomThresholdsHit = 0
 		// A fresh loop start means any previously parked banner is obsolete.
 		m.ui.resumePromptActive = false
 		files := payloadInt(payload, "context_files", 0)
@@ -76,6 +138,16 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		}
 		m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
 		m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
+		// Pre-compact headroom warnings: when the running tokens_used
+		// crosses 70/85/95% of the live loop budget for the FIRST
+		// TIME this turn, push a chat-event notification. The
+		// auto-compactor fires reactively at 0.7 ratio (and proactively
+		// at 0.5 once past the soft-cap), so a 70% notification means
+		// "compact is imminent next round"; 95% means "things are
+		// getting urgent — narrow the question or /compact now."
+		// Tracker is per-turn (cleared on agent:loop:start) so a
+		// second turn after compact gets a clean band-crossing slate.
+		m = m.maybeNotifyHeadroomThreshold()
 		if m.agentLoop.step > 0 && m.agentLoop.maxToolStep > 0 {
 			line = fmt.Sprintf("Agent thinking: step %d/%d", m.agentLoop.step, m.agentLoop.maxToolStep)
 		} else {

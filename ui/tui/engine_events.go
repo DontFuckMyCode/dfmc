@@ -375,16 +375,32 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		collapsed := payloadInt(payload, "rounds_collapsed", 0)
 		removed := payloadInt(payload, "messages_removed", 0)
 		step := payloadInt(payload, "step", 0)
+		reclaimed := max(before-after, 0) // defensive: compact never grows the buffer
 		title := "context compacted"
 		if eventType == "context:lifecycle:proactive_compacted" {
 			title = "context proactive compact"
 		}
-		preview := fmt.Sprintf("%d→%d tok · %d rounds", before, after, collapsed)
+		preview := fmt.Sprintf("%d→%d tok · -%d reclaimed · %d rounds",
+			before, after, reclaimed, collapsed)
 		m.pushToolChip(toolChip{
 			Name:    "auto-compact",
 			Status:  "compact",
 			Preview: preview,
 		})
+		// Re-arm the headroom-threshold tracker for the bands the
+		// compact has now dropped below — without this, a turn that
+		// hit 95% then compacted to 30% would suppress the warning
+		// when the loop climbs back over 70% on the next round.
+		// Recompute usage % post-compact and clear the bits for any
+		// bands that are no longer crossed.
+		if cap := m.agentLoop.liveLoopBudgetCap; cap > 0 && after > 0 {
+			pctAfter := int((int64(after) * 100) / int64(cap))
+			for _, band := range headroomThresholds {
+				if pctAfter < band.pct {
+					m.agentLoop.headroomThresholdsHit &^= band.bit
+				}
+			}
+		}
 		m.upsertStreamingChatEvent(chatEventLine{
 			Key:    fmt.Sprintf("%s:%d", eventType, step),
 			Kind:   "context",
@@ -395,9 +411,11 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			Reason: "tool-loop history was summarized to keep provider context headroom",
 		})
 		if collapsed > 0 {
-			line = fmt.Sprintf("Context auto-compacted: %d→%d tokens (%d rounds, %d msgs removed).", before, after, collapsed, removed)
+			line = fmt.Sprintf("Context auto-compacted: %d→%d tok · -%d reclaimed (%d rounds, %d msgs removed).",
+				before, after, reclaimed, collapsed, removed)
 		} else {
-			line = fmt.Sprintf("Context auto-compacted: %d→%d tokens.", before, after)
+			line = fmt.Sprintf("Context auto-compacted: %d→%d tok · -%d reclaimed.",
+				before, after, reclaimed)
 		}
 	case "provider:race:complete":
 		winner := payloadString(payload, "winner", "?")

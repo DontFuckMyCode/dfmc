@@ -610,6 +610,14 @@ type agentLoopState struct {
 	// updating round-by-round.
 	liveLoopTokens     int
 	liveLoopBudgetCap  int // engine's max_tool_tokens (live working-set ceiling)
+
+	// headroomThresholdsHit tracks WHICH context-fill % bands the
+	// current turn has already crossed (70/85/95). Used to dedupe the
+	// chat-event "context X% full · auto-compact pending" notifications
+	// so a long loop ticking over 70% repeatedly only fires the warning
+	// ONCE per turn per band. Reset on agent:loop:start.
+	// Bit 0 = 70%, bit 1 = 85%, bit 2 = 95%.
+	headroomThresholdsHit uint8
 }
 
 // workflowPanelState — Drive TODO tree panel state for the Workflow tab.
