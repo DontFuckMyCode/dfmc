@@ -162,15 +162,30 @@ func asString(m map[string]any, key, fallback string) string {
 	if m == nil {
 		return fallback
 	}
-	if v, ok := m[key]; ok {
-		switch vv := v.(type) {
-		case string:
-			return vv
-		default:
-			return fmt.Sprint(v)
-		}
+	v, ok := m[key]
+	if !ok {
+		return fallback
 	}
-	return fallback
+	// Nil + slice + map all produce gibberish via fmt.Sprint:
+	//   nil      → "<nil>"
+	//   []any{x} → "[x]"
+	//   map      → "map[k:v]"
+	// Tools using these as paths/queries would silently fail with
+	// "file <nil> not found" style errors. Return fallback so the
+	// caller's required-field check fires with a useful message
+	// instead, or the default value applies.
+	if v == nil {
+		return fallback
+	}
+	switch vv := v.(type) {
+	case string:
+		return vv
+	case []any, map[string]any:
+		_ = vv
+		return fallback
+	default:
+		return fmt.Sprint(v)
+	}
 }
 
 func asInt(m map[string]any, key string, fallback int) int {

@@ -56,6 +56,48 @@ func TestAsBool_AcceptsCommonProviderShapes(t *testing.T) {
 	}
 }
 
+// TestAsString_RejectsNonStringScalars pins the asString contract for
+// the three nonsense inputs the legacy fmt.Sprint fall-through used to
+// turn into corrupt values:
+//   - nil → "<nil>"   (read_file path="<nil>" → "file not found: <nil>")
+//   - []any{x} → "[x]"  (weak model wrapping a single arg in an array)
+//   - map → "map[k:v]"  (model nesting struct where a string was wanted)
+// All three should fall back to the caller's default so the
+// missingParamError or downstream validation fires with a useful
+// message instead of corrupted-value errors.
+func TestAsString_RejectsNonStringScalars(t *testing.T) {
+	cases := []struct {
+		name string
+		v    any
+	}{
+		{name: "nil value", v: nil},
+		{name: "single-element array", v: []any{"foo"}},
+		{name: "map", v: map[string]any{"k": "v"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := asString(map[string]any{"path": tc.v}, "path", "")
+			if got != "" {
+				t.Errorf("asString(%T=%v) = %q, want fallback empty string", tc.v, tc.v, got)
+			}
+			// Fallback must propagate when caller passes a default.
+			withDefault := asString(map[string]any{"path": tc.v}, "path", "default")
+			if withDefault != "default" {
+				t.Errorf("asString(%T=%v, fallback=default) = %q, want %q", tc.v, tc.v, withDefault, "default")
+			}
+		})
+	}
+	// Sanity: real strings still pass through.
+	if got := asString(map[string]any{"path": "src/foo.go"}, "path", ""); got != "src/foo.go" {
+		t.Errorf("string passthrough broke: got %q", got)
+	}
+	// Sanity: numbers still convert via fmt.Sprint (some callers expect
+	// `asString(params, "step", "")` to coerce numeric step IDs).
+	if got := asString(map[string]any{"step": 42}, "step", ""); got != "42" {
+		t.Errorf("numeric coerce broke: got %q", got)
+	}
+}
+
 // TestAsBool_NaNFallsBack ensures the float64 path rejects NaN. Without
 // the explicit NaN check, `NaN != 0` would be true and asBool would
 // return true for an invalid value — surprising behaviour even if
