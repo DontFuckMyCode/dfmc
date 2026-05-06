@@ -167,6 +167,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		m.agentLoop.stuckTool = tool
 		m.agentLoop.stuckCount = count
 		m.agentLoop.stuckErrClass = truncatedErr
+		m.agentLoop.turnCoachInterventions++
 		notice := fmt.Sprintf(
 			"⚠ Loop stalled — %s failed %d times with the same error class. The agent has been told to switch tactic.",
 			tool, count,
@@ -206,6 +207,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			fileCount, preview,
 		)
 		m = m.appendCoachMessage(notice, coachSeverityWarn, "unverified-edits", "")
+		m.agentLoop.turnCoachInterventions++
 		return m
 	case "agent:subagent:start", "agent:subagent:fallback", "agent:subagent:done":
 		m, line = m.handleSubagentEvent(eventType, payload)

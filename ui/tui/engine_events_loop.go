@@ -10,6 +10,7 @@ package tui
 
 import (
 	"fmt"
+	"time"
 )
 
 func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (Model, string) {
@@ -34,6 +35,11 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		// slate. Edits the new turn produces will accumulate from zero.
 		m.agentLoop.unvalidatedEdits = nil
 		m.agentLoop.unvalidatedSinceStep = 0
+		// Turn accumulators for the on-final summary card.
+		m.agentLoop.turnStartedAt = time.Now()
+		m.agentLoop.turnEditedFiles = nil
+		m.agentLoop.turnValidationPasses = 0
+		m.agentLoop.turnCoachInterventions = 0
 		// A fresh loop start means any previously parked banner is obsolete.
 		m.ui.resumePromptActive = false
 		files := payloadInt(payload, "context_files", 0)
@@ -70,7 +76,17 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		if step := payloadInt(payload, "step", 0); step > 0 {
 			m.agentLoop.step = step
 		}
-		line = fmt.Sprintf("Agent loop finalizing answer after %d tool call(s).", m.agentLoop.toolRounds)
+		// Render the turn-summary card AS the final notice line so the
+		// user lands on a multi-line recap of what just happened
+		// instead of a generic "finalizing answer after N tool call(s)"
+		// banner. Suppressed for trivial turns (zero edits, zero
+		// validation, no coach interventions) where the answer itself
+		// is the report and a card would be noise.
+		if summary := buildTurnSummary(m.agentLoop); summary != "" {
+			line = summary
+		} else {
+			line = fmt.Sprintf("Agent loop finalizing answer after %d tool call(s).", m.agentLoop.toolRounds)
+		}
 	case "agent:loop:max_steps":
 		m.agentLoop.active = false
 		m.agentLoop.phase = "max-steps"

@@ -208,6 +208,88 @@ func autonomyUnverifiedLine(s agentLoopState) string {
 		len(s.unvalidatedEdits), severity, strings.Join(preview, ", "), tail)
 }
 
+// buildTurnSummary renders a multi-line recap of an agent turn that
+// finished. Surfaces what the user actually wants to know after a long
+// unattended run: how long did it take, how many tool calls, what
+// files did it touch, did it validate, did the coach intervene, how
+// close to the cumulative ceiling. Returns "" for trivial turns
+// (zero edits, no validation, no coach activity) — the assistant
+// answer itself is the report in that case and a card would be noise.
+//
+// Output shape:
+//
+//	▸ Turn summary
+//	  duration:    2m 14s
+//	  tool calls:  12 round(s)
+//	  files:       edited 5 (a.go, b.go, c.go, +2 more)
+//	  validation:  3 passes ran (last unverified count: 0)
+//	  coach:       2 intervention(s) — see scrollback for detail
+//	  ceiling:     78/600 cumulative steps used (13%)
+//
+// Each row only appears when the value is non-zero so the card
+// adapts to what actually happened.
+func buildTurnSummary(s agentLoopState) string {
+	hasEdits := len(s.turnEditedFiles) > 0
+	hasValidation := s.turnValidationPasses > 0
+	hasCoach := s.turnCoachInterventions > 0
+	hasCeiling := s.stepCeiling > 0 && s.cumulativeSteps > 0
+
+	if !hasEdits && !hasValidation && !hasCoach && !hasCeiling && s.toolRounds == 0 {
+		return ""
+	}
+
+	lines := []string{"▸ Turn summary"}
+
+	if !s.turnStartedAt.IsZero() {
+		dur := time.Since(s.turnStartedAt).Round(time.Second)
+		lines = append(lines, fmt.Sprintf("  duration:    %s", dur))
+	}
+	if s.toolRounds > 0 {
+		lines = append(lines, fmt.Sprintf("  tool calls:  %d round(s)", s.toolRounds))
+	}
+	if hasEdits {
+		preview := s.turnEditedFiles
+		tail := ""
+		if len(preview) > 3 {
+			preview = preview[:3]
+			tail = fmt.Sprintf(", +%d more", len(s.turnEditedFiles)-3)
+		}
+		lines = append(lines, fmt.Sprintf("  files:       edited %d (%s%s)",
+			len(s.turnEditedFiles), strings.Join(preview, ", "), tail))
+	}
+	if hasValidation || hasEdits {
+		// Validation row appears whenever there was either a validation
+		// pass OR an edit — an edit-only row without a validation row
+		// is itself a signal the user should see ("edited 5, ran 0").
+		passWord := "passes"
+		if s.turnValidationPasses == 1 {
+			passWord = "pass"
+		}
+		stillUnverified := len(s.unvalidatedEdits)
+		lines = append(lines, fmt.Sprintf("  validation:  %d %s ran (still unverified: %d)",
+			s.turnValidationPasses, passWord, stillUnverified))
+	}
+	if hasCoach {
+		word := "interventions"
+		if s.turnCoachInterventions == 1 {
+			word = "intervention"
+		}
+		lines = append(lines, fmt.Sprintf("  coach:       %d %s — see scrollback for detail",
+			s.turnCoachInterventions, word))
+	}
+	if hasCeiling {
+		pct := (s.cumulativeSteps * 100) / s.stepCeiling
+		lines = append(lines, fmt.Sprintf("  ceiling:     %d/%d cumulative steps used (%d%%)",
+			s.cumulativeSteps, s.stepCeiling, pct))
+	}
+
+	if len(lines) == 1 {
+		// Only the header — nothing meaningful happened, drop the card.
+		return ""
+	}
+	return strings.Join(lines, "\n")
+}
+
 // describeWorkflow renders the high-level autonomous-workflow snapshot:
 // todo list counts, active subagent fan-out, drive progress, and the
 // latest available plan summary.

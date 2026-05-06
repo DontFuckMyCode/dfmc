@@ -287,19 +287,31 @@ func (m Model) trackMutationOrValidation(toolName string, payload map[string]any
 		if len(m.agentLoop.unvalidatedEdits) == 0 {
 			m.agentLoop.unvalidatedSinceStep = step
 		}
-		seen := make(map[string]struct{}, len(m.agentLoop.unvalidatedEdits))
+		// turnEditedFiles is the same de-dup'd accumulator as
+		// unvalidatedEdits but survives validation — it answers "what
+		// did this turn touch overall" for the final summary card,
+		// while unvalidatedEdits tracks "what's still unverified
+		// RIGHT NOW" for the live badge.
+		seenLive := make(map[string]struct{}, len(m.agentLoop.unvalidatedEdits))
 		for _, p := range m.agentLoop.unvalidatedEdits {
-			seen[p] = struct{}{}
+			seenLive[p] = struct{}{}
+		}
+		seenTurn := make(map[string]struct{}, len(m.agentLoop.turnEditedFiles))
+		for _, p := range m.agentLoop.turnEditedFiles {
+			seenTurn[p] = struct{}{}
 		}
 		for _, p := range paths {
 			if p = strings.TrimSpace(p); p == "" {
 				continue
 			}
-			if _, dup := seen[p]; dup {
-				continue
+			if _, dup := seenLive[p]; !dup {
+				m.agentLoop.unvalidatedEdits = append(m.agentLoop.unvalidatedEdits, p)
+				seenLive[p] = struct{}{}
 			}
-			m.agentLoop.unvalidatedEdits = append(m.agentLoop.unvalidatedEdits, p)
-			seen[p] = struct{}{}
+			if _, dup := seenTurn[p]; !dup {
+				m.agentLoop.turnEditedFiles = append(m.agentLoop.turnEditedFiles, p)
+				seenTurn[p] = struct{}{}
+			}
 		}
 	case "run_command":
 		cmd := strings.TrimSpace(payloadString(payload, "command", ""))
@@ -309,6 +321,7 @@ func (m Model) trackMutationOrValidation(toolName string, payload map[string]any
 		if isValidationCommand(cmd) {
 			m.agentLoop.unvalidatedEdits = nil
 			m.agentLoop.unvalidatedSinceStep = 0
+			m.agentLoop.turnValidationPasses++
 		}
 	}
 	return m

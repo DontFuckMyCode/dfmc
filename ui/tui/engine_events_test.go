@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
@@ -726,6 +727,86 @@ func TestHandleEngineEvent_AutoResumePersistsCumulative(t *testing.T) {
 	if m3.agentLoop.cumulativeSteps != 0 || m3.agentLoop.stepCeiling != 0 {
 		t.Errorf("agent:loop:start should reset cumulative counters, got steps=%d ceil=%d",
 			m3.agentLoop.cumulativeSteps, m3.agentLoop.stepCeiling)
+	}
+}
+
+func TestBuildTurnSummary_QuietForTrivialTurn(t *testing.T) {
+	// Zero-effort turn (e.g. one-shot Q+A with no tools) → no card.
+	if got := buildTurnSummary(agentLoopState{}); got != "" {
+		t.Errorf("trivial turn → no summary, got %q", got)
+	}
+}
+
+func TestBuildTurnSummary_EditsAndValidationRecap(t *testing.T) {
+	s := agentLoopState{
+		toolRounds:             12,
+		turnStartedAt:          time.Now().Add(-2 * time.Minute),
+		turnEditedFiles:        []string{"a.go", "b.go", "c.go", "d.go", "e.go"},
+		turnValidationPasses:   3,
+		turnCoachInterventions: 0,
+		unvalidatedEdits:       nil, // all validated
+	}
+	got := buildTurnSummary(s)
+	if !strings.Contains(got, "Turn summary") {
+		t.Errorf("missing header in %q", got)
+	}
+	if !strings.Contains(got, "12 round(s)") {
+		t.Errorf("missing tool round count in %q", got)
+	}
+	if !strings.Contains(got, "edited 5") {
+		t.Errorf("missing edit count in %q", got)
+	}
+	if !strings.Contains(got, "+2 more") {
+		t.Errorf("missing path-preview tail in %q", got)
+	}
+	if !strings.Contains(got, "3 passes ran") {
+		t.Errorf("missing validation count in %q", got)
+	}
+	if !strings.Contains(got, "still unverified: 0") {
+		t.Errorf("missing zero-unverified status in %q", got)
+	}
+	if strings.Contains(got, "coach:") {
+		t.Errorf("zero coach interventions → no coach row, got %q", got)
+	}
+	if !strings.Contains(got, "duration:") {
+		t.Errorf("expected duration row, got %q", got)
+	}
+}
+
+func TestBuildTurnSummary_IncludesCoachAndCeiling(t *testing.T) {
+	s := agentLoopState{
+		toolRounds:             20,
+		turnEditedFiles:        []string{"a.go"},
+		turnValidationPasses:   1,
+		turnCoachInterventions: 2,
+		cumulativeSteps:        78,
+		stepCeiling:            600,
+	}
+	got := buildTurnSummary(s)
+	if !strings.Contains(got, "2 interventions") {
+		t.Errorf("expected coach interventions row, got %q", got)
+	}
+	if !strings.Contains(got, "78/600") {
+		t.Errorf("expected ceiling counter, got %q", got)
+	}
+	if !strings.Contains(got, "13%") {
+		t.Errorf("expected ceiling percent, got %q", got)
+	}
+	// Singular for one validation pass.
+	if !strings.Contains(got, "1 pass ran") {
+		t.Errorf("expected singular 'pass', got %q", got)
+	}
+}
+
+func TestBuildTurnSummary_SingularCoachWording(t *testing.T) {
+	s := agentLoopState{
+		toolRounds:             5,
+		turnEditedFiles:        []string{"a.go"},
+		turnCoachInterventions: 1,
+	}
+	got := buildTurnSummary(s)
+	if !strings.Contains(got, "1 intervention ") {
+		t.Errorf("expected singular 'intervention', got %q", got)
 	}
 }
 

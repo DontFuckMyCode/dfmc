@@ -588,6 +588,18 @@ type agentLoopState struct {
 	// current unvalidated batch landed; useful for "edited 5 files
 	// across the last 12 steps" signals if we ever surface duration.
 	unvalidatedSinceStep int
+
+	// Turn-scoped accumulators powering the on-final summary card.
+	// `unvalidated*` above is a LIVE state that clears on validation;
+	// these survive validation passes and only reset on agent:loop:start
+	// because their job is "what did this whole turn touch?", not
+	// "what's still unverified right now". Together they answer the
+	// "what did it actually do for the last 2 hours?" question that the
+	// chip ribbon can't because chips scroll out of view.
+	turnStartedAt          time.Time
+	turnEditedFiles        []string
+	turnValidationPasses   int
+	turnCoachInterventions int
 }
 
 // workflowPanelState — Drive TODO tree panel state for the Workflow tab.
