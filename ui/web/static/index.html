@@ -1020,6 +1020,11 @@ const activityState = {
 	eventSource: null,
 };
 
+// loopBudgetState tracks the current ask's max_tool_tokens so the
+// thinking-event renderer can show context fill %. Reset on each
+// agent:loop:start; null until the first start event of the session.
+const loopBudgetState = { cap: 0, bandsHit: 0 };
+
 function classifyActivityEvent(ev) {
 	const type = (ev && ev.event || "").toLowerCase();
 	const payload = (ev && ev.payload) || {};
@@ -1027,12 +1032,33 @@ function classifyActivityEvent(ev) {
 	if (!type) return fallback;
 	if (type.startsWith("agent:")) {
 		if (type === "agent:loop:start") {
+			loopBudgetState.cap = payload.max_tool_tokens || 0;
+			loopBudgetState.bandsHit = 0;
 			return { kind: "agent", icon: "\u25c9",
 				text: "agent start \u00b7 " + (payload.provider || "") + "/" + (payload.model || "") + " max=" + (payload.max_tool_steps || 0) };
 		}
 		if (type === "agent:loop:thinking") {
+			// Inline context fill % when over 50% so users debugging a
+			// long loop see headroom shrinking without opening the
+			// Workbench. Mirrors the TUI's threshold notifications but
+			// rendered on the existing thinking-event row to avoid
+			// flooding the activity feed with synthetic warnings.
+			let suffix = "";
+			const used = payload.tokens_used || 0;
+			if (loopBudgetState.cap > 0 && used > 0) {
+				const pct = Math.floor((used * 100) / loopBudgetState.cap);
+				if (pct >= 95) {
+					suffix = " \u00b7 \u26a0 ctx " + pct + "% (compact urgent)";
+				} else if (pct >= 85) {
+					suffix = " \u00b7 \u26a0 ctx " + pct + "% (narrow scope)";
+				} else if (pct >= 70) {
+					suffix = " \u00b7 ctx " + pct + "% (compact pending)";
+				} else if (pct >= 50) {
+					suffix = " \u00b7 ctx " + pct + "%";
+				}
+			}
 			return { kind: "agent", icon: "\u25c9",
-				text: "agent thinking \u00b7 " + (payload.step || 0) + "/" + (payload.max_tool_steps || 0) };
+				text: "agent thinking \u00b7 " + (payload.step || 0) + "/" + (payload.max_tool_steps || 0) + suffix };
 		}
 		if (type === "agent:loop:end") {
 			return { kind: "agent", icon: "\u25c9", text: "agent end \u00b7 " + (payload.reason || "done") };
