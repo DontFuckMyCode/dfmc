@@ -183,6 +183,24 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		} else {
 			line = "Auto-recover: budget trip, transcript slimmed. Retrying."
 		}
+	case "agent:loop:stuck_force_stop":
+		// Stuck-streak guard fired — the loop forced tool_choice="none"
+		// for the next call because the same failure pattern persisted
+		// for N consecutive rounds and the "switch tactic" hint went
+		// unheeded. Surface a distinct chip + warn line so the user can
+		// see WHY the model suddenly switches to text-only output.
+		streak := payloadInt(payload, "stuck_streak", 0)
+		threshold := payloadInt(payload, "threshold", 0)
+		preview := fmt.Sprintf("%d rounds stuck · forcing text reply", streak)
+		m.pushToolChip(toolChip{
+			Name:    "force-stop",
+			Status:  "warn",
+			Preview: preview,
+		})
+		line = fmt.Sprintf(
+			"Loop stuck for %d consecutive rounds (threshold %d) — forcing the next reply to be text-only so you can redirect.",
+			streak, threshold,
+		)
 	}
 	return m, line
 }

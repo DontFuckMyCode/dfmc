@@ -729,6 +729,36 @@ func TestHandleEngineEvent_AutoResumePersistsCumulative(t *testing.T) {
 	}
 }
 
+func TestHandleEngineEvent_StuckForceStop_SurfacesChipAndLine(t *testing.T) {
+	m := newCoverageModel(t)
+	payload := map[string]any{
+		"step":         12,
+		"stuck_streak": 3,
+		"threshold":    3,
+	}
+	m2, line := m.handleAgentLoopEvent("agent:loop:stuck_force_stop", payload)
+	if !strings.Contains(line, "stuck for 3 consecutive rounds") {
+		t.Errorf("expected stuck-streak narration in line, got %q", line)
+	}
+	if !strings.Contains(line, "text-only") {
+		t.Errorf("line should explain the force-stop, got %q", line)
+	}
+	timeline := m2.agentLoop.toolTimeline
+	if len(timeline) == 0 {
+		t.Fatal("expected a force-stop chip on the timeline")
+	}
+	chip := timeline[len(timeline)-1]
+	if chip.Name != "force-stop" {
+		t.Errorf("expected chip name 'force-stop', got %q", chip.Name)
+	}
+	if chip.Status != "warn" {
+		t.Errorf("expected warn status, got %q", chip.Status)
+	}
+	if !strings.Contains(chip.Preview, "3 rounds stuck") {
+		t.Errorf("chip preview should cite streak, got %q", chip.Preview)
+	}
+}
+
 func TestHandleEngineEvent_CoachUnverified_FiresAtThreshold(t *testing.T) {
 	m := newCoverageModel(t)
 	event := engine.Event{

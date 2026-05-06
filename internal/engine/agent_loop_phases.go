@@ -329,7 +329,17 @@ func dedupTargetHint(call provider.ToolCall) string {
 func (e *Engine) injectTrajectoryHints(s *loopRunState, freshStart int) {
 	hints := buildTrajectoryHints(s.traces[freshStart:], s.traces, s.seed.RecentCoachHints)
 	if hints == nil {
+		// No fresh traces this round — leave streak alone (could be a
+		// pure-text round between tool batches; not a recovery signal).
 		return
+	}
+	// Maintain the stuck-streak counter. Tracks consecutive rounds with
+	// the repeated-failure pattern; reset when the round comes back
+	// clean. Drives the loop's force-stop guard below.
+	if hints.StuckTool != "" {
+		s.stuckStreak++
+	} else {
+		s.stuckStreak = 0
 	}
 	if hints.StuckTool != "" {
 		e.publishAgentLoopEvent("agent:coach:stuck", map[string]any{
@@ -338,6 +348,7 @@ func (e *Engine) injectTrajectoryHints(s *loopRunState, freshStart int) {
 			"failure_count":     hints.StuckCount,
 			"error_class":       hints.StuckErrSample,
 			"hint_text_emitted": len(hints.Hints) > 0,
+			"streak":            s.stuckStreak,
 			"surface":           "native",
 		})
 	}

@@ -184,3 +184,119 @@ func TestRecommendCoachValidationHintShellSafety(t *testing.T) {
 		t.Fatalf("validation hint mismatch:\nwant: %q\n got: %q", want, got)
 	}
 }
+
+// TestInjectTrajectoryHints_StuckStreakIncrement pins the per-round
+// stuck-streak counter that drives the stuck_force_stop guard. Three
+// consecutive rounds of the same failure pattern → streak=3, ready to
+// trip the force-stop threshold on the next iteration.
+func TestInjectTrajectoryHints_StuckStreakIncrement(t *testing.T) {
+	e := &Engine{}
+	makeFailureTrace := func(step int, path string) nativeToolTrace {
+		return nativeToolTrace{
+			Call: provider.ToolCall{
+				Name: "tool_call",
+				Input: map[string]any{
+					"name": "read_file",
+					"args": map[string]any{"path": path},
+				},
+			},
+			Err:  "file does not exist",
+			Step: step,
+		}
+	}
+	s := &loopRunState{
+		seed: &parkedAgentState{},
+		// 3 failures in a row → detectRepeatedFailures fires.
+		traces: []nativeToolTrace{
+			makeFailureTrace(1, "guess1.go"),
+			makeFailureTrace(2, "guess2.go"),
+			makeFailureTrace(3, "guess3.go"),
+		},
+		step: 3,
+	}
+	// Round 1 over a stuck pattern → streak goes 0→1.
+	e.injectTrajectoryHints(s, 0)
+	if s.stuckStreak != 1 {
+		t.Errorf("after first stuck round, streak = %d, want 1", s.stuckStreak)
+	}
+	// Round 2 — still stuck (recompute over same+more traces). Adding a
+	// fourth failure keeps Rule 0 firing.
+	s.traces = append(s.traces, makeFailureTrace(4, "guess4.go"))
+	s.step = 4
+	e.injectTrajectoryHints(s, 3)
+	if s.stuckStreak != 2 {
+		t.Errorf("after second stuck round, streak = %d, want 2", s.stuckStreak)
+	}
+	// Successful tool result → next round is "clean", streak resets.
+	s.traces = append(s.traces, nativeToolTrace{
+		Call: provider.ToolCall{
+			Name: "tool_call",
+			Input: map[string]any{
+				"name": "glob",
+				"args": map[string]any{"pattern": "**/*.go"},
+			},
+		},
+		Step: 5,
+	})
+	s.step = 5
+	e.injectTrajectoryHints(s, 4)
+	// detectRepeatedFailures still has 4 read_file fails on record so
+	// it would still flag stuck. The reset happens only when the stuck
+	// pattern itself goes away. Verify the expected behaviour: streak
+	// CONTINUES because Rule 0 still fires (the failures are still in
+	// the window). The streak is reset by recovery from the failures,
+	// not just by one successful unrelated tool. So after this round
+	// streak should be 3 — ready to trip the force-stop on the next
+	// pre-flight tool-choice check.
+	if s.stuckStreak != 3 {
+		t.Errorf("streak should still climb while stuck pattern persists, got %d", s.stuckStreak)
+	}
+}
+
+// TestInjectTrajectoryHints_StuckStreakResetsOnRecovery verifies the
+// streak goes back to zero once detectRepeatedFailures stops firing.
+// In practice that happens when enough successful calls of OTHER tools
+// push the failed read_file calls out of the 8-trace detector window.
+func TestInjectTrajectoryHints_StuckStreakResetsOnRecovery(t *testing.T) {
+	e := &Engine{}
+	traces := []nativeToolTrace{}
+	// Three failures of read_file establish the stuck pattern.
+	for i := 1; i <= 3; i++ {
+		traces = append(traces, nativeToolTrace{
+			Call: provider.ToolCall{
+				Name: "tool_call",
+				Input: map[string]any{
+					"name": "read_file",
+					"args": map[string]any{"path": "missing.go"},
+				},
+			},
+			Err:  "file does not exist",
+			Step: i,
+		})
+	}
+	s := &loopRunState{seed: &parkedAgentState{}, traces: traces, step: 3}
+	e.injectTrajectoryHints(s, 0)
+	if s.stuckStreak != 1 {
+		t.Fatalf("setup: expected streak=1, got %d", s.stuckStreak)
+	}
+	// Now push 8 successful unrelated calls — the failed read_files
+	// drop out of the 8-entry detector window.
+	for i := 4; i <= 11; i++ {
+		traces = append(traces, nativeToolTrace{
+			Call: provider.ToolCall{
+				Name: "tool_call",
+				Input: map[string]any{
+					"name": "read_file",
+					"args": map[string]any{"path": "ok.go"},
+				},
+			},
+			Step: i,
+		})
+	}
+	s.traces = traces
+	s.step = 11
+	e.injectTrajectoryHints(s, len(traces)-1)
+	if s.stuckStreak != 0 {
+		t.Errorf("after recovery, streak should reset to 0, got %d", s.stuckStreak)
+	}
+}

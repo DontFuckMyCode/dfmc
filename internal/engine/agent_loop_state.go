@@ -41,6 +41,16 @@ type loopRunState struct {
 	autoRecoveries int
 	lastProvider   string
 	lastModel      string
+	// stuckStreak counts consecutive rounds where the trajectory layer
+	// flagged the repeated-failure pattern. Increments when Rule 0
+	// fires; resets to zero whenever a round produces no stuck signal
+	// (i.e., the model recovered). When the streak hits the threshold
+	// the loop forces tool_choice="none" for the next call so the
+	// model HAS to produce text instead of another tool call —
+	// breaking the loop and giving the user a chance to redirect
+	// instead of letting an unattended run burn through the budget on
+	// the same broken approach.
+	stuckStreak int
 
 	// Stable for the run.
 	question     string

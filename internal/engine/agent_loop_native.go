@@ -138,6 +138,18 @@ func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativ
 // when the model's asks inherently generate more data than fits.
 const maxBudgetAutoRecoveries = 1
 
+// stuckStreakHardstopThreshold is the number of consecutive rounds the
+// trajectory layer must flag the repeated-failure pattern before the
+// loop forces tool_choice="none" on the next provider call. Three is
+// the smallest value that reliably distinguishes "the model is iterating
+// on a hard problem" (one stuck round, sometimes two) from "the model
+// is ignoring the switch-tactic hint and grinding on the same broken
+// approach" (three+). Bumping this would let unattended runs waste
+// more steps; lowering it would interrupt productive multi-attempt
+// recoveries. Not config-tunable yet — bake in the floor first, expose
+// when we have evidence the default is wrong for some workload.
+const stuckStreakHardstopThreshold = 3
+
 func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, lim agentLimits) (nativeToolCompletion, error) {
 	callBudget, depthLimit := 0, 0
 	if e.Config != nil {
@@ -300,6 +312,26 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 				"tool_rounds": len(s.traces),
 				"hard_cap":    lim.RoundHardCap,
 				"surface":     "native",
+			})
+		}
+		// Stuck-streak force-stop: if Rule 0 has flagged the same
+		// failure pattern for stuckStreakHardstopThreshold consecutive
+		// rounds AND the model still hasn't switched tactic, the
+		// "switch tactic" hint is being ignored. Force tool_choice=
+		// "none" so the next response MUST be text — the model is
+		// compelled to either explain the blocker or hand back to the
+		// user. Without this, an unattended run can burn 30+ rounds
+		// retrying read_file with different guesses while the same
+		// hint scrolls past every round. Independent of RoundHardCap
+		// because it can fire much earlier (3 consecutive stuck rounds
+		// vs. 30 total tool rounds).
+		if toolChoice == "auto" && s.stuckStreak >= stuckStreakHardstopThreshold {
+			toolChoice = "none"
+			e.publishAgentLoopEvent("agent:loop:stuck_force_stop", map[string]any{
+				"step":         step,
+				"stuck_streak": s.stuckStreak,
+				"threshold":    stuckStreakHardstopThreshold,
+				"surface":      "native",
 			})
 		}
 
