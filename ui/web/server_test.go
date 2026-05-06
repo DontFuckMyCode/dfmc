@@ -100,6 +100,51 @@ func TestStatusEndpointIncludesProviderAdvisories(t *testing.T) {
 	}
 }
 
+// TestStatusEndpointIncludesConversationMemory pins the new
+// "conversation_memory" object in the /api/v1/status payload so
+// HTTP/remote consumers see the same stored-msgs + ceilings the
+// CLI/TUI surface. Without this object a user verifying their
+// MaxHistoryTokens=200000 edit took effect via curl would get
+// no signal — the field gap was the original four-layer parity
+// hole the larger memory chain set out to close.
+func TestStatusEndpointIncludesConversationMemory(t *testing.T) {
+	eng := newTestEngine(t)
+	srv := New(eng, "127.0.0.1", 0)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Drop a couple of messages so stored_msgs is non-zero — verifies
+	// the active-conversation read path (not just default-zero).
+	eng.Conversation.AddMessage("offline", "offline-analyzer-v1", types.Message{Role: types.RoleUser, Content: "hello"})
+	eng.Conversation.AddMessage("offline", "offline-analyzer-v1", types.Message{Role: types.RoleAssistant, Content: "hi"})
+
+	resp, err := http.Get(ts.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var payload struct {
+		ConversationMemory struct {
+			StoredMsgs         int `json:"stored_msgs"`
+			MaxHistoryTokens   int `json:"max_history_tokens"`
+			MaxHistoryMessages int `json:"max_history_messages"`
+		} `json:"conversation_memory"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if payload.ConversationMemory.StoredMsgs != 2 {
+		t.Errorf("expected stored_msgs=2, got %d", payload.ConversationMemory.StoredMsgs)
+	}
+	if payload.ConversationMemory.MaxHistoryTokens <= 0 {
+		t.Errorf("expected max_history_tokens > 0, got %d", payload.ConversationMemory.MaxHistoryTokens)
+	}
+	if payload.ConversationMemory.MaxHistoryMessages <= 0 {
+		t.Errorf("expected max_history_messages > 0, got %d", payload.ConversationMemory.MaxHistoryMessages)
+	}
+}
+
 func TestStatusEndpointIncludesApprovalGateAndHooks(t *testing.T) {
 	eng := newTestEngine(t)
 	eng.Config.Tools.RequireApproval = []string{"write_file", "run_command"}

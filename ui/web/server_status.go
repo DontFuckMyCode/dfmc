@@ -46,6 +46,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		if q != "" {
 			payload["context_breakdown"] = s.engine.ContextBreakdown(q)
 		}
+		payload["conversation_memory"] = s.conversationMemorySummary(q)
 	}
 	writeJSON(w, http.StatusOK, payload)
 }
@@ -82,6 +83,29 @@ func (s *Server) approvalGateSummary() webApprovalGateSummary {
 		out.Count = -1
 	}
 	out.Active = out.Wildcard || len(tools) > 0
+	return out
+}
+
+// conversationMemorySummary mirrors the CLI `dfmc status`
+// "conversation_memory" object so HTTP / remote consumers see the
+// same stored-count + ceilings the user can read in chat. Without
+// this field, the memory floor / message-count bumps users tweak
+// in config are invisible from the API surface.
+func (s *Server) conversationMemorySummary(query string) map[string]any {
+	out := map[string]any{
+		"stored_msgs":          0,
+		"max_history_tokens":   0,
+		"max_history_messages": 0,
+	}
+	if s.engine == nil {
+		return out
+	}
+	if active := s.engine.ConversationActive(); active != nil {
+		out["stored_msgs"] = len(active.Messages())
+	}
+	preview := s.engine.ContextBudgetPreview(query)
+	out["max_history_tokens"] = preview.MaxHistoryTokens
+	out["max_history_messages"] = preview.MaxHistoryMessages
 	return out
 }
 
