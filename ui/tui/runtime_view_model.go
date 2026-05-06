@@ -491,6 +491,32 @@ func runtimeStripNowParts(vm runtimeViewModel) []string {
 			parts = append(parts, infoStyle.Render(label))
 		}
 	}
+	// Subagents-active badge — promoted from the workflow strip into
+	// the prominent "now" line. When fan-out work is running the user
+	// sees "agents ×3/4" right in the eyeline so parallel autonomy
+	// registers without scanning through sub-strips. Hidden at zero.
+	if vm.ActiveSubagents > 0 {
+		label := fmt.Sprintf("agents ×%d", vm.ActiveSubagents)
+		if vm.SubagentLimit > 0 {
+			label = fmt.Sprintf("agents ×%d/%d", vm.ActiveSubagents, vm.SubagentLimit)
+		}
+		parts = append(parts, accentStyle.Render(label))
+	}
+	// Drive-progress badge — ditto for autonomous Drive runs. Counts
+	// done/total + blocked surface as accent so a long Drive run
+	// reads as "this is making progress" rather than living silently
+	// in the F5 cockpit tab.
+	if strings.TrimSpace(vm.DriveRunID) != "" || vm.DriveTotal > 0 {
+		label := fmt.Sprintf("drive %d/%d", vm.DriveDone, vm.DriveTotal)
+		if vm.DriveBlocked > 0 {
+			label += fmt.Sprintf(" · %d blocked", vm.DriveBlocked)
+		}
+		if vm.DriveBlocked > 0 {
+			parts = append(parts, warnStyle.Render(label))
+		} else {
+			parts = append(parts, accentStyle.Render(label))
+		}
+	}
 	// Auto-resume progress: show ceiling proximity continuously during a
 	// long autonomous run. Style escalates from info → warn as headroom
 	// disappears so the user knows when to /continue with a refined

@@ -1427,6 +1427,69 @@ func TestComputeTurnElapsedSec(t *testing.T) {
 	})
 }
 
+// TestRuntimeStrip_SubagentBadgeInNowStrip pins promoting the
+// "agents ×N" badge from the workflow sub-strip into the prominent
+// runtime "now" line so parallel fan-out registers at a glance.
+func TestRuntimeStrip_SubagentBadgeInNowStrip(t *testing.T) {
+	t.Run("hidden when zero", func(t *testing.T) {
+		vm := runtimeViewModel{AgentActive: true, ActiveSubagents: 0}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if strings.Contains(joined, "agents ×") {
+			t.Errorf("zero subagents should hide badge, got %q", joined)
+		}
+	})
+	t.Run("visible without limit", func(t *testing.T) {
+		vm := runtimeViewModel{AgentActive: true, ActiveSubagents: 3}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if !strings.Contains(joined, "agents ×3") {
+			t.Errorf("expected 'agents ×3', got %q", joined)
+		}
+		if strings.Contains(joined, "agents ×3/") {
+			t.Errorf("limit zero should suppress slash form, got %q", joined)
+		}
+	})
+	t.Run("visible with limit", func(t *testing.T) {
+		vm := runtimeViewModel{AgentActive: true, ActiveSubagents: 2, SubagentLimit: 4}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if !strings.Contains(joined, "agents ×2/4") {
+			t.Errorf("expected 'agents ×2/4', got %q", joined)
+		}
+	})
+}
+
+// TestRuntimeStrip_DriveProgressInNowStrip pins promoting drive
+// done/total into the now strip. A long Drive run with the user
+// off the workflow tab still shows progress without tab-switching.
+func TestRuntimeStrip_DriveProgressInNowStrip(t *testing.T) {
+	t.Run("hidden when no run id and zero total", func(t *testing.T) {
+		vm := runtimeViewModel{DriveRunID: "", DriveDone: 0, DriveTotal: 0}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if strings.Contains(joined, "drive ") {
+			t.Errorf("idle drive should hide badge, got %q", joined)
+		}
+	})
+	t.Run("visible with active run", func(t *testing.T) {
+		vm := runtimeViewModel{DriveRunID: "abc12345", DriveDone: 5, DriveTotal: 12}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if !strings.Contains(joined, "drive 5/12") {
+			t.Errorf("expected 'drive 5/12', got %q", joined)
+		}
+		if strings.Contains(joined, "blocked") {
+			t.Errorf("zero blocked should suppress blocked clause, got %q", joined)
+		}
+	})
+	t.Run("warn-styled with blocked TODOs", func(t *testing.T) {
+		vm := runtimeViewModel{DriveRunID: "abc12345", DriveDone: 3, DriveTotal: 8, DriveBlocked: 2}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if !strings.Contains(joined, "drive 3/8") {
+			t.Errorf("expected 'drive 3/8', got %q", joined)
+		}
+		if !strings.Contains(joined, "2 blocked") {
+			t.Errorf("expected '2 blocked' clause, got %q", joined)
+		}
+	})
+}
+
 // TestRuntimeStrip_CacheHitsBadge_RendersAndHidesAtZero pins the
 // "cache ×N" badge in the runtime strip.
 func TestRuntimeStrip_CacheHitsBadge_RendersAndHidesAtZero(t *testing.T) {
