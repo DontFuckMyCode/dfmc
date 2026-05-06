@@ -478,6 +478,9 @@ func (m Model) handleRoutingEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// commit the edit
 			tag := m.workflow.routingEditTag
 			if tag != "" && m.workflow.routingEditProfile != "" {
+				if m.workflow.routingDraft == nil {
+					m.workflow.routingDraft = make(map[string]string)
+				}
 				m.workflow.routingDraft[tag] = m.workflow.routingEditProfile
 			}
 			m.workflow.routingEditMode = false
@@ -502,7 +505,12 @@ func (m Model) handleRoutingEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.workflow.routingEditTag = tag
 			m.workflow.routingEditProfile = profiles[0]
 			m.workflow.routingEditMode = true
-			// Add to draft with current profile as default
+			// Add to draft with current profile as default. routingDraft
+			// is nil-by-default on a fresh model, so lazy-init before
+			// the first write to avoid a "nil map" panic.
+			if m.workflow.routingDraft == nil {
+				m.workflow.routingDraft = make(map[string]string)
+			}
 			m.workflow.routingDraft[tag] = profiles[0]
 			// Select the new row
 			for i, k := range keys {
@@ -551,6 +559,14 @@ func (m Model) cycleWorkflowTodoExpand() Model {
 		}
 	}
 	if targetID != "" {
+		// Lazy-init: workflowPanelState is constructed as a zero value
+		// in NewModel, so expandedTodo is nil until the first toggle.
+		// Reads from a nil map are safe; writes panic with
+		// "assignment to entry in nil map" — exactly the crash a user
+		// hit pressing enter on the Workflow tab.
+		if m.workflow.expandedTodo == nil {
+			m.workflow.expandedTodo = make(map[string]bool)
+		}
 		m.workflow.expandedTodo[targetID] = !m.workflow.expandedTodo[targetID]
 	}
 	return m

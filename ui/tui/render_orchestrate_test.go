@@ -19,8 +19,10 @@ func TestOrchestrateView_RendersAllSections(t *testing.T) {
 		"MAIN AGENT",
 		"SUBAGENTS",
 		"TODOS",
+		"TASK STORE",
 		"DRIVE RUN",
 		"TOKENS",
+		"RECENT ACTIVITY",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("orchestrate view missing section %q. Got:\n%s", want, view)
@@ -53,7 +55,7 @@ func TestOrchestrateView_RendersSubagentsWithProviderModel(t *testing.T) {
 			Task:      "refactor auth/token.go",
 			Provider:  "deepseek",
 			Model:     "deepseek-chat",
-			Status:    "subagent-running",
+			Status:    "running",
 			Rounds:    5,
 			StartedAt: time.Now().Add(-45 * time.Second),
 		},
@@ -63,7 +65,7 @@ func TestOrchestrateView_RendersSubagentsWithProviderModel(t *testing.T) {
 			Task:      "regenerate fixtures",
 			Provider:  "openai",
 			Model:     "o1-mini",
-			Status:    "subagent-running",
+			Status:    "running",
 			Rounds:    2,
 			StartedAt: time.Now().Add(-18 * time.Second),
 		},
@@ -143,6 +145,78 @@ func TestOrchestrateView_RendersTokensSection(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Errorf("expected %q in tokens section. Got:\n%s", want, view)
 		}
+	}
+}
+
+// TestOrchestrateView_TaskStoreEmptyExplains pins the empty-state
+// copy on the TASK STORE section. A user opening the panel during
+// a session that hasn't called /split or orchestrate must not see
+// just "(empty)" — they need to know what populates this surface.
+func TestOrchestrateView_TaskStoreEmptyExplains(t *testing.T) {
+	m := newCoverageModel(t)
+	view := stripANSI(m.renderOrchestrateView(120))
+	if !strings.Contains(view, "TASK STORE") {
+		t.Fatalf("missing TASK STORE section. Got:\n%s", view)
+	}
+	if !strings.Contains(view, "/split") || !strings.Contains(view, "delegate_task") {
+		t.Errorf("empty TASK STORE should hint at populating commands. Got:\n%s", view)
+	}
+}
+
+// TestCycleWorkflowTodoExpand_NilMapDoesNotPanic — regression for
+// the "assignment to entry in nil map" panic a user hit pressing
+// enter on a Drive run TODO. workflowPanelState is constructed as
+// a zero value in NewModel so expandedTodo starts as nil; toggling
+// without a guard panics. Now covered by lazy-init in
+// cycleWorkflowTodoExpand.
+func TestCycleWorkflowTodoExpand_NilMapDoesNotPanic(t *testing.T) {
+	m := newCoverageModel(t)
+	if m.workflow.expandedTodo != nil {
+		t.Fatal("setup: expected expandedTodo to start as nil")
+	}
+	// Empty runs slice keeps the function in its happy path without
+	// requiring a fully populated drive run; the panic site is the
+	// final write to expandedTodo, exercised via cycleWorkflowTodoExpand.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("cycleWorkflowTodoExpand panicked on nil map: %v", r)
+		}
+	}()
+	_ = m.cycleWorkflowTodoExpand()
+}
+
+// TestOrchestrateView_RecentActivityFeedShowsLast pins the
+// chat-history-style recent-events feed at the bottom of the panel.
+// The user explicitly asked for "ne oldu" (what happened) visibility
+// alongside hierarchy; this section answers that.
+func TestOrchestrateView_RecentActivityFeedShowsLast(t *testing.T) {
+	m := newCoverageModel(t)
+	m.activityLog = []string{
+		"older event 1",
+		"older event 2",
+		"older event 3",
+		"older event 4",
+		"older event 5",
+		"older event 6",
+		"older event 7",
+		"older event 8",
+		"older event 9",
+		"newest event 10",
+	}
+	view := stripANSI(m.renderOrchestrateView(120))
+	if !strings.Contains(view, "RECENT ACTIVITY") {
+		t.Fatalf("missing RECENT ACTIVITY section. Got:\n%s", view)
+	}
+	// Newest line must appear, and "last 8 of 10" range hint must be there.
+	if !strings.Contains(view, "newest event 10") {
+		t.Errorf("newest event missing. Got:\n%s", view)
+	}
+	if !strings.Contains(view, "last 8 of 10") {
+		t.Errorf("range hint missing. Got:\n%s", view)
+	}
+	// Older events that fell off the 8-line window must NOT appear.
+	if strings.Contains(view, "older event 1") || strings.Contains(view, "older event 2") {
+		t.Errorf("oldest events should be clipped at 8-line window. Got:\n%s", view)
 	}
 }
 

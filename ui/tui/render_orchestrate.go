@@ -45,11 +45,40 @@ func (m Model) renderOrchestrateView(width int) string {
 	parts = append(parts, "")
 	parts = append(parts, m.orchestrateTodosSection(inner)...)
 	parts = append(parts, "")
+	parts = append(parts, m.orchestrateTaskStoreSection(inner)...)
+	parts = append(parts, "")
 	parts = append(parts, m.orchestrateDriveSection(inner)...)
 	parts = append(parts, "")
 	parts = append(parts, m.orchestrateTokensSection(inner)...)
+	parts = append(parts, "")
+	parts = append(parts, m.orchestrateRecentSection(inner)...)
 
 	return strings.Join(parts, "\n")
+}
+
+// orchestrateRecentSection — last few high-signal events from the
+// activity log so the user gets a chat-history-style "what just
+// happened" feed inside the panel. Uses the same activityLog that
+// feeds the bottom-of-chat notice line; capped at the last 8 lines
+// so the panel doesn't grow unbounded.
+func (m Model) orchestrateRecentSection(width int) []string {
+	header := accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("RECENT ACTIVITY")
+	log := m.activityLog
+	if len(log) == 0 {
+		return []string{
+			header + "  " + subtleStyle.Render("(empty)"),
+			"  " + subtleStyle.Render("event firehose builds up as the agent works · F7 for full feed"),
+		}
+	}
+	out := []string{header + "  " + subtleStyle.Render(fmt.Sprintf("(last %d of %d)", min(len(log), 8), len(log)))}
+	start := 0
+	if len(log) > 8 {
+		start = len(log) - 8
+	}
+	for _, line := range log[start:] {
+		out = append(out, "  · "+truncateSingleLine(strings.TrimSpace(line), width-6))
+	}
+	return out
 }
 
 // orchestrateMainAgentSection — top-level "what's the main agent
@@ -190,13 +219,21 @@ func (m Model) orchestrateSubagentsSection(width int) []string {
 	return out
 }
 
+// orchestrateSubagentGlyph maps the runtime status set by
+// subagent_runtime.go ("running"/"fallback"/"failed"/"parked"/
+// "done") to a status glyph. The "subagent-*" chip statuses live
+// on the chip ribbon, not the runtime item — different vocabulary,
+// matched here so a fallback in flight reads as ↻ and a finished
+// helper as ✓ instead of the generic running ▶.
 func orchestrateSubagentGlyph(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "subagent-failed":
+	case "failed":
 		return failStyle.Render("✗")
-	case "subagent-fallback":
+	case "fallback":
 		return warnStyle.Render("↻")
-	case "subagent-ok":
+	case "parked":
+		return warnStyle.Render("⏸")
+	case "done":
 		return doneStyle.Render("✓")
 	default:
 		return accentStyle.Render("▶")
@@ -260,6 +297,53 @@ func (m Model) orchestrateTodosSection(width int) []string {
 		}
 		out = append(out, "  "+glyph+" "+truncateSingleLine(body, width-6))
 	}
+	return out
+}
+
+// orchestrateTaskStoreSection — supervisor task tree from the task
+// store. Distinct from the TODOs surface (todo_write) and the DRIVE
+// surface (drive runs): tasks here come from /split, orchestrate,
+// or delegate_task. Renders the hierarchical tree as already
+// formatted by statsPanelInfo so root → leaf indentation matches
+// the stats panel.
+func (m Model) orchestrateTaskStoreSection(width int) []string {
+	header := accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("TASK STORE")
+	info := m.statsPanelInfo()
+	lines := info.TaskTreeLines
+
+	// Plan-only state (no store entries yet but a /split plan exists).
+	if len(lines) == 0 {
+		if info.PlanSubtasks > 0 {
+			mode := "serial"
+			if info.PlanParallel {
+				mode = "parallel"
+			}
+			out := []string{
+				header + "  " + subtleStyle.Render(fmt.Sprintf("(plan only · %d subtasks · %s)", info.PlanSubtasks, mode)),
+			}
+			for _, line := range info.TaskLines {
+				out = append(out, "  "+truncateSingleLine(line, width-4))
+			}
+			return out
+		}
+		return []string{
+			header + "  " + subtleStyle.Render("(empty)"),
+			"  " + subtleStyle.Render("populated by /split, orchestrate, delegate_task · F-keys can't reach this surface yet, but it's live"),
+		}
+	}
+
+	out := []string{header + "  " + subtleStyle.Render(fmt.Sprintf("(%d entries)", len(lines)))}
+	cap := 12
+	if len(lines) <= cap {
+		for _, line := range lines {
+			out = append(out, "  "+truncateSingleLine(line, width-4))
+		}
+		return out
+	}
+	for _, line := range lines[:cap] {
+		out = append(out, "  "+truncateSingleLine(line, width-4))
+	}
+	out = append(out, "  "+subtleStyle.Render(fmt.Sprintf("... %d more in store · open the stats panel (alt+d) for the full tree", len(lines)-cap)))
 	return out
 }
 
