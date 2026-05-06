@@ -546,6 +546,59 @@ func TestHandleEngineEvent_CoachStuck_FiresIndependentOfVerbose(t *testing.T) {
 	}
 }
 
+// TestHandleEngineEvent_ContextErrorAndShutdownAndResume rounds out
+// the audit by pinning three more events the dispatcher used to
+// drop: context:error (string-payload special case), engine:
+// shutdown_error (multi-stage), and agent:loop:resume (the success
+// counterpart to resume_refused — needed so users see /continue
+// landed instead of guessing).
+func TestHandleEngineEvent_ContextErrorAndShutdownAndResume(t *testing.T) {
+	cases := []struct {
+		name      string
+		evType    string
+		payload   any
+		wantInMsg []string
+	}{
+		{
+			name:      "context:error string payload",
+			evType:    "context:error",
+			payload:   "ast parse failed: syntax error at line 42",
+			wantInMsg: []string{"context build failed", "ast parse failed", "reduced context"},
+		},
+		{
+			name:   "engine:shutdown_error",
+			evType: "engine:shutdown_error",
+			payload: map[string]any{
+				"stage": "storage",
+				"error": "bbolt: timeout closing handle",
+			},
+			wantInMsg: []string{"shutdown error", "storage", "bbolt"},
+		},
+		{
+			name:   "agent:loop:resume",
+			evType: "agent:loop:resume",
+			payload: map[string]any{
+				"resumed_from_step": 12,
+				"tool_rounds":       8,
+				"tokens_used":       4200,
+			},
+			wantInMsg: []string{"loop resumed", "step 12", "8 rounds"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newCoverageModel(t)
+			m = m.handleEngineEvent(engine.Event{Type: tc.evType, Payload: tc.payload})
+			notice := strings.ToLower(m.notice)
+			for _, want := range tc.wantInMsg {
+				if !strings.Contains(notice, strings.ToLower(want)) {
+					t.Errorf("expected notice to contain %q, got %q", want, m.notice)
+				}
+			}
+		})
+	}
+}
+
 // TestHandleEngineEvent_AgentLoopGuards_SurfaceNotices pins the
 // seven agent:loop:* guard events the TUI dispatcher used to drop:
 // tools_force_stop, interrupted, shutdown_parked, resume_refused,

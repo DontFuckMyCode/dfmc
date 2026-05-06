@@ -1040,6 +1040,10 @@ function classifyActivityEvent(ev) {
 		if (type === "agent:loop:error") {
 			return { kind: "error", icon: "\u2717", text: "agent error \u00b7 " + (payload.error || "") };
 		}
+		if (type === "agent:loop:resume") {
+			return { kind: "agent", icon: "↻",
+				text: "loop resumed · from step " + (payload.resumed_from_step || 0) + " (" + (payload.tool_rounds || 0) + " prior rounds)" };
+		}
 		if (type === "agent:loop:tools_force_stop") {
 			return { kind: "error", icon: "⧖",
 				text: "tool round hard cap · " + (payload.tool_rounds || 0) + "/" + (payload.hard_cap || 0) + " — text-only reply forced" };
@@ -1143,6 +1147,19 @@ function classifyActivityEvent(ev) {
 				text: "context compacted \u00b7 " + (payload.tokens_before || 0) + " \u2192 " + (payload.tokens_after || 0) + " tok" };
 		}
 		return { kind: "ctx", icon: "\u25c8", text: type };
+	}
+	if (type === "context:error") {
+		// context:error payload is a plain string (err.Error()), so
+		// the classifier reads `ev.payload` directly when it's a
+		// string instead of pulling fields off the (typically empty)
+		// payload object.
+		var ctxErrText = (typeof ev.payload === "string") ? ev.payload : (payload.error || "context build failed");
+		return { kind: "error", icon: "✗",
+			text: "context build failed · " + ctxErrText };
+	}
+	if (type === "engine:shutdown_error") {
+		return { kind: "error", icon: "✗",
+			text: "engine shutdown error · " + (payload.stage || "shutdown") + ": " + (payload.error || "") };
 	}
 	if (type === "runtime:panic") {
 		// Background goroutine panic recovered — process kept running

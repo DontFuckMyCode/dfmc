@@ -51,9 +51,10 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		"agent:loop:budget_exhausted", "agent:loop:auto_resume",
 		"agent:loop:auto_resume_refused", "agent:loop:auto_recover",
 		"agent:loop:tools_force_stop", "agent:loop:interrupted",
-		"agent:loop:shutdown_parked", "agent:loop:resume_refused",
-		"agent:loop:safety_bound", "agent:loop:empty_recovery",
-		"agent:loop:empty_final", "agent:loop:stuck_force_stop":
+		"agent:loop:shutdown_parked", "agent:loop:resume",
+		"agent:loop:resume_refused", "agent:loop:safety_bound",
+		"agent:loop:empty_recovery", "agent:loop:empty_final",
+		"agent:loop:stuck_force_stop":
 		m, line = m.handleAgentLoopEvent(eventType, payload)
 	case "tool:call", "tool:result", "tool:error", "tool:reasoning", "tool:timeout", "tool:denied":
 		m, line = m.handleToolEvent(eventType, event, payload)
@@ -453,6 +454,44 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		} else {
 			line = fmt.Sprintf("Auto-new-session: fresh conversation seeded (%d→%d tokens).", historyTokens, briefTokens)
 		}
+	case "context:error":
+		// Context build failed — the chunk-ranking pass couldn't
+		// produce a budget-respecting set. The Ask path falls back
+		// to a question-only request (no file context), so the
+		// LLM still answers, but answer quality is degraded. User
+		// must see this so a "wrong answer" can be diagnosed as
+		// "missing context" rather than "model hallucinated."
+		// Payload here is a plain string (err.Error()), not a map.
+		errText := ""
+		if s, ok := event.Payload.(string); ok {
+			errText = strings.TrimSpace(s)
+		} else if errText == "" {
+			errText = payloadString(payload, "error", "context build failed")
+		}
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "context:error",
+			Kind:   "context",
+			Status: "error",
+			Title:  "context build failed",
+			Detail: truncateSingleLine(errText, 160),
+		})
+		line = "Context build failed (answering with reduced context): " + truncateSingleLine(errText, 140)
+	case "engine:shutdown_error":
+		// Shutdown stage failed — bbolt won't close, indexer hung,
+		// goroutine drain timeout, etc. Critical because subsequent
+		// dfmc launches may hit ErrStoreLocked or corrupted state.
+		// User must see WHICH stage failed so they can take action
+		// (kill stale process, repair store, etc.).
+		stage := payloadString(payload, "stage", "shutdown")
+		errText := strings.TrimSpace(payloadString(payload, "error", "shutdown failed"))
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "engine:shutdown_error:" + stage,
+			Kind:   "system",
+			Status: "error",
+			Title:  "engine shutdown error",
+			Detail: fmt.Sprintf("%s · %s", stage, truncateSingleLine(errText, 120)),
+		})
+		line = fmt.Sprintf("Engine shutdown error [%s]: %s", stage, truncateSingleLine(errText, 160))
 	case "runtime:panic":
 		// Background-goroutine panic recovered via SafeGo. The process
 		// keeps running but a panic is always notable — surface it as
@@ -619,7 +658,7 @@ func shouldMirrorEventToTranscript(eventType string) bool {
 		"context:lifecycle:compacted", "context:lifecycle:handoff",
 		"conversation:save:error", "coach:note", "tool:denied",
 		"runtime:panic", "tool:panicked", "security:config_permissions",
-		"memory:degraded":
+		"memory:degraded", "context:error", "engine:shutdown_error":
 		return true
 	default:
 		return false

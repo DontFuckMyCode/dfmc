@@ -219,6 +219,15 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		} else {
 			line = "Auto-recover: budget trip, transcript slimmed. Retrying."
 		}
+	case "agent:loop:resume":
+		// Manual /continue (or successful auto-resume) just re-entered
+		// the loop with prior seed state. Quiet info-level line so the
+		// user sees the resume actually took effect, especially on long
+		// runs where they typed /continue a while back and forgot.
+		fromStep := payloadInt(payload, "resumed_from_step", 0)
+		rounds := payloadInt(payload, "tool_rounds", 0)
+		tokens := payloadInt(payload, "tokens_used", 0)
+		line = fmt.Sprintf("Loop resumed from step %d (prior: %d rounds, ~%d tokens).", fromStep, rounds, tokens)
 	case "agent:loop:tools_force_stop":
 		// Hard round-cap fired — distinct from stuck_force_stop (which
 		// is the trajectory-detector guard) and from max_steps. Surface
