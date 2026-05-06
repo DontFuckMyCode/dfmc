@@ -342,7 +342,8 @@ func helpOverlayTabHints(tab string) []string {
 		}
 	case "workflow":
 		return []string{
-			"j/k select run · enter expand · esc deselect · r refresh",
+			"j/k move · enter select run / expand TODO · esc deselect / back",
+			"r routing editor · g/G top/bottom · ctrl+h keys",
 		}
 	case "tools":
 		return []string{

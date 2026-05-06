@@ -2846,7 +2846,8 @@ func TestWorkflowTabRendersRunList(t *testing.T) {
 		{ID: "drv-def456", Task: "Refactor DB layer", Status: drive.RunRunning},
 	}
 
-	view := m.renderWorkflowView(120)
+	// Wide enough to keep both tasks unabbreviated in the runs list.
+	view := m.renderWorkflowView(160)
 	if view == "" {
 		t.Fatal("expected non-empty workflow view")
 	}
@@ -2856,8 +2857,8 @@ func TestWorkflowTabRendersRunList(t *testing.T) {
 	if !strings.Contains(view, "Refactor DB") {
 		t.Fatalf("expected second run task in view, got:\n%s", view)
 	}
-	if !strings.Contains(view, "Workflow") {
-		t.Fatalf("expected Workflow section header, got:\n%s", view)
+	if !strings.Contains(view, "WORKFLOW") {
+		t.Fatalf("expected WORKFLOW section header, got:\n%s", view)
 	}
 }
 

@@ -28,115 +28,11 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/drive"
 )
 
-// renderWorkflowView shows the Drive TODO tree panel. Two-column layout:
-// LEFT (30%): run selector list — ID, task truncated, status chip, age
-// RIGHT (70%): TODO tree for the selected run — hierarchical view of
-// pending/running/done/blocked/skipped TODOs with expand/collapse detail.
+// renderWorkflowView delegates to the rebuilt 3-pane Workflow panel
+// in render_workflow_v2.go. The legacy 2-column shape lives in git
+// history; the V2 renderer is the active F5 panel.
 func (m Model) renderWorkflowView(width int) string {
-	listWidth := width * 30 / 100
-	if listWidth < 28 {
-		listWidth = 28
-	}
-	if listWidth > width-28 {
-		listWidth = width / 2
-	}
-	detailWidth := width - listWidth - 3
-
-	runs := m.workflow.runs
-	listLines := []string{
-		sectionHeader("\u26a1", "Workflow"),
-		subtleStyle.Render("enter select \u00b7 j/k move \u00b7 r routing"),
-		renderDivider(listWidth - 2),
-		"",
-	}
-	if len(runs) == 0 {
-		listLines = append(listLines,
-			subtleStyle.Render("No drive runs yet."),
-			"",
-			subtleStyle.Render("Start one from Chat:"),
-			subtleStyle.Render("  /drive <task description>"),
-		)
-	} else {
-		for i, r := range runs {
-			prefix := "  "
-			label := truncateForLine(r.ID, 8) + "  " + truncateForLine(r.Task, listWidth-14)
-			if r.ID == m.workflow.selectedRunID {
-				prefix = "> "
-				label = titleStyle.Render(label)
-			} else if i == m.workflow.selectedIndex {
-				prefix = "> "
-			}
-			statusChip := renderRunStatusChip(r.Status)
-			listLines = append(listLines, prefix+label+"  "+statusChip)
-		}
-	}
-
-	// Show routing summary in the header when routing draft has entries
-	if routing := m.workflow.routingDraft; len(routing) > 0 {
-		var parts []string
-		keys := make([]string, 0, len(routing))
-		for k := range routing {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, tag := range keys {
-			parts = append(parts, tag+"\u2192"+routing[tag])
-		}
-		if len(parts) > 0 {
-			listLines = append(listLines, "", subtleStyle.Render("routing: "+strings.Join(parts, " \u00b7 ")))
-		}
-	}
-
-	var detailLines []string
-	selectedRun := m.selectedRunForWorkflow()
-	if selectedRun == nil {
-		detailLines = []string{
-			sectionHeader("\u25c9", "Run Details"),
-			renderDivider(detailWidth - 2),
-			"",
-			subtleStyle.Render("Select a run from the list to inspect its TODO tree."),
-		}
-	} else {
-		_done, _blocked, _skipped, _pending := selectedRun.Counts()
-		running := 0
-		for _, t := range selectedRun.Todos {
-			if t.Status == drive.TodoRunning {
-				running++
-			}
-		}
-		done, blocked, skipped, pending := _done, _blocked, _skipped, _pending
-		detailLines = []string{
-			sectionHeader("\u26a1", truncateForLine(selectedRun.Task, detailWidth-20)),
-			fmt.Sprintf("%s  %s  %s  %s  %s  %s",
-				renderRunStatusChip(selectedRun.Status),
-				doneStyle.Render(fmt.Sprintf("%d done", done)),
-				pendingStyle.Render(fmt.Sprintf("%d pending", pending)),
-				runningStyle.Render(fmt.Sprintf("%d running", running)),
-				blockedStyle.Render(fmt.Sprintf("%d blocked", blocked)),
-				skippedStyle.Render(fmt.Sprintf("%d skipped", skipped)),
-			),
-			renderDivider(detailWidth - 2),
-			"",
-		}
-		rows := m.renderWorkflowTreeRows(selectedRun, detailWidth)
-		detailLines = append(detailLines, rows...)
-
-		// Show TODO detail below tree when a TODO is selected
-		if m.workflow.selectedTodoID != "" {
-			detailLines = append(detailLines, "", renderDivider(detailWidth-2), "")
-			detailLines = append(detailLines, m.renderWorkflowTodoDetail(selectedRun, detailWidth)...)
-		}
-	}
-
-	left := lipgloss.NewStyle().Width(listWidth).Render(strings.Join(listLines, "\n"))
-	right := lipgloss.NewStyle().Width(detailWidth).Render(strings.Join(detailLines, "\n"))
-
-	// Show routing editor overlay when active
-	if m.workflow.showRoutingEditor {
-		routingPanel := m.renderRoutingEditor(width)
-		return routingPanel
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, "   ", right)
+	return m.renderWorkflowViewV2(width)
 }
 
 func (m Model) selectedRunForWorkflow() *drive.Run {
