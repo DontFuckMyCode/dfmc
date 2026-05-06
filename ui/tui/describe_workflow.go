@@ -107,6 +107,22 @@ func (m Model) describeStats() string {
 		lines = append(lines, "  rtk savings: (no tool output yet to compress)")
 	}
 
+	// Autonomy health — surfaces the same signals as the runtime strip
+	// badges (stuck-loop, unverified edits, cumulative ceiling) but in
+	// expanded-text form so a user typing /stats during an hour-long
+	// run can read the full picture instead of decoding compact badges.
+	// Each line only appears when the signal is active; quiet when
+	// everything is healthy.
+	if line := autonomyHealthLine(m.agentLoop); line != "" {
+		lines = append(lines, line)
+	}
+	if line := autonomyCeilingLine(m.agentLoop); line != "" {
+		lines = append(lines, line)
+	}
+	if line := autonomyUnverifiedLine(m.agentLoop); line != "" {
+		lines = append(lines, line)
+	}
+
 	// Recent denials — short summary, full list lives in /approve.
 	if m.eng != nil {
 		if denials := m.eng.RecentDenials(); len(denials) > 0 {
@@ -133,6 +149,63 @@ func (m Model) describeStats() string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// autonomyHealthLine renders the stuck-loop signal as a /stats row.
+// Empty when no current stall — quiet stats card stays quiet, noisy
+// stats card surfaces the count + tool + error class so the user has
+// full context for the always-visible runtime-strip badge.
+func autonomyHealthLine(s agentLoopState) string {
+	if strings.TrimSpace(s.stuckTool) == "" || s.stuckCount == 0 {
+		return ""
+	}
+	tail := ""
+	if cls := strings.TrimSpace(s.stuckErrClass); cls != "" {
+		tail = " · err class: " + cls
+	}
+	return fmt.Sprintf("  stuck loop:  %s ×%d failures%s — agent has been told to switch tactic",
+		s.stuckTool, s.stuckCount, tail)
+}
+
+// autonomyCeilingLine renders the cumulative auto-resume ceiling
+// proximity. Quiet until the autonomous wrapper has actually fired at
+// least once (StepCeiling>0). Includes both step and token windows when
+// available, with explicit percent so the user doesn't have to do
+// mental math from the badge's compact "240/600 · 920k/2.5M".
+func autonomyCeilingLine(s agentLoopState) string {
+	if s.stepCeiling <= 0 || s.cumulativeSteps <= 0 {
+		return ""
+	}
+	stepPct := (s.cumulativeSteps * 100) / s.stepCeiling
+	tokInfo := ""
+	if s.tokenCeiling > 0 && s.cumulativeTokens > 0 {
+		tokPct := (s.cumulativeTokens * 100) / s.tokenCeiling
+		tokInfo = fmt.Sprintf(" · tokens %s/%s (%d%%)",
+			formatThousands(s.cumulativeTokens), formatThousands(s.tokenCeiling), tokPct)
+	}
+	return fmt.Sprintf("  auto-resume: %d/%d steps (%d%%)%s — engine refuses further resumes when this hits 100%%",
+		s.cumulativeSteps, s.stepCeiling, stepPct, tokInfo)
+}
+
+// autonomyUnverifiedLine renders the unvalidated-edits ledger. Lists up
+// to 3 paths plus a "+N more" tail to match the warn notice. Quiet
+// when the ledger is empty.
+func autonomyUnverifiedLine(s agentLoopState) string {
+	if len(s.unvalidatedEdits) == 0 {
+		return ""
+	}
+	preview := s.unvalidatedEdits
+	tail := ""
+	if len(preview) > 3 {
+		preview = preview[:3]
+		tail = fmt.Sprintf(", +%d more", len(s.unvalidatedEdits)-3)
+	}
+	severity := "edits"
+	if len(s.unvalidatedEdits) >= 3 {
+		severity = "EDITS — agent has been told to STOP and validate"
+	}
+	return fmt.Sprintf("  unverified:  %d %s · %s%s",
+		len(s.unvalidatedEdits), severity, strings.Join(preview, ", "), tail)
 }
 
 // describeWorkflow renders the high-level autonomous-workflow snapshot:

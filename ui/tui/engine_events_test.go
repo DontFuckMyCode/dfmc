@@ -729,6 +729,104 @@ func TestHandleEngineEvent_AutoResumePersistsCumulative(t *testing.T) {
 	}
 }
 
+func TestAutonomyHealthLine_QuietWhenHealthy(t *testing.T) {
+	if got := autonomyHealthLine(agentLoopState{}); got != "" {
+		t.Errorf("empty state → empty line, got %q", got)
+	}
+	// Tool name set but count zero → still quiet (defensive).
+	if got := autonomyHealthLine(agentLoopState{stuckTool: "read_file", stuckCount: 0}); got != "" {
+		t.Errorf("zero count → empty line, got %q", got)
+	}
+}
+
+func TestAutonomyHealthLine_NamesToolCountAndErrClass(t *testing.T) {
+	s := agentLoopState{
+		stuckTool:     "read_file",
+		stuckCount:    4,
+		stuckErrClass: "file does not exist",
+	}
+	got := autonomyHealthLine(s)
+	if !strings.Contains(got, "read_file") {
+		t.Errorf("missing tool name in %q", got)
+	}
+	if !strings.Contains(got, "×4") {
+		t.Errorf("missing count in %q", got)
+	}
+	if !strings.Contains(got, "file does not exist") {
+		t.Errorf("missing error class in %q", got)
+	}
+	if !strings.Contains(got, "switch tactic") {
+		t.Errorf("missing prescription in %q", got)
+	}
+}
+
+func TestAutonomyCeilingLine_ShowsStepPercentAndTokenWindow(t *testing.T) {
+	s := agentLoopState{
+		cumulativeSteps:  240,
+		stepCeiling:      600,
+		cumulativeTokens: 920_000,
+		tokenCeiling:     2_500_000,
+	}
+	got := autonomyCeilingLine(s)
+	if !strings.Contains(got, "240/600") {
+		t.Errorf("missing step counter in %q", got)
+	}
+	if !strings.Contains(got, "40%") {
+		t.Errorf("missing step percent in %q", got)
+	}
+	if !strings.Contains(got, "tokens") {
+		t.Errorf("missing token window in %q", got)
+	}
+	if !strings.Contains(got, "100%") {
+		t.Errorf("missing ceiling explanation in %q", got)
+	}
+}
+
+func TestAutonomyCeilingLine_QuietBeforeFirstAutoResume(t *testing.T) {
+	if got := autonomyCeilingLine(agentLoopState{}); got != "" {
+		t.Errorf("no auto-resume yet → empty line, got %q", got)
+	}
+}
+
+func TestAutonomyUnverifiedLine_EscalatesAtThreeEdits(t *testing.T) {
+	gentle := autonomyUnverifiedLine(agentLoopState{
+		unvalidatedEdits: []string{"a.go", "b.go"},
+	})
+	if !strings.Contains(gentle, "2 edits") {
+		t.Errorf("missing count in %q", gentle)
+	}
+	if strings.Contains(gentle, "STOP") {
+		t.Errorf("count<3 should not include STOP, got %q", gentle)
+	}
+
+	directive := autonomyUnverifiedLine(agentLoopState{
+		unvalidatedEdits: []string{"a.go", "b.go", "c.go", "d.go", "e.go"},
+	})
+	if !strings.Contains(directive, "5 EDITS") {
+		t.Errorf("count>=3 should escalate; got %q", directive)
+	}
+	if !strings.Contains(directive, "STOP") {
+		t.Errorf("count>=3 should include STOP directive; got %q", directive)
+	}
+	// Path preview caps at 3 + "+N more".
+	if !strings.Contains(directive, "+2 more") {
+		t.Errorf("expected +2 more tail for 5 paths, got %q", directive)
+	}
+	// And only the first 3 paths appear in the preview.
+	if !strings.Contains(directive, "a.go, b.go, c.go") {
+		t.Errorf("expected first 3 paths in preview, got %q", directive)
+	}
+	if strings.Contains(directive, "d.go") {
+		t.Errorf("4th path should be hidden behind +N more, got %q", directive)
+	}
+}
+
+func TestAutonomyUnverifiedLine_QuietWhenLedgerEmpty(t *testing.T) {
+	if got := autonomyUnverifiedLine(agentLoopState{}); got != "" {
+		t.Errorf("empty ledger → empty line, got %q", got)
+	}
+}
+
 func TestHandleEngineEvent_StuckForceStop_SurfacesChipAndLine(t *testing.T) {
 	m := newCoverageModel(t)
 	payload := map[string]any{
