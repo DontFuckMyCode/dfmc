@@ -185,6 +185,62 @@ func TestRecommendCoachValidationHintShellSafety(t *testing.T) {
 	}
 }
 
+// TestInitialSynthesisFlag pins the synthesis-nudge re-arm semantics:
+// a fresh run keeps the historical "already past soft cap → already
+// emitted" gate, but a resumed run (CumulativeSteps>0) re-arms the
+// nudge so it can fire again. Without the re-arm, a model whose
+// context was just force-compacted for budget never gets re-anchored
+// — the prior nudge is gone with the transcript and the gate stays
+// stuck at "already emitted".
+func TestInitialSynthesisFlag(t *testing.T) {
+	lim := agentLimits{RoundSoftCap: 5}
+
+	tests := []struct {
+		name     string
+		traceLen int
+		cumSteps int
+		want     bool // value of synthesizeHintInjected (true == "already done")
+	}{
+		{name: "fresh, under soft cap", traceLen: 2, cumSteps: 0, want: false},
+		{name: "fresh, at soft cap", traceLen: 5, cumSteps: 0, want: true},
+		{name: "fresh, over soft cap", traceLen: 7, cumSteps: 0, want: true},
+		// Resumed: re-arm regardless of trace count — the prior nudge
+		// is gone with the compacted transcript.
+		{name: "resumed, under soft cap", traceLen: 2, cumSteps: 60, want: false},
+		{name: "resumed, at soft cap", traceLen: 5, cumSteps: 60, want: false},
+		{name: "resumed, over soft cap", traceLen: 12, cumSteps: 60, want: false},
+		{name: "resumed, far over soft cap", traceLen: 30, cumSteps: 600, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			traces := make([]nativeToolTrace, tc.traceLen)
+			s := &loopRunState{
+				seed:   &parkedAgentState{CumulativeSteps: tc.cumSteps},
+				traces: traces,
+			}
+			got := initialSynthesisFlag(s, lim)
+			if got != tc.want {
+				t.Errorf("traceLen=%d cumSteps=%d: got %v, want %v",
+					tc.traceLen, tc.cumSteps, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestInitialSynthesisFlag_NilGuards verifies the helper doesn't panic
+// on partial-zero inputs — defensive because it's called early in loop
+// setup where we'd rather degrade than crash.
+func TestInitialSynthesisFlag_NilGuards(t *testing.T) {
+	if got := initialSynthesisFlag(nil, agentLimits{RoundSoftCap: 5}); got {
+		t.Errorf("nil state: want false, got true")
+	}
+	s := &loopRunState{seed: nil, traces: make([]nativeToolTrace, 10)}
+	// nil seed → behaves like a fresh run (no resume signal).
+	if got := initialSynthesisFlag(s, agentLimits{RoundSoftCap: 5}); !got {
+		t.Errorf("nil seed with traces > soft cap: want true, got false")
+	}
+}
+
 // TestInjectTrajectoryHints_StuckStreakIncrement pins the per-round
 // stuck-streak counter that drives the stuck_force_stop guard. Three
 // consecutive rounds of the same failure pattern → streak=3, ready to

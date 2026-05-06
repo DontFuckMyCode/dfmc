@@ -138,6 +138,25 @@ func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativ
 // when the model's asks inherently generate more data than fits.
 const maxBudgetAutoRecoveries = 1
 
+// initialSynthesisFlag computes the starting value of the
+// synthesizeHintInjected gate for a new loop iteration. For a fresh
+// run the gate matches the original "did we already cross the soft
+// cap?" condition. For an auto-resumed run (CumulativeSteps>0) the
+// gate is forced false so the nudge can fire again — the prior one
+// was compacted away with the rest of the transcript and the model
+// needs re-anchoring, not silence. Extracted to a helper so the
+// re-arm condition is unit-testable without standing up a full
+// scripted-provider end-to-end fixture.
+func initialSynthesisFlag(s *loopRunState, lim agentLimits) bool {
+	if s == nil {
+		return false
+	}
+	if s.seed != nil && s.seed.CumulativeSteps > 0 {
+		return false
+	}
+	return len(s.traces) >= lim.RoundSoftCap
+}
+
 // stuckStreakHardstopThreshold is the number of consecutive rounds the
 // trajectory layer must flag the repeated-failure pattern before the
 // loop forces tool_choice="none" on the next provider call. Three is
@@ -196,7 +215,15 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 	// so it doesn't spam; emptyRecoveryTried lets us reprompt the model
 	// once when it returns zero tool_calls AND zero text (observed when
 	// the model gets confused by a compacted history or a tool failure).
-	synthesizeHintInjected := len(s.traces) >= lim.RoundSoftCap
+	//
+	// Auto-resume re-arm: when this loop instance comes from
+	// attemptAutoResume (CumulativeSteps>0), the prior nudge — if any —
+	// was compacted away with the rest of the transcript. Setting the
+	// flag to false re-arms the nudge so a model that just had its
+	// context wiped gets re-anchored ("you've been at this a while,
+	// either share results or keep going with intent") instead of
+	// drifting on whatever fragments survived the compact.
+	synthesizeHintInjected := initialSynthesisFlag(s, lim)
 	emptyRecoveryTried := false
 
 	for step := 1; step <= lim.MaxSteps; step++ {
