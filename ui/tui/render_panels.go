@@ -238,8 +238,8 @@ func helpOverlayTabHints(tab string) []string {
 		}
 	case "patch":
 		return []string{
-			"n/b next/prev file · j/k next/prev hunk · f focus in Files",
-			"a apply · c check · u undo · d worktree diff · l reload patch",
+			"↑↓ next/prev hunk · n/b next/prev file · enter / → action menu",
+			"menu: apply · check · undo · focus · reload — accelerators: a/c/u/f/d",
 		}
 	case "workflow":
 		return []string{

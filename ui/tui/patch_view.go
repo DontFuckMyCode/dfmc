@@ -39,7 +39,80 @@ func (m Model) patchCommandSummary() string {
 // render_patch.go. The legacy stack-rendering implementation lives in
 // git history; the V2 renderer is the active F4 panel.
 func (m Model) renderPatchView(width int) string {
-	return m.renderPatchViewV2(width)
+	out := m.renderPatchViewV2(width)
+	if m.actionMenu.open && m.actionMenu.owner == "Patch" {
+		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
+}
+
+// openPatchActionMenu builds the contextual action list for the
+// Patch panel — every operation that previously lived behind
+// a/c/u/n/b/j/k/f/d/l is now reachable via arrows + enter.
+func (m Model) openPatchActionMenu() Model {
+	actions := []panelAction{
+		{Label: "Apply patch (modifies the worktree)", Accel: "a",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m, applyPatchCmd(m.eng, m.patchView.latestPatch, false)
+			}},
+		{Label: "Check patch (dry-run apply)", Accel: "c",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m, applyPatchCmd(m.eng, m.patchView.latestPatch, true)
+			}},
+		{Label: "Undo last conversation turn", Accel: "u",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m, undoConversationCmd(m.eng)
+			}},
+		{Label: "Next file in patch", Accel: "n",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				nm, cmd := m.shiftPatchTarget(1)
+				if mm, ok := nm.(Model); ok {
+					return mm, cmd
+				}
+				return m, cmd
+			}},
+		{Label: "Previous file in patch", Accel: "b",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				nm, cmd := m.shiftPatchTarget(-1)
+				if mm, ok := nm.(Model); ok {
+					return mm, cmd
+				}
+				return m, cmd
+			}},
+		{Label: "Next hunk", Accel: "j",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				nm, cmd := m.shiftPatchHunk(1)
+				if mm, ok := nm.(Model); ok {
+					return mm, cmd
+				}
+				return m, cmd
+			}},
+		{Label: "Previous hunk", Accel: "k",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				nm, cmd := m.shiftPatchHunk(-1)
+				if mm, ok := nm.(Model); ok {
+					return mm, cmd
+				}
+				return m, cmd
+			}},
+		{Label: "Focus current file in Files tab", Accel: "f",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				nm, cmd := m.focusPatchFile()
+				if mm, ok := nm.(Model); ok {
+					return mm, cmd
+				}
+				return m, cmd
+			}},
+		{Label: "Reload worktree diff", Accel: "d",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m, loadWorkspaceCmd(m.eng)
+			}},
+		{Label: "Reload latest assistant patch", Accel: "alt+l",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m, loadLatestPatchCmd(m.eng)
+			}},
+	}
+	return m.openActionMenu("Patch", "Patch actions", actions)
 }
 
 func loadLatestPatchCmd(eng *engine.Engine) tea.Cmd {

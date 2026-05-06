@@ -742,18 +742,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "Files":
 			return m.handleFilesKey(msg)
 		case "Patch":
+			if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+				return nm, cmd
+			}
 			switch msg.String() {
+			case "enter", "right", "l":
+				// Enter / Right opens the menu — arrow-driven access to
+				// apply / check / undo / next-file / next-hunk / focus /
+				// reload-* without memorising a/c/u/n/b/j/k/f/d/l.
+				return m.openPatchActionMenu(), nil
 			case "d", "alt+d":
 				return m, loadWorkspaceCmd(m.eng)
-			case "l", "alt+l":
+			case "alt+l":
 				return m, loadLatestPatchCmd(m.eng)
 			case "n", "alt+n":
 				return m.shiftPatchTarget(1)
 			case "b", "alt+b":
 				return m.shiftPatchTarget(-1)
-			case "j", "alt+j":
+			case "j", "alt+j", "down":
 				return m.shiftPatchHunk(1)
-			case "k", "alt+k":
+			case "k", "alt+k", "up":
 				return m.shiftPatchHunk(-1)
 			case "f", "alt+f":
 				return m.focusPatchFile()
