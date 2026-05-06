@@ -546,6 +546,71 @@ func TestHandleEngineEvent_CoachStuck_FiresIndependentOfVerbose(t *testing.T) {
 	}
 }
 
+// TestHandleEngineEvent_CriticalSafetyEvents_SurfaceNotices pins
+// the four "engine publishes but UI ignored" safety-critical events
+// the activity-feed audit found: runtime panics, tool panics,
+// world-writable config warnings, and degraded memory store. All
+// four were silently dropped at the dispatcher before this fix —
+// process panic recovery, security advisories, and storage
+// degradation were invisible to the user.
+func TestHandleEngineEvent_CriticalSafetyEvents_SurfaceNotices(t *testing.T) {
+	cases := []struct {
+		name      string
+		evType    string
+		payload   map[string]any
+		wantInMsg []string
+	}{
+		{
+			name:   "runtime panic",
+			evType: "runtime:panic",
+			payload: map[string]any{
+				"name":  "indexer-bg",
+				"panic": "nil pointer dereference",
+			},
+			wantInMsg: []string{"runtime panic", "indexer-bg", "nil pointer"},
+		},
+		{
+			name:   "tool panic",
+			evType: "tool:panicked",
+			payload: map[string]any{
+				"name":  "edit_file",
+				"panic": "index out of range",
+			},
+			wantInMsg: []string{"tool panicked", "edit_file", "index out of range"},
+		},
+		{
+			name:   "config permissions",
+			evType: "security:config_permissions",
+			payload: map[string]any{
+				"path":   "/etc/dfmc/config.yaml",
+				"status": "warn",
+				"msg":    "world-writable",
+			},
+			wantInMsg: []string{"security warning", "world-writable"},
+		},
+		{
+			name:   "memory degraded",
+			evType: "memory:degraded",
+			payload: map[string]any{
+				"reason": "bbolt: timeout",
+			},
+			wantInMsg: []string{"memory degraded", "bbolt: timeout"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newCoverageModel(t)
+			m = m.handleEngineEvent(engine.Event{Type: tc.evType, Payload: tc.payload})
+			notice := strings.ToLower(m.notice)
+			for _, want := range tc.wantInMsg {
+				if !strings.Contains(notice, strings.ToLower(want)) {
+					t.Errorf("expected notice to contain %q, got %q", want, m.notice)
+				}
+			}
+		})
+	}
+}
+
 // TestHandleEngineEvent_ToolDenied_SurfacesNotice pins the new
 // tool:denied classifier: the engine has been publishing this
 // event since the approval gate landed, but the TUI dispatcher

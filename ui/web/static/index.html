@@ -1116,6 +1116,31 @@ function classifyActivityEvent(ev) {
 		}
 		return { kind: "ctx", icon: "\u25c8", text: type };
 	}
+	if (type === "runtime:panic") {
+		// Background goroutine panic recovered — process kept running
+		// but the user must see this. High-prominence error.
+		var rpName = payload.name || "goroutine";
+		var rpText = payload.panic || "panic";
+		return { kind: "error", icon: "💥",
+			text: "runtime panic recovered · " + rpName + " · " + rpText };
+	}
+	if (type === "tool:panicked") {
+		var tpName = payload.name || "tool";
+		var tpText = payload.panic || "panic";
+		return { kind: "error", icon: "💥",
+			text: "tool panicked · " + tpName + " · " + tpText };
+	}
+	if (type === "security:config_permissions") {
+		var spPath = payload.path || "";
+		var spMsg = payload.msg || "config permissions warning";
+		return { kind: "error", icon: "⚠",
+			text: "security warning · " + (spPath ? (spPath + " · ") : "") + spMsg };
+	}
+	if (type === "memory:degraded") {
+		var mdReason = payload.reason || "memory store unavailable";
+		return { kind: "error", icon: "⚠",
+			text: "memory degraded · " + mdReason };
+	}
 	if (type.startsWith("hook:")) {
 		if (type === "hook:run") {
 			// Hooks are best-effort; only failures (non-zero exit

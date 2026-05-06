@@ -449,6 +449,70 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		} else {
 			line = fmt.Sprintf("Auto-new-session: fresh conversation seeded (%d→%d tokens).", historyTokens, briefTokens)
 		}
+	case "runtime:panic":
+		// Background-goroutine panic recovered via SafeGo. The process
+		// keeps running but a panic is always notable — surface it as
+		// a high-prominence error in the activity feed AND the chat
+		// transcript so a future "why did this fail" investigation has
+		// the breadcrumb.
+		name := payloadString(payload, "name", "goroutine")
+		panicText := strings.TrimSpace(payloadString(payload, "panic", "panic"))
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "runtime:panic:" + name,
+			Kind:   "system",
+			Status: "error",
+			Title:  "runtime panic recovered",
+			Detail: fmt.Sprintf("%s · %s", name, truncateSingleLine(panicText, 120)),
+		})
+		line = fmt.Sprintf("Runtime panic recovered [%s]: %s", name, truncateSingleLine(panicText, 160))
+	case "tool:panicked":
+		// Tool execution panicked. The tools.Engine wraps the call in a
+		// recover so the loop continues, but the user must know which
+		// tool blew up — silent recover is worse than a visible failure.
+		toolName := payloadString(payload, "name", "tool")
+		panicText := strings.TrimSpace(payloadString(payload, "panic", "panic"))
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:      "tool:panicked:" + toolName,
+			Kind:     "tool",
+			Status:   "error",
+			Title:    toolName + " (panicked)",
+			Detail:   truncateSingleLine(panicText, 120),
+			ToolName: toolName,
+		})
+		line = fmt.Sprintf("Tool panicked: %s — %s", toolName, truncateSingleLine(panicText, 160))
+	case "security:config_permissions":
+		// World/group-writable config detected — a hostile co-tenant on
+		// a shared host could inject hook commands. Surface once at
+		// session start with warn styling so the user can audit the
+		// path before any hook runs.
+		path := payloadString(payload, "path", "")
+		msg := strings.TrimSpace(payloadString(payload, "msg", "config permissions warning"))
+		detail := msg
+		if path != "" {
+			detail = fmt.Sprintf("%s · %s", path, msg)
+		}
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "security:config_permissions",
+			Kind:   "system",
+			Status: "warn",
+			Title:  "config permissions warning",
+			Detail: truncateSingleLine(detail, 160),
+		})
+		line = "Security warning: " + truncateSingleLine(detail, 160)
+	case "memory:degraded":
+		// Memory store load failed — engine falls back to in-memory tier
+		// so the session still works, but episodic/semantic recall is
+		// disabled until the underlying bbolt issue is fixed. Visible
+		// notice so the user knows recall is impaired.
+		reason := strings.TrimSpace(payloadString(payload, "reason", "memory store unavailable"))
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    "memory:degraded",
+			Kind:   "system",
+			Status: "warn",
+			Title:  "memory degraded",
+			Detail: truncateSingleLine(reason, 160),
+		})
+		line = "Memory degraded — episodic/semantic recall disabled: " + truncateSingleLine(reason, 140)
 	case "hook:run":
 		// Hooks are best-effort lifecycle shell commands — the engine
 		// never blocks on them, but a misconfigured hook (typo,
@@ -546,7 +610,9 @@ func shouldMirrorEventToTranscript(eventType string) bool {
 	case "agent:loop:error", "agent:loop:max_steps", "agent:loop:parked",
 		"agent:loop:budget_exhausted", "provider:throttle:retry",
 		"context:lifecycle:compacted", "context:lifecycle:handoff",
-		"conversation:save:error", "coach:note", "tool:denied":
+		"conversation:save:error", "coach:note", "tool:denied",
+		"runtime:panic", "tool:panicked", "security:config_permissions",
+		"memory:degraded":
 		return true
 	default:
 		return false
