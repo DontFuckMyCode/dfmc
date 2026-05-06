@@ -520,6 +520,11 @@ func helpOverlayTabHints(tab string) []string {
 		return []string{
 			"j/k scroll · r refresh · g/G top/bottom",
 		}
+	case "orchestrate":
+		return []string{
+			"alt+r jumps here · live hierarchy of agents/subagents/todos/drive/tokens",
+			"read-only panel — drive control from chat (/drive) · todo control via agent",
+		}
 	default:
 		return []string{"f1=chat f2=files f3=activity f4=providers f5=patch f6=tools f7=workflow f8=memory f9=codemap f10=conversations f11=prompts f12=security · ctrl+p palette · ctrl+q quit"}
 	}

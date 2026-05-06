@@ -713,6 +713,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+o":
 			m = m.activateProvidersPanel("", false)
 			return m, nil
+		case "alt+r":
+			m = m.activateDiagnosticTab("Orchestrate")
+			return m, nil
 		}
 
 		if m.activeTab < 0 || m.activeTab >= len(m.tabs) {

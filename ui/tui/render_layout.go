@@ -50,6 +50,8 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 		content = fitPanelContentHeight(m.renderContextViewSized(contentWidth, innerHeight), innerHeight)
 	case "Providers":
 		content = fitPanelContentHeight(m.renderProvidersView(contentWidth), innerHeight)
+	case "Orchestrate":
+		content = fitPanelContentHeight(m.renderOrchestrateView(contentWidth), innerHeight)
 	default:
 		panelVisible := m.statsPanelVisible(contentWidth)
 		boosted := m.statsPanelBoostActive(time.Now())

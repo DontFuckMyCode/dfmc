@@ -51,6 +51,7 @@ var tabPalette = map[string]tabPaletteEntry{
 	"Plans":         {Border: lipgloss.Color("#A5B4FC"), Accent: lipgloss.Color("#A5B4FC"), Glyph: "▣"},
 	"Context":       {Border: lipgloss.Color("#BEF264"), Accent: lipgloss.Color("#BEF264"), Glyph: "◐"},
 	"Providers":     {Border: lipgloss.Color("#F0ABFC"), Accent: lipgloss.Color("#F0ABFC"), Glyph: "◌"},
+	"Orchestrate":   {Border: lipgloss.Color("#FDE68A"), Accent: lipgloss.Color("#FDE68A"), Glyph: "◬"},
 }
 
 // planChatPaletteOverride kicks in when chat is in plan mode. The
@@ -118,6 +119,8 @@ func tabFKeyHint(tab string) string {
 		return "Alt+Y"
 	case "Context":
 		return "Alt+W"
+	case "Orchestrate":
+		return "Alt+R"
 	}
 	return ""
 }
