@@ -8,6 +8,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 func (m Model) statusCommandSummary() string {
@@ -31,6 +33,42 @@ func (m Model) statusCommandSummary() string {
 		parts = append(parts, "Context Why: "+why)
 	}
 	return strings.Join(parts, "\n")
+}
+
+// historyConfigLine surfaces the conversation-memory knobs in the
+// /context detailed summary so a user who just bumped MaxHistoryTokens
+// or MaxHistoryMessages can confirm the value made it through. Without
+// this line, the budget breakdown above shows the resolved per-request
+// share but not the underlying ceiling — and the user is left
+// guessing whether their config edit took effect.
+func (m Model) historyConfigLine() string {
+	if m.eng == nil || m.eng.Config == nil {
+		return ""
+	}
+	tokensCfg := m.eng.Config.Context.MaxHistoryTokens
+	msgsCfg := m.eng.Config.Context.MaxHistoryMessages
+	tokensTxt := fmt.Sprintf("%d", tokensCfg)
+	if tokensCfg <= 0 {
+		tokensTxt = "auto"
+	}
+	msgsTxt := fmt.Sprintf("%d", msgsCfg)
+	if msgsCfg <= 0 {
+		msgsTxt = "auto"
+	}
+	storedUser, storedAssistant := 0, 0
+	if active := m.eng.ConversationActive(); active != nil {
+		for _, msg := range active.Messages() {
+			switch msg.Role {
+			case types.RoleUser:
+				storedUser++
+			case types.RoleAssistant:
+				storedAssistant++
+			}
+		}
+	}
+	storedTotal := storedUser + storedAssistant
+	return fmt.Sprintf("History config: max_tokens=%s max_messages=%s · stored=%d msgs (%dU/%dA)",
+		tokensTxt, msgsTxt, storedTotal, storedUser, storedAssistant)
 }
 
 func (m Model) contextCommandSummary() string {
@@ -129,6 +167,9 @@ func (m Model) contextCommandDetailedSummary() string {
 			fmt.Sprintf("Budget breakdown: code=%d max_code=%d per_file=%d available=%d",
 				report.TokenCount, report.MaxTokensTotal, report.MaxTokensPerFile, report.ContextAvailable),
 		)
+	}
+	if line := m.historyConfigLine(); line != "" {
+		parts = append(parts, line)
 	}
 	if why := formatContextInReasonSummaryTUI(report); why != "" {
 		parts = append(parts, "Why summary: "+why)

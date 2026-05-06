@@ -308,6 +308,29 @@ func TestValidate_ContextMaxHistoryTokensMustBePositive(t *testing.T) {
 	}
 }
 
+// TestValidate_ContextMaxHistoryMessagesRejectsNegative pins the new
+// validation rule: 0 means "use engine default" (auto-fallback path
+// in conversationHistoryMaxMessages), positive overrides the floor,
+// negative is silent corruption (would zero the trim window) and
+// must be rejected at load time.
+func TestValidate_ContextMaxHistoryMessagesRejectsNegative(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Context.MaxHistoryMessages = -1
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for context.max_history_messages < 0")
+	}
+
+	cfg.Context.MaxHistoryMessages = 0
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected 0 to pass (auto-default), got: %v", err)
+	}
+
+	cfg.Context.MaxHistoryMessages = 200
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected positive value to pass, got: %v", err)
+	}
+}
+
 func TestValidate_ASTCacheSizeMustNotBeNegative(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.AST.CacheSize = -1
