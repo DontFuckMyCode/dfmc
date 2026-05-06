@@ -295,9 +295,56 @@ func runConfig(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		return 0
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc config [list|get|set|sync-models|edit]")
+		fmt.Fprintln(os.Stderr, formatConfigSubcommandError(args[0]))
 		return 2
 	}
+}
+
+// formatConfigSubcommandError renders the help-on-typo block shown when
+// `dfmc config <unknown>` is run. Lists each sub with a one-line summary
+// and adds a "did you mean" suggestion when the typo is close to a real
+// sub name. Without these the user only sees a bare `usage:` line that
+// names the verbs but never says what they do.
+func formatConfigSubcommandError(typo string) string {
+	subs := []struct {
+		name    string
+		summary string
+	}{
+		{"list", "Print the merged config (sensitive values redacted; --raw to show)."},
+		{"get", "Read one dotted path. `dfmc config get providers.profiles.anthropic.model`."},
+		{"set", "Write one dotted path. `dfmc config set [--global] <path> <value>`."},
+		{"sync-models", "Refresh providers.profiles.* from https://models.dev/api.json (preserves API keys)."},
+		{"edit", "Open the active config file in $EDITOR (or notepad/vi). `--global` switches to ~/.dfmc/."},
+	}
+	var b strings.Builder
+	if t := strings.TrimSpace(typo); t != "" {
+		fmt.Fprintf(&b, "unknown subcommand %q.", t)
+		if hint := suggestConfigSub(t, subs); hint != "" {
+			fmt.Fprintf(&b, " Did you mean %q?", hint)
+		}
+		b.WriteByte('\n')
+	}
+	b.WriteString("usage: dfmc config <subcommand> [flags]\n")
+	for _, s := range subs {
+		fmt.Fprintf(&b, "  %-13s %s\n", s.name, s.summary)
+	}
+	b.WriteString("\nRun `dfmc help config` for the full reference.")
+	return b.String()
+}
+
+func suggestConfigSub(typo string, subs []struct{ name, summary string }) string {
+	typo = strings.ToLower(strings.TrimSpace(typo))
+	for _, s := range subs {
+		if strings.HasPrefix(s.name, typo) && s.name != typo {
+			return s.name
+		}
+	}
+	for _, s := range subs {
+		if editDistanceAtMost(typo, s.name, 1) && s.name != typo {
+			return s.name
+		}
+	}
+	return ""
 }
 
 func projectConfigPath(cwd string) string {
