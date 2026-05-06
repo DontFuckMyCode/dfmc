@@ -689,12 +689,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, loadConversationsCmd(m.eng)
 			}
 			return m, nil
-		case "f11", "alt+t":
+		case "alt+t":
 			m.activeTab = 10
 			if !m.prompts.loaded && !m.prompts.loading {
 				m.prompts.loading = true
 				return m, loadPromptsCmd(m.eng)
 			}
+			return m, nil
+		case "f11":
+			// Most terminals intercept F11 for window fullscreen, so the
+			// app rarely sees this event. When it DOES come through (some
+			// embedded terminals, IDE consoles), open the help overlay
+			// rather than the Prompts tab — the previous binding sent
+			// users to a panel they couldn't escape from without knowing
+			// the secret. Prompts is reachable via alt+t.
+			m.ui.showHelpOverlay = !m.ui.showHelpOverlay
 			return m, nil
 		case "f12":
 			m.activeTab = 11

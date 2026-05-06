@@ -111,7 +111,10 @@ func tabFKeyHint(tab string) string {
 	case "Conversations":
 		return "F10"
 	case "Prompts":
-		return "F11"
+		// F11 is reserved for the help overlay because most terminals
+		// intercept it for window fullscreen before the app sees it.
+		// Prompts is reachable via Alt+T.
+		return "Alt+T"
 	case "Security":
 		return "F12"
 	case "Status":

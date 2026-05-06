@@ -69,7 +69,7 @@ func (m Model) shortcutsTabsSection() []string {
 		{"Memory", "F8", "working/episodic/semantic memory tiers"},
 		{"CodeMap", "F9", "symbol/dep graph · cycles · hotspots"},
 		{"Conversations", "F10", "saved conversations · branch nav"},
-		{"Prompts", "F11", "task/role/language prompt overlays"},
+		{"Prompts", "Alt+T", "task/role/language prompt overlays (F11 reserved — most terminals eat it for fullscreen; opens this help if it leaks through)"},
 		{"Security", "F12", "scanner · secrets · vuln scan"},
 		{"Plans", "Ctrl+Y", "plan-split editor · subtask preview"},
 		{"Context", "Ctrl+W", "context-build preview · ranked snippets"},

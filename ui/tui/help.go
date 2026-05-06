@@ -53,7 +53,8 @@ func renderTUIHelp() string {
 		"  F1  Chat       F2  Status     F3  Files",
 		"  F4  Patch      F5  Workflow  F6  Tools",
 		"  F7  Activity   F8  Memory     F9  CodeMap",
-		"  F10 Conversations  F11 Prompts  F12 Security",
+		"  F10 Conversations  Alt+T Prompts  F12 Security",
+		"  (F11 opens this help overlay — most terminals eat it for fullscreen)",
 		"  Ctrl+I   Context panel    Ctrl+O   Providers",
 		"  Tab / Shift+Tab   next / prev tab",
 
