@@ -275,41 +275,12 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 // comma-separated string ("**/*.go,internal/**"). Empty/whitespace
 // entries are dropped. The model often guesses one shape per language so
 // we accept both rather than rejecting the call.
+// splitGlobList is a thin alias for asStringSlice kept for grep-internal
+// readability — call sites read `splitGlobList(params, "include")`
+// which conveys "this is a glob list" better than the generic name.
+// All shape-coercion logic lives in asStringSlice.
 func splitGlobList(params map[string]any, key string) []string {
-	if params == nil {
-		return nil
-	}
-	v, ok := params[key]
-	if !ok || v == nil {
-		return nil
-	}
-	switch vv := v.(type) {
-	case []any:
-		out := make([]string, 0, len(vv))
-		for _, item := range vv {
-			if s := strings.TrimSpace(fmt.Sprint(item)); s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	case []string:
-		out := make([]string, 0, len(vv))
-		for _, item := range vv {
-			if s := strings.TrimSpace(item); s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	case string:
-		out := []string{}
-		for _, part := range strings.Split(vv, ",") {
-			if s := strings.TrimSpace(part); s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	}
-	return nil
+	return asStringSlice(params, key)
 }
 
 // anyGlobMatches returns true when any glob in `patterns` matches the

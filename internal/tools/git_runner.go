@@ -150,40 +150,12 @@ func resolveGitTimeout(params map[string]any) time.Duration {
 	return gitDefaultTimeout
 }
 
+// stringSliceArg is the git-runner alias for the shared
+// coerceStringSlice. Kept as a named function because the git
+// surface calls it from several places where "give me the args
+// list" reads cleaner than the generic name.
 func stringSliceArg(raw any) []string {
-	switch v := raw.(type) {
-	case nil:
-		return nil
-	case []string:
-		out := make([]string, 0, len(v))
-		for _, s := range v {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			s := strings.TrimSpace(fmt.Sprint(item))
-			if s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	case string:
-		parts := strings.Split(v, ",")
-		out := make([]string, 0, len(parts))
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p != "" {
-				out = append(out, p)
-			}
-		}
-		return out
-	}
-	return nil
+	return coerceStringSlice(raw)
 }
 
 func joinGitOutput(stdout, stderr string) string {

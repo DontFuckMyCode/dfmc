@@ -220,6 +220,64 @@ func asInt(m map[string]any, key string, fallback int) int {
 	return fallback
 }
 
+// asStringSlice extracts a list-of-strings param tolerating the
+// shapes providers and weaker models actually serialize:
+//   - []string                 → trimmed copy
+//   - []any{"a", "b"}          → stringified + trimmed
+//   - "a, b , c"               → CSV split
+//   - "a"                      → []string{"a"}  (single bare string)
+//   - nil / missing / wrong    → nil
+//
+// Empty entries are dropped so `include: ", , *.go"` produces
+// ["*.go"] not ["", "", "*.go"]. The pre-consolidation helpers
+// (splitGlobList, stringSliceArg) had small contract drifts; this
+// is the single source of truth so all tools accept the same shapes.
+func asStringSlice(m map[string]any, key string) []string {
+	if m == nil {
+		return nil
+	}
+	return coerceStringSlice(m[key])
+}
+
+// coerceStringSlice is the shape-agnostic core; callers that already
+// extracted the raw value (e.g. from a nested struct) use this directly.
+func coerceStringSlice(raw any) []string {
+	if raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		out := make([]string, 0, len(v))
+		for _, s := range v {
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if item == nil {
+				continue
+			}
+			s := strings.TrimSpace(fmt.Sprint(item))
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		out := make([]string, 0, 4)
+		for _, part := range strings.Split(v, ",") {
+			if s := strings.TrimSpace(part); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 func asBool(m map[string]any, key string, fallback bool) bool {
 	if m == nil {
 		return fallback

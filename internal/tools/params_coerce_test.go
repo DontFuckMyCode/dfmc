@@ -98,6 +98,60 @@ func TestAsString_RejectsNonStringScalars(t *testing.T) {
 	}
 }
 
+// TestAsStringSlice_HandlesProviderShapes pins the shared list-coercion
+// contract used by both grep's splitGlobList and git's stringSliceArg.
+// Before consolidation each helper had its own (slightly different)
+// switch — same provider input could yield empty in one tool and
+// populated in another. This test holds the single source of truth.
+func TestAsStringSlice_HandlesProviderShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		v    any
+		want []string
+	}{
+		{name: "nil missing", v: nil, want: nil},
+		{name: "[]string", v: []string{"*.go", "  ", "*.ts"}, want: []string{"*.go", "*.ts"}},
+		{name: "[]any with mix", v: []any{"a", 2, nil, "  c "}, want: []string{"a", "2", "c"}},
+		{name: "string CSV", v: "*.go, *.ts , ,*.py", want: []string{"*.go", "*.ts", "*.py"}},
+		{name: "single bare string", v: "*.go", want: []string{"*.go"}},
+		{name: "empty string", v: "", want: nil}, // CSV split of "" yields [""], all-empty → drops to nil
+		{name: "non-list scalar", v: 42, want: nil},
+		{name: "map input", v: map[string]any{"k": "v"}, want: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := asStringSlice(map[string]any{"x": tc.v}, "x")
+			if !equalStringSlices(got, tc.want) {
+				t.Errorf("asStringSlice(%T=%v) = %v, want %v", tc.v, tc.v, got, tc.want)
+			}
+			// Sanity: the standalone coerce path must agree.
+			gotCore := coerceStringSlice(tc.v)
+			if !equalStringSlices(gotCore, tc.want) {
+				t.Errorf("coerceStringSlice(%T=%v) = %v, want %v", tc.v, tc.v, gotCore, tc.want)
+			}
+		})
+	}
+	// Nil map and missing key.
+	if got := asStringSlice(nil, "x"); got != nil {
+		t.Errorf("nil map should return nil, got %v", got)
+	}
+	if got := asStringSlice(map[string]any{}, "x"); got != nil {
+		t.Errorf("missing key should return nil, got %v", got)
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // TestAsBool_NaNFallsBack ensures the float64 path rejects NaN. Without
 // the explicit NaN check, `NaN != 0` would be true and asBool would
 // return true for an invalid value — surprising behaviour even if
