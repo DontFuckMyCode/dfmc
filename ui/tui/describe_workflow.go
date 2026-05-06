@@ -249,6 +249,8 @@ func todoCountsForSummary(m Model) (total, done, pending int) {
 //	  validation:  3 passes ran (last unverified count: 0)
 //	  coach:       2 intervention(s) — see scrollback for detail
 //	  ceiling:     78/600 cumulative steps used (13%)
+//	  compacts:    4 cycles (reclaimed 142k tok)
+//	  cache:       3 hits · saved that many round-trips
 //
 // Each row only appears when the value is non-zero so the card
 // adapts to what actually happened.
@@ -258,8 +260,11 @@ func buildTurnSummary(s agentLoopState, todoTotal, todoDone, todoPending int) st
 	hasCoach := s.turnCoachInterventions > 0
 	hasCeiling := s.stepCeiling > 0 && s.cumulativeSteps > 0
 	hasTodos := todoTotal > 0
+	hasCompacts := s.compactsThisTurn > 0
+	hasCache := s.cacheHitsThisTurn > 0
 
-	if !hasEdits && !hasValidation && !hasCoach && !hasCeiling && !hasTodos && s.toolRounds == 0 {
+	if !hasEdits && !hasValidation && !hasCoach && !hasCeiling && !hasTodos &&
+		!hasCompacts && !hasCache && s.toolRounds == 0 {
 		return ""
 	}
 
@@ -317,6 +322,33 @@ func buildTurnSummary(s agentLoopState, todoTotal, todoDone, todoPending int) st
 		}
 		lines = append(lines, fmt.Sprintf("  todos:       %d of %d done%s",
 			todoDone, todoTotal, pendingHint))
+	}
+	if hasCompacts {
+		// Auto-compact pressure for this turn — surfaces a budget-thrashing
+		// turn even after the live runtime badge clears at agent:loop:final.
+		// Without this row, "we compacted 4 times" disappears the moment the
+		// loop ends and the user has no record of how heavy the turn was.
+		reclaimHint := ""
+		if s.compactReclaimedTurn > 0 {
+			reclaimHint = fmt.Sprintf(" (reclaimed %s tok)", compactMetric(s.compactReclaimedTurn))
+		}
+		cyc := "cycles"
+		if s.compactsThisTurn == 1 {
+			cyc = "cycle"
+		}
+		lines = append(lines, fmt.Sprintf("  compacts:    %d %s%s",
+			s.compactsThisTurn, cyc, reclaimHint))
+	}
+	if hasCache {
+		// Silent token savings — cache hits don't fire tool:call/tool:result
+		// so they're invisible in the chip strip. Adding the row to the
+		// turn summary preserves the signal in scrollback.
+		hits := "hits"
+		if s.cacheHitsThisTurn == 1 {
+			hits = "hit"
+		}
+		lines = append(lines, fmt.Sprintf("  cache:       %d %s · saved that many round-trips",
+			s.cacheHitsThisTurn, hits))
 	}
 
 	if len(lines) == 1 {

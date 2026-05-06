@@ -1484,6 +1484,75 @@ func TestBuildTurnSummary_TodosAlone(t *testing.T) {
 	}
 }
 
+// TestBuildTurnSummary_IncludesCompactsAndCache pins the two
+// budget-pressure rows added so the per-turn signal that lives on
+// the runtime badge survives into scrollback after agent:loop:final
+// resets the badge state.
+func TestBuildTurnSummary_IncludesCompactsAndCache(t *testing.T) {
+	s := agentLoopState{
+		toolRounds:           14,
+		turnEditedFiles:      []string{"x.go"},
+		compactsThisTurn:     4,
+		compactReclaimedTurn: 142000,
+		cacheHitsThisTurn:    3,
+	}
+	got := buildTurnSummary(s, 0, 0, 0)
+	if !strings.Contains(got, "compacts:") {
+		t.Errorf("expected compacts row, got %q", got)
+	}
+	if !strings.Contains(got, "4 cycles") {
+		t.Errorf("expected '4 cycles' plural form, got %q", got)
+	}
+	if !strings.Contains(got, "reclaimed 142.0k") {
+		t.Errorf("expected reclaim figure, got %q", got)
+	}
+	if !strings.Contains(got, "cache:") {
+		t.Errorf("expected cache row, got %q", got)
+	}
+	if !strings.Contains(got, "3 hits") {
+		t.Errorf("expected '3 hits' plural form, got %q", got)
+	}
+}
+
+// TestBuildTurnSummary_SingularCompactAndCacheWording pins the
+// "1 cycle"/"1 hit" branches so we don't ship "1 cycles" / "1 hits"
+// once a turn happens to have exactly one of each.
+func TestBuildTurnSummary_SingularCompactAndCacheWording(t *testing.T) {
+	s := agentLoopState{
+		toolRounds:           3,
+		turnEditedFiles:      []string{"y.go"},
+		compactsThisTurn:     1,
+		compactReclaimedTurn: 0, // reclaim hint suppressed when zero
+		cacheHitsThisTurn:    1,
+	}
+	got := buildTurnSummary(s, 0, 0, 0)
+	if !strings.Contains(got, "1 cycle") || strings.Contains(got, "1 cycles") {
+		t.Errorf("expected singular 'cycle' wording, got %q", got)
+	}
+	if !strings.Contains(got, "1 hit") || strings.Contains(got, "1 hits") {
+		t.Errorf("expected singular 'hit' wording, got %q", got)
+	}
+	if strings.Contains(got, "reclaimed") {
+		t.Errorf("zero reclaim should suppress the parenthetical, got %q", got)
+	}
+}
+
+// TestBuildTurnSummary_CompactsAloneStillRenders pins that a turn
+// with NO edits, NO validation, NO coach, NO ceiling, NO todos, but
+// non-zero compacts (e.g. a long-context Q+A that thrashed compact
+// without writing any files) still produces the card. Without this
+// the user has no record of how heavy the turn was.
+func TestBuildTurnSummary_CompactsAloneStillRenders(t *testing.T) {
+	s := agentLoopState{compactsThisTurn: 2, compactReclaimedTurn: 80000}
+	got := buildTurnSummary(s, 0, 0, 0)
+	if got == "" {
+		t.Fatal("compacts-only turn should still produce a summary card")
+	}
+	if !strings.Contains(got, "compacts:") {
+		t.Errorf("expected compacts row, got %q", got)
+	}
+}
+
 func TestToolReasoningUpdatesRuntimeStrip(t *testing.T) {
 	m := newCoverageModel(t)
 	m = m.handleEngineEvent(engine.Event{
