@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -146,10 +147,9 @@ func (m Model) renderCodemapView(width int) string {
 	if view == "" {
 		view = codemapViewOverview
 	}
+	banner := m.codemapTopBanner(width, view)
 	hint := subtleStyle.Render("j/k scroll · v cycle view · r refresh · g/G top/bottom")
-	header := sectionHeader("⌘", "CodeMap")
-	viewLine := subtleStyle.Render("view: ") + accentStyle.Render(view)
-	lines := []string{header, hint, viewLine, renderDivider(width - 2)}
+	lines := []string{banner, hint, renderDivider(width - 2)}
 
 	if m.codemap.err != "" {
 		lines = append(lines, "", warnStyle.Render("error · "+m.codemap.err))
@@ -171,12 +171,34 @@ func (m Model) renderCodemapView(width int) string {
 
 	body := renderCodemapBody(view, snap, m.codemap.scroll, width-2)
 	lines = append(lines, body...)
-	summary := fmt.Sprintf(
-		"%d nodes · %d edges · %d cycles · %d orphans",
-		snap.Nodes, snap.Edges, len(snap.Cycles), len(snap.Orphans),
-	)
-	lines = append(lines, "", subtleStyle.Render(summary))
+	summaryParts := []string{
+		accentStyle.Render(fmt.Sprintf("%d nodes", snap.Nodes)),
+		infoStyle.Render(fmt.Sprintf("%d edges", snap.Edges)),
+		warnStyle.Render(fmt.Sprintf("%d cycles", len(snap.Cycles))),
+		subtleStyle.Render(fmt.Sprintf("%d orphans", len(snap.Orphans))),
+	}
+	lines = append(lines, "", strings.Join(summaryParts, subtleStyle.Render(" · ")))
 	return strings.Join(lines, "\n")
+}
+
+// codemapTopBanner — title + view chip + status chip on the right.
+// Status: HEALTHY / EMPTY / ERROR / LOADING.
+func (m Model) codemapTopBanner(width int, view string) string {
+	title := titleStyle.Bold(true).Render("⌘ CODEMAP")
+	chipText, chipStyle := " HEALTHY ", okStyle
+	switch {
+	case m.codemap.err != "":
+		chipText, chipStyle = " ERROR ", warnStyle
+	case m.codemap.loading:
+		chipText, chipStyle = " LOADING ", infoStyle
+	case m.codemap.snap.Nodes == 0:
+		chipText, chipStyle = " EMPTY ", subtleStyle
+	}
+	chip := chipStyle.Render(chipText)
+	viewChip := accentStyle.Render(" view=" + view + " ")
+	chipStrip := viewChip + " " + chip
+	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
+	return title + strings.Repeat(" ", gap) + chipStrip
 }
 
 // renderCodemapBody returns the view-specific rows. It's split out from
