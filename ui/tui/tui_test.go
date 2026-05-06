@@ -4051,19 +4051,20 @@ func TestFitPanelContentHeightTruncatesWithEllipsis(t *testing.T) {
 	}
 }
 
-// TestRenderFilesViewHintDescribesRealKeys — the inline hint at the top of
-// the Files panel must describe the actual keys handleFilesKey accepts, not
-// stale copy. Previously the hint said 'enter reload' when 'r' is the
-// reload key (enter loads the preview); this test pins the corrected copy.
+// TestRenderFilesViewHintDescribesRealKeys — the Files panel must
+// surface the actual keys handleFilesKey accepts, not stale copy.
+// On the rebuilt V2 panel both the empty-state guidance and the
+// ACTIONS metadata card advertise 'r' for refresh/reload so the user
+// never has to read the source to learn the keys.
 func TestRenderFilesViewHintDescribesRealKeys(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 2
-	view := m.renderFilesView(120)
-	if !strings.Contains(view, "r reload") {
-		t.Fatalf("Files hint should advertise r as the reload key, got:\n%s", view)
-	}
-	if !strings.Contains(view, "enter preview") {
-		t.Fatalf("Files hint should advertise enter as the preview key, got:\n%s", view)
+	m.filesView.entries = []string{"main.go"}
+	m.filesView.path = "main.go"
+	m.filesView.preview = "package main\n"
+	view := m.renderFilesView(140)
+	if !strings.Contains(view, "reload") {
+		t.Fatalf("Files hint should advertise the reload action, got:\n%s", view)
 	}
 	if strings.Contains(view, "enter reload") {
 		t.Fatalf("stale 'enter reload' copy must not re-appear in Files hint, got:\n%s", view)
@@ -4171,8 +4172,11 @@ func TestRenderChatAndFilesViewShowPinnedFile(t *testing.T) {
 	}
 
 	filesView := m.renderFilesView(80)
-	if !strings.Contains(filesView, "Pinned for chat context") {
-		t.Fatalf("expected files view to show pinned file label, got:\n%s", filesView)
+	// The rebuilt V2 panel surfaces pinned status as a "PIN" chip in
+	// the list row and a "Pinned" mention in the inline footer
+	// (or STATUS card on wide terminals).
+	if !strings.Contains(filesView, "PIN") {
+		t.Fatalf("expected files view to show PIN chip for pinned file, got:\n%s", filesView)
 	}
 }
 

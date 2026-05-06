@@ -21,95 +21,11 @@ func (m Model) renderFilesView(width int) string {
 	return m.renderFilesViewSized(width, 24)
 }
 
+// renderFilesViewSized delegates to the rebuilt 3-pane explorer in
+// render_files.go. The legacy text-shape lives in git history; the V2
+// renderer is the active implementation for the F3 panel.
 func (m Model) renderFilesViewSized(width, height int) string {
-	listWidth := width / 3
-	if listWidth < 28 {
-		listWidth = 28
-	}
-	if listWidth > width-24 {
-		listWidth = width / 2
-	}
-	previewWidth := width - listWidth - 3
-	if previewWidth < 20 {
-		previewWidth = 20
-	}
-
-	const listChrome = 6
-	listRows := height - listChrome
-	if listRows < 8 {
-		listRows = 8
-	}
-	const previewChrome = 6
-	previewRows := height - previewChrome
-	if previewRows < 8 {
-		previewRows = 8
-	}
-
-	listLines := []string{
-		sectionHeader("▦", "Files"),
-		subtleStyle.Render("j/k move · enter preview · r reload · p pin · i/e/v chat actions · ctrl+h keys"),
-		renderDivider(listWidth - 2),
-		"",
-	}
-	if len(m.filesView.entries) == 0 {
-		listLines = append(listLines,
-			warnStyle.Render("No indexed project files yet."),
-			"",
-			subtleStyle.Render("Try one of these:"),
-			subtleStyle.Render("  • switch to Chat and run ")+codeStyle.Render("/analyze"),
-			subtleStyle.Render("  • press ")+codeStyle.Render("r")+subtleStyle.Render(" to refresh the file index"),
-			subtleStyle.Render("  • confirm you launched ")+codeStyle.Render("dfmc")+subtleStyle.Render(" from a project root"),
-		)
-	} else {
-		half := listRows / 2
-		start := m.filesView.index - half
-		if start < 0 {
-			start = 0
-		}
-		end := start + listRows
-		if end > len(m.filesView.entries) {
-			end = len(m.filesView.entries)
-			start = end - listRows
-			if start < 0 {
-				start = 0
-			}
-		}
-		for i := start; i < end; i++ {
-			prefix := "  "
-			label := truncateSingleLine(m.filesView.entries[i], listWidth-4)
-			if m.filesView.entries[i] == strings.TrimSpace(m.filesView.pinned) {
-				label = "[p] " + label
-			}
-			if i == m.filesView.index {
-				prefix = "> "
-				label = titleStyle.Render(label)
-			}
-			listLines = append(listLines, prefix+label)
-		}
-		listLines = append(listLines, "", subtleStyle.Render(fmt.Sprintf("%d/%d files", m.filesView.index+1, len(m.filesView.entries))))
-	}
-
-	previewLines := []string{
-		sectionHeader("❐", "Preview"),
-		subtleStyle.Render(blankFallback(m.filesView.path, "Select a file")),
-		renderDivider(previewWidth - 2),
-		"",
-	}
-	if strings.TrimSpace(m.filesView.path) != "" && m.filesView.path == strings.TrimSpace(m.filesView.pinned) {
-		previewLines = append(previewLines, subtleStyle.Render("Pinned for chat context"), "")
-	}
-	content := truncateForPanelSized(m.filesView.preview, previewWidth, previewRows)
-	if content == "" {
-		content = subtleStyle.Render("No preview loaded.")
-	}
-	previewLines = append(previewLines, content)
-	if m.filesView.size > 0 {
-		previewLines = append(previewLines, "", subtleStyle.Render(fmt.Sprintf("size=%d bytes", m.filesView.size)))
-	}
-
-	left := lipgloss.NewStyle().Width(listWidth).Render(strings.Join(listLines, "\n"))
-	right := lipgloss.NewStyle().Width(previewWidth).Render(strings.Join(previewLines, "\n"))
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, "   ", right)
+	return m.renderFilesViewV2(width, height)
 }
 
 func (m Model) renderToolsView(width int) string {
@@ -416,8 +332,8 @@ func helpOverlayTabHints(tab string) []string {
 		}
 	case "files":
 		return []string{
-			"j/k or alt+j/alt+k move · p pin · i insert marker",
-			"e explain · v review",
+			"j/k move · enter load preview · r reload index · p toggle pin",
+			"i insert [[file:…]] · e explain · v review · ctrl+w context",
 		}
 	case "patch":
 		return []string{
