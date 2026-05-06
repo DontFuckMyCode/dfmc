@@ -51,7 +51,7 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		"agent:loop:budget_exhausted", "agent:loop:auto_resume",
 		"agent:loop:auto_resume_refused", "agent:loop:auto_recover":
 		m, line = m.handleAgentLoopEvent(eventType, payload)
-	case "tool:call", "tool:result", "tool:error", "tool:reasoning", "tool:timeout":
+	case "tool:call", "tool:result", "tool:error", "tool:reasoning", "tool:timeout", "tool:denied":
 		m, line = m.handleToolEvent(eventType, event, payload)
 	case "agent:autonomy:plan":
 		m.autoActivateStatsPanelMode(statsPanelModeTasks, "tasks")
@@ -546,7 +546,7 @@ func shouldMirrorEventToTranscript(eventType string) bool {
 	case "agent:loop:error", "agent:loop:max_steps", "agent:loop:parked",
 		"agent:loop:budget_exhausted", "provider:throttle:retry",
 		"context:lifecycle:compacted", "context:lifecycle:handoff",
-		"conversation:save:error", "coach:note":
+		"conversation:save:error", "coach:note", "tool:denied":
 		return true
 	default:
 		return false

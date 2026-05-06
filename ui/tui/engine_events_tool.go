@@ -246,6 +246,40 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		} else {
 			line = fmt.Sprintf("Tool timeout: %s.", toolName)
 		}
+	case "tool:denied":
+		// Approval gate or sub-agent allowlist refused this tool. Fires
+		// BEFORE the tool would have run — there's no chip to finalize,
+		// just a denial line. Operators care because a recurring denial
+		// often means an over-strict gate or a model trying to use a
+		// tool that's intentionally off-limits; either way it's worth
+		// surfacing instead of letting the model swallow it silently.
+		toolName := payloadString(payload, "name", "tool")
+		reason := strings.TrimSpace(payloadString(payload, "reason", "denied"))
+		source := payloadString(payload, "source", "")
+		// Push a denied chip so the assistant message ribbon shows the
+		// refusal at the same spot a real tool would have appeared.
+		m.pushToolChip(toolChip{
+			Name:    toolName,
+			Status:  "denied",
+			Preview: truncateSingleLine(reason, 72),
+		})
+		detail := reason
+		if source != "" {
+			detail = fmt.Sprintf("[%s] %s", source, reason)
+		}
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:      "tool:denied:" + toolName,
+			Kind:     "tool",
+			Status:   "error",
+			Title:    toolName + " (denied)",
+			Detail:   detail,
+			ToolName: toolName,
+		})
+		if source != "" {
+			line = fmt.Sprintf("Tool denied [%s]: %s — %s", source, toolName, truncateSingleLine(reason, 120))
+		} else {
+			line = fmt.Sprintf("Tool denied: %s — %s", toolName, truncateSingleLine(reason, 120))
+		}
 	case "tool:reasoning":
 		// Self-narration: backfill the most recent running chip for
 		// this tool with the model's `_reason` text. Fires AFTER

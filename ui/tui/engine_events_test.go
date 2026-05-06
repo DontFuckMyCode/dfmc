@@ -546,6 +546,34 @@ func TestHandleEngineEvent_CoachStuck_FiresIndependentOfVerbose(t *testing.T) {
 	}
 }
 
+// TestHandleEngineEvent_ToolDenied_SurfacesNotice pins the new
+// tool:denied classifier: the engine has been publishing this
+// event since the approval gate landed, but the TUI dispatcher
+// didn't route it through handleToolEvent so it fell through to
+// the generic info fallback. A denied write_file (gate or sub-
+// agent allowlist) used to be invisible — the model saw the
+// error string but the user got no signal.
+func TestHandleEngineEvent_ToolDenied_SurfacesNotice(t *testing.T) {
+	m := newCoverageModel(t)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:denied",
+		Payload: map[string]any{
+			"name":   "run_command",
+			"reason": "user denied",
+			"source": "agent-loop",
+		},
+	})
+	if !strings.Contains(strings.ToLower(m.notice), "denied") {
+		t.Errorf("expected denial notice, got %q", m.notice)
+	}
+	if !strings.Contains(m.notice, "run_command") {
+		t.Errorf("expected denied tool name in notice, got %q", m.notice)
+	}
+	if !strings.Contains(m.notice, "agent-loop") {
+		t.Errorf("expected source bracket in notice, got %q", m.notice)
+	}
+}
+
 // TestHandleEngineEvent_HookRun_FailureSurfacesNotice pins the new
 // hook:run classifier: a non-zero exit code or err string must
 // produce a footer notice + transcript-friendly line, while a

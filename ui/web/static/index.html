@@ -1091,6 +1091,17 @@ function classifyActivityEvent(ev) {
 				: ("tool timeout \u00b7 " + tname);
 			return { kind: "error", icon: "\u29d6", text: line };
 		}
+		if (type === "tool:denied") {
+			// Approval gate or sub-agent allowlist refused this call —
+			// distinct error styling so operators spot recurring denials
+			// (often a sign of over-strict gate config or a model
+			// repeatedly trying an off-limits tool).
+			var dnTool = payload.name || "tool";
+			var dnReason = payload.reason || "denied";
+			var dnSource = payload.source || "";
+			return { kind: "error", icon: "🚫",
+				text: "tool denied · " + dnTool + (dnSource ? (" [" + dnSource + "]") : "") + " · " + dnReason };
+		}
 		if (type === "tool:reasoning") {
 			// Self-narration from the model — surface the WHY before the
 			// tool result lands. Glyph mirrors the TUI chip's `↳` shape.
