@@ -23,6 +23,8 @@ func runAsk(ctx context.Context, eng *engine.Engine, args []string, jsonMode boo
 	fs.SetOutput(os.Stderr)
 	race := fs.Bool("race", false, "race configured providers concurrently; first success wins")
 	raceProviders := fs.String("race-providers", "", "comma-separated provider names to race; defaults to primary+fallbacks when --race is set")
+	verbose := fs.Bool("v", false, "stream high-signal engine events to stderr (failures, denials, trims, guards)")
+	fs.BoolVar(verbose, "verbose", false, "alias of -v")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -30,6 +32,11 @@ func runAsk(ctx context.Context, eng *engine.Engine, args []string, jsonMode boo
 	if question == "" {
 		fmt.Fprintln(os.Stderr, "ask requires a question")
 		return 2
+	}
+
+	if *verbose {
+		stop := streamVerboseEvents(eng)
+		defer stop()
 	}
 
 	if *race {
