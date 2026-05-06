@@ -1267,6 +1267,44 @@ func TestHandleEngineEvent_CacheHit_IncrementsTurnCounter(t *testing.T) {
 	}
 }
 
+// TestHandleEngineEvent_ToolErrorIncrementsTurnCounter pins that a
+// failed tool:result bumps toolErrorsThisTurn so the end-of-turn
+// summary card can show "errors: N tool failures (recovered to
+// final answer)". Successful results must NOT bump the counter,
+// otherwise a turn that mixed success+failure would over-report.
+func TestHandleEngineEvent_ToolErrorIncrementsTurnCounter(t *testing.T) {
+	m := newCoverageModel(t)
+	if m.agentLoop.toolErrorsThisTurn != 0 {
+		t.Fatalf("setup: counter should start at 0, got %d", m.agentLoop.toolErrorsThisTurn)
+	}
+	// One success — counter stays at 0.
+	m = m.handleEngineEvent(engine.Event{
+		Type:    "tool:result",
+		Payload: map[string]any{"tool": "read_file", "success": true, "step": 1},
+	})
+	if m.agentLoop.toolErrorsThisTurn != 0 {
+		t.Errorf("success result should not bump counter, got %d", m.agentLoop.toolErrorsThisTurn)
+	}
+	// Two failures — counter == 2.
+	for range 2 {
+		m = m.handleEngineEvent(engine.Event{
+			Type:    "tool:result",
+			Payload: map[string]any{"tool": "edit_file", "success": false, "step": 2},
+		})
+	}
+	if m.agentLoop.toolErrorsThisTurn != 2 {
+		t.Errorf("two failures should bump counter to 2, got %d", m.agentLoop.toolErrorsThisTurn)
+	}
+	// New ask resets.
+	m = m.handleEngineEvent(engine.Event{
+		Type:    "agent:loop:start",
+		Payload: map[string]any{},
+	})
+	if m.agentLoop.toolErrorsThisTurn != 0 {
+		t.Errorf("loop start should reset counter, got %d", m.agentLoop.toolErrorsThisTurn)
+	}
+}
+
 // TestRuntimeStrip_CacheHitsBadge_RendersAndHidesAtZero pins the
 // "cache ×N" badge in the runtime strip.
 func TestRuntimeStrip_CacheHitsBadge_RendersAndHidesAtZero(t *testing.T) {
@@ -1551,6 +1589,55 @@ func TestBuildTurnSummary_CompactsAloneStillRenders(t *testing.T) {
 	if !strings.Contains(got, "compacts:") {
 		t.Errorf("expected compacts row, got %q", got)
 	}
+}
+
+// TestBuildTurnSummary_IncludesToolErrors pins the per-turn fragility
+// row. Without it, a turn that recovered through 8 tool failures
+// reads identically to a clean turn once chips scroll.
+func TestBuildTurnSummary_IncludesToolErrors(t *testing.T) {
+	t.Run("plural", func(t *testing.T) {
+		s := agentLoopState{
+			toolRounds:         18,
+			turnEditedFiles:    []string{"a.go"},
+			toolErrorsThisTurn: 8,
+		}
+		got := buildTurnSummary(s, 0, 0, 0)
+		if !strings.Contains(got, "errors:") {
+			t.Errorf("expected errors row, got %q", got)
+		}
+		if !strings.Contains(got, "8 tool failures") {
+			t.Errorf("expected '8 tool failures' plural, got %q", got)
+		}
+		if !strings.Contains(got, "recovered to final answer") {
+			t.Errorf("expected recovery clause, got %q", got)
+		}
+	})
+	t.Run("singular wording for one error", func(t *testing.T) {
+		s := agentLoopState{
+			toolRounds:         3,
+			turnEditedFiles:    []string{"a.go"},
+			toolErrorsThisTurn: 1,
+		}
+		got := buildTurnSummary(s, 0, 0, 0)
+		if strings.Contains(got, "1 tool failures") {
+			t.Errorf("expected singular wording, got %q", got)
+		}
+		if !strings.Contains(got, "1 tool failure") {
+			t.Errorf("expected '1 tool failure' singular, got %q", got)
+		}
+	})
+	t.Run("errors-alone still renders the card", func(t *testing.T) {
+		// Pure-error turn (no edits, no validation, no compacts) — still
+		// surfaces because "this turn was fragile" is itself a signal.
+		s := agentLoopState{toolErrorsThisTurn: 4}
+		got := buildTurnSummary(s, 0, 0, 0)
+		if got == "" {
+			t.Fatal("errors-only turn should produce a summary card")
+		}
+		if !strings.Contains(got, "errors:") {
+			t.Errorf("expected errors row, got %q", got)
+		}
+	})
 }
 
 func TestToolReasoningUpdatesRuntimeStrip(t *testing.T) {

@@ -249,8 +249,9 @@ func todoCountsForSummary(m Model) (total, done, pending int) {
 //	  validation:  3 passes ran (last unverified count: 0)
 //	  coach:       2 intervention(s) — see scrollback for detail
 //	  ceiling:     78/600 cumulative steps used (13%)
-//	  compacts:    4 cycles (reclaimed 142k tok)
+//	  compacts:    4 cycles (reclaimed 142.0k tok)
 //	  cache:       3 hits · saved that many round-trips
+//	  errors:      8 tool failures (recovered to final answer)
 //
 // Each row only appears when the value is non-zero so the card
 // adapts to what actually happened.
@@ -262,9 +263,10 @@ func buildTurnSummary(s agentLoopState, todoTotal, todoDone, todoPending int) st
 	hasTodos := todoTotal > 0
 	hasCompacts := s.compactsThisTurn > 0
 	hasCache := s.cacheHitsThisTurn > 0
+	hasErrors := s.toolErrorsThisTurn > 0
 
 	if !hasEdits && !hasValidation && !hasCoach && !hasCeiling && !hasTodos &&
-		!hasCompacts && !hasCache && s.toolRounds == 0 {
+		!hasCompacts && !hasCache && !hasErrors && s.toolRounds == 0 {
 		return ""
 	}
 
@@ -349,6 +351,19 @@ func buildTurnSummary(s agentLoopState, todoTotal, todoDone, todoPending int) st
 		}
 		lines = append(lines, fmt.Sprintf("  cache:       %d %s · saved that many round-trips",
 			s.cacheHitsThisTurn, hits))
+	}
+	if hasErrors {
+		// Per-turn fragility: how many tool calls failed (retried,
+		// timed out, denied) before the loop reached a final answer.
+		// Recovery is silent — chips scroll, the activity feed buries
+		// individual rows. Without this row, a turn that limped through
+		// 8 retries reads identically to a clean turn in scrollback.
+		count := "tool failures"
+		if s.toolErrorsThisTurn == 1 {
+			count = "tool failure"
+		}
+		lines = append(lines, fmt.Sprintf("  errors:      %d %s (recovered to final answer)",
+			s.toolErrorsThisTurn, count))
 	}
 
 	if len(lines) == 1 {

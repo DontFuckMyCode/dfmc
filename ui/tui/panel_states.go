@@ -637,6 +637,17 @@ type agentLoopState struct {
 	// runtime strip so a savings-heavy turn registers visibly. Reset
 	// on agent:loop:start.
 	cacheHitsThisTurn int
+
+	// toolErrorsThisTurn counts how many tool:result events arrived
+	// with success=false during the current turn. Recovery happens
+	// silently (the model retries or pivots), so a turn that failed 8
+	// tool calls and limped to a final answer leaves no trace once
+	// the chips scroll out. The end-of-turn summary card surfaces this
+	// as "errors: N recovered" so retry-heavy turns are visible in
+	// scrollback. Counts every failed result including timeouts and
+	// denials — the goal is to capture turn-level fragility, not to
+	// taxonomize causes. Reset on agent:loop:start.
+	toolErrorsThisTurn int
 }
 
 // workflowPanelState — Drive TODO tree panel state for the Workflow tab.

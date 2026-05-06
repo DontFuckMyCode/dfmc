@@ -123,6 +123,9 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		// Cache hits also reset per-turn so the badge tells the user
 		// "this turn saved N tool calls via cache" cleanly.
 		m.agentLoop.cacheHitsThisTurn = 0
+		// Tool error counter resets per-turn so the summary card reflects
+		// just THIS turn's fragility, not a cumulative since-launch tally.
+		m.agentLoop.toolErrorsThisTurn = 0
 		// A fresh loop start means any previously parked banner is obsolete.
 		m.ui.resumePromptActive = false
 		files := payloadInt(payload, "context_files", 0)

@@ -98,6 +98,11 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		status := "ok"
 		if !success {
 			status = "failed"
+			// Per-turn error tally — the chip ribbon scrolls and the
+			// activity feed buries individual failures, so a retry-heavy
+			// turn vanishes once the assistant stitches a final answer.
+			// Counted here for the end-of-turn summary card.
+			m.agentLoop.toolErrorsThisTurn++
 		}
 		m.agentLoop.lastTool = toolName
 		m.agentLoop.lastStatus = status
