@@ -86,6 +86,16 @@ type runtimeViewModel struct {
 	// validation command after the streak.
 	UnvalidatedEdits int
 
+	// LiveLoopTokens is the rolling conversation footprint as reported
+	// by the engine on every agent:loop:thinking, NOT the static
+	// "context that would be sent if you asked now" number from
+	// context:built. Pairs with LiveLoopBudgetCap (the per-turn
+	// max_tool_tokens) to render "loop ~47k/250k" in the runtime
+	// strip — the only surface that updates round-by-round during a
+	// long autonomous run. Zero when not in a loop.
+	LiveLoopTokens    int
+	LiveLoopBudgetCap int
+
 	Parked          bool
 	ApprovalPending bool
 	QueuedCount     int
@@ -180,6 +190,8 @@ func (m Model) runtimeViewModel() runtimeViewModel {
 		LastStatus:             info.LastStatus,
 		LastDuration:           info.LastDurationMs,
 		LastToolReason:         m.agentLoop.lastToolReason,
+		LiveLoopTokens:         m.agentLoop.liveLoopTokens,
+		LiveLoopBudgetCap:      m.agentLoop.liveLoopBudgetCap,
 		StuckTool:              m.agentLoop.stuckTool,
 		StuckCount:             m.agentLoop.stuckCount,
 		StuckErrClass:          m.agentLoop.stuckErrClass,
@@ -344,6 +356,14 @@ func runtimeStripNowParts(vm runtimeViewModel) []string {
 	if vm.ActiveTools > 0 {
 		parts = append(parts, fmt.Sprintf("tools %d", vm.ActiveTools))
 	}
+	// Live conversation-footprint badge — the only surface that updates
+	// round-by-round during an active loop. CONTEXT panel above the
+	// chat shows the static "what would be sent if you asked now"
+	// number from context:built; this one reflects the actual growing
+	// (and force-compact-shrinking) working set the engine sees.
+	if badge := liveLoopTokensBadge(vm); badge != "" {
+		parts = append(parts, badge)
+	}
 	// Auto-resume progress: show ceiling proximity continuously during a
 	// long autonomous run. Style escalates from info → warn as headroom
 	// disappears so the user knows when to /continue with a refined
@@ -408,6 +428,40 @@ func runtimeStripNowParts(vm runtimeViewModel) []string {
 		parts = append(parts, infoStyle.Render(fmt.Sprintf("notes %d", vm.PendingNotes)))
 	}
 	return parts
+}
+
+// liveLoopTokensBadge renders the "loop ~47k/250k" indicator when the
+// agent loop is active. Style escalates with proximity to the per-turn
+// budget cap so the user can see when a force-compact is about to fire:
+//
+//	<70% → subtle (quiet status counter)
+//	70-90% → info (compaction is approaching)
+//	>=90% → warn (compaction or budget park imminent)
+//
+// Returns "" when the loop isn't running (LiveLoopTokens==0) so the
+// strip stays clean between turns. When LiveLoopBudgetCap is zero we
+// still render the count alone (some configs disable the budget) so
+// the user always sees the live working set during a turn.
+func liveLoopTokensBadge(vm runtimeViewModel) string {
+	if vm.LiveLoopTokens <= 0 {
+		return ""
+	}
+	if vm.LiveLoopBudgetCap <= 0 {
+		return subtleStyle.Render(fmt.Sprintf("loop ~%s", formatTokenCount(vm.LiveLoopTokens)))
+	}
+	pct := (vm.LiveLoopTokens * 100) / vm.LiveLoopBudgetCap
+	label := fmt.Sprintf("loop ~%s/%s",
+		formatTokenCount(vm.LiveLoopTokens),
+		formatTokenCount(vm.LiveLoopBudgetCap),
+	)
+	switch {
+	case pct >= 90:
+		return warnStyle.Render(label)
+	case pct >= 70:
+		return infoStyle.Render(label)
+	default:
+		return subtleStyle.Render(label)
+	}
 }
 
 // autoResumeBadge renders a one-token "auto · S/SCeil" badge when the

@@ -730,6 +730,91 @@ func TestHandleEngineEvent_AutoResumePersistsCumulative(t *testing.T) {
 	}
 }
 
+func TestLiveLoopTokens_UpdatedByThinkingEvent(t *testing.T) {
+	m := newCoverageModel(t)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:loop:start",
+		Payload: map[string]any{
+			"max_tool_steps":  60,
+			"max_tool_tokens": 250_000,
+		},
+	})
+	if m.agentLoop.liveLoopBudgetCap != 250_000 {
+		t.Errorf("budget cap should be picked up from start event, got %d", m.agentLoop.liveLoopBudgetCap)
+	}
+	if m.agentLoop.liveLoopTokens != 0 {
+		t.Errorf("live tokens should reset on start, got %d", m.agentLoop.liveLoopTokens)
+	}
+	// Three rounds — token count should track the LATEST value, not
+	// accumulate (the engine reports rolling footprint, not cumulative).
+	for _, used := range []int{12_000, 35_000, 28_000} {
+		m = m.handleEngineEvent(engine.Event{
+			Type: "agent:loop:thinking",
+			Payload: map[string]any{
+				"step":           1,
+				"max_tool_steps": 60,
+				"tokens_used":    used,
+			},
+		})
+	}
+	if m.agentLoop.liveLoopTokens != 28_000 {
+		t.Errorf("live tokens should track latest value (28000 after compact), got %d", m.agentLoop.liveLoopTokens)
+	}
+	// Final clears.
+	m = m.handleEngineEvent(engine.Event{Type: "agent:loop:final", Payload: map[string]any{}})
+	if m.agentLoop.liveLoopTokens != 0 || m.agentLoop.liveLoopBudgetCap != 0 {
+		t.Errorf("live tokens should clear on final, got %d/%d",
+			m.agentLoop.liveLoopTokens, m.agentLoop.liveLoopBudgetCap)
+	}
+}
+
+func TestRuntimeStrip_LiveLoopTokensBadge_ProximityEscalates(t *testing.T) {
+	cases := []struct {
+		used, cap int
+		want      string
+	}{
+		{30_000, 250_000, "loop ~30k/250k"},  // <70%, subtle
+		{180_000, 250_000, "loop ~180k/250k"}, // 72%, info
+		{230_000, 250_000, "loop ~230k/250k"}, // 92%, warn
+	}
+	for _, c := range cases {
+		vm := runtimeViewModel{
+			AgentActive:       true,
+			LiveLoopTokens:    c.used,
+			LiveLoopBudgetCap: c.cap,
+		}
+		joined := strings.Join(runtimeStripNowParts(vm), " | ")
+		if !strings.Contains(joined, c.want) {
+			t.Errorf("used=%d cap=%d expected %q in strip, got %q",
+				c.used, c.cap, c.want, joined)
+		}
+	}
+}
+
+func TestRuntimeStrip_LiveLoopTokens_WithoutBudget(t *testing.T) {
+	// No budget cap → render count alone, no /denom. Some configs
+	// disable max_tool_tokens entirely.
+	vm := runtimeViewModel{
+		AgentActive:    true,
+		LiveLoopTokens: 12_000,
+	}
+	joined := strings.Join(runtimeStripNowParts(vm), " | ")
+	if !strings.Contains(joined, "loop ~12k") {
+		t.Errorf("expected count alone, got %q", joined)
+	}
+	if strings.Contains(joined, "loop ~12k/") {
+		t.Errorf("no budget → no /denom suffix, got %q", joined)
+	}
+}
+
+func TestRuntimeStrip_NoLiveLoopBadgeWhenIdle(t *testing.T) {
+	vm := runtimeViewModel{AgentActive: false, LiveLoopTokens: 0}
+	joined := strings.Join(runtimeStripNowParts(vm), " | ")
+	if strings.Contains(joined, "loop ~") {
+		t.Errorf("no active loop → no badge, got %q", joined)
+	}
+}
+
 func TestBuildTurnSummary_QuietForTrivialTurn(t *testing.T) {
 	// Zero-effort turn (e.g. one-shot Q+A with no tools) → no card.
 	if got := buildTurnSummary(agentLoopState{}, 0, 0, 0); got != "" {

@@ -40,6 +40,11 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		m.agentLoop.turnEditedFiles = nil
 		m.agentLoop.turnValidationPasses = 0
 		m.agentLoop.turnCoachInterventions = 0
+		// Live token tracking — pick up the per-turn budget from the
+		// start event so the strip can render "47k/250k" with the
+		// right denominator. Cleared together with the rest.
+		m.agentLoop.liveLoopTokens = 0
+		m.agentLoop.liveLoopBudgetCap = payloadInt(payload, "max_tool_tokens", 0)
 		// A fresh loop start means any previously parked banner is obsolete.
 		m.ui.resumePromptActive = false
 		files := payloadInt(payload, "context_files", 0)
@@ -60,6 +65,14 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		if rounds >= 0 {
 			m.agentLoop.toolRounds = rounds
 		}
+		// Live working-set token count, refreshed every round. The
+		// engine reports the rolling conversation footprint here (NOT
+		// a cumulative sum) so this can shrink when a force-compact
+		// runs — a feature, not a bug: the strip should reflect the
+		// real footprint, not a monotonic counter.
+		if used := payloadInt(payload, "tokens_used", 0); used > 0 {
+			m.agentLoop.liveLoopTokens = used
+		}
 		m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
 		m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
 		if m.agentLoop.step > 0 && m.agentLoop.maxToolStep > 0 {
@@ -70,6 +83,11 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 	case "agent:loop:final":
 		m.agentLoop.active = false
 		m.agentLoop.phase = "finalizing"
+		// Drop the live counter — the loop is done, the badge is
+		// no longer meaningful. The /stats card preserves session-
+		// scope token totals separately.
+		m.agentLoop.liveLoopTokens = 0
+		m.agentLoop.liveLoopBudgetCap = 0
 		if rounds := payloadInt(payload, "tool_rounds", 0); rounds >= 0 {
 			m.agentLoop.toolRounds = rounds
 		}

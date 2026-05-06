@@ -600,6 +600,16 @@ type agentLoopState struct {
 	turnEditedFiles        []string
 	turnValidationPasses   int
 	turnCoachInterventions int
+	// Live in-loop conversation footprint as reported by the engine on
+	// agent:loop:thinking. The CONTEXT panel only refreshes once per
+	// Ask (on context:built) so it shows "what WOULD be sent if you
+	// asked now" — the static value, not the actively-growing one.
+	// During a long autonomous loop the user wants to see how close
+	// the working context is to the budget; this field powers a
+	// "loop ~47k/250k" indicator in the runtime strip that keeps
+	// updating round-by-round.
+	liveLoopTokens     int
+	liveLoopBudgetCap  int // engine's max_tool_tokens (live working-set ceiling)
 }
 
 // workflowPanelState — Drive TODO tree panel state for the Workflow tab.
