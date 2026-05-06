@@ -57,6 +57,13 @@ type runtimeViewModel struct {
 	LastStatus    string
 	LastDuration  int
 
+	// Stuck* — populated when the trajectory coach has flagged a
+	// repeated-failure pattern that hasn't been cleared by a successful
+	// tool call yet. Empty StuckTool means no current stall.
+	StuckTool     string
+	StuckCount    int
+	StuckErrClass string
+
 	Parked          bool
 	ApprovalPending bool
 	QueuedCount     int
@@ -150,6 +157,9 @@ func (m Model) runtimeViewModel() runtimeViewModel {
 		LastTool:               info.LastTool,
 		LastStatus:             info.LastStatus,
 		LastDuration:           info.LastDurationMs,
+		StuckTool:              m.agentLoop.stuckTool,
+		StuckCount:             m.agentLoop.stuckCount,
+		StuckErrClass:          m.agentLoop.stuckErrClass,
 		Parked:                 info.Parked,
 		ApprovalPending:        m.pendingApproval != nil,
 		QueuedCount:            info.QueuedCount,
@@ -305,6 +315,16 @@ func runtimeStripNowParts(vm runtimeViewModel) []string {
 	}
 	if vm.ActiveTools > 0 {
 		parts = append(parts, fmt.Sprintf("tools %d", vm.ActiveTools))
+	}
+	// Stuck-loop badge: warn-styled, ahead of last-tool so it lands in
+	// the eyeline of someone scanning a long-running run for "is it
+	// stuck?" Cleared automatically by the next successful tool result.
+	if stuck := strings.TrimSpace(vm.StuckTool); stuck != "" && vm.StuckCount > 0 {
+		badge := fmt.Sprintf("stalled: %s ×%d", stuck, vm.StuckCount)
+		if cls := strings.TrimSpace(vm.StuckErrClass); cls != "" {
+			badge += " · " + cls
+		}
+		parts = append(parts, warnStyle.Render(badge))
 	}
 	if tool := strings.TrimSpace(vm.LastTool); tool != "" {
 		label := "last tool: " + tool

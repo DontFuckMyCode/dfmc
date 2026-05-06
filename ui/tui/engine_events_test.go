@@ -545,6 +545,96 @@ func TestHandleEngineEvent_CoachStuck_FiresIndependentOfVerbose(t *testing.T) {
 	}
 }
 
+func TestHandleEngineEvent_CoachStuck_ClearedBySuccessfulTool(t *testing.T) {
+	// Stall badge should disappear automatically once the model recovers
+	// — a single successful tool call after the stuck signal is the
+	// trajectory layer's "switch tactic" hint landing.
+	m := newCoverageModel(t)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:coach:stuck",
+		Payload: map[string]any{
+			"tool":          "read_file",
+			"failure_count": 3,
+			"error_class":   "file does not exist",
+		},
+	})
+	if m.agentLoop.stuckTool == "" {
+		t.Fatal("setup: stuck signal should set stuckTool")
+	}
+	// Successful tool call → badge clears.
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":    "glob",
+			"success": true,
+			"step":    14,
+		},
+	})
+	if m.agentLoop.stuckTool != "" {
+		t.Errorf("successful tool should clear stuckTool, got %q", m.agentLoop.stuckTool)
+	}
+	if m.agentLoop.stuckClearedAt != 14 {
+		t.Errorf("stuckClearedAt should record the recovery step, got %d", m.agentLoop.stuckClearedAt)
+	}
+}
+
+func TestHandleEngineEvent_CoachStuck_NotClearedByFailedTool(t *testing.T) {
+	// A FAILED tool call must NOT clear the badge — the model is still
+	// stuck, and the badge should keep warning the user.
+	m := newCoverageModel(t)
+	m = m.handleEngineEvent(engine.Event{
+		Type: "agent:coach:stuck",
+		Payload: map[string]any{
+			"tool":          "read_file",
+			"failure_count": 3,
+			"error_class":   "file does not exist",
+		},
+	})
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":    "read_file",
+			"success": false,
+			"step":    15,
+		},
+	})
+	if m.agentLoop.stuckTool != "read_file" {
+		t.Errorf("failed tool should NOT clear stuckTool, got %q", m.agentLoop.stuckTool)
+	}
+}
+
+func TestRuntimeStrip_StalledBadge(t *testing.T) {
+	vm := runtimeViewModel{
+		AgentActive:   true,
+		AgentPhase:    "thinking",
+		AgentStep:     12,
+		AgentMaxSteps: 60,
+		StuckTool:     "read_file",
+		StuckCount:    4,
+		StuckErrClass: "file does not exist",
+	}
+	parts := runtimeStripNowParts(vm)
+	joined := strings.Join(parts, " | ")
+	if !strings.Contains(joined, "stalled:") {
+		t.Errorf("expected stalled badge in strip, got %q", joined)
+	}
+	if !strings.Contains(joined, "read_file") {
+		t.Errorf("badge should name the tool, got %q", joined)
+	}
+	if !strings.Contains(joined, "×4") {
+		t.Errorf("badge should show count, got %q", joined)
+	}
+}
+
+func TestRuntimeStrip_NoBadgeWhenNotStuck(t *testing.T) {
+	vm := runtimeViewModel{AgentActive: true, AgentStep: 5, AgentMaxSteps: 60}
+	parts := runtimeStripNowParts(vm)
+	joined := strings.Join(parts, " | ")
+	if strings.Contains(joined, "stalled:") {
+		t.Errorf("no stuck signal → no badge, got %q", joined)
+	}
+}
+
 func TestHandleEngineEvent_CoachStuck_IgnoresEmptyTool(t *testing.T) {
 	// Defensive: malformed payload (missing tool name or zero count)
 	// should not produce a chip or a note — better to drop the event

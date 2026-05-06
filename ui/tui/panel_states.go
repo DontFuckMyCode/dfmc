@@ -545,6 +545,14 @@ type agentLoopState struct {
 	// sessionCoachNotes accumulates coach:note text during the current round for
 	// runtime visibility and test assertions.
 	sessionCoachNotes []string
+	// stuck* — last seen `agent:coach:stuck` payload. Powers the warn
+	// badge in the runtime "now" strip so a multi-hour autonomous run
+	// surfaces "stalled: <tool> ×N" at a glance until the next
+	// successful tool clears it. Empty stuckTool means no current stall.
+	stuckTool      string
+	stuckCount     int
+	stuckErrClass  string
+	stuckClearedAt int // step number where the stall was last cleared (0=never)
 }
 
 // workflowPanelState — Drive TODO tree panel state for the Workflow tab.

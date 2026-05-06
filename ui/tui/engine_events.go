@@ -150,18 +150,23 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 			return m
 		}
 		preview := fmt.Sprintf("%s ×%d failures", tool, count)
+		truncatedErr := errClass
 		if errClass != "" {
-			truncated := errClass
-			if len(truncated) > 28 {
-				truncated = truncated[:25] + "..."
+			if len(truncatedErr) > 28 {
+				truncatedErr = truncatedErr[:25] + "..."
 			}
-			preview = fmt.Sprintf("%s ×%d · %s", tool, count, truncated)
+			preview = fmt.Sprintf("%s ×%d · %s", tool, count, truncatedErr)
 		}
 		m.pushToolChip(toolChip{
 			Name:    "stuck-loop",
 			Status:  "warn",
 			Preview: preview,
 		})
+		// Mark the stall on agentLoopState so the runtime "now" strip
+		// renders a warn badge until the next successful tool clears it.
+		m.agentLoop.stuckTool = tool
+		m.agentLoop.stuckCount = count
+		m.agentLoop.stuckErrClass = truncatedErr
 		notice := fmt.Sprintf(
 			"⚠ Loop stalled — %s failed %d times with the same error class. The agent has been told to switch tactic.",
 			tool, count,

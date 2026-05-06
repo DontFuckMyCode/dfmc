@@ -100,6 +100,16 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 				m.agentLoop.toolRounds = step
 			}
 		}
+		// Clear the stuck-loop badge once the model recovers — a single
+		// successful tool call means the trajectory layer's "switch
+		// tactic" hint landed and the agent broke out of the failure
+		// loop. The badge re-arms on the next agent:coach:stuck event.
+		if success && m.agentLoop.stuckTool != "" {
+			m.agentLoop.stuckClearedAt = step
+			m.agentLoop.stuckTool = ""
+			m.agentLoop.stuckCount = 0
+			m.agentLoop.stuckErrClass = ""
+		}
 		m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
 		m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
 		displayName := displayToolName(toolName, payload)
