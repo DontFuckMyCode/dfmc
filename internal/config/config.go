@@ -40,6 +40,8 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	if err := loadYAML(globalPath, cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("load global config: %w", err)
 	}
+	// Silent on not-exist: defaults from DefaultConfig() (including primary:minimax)
+	// are preserved. Any other parse error still returns.
 	cfg.normalizeAliases()
 	globalHooks := cloneHooksConfig(cfg.Hooks)
 	allowProjectHooks := cfg.Hooks.AllowProject
@@ -206,6 +208,36 @@ func (c *Config) PluginDir() string {
 		return c.Plugins.Directory
 	}
 	return filepath.Join(UserConfigDir(), "plugins")
+}
+
+// GetKey returns the API key for the named provider. Returns "" if the
+// provider is not configured.
+func (c *Config) GetKey(provider string) string {
+	if c == nil || c.Providers.Profiles == nil {
+		return ""
+	}
+	prof, ok := c.Providers.Profiles[provider]
+	if !ok {
+		return ""
+	}
+	return prof.APIKey
+}
+
+// SetKey updates (or inserts) the API key for the named provider,
+// expanding the Providers.Profiles map as needed.
+func (c *Config) SetKey(provider, key string) {
+	if c == nil {
+		return
+	}
+	if c.Providers.Profiles == nil {
+		c.Providers.Profiles = map[string]ModelConfig{}
+	}
+	prof, ok := c.Providers.Profiles[provider]
+	if !ok {
+		prof = ModelConfig{}
+	}
+	prof.APIKey = key
+	c.Providers.Profiles[provider] = prof
 }
 
 func (c *Config) Save(path string) error {

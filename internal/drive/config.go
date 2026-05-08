@@ -119,7 +119,7 @@ func DefaultConfig() Config {
 	return Config{
 		MaxTodos:         20,
 		MaxFailedTodos:   3,
-		MaxWallTime:      30 * time.Minute,
+		MaxWallTime:      60 * time.Minute,
 		DrainGraceWindow: 2 * time.Second,
 		Retries:          1,
 		MaxParallel:      3,

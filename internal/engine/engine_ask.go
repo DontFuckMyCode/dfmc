@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/drive"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 )
 
@@ -149,7 +150,18 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 		}
 		return completion.Answer, nil
 	}
-	e.ensureIndexed(ctx)
+
+	// Auto-decompose: prompt scoring ile çok adımlı mı tek adımlı mı
+	// karar ver. True ise Drive'a yönlendir (plan + adım adım exec).
+	if e.shouldDecomposePrompt(prompt) {
+		result, err := e.runViaDrive(ctx, prompt)
+		if err != nil {
+			return "", err
+		}
+		return e.formatDriveResult(result), nil
+	}
+
+e.ensureIndexed(ctx)
 
 	chunks := e.buildContextChunks(prompt)
 
@@ -184,3 +196,130 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 }
 
 // StreamAsk lives in engine_ask_stream.go.
+
+// shouldDecomposePrompt returns true when the prompt looks multi-step
+// enough to benefit from Drive's TODO decomposition and adım-adım
+// execution. Scoring is intentionally cheap (regex + heuristics) so
+// it runs on every Ask without adding noticeable latency.
+func (e *Engine) shouldDecomposePrompt(prompt string) bool {
+	if e == nil || e.Config == nil {
+		return false
+	}
+	if !e.Config.Agent.ChatAutoDecompose {
+		return false
+	}
+	if prompt == "" {
+		return false
+	}
+
+	// Low score = likely single-turn Q&A → stay in Ask.
+	// High score = multi-step work → route to Drive.
+	score := 0
+	lower := strings.ToLower(prompt)
+
+	// Sequential action signals
+	if strings.Contains(lower, "and then") || strings.Contains(lower, "after that") {
+		score += 3
+	}
+	if strings.Contains(lower, "also") || strings.Contains(lower, "bunun yanında") || strings.Contains(lower, "ek olarak") {
+		score += 2
+	}
+	if strings.Contains(lower, "once ") || strings.Contains(lower, "first, ") || strings.Contains(lower, "önce ") {
+		score += 2
+	}
+
+	// Bulk operation signals
+	if strings.Contains(lower, "all ") && (strings.Contains(lower, "files") || strings.Contains(lower, "functions") || strings.Contains(lower, "tests")) {
+		score += 4
+	}
+	if strings.Contains(lower, "every ") || strings.Contains(lower, "tüm ") {
+		score += 3
+	}
+	if strings.Contains(lower, "multiple ") || strings.Contains(lower, "birden fazla") {
+		score += 2
+	}
+
+	// Complex task signals
+	if strings.Contains(lower, "create a project") || strings.Contains(lower, "set up") || strings.Contains(lower, "migrate") {
+		score += 5
+	}
+	if strings.Contains(lower, "refactor") || strings.Contains(lower, "rewrite") {
+		score += 4
+	}
+	if strings.Contains(lower, "fix all") || strings.Contains(lower, "update all") || strings.Contains(lower, "tümünü düzelt") {
+		score += 4
+	}
+	if strings.Contains(lower, "implement ") || strings.Contains(lower, "write ") {
+		score += 2
+	}
+	if strings.Contains(lower, "build ") || strings.Contains(lower, "create ") {
+		score += 1
+	}
+
+	// Single-step Q&A signals (reduce score)
+	if strings.HasPrefix(lower, "what is") || strings.HasPrefix(lower, "what's") {
+		score -= 3
+	}
+	if strings.HasPrefix(lower, "how do i") || strings.HasPrefix(lower, "how can i") {
+		score -= 2
+	}
+	if strings.HasPrefix(lower, "why ") || strings.HasPrefix(lower, "neden") {
+		score -= 3
+	}
+	if strings.HasPrefix(lower, "explain ") {
+		score -= 3
+	}
+	if strings.HasPrefix(lower, "show me") || strings.HasPrefix(lower, "bana göster") {
+		score -= 2
+	}
+	if strings.HasPrefix(lower, "list ") {
+		score -= 1
+	}
+
+	// Threshold: score >= 4 → Drive, else Ask
+	return score >= 4
+}
+
+// runViaDrive executes the prompt through Drive's plan → execute loop.
+// It creates a Driver from the engine's own components and blocks
+// until the run finishes (or ctx cancels). Returns the final Run record.
+func (e *Engine) runViaDrive(ctx context.Context, prompt string) (*drive.Run, error) {
+	runner := e.NewDriveRunner()
+	if runner == nil {
+		return nil, fmt.Errorf("drive runner not available: providers not initialized")
+	}
+
+	dcfg := drive.DefaultConfig()
+	// 60 dakika max — uzun refactor/migration işleri için yeterli.
+	dcfg.MaxWallTime = 60 * time.Minute
+	dcfg.MaxFailedTodos = 5 // 3 yerine 5 — karmaşık işlerde daha toleranslı
+	dcfg.MaxParallel = 3
+	dcfg.AutoApprove = []string{
+		"read_file", "grep_codebase", "glob", "ast_query",
+		"find_symbol", "list_dir", "web_fetch", "web_search",
+	}
+
+	// Adapter: engine.EventBus.Publish(func(Event)) → drive.Publisher(func(string, map))
+	publisher := func(eventType string, payload map[string]any) {
+		e.EventBus.Publish(Event{Type: eventType, Payload: payload})
+	}
+
+	d := drive.NewDriver(runner, nil, publisher, dcfg)
+	return d.Run(ctx, prompt)
+}
+
+// formatDriveResult extracts a human-readable summary from the completed
+// Drive run for the chat response. Returns "" on nil run.
+func (e *Engine) formatDriveResult(run *drive.Run) string {
+	if run == nil {
+		return ""
+	}
+	done, blocked, skipped, _ := run.Counts()
+	msg := fmt.Sprintf("[Drive] %s — %d done, %d blocked, %d skipped",
+		run.Status, done, blocked, skipped)
+	if run.Reason != "" {
+		msg += " | " + run.Reason
+	}
+	return msg
+}
+

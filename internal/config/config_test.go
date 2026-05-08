@@ -292,10 +292,12 @@ func TestValidate_ContextMaxTokensTotalMustBePositive(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_ContextAutoIncludeFilesOff(t *testing.T) {
+func TestDefaultConfig_ContextAutoIncludeFilesOn(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.Context.AutoIncludeFiles {
-		t.Fatal("default context.auto_include_files must stay false; workspace files should be explicit/tool-driven")
+	// AutoIncludeFiles=true is the modern default; workspace files are
+	// automatically retrieved for every query without needing markers.
+	if !cfg.Context.AutoIncludeFiles {
+		t.Fatal("default context.auto_include_files should be true in modern config")
 	}
 }
 

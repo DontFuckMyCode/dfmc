@@ -219,6 +219,13 @@ func (e *Engine) clearLastContextSnapshot() {
 	e.mu.Unlock()
 }
 
+// ClearContextSnapshot exposes the unexported clearLastContextSnapshot
+// for use by the TUI when a drive run terminates — the snapshot from
+// the previous Ask is stale after an autonomous drive session.
+func (e *Engine) ClearContextSnapshot() {
+	e.clearLastContextSnapshot()
+}
+
 // InspectLastContext returns a detailed breakdown of the most recently
 // built context chunks. Use this to show context composition in TUI or CLI.
 func (e *Engine) InspectLastContext() ctxmgr.InspectionResult {

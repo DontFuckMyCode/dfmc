@@ -97,6 +97,11 @@ type AgentConfig struct {
 	// RecentFailureCap caps the per-tool failure ledger used to
 	// suppress noisy retries on the same broken call. Default 256.
 	RecentFailureCap int `yaml:"recent_failure_cap"`
+	// ChatAutoDecompose: when true and a chat prompt appears multi-step
+	// (multiple files, sequential actions, "all X" patterns), the engine
+	// automatically routes it through Drive for TODO decomposition and
+	// adım-adım execution instead of a single-shot ask. Default true.
+	ChatAutoDecompose bool `yaml:"chat_auto_decompose"`
 }
 
 type ContextLifecycleConfig struct {

@@ -52,14 +52,13 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 	payload, _ := toStringAnyMap(event.Payload)
 	m, line, _ := engineEvents.dispatch(m, event, payload)
 	line = strings.TrimSpace(line)
-	if line == "" {
-		return m
+	if line != "" {
+		m.appendActivity(line)
 	}
-	m.appendActivity(line)
-	m.notice = line
-	if m.chat.sending && shouldMirrorEventToTranscript(eventType) {
+	if shouldMirrorEventToTranscript(eventType) && line != "" {
 		m = m.appendToolEventMessage(line)
 	}
+
 	return m
 }
 
@@ -74,12 +73,18 @@ func shouldMirrorEventToTranscript(eventType string) bool {
 		"agent:loop:budget_exhausted", "agent:loop:tools_force_stop",
 		"agent:loop:interrupted", "agent:loop:shutdown_parked",
 		"agent:loop:resume_refused", "agent:loop:safety_bound",
-		"agent:loop:empty_final", "provider:throttle:retry",
+		"agent:loop:empty_final", "agent:loop:start", "agent:loop:thinking",
+		"agent:loop:final", "provider:throttle:retry",
 		"context:lifecycle:compacted", "context:lifecycle:handoff",
 		"conversation:save:error", "coach:note", "tool:denied",
 		"runtime:panic", "tool:panicked", "security:config_permissions",
 		"memory:degraded", "context:error", "engine:shutdown_error",
-		"provider:fallback", "config:reload:auto_failed", "index:error":
+		"provider:fallback", "config:reload:auto_failed", "index:error",
+		// Drive events mirrored as chat history entries
+		"drive:run:start", "drive:plan:done", "drive:plan:failed",
+		"drive:todo:start", "drive:todo:done", "drive:todo:blocked",
+		"drive:todo:skipped", "drive:todo:retry", "drive:run:warning",
+		"drive:run:done", "drive:run:stopped", "drive:run:failed":
 		return true
 	default:
 		return false

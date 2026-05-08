@@ -267,8 +267,9 @@ func TestHandleEngineEvent_ContextBuilt(t *testing.T) {
 		},
 	}
 	m2 := m.handleEngineEvent(event)
-	if m2.notice == "" {
-		t.Error("context:built should set notice")
+	last := m2.activityLog[len(m2.activityLog)-1]
+	if last == "" {
+		t.Error("context:built should append to activity log")
 	}
 }
 
@@ -335,8 +336,8 @@ func TestHandleEngineEvent_ProviderThrottleRetry(t *testing.T) {
 		},
 	}
 	m2 := m.handleEngineEvent(event)
-	if m2.notice == "" {
-		t.Error("throttle retry should set notice")
+	if len(m2.activityLog) == 0 {
+		t.Error("throttle retry should append to activity log")
 	}
 }
 
@@ -350,8 +351,8 @@ func TestHandleEngineEvent_ProviderCircuitOpen(t *testing.T) {
 		},
 	}
 	m2 := m.handleEngineEvent(event)
-	if m2.notice == "" {
-		t.Error("circuit open should set notice")
+	if len(m2.activityLog) == 0 {
+		t.Error("circuit open should append to activity log")
 	}
 }
 
@@ -364,8 +365,8 @@ func TestHandleEngineEvent_ProviderCircuitClosed(t *testing.T) {
 		},
 	}
 	m2 := m.handleEngineEvent(event)
-	if m2.notice == "" {
-		t.Error("circuit closed should set notice")
+	if len(m2.activityLog) == 0 {
+		t.Error("circuit closed should append to activity log")
 	}
 }
 
@@ -379,8 +380,8 @@ func TestHandleEngineEvent_ProviderStreamRecovered(t *testing.T) {
 		},
 	}
 	m2 := m.handleEngineEvent(event)
-	if m2.notice == "" {
-		t.Error("stream recovered should set notice")
+	if len(m2.activityLog) == 0 {
+		t.Error("stream recovered should append to activity log")
 	}
 }
 
@@ -393,8 +394,8 @@ func TestHandleEngineEvent_ConfigReloadAuto(t *testing.T) {
 		},
 	}
 	m2 := m.handleEngineEvent(event)
-	if m2.notice == "" {
-		t.Error("config reload should set notice")
+	if len(m2.activityLog) == 0 {
+		t.Error("config reload should append to activity log")
 	}
 }
 
@@ -407,8 +408,8 @@ func TestHandleEngineEvent_ConfigReloadAutoFailed(t *testing.T) {
 		},
 	}
 	m2 := m.handleEngineEvent(event)
-	if m2.notice == "" {
-		t.Error("config reload failed should set notice")
+	if len(m2.activityLog) == 0 {
+		t.Error("config reload failed should append to activity log")
 	}
 }
 
@@ -684,10 +685,10 @@ func TestHandleEngineEvent_ProviderFallback_SurfacesNotice(t *testing.T) {
 			"error":   "503 service unavailable",
 		},
 	})
-	notice := strings.ToLower(m.notice)
+	last := m.activityLog[len(m.activityLog)-1]
 	for _, want := range []string{"provider fallback", "anthropic", "openai", "503"} {
-		if !strings.Contains(notice, strings.ToLower(want)) {
-			t.Errorf("expected %q in notice, got %q", want, m.notice)
+		if !strings.Contains(strings.ToLower(last), strings.ToLower(want)) {
+			t.Errorf("expected %q in activity log, got %q", want, last)
 		}
 	}
 }
@@ -735,10 +736,10 @@ func TestHandleEngineEvent_ContextErrorAndShutdownAndResume(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newCoverageModel(t)
 			m = m.handleEngineEvent(engine.Event{Type: tc.evType, Payload: tc.payload})
-			notice := strings.ToLower(m.notice)
+			last := m.activityLog[len(m.activityLog)-1]
 			for _, want := range tc.wantInMsg {
-				if !strings.Contains(notice, strings.ToLower(want)) {
-					t.Errorf("expected notice to contain %q, got %q", want, m.notice)
+				if !strings.Contains(strings.ToLower(last), strings.ToLower(want)) {
+					t.Errorf("expected activity log to contain %q, got %q", want, last)
 				}
 			}
 		})
@@ -822,10 +823,13 @@ func TestHandleEngineEvent_AgentLoopGuards_SurfaceNotices(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newCoverageModel(t)
 			m = m.handleEngineEvent(engine.Event{Type: tc.evType, Payload: tc.payload})
-			notice := strings.ToLower(m.notice)
+			if len(m.activityLog) == 0 {
+				t.Fatalf("%s: expected activity log entry, got empty", tc.name)
+			}
+			last := m.activityLog[len(m.activityLog)-1]
 			for _, want := range tc.wantInMsg {
-				if !strings.Contains(notice, strings.ToLower(want)) {
-					t.Errorf("expected notice to contain %q, got %q", want, m.notice)
+				if !strings.Contains(strings.ToLower(last), strings.ToLower(want)) {
+					t.Errorf("expected activity log to contain %q, got %q", want, last)
 				}
 			}
 		})
@@ -887,10 +891,10 @@ func TestHandleEngineEvent_CriticalSafetyEvents_SurfaceNotices(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newCoverageModel(t)
 			m = m.handleEngineEvent(engine.Event{Type: tc.evType, Payload: tc.payload})
-			notice := strings.ToLower(m.notice)
+			last := m.activityLog[len(m.activityLog)-1]
 			for _, want := range tc.wantInMsg {
-				if !strings.Contains(notice, strings.ToLower(want)) {
-					t.Errorf("expected notice to contain %q, got %q", want, m.notice)
+				if !strings.Contains(strings.ToLower(last), strings.ToLower(want)) {
+					t.Errorf("expected activity log to contain %q, got %q", want, last)
 				}
 			}
 		})
@@ -914,14 +918,15 @@ func TestHandleEngineEvent_ToolDenied_SurfacesNotice(t *testing.T) {
 			"source": "agent-loop",
 		},
 	})
-	if !strings.Contains(strings.ToLower(m.notice), "denied") {
-		t.Errorf("expected denial notice, got %q", m.notice)
+	last := m.activityLog[len(m.activityLog)-1]
+	if !strings.Contains(strings.ToLower(last), "denied") {
+		t.Errorf("expected denial notice in activity log, got %q", last)
 	}
-	if !strings.Contains(m.notice, "run_command") {
-		t.Errorf("expected denied tool name in notice, got %q", m.notice)
+	if !strings.Contains(last, "run_command") {
+		t.Errorf("expected denied tool name in activity log, got %q", last)
 	}
-	if !strings.Contains(m.notice, "agent-loop") {
-		t.Errorf("expected source bracket in notice, got %q", m.notice)
+	if !strings.Contains(last, "agent-loop") {
+		t.Errorf("expected source bracket in activity log, got %q", last)
 	}
 }
 
@@ -942,11 +947,12 @@ func TestHandleEngineEvent_HookRun_FailureSurfacesNotice(t *testing.T) {
 			"err":         "exit status 1",
 		},
 	})
-	if !strings.Contains(strings.ToLower(m.notice), "hook failed") {
-		t.Errorf("expected failure notice, got %q", m.notice)
+	last := m.activityLog[len(m.activityLog)-1]
+	if !strings.Contains(strings.ToLower(last), "hook failed") {
+		t.Errorf("expected failure notice in activity log, got %q", last)
 	}
-	if !strings.Contains(m.notice, "lint") {
-		t.Errorf("expected hook name in notice, got %q", m.notice)
+	if !strings.Contains(last, "lint") {
+		t.Errorf("expected hook name in activity log, got %q", last)
 	}
 }
 
@@ -2311,14 +2317,15 @@ func TestHandleEngineEvent_IndexErrorSurfacesChatEvent(t *testing.T) {
 		Type:    "index:error",
 		Payload: "tree-sitter: parse failed at pkg/foo/bar.go:42",
 	})
-	if m.notice == "" {
-		t.Fatal("index:error should set notice line")
+	last := m.activityLog[len(m.activityLog)-1]
+	if last == "" {
+		t.Fatal("index:error should append to activity log")
 	}
-	if !strings.Contains(strings.ToLower(m.notice), "workspace index failed") {
-		t.Errorf("notice should mention 'workspace index failed': %q", m.notice)
+	if !strings.Contains(strings.ToLower(last), "workspace index failed") {
+		t.Errorf("activity log should mention 'workspace index failed': %q", last)
 	}
-	if !strings.Contains(m.notice, "tree-sitter") {
-		t.Errorf("notice should include the underlying error: %q", m.notice)
+	if !strings.Contains(last, "tree-sitter") {
+		t.Errorf("activity log should include the underlying error: %q", last)
 	}
 	// Chat-event line should land in the transcript with warn status.
 	found := false
@@ -2348,11 +2355,12 @@ func TestHandleEngineEvent_AgentNoteQueuedSurfacesChatEvent(t *testing.T) {
 			"queue": 2,
 		},
 	})
-	if m.notice == "" {
-		t.Fatal("agent:note:queued should set notice")
+	last := m.activityLog[len(m.activityLog)-1]
+	if last == "" {
+		t.Fatal("agent:note:queued should append to activity log")
 	}
-	if !strings.Contains(strings.ToLower(m.notice), "note queued") {
-		t.Errorf("notice should mention 'note queued': %q", m.notice)
+	if !strings.Contains(strings.ToLower(last), "note queued") {
+		t.Errorf("activity log should mention 'note queued': %q", last)
 	}
 	found := false
 	for _, line := range m.chat.transcript {
@@ -2385,8 +2393,9 @@ func TestHandleEngineEvent_ConfigReloadSurfacesChatEvent(t *testing.T) {
 				"updated_at": int64(1700000000),
 			},
 		})
-		if !strings.Contains(strings.ToLower(m.notice), "auto-reloaded") {
-			t.Errorf("notice should mention auto-reloaded: %q", m.notice)
+		last := m.activityLog[len(m.activityLog)-1]
+		if !strings.Contains(strings.ToLower(last), "auto-reloaded") {
+			t.Errorf("activity log should mention auto-reloaded: %q", last)
 		}
 		found := false
 		for _, line := range m.chat.transcript {
@@ -2411,8 +2420,9 @@ func TestHandleEngineEvent_ConfigReloadSurfacesChatEvent(t *testing.T) {
 				"error": "invalid provider profile: missing api_key",
 			},
 		})
-		if !strings.Contains(strings.ToLower(m.notice), "config auto-reload failed") {
-			t.Errorf("notice should mention reload failed: %q", m.notice)
+		last := m.activityLog[len(m.activityLog)-1]
+		if !strings.Contains(strings.ToLower(last), "config auto-reload failed") {
+			t.Errorf("activity log should mention reload failed: %q", last)
 		}
 		found := false
 		for _, line := range m.chat.transcript {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) string {
@@ -218,7 +219,7 @@ func renderChatScrollbar(lines []string, total, start, end, width int) []string 
 			}
 			clipped = truncateSingleLine(clipped+"  "+subtleStyle.Render(position), contentWidth)
 		}
-		pad := contentWidth - lipgloss.Width(clipped)
+		pad := contentWidth - ansi.StringWidth(clipped)
 		if pad < 1 {
 			pad = 1
 		}

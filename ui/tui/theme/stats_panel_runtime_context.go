@@ -17,7 +17,14 @@ func contextRows(info StatsPanelInfo) []string {
 	workspaceEvidenceOff := contextReasonContains(info.ContextReasons, "conversation history only")
 	if workspaceEvidenceOff {
 		rows = append(rows, InfoStyle.Render("conversation history only"))
-		rows = append(rows, SubtleStyle.Render("workspace evidence off"))
+		histLine := "workspace evidence off"
+		if info.ContextHistoryTokens > 0 {
+			histLine += fmt.Sprintf(" | hist %s tok", CompactTokens(info.ContextHistoryTokens))
+		}
+		rows = append(rows, SubtleStyle.Render(histLine))
+		if info.ContextTokens > 0 {
+			rows = append(rows, SubtleStyle.Render(fmt.Sprintf("query+evidence %s tok", CompactTokens(info.ContextTokens))))
+		}
 	} else if info.ContextFileCount > 0 || info.ContextBudgetTokens > 0 {
 		files := fmt.Sprintf("files %d", info.ContextFileCount)
 		if info.ContextMaxFiles > 0 {

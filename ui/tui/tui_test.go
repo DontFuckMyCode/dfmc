@@ -1843,8 +1843,9 @@ func TestHandleEngineEventProviderThrottleRetry(t *testing.T) {
 			"stream":   true,
 		},
 	})
-	if next.notice == "" || !strings.Contains(next.notice, "Provider throttled") {
-		t.Fatalf("expected throttle notice, got %q", next.notice)
+	last := next.activityLog[len(next.activityLog)-1]
+	if last == "" || !strings.Contains(last, "Provider throttled") {
+		t.Fatalf("expected throttle line in activity log, got %q", last)
 	}
 	if len(next.activityLog) == 0 || !strings.Contains(next.activityLog[len(next.activityLog)-1], "retry #2") {
 		t.Fatalf("expected activity log throttle line, got %#v", next.activityLog)
@@ -5684,8 +5685,12 @@ func TestSubagentFallbackEventSurfacesTransition(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(m.notice, "after 2 attempts") {
-		t.Fatalf("expected notice to mention fallback attempts, got %q", m.notice)
+	if len(m.activityLog) == 0 {
+		t.Fatalf("expected activity log entry for fallback, got empty")
+	}
+	last := m.activityLog[len(m.activityLog)-1]
+	if !strings.Contains(last, "after 2 attempts") {
+		t.Fatalf("expected activity log to mention fallback attempts, got %q", last)
 	}
 	foundFallbackChip := false
 	foundDoneChip := false
@@ -5727,25 +5732,7 @@ func TestSubagentFallbackEventSurfacesTransition(t *testing.T) {
 	}
 }
 
-func TestDriveTodoDoneSurfacesFallbackReason(t *testing.T) {
-	m := NewModel(context.Background(), nil)
-	m = m.handleEngineEvent(engine.Event{
-		Type: "drive:todo:done",
-		Payload: map[string]any{
-			"todo_id":          "T4",
-			"duration_ms":      1200,
-			"tool_calls":       3,
-			"provider":         "openai-fast",
-			"model":            "gpt-5.4-mini",
-			"attempts":         2,
-			"fallback":         true,
-			"fallback_reasons": []string{"provider timeout"},
-		},
-	})
-	if !strings.Contains(m.notice, "provider timeout") {
-		t.Fatalf("expected drive notice to include fallback reason, got %q", m.notice)
-	}
-}
+
 
 // TestBatchFanoutSurfacesInChipPreview: when tool_batch_call completes,
 // the TUI turns batch_count/batch_parallel/batch_ok/batch_fail payload

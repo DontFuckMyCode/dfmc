@@ -14,7 +14,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Version: DefaultVersion,
 		Providers: ProvidersConfig{
-			Primary:  "anthropic",
+			Primary:  "minimax",
 			Fallback: []string{"openai", "deepseek"},
 			Profiles: profiles,
 		},
@@ -22,18 +22,16 @@ func DefaultConfig() *Config {
 			MaxFiles:         50,
 			MaxTokensTotal:   16000,
 			MaxTokensPerFile: 2000,
-			// 4096 tokens of conversation history is roughly 8 detailed
-			// turn pairs — enough to keep framing across a working
-			// session on a 200k+ window. Users on bigger-context models
-			// can crank this much higher; the engine no longer caps
-			// user-set values to the legacy 2k floor.
-			MaxHistoryTokens: 4096,
-			// 60 messages = 30 user/assistant pairs. Old default was 12
-			// which made the assistant feel amnesiac after ~6 turns even
-			// when the token budget had headroom.
-			MaxHistoryMessages: 60,
+			// 2048 tokens of conversation history — roughly 4 turn pairs.
+			// Reduced from 4096 to prevent context window from growing
+			// unboundedly between turns.
+			MaxHistoryTokens:  2048,
+			// 30 messages = 15 user/assistant pairs.
+			MaxHistoryMessages: 30,
 			Compression:        "standard",
-			AutoIncludeFiles:   false,
+			// AutoIncludeFiles=true: workspace dosyaları otomatik inject
+			// edilir her sorguda — [[workspace-context]]'e gerek kalmaz.
+			AutoIncludeFiles:   true,
 			IncludeTests:       false,
 			IncludeDocs:        true,
 			SymbolAware:        true,
@@ -117,6 +115,9 @@ func DefaultConfig() *Config {
 			ToolDefaultTimeoutSeconds: 30,
 			ReadSnapshotCap:           256,
 			RecentFailureCap:          256,
+		// ChatAutoDecompose: chat prompt'lar otomatik Drive'a yönlendirilir
+		// eğer çok adımlı iş gibi görünüyorsa. Tek adımlık sorular Ask() ile kalır.
+		ChatAutoDecompose:         true,
 		},
 		Hooks: HooksConfig{
 			AllowProject: false,

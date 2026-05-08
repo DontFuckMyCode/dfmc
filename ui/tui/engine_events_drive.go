@@ -154,6 +154,12 @@ func (m Model) handleDriveEvent(eventType string, payload map[string]any) (Model
 		reason := payloadString(payload, "reason", "")
 		m.telemetry.driveRunID = ""
 		m.telemetry.driveTodoID = ""
+		m.telemetry.driveTotal = 0
+		m.telemetry.driveDone = 0
+		m.telemetry.driveBlocked = 0
+		if m.eng != nil {
+			m.eng.ClearContextSnapshot()
+		}
 		base := fmt.Sprintf("Drive: %s — %d done, %d blocked, %d skipped (%dms)", status, done, blocked, skipped, dur)
 		if reason != "" {
 			line = base + " · " + reason

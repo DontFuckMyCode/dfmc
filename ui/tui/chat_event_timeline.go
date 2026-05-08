@@ -25,7 +25,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"time"
 )
 
 func (m *Model) upsertStreamingChatEvent(ev chatEventLine) {
@@ -34,18 +33,7 @@ func (m *Model) upsertStreamingChatEvent(ev chatEventLine) {
 	ev.Status = strings.TrimSpace(ev.Status)
 	ev.Title = strings.TrimSpace(ev.Title)
 	ev.Detail = strings.TrimSpace(ev.Detail)
-	if ev.Title == "" {
-		return
-	}
-	if ev.At.IsZero() {
-		ev.At = time.Now()
-	}
-	if !m.chat.sending {
-		return
-	}
 
-	// Tool events: update existing line's EventLines instead of appending a new chatLine.
-	// This prevents "TOOL TOOL TOOL" spam when a tool goes running→done/failed.
 	if strings.EqualFold(ev.Kind, "tool") {
 		m.updateToolEventLine(ev)
 		return
