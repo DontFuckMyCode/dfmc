@@ -20,7 +20,6 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/drive"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
-	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
 // executeDriveRunFromSpec runs spec_to_todo against the given path,
@@ -82,28 +81,16 @@ func executeDriveRunFromSpec(ctx context.Context, eng *engine.Engine, specPath, 
 	return 0
 }
 
-// todosFromSpecFile drives the spec_to_todo tool against the given
-// path/section/include_done settings and converts the result into
-// drive.Todo records. The returned `task` is what should be stamped
-// onto the new Run for human-readable display.
+// todosFromSpecFile is the CLI's thin wrapper over
+// engine.TodosFromSpecFile — the heavy lifting (spec_to_todo +
+// drive.TodosFromSpec conversion) lives there so HTTP / MCP /
+// CLI all use one path. CLI-specific work is the `task` label
+// synthesis and the dropped-items stderr warning.
 func todosFromSpecFile(ctx context.Context, eng *engine.Engine, specPath, section string, includeDone bool, taskOverride string) ([]drive.Todo, string, error) {
-	tool := tools.NewSpecToTodoTool()
-	params := map[string]any{"path": specPath}
-	if section != "" {
-		params["section"] = section
-	}
-	if includeDone {
-		params["include_done"] = true
-	}
-	res, err := tool.Execute(ctx, tools.Request{
-		ProjectRoot: eng.ProjectRoot,
-		Params:      params,
-	})
+	todos, dropped, err := eng.TodosFromSpecFile(ctx, specPath, section, includeDone)
 	if err != nil {
-		return nil, "", fmt.Errorf("spec_to_todo: %w", err)
+		return nil, "", err
 	}
-	rawItems, _ := res.Data["todos"].([]map[string]any)
-	todos, dropped := drive.TodosFromSpec(rawItems)
 	if dropped > 0 {
 		fmt.Fprintf(os.Stderr, "drive: spec ingest dropped %d item(s) without a title\n", dropped)
 	}

@@ -71,18 +71,25 @@ func (h *driveMCPHandler) Tools() []mcp.ToolDescriptor {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"task":             map[string]any{"type": "string", "description": "What to do, in plain language. Example: 'add CSV export to /api/users with tests'"},
-					"max_parallel":     map[string]any{"type": "integer", "description": "Max TODOs running concurrently (default 3)", "minimum": 1, "maximum": 20},
-					"max_todos":        map[string]any{"type": "integer", "description": "Cap on TODOs the planner may emit (default 20)", "minimum": 1, "maximum": 200},
-					"retries":          map[string]any{"type": "integer", "description": "Per-TODO retry count on failure (default 1)", "minimum": 0, "maximum": 10},
-					"max_wall_time_ms": map[string]any{"type": "integer", "description": "Wall-clock budget in ms before the run is force-stopped (default 30min)", "minimum": 1000},
-					"planner_model":    map[string]any{"type": "string", "description": "Provider profile name to use for the planner LLM call (defaults to engine primary)"},
-					"auto_survey":      map[string]any{"type": "boolean", "description": "Prepend a supervisor-generated discovery task after planning"},
-					"auto_verify":      map[string]any{"type": "boolean", "description": "Append a supervisor-generated verification task after planning"},
-					"routing":          map[string]any{"type": "object", "description": "Map provider_tag -> profile name. Tags planner emits: plan, code, review, test, research", "additionalProperties": map[string]any{"type": "string"}},
-					"auto_approve":     map[string]any{"type": "array", "description": "Tool names to auto-approve for this run (use ['*'] for all)", "items": map[string]any{"type": "string"}},
+					"task":              map[string]any{"type": "string", "description": "What to do, in plain language. Example: 'add CSV export to /api/users with tests'. Required unless from_spec is set."},
+					"max_parallel":      map[string]any{"type": "integer", "description": "Max TODOs running concurrently (default 3)", "minimum": 1, "maximum": 20},
+					"max_todos":         map[string]any{"type": "integer", "description": "Cap on TODOs the planner may emit (default 20)", "minimum": 1, "maximum": 200},
+					"retries":           map[string]any{"type": "integer", "description": "Per-TODO retry count on failure (default 1)", "minimum": 0, "maximum": 10},
+					"max_wall_time_ms":  map[string]any{"type": "integer", "description": "Wall-clock budget in ms before the run is force-stopped (default 30min)", "minimum": 1000},
+					"planner_model":     map[string]any{"type": "string", "description": "Provider profile name to use for the planner LLM call (defaults to engine primary)"},
+					"auto_survey":       map[string]any{"type": "boolean", "description": "Prepend a supervisor-generated discovery task after planning"},
+					"auto_verify":       map[string]any{"type": "boolean", "description": "Append a supervisor-generated verification task after planning"},
+					"routing":           map[string]any{"type": "object", "description": "Map provider_tag -> profile name. Tags planner emits: plan, code, review, test, research", "additionalProperties": map[string]any{"type": "string"}},
+					"auto_approve":      map[string]any{"type": "array", "description": "Tool names to auto-approve for this run (use ['*'] for all)", "items": map[string]any{"type": "string"}},
+					"from_spec":         map[string]any{"type": "string", "description": "Path to a markdown spec (e.g. '.project/PLAN.md'); skips the planner LLM and turns each '- [ ]' into one TODO. Mutually substitutable with task."},
+					"spec_section":      map[string]any{"type": "string", "description": "When from_spec is set, only ingest TODOs from this heading anchor (lowercase slug)"},
+					"spec_include_done": map[string]any{"type": "boolean", "description": "When from_spec is set, also load already-checked items as status=done TODOs"},
 				},
-				"required":             []string{"task"},
+				// task and from_spec are alternatives — neither is strictly
+				// "required" alone, the handler validates that at least one
+				// is present. The schema's required[] only carries fields a
+				// caller MUST supply unconditionally.
+				"required":             []string{},
 				"additionalProperties": false,
 			},
 		},

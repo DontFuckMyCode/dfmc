@@ -34,16 +34,23 @@ type driveStartArgs struct {
 	PlannerModel   string            `json:"planner_model,omitempty"`
 	Routing        map[string]string `json:"routing,omitempty"`
 	AutoApprove    []string          `json:"auto_approve,omitempty"`
+	// Spec ingest fields — when FromSpec is non-empty the MCP host
+	// has supplied a markdown plan instead of a free-form task and
+	// the planner LLM is skipped. Mirrors web.DriveStartRequest.
+	FromSpec        string `json:"from_spec,omitempty"`
+	SpecSection     string `json:"spec_section,omitempty"`
+	SpecIncludeDone bool   `json:"spec_include_done,omitempty"`
 }
 
-func (h *driveMCPHandler) callStart(_ context.Context, rawArgs []byte) (mcp.CallToolResult, error) {
+func (h *driveMCPHandler) callStart(ctx context.Context, rawArgs []byte) (mcp.CallToolResult, error) {
 	var args driveStartArgs
 	if err := decodeOrEmpty(rawArgs, &args); err != nil {
 		return errResult("decode arguments: " + err.Error())
 	}
 	task := strings.TrimSpace(args.Task)
-	if task == "" {
-		return errResult(`task is required. Example: {"task":"add CSV export to /api/users with tests"}`)
+	specPath := strings.TrimSpace(args.FromSpec)
+	if task == "" && specPath == "" {
+		return errResult(`task or from_spec is required. Example: {"task":"add CSV export to /api/users with tests"} or {"from_spec":".project/PLAN.md"}`)
 	}
 	runner := h.eng.NewDriveRunner()
 	if runner == nil {
@@ -70,9 +77,39 @@ func (h *driveMCPHandler) callStart(_ context.Context, rawArgs []byte) (mcp.Call
 	})
 	driver := drive.NewDriver(runner, store, publisher, cfg)
 	driver.SetReportDir(h.eng.DriveReportDir())
-	run, err := drive.NewRun(task)
+
+	var presetTodos []drive.Todo
+	taskLabel := task
+	if specPath != "" {
+		todos, dropped, err := h.eng.TodosFromSpecFile(ctx, specPath, strings.TrimSpace(args.SpecSection), args.SpecIncludeDone)
+		if err != nil {
+			return errResult("spec ingest: " + err.Error())
+		}
+		if len(todos) == 0 {
+			return errResult("no TODOs found in spec (check the file has `- [ ]` entries; try omitting spec_section or set spec_include_done=true)")
+		}
+		presetTodos = todos
+		if taskLabel == "" {
+			taskLabel = "drive from-spec " + specPath
+			if args.SpecSection != "" {
+				taskLabel += " (section: " + args.SpecSection + ")"
+			}
+		}
+		if dropped > 0 {
+			h.eng.PublishDriveEvent("drive:run:warning", map[string]any{
+				"warning": "spec ingest dropped item(s) without a title",
+				"dropped": dropped,
+				"source":  "from_spec",
+			})
+		}
+	}
+
+	run, err := drive.NewRun(taskLabel)
 	if err != nil {
 		return errResult(err.Error())
+	}
+	if len(presetTodos) > 0 {
+		run.Todos = presetTodos
 	}
 	if err := store.Save(run); err != nil {
 		return errResult("persist run: " + err.Error())

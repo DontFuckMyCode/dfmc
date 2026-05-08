@@ -86,8 +86,8 @@ func TestDriveMCPCallStartRejectsMissingTask(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("missing task must return IsError:true")
 	}
-	if !strings.Contains(res.Content[0].Text, "task is required") {
-		t.Errorf("error text must mention task; got %q", res.Content[0].Text)
+	if !strings.Contains(res.Content[0].Text, "task or from_spec is required") {
+		t.Errorf("error text must mention task or from_spec; got %q", res.Content[0].Text)
 	}
 	// The hint must include a literal example so the model can
 	// self-correct on the next call (matches missingParamError style).
@@ -317,7 +317,7 @@ func TestEngineMCPBridgeRoutesDriveCallsToHandler(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("expected tool error from drive handler routing")
 	}
-	if !strings.Contains(res.Content[0].Text, "task is required") {
+	if !strings.Contains(res.Content[0].Text, "task or from_spec is required") {
 		t.Errorf("expected drive handler error text; got %q", res.Content[0].Text)
 	}
 }

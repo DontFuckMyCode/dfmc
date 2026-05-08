@@ -46,6 +46,14 @@ type DriveStartRequest struct {
 	PlannerModel   string            `json:"planner_model,omitempty"`
 	Routing        map[string]string `json:"routing,omitempty"`
 	AutoApprove    []string          `json:"auto_approve,omitempty"`
+	// FromSpec ingests TODOs literally from a markdown spec
+	// (e.g. ".project/PLAN.md") and skips the planner LLM. Each
+	// `- [ ]` becomes one TODO; pair with SpecSection to filter to a
+	// single anchor and SpecIncludeDone to also load already-checked
+	// items. Path is resolved relative to the engine's project root.
+	FromSpec        string `json:"from_spec,omitempty"`
+	SpecSection     string `json:"spec_section,omitempty"`
+	SpecIncludeDone bool   `json:"spec_include_done,omitempty"`
 }
 
 // handleDriveStart accepts a task, builds a Driver against the
@@ -59,10 +67,10 @@ func (s *Server) handleDriveStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON: " + err.Error()})
 		return
 	}
-	if strings.TrimSpace(req.Task) == "" {
+	if strings.TrimSpace(req.Task) == "" && strings.TrimSpace(req.FromSpec) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": "task is required",
-			"hint":  `POST {"task":"add input validation to /api/users"}`,
+			"error": "task or from_spec is required",
+			"hint":  `POST {"task":"add input validation to /api/users"} or {"from_spec":".project/PLAN.md"}`,
 		})
 		return
 	}
@@ -113,10 +121,56 @@ func (s *Server) handleDriveStart(w http.ResponseWriter, r *http.Request) {
 	})
 	driver := drive.NewDriver(runner, store, publisher, cfg)
 	driver.SetReportDir(s.engine.DriveReportDir())
-	run, err := drive.NewRun(req.Task)
+
+	// from_spec branch: ingest TODOs ahead of time and stamp them on
+	// the Run so RunPrepared takes the planner-skip path. Validation
+	// errors come back as 400; an empty TODO set after filtering is
+	// also a user error (wrong section anchor, all items already done
+	// without --spec-include-done, etc.) so we surface it clearly
+	// rather than starting a doomed run.
+	var presetTodos []drive.Todo
+	taskLabel := strings.TrimSpace(req.Task)
+	specPath := strings.TrimSpace(req.FromSpec)
+	if specPath != "" {
+		todos, dropped, err := s.engine.TodosFromSpecFile(r.Context(), specPath, strings.TrimSpace(req.SpecSection), req.SpecIncludeDone)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "spec ingest: " + err.Error()})
+			return
+		}
+		if len(todos) == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": "no TODOs found in spec",
+				"hint":  "check the spec has `- [ ]` entries; try omitting spec_section or setting spec_include_done=true",
+			})
+			return
+		}
+		presetTodos = todos
+		if taskLabel == "" {
+			taskLabel = "drive from-spec " + specPath
+			if req.SpecSection != "" {
+				taskLabel += " (section: " + req.SpecSection + ")"
+			}
+		}
+		if dropped > 0 {
+			// Surface dropped count alongside run_id so the operator
+			// sees the partial-coverage warning even when subscribing
+			// to /ws after the run already kicked off.
+			defer func(d int) {
+				s.engine.PublishDriveEvent("drive:run:warning", map[string]any{
+					"warning": "spec ingest dropped " + strconv.Itoa(d) + " item(s) without a title",
+					"source":  "from_spec",
+				})
+			}(dropped)
+		}
+	}
+
+	run, err := drive.NewRun(taskLabel)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
+	}
+	if len(presetTodos) > 0 {
+		run.Todos = presetTodos
 	}
 	if err := store.Save(run); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "persist run: " + err.Error()})
