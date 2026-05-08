@@ -177,6 +177,12 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 	res, err := e.executeToolWithPanicGuard(ctx, name, params)
 	if err == nil {
 		e.invalidateContextForTool(name, params)
+		// Sensitive-path auto-audit: write tools that touch
+		// auth/crypto/secret/etc. paths get a quick scanner pass so
+		// the user sees a coach note when a write introduces a
+		// likely vulnerability or leaked credential. Best-effort,
+		// non-blocking — see security_audit.go for the heuristic.
+		e.maybeAuditSensitiveWrite(name, params)
 	} else {
 		// Distinct event when the per-tool deadline killed Execute.
 		// Operators care because the gate firing means either (a) the
