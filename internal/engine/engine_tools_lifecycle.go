@@ -115,6 +115,26 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 		})
 		return tools.Result{}, fmt.Errorf("tool %s denied: %s", name, denial)
 	}
+	// Sub-agent path-scope gate — refuses write tools whose path
+	// argument escapes the allow_paths list. Runs after the allowlist
+	// gate (so the tool itself is permitted) and before approval (so a
+	// scope violation can never reach the approver). Read tools and
+	// non-write paths are unaffected; see subagent_path_scope.go for
+	// the rationale.
+	if denial := checkSubagentPathScope(ctx, name, params); denial != "" {
+		e.recordDenial(name, source, denial)
+		e.EventBus.Publish(Event{
+			Type:   "tool:denied",
+			Source: "engine",
+			Payload: map[string]any{
+				"name":   name,
+				"reason": denial,
+				"source": sourceStr,
+				"scope":  "path",
+			},
+		})
+		return tools.Result{}, fmt.Errorf("tool %s denied: %s", name, denial)
+	}
 	// Approval gate — only engages for non-user sources and only when
 	// the tool is on the approval list. Blocks until the Approver
 	// responds or returns an implicit deny on timeout. See approver.go.

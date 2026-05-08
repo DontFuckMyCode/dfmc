@@ -133,6 +133,7 @@ When NOT to delegate:
 Rules:
 - The sub-agent sees NO prior context. The ` + "`task`" + ` string must be self-contained: include paths, symbols, and what form the answer should take.
 - ` + "`allowed_tools`" + ` restricts the sub-agent to a subset. For read-only surveys pass ` + "`[\"read_file\",\"grep_codebase\",\"ast_query\",\"glob\"]`" + ` — keeps it cheap and safe.
+- ` + "`allowed_paths`" + ` restricts write tools (write_file/edit_file/symbol_rename/symbol_move) to paths under one of the given prefixes. Reads are unaffected. Use when delegating an implementation slice to a single subtree, e.g. ` + "`[\"internal/parsers\"]`" + `.
 - ` + "`max_steps`" + ` caps tool calls (default 10, ceiling 40). The sub-agent also gets half the parent's token budget (floor 10000).
 - The return is ` + "`{summary, tool_calls, duration_ms}`" + `. Treat ` + "`summary`" + ` as authoritative; do not re-do the work unless the sub-agent clearly failed.`,
 		Risk: RiskExecute,
@@ -141,6 +142,7 @@ Rules:
 			{Name: "task", Type: ArgString, Required: true, Description: "Self-contained prompt for the sub-agent (it sees no prior context)."},
 			{Name: "role", Type: ArgString, Description: "Optional role hint (researcher, reviewer, planner)."},
 			{Name: "allowed_tools", Type: ArgArray, Description: "Restrict sub-agent to a tool subset.", Items: &Arg{Type: ArgString}},
+			{Name: "allowed_paths", Type: ArgArray, Description: "Restrict write tools to paths under these prefixes (e.g. [\"internal/parsers\"]). Reads are unaffected.", Items: &Arg{Type: ArgString}},
 			{Name: "max_steps", Type: ArgInteger, Default: 10, Description: "Tool-call budget for the sub-agent (<=40)."},
 			{Name: "model", Type: ArgString, Description: "Provider profile override (defaults to parent's)."},
 		},

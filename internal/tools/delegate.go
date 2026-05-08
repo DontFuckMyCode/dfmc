@@ -7,6 +7,40 @@ import (
 	"sync"
 )
 
+// parseStringListParam pulls a list of strings out of a tool param
+// that may arrive as []any (the JSON path), []string (Go-side
+// callers), or a comma-separated string (model shorthand). Returns
+// nil when the key is missing, the value is nil, or every element is
+// blank — callers can treat all three as "no constraint".
+func parseStringListParam(params map[string]any, key string) []string {
+	v, ok := params[key]
+	if !ok || v == nil {
+		return nil
+	}
+	var out []string
+	switch vv := v.(type) {
+	case []any:
+		for _, x := range vv {
+			if s := strings.TrimSpace(fmt.Sprint(x)); s != "" {
+				out = append(out, s)
+			}
+		}
+	case []string:
+		for _, s := range vv {
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
+			}
+		}
+	case string:
+		for _, p := range strings.Split(vv, ",") {
+			if s := strings.TrimSpace(p); s != "" {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
 // SubagentRequest is the structured input to a sub-agent run. The engine
 // is responsible for interpreting scope hints — the tools package only
 // forwards them.
@@ -14,8 +48,14 @@ type SubagentRequest struct {
 	Task         string   `json:"task"`          // The self-contained prompt for the sub-agent.
 	Role         string   `json:"role"`          // Optional role hint: "researcher", "reviewer", ...
 	AllowedTools []string `json:"allowed_tools"` // Optional restriction — if empty, engine picks defaults.
-	MaxSteps     int      `json:"max_steps"`     // Tool-call budget; 0 means engine default.
-	Model        string   `json:"model"`         // Optional provider profile override.
+	// AllowedPaths constrains write tools (write_file, edit_file,
+	// symbol_rename, symbol_move) to paths under one of the given
+	// prefixes. Empty list means "no constraint". Reads are
+	// unaffected — operators who want a read-restriction should drop
+	// read tools from AllowedTools instead.
+	AllowedPaths []string `json:"allowed_paths,omitempty"`
+	MaxSteps     int      `json:"max_steps"` // Tool-call budget; 0 means engine default.
+	Model        string   `json:"model"`     // Optional provider profile override.
 	// ToolSource is an engine-internal approval scope marker. It is not
 	// user/model supplied; adapters like drive may set it so approval
 	// overrides apply only to their own sub-agent tool calls.
@@ -95,34 +135,14 @@ func (t *DelegateTaskTool) Execute(ctx context.Context, req Request) (Result, er
 		maxSteps = 40
 	}
 
-	var allowed []string
-	if v, ok := req.Params["allowed_tools"]; ok && v != nil {
-		switch vv := v.(type) {
-		case []any:
-			for _, x := range vv {
-				if s := strings.TrimSpace(fmt.Sprint(x)); s != "" {
-					allowed = append(allowed, s)
-				}
-			}
-		case []string:
-			for _, s := range vv {
-				if s = strings.TrimSpace(s); s != "" {
-					allowed = append(allowed, s)
-				}
-			}
-		case string:
-			for _, p := range strings.Split(vv, ",") {
-				if s := strings.TrimSpace(p); s != "" {
-					allowed = append(allowed, s)
-				}
-			}
-		}
-	}
+	allowed := parseStringListParam(req.Params, "allowed_tools")
+	allowedPaths := parseStringListParam(req.Params, "allowed_paths")
 
 	res, err := runSubagentRetrying(ctx, runner, SubagentRequest{
 		Task:         task,
 		Role:         role,
 		AllowedTools: allowed,
+		AllowedPaths: allowedPaths,
 		MaxSteps:     maxSteps,
 		Model:        model,
 	}, defaultSubagentRetryAttempts)

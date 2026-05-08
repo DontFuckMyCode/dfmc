@@ -60,6 +60,74 @@ func metaInnerNames(name string, params map[string]any) []string {
 	return nil
 }
 
+// metaInnerToolCall represents one (name, args) pair extracted from a
+// meta wrapper. metaInnerToolCalls returns the unwrapped backend
+// calls so checks beyond name-only (path scope, etc.) can reach the
+// inner params. Mirrors metaInnerNames' unwrap rules — peels nested
+// tool_call layers, drops meta-in-meta entries — but carries args
+// alongside name.
+type metaInnerToolCall struct {
+	Name string
+	Args map[string]any
+}
+
+func metaInnerToolCalls(name string, params map[string]any) []metaInnerToolCall {
+	switch strings.TrimSpace(name) {
+	case "tool_call":
+		if n, args := unwrapToolCall(params, 0); n != "" {
+			return []metaInnerToolCall{{Name: n, Args: args}}
+		}
+		return nil
+	case "tool_batch_call":
+		raw, ok := params["calls"].([]any)
+		if !ok {
+			return nil
+		}
+		out := make([]metaInnerToolCall, 0, len(raw))
+		for _, entry := range raw {
+			obj, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			n := pickNameFromMetaMap(obj)
+			if n == "" || isMetaToolName(n) {
+				continue
+			}
+			out = append(out, metaInnerToolCall{Name: n, Args: readArgsObject(obj)})
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	return nil
+}
+
+// unwrapToolCall is the args-aware sibling of unwrapToolCallName: it
+// returns both the resolved backend tool name AND its inner args
+// object. Recurses through nested tool_call layers up to
+// MaxMetaUnwrapDepth.
+func unwrapToolCall(params map[string]any, depth int) (string, map[string]any) {
+	if depth > tools.MaxMetaUnwrapDepth {
+		return "", nil
+	}
+	n := pickNameFromMetaMap(params)
+	if n == "" {
+		return "", nil
+	}
+	if n == "tool_call" {
+		inner := readArgsObject(params)
+		if inner == nil {
+			return "", nil
+		}
+		return unwrapToolCall(inner, depth+1)
+	}
+	if isMetaToolName(n) {
+		return "", nil
+	}
+	return n, readArgsObject(params)
+}
+
 func unwrapToolCallName(params map[string]any, depth int) string {
 	if depth > tools.MaxMetaUnwrapDepth {
 		return ""

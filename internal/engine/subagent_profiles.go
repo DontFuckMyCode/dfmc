@@ -107,8 +107,10 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 	// before approval/hooks/Execute. Empty list short-circuits to a
 	// no-op inside withSubagentAllowlist, preserving the
 	// "no constraint" default for delegate_task calls without
-	// allowed_tools.
+	// allowed_tools. AllowedPaths is the sibling write-scope gate;
+	// same lifecycle funnel, same empty-list-is-no-op contract.
 	ctx = withSubagentAllowlist(ctx, req.AllowedTools)
+	ctx = withSubagentPathScope(ctx, req.AllowedPaths)
 
 	start := time.Now()
 	e.publishAgentLoopEvent("agent:subagent:start", map[string]any{
