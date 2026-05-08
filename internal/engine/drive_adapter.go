@@ -11,6 +11,7 @@ package engine
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
@@ -38,6 +39,27 @@ func (e *Engine) NewDriveRunner() drive.Runner {
 		return nil
 	}
 	return &driveRunner{e: e}
+}
+
+// DriveReportDir returns the project-relative directory where every
+// drive run lands a Markdown rollup (drive-<runID>.md). Empty when
+// ProjectRoot is unset (in-memory tests, headless contexts) which
+// disables report writing for that driver. Call sites:
+//
+//	driver := drive.NewDriver(...)
+//	driver.SetReportDir(eng.DriveReportDir())
+//
+// Cheap helper rather than baking the path into NewDriver itself —
+// keeps internal/drive free of "where in the project tree" knowledge.
+func (e *Engine) DriveReportDir() string {
+	if e == nil {
+		return ""
+	}
+	root := strings.TrimSpace(e.ProjectRoot)
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, ".dfmc", "reports")
 }
 
 // PlannerCall issues a single completion against the active provider

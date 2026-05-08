@@ -326,6 +326,7 @@ func (e *Engine) runViaDrive(ctx context.Context, prompt string) (*drive.Run, er
 	}
 
 	d := drive.NewDriver(runner, nil, publisher, dcfg)
+	d.SetReportDir(e.DriveReportDir())
 	return d.Run(ctx, prompt)
 }
 

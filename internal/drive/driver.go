@@ -22,6 +22,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -40,6 +42,24 @@ type Driver struct {
 	store     *Store
 	publisher Publisher
 	cfg       Config
+	// reportDir, when non-empty, receives a Markdown rollup of every
+	// terminal run as drive-<runID>.md. Empty disables report writing
+	// (tests, headless contexts). The engine adapter sets this to
+	// <project>/.dfmc/reports/ so each run leaves a durable trace next
+	// to the existing JSON persistence — same theme as the provider
+	// log archive: every important event has a place to land outside
+	// the in-memory transcript.
+	reportDir string
+}
+
+// SetReportDir configures the directory where finalize() writes a
+// Markdown rollup for every terminal run. Empty string disables the
+// behaviour. Idempotent — calling with the same value is a no-op.
+func (d *Driver) SetReportDir(dir string) {
+	if d == nil {
+		return
+	}
+	d.reportDir = strings.TrimSpace(dir)
 }
 
 const emptyTaskError = "drive task is empty; pass a non-empty task description"
@@ -275,6 +295,38 @@ func (d *Driver) finalize(run *Run, status RunStatus, reason string) {
 		d.publish(EventRunStopped, payload)
 	case RunFailed:
 		d.publish(EventRunFailed, payload)
+	}
+	d.writeRunReport(run)
+}
+
+// writeRunReport persists a Markdown rollup under reportDir. Best-
+// effort: any I/O failure is published as a warning event (so the user
+// sees it) but never blocks the run-done path. Mirrors persist()'s
+// "swallow errors mid-finalize" stance; the run is already terminal at
+// this point and the JSON record is the source of truth either way.
+func (d *Driver) writeRunReport(run *Run) {
+	if d == nil || run == nil || strings.TrimSpace(d.reportDir) == "" {
+		return
+	}
+	body := RenderRunReport(run)
+	if strings.TrimSpace(body) == "" {
+		return
+	}
+	if err := os.MkdirAll(d.reportDir, 0o755); err != nil {
+		d.publish(EventRunWarning, map[string]any{
+			"run_id": run.ID,
+			"status": string(run.Status),
+			"error":  "report mkdir: " + err.Error(),
+		})
+		return
+	}
+	path := filepath.Join(d.reportDir, "drive-"+run.ID+".md")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		d.publish(EventRunWarning, map[string]any{
+			"run_id": run.ID,
+			"status": string(run.Status),
+			"error":  "report write: " + err.Error(),
+		})
 	}
 }
 

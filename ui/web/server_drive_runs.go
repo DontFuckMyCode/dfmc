@@ -104,6 +104,7 @@ func (s *Server) handleDriveResume(w http.ResponseWriter, r *http.Request) {
 		s.engine.PublishDriveEvent(typ, payload)
 	})
 	driver := drive.NewDriver(runner, store, publisher, drive.Config{})
+	driver.SetReportDir(s.engine.DriveReportDir())
 	s.engine.StartBackgroundTask("web.drive.resume", func(ctx context.Context) {
 		_, _ = driver.Resume(ctx, id)
 	})

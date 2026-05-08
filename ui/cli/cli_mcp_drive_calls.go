@@ -69,6 +69,7 @@ func (h *driveMCPHandler) callStart(_ context.Context, rawArgs []byte) (mcp.Call
 		h.eng.PublishDriveEvent(typ, payload)
 	})
 	driver := drive.NewDriver(runner, store, publisher, cfg)
+	driver.SetReportDir(h.eng.DriveReportDir())
 	run, err := drive.NewRun(task)
 	if err != nil {
 		return errResult(err.Error())
@@ -188,6 +189,7 @@ func (h *driveMCPHandler) callResume(_ context.Context, rawArgs []byte) (mcp.Cal
 		h.eng.PublishDriveEvent(typ, payload)
 	})
 	driver := drive.NewDriver(runner, store, publisher, drive.Config{})
+	driver.SetReportDir(h.eng.DriveReportDir())
 	h.eng.StartBackgroundTask("mcp.drive.resume", func(ctx context.Context) {
 		_, _ = driver.Resume(ctx, id)
 	})

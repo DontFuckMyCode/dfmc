@@ -136,8 +136,10 @@ func buildTUIDriver(eng *engine.Engine, routing map[string]string) (*tuiDriveRes
 		eng.PublishDriveEvent(typ, payload)
 	})
 	cfg := drive.Config{Routing: routing}
+	driver := drive.NewDriver(runner, store, publisher, cfg)
+	driver.SetReportDir(eng.DriveReportDir())
 	return &tuiDriveResources{
-		driver:  drive.NewDriver(runner, store, publisher, cfg),
+		driver:  driver,
 		store:   store,
 		routing: routing,
 	}, nil

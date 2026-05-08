@@ -112,6 +112,7 @@ func (s *Server) handleDriveStart(w http.ResponseWriter, r *http.Request) {
 		s.engine.PublishDriveEvent(typ, payload)
 	})
 	driver := drive.NewDriver(runner, store, publisher, cfg)
+	driver.SetReportDir(s.engine.DriveReportDir())
 	run, err := drive.NewRun(req.Task)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})

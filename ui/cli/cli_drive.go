@@ -180,6 +180,7 @@ func executeDriveRun(ctx context.Context, eng *engine.Engine, task string, cfg d
 		}
 	})
 	driver := drive.NewDriver(runner, store, publisher, cfg)
+	driver.SetReportDir(eng.DriveReportDir())
 
 	var run *drive.Run
 	if resume {
