@@ -286,10 +286,7 @@ func TestBuildSystemPromptInjectsProjectBrief(t *testing.T) {
 	}
 	mgr := New(cm)
 
-	// IncludeProjectBrief=true to exercise the loader; the engine's
-	// gate (off when AutoIncludeFiles=false and no opt-in markers) is
-	// covered by the engine-side tests, not here.
-	prompt := mgr.BuildSystemPromptWithRuntime(tmp, "review auth flow", nil, nil, PromptRuntime{IncludeProjectBrief: true})
+	prompt := mgr.BuildSystemPrompt(tmp, "review auth flow", nil, nil)
 	if !strings.Contains(prompt, "Critical note: auth boundary is strict.") {
 		t.Fatalf("expected project brief in prompt, got: %s", prompt)
 	}
@@ -316,35 +313,12 @@ func TestBuildSystemPromptFiltersProjectBriefByTaskAndQuery(t *testing.T) {
 	}
 
 	mgr := New(nil)
-	prompt := mgr.BuildSystemPromptWithRuntime(tmp, "security audit auth token storage", nil, nil, PromptRuntime{IncludeProjectBrief: true})
+	prompt := mgr.BuildSystemPrompt(tmp, "security audit auth token storage", nil, nil)
 	if !strings.Contains(prompt, "Project brief filtered for task=security") {
 		t.Fatalf("expected filtered project brief marker, got: %s", prompt)
 	}
 	if !strings.Contains(prompt, "Auth token persistence") {
 		t.Fatalf("expected security-relevant project brief section, got: %s", prompt)
-	}
-}
-
-// Default IncludeProjectBrief=false (zero value) keeps MAGIC_DOC.md OUT
-// of the system prompt — symmetric with AutoIncludeFiles=false. The
-// engine flips it on per-turn for queries with explicit opt-in markers.
-// Without this gate, every prompt carried 180-320 tokens of brief that
-// the user never asked for.
-func TestBuildSystemPromptOmitsProjectBriefWhenGateOff(t *testing.T) {
-	tmp := t.TempDir()
-	magicDir := filepath.Join(tmp, ".dfmc", "magic")
-	if err := os.MkdirAll(magicDir, 0o755); err != nil {
-		t.Fatalf("mkdir magic dir: %v", err)
-	}
-	body := "# MAGIC DOC: Test\n\nLoad-bearing brief content the gate should suppress.\n"
-	if err := os.WriteFile(filepath.Join(magicDir, "MAGIC_DOC.md"), []byte(body), 0o644); err != nil {
-		t.Fatalf("write magic doc: %v", err)
-	}
-	mgr := New(nil)
-	// Default runtime — IncludeProjectBrief defaults to false.
-	prompt := mgr.BuildSystemPrompt(tmp, "review auth flow", nil, nil)
-	if strings.Contains(prompt, "Load-bearing brief content the gate should suppress.") {
-		t.Fatalf("project brief leaked into prompt despite gate=false; got: %s", prompt)
 	}
 }
 

@@ -73,16 +73,13 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 	runtime.ActiveSkills = activeSkillNames
 	limits := ResolvePromptRenderBudget(task, profile, runtime)
 	injected := BuildInjectedContextWithBudget(projectRoot, cleanQuery, limits)
-	// Project brief auto-injection gated by IncludeProjectBrief — same
-	// opt-in policy as workspace evidence. Without this gate, every
-	// system prompt carried 180-320 tokens of MAGIC_DOC.md whether the
-	// user asked for project context or not. Explicit user markers
-	// ([[file:...]] / [[workspace-context]] / #ctx-files) flip the gate
-	// on for that turn via the engine's contextBuildOptions wiring.
-	projectBrief := "(none)"
-	if runtime.IncludeProjectBrief {
-		projectBrief = loadProjectBrief(projectRoot, cleanQuery, task, limits.ProjectBriefTokens)
-	}
+	// MAGIC_DOC.md is a user-curated project brief, NOT auto-discovered
+	// file content — the user explicitly authored it via `dfmc init` /
+	// `dfmc magicdoc update`, so injecting it every turn is the
+	// intended behaviour. Workspace evidence (random file scraps) is
+	// what the AutoIncludeFiles=false default suppresses; the brief
+	// stays in by design.
+	projectBrief := loadProjectBrief(projectRoot, cleanQuery, task, limits.ProjectBriefTokens)
 	// Headered sections: when content is empty, return "" so the template
 	// drops both the body and the header line — no more "Context files:\n
 	// (none)\n" / "Injected code:\n" noise on bare turns. The template

@@ -190,14 +190,12 @@ func (e *Engine) buildSystemPrompt(question string, chunks []types.ContextChunk)
 	if e.Context == nil {
 		return "", nil
 	}
-	rt := e.promptRuntime()
-	rt.IncludeProjectBrief = e.shouldBuildWorkspaceContext(question)
 	bundle := e.Context.BuildSystemPromptBundle(
 		e.ProjectRoot,
 		question,
 		chunks,
 		e.ListTools(),
-		rt,
+		e.promptRuntime(),
 	)
 	text, blocks := bundleToSystemBlocks(bundle)
 	// L2 (REPORT.md): when the persistent memory store failed to load
