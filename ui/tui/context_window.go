@@ -37,7 +37,16 @@ func (m Model) liveContextSnapshot() liveContextSnapshot {
 		codeTokens = m.status.ContextIn.TokenCount
 	}
 	queryTokens := estimatedChatTokens(query)
-	windowTokens := breakdown.SystemPrompt + breakdown.History + breakdown.ContextChunks + breakdown.Response + breakdown.ToolReserve + queryTokens
+	// windowTokens = ACTUAL input footprint, NOT reserve sum. The old
+	// formula added Response (16K) and Tool (0.5K) reserves — output
+	// headroom that's never part of the input — plus History reserve
+	// (24K) instead of HistoryActual, so a fresh empty session showed
+	// ~42K "context dolu" while the real input was a few thousand tokens.
+	// InputFootprint already covers system prompt + tools[] + actual
+	// history + chunks; we only add the live query tokens because the
+	// breakdown was built BEFORE the user pressed enter (the query is
+	// the composer text, not yet in conversation).
+	windowTokens := breakdown.InputFootprint + queryTokens
 	if windowTokens <= 0 {
 		windowTokens = breakdown.UsedTotal + queryTokens
 	}
