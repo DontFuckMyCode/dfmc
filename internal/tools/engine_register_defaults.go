@@ -66,6 +66,7 @@ func New(cfg config.Config) *Engine {
 	e.Register(NewASTQueryTool())
 	e.Register(NewFindSymbolTool())
 	e.Register(NewCodemapTool())
+	e.Register(NewSpecParseTool())
 	e.Register(NewTestDiscoveryTool())
 	depTool := NewDependencyGraphTool()
 	// SetEngine uses a deferred pattern: it stores the engine and will
