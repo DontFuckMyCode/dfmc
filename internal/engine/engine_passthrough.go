@@ -188,11 +188,21 @@ func (e *Engine) ContextBreakdown(question string) ContextBreakdown {
 		responsePct = float64(reserve.Response) / float64(providerLimit)
 	}
 
+	// InputFootprint = real input-token spend, NOT reserve sum. Excludes
+	// response/tool reserves (those are output headroom). Approximates
+	// tools[] at 700 tokens for the four meta tools — close enough for
+	// the "context full" gauge; the precise count is provider-internal.
+	historyActual := e.CurrentConversationTokens()
+	const metaToolsApproxTokens = 700
+	inputFootprint := reserve.Prompt + historyActual + contextChunksTokens + metaToolsApproxTokens
+
 	return ContextBreakdown{
 		Provider:         providerName,
 		Model:            modelName,
 		MaxContext:       providerLimit,
 		UsedTotal:        usedTotal,
+		InputFootprint:   inputFootprint,
+		HistoryActual:    historyActual,
 		SystemPrompt:     reserve.Prompt,
 		History:          historyTokens,
 		ContextChunks:    contextChunksTokens,

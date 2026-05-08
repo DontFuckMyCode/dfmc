@@ -260,7 +260,24 @@ type ContextBreakdown struct {
 	Model    string `json:"model"`
 	// Budget boundaries
 	MaxContext int `json:"max_context"`
-	UsedTotal  int `json:"used_total"`
+	// UsedTotal sums all RESERVE buckets (input + output headroom). It
+	// answers "how much have we promised across the whole budget" — NOT
+	// "how much input are we sending right now." Surfaces that show
+	// "context full" should prefer InputFootprint, which only counts
+	// what actually goes on the wire as input tokens.
+	UsedTotal int `json:"used_total"`
+	// InputFootprint approximates the actual input-token spend for THIS
+	// turn: system prompt + tools[] descriptors + current history +
+	// retrieved chunks. Excludes Response/Tool reserves (those are
+	// output headroom, not input). On a fresh session with no history,
+	// this is just system prompt + tools + the user question — a few
+	// thousand tokens, not the ~40K reservation total.
+	InputFootprint int `json:"input_footprint"`
+	// HistoryActual is the real token footprint of user/assistant
+	// messages currently in the conversation, vs. History below which
+	// is the reserved budget. Empty conversation = 0 here even when
+	// History reservation is 24K.
+	HistoryActual int `json:"history_actual"`
 	// Reserve buckets
 	SystemPrompt  int `json:"system_prompt_tokens"`
 	History       int `json:"history_tokens"`

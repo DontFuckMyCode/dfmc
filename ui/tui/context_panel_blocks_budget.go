@@ -119,8 +119,15 @@ func renderContextBreakdownBlock(bd engine.ContextBreakdown, width int) []string
 		out = append(out, "  "+head)
 	}
 
-	// Main bar: used vs total
-	totalUsed := bd.UsedTotal
+	// Main bar: ACTUAL input footprint vs total. UsedTotal is the
+	// reserve sum (input + output headroom), which made a fresh session
+	// read as ~40K of "context dolu" when only ~2K was actually flying
+	// on the wire. InputFootprint excludes Response/Tool reserves —
+	// those are headroom for the model's reply, not input tokens.
+	totalUsed := bd.InputFootprint
+	if totalUsed == 0 {
+		totalUsed = bd.UsedTotal // back-compat: pre-InputFootprint callers
+	}
 	bar := contextRatioBar(totalUsed, bd.MaxContext)
 	if bd.MaxContext > 0 {
 		pct := float64(totalUsed) / float64(bd.MaxContext) * 100
@@ -130,14 +137,22 @@ func renderContextBreakdownBlock(bd engine.ContextBreakdown, width int) []string
 		out = append(out, "  "+bar+subtleStyle.Render("  ??%%"))
 	}
 
-	// Per-bucket rows
+	// Per-bucket rows. "history" shows ACTUAL conversation footprint
+	// (HistoryActual), not the History reservation — a fresh session
+	// reads as 0 here, then grows organically. Tool/response stay as
+	// reservations because they're headroom the model needs available
+	// for its reply, not input we're sending.
+	historyActualPct := 0.0
+	if bd.MaxContext > 0 {
+		historyActualPct = float64(bd.HistoryActual) / float64(bd.MaxContext)
+	}
 	rows := []struct {
 		label string
 		value int
 		pct   float64
 	}{
 		{"system prompt", bd.SystemPrompt, bd.SystemPromptPct},
-		{"history", bd.History, bd.HistoryPct},
+		{"history", bd.HistoryActual, historyActualPct},
 		{"file context", bd.ContextChunks, bd.ContextChunksPct},
 		{"tool reserve", bd.ToolReserve, 0},
 		{"response", bd.Response, bd.ResponsePct},
