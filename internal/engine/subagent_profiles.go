@@ -66,6 +66,7 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 
 	skillTexts := resolveSubagentSkillTexts(e.ProjectRoot, req.Skills)
 	backendSpecs := e.Tools.BackendSpecs()
+	journalSection := formatSubagentJournalSection(e.loadSubagentJournal(req.Role))
 	task := buildSubagentPrompt(req, skillTexts, subagentPromptEnvironment{
 		ProjectRoot:      e.ProjectRoot,
 		Provider:         firstProvider,
@@ -73,6 +74,7 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 		MaxSteps:         lim.MaxSteps,
 		BackendToolCount: len(backendSpecs),
 		BackendToolNames: subagentPromptToolSample(backendSpecs, 16),
+		JournalSection:   journalSection,
 	})
 	preflight := e.prepareAutonomyPreflight(ctx, task, "subagent", false)
 	chunks := e.buildContextChunks(task)
@@ -193,6 +195,19 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 			if completion.Parked {
 				res.Summary = strings.TrimSpace(res.Summary + "\n\n[note: sub-agent reached its step budget; summary reflects partial work]")
 			}
+			// Persist this delegation into the per-role journal so a
+			// later delegate_task with the same role sees prior
+			// findings instead of re-deriving them. Best-effort:
+			// loadSubagentJournal returns nil on any failure, so a
+			// missed write just degrades the next call to "no prior
+			// context" — never blocks the caller.
+			e.appendSubagentJournal(req.Role, subagentJournalEntry{
+				Task:     req.Task,
+				Summary:  res.Summary,
+				Provider: completion.Provider,
+				Model:    completion.Model,
+				Parked:   completion.Parked,
+			})
 			return res, nil
 		}
 		lastErr = runErr

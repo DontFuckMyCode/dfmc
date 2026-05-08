@@ -31,6 +31,12 @@ type subagentPromptEnvironment struct {
 	MaxSteps         int
 	BackendToolCount int
 	BackendToolNames []string
+	// JournalSection is an already-rendered "Prior delegations to
+	// this role" block from formatSubagentJournalSection. Empty
+	// string means no prior entries (or storage not available); the
+	// builder splices it in only when non-empty so the common
+	// "first delegation" path stays minimal.
+	JournalSection string
 }
 
 // buildSubagentPrompt stitches role and allowed-tool hints onto the raw task
@@ -45,6 +51,9 @@ func buildSubagentPrompt(req tools.SubagentRequest, skillTexts []string, env sub
 			b.WriteString(text)
 			b.WriteString("\n\n")
 		}
+	}
+	if env.JournalSection != "" {
+		b.WriteString(env.JournalSection)
 	}
 	role := strings.TrimSpace(req.Role)
 	if role != "" {
