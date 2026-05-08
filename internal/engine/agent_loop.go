@@ -139,6 +139,16 @@ func truncateRunesWithMarker(s string, maxRunes int, marker string) string {
 }
 
 func (e *Engine) publishProviderComplete(providerName, model string, tokenCount int, usageParts ...provider.Usage) {
+	e.publishProviderCompleteWithSource(providerName, model, tokenCount, "agent_loop", "", "", usageParts...)
+}
+
+// publishProviderCompleteWithSource is the richer variant used when the
+// caller has the original prompt + assistant response in hand. The
+// providerlog archive consumes the previews and the source label so a
+// later "/log" view can show "agent_loop round 3 / Sonnet 4.6 / 1.2K
+// tokens / preview…". When previews are empty the payload still flows;
+// the archive simply omits those fields.
+func (e *Engine) publishProviderCompleteWithSource(providerName, model string, tokenCount int, source, userPreview, assistantPreview string, usageParts ...provider.Usage) {
 	if e.EventBus == nil {
 		return
 	}
@@ -146,6 +156,15 @@ func (e *Engine) publishProviderComplete(providerName, model string, tokenCount 
 		"provider": providerName,
 		"model":    model,
 		"tokens":   tokenCount,
+	}
+	if strings.TrimSpace(source) != "" {
+		payload["source"] = source
+	}
+	if strings.TrimSpace(userPreview) != "" {
+		payload["user_preview"] = truncatePreview(userPreview, 240)
+	}
+	if strings.TrimSpace(assistantPreview) != "" {
+		payload["assistant_preview"] = truncatePreview(assistantPreview, 240)
 	}
 	if len(usageParts) > 0 {
 		usage := usageParts[0]

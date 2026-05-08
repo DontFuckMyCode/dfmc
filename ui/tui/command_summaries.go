@@ -77,6 +77,47 @@ func (m Model) historyConfigLine() string {
 		tokensTxt, msgsTxt, storedTotal, storedUser, storedAssistant)
 }
 
+// providerLogTailSummary renders the most recent provider:complete
+// archive entries (today's JSONL under <data-dir>/provider_calls/) so a
+// user can answer "which model got which prompt and what did it cost"
+// without leaving the TUI. Newest at the bottom; ~12 lines fit the
+// transcript band without overwhelming the chat history.
+func (m Model) providerLogTailSummary() string {
+	if m.eng == nil || m.eng.ProviderLog == nil {
+		return "Provider log: archive not initialised yet (engine still warming up or DataDir unset)."
+	}
+	recs := m.eng.ProviderLog.Tail(12)
+	if len(recs) == 0 {
+		return fmt.Sprintf("Provider log: no entries today.\nArchive dir: %s", m.eng.ProviderLog.Dir())
+	}
+	parts := []string{
+		fmt.Sprintf("Provider log — last %d call(s) today (%s):", len(recs), m.eng.ProviderLog.Dir()),
+	}
+	for _, r := range recs {
+		ts := strings.TrimSpace(r.TS)
+		if len(ts) > 19 {
+			ts = ts[:19]
+		}
+		who := r.Provider + "/" + r.Model
+		if r.Provider == "" && r.Model == "" {
+			who = "(unknown)"
+		}
+		toks := fmt.Sprintf("in=%d out=%d total=%d", r.InputTokens, r.OutputTokens, r.TotalTokens)
+		row := fmt.Sprintf("  %s · %s · %s", ts, who, toks)
+		if r.Source != "" {
+			row += " · " + r.Source
+		}
+		if r.Error != "" {
+			row += " · err=" + truncateForLine(r.Error, 60)
+		}
+		parts = append(parts, row)
+		if preview := strings.TrimSpace(r.AssistantPreview); preview != "" {
+			parts = append(parts, "      → "+truncateForLine(preview, 100))
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 // filesConfigLine surfaces the workspace-context file knobs symmetric
 // to historyConfigLine. Lets the user confirm at a glance that the
 // current MaxFiles / MaxTokensTotal / MaxTokensPerFile / AutoIncludeFiles

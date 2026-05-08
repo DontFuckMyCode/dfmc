@@ -82,6 +82,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "key clear", Template: "/key clear anthropic", Description: "remove an API key from ~/.dfmc/config.yaml"},
 		{Command: "key migrate", Template: "/key migrate", Description: "copy keys from project .env into ~/.dfmc/config.yaml"},
 		{Command: "tools", Template: "/tools", Description: "list tools and open panel"},
+		{Command: "log", Template: "/log", Description: "show recent provider calls (model · in/out tokens · preview)"},
 		{Command: "ls", Template: "/ls .", Description: "list project files"},
 		{Command: "read", Template: "/read " + blankFallback(m.toolTargetFile(), "path/to/file.go"), Description: "read file lines"},
 		{Command: "grep", Template: "/grep TODO", Description: "search codebase (regex)"},
@@ -108,6 +109,8 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "split", Template: "/split TASK", Description: "Decompose a broad task into subtasks"},
 		{Command: "context messages", Template: "/context messages", Description: "show every message the LLM is paying to carry · ID · role · ~tokens · tools · preview"},
 		{Command: "context drop", Template: "/context drop ", Description: "manually remove messages from the active branch by ID (override the model's [cleanup:])"},
+		{Command: "context gc", Template: "/context gc", Description: "preview engine-side garbage: failed-retry + dominated-read turns the GC would prune"},
+		{Command: "context gc run", Template: "/context gc run", Description: "force the GC pass now (auto-runs every turn; this is the manual trigger)"},
 		// Drive — autonomous plan/execute loop. Surfaces the full sub-command
 		// family (start / stop / list / active / resume) so users discover
 		// every verb without leaving the palette.

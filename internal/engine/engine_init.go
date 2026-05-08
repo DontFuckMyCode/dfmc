@@ -33,6 +33,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/langintel"
 	"github.com/dontfuckmycode/dfmc/internal/memory"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/providerlog"
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/internal/storage"
 	"github.com/dontfuckmycode/dfmc/internal/taskstore"
@@ -70,6 +71,17 @@ func (e *Engine) Init(ctx context.Context) error {
 		return fmt.Errorf("storage init failed: %w", err)
 	}
 	e.Storage = store
+	// Provider call archive: every provider:complete event lands as a
+	// JSONL row under <data-dir>/provider_calls/{YYYY-MM-DD}.jsonl. The
+	// engine owns the subscription so providerlog stays free of any
+	// engine import (would cycle). nil-safe: a missing/unwritable dir
+	// returns a nil logger and the subscription is skipped.
+	if pl, perr := providerlog.New(e.Config.DataDir()); perr == nil && pl != nil {
+		e.ProviderLog = pl
+		e.EventBus.SubscribeFunc("provider:complete", func(ev Event) {
+			pl.Record(ev.Payload)
+		})
+	}
 	e.AST = ast.NewWithCacheSize(e.Config.AST.CacheSize)
 	e.CodeMap = codemap.New(e.AST)
 	e.Context = ctxmgr.New(e.CodeMap)

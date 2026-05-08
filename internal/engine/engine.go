@@ -44,6 +44,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/langintel"
 	"github.com/dontfuckmycode/dfmc/internal/memory"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/providerlog"
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/internal/storage"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
@@ -86,6 +87,14 @@ type Engine struct {
 	// (user_prompt_submit, pre_tool, post_tool, session_start/end). A nil
 	// value is safe — Fire is a no-op on nil.
 	Hooks *hooks.Dispatcher
+
+	// ProviderLog persists every provider:complete event to a daily
+	// JSONL file under <data-dir>/provider_calls/. Survives session
+	// crashes and conversation compaction so the user can audit
+	// "which model got which prompt and how many tokens it cost"
+	// after the fact. nil-safe: Tail/Dir return zero values, Close
+	// is a no-op.
+	ProviderLog *providerlog.Logger
 
 	// activeSkills holds the skill names resolved from the current
 	// prompt build (BuildSystemPromptBundle). executeToolWithLifecycle

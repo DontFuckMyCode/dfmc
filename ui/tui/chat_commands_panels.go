@@ -151,6 +151,9 @@ func (m Model) runPanelCommand(cmd string, args []string) (tea.Model, tea.Cmd, b
 	case "status":
 		m.chat.input = ""
 		return m.appendSystemMessage(m.statusCommandSummary()), loadStatusCmd(m.eng), true
+	case "log", "calls":
+		m.chat.input = ""
+		return m.appendSystemMessage(m.providerLogTailSummary()), nil, true
 	case "providers":
 		// Open the Providers diagnostic panel (Ctrl+O shortcut).
 		// Use /provider to switch the active model, /models lists them.

@@ -262,7 +262,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 				"model":          s.lastModel,
 				"surface":        "native",
 			})
-			e.publishProviderComplete(s.lastProvider, s.lastModel, s.totalTokens, resp.Usage)
+			e.publishProviderCompleteWithSource(s.lastProvider, s.lastModel, s.totalTokens, "agent_loop", s.question, completion.Answer, resp.Usage)
 			e.emitCoachNotes(s.question, completion)
 			return completion, nil
 		}

@@ -184,15 +184,36 @@ e.ensureIndexed(ctx)
 		Type:   "provider:complete",
 		Source: "engine",
 		Payload: map[string]any{
-			"provider":      usedProvider,
-			"model":         resp.Model,
-			"tokens":        resp.Usage.TotalTokens,
-			"input_tokens":  resp.Usage.InputTokens,
-			"output_tokens": resp.Usage.OutputTokens,
-			"total_tokens":  resp.Usage.TotalTokens,
+			"provider":          usedProvider,
+			"model":             resp.Model,
+			"tokens":            resp.Usage.TotalTokens,
+			"input_tokens":      resp.Usage.InputTokens,
+			"output_tokens":     resp.Usage.OutputTokens,
+			"total_tokens":      resp.Usage.TotalTokens,
+			"source":            "ask",
+			"user_preview":      truncatePreview(prompt, 240),
+			"assistant_preview": truncatePreview(resp.Text, 240),
 		},
 	})
 	return resp.Text, nil
+}
+
+// truncatePreview clamps a string to max runes with an ellipsis so the
+// archive doesn't carry full prompts/answers (those live in the
+// conversation JSONL — provider_calls is the rollup index).
+func truncatePreview(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	if max < 4 {
+		return string(r[:max])
+	}
+	return string(r[:max-1]) + "…"
 }
 
 // StreamAsk lives in engine_ask_stream.go.

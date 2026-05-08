@@ -169,12 +169,15 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 						Type:   "provider:complete",
 						Source: "engine",
 						Payload: map[string]any{
-							"provider":      usedProvider,
-							"model":         req.Model,
-							"tokens":        usage.TotalTokens,
-							"input_tokens":  usage.InputTokens,
-							"output_tokens": usage.OutputTokens,
-							"total_tokens":  usage.TotalTokens,
+							"provider":          usedProvider,
+							"model":             req.Model,
+							"tokens":            usage.TotalTokens,
+							"input_tokens":     usage.InputTokens,
+							"output_tokens":     usage.OutputTokens,
+							"total_tokens":      usage.TotalTokens,
+							"source":            "stream",
+							"user_preview":      truncatePreview(prompt, 240),
+							"assistant_preview": truncatePreview(answer, 240),
 						},
 					})
 				}
