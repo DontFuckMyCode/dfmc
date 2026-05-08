@@ -164,6 +164,19 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		m.slashMenu.commandArg = 0
 		m.slashMenu.mention = 0
 		return m, nil, true
+	case "ctrl+b":
+		// Panel switcher — fuzzy-filter overlay over every panel. The
+		// fallback for users whose terminal eats specific F-keys (F11
+		// goes fullscreen on most terminals, F1 opens terminal help on
+		// some, F4 closes tabs in others). With Ctrl+B you type three
+		// letters of the panel name and hit enter — works everywhere.
+		// Toggles closed when already open.
+		if m.panelSwitcher.active {
+			m = m.closePanelSwitcher()
+		} else {
+			m = m.openPanelSwitcher()
+		}
+		return m, nil, true
 	case "ctrl+g":
 		m = m.activateDiagnosticTab("Activity")
 		return m, nil, true
@@ -309,6 +322,13 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		// terminals emit f18 for shift+f6 (xterm classic); newer ones
 		// (Kitty / modifyOtherKeys) send the literal "shift+f6" form.
 		m = m.activateDiagnosticTab("Contexts")
+		return m, nil, true
+	case "shift+f7", "f19", "ctrl+l":
+		// Provider call archive — every model invocation today, with
+		// in/out tokens and a preview of the user prompt + assistant
+		// reply. Ctrl+L doubles as the discoverable shortcut (mnemonic
+		// "L" for log) for terminals that eat Shift+F7.
+		m = m.activateDiagnosticTab("ProviderLog")
 		return m, nil, true
 	// Alt+9 / Alt+0 used to map to Memory/Conversations under the 17-tab
 	// era; after the F-key remap they would silently disagree with their

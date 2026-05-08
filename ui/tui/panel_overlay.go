@@ -58,6 +58,11 @@ func (m Model) renderPanelOverlayBody(kind string, contentWidth, innerHeight int
 		body, _ = fitPanelContentScrollable(m.renderShortcutsView(contentWidth), bodyHeight, m.shortcuts.scroll)
 	case "contexts":
 		body = fitPanelContentHeight(m.renderContextsView(contentWidth), bodyHeight)
+	case "providerlog":
+		// Provider call archive — long read-only digest of every
+		// provider:complete event today. Scroll grammar matches
+		// orchestrate/shortcuts (j/k/pgup/pgdn/g/G).
+		body, _ = fitPanelContentScrollable(m.renderProviderLogView(contentWidth), bodyHeight, m.providerLog.scroll)
 	default:
 		body = subtleStyle.Render("(unknown overlay: " + kind + ")")
 	}
@@ -89,6 +94,8 @@ func panelOverlayLabel(kind string) string {
 		return "SHORTCUTS"
 	case "contexts":
 		return "CONTEXTS"
+	case "providerlog":
+		return "PROVIDER LOG"
 	default:
 		return strings.ToUpper(kind)
 	}

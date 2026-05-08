@@ -33,6 +33,11 @@ func (m Model) handleShortcutsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleProviderLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.providerLog.scroll = adjustScrollOnlyOffset(msg.String(), m.providerLog.scroll)
+	return m, nil
+}
+
 // adjustScrollOnlyOffset implements the j/k/pgup/pgdn/g/G grammar used
 // by both read-only overlays. Returns the new offset; the renderer
 // (fitPanelContentScrollable) clamps to the actual content size, so

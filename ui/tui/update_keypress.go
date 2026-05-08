@@ -28,6 +28,15 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.pendingApproval != nil {
 		return m.handleApprovalKey(msg)
 	}
+	// Panel switcher captures ALL keys while open — including arrows,
+	// enter, esc, and rune input that drives the live filter. We
+	// short-circuit before the global shortcut table so opening the
+	// switcher doesn't compete with chat/per-tab handlers.
+	if m.panelSwitcher.active {
+		if nm, cmd, handled := m.handlePanelSwitcherKey(msg); handled {
+			return nm, cmd
+		}
+	}
 	// Turkish keyboards on MinTTY / Windows Terminal occasionally
 	// deliver a plain letter keystroke with Alt=true during paste
 	// or fast typing (the same ESC-prefix quirk that ships '@' as
@@ -152,6 +161,8 @@ func (m Model) routeKeyByActiveTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.handleOrchestrateKey(msg)
 		case "shortcuts":
 			return m.handleShortcutsKey(msg)
+		case "providerlog":
+			return m.handleProviderLogKey(msg)
 		}
 	}
 	if m.activeTab < 0 || m.activeTab >= len(m.tabs) {

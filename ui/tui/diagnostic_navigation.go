@@ -18,6 +18,7 @@ var demotedPanelKinds = map[string]string{
 	"Orchestrate": "orchestrate",
 	"Shortcuts":   "shortcuts",
 	"Contexts":    "contexts",
+	"ProviderLog": "providerlog",
 }
 
 // activateDiagnosticTab is the single entry point for "go look at the
