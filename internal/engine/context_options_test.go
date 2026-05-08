@@ -139,13 +139,15 @@ func TestContextBudgetPreview_ReflectsEffectiveOptions(t *testing.T) {
 	}
 }
 
-func TestBuildContextChunks_AutoIncludeFilesEnabledByDefault(t *testing.T) {
+func TestBuildContextChunks_AutoIncludeFilesOffByDefault(t *testing.T) {
 	cfg := config.DefaultConfig()
-	// AutoIncludeFiles=true by default in modern config; this test
-	// verifies that workspace retrieval runs automatically without
-	// needing [[workspace-context]] markers.
-	if !cfg.Context.AutoIncludeFiles {
-		t.Skip("AutoIncludeFiles=false is no longer the default")
+	// AutoIncludeFiles=false is the modern default: a tool-using model
+	// retrieves on demand via grep_codebase / find_symbol / read_file
+	// rather than receiving a pre-loaded scrap pile. A bare query must
+	// therefore SKIP workspace retrieval; only explicit markers force
+	// inclusion.
+	if cfg.Context.AutoIncludeFiles {
+		t.Fatal("default AutoIncludeFiles should be false; tool-using models retrieve on demand")
 	}
 	router, err := provider.NewRouter(cfg.Providers)
 	if err != nil {
@@ -154,40 +156,99 @@ func TestBuildContextChunks_AutoIncludeFilesEnabledByDefault(t *testing.T) {
 	eng := &Engine{Config: cfg, Providers: router}
 	chunks := eng.buildContextChunks("explain the provider router")
 
-	// With AutoIncludeFiles=true, chunks should be retrieved (or at least
-	// the build should not skip silently with "conversation only" reason).
-	_ = chunks // chunks may be empty if context index is nil; that's ok
-	eng.mu.RLock()
-	status := eng.lastContextIn
-	eng.mu.RUnlock()
-	if status.FileCount == 0 && status.TokenCount == 0 {
-		// Index may be nil in this test env — check reason, not outcome
-		t.Log("no chunks retrieved (index may be nil in test env)")
+	if len(chunks) != 0 {
+		t.Fatalf("AutoIncludeFiles=false: bare query must yield 0 chunks, got %d", len(chunks))
 	}
-	// The key assertion: reasons must NOT say "conversation history only"
-	// since AutoIncludeFiles=true means we attempt retrieval.
-	_ = status // status checked above
 }
 
-func TestShouldBuildWorkspaceContext_WithAutoIncludeFiles(t *testing.T) {
+// providerWindowScale is sized for modern 200K+ defaults: most
+// providers get 1.0 (no change to base config) and only the rarefied
+// 1M-window class (Opus 4.7 etc.) gets a modest 1.25 stretch. The
+// reserve/available-budget clamps already handle small-window
+// auto-throttle, so this scaler doesn't need <1.0 tiers.
+func TestProviderWindowScale_TiersByWindowSize(t *testing.T) {
+	cases := []struct {
+		windowTokens int
+		want         float64
+	}{
+		{0, 1.0},          // unknown — pass-through
+		{8_000, 1.0},      // tight (clamp handles fit)
+		{32_000, 1.0},     // small
+		{128_000, 1.0},    // mid
+		{200_000, 1.0},    // Sonnet/GPT class — base default
+		{511_999, 1.0},    // just under threshold
+		{512_000, 1.25},   // Opus 1M class
+		{1_000_000, 1.25}, // 1M
+	}
+	for _, tc := range cases {
+		got := providerWindowScale(tc.windowTokens)
+		if got != tc.want {
+			t.Errorf("providerWindowScale(%d): want %.2f, got %.2f", tc.windowTokens, tc.want, got)
+		}
+	}
+}
+
+// Auto-computed budgets (no user-set MaxFiles/MaxTokensTotal) should
+// scale UP for big-window providers but NEVER below the configured
+// floor for small-window providers. Explicit user values pass
+// through without scaling — verified separately by
+// TestContextBudgetPreview_ReflectsEffectiveOptions.
+func TestContextBuildOptions_WindowScaleRespectsUserSetValues(t *testing.T) {
+	cfg := config.DefaultConfig()
+	// User explicitly sets MaxFiles + MaxTokensTotal — these MUST NOT
+	// be inflated by windowScale, even when the provider has a huge
+	// context window. Otherwise users who tighten their config
+	// silently get re-bloated.
+	cfg.Context.MaxFiles = 6
+	cfg.Context.MaxTokensTotal = 3000
+	cfg.Context.MaxTokensPerFile = 500
+
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{Config: cfg, Providers: router}
+	opts := eng.contextBuildOptions("explore the architecture")
+
+	// MaxFiles user-set — even on a 1M-window provider it should
+	// stay ~6 (profile.FileScale may nudge slightly but windowScale
+	// must not multiply it further).
+	if opts.MaxFiles > 8 {
+		t.Errorf("user-set MaxFiles=6 must not be inflated by windowScale; got %d", opts.MaxFiles)
+	}
+	// MaxTokensTotal user-set — same contract.
+	if opts.MaxTokensTotal > 4000 {
+		t.Errorf("user-set MaxTokensTotal=3000 must not be inflated by windowScale; got %d", opts.MaxTokensTotal)
+	}
+}
+
+func TestShouldBuildWorkspaceContext_AutoIncludeFilesOffByDefault(t *testing.T) {
 	cfg := config.DefaultConfig()
 	eng := &Engine{Config: cfg}
 
-	if !cfg.Context.AutoIncludeFiles {
-		t.Fatal("default config should have AutoIncludeFiles=true")
+	if cfg.Context.AutoIncludeFiles {
+		t.Fatal("default config should have AutoIncludeFiles=false; tool-using models retrieve on demand")
 	}
-	// With AutoIncludeFiles=true, ANY query triggers workspace retrieval,
-	// including those with explicit file markers — those markers still
-	// inject the specific file but don't narrow retrieval scope.
+	// Bare query — workspace retrieval MUST be skipped. The model uses
+	// its grep/find_symbol/read_file tools to pull only what it needs.
+	if eng.shouldBuildWorkspaceContext("debug provider router") {
+		t.Fatal("AutoIncludeFiles=false: bare query must NOT trigger workspace retrieval")
+	}
+	// Explicit per-turn opt-ins still work — these are user-driven
+	// signals that "for THIS turn, dump the workspace evidence in".
 	if !eng.shouldBuildWorkspaceContext("debug [[file:internal/provider/router.go]]") {
-		t.Fatal("explicit file markers with AutoIncludeFiles=true should still trigger workspace retrieval")
+		t.Fatal("[[file:...]] marker should opt in to workspace retrieval")
 	}
 	if !eng.shouldBuildWorkspaceContext("debug provider router [[workspace-context]]") {
-		t.Fatal("workspace marker should enable broad workspace retrieval")
+		t.Fatal("[[workspace-context]] marker should opt in to workspace retrieval")
 	}
-	// With AutoIncludeFiles=true, bare query also triggers retrieval
+	if !eng.shouldBuildWorkspaceContext("trace #ctx-files the auth flow") {
+		t.Fatal("#ctx-files flag should opt in to workspace retrieval")
+	}
+	// User can flip the default per-config when they want classic pre-load.
+	cfg.Context.AutoIncludeFiles = true
 	if !eng.shouldBuildWorkspaceContext("debug provider router") {
-		t.Fatal("context.auto_include_files=true should enable broad workspace retrieval for any query")
+		t.Fatal("AutoIncludeFiles=true override: bare query must trigger retrieval")
 	}
 }
 

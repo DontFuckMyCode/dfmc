@@ -93,6 +93,12 @@ type PromptRuntime struct {
 	// into the agent loop so executeToolWithLifecycle can consult Preferred/Allowed
 	// tool lists when enforcing skill-scoped tool policy.
 	ActiveSkills []string
+	// IncludeProjectBrief gates auto-injection of .dfmc/magic/MAGIC_DOC.md
+	// into the system prompt. Symmetric with Config.Context.AutoIncludeFiles:
+	// when both are off, the prompt carries NO project-specific file content
+	// the user didn't explicitly request via [[file:...]] / [[workspace-context]]
+	// / #ctx-files markers. Default-zero is false so callers must opt in.
+	IncludeProjectBrief bool
 }
 
 func New(cm *codemap.Engine) *Manager {

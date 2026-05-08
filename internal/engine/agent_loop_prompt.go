@@ -37,12 +37,14 @@ import (
 func (e *Engine) buildNativeToolSystemPromptBundle(question string, chunks []types.ContextChunk, preflight *autonomyPreflight) (string, []provider.SystemBlock) {
 	var bundle *promptlib.PromptBundle
 	if e.Context != nil {
+		rt := e.promptRuntime()
+		rt.IncludeProjectBrief = e.shouldBuildWorkspaceContext(question)
 		bundle = e.Context.BuildSystemPromptBundle(
 			e.ProjectRoot,
 			question,
 			chunks,
 			e.ListTools(),
-			e.promptRuntime(),
+			rt,
 		)
 	}
 	// Sync activeSkills into the Engine so executeToolWithLifecycle can

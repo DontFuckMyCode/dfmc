@@ -32,6 +32,9 @@ func (m Model) statusCommandSummary() string {
 	if why := formatContextInReasonSummaryTUI(st.ContextIn); why != "" {
 		parts = append(parts, "Context Why: "+why)
 	}
+	if line := m.filesConfigLine(); line != "" {
+		parts = append(parts, line)
+	}
 	if line := m.historyConfigLine(); line != "" {
 		parts = append(parts, line)
 	}
@@ -72,6 +75,38 @@ func (m Model) historyConfigLine() string {
 	storedTotal := storedUser + storedAssistant
 	return fmt.Sprintf("History config: max_tokens=%s max_messages=%s · stored=%d msgs (%dU/%dA)",
 		tokensTxt, msgsTxt, storedTotal, storedUser, storedAssistant)
+}
+
+// filesConfigLine surfaces the workspace-context file knobs symmetric
+// to historyConfigLine. Lets the user confirm at a glance that the
+// current MaxFiles / MaxTokensTotal / MaxTokensPerFile / AutoIncludeFiles
+// values are what they expect — especially after the 2026-05 default
+// recalibration to 20 files / 12000 total / 2000 per-file. Without
+// this surface, the budget breakdown shows the resolved per-request
+// share but the underlying ceiling stays opaque.
+func (m Model) filesConfigLine() string {
+	if m.eng == nil || m.eng.Config == nil {
+		return ""
+	}
+	c := m.eng.Config.Context
+	maxFilesTxt := fmt.Sprintf("%d", c.MaxFiles)
+	if c.MaxFiles <= 0 {
+		maxFilesTxt = "auto"
+	}
+	totalTxt := fmt.Sprintf("%d", c.MaxTokensTotal)
+	if c.MaxTokensTotal <= 0 {
+		totalTxt = "auto"
+	}
+	perFileTxt := fmt.Sprintf("%d", c.MaxTokensPerFile)
+	if c.MaxTokensPerFile <= 0 {
+		perFileTxt = "auto"
+	}
+	autoTxt := "on"
+	if !c.AutoIncludeFiles {
+		autoTxt = "off"
+	}
+	return fmt.Sprintf("Files config: max_files=%s max_tokens_total=%s max_tokens_per_file=%s auto_include=%s",
+		maxFilesTxt, totalTxt, perFileTxt, autoTxt)
 }
 
 func (m Model) contextCommandSummary() string {
@@ -170,6 +205,9 @@ func (m Model) contextCommandDetailedSummary() string {
 			fmt.Sprintf("Budget breakdown: code=%d max_code=%d per_file=%d available=%d",
 				report.TokenCount, report.MaxTokensTotal, report.MaxTokensPerFile, report.ContextAvailable),
 		)
+	}
+	if line := m.filesConfigLine(); line != "" {
+		parts = append(parts, line)
 	}
 	if line := m.historyConfigLine(); line != "" {
 		parts = append(parts, line)

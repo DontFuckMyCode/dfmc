@@ -207,8 +207,13 @@ func (e *Engine) shouldBuildWorkspaceContext(question string) bool {
 	if e.Config.Context.AutoIncludeFiles {
 		return true
 	}
+	// Opt-in markers for the AutoIncludeFiles=false default. The model
+	// pulls files via tools (grep_codebase / find_symbol / read_file)
+	// for any bare query; these markers are how the *user* says "for
+	// THIS turn, dump file evidence in too."
 	q := strings.ToLower(strings.TrimSpace(question))
 	return strings.Contains(q, "[[workspace-context]]") ||
+		strings.Contains(q, "[[file:") ||
 		strings.Contains(q, "#context:on") ||
 		strings.Contains(q, "#ctx-files")
 }

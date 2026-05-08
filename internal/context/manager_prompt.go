@@ -73,7 +73,16 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 	runtime.ActiveSkills = activeSkillNames
 	limits := ResolvePromptRenderBudget(task, profile, runtime)
 	injected := BuildInjectedContextWithBudget(projectRoot, cleanQuery, limits)
-	projectBrief := loadProjectBrief(projectRoot, cleanQuery, task, limits.ProjectBriefTokens)
+	// Project brief auto-injection gated by IncludeProjectBrief — same
+	// opt-in policy as workspace evidence. Without this gate, every
+	// system prompt carried 180-320 tokens of MAGIC_DOC.md whether the
+	// user asked for project context or not. Explicit user markers
+	// ([[file:...]] / [[workspace-context]] / #ctx-files) flip the gate
+	// on for that turn via the engine's contextBuildOptions wiring.
+	projectBrief := "(none)"
+	if runtime.IncludeProjectBrief {
+		projectBrief = loadProjectBrief(projectRoot, cleanQuery, task, limits.ProjectBriefTokens)
+	}
 	bundle := m.prompts.RenderBundle(promptlib.RenderRequest{
 		Type:     "system",
 		Task:     task,

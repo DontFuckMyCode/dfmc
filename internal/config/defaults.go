@@ -19,19 +19,36 @@ func DefaultConfig() *Config {
 			Profiles: profiles,
 		},
 		Context: ContextConfig{
-			MaxFiles:         50,
-			MaxTokensTotal:   16000,
+			// Sized for modern 200K-1M providers (Opus 4.7, GPT-5.4,
+			// Sonnet 4.6) where prompt caching subsidizes stable
+			// prefixes. The earlier 50-files × 320-tokens "file scrap"
+			// failure mode came from a tiny per-file budget, not from
+			// the file count itself; here we keep the count generous
+			// and the per-file budget meaningful so injects are
+			// useful evidence, not unreadable slices.
+			MaxFiles:         20,
+			MaxTokensTotal:   12000,
 			MaxTokensPerFile: 2000,
-			// 2048 tokens of conversation history — roughly 4 turn pairs.
-			// Reduced from 4096 to prevent context window from growing
-			// unboundedly between turns.
-			MaxHistoryTokens:  2048,
-			// 30 messages = 15 user/assistant pairs.
-			MaxHistoryMessages: 30,
+			// History budget — the work narrative the model threads
+			// across turns. Prompt caching on the conversation prefix
+			// makes carrying ~24K of history cheap on modern
+			// providers; capping low (the old 2K) starved the
+			// reasoning thread and forced the model to re-discover
+			// context every round.
+			MaxHistoryTokens:   24000,
+			MaxHistoryMessages: 120,
 			Compression:        "standard",
-			// AutoIncludeFiles=true: workspace dosyaları otomatik inject
-			// edilir her sorguda — [[workspace-context]]'e gerek kalmaz.
-			AutoIncludeFiles:   true,
+			// AutoIncludeFiles=false: a tool-using model should
+			// retrieve its own context via grep_codebase / find_symbol
+			// / read_file when it needs files, NOT have N random
+			// scraps dumped into the prompt before the question even
+			// runs. Pre-loading hurts signal-to-noise (the model sees
+			// 20 partial files it didn't ask for) AND wastes the
+			// cached prefix on stuff that may be irrelevant to the
+			// current turn. Users who DO want a specific file pulled
+			// in opt back in per-turn with `[[file:path]]` markers or
+			// `#ctx-files` / `#context:on` flags in the prompt.
+			AutoIncludeFiles:   false,
 			IncludeTests:       false,
 			IncludeDocs:        true,
 			SymbolAware:        true,

@@ -292,12 +292,16 @@ func TestValidate_ContextMaxTokensTotalMustBePositive(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_ContextAutoIncludeFilesOn(t *testing.T) {
+func TestDefaultConfig_ContextAutoIncludeFilesOff(t *testing.T) {
 	cfg := DefaultConfig()
-	// AutoIncludeFiles=true is the modern default; workspace files are
-	// automatically retrieved for every query without needing markers.
-	if !cfg.Context.AutoIncludeFiles {
-		t.Fatal("default context.auto_include_files should be true in modern config")
+	// AutoIncludeFiles=false is the modern default: a tool-using
+	// model retrieves its own context via grep_codebase / find_symbol
+	// / read_file when it needs files. Pre-loading N scraps before
+	// the question even runs hurts signal-to-noise and wastes the
+	// cached prefix on possibly-irrelevant evidence. Users opt in
+	// per-turn via `[[file:path]]` markers or `#ctx-files` flags.
+	if cfg.Context.AutoIncludeFiles {
+		t.Fatal("default context.auto_include_files should be false; tool-using models retrieve on demand")
 	}
 }
 
