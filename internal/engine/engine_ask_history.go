@@ -104,6 +104,34 @@ func (e *Engine) conversationHistoryMaxMessages() int {
 	return maxHistoryMessages
 }
 
+// CurrentConversationTokens returns the actual token footprint of the
+// active conversation's user/assistant messages — NOT the reserved
+// MaxHistoryTokens budget. Used by surfaces that show "how full is the
+// context" so a fresh session reads as 0 tokens of history rather than
+// the 24K reservation. Tool-only assistant turns (no Content but with
+// ToolCalls/Results) are filtered the same way trimmedConversationMessages
+// filters them.
+func (e *Engine) CurrentConversationTokens() int {
+	if e == nil || e.Conversation == nil {
+		return 0
+	}
+	active := e.Conversation.Active()
+	if active == nil {
+		return 0
+	}
+	total := 0
+	for _, msg := range active.Messages() {
+		if msg.Role != types.RoleUser && msg.Role != types.RoleAssistant {
+			continue
+		}
+		if strings.TrimSpace(msg.Content) == "" && len(msg.ToolCalls) == 0 && len(msg.Results) == 0 {
+			continue
+		}
+		total += tokens.Estimate(msg.Content)
+	}
+	return total
+}
+
 func (e *Engine) trimmedConversationMessages(budget int) ([]provider.Message, []types.Message) {
 	if e.Conversation == nil {
 		return nil, nil

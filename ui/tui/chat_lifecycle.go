@@ -97,11 +97,19 @@ func (m Model) submitChatQuestion(question string, quickActions []quickActionSug
 	return m, tea.Batch(waitForStreamMsg(m.chat.streamMessages), m.ensureSpinnerTick())
 }
 
+// estimateLiveInputTokens approximates the actual input footprint that
+// will be sent to the provider for THIS turn — not the reserved budget.
+// Earlier this summed reserve.History (24K default), which made an empty
+// fresh session read as ~30K of "context window dolu" even though the
+// real conversation history was 0 tokens. Now uses CurrentConversationTokens
+// (real history) + the actual context-chunk tokens (0 when AutoIncludeFiles=false)
+// + a stable system-prompt approximation + the new question.
 func (m Model) estimateLiveInputTokens(question string) int {
 	questionTokens := estimatedChatTokens(question)
 	if m.eng != nil {
 		breakdown := m.eng.ContextBreakdown(question)
-		total := breakdown.SystemPrompt + breakdown.History + breakdown.ContextChunks + questionTokens
+		actualHistory := m.eng.CurrentConversationTokens()
+		total := breakdown.SystemPrompt + actualHistory + breakdown.ContextChunks + questionTokens
 		if total > 0 {
 			return total
 		}
