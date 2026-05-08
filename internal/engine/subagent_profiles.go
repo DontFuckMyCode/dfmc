@@ -101,6 +101,15 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 		ToolSource:    normalizeToolSource(req.ToolSource),
 	}
 
+	// Bind the AllowedTools whitelist onto the context BEFORE the loop
+	// runs so executeToolWithLifecycle's gate (checkSubagentAllowlist)
+	// refuses any tool outside the list at the lifecycle funnel — well
+	// before approval/hooks/Execute. Empty list short-circuits to a
+	// no-op inside withSubagentAllowlist, preserving the
+	// "no constraint" default for delegate_task calls without
+	// allowed_tools.
+	ctx = withSubagentAllowlist(ctx, req.AllowedTools)
+
 	start := time.Now()
 	e.publishAgentLoopEvent("agent:subagent:start", map[string]any{
 		"task":                truncateString(req.Task, 200),
