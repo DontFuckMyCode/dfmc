@@ -21,6 +21,39 @@ import (
 // caller should treat a non-nil return as terminal and skip the
 // executor stage.
 func (d *Driver) runPlannerPhase(ctx context.Context, run *Run) error {
+	// Preset-plan path: when the caller already filled run.Todos before
+	// calling RunPrepared (e.g. spec_to_todo → TodosFromSpec → preset
+	// run), there is nothing for the planner LLM to decide. Publish the
+	// planner-stage events with a "preset" source so subscribers can
+	// distinguish a literal-execution run from a planner-driven one,
+	// then jump straight to the supervisor expansion + RunRunning flip.
+	if len(run.Todos) > 0 {
+		d.publish(EventPlanStart, map[string]any{
+			"run_id": run.ID,
+			"model":  d.cfg.PlannerModel,
+			"source": "preset",
+		})
+		beforePlanCount := len(run.Todos)
+		applySupervisorPlan(run, d.cfg.AutoSurvey, d.cfg.AutoVerify, d.cfg.MaxParallel)
+		if len(run.Todos) > beforePlanCount {
+			added := append([]Todo(nil), run.Todos[beforePlanCount:]...)
+			d.publish(EventPlanAugment, map[string]any{
+				"run_id": run.ID,
+				"added":  len(added),
+				"todos":  planSummary(added),
+			})
+		}
+		run.Status = RunRunning
+		d.persist(run)
+		d.publish(EventPlanDone, map[string]any{
+			"run_id":     run.ID,
+			"todo_count": len(run.Todos),
+			"todos":      planSummary(run.Todos),
+			"plan":       run.Plan,
+			"source":     "preset",
+		})
+		return nil
+	}
 	d.publish(EventPlanStart, map[string]any{"run_id": run.ID, "model": d.cfg.PlannerModel})
 	todos, err := runPlanner(ctx, d.runner, run.Task, d.cfg.PlannerModel)
 	if err != nil {

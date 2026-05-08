@@ -202,6 +202,12 @@ Flags (for new runs):
   --auto-approve LIST     comma-separated tools to auto-approve during the run.
                           Use "*" to approve everything (truly unattended).
                           Without this, drive prompts for every gated tool.
+  --from-spec PATH        load TODOs literally from a markdown spec
+                          (e.g. .project/PLAN.md), skipping the planner LLM.
+                          Each '- [ ]' becomes one TODO; classification is
+                          keyword-based.
+  --spec-section ANCHOR   filter --from-spec to one heading anchor
+  --spec-include-done     also load already-checked items as status=done
 
 Examples:
   dfmc drive "add rate limiting to /api/auth"
@@ -209,6 +215,7 @@ Examples:
   dfmc drive --max-parallel 4 --route plan=opus --route code=sonnet --route test=haiku "ship feature"
   dfmc drive --auto-approve "edit_file,write_file,apply_patch" "do work unattended"
   dfmc drive --auto-approve "*" "fully autonomous run"
+  dfmc drive --from-spec .project/PLAN.md --spec-section phase-1
   dfmc drive resume drv-67abcd-...
 
 Drive runs use the engine's existing tool surface — every TODO becomes

@@ -78,12 +78,21 @@ func runDrive(ctx context.Context, eng *engine.Engine, args []string, asJSON boo
 		`comma-separated list of tools to auto-approve during the run (use "*" to approve all). `+
 			`Without this, drive prompts for every gated tool — usually not what you want unattended. `+
 			`Recommended unattended preset: read_file,grep_codebase,glob,ast_query,find_symbol,list_dir,web_fetch,web_search,edit_file,write_file,apply_patch`)
+	fromSpec := fs.String("from-spec", "",
+		`load TODOs literally from a markdown spec file (e.g. .project/PLAN.md), skipping the planner LLM. `+
+			`Each '- [ ]' becomes one Drive TODO; classification is keyword-based (see spec_to_todo). `+
+			`Pair with --spec-section to filter to a single anchor.`)
+	specSection := fs.String("spec-section", "",
+		`when used with --from-spec: only ingest TODOs from the named heading anchor (lowercase slug)`)
+	specIncludeDone := fs.Bool("spec-include-done", false,
+		`when used with --from-spec: also load already-checked items as status=done TODOs`)
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "drive: %v\n", err)
 		return 2
 	}
 	task := strings.TrimSpace(strings.Join(fs.Args(), " "))
-	if task == "" {
+	specPath := strings.TrimSpace(*fromSpec)
+	if specPath == "" && task == "" {
 		fmt.Fprintln(os.Stderr, "drive: task is required (e.g. `dfmc drive \"add input validation to /api/users\"`)")
 		return 2
 	}
@@ -103,6 +112,9 @@ func runDrive(ctx context.Context, eng *engine.Engine, args []string, asJSON boo
 		AutoApprove:    parseAutoApproveFlag(*autoApprove),
 		AutoSurvey:     *autoSurvey,
 		AutoVerify:     *autoVerify,
+	}
+	if specPath != "" {
+		return executeDriveRunFromSpec(ctx, eng, specPath, task, *specSection, *specIncludeDone, cfg, asJSON)
 	}
 	return executeDriveRun(ctx, eng, task, cfg, asJSON, false, "")
 }
