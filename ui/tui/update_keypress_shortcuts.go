@@ -303,6 +303,13 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 	case "shift+f5", "f17":
 		m = m.activateDiagnosticTab("Shortcuts")
 		return m, nil, true
+	case "shift+f6", "f18":
+		// Active Contexts overlay — surveys main agent + parked agent +
+		// in-flight sub-agents + active drive run in one place. Most
+		// terminals emit f18 for shift+f6 (xterm classic); newer ones
+		// (Kitty / modifyOtherKeys) send the literal "shift+f6" form.
+		m = m.activateDiagnosticTab("Contexts")
+		return m, nil, true
 	// Alt+9 / Alt+0 used to map to Memory/Conversations under the 17-tab
 	// era; after the F-key remap they would silently disagree with their
 	// F-key partners. Route both to the help overlay so the legacy

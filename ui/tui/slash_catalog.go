@@ -108,6 +108,31 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "split", Template: "/split TASK", Description: "Decompose a broad task into subtasks"},
 		{Command: "context messages", Template: "/context messages", Description: "show every message the LLM is paying to carry · ID · role · ~tokens · tools · preview"},
 		{Command: "context drop", Template: "/context drop ", Description: "manually remove messages from the active branch by ID (override the model's [cleanup:])"},
+		// Drive — autonomous plan/execute loop. Surfaces the full sub-command
+		// family (start / stop / list / active / resume) so users discover
+		// every verb without leaving the palette.
+		{Command: "drive", Template: "/drive ", Description: "start an autonomous plan/execute run (DAG of TODOs; survives chat turns)"},
+		{Command: "drive active", Template: "/drive active", Description: "show the currently running drive run (one-line status)"},
+		{Command: "drive list", Template: "/drive list", Description: "list recent drive runs (id · state · todos · stamp)"},
+		{Command: "drive stop", Template: "/drive stop", Description: "stop the active drive run (resumable; use /drive resume to continue)"},
+		{Command: "drive resume", Template: "/drive resume ", Description: "resume a stopped drive run by id (prefix match accepted)"},
+		// Plan-mode toggle — investigate-only vs. mutation-allowed. Header
+		// renders a PLAN badge so the mode is impossible to forget.
+		{Command: "plan", Template: "/plan", Description: "enter plan mode — read-only investigation, no file writes (header shows PLAN)"},
+		{Command: "code", Template: "/code", Description: "exit plan mode — prompts can mutate files again"},
+		// Conversation amend — pull last user turn back into the composer
+		// (/edit) or regenerate the last assistant reply in place (/retry).
+		{Command: "retry", Template: "/retry", Description: "regenerate the most recent assistant reply (resends the last user turn)"},
+		{Command: "edit", Template: "/edit", Description: "pull the last user message into the composer to amend and resend"},
+		// Intent layer — verbose toggle + last-decision inspector.
+		{Command: "intent", Template: "/intent", Description: "toggle intent-rewrite verbosity in the transcript (off by default)"},
+		{Command: "intent show", Template: "/intent show", Description: "print the most recent intent decision (raw, decision, confidence, reason)"},
+		// Utility toggles — useful enough to discover via palette even
+		// though they're typically bound to a key chord too.
+		{Command: "mouse", Template: "/mouse", Description: "toggle mouse capture (off lets the terminal handle drag-select natively)"},
+		{Command: "select", Template: "/select", Description: "selection mode — chat-only width, mouse off, terminal drag-select focused"},
+		{Command: "copy", Template: "/copy", Description: "copy the most recent assistant reply to the system clipboard"},
+		{Command: "version", Template: "/version", Description: "print the DFMC build version (in-chat)"},
 	}
 	for _, x := range extras {
 		add(x.Command, x.Template, x.Description)

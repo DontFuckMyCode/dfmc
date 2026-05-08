@@ -24,6 +24,12 @@ type SubagentRequest struct {
 	// sub-agent prompts. The engine resolves names to playbook text before
 	// building the system prompt.
 	Skills []string `json:"skills,omitempty"`
+	// Autonomous, when true, opts the sub-agent into the auto-resume
+	// wrapper instead of the bare runNativeToolLoop. Drive sets this so
+	// a TODO never silently parks on tool-budget exhaustion mid-task —
+	// the wrapper force-compacts and re-enters the loop transparently
+	// up to resume_max_multiplier. Engine-internal flag; not on the wire.
+	Autonomous bool `json:"-"`
 }
 
 // SubagentResult is what the engine reports back to the parent tool loop.

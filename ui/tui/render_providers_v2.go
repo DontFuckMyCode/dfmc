@@ -127,6 +127,10 @@ func (m Model) renderProvidersListPane(width, height int, pal tabPaletteEntry, r
 	if m.providers.query != "" {
 		lines = append(lines, subtleStyle.Render("query: "+m.providers.query))
 	}
+	// Always-visible keyboard contract for the providers list pane.
+	// Right pane (action menu / detail) repeats its own subset.
+	lines = append(lines,
+		subtleStyle.Render("j/k scroll · enter detail · → action menu · / search · c clear"))
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 }
 

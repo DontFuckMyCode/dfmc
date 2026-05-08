@@ -214,6 +214,12 @@ func helpOverlayTabHints(tab string) []string {
 			"shift+f5 (or alt+h) jumps here from any tab · /shortcuts and /keys also open this",
 			"j/k/pgup/pgdn/g/G scroll · per-tab quick hints: ctrl+h overlay",
 		}
+	case "contexts":
+		return []string{
+			"shift+f6 jumps here · live snapshot of every concurrently-active agent context",
+			"main · parked · sub-agents · drive run with their tokens / step / last tool",
+			"esc closes · /continue resumes parked · /drive stop kills the active run",
+		}
 	default:
 		return []string{"f1 chat · f2 files · f3 patch · f4 workflow · f5 activity · f6 memory · f7 conversations · f8 providers · f9 status · f10 codemap · f11 tools · f12 security · shift+f1..f5 prompts/plans/context/orchestrate/shortcuts · ctrl+h help · ctrl+q quit"}
 	}

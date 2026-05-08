@@ -142,7 +142,19 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 		attemptSeed.LastProvider = providerName
 		attemptSeed.LastModel = modelName
 
-		completion, runErr := e.runNativeToolLoop(ctx, attemptSeed, lim)
+		// Autonomous sub-agents (currently: drive TODOs) opt into the
+		// auto-resume wrapper so a budget-exhaust mid-task force-
+		// compacts and re-enters transparently. Plain delegate_task
+		// keeps the bare loop because its caller (the parent native
+		// tool loop) is already inside its own autonomous wrapper —
+		// double-wrapping would multiply the resume ceiling.
+		var completion nativeToolCompletion
+		var runErr error
+		if req.Autonomous {
+			completion, runErr = e.runNativeToolLoopAutonomous(ctx, attemptSeed, lim, "subagent")
+		} else {
+			completion, runErr = e.runNativeToolLoop(ctx, attemptSeed, lim)
+		}
 		if runErr == nil {
 			dur := time.Since(start).Milliseconds()
 			e.publishAgentLoopEvent("agent:subagent:done", map[string]any{

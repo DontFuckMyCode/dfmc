@@ -294,6 +294,25 @@ func (e *Engine) currentSubagentCount() int {
 	return e.subagentInFlight
 }
 
+// SubagentInFlight is the public accessor for the in-flight sub-agent
+// count. UIs surveying live state (Active Contexts panel) need a stable
+// thread-safe read; the unexported currentSubagentCount served the
+// engine-internal callers but UIs can't reach it without exposing the
+// method directly. Both share the same locking shape.
+func (e *Engine) SubagentInFlight() int {
+	return e.currentSubagentCount()
+}
+
+// SubagentConcurrencyLimit is the public accessor for the concurrency
+// cap (parallel_batch_size in config). UIs render `M / N in flight`
+// using this so the user can see when fan-out is bounded.
+func (e *Engine) SubagentConcurrencyLimit() int {
+	if e == nil {
+		return 0
+	}
+	return e.subagentConcurrencyLimit()
+}
+
 // itoaInt is a tiny allocation-free int formatter for status strings, to
 // avoid importing strconv just for two digits.
 func itoaInt(n int) string {

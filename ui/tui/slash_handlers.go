@@ -30,7 +30,14 @@ func (m Model) codemapSummary() string {
 }
 
 // versionSummary composes a short runtime readout for /version.
+// Engine may be nil under test fixtures or during degraded startup
+// (ErrStoreLocked allow-list); fall back to a runtime-only line so
+// the slash command never panics.
 func (m Model) versionSummary() string {
+	if m.eng == nil {
+		return fmt.Sprintf("DFMC (Go %s, %s/%s)\nProvider: - / -\nAST backend: unknown (engine not initialized)",
+			runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	}
 	st := m.eng.Status()
 	return fmt.Sprintf("DFMC (Go %s, %s/%s)\nProvider: %s / %s\nAST backend: %s",
 		runtime.Version(), runtime.GOOS, runtime.GOARCH,

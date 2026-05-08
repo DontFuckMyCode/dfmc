@@ -170,13 +170,15 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 		)
 	case len(s.MentionSuggestions()) > 0:
 		selected := clampIndex(mentionIndex, len(s.MentionSuggestions()))
+		query := s.MentionQuery()
 		for i, row := range s.MentionSuggestions() {
-			label := truncateSingleLine(row.Path, width-6)
+			truncated := truncateSingleLine(row.Path, width-6)
+			label := highlightMentionMatch(truncated, query)
 			if row.Recent {
 				label += " " + subtleStyle.Render("| recent")
 			}
 			if i == selected {
-				bodyLines = append(bodyLines, mentionSelectedRowStyle.Render("▶ "+label))
+				bodyLines = append(bodyLines, mentionSelectedRowStyle.Render("▶ ")+label)
 			} else {
 				bodyLines = append(bodyLines, "  "+label)
 			}

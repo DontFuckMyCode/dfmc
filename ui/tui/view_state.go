@@ -66,6 +66,11 @@ type workflowPanelState struct {
 	expandedTodo   map[string]bool
 	selectedIndex  int    // index in run selector list when no run selected
 	selectedTodoID string // ID of the TODO whose detail is shown
+	// followLive: when true, the cursor and scroll auto-track the
+	// currently-running TODO (or the most recent active run if no TODO
+	// is running). Toggled with `space` on the Workflow tab. Off by
+	// default so manual navigation isn't fought by auto-jumps.
+	followLive bool
 	// routingEditor controls the drive.Config.Routing editor overlay.
 	showRoutingEditor  bool              // true = overlay open
 	routingEditTag     string            // tag being edited (empty = new entry)

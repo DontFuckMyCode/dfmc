@@ -51,7 +51,7 @@ var expectedEngineEventTypes = []string{
 	"agent:coach:hint", "agent:coach:stuck", "agent:coach:unverified",
 	"agent:autonomy:plan", "agent:autonomy:kickoff",
 	"agent:tool:cache_hit",
-	"assistant:next_actions", "assistant:auto_continue",
+	"assistant:next_actions", "assistant:auto_continue", "assistant:auto_continue:clarify",
 	// system / health
 	"config:reload:auto", "config:reload:auto_failed",
 	"engine:shutdown_error", "runtime:panic", "tool:panicked",

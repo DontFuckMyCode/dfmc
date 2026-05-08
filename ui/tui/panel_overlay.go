@@ -56,6 +56,8 @@ func (m Model) renderPanelOverlayBody(kind string, contentWidth, innerHeight int
 		// Shortcuts is the cheat-sheet — also long, also read-only, also
 		// gets truncated below ~40 rows on stock terminals. Same fix.
 		body, _ = fitPanelContentScrollable(m.renderShortcutsView(contentWidth), bodyHeight, m.shortcuts.scroll)
+	case "contexts":
+		body = fitPanelContentHeight(m.renderContextsView(contentWidth), bodyHeight)
 	default:
 		body = subtleStyle.Render("(unknown overlay: " + kind + ")")
 	}
@@ -85,6 +87,8 @@ func panelOverlayLabel(kind string) string {
 		return "ORCHESTRATE"
 	case "shortcuts":
 		return "SHORTCUTS"
+	case "contexts":
+		return "CONTEXTS"
 	default:
 		return strings.ToUpper(kind)
 	}

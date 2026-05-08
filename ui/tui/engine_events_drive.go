@@ -52,6 +52,13 @@ func (m Model) handleDriveEvent(eventType string, payload map[string]any) (Model
 		profileSelected := payloadString(payload, "profile_selected", "")
 		skills := payloadStringSlice(payload, "skills")
 		m.telemetry.driveTodoID = id
+		// When the user has armed live-follow on the Workflow cockpit
+		// with `space`, every new TODO start should pull the cursor
+		// over so the eye stays on whatever the agent is doing right
+		// now. Manual navigation off (Esc) flips followLive off.
+		if m.workflow.followLive {
+			m = m.snapWorkflowToLiveTarget()
+		}
 		if attempt > 1 {
 			line = fmt.Sprintf("Drive: ▶ %s (attempt %d) — %s", id, attempt, truncateForLine(title, 80))
 		} else {

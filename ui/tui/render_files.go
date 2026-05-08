@@ -122,6 +122,9 @@ func (m Model) renderFilesListPane(width, height int, pal tabPaletteEntry) strin
 			lines = append(lines,
 				infoStyle.Render("📌 ")+subtleStyle.Render(truncateForLine(pinned, width-6)))
 		}
+		// Always-visible keyboard contract — same shape the other panels use.
+		lines = append(lines,
+			subtleStyle.Render("j/k scroll · enter/→ action menu · p pin · i insert · e explain · v review · r reload"))
 	}
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 }

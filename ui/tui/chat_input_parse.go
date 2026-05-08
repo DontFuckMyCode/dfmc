@@ -32,10 +32,14 @@ func formatRunArgList(args string) string {
 	return strings.Join(formatted, " ")
 }
 
-// splitRespectingQuotes splits on whitespace but keeps quoted segments
-// (single or double) atomic. Backslash escapes the next char inside the
-// quote. Tokens are returned without surrounding quotes; the formatter
+// splitRespectingQuotes splits on whitespace but keeps double-quoted
+// segments atomic. Backslash escapes the next char inside the quote.
+// Tokens are returned without surrounding quotes; the formatter
 // re-applies them only when the token contains whitespace.
+//
+// Single quote (`'`) is intentionally NOT treated as a quote opener so
+// that English/Turkish contractions ("what's", "don't") and possessives
+// pass through verbatim. Users wrap multi-word arguments with `"..."`.
 func splitRespectingQuotes(s string) ([]string, error) {
 	var out []string
 	var cur strings.Builder
@@ -55,7 +59,7 @@ func splitRespectingQuotes(s string) ([]string, error) {
 			cur.WriteByte(c)
 			continue
 		}
-		if c == '"' || c == '\'' {
+		if c == '"' {
 			quote = c
 			continue
 		}
@@ -115,7 +119,7 @@ func splitFirstTokenAndTail(raw string) (string, string, error) {
 			if r == quote {
 				quote = 0
 			}
-		case r == '"' || r == '\'':
+		case r == '"':
 			quote = r
 		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
 			splitAt = i

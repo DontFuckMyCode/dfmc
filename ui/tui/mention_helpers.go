@@ -40,6 +40,34 @@ type mentionRow struct {
 	Recent bool
 }
 
+// highlightMentionMatch wraps the matched substring of `path` (case-insensitive
+// against `query`) with the picker's accent style so users can see why a row
+// ranked. Empty/whitespace queries return the path unchanged. Multi-byte
+// characters are preserved by indexing on byte offsets returned by
+// strings.Index over the lower-cased copy — both sides have identical byte
+// length because ToLower preserves byte width for ASCII; for non-ASCII paths
+// we fall back to plain rendering rather than risk slicing inside a rune.
+func highlightMentionMatch(path, query string) string {
+	q := strings.TrimSpace(query)
+	if q == "" || path == "" {
+		return path
+	}
+	low := strings.ToLower(path)
+	lq := strings.ToLower(q)
+	// ASCII fast path: ToLower preserves byte length so byte slicing is
+	// safe. For non-ASCII queries (rare for file paths), bail out — the
+	// raw path still renders, just without highlight.
+	if len(low) != len(path) || len(lq) != len(q) {
+		return path
+	}
+	idx := strings.Index(low, lq)
+	if idx < 0 {
+		return path
+	}
+	end := idx + len(lq)
+	return path[:idx] + accentStyle.Bold(true).Render(path[idx:end]) + path[end:]
+}
+
 func (m Model) mentionSuggestions(query string, limit int) []mentionRow {
 	ranker := newMentionRanker(m.filesView.entries, m.engineRecentFiles())
 	ranked := ranker.rank(query, limit)

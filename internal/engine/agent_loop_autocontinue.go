@@ -88,10 +88,42 @@ func (e *Engine) askWithNativeToolsAutoContinue(ctx context.Context, question st
 			break
 		}
 		if len(hints.NextActions) == 0 {
+			// "Stuck" state: model didn't mark the turn done AND gave us
+			// no next action to chain into. Pre-fix the wrapper just
+			// stopped silently — looked to the user like the engine had
+			// silently given up mid-task. Now publish a clarify-needed
+			// event AND embed a one-line nudge into the final answer so
+			// the user can see WHY the engine paused and what to type
+			// next. The TUI surfaces the event as a notice + the answer
+			// keeps the stripped body intact so the work isn't lost.
+			if e.EventBus != nil {
+				e.EventBus.Publish(Event{
+					Type:   "assistant:auto_continue:clarify",
+					Source: "engine",
+					Payload: map[string]any{
+						"iteration":      iter,
+						"max_iterations": cfg.MaxIterations,
+						"reason":         "missing_next_action",
+					},
+				})
+			}
+			parts = append(parts, "\n*— engine paused: no `[next:]` action and `[done: true]` was not asserted. Reply with the next step (or `/cancel` to stop here).*")
 			break
 		}
 		nextPrompt := strings.TrimSpace(hints.NextActions[0])
 		if nextPrompt == "" {
+			if e.EventBus != nil {
+				e.EventBus.Publish(Event{
+					Type:   "assistant:auto_continue:clarify",
+					Source: "engine",
+					Payload: map[string]any{
+						"iteration":      iter,
+						"max_iterations": cfg.MaxIterations,
+						"reason":         "blank_next_action",
+					},
+				})
+			}
+			parts = append(parts, "\n*— engine paused: `[next:]` was empty. Reply with the concrete next step (or `/cancel`).*")
 			break
 		}
 		if e.EventBus != nil {

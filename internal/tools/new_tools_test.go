@@ -398,6 +398,60 @@ func TestFileToolsReturnRelativePathInData(t *testing.T) {
 	}
 }
 
+// write_file used to silently write an empty file when the model passed
+// only `path` (forgetting `content`), and surface a confusing path-resolve
+// error when `path` itself was missing. Both are now self-teaching errors.
+func TestWriteFileRejectsMissingContent(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+	_, err := eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "out.txt"}, // no content key at all
+	})
+	if err == nil {
+		t.Fatal("expected write_file to refuse missing content, got nil")
+	}
+	if !strings.Contains(err.Error(), "content") {
+		t.Fatalf("error should call out the missing `content` field, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmp, "out.txt")); statErr == nil {
+		t.Fatal("write_file must NOT create the file when validation fails")
+	}
+}
+
+func TestWriteFileRejectsMissingPath(t *testing.T) {
+	tmp := t.TempDir()
+	eng := New(*config.DefaultConfig())
+	_, err := eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"content": "body"},
+	})
+	if err == nil {
+		t.Fatal("expected write_file to refuse missing path, got nil")
+	}
+	if !strings.Contains(err.Error(), "path") {
+		t.Fatalf("error should call out the missing `path` field, got: %v", err)
+	}
+}
+
+func TestWriteFileRejectsDirectoryTarget(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmp, "subdir"), 0o755); err != nil {
+		t.Fatalf("setup mkdir: %v", err)
+	}
+	eng := New(*config.DefaultConfig())
+	_, err := eng.Execute(context.Background(), "write_file", Request{
+		ProjectRoot: tmp,
+		Params:      map[string]any{"path": "subdir", "content": "x", "overwrite": true},
+	})
+	if err == nil {
+		t.Fatal("expected write_file to refuse a directory target, got nil")
+	}
+	if !strings.Contains(err.Error(), "directory") {
+		t.Fatalf("error should call out that the target is a directory, got: %v", err)
+	}
+}
+
 func TestWriteFileExistingFileRequiresExplicitOverwrite(t *testing.T) {
 	tmp := t.TempDir()
 	target := filepath.Join(tmp, "existing.txt")

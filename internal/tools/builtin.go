@@ -30,12 +30,39 @@ func (t *WriteFileTool) SetEngine(e *Engine) { t.engine = e }
 func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) {
 	path := asString(req.Params, "path", "")
 	content := asString(req.Params, "content", "")
+	_, contentProvided := req.Params["content"]
 	createDirs := asBool(req.Params, "create_dirs", true)
 	overwrite := asBool(req.Params, "overwrite", false)
+
+	// Self-teaching required-field validation. Without these the tool
+	// used to silently write an empty file when the model passed only
+	// `path`, or fail with a confusing path-resolution error when the
+	// model dropped `path` entirely. missingParamError lists the keys
+	// the call actually carried so the next round can self-correct.
+	if strings.TrimSpace(path) == "" {
+		return Result{}, missingParamError("write_file", "path", req.Params,
+			`{"path":"docs/notes.md","content":"# Notes\n"}`,
+			`path is the relative file location inside the project root.`)
+	}
+	if !contentProvided {
+		return Result{}, missingParamError("write_file", "content", req.Params,
+			`{"path":"docs/notes.md","content":"# Notes\n"}`,
+			`content is the FULL file body. For small targeted changes prefer edit_file (old_string/new_string) — write_file replaces the entire file.`)
+	}
 
 	absPath, err := EnsureWithinRoot(req.ProjectRoot, path)
 	if err != nil {
 		return Result{}, err
+	}
+	// Reject paths that resolve to an existing directory before we try
+	// to mkdir-and-write — otherwise the model gets a confusing
+	// "is a directory" syscall error instead of a self-teaching message.
+	if info, err := os.Stat(absPath); err == nil && info.IsDir() {
+		rel := PathRelativeToRoot(req.ProjectRoot, absPath)
+		return Result{}, fmt.Errorf(
+			"write_file refused: %q is a directory, not a file. Pick a path that points to a file (e.g. %q). "+
+				`Recover: {"name":"write_file","args":{"path":"%s/new-file.txt","content":"..."}}`,
+			rel, filepath.Join(rel, "new-file.txt"), rel)
 	}
 	if createDirs {
 		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {

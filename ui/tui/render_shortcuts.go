@@ -81,6 +81,7 @@ func (m Model) shortcutsTabsSection() []string {
 		{"Context", "Shift+F3", "context-build preview · ranked snippets"},
 		{"Orchestrate", "Shift+F4", "agents/subagents/todos/drive/tokens hierarchy"},
 		{"Shortcuts", "Shift+F5", "this screen — cheat sheet of everything"},
+		{"Contexts", "Shift+F6", "live agents — main · parked · subagents · drive run"},
 	}
 	for _, r := range rows {
 		// Format: "  F1       Chat            main composer ..."

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/dontfuckmycode/dfmc/internal/drive"
 )
 
@@ -195,6 +196,52 @@ func TestDriveSlashStartShowsRunID(t *testing.T) {
 	last := mm.chat.transcript[len(mm.chat.transcript)-1].Content
 	if !strings.Contains(last, "run_id: drv-") {
 		t.Fatalf("expected run_id in transcript, got:\n%s", last)
+	}
+}
+
+// space toggles live-follow on the Workflow tab; when ON,
+// snapWorkflowToLiveTarget should move the cursor onto the running TODO
+// so the user sees what's currently spinning without scrolling. Esc
+// releases the follow.
+func TestWorkflowSpaceTogglesLiveFollowAndSnapsToRunningTodo(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	run := &drive.Run{
+		ID:     "run-test",
+		Status: drive.RunRunning,
+		Todos: []drive.Todo{
+			{ID: "T1", Title: "first", Status: drive.TodoDone},
+			{ID: "T2", Title: "second", Status: drive.TodoRunning},
+			{ID: "T3", Title: "third", Status: drive.TodoPending},
+		},
+	}
+	m.workflow.runs = []*drive.Run{run}
+	m.workflow.selectedRunID = run.ID
+	m.workflow.scrollY = 0
+
+	// Press space: follow flips ON and snaps to the running TODO (T2 at index 1).
+	next, _ := m.handleWorkflowKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	mm, ok := next.(Model)
+	if !ok {
+		t.Fatalf("expected Model, got %T", next)
+	}
+	if !mm.workflow.followLive {
+		t.Fatal("space should flip followLive ON")
+	}
+	if mm.workflow.selectedTodoID != "T2" {
+		t.Fatalf("snap should select the running TODO T2, got %q", mm.workflow.selectedTodoID)
+	}
+	if mm.workflow.scrollY != 1 {
+		t.Fatalf("scroll should land on visible index 1 (T2), got %d", mm.workflow.scrollY)
+	}
+
+	// Esc with no TODO/run-modal context simply releases follow.
+	mm.workflow.selectedTodoID = "" // simulate user already deselected
+	mm.workflow.selectedRunID = ""
+	mm.workflow.showRoutingEditor = false
+	next2, _ := mm.handleWorkflowKey(tea.KeyMsg{Type: tea.KeyEsc})
+	mm2 := next2.(Model)
+	if mm2.workflow.followLive {
+		t.Fatal("esc should release live-follow when nothing else is dismissable")
 	}
 }
 

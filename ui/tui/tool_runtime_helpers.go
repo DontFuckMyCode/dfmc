@@ -136,9 +136,11 @@ func parseToolParamString(raw string) (map[string]any, error) {
 }
 
 // splitToolParamTokens performs a small quote-aware tokeniser so a value
-// like name="hello world" parses as a single token. Single and double
-// quotes are honoured equivalently. Unterminated quotes are reported
-// as an error rather than silently swallowing the trailing value.
+// like name="hello world" parses as a single token. Only `"` opens a
+// quoted segment — single quote (`'`) is treated as a literal rune so
+// contractions like "what's"/"don't" pass through unchanged in chat
+// slash-command arguments. Unterminated quotes are reported as an
+// error rather than silently swallowing the trailing value.
 func splitToolParamTokens(raw string) ([]string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -164,7 +166,7 @@ func splitToolParamTokens(raw string) ([]string, error) {
 				continue
 			}
 			current.WriteRune(r)
-		case r == '"' || r == '\'':
+		case r == '"':
 			quote = r
 		case r == ' ' || r == '\t' || r == '\n':
 			flush()

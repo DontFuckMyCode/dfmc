@@ -8,6 +8,38 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// highlightMentionMatch must always preserve the raw path content (so the
+// renderer above never accidentally truncates or reorders bytes) and must
+// not crash on edge cases. The visual ANSI styling itself is impossible to
+// assert under `go test` because lipgloss strips colour when no TTY profile
+// is detected — this test guards the byte-level invariants only.
+func TestHighlightMentionMatch(t *testing.T) {
+	cases := []struct {
+		name  string
+		path  string
+		query string
+	}{
+		{"no_query_passes_through", "ui/tui/tui.go", ""},
+		{"case_insensitive_match", "ui/tui/tui.go", "TUI"},
+		{"no_match_returns_raw", "ui/tui/tui.go", "zzz"},
+		{"extension_match", "main.go", ".go"},
+		{"empty_path", "", "anything"},
+		{"whitespace_query_passes_through", "main.go", "   "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := highlightMentionMatch(tc.path, tc.query)
+			// In a no-TTY test environment, lipgloss strips ANSI, so the
+			// rendered string equals the raw path. That's fine — what we
+			// care about is that ALL of the path bytes are present in
+			// order, with no gaps or duplicates.
+			if !strings.Contains(got, tc.path) {
+				t.Errorf("path %q lost from highlight output: got %q", tc.path, got)
+			}
+		})
+	}
+}
+
 func TestMentionRanker_PrefersExactBasenameAndBoostsRecency(t *testing.T) {
 	files := []string{
 		"internal/util/pkg.go",

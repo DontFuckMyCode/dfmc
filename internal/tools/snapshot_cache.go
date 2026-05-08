@@ -89,12 +89,19 @@ func (e *Engine) ensureReadBeforeMutationMode(absPath string, mode readGateMode)
 	if mode == readGateNone {
 		return nil
 	}
-	_, err := os.Stat(absPath)
+	info, err := os.Stat(absPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil // Creating a new file does not require prior read.
 		}
 		return err
+	}
+	if info.IsDir() {
+		// Directories can't have a read_file snapshot — let the tool
+		// emit its own self-teaching "X is a directory" error rather
+		// than confuse the model with a "no prior read_file snapshot"
+		// guard message that points at an unreadable target.
+		return nil
 	}
 
 	e.readMu.RLock()

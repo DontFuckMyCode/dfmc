@@ -26,6 +26,7 @@ func registerCoachEventHandlers(r *engineEventRegistry) {
 	r.register("agent:tool:cache_hit", handleAgentToolCacheHit)
 	r.register("assistant:next_actions", handleAssistantNextActions)
 	r.register("assistant:auto_continue", handleAssistantAutoContinue)
+	r.register("assistant:auto_continue:clarify", handleAssistantAutoContinueClarify)
 }
 
 func handleCoachNote(m Model, eventType string, event engine.Event, payload map[string]any) (Model, string) {
@@ -218,4 +219,27 @@ func handleAssistantAutoContinue(m Model, eventType string, event engine.Event, 
 		Preview: truncateForLine(preview, 96),
 	})
 	return m, fmt.Sprintf("↻ Auto-continue %d/%d — %s", iter, maxIter, truncateForLine(nextPrompt, 80))
+}
+
+// handleAssistantAutoContinueClarify surfaces the engine's "stuck" pause —
+// the model didn't assert [done: true] but also gave no concrete [next:]
+// action. Pre-fix this just stopped silently and looked like the engine
+// had given up. Now we show a notice + chip so the user knows engine is
+// awaiting input on purpose, plus the answer body itself carries an
+// inline pointer (added by the auto-continue wrapper) describing what
+// to type next.
+func handleAssistantAutoContinueClarify(m Model, eventType string, event engine.Event, payload map[string]any) (Model, string) {
+	reason := payloadString(payload, "reason", "missing_next_action")
+	iter := payloadInt(payload, "iteration", 0)
+	maxIter := payloadInt(payload, "max_iterations", 0)
+	preview := reason
+	if maxIter > 0 {
+		preview = fmt.Sprintf("%d/%d · %s", iter, maxIter, reason)
+	}
+	m.pushToolChip(toolChip{
+		Name:    "auto-continue: clarify",
+		Status:  "warn",
+		Preview: truncateForLine(preview, 96),
+	})
+	return m, "↻ Auto-continue paused — model didn't say [done: true] and no [next:] given. Reply with the next step or /cancel."
 }

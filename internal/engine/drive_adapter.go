@@ -112,6 +112,13 @@ func (r *driveRunner) ExecuteTodo(ctx context.Context, req drive.ExecuteTodoRequ
 		Model:        req.Model,
 		ToolSource:   "drive",
 		Skills:       req.Skills,
+		// Drive TODOs run autonomously: the user fired one /drive
+		// command and walked away. Parking the sub-agent on a tool-
+		// budget cap mid-TODO would leave the run stuck waiting for a
+		// /continue that never comes. Opt into the auto-resume wrapper
+		// so a budget exhaust force-compacts + re-enters transparently
+		// (capped by resume_max_multiplier so it can't run forever).
+		Autonomous: true,
 	}
 	res, err := r.e.runSubagentProfiles(ctx, subReq, req.ProfileCandidates)
 	if err != nil {

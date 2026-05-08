@@ -3623,6 +3623,60 @@ func TestSplitRespectingQuotesRejectsUnterminatedQuote(t *testing.T) {
 	}
 }
 
+// Single quote inside chat input must NOT be treated as a quote opener —
+// English/Turkish contractions ("what's", "don't") used to trip the parser
+// with "unterminated quoted value" before the fix.
+func TestSplitRespectingQuotesAllowsApostrophe(t *testing.T) {
+	cases := []string{
+		`what's the capital`,
+		`don't worry`,
+		`it's a 'mixed' case`,
+		`five o'clock somewhere`,
+	}
+	for _, in := range cases {
+		got, err := splitRespectingQuotes(in)
+		if err != nil {
+			t.Fatalf("splitRespectingQuotes(%q): unexpected error %v", in, err)
+		}
+		joined := strings.Join(got, " ")
+		// Apostrophes should survive the round-trip in some token; we
+		// don't enforce token boundaries here, only that no error fires
+		// and the apostrophe character isn't dropped.
+		if !strings.ContainsRune(joined, '\'') {
+			t.Fatalf("apostrophe lost for %q -> %v", in, got)
+		}
+	}
+}
+
+func TestSplitToolParamTokensAllowsApostrophe(t *testing.T) {
+	got, err := splitToolParamTokens(`task="what's left" mode=plain`)
+	if err != nil {
+		t.Fatalf("splitToolParamTokens: unexpected error %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 tokens, got %d: %v", len(got), got)
+	}
+	if got[0] != `task=what's left` {
+		t.Errorf("first token: got %q want %q", got[0], `task=what's left`)
+	}
+}
+
+func TestParseChatCommandInputAllowsApostrophe(t *testing.T) {
+	cmd, args, raw, err := parseChatCommandInput(`/ask what's the deal`)
+	if err != nil {
+		t.Fatalf("parseChatCommandInput: unexpected error %v", err)
+	}
+	if cmd != "ask" {
+		t.Errorf("cmd: got %q want %q", cmd, "ask")
+	}
+	if raw != `what's the deal` {
+		t.Errorf("rawArgs: got %q want %q", raw, `what's the deal`)
+	}
+	if len(args) != 3 || args[0] != `what's` || args[1] != "the" || args[2] != "deal" {
+		t.Errorf("args: got %v want [what's the deal]", args)
+	}
+}
+
 func TestFormatRunArgListPreservesMalformedQuotedArg(t *testing.T) {
 	got := formatRunArgList(`echo "hello`)
 	if !strings.Contains(got, `"echo \"hello"`) {

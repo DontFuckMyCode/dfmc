@@ -76,7 +76,19 @@ func (m Model) renderWorkflowTreeRows(run *drive.Run, width int) []string {
 			}
 		}
 		title := truncateForLine(t.Title, width-depth*2-8)
+		// Currently-running TODOs render with a loud LIVE chip and
+		// accent-bold title so the eye locks on whichever node is
+		// actually executing right now. The space-toggled live-follow
+		// mode auto-snaps the cursor here, but even without follow on
+		// the visual difference makes "what's spinning" obvious.
+		isRunning := t.Status == drive.TodoRunning
+		if isRunning {
+			title = accentStyle.Bold(true).Render(title)
+		}
 		line := prefix + icon + expandMark + " " + title
+		if isRunning {
+			line += "  " + runningStyle.Render(" LIVE ")
+		}
 		tagStr := ""
 		if t.ProviderTag != "" {
 			tagStr += subtleStyle.Render("[" + t.ProviderTag + "]")

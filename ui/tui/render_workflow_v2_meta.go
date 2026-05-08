@@ -92,14 +92,20 @@ func (m Model) workflowMetaCards() []panelCard {
 	}
 
 	// ACTIONS card always.
+	followLabel := "follow OFF"
+	if m.workflow.followLive {
+		followLabel = "follow ON"
+	}
 	cards = append(cards, panelCard{
 		Icon:  "⚒",
 		Title: "Actions",
 		Rows: []panelCardRow{
 			{Key: "j / k", Value: "move · enter select"},
 			{Key: "enter", Value: "expand TODO / select run"},
-			{Key: "esc", Value: "back · deselect"},
+			{Key: "space", Value: "toggle live-follow · " + followLabel},
+			{Key: "esc", Value: "back · deselect · release follow"},
 			{Key: "r", Value: "routing editor"},
+			{Key: "→", Value: "action menu (stop · resume · copy id)"},
 			{Key: "g / G", Value: "top / bottom"},
 		},
 		FooterHint: "ctrl+h keys",
@@ -127,7 +133,11 @@ func (m Model) renderWorkflowMetaInline(width int) string {
 			blockedStyle.Render(fmt.Sprintf("%d blocked", blocked)),
 		)
 	}
-	parts = append(parts, subtleStyle.Render("j/k move · enter select · r routing · esc back"))
+	hint := "j/k move · enter select · space follow · → menu · r routing · esc back"
+	if m.workflow.followLive {
+		hint = "● LIVE · " + hint
+	}
+	parts = append(parts, subtleStyle.Render(hint))
 	return strings.Join(parts, "  ·  ")
 }
 
