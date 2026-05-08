@@ -114,6 +114,35 @@ func summarizeContextFiles(projectRoot string, chunks []types.ContextChunk, limi
 	return strings.Join(lines, "\n")
 }
 
+// renderContextFilesSection wraps summarizeContextFiles with the
+// "Context files:" header — but only when there's actual content. When
+// chunks are empty (the AutoIncludeFiles=false default), returns "" so
+// the template emits no header and no body for this section. The
+// leading newline + header keeps the rendered prompt readable when the
+// section IS present.
+func renderContextFilesSection(projectRoot string, chunks []types.ContextChunk, limit int) string {
+	if len(chunks) == 0 || limit <= 0 {
+		return ""
+	}
+	body := summarizeContextFiles(projectRoot, chunks, limit)
+	if strings.TrimSpace(body) == "" || body == "(none)" {
+		return ""
+	}
+	return "\nContext files:\n" + body
+}
+
+// renderInjectedSection wraps the injected-context body with the
+// "Injected code:" header. Same emit-or-omit policy as
+// renderContextFilesSection: empty input drops the entire section
+// (header + body) so a bare query without [[file:...]] markers doesn't
+// leave a dangling "Injected code:\n" line in the system prompt.
+func renderInjectedSection(injected string) string {
+	if strings.TrimSpace(injected) == "" {
+		return ""
+	}
+	return "\nInjected code:\n" + injected
+}
+
 func compactPath(projectRoot, path string) string {
 	p := strings.TrimSpace(path)
 	if p == "" {

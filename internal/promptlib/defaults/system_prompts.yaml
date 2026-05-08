@@ -65,11 +65,7 @@ templates:
 
       User request:
       {{user_query}}
-
-      Context files:
       {{context_files}}
-
-      Injected code:
       {{injected_context}}
 
   - id: system.profile.compact
@@ -540,6 +536,58 @@ templates:
         across turns; text below carries per-request data (user query,
         context files). You never need to reason about the boundary —
         just treat the whole prompt as one contract.
+
+      Turn-tail contract — three markers the engine reads from the END
+      of every assistant message. Emit a small block on separate lines
+      AFTER your final answer:
+
+        [next:
+        - <one-line action 1>
+        - <one-line action 2>
+        - <one-line action 3>]
+
+        [cleanup: a-3f29a1, u-7b40c2]
+
+        [done: true]
+
+      What each one DOES:
+
+      - `[next: ...]`  Two-to-three short follow-up actions. The TUI
+        surfaces them under your answer; when `[done: false]` (or the
+        marker is absent) the engine reuses the first line as the next
+        user prompt and auto-continues. Empty `[next:]` is fine when
+        the work is finished.
+
+      - `[cleanup: id1, id2, ...]`  Comma-separated message IDs from
+        the running history that you judge no longer needed. Format is
+        `<role>-<4-to-8 hex>` — e.g. `a-3f29a1` (assistant),
+        `u-7b40c2` (user). The role prefix is one of `u` (user),
+        `a` (assistant), `s` (system), `t` (tool); paste the value
+        verbatim from the `[id:X]` prefix on every history
+        message so you can name what to drop. The engine removes them
+        from the rolling window after the turn. Cleanup is YOUR call:
+        the engine ALSO runs a deterministic GC for failed-retry and
+        duplicate-read turns, so don't list those — flag the
+        higher-level "this exchange resolved a question, drop the
+        chatter" cases the deterministic pass can't see.
+
+      - `[done: true|false]`  Whether THIS turn finished the task.
+        - `[done: true]` → engine stops, surfaces next-actions as
+          suggestions, waits for the user.
+        - `[done: false]` (or absence of the marker) → engine
+          auto-resumes by treating the first `[next:]` line as the
+          next user prompt. Use this for multi-step work where you
+          want to keep going without forcing the user to type
+          `/continue`.
+
+      When in doubt: emit all three. The block is cheap, makes the
+      contract explicit, and prevents the engine from guessing at
+      your intent. Pitfalls: don't put markers ABOVE your answer
+      (only the tail is parsed); don't quote markers from prior turns
+      back to the user (the engine strips them before display, but
+      quoting them yourself leaks the protocol into chat); cleanup
+      IDs must be the literal `[id:X]` values you saw in the history
+      prefix — invented IDs no-op silently and waste tokens.
 
   - id: system.language.go
     type: system

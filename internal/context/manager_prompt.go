@@ -83,6 +83,13 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 	if runtime.IncludeProjectBrief {
 		projectBrief = loadProjectBrief(projectRoot, cleanQuery, task, limits.ProjectBriefTokens)
 	}
+	// Headered sections: when content is empty, return "" so the template
+	// drops both the body and the header line — no more "Context files:\n
+	// (none)\n" / "Injected code:\n" noise on bare turns. The template
+	// pairs these with leading newlines so multiple empty sections collapse
+	// cleanly.
+	contextFilesSection := renderContextFilesSection(projectRoot, chunks, limits.ContextFiles)
+	injectedSection := renderInjectedSection(injected)
 	bundle := m.prompts.RenderBundle(promptlib.RenderRequest{
 		Type:     "system",
 		Task:     task,
@@ -98,8 +105,8 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 			"project_brief":                  projectBrief,
 			"project_brief_relevant_section": projectBrief,
 			"user_query":                     strings.TrimSpace(cleanQuery),
-			"context_files":                  summarizeContextFiles(projectRoot, chunks, limits.ContextFiles),
-			"injected_context":               injected,
+			"context_files":                  contextFilesSection,
+			"injected_context":               injectedSection,
 			"tools_overview":                 summarizeTools(tools, limits.ToolList, task),
 			"tool_call_policy":               BuildToolCallPolicy(task, runtime),
 			"response_policy":                BuildResponsePolicy(task, profile),
