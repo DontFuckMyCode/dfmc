@@ -144,36 +144,7 @@ DFMC (Duty Free Meta Copilot) exposes **22 backend tools** the model uses to rea
 
 **Cost order (cheapest to most expensive):**
 ```
-grep_codebase < glob/list_dir < ast_query/disk_usage < find_symbol < read_file < symbol_rename/symbol_move < apply_patch/edit_file < write_file < run_command/patch_validation
-```
-
----
-
-### disk_usage - Disk Usage
-
-**Purpose:** Analyze disk consumption for a directory tree with breakdowns by extension, language, largest files, and subdirectories.
-
-**Risk:** read (idempotent) | **Cost:** io-bound
-
-
-**Arguments**
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `path` | string | no | project root | Directory to analyze |
-| `depth` | integer | no | 3 | Max directory depth for dir summaries |
-| `by_type` | boolean | no | true | Group by file extension |
-
-**Output**
-```json
-{
-  "total_bytes": 4194304,
-  "files": 342,
-  "by_extension": {".go": 2048000, ".md": 512000},
-  "by_language": {"go": 2048000, "markdown": 512000},
-  "largest_files": [{"path": "vendor/big.go", "bytes": 102400}],
-  "dirs": [{"path": "internal", "bytes": 512000, "files": 47}]
-}
+grep_codebase < glob/list_dir < ast_query < find_symbol < read_file < symbol_rename/symbol_move < apply_patch/edit_file < write_file < run_command/patch_validation
 ```
 
 ---
@@ -843,6 +814,6 @@ Full tool schema including all arguments, their types, defaults, descriptions, a
 
 | Risk level | Tools |
 |---|---|
-| read (idempotent) | `read_file`, `glob`, `list_dir`, `codemap`, `disk_usage`, `grep_codebase`, `find_symbol`, `ast_query`, `semantic_search`, `test_discovery`, `git_blame`, `think`, `tool_search`, `tool_help` |
+| read (idempotent) | `read_file`, `glob`, `list_dir`, `codemap`, `grep_codebase`, `find_symbol`, `ast_query`, `semantic_search`, `test_discovery`, `git_blame`, `think`, `tool_search`, `tool_help` |
 | write | `write_file`, `edit_file`, `apply_patch`, `symbol_rename`, `symbol_move`, `git_commit` |
 | execute | `run_command`, `patch_validation`, `web_search`, `tool_call`, `tool_batch_call` |

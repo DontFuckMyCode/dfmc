@@ -24,7 +24,6 @@
 | 13 | `test_discovery` | Search | read | Find test files and test functions covering a source path/symbol |
 | 14 | `symbol_rename` | Refactor | write | Rename a symbol across a file or the entire project |
 | 15 | `symbol_move` | Refactor | write | Move a symbol to another file and update all references |
-| 16 | `disk_usage` | Search | read | Disk usage breakdown by file type and language |
 | 17 | `project_info` | Search | read | Structured project metadata (module, Go version, deps) |
 | 18 | `git_status` | Git | read | Working-tree status (porcelain v1) |
 | 19 | `git_diff` | Git | read | Unified diff of working tree, a revision, or path subset |
@@ -100,7 +99,6 @@ any of them would cripple the agent.
 | `git_worktree_list` | `run_command git worktree list` | **Merge** into `git` multiplexer; very low usage frequency |
 | `git_worktree_add` | `run_command git worktree add` | **Merge** into `git` multiplexer; write-risk but guardable via subcommand param |
 | `git_worktree_remove` | `run_command git worktree remove` | **Merge** into `git` multiplexer; same as add |
-| `disk_usage` | `run_command du -sh` + `glob` gives rough equivalent | **Remove** — rarely needed; `project_info` + `glob` covers the common case |
 | `project_info` | Could be computed from `go.mod` + `glob` | **Keep** — cheap, structured, used once per session for orientation |
 | `list_dir` | `run_command` with `ls`/`dir` equivalent | **Keep** — cross-platform, structured, no shell required |
 | `web_fetch` | Subset of `run_command curl` | **Keep** — `run_command` cannot call `curl` in sandboxed environments; HTML-to-text stripping is valuable |
@@ -153,21 +151,19 @@ Risk mapping:
 
 ---
 
-## 4. Refactor Plan: Remove `disk_usage`
+## 4. Refactor Plan: Remove `disk_usage` — DONE
 
-### Rationale
+Removed in 2026-05-08: registry binding, handler, tests, schema, and
+docs entries (`docs/tools.md`, `ARCHITECTURE.md`, `internal/context/prompt_render_tools.go`'s
+toolGroup switch). Rationale that justified the removal:
 
-- **Usage frequency:** Extremely low. The agent almost never needs raw disk bytes.
+- **Usage frequency:** Extremely low. The agent almost never needed raw disk bytes.
 - **Overlap:** `project_info` already gives file count, language breakdown, and dependency count.
 - **Alternative:** `glob` + `run_command du` covers the edge case.
-- **Maintenance cost:** Each tool is a handler, schema, tests, and docs entry. Removing one trims all four.
 
-### Action
-
-1. Remove `disk_usage` from the tool registry
-2. Remove its handler, schema definition, and tests
-3. Remove its entry from `tools.md`
-4. If needed later, add a `subcommand: disk_usage` to `project_info`
+If a future workload needs disk metrics back, prefer adding a
+`subcommand: disk_usage` to `project_info` over re-introducing a
+standalone tool.
 
 ---
 
@@ -238,7 +234,7 @@ reasoning capability.
 |----------|--------|----------------|-------------------|--------|
 | **P0** | Consolidate git tools into `git` multiplexer | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_branch`, `git_worktree_list`, `git_worktree_add`, `git_worktree_remove` | Medium (new multiplexer + migration) | -7 tool registrations, simpler mental model |
 | **P0** | Keep `git_commit` separate or merge with guards | `git_commit` | Small | Safety guard preservation |
-| **P1** | Remove `disk_usage` | `disk_usage` | Small | -1 tool, less docs surface |
+| ~~**P1**~~ | ~~Remove `disk_usage`~~ — **DONE 2026-05-08** | `disk_usage` | Small | -1 tool, less docs surface |
 | **P2** | Consider `gh` multiplexer if demand grows | `gh_pr` → `gh` | Medium | Future-proofing |
 | **P2** | Consider `benchmark` removal if maintenance cost rises | `benchmark` | Small | -1 tool |
 | **P3** | Evaluate `project_info` + `codemap` overlap | Both | Research | Possible merge |
@@ -249,9 +245,9 @@ reasoning capability.
 
 | State | Tool Count |
 |-------|-----------|
-| Current | 41 |
-| After P0 (git consolidation) | 34 |
-| After P1 (remove disk_usage) | 33 |
+| Pre-cleanup baseline | 41 |
+| Current (after disk_usage removal, 2026-05-08) | 40 |
+| After P0 (git consolidation) | 33 |
 | After P2 (benchmark removal) | 32 |
 | Theoretical minimum (aggressive) | ~28 |
 
@@ -261,5 +257,5 @@ documented above.
 
 ---
 
-*Last updated: 2025-05-02*
+*Last updated: 2026-05-08*
 *Author: DFMC autonomous analysis*

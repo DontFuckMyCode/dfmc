@@ -134,7 +134,7 @@ func toolPriority(name, task string) int {
 
 func toolGroup(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "read_file", "list_dir", "glob", "grep_codebase", "find_symbol", "codemap", "ast_query", "semantic_search", "project_info", "disk_usage":
+	case "read_file", "list_dir", "glob", "grep_codebase", "find_symbol", "codemap", "ast_query", "semantic_search", "project_info":
 		return "Read/search"
 	case "write_file", "edit_file", "apply_patch", "symbol_rename", "symbol_move":
 		return "Edit"

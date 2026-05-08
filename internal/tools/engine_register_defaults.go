@@ -100,7 +100,6 @@ func New(cfg config.Config) *Engine {
 	symMoveTool.SetEngine(e)
 	e.Register(symMoveTool)
 	e.Register(NewSemanticSearchTool())
-	e.Register(NewDiskUsageTool())
 	e.Register(NewProjectInfoTool())
 	e.Register(NewTaskSplitTool())
 	e.delegateTool = NewDelegateTaskTool()

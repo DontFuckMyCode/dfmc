@@ -357,7 +357,7 @@ Built-in backend tools:
 
 - File: `read_file`, `write_file`, `edit_file`, `apply_patch`, `list_dir`
 - Search/nav: `grep_codebase`, `glob`, `find_symbol`, `codemap`, `ast_query`, `semantic_search`
-- Project: `project_info`, `dependency_graph`, `disk_usage`, `test_discovery`
+- Project: `project_info`, `dependency_graph`, `test_discovery`
 - Shell: `run_command`
 - Git/GitHub: `git_status`, `git_diff`, `git_branch`, `git_log`, `git_blame`, `git_commit`, `git_worktree_list`, `git_worktree_add`, `git_worktree_remove`, `gh_pr`
 - Web: `web_fetch`, `web_search`
