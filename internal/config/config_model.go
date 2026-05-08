@@ -10,18 +10,18 @@ import "strings"
 // cost hint, and capability tags. Profiles are stored in ProvidersConfig.Profiles
 // and referenced by name from RoutingConfig rules.
 type ModelConfig struct {
-	APIKey         string   `yaml:"api_key,omitempty"`
-	BaseURL        string   `yaml:"base_url,omitempty"`
-	Models         []string `yaml:"models,omitempty"`
-	FallbackModels []string `yaml:"fallback_models,omitempty"`
-	Model          string   `yaml:"model,omitempty"`
-	MaxTokens      int      `yaml:"max_tokens,omitempty"`
-	MaxContext     int      `yaml:"max_context,omitempty"`
-	Protocol       string   `yaml:"protocol,omitempty"`
-	Region         string   `yaml:"region,omitempty"`
-	HTTPTimeout    int      `yaml:"http_timeout,omitempty"`
-	Tags           []string `yaml:"tags,omitempty"`
-	CostPer1kTokens float64 `yaml:"cost_per_1k_tokens,omitempty"`
+	APIKey          string   `yaml:"api_key,omitempty"`
+	BaseURL         string   `yaml:"base_url,omitempty"`
+	Models          []string `yaml:"models,omitempty"`
+	FallbackModels  []string `yaml:"fallback_models,omitempty"`
+	Model           string   `yaml:"model,omitempty"`
+	MaxTokens       int      `yaml:"max_tokens,omitempty"`
+	MaxContext      int      `yaml:"max_context,omitempty"`
+	Protocol        string   `yaml:"protocol,omitempty"`
+	Region          string   `yaml:"region,omitempty"`
+	HTTPTimeout     int      `yaml:"http_timeout,omitempty"`
+	Tags            []string `yaml:"tags,omitempty"`
+	CostPer1kTokens float64  `yaml:"cost_per_1k_tokens,omitempty"`
 }
 
 // BestModel returns the preferred model: Models[0] if set, otherwise Model.

@@ -7,7 +7,6 @@ package tui
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -46,8 +45,8 @@ func (m Model) runProviderCommand(cmd string, args []string) (tea.Model, tea.Cmd
 				m.notice = "provider persist: " + err.Error()
 				return m.appendSystemMessage(fmt.Sprintf("Provider set to %s (%s)\nPersist error: %v", name, blankFallback(model, "-"), err)), loadStatusCmd(m.eng), true
 			}
-			m.notice = fmt.Sprintf("Provider set to %s (%s), saved to %s", name, blankFallback(model, "-"), filepath.ToSlash(path))
-			return m.appendSystemMessage(fmt.Sprintf("Provider set to %s (%s)\nSaved project config: %s", name, blankFallback(model, "-"), filepath.ToSlash(path))), loadStatusCmd(m.eng), true
+			m.notice = fmt.Sprintf("Provider set to %s (%s) · saved → %s", name, blankFallback(model, "-"), displayConfigPath(path))
+			return m.appendSystemMessage(fmt.Sprintf("Provider set to %s (%s)\nSaved → %s", name, blankFallback(model, "-"), displayConfigPath(path))), loadStatusCmd(m.eng), true
 		}
 		return m.appendSystemMessage(fmt.Sprintf("Provider set to %s (%s)", name, blankFallback(model, "-"))), loadStatusCmd(m.eng), true
 	case "models":
@@ -82,8 +81,8 @@ func (m Model) runProviderCommand(cmd string, args []string) (tea.Model, tea.Cmd
 				m.notice = "model persist: " + err.Error()
 				return m.appendSystemMessage(fmt.Sprintf("Model set to %s (%s)\nPersist error: %v", model, blankFallback(providerName, "-"), err)), loadStatusCmd(m.eng), true
 			}
-			m.notice = fmt.Sprintf("Model set to %s (%s), saved to %s", model, blankFallback(providerName, "-"), filepath.ToSlash(path))
-			return m.appendSystemMessage(fmt.Sprintf("Model set to %s (%s)\nSaved project config: %s", model, blankFallback(providerName, "-"), filepath.ToSlash(path))), loadStatusCmd(m.eng), true
+			m.notice = fmt.Sprintf("Model set to %s (%s) · saved → %s", model, blankFallback(providerName, "-"), displayConfigPath(path))
+			return m.appendSystemMessage(fmt.Sprintf("Model set to %s (%s)\nSaved → %s", model, blankFallback(providerName, "-"), displayConfigPath(path))), loadStatusCmd(m.eng), true
 		}
 		return m.appendSystemMessage(fmt.Sprintf("Model set to %s (%s)", model, blankFallback(providerName, "-"))), loadStatusCmd(m.eng), true
 	}

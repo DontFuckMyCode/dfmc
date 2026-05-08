@@ -1,134 +1,41 @@
 package engine
 
-// agent_loop_native.go — provider-native agent loop.
+// agent_loop_native.go — orchestration loop for the provider-native
+// agent path. The model only sees the 4 meta tools (tool_search,
+// tool_help, tool_call, tool_batch_call). It discovers backend tools
+// through tool_search/tool_help and invokes them through tool_call /
+// tool_batch_call. Tool dialogue rides on Anthropic's tool_use blocks
+// or OpenAI's tool_calls — the text-bridge fenced JSON format is gone.
 //
-// The model only sees the 4 meta tools (tool_search, tool_help, tool_call,
-// tool_batch_call). It discovers backend tools through tool_search/tool_help
-// and invokes them through tool_call / tool_batch_call. Tool dialogue rides
-// on Anthropic's tool_use blocks or OpenAI's tool_calls — the text-bridge
-// fenced JSON format is gone.
+// File layout: this file owns runNativeToolLoop (the bounded step
+// loop) and the loop-tunable constants (maxBudgetAutoRecoveries,
+// stuckStreakHardstopThreshold). Entry point + types + small helpers
+// (askWithNativeTools, shouldUseNativeToolLoop, nativeToolTrace,
+// nativeToolCompletion, initialSynthesisFlag) live in
+// agent_loop_native_entry.go. Per-round helpers
+// (applyNativeBudgetCompaction, computeNativeToolChoice,
+// buildNativeLoopRequest, updateNativeTokenFootprint) live in
+// agent_loop_native_helpers.go. Per-step phase helpers
+// (preflightBudget, postStepBudget, executeAndAppendToolBatch,
+// handleEmptyTurn, injectTrajectoryHints) live in
+// agent_loop_phases.go. Park / resume machinery (parkPhase,
+// ParkReason, formatBudgetExhaustedNotice, parkNativeToolLoop) lives
+// in agent_parking.go.
 //
 // The loop is bounded by maxNativeToolSteps (config-overridable in S4).
-// Per-call failures don't abort the loop; the model gets a tool_result with
-// is_error=true and decides how to recover.
+// Per-call failures don't abort the loop; the model gets a tool_result
+// with is_error=true and decides how to recover.
 
 import (
 	"context"
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
-
-// parkPhase, ParkReason, formatBudgetExhaustedNotice, and parkNativeToolLoop
-// live in agent_parking.go.
-
-type nativeToolTrace struct {
-	Call       provider.ToolCall
-	Result     tools.Result
-	Err        string
-	Provider   string
-	Model      string
-	Step       int
-	OccurredAt time.Time
-}
-
-type nativeToolCompletion struct {
-	Answer       string
-	Provider     string
-	Model        string
-	TokenCount   int
-	Context      []types.ContextChunk
-	ToolTraces   []nativeToolTrace
-	SystemPrompt string
-	// Parked is true when the loop hit MaxSteps and saved its state for /continue
-	// to pick up. Answer is a friendly "parked at step N" notice in that case.
-	Parked       bool
-	ParkedAtStep int
-	// ParkedReason discriminates why the loop parked so downstream surfaces
-	// (coach, TUI) can tailor their copy. Values: ParkReasonStepCap or
-	// ParkReasonBudgetExhausted. Empty when Parked is false.
-	ParkedReason ParkReason
-}
-
-// shouldUseNativeToolLoop reports whether the active provider negotiates
-// provider-native tool calling (Anthropic, OpenAI) AND has at least one
-// backend tool to expose. Falls back to false for offline/placeholder.
-func (e *Engine) shouldUseNativeToolLoop() bool {
-	if e == nil || e.Tools == nil || e.Providers == nil {
-		return false
-	}
-	if len(e.Tools.BackendSpecs()) == 0 {
-		return false
-	}
-	p, ok := e.Providers.Get(e.provider())
-	if !ok || p == nil {
-		return false
-	}
-	return p.Hints().SupportsTools
-}
-
-func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativeToolCompletion, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	e.ensureIndexed(ctx)
-
-	// Fresh question → abandon any stale parked loop.
-	e.ClearParkedAgent()
-
-	preflight := e.prepareAutonomyPreflight(ctx, question, "top_level", true)
-	chunks := e.buildContextChunks(question)
-	systemPrompt, systemBlocks := e.buildNativeToolSystemPromptBundle(question, chunks, preflight)
-	descriptors := metaSpecsToDescriptors(e.Tools.MetaSpecs())
-	lim := e.agentLimits()
-	kickoffTail, kickoffTraces := e.maybeAutoKickoffAutonomy(ctx, question, preflight, lim)
-
-	contextTokens := 0
-	for _, c := range chunks {
-		contextTokens += c.TokenCount
-	}
-	protocol := ""
-	baseURL := ""
-	if e.Config != nil {
-		if profile, ok := e.Config.Providers.Profiles[e.provider()]; ok {
-			protocol = strings.TrimSpace(profile.Protocol)
-			baseURL = strings.TrimSpace(profile.BaseURL)
-		}
-	}
-
-	seed := &parkedAgentState{
-		Question:      question,
-		Messages:      e.buildToolLoopRequestMessages(question, chunks, systemPrompt, kickoffTail),
-		Traces:        kickoffTraces,
-		Chunks:        chunks,
-		SystemPrompt:  systemPrompt,
-		SystemBlocks:  systemBlocks,
-		Descriptors:   descriptors,
-		ContextTokens: contextTokens,
-		TotalTokens:   0,
-		Step:          0,
-		LastProvider:  e.provider(),
-		LastModel:     e.model(),
-	}
-	e.publishAgentLoopEvent("agent:loop:start", map[string]any{
-		"provider":        seed.LastProvider,
-		"model":           seed.LastModel,
-		"protocol":        protocol,
-		"base_url":        baseURL,
-		"max_tool_steps":  lim.MaxSteps,
-		"max_tool_tokens": lim.MaxTokens,
-		"surface":         "native",
-		"context_files":   len(chunks),
-		"context_tokens":  contextTokens,
-		"meta_tools":      metaToolNames(descriptors),
-	})
-	return e.runNativeToolLoopAutonomous(ctx, seed, lim, "ask")
-}
 
 // maxBudgetAutoRecoveries caps how many times a single agent-loop invocation
 // will auto-compact + reset tokens on budget_exhausted before giving up and
@@ -137,25 +44,6 @@ func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativ
 // growing mid-loop. Higher values risk infinite compact→fill→compact cycles
 // when the model's asks inherently generate more data than fits.
 const maxBudgetAutoRecoveries = 1
-
-// initialSynthesisFlag computes the starting value of the
-// synthesizeHintInjected gate for a new loop iteration. For a fresh
-// run the gate matches the original "did we already cross the soft
-// cap?" condition. For an auto-resumed run (CumulativeSteps>0) the
-// gate is forced false so the nudge can fire again — the prior one
-// was compacted away with the rest of the transcript and the model
-// needs re-anchoring, not silence. Extracted to a helper so the
-// re-arm condition is unit-testable without standing up a full
-// scripted-provider end-to-end fixture.
-func initialSynthesisFlag(s *loopRunState, lim agentLimits) bool {
-	if s == nil {
-		return false
-	}
-	if s.seed != nil && s.seed.CumulativeSteps > 0 {
-		return false
-	}
-	return len(s.traces) >= lim.RoundSoftCap
-}
 
 // stuckStreakHardstopThreshold is the number of consecutive rounds the
 // trajectory layer must flag the repeated-failure pattern before the
@@ -262,40 +150,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			}
 		}
 
-		if compacted, report := e.maybeCompactNativeLoopHistoryForBudget(s.msgs, s.systemPrompt, s.chunks, lim.MaxTokens); report != nil {
-			s.msgs = compacted
-			e.publishAgentLoopEvent("context:lifecycle:compacted", map[string]any{
-				"step":             step,
-				"before_tokens":    report.BeforeTokens,
-				"after_tokens":     report.AfterTokens,
-				"rounds_collapsed": report.RoundsCollapsed,
-				"messages_removed": report.MessagesRemoved,
-				"threshold_ratio":  report.ThresholdRatio,
-				"keep_recent":      report.KeepRecentRounds,
-				"surface":          "native",
-			})
-		}
-
-		// Proactive step-boundary compaction. Once we're past the soft
-		// round cap (15 by default), drop the threshold so old rounds get
-		// collapsed before headroom crashes. The reactive compactor above
-		// uses 0.7; this one uses 0.5 — fires earlier so a long sustained
-		// loop never has to pay an emergency park. No-op when the loop is
-		// short or the lifecycle is disabled.
-		if step > lim.RoundSoftCap {
-			if compacted, report := e.proactiveCompactNativeLoopHistory(s.msgs, s.systemPrompt, s.chunks, lim.MaxTokens); report != nil {
-				s.msgs = compacted
-				e.publishAgentLoopEvent("context:lifecycle:proactive_compacted", map[string]any{
-					"step":             step,
-					"before_tokens":    report.BeforeTokens,
-					"after_tokens":     report.AfterTokens,
-					"rounds_collapsed": report.RoundsCollapsed,
-					"messages_removed": report.MessagesRemoved,
-					"threshold_ratio":  proactiveCompactRatio,
-					"surface":          "native",
-				})
-			}
-		}
+		e.applyNativeBudgetCompaction(s, step)
 
 		// Pre-flight budget gate (preflightBudget in agent_loop_phases.go).
 		// Park-or-recover before we burn another round's tokens.
@@ -327,40 +182,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			})
 		}
 
-		// Hard cap: after N rounds the model doesn't get to ask for
-		// tools anymore. `ToolChoice: "none"` forces the next call to
-		// emit plain text. This is the final guardrail before the
-		// step cap trips.
-		toolChoice := "auto"
-		if len(s.traces) >= lim.RoundHardCap {
-			toolChoice = "none"
-			e.publishAgentLoopEvent("agent:loop:tools_force_stop", map[string]any{
-				"step":        step,
-				"tool_rounds": len(s.traces),
-				"hard_cap":    lim.RoundHardCap,
-				"surface":     "native",
-			})
-		}
-		// Stuck-streak force-stop: if Rule 0 has flagged the same
-		// failure pattern for stuckStreakHardstopThreshold consecutive
-		// rounds AND the model still hasn't switched tactic, the
-		// "switch tactic" hint is being ignored. Force tool_choice=
-		// "none" so the next response MUST be text — the model is
-		// compelled to either explain the blocker or hand back to the
-		// user. Without this, an unattended run can burn 30+ rounds
-		// retrying read_file with different guesses while the same
-		// hint scrolls past every round. Independent of RoundHardCap
-		// because it can fire much earlier (3 consecutive stuck rounds
-		// vs. 30 total tool rounds).
-		if toolChoice == "auto" && s.stuckStreak >= stuckStreakHardstopThreshold {
-			toolChoice = "none"
-			e.publishAgentLoopEvent("agent:loop:stuck_force_stop", map[string]any{
-				"step":         step,
-				"stuck_streak": s.stuckStreak,
-				"threshold":    stuckStreakHardstopThreshold,
-				"surface":      "native",
-			})
-		}
+		toolChoice := e.computeNativeToolChoice(s, step)
 
 		e.publishAgentLoopEvent("agent:loop:thinking", map[string]any{
 			"step":           step,
@@ -371,26 +193,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			"surface":        "native",
 		})
 
-		reqProvider := strings.TrimSpace(s.lastProvider)
-		if reqProvider == "" {
-			reqProvider = e.provider()
-		}
-		reqModel := strings.TrimSpace(s.lastModel)
-		if reqModel == "" {
-			if selected, ok := e.Providers.Get(reqProvider); ok && selected != nil {
-				reqModel = strings.TrimSpace(selected.Model())
-			}
-		}
-		req := provider.CompletionRequest{
-			Provider:     reqProvider,
-			Model:        reqModel,
-			System:       s.systemPrompt,
-			SystemBlocks: s.systemBlocks,
-			Context:      s.chunks,
-			Messages:     s.msgs,
-			Tools:        s.descriptors,
-			ToolChoice:   toolChoice,
-		}
+		req := e.buildNativeLoopRequest(s, toolChoice)
 
 		resp, usedProvider, err := e.Providers.Complete(ctx, req)
 		if err != nil {
@@ -418,22 +221,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			})
 			return nativeToolCompletion{}, err
 		}
-		// totalTokens is the rolling conversation footprint as seen by
-		// the provider, NOT a cumulative sum across rounds. Summing
-		// per-round Usage.TotalTokens double-counted the growing history
-		// every iteration — a modest 20-round loop that never left a 25k
-		// working set would trip a 250k "budget" purely from re-counting
-		// the same prompt tokens. Replace with the latest
-		// InputTokens+OutputTokens so the metric tracks real footprint
-		// and correctly shrinks after auto-compact trims the history.
-		if footprint := resp.Usage.InputTokens + resp.Usage.OutputTokens; footprint > 0 {
-			s.totalTokens = footprint
-		} else if resp.Usage.TotalTokens > 0 {
-			// Provider only reported the aggregate (some OpenAI-compatible
-			// endpoints drop the per-direction split). Best-effort
-			// footprint: treat TotalTokens as the request size.
-			s.totalTokens = resp.Usage.TotalTokens
-		}
+		updateNativeTokenFootprint(s, resp)
 		if strings.TrimSpace(usedProvider) != "" {
 			s.lastProvider = usedProvider
 		}

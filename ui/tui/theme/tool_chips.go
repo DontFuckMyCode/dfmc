@@ -1,8 +1,13 @@
 package theme
 
-// tool_chips.go — rendering for the per-message tool activity chips and
-// their collapsed summary. Split out of render.go for size. All symbols
-// here revolve around the ToolChip view-model defined in types.go.
+// tool_chips.go — per-chip rendering for the tool activity strip:
+// RenderToolChip (one chip's head + meta + verb/preview/inner lines),
+// appendInnerLines (the indented sub-lines), FormatToolTokenCount
+// (the "1.3k" suffix), isSubagentToolChip (the SUBAGENT classifier),
+// and chipIconStyle / chipNameStyle (status → icon + colour and tool
+// → colour). Sibling tool_chips_inline.go owns the multi-chip list
+// views (RenderInlineToolChips and the collapsed
+// RenderInlineToolChipsSummary used when /tools collapses the strip).
 
 import (
 	"fmt"
@@ -45,6 +50,20 @@ func RenderToolChip(chip ToolChip, width int) string {
 		} else {
 			meta = append(meta, fmt.Sprintf("rtk −%s", FormatToolTokenCount(chip.SavedChars)))
 		}
+	}
+	// Hard-truncation badge — distinct from `rtk` (compression of
+	// noise) and from `Truncated` (the sandbox flag). This fires when
+	// the per-call char cap forced bytes out of the model-bound
+	// payload — meaning the model is missing real content. Prominent
+	// warn style so the user knows to widen the window or split the
+	// call. The rune count tells them HOW MUCH was lost so they can
+	// judge severity at a glance.
+	if chip.HardTruncated {
+		label := "✂ truncated"
+		if chip.HardTruncatedRunes > 0 {
+			label = fmt.Sprintf("✂ −%s chars cut", FormatToolTokenCount(chip.HardTruncatedRunes))
+		}
+		meta = append(meta, WarnStyle.Bold(true).Render(label))
 	}
 	if status != "" && status != "ok" && status != "running" {
 		meta = append(meta, status)
@@ -134,130 +153,8 @@ func FormatToolTokenCount(n int) string {
 	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
-func RenderInlineToolChips(chips []ToolChip, width int) string {
-	if len(chips) == 0 {
-		return ""
-	}
-	if width < 20 {
-		width = 20
-	}
-	indent := "    "
-	inner := width - len(indent)
-	if inner < 16 {
-		inner = 16
-	}
-	var b strings.Builder
-	for i, chip := range chips {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		for j, line := range strings.Split(RenderToolChip(chip, inner), "\n") {
-			if j > 0 {
-				b.WriteByte('\n')
-			}
-			b.WriteString(indent)
-			b.WriteString(line)
-		}
-	}
-	return b.String()
-}
-
-func RenderInlineToolChipsSummary(chips []ToolChip, width int) string {
-	if len(chips) == 0 {
-		return ""
-	}
-	if width < 20 {
-		width = 20
-	}
-	indent := "    "
-	inner := width - len(indent)
-	if inner < 24 {
-		inner = 24
-	}
-
-	var ok, fail, running, subagents int
-	var totalMs int64
-	var totalTok int
-	counts := map[string]int{}
-	order := []string{}
-
-	for _, c := range chips {
-		switch strings.ToLower(strings.TrimSpace(c.Status)) {
-		case "ok", "success", "done":
-			ok++
-		case "failed", "error", "fail":
-			fail++
-		case "running", "pending":
-			running++
-		}
-		if c.DurationMs > 0 {
-			totalMs += int64(c.DurationMs)
-		}
-		if c.OutputTokens > 0 {
-			totalTok += c.OutputTokens
-		}
-		name := strings.TrimSpace(c.Name)
-		if name == "" {
-			name = "tool"
-		}
-		if name == "delegate_task" || name == "orchestrate" || strings.HasPrefix(name, "subagent") {
-			subagents++
-		}
-		if _, seen := counts[name]; !seen {
-			order = append(order, name)
-		}
-		counts[name]++
-	}
-
-	parts := []string{fmt.Sprintf("%d tool call%s", len(chips), plural(len(chips)))}
-	if ok > 0 {
-		parts = append(parts, fmt.Sprintf("%s ok", OkStyle.Render(fmt.Sprintf("%d", ok))))
-	}
-	if fail > 0 {
-		parts = append(parts, fmt.Sprintf("%s fail", FailStyle.Render(fmt.Sprintf("%d", fail))))
-	}
-	if running > 0 {
-		parts = append(parts, fmt.Sprintf("%d running", running))
-	}
-	if subagents > 0 {
-		parts = append(parts, fmt.Sprintf("%d sub-agent%s", subagents, plural(subagents)))
-	}
-	if totalTok > 0 {
-		parts = append(parts, fmt.Sprintf("~%s tok", FormatToolTokenCount(totalTok)))
-	}
-	if totalMs > 0 {
-		parts = append(parts, fmt.Sprintf("%dms", totalMs))
-	}
-	headline := SubtleStyle.Render("▸ tools · "+strings.Join(parts, " · ")) + "  " +
-		AccentStyle.Render("[/tools]") + SubtleStyle.Render(" expand")
-
-	breakdown := []string{}
-	for _, name := range order {
-		n := counts[name]
-		if n == 1 {
-			breakdown = append(breakdown, name)
-		} else {
-			breakdown = append(breakdown, fmt.Sprintf("%s ×%d", name, n))
-		}
-	}
-	body := strings.Join(breakdown, ", ")
-	bodyLine := SubtleStyle.Render("  ") + SubtleStyle.Render(TruncateSingleLine(body, inner-2))
-
-	var b strings.Builder
-	b.WriteString(indent)
-	b.WriteString(TruncateSingleLine(headline, inner))
-	b.WriteByte('\n')
-	b.WriteString(indent)
-	b.WriteString(bodyLine)
-	return b.String()
-}
-
-func plural(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
-}
+// RenderInlineToolChips + RenderInlineToolChipsSummary + plural live in
+// tool_chips_inline.go.
 
 func isSubagentToolChip(chip ToolChip) bool {
 	name := strings.ToLower(strings.TrimSpace(chip.Name))

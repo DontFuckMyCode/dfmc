@@ -1,26 +1,30 @@
-// bubbletea Update reducer for the TUI Model. Extracted from tui.go to keep
-// the message dispatch table close to per-msg handlers in this package
-// (handleEngineEvent, handleChatKey, handleFilesKey, etc.). Update itself
-// is just a router — every case falls through to a focused helper.
+// update.go — bubbletea Update reducer for the TUI Model.
+//
+// Update itself is a pure router: switch on tea.Msg type, dispatch to
+// the matching handle<Type>Msg in a sibling file. Per-domain handlers
+// live in:
+//
+//   update_window.go    — WindowSizeMsg, MouseMsg
+//   update_data.go      — *LoadedMsg, sync/patch/undo/tool/git
+//                         "data arrived" notifications
+//   update_stream.go    — chat lifecycle (delta/done/err/closed),
+//                         spinner/heartbeat ticks, event subscription,
+//                         approvalRequested
+//   update_keypress.go  — tea.KeyMsg (modal, global shortcuts, per-tab
+//                         routing)
 //
 // When adding a new tea.Msg type:
 //   1. Define the message type alongside the cmd that emits it
-//   2. Add a `case xxxMsg:` here and call into a Model.handleX method
-//   3. Update.go MUST stay a pure dispatcher — no business logic inline
+//   2. Add a `case xxxMsg:` here and call into a Model.handleXxxMsg method
+//      placed in the sibling that owns that domain
+//   3. update.go MUST stay a pure dispatcher — no business logic inline
 
 package tui
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	"strings"
 	"time"
-	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
 const statsPanelBoostDuration = 4 * time.Second
@@ -65,736 +69,68 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.chat.suppressPasteRender = false
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		return m, nil
-
+		return m.handleWindowSizeMsg(msg)
 	case tea.MouseMsg:
-		// Mouse wheel scrolls the chat transcript on the Chat tab. We
-		// deliberately only react on press/release edges — bubbletea emits
-		// a press+release pair per wheel tick, so handling both would
-		// double-scroll. The input box (tail) stays pinned; only the
-		// transcript head clips. Shift+wheel jumps a half-page so power
-		// users can travel a long history quickly. Ignore the other tabs
-		// (their content is static enough to fit in-panel).
-		if m.tabs[m.activeTab] != "Chat" {
-			return m, nil
-		}
-		if len(m.chat.transcript) == 0 {
-			return m, nil
-		}
-		if msg.Action != tea.MouseActionPress {
-			return m, nil
-		}
-		step := mouseWheelStep
-		if msg.Shift {
-			step = mouseWheelPageStep
-		}
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
-			m.scrollTranscript(-step)
-		case tea.MouseButtonWheelDown:
-			m.scrollTranscript(step)
-		}
-		return m, nil
+		return m.handleMouseMsg(msg)
 
 	case eventSubscribedMsg:
-		if msg.ch == nil {
-			return m, nil
-		}
-		m.eventSub = msg.ch
-		return m, waitForEventMsg(msg.ch)
-
+		return m.handleEventSubscribedMsg(msg)
 	case engineEventMsg:
-		m = m.handleEngineEvent(msg.event)
-		if m.eventSub == nil {
-			return m, nil
-		}
-		next := waitForEventMsg(m.eventSub)
-		if strings.EqualFold(strings.TrimSpace(msg.event.Type), "context:built") {
-			return m, tea.Batch(next, loadStatusCmd(m.eng))
-		}
-		return m, next
+		return m.handleEngineEventMsg(msg)
 
 	case statusLoadedMsg:
-		m.status = msg.status
-		m = m.hydrateStatusProviderFromConfig()
-		return m, nil
-
+		return m.handleStatusLoadedMsg(msg)
 	case workspaceLoadedMsg:
-		if msg.err != nil {
-			m.notice = "workspace: " + msg.err.Error()
-			return m, nil
-		}
-		m.patchView.diff = msg.diff
-		m.patchView.changed = msg.changed
-		if strings.TrimSpace(msg.diff) == "" {
-			m.notice = "Working tree is clean."
-		} else if len(msg.changed) > 0 {
-			m.notice = "Changed files: " + strings.Join(msg.changed, ", ")
-		}
-		return m, nil
-
+		return m.handleWorkspaceLoadedMsg(msg)
 	case latestPatchLoadedMsg:
-		m.patchView.latestPatch = msg.patch
-		m.patchView.set = parseUnifiedDiffSections(msg.patch)
-		m.patchView.files = patchSectionPaths(m.patchView.set)
-		if len(m.patchView.files) == 0 {
-			m.patchView.files = extractPatchedFiles(msg.patch)
-		}
-		m.patchView.index = m.bestPatchIndex()
-		m.patchView.hunk = 0
-		m.markLatestPatchInTranscript(msg.patch)
-		if strings.TrimSpace(msg.patch) == "" {
-			m.notice = "No assistant patch found yet."
-		} else {
-			m.notice = "Loaded latest assistant patch."
-		}
-		return m, nil
-
+		return m.handleLatestPatchLoadedMsg(msg)
 	case filesLoadedMsg:
-		if msg.err != nil {
-			m.notice = "files: " + msg.err.Error()
-			return m, nil
-		}
-		m.filesView.entries = msg.files
-		if len(m.filesView.entries) == 0 {
-			m.filesView.index = 0
-			m.filesView.path = ""
-			m.filesView.preview = ""
-			m.filesView.size = 0
-			m.notice = "No project files found."
-			return m, nil
-		}
-		selected := m.selectedFile()
-		nextIndex := 0
-		if selected != "" {
-			for i, path := range m.filesView.entries {
-				if path == selected {
-					nextIndex = i
-					break
-				}
-			}
-		}
-		m.filesView.index = nextIndex
-		return m, loadFilePreviewCmd(m.eng, m.selectedFile())
-
+		return m.handleFilesLoadedMsg(msg)
 	case filePreviewLoadedMsg:
-		if msg.err != nil {
-			m.notice = "preview: " + msg.err.Error()
-			return m, nil
-		}
-		m.filesView.path = msg.path
-		m.filesView.preview = msg.content
-		m.filesView.size = msg.size
-		if strings.TrimSpace(msg.path) != "" {
-			m.notice = fmt.Sprintf("Previewing %s (%d bytes)", msg.path, msg.size)
-		}
-		return m, nil
-
+		return m.handleFilePreviewLoadedMsg(msg)
 	case memoryLoadedMsg:
-		m.memory.loading = false
-		if msg.err != nil {
-			m.memory.err = msg.err.Error()
-			return m, nil
-		}
-		m.memory.err = ""
-		m.memory.entries = msg.entries
-		if msg.tier != "" {
-			m.memory.tier = msg.tier
-		}
-		if m.memory.scroll >= len(m.memory.entries) {
-			m.memory.scroll = 0
-		}
-		return m, nil
-
+		return m.handleMemoryLoadedMsg(msg)
 	case codemapLoadedMsg:
-		m.codemap.loading = false
-		m.codemap.loaded = true
-		if msg.err != nil {
-			m.codemap.err = msg.err.Error()
-			return m, nil
-		}
-		m.codemap.err = ""
-		m.codemap.snap = msg.snap
-		if m.codemap.scroll >= codemapViewRowCount(m.codemap.view, m.codemap.snap) {
-			m.codemap.scroll = 0
-		}
-		return m, nil
-
+		return m.handleCodemapLoadedMsg(msg)
 	case conversationsLoadedMsg:
-		m.conversations.loading = false
-		m.conversations.loaded = true
-		if msg.err != nil {
-			m.conversations.err = msg.err.Error()
-			return m, nil
-		}
-		m.conversations.err = ""
-		m.conversations.entries = msg.entries
-		if m.conversations.scroll >= len(m.conversations.entries) {
-			m.conversations.scroll = 0
-		}
-		return m, nil
-
+		return m.handleConversationsLoadedMsg(msg)
 	case conversationPreviewMsg:
-		if msg.err != nil {
-			m.notice = "conversations: " + msg.err.Error()
-			return m, nil
-		}
-		m.conversations.previewID = msg.id
-		m.conversations.preview = msg.msgs
-		// LoadReadOnly does NOT change the active conversation — Chat
-		// keeps whatever was running. The notice has to make that
-		// explicit so users don't assume f1 will jump them into the
-		// previewed history.
-		m.notice = fmt.Sprintf("Previewed conversation %s (%d messages) — read-only; Chat keeps the current session.", msg.id, len(msg.msgs))
-		return m, nil
-
+		return m.handleConversationPreviewMsg(msg)
 	case promptsLoadedMsg:
-		m.prompts.loading = false
-		m.prompts.loaded = true
-		if msg.err != nil {
-			m.prompts.err = msg.err.Error()
-			return m, nil
-		}
-		m.prompts.err = ""
-		m.prompts.templates = msg.templates
-		if m.prompts.scroll >= len(m.prompts.templates) {
-			m.prompts.scroll = 0
-		}
-		return m, nil
-
+		return m.handlePromptsLoadedMsg(msg)
 	case securityLoadedMsg:
-		m.security.loading = false
-		m.security.loaded = true
-		if msg.err != nil {
-			m.security.err = msg.err.Error()
-			return m, nil
-		}
-		m.security.err = ""
-		m.security.report = msg.report
-		m.security.scroll = 0
-		return m, nil
-
+		return m.handleSecurityLoadedMsg(msg)
 	case syncModelsDevMsg:
-		m.providers.syncing = false
-		if msg.err != nil {
-			m.notice = "sync failed: " + msg.err.Error()
-			return m, nil
-		}
-		m.providers.lastSyncedAt = time.Now()
-		m = m.refreshProvidersRows()
-		m.status = m.eng.Status()
-		m.notice = fmt.Sprintf("synced %d changes → %s", len(msg.changes), msg.path)
-		return m, nil
-
+		return m.handleSyncModelsDevMsg(msg)
+	case providerProbeMsg:
+		next, cmd := m.handleProviderProbeMsg(msg)
+		return next, cmd
 	case patchApplyMsg:
-		if msg.err != nil {
-			m.notice = "patch: " + msg.err.Error()
-			return m, nil
-		}
-		if msg.checkOnly {
-			m.notice = "Patch check passed."
-			return m, nil
-		}
-		m = m.focusChangedFiles(msg.changed)
-		if len(msg.changed) > 0 {
-			m.notice = "Patch applied: " + strings.Join(msg.changed, ", ")
-		} else {
-			m.notice = "Patch applied."
-		}
-		cmds := []tea.Cmd{loadWorkspaceCmd(m.eng)}
-		if target := m.selectedFile(); target != "" {
-			cmds = append(cmds, loadFilePreviewCmd(m.eng, target))
-		}
-		return m, tea.Batch(cmds...)
-
+		return m.handlePatchApplyMsg(msg)
 	case conversationUndoMsg:
-		if msg.err != nil {
-			m.notice = "undo: " + msg.err.Error()
-			return m, nil
-		}
-		m.notice = fmt.Sprintf("Undone messages: %d", msg.removed)
-		return m, loadLatestPatchCmd(m.eng)
-
+		return m.handleConversationUndoMsg(msg)
 	case toolRunMsg:
-		if msg.err != nil {
-			m.notice = "tool: " + msg.err.Error()
-			m.toolView.output = formatToolErrorForPanel(msg.name, msg.params, msg.result, msg.err)
-			if m.chat.toolPending && strings.EqualFold(strings.TrimSpace(msg.name), strings.TrimSpace(m.chat.toolName)) {
-				m = m.appendSystemMessage(formatToolResultForChat(msg.name, msg.params, msg.result, msg.err))
-				m.chat.toolPending = false
-				m.chat.toolName = ""
-			}
-			if toolResultWorkspaceChanged(msg.result) {
-				m = m.refreshToolMutationState("")
-			}
-			return m, nil
-		}
-		m.toolView.output = formatToolResultForPanel(msg.name, msg.params, msg.result)
-		m.notice = fmt.Sprintf("Tool ran: %s (%dms)", msg.name, msg.result.DurationMs)
-		if warnings := toolResultWarnings(msg.name, msg.result); len(warnings) > 0 {
-			m.notice = warnings[0]
-		}
-		if m.chat.toolPending && strings.EqualFold(strings.TrimSpace(msg.name), strings.TrimSpace(m.chat.toolName)) {
-			m = m.appendSystemMessage(formatToolResultForChat(msg.name, msg.params, msg.result, nil))
-			m.chat.toolPending = false
-			m.chat.toolName = ""
-		}
-		if path := toolResultRelativePath(m.eng, msg.result); path != "" {
-			m.filesView.path = path
-			if idx := indexOfString(m.filesView.entries, path); idx >= 0 {
-				m.filesView.index = idx
-			}
-			if msg.name == "read_file" {
-				m.filesView.preview = msg.result.Output
-				m.filesView.size = len([]byte(msg.result.Output))
-			}
-			if isMutationTool(msg.name) || toolResultWorkspaceChanged(msg.result) {
-				m = m.refreshToolMutationState(path)
-			}
-		} else if isMutationTool(msg.name) || toolResultWorkspaceChanged(msg.result) {
-			m = m.refreshToolMutationState("")
-		}
-		return m, nil
+		return m.handleToolRunMsg(msg)
+	case gitInfoLoadedMsg:
+		return m.handleGitInfoLoadedMsg(msg)
 
 	case chatDeltaMsg:
-		if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) {
-			m.chat.transcript[m.chat.streamIndex].Content += msg.delta
-			m.chat.transcript[m.chat.streamIndex].Preview = chatDigest(m.chat.transcript[m.chat.streamIndex].Content)
-			m.refreshChatLineTokenCount(m.chat.streamIndex)
-		}
-		return m, waitForStreamMsg(m.chat.streamMessages)
-
+		return m.handleChatDeltaMsg(msg)
 	case spinnerTickMsg:
-		m.chat.spinnerFrame++
-		if m.chat.sending || m.agentLoop.active {
-			return m, spinnerTickCmd()
-		}
-		m.chat.spinnerTicking = false
-		return m, nil
-
+		return m.handleSpinnerTickMsg(msg)
 	case heartbeatTickMsg:
-		// 1Hz heartbeat. Keeps the session timer and elapsed chips live
-		// even when no events are in flight. Cheap — one int bump and a
-		// repaint per second.
-		return m, heartbeatTickCmd()
-
+		return m.handleHeartbeatTickMsg(msg)
 	case chatDoneMsg:
-		m.annotateAssistantPatch(m.chat.streamIndex)
-		m.annotateAssistantToolUsage(m.chat.streamIndex)
-		if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) && !m.chat.streamStartedAt.IsZero() {
-			m.chat.transcript[m.chat.streamIndex].DurationMs = int(time.Since(m.chat.streamStartedAt).Milliseconds())
-			if msg.usage != nil && msg.usage.OutputTokens > 0 {
-				m.chat.transcript[m.chat.streamIndex].TokenCount = msg.usage.OutputTokens
-			}
-		}
-		m.moveStreamingAssistantToTranscriptEnd()
-		m.chat.streamStartedAt = time.Time{}
-		m.chat.streamInputTokens = 0
-		m.chat.sending = false
-		m.chat.streamMessages = nil
-		m.chat.streamIndex = -1
-		m.clearStreamCancel()
-		m.resetAgentRuntime()
-		m.chat.pendingNoteCount = 0
-		m.notice = ""
-		next, drainCmd := m.drainPendingQueue()
-		return next, tea.Batch(loadStatusCmd(m.eng), loadLatestPatchCmd(m.eng), loadGitInfoCmd(m.projectRoot()), drainCmd)
-
-	case gitInfoLoadedMsg:
-		m.gitInfo = msg.info
-		return m, nil
-
+		return m.handleChatDoneMsg(msg)
 	case chatErrMsg:
-		m.chat.sending = false
-		m.chat.streamMessages = nil
-		m.chat.streamIndex = -1
-		m.chat.streamInputTokens = 0
-		m.clearStreamCancel()
-		m.resetAgentRuntime()
-		m.chat.pendingNoteCount = 0
-		// Distinguish a user-driven cancel (esc) from a real provider or
-		// network error. Context cancellation that arrives without the
-		// userCancelledStream flag set is still treated as an error (e.g.
-		// the process context got cancelled from above) — but the common
-		// flow is "user pressed esc", which deserves a calm message and a
-		// transcript marker so scrolling back makes it obvious the turn
-		// was aborted, not silently truncated.
-		wasCancelled := m.chat.userCancelledStream || errors.Is(msg.err, context.Canceled)
-		m.chat.userCancelledStream = false
-		if wasCancelled {
-			m.notice = "Turn cancelled (esc). Partial output kept in transcript; /retry reopens it."
-			m = m.appendSystemMessage("◦ Turn cancelled by user — partial assistant output above, if any, is what arrived before the cancel took effect.")
-			if len(m.chat.pendingQueue) > 0 {
-				m.notice += fmt.Sprintf(" %d queued message(s) kept.", len(m.chat.pendingQueue))
-			}
-			return m, nil
-		}
-		m.notice = "chat: " + msg.err.Error()
-		if len(m.chat.pendingQueue) > 0 {
-			m.notice += fmt.Sprintf(" — %d queued message(s) kept.", len(m.chat.pendingQueue))
-		}
-		return m, nil
-
+		return m.handleChatErrMsg(msg)
 	case streamClosedMsg:
-		m.chat.sending = false
-		m.chat.streamMessages = nil
-		m.chat.streamIndex = -1
-		m.chat.streamInputTokens = 0
-		m.clearStreamCancel()
-		m.resetAgentRuntime()
-		m.chat.pendingNoteCount = 0
-		next, drainCmd := m.drainPendingQueue()
-		return next, drainCmd
-
+		return m.handleStreamClosedMsg(msg)
 	case approvalRequestedMsg:
-		// Only surface one prompt at a time. If a second request sneaks in
-		// (shouldn't happen — agent loop is sequential) we deny it
-		// immediately so the engine keeps moving instead of deadlocking.
-		if m.pendingApproval != nil && msg.Pending != nil {
-			msg.Pending.resolve(engine.ApprovalDecision{
-				Approved: false,
-				Reason:   "another approval in progress",
-			})
-			return m, nil
-		}
-		m.pendingApproval = msg.Pending
-		// Snap to the Chat tab so the modal is actually visible — if the
-		// user was browsing the Files panel when an agent step asked for
-		// approval they need to see the prompt.
-		if len(m.tabs) > 0 {
-			m.activeTab = 0
-		}
-		return m, nil
+		return m.handleApprovalRequestedMsg(msg)
 
 	case tea.KeyMsg:
-		// Approval modal steals all keys while active. We intercept before
-		// anything else so a hasty tab-switch or ctrl+c doesn't leak a
-		// decision into unrelated handlers or leave the agent loop hung.
-		// ctrl+c still quits because a ragequit with an unanswered modal
-		// must not wedge the agent — the deferred SetApprover(nil) + the
-		// approver's own context cancellation take care of the rest.
-		if m.pendingApproval != nil {
-			switch msg.String() {
-			case "ctrl+c", "ctrl+q":
-				m.pendingApproval.resolve(engine.ApprovalDecision{
-					Approved: false,
-					Reason:   "tui quit",
-				})
-				m.pendingApproval = nil
-				return m, tea.Quit
-			case "y", "Y", "enter":
-				pending := m.pendingApproval
-				m.pendingApproval = nil
-				pending.resolve(engine.ApprovalDecision{Approved: true})
-				m.notice = "Approved " + pending.Req.Tool + "."
-				return m, nil
-			case "n", "N", "esc":
-				pending := m.pendingApproval
-				m.pendingApproval = nil
-				pending.resolve(engine.ApprovalDecision{
-					Approved: false,
-					Reason:   "user denied",
-				})
-				m.notice = "Denied " + pending.Req.Tool + "."
-				return m, nil
-			default:
-				// Swallow every other key while a prompt is pending so the
-				// user doesn't accidentally drop noise into the composer.
-				return m, nil
-			}
-		}
-		// Turkish keyboards on MinTTY / Windows Terminal occasionally
-		// deliver a plain letter keystroke with Alt=true during paste
-		// or fast typing (the same ESC-prefix quirk that ships '@' as
-		// alt+q). If we let that hit the global alt+<letter> switch
-		// below, typing "kelime" would trip alt+i → Status tab mid-
-		// word. Shield the Chat composer: when the tab is Chat and
-		// the user has active input, route alt+<letter> straight to
-		// the chat handler where it inserts as a rune. Empty Chat
-		// composer still honours alt+<letter> as a real shortcut.
-		if m.activeTab == 0 && msg.Alt && msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
-			if unicode.IsLetter(msg.Runes[0]) && (len(m.chat.input) > 0 || len(m.chat.pasteBlocks) > 0) {
-				// Allow stats-panel mode switches through even while typing;
-				// these specific alt combos are not Turkish-character inputs.
-				switch msg.String() {
-				case "alt+a", "alt+s", "alt+d", "alt+f", "alt+p":
-					// fall through to global shortcut handler
-				default:
-					return m.handleChatKey(msg)
-				}
-			}
-		}
-		if m.activeTab == 0 && isAtMentionOpenKey(msg) {
-			return m.handleChatKey(msg)
-		}
-		switch msg.String() {
-		case "ctrl+c", "ctrl+q":
-			// Ctrl+C cancels paste blocks first; then cancels streaming
-			// (if actively sending); finally rage-quits.
-			if m.activeTab == 0 && len(m.chat.pasteBlocks) > 0 {
-				m.clearPasteBlocks()
-				m.setChatInput("")
-				m.notice = "Paste cancelled."
-				return m, nil
-			}
-			if m.chat.sending {
-				if m.cancelActiveStream() {
-					m.notice = "Cancelling…"
-					return m, nil
-				}
-			}
-			return m, tea.Quit
-		case "ctrl+u":
-			// Unix readline-style "clear input line". Only useful on the
-			// Chat tab — other panels don't have a live composer.
-			if m.activeTab == 0 {
-				m.clearPasteBlocks()
-				m.setChatInput("")
-				m.chat.cursor = 0
-				m.slashMenu.mention = 0
-				m.slashMenu.command = 0
-				m.slashMenu.commandArg = 0
-				m.slashMenu.quickAction = 0
-				m.notice = "Input cleared."
-				return m, nil
-			}
-		case "ctrl+h":
-			m.ui.showHelpOverlay = !m.ui.showHelpOverlay
-			return m, nil
-		case "esc":
-			if m.activeTab == 0 && m.ui.showTasksPanel {
-				return m.handleTasksPanelKey(msg)
-			}
-			if m.chat.sending && m.cancelActiveStream() {
-				m.notice = "Cancelling…"
-				return m, nil
-			}
-			if m.activeTab == 0 && m.ui.statsPanelFocusLocked {
-				m.ui.statsPanelFocusLocked = false
-				m.ui.statsPanelBoostUntil = time.Time{}
-				m.notice = "Stats panel focus unlocked."
-				return m, nil
-			}
-		case "j", "k", "up", "down", "enter", "m", "f", "s", "g", "G", "r":
-			if m.activeTab == 0 && m.ui.showTasksPanel {
-				return m.handleTasksPanelKey(msg)
-			}
-			// Route to stats panel handler when providers sub-mode is focused
-			if m.activeTab == 0 && m.ui.statsPanelFocusLocked && m.ui.statsPanelMode == statsPanelModeProviders {
-				return m.handleStatsPanelProviderKey(msg)
-			}
-		case "ctrl+s":
-			m.ui.selectionModeActive = false
-			m.ui.statsPanelFocusLocked = false
-			m.ui.statsPanelBoostUntil = time.Time{}
-			m.ui.showStatsPanel = !m.ui.showStatsPanel
-			if m.ui.showStatsPanel && m.ui.statsPanelMode == "" {
-				m.ui.statsPanelMode = statsPanelModeOverview
-			}
-			return m, nil
-		case "alt+x":
-			if m.activeTab == 0 {
-				return m.setSelectionMode(!m.ui.selectionModeActive)
-			}
-		case "alt+a":
-			if m.activeTab == 0 {
-				m.activateStatsPanelMode(statsPanelModeOverview, "overview")
-				return m, nil
-			}
-		case "alt+s":
-			if m.activeTab == 0 {
-				m.activateStatsPanelMode(statsPanelModeTodos, "todos")
-				return m, nil
-			}
-		case "alt+d":
-			if m.activeTab == 0 {
-				m.activateStatsPanelMode(statsPanelModeTasks, "tasks")
-				return m, nil
-			}
-		case "alt+f":
-			if m.activeTab == 0 {
-				m.activateStatsPanelMode(statsPanelModeSubagents, "subagents")
-				return m, nil
-			}
-		case "alt+p":
-			if m.activeTab == 0 {
-				m.activateStatsPanelMode(statsPanelModeProviders, "providers")
-				return m, nil
-			}
-		case "ctrl+p":
-			m.activeTab = 0
-			m.setChatInput("/")
-			m.slashMenu.command = 0
-			m.slashMenu.commandArg = 0
-			m.slashMenu.mention = 0
-			return m, nil
-		case "ctrl+g":
-			m = m.activateDiagnosticTab("Activity")
-			return m, nil
-		case "tab":
-			if m.tabs[m.activeTab] != "Chat" {
-				m.activeTab = (m.activeTab + 1) % len(m.tabs)
-				return m, nil
-			}
-		case "shift+tab":
-			if m.tabs[m.activeTab] != "Chat" {
-				m.activeTab--
-				if m.activeTab < 0 {
-					m.activeTab = len(m.tabs) - 1
-				}
-				return m, nil
-			}
-		case "f1", "alt+1":
-			m.activeTab = 0
-			return m, nil
-		case "f2":
-			m.activeTab = 1
-			return m, nil
-		case "f3", "alt+2":
-			m.activeTab = 2
-			return m, nil
-		case "f4", "alt+3":
-			m.activeTab = 3
-			return m, nil
-		case "f5", "alt+4":
-			m.activeTab = 4
-			m = m.refreshWorkflowOnTabEnter()
-			return m, nil
-		case "f6", "alt+5", "alt+6":
-			m.activeTab = 5
-			return m, nil
-		case "f7":
-			m.activeTab = 6
-			return m, nil
-		case "f8", "alt+7":
-			m.activeTab = 7
-			if m.memory.entries == nil && !m.memory.loading {
-				m.memory.loading = true
-				return m, loadMemoryCmd(m.eng, m.memory.tier)
-			}
-			return m, nil
-		case "f9", "alt+8":
-			m.activeTab = 8
-			if !m.codemap.loaded && !m.codemap.loading {
-				m.codemap.loading = true
-				return m, loadCodemapCmd(m.eng)
-			}
-			return m, nil
-		case "f10", "alt+9", "alt+0":
-			m.activeTab = 9
-			if !m.conversations.loaded && !m.conversations.loading {
-				m.conversations.loading = true
-				return m, loadConversationsCmd(m.eng)
-			}
-			return m, nil
-		case "alt+t":
-			m.activeTab = 10
-			if !m.prompts.loaded && !m.prompts.loading {
-				m.prompts.loading = true
-				return m, loadPromptsCmd(m.eng)
-			}
-			return m, nil
-		case "f11":
-			// Most terminals intercept F11 for window fullscreen, so the
-			// app rarely sees this event. When it DOES come through (some
-			// embedded terminals, IDE consoles), open the help overlay
-			// rather than the Prompts tab — the previous binding sent
-			// users to a panel they couldn't escape from without knowing
-			// the secret. Prompts is reachable via alt+t.
-			m.ui.showHelpOverlay = !m.ui.showHelpOverlay
-			return m, nil
-		case "f12":
-			m.activeTab = 11
-			return m, nil
-		case "ctrl+i":
-			m = m.activateDiagnosticTab("Status")
-			return m, nil
-		case "ctrl+y":
-			m = m.activatePlansPanel("", false)
-			return m, nil
-		case "ctrl+w":
-			if m.activeTab != 0 {
-				m = m.activateContextPanel("", false)
-				return m, nil
-			}
-		case "ctrl+o":
-			m = m.activateProvidersPanel("", false)
-			return m, nil
-		case "alt+r":
-			m = m.activateDiagnosticTab("Orchestrate")
-			return m, nil
-		case "alt+h":
-			m = m.activateDiagnosticTab("Shortcuts")
-			return m, nil
-		}
-
-		if m.activeTab < 0 || m.activeTab >= len(m.tabs) {
-			m.notice = "Internal: tab index out of range"
-			return m, nil
-		}
-		switch m.tabs[m.activeTab] {
-		case "Chat":
-			return m.handleChatKey(msg)
-		case "Status":
-			return m.handleStatusKey(msg)
-		case "Files":
-			return m.handleFilesKey(msg)
-		case "Patch":
-			if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
-				return nm, cmd
-			}
-			switch msg.String() {
-			case "enter", "right", "l":
-				// Enter / Right opens the menu — arrow-driven access to
-				// apply / check / undo / next-file / next-hunk / focus /
-				// reload-* without memorising a/c/u/n/b/j/k/f/d/l.
-				return m.openPatchActionMenu(), nil
-			case "d", "alt+d":
-				return m, loadWorkspaceCmd(m.eng)
-			case "alt+l":
-				return m, loadLatestPatchCmd(m.eng)
-			case "n", "alt+n":
-				return m.shiftPatchTarget(1)
-			case "b", "alt+b":
-				return m.shiftPatchTarget(-1)
-			case "j", "alt+j", "down":
-				return m.shiftPatchHunk(1)
-			case "k", "alt+k", "up":
-				return m.shiftPatchHunk(-1)
-			case "f", "alt+f":
-				return m.focusPatchFile()
-			case "c", "alt+c":
-				return m, applyPatchCmd(m.eng, m.patchView.latestPatch, true)
-			case "a", "alt+a":
-				return m, applyPatchCmd(m.eng, m.patchView.latestPatch, false)
-			case "u", "alt+u":
-				return m, undoConversationCmd(m.eng)
-			}
-		case "Tools":
-			return m.handleToolsKey(msg)
-		case "Activity":
-			return m.handleActivityKey(msg)
-		case "Memory":
-			return m.handleMemoryKey(msg)
-		case "CodeMap":
-			return m.handleCodemapKey(msg)
-		case "Conversations":
-			return m.handleConversationsKey(msg)
-		case "Prompts":
-			return m.handlePromptsKey(msg)
-		case "Security":
-			return m.handleSecurityKey(msg)
-		case "Plans":
-			return m.handlePlansKey(msg)
-		case "Context":
-			return m.handleContextKey(msg)
-		case "Providers":
-			return m.handleProvidersKey(msg)
-		case "Workflow":
-			return m.handleWorkflowKey(msg)
-		}
+		return m.handleKeyMsg(msg)
 	}
 	return m, nil
 }

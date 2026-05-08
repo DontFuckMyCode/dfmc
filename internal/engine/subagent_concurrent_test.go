@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -98,7 +99,7 @@ func TestTryEnterSubagentEnforcesMaxConcurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first sub-agent should enter: %v", err)
 	}
-	if _, err := e.tryEnterSubagent(1); err == nil || !strings.Contains(err.Error(), "concurrency limit") {
+	if _, err := e.tryEnterSubagent(1); err == nil || !errors.Is(err, ErrSubagentConcurrencyLimit) {
 		t.Fatalf("second sub-agent should hit limit, got %v", err)
 	}
 	first()
@@ -168,7 +169,7 @@ func TestRunSubagentRejectsWhenConcurrencyLimitReached(t *testing.T) {
 	defer release()
 
 	_, err = e.RunSubagent(context.Background(), tools.SubagentRequest{Task: "overflow"})
-	if err == nil || !strings.Contains(err.Error(), "concurrency limit") {
+	if err == nil || !errors.Is(err, ErrSubagentConcurrencyLimit) {
 		t.Fatalf("RunSubagent should reject at concurrency limit, got %v", err)
 	}
 	if len(stub.requests) != 0 {

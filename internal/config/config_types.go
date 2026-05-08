@@ -13,26 +13,26 @@
 package config
 
 type Config struct {
-	Version   int                       `yaml:"version"`
-	Providers ProvidersConfig           `yaml:"providers"`
-	Routing   RoutingConfig             `yaml:"routing"`
-	Pipelines map[string]PipelineConfig `yaml:"pipelines"`
-	Context   ContextConfig             `yaml:"context"`
-	Memory    MemoryConfig              `yaml:"memory"`
-	Security  SecurityConfig            `yaml:"security"`
-	Tools     ToolsConfig               `yaml:"tools"`
-	Agent     AgentConfig               `yaml:"agent"`
-	Hooks     HooksConfig               `yaml:"hooks"`
-	Plugins   PluginsConfig             `yaml:"plugins"`
-	TUI       TUIConfig                 `yaml:"tui"`
-	Web       WebConfig                 `yaml:"web"`
-	Remote    RemoteConfig              `yaml:"remote"`
-	Project   ProjectConfig             `yaml:"project"`
-	Coach     CoachConfig               `yaml:"coach"`
-	Intent    IntentConfig              `yaml:"intent"`
-	AST       ASTConfig                 `yaml:"ast"`
-	MCP       MCPConfig                 `yaml:"mcp"`
-	DataDirPath string                  `yaml:"data_dir"`
+	Version     int                       `yaml:"version"`
+	Providers   ProvidersConfig           `yaml:"providers"`
+	Routing     RoutingConfig             `yaml:"routing"`
+	Pipelines   map[string]PipelineConfig `yaml:"pipelines"`
+	Context     ContextConfig             `yaml:"context"`
+	Memory      MemoryConfig              `yaml:"memory"`
+	Security    SecurityConfig            `yaml:"security"`
+	Tools       ToolsConfig               `yaml:"tools"`
+	Agent       AgentConfig               `yaml:"agent"`
+	Hooks       HooksConfig               `yaml:"hooks"`
+	Plugins     PluginsConfig             `yaml:"plugins"`
+	TUI         TUIConfig                 `yaml:"tui"`
+	Web         WebConfig                 `yaml:"web"`
+	Remote      RemoteConfig              `yaml:"remote"`
+	Project     ProjectConfig             `yaml:"project"`
+	Coach       CoachConfig               `yaml:"coach"`
+	Intent      IntentConfig              `yaml:"intent"`
+	AST         ASTConfig                 `yaml:"ast"`
+	MCP         MCPConfig                 `yaml:"mcp"`
+	DataDirPath string                    `yaml:"data_dir"`
 }
 
 type ASTConfig struct {
@@ -45,10 +45,10 @@ type CoachConfig struct {
 }
 
 type IntentConfig struct {
-	Enabled         bool   `yaml:"enabled"`
-	Provider        string `yaml:"provider"`
-	Model           string `yaml:"model"`
-	TimeoutMs       int    `yaml:"timeout_ms"`
-	FailOpen        bool   `yaml:"fail_open"`
+	Enabled          bool   `yaml:"enabled"`
+	Provider         string `yaml:"provider"`
+	Model            string `yaml:"model"`
+	TimeoutMs        int    `yaml:"timeout_ms"`
+	FailOpen         bool   `yaml:"fail_open"`
 	MaxSnapshotChars int    `yaml:"max_snapshot_chars"`
 }

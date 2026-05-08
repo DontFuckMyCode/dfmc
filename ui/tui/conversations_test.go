@@ -153,6 +153,44 @@ func TestRenderConversationsViewWithEntries(t *testing.T) {
 	}
 }
 
+// TestConversationsDeepSearchSurfacesActiveModeChip — Phase G item 1:
+// when a deep full-text search is active the panel must advertise it
+// in the query line (so the user knows row count reflects matches,
+// not the full list) and the hint must mention `S` and `c`.
+func TestConversationsDeepSearchSurfacesActiveModeChip(t *testing.T) {
+	m := newConversationsTestModel()
+	m.conversations.entries = sampleConversationSummaries()[:1]
+	m.conversations.query = "auth"
+	m.conversations.deepSearchActive = true
+	m.conversations.deepSearchQuery = "auth"
+	out := m.renderConversationsView(140)
+	if !strings.Contains(out, "deep-search active") {
+		t.Fatalf("deep-search chip missing:\n%s", out)
+	}
+	if !strings.Contains(out, "S deep-search") {
+		t.Fatalf("hint should advertise S accelerator:\n%s", out)
+	}
+}
+
+// TestHandleConversationsKey_DeepSearchRequiresQuery — `S` with an
+// empty query must not fire the search command; instead it leaves a
+// notice telling the user to type with `/` first. This prevents an
+// engine round-trip that would just return the full list.
+func TestHandleConversationsKey_DeepSearchRequiresQuery(t *testing.T) {
+	m := newConversationsTestModel()
+	got, cmd := m.handleConversationsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
+	gm := got.(Model)
+	if cmd != nil {
+		t.Fatalf("expected no cmd when query empty, got cmd")
+	}
+	if !strings.Contains(gm.notice, "deep-search") && !strings.Contains(gm.notice, "/") {
+		t.Fatalf("expected guidance notice, got %q", gm.notice)
+	}
+	if gm.conversations.deepSearchActive {
+		t.Fatalf("deep-search must not flip active without a query")
+	}
+}
+
 func TestConversationsScrollBindings(t *testing.T) {
 	m := newConversationsTestModel()
 	m.conversations.entries = sampleConversationSummaries()

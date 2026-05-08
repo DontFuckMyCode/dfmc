@@ -3,11 +3,16 @@
 // sizing with the PromptRuntime resolver (provider/model/tool-style/
 // default-mode) and the system-prompt assembler that feeds both the
 // non-native and native tool loops.
+//
+// System-prompt notices (conversationPruneSystemNotice,
+// toolReasoningSystemNotice, hostOSSystemNotice,
+// memoryDegradedSystemNotice, appendSystemNoticeText, and the
+// bundleToSystemBlocks PromptBundle converter) live in
+// engine_prompt_notices.go.
 
 package engine
 
 import (
-	"runtime"
 	"strings"
 
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
@@ -241,95 +246,23 @@ func (e *Engine) buildSystemPrompt(question string, chunks []types.ContextChunk)
 			Cacheable: true,
 		})
 	}
+	// Conversation-pruning contract. Every history turn we send the
+	// model has a `[id:X]` prefix so the model can name pruning
+	// candidates by ID. The model owes us TWO things on its FINAL
+	// turn (the user-visible answer, not intermediate tool steps):
+	//  1. A `[next: ...]` block with 2-3 concrete next-action ideas
+	//     so the user can keep moving without re-prompting from zero.
+	//  2. A `[cleanup: id1, id2]` block listing message IDs that are
+	//     no longer needed — superseded, resolved, or off-thread.
+	// We strip both blocks from the persisted answer (they're metadata)
+	// and apply the cleanup against the conversation log automatically.
+	pruneNotice := conversationPruneSystemNotice()
+	text = appendSystemNoticeText(text, pruneNotice)
+	blocks = append(blocks, provider.SystemBlock{
+		Label:     "conversation-prune",
+		Text:      pruneNotice,
+		Cacheable: true,
+	})
 	return text, blocks
 }
 
-// toolReasoningSystemNotice is the cacheable system-prompt block that tells
-// the model to fill the `_reason` virtual field on every tool call. The schema
-// keeps it optional for provider compatibility, but this runtime instruction
-// treats it as required UI metadata.
-func toolReasoningSystemNotice() string {
-	return "[Tool self-narration REQUIRED: every tool call must include the virtual `_reason` string in args; every model-initiated tool call must provide it. " +
-		"Treat missing `_reason` as an invalid tool-call shape. Use one concise sentence (<=140 chars) explaining why this tool is needed now and what signal you expect; " +
-		"the TUI shows it in the debug tool timeline, and batch calls need a reason both for the batch and for each inner call when possible. Example: " +
-		`{"name":"read_file","args":{"path":"server.go","_reason":"checking how the SSE handler closes the stream before editing it"}}.` +
-		" `_reason` is stripped before dispatch and never reaches the tool implementation.]"
-}
-
-// hostOSSystemNotice returns the runtime.GOOS-aware reminder injected
-// into every system prompt. Tells the model what host it's on, which
-// path separators are native, and — most importantly — that
-// run_command does not invoke a shell so chain operators and
-// redirects belong nowhere.
-func hostOSSystemNotice() string {
-	switch runtime.GOOS {
-	case "windows":
-		return "[Host: Windows. run_command executes binaries directly (no cmd.exe / no PowerShell): " +
-			"`&&`, `||`, `;`, `|`, `>`, and `cd ...` chains are NOT interpreted. " +
-			"Pass {command, args, dir} separately, and set dir to an absolute path. " +
-			"Prefer forward slashes for cross-platform tools (`go`, `git`, `npm`, `python`); use escaped backslashes only when explicitly invoking Windows-native built-ins via cmd.exe/PowerShell.]"
-	case "darwin":
-		return "[Host: macOS (darwin). run_command executes binaries directly — no shell — so " +
-			"`&&`, `||`, `;`, `|`, `>`, redirects do NOT work. Use {command, args, dir} and " +
-			"sequence dependent steps as separate tool_calls.]"
-	default:
-		return "[Host: " + runtime.GOOS + " (Unix-like). run_command executes binaries directly — no shell — so " +
-			"`&&`, `||`, `;`, `|`, `>`, redirects do NOT work. Use {command, args, dir} and " +
-			"sequence dependent steps as separate tool_calls.]"
-	}
-}
-
-// appendSystemNoticeText is a tiny join helper that avoids leading
-// blank lines when the existing prompt is empty (rare but possible
-// when buildSystemPromptBundle returns an empty bundle).
-func appendSystemNoticeText(existing, notice string) string {
-	if strings.TrimSpace(notice) == "" {
-		return existing
-	}
-	if strings.TrimSpace(existing) == "" {
-		return notice
-	}
-	return existing + "\n\n" + notice
-}
-
-// memoryDegradedSystemNotice formats the user-invisible system-prompt
-// hint that warns the model recall is offline. Lives next to its only
-// caller so future tweaks (wording, label) stay obvious. The reason
-// is included verbatim so the model can decide whether the failure is
-// recoverable (e.g. "database locked" → suggest /doctor) or terminal
-// (corrupt store → fall back to project-only context).
-func memoryDegradedSystemNotice(reason string) string {
-	r := strings.TrimSpace(reason)
-	if r == "" {
-		r = "store unavailable"
-	}
-	return "[Memory store is offline — do not rely on historical recall. " +
-		"Memory.Search/Recall will return empty results regardless of what was " +
-		"learned in prior sessions. Reason: " + r + "]"
-}
-
-// bundleToSystemBlocks converts a PromptBundle into the paired (flat text,
-// SystemBlocks) form consumed by providers. When the bundle has no cacheable
-// sections the blocks slice is nil so non-cache-aware providers keep the
-// flat-string fast path.
-func bundleToSystemBlocks(bundle *promptlib.PromptBundle) (string, []provider.SystemBlock) {
-	if bundle == nil {
-		return "", nil
-	}
-	text := bundle.Text()
-	if !bundle.HasCacheable() {
-		return text, nil
-	}
-	blocks := make([]provider.SystemBlock, 0, len(bundle.Sections))
-	for _, s := range bundle.Sections {
-		if strings.TrimSpace(s.Text) == "" {
-			continue
-		}
-		blocks = append(blocks, provider.SystemBlock{
-			Label:     s.Label,
-			Text:      s.Text,
-			Cacheable: s.Cacheable,
-		})
-	}
-	return text, blocks
-}

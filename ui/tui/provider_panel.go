@@ -1,18 +1,20 @@
 package tui
 
-// provider_panel.go
+// provider_panel.go — read-side surface for the Providers panel:
+// derives provider rows from the engine, filters on the panel query,
+// renders status badges + key-source badges + relative-time strings,
+// and exposes a few small Model accessors used by the panel renderer.
+// All write paths (cycle/setPrimary/toggleFallback/profile edits +
+// pipelines) live in provider_panel_actions.go; provider create/delete
+// + models.dev sync command live in provider_panel_crud.go; the
+// keyboard router lives in provider_panel_key*.go.
 
 import (
-	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -30,6 +32,14 @@ type providerRow struct {
 	IsOffline     bool
 	IsPrimary     bool
 	Status        string // "ready" | "offline" | "no-key"
+}
+
+// syncModelsDevMsg carries the result of the async models.dev refresh
+// dispatched from provider_panel_crud.go's syncModelsDevCmd.
+type syncModelsDevMsg struct {
+	path    string
+	changes []string
+	err     error
 }
 
 // providerStatusTag derives the short status label from a Provider's
@@ -184,8 +194,6 @@ func apiKeySourceBadge(name string, prof config.ModelConfig) string {
 	return subtleStyle.Render("[key:config]")
 }
 
-// formatProviderRow renders one line. Shape:
-// `▶ READY  anthropic  claude-opus-4   max=200000  tools=on  tool-style`.
 func (m Model) refreshProvidersRows() Model {
 	rows := collectProviderRows(m.eng)
 	m.providers.rows = rows
@@ -232,21 +240,6 @@ func (m Model) detailProviderModels() []string {
 	return prof.AllModels()
 }
 
-func (m *Model) addModelToProvider(provider, model string) {
-	if m.eng == nil || m.eng.Config == nil {
-		return
-	}
-	prof, ok := m.eng.Config.Providers.Profiles[provider]
-	if !ok {
-		return
-	}
-	models := prof.AllModels()
-	prof.Models = append(models, model)
-	prof.Model = model
-	m.eng.Config.Providers.Profiles[provider] = prof
-	m.notice = fmt.Sprintf("added model %s to %s", model, provider)
-}
-
 func (m Model) loadModelsDevForProvider(providerName string) []string {
 	providerName = strings.ToLower(strings.TrimSpace(providerName))
 	catalog, err := config.LoadModelsDevCatalog(config.ModelsDevCachePath())
@@ -275,298 +268,9 @@ func (m Model) loadModelsDevForProvider(providerName string) []string {
 	return items
 }
 
-func (m *Model) savePipelineDraft() error {
-	name := strings.TrimSpace(m.providers.pipelineDraftName)
-	if name == "" {
-		return fmt.Errorf("pipeline name is required")
-	}
-	if len(m.providers.pipelineDraftSteps) == 0 {
-		return fmt.Errorf("pipeline needs at least one step")
-	}
-	for i, step := range m.providers.pipelineDraftSteps {
-		if strings.TrimSpace(step.Provider) == "" {
-			return fmt.Errorf("step %d provider is required", i+1)
-		}
-		if strings.TrimSpace(step.Model) == "" {
-			return fmt.Errorf("step %d model is required", i+1)
-		}
-	}
-	path, err := m.persistPipelinesProjectConfig(name, m.providers.pipelineDraftSteps)
-	if err != nil {
-		return err
-	}
-	m.providers.pipelineEditMode = false
-	m.providers.pipelineDraftName = ""
-	m.providers.pipelineDraftSteps = nil
-	m.providers.pipelineDraftBuf = ""
-	m.providers.pipelineNames = m.pipelineNamesFromEngine()
-	m.notice = "saved pipeline to " + path
-	return nil
-}
-
-func (m *Model) deletePipeline(name string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return fmt.Errorf("pipeline name is empty")
-	}
-	if m.eng == nil || m.eng.Config == nil {
-		return fmt.Errorf("engine not ready")
-	}
-	path, err := m.projectConfigPath()
-	if err != nil {
-		return err
-	}
-	cfg := m.eng.Config
-	if cfg.Pipelines == nil {
-		return fmt.Errorf("pipeline not found")
-	}
-	delete(cfg.Pipelines, name)
-	if err := cfg.Save(path); err != nil {
-		return err
-	}
-	if err := m.reloadEngineConfig(); err != nil {
-		return err
-	}
-	if m.providers.activePipeline == name {
-		m.providers.activePipeline = ""
-	}
-	return nil
-}
-
 func (m Model) pipelineNamesFromEngine() []string {
 	if m.eng == nil {
 		return nil
 	}
 	return m.eng.PipelineNames()
-}
-
-// handleStatsPanelProviderKey processes keystrokes when the F2 stats panel
-// is locked to the providers sub-mode (alt+p while on chat tab). It supports:
-// j/k — move cursor through provider list
-// enter — switch to the selected provider
-// m — cycle preferred model for the selected profile
-// f — cycle fallback model index
-// s — save provider config to project .dfmc/config.yaml
-// g/G — jump to first/last provider
-type syncModelsDevMsg struct {
-	path    string
-	changes []string
-	err     error
-}
-
-func (m Model) cycleProviderModel(name string) Model {
-	if m.eng == nil || m.eng.Config == nil {
-		return m
-	}
-	prof, ok := m.eng.Config.Providers.Profiles[name]
-	if !ok {
-		return m
-	}
-	models := prof.AllModels()
-	if len(models) == 0 {
-		m.notice = name + " has no models to cycle"
-		return m
-	}
-	current := strings.TrimSpace(prof.Model)
-	idx := 0
-	for i, model := range models {
-		if strings.EqualFold(model, current) {
-			idx = i
-			break
-		}
-	}
-	idx = (idx + 1) % len(models)
-	prof.Model = models[idx]
-	m.eng.Config.Providers.Profiles[name] = prof
-	path, err := m.persistProviderModelProjectConfig(name, prof.Model)
-	if err != nil {
-		m.notice = "cycle " + name + " model → " + prof.Model + " (save failed: " + err.Error() + ")"
-	} else {
-		m.notice = "cycle " + name + " model → " + prof.Model
-		_ = path
-	}
-	m = m.refreshProvidersRows()
-	m = m.focusProviderRow(name)
-	return m
-}
-
-func (m Model) setPrimaryProvider(name string) Model {
-	if m.eng == nil || m.eng.Config == nil {
-		return m
-	}
-	m.eng.Config.Providers.Primary = name
-	if m.eng.Providers != nil {
-		m.eng.Providers.SetPrimary(name)
-	}
-	if err := m.persistProvidersPrimaryFallback(); err != nil {
-		m.notice = "primary set failed: " + err.Error()
-	} else {
-		m.notice = name + " is now primary"
-	}
-	m = m.refreshProvidersRows()
-	m = m.focusProviderRow(name)
-	return m
-}
-
-func (m Model) toggleFallbackProvider(name string) Model {
-	if m.eng == nil || m.eng.Config == nil {
-		return m
-	}
-	var newFallback []string
-	found := false
-	for _, fb := range m.eng.Config.Providers.Fallback {
-		if strings.EqualFold(fb, name) {
-			found = true
-			continue
-		}
-		newFallback = append(newFallback, fb)
-	}
-	if !found {
-		newFallback = []string{name}
-	}
-	m.eng.Config.Providers.Fallback = newFallback
-	if m.eng != nil && m.eng.Providers != nil {
-		m.eng.Providers.SetFallback(newFallback)
-	}
-	if err := m.persistProvidersPrimaryFallback(); err != nil {
-		m.notice = "fallback toggle failed: " + err.Error()
-	} else if found {
-		m.notice = "removed " + name + " from fallback"
-	} else {
-		m.notice = "added " + name + " to fallback"
-	}
-	m = m.refreshProvidersRows()
-	m = m.focusProviderRow(name)
-	return m
-}
-
-func (m Model) deleteActiveModel() Model {
-	if m.eng == nil || m.eng.Config == nil {
-		m.notice = "engine not ready"
-		return m
-	}
-	prof, ok := m.eng.Config.Providers.Profiles[m.providers.detailProvider]
-	if !ok {
-		m.notice = "provider not found"
-		return m
-	}
-	models := prof.AllModels()
-	if len(models) == 0 {
-		m.notice = "no models to delete"
-		return m
-	}
-	idx := m.providers.modelEditIdx
-	if idx < 0 || idx >= len(models) {
-		idx = 0
-	}
-	deleted := models[idx]
-	models = append(models[:idx], models[idx+1:]...)
-	prof.Models = models
-	if len(models) > 0 {
-		prof.Model = models[0]
-	} else {
-		prof.Model = ""
-	}
-	m.eng.Config.Providers.Profiles[m.providers.detailProvider] = prof
-	if m.providers.modelEditIdx >= len(models) {
-		m.providers.modelEditIdx = max(0, len(models)-1)
-	}
-	m = m.refreshProvidersRows()
-	m = m.focusProviderRow(m.providers.detailProvider)
-	m.notice = fmt.Sprintf("deleted model %s from %s", deleted, m.providers.detailProvider)
-	return m
-}
-
-func (m *Model) commitProfileEditField() {
-	if m.eng == nil || m.eng.Config == nil {
-		return
-	}
-	prof, ok := m.eng.Config.Providers.Profiles[m.providers.detailProvider]
-	if !ok {
-		return
-	}
-	draft := strings.TrimSpace(m.providers.profileEditDraft)
-	if draft == "" {
-		return
-	}
-	switch m.providers.profileEditField {
-	case 0:
-		prof.Protocol = draft
-	case 1:
-		prof.BaseURL = draft
-	case 2:
-		if v, err := strconv.Atoi(draft); err == nil {
-			prof.MaxContext = v
-		}
-	case 3:
-		if v, err := strconv.Atoi(draft); err == nil {
-			prof.MaxTokens = v
-		}
-	}
-	m.eng.Config.Providers.Profiles[m.providers.detailProvider] = prof
-	m.providers.profileEditDraft = ""
-}
-
-func (m *Model) persistProfileEdits() error {
-	if m.eng == nil || m.eng.Config == nil {
-		return fmt.Errorf("engine not ready")
-	}
-	prof, ok := m.eng.Config.Providers.Profiles[m.providers.detailProvider]
-	if !ok {
-		return fmt.Errorf("provider not found")
-	}
-	path, err := m.projectConfigPath()
-	if err != nil {
-		return err
-	}
-
-	doc := map[string]any{}
-	if data, readErr := os.ReadFile(path); readErr == nil {
-		if len(strings.TrimSpace(string(data))) > 0 {
-			if unmarshalErr := yaml.Unmarshal(data, &doc); unmarshalErr != nil {
-				return fmt.Errorf("parse project config: %w", unmarshalErr)
-			}
-		}
-	} else if !errors.Is(readErr, os.ErrNotExist) {
-		return fmt.Errorf("read project config: %w", readErr)
-	}
-	if doc == nil {
-		doc = map[string]any{}
-	}
-	if _, ok := doc["version"]; !ok {
-		doc["version"] = 1
-	}
-
-	profilesNode := ensureStringAnyMap(ensureStringAnyMap(doc, "providers"), "profiles")
-	profileNode := ensureStringAnyMap(profilesNode, m.providers.detailProvider)
-	if strings.TrimSpace(prof.Protocol) != "" {
-		profileNode["protocol"] = prof.Protocol
-	}
-	if strings.TrimSpace(prof.BaseURL) != "" {
-		profileNode["base_url"] = prof.BaseURL
-	}
-	if prof.MaxTokens > 0 {
-		profileNode["max_tokens"] = prof.MaxTokens
-	}
-	if prof.MaxContext > 0 {
-		profileNode["max_context"] = prof.MaxContext
-	}
-	if strings.TrimSpace(prof.Model) != "" {
-		profileNode["model"] = prof.Model
-	}
-	if len(prof.Models) > 0 {
-		profileNode["models"] = prof.Models
-	}
-
-	out, marshalErr := yaml.Marshal(doc)
-	if marshalErr != nil {
-		return fmt.Errorf("marshal project config: %w", marshalErr)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create project config dir: %w", err)
-	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return fmt.Errorf("write project config: %w", err)
-	}
-	return m.reloadEngineConfig()
 }

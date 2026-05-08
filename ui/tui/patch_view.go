@@ -1,26 +1,21 @@
 package tui
 
-// patch_view.go — Patch Lab panel and the patch-related Model
-// accessors that drive it.
+// patch_view.go — Patch Lab panel: the read-only summary/render
+// surface and the section/hunk accessors that back it. Sibling of
+// patch_view_actions.go which owns the action menu (apply / check /
+// undo / next-prev file or hunk / focus-in-Files / reload diff or
+// patch) plus the bubbletea commands and Model navigators those
+// actions dispatch to.
 //
 // Lifted out of the 10K-line tui.go god file (REPORT.md C1) so the
 // "what changed and what's about to change" surface lives in one
 // obvious place. Pure parsing & git-apply helpers stayed in
-// patch_parse.go; this file is the layer above — Model state for the
-// currently-focused section/hunk, the bubbletea commands that run
-// `git apply`, and the renderer that paints the side-by-side view.
-//
-// All Model methods are kept verbatim — no behaviour change, no new
-// abstractions. handleChatKey / handlePatchKey still call them.
+// patch_parse.go; this file is the layer above for the read side,
+// patch_view_actions.go is the layer above for the write side.
 
 import (
 	"fmt"
 	"strings"
-
-	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/dontfuckmycode/dfmc/internal/engine"
-	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 func (m Model) patchCommandSummary() string {
@@ -46,149 +41,9 @@ func (m Model) renderPatchView(width int) string {
 	return out
 }
 
-// openPatchActionMenu builds the contextual action list for the
-// Patch panel — every operation that previously lived behind
-// a/c/u/n/b/j/k/f/d/l is now reachable via arrows + enter.
-func (m Model) openPatchActionMenu() Model {
-	actions := []panelAction{
-		{Label: "Apply patch (modifies the worktree)", Accel: "a",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				return m, applyPatchCmd(m.eng, m.patchView.latestPatch, false)
-			}},
-		{Label: "Check patch (dry-run apply)", Accel: "c",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				return m, applyPatchCmd(m.eng, m.patchView.latestPatch, true)
-			}},
-		{Label: "Undo last conversation turn", Accel: "u",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				return m, undoConversationCmd(m.eng)
-			}},
-		{Label: "Next file in patch", Accel: "n",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				nm, cmd := m.shiftPatchTarget(1)
-				if mm, ok := nm.(Model); ok {
-					return mm, cmd
-				}
-				return m, cmd
-			}},
-		{Label: "Previous file in patch", Accel: "b",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				nm, cmd := m.shiftPatchTarget(-1)
-				if mm, ok := nm.(Model); ok {
-					return mm, cmd
-				}
-				return m, cmd
-			}},
-		{Label: "Next hunk", Accel: "j",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				nm, cmd := m.shiftPatchHunk(1)
-				if mm, ok := nm.(Model); ok {
-					return mm, cmd
-				}
-				return m, cmd
-			}},
-		{Label: "Previous hunk", Accel: "k",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				nm, cmd := m.shiftPatchHunk(-1)
-				if mm, ok := nm.(Model); ok {
-					return mm, cmd
-				}
-				return m, cmd
-			}},
-		{Label: "Focus current file in Files tab", Accel: "f",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				nm, cmd := m.focusPatchFile()
-				if mm, ok := nm.(Model); ok {
-					return mm, cmd
-				}
-				return m, cmd
-			}},
-		{Label: "Reload worktree diff", Accel: "d",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				return m, loadWorkspaceCmd(m.eng)
-			}},
-		{Label: "Reload latest assistant patch", Accel: "alt+l",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				return m, loadLatestPatchCmd(m.eng)
-			}},
-	}
-	return m.openActionMenu("Patch", "Patch actions", actions)
-}
-
-func loadLatestPatchCmd(eng *engine.Engine) tea.Cmd {
-	return func() tea.Msg {
-		if eng == nil {
-			return latestPatchLoadedMsg{}
-		}
-		return latestPatchLoadedMsg{patch: latestAssistantUnifiedDiff(eng.ConversationActive())}
-	}
-}
-
-func applyPatchCmd(eng *engine.Engine, patch string, checkOnly bool) tea.Cmd {
-	return func() tea.Msg {
-		if eng == nil {
-			return patchApplyMsg{err: fmt.Errorf("engine is nil"), checkOnly: checkOnly}
-		}
-		if strings.TrimSpace(patch) == "" {
-			return patchApplyMsg{err: fmt.Errorf("no assistant patch loaded"), checkOnly: checkOnly}
-		}
-		root := strings.TrimSpace(eng.Status().ProjectRoot)
-		if root == "" {
-			root = "."
-		}
-		if err := applyUnifiedDiff(root, patch, checkOnly); err != nil {
-			return patchApplyMsg{err: err, checkOnly: checkOnly}
-		}
-		if checkOnly {
-			return patchApplyMsg{checkOnly: true}
-		}
-		changed, err := gitChangedFiles(root, 12)
-		return patchApplyMsg{checkOnly: false, changed: changed, err: err}
-	}
-}
-
-func (m Model) focusPatchFile() (tea.Model, tea.Cmd) {
-	target := strings.TrimSpace(m.currentPatchPath())
-	if target == "" {
-		target = strings.TrimSpace(m.bestPatchFileTarget())
-	}
-	if target == "" {
-		m.notice = "No patched file to focus."
-		return m, nil
-	}
-	for i, path := range m.filesView.entries {
-		if strings.EqualFold(strings.TrimSpace(path), target) {
-			m.filesView.index = i
-			m.activeTab = 2
-			m.notice = "Focused patched file " + target
-			return m, loadFilePreviewCmd(m.eng, target)
-		}
-	}
-	m.notice = "Patched file not present in file index: " + target
-	return m, nil
-}
-
-func (m Model) shiftPatchTarget(delta int) (tea.Model, tea.Cmd) {
-	if len(m.patchView.set) == 0 {
-		m.notice = "No patched file to navigate."
-		return m, nil
-	}
-	m.patchView.index = (m.patchView.index + delta + len(m.patchView.set)) % len(m.patchView.set)
-	m.patchView.hunk = 0
-	m.notice = "Viewing patch for " + m.currentPatchPath()
-	return m, nil
-}
-
-func (m Model) shiftPatchHunk(delta int) (tea.Model, tea.Cmd) {
-	section := m.currentPatchSection()
-	if section == nil || len(section.Hunks) == 0 {
-		m.notice = "No patch hunk to navigate."
-		return m, nil
-	}
-	m.patchView.hunk = (m.patchView.hunk + delta + len(section.Hunks)) % len(section.Hunks)
-	m.notice = "Viewing hunk " + m.patchHunkSummary()
-	return m, nil
-}
+// openPatchActionMenu + applyPatchCmd + loadLatestPatchCmd +
+// focusPatchFile + shiftPatchTarget + shiftPatchHunk live in
+// patch_view_actions.go.
 
 func (m Model) patchFilesOrNone() []string {
 	if len(m.patchView.files) == 0 {
@@ -327,140 +182,3 @@ func (m Model) patchReviewHints() []string {
 	return hints
 }
 
-func (m Model) chatPatchSummary(item chatLine) string {
-	if len(item.PatchFiles) == 0 && item.PatchHunks == 0 && item.ToolCalls == 0 {
-		return ""
-	}
-	parts := make([]string, 0, 6)
-	if len(item.PatchFiles) > 0 {
-		parts = append(parts, fmt.Sprintf("patch: %s", strings.Join(item.PatchFiles, ", ")))
-	}
-	if item.PatchHunks > 0 {
-		parts = append(parts, fmt.Sprintf("hunks=%d", item.PatchHunks))
-	}
-	if item.IsLatestPatch {
-		parts = append(parts, "latest")
-	}
-	if current := strings.TrimSpace(m.currentPatchPath()); current != "" && containsStringFold(item.PatchFiles, current) {
-		parts = append(parts, "current target")
-	}
-	if item.ToolCalls > 0 {
-		toolSummary := fmt.Sprintf("tools=%d", item.ToolCalls)
-		if len(item.ToolNames) > 0 {
-			toolSummary = fmt.Sprintf("%s [%s]", toolSummary, strings.Join(item.ToolNames, ", "))
-		}
-		parts = append(parts, toolSummary)
-	}
-	if item.ToolFailures > 0 {
-		parts = append(parts, fmt.Sprintf("failures=%d", item.ToolFailures))
-	}
-	return strings.Join(parts, " | ")
-}
-
-func (m *Model) annotateAssistantPatch(index int) {
-	if index < 0 || index >= len(m.chat.transcript) {
-		return
-	}
-	if m.chat.transcript[index].Role != "assistant" {
-		return
-	}
-	sections := parseUnifiedDiffSections(m.chat.transcript[index].Content)
-	m.chat.transcript[index].PatchFiles = patchSectionPaths(sections)
-	m.chat.transcript[index].PatchHunks = totalPatchHunks(sections)
-}
-
-func (m *Model) annotateAssistantToolUsage(index int) {
-	if index < 0 || index >= len(m.chat.transcript) {
-		return
-	}
-	if m.chat.transcript[index].Role != "assistant" || m.eng == nil || m.eng.Conversation == nil {
-		return
-	}
-	msg, ok := m.matchAssistantConversationMessage(m.chat.transcript[index].Content)
-	if !ok {
-		return
-	}
-	m.chat.transcript[index].ToolCalls = len(msg.ToolCalls)
-	m.chat.transcript[index].ToolFailures = 0
-	if len(msg.ToolCalls) == 0 && len(msg.Results) == 0 {
-		return
-	}
-	names := make([]string, 0, len(msg.ToolCalls))
-	seen := map[string]struct{}{}
-	for _, call := range msg.ToolCalls {
-		name := strings.TrimSpace(call.Name)
-		if name == "" {
-			continue
-		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		names = append(names, name)
-	}
-	for _, result := range msg.Results {
-		if !result.Success {
-			m.chat.transcript[index].ToolFailures++
-		}
-		if name := strings.TrimSpace(result.Name); name != "" {
-			if _, ok := seen[name]; !ok {
-				seen[name] = struct{}{}
-				names = append(names, name)
-			}
-		}
-	}
-	m.chat.transcript[index].ToolNames = names
-}
-
-func (m Model) matchAssistantConversationMessage(content string) (types.Message, bool) {
-	if m.eng == nil || m.eng.Conversation == nil {
-		return types.Message{}, false
-	}
-	active := m.eng.Conversation.Active()
-	if active == nil {
-		return types.Message{}, false
-	}
-	want := strings.TrimSpace(content)
-	messages := active.Messages()
-	for i := len(messages) - 1; i >= 0; i-- {
-		msg := messages[i]
-		if msg.Role != types.RoleAssistant {
-			continue
-		}
-		if strings.TrimSpace(msg.Content) == want {
-			return msg, true
-		}
-	}
-	for i := len(messages) - 1; i >= 0; i-- {
-		msg := messages[i]
-		if msg.Role != types.RoleAssistant {
-			continue
-		}
-		if len(msg.ToolCalls) > 0 || len(msg.Results) > 0 {
-			return msg, true
-		}
-	}
-	return types.Message{}, false
-}
-
-func (m *Model) markLatestPatchInTranscript(patch string) {
-	for i := range m.chat.transcript {
-		m.chat.transcript[i].IsLatestPatch = false
-	}
-	patch = strings.TrimSpace(strings.ReplaceAll(patch, "\r\n", "\n"))
-	if patch == "" {
-		return
-	}
-	for i := len(m.chat.transcript) - 1; i >= 0; i-- {
-		if m.chat.transcript[i].Role != "assistant" {
-			continue
-		}
-		if strings.TrimSpace(extractUnifiedDiff(m.chat.transcript[i].Content)) == patch {
-			m.chat.transcript[i].IsLatestPatch = true
-			if len(m.chat.transcript[i].PatchFiles) == 0 {
-				m.annotateAssistantPatch(i)
-			}
-			return
-		}
-	}
-}

@@ -238,6 +238,19 @@ func (m Model) renderProviderDetailView(width int) string {
 		}
 	}
 
+	// Phase I item 2 — per-provider usage history strip. Only renders
+	// when something has actually completed against this provider; the
+	// renderer keeps the section silent on a fresh session so an empty
+	// "Recent" block doesn't clutter the detail view. Up to 5 most-recent
+	// completions, newest first, with relative time + model + token
+	// counts so the user can size next prompts off real numbers.
+	if hist := m.providerUsageStrip(name, 5); len(hist) > 0 {
+		lines = append(lines, "", sectionTitleStyle.Render("Recent completions"))
+		for _, line := range hist {
+			lines = append(lines, "  "+subtleStyle.Render(line))
+		}
+	}
+
 	lines = append(lines, m.renderProvidersMenu(width-2)...)
 	return strings.Join(lines, "\n")
 }

@@ -15,7 +15,7 @@ func TestProvidersListV2_RendersAllThreePanesOnWideTerminal(t *testing.T) {
 		{
 			Name: "anthropic", Model: "claude-sonnet-4-6", Protocol: "anthropic",
 			MaxContext: 200000, ToolStyle: "anthropic", SupportsTools: true,
-			BestFor: []string{"code", "reasoning"},
+			BestFor:   []string{"code", "reasoning"},
 			IsPrimary: true, Status: "ready",
 			Models: []string{"claude-sonnet-4-6", "claude-opus-4-7"},
 		},

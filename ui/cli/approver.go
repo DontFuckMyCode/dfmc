@@ -105,26 +105,29 @@ func (a *stdinApprover) RequestApproval(ctx context.Context, req engine.Approval
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	fmt.Fprintln(a.out)
-	fmt.Fprintln(a.out, "+- DFMC tool approval -----------------------------------------")
-	fmt.Fprintf(a.out, "| tool    %s\n", req.Tool)
-	fmt.Fprintf(a.out, "| source  %s\n", orDefault(req.Source, "agent"))
+	// Best-effort terminal output; failed writes (e.g. closed pipe)
+	// only mean the user can't see the prompt — the decision still
+	// flows through readApprovalLine below so the engine isn't stuck.
+	_, _ = fmt.Fprintln(a.out)
+	_, _ = fmt.Fprintln(a.out, "+- DFMC tool approval -----------------------------------------")
+	_, _ = fmt.Fprintf(a.out, "| tool    %s\n", req.Tool)
+	_, _ = fmt.Fprintf(a.out, "| source  %s\n", orDefault(req.Source, "agent"))
 	if len(req.Params) > 0 {
 		summary := compactJSONParams(req.Params, 240)
-		fmt.Fprintf(a.out, "| params  %s\n", summary)
+		_, _ = fmt.Fprintf(a.out, "| params  %s\n", summary)
 	}
-	fmt.Fprintln(a.out, "+--------------------------------------------------------------")
-	fmt.Fprintf(a.out, "Approve? [y/N]: ")
+	_, _ = fmt.Fprintln(a.out, "+--------------------------------------------------------------")
+	_, _ = fmt.Fprintf(a.out, "Approve? [y/N]: ")
 
 	if err := ctx.Err(); err != nil {
-		fmt.Fprintln(a.out, "canceled")
+		_, _ = fmt.Fprintln(a.out, "canceled")
 		return engine.ApprovalDecision{Approved: false, Reason: "context canceled"}
 	}
 
 	line, err := a.readApprovalLine(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			fmt.Fprintln(a.out, "canceled")
+			_, _ = fmt.Fprintln(a.out, "canceled")
 			return engine.ApprovalDecision{Approved: false, Reason: "context canceled"}
 		}
 		if err != io.EOF {

@@ -32,7 +32,7 @@ func TestRenderTUIHelp_MixesRegistryAndShortcuts(t *testing.T) {
 		t.Fatalf("TUI help missing mention range-syntax hint")
 	}
 	// Panel hotkey hint.
-	if !strings.Contains(out, "F1 Chat") {
+	if !strings.Contains(out, "F1  Chat") {
 		t.Fatalf("TUI help missing panel hotkeys")
 	}
 }

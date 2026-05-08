@@ -129,7 +129,7 @@ func (m Model) activityOpenSelection(refresh bool) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case activityTargetTools:
-		m.activeTab = m.activityTabIndex("Tools")
+		m = m.activateDiagnosticTab("Tools")
 		m.notice = "Opened Tools from Activity."
 		return m, nil
 	case activityTargetPlans:
@@ -141,14 +141,14 @@ func (m Model) activityOpenSelection(refresh bool) (tea.Model, tea.Cmd) {
 		m.notice = "Opened Context from Activity."
 		return m, nil
 	case activityTargetCodeMap:
-		m.activeTab = m.activityTabIndex("CodeMap")
+		m = m.activateDiagnosticTab("CodeMap")
 		m.notice = "Opened CodeMap from Activity."
 		if refresh {
 			return m, loadCodemapCmd(m.eng)
 		}
 		return m, nil
 	case activityTargetSecurity:
-		m.activeTab = m.activityTabIndex("Security")
+		m = m.activateDiagnosticTab("Security")
 		m.notice = "Opened Security from Activity."
 		if refresh {
 			return m, loadSecurityCmd(m.eng)
@@ -159,7 +159,7 @@ func (m Model) activityOpenSelection(refresh bool) (tea.Model, tea.Cmd) {
 		m.notice = "Opened Providers from Activity."
 		return m, nil
 	default:
-		m.activeTab = m.activityTabIndex("Status")
+		m = m.activateDiagnosticTab("Status")
 		m.notice = "Opened Status from Activity."
 		if refresh {
 			return m, loadStatusCmd(m.eng)

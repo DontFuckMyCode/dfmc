@@ -66,12 +66,12 @@ var verboseAllowlist = map[string]struct{}{
 	"context:error":             {},
 	"context:lifecycle:handoff": {},
 	// Reliability
-	"conversation:save:error":      {},
-	"engine:shutdown_error":        {},
-	"runtime:panic":                {},
-	"tool:panicked":                {},
-	"security:config_permissions":  {},
-	"memory:degraded":              {},
+	"conversation:save:error":     {},
+	"engine:shutdown_error":       {},
+	"runtime:panic":               {},
+	"tool:panicked":               {},
+	"security:config_permissions": {},
+	"memory:degraded":             {},
 	// Approval gate + tool execution faults
 	"tool:denied":  {},
 	"tool:timeout": {}, // structural: per-tool deadline gate fired

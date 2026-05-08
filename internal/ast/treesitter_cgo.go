@@ -205,9 +205,9 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
-					Name: name,
-					Kind: "function",
-					Path: path,
+					Name:     name,
+					Kind:     "function",
+					Path:     path,
 					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
 				})
 			}
@@ -216,9 +216,9 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
-					Name: name,
-					Kind: "type",
-					Path: path,
+					Name:     name,
+					Kind:     "type",
+					Path:     path,
 					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
 				})
 			}

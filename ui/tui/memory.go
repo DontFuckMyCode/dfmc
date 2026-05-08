@@ -6,17 +6,17 @@ package tui
 // lives in internal/memory; this panel is a read-only view on top with
 // tier filtering and substring search.
 //
+// This file owns the load command, key dispatch, action menu, and
+// tier-cycle helper. Rendering (filteredMemoryEntries, formatMemoryRow,
+// oneLine, renderMemoryView, memoryTopBanner) lives in memory_render.go.
+//
 // Shape: a list of types.MemoryEntry, a tier filter (all | episodic |
 // semantic), a search query, and a scroll offset. Refresh is manual —
 // the memory store doesn't publish mutation events, so `r` re-runs the
 // list query and tab-switch triggers an initial load.
 
 import (
-	"fmt"
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -71,154 +71,6 @@ func loadMemoryCmd(eng *engine.Engine, tier string) tea.Cmd {
 	}
 }
 
-// filteredMemoryEntries applies the in-panel search query over the
-// loaded entries. The filter matches Category / Key / Value / ID.
-func filteredMemoryEntries(entries []types.MemoryEntry, query string) []types.MemoryEntry {
-	q := strings.ToLower(strings.TrimSpace(query))
-	if q == "" {
-		return entries
-	}
-	out := entries[:0:0]
-	for _, e := range entries {
-		if strings.Contains(strings.ToLower(e.Category), q) ||
-			strings.Contains(strings.ToLower(e.Key), q) ||
-			strings.Contains(strings.ToLower(e.Value), q) ||
-			strings.Contains(strings.ToLower(e.ID), q) {
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
-// formatMemoryRow renders one entry as a single line, clipped to width.
-// Shape: `[tier] category · key — value`. When Category/Key are blank
-// (bare episodic interaction) we fall back to the value on its own.
-func formatMemoryRow(e types.MemoryEntry, width int) string {
-	tierLabel := strings.ToUpper(string(e.Tier))
-	if tierLabel == "" {
-		tierLabel = "MEM"
-	}
-	head := subtleStyle.Render("[" + tierLabel + "]")
-	var body strings.Builder
-	cat := strings.TrimSpace(e.Category)
-	key := strings.TrimSpace(e.Key)
-	val := strings.TrimSpace(e.Value)
-	if cat != "" {
-		body.WriteString(accentStyle.Render(cat))
-		if key != "" {
-			body.WriteString(" · ")
-			body.WriteString(key)
-		}
-	} else if key != "" {
-		body.WriteString(key)
-	}
-	if val != "" {
-		if body.Len() > 0 {
-			body.WriteString(" — ")
-		}
-		body.WriteString(val)
-	}
-	line := head + " " + oneLine(body.String())
-	if width > 0 {
-		return truncateSingleLine(line, width)
-	}
-	return line
-}
-
-// oneLine collapses internal whitespace so the panel stays aligned
-// even when entries carry embedded newlines or tabs.
-func oneLine(s string) string {
-	s = strings.ReplaceAll(s, "\r", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\t", " ")
-	for strings.Contains(s, "  ") {
-		s = strings.ReplaceAll(s, "  ", " ")
-	}
-	return strings.TrimSpace(s)
-}
-
-func (m Model) renderMemoryView(width int) string {
-	width = clampInt(width, 24, 1000)
-	tier := m.memory.tier
-	if tier == "" {
-		tier = memoryTierAll
-	}
-	banner := m.memoryTopBanner(width, tier)
-	hint := subtleStyle.Render("j/k scroll · t toggle tier · / search · r refresh · c clear")
-	tierLine := subtleStyle.Render("tier ") + accentStyle.Render(tier)
-	if strings.TrimSpace(m.memory.query) != "" {
-		tierLine += subtleStyle.Render(" · query ") + boldStyle.Render(m.memory.query)
-	}
-	lines := []string{banner, tierLine, hint, renderDivider(width - 2)}
-
-	if m.memory.err != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.memory.err))
-		return strings.Join(lines, "\n")
-	}
-	if m.memory.loading {
-		lines = append(lines, "", subtleStyle.Render("loading..."))
-		return strings.Join(lines, "\n")
-	}
-
-	filtered := filteredMemoryEntries(m.memory.entries, m.memory.query)
-	if len(filtered) == 0 {
-		lines = append(lines, "")
-		if len(m.memory.entries) == 0 {
-			lines = append(lines,
-				subtleStyle.Render("No memory entries in this view."),
-				subtleStyle.Render("Use `dfmc memory add <text>` or ask the agent to remember something."),
-			)
-		} else {
-			lines = append(lines,
-				warnStyle.Render(fmt.Sprintf("No matches for %q in %d memory entries.", m.memory.query, len(m.memory.entries))),
-				subtleStyle.Render("Press c to clear the query, or / to edit it."),
-			)
-		}
-		return strings.Join(lines, "\n")
-	}
-
-	// Scroll window: clamp offset into range, then show up to the rest.
-	scroll := m.memory.scroll
-	if scroll < 0 {
-		scroll = 0
-	}
-	if scroll >= len(filtered) {
-		scroll = len(filtered) - 1
-	}
-	for _, e := range filtered[scroll:] {
-		lines = append(lines, formatMemoryRow(e, width-2))
-	}
-
-	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
-		"%d shown · %d loaded · tier=%s",
-		len(filtered), len(m.memory.entries), tier,
-	)))
-	body := strings.Join(lines, "\n")
-	if m.actionMenu.open && m.actionMenu.owner == "Memory" {
-		body += "\n\n" + m.renderActionMenu(width)
-	}
-	return body
-}
-
-// memoryTopBanner draws the title + a status chip on the right.
-// Chip: HEALTHY (entries loaded), EMPTY, ERROR, LOADING.
-func (m Model) memoryTopBanner(width int, tier string) string {
-	title := titleStyle.Bold(true).Render("◈ MEMORY")
-	chipText, chipStyle := " HEALTHY ", okStyle
-	switch {
-	case m.memory.err != "":
-		chipText, chipStyle = " ERROR ", warnStyle
-	case m.memory.loading:
-		chipText, chipStyle = " LOADING ", infoStyle
-	case len(m.memory.entries) == 0:
-		chipText, chipStyle = " EMPTY ", subtleStyle
-	}
-	chip := chipStyle.Render(chipText)
-	tierChip := subtleStyle.Render(" tier=" + tier + " ")
-	chipStrip := tierChip + " " + chip
-	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
-	return title + strings.Repeat(" ", gap) + chipStrip
-}
 
 // openMemoryActionMenu builds the contextual action list for the
 // Memory panel. Mirrors the F2-F6 ACTIONS card content but routes
@@ -250,8 +102,111 @@ func (m Model) openMemoryActionMenu() Model {
 				m.memory.scroll = 0
 				return m, nil
 			}},
+		// Phase H item 1 — mutation actions on the highlighted entry.
+		// Delete is the destructive path (engine.MemoryDelete walks both
+		// tiers and is idempotent); promote graduates an episodic entry
+		// into the semantic tier (no-op when already semantic). Both
+		// queue a reload so the panel reflects the new state without a
+		// manual refresh.
+		{Label: "Delete the highlighted entry", Accel: "d",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m.deleteSelectedMemoryEntry()
+			}},
+		{Label: "Promote highlighted entry to semantic tier", Accel: "p",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m.promoteSelectedMemoryEntry()
+			}},
 	}
 	return m.openActionMenu("Memory", "Memory actions", actions)
+}
+
+// selectedMemoryEntry returns the entry under the current scroll row
+// of the filtered view, or (zero, false) when the panel has no
+// highlight. Both delete and promote use this to resolve the target
+// without the caller having to re-walk the filter.
+func (m Model) selectedMemoryEntry() (types.MemoryEntry, bool) {
+	filtered := filteredMemoryEntries(m.memory.entries, m.memory.query)
+	if len(filtered) == 0 || m.memory.scroll < 0 || m.memory.scroll >= len(filtered) {
+		return types.MemoryEntry{}, false
+	}
+	return filtered[m.memory.scroll], true
+}
+
+// deleteSelectedMemoryEntry — Phase H item 1 surface for `d`. Looks up
+// the highlighted entry, calls engine.MemoryDelete, drops the row from
+// the in-memory list immediately so the panel updates without waiting
+// for the reload, and queues a refresh as belt-and-braces.
+func (m Model) deleteSelectedMemoryEntry() (Model, tea.Cmd) {
+	entry, ok := m.selectedMemoryEntry()
+	if !ok {
+		m.notice = "No memory entry selected — j/k highlights a row, then d deletes it."
+		return m, nil
+	}
+	if m.eng == nil {
+		m.notice = "Engine not ready — cannot delete memory entries yet."
+		return m, nil
+	}
+	if err := m.eng.MemoryDelete(entry.ID); err != nil {
+		m.notice = "Delete failed: " + err.Error()
+		return m, nil
+	}
+	// Drop locally so the row vanishes immediately; the reload below
+	// reconciles in case anything else mutated the store concurrently.
+	m.memory.entries = removeMemoryEntryByID(m.memory.entries, entry.ID)
+	if m.memory.scroll >= len(filteredMemoryEntries(m.memory.entries, m.memory.query)) && m.memory.scroll > 0 {
+		m.memory.scroll--
+	}
+	if m.memory.expandedID == entry.ID {
+		m.memory.expandedID = ""
+	}
+	m.notice = "Deleted memory entry — store updated."
+	m.memory.loading = true
+	return m, loadMemoryCmd(m.eng, m.memory.tier)
+}
+
+// promoteSelectedMemoryEntry — Phase H item 1 surface for `p`. Moves
+// the highlighted entry from episodic to semantic via engine.MemoryPromote
+// and triggers a reload so the row migrates between tiers visually.
+// Already-semantic entries return a friendlier "nothing to promote"
+// notice rather than calling the engine.
+func (m Model) promoteSelectedMemoryEntry() (Model, tea.Cmd) {
+	entry, ok := m.selectedMemoryEntry()
+	if !ok {
+		m.notice = "No memory entry selected — j/k highlights a row, then p promotes it."
+		return m, nil
+	}
+	// Already-semantic check is engine-independent — answer it first so
+	// a user pressing `p` on a semantic row gets the friendly notice
+	// even when the engine isn't available (e.g. degraded-storage start).
+	if entry.Tier == types.MemorySemantic {
+		m.notice = "Entry is already semantic — nothing to promote."
+		return m, nil
+	}
+	if m.eng == nil {
+		m.notice = "Engine not ready — cannot promote memory entries yet."
+		return m, nil
+	}
+	if err := m.eng.MemoryPromote(entry.ID); err != nil {
+		m.notice = "Promote failed: " + err.Error()
+		return m, nil
+	}
+	m.notice = "Promoted episodic entry → semantic tier."
+	m.memory.loading = true
+	return m, loadMemoryCmd(m.eng, m.memory.tier)
+}
+
+// removeMemoryEntryByID drops the entry whose ID matches `id` from the
+// slice, preserving order. Used by deleteSelectedMemoryEntry to update
+// the panel optimistically before the reload arrives.
+func removeMemoryEntryByID(entries []types.MemoryEntry, id string) []types.MemoryEntry {
+	out := make([]types.MemoryEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.ID == id {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // handleMemoryKey drives the Memory panel. The search input mode owns
@@ -263,9 +218,11 @@ func (m Model) handleMemoryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
 		return nm, cmd
 	}
-	// Enter / Right opens the action menu (cycle tier · refresh ·
-	// search · clear) so the user doesn't need to memorise t/r/// c.
-	if s := msg.String(); s == "enter" || s == "right" || s == "l" {
+	// Right / l opens the action menu (cycle tier · refresh · search ·
+	// clear). Enter is reserved for the per-entry expand toggle (Phase
+	// H item 3) — that lives in the switch below so each row's full
+	// value can be inspected without leaving the panel.
+	if s := msg.String(); s == "right" || s == "l" {
 		return m.openMemoryActionMenu(), nil
 	}
 	total := len(filteredMemoryEntries(m.memory.entries, m.memory.query))
@@ -300,6 +257,23 @@ func (m Model) handleMemoryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if total > 0 {
 			m.memory.scroll = total - 1
 		}
+	case "enter":
+		// Phase H item 3: enter expands the currently-highlighted entry
+		// to its full multi-line value, or collapses it back to a single
+		// row if it was already expanded. Useful for episodic memory
+		// where the body is a paragraph and gets clipped at the panel
+		// width otherwise.
+		filtered := filteredMemoryEntries(m.memory.entries, m.memory.query)
+		if len(filtered) == 0 || m.memory.scroll < 0 || m.memory.scroll >= len(filtered) {
+			return m, nil
+		}
+		id := filtered[m.memory.scroll].ID
+		if m.memory.expandedID == id {
+			m.memory.expandedID = ""
+		} else {
+			m.memory.expandedID = id
+		}
+		return m, nil
 	case "t":
 		// Cycle all → episodic → semantic → all.
 		m.memory.tier = nextMemoryTier(m.memory.tier)
@@ -319,6 +293,18 @@ func (m Model) handleMemoryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		m.memory.query = ""
 		m.memory.scroll = 0
+	case "d":
+		// Phase H item 1 — delete the highlighted entry. Calls through
+		// engine.MemoryDelete (idempotent across both tiers), drops the
+		// row locally, and reloads to reconcile with the store.
+		nm, cmd := m.deleteSelectedMemoryEntry()
+		return nm, cmd
+	case "p":
+		// Phase H item 1 — promote the highlighted episodic entry into
+		// the semantic tier. No-op when already semantic (handler shows
+		// a friendly "nothing to promote" notice instead of erroring).
+		nm, cmd := m.promoteSelectedMemoryEntry()
+		return nm, cmd
 	}
 	return m, nil
 }
@@ -349,12 +335,18 @@ func (m Model) handleMemorySearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func nextMemoryTier(current string) string {
+	// Phase H item 2: cycle order is working → episodic → semantic →
+	// all → working. Working is the default landing (recent
+	// scratchpad), the others step through the tiers, and `all` is
+	// the merged-everything view at the end.
 	switch current {
-	case "", memoryTierAll:
+	case "", string(types.MemoryWorking):
 		return string(types.MemoryEpisodic)
 	case string(types.MemoryEpisodic):
 		return string(types.MemorySemantic)
-	default:
+	case string(types.MemorySemantic):
 		return memoryTierAll
+	default:
+		return string(types.MemoryWorking)
 	}
 }

@@ -9,10 +9,10 @@ import (
 
 // TestFormatVerboseEvent_AllowlistFiltering pins three contracts of
 // the -v stream formatter:
-//   1. Events on the allowlist render with key fields.
-//   2. Events NOT on the allowlist return empty (silenced).
-//   3. Successful hook:run is silenced; failed hook:run renders.
-//   4. context:error tolerates the plain-string payload shape.
+//  1. Events on the allowlist render with key fields.
+//  2. Events NOT on the allowlist return empty (silenced).
+//  3. Successful hook:run is silenced; failed hook:run renders.
+//  4. context:error tolerates the plain-string payload shape.
 func TestFormatVerboseEvent_AllowlistFiltering(t *testing.T) {
 	cases := []struct {
 		name      string

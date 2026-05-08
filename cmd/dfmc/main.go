@@ -89,8 +89,8 @@ func run() int {
 				localCfg := config.DefaultConfig()
 				localCfg.DataDirPath = dd
 				if cfgPathErr := localCfg.Save(filepath.Join(dfmcDir, "config.yaml")); cfgPathErr == nil {
-					os.WriteFile(filepath.Join(dfmcDir, "knowledge.json"), []byte("{}\n"), 0o644)
-					os.WriteFile(filepath.Join(dfmcDir, "conventions.json"), []byte("{}\n"), 0o644)
+					_ = os.WriteFile(filepath.Join(dfmcDir, "knowledge.json"), []byte("{}\n"), 0o644)
+					_ = os.WriteFile(filepath.Join(dfmcDir, "conventions.json"), []byte("{}\n"), 0o644)
 					fmt.Fprintf(os.Stderr, "[DFMC] initialized project at %s\n", projectRoot)
 				}
 			}

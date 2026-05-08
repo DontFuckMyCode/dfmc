@@ -135,6 +135,13 @@ const (
 )
 
 type Message struct {
+	// ID is a short, opaque identifier (e.g. "u-3f29a1", "a-7b40c2")
+	// generated when the message is appended to a Conversation. It is
+	// surfaced to the LLM as a [id:X] prefix on every turn so the
+	// model can name messages it considers cleanup candidates in its
+	// final-turn pruning hint. Stable across reloads, embedded in the
+	// JSONL on disk. Empty on legacy entries that pre-date this field.
+	ID        string             `json:"id,omitempty"`
 	Role      MessageRole        `json:"role"`
 	Content   string             `json:"content"`
 	Timestamp time.Time          `json:"timestamp"`

@@ -141,11 +141,11 @@ func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
 		if scroll >= 0 && scroll < len(m.providers.rows) {
 			name := m.providers.rows[scroll].Name
 			model := m.providers.rows[scroll].Model
-			path, err := m.persistProviderModelProjectConfig(name, model)
+			path, err := m.persistProviderModelUserConfig(name, model)
 			if err != nil {
 				m.notice = "save failed: " + err.Error()
 			} else {
-				m.notice = "saved " + path
+				m.notice = "saved → " + displayConfigPath(path)
 			}
 		}
 	case "sync_models":
@@ -200,10 +200,10 @@ func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
 		}
 		prof.Model = models[idx]
 		m.eng.Config.Providers.Profiles[m.providers.detailProvider] = prof
-		if _, err := m.persistProviderModelProjectConfig(m.providers.detailProvider, prof.Model); err != nil {
+		if path, err := m.persistProviderModelUserConfig(m.providers.detailProvider, prof.Model); err != nil {
 			m.notice = fmt.Sprintf("set active model → %s (save failed: %v)", prof.Model, err)
 		} else {
-			m.notice = fmt.Sprintf("set active model → %s", prof.Model)
+			m.notice = fmt.Sprintf("set active model → %s · saved → %s", prof.Model, displayConfigPath(path))
 		}
 		m = m.refreshProvidersRows()
 		m = m.focusProviderRow(m.providers.detailProvider)

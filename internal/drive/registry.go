@@ -36,10 +36,40 @@ type regEntry struct {
 	Task   string
 }
 
+// Invariant: every successful tryRegister(id, …) MUST be paired with
+// exactly one unregister(id), via a defer that runs before the goroutine
+// returns by ANY path (success, error, ctx-cancel, panic recover). The
+// driver's RunPrepared / Resume own this discipline:
+//
+//	ok := tryRegister(id, task, cancel)
+//	if !ok { return … }
+//	defer unregister(id)   // <- pairs the register
+//	defer cancel()         // <- frees the wrapper goroutine
+//
+// A panic anywhere in the loop is caught by the recover() in driver.go,
+// which still calls unregister(id) before re-raising as a typed error,
+// so the registry never carries a dead entry across runs.
+//
+// Why sync.RWMutex + plain map and not sync.Map: the registry is small
+// (one entry per active drive run, typically ≤ 5), reads vastly outnumber
+// writes (every IsActive / ListActive call), and we need atomic
+// "register-if-absent" via tryRegister — sync.Map.LoadOrStore returns
+// the existing value but can't distinguish a stored cancel func that's
+// already cancelled from a fresh slot, so the race-free duplicate check
+// is cleaner under explicit locking.
 var (
 	registryMu sync.RWMutex
 	registry   = map[string]*regEntry{}
 )
+
+// registrySize returns the current number of active entries. Test-only
+// helper — callers in production code should use IsActive (single key)
+// or ListActive (snapshot copy) instead.
+func registrySize() int {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	return len(registry)
+}
 
 // register stores the cancel func and task for runID. Called from
 // Driver right before it enters executeLoop. Overwrites silently

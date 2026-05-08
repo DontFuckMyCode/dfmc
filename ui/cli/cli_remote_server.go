@@ -13,7 +13,10 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -22,7 +25,16 @@ func serveWithContext(ctx context.Context, server *http.Server) error {
 	go func() {
 		errCh <- server.ListenAndServe()
 	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
 	select {
+	case <-sigCh:
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+		return nil
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()

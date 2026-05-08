@@ -11,7 +11,9 @@
 //     the savings.
 //
 // Extracted from agent_loop_native.go to keep the main loop file focused
-// on control flow.
+// on control flow. Per-tool metadata enrichment (nativeToolEventMetadata
+// + first*Any helpers + textLineCount + summarizeUnifiedDiffPatch +
+// summarizePatchResultHunks) lives in agent_loop_events_metadata.go.
 
 package engine
 
@@ -26,9 +28,10 @@ import (
 
 func (e *Engine) recordNativeAgentInteraction(question string, completion nativeToolCompletion) {
 	now := time.Now()
+	cleanupIDs, nextActions, strippedAnswer := parseAssistantHints(completion.Answer)
 	assistantMsg := types.Message{
 		Role:      types.RoleAssistant,
-		Content:   completion.Answer,
+		Content:   strippedAnswer,
 		Timestamp: now,
 		TokenCnt:  completion.TokenCount,
 		Metadata: map[string]string{
@@ -37,6 +40,12 @@ func (e *Engine) recordNativeAgentInteraction(question string, completion native
 			"tool_rounds": fmt.Sprintf("%d", len(completion.ToolTraces)),
 			"surface":     "native",
 		},
+	}
+	if len(nextActions) > 0 {
+		assistantMsg.Metadata["next_actions"] = strings.Join(nextActions, "\n")
+	}
+	if len(cleanupIDs) > 0 {
+		assistantMsg.Metadata["cleanup_requested"] = strings.Join(cleanupIDs, ",")
 	}
 	for _, trace := range completion.ToolTraces {
 		callMetadata := map[string]string{
@@ -76,6 +85,35 @@ func (e *Engine) recordNativeAgentInteraction(question string, completion native
 			Timestamp: now,
 		})
 		e.Conversation.AddMessage(completion.Provider, completion.Model, assistantMsg)
+		// Honour the LLM's [cleanup: id1, id2] hint by dropping the
+		// named messages from the active branch. This shrinks the
+		// rolling history footprint each turn so the model itself
+		// curates which prior exchanges still matter — without us
+		// having to guess. We never drop the just-added pair (they
+		// have IDs the model couldn't have known about yet).
+		if len(cleanupIDs) > 0 {
+			dropped := e.Conversation.RemoveMessagesByID(cleanupIDs)
+			if dropped > 0 {
+				e.EventBus.Publish(Event{
+					Type:   "context:cleanup",
+					Source: "engine",
+					Payload: map[string]any{
+						"requested": len(cleanupIDs),
+						"dropped":   dropped,
+						"ids":       cleanupIDs,
+					},
+				})
+			}
+		}
+		if len(nextActions) > 0 {
+			e.EventBus.Publish(Event{
+				Type:   "assistant:next_actions",
+				Source: "engine",
+				Payload: map[string]any{
+					"actions": nextActions,
+				},
+			})
+		}
 		// Persist after every completed turn — without this the
 		// JSONL is only flushed at engine.Shutdown(), so a panic,
 		// SIGKILL, OOM, or power loss between turns silently drops
@@ -121,6 +159,15 @@ func (e *Engine) publishNativeToolCall(trace nativeToolTrace) {
 	})
 }
 
+// publishNativeToolResultWithTruncation is the audit-aware variant
+// that also publishes hard-truncation stats (output_dropped_runes,
+// data_dropped_runes, hard_truncated). The TUI uses these to flip
+// the chip from "compressed" to "truncated" so the user sees when
+// the MODEL is missing real bytes (not just ANSI/spinner noise).
+func (e *Engine) publishNativeToolResultWithTruncation(trace nativeToolTrace, modelPayload string, stats truncationStats) {
+	e.publishNativeToolResultWithPayloadAndStats(trace, modelPayload, &stats)
+}
+
 // publishNativeToolResultWithPayload emits a tool:result event enriched
 // with RTK compression stats — the exact bytes (and token estimate) that
 // go back to the model after the noise filter + char-cap trim. When
@@ -128,6 +175,10 @@ func (e *Engine) publishNativeToolCall(trace nativeToolTrace) {
 // payload-size fields are omitted. The diff between raw output and payload
 // is the RTK savings the TUI stats panel can surface.
 func (e *Engine) publishNativeToolResultWithPayload(trace nativeToolTrace, modelPayload string) {
+	e.publishNativeToolResultWithPayloadAndStats(trace, modelPayload, nil)
+}
+
+func (e *Engine) publishNativeToolResultWithPayloadAndStats(trace nativeToolTrace, modelPayload string, stats *truncationStats) {
 	if e.EventBus == nil {
 		return
 	}
@@ -159,6 +210,17 @@ func (e *Engine) publishNativeToolResultWithPayload(trace nativeToolTrace, model
 	if trace.Err != "" {
 		payload["error"] = trace.Err
 	}
+	// Hard-truncation badge data — when stats is non-nil AND the
+	// formatter actually had to drop bytes to fit the per-call cap.
+	// Distinct from compression_* (which counts noise stripped from
+	// raw output, no semantic loss). hard_truncated == true means
+	// the model is missing real bytes; the TUI flips its chip badge
+	// to "✂ N chars dropped" so the user sees the loss.
+	if stats != nil && stats.HardTruncated() {
+		payload["hard_truncated"] = true
+		payload["hard_truncated_output_runes"] = stats.OutputRunes
+		payload["hard_truncated_data_runes"] = stats.DataRunes
+	}
 	if summary := batchFanoutSummary(trace.Call.Name, trace.Result.Data); summary != nil {
 		for k, v := range summary {
 			payload[k] = v
@@ -174,233 +236,3 @@ func (e *Engine) publishNativeToolResultWithPayload(trace nativeToolTrace, model
 	})
 }
 
-func nativeToolEventMetadata(toolName string, params map[string]any, data map[string]any) map[string]any {
-	out := map[string]any{}
-	switch strings.ToLower(strings.TrimSpace(toolName)) {
-	case "read_file":
-		if path := firstStringAny(data, params, "path"); path != "" {
-			out["read_path"] = path
-		}
-		if n := firstIntAny(data, params, "line_start"); n > 0 {
-			out["read_line_start"] = n
-		}
-		if n := firstIntAny(data, params, "line_end"); n > 0 {
-			out["read_line_end"] = n
-		}
-		if n := firstIntAny(data, nil, "returned_lines"); n > 0 {
-			out["read_returned_lines"] = n
-		}
-		if n := firstIntAny(data, nil, "total_lines", "line_count"); n > 0 {
-			out["read_total_lines"] = n
-		}
-		if lang := firstStringAny(data, nil, "language"); lang != "" {
-			out["read_language"] = lang
-		}
-	case "edit_file":
-		path := firstStringAny(data, params, "path")
-		if path != "" {
-			out["changed_files"] = []string{path}
-		}
-		if replacements := firstIntAny(data, nil, "replacements"); replacements > 0 {
-			out["replacements"] = replacements
-		}
-		oldLines := textLineCount(firstStringAny(nil, params, "old_string"))
-		newLines := textLineCount(firstStringAny(nil, params, "new_string"))
-		if oldLines > 0 || newLines > 0 {
-			out["removed_lines"] = oldLines
-			out["added_lines"] = newLines
-			out["net_lines"] = newLines - oldLines
-		}
-	case "write_file":
-		path := firstStringAny(data, params, "path")
-		if path != "" {
-			out["changed_files"] = []string{path}
-		}
-		lines := textLineCount(firstStringAny(nil, params, "content"))
-		if lines > 0 {
-			out["added_lines"] = lines
-			if firstBoolAny(data, params, "overwrite", "overwrote_existing") {
-				out["mutation_mode"] = "overwrite"
-			} else {
-				out["mutation_mode"] = "create"
-			}
-		}
-		if bytes := firstIntAny(data, nil, "bytes"); bytes > 0 {
-			out["written_bytes"] = bytes
-		}
-	case "run_command":
-		// Surface the command string so downstream surfaces (TUI
-		// validation tracker, web activity feed) can recognise build/
-		// test/vet runs without scraping params_preview. We keep it
-		// short — full args list lives in params_preview already.
-		if cmd := firstStringAny(nil, params, "command"); cmd != "" {
-			out["command"] = cmd
-		}
-	case "apply_patch":
-		patch := firstStringAny(nil, params, "patch")
-		files, added, removed, hunks := summarizeUnifiedDiffPatch(patch)
-		if len(files) > 0 {
-			out["changed_files"] = files
-		}
-		if added > 0 {
-			out["added_lines"] = added
-		}
-		if removed > 0 {
-			out["removed_lines"] = removed
-		}
-		if added > 0 || removed > 0 {
-			out["net_lines"] = added - removed
-		}
-		if hunks > 0 {
-			out["hunks"] = hunks
-		}
-		if appliedHunks, rejectedHunks := summarizePatchResultHunks(data); appliedHunks > 0 || rejectedHunks > 0 {
-			out["hunks_applied"] = appliedHunks
-			out["hunks_rejected"] = rejectedHunks
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func firstStringAny(primary, secondary map[string]any, keys ...string) string {
-	for _, data := range []map[string]any{primary, secondary} {
-		if data == nil {
-			continue
-		}
-		for _, key := range keys {
-			raw, ok := data[key]
-			if !ok || raw == nil {
-				continue
-			}
-			text := strings.TrimSpace(fmt.Sprint(raw))
-			if text != "" {
-				return text
-			}
-		}
-	}
-	return ""
-}
-
-func firstIntAny(primary, secondary map[string]any, keys ...string) int {
-	for _, data := range []map[string]any{primary, secondary} {
-		if data == nil {
-			continue
-		}
-		for _, key := range keys {
-			raw, ok := data[key]
-			if !ok || raw == nil {
-				continue
-			}
-			switch v := raw.(type) {
-			case int:
-				return v
-			case int32:
-				return int(v)
-			case int64:
-				return int(v)
-			case float32:
-				return int(v)
-			case float64:
-				return int(v)
-			case string:
-				var n int
-				if _, err := fmt.Sscanf(strings.TrimSpace(v), "%d", &n); err == nil {
-					return n
-				}
-			}
-		}
-	}
-	return 0
-}
-
-func firstBoolAny(primary, secondary map[string]any, keys ...string) bool {
-	for _, data := range []map[string]any{primary, secondary} {
-		if data == nil {
-			continue
-		}
-		for _, key := range keys {
-			raw, ok := data[key]
-			if !ok || raw == nil {
-				continue
-			}
-			switch v := raw.(type) {
-			case bool:
-				return v
-			case string:
-				return strings.EqualFold(strings.TrimSpace(v), "true")
-			}
-		}
-	}
-	return false
-}
-
-func textLineCount(text string) int {
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.TrimSuffix(text, "\n")
-	if text == "" {
-		return 0
-	}
-	return strings.Count(text, "\n") + 1
-}
-
-func summarizeUnifiedDiffPatch(patch string) ([]string, int, int, int) {
-	patch = strings.ReplaceAll(patch, "\r\n", "\n")
-	files := make([]string, 0, 4)
-	seen := map[string]struct{}{}
-	added, removed, hunks := 0, 0, 0
-	for _, line := range strings.Split(patch, "\n") {
-		switch {
-		case strings.HasPrefix(line, "+++ "):
-			path := strings.TrimSpace(strings.TrimPrefix(line, "+++ "))
-			path = strings.TrimPrefix(path, "b/")
-			if path != "" && path != "/dev/null" {
-				if _, ok := seen[path]; !ok {
-					seen[path] = struct{}{}
-					files = append(files, path)
-				}
-			}
-		case strings.HasPrefix(line, "--- "):
-			path := strings.TrimSpace(strings.TrimPrefix(line, "--- "))
-			path = strings.TrimPrefix(path, "a/")
-			if path != "" && path != "/dev/null" {
-				if _, ok := seen[path]; !ok {
-					seen[path] = struct{}{}
-					files = append(files, path)
-				}
-			}
-		case strings.HasPrefix(line, "@@"):
-			hunks++
-		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
-			added++
-		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
-			removed++
-		}
-	}
-	return files, added, removed, hunks
-}
-
-func summarizePatchResultHunks(data map[string]any) (int, int) {
-	raw, ok := data["files"]
-	if !ok || raw == nil {
-		return 0, 0
-	}
-	var applied, rejected int
-	switch files := raw.(type) {
-	case []map[string]any:
-		for _, f := range files {
-			applied += firstIntAny(f, nil, "hunks_applied")
-			rejected += firstIntAny(f, nil, "hunks_rejected")
-		}
-	case []any:
-		for _, item := range files {
-			if f, ok := item.(map[string]any); ok {
-				applied += firstIntAny(f, nil, "hunks_applied")
-				rejected += firstIntAny(f, nil, "hunks_rejected")
-			}
-		}
-	}
-	return applied, rejected
-}

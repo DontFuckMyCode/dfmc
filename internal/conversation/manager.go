@@ -1,15 +1,21 @@
 package conversation
 
+// manager.go — core conversation types and the Manager mutator surface
+// (Start, Active, AddMessage, RemoveMessagesByID, ID assignment).
+//
+// Branch lifecycle and undo live in manager_branches.go. Disk
+// persistence + history recall (Save/Load/List/Search) live in
+// manager_persist.go. Defensive-copy helpers live in manager_clone.go.
+//
+// Concurrency: m.mu guards every read or write of m.active and m.reporter.
+// saveMu serializes blocking and async saves so a snapshot taken by one
+// is never invalidated mid-fsync by an AddMessage on the other side.
+
 import (
-	"encoding/json"
-	"errors"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
-	"io"
-	"log"
-	"maps"
-	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +23,39 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/storage"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
+
+// AssignMessageID returns a short opaque ID like "u-3f29a1" for users
+// or "a-7b40c2" for assistants. Generated from 4 random bytes (8 hex
+// chars truncated to 6) — collision-safe within any realistic
+// conversation length (~16M IDs per role before birthday risk). The
+// role-prefix is purely for the LLM's readability when it needs to
+// name a cleanup target ("drop a-7b40c2 — superseded by a-9c12d3").
+//
+// Exported so the engine layer can assign IDs to outbound messages it
+// constructs directly (StreamAsk, agent_loop_events) without going
+// through AddMessage, keeping the contract that EVERY persisted
+// message has an ID.
+func AssignMessageID(role types.MessageRole) string {
+	prefix := "x"
+	switch role {
+	case types.RoleUser:
+		prefix = "u"
+	case types.RoleAssistant:
+		prefix = "a"
+	case types.RoleSystem:
+		prefix = "s"
+	case types.RoleTool:
+		prefix = "t"
+	}
+	var buf [4]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// Fallback to a timestamp-based ID — uniqueness is good enough
+		// because rand.Read essentially never fails on Linux/Windows,
+		// but a panic here would kill an interactive session.
+		return fmt.Sprintf("%s-%x", prefix, time.Now().UnixNano()&0xffffff)
+	}
+	return prefix + "-" + hex.EncodeToString(buf[:])[:6]
+}
 
 // Conversation represents a single AI conversation session with branch support.
 type Conversation struct {
@@ -160,571 +199,54 @@ func (m *Manager) AddMessage(provider, model string, msg types.Message) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ensureActiveLocked(provider, model)
+	if strings.TrimSpace(msg.ID) == "" {
+		msg.ID = AssignMessageID(msg.Role)
+	}
 	msgs := m.active.Branches[m.active.Branch]
 	msgs = append(msgs, msg)
 	m.active.Branches[m.active.Branch] = msgs
 }
 
-func (m *Manager) BranchCreate(name string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.active == nil {
-		return fmt.Errorf("no active conversation")
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return fmt.Errorf("branch name is required")
-	}
-	// Reject names that could escape the branch map key namespace or
-	// confuse UIs that use the name as a path segment or display label.
-	// Mirror validateConvID from store.go for consistency.
-	if filepath.IsAbs(name) {
-		return fmt.Errorf("invalid branch name %q: must be a relative name", name)
-	}
-	if strings.ContainsAny(name, "/\\") {
-		return fmt.Errorf("invalid branch name %q: must not contain path separators", name)
-	}
-	if name == "." || name == ".." || strings.Contains(name, "..") {
-		return fmt.Errorf("invalid branch name %q: must not contain `..`", name)
-	}
-	for _, r := range name {
-		if r < 0x20 || r == 0x7f {
-			return fmt.Errorf("invalid branch name: contains control character U+%04X", r)
-		}
-	}
-	if _, ok := m.active.Branches[name]; ok {
-		return fmt.Errorf("branch already exists: %s", name)
-	}
-	current := m.active.Branches[m.active.Branch]
-	copyMsgs := cloneMessages(current)
-	m.active.Branches[name] = copyMsgs
-	return nil
-}
-
-func (m *Manager) BranchSwitch(name string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.active == nil {
-		return fmt.Errorf("no active conversation")
-	}
-	if _, ok := m.active.Branches[name]; !ok {
-		return fmt.Errorf("branch not found: %s", name)
-	}
-	m.active.Branch = name
-	return nil
-}
-
-func (m *Manager) BranchList() []string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.active == nil {
-		return nil
-	}
-	out := make([]string, 0, len(m.active.Branches))
-	for name := range m.active.Branches {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (m *Manager) BranchCompare(branchA, branchB string) (BranchComparison, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.active == nil {
-		return BranchComparison{}, fmt.Errorf("no active conversation")
-	}
-	a := strings.TrimSpace(branchA)
-	b := strings.TrimSpace(branchB)
-	if a == "" || b == "" {
-		return BranchComparison{}, fmt.Errorf("both branch names are required")
-	}
-	msgsA, ok := m.active.Branches[a]
-	if !ok {
-		return BranchComparison{}, fmt.Errorf("branch not found: %s", a)
-	}
-	msgsB, ok := m.active.Branches[b]
-	if !ok {
-		return BranchComparison{}, fmt.Errorf("branch not found: %s", b)
-	}
-	shared := sharedPrefixLen(msgsA, msgsB)
-	return BranchComparison{
-		BranchA:       a,
-		BranchB:       b,
-		MessagesA:     len(msgsA),
-		MessagesB:     len(msgsB),
-		SharedPrefixN: shared,
-		OnlyA:         max(0, len(msgsA)-shared),
-		OnlyB:         max(0, len(msgsB)-shared),
-	}, nil
-}
-
-func (m *Manager) UndoLast() (int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.active == nil {
-		return 0, fmt.Errorf("no active conversation")
-	}
-	msgs := m.active.Branches[m.active.Branch]
-	if len(msgs) == 0 {
-		return 0, nil
-	}
-
-	removed := 1
-	trimTo := len(msgs) - 1
-	if len(msgs) >= 2 {
-		last := msgs[len(msgs)-1]
-		prev := msgs[len(msgs)-2]
-		if prev.Role == types.RoleUser && last.Role == types.RoleAssistant {
-			removed = 2
-			trimTo = len(msgs) - 2
-		}
-	}
-	if trimTo < 0 {
-		trimTo = 0
-	}
-	next := cloneMessages(msgs[:trimTo])
-	m.active.Branches[m.active.Branch] = next
-	return removed, nil
-}
-
-func (m *Manager) SaveActive() error {
-	// Snapshot id + a defensive copy of the message slice under the lock,
-	// then release before doing the disk write. Holding m.mu across
-	// SaveConversationLog (atomic-rename + fsync, often tens to hundreds
-	// of ms) would block every concurrent AddMessage / Branch* / UndoLast
-	// call for the entire write — and is a classic footgun for re-entrant
-	// deadlocks if the store ever calls back through anything that takes
-	// m.mu (event hooks, error reporters, etc.). The snapshot copy is
-	// cheap relative to the fsync cost.
-	// saveMu serializes concurrent SaveActive calls so the snapshot taken
-	// by one is not invalidated by another goroutine's AddMessage between
-	// RUnlock and the disk write. The original comment about not holding
-	// m.mu across I/O still applies â we keep the RLock short.
-	m.saveMu.Lock()
-	defer m.saveMu.Unlock()
-
-	m.mu.RLock()
-	if m.active == nil || m.store == nil {
-		m.mu.RUnlock()
-		return nil
-	}
-	snapshot := cloneConversation(m.active)
-	store := m.store
-	m.mu.RUnlock()
-
-	state := persistedConversation{
-		ID:        snapshot.ID,
-		Provider:  snapshot.Provider,
-		Model:     snapshot.Model,
-		StartedAt: snapshot.StartedAt,
-		Branch:    snapshot.Branch,
-		Branches:  snapshot.Branches,
-		Metadata:  snapshot.Metadata,
-	}
-	if err := store.SaveConversationState(snapshot.ID, state); err != nil {
-		return err
-	}
-	return store.SaveConversationLog(snapshot.ID, snapshot.Branches[snapshot.Branch])
-}
-
-// SaveActiveAsync persists the active conversation without blocking the
-// caller. Failures are logged but never propagated — this is best-effort
-// durability for crash-before-shutdown scenarios. Uses saveMu to serialize
-// with the blocking SaveActive call so the two never race. saveWg lets
-// Close drain pending writes before the underlying bbolt store is shut
-// down — without it, a goroutine scheduled microseconds before Shutdown
-// could try to write to a closed handle.
-func (m *Manager) SaveActiveAsync() {
-	m.saveWg.Add(1)
-	go func() {
-		defer m.saveWg.Done()
-		m.saveMu.Lock()
-		defer m.saveMu.Unlock()
-
-		m.mu.RLock()
-		if m.active == nil || m.store == nil {
-			m.mu.RUnlock()
-			return
-		}
-		snapshot := cloneConversation(m.active)
-		store := m.store
-		m.mu.RUnlock()
-
-		state := persistedConversation{
-			ID:        snapshot.ID,
-			Provider:  snapshot.Provider,
-			Model:     snapshot.Model,
-			StartedAt: snapshot.StartedAt,
-			Branch:    snapshot.Branch,
-			Branches:  snapshot.Branches,
-			Metadata:  snapshot.Metadata,
-		}
-		if err := store.SaveConversationState(snapshot.ID, state); err != nil {
-			m.reportError("state", err)
-			return
-		}
-		if err := store.SaveConversationLog(snapshot.ID, snapshot.Branches[snapshot.Branch]); err != nil {
-			m.reportError("log", err)
-		}
-	}()
-}
-
-// SetErrorReporter wires an optional callback that fires when an
-// async save step fails. The engine passes a reporter that publishes
-// a conversation:save:error event on the bus; tests pass nil to
-// keep the fallback log path. Safe to call after Manager has been
-// in use — single store under m.mu.
-func (m *Manager) SetErrorReporter(r ErrorReporter) {
-	m.mu.Lock()
-	m.reporter = r
-	m.mu.Unlock()
-}
-
-func (m *Manager) reportError(stage string, err error) {
-	if err == nil {
-		return
-	}
-	m.mu.RLock()
-	r := m.reporter
-	m.mu.RUnlock()
-	if r != nil {
-		r(stage, err)
-		return
-	}
-	log.Printf("conversation: SaveActiveAsync %s: %v", stage, err)
-}
-
-// Close drains any in-flight SaveActiveAsync goroutines so callers can
-// shut the underlying bbolt store down without races. Call this before
-// closing the store; otherwise an async save scheduled microseconds
-// earlier may run on a closed handle and silently lose the turn.
-func (m *Manager) Close() {
-	m.saveWg.Wait()
-}
-
-func (m *Manager) Load(id string) (*Conversation, error) {
-	c, err := m.loadFromStore(id)
-	if err != nil {
-		return nil, err
-	}
-	// Hold the write lock for the entire swap so concurrent Active()
-	// readers see an consistent pointer, not a partial write.
-	m.mu.Lock()
-	m.active = c
-	m.mu.Unlock()
-	return cloneConversation(c), nil
-}
-
-// LoadReadOnly returns a conversation without setting it as active.
-// Use this for previews / inspection surfaces (e.g. the TUI Conversations
-// tab highlighting an entry) where mutating the active conversation would
-// silently switch the user's chat history out from under them.
-func (m *Manager) LoadReadOnly(id string) (*Conversation, error) {
-	c, err := m.loadFromStore(id)
-	if err != nil {
-		return nil, err
-	}
-	return cloneConversation(c), nil
-}
-
-// isJSONError reports whether err indicates a JSON file that is absent,
-// empty, or structurally malformed — in all these cases the .jsonl
-// fallback is worth attempting.
-func isJSONError(err error) bool {
-	if err == nil {
-		return false
-	}
-	// os.IsNotExist — .json absent (redundant with caller check, but defensive)
-	if os.IsNotExist(err) {
-		return true
-	}
-	// json.Unmarshal wraps its errors; check the chain.
-	// *json.SyntaxError — truncated/garbage JSON (e.g. crash mid-write)
-	// *json.UnmarshalTypeError — wrong types (partial schema match)
-	// io.EOF — empty file
-	var synErr *json.SyntaxError
-	var typErr *json.UnmarshalTypeError
-	if errors.As(err, &synErr) || errors.As(err, &typErr) || errors.Is(err, io.EOF) {
-		return true
-	}
-	return false
-}
-
-// loadFromStore is the shared scaffolding behind Load and LoadReadOnly.
-// Disk I/O happens outside m.mu (the store handles its own concurrency)
-// so a long history scan can't block readers.
-func (m *Manager) loadFromStore(id string) (*Conversation, error) {
-	m.mu.RLock()
-	store := m.store
-	m.mu.RUnlock()
-	if store == nil {
-		return nil, fmt.Errorf("store not available")
-	}
-	var state persistedConversation
-	if err := store.LoadConversationState(id, &state); err == nil {
-		return normalizeConversation(&Conversation{
-			ID:        state.ID,
-			Provider:  state.Provider,
-			Model:     state.Model,
-			StartedAt: state.StartedAt,
-			Branch:    state.Branch,
-			Branches:  state.Branches,
-			Metadata:  state.Metadata,
-		}), nil
-	} else if os.IsNotExist(err) {
-		// .json does not exist — fall through to .jsonl fallback
-	} else if isJSONError(err) {
-		// .json is corrupted (truncated/malformed) — fall through to .jsonl fallback
-	} else {
-		return nil, err
-	}
-	msgs, err := store.LoadConversationLog(id)
-	if err != nil {
-		return nil, err
-	}
-	startedAt := legacyConversationStartedAt(store, id)
-	return normalizeConversation(&Conversation{
-		ID:        id,
-		Provider:  "unknown",
-		Model:     "unknown",
-		StartedAt: startedAt,
-		Branch:    "main",
-		Branches: map[string][]types.Message{
-			"main": msgs,
-		},
-		Metadata: map[string]string{},
-	}), nil
-}
-
-func (m *Manager) List() ([]Summary, error) {
-	// Snapshot the immutable refs we need (baseDir, store), release the
-	// lock, then do the directory scan + per-file loads. The previous
-	// version held m.mu for the whole crawl which scaled with conversation
-	// count and starved every concurrent reader.
-	m.mu.RLock()
-	baseDir := m.baseDir
-	m.mu.RUnlock()
-
-	if strings.TrimSpace(baseDir) == "" {
-		return nil, nil
-	}
-	entries, err := os.ReadDir(baseDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	out := make([]Summary, 0, len(entries))
-	seenIDs := make(map[string]struct{}, len(entries))
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		id := ""
-		switch {
-		case strings.HasSuffix(name, ".json"):
-			id = strings.TrimSuffix(name, ".json")
-		case strings.HasSuffix(name, ".jsonl"):
-			id = strings.TrimSuffix(name, ".jsonl")
-		default:
-			continue
-		}
-		if id == "" {
-			continue
-		}
-		if _, seen := seenIDs[id]; seen {
-			continue
-		}
-		seenIDs[id] = struct{}{}
-		conv, err := m.loadFromStore(id)
-		if err != nil {
-			continue
-		}
-		msgCount := totalMessageCount(conv)
-		mod := time.Time{}
-		if info, e2 := e.Info(); e2 == nil {
-			mod = info.ModTime()
-		}
-		startedAt := conv.StartedAt
-		if startedAt.IsZero() {
-			startedAt = mod
-		}
-		out = append(out, Summary{
-			ID:        id,
-			StartedAt: startedAt,
-			MessageN:  msgCount,
-			Provider:  conv.Provider,
-			Model:     conv.Model,
-		})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].StartedAt.After(out[j].StartedAt)
-	})
-	return out, nil
-}
-
-func (m *Manager) Search(query string, limit int) ([]Summary, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	query = strings.TrimSpace(strings.ToLower(query))
-	if query == "" {
-		return m.List()
-	}
-	all, err := m.List()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Summary, 0, min(limit, len(all)))
-	for _, item := range all {
-		conv, err := m.loadFromStore(item.ID)
-		if err != nil {
-			continue
-		}
-		found := false
-		for _, msgs := range conv.Branches {
-			for _, msg := range msgs {
-				if strings.Contains(strings.ToLower(msg.Content), query) {
-					found = true
-					break
-				}
-			}
-			if found {
-				break
-			}
-		}
-		if found {
-			out = append(out, item)
-			if len(out) >= limit {
-				break
-			}
-		}
-	}
-	return out, nil
-}
-
-func cloneConversation(in *Conversation) *Conversation {
-	if in == nil {
-		return nil
-	}
-	out := *in
-	out.Metadata = cloneMap(in.Metadata)
-	out.Branches = map[string][]types.Message{}
-	for k, v := range in.Branches {
-		out.Branches[k] = cloneMessages(v)
-	}
-	return &out
-}
-
-func cloneMap(in map[string]string) map[string]string {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	maps.Copy(out, in)
-	return out
-}
-
-func cloneMessages(in []types.Message) []types.Message {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]types.Message, len(in))
-	for i, msg := range in {
-		out[i] = cloneMessage(msg)
-	}
-	return out
-}
-
-func cloneMessage(in types.Message) types.Message {
-	out := in
-	out.Metadata = cloneMap(in.Metadata)
-	if len(in.ToolCalls) > 0 {
-		out.ToolCalls = make([]types.ToolCallRecord, len(in.ToolCalls))
-		for i, call := range in.ToolCalls {
-			out.ToolCalls[i] = call
-			out.ToolCalls[i].Params = cloneAnyMap(call.Params)
-			out.ToolCalls[i].Metadata = cloneMap(call.Metadata)
-		}
-	}
-	if len(in.Results) > 0 {
-		out.Results = make([]types.ToolResultRecord, len(in.Results))
-		for i, result := range in.Results {
-			out.Results[i] = result
-			out.Results[i].Metadata = cloneMap(result.Metadata)
-		}
-	}
-	return out
-}
-
-func cloneAnyMap(in map[string]any) map[string]any {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]any, len(in))
-	maps.Copy(out, in)
-	return out
-}
-
-func legacyConversationStartedAt(store *storage.Store, id string) time.Time {
-	if store == nil {
-		return time.Time{}
-	}
-	info, err := os.Stat(filepath.Join(store.ArtifactsDir(), "conversations", id+".jsonl"))
-	if err != nil {
-		return time.Time{}
-	}
-	return info.ModTime()
-}
-
-func normalizeConversation(c *Conversation) *Conversation {
-	if c == nil {
-		return nil
-	}
-	if c.Branches == nil {
-		c.Branches = map[string][]types.Message{}
-	}
-	if strings.TrimSpace(c.Branch) == "" {
-		c.Branch = "main"
-	}
-	if _, ok := c.Branches[c.Branch]; !ok {
-		c.Branches[c.Branch] = []types.Message{}
-	}
-	if c.Metadata == nil {
-		c.Metadata = map[string]string{}
-	}
-	if c.Provider == "" {
-		c.Provider = "unknown"
-	}
-	if c.Model == "" {
-		c.Model = "unknown"
-	}
-	if c.StartedAt.IsZero() {
-		c.StartedAt = time.Now()
-	}
-	return c
-}
-
-func totalMessageCount(c *Conversation) int {
-	if c == nil {
+// RemoveMessagesByID drops every message in the active branch whose
+// ID matches one in the given set. Returns the number of messages
+// removed. Used when the LLM emits a [cleanup: id1, id2] hint and the
+// engine wants to honour it. Safe to call with unknown/empty IDs —
+// no-ops silently.
+func (m *Manager) RemoveMessagesByID(ids []string) int {
+	if len(ids) == 0 {
 		return 0
 	}
-	total := 0
-	for _, msgs := range c.Branches {
-		total += len(msgs)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.active == nil {
+		return 0
 	}
-	return total
-}
-
-func sharedPrefixLen(a, b []types.Message) int {
-	n := min(len(a), len(b))
-	for i := range n {
-		if a[i].Role != b[i].Role || a[i].Content != b[i].Content {
-			return i
+	want := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			want[id] = struct{}{}
 		}
 	}
-	return n
+	if len(want) == 0 {
+		return 0
+	}
+	src := m.active.Branches[m.active.Branch]
+	if len(src) == 0 {
+		return 0
+	}
+	out := make([]types.Message, 0, len(src))
+	dropped := 0
+	for _, msg := range src {
+		if _, drop := want[strings.TrimSpace(msg.ID)]; drop && msg.ID != "" {
+			dropped++
+			continue
+		}
+		out = append(out, msg)
+	}
+	if dropped == 0 {
+		return 0
+	}
+	m.active.Branches[m.active.Branch] = out
+	return dropped
 }

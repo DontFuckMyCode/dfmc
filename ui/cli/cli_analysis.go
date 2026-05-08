@@ -3,6 +3,12 @@
 // dispatcher stays focused. These commands share dependency-graph
 // helpers (codemap DOT/SVG rendering) and promptlib/context-manager
 // plumbing so they travel together.
+//
+// File layout: this file owns runAnalyze (with its --magicdoc side
+// pipeline) + runMap. runTool lives in cli_analysis_tool.go;
+// dependency-graph rendering (collectDependencyStats + graphToDOT +
+// graphToSVG + escapeDOT + xmlEscape + depStat) lives in
+// cli_analysis_graph.go.
 
 package cli
 
@@ -10,14 +16,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"html"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
@@ -264,245 +267,4 @@ func runMap(ctx context.Context, eng *engine.Engine, args []string, jsonMode boo
 		fmt.Printf("%s -> %s (%s)\n", e.From, e.To, e.Type)
 	}
 	return 0
-}
-
-func runTool(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
-	if len(args) == 0 || args[0] == "list" {
-		tools := eng.ListTools()
-		if jsonMode {
-			mustPrintJSON(map[string]any{"tools": tools})
-			return 0
-		}
-		// Show one line per tool with a short summary pulled from its
-		// ToolSpec. Keeps text mode readable without requiring a follow-
-		// up `dfmc tool show NAME` just to learn what each verb does.
-		var specs map[string]string
-		if eng.Tools != nil {
-			specs = map[string]string{}
-			for _, s := range eng.Tools.Specs() {
-				specs[s.Name] = strings.TrimSpace(s.Summary)
-			}
-		}
-		for _, t := range tools {
-			summary := ""
-			if specs != nil {
-				summary = specs[t]
-			}
-			if summary != "" {
-				fmt.Printf("%-18s %s\n", t, summary)
-			} else {
-				fmt.Println(t)
-			}
-		}
-		return 0
-	}
-
-	// `dfmc tool show NAME` — print the ToolSpec so operators can see
-	// the parameter shape before invoking `dfmc tool run` blind. This
-	// fills the gap where previously you had to grep the source to
-	// discover what args a tool accepts.
-	if args[0] == "show" || args[0] == "describe" || args[0] == "inspect" {
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: dfmc tool show <name>")
-			return 2
-		}
-		name := strings.TrimSpace(args[1])
-		if eng.Tools == nil {
-			fmt.Fprintln(os.Stderr, "tools engine not initialized")
-			return 1
-		}
-		spec, ok := eng.Tools.Spec(name)
-		if !ok {
-			fmt.Fprintf(os.Stderr, "unknown tool: %s\n", name)
-			return 1
-		}
-		if jsonMode {
-			mustPrintJSON(spec)
-			return 0
-		}
-		printToolSpec(spec)
-		return 0
-	}
-
-	if args[0] != "run" {
-		fmt.Fprintln(os.Stderr, "usage: dfmc tool [list|show <name>|run <name> [--key value ...]]")
-		return 2
-	}
-	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: dfmc tool run <name> [--key value ...]")
-		return 2
-	}
-	name := args[1]
-	params := map[string]any{}
-	rest := args[2:]
-	for i := 0; i < len(rest); i++ {
-		part := rest[i]
-		if !strings.HasPrefix(part, "--") {
-			continue
-		}
-		key := strings.TrimPrefix(part, "--")
-		val := "true"
-		if i+1 < len(rest) && !strings.HasPrefix(rest[i+1], "--") {
-			val = rest[i+1]
-			i++
-		}
-		params[key] = val
-	}
-
-	res, err := eng.CallTool(ctx, name, params)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "tool error: %v\n", err)
-		return 1
-	}
-	if jsonMode {
-		mustPrintJSON(res)
-		return 0
-	}
-	if strings.TrimSpace(res.Output) != "" {
-		fmt.Println(res.Output)
-	}
-	return 0
-}
-
-type depStat struct {
-	Module string `json:"module"`
-	Count  int    `json:"count"`
-}
-
-func collectDependencyStats(eng *engine.Engine, limit int) []depStat {
-	if eng == nil || eng.CodeMap == nil || eng.CodeMap.Graph() == nil {
-		return nil
-	}
-	counts := map[string]int{}
-	for _, e := range eng.CodeMap.Graph().Edges() {
-		if e.Type != "imports" {
-			continue
-		}
-		mod := strings.TrimPrefix(e.To, "module:")
-		mod = strings.TrimSpace(mod)
-		if mod == "" {
-			continue
-		}
-		counts[mod]++
-	}
-	out := make([]depStat, 0, len(counts))
-	for mod, count := range counts {
-		out = append(out, depStat{Module: mod, Count: count})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Count == out[j].Count {
-			return out[i].Module < out[j].Module
-		}
-		return out[i].Count > out[j].Count
-	})
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out
-}
-
-func graphToDOT(nodes []codemap.Node, edges []codemap.Edge) string {
-	var b strings.Builder
-	b.WriteString("digraph DFMC {\n")
-	for _, n := range nodes {
-		label := n.Name
-		if strings.TrimSpace(label) == "" {
-			label = n.ID
-		}
-		if n.Kind != "" {
-			label = label + "\\n(" + n.Kind + ")"
-		}
-		fmt.Fprintf(&b, "  \"%s\" [label=\"%s\"];\n", escapeDOT(n.ID), escapeDOT(label))
-	}
-	for _, e := range edges {
-		fmt.Fprintf(&b, "  \"%s\" -> \"%s\" [label=\"%s\"];\n",
-			escapeDOT(e.From), escapeDOT(e.To), escapeDOT(e.Type))
-	}
-	b.WriteString("}\n")
-	return b.String()
-}
-
-func graphToSVG(nodes []codemap.Node, edges []codemap.Edge) string {
-	const (
-		width     = 1200.0
-		height    = 800.0
-		margin    = 90.0
-		nodeR     = 14.0
-		fontSize  = 12
-		labelDy   = 24.0
-		strokeW   = 1.2
-		centerPad = 20.0
-	)
-
-	var b strings.Builder
-	b.WriteString(`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">` + "\n")
-	b.WriteString(`  <defs><style>
-    .edge { stroke: #64748b; stroke-width: 1.2; opacity: 0.8; }
-    .node { fill: #0ea5e9; stroke: #075985; stroke-width: 1.2; }
-    .label { fill: #0f172a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; text-anchor: middle; }
-    .kind { fill: #334155; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; text-anchor: middle; }
-  </style></defs>` + "\n")
-	b.WriteString(`  <rect x="0" y="0" width="1200" height="800" fill="#f8fafc"/>` + "\n")
-
-	if len(nodes) == 0 {
-		b.WriteString(`  <text x="600" y="400" class="label">No codemap nodes</text>` + "\n")
-		b.WriteString(`</svg>` + "\n")
-		return b.String()
-	}
-
-	type pt struct {
-		x float64
-		y float64
-	}
-	pos := make(map[string]pt, len(nodes))
-	cx := width / 2
-	cy := height / 2
-	r := math.Min(width, height)/2 - margin
-	if len(nodes) == 1 {
-		pos[nodes[0].ID] = pt{x: cx, y: cy}
-	} else {
-		for i, n := range nodes {
-			angle := (2 * math.Pi * float64(i) / float64(len(nodes))) - math.Pi/2
-			x := cx + (r-centerPad)*math.Cos(angle)
-			y := cy + (r-centerPad)*math.Sin(angle)
-			pos[n.ID] = pt{x: x, y: y}
-		}
-	}
-
-	for _, e := range edges {
-		from, okFrom := pos[e.From]
-		to, okTo := pos[e.To]
-		if !okFrom || !okTo {
-			continue
-		}
-		fmt.Fprintf(&b, `  <line class="edge" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>`+"\n",
-			from.x, from.y, to.x, to.y)
-	}
-
-	for _, n := range nodes {
-		p := pos[n.ID]
-		label := strings.TrimSpace(n.Name)
-		if label == "" {
-			label = n.ID
-		}
-		kind := strings.TrimSpace(n.Kind)
-		fmt.Fprintf(&b, `  <circle class="node" cx="%.1f" cy="%.1f" r="%.1f"/>`+"\n", p.x, p.y, nodeR)
-		fmt.Fprintf(&b, `  <text class="label" x="%.1f" y="%.1f">%s</text>`+"\n", p.x, p.y+labelDy, xmlEscape(label))
-		if kind != "" {
-			fmt.Fprintf(&b, `  <text class="kind" x="%.1f" y="%.1f">%s</text>`+"\n", p.x, p.y+labelDy+12, xmlEscape(kind))
-		}
-	}
-
-	b.WriteString(`</svg>` + "\n")
-	return b.String()
-}
-
-func xmlEscape(s string) string {
-	return html.EscapeString(s)
-}
-
-func escapeDOT(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "\"", "\\\"")
-	return s
 }

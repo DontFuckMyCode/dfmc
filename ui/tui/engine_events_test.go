@@ -1197,7 +1197,7 @@ func TestRuntimeStrip_LiveLoopTokensBadge_ProximityEscalates(t *testing.T) {
 		used, cap int
 		want      string
 	}{
-		{30_000, 250_000, "loop ~30k/250k"},  // <70%, subtle
+		{30_000, 250_000, "loop ~30k/250k"},   // <70%, subtle
 		{180_000, 250_000, "loop ~180k/250k"}, // 72%, info
 		{230_000, 250_000, "loop ~230k/250k"}, // 92%, warn
 	}

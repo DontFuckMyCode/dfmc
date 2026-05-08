@@ -60,28 +60,43 @@ type ShellToolConfig struct {
 }
 
 type AgentConfig struct {
-	MaxToolSteps                int                    `yaml:"max_tool_steps"`
-	MaxToolTokens               int                    `yaml:"max_tool_tokens"`
-	MaxToolResultChars          int                    `yaml:"max_tool_result_chars"`
-	MaxToolResultDataChars      int                    `yaml:"max_tool_result_data_chars"`
-	ParallelBatchSize           int                    `yaml:"parallel_batch_size"`
-	MetaCallBudget              int                    `yaml:"meta_call_budget"`
-	MetaDepthLimit              int                    `yaml:"meta_depth_limit"`
-	ToolRoundSoftCap            int                    `yaml:"tool_round_soft_cap"`
-	ToolRoundHardCap            int                    `yaml:"tool_round_hard_cap"`
-	BudgetHeadroomDivisor       int                    `yaml:"budget_headroom_divisor"`
-	ElasticToolTokensRatio      float64                `yaml:"elastic_tool_tokens_ratio"`
-	ElasticToolResultCharsRatio float64                `yaml:"elastic_tool_result_chars_ratio"`
-	ElasticToolDataCharsRatio   float64                `yaml:"elastic_tool_data_chars_ratio"`
-	ResumeMaxMultiplier         int                    `yaml:"resume_max_multiplier"`
-	ToolReasoning               string                 `yaml:"tool_reasoning"`
-	AutonomousResume            string                 `yaml:"autonomous_resume"`
-	AutonomousPlanning          string                 `yaml:"autonomous_planning"`
-	ContextLifecycle            ContextLifecycleConfig `yaml:"context_lifecycle"`
-	ToolDefaultTimeoutSeconds   int                    `yaml:"tool_default_timeout_seconds"`
-	ToolTimeouts                map[string]int         `yaml:"tool_timeouts"`
-	RangeCachePerPath           int                    `yaml:"range_cache_per_path"`
-	RetryWindowSize             int                    `yaml:"retry_window_size"`
+	MaxToolSteps                int     `yaml:"max_tool_steps"`
+	MaxToolTokens               int     `yaml:"max_tool_tokens"`
+	MaxToolResultChars          int     `yaml:"max_tool_result_chars"`
+	MaxToolResultDataChars      int     `yaml:"max_tool_result_data_chars"`
+	ParallelBatchSize           int     `yaml:"parallel_batch_size"`
+	MetaCallBudget              int     `yaml:"meta_call_budget"`
+	MetaDepthLimit              int     `yaml:"meta_depth_limit"`
+	ToolRoundSoftCap            int     `yaml:"tool_round_soft_cap"`
+	ToolRoundHardCap            int     `yaml:"tool_round_hard_cap"`
+	BudgetHeadroomDivisor       int     `yaml:"budget_headroom_divisor"`
+	ElasticToolTokensRatio      float64 `yaml:"elastic_tool_tokens_ratio"`
+	ElasticToolResultCharsRatio float64 `yaml:"elastic_tool_result_chars_ratio"`
+	ElasticToolDataCharsRatio   float64 `yaml:"elastic_tool_data_chars_ratio"`
+	ResumeMaxMultiplier         int     `yaml:"resume_max_multiplier"`
+	ToolReasoning               string  `yaml:"tool_reasoning"`
+	AutonomousResume            string  `yaml:"autonomous_resume"`
+	AutonomousPlanning          string  `yaml:"autonomous_planning"`
+	// AutoContinue: when "auto" (default), the engine self-resumes
+	// after a final answer if the assistant did NOT emit `[done: true]`.
+	// The next turn is seeded with the first item from the assistant's
+	// `[next: ...]` block as the user prompt. Capped by
+	// MaxAutoContinueIterations (default 5) so a runaway model
+	// doesn't burn the whole budget on its own. Set to "off" to
+	// require the user to type each follow-up manually (legacy).
+	AutoContinue              string                 `yaml:"auto_continue"`
+	MaxAutoContinueIterations int                    `yaml:"max_auto_continue_iterations"`
+	ContextLifecycle          ContextLifecycleConfig `yaml:"context_lifecycle"`
+	ToolDefaultTimeoutSeconds int                    `yaml:"tool_default_timeout_seconds"`
+	ToolTimeouts              map[string]int         `yaml:"tool_timeouts"`
+	RangeCachePerPath         int                    `yaml:"range_cache_per_path"`
+	RetryWindowSize           int                    `yaml:"retry_window_size"`
+	// ReadSnapshotCap caps the read-before-mutation snapshot LRU.
+	// Default 256; raise for sessions with very wide file fan-out.
+	ReadSnapshotCap int `yaml:"read_snapshot_cap"`
+	// RecentFailureCap caps the per-tool failure ledger used to
+	// suppress noisy retries on the same broken call. Default 256.
+	RecentFailureCap int `yaml:"recent_failure_cap"`
 }
 
 type ContextLifecycleConfig struct {

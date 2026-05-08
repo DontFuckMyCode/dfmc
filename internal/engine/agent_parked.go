@@ -252,7 +252,7 @@ func (e *Engine) tryEnterSubagent(maxConcurrent int) (func(), error) {
 	if maxConcurrent > 0 && e.subagentInFlight >= maxConcurrent {
 		active := e.subagentInFlight
 		e.agentMu.Unlock()
-		return nil, fmt.Errorf("sub-agent concurrency limit reached (active=%d max=%d)", active, maxConcurrent)
+		return nil, fmt.Errorf("%w (active=%d max=%d)", ErrSubagentConcurrencyLimit, active, maxConcurrent)
 	}
 	if e.subagentInFlight == 0 {
 		e.subagentStashed = e.agentParked

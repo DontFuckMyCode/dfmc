@@ -59,9 +59,9 @@ func TestPatchViewV2_RendersAllThreePanesOnWideTerminal(t *testing.T) {
 // applied) → FAILED (notice mentions error/fail).
 func TestPatchViewV2_StatusChipReflectsApplyState(t *testing.T) {
 	cases := []struct {
-		name   string
-		setup  func(*Model)
-		want   string
+		name  string
+		setup func(*Model)
+		want  string
 	}{
 		{"empty", func(m *Model) {}, "EMPTY"},
 		{"pending", func(m *Model) {

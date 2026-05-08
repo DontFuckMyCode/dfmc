@@ -1,12 +1,17 @@
 package provider
 
+// openai_compat.go — non-streaming Complete entry, constructor,
+// base-URL normalization, name/model accessors, and the
+// CountTokens/MaxContext/Hints metadata trio for the
+// OpenAI-compatible provider (deepseek/kimi/zai/alibaba/generic/
+// ollama). Sibling: openai_compat_stream.go owns the SSE Stream
+// pump.
+
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -114,7 +119,7 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, truncated, err := readBoundedBody(resp.Body)
 	if err != nil {
@@ -177,178 +182,7 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 	}, nil
 }
 
-func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionRequest) (<-chan StreamEvent, error) {
-	if strings.TrimSpace(p.baseURL) == "" {
-		return nil, fmt.Errorf("%w: %s base_url missing", ErrProviderUnavailable, p.name)
-	}
-	if p.name != "generic" && strings.TrimSpace(p.apiKey) == "" {
-		return nil, fmt.Errorf("%w: %s api key missing", ErrProviderUnavailable, p.name)
-	}
-
-	messages := buildOpenAIMessages(req)
-	model := nonEmpty(req.Model, p.model)
-	body := map[string]any{
-		"model":    model,
-		"messages": messages,
-		"stream":   true,
-	}
-	if p.maxTokens > 0 {
-		body["max_tokens"] = p.maxTokens
-	}
-	if len(req.Tools) > 0 {
-		body["tools"] = openaiToolDescriptors(req.Tools)
-		if choice := openaiToolChoice(req.ToolChoice); choice != nil {
-			body["tool_choice"] = choice
-		}
-	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-
-	endpoint := p.baseURL + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if strings.TrimSpace(p.apiKey) != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	}
-
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode >= 400 {
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(resp.Body)
-		if isThrottleStatus(resp.StatusCode) {
-			return nil, newThrottledErrorFromResponse(p.name, resp, string(raw))
-		}
-		return nil, &StatusError{Provider: p.name, StatusCode: resp.StatusCode, Body: string(raw)}
-	}
-
-	ch := make(chan StreamEvent, 32)
-	providerName := p.name
-	go func() {
-		defer close(ch)
-		defer resp.Body.Close()
-
-		sc := bufio.NewScanner(resp.Body)
-		sc.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-
-		resolvedModel := model
-		startAnnounced := false
-		usage := Usage{}
-		usageSet := false
-		stopReason := StopUnknown
-
-		emitStart := func() {
-			if startAnnounced {
-				return
-			}
-			startAnnounced = true
-			select {
-			case <-ctx.Done():
-				return
-			case ch <- StreamEvent{Type: StreamStart, Provider: providerName, Model: resolvedModel}:
-			}
-		}
-
-		finish := func() {
-			emitStart()
-			done := StreamEvent{Type: StreamDone, Provider: providerName, Model: resolvedModel, StopReason: stopReason}
-			if usageSet {
-				u := usage
-				u.TotalTokens = u.InputTokens + u.OutputTokens
-				done.Usage = &u
-			}
-			ch <- done
-		}
-
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if line == "" || strings.HasPrefix(line, ":") {
-				continue
-			}
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if payload == "" {
-				continue
-			}
-			if payload == "[DONE]" {
-				finish()
-				return
-			}
-			if strings.Contains(payload, "\"success\":false") {
-				ch <- StreamEvent{Type: StreamError, Err: fmt.Errorf("%s provider error: %s", providerName, payload)}
-				return
-			}
-
-			var evt struct {
-				Model   string `json:"model"`
-				Choices []struct {
-					Delta struct {
-						Content string `json:"content"`
-					} `json:"delta"`
-					FinishReason string `json:"finish_reason"`
-				} `json:"choices"`
-				Usage *struct {
-					PromptTokens     int `json:"prompt_tokens"`
-					CompletionTokens int `json:"completion_tokens"`
-					TotalTokens      int `json:"total_tokens"`
-				} `json:"usage"`
-			}
-			if err := json.Unmarshal([]byte(payload), &evt); err != nil {
-				continue
-			}
-			if strings.TrimSpace(evt.Model) != "" {
-				resolvedModel = evt.Model
-			}
-			if evt.Usage != nil {
-				if evt.Usage.PromptTokens > 0 {
-					usage.InputTokens = evt.Usage.PromptTokens
-					usageSet = true
-				}
-				if evt.Usage.CompletionTokens > 0 {
-					usage.OutputTokens = evt.Usage.CompletionTokens
-					usageSet = true
-				}
-				if evt.Usage.TotalTokens > 0 {
-					usage.TotalTokens = evt.Usage.TotalTokens
-					usageSet = true
-				}
-			}
-			if len(evt.Choices) == 0 {
-				continue
-			}
-			if fr := strings.TrimSpace(evt.Choices[0].FinishReason); fr != "" {
-				stopReason = openaiStopReason(fr)
-			}
-			delta := evt.Choices[0].Delta.Content
-			if delta == "" {
-				continue
-			}
-			emitStart()
-			select {
-			case <-ctx.Done():
-				ch <- StreamEvent{Type: StreamError, Err: ctx.Err()}
-				return
-			case ch <- StreamEvent{Type: StreamDelta, Delta: delta}:
-			}
-		}
-		if err := sc.Err(); err != nil {
-			ch <- StreamEvent{Type: StreamError, Err: err}
-			return
-		}
-		finish()
-	}()
-
-	return ch, nil
-}
+// Stream lives in openai_compat_stream.go.
 
 func (p *OpenAICompatibleProvider) CountTokens(text string) int {
 	return len(strings.Fields(text))

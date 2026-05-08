@@ -20,6 +20,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
 )
 
 // tabPaletteEntry bundles every colour decision a tab needs. Border
@@ -35,32 +37,36 @@ type tabPaletteEntry struct {
 // Pre-computed entries for every tab name in the canonical order.
 // The map is keyed by the tab label exactly as it appears in
 // Model.tabs, case-sensitive.
+// All hex literals come from theme/palette.go (P14 invariant: zero
+// hex literals outside theme/). Overlapping per-tab tones (Chat=Info,
+// Status=Ok, etc.) reuse the existing role/severity colours; the
+// remaining 8 unique tab tones are exported as theme.ColorTab*.
 var tabPalette = map[string]tabPaletteEntry{
-	"Chat":          {Border: lipgloss.Color("#67E8F9"), Accent: lipgloss.Color("#67E8F9"), Glyph: "◆"},
-	"Status":        {Border: lipgloss.Color("#6EE7A7"), Accent: lipgloss.Color("#6EE7A7"), Glyph: "◉"},
-	"Files":         {Border: lipgloss.Color("#F6D38A"), Accent: lipgloss.Color("#F6D38A"), Glyph: "▦"},
-	"Patch":         {Border: lipgloss.Color("#FF9F6A"), Accent: lipgloss.Color("#FF9F6A"), Glyph: "◈"},
-	"Workflow":      {Border: lipgloss.Color("#BFA9FF"), Accent: lipgloss.Color("#BFA9FF"), Glyph: "⚙"},
-	"Tools":         {Border: lipgloss.Color("#F4B8D6"), Accent: lipgloss.Color("#F4B8D6"), Glyph: "⚒"},
-	"Activity":      {Border: lipgloss.Color("#8BC7FF"), Accent: lipgloss.Color("#8BC7FF"), Glyph: "✦"},
-	"Memory":        {Border: lipgloss.Color("#C4A7FF"), Accent: lipgloss.Color("#C4A7FF"), Glyph: "❖"},
-	"CodeMap":       {Border: lipgloss.Color("#5EEAD4"), Accent: lipgloss.Color("#5EEAD4"), Glyph: "◇"},
-	"Conversations": {Border: lipgloss.Color("#FFB4B4"), Accent: lipgloss.Color("#FFB4B4"), Glyph: "❍"},
-	"Prompts":       {Border: lipgloss.Color("#F2E5A1"), Accent: lipgloss.Color("#F2E5A1"), Glyph: "✎"},
-	"Security":      {Border: lipgloss.Color("#FF8A8A"), Accent: lipgloss.Color("#FF8A8A"), Glyph: "⛒"},
-	"Plans":         {Border: lipgloss.Color("#A5B4FC"), Accent: lipgloss.Color("#A5B4FC"), Glyph: "▣"},
-	"Context":       {Border: lipgloss.Color("#BEF264"), Accent: lipgloss.Color("#BEF264"), Glyph: "◐"},
-	"Providers":     {Border: lipgloss.Color("#F0ABFC"), Accent: lipgloss.Color("#F0ABFC"), Glyph: "◌"},
-	"Orchestrate":   {Border: lipgloss.Color("#FDE68A"), Accent: lipgloss.Color("#FDE68A"), Glyph: "◬"},
-	"Shortcuts":     {Border: lipgloss.Color("#A7F3D0"), Accent: lipgloss.Color("#A7F3D0"), Glyph: "?"},
+	"Chat":          {Border: theme.ColorInfo, Accent: theme.ColorInfo, Glyph: "◆"},
+	"Status":        {Border: theme.ColorOk, Accent: theme.ColorOk, Glyph: "◉"},
+	"Files":         {Border: theme.ColorWarn, Accent: theme.ColorWarn, Glyph: "▦"},
+	"Patch":         {Border: theme.ColorTabPatch, Accent: theme.ColorTabPatch, Glyph: "◈"},
+	"Workflow":      {Border: theme.ColorAccent, Accent: theme.ColorAccent, Glyph: "⚙"},
+	"Tools":         {Border: theme.ColorRoleCoach, Accent: theme.ColorRoleCoach, Glyph: "⚒"},
+	"Activity":      {Border: theme.ColorRoleUser, Accent: theme.ColorRoleUser, Glyph: "✦"},
+	"Memory":        {Border: theme.ColorRoleTool, Accent: theme.ColorRoleTool, Glyph: "❖"},
+	"CodeMap":       {Border: theme.ColorTabCodeMap, Accent: theme.ColorTabCodeMap, Glyph: "◇"},
+	"Conversations": {Border: theme.ColorTabConversations, Accent: theme.ColorTabConversations, Glyph: "❍"},
+	"Prompts":       {Border: theme.ColorCode, Accent: theme.ColorCode, Glyph: "✎"},
+	"Security":      {Border: theme.ColorFail, Accent: theme.ColorFail, Glyph: "⛒"},
+	"Plans":         {Border: theme.ColorTabPlans, Accent: theme.ColorTabPlans, Glyph: "▣"},
+	"Context":       {Border: theme.ColorTabContext, Accent: theme.ColorTabContext, Glyph: "◐"},
+	"Providers":     {Border: theme.ColorTabProviders, Accent: theme.ColorTabProviders, Glyph: "◌"},
+	"Orchestrate":   {Border: theme.ColorTabOrchestrate, Accent: theme.ColorTabOrchestrate, Glyph: "◬"},
+	"Shortcuts":     {Border: theme.ColorTabShortcuts, Accent: theme.ColorTabShortcuts, Glyph: "?"},
 }
 
 // planChatPaletteOverride kicks in when chat is in plan mode. The
 // loud yellow ties the screen frame to the existing /plan badge so
 // the gate state is impossible to miss.
 var planChatPaletteOverride = tabPaletteEntry{
-	Border: lipgloss.Color("#F6D38A"),
-	Accent: lipgloss.Color("#F6D38A"),
+	Border: theme.ColorWarn,
+	Accent: theme.ColorWarn,
 	Glyph:  "◈",
 }
 
@@ -90,43 +96,46 @@ func paletteForTab(tab string, planMode bool) tabPaletteEntry {
 // honest about how to navigate.
 func tabFKeyHint(tab string) string {
 	switch tab {
+	// Eight first-class tabs — F1..F8 step in tab-strip order.
+	// Alt+1..Alt+8 mirror them for terminals that swallow F-keys.
 	case "Chat":
 		return "F1"
+	case "Files":
+		return "F2"
+	case "Patch":
+		return "F3"
+	case "Workflow":
+		return "F4"
 	case "Activity":
+		return "F5"
+	case "Memory":
+		return "F6"
+	case "Conversations":
 		return "F7"
 	case "Providers":
-		return "Ctrl+O"
-	case "Files":
-		return "F3"
-	case "Patch":
-		return "F4"
-	case "Workflow":
-		return "F5"
-	case "Tools":
-		return "F6"
-	case "Memory":
 		return "F8"
-	case "CodeMap":
+	// Demoted overlays — F9..F12 cover the four most-trafficked
+	// (Status, CodeMap, Tools, Security); the remaining five live on
+	// Shift+F1..Shift+F5 so every panel still has an F-key. Help is
+	// reachable via Ctrl+H / Alt+H, not an F-key.
+	case "Status":
 		return "F9"
-	case "Conversations":
+	case "CodeMap":
 		return "F10"
-	case "Prompts":
-		// F11 is reserved for the help overlay because most terminals
-		// intercept it for window fullscreen before the app sees it.
-		// Prompts is reachable via Alt+T.
-		return "Alt+T"
+	case "Tools":
+		return "F11"
 	case "Security":
 		return "F12"
-	case "Status":
-		return "F2/Alt+I"
+	case "Prompts":
+		return "Shift+F1"
 	case "Plans":
-		return "Alt+Y"
+		return "Shift+F2"
 	case "Context":
-		return "Alt+W"
+		return "Shift+F3"
 	case "Orchestrate":
-		return "Alt+R"
+		return "Shift+F4"
 	case "Shortcuts":
-		return "Alt+H"
+		return "Shift+F5"
 	}
 	return ""
 }

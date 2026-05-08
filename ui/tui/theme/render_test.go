@@ -856,6 +856,113 @@ func TestRenderStatsPanelSized_NarrowWidth(t *testing.T) {
 	}
 }
 
+// TestRenderStatsPanelOverviewProviderRowCompressed — Phase B dedup
+// slice 5. The stats panel's Overview-mode PROVIDER section used to
+// stack provider + model on two bold rows that duplicated the runtime-
+// strip Top row (chat tab) and the dedicated ACTIVE section in
+// Providers mode (alt+p). Compressed to a single subtle pointer line
+// so signal-density survives without the 3-row block. Failure states
+// (no provider, needs key) keep their loud multi-row form because
+// those are actionable, not just labels.
+func TestRenderStatsPanelOverviewProviderRowCompressed(t *testing.T) {
+	configured := RenderStatsPanelSized(StatsPanelInfo{
+		Provider: "anthropic", Model: "claude-opus-4-7",
+		Configured: true, MaxContext: 200000,
+	}, 30, 60)
+	if !strings.Contains(configured, "anthropic / claude-opus-4-7") {
+		t.Fatalf("Overview should still name the active provider/model on one line, got:\n%s", configured)
+	}
+	if !strings.Contains(configured, "alt+p deep view") {
+		t.Fatalf("Overview should advertise alt+p as the deep-view affordance, got:\n%s", configured)
+	}
+
+	// Failure path stays multi-row + loud — the user must act here.
+	missing := RenderStatsPanelSized(StatsPanelInfo{}, 30, 60)
+	if !strings.Contains(missing, "no provider") {
+		t.Fatalf("missing-provider state should still be loud, got:\n%s", missing)
+	}
+	if !strings.Contains(missing, "alt+p providers") {
+		t.Fatalf("missing-provider guidance should point at alt+p, got:\n%s", missing)
+	}
+
+	needsKey := RenderStatsPanelSized(StatsPanelInfo{
+		Provider: "anthropic", Model: "claude-opus-4-7",
+		Configured: false, MaxContext: 200000,
+	}, 30, 60)
+	if !strings.Contains(needsKey, "needs key") || !strings.Contains(needsKey, "claude-opus-4-7") {
+		t.Fatalf("needs-key state should keep the multi-row actionable form, got:\n%s", needsKey)
+	}
+}
+
+// TestRenderStatsPanelOverviewWorkflowDropsTodoCountDuplicate — Phase B
+// dedup slice 3. The runtime strip Work-row (always visible above chat)
+// already shows `todos X/Y done, Z doing - <active>`. The Overview
+// stats panel's WORKFLOW section used to print the same numbers in a
+// different format right beside it. Now the section drops the count
+// line and active text and only points to alt+s for the deep breakdown.
+func TestRenderStatsPanelOverviewWorkflowDropsTodoCountDuplicate(t *testing.T) {
+	info := StatsPanelInfo{
+		Provider: "anthropic", Configured: true, MaxContext: 200000,
+		TodoTotal: 6, TodoDone: 2, TodoDoing: 1, TodoPending: 3,
+		TodoActive: "Wire Phase B dedup",
+	}
+	out := RenderStatsPanelSized(info, 30, 60)
+	for _, banned := range []string{
+		"todos 6 | 2 done | 1 doing | 3 pending",
+		"active: Wire Phase B dedup",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("Overview WORKFLOW section should not echo runtime-strip TODO counts; saw %q in:\n%s", banned, out)
+		}
+	}
+	if !strings.Contains(out, "todos: alt+s for breakdown") {
+		t.Fatalf("expected drill-in pointer to alt+s Todos mode, got:\n%s", out)
+	}
+
+	// Sanity: in Todos mode the full breakdown is still the canonical
+	// home — make sure we didn't accidentally remove that surface too.
+	deep := RenderStatsPanelSized(StatsPanelInfo{
+		Provider: "anthropic", Configured: true, MaxContext: 200000,
+		Mode:      StatsPanelModeTodos,
+		TodoTotal: 6, TodoDone: 2, TodoDoing: 1, TodoPending: 3,
+	}, 30, 60)
+	if !strings.Contains(deep, "6 total") || !strings.Contains(deep, "2 done") || !strings.Contains(deep, "1 doing") || !strings.Contains(deep, "3 pending") {
+		t.Fatalf("Todos mode should still carry the full breakdown, got:\n%s", deep)
+	}
+}
+
+// TestRenderStatsPanelSuppressesParkedRowsWhileBannerActive — Phase B
+// dedup slice. Two parked-related surfaces sit in the stats panel:
+// the runtime block's "parked" row + "/continue to resume" hint, and
+// the next-action critical hint "/continue resumes parked agent".
+// While the resume banner is up (BannerActive=true), both should drop
+// out so the panel doesn't echo the banner's primary message. The
+// state-line at the top of the panel still reads "parked" — that's the
+// canonical one-line distill and stays put.
+func TestRenderStatsPanelSuppressesParkedRowsWhileBannerActive(t *testing.T) {
+	withBanner := RenderStatsPanelSized(StatsPanelInfo{
+		Provider: "anthropic", Configured: true, MaxContext: 200000,
+		Parked: true, BannerActive: true,
+	}, 30, 60)
+	if strings.Contains(withBanner, "/continue to resume") {
+		t.Fatalf("runtime parked hint should be hidden while banner is active, got:\n%s", withBanner)
+	}
+	if strings.Contains(withBanner, "/continue resumes parked agent") {
+		t.Fatalf("next-action parked hint should be hidden while banner is active, got:\n%s", withBanner)
+	}
+
+	bannerDismissed := RenderStatsPanelSized(StatsPanelInfo{
+		Provider: "anthropic", Configured: true, MaxContext: 200000,
+		Parked: true, BannerActive: false,
+	}, 30, 60)
+	if !strings.Contains(bannerDismissed, "/continue to resume") {
+		t.Fatalf("runtime parked hint should re-emerge when banner is dismissed, got:\n%s", bannerDismissed)
+	}
+	if !strings.Contains(bannerDismissed, "/continue resumes parked agent") {
+		t.Fatalf("next-action parked hint should re-emerge when banner is dismissed, got:\n%s", bannerDismissed)
+	}
+}
+
 func TestRenderStatsPanelModeTabs(t *testing.T) {
 	out := RenderStatsPanelModeTabs(StatsPanelModeOverview, 100)
 	if out == "" {

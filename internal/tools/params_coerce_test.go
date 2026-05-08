@@ -62,6 +62,7 @@ func TestAsBool_AcceptsCommonProviderShapes(t *testing.T) {
 //   - nil → "<nil>"   (read_file path="<nil>" → "file not found: <nil>")
 //   - []any{x} → "[x]"  (weak model wrapping a single arg in an array)
 //   - map → "map[k:v]"  (model nesting struct where a string was wanted)
+//
 // All three should fall back to the caller's default so the
 // missingParamError or downstream validation fires with a useful
 // message instead of corrupted-value errors.

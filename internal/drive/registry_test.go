@@ -152,6 +152,60 @@ func TestRegistryNilCancelIgnored(t *testing.T) {
 	}
 }
 
+// TestRegistryNoLeakUnderRandomCancelTiming hammers the registry with
+// many concurrent register / cancel / unregister cycles where the
+// cancel arrives at random points. The invariant: after every batch
+// completes, registrySize() must return to zero. Catches a regression
+// where a defer-unregister was misordered or a cancel-before-defer
+// window left a stale entry.
+//
+// P13: pinning the "every register pairs with exactly one unregister"
+// invariant under concurrent ctx-cancel pressure.
+func TestRegistryNoLeakUnderRandomCancelTiming(t *testing.T) {
+	const batches = 10
+	const perBatch = 100
+	for batch := 0; batch < batches; batch++ {
+		var wg sync.WaitGroup
+		for i := 0; i < perBatch; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				ctx, cancel := context.WithCancel(context.Background())
+				runID := "drv-leak-" + itoa(batch*perBatch+id)
+				if !tryRegister(runID, "task", cancel) {
+					t.Errorf("tryRegister should succeed for unique ID %s", runID)
+					cancel()
+					return
+				}
+				defer unregister(runID)
+				defer cancel()
+				// Random timing: cancel before, during, or after the
+				// "work" phase. The defer chain must release the
+				// registry entry no matter which path wins.
+				switch id % 4 {
+				case 0:
+					Cancel(runID) // external cancel before any work
+				case 1:
+					go Cancel(runID) // racing cancel
+				case 2:
+					// natural completion — no Cancel call
+				case 3:
+					cancel() // local cancel
+				}
+				// Brief synthetic work so cancels race with completion.
+				select {
+				case <-ctx.Done():
+				case <-time.After(time.Millisecond):
+				}
+			}(i)
+		}
+		wg.Wait()
+		if got := registrySize(); got != 0 {
+			t.Fatalf("batch %d leaked %d entries (want 0)", batch, got)
+		}
+	}
+}
+
 func TestRegistryEmptyIDIgnored(t *testing.T) {
 	_, cancel := context.WithCancel(context.Background())
 	register("", "task", cancel)

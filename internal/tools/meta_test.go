@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -831,7 +832,7 @@ func TestToolBatchCall_UsesCumulativeMetaBudgetPerTurn(t *testing.T) {
 			"name": "read_file",
 			"args": map[string]any{"path": "hello.go"},
 		},
-	}); err == nil || !strings.Contains(err.Error(), "meta tool budget exhausted") {
+	}); err == nil || !errors.Is(err, ErrMetaBudgetExhausted) {
 		t.Fatalf("expected cumulative budget exhaustion on the 65th planned call, got %v", err)
 	}
 }

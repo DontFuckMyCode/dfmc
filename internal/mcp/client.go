@@ -64,25 +64,17 @@ func NewClient(name string, command string, args []string, env map[string]string
 	return c, nil
 }
 
-// Start spawns the server process and runs the MCP handshake:
-//  1. Create stdout pipe
-//  2. Start the process
-//  3. Bind stdin/stdout pipes
-//  4. Send initialize, read response, send notifications/initialized
-//  5. Send tools/list and cache the result
-
-
 // Stop terminates the server process and releases resources.
 func (c *Client) Stop() error {
 	if c.closed.Swap(true) {
 		return nil
 	}
 	if c.stdin != nil {
-		c.stdin.Close()
+		_ = c.stdin.Close()
 	}
 	if c.cmd != nil && c.cmd.Process != nil {
-		c.cmd.Process.Kill()
-		c.cmd.Wait()
+		_ = c.cmd.Process.Kill()
+		_ = c.cmd.Wait()
 	}
 	return nil
 }
@@ -123,56 +115,6 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 	return result, nil
 }
 
-// handshake runs the MCP initialize/initialized handshake and caches tools.
-func (c *Client) handshake(ctx context.Context) error {
-	// Use raw params to set serverInfo (the param name in the spec,
-	// even though it's the CLIENT's own info — the struct field in
-	// protocol.go is mislabeled ServerInfo but the JSON key is serverInfo)
-	initParams := map[string]any{
-		"protocolVersion": ProtocolVersion,
-		"serverInfo": map[string]string{
-			"name":    "dfmc-client",
-			"version": "1.0",
-		},
-	}
-	initReq := Request{
-		JSONRPC: "2.0",
-		ID:      newID(),
-		Method:  "initialize",
-		Params:  jsonMarshal(initParams),
-	}
-	var initResp Response
-	if err := c.sendSync(ctx, &initReq, &initResp); err != nil {
-		return fmt.Errorf("initialize: %w", err)
-	}
-	if initResp.Error != nil {
-		return fmt.Errorf("server rejected initialize: %s", initResp.Error.Message)
-	}
-
-	// Client is ready — send the notifications/initialized notification
-	c.sendNotification(Request{JSONRPC: "2.0", Method: "notifications/initialized"})
-
-	// Fetch tool list
-	var listResp Response
-	listReq := Request{JSONRPC: "2.0", ID: newID(), Method: "tools/list"}
-	if err := c.sendSync(ctx, &listReq, &listResp); err != nil {
-		return fmt.Errorf("tools/list: %w", err)
-	}
-	if listResp.Error != nil {
-		return fmt.Errorf("tools/list error: %s", listResp.Error.Message)
-	}
-
-	var listResult ListToolsResult
-	if err := jsonDecode(listResp.Result, &listResult); err != nil {
-		return fmt.Errorf("decode tools/list: %w", err)
-	}
-
-	c.mu.Lock()
-	c.tools = listResult.Tools
-	c.mu.Unlock()
-	return nil
-}
-
 // sendSync sends a request and waits for its response.
 func (c *Client) sendSync(ctx context.Context, req *Request, resp *Response) error {
 	if c.stdin == nil || c.stdout == nil {
@@ -200,11 +142,6 @@ func (c *Client) sendSync(ctx context.Context, req *Request, resp *Response) err
 	case err := <-ch:
 		return err
 	}
-}
-
-// sendNotification sends a one-way JSON-RPC notification (no ID, no response).
-func (c *Client) sendNotification(req Request) {
-	_ = json.NewEncoder(c.stdin).Encode(req)
 }
 
 // -- helpers --

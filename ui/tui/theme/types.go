@@ -35,8 +35,16 @@ type ToolChip struct {
 	CompressedChars int
 	SavedChars      int
 	CompressionPct  int // 0–99, how much of the raw output was dropped
-	InnerLines      []string
-	Reason          string
+	// HardTruncated is true when the per-call char cap forced bytes
+	// out of the model-bound payload (NOT just ANSI/spinner noise).
+	// HardTruncatedRunes counts runes lost from output + data.
+	// Distinct from Truncated above (which is the sandbox's own flag).
+	// Renderers should show a "✂ N chars dropped" badge so the user
+	// knows the model is missing real content, not just compressed.
+	HardTruncated      bool
+	HardTruncatedRunes int
+	InnerLines         []string
+	Reason             string
 }
 
 // --- todo strip ---------------------------------------------------------
@@ -94,6 +102,13 @@ type ChatHeaderInfo struct {
 	AgentMax            int
 	QueuedCount         int
 	Parked              bool
+	// BannerActive is true while the resume banner is shown above the
+	// composer. Used to suppress duplicate "parked" chips/rows in the
+	// chat header and stats panel — the banner is the canonical "do
+	// something" surface and the duplicates are noise. Esc dismisses
+	// the banner, which clears this flag and lets the smaller surfaces
+	// re-emerge so the user can rediscover the parked state.
+	BannerActive        bool
 	PendingNotes        int
 	Slim                bool
 	ActiveTools         int
@@ -171,6 +186,11 @@ type StatsPanelInfo struct {
 	LastStatus              string
 	LastDurationMs          int
 	Parked                  bool
+	// BannerActive — same meaning as ChatHeaderInfo.BannerActive: when
+	// the resume banner is up, the stats panel suppresses its duplicate
+	// "parked" row + "/continue resumes parked agent" hint so the panel
+	// doesn't echo the banner's primary message.
+	BannerActive            bool
 	QueuedCount             int
 	PendingNotes            int
 	ToolsEnabled            bool

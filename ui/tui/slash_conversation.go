@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // conversationSlash exposes the branch/history surface through chat.
@@ -104,8 +105,25 @@ func (m Model) conversationSlash(args []string) string {
 		return strings.TrimRight(b.String(), "\n")
 	case "branch":
 		return conversationBranchSlash(m, rest)
+	case "fork":
+		// Phase G item 2 — fork shorthand. Branches the current
+		// conversation onto a new branch + immediately switches to it
+		// so the user can keep typing without losing the divergence
+		// point. Uses an auto-generated timestamped name when none is
+		// supplied.
+		name := strings.TrimSpace(strings.Join(rest, " "))
+		if name == "" {
+			name = "fork-" + time.Now().Format("20060102-150405")
+		}
+		if err := m.eng.ConversationBranchCreate(name); err != nil {
+			return "fork failed: " + err.Error()
+		}
+		if err := m.eng.ConversationBranchSwitch(name); err != nil {
+			return "fork created but switch failed: " + err.Error()
+		}
+		return "Forked onto branch " + name + " — keep typing to diverge."
 	default:
-		return "conversation: unknown subcommand. Try: list | active | new | save | load <id> | undo | search <q> | branch <sub>"
+		return "conversation: unknown subcommand. Try: list | active | new | save | load <id> | undo | search <q> | branch <sub> | fork [name]"
 	}
 }
 

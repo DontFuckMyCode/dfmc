@@ -271,10 +271,10 @@ func TestTrajectoryHints_MutationGentleAtCountOne(t *testing.T) {
 
 func TestErrorFingerprint_NormalizesClass(t *testing.T) {
 	cases := map[string]string{
-		"":                                       "",
-		"  File not Found":                       "file not found",
-		"file   not\tfound":                      "file not found",
-		"FILE NOT FOUND: /tmp/zzz/aaa/path.go":   "file not found: /tmp/zzz/aaa/p",
+		"":                                      "",
+		"  File not Found":                      "file not found",
+		"file   not\tfound":                     "file not found",
+		"FILE NOT FOUND: /tmp/zzz/aaa/path.go":  "file not found: /tmp/zzz/aaa/p",
 		"permission denied: /var/run/something": "permission denied: /var/run/so",
 	}
 	for in, want := range cases {

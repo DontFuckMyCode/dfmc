@@ -91,7 +91,7 @@ func (s *Scanner) scanGoSum(path string) ([]DependencyFinding, error) {
 	if err != nil {
 		return nil, nil // no go.sum is fine
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var findings []DependencyFinding
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -134,7 +134,7 @@ func (s *Scanner) scanNPMLock(path string) ([]DependencyFinding, error) {
 	if err != nil {
 		return nil, nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var top struct {
 		Dependencies map[string]npmLockPackage `json:"dependencies"`
 	}
@@ -215,7 +215,7 @@ func (s *Scanner) scanRequirementsTxt(path string) ([]DependencyFinding, error) 
 	if err != nil {
 		return nil, nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var findings []DependencyFinding
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {

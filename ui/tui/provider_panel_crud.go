@@ -112,7 +112,11 @@ func (m *Model) createProvider(name string) error {
 	}
 	m.eng.Config.Providers.Profiles[name] = prof
 
-	path, err := m.projectConfigPath()
+	// Match panel-toggle scope semantics: if project already has a
+	// providers block, write there (it shadows user-home anyway);
+	// otherwise create the new provider in user-home so it's
+	// available across projects.
+	path, err := m.configPathForScope(m.effectivePersistScope())
 	if err != nil {
 		return err
 	}
@@ -159,7 +163,10 @@ func (m *Model) deleteProvider(name string) error {
 	}
 	delete(m.eng.Config.Providers.Profiles, name)
 
-	path, err := m.projectConfigPath()
+	// Same dynamic scope as createProvider — we delete from whichever
+	// file is winning so the deletion actually takes effect on next
+	// reload, not just in-memory.
+	path, err := m.configPathForScope(m.effectivePersistScope())
 	if err != nil {
 		return err
 	}

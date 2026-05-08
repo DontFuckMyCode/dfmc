@@ -26,7 +26,6 @@ import (
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
-	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 type SemanticSearchTool struct{}
@@ -87,39 +86,6 @@ type semanticMatch struct {
 	ContextLines []string `json:"context_lines,omitempty"`
 }
 
-// parsedQuery holds a parsed pattern query.
-type parsedQuery struct {
-	nodeType   string
-	name       string
-	typeFilter string
-	context    int
-}
-
-func parseQuery(q string) parsedQuery {
-	q = strings.TrimSpace(q)
-	var pq parsedQuery
-	pq.context = 0
-
-	parts := strings.Split(q, ":")
-	pq.nodeType = strings.TrimSpace(parts[0])
-	if len(parts) > 1 {
-		for i := 1; i < len(parts); i++ {
-			part := strings.TrimSpace(parts[i])
-			if strings.HasPrefix(part, "type=") {
-				pq.typeFilter = strings.TrimPrefix(part, "type=")
-			} else if strings.HasPrefix(part, "context=") {
-				fmt.Sscanf(part, "context=%d", &pq.context)
-			} else if strings.HasPrefix(part, "name=") {
-				pq.name = strings.TrimPrefix(part, "name=")
-			} else if pq.name == "" {
-				// First non-flag :part is the bare name filter
-				pq.name = part
-			}
-		}
-	}
-	return pq
-}
-
 func (t *SemanticSearchTool) Execute(ctx context.Context, req Request) (Result, error) {
 	queryStr := strings.TrimSpace(asString(req.Params, "query", ""))
 	if queryStr == "" {
@@ -172,7 +138,7 @@ func (t *SemanticSearchTool) Execute(ctx context.Context, req Request) (Result, 
 	}
 
 	astEngine := ast.New()
-	defer astEngine.Close()
+	defer func() { _ = astEngine.Close() }()
 
 	var matches []semanticMatch
 	backend := "unknown"
@@ -267,86 +233,12 @@ func searchFileWithEngine(engine *ast.Engine, fpath string, pq parsedQuery) ([]s
 	return matches, backend
 }
 
-func symKindMatchesQuery(sym types.Symbol, pq parsedQuery) bool {
-	nodeKind := strings.ToLower(pq.nodeType)
-	switch nodeKind {
-	case "functiondecl", "functioncall":
-		if sym.Kind != types.SymbolFunction {
-			return false
-		}
-		return patternNameMatches(sym.Name, pq.name)
-	case "typedecl":
-		if sym.Kind != types.SymbolType && sym.Kind != types.SymbolInterface && sym.Kind != types.SymbolClass {
-			return false
-		}
-		return patternNameMatches(sym.Name, pq.name)
-	case "methoddecl":
-		if sym.Kind != types.SymbolFunction {
-			return false
-		}
-		if !strings.Contains(sym.Signature, "(") {
-			return false
-		}
-		return patternNameMatches(sym.Name, pq.name)
-	case "ifstmt", "returnstmt", "assignstmt":
-		return pq.name == "" || patternNameMatches(sym.Name, pq.name)
-	case "vardecl":
-		if sym.Kind != types.SymbolVariable {
-			return false
-		}
-		return patternNameMatches(sym.Name, pq.name)
-	case "constdecl":
-		if sym.Kind != types.SymbolConstant {
-			return false
-		}
-		return patternNameMatches(sym.Name, pq.name)
-	default:
-		return pq.name == "" || patternNameMatches(sym.Name, pq.name)
-	}
-}
-
-// patternNameMatches checks if symName matches the given pattern.
-// pattern may be "", a plain name, or a name with * at start/end only.
-// Supports: "foo" exact, "foo*" prefix, "*foo" suffix, "*Bar*" infix, "*" any.
-// * in the middle of the pattern is treated as a literal character.
-func patternNameMatches(symName, pattern string) bool {
-	if pattern == "" {
-		return true
-	}
-	pattern = strings.TrimPrefix(pattern, "name=")
-	// Exact match (no wildcards)
-	if !strings.Contains(pattern, "*") {
-		return symName == pattern
-	}
-	// Bare * matches everything
-	if pattern == "*" {
-		return true
-	}
-	// Infix * (e.g. "foo*bar") — * at both start AND end with non-empty sides
-	if strings.HasPrefix(pattern, "*") && strings.HasSuffix(pattern, "*") {
-		infix := pattern[1 : len(pattern)-1]
-		return infix == "" || strings.Contains(symName, infix)
-	}
-	// Trailing-only * wildcard (e.g. "foo*")
-	if strings.HasSuffix(pattern, "*") && !strings.Contains(pattern[:len(pattern)-1], "*") {
-		prefix := pattern[:len(pattern)-1]
-		return prefix == "" || strings.HasPrefix(symName, prefix)
-	}
-	// Leading-only * wildcard (e.g. "*Bar")
-	if strings.HasPrefix(pattern, "*") && !strings.Contains(pattern[1:], "*") {
-		suffix := pattern[1:]
-		return suffix == "" || strings.HasSuffix(symName, suffix)
-	}
-	// Multiple wildcards in inconsistent positions — literal match
-	return symName == pattern
-}
-
 var searchSkipDirs = []string{".git", "node_modules", "vendor", "bin", "dist", ".dfmc", "__pycache__", ".venv", ".idea", ".vscode"}
 
 func collectSearchFiles(projectRoot, langFilter string) []string {
 	exts := extensionsForLang(langFilter)
 	var files []string
-	filepath.Walk(projectRoot, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(projectRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info == nil {
 			return nil
 		}

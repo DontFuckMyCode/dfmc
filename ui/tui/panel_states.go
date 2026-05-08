@@ -10,21 +10,28 @@
 // field on Model per panel (m.providers, m.codemap, etc.). The rename is
 // purely structural — value semantics are preserved, every field still
 // belongs to one Model copy, no pointer aliasing.
+//
+// Sibling state files (split out 2026-05-07 because this file used to
+// host every Model sub-struct, panels and not):
+//
+//   chat_state.go    — chatState (composer/transcript/stream/queue),
+//                      pasteBlock, assistantNextActionsState,
+//                      composeInput method, intentState, slashMenuState,
+//                      commandPickerState, inputHistoryState.
+//   runtime_state.go — agentLoopState, sessionTelemetry,
+//                      subagentRuntimeItem, statsPanelMode + consts,
+//                      uiToggles.
+//   view_state.go    — tasksPanelState, patchViewState, filesViewState,
+//                      toolViewState, workflowPanelState,
+//                      activityPanelState.
 
 package tui
 
 import (
-	"context"
-	"fmt"
-	"strings"
 	"time"
-	"unicode/utf8"
-
-	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
-	"github.com/dontfuckmycode/dfmc/internal/drive"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/planning"
 	"github.com/dontfuckmycode/dfmc/internal/promptlib"
@@ -87,7 +94,36 @@ type providersPanelState struct {
 	// loaded guard — refreshProvidersRows is idempotent so we gate on
 	// first activation rather than re-reading on every ctrl+o press.
 	loaded bool
+	// probeResults caches the most recent test-connection result per
+	// provider name (Phase I item 1). Lookup is lower-cased to match
+	// router normalisation. Nil-safe — `T` allocates on first use.
+	probeResults map[string]engine.ProviderProbeResult
+	probing      map[string]bool // names with an in-flight probe
+	// usageHistory is a bounded ring buffer of provider:complete events
+	// per provider name (Phase I item 2). Newest at the end so the
+	// detail panel can render last-N descending; capped at
+	// providerUsageHistoryCap so steady-state memory stays flat across
+	// long sessions.
+	usageHistory map[string][]providerUsageEntry
 }
+
+// providerUsageEntry captures one provider:complete event so the
+// Providers panel can render a per-provider history strip. Tokens come
+// straight off the event payload; At lets the renderer show "12s ago".
+type providerUsageEntry struct {
+	At           time.Time
+	Provider     string
+	Model        string
+	InputTokens  int
+	OutputTokens int
+	TotalTokens  int
+}
+
+// providerUsageHistoryCap bounds the ring buffer size per provider so
+// long sessions don't accumulate unbounded history. Tuned for a
+// week-long session at one ask/minute (≈10k events) — far above the
+// realistic edit-and-see-the-last-N use case.
+const providerUsageHistoryCap = 50
 
 // diagnosticPanelsState groups the cold, mostly read-only diagnostic tabs.
 // These views are loaded on demand and mutated far less often than the chat
@@ -103,6 +139,22 @@ type diagnosticPanelsState struct {
 	contextPanel  contextPanelState
 	providers     providersPanelState
 	statusPanel   statusPanelState
+	orchestrate   scrollOnlyPanelState
+	shortcuts     scrollOnlyPanelState
+	// helpOverlay scroll is shared by the Ctrl+H overlay rendered on
+	// non-Chat tabs (the Chat-tab inline widget has its own scroll
+	// behaviour). j/k/pgup/pgdn/g/G adjust it via handleHelpOverlayKey.
+	helpOverlay scrollOnlyPanelState
+}
+
+// scrollOnlyPanelState is the state shared by read-only reference
+// overlays (Orchestrate, Shortcuts) that need nothing more than a
+// vertical scroll offset. They have no selectable rows, no action menu,
+// and no editing — just a long body the user pages through with j/k,
+// pgup/pgdn, g/G. Kept tiny on purpose so adding another such panel is
+// cheap.
+type scrollOnlyPanelState struct {
+	scroll int
 }
 
 // statusPanelState — arrow-key navigation state for the Status (F2)
@@ -129,13 +181,21 @@ func (d *diagnosticPanelsState) applyDefaults() {
 		return
 	}
 	if d.memory.tier == "" {
-		d.memory.tier = memoryTierAll
+		// Phase H item 2 — default to Working tier (the recent
+		// scratchpad), not the merged All view. Rationale per Section
+		// 2.8: users mostly care about "what was just remembered" on
+		// open; episodic / semantic are reachable via `t` cycle (or
+		// the action menu) when needed.
+		d.memory.tier = string(types.MemoryWorking)
 	}
 	if d.codemap.view == "" {
 		d.codemap.view = codemapViewOverview
 	}
 	if d.security.view == "" {
 		d.security.view = securityViewSecrets
+	}
+	if d.security.ignored == nil {
+		d.security.ignored = map[string]bool{}
 	}
 }
 
@@ -185,6 +245,11 @@ type memoryPanelState struct {
 	loading      bool
 	err          string
 	searchActive bool
+	// expandedID is the entry whose full multi-line value is rendered
+	// inline below the row. Empty = collapsed (one-line per row, the
+	// default). Phase H item 3 — per-entry detail expand. Enter on a
+	// row sets/clears this field.
+	expandedID string
 }
 
 // promptsPanelState — read view over the merged promptlib catalog (defaults
@@ -213,472 +278,38 @@ type securityPanelState struct {
 	err          string
 	searchActive bool
 	loaded       bool
+	// ignored is the set of finding fingerprints the user has marked
+	// "known acceptable risk" — those rows render with a muted IGN
+	// chip and drop out of the unfiltered count. The fingerprint is a
+	// stable hash of `kind|file|line|rule` so re-running the scan after
+	// a code reshuffle correctly forgets ignores that no longer match.
+	// Phase J item 1 — whitelist / ignore mechanism.
+	ignored map[string]bool
 }
 
 // conversationsPanelState — read view over the JSONL-persisted conversation
 // store. The preview pane holds the first few messages of the currently
 // highlighted entry; it's lazy-loaded on enter.
+//
+// deepSearchQuery: when non-empty, `entries` are the results of an
+// engine-side full-text search across message bodies (not the ID/
+// provider/model substring filter that lives client-side as `query`).
+// Phase G item 1 — Conversations full-text search.
 type conversationsPanelState struct {
-	entries      []conversation.Summary
-	scroll       int
-	query        string
-	loading      bool
-	err          string
-	searchActive bool
-	loaded       bool
-	preview      []types.Message
-	previewID    string
-}
-
-// chatState — the chat tab's hot path: composer state, transcript,
-// in-flight stream lifecycle, and the FIFO of queued submissions /btw
-// notes that arrive while the engine is busy. The fields cluster into
-// three loose groups that all live here because they're touched together
-// on every keystroke and stream event:
-//
-//   - composer    — input, cursor, cursorManual, cursorInput
-//   - stream      — sending, streamIndex/Messages/Cancel/StartedAt,
-//     userCancelledStream, spinnerFrame/Ticking, scrollback
-//   - queue/tools — pendingQueue, pendingNoteCount, toolPending, toolName
-//
-// `transcript` is the rendered history; `scrollback` is how far PageUp
-// has scrolled us back from the tail (0 = pinned to latest).
-type chatState struct {
-	transcript          []chatLine
-	input               string
-	cursor              int
-	cursorManual        bool
-	cursorInput         string
-	sending             bool
-	streamIndex         int
-	streamMessages      <-chan tea.Msg
-	streamCancel        context.CancelFunc
-	userCancelledStream bool
-	pendingQueue        []string
-	pendingNoteCount    int
-	streamStartedAt     time.Time
-	streamInputTokens   int
-	spinnerFrame        int
-	spinnerTicking      bool
-	scrollback          int
-	toolPending         bool
-	toolName            string
-	mentionPickerOpen   bool
-	// pasteBlocks stores atomic multi-line paste segments. The composer
-	// only contains their placeholders; composeInput replaces placeholders
-	// with the original text at submit time. pasteBurst* catches terminals
-	// that send multi-line paste as "line text" + Enter events while a
-	// stream is active, so pasted lines do not become many queued messages.
-	pasteBlocks         []pasteBlock
-	pasteBurstUntil     time.Time
-	pasteBurstBlock     int
-	pasteCandidateStart int
-	pasteCandidateEnd   int
-	pasteCandidateRunes int
-	pasteCandidateBulk  bool
-	pasteCandidateSince time.Time
-	pasteCandidateLast  time.Time
-	suppressPasteRender bool
-}
-
-// pasteBlock represents one multi-line paste operation.
-type pasteBlock struct {
-	content   string // original pasted text (newlines preserved)
-	blockNum  int    // 1-based sequence number
-	lineCount int    // number of lines in the content
-}
-
-// composeInput reconstructs the full submission text from all paste blocks
-// and the visible composer text. Paste block placeholders are replaced
-// with the original content.
-func (m Model) composeInput() string {
-	var full strings.Builder
-	// Reconstruct from stored blocks + visible input
-	blocks := m.chat.pasteBlocks
-	if len(blocks) == 0 {
-		return m.chat.input
-	}
-	// The visible m.chat.input contains placeholders like
-	// "[Pasted #1 3 lines]" interleaved with regular typed text.
-	// We reconstruct by scanning the input left-to-right and substituting.
-	rest := m.chat.input
-	for len(rest) > 0 {
-		matched := false
-		for _, b := range blocks {
-			placeholder := b.placeholder()
-			if strings.HasPrefix(rest, placeholder) {
-				full.WriteString(b.content)
-				rest = rest[len(placeholder):]
-				matched = true
-				break
-			}
-		}
-		if matched {
-			continue
-		}
-		// No placeholder match — take one character
-		r, size := utf8.DecodeRuneInString(rest)
-		if r == utf8.RuneError && size == 0 {
-			break
-		}
-		full.WriteRune(r)
-		rest = rest[size:]
-	}
-	return full.String()
-}
-
-// placeholder returns the compact display string for this block. Keep this
-// ASCII and visually atomic; deleteInputRange treats any edit inside it as a
-// deletion of the stored paste content too.
-func (b pasteBlock) placeholder() string {
-	return fmt.Sprintf("[Pasted #%d %d lines]", b.blockNum, b.lineCount)
-}
-
-// intentState — most recent decision from the engine's intent router,
-// plus a verbose flag that controls whether enrichments surface in the
-// chat transcript as gray "you said X / agent saw Y" pairs. The chip
-// in the chat header reads from active+source; the slash command
-// /intent show prints the full last decision via Recent.
-//
-// Engine publishes "intent:decision" events via EventBus; the TUI
-// handler pulls fields out of the payload and assigns into this
-// struct. Empty struct = "intent layer hasn't fired yet this session".
-type intentState struct {
-	verbose          bool   // /intent verbose toggles transcript pairs
-	lastIntent       string // "resume" | "new" | "clarify" | ""
-	lastSource       string // "llm" | "fallback" | ""
-	lastRaw          string
-	lastEnriched     string
-	lastReasoning    string
-	lastFollowUp     string
-	lastLatencyMs    int64
-	lastDecisionAtMs int64 // Unix millis; 0 when never fired
-}
-
-// uiToggles — runtime UI flags driven by /slash commands and ctrl-key
-// shortcuts. These are independent on/off knobs that don't share state,
-// but grouping them keeps the Model declaration from being half-flooded
-// with bools whose only role is "is this overlay visible?".
-type uiToggles struct {
-	showHelpOverlay       bool // ctrl+h: keybinding card overlay
-	showStatsPanel        bool // ctrl+s: right-side stats panel on chat tab
-	statsPanelMode        statsPanelMode
-	statsPanelBoostUntil  time.Time
-	statsPanelFocusLocked bool
-	keyLogEnabled         bool // /keylog or DFMC_KEYLOG=1: dump KeyMsg into notice
-	planMode              bool // /plan: investigate-only agent loop
-	resumePromptActive    bool // agent:loop:parked: show "press enter to resume"
-	coachMuted            bool // /coach: hide coach:note transcript lines
-	hintsVerbose          bool // /hints: surface model-facing trajectory hints
-	mouseCaptureEnabled   bool // /mouse: cell-motion mouse tracking on/off
-	selectionModeActive   bool // /select or alt+x: chat-only selection layout
-	selectionRestoreStats bool // previous showStatsPanel before selection mode
-	selectionRestoreMouse bool // previous mouseCaptureEnabled before selection mode
-	// toolStripExpanded controls whether the per-message tool-call
-	// strip renders as a one-line summary table (when false) or as
-	// the full per-call chip block (default, true). Default is expanded
-	// because seeing which tools fired and their outcomes is essential
-	// for trust and transparency — the user can /tools (or ctrl+y) to
-	// flip it when they want a quieter view.
-	toolStripExpanded bool
-	showTasksPanel    bool // /tasks: floating tasks panel on chat tab
-}
-
-type statsPanelMode string
-
-const (
-	statsPanelModeOverview  statsPanelMode = "overview"
-	statsPanelModeTodos     statsPanelMode = "todos"
-	statsPanelModeTasks     statsPanelMode = "tasks"
-	statsPanelModeSubagents statsPanelMode = "subagents"
-	statsPanelModeProviders statsPanelMode = "providers"
-)
-
-// activityPanelState — Activity tab state. `entries` is the timestamped
-// firehose fed by every engine event; `follow` pins the view to the tail
-// (any manual scroll unpins it).
-type activityPanelState struct {
-	entries      []activityEntry
-	scroll       int
-	follow       bool
-	mode         activityViewMode
-	query        string
-	searchActive bool
-}
-
-// sessionTelemetry — running counters surfaced by the chat header chips
-// and the stats panel. Compression* aggregate every tool:result event so
-// we can show "rtk saved N chars (M%)" without rewalking the timeline;
-// active*Count track in-flight fan-out (incremented on tool:call /
-// agent:subagent:start, decremented on the matching done event).
-type sessionTelemetry struct {
-	compressionSavedChars int
-	compressionRawChars   int
-	activeToolCount       int
-	activeSubagentCount   int
-	lastInputTokens       int
-	lastOutputTokens      int
-	lastTotalTokens       int
-	sessionInputTokens    int
-	sessionOutputTokens   int
-	sessionTotalTokens    int
-	subagents             map[string]subagentRuntimeItem
-	subagentOrder         []string
-
-	// drive* fields track the most recently active drive run so the
-	// chat header can show "▸ drive 3/12 · T5" while the run is in
-	// flight. Reset on drive:run:done/stopped/failed so the chip
-	// disappears when the run is over. Concurrent drive runs are
-	// uncommon; the last one to publish "wins" the chip — tracking
-	// only the latest matches what users actually want to see.
-	driveRunID   string
-	driveTodoID  string
-	driveDone    int
-	driveTotal   int
-	driveBlocked int
-}
-
-type subagentRuntimeItem struct {
-	Key        string
-	Task       string
-	Role       string
-	Status     string
-	Provider   string
-	Model      string
-	Candidates []string
-	Tried      []string
-	Attempt    int
-	Attempts   int
-	Rounds     int
-	DurationMs int
-	Fallback   bool
-	Error      string
-	LastReason string
-	StartedAt  time.Time
-	UpdatedAt  time.Time
-}
-
-// tasksPanelState — floating tasks overlay on the chat tab.
-// Rendered by render_task_tree.go.
-type tasksPanelState struct {
-	expanded      map[string]bool
-	selectedIndex int
-	scroll        int
-}
-
-// patchViewState — Patch tab state plus the workspace-diff snapshot that
-// feeds it. `diff`/`changed` mirror `git diff` output (refreshed by the
-// workspace loader); `latestPatch` is the most recent patch the assistant
-// emitted; `set`/`files`/`index`/`hunk` are the parsed view we paginate
-// through with [/]-keys.
-type patchViewState struct {
-	diff        string
-	changed     []string
-	latestPatch string
-	set         []patchSection
-	files       []string
-	index       int
-	hunk        int
-}
-
-// filesViewState — Files tab state. `entries` is the directory listing,
-// `index` the cursor row, `pinned` a sticky selection that survives
-// re-loads, and `path/preview/size` the currently shown file.
-type filesViewState struct {
-	entries []string
-	index   int
-	pinned  string
-	preview string
-	path    string
-	size    int
-}
-
-// toolViewState — Tools tab cursor position, current output for the
-// selected tool, and the in-place editor (editing flag, draft buffer,
-// per-key overrides) used to tweak parameters before re-running.
-type toolViewState struct {
-	index     int
-	output    string
-	editing   bool
-	draft     string
-	overrides map[string]string
-}
-
-// inputHistoryState — chat composer command history (up/down recall),
-// plus the in-progress draft we stash before navigating into history so
-// pressing down past the newest entry restores what the user was typing.
-type inputHistoryState struct {
-	history []string
-	index   int
-	draft   string
-}
-
-// slashMenuState — composer popup indices for the four completion menus
-// (slash command, slash argument, file mention, quick action). Each is
-// the highlighted-row index inside the corresponding rendered list.
-type slashMenuState struct {
-	command     int
-	commandArg  int
-	mention     int
-	quickAction int
-}
-
-// commandPickerState — modal chooser state for slash commands that need
-// an interactive selection (provider/model/skill). Active flips on while
-// the picker is open and pins keyboard focus to the picker handler.
-type commandPickerState struct {
-	active  bool
-	kind    string
-	query   string
-	index   int
-	persist bool
-	all     []commandPickerItem
-}
-
-// agentLoopState aggregates everything the TUI knows about the currently
-// running native tool loop — surface used by the chat header chips, the
-// stats panel, and the per-step toolTimeline chip strip. Engine events
-// (agent:loop:*, tool:*) are the only writers; renderers read it.
-//
-// Lives off Model so the 13 separate flat fields don't drown unrelated
-// state in the Model declaration.
-type agentLoopState struct {
-	active       bool
-	step         int
-	maxToolStep  int
-	toolRounds   int
-	phase        string
-	provider     string
-	model        string
-	lastTool     string
-	lastStatus   string
-	lastDuration int
-	lastOutput   string
-	contextScope string
-	// lastToolReason is the model's `_reason` field on the most recent
-	// tool call — its self-narration of WHY this call. Surfaced in the
-	// runtime "now" strip as "→ thinking: <reason>" so a user watching
-	// a long autonomous run can see the model's current intent at a
-	// glance without scrolling through chips. Cleared on each new
-	// tool:call (previous intent is now stale); refreshed on each
-	// tool:reasoning event.
-	lastToolReason string
-	toolTimeline []toolChip
-	// sessionCoachNotes accumulates coach:note text during the current round for
-	// runtime visibility and test assertions.
-	sessionCoachNotes []string
-	// stuck* — last seen `agent:coach:stuck` payload. Powers the warn
-	// badge in the runtime "now" strip so a multi-hour autonomous run
-	// surfaces "stalled: <tool> ×N" at a glance until the next
-	// successful tool clears it. Empty stuckTool means no current stall.
-	stuckTool      string
-	stuckCount     int
-	stuckErrClass  string
-	stuckClearedAt int // step number where the stall was last cleared (0=never)
-	// cumulative* — running totals across auto-resume cycles within a
-	// single root ask. The autonomous wrapper accumulates these on
-	// every park→compact→resume transition, and the engine refuses
-	// further resumes when cumulativeSteps >= stepCeiling (or tokens
-	// hit tokenCeiling). Surfacing them in the runtime strip lets the
-	// user see "I'm 240/600 cumulative steps in" at a glance during a
-	// multi-hour run instead of having to read auto-resume chips that
-	// scroll out of view. Reset on agent:loop:start (fresh ask).
-	cumulativeSteps  int
-	stepCeiling      int
-	cumulativeTokens int
-	tokenCeiling     int
-
-	// unvalidatedEdits tracks files mutated since the last successful
-	// build/test/vet command. The trajectory layer already nudges the
-	// model with a "validate this" hint per turn, but never escalates
-	// when the unvalidated count keeps climbing across rounds. The TUI
-	// surface compensates: a warn badge "unverified: N edits" lights up
-	// from the third edit onward so a multi-hour run that has been
-	// happily editing for 20 rounds without a single test pass becomes
-	// visually obvious. Cleared by successful build/test/vet, reset on
-	// agent:loop:start.
-	unvalidatedEdits []string
-	// unvalidatedSinceStep records the step where the first edit in the
-	// current unvalidated batch landed; useful for "edited 5 files
-	// across the last 12 steps" signals if we ever surface duration.
-	unvalidatedSinceStep int
-
-	// Turn-scoped accumulators powering the on-final summary card.
-	// `unvalidated*` above is a LIVE state that clears on validation;
-	// these survive validation passes and only reset on agent:loop:start
-	// because their job is "what did this whole turn touch?", not
-	// "what's still unverified right now". Together they answer the
-	// "what did it actually do for the last 2 hours?" question that the
-	// chip ribbon can't because chips scroll out of view.
-	turnStartedAt          time.Time
-	turnEditedFiles        []string
-	turnValidationPasses   int
-	turnCoachInterventions int
-	// Live in-loop conversation footprint as reported by the engine on
-	// agent:loop:thinking. The CONTEXT panel only refreshes once per
-	// Ask (on context:built) so it shows "what WOULD be sent if you
-	// asked now" — the static value, not the actively-growing one.
-	// During a long autonomous loop the user wants to see how close
-	// the working context is to the budget; this field powers a
-	// "loop ~47k/250k" indicator in the runtime strip that keeps
-	// updating round-by-round.
-	liveLoopTokens     int
-	liveLoopBudgetCap  int // engine's max_tool_tokens (live working-set ceiling)
-
-	// headroomThresholdsHit tracks WHICH context-fill % bands the
-	// current turn has already crossed (70/85/95). Used to dedupe the
-	// chat-event "context X% full · auto-compact pending" notifications
-	// so a long loop ticking over 70% repeatedly only fires the warning
-	// ONCE per turn per band. Reset on agent:loop:start.
-	// Bit 0 = 70%, bit 1 = 85%, bit 2 = 95%.
-	headroomThresholdsHit uint8
-
-	// compactsThisTurn counts how many times the engine has run an
-	// auto-compact cycle during the CURRENT turn (reactive + proactive
-	// combined). A turn that needed multiple compacts is fighting hard
-	// for budget — the runtime card shows a "compacts ×N" badge so
-	// the user can spot a loop that's barely keeping its head above
-	// water without watching the activity feed event-by-event. Reset
-	// on agent:loop:start.
-	compactsThisTurn      int
-	compactReclaimedTurn  int // cumulative tokens reclaimed by compacts this turn
-
-	// cacheHitsThisTurn counts how many sub-agent / parallel-tool cache
-	// hits the current turn served. A cache hit is a tool call that the
-	// engine answered from a prior result without re-running the tool —
-	// silent token savings the user wouldn't otherwise see (no
-	// tool:call → no chip → no signal). Surfaced as "cache ×N" in the
-	// runtime strip so a savings-heavy turn registers visibly. Reset
-	// on agent:loop:start.
-	cacheHitsThisTurn int
-
-	// toolErrorsThisTurn counts how many tool:result events arrived
-	// with success=false during the current turn. Recovery happens
-	// silently (the model retries or pivots), so a turn that failed 8
-	// tool calls and limped to a final answer leaves no trace once
-	// the chips scroll out. The end-of-turn summary card surfaces this
-	// as "errors: N recovered" so retry-heavy turns are visible in
-	// scrollback. Counts every failed result including timeouts and
-	// denials — the goal is to capture turn-level fragility, not to
-	// taxonomize causes. Reset on agent:loop:start.
-	toolErrorsThisTurn int
-}
-
-// workflowPanelState — Drive TODO tree panel state for the Workflow tab.
-// Tracks the list of drive runs, which run is selected, scroll position,
-// and which TODO nodes are expanded to show their detail.
-type workflowPanelState struct {
-	runs           []*drive.Run // from drive store List(), refreshed on events
-	selectedRunID  string       // empty = show run selector; set = show TODO tree
-	scrollY        int          // vertical scroll offset in the TODO tree
-	expandedTodo   map[string]bool
-	selectedIndex  int    // index in run selector list when no run selected
-	selectedTodoID string // ID of the TODO whose detail is shown
-	// routingEditor controls the drive.Config.Routing editor overlay.
-	showRoutingEditor  bool              // true = overlay open
-	routingEditTag     string            // tag being edited (empty = new entry)
-	routingEditProfile string            // profile name being edited
-	routingEditIndex   int               // which row is selected in the routing list
-	routingEditMode    bool              // true = currently editing the profile field
-	routingDraft       map[string]string // routing entries in the editor (tag -> profile)
+	entries          []conversation.Summary
+	scroll           int
+	query            string
+	loading          bool
+	err              string
+	searchActive     bool
+	loaded           bool
+	preview          []types.Message
+	previewID        string
+	deepSearchQuery  string
+	deepSearchActive bool
+	// previewBranches is the branch list of the currently-previewed
+	// conversation. Empty when the conversation only has the default
+	// `main` branch. Phase G item 3 — branch tree visualization.
+	previewBranches      []conversationBranchSummary
+	previewActiveBranch  string
 }

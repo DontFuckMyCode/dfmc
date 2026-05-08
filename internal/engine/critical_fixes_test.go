@@ -12,6 +12,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,7 +96,7 @@ func TestAskBeforeInitReturnsDescriptiveError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new engine: %v", err)
 	}
-	if _, err := eng.Ask(context.Background(), "hello"); err == nil || !strings.Contains(err.Error(), "engine not initialized") {
+	if _, err := eng.Ask(context.Background(), "hello"); err == nil || !errors.Is(err, ErrEngineNotInitialized) {
 		t.Fatalf("expected pre-init ask error, got %v", err)
 	}
 }
@@ -106,7 +107,7 @@ func TestCallToolBeforeInitReturnsDescriptiveError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new engine: %v", err)
 	}
-	if _, err := eng.CallTool(context.Background(), "read_file", map[string]any{"path": "go.mod"}); err == nil || !strings.Contains(err.Error(), "engine not initialized") {
+	if _, err := eng.CallTool(context.Background(), "read_file", map[string]any{"path": "go.mod"}); err == nil || !errors.Is(err, ErrEngineNotInitialized) {
 		t.Fatalf("expected pre-init tool error, got %v", err)
 	}
 }
@@ -184,7 +185,7 @@ func TestResumeAgent_RefusesAfterCumulativeStepsCeiling(t *testing.T) {
 func TestResumeAgent_NoParkedStateStillErrors(t *testing.T) {
 	eng, _, _ := buildGuardTestEngine(t, 0, 1, nil)
 	_, err := eng.ResumeAgent(context.Background(), "")
-	if err == nil || !strings.Contains(err.Error(), "no parked agent") {
+	if err == nil || !errors.Is(err, ErrNoParkedAgent) {
 		t.Fatalf("want 'no parked agent' error, got %v", err)
 	}
 }

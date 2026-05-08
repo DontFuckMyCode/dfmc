@@ -8,6 +8,8 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/storage"
 )
 
+// --- allowsDegradedStartup ---
+
 func TestAllowsDegradedStartup_HelpVariants(t *testing.T) {
 	for _, cmd := range []string{"help", "-h", "--help"} {
 		if !allowsDegradedStartup([]string{cmd}) {
@@ -83,6 +85,8 @@ func TestAllowsDegradedStartup_FlagsOnly(t *testing.T) {
 	}
 }
 
+// --- formatInitError ---
+
 func TestFormatInitError_Nil(t *testing.T) {
 	got := formatInitError(nil)
 	if got != "" {
@@ -104,7 +108,6 @@ func TestFormatInitError_StoreLocked(t *testing.T) {
 	}
 }
 
-// TestFormatInitError_StoreLockedWithTimeout tests a wrapped ErrStoreLocked.
 func TestFormatInitError_StoreLockedWithTimeout(t *testing.T) {
 	err := errors.Join(storage.ErrStoreLocked, errors.New("database is locked by another process"))
 	got := formatInitError(err)
@@ -113,7 +116,6 @@ func TestFormatInitError_StoreLockedWithTimeout(t *testing.T) {
 	}
 }
 
-// TestFormatInitError_Generic covers non-StoreLocked errors.
 func TestFormatInitError_Generic(t *testing.T) {
 	err := errors.New("some other error")
 	got := formatInitError(err)
@@ -122,60 +124,10 @@ func TestFormatInitError_Generic(t *testing.T) {
 	}
 }
 
-func TestRun_ConfigLoadError(t *testing.T) {
-	// Cannot easily test config load failure without mocking, but
-	// formatInitError is tested above; run() calls it.
-}
+// --- suppressInitWarning ---
 
-func TestRun_EngineNewError(t *testing.T) {
-	// engine.New failure path is covered by formatInitError tests.
-}
-
-func TestRun_EngineInitError(t *testing.T) {
-	// engine.Init failure propagates to formatInitError; tested above.
-}
-
-func TestRun_DegradedWithDoctor(t *testing.T) {
-	if !allowsDegradedStartup([]string{"doctor"}) {
-		t.Error("doctor should allow degraded startup")
-	}
-}
-
-func TestRun_DegradedWithCompletion(t *testing.T) {
-	if !allowsDegradedStartup([]string{"completion"}) {
-		t.Error("completion should allow degraded startup")
-	}
-}
-
-func TestRun_DegradedWithUpdate(t *testing.T) {
-	if !allowsDegradedStartup([]string{"update"}) {
-		t.Error("update should allow degraded startup")
-	}
-}
-
-func TestRun_DegradedWithMan(t *testing.T) {
-	if !allowsDegradedStartup([]string{"man"}) {
-		t.Error("man should allow degraded startup")
-	}
-}
-
-func TestRun_DegradedWithMixedFlagsAndCommand(t *testing.T) {
-	if !allowsDegradedStartup([]string{"--verbose", "--json", "version"}) {
-		t.Error("global flags before secondary command should allow degraded startup")
-	}
-}
-
-func TestRun_DegradedWithSecondaryCommandVariants(t *testing.T) {
-	for _, cmd := range []string{"completion", "man", "update"} {
-		if !allowsDegradedStartup([]string{cmd}) {
-			t.Errorf("allowsDegradedStartup(%q) = false, want true", cmd)
-		}
-	}
-}
-
-// Pure meta commands (read-only catalogs) suppress the lock warning so
-// `dfmc help` and friends don't lead with a scary `init warning:` header
-// for a store they were never going to open.
+// Quiet meta commands: they never touch the store so the lock warning
+// would be an irrelevant distraction.
 func TestSuppressInitWarning_QuietMetaCommands(t *testing.T) {
 	for _, cmd := range []string{"help", "version", "completion", "man"} {
 		if !suppressInitWarning([]string{cmd}) {
@@ -209,7 +161,68 @@ func TestSuppressInitWarning_FlagsBeforeCommand(t *testing.T) {
 	if !suppressInitWarning([]string{"--verbose", "--json", "help"}) {
 		t.Error("flags before help should still suppress")
 	}
-	if suppressInitWarning([]string{"--verbose", "ask"}) {
-		t.Error("flags before ask should not suppress")
+}
+
+// Only leading non-flag args determine the verdict.
+func TestSuppressInitWarning_FlagsBeforeRealCommand(t *testing.T) {
+	if suppressInitWarning([]string{"--verbose", "ask", "--json"}) {
+		t.Error("flags before a real command should NOT suppress")
 	}
 }
+
+// Empty args defaults to help-path: suppress.
+func TestSuppressInitWarning_Empty(t *testing.T) {
+	if !suppressInitWarning([]string{}) {
+		t.Error("suppressInitWarning({}) = false, want true")
+	}
+}
+
+// Whitespace-only args: treated same as empty.
+func TestSuppressInitWarning_WhitespaceOnly(t *testing.T) {
+	if !suppressInitWarning([]string{"", " ", "  "}) {
+		t.Error("whitespace-only args should suppress")
+	}
+}
+
+// --- extractDataDir ---
+
+func TestExtractDataDir_NotPresent(t *testing.T) {
+	if got := extractDataDir([]string{"ask", "hello"}); got != "" {
+		t.Errorf("extractDataDir([ask, hello]) = %q, want \"\"", got)
+	}
+}
+
+func TestExtractDataDir_ExplicitFlag(t *testing.T) {
+	if got := extractDataDir([]string{"--data-dir", "/custom/path"}); got != "/custom/path" {
+		t.Errorf("extractDataDir([--data-dir, /custom/path]) = %q, want %q", got, "/custom/path")
+	}
+}
+
+func TestExtractDataDir_EqualsForm(t *testing.T) {
+	if got := extractDataDir([]string{"--data-dir=/custom/path"}); got != "/custom/path" {
+		t.Errorf("extractDataDir([--data-dir=/custom/path]) = %q, want %q", got, "/custom/path")
+	}
+}
+
+func TestExtractDataDir_WithLeadingFlags(t *testing.T) {
+	got := extractDataDir([]string{"--verbose", "--data-dir=/my/data", "ask", "hello"})
+	if got != "/my/data" {
+		t.Errorf("extractDataDir with leading flags = %q, want %q", got, "/my/data")
+	}
+}
+
+func TestExtractDataDir_TrailingFlags(t *testing.T) {
+	got := extractDataDir([]string{"ask", "--data-dir=/my/data", "--json"})
+	if got != "/my/data" {
+		t.Errorf("extractDataDir with trailing flags = %q, want %q", got, "/my/data")
+	}
+}
+
+func TestExtractDataDir_LastPosition(t *testing.T) {
+	got := extractDataDir([]string{"--verbose", "--no-color", "--data-dir=/data"})
+	if got != "/data" {
+		t.Errorf("extractDataDir at last position = %q, want %q", got, "/data")
+	}
+}
+
+

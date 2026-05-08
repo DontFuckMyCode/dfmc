@@ -2,13 +2,16 @@ package toolhistory
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sync"
 	"time"
 )
+
+// Bus subscription bridge (subscribePayload + payloadFromEventValue),
+// payload value coercers (strVal/intVal/boolVal/truncate), and the
+// atomic file writer (writeFileAtomic + syncDir) live in
+// logger_helpers.go.
 
 // ToolCallRecord is the JSONL log entry shape.
 type ToolCallRecord struct {
@@ -83,66 +86,6 @@ func Init(bus any, artifactsDir string) (*Logger, error) {
 	l.subResult = subscribePayload(bus, "tool:result", l.onResult)
 	go l.periodicFlush()
 	return l, nil
-}
-
-func subscribePayload(bus any, eventType string, fn func(any)) func() {
-	if bus == nil || fn == nil {
-		return func() {}
-	}
-	if typed, ok := bus.(interface {
-		SubscribeFunc(string, func(any)) func()
-	}); ok {
-		return typed.SubscribeFunc(eventType, fn)
-	}
-
-	method := reflect.ValueOf(bus).MethodByName("SubscribeFunc")
-	if !method.IsValid() {
-		return func() {}
-	}
-	methodType := method.Type()
-	if methodType.NumIn() != 2 || methodType.In(0).Kind() != reflect.String || methodType.In(1).Kind() != reflect.Func {
-		return func() {}
-	}
-	callbackType := methodType.In(1)
-	if callbackType.NumIn() != 1 || callbackType.NumOut() != 0 {
-		return func() {}
-	}
-	callback := reflect.MakeFunc(callbackType, func(args []reflect.Value) []reflect.Value {
-		if len(args) == 0 {
-			fn(nil)
-			return nil
-		}
-		fn(payloadFromEventValue(args[0]))
-		return nil
-	})
-	results := method.Call([]reflect.Value{reflect.ValueOf(eventType), callback})
-	if len(results) != 1 || results[0].Kind() != reflect.Func {
-		return func() {}
-	}
-	return func() {
-		results[0].Call(nil)
-	}
-}
-
-func payloadFromEventValue(v reflect.Value) any {
-	if !v.IsValid() {
-		return nil
-	}
-	if v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return nil
-		}
-		v = v.Elem()
-	}
-	if v.Kind() == reflect.Struct {
-		if field := v.FieldByName("Payload"); field.IsValid() && field.CanInterface() {
-			return field.Interface()
-		}
-	}
-	if v.CanInterface() {
-		return v.Interface()
-	}
-	return nil
 }
 
 func (l *Logger) onCall(payload any) {
@@ -261,79 +204,3 @@ func (l *Logger) Close() {
 	close(l.stopCh)
 }
 
-func strVal(m map[string]any, k string) string {
-	if v, ok := m[k].(string); ok {
-		return v
-	}
-	return ""
-}
-
-func intVal(m map[string]any, k string) int {
-	switch v := m[k].(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	}
-	return 0
-}
-
-func boolVal(m map[string]any, k string) bool {
-	if v, ok := m[k].(bool); ok {
-		return v
-	}
-	return false
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	if max <= 2 {
-		return "..."
-	}
-	return s[:max-2] + "..."
-}
-
-// writeFileAtomic is duplicated from internal/storage/store.go to keep
-// the toolhistory package free of internal storage imports.
-func writeFileAtomic(path string, data []byte, pattern string) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, pattern)
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("sync temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rename temp file: %w", err)
-	}
-	if err := syncDir(dir); err != nil {
-		return fmt.Errorf("sync parent dir: %w", err)
-	}
-	return nil
-}
-
-func syncDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	err = f.Sync()
-	_ = f.Close()
-	return err
-}

@@ -171,53 +171,11 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (retRun *Run, retErr
 	release := d.runner.BeginAutoApprove(d.cfg.AutoApprove)
 	defer release()
 
-	// --- Plan stage ---------------------------------------------------
-	d.publish(EventPlanStart, map[string]any{"run_id": run.ID, "model": d.cfg.PlannerModel})
-	todos, err := runPlanner(ctx, d.runner, run.Task, d.cfg.PlannerModel)
-	if err != nil {
-		run.Status = RunFailed
-		run.Reason = fmt.Sprintf("plan failed: %v", err)
-		run.EndedAt = time.Now()
-		d.persist(run)
-		d.publish(EventPlanFailed, map[string]any{"run_id": run.ID, "error": err.Error()})
-		d.publish(EventRunFailed, map[string]any{"run_id": run.ID, "reason": run.Reason})
-		return run, fmt.Errorf("plan failed: %w", err)
+	// Plan stage owns its own persistence + EventPlanStart/Done/Failed
+	// + EventRunFailed publish, so we just propagate its error here.
+	if err := d.runPlannerPhase(ctx, run); err != nil {
+		return run, err
 	}
-	if len(todos) > d.cfg.MaxTodos {
-		// Truncate noisily — surface the cap so the user sees why later
-		// TODOs are missing, instead of silently dropping work. Publishes
-		// EventRunWarning (not EventPlanFailed): the plan succeeded, we
-		// just dropped tail TODOs over the cap; listeners that gate on
-		// plan:failed as a real failure signal shouldn't trip on this.
-		truncated := todos[d.cfg.MaxTodos:]
-		todos = todos[:d.cfg.MaxTodos]
-		d.publish(EventRunWarning, map[string]any{
-			"run_id":           run.ID,
-			"warning":          "MaxTodos exceeded; truncated",
-			"kept":             d.cfg.MaxTodos,
-			"dropped":          len(truncated),
-			"dropped_ids_head": collectIDsHead(truncated, 5),
-		})
-	}
-	run.Todos = todos
-	beforePlanCount := len(run.Todos)
-	applySupervisorPlan(run, d.cfg.AutoSurvey, d.cfg.AutoVerify, d.cfg.MaxParallel)
-	if len(run.Todos) > beforePlanCount {
-		added := append([]Todo(nil), run.Todos[beforePlanCount:]...)
-		d.publish(EventPlanAugment, map[string]any{
-			"run_id": run.ID,
-			"added":  len(added),
-			"todos":  planSummary(added),
-		})
-	}
-	run.Status = RunRunning
-	d.persist(run)
-	d.publish(EventPlanDone, map[string]any{
-		"run_id":     run.ID,
-		"todo_count": len(run.Todos),
-		"todos":      planSummary(run.Todos),
-		"plan":       run.Plan,
-	})
 
 	d.executeLoop(ctx, run)
 	return run, nil

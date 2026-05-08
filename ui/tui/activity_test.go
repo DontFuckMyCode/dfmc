@@ -12,8 +12,8 @@ import (
 
 func newActivityTestModel() Model {
 	return Model{
-		tabs:                  []string{"Chat", "Status", "Files", "Patch", "Workflow", "Tools", "Activity", "Memory", "CodeMap", "Conversations", "Prompts", "Security", "Plans", "Context", "Providers"},
-		activeTab:             6,
+		tabs:                  []string{"Chat", "Files", "Patch", "Workflow", "Activity", "Memory", "Conversations", "Providers"},
+		activeTab:             4,
 		activity:              activityPanelState{follow: true},
 		diagnosticPanelsState: newDiagnosticPanelsState(),
 	}
@@ -374,7 +374,7 @@ func TestActivityOpenSelectionRoutesProviderEventsToProvidersTab(t *testing.T) {
 	})
 	nextModel, _ := m.handleActivityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
 	next := nextModel.(Model)
-	if next.activeTab != 14 {
+	if next.activeTab != 7 {
 		t.Fatalf("expected provider activity to jump to Providers tab, got %d", next.activeTab)
 	}
 	if next.providers.scroll != 1 {
@@ -390,8 +390,8 @@ func TestActivityOpenSelectionRoutesWorkflowEventsToPlansTab(t *testing.T) {
 	})
 	nextModel, _ := m.handleActivityKey(tea.KeyMsg{Type: tea.KeyEnter})
 	next := nextModel.(Model)
-	if next.activeTab != 12 {
-		t.Fatalf("expected drive activity to jump to Plans tab, got %d", next.activeTab)
+	if next.ui.panelOverlayKind != "plans" {
+		t.Fatalf("expected drive activity to open Plans overlay, got %q", next.ui.panelOverlayKind)
 	}
 	if !strings.Contains(next.plans.query, "investigate blocked provider flow") {
 		t.Fatalf("expected plan query to inherit activity context, got %q", next.plans.query)
@@ -413,7 +413,7 @@ func TestActivityOpenSelectionFocusesFileWhenPathExists(t *testing.T) {
 	})
 	nextModel, cmd := m.handleActivityKey(tea.KeyMsg{Type: tea.KeyEnter})
 	next := nextModel.(Model)
-	if next.activeTab != 2 {
+	if next.activeTab != 1 {
 		t.Fatalf("expected file-backed activity to jump to Files tab, got %d", next.activeTab)
 	}
 	if next.filesView.index != 0 {
@@ -434,7 +434,7 @@ func TestActivityFocusSelectionFileUsesFShortcut(t *testing.T) {
 	})
 	nextModel, cmd := m.handleActivityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
 	next := nextModel.(Model)
-	if next.activeTab != 2 {
+	if next.activeTab != 1 {
 		t.Fatalf("expected f shortcut to jump to Files tab, got %d", next.activeTab)
 	}
 	if next.filesView.path != ".dfmc/config.yaml" {
@@ -455,8 +455,8 @@ func TestActivityOpenSelectionSeedsContextPreview(t *testing.T) {
 	})
 	nextModel, _ := m.handleActivityKey(tea.KeyMsg{Type: tea.KeyEnter})
 	next := nextModel.(Model)
-	if next.activeTab != 13 {
-		t.Fatalf("expected context activity to jump to Context tab, got %d", next.activeTab)
+	if next.ui.panelOverlayKind != "context" {
+		t.Fatalf("expected context activity to open Context overlay, got %q", next.ui.panelOverlayKind)
 	}
 	if next.contextPanel.query != "explain token budget around provider retries" {
 		t.Fatalf("expected context query seed, got %q", next.contextPanel.query)

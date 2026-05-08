@@ -31,6 +31,24 @@ var (
 	ColorInfo   = lipgloss.Color("#67E8F9")
 	ColorAccent = lipgloss.Color("#BFA9FF")
 	ColorCode   = lipgloss.Color("#F2E5A1")
+
+	// Tab-accent colours used by the TUI's per-tab palette in
+	// ui/tui/tui_palette.go. Defined here so every hex literal lives
+	// under theme/, which is the P14 invariant: zero hex literals
+	// outside theme/. Names match the tab labels they paint so a
+	// retune is one-grep-away.
+	ColorTabPatch         = lipgloss.Color("#FF9F6A")
+	ColorTabCodeMap       = lipgloss.Color("#5EEAD4")
+	ColorTabConversations = lipgloss.Color("#FFB4B4")
+	ColorTabPlans         = lipgloss.Color("#A5B4FC")
+	ColorTabContext       = lipgloss.Color("#BEF264")
+	ColorTabProviders     = lipgloss.Color("#F0ABFC")
+	ColorTabOrchestrate   = lipgloss.Color("#FDE68A")
+	ColorTabShortcuts     = lipgloss.Color("#A7F3D0")
+
+	// Misc one-off colours that previously lived as inline literals.
+	ColorInputForeground = lipgloss.Color("#E5F2FF")
+	ColorDisabledFg      = lipgloss.Color("#5A6A82")
 )
 
 // --- styles ---------------------------------------------------------------
@@ -58,7 +76,7 @@ var (
 	AssistantLineStyle = lipgloss.NewStyle().Foreground(ColorRoleAssistant)
 	SystemLineStyle    = lipgloss.NewStyle().Foreground(ColorRoleSystem)
 	CoachLineStyle     = lipgloss.NewStyle().Foreground(ColorRoleCoach).Italic(true)
-	InputLineStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#E5F2FF"))
+	InputLineStyle     = lipgloss.NewStyle().Foreground(ColorInputForeground)
 
 	BoldStyle     = lipgloss.NewStyle().Bold(true)
 	CodeStyle     = lipgloss.NewStyle().Foreground(ColorCode)
@@ -69,7 +87,7 @@ var (
 	InfoStyle     = lipgloss.NewStyle().Foreground(ColorInfo)
 	ToolStyle     = lipgloss.NewStyle().Foreground(ColorRoleTool)
 	ToolLineStyle = lipgloss.NewStyle().Foreground(ColorPanelBg).Background(ColorRoleTool)
-	DisabledStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#5A6A82"))
+	DisabledStyle = lipgloss.NewStyle().Foreground(ColorDisabledFg)
 
 	BadgeUserStyle      = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleUser).Padding(0, 1).Bold(true)
 	BadgeAssistantStyle = lipgloss.NewStyle().Foreground(ColorTitleFg).Background(ColorRoleAssistant).Padding(0, 1).Bold(true)

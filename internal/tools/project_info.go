@@ -196,7 +196,7 @@ func fetchFileStats(projectRoot string) map[string]any {
 		return nil
 	}
 
-	filepath.Walk(projectRoot, walkFn)
+	_ = filepath.Walk(projectRoot, walkFn)
 
 	return map[string]any{
 		"total_files":     stats.TotalFiles,

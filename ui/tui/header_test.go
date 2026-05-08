@@ -163,6 +163,30 @@ func TestRenderChatHeaderShowsActivityBadges(t *testing.T) {
 	}
 }
 
+// TestRenderChatHeaderSuppressesParkedChipWhileBannerActive — Phase B
+// dedup slice: the resume banner above the composer is the canonical
+// "do something" surface for a parked agent. While it's visible, the
+// header's small `⏸ parked — /continue` chip is a noisy echo and should
+// be dropped. Esc dismisses the banner (clears BannerActive) and the
+// chip re-emerges so the user can rediscover the parked state.
+func TestRenderChatHeaderSuppressesParkedChipWhileBannerActive(t *testing.T) {
+	withBanner := renderChatHeader(chatHeaderInfo{
+		Provider: "anthropic", Model: "claude-opus-4-6",
+		Parked: true, BannerActive: true,
+	}, 120)
+	if strings.Contains(withBanner, "parked — /continue") {
+		t.Fatalf("parked chip should be hidden while banner is active, got:\n%s", withBanner)
+	}
+
+	bannerDismissed := renderChatHeader(chatHeaderInfo{
+		Provider: "anthropic", Model: "claude-opus-4-6",
+		Parked: true, BannerActive: false,
+	}, 120)
+	if !strings.Contains(bannerDismissed, "parked — /continue") {
+		t.Fatalf("parked chip should re-emerge when banner is dismissed, got:\n%s", bannerDismissed)
+	}
+}
+
 func TestRenderChatHeaderMovesPinnedToSecondLine(t *testing.T) {
 	out := renderChatHeader(chatHeaderInfo{
 		Provider: "anthropic", Model: "claude-opus-4-6", Pinned: "internal/foo.go",

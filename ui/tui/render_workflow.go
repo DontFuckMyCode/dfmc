@@ -1,29 +1,22 @@
-// render_workflow.go — the Workflow tab (Drive cockpit) rendering +
-// keyboard surface. A two-column panel: run selector on the left, TODO
-// tree on the right, with an overlaid routing editor for configuring
-// drive.Config.Routing (ProviderTag -> profile name). Nothing here
-// starts drive runs — it just displays state supplied by workflow
-// events and hands edits back via persistDriveRoutingProjectConfig.
+// render_workflow.go — Workflow tab (Drive cockpit) rendering surface.
+// Owns the run selector + TODO tree visuals, status glyphs, and the
+// expanded TODO detail pane. Companion siblings:
 //
-//   - renderWorkflowView / selectedRunForWorkflow / renderWorkflowTreeRows /
-//     renderWorkflowTodoDetail: the display.
-//   - todoStatusIcon / renderRunStatusChip: tiny status glyphs shared
-//     between the list and the tree.
-//   - handleWorkflowKey / handleRoutingEditorKey /
-//     cycleWorkflowTodoExpand: keyboard surface, including the
-//     routing-editor submodal (enter / + / d / esc).
-//   - renderRoutingEditor / workflowRouting: routing-editor overlay
-//     and its draft map accessor.
+//   - render_workflow_keys.go     — j/k/g/G/enter/o/r/esc + action menu
+//                                   + cycleWorkflowTodoExpand
+//   - render_workflow_routing.go  — routing-editor overlay (renderer +
+//                                   key handler + draft accessor)
+//
+// Nothing here starts drive runs — it just displays state supplied by
+// workflow events. Edits flow back through persistDriveRoutingProjectConfig
+// which is invoked from the routing-editor sibling.
 
 package tui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
-
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/drive"
 )
@@ -49,7 +42,7 @@ func (m Model) selectedRunForWorkflow() *drive.Run {
 
 func (m Model) renderWorkflowTreeRows(run *drive.Run, width int) []string {
 	if run == nil || len(run.Todos) == 0 {
-		return []string{subtleStyle.Render("(no TODOs \u2014 run may still be planning)")}
+		return []string{subtleStyle.Render("(no TODOs — run may still be planning)")}
 	}
 
 	kids := make(map[string][]*drive.Todo)
@@ -77,9 +70,9 @@ func (m Model) renderWorkflowTreeRows(run *drive.Run, width int) []string {
 		expandMark := " "
 		if _, hasKids := kids[t.ID]; hasKids {
 			if expanded {
-				expandMark = "\u25bc"
+				expandMark = "▼"
 			} else {
-				expandMark = "\u25b6"
+				expandMark = "▶"
 			}
 		}
 		title := truncateForLine(t.Title, width-depth*2-8)
@@ -110,32 +103,32 @@ func (m Model) renderWorkflowTreeRows(run *drive.Run, width int) []string {
 func todoStatusIcon(s drive.TodoStatus) string {
 	switch s {
 	case drive.TodoPending:
-		return "\u23f3"
+		return "⏳"
 	case drive.TodoRunning:
-		return "\U0001f504"
+		return "🔄"
 	case drive.TodoDone:
-		return "\u2705"
+		return "✅"
 	case drive.TodoBlocked:
-		return "\u274c"
+		return "❌"
 	case drive.TodoSkipped:
-		return "\u23ed"
+		return "⏭"
 	default:
-		return "\u25cb"
+		return "○"
 	}
 }
 
 func renderRunStatusChip(s drive.RunStatus) string {
 	switch s {
 	case drive.RunPlanning:
-		return subtleStyle.Render("\u25a1 planning")
+		return subtleStyle.Render("□ planning")
 	case drive.RunRunning:
-		return accentStyle.Render("\u25b8 running")
+		return accentStyle.Render("▸ running")
 	case drive.RunDone:
-		return doneStyle.Render("\u2713 done")
+		return doneStyle.Render("✓ done")
 	case drive.RunStopped:
-		return subtleStyle.Render("\u25a0 stopped")
+		return subtleStyle.Render("■ stopped")
 	case drive.RunFailed:
-		return blockedStyle.Render("\u2717 failed")
+		return blockedStyle.Render("✗ failed")
 	default:
 		return subtleStyle.Render(string(s))
 	}
@@ -171,9 +164,9 @@ func (m Model) renderWorkflowTodoDetail(run *drive.Run, width int) []string {
 		if m.eng != nil && m.eng.Config != nil {
 			routing := m.workflow.routingDraft
 			if profile, ok := routing[todo.ProviderTag]; ok {
-				lines = append(lines, fmt.Sprintf("  Routed:   %s \u2192 %s", subtleStyle.Render(todo.ProviderTag), accentStyle.Render(profile)))
+				lines = append(lines, fmt.Sprintf("  Routed:   %s → %s", subtleStyle.Render(todo.ProviderTag), accentStyle.Render(profile)))
 			} else {
-				lines = append(lines, fmt.Sprintf("  Routed:   %s \u2192 %s", subtleStyle.Render(todo.ProviderTag), subtleStyle.Render("(default)")))
+				lines = append(lines, fmt.Sprintf("  Routed:   %s → %s", subtleStyle.Render(todo.ProviderTag), subtleStyle.Render("(default)")))
 			}
 		}
 	}
@@ -200,460 +193,80 @@ func (m Model) renderWorkflowTodoDetail(run *drive.Run, width int) []string {
 		lines = append(lines, "")
 		lines = append(lines, failStyle.Render("  Error:   ")+failStyle.Render(truncateForPanel(todo.Error, width-8)))
 	}
-	lines = append(lines, "", subtleStyle.Render("esc deselect"))
+
+	// Lifecycle timing — answers "how long has this been running" for
+	// active TODOs and "how long did it take" for finished ones.
+	if !todo.StartedAt.IsZero() {
+		switch todo.Status {
+		case drive.TodoRunning:
+			elapsed := time.Since(todo.StartedAt).Round(time.Second)
+			lines = append(lines, "", fmt.Sprintf("  Elapsed:  %s %s",
+				runningStyle.Render("◌"),
+				accentStyle.Render(elapsed.String())))
+		case drive.TodoDone, drive.TodoBlocked, drive.TodoSkipped:
+			if !todo.EndedAt.IsZero() {
+				dur := todo.EndedAt.Sub(todo.StartedAt).Round(time.Second)
+				lines = append(lines, "", fmt.Sprintf("  Took:     %s", subtleStyle.Render(dur.String())))
+			}
+		}
+	}
+
+	// Live tool activity feed — when the TODO is running, show the
+	// last few tool events so the user can see exactly what the
+	// drive agent is doing without leaving the workflow panel. The
+	// user explicitly asked for this: "drive agentların o an ne bok
+	// yediğini her detayı ile bilmeliyim". Activity entries are
+	// global, but drive sub-agents run mostly-sequentially so the
+	// most recent N tool events almost always belong to the active
+	// TODO.
+	if todo.Status == drive.TodoRunning {
+		recent := m.recentToolActivityForTodo(todo, 6)
+		if len(recent) > 0 {
+			lines = append(lines, "", subtleStyle.Render("  Live activity:"))
+			for _, entry := range recent {
+				ago := time.Since(entry.At).Round(time.Second)
+				prefix := fmt.Sprintf("  · %s ago  ", ago)
+				body := truncateForPanel(entry.Text, width-len(prefix)-2)
+				if entry.Kind == activityKindError {
+					lines = append(lines, prefix+failStyle.Render(body))
+				} else {
+					lines = append(lines, prefix+body)
+				}
+			}
+		} else {
+			lines = append(lines, "", subtleStyle.Render("  Live activity: (waiting for first tool call…)"))
+		}
+	}
+
+	lines = append(lines, "", subtleStyle.Render("esc deselect · ctrl+g full activity feed"))
 	return lines
 }
 
-// handleWorkflowKey keyboard handler for the Workflow tab.
-// Two-level navigation: run selector (left column, no run selected) →
-// TODO tree (right column, run selected). 'r' opens the routing editor
-// overlay when no run is selected, letting the user configure the
-// openWorkflowActionMenu builds the contextual action list for the
-// Workflow / Drive cockpit panel. Actions depend on whether a run is
-// currently selected — when one is, "Stop" / "Resume" / "Copy ID" all
-// target it. When no run is selected, the menu still exposes the
-// global routing editor + refresh.
-func (m Model) openWorkflowActionMenu() Model {
-	run := m.selectedRunForWorkflow()
-
-	// When the selected run is a placeholder slot (cursor without
-	// committed selection), fall back to the cursor-pointed run from
-	// the list so the actions still target something useful.
-	if run == nil && len(m.workflow.runs) > 0 &&
-		m.workflow.selectedIndex >= 0 && m.workflow.selectedIndex < len(m.workflow.runs) {
-		run = m.workflow.runs[m.workflow.selectedIndex]
-	}
-
-	actions := []panelAction{}
-	title := "Workflow actions"
-	if run != nil {
-		title = "Run actions · " + truncateForLine(run.ID, 32)
-		runID := run.ID
-
-		actions = append(actions, panelAction{
-			Label: "Open run · view TODO tree",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				m.workflow.selectedRunID = runID
-				m.workflow.scrollY = 0
-				return m, nil
-			},
-		})
-		actions = append(actions, panelAction{
-			Label: "Stop / cancel this run",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				if drive.Cancel(runID) {
-					m.notice = "Drive [" + shortRunID(runID) + "] stopping — finishes current TODO first."
-				} else {
-					m.notice = "Run " + shortRunID(runID) + " is not active in this process."
-				}
-				return m, nil
-			},
-		})
-		actions = append(actions, panelAction{
-			Label: "Resume this run",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				if _, err := runDriveResumeAsync(m.eng, runID); err != nil {
-					m.notice = "Resume error: " + err.Error()
-					return m, nil
-				}
-				m.notice = "Drive [" + shortRunID(runID) + "] resumed."
-				return m, nil
-			},
-		})
-		actions = append(actions, panelAction{
-			Label: "Copy full run ID into chat composer",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				current := strings.TrimRight(m.chat.input, " ")
-				if current != "" {
-					current += " "
-				}
-				m.setChatInput(current + runID)
-				m.activeTab = 0
-				m.notice = "Copied run ID to chat: " + runID
-				return m, nil
-			},
-		})
-		actions = append(actions, panelAction{
-			Label: "Deselect run · back to run list",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				m.workflow.selectedRunID = ""
-				m.workflow.scrollY = 0
-				m.workflow.selectedTodoID = ""
-				return m, nil
-			},
-		})
-	}
-
-	// Always-on actions.
-	actions = append(actions,
-		panelAction{
-			Label: "Routing editor (provider tag → profile)", Accel: "r",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				m.workflow.showRoutingEditor = true
-				m.workflow.routingEditTag = ""
-				m.workflow.routingEditProfile = ""
-				m.workflow.routingEditIndex = 0
-				m.workflow.routingEditMode = false
-				if m.workflow.routingDraft == nil {
-					m.workflow.routingDraft = m.loadDriveRoutingFromProjectConfig()
-					if m.workflow.routingDraft == nil {
-						m.workflow.routingDraft = make(map[string]string)
-					}
-				}
-				return m, nil
-			},
-		},
-		panelAction{
-			Label: "Refresh runs from store",
-			Handler: func(m Model) (Model, tea.Cmd) {
-				if m.eng != nil && m.eng.Storage != nil {
-					if store, err := drive.NewStore(m.eng.Storage.DB()); err == nil {
-						if runs, err := store.List(); err == nil {
-							m.workflow.runs = runs
-							m.notice = fmt.Sprintf("Drive runs reloaded · %d total", len(runs))
-						}
-					}
-				}
-				return m, nil
-			},
-		},
-	)
-	return m.openActionMenu("Workflow", title, actions)
-}
-
-func (m Model) handleWorkflowKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Routing editor has its own key handler
-	if m.workflow.showRoutingEditor {
-		return m.handleRoutingEditorKey(msg)
-	}
-	// Action menu owns arrows/enter/esc when open.
-	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
-		return nm, cmd
-	}
-
-	total := len(m.workflow.runs)
-	step := 1
-
-	// Right arrow opens the action menu — covers stop / resume /
-	// copy ID / focus run / open routing editor without the user
-	// having to memorise letters or copy the ID elsewhere.
-	if s := msg.String(); s == "right" || s == "l" {
-		return m.openWorkflowActionMenu(), nil
-	}
-
-	switch msg.String() {
-	case "j", "down":
-		if m.workflow.selectedRunID == "" {
-			// run selector: move selectedIndex down
-			if m.workflow.selectedIndex+step < total {
-				m.workflow.selectedIndex += step
-			}
-		} else {
-			// TODO tree: scroll down
-			m.workflow.scrollY += step
-		}
-	case "k", "up":
-		if m.workflow.selectedRunID == "" {
-			if m.workflow.selectedIndex >= step {
-				m.workflow.selectedIndex -= step
-			} else {
-				m.workflow.selectedIndex = 0
-			}
-		} else {
-			if m.workflow.scrollY >= step {
-				m.workflow.scrollY -= step
-			} else {
-				m.workflow.scrollY = 0
-			}
-		}
-	case "g":
-		if m.workflow.selectedRunID == "" {
-			m.workflow.selectedIndex = 0
-		} else {
-			m.workflow.scrollY = 0
-		}
-	case "G":
-		if m.workflow.selectedRunID == "" {
-			if total > 0 {
-				m.workflow.selectedIndex = total - 1
-			}
-		}
-	case "enter", "o":
-		if m.workflow.selectedRunID == "" {
-			// select a run from the selector list
-			if m.workflow.selectedIndex >= 0 && m.workflow.selectedIndex < total {
-				run := m.workflow.runs[m.workflow.selectedIndex]
-				m.workflow.selectedRunID = run.ID
-				m.workflow.scrollY = 0
-			}
-		} else {
-			// toggle TODO expand + set selectedTodoID
-			m = m.cycleWorkflowTodoExpand()
-			// Set selectedTodoID to the TODO at current scroll position
-			run := m.selectedRunForWorkflow()
-			if run != nil {
-				visible := 0
-				for _, t := range run.Todos {
-					if t.ParentID == "" || m.workflow.expandedTodo[t.ParentID] {
-						if visible == m.workflow.scrollY {
-							m.workflow.selectedTodoID = t.ID
-							break
-						}
-						visible++
-					}
-				}
-			}
-		}
-	case "r":
-		// routing editor: only when no run is selected
-		if m.workflow.selectedRunID == "" {
-			m.workflow.showRoutingEditor = true
-			m.workflow.routingEditTag = ""
-			m.workflow.routingEditProfile = ""
-			m.workflow.routingEditIndex = 0
-			m.workflow.routingEditMode = false
-			if m.workflow.routingDraft == nil {
-				m.workflow.routingDraft = m.loadDriveRoutingFromProjectConfig()
-				if m.workflow.routingDraft == nil {
-					m.workflow.routingDraft = make(map[string]string)
-				}
-			}
-		}
-	case "esc":
-		if m.workflow.showRoutingEditor {
-			m.workflow.showRoutingEditor = false
-		} else if m.workflow.selectedTodoID != "" {
-			// deselect TODO — hide detail
-			m.workflow.selectedTodoID = ""
-		} else if m.workflow.selectedRunID != "" {
-			// deselect run — back to run selector
-			m.workflow.selectedRunID = ""
-			m.workflow.scrollY = 0
-		}
-	}
-	return m, nil
-}
-
-// handleRoutingEditorKey handles keystrokes within the routing editor overlay.
-// 'routingDraft' holds the tag→profile map being edited.
-func (m Model) handleRoutingEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	routing := m.workflow.routingDraft
-	keys := make([]string, 0, len(routing))
-	for k := range routing {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	if keys == nil {
-		keys = []string{}
-	}
-	step := 1
-
-	switch msg.String() {
-	case "j", "down":
-		if m.workflow.routingEditMode {
-			// cycling through available profiles
-			profiles := m.availableProviders()
-			if len(profiles) > 0 {
-				cur := m.workflow.routingEditProfile
-				idx := 0
-				for i, p := range profiles {
-					if p == cur {
-						idx = i
-						break
-					}
-				}
-				idx = (idx + 1) % len(profiles)
-				m.workflow.routingEditProfile = profiles[idx]
-			}
-		} else {
-			if m.workflow.routingEditIndex+step < len(keys) {
-				m.workflow.routingEditIndex += step
-			}
-		}
-	case "k", "up":
-		if m.workflow.routingEditMode {
-			profiles := m.availableProviders()
-			if len(profiles) > 0 {
-				cur := m.workflow.routingEditProfile
-				idx := len(profiles) - 1
-				for i, p := range profiles {
-					if p == cur {
-						idx = i
-						break
-					}
-				}
-				idx = (idx - 1 + len(profiles)) % len(profiles)
-				m.workflow.routingEditProfile = profiles[idx]
-			}
-		} else {
-			if m.workflow.routingEditIndex >= step {
-				m.workflow.routingEditIndex -= step
-			} else {
-				m.workflow.routingEditIndex = 0
-			}
-		}
-	case "enter":
-		if m.workflow.routingEditMode {
-			// commit the edit
-			tag := m.workflow.routingEditTag
-			if tag != "" && m.workflow.routingEditProfile != "" {
-				if m.workflow.routingDraft == nil {
-					m.workflow.routingDraft = make(map[string]string)
-				}
-				m.workflow.routingDraft[tag] = m.workflow.routingEditProfile
-			}
-			m.workflow.routingEditMode = false
-			m.workflow.routingEditTag = ""
-			m.workflow.routingEditProfile = ""
-		} else {
-			// start editing the selected row's profile
-			if m.workflow.routingEditIndex >= 0 && m.workflow.routingEditIndex < len(keys) {
-				tag := keys[m.workflow.routingEditIndex]
-				m.workflow.routingEditTag = tag
-				m.workflow.routingEditProfile = routing[tag]
-				m.workflow.routingEditMode = true
-			}
-		}
-	case "+":
-		// add a new entry (cycle through available profiles as tag)
-		profiles := m.availableProviders()
-		if len(profiles) > 0 {
-			// Use the first profile as a starting point for a new tag
-			tag := profiles[0]
-			// Make tag name from profile
-			m.workflow.routingEditTag = tag
-			m.workflow.routingEditProfile = profiles[0]
-			m.workflow.routingEditMode = true
-			// Add to draft with current profile as default. routingDraft
-			// is nil-by-default on a fresh model, so lazy-init before
-			// the first write to avoid a "nil map" panic.
-			if m.workflow.routingDraft == nil {
-				m.workflow.routingDraft = make(map[string]string)
-			}
-			m.workflow.routingDraft[tag] = profiles[0]
-			// Select the new row
-			for i, k := range keys {
-				if k == tag {
-					m.workflow.routingEditIndex = i
-					break
-				}
-			}
-		}
-	case "d":
-		// delete the selected entry
-		if m.workflow.routingEditIndex >= 0 && m.workflow.routingEditIndex < len(keys) {
-			tag := keys[m.workflow.routingEditIndex]
-			delete(m.workflow.routingDraft, tag)
-			if m.workflow.routingEditIndex >= len(m.workflow.routingDraft) {
-				m.workflow.routingEditIndex = max(0, len(m.workflow.routingDraft)-1)
-			}
-		}
-	case "esc":
-		if path, err := m.persistDriveRoutingProjectConfig(m.workflow.routingDraft); err == nil {
-			m.notice = "routing saved: " + path
-		}
-		m.workflow.showRoutingEditor = false
-		m.workflow.routingEditMode = false
-	}
-	return m, nil
-}
-
-// cycleWorkflowTodoExpand finds the TODO at the current scroll position
-// and toggles its expanded state.
-func (m Model) cycleWorkflowTodoExpand() Model {
-	run := m.selectedRunForWorkflow()
-	if run == nil || len(run.Todos) == 0 {
-		return m
-	}
-	// find Nth visible TODO at current scroll
-	visible := 0
-	var targetID string
-	for _, t := range run.Todos {
-		if t.ParentID == "" || m.workflow.expandedTodo[t.ParentID] {
-			if visible == m.workflow.scrollY {
-				targetID = t.ID
-				break
-			}
-			visible++
-		}
-	}
-	if targetID != "" {
-		// Lazy-init: workflowPanelState is constructed as a zero value
-		// in NewModel, so expandedTodo is nil until the first toggle.
-		// Reads from a nil map are safe; writes panic with
-		// "assignment to entry in nil map" — exactly the crash a user
-		// hit pressing enter on the Workflow tab.
-		if m.workflow.expandedTodo == nil {
-			m.workflow.expandedTodo = make(map[string]bool)
-		}
-		m.workflow.expandedTodo[targetID] = !m.workflow.expandedTodo[targetID]
-	}
-	return m
-}
-
-// renderRoutingEditor shows the drive.Config.Routing editor overlay.
-// The routing map controls which provider profile is used for each
-// TODO ProviderTag (plan/code/review/test/etc.) when starting a drive run.
-func (m Model) renderRoutingEditor(width int) string {
-	if m.eng == nil || m.eng.Config == nil {
-		return subtleStyle.Render("(engine not available)")
-	}
-
-	lines := []string{
-		sectionHeader("\u2699", "Routing Editor"),
-		subtleStyle.Render("enter edit \u00b7 + add \u00b7 d delete \u00b7 esc close"),
-		renderDivider(width - 4),
-		"",
-	}
-
-	profiles := m.availableProviders()
-	if len(profiles) == 0 {
-		lines = append(lines, subtleStyle.Render("(no provider profiles configured)"))
-		return strings.Join(lines, "\n")
-	}
-
-	routing := m.workflowRouting()
-	if len(routing) == 0 {
-		lines = append(lines, subtleStyle.Render("No routing entries yet."))
-		lines = append(lines, "")
-		lines = append(lines, subtleStyle.Render("Press + to add a tag\u2192profile mapping."))
-	} else {
-		keys := make([]string, 0, len(routing))
-		for k := range routing {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		for i, tag := range keys {
-			profile := routing[tag]
-			prefix := "  "
-			if i == m.workflow.routingEditIndex {
-				prefix = "> "
-			}
-			// If this row is being edited
-			if m.workflow.routingEditMode && i == m.workflow.routingEditIndex {
-				profile = codeStyle.Render(m.workflow.routingEditProfile) + subtleStyle.Render("|")
-			}
-			lines = append(lines, prefix+titleStyle.Render(tag)+subtleStyle.Render(" \u2192 ")+accentStyle.Render(profile))
-		}
-	}
-
-	lines = append(lines, "")
-	lines = append(lines, subtleStyle.Render("Profiles: ")+strings.Join(profiles, ", "))
-
-	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
-}
-
-// workflowRouting returns the current routing map from the workflow state.
-// This is stored on the model so it persists while the editor is open.
-func (m Model) workflowRouting() map[string]string {
-	// m.workflow.routing is not persisted — it's built from the engine config
-	// on each render call.
-	if m.eng == nil || m.eng.Config == nil {
+// recentToolActivityForTodo returns up to `max` recent activity
+// entries that look like tool work (call/result/error). When a
+// TODO is Running this is the closest the workflow panel can get to
+// "what is this agent doing right now" without dedicated subagent→
+// TODO correlation in the engine — drive workers are mostly serial
+// so the freshest tool events almost always belong to the live TODO.
+func (m Model) recentToolActivityForTodo(todo *drive.Todo, max int) []activityEntry {
+	if todo == nil || todo.StartedAt.IsZero() {
 		return nil
 	}
-	// Build a routing map from the engine's drive config
-	// For now, return an empty map — the user can add entries via the editor.
-	// A future enhancement would load this from a saved config.
-	return m.workflow.routingDraft
+	out := make([]activityEntry, 0, max)
+	for i := len(m.activity.entries) - 1; i >= 0 && len(out) < max; i-- {
+		entry := m.activity.entries[i]
+		if entry.At.Before(todo.StartedAt) {
+			break
+		}
+		if entry.Kind == activityKindTool || entry.Kind == activityKindError {
+			out = append(out, entry)
+		}
+	}
+	// Reverse so the oldest-of-the-recent shows on top, freshest at
+	// the bottom — matches the natural reading order users expect
+	// from a live tail.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
 }

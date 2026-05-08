@@ -99,6 +99,14 @@ func DefaultConfig() *Config {
 			AutonomousResume:   "auto",
 			AutonomousPlanning: "auto",
 			ToolReasoning:      "auto",
+			// "auto" = the engine self-resumes after a final assistant
+			// answer if the model didn't emit `[done: true]`. The first
+			// `[next: …]` action becomes the next user prompt. Capped by
+			// MaxAutoContinueIterations so a runaway model can't burn a
+			// whole budget on its own. Set to "off" for legacy behavior
+			// (user types each follow-up manually).
+			AutoContinue:              "auto",
+			MaxAutoContinueIterations: 5,
 			ContextLifecycle: ContextLifecycleConfig{
 				Enabled:                   true,
 				AutoCompactThresholdRatio: 0.7,
@@ -107,6 +115,8 @@ func DefaultConfig() *Config {
 				AutoHandoffThresholdRatio: 0.9,
 			},
 			ToolDefaultTimeoutSeconds: 30,
+			ReadSnapshotCap:           256,
+			RecentFailureCap:          256,
 		},
 		Hooks: HooksConfig{
 			AllowProject: false,

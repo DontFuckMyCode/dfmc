@@ -105,7 +105,7 @@ func TestNewClampsAuthNoneToLoopback(t *testing.T) {
 	}
 }
 
-func TestSecurityHeadersCSPDisallowsInlineStyles(t *testing.T) {
+func TestSecurityHeadersCSPAllowsInlineStyles(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -116,8 +116,8 @@ func TestSecurityHeadersCSPDisallowsInlineStyles(t *testing.T) {
 	if !strings.Contains(csp, "style-src 'self'") {
 		t.Fatalf("expected style-src self in CSP, got %q", csp)
 	}
-	if strings.Contains(csp, "unsafe-inline") {
-		t.Fatalf("CSP must not allow unsafe-inline styles, got %q", csp)
+	if !strings.Contains(csp, "'unsafe-inline'") {
+		t.Fatalf("CSP must allow unsafe-inline styles for embedded workbench, got %q", csp)
 	}
 }
 

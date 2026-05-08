@@ -1,0 +1,243 @@
+package tui
+
+// memory_render.go — rendering surface for the Memory panel. Sibling
+// of memory.go which keeps the load command, key dispatch, action
+// menu, and tier-cycle helper. Pure render: filteredMemoryEntries,
+// formatMemoryRow, oneLine, renderMemoryView, memoryTopBanner.
+//
+// oneLine is shared with the Conversations preview surface — both
+// panels need the embedded-newline collapse to stay aligned, and
+// keeping it next to formatMemoryRow's only call site is more
+// findable than burying it in a generic strings_helpers.go.
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/dontfuckmycode/dfmc/pkg/types"
+)
+
+// filteredMemoryEntries applies the in-panel search query over the
+// loaded entries. The filter matches Category / Key / Value / ID.
+func filteredMemoryEntries(entries []types.MemoryEntry, query string) []types.MemoryEntry {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return entries
+	}
+	out := entries[:0:0]
+	for _, e := range entries {
+		if strings.Contains(strings.ToLower(e.Category), q) ||
+			strings.Contains(strings.ToLower(e.Key), q) ||
+			strings.Contains(strings.ToLower(e.Value), q) ||
+			strings.Contains(strings.ToLower(e.ID), q) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// formatMemoryRow renders one entry as a single line, clipped to width.
+// Shape: `[tier] category · key — value`. When Category/Key are blank
+// (bare episodic interaction) we fall back to the value on its own.
+func formatMemoryRow(e types.MemoryEntry, width int) string {
+	tierLabel := strings.ToUpper(string(e.Tier))
+	if tierLabel == "" {
+		tierLabel = "MEM"
+	}
+	head := subtleStyle.Render("[" + tierLabel + "]")
+	var body strings.Builder
+	cat := strings.TrimSpace(e.Category)
+	key := strings.TrimSpace(e.Key)
+	val := strings.TrimSpace(e.Value)
+	if cat != "" {
+		body.WriteString(accentStyle.Render(cat))
+		if key != "" {
+			body.WriteString(" · ")
+			body.WriteString(key)
+		}
+	} else if key != "" {
+		body.WriteString(key)
+	}
+	if val != "" {
+		if body.Len() > 0 {
+			body.WriteString(" — ")
+		}
+		body.WriteString(val)
+	}
+	line := head + " " + oneLine(body.String())
+	if width > 0 {
+		return truncateSingleLine(line, width)
+	}
+	return line
+}
+
+// memoryDetailWrap is a simple word-wrap for the per-entry detail
+// expand (Phase H item 3). Splits a line on word boundaries; any
+// single token longer than the width falls through as a hard chunk
+// rather than breaking mid-word badly. Returns at least one line so
+// callers can blindly iterate without a length check.
+func memoryDetailWrap(s string, width int) []string {
+	if width <= 0 {
+		return []string{s}
+	}
+	if len(s) <= width {
+		return []string{s}
+	}
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return []string{s}
+	}
+	var out []string
+	cur := ""
+	for _, w := range words {
+		switch {
+		case cur == "":
+			cur = w
+		case len(cur)+1+len(w) <= width:
+			cur += " " + w
+		default:
+			out = append(out, cur)
+			cur = w
+		}
+		// Emergency split: a single token longer than width falls
+		// through as a hard chunk so the user still sees it rather
+		// than producing a truncated line.
+		if len(cur) > width {
+			out = append(out, cur[:width])
+			cur = cur[width:]
+		}
+	}
+	if cur != "" {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// oneLine collapses internal whitespace so the panel stays aligned
+// even when entries carry embedded newlines or tabs.
+func oneLine(s string) string {
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	return strings.TrimSpace(s)
+}
+
+func (m Model) renderMemoryView(width int) string {
+	width = clampInt(width, 24, 1000)
+	tier := m.memory.tier
+	if tier == "" {
+		tier = memoryTierAll
+	}
+	banner := m.memoryTopBanner(width, tier)
+	hint := subtleStyle.Render("j/k scroll · enter expand/collapse · t toggle tier · / search · r refresh · c clear")
+	tierLine := subtleStyle.Render("tier ") + accentStyle.Render(tier)
+	if strings.TrimSpace(m.memory.query) != "" {
+		tierLine += subtleStyle.Render(" · query ") + boldStyle.Render(m.memory.query)
+	}
+	lines := []string{banner, tierLine, hint, renderDivider(width - 2)}
+
+	if m.memory.err != "" {
+		lines = append(lines, "", warnStyle.Render("error · "+m.memory.err))
+		return strings.Join(lines, "\n")
+	}
+	if m.memory.loading {
+		lines = append(lines, "", subtleStyle.Render("loading..."))
+		return strings.Join(lines, "\n")
+	}
+
+	filtered := filteredMemoryEntries(m.memory.entries, m.memory.query)
+	if len(filtered) == 0 {
+		lines = append(lines, "")
+		if len(m.memory.entries) == 0 {
+			lines = append(lines,
+				subtleStyle.Render("No memory entries in this view."),
+				subtleStyle.Render("Memory is the engine's long-term recall — it fills as you chat and the agent saves facts about the project."),
+				subtleStyle.Render("Send a message in /chat to start, or use `dfmc memory add <text>`. 1/2/3 cycle Working / Episodic / Semantic tiers."),
+			)
+		} else {
+			lines = append(lines,
+				warnStyle.Render(fmt.Sprintf("No matches for %q in %d memory entries.", m.memory.query, len(m.memory.entries))),
+				subtleStyle.Render("Press c to clear the query, or / to edit it."),
+			)
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	// Scroll window: clamp offset into range, then show up to the rest.
+	scroll := m.memory.scroll
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll >= len(filtered) {
+		scroll = len(filtered) - 1
+	}
+	for _, e := range filtered[scroll:] {
+		lines = append(lines, formatMemoryRow(e, width-2))
+		if e.ID != "" && e.ID == m.memory.expandedID {
+			// Phase H item 3: render the full value as wrapped lines
+			// indented under the one-line summary so the layout stays
+			// tabular but the user can read the full body without
+			// jumping into a separate detail surface.
+			body := strings.TrimSpace(e.Value)
+			if body != "" {
+				for _, raw := range strings.Split(body, "\n") {
+					raw = strings.ReplaceAll(raw, "\t", "    ")
+					for _, chunk := range memoryDetailWrap(raw, width-6) {
+						lines = append(lines, "    "+subtleStyle.Render(chunk))
+					}
+				}
+			}
+			meta := []string{}
+			if e.Category != "" {
+				meta = append(meta, "category="+e.Category)
+			}
+			if !e.UpdatedAt.IsZero() {
+				meta = append(meta, "updated="+e.UpdatedAt.Local().Format("2006-01-02 15:04"))
+			}
+			if e.Confidence > 0 {
+				meta = append(meta, fmt.Sprintf("confidence=%.2f", e.Confidence))
+			}
+			if e.ID != "" {
+				meta = append(meta, "id="+e.ID)
+			}
+			if len(meta) > 0 {
+				lines = append(lines, "    "+subtleStyle.Render("· "+strings.Join(meta, " · ")))
+			}
+		}
+	}
+
+	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
+		"%d shown · %d loaded · tier=%s",
+		len(filtered), len(m.memory.entries), tier,
+	)))
+	body := strings.Join(lines, "\n")
+	if m.actionMenu.open && m.actionMenu.owner == "Memory" {
+		body += "\n\n" + m.renderActionMenu(width)
+	}
+	return body
+}
+
+// memoryTopBanner draws the title + a status chip on the right.
+// Chip: HEALTHY (entries loaded), EMPTY, ERROR, LOADING.
+func (m Model) memoryTopBanner(width int, tier string) string {
+	title := titleStyle.Bold(true).Render("◈ MEMORY")
+	chipText, chipStyle := " HEALTHY ", okStyle
+	switch {
+	case m.memory.err != "":
+		chipText, chipStyle = " ERROR ", warnStyle
+	case m.memory.loading:
+		chipText, chipStyle = " LOADING ", infoStyle
+	case len(m.memory.entries) == 0:
+		chipText, chipStyle = " EMPTY ", subtleStyle
+	}
+	chip := chipStyle.Render(chipText)
+	tierChip := subtleStyle.Render(" tier=" + tier + " ")
+	chipStrip := tierChip + " " + chip
+	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
+	return title + strings.Repeat(" ", gap) + chipStrip
+}

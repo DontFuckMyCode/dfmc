@@ -67,7 +67,10 @@ func TestRenderTopTabStrip_ShowsPrevActiveNext(t *testing.T) {
 	if !strings.Contains(out, "Status") || !strings.Contains(out, "Patch") {
 		t.Fatalf("prev/next neighbours missing:\n%s", out)
 	}
-	if !strings.Contains(out, "Alt+I") || !strings.Contains(out, "F4") {
+	// Prev = Status → F9 in the post-Phase-A mapping (Status moved to
+	// the demoted overlay row); next = Patch → F3 since the eight
+	// first-class tabs run F1..F8 in strip order.
+	if !strings.Contains(out, "F9") || !strings.Contains(out, "F3") {
 		t.Fatalf("prev/next F-key hints missing:\n%s", out)
 	}
 }

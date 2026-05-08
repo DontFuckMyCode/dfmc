@@ -20,40 +20,53 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 	if innerHeight < 1 {
 		innerHeight = 1
 	}
+	// Help overlay covers the active body on EVERY tab except Chat.
+	// On Chat the overlay renders as a small section inside the chat
+	// console (Phase K: lets the composer double as a live filter). On
+	// other tabs there is no composer so the help overlay must take
+	// the whole body — otherwise pressing Ctrl+H on Files / Patch /
+	// Activity silently set the flag and the user saw nothing change.
+	// The chat-tab branch leaves m.ui.showHelpOverlay untouched and
+	// the inline widget in chat_console_composer.go handles rendering.
+	if m.ui.showHelpOverlay && m.tabs[m.activeTab] != "Chat" {
+		body, _ := fitPanelContentScrollable(m.renderHelpOverlay(contentWidth), innerHeight-1, m.helpOverlay.scroll)
+		hint := subtleStyle.Render("esc · ctrl+h to close · type into chat composer to filter (chat tab only)")
+		content := body + "\n" + hint
+		frame := lipgloss.NewStyle().
+			Padding(1, 2).
+			Background(colorPanelBg).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(pal.Border)
+		return frame.Width(width).Height(height).Render(content)
+	}
+	// Demoted-panel overlay covers the active tab body whenever
+	// panelOverlayKind is set. Falls through to the regular per-tab
+	// switch when empty.
+	if kind := m.ui.panelOverlayKind; kind != "" {
+		content := m.renderPanelOverlayBody(kind, contentWidth, innerHeight)
+		frame := lipgloss.NewStyle().
+			Padding(1, 2).
+			Background(colorPanelBg).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(pal.Border)
+		return frame.Width(width).Height(height).Render(content)
+	}
 	var content string
 	switch m.tabs[m.activeTab] {
-	case "Status":
-		content = fitPanelContentHeight(m.renderStatusViewV2(contentWidth), innerHeight)
 	case "Files":
 		content = fitPanelContentHeight(m.renderFilesViewSized(contentWidth, innerHeight), innerHeight)
 	case "Patch":
 		content = fitPanelContentHeight(m.renderPatchView(contentWidth), innerHeight)
 	case "Workflow":
 		content = fitPanelContentHeight(m.renderWorkflowView(contentWidth), innerHeight)
-	case "Tools":
-		content = fitPanelContentHeight(m.renderToolsView(contentWidth), innerHeight)
 	case "Activity":
 		content = m.renderActivityViewSized(contentWidth, innerHeight)
 	case "Memory":
 		content = fitPanelContentHeight(m.renderMemoryView(contentWidth), innerHeight)
-	case "CodeMap":
-		content = fitPanelContentHeight(m.renderCodemapView(contentWidth), innerHeight)
 	case "Conversations":
 		content = fitPanelContentHeight(m.renderConversationsView(contentWidth), innerHeight)
-	case "Prompts":
-		content = fitPanelContentHeight(m.renderPromptsView(contentWidth), innerHeight)
-	case "Security":
-		content = fitPanelContentHeight(m.renderSecurityView(contentWidth), innerHeight)
-	case "Plans":
-		content = fitPanelContentHeight(m.renderPlansView(contentWidth), innerHeight)
-	case "Context":
-		content = fitPanelContentHeight(m.renderContextViewSized(contentWidth, innerHeight), innerHeight)
 	case "Providers":
 		content = fitPanelContentHeight(m.renderProvidersView(contentWidth), innerHeight)
-	case "Orchestrate":
-		content = fitPanelContentHeight(m.renderOrchestrateView(contentWidth), innerHeight)
-	case "Shortcuts":
-		content = fitPanelContentHeight(m.renderShortcutsView(contentWidth), innerHeight)
 	default:
 		panelVisible := m.statsPanelVisible(contentWidth)
 		boosted := m.statsPanelBoostActive(time.Now())

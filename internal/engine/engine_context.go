@@ -1,20 +1,61 @@
 // Context-budgeting and context-in-status methods for the Engine.
 // Extracted from engine.go. Owns the "what files does the LLM see
-// for this query" pipeline: preview, recommendations, tuning,
-// build-and-report, task-profile scaling, compression level, and
-// reserve breakdown accounting.
+// for this query" pipeline: budget preview, build-and-report,
+// last-context bookkeeping, and the post-build snapshot used for
+// uncertainty-aware retrieval. The per-question BuildOptions math
+// lives in engine_context_options.go and the ContextInStatus /
+// ContextDebugStatus formatting lives in engine_context_status.go.
 
 package engine
 
 import (
-	"fmt"
-	"math"
 	"strings"
 	"time"
 
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
+
+const (
+	defaultContextTotalCapTokens = 16000
+	minContextTotalBudgetTokens  = 512
+	minContextPerFileTokens      = 96
+	minContextFiles              = 2
+	maxContextFiles              = 64
+	defaultProviderContextTokens = 32000
+	defaultResponseReserveTokens = 2048
+	// Conversation-history retention floors. The previous values
+	// (defaultHistoryBudgetTokens=1200, maxHistoryBudgetTokens=2048,
+	// maxHistoryMessages=12) were sized for the 8k-window era and made
+	// the assistant feel amnesiac after 3-4 substantive turns on
+	// 200k+/1M-window models. New floors target "remember the framing
+	// across a 30-turn working session" by default while staying well
+	// under any provider's hard limit. Both can be raised further via
+	// agent.history_budget_tokens / agent.history_max_messages config
+	// overrides for users on big-context models.
+	defaultHistoryBudgetTokens = 4096
+	maxHistoryBudgetTokens     = 32768
+	maxHistoryMessages         = 60
+	minHistorySummaryTokens    = 64
+	maxHistorySummaryTokens    = 1024
+	maxResponseReserveTokens   = 16384
+	basePromptReserveTokens    = 900
+	baseToolReserveTokens      = 512
+)
+
+type contextTaskBudgetProfile struct {
+	TotalScale   float64
+	FileScale    float64
+	PerFileScale float64
+}
+
+type contextReserveBreakdown struct {
+	Prompt   int
+	History  int
+	Response int
+	Tool     int
+	Total    int
+}
 
 func (e *Engine) ContextBudgetPreview(question string) ContextBudgetInfo {
 	return e.ContextBudgetPreviewWithRuntime(question, ctxmgr.PromptRuntime{})
@@ -68,47 +109,6 @@ func (e *Engine) ContextBudgetPreviewWithRuntime(question string, overrides ctxm
 		IncludeTests:           opts.IncludeTests,
 		IncludeDocs:            opts.IncludeDocs,
 	}
-}
-
-const (
-	defaultContextTotalCapTokens = 16000
-	minContextTotalBudgetTokens  = 512
-	minContextPerFileTokens      = 96
-	minContextFiles              = 2
-	maxContextFiles              = 64
-	defaultProviderContextTokens = 32000
-	defaultResponseReserveTokens = 2048
-	// Conversation-history retention floors. The previous values
-	// (defaultHistoryBudgetTokens=1200, maxHistoryBudgetTokens=2048,
-	// maxHistoryMessages=12) were sized for the 8k-window era and made
-	// the assistant feel amnesiac after 3-4 substantive turns on
-	// 200k+/1M-window models. New floors target "remember the framing
-	// across a 30-turn working session" by default while staying well
-	// under any provider's hard limit. Both can be raised further via
-	// agent.history_budget_tokens / agent.history_max_messages config
-	// overrides for users on big-context models.
-	defaultHistoryBudgetTokens = 4096
-	maxHistoryBudgetTokens     = 32768
-	maxHistoryMessages         = 60
-	minHistorySummaryTokens    = 64
-	maxHistorySummaryTokens    = 1024
-	maxResponseReserveTokens     = 16384
-	basePromptReserveTokens      = 900
-	baseToolReserveTokens        = 512
-)
-
-type contextTaskBudgetProfile struct {
-	TotalScale   float64
-	FileScale    float64
-	PerFileScale float64
-}
-
-type contextReserveBreakdown struct {
-	Prompt   int
-	History  int
-	Response int
-	Tool     int
-	Total    int
 }
 
 func (e *Engine) buildContextChunks(question string) []types.ContextChunk {
@@ -213,54 +213,6 @@ func (e *Engine) shouldBuildWorkspaceContext(question string) bool {
 		strings.Contains(q, "#ctx-files")
 }
 
-func (e *Engine) buildWorkspaceContextSkippedStatus(question string, runtime ctxmgr.PromptRuntime, opts ctxmgr.BuildOptions) ContextInStatus {
-	query := strings.TrimSpace(question)
-	task := detectContextTask(query)
-	providerLimit := e.providerMaxContextForRuntime(runtime)
-	if providerLimit <= 0 {
-		providerLimit = defaultProviderContextTokens
-	}
-	reserve := e.contextReserveBreakdownWithRuntime(query, runtime)
-	available := providerLimit - reserve.Total
-	if available < minContextTotalBudgetTokens {
-		available = minContextTotalBudgetTokens
-	}
-	providerName := strings.TrimSpace(runtime.Provider)
-	if providerName == "" {
-		providerName = e.provider()
-	}
-	modelName := strings.TrimSpace(runtime.Model)
-	if modelName == "" {
-		modelName = e.model()
-	}
-	explicitMentions := countExplicitFileMentions(query)
-	reasons := []string{
-		"conversation history only; workspace evidence auto-attach is off",
-		"code enters context through @file/[[file:...]], pasted blocks, or read/search tools",
-		"set context.auto_include_files=true or add [[workspace-context]] to opt into broad retrieval",
-	}
-	if explicitMentions > 0 {
-		reasons = append(reasons, fmt.Sprintf("%d explicit file marker(s) will be injected separately", explicitMentions))
-	}
-	return ContextInStatus{
-		Query:                query,
-		Task:                 task,
-		BuiltAt:              time.Now(),
-		Provider:             providerName,
-		Model:                modelName,
-		ProviderMaxContext:   providerLimit,
-		ContextAvailable:     available,
-		ExplicitFileMentions: explicitMentions,
-		MaxFiles:             opts.MaxFiles,
-		MaxTokensTotal:       opts.MaxTokensTotal,
-		MaxTokensPerFile:     opts.MaxTokensPerFile,
-		Compression:          opts.Compression,
-		IncludeTests:         opts.IncludeTests,
-		IncludeDocs:          opts.IncludeDocs,
-		Reasons:              reasons,
-	}
-}
-
 func (e *Engine) clearLastContextSnapshot() {
 	e.mu.Lock()
 	e.lastContextSnapshot = nil
@@ -301,111 +253,6 @@ func (e *Engine) InspectLastContext() ctxmgr.InspectionResult {
 	return ctxmgr.Inspect(e.ProjectRoot, chunks, opts.MaxTokensTotal)
 }
 
-func (e *Engine) contextBuildOptions(question string) ctxmgr.BuildOptions {
-	return e.contextBuildOptionsWithRuntime(question, e.promptRuntime())
-}
-
-func (e *Engine) contextBuildOptionsWithRuntime(question string, runtime ctxmgr.PromptRuntime) ctxmgr.BuildOptions {
-	cfg := e.Config.Context
-	task := detectContextTask(question)
-	profile := contextTaskProfile(task)
-	explicitFileRefs := countExplicitFileMentions(question)
-	providerLimit := e.providerMaxContextForRuntime(runtime)
-	if providerLimit <= 0 {
-		providerLimit = defaultProviderContextTokens
-	}
-	opts := ctxmgr.BuildOptions{
-		MaxFiles:         cfg.MaxFiles,
-		MaxTokensTotal:   cfg.MaxTokensTotal,
-		MaxTokensPerFile: cfg.MaxTokensPerFile,
-		Compression:      cfg.Compression,
-		IncludeTests:     cfg.IncludeTests,
-		IncludeDocs:      cfg.IncludeDocs,
-		SymbolAware:      cfg.SymbolAware,
-		GraphDepth:       cfg.GraphDepth,
-	}
-	opts.Compression = normalizeContextCompression(opts.Compression)
-	if runtime.LowLatency || providerLimit <= 12000 {
-		opts.Compression = strongerContextCompression(opts.Compression, "aggressive")
-	} else if providerLimit <= 32000 {
-		opts.Compression = strongerContextCompression(opts.Compression, "standard")
-	}
-	if providerLimit <= 8000 && task != "doc" {
-		opts.IncludeDocs = false
-	}
-	if opts.MaxFiles <= 0 {
-		opts.MaxFiles = 8
-	}
-	opts.MaxFiles = clampInt(int(math.Round(float64(opts.MaxFiles)*profile.FileScale)), minContextFiles, maxContextFiles)
-	if explicitFileRefs > 0 {
-		// Explicit file markers imply targeted retrieval: fewer files, deeper slices.
-		opts.MaxFiles = minInt(opts.MaxFiles, explicitFileRefs+4)
-		opts.MaxFiles = maxInt(opts.MaxFiles, minContextFiles)
-	}
-
-	if opts.MaxTokensPerFile <= 0 {
-		opts.MaxTokensPerFile = 1200
-	}
-	opts.MaxTokensPerFile = maxInt(minContextPerFileTokens, int(math.Round(float64(opts.MaxTokensPerFile)*profile.PerFileScale)))
-
-	configuredTotal := opts.MaxTokensTotal
-	if configuredTotal <= 0 {
-		configuredTotal = opts.MaxFiles * opts.MaxTokensPerFile
-		configuredTotal = minInt(configuredTotal, defaultContextTotalCapTokens)
-	}
-	configuredTotal = maxInt(minContextTotalBudgetTokens, int(math.Round(float64(configuredTotal)*profile.TotalScale)))
-
-	reserve := e.contextReserveBreakdownWithRuntime(question, runtime)
-	availableForContext := providerLimit - reserve.Total
-	if availableForContext < minContextTotalBudgetTokens {
-		availableForContext = minContextTotalBudgetTokens
-	}
-
-	opts.MaxTokensTotal = minInt(configuredTotal, availableForContext)
-	if opts.MaxTokensTotal < minContextTotalBudgetTokens {
-		opts.MaxTokensTotal = minContextTotalBudgetTokens
-	}
-
-	perFileByTotal := opts.MaxTokensTotal / opts.MaxFiles
-	if perFileByTotal < minContextPerFileTokens {
-		perFileByTotal = minContextPerFileTokens
-	}
-	opts.MaxTokensPerFile = minInt(opts.MaxTokensPerFile, perFileByTotal)
-	if opts.MaxTokensPerFile > opts.MaxTokensTotal {
-		opts.MaxTokensPerFile = opts.MaxTokensTotal
-	}
-
-	// Phase 4: If the previous retrieval had low confidence, expand the
-	// next retrieval with deeper graph traversal and fewer but more thoroughly
-	// explored files. This triggers "uncertainty-aware retrieval": when
-	// confidence is low, the next round does expanded graph exploration.
-	e.mu.RLock()
-	prevSnapshot := e.lastContextSnapshot
-	e.mu.RUnlock()
-	if prev := prevSnapshot; prev != nil && prev.Confidence < 0.5 {
-		opts.GraphDepth += 1
-		if opts.MaxFiles > 1 {
-			opts.MaxFiles = maxInt(1, opts.MaxFiles/2)
-		}
-	}
-
-	// Propagate recently modified files so BuildWithOptions excludes them
-	// from context retrieval. Files written/edited by tools in the last
-	// few minutes must be re-read via read_file, not served from a stale
-	// context chunk. The map is safely copied — ExcludeStaleFilters is
-	// read-only during the BuildOptions pass.
-	if len(e.modifiedFiles) > 0 {
-		opts.ExcludeStaleFilters = e.modifiedFiles
-	}
-	// Propagate files already read via read_file this session so they are
-	// excluded from context deduplication. The model already has the content
-	// via conversation, so sending it again via context is redundant.
-	if len(e.seenFiles) > 0 {
-		opts.SeenFiles = e.seenFiles
-	}
-
-	return opts
-}
 func (e *Engine) setLastContextInStatus(status ContextInStatus) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -422,144 +269,6 @@ func (e *Engine) ActiveContextDebug() ContextDebugStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return cloneContextDebugStatus(e.lastContextDebug)
-}
-
-func buildContextDebugStatus(report ContextInStatus, chunks []types.ContextChunk) ContextDebugStatus {
-	files := make([]ContextDebugFileStatus, 0, len(chunks))
-	for i, chunk := range chunks {
-		reason := ""
-		path := chunk.Path
-		if i < len(report.Files) {
-			reason = report.Files[i].Reason
-			if report.Files[i].Path != "" {
-				path = report.Files[i].Path
-			}
-		}
-		files = append(files, ContextDebugFileStatus{
-			Path:        path,
-			Language:    chunk.Language,
-			LineStart:   chunk.LineStart,
-			LineEnd:     chunk.LineEnd,
-			TokenCount:  chunk.TokenCount,
-			Score:       chunk.Score,
-			Compression: chunk.Compression,
-			Source:      chunk.Source,
-			Reason:      reason,
-			Content:     chunk.Content,
-		})
-	}
-	return ContextDebugStatus{
-		Query:              report.Query,
-		Task:               report.Task,
-		BuiltAt:            report.BuiltAt,
-		Provider:           report.Provider,
-		Model:              report.Model,
-		ProviderMaxContext: report.ProviderMaxContext,
-		MaxTokensTotal:     report.MaxTokensTotal,
-		TokenCount:         report.TokenCount,
-		FileCount:          report.FileCount,
-		Reasons:            append([]string(nil), report.Reasons...),
-		Files:              files,
-	}
-}
-
-func cloneContextDebugStatus(src ContextDebugStatus) ContextDebugStatus {
-	copyStatus := src
-	if len(src.Reasons) > 0 {
-		copyStatus.Reasons = append([]string(nil), src.Reasons...)
-	}
-	if len(src.Files) > 0 {
-		copyStatus.Files = append([]ContextDebugFileStatus(nil), src.Files...)
-	}
-	return copyStatus
-}
-
-func (e *Engine) buildContextInStatus(question string, runtime ctxmgr.PromptRuntime, opts ctxmgr.BuildOptions, chunks []types.ContextChunk) ContextInStatus {
-	query := strings.TrimSpace(question)
-	task := detectContextTask(query)
-	profile := contextTaskProfile(task)
-	providerLimit := e.providerMaxContextForRuntime(runtime)
-	if providerLimit <= 0 {
-		providerLimit = defaultProviderContextTokens
-	}
-	reserve := e.contextReserveBreakdownWithRuntime(query, runtime)
-	available := providerLimit - reserve.Total
-	if available < minContextTotalBudgetTokens {
-		available = minContextTotalBudgetTokens
-	}
-	providerName := strings.TrimSpace(runtime.Provider)
-	if providerName == "" {
-		providerName = e.provider()
-	}
-	modelName := strings.TrimSpace(runtime.Model)
-	if modelName == "" {
-		modelName = e.model()
-	}
-
-	terms := tokenizeContextQueryTerms(query)
-	explicitMentions := countExplicitFileMentions(query)
-	explicitPaths := explicitFileMentionPaths(query)
-	totalTokens := 0
-	files := make([]ContextInFileStatus, 0, len(chunks))
-	for _, chunk := range chunks {
-		totalTokens += chunk.TokenCount
-		path := normalizeContextPathForStatus(e.ProjectRoot, chunk.Path)
-		files = append(files, ContextInFileStatus{
-			Path:        path,
-			LineStart:   chunk.LineStart,
-			LineEnd:     chunk.LineEnd,
-			TokenCount:  chunk.TokenCount,
-			Score:       chunk.Score,
-			Compression: chunk.Compression,
-			Reason:      explainContextFileReason(path, terms, explicitPaths, chunk.Score, chunk.Source),
-		})
-	}
-
-	reasons := make([]string, 0, 8)
-	reasons = append(reasons, fmt.Sprintf("task=%s profile(total x%.2f, files x%.2f, per-file x%.2f)", task, profile.TotalScale, profile.FileScale, profile.PerFileScale))
-	if explicitMentions > 0 {
-		reasons = append(reasons, fmt.Sprintf("explicit file markers detected (%d), retrieval was narrowed", explicitMentions))
-	}
-	if providerLimit <= 12000 {
-		reasons = append(reasons, "provider max context is tight, compression and budget were constrained")
-	}
-	configCompression := "standard"
-	if e.Config != nil {
-		configCompression = normalizeContextCompression(e.Config.Context.Compression)
-	}
-	if opts.Compression != configCompression {
-		reasons = append(reasons, fmt.Sprintf("compression adjusted from %s to %s for runtime budget", configCompression, opts.Compression))
-	}
-	if !opts.IncludeDocs {
-		reasons = append(reasons, "docs were excluded to preserve code-context tokens")
-	}
-	if !opts.IncludeTests {
-		reasons = append(reasons, "tests were excluded by context settings")
-	}
-	if available > 0 && opts.MaxTokensTotal >= int(float64(available)*0.9) {
-		reasons = append(reasons, "context budget is near runtime cap; deeper retrieval may require tighter query/file markers")
-	}
-
-	return ContextInStatus{
-		Query:                query,
-		Task:                 task,
-		BuiltAt:              time.Now(),
-		Provider:             providerName,
-		Model:                modelName,
-		ProviderMaxContext:   providerLimit,
-		ContextAvailable:     available,
-		ExplicitFileMentions: explicitMentions,
-		MaxFiles:             opts.MaxFiles,
-		MaxTokensTotal:       opts.MaxTokensTotal,
-		MaxTokensPerFile:     opts.MaxTokensPerFile,
-		Compression:          opts.Compression,
-		IncludeTests:         opts.IncludeTests,
-		IncludeDocs:          opts.IncludeDocs,
-		FileCount:            len(chunks),
-		TokenCount:           totalTokens,
-		Reasons:              reasons,
-		Files:                files,
-	}
 }
 
 // buildContextSnapshot creates a ContextSnapshot from the retrieval outcome.

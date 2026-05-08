@@ -60,8 +60,8 @@ func (m Model) renderActivityViewV2(width, height int) string {
 		lines = append(lines,
 			"",
 			subtleStyle.Render("No events yet."),
-			subtleStyle.Render("Tool calls, subagent fan-out, drive progress, provider retries,"),
-			subtleStyle.Render("and context lifecycle stream here live."),
+			subtleStyle.Render("Activity is the live firehose — tool calls, subagent fan-out, drive progress, provider retries, and context lifecycle stream here as the engine runs."),
+			subtleStyle.Render("Send a message in /chat or kick off /drive to make events flow. → opens the actions menu; 1-6 / v cycle filters; / searches; enter on a row jumps to the relevant panel."),
 		)
 		return strings.Join(lines, "\n")
 	}

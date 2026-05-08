@@ -266,4 +266,3 @@ func (m Model) renderActivityView(width int) string {
 func (m Model) renderActivityViewSized(width, height int) string {
 	return m.renderActivityViewV2(width, height)
 }
-

@@ -6,6 +6,11 @@ package tui
 // shows a short preview of the first few messages so the user can find an
 // old session without leaving the TUI.
 //
+// This file owns the load commands, key dispatch, and arrow-driven
+// action menu. Rendering (filteredConversations, formatConversationRow,
+// formatConversationPreview, renderConversationsView,
+// conversationsTopBanner) lives in conversations_render.go.
+//
 // Shape: a list of conversation.Summary, a search query, a scroll offset,
 // and an optional preview of the currently-highlighted entry. Refresh is
 // manual — the store doesn't publish mutation events for past files, so
@@ -16,7 +21,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -36,12 +40,32 @@ const (
 type conversationsLoadedMsg struct {
 	entries []conversation.Summary
 	err     error
+	// deepSearchQuery is the query that produced this result set when
+	// the message comes from a full-text search rather than a plain
+	// List(). Empty for normal loads. The render path keys off this so
+	// the title bar can advertise "search for: <q>" instead of the
+	// usual entry count.
+	deepSearchQuery string
 }
 
 type conversationPreviewMsg struct {
 	id   string
 	msgs []types.Message
 	err  error
+	// branches carries the loaded conversation's branch list — name +
+	// message count per branch — so the preview pane can advertise
+	// the available branches without a second engine round-trip.
+	// Empty when the conversation only has the default `main` branch.
+	// Phase G item 3 — branch tree visualization.
+	branches []conversationBranchSummary
+	// activeBranch is the name of the currently-active branch on the
+	// loaded conversation; the preview pane highlights this name.
+	activeBranch string
+}
+
+type conversationBranchSummary struct {
+	Name     string
+	Messages int
 }
 
 func loadConversationsCmd(eng *engine.Engine) tea.Cmd {
@@ -51,6 +75,20 @@ func loadConversationsCmd(eng *engine.Engine) tea.Cmd {
 		}
 		entries, err := eng.Conversation.List()
 		return conversationsLoadedMsg{entries: entries, err: err}
+	}
+}
+
+// searchConversationsCmd runs an engine-side full-text search across
+// message bodies (not just the Summary fields the client-side filter
+// matches on). Phase G item 1: lets the user find a past conversation
+// by something they remember saying, not just by ID/provider/model.
+func searchConversationsCmd(eng *engine.Engine, query string, limit int) tea.Cmd {
+	return func() tea.Msg {
+		if eng == nil || eng.Conversation == nil {
+			return conversationsLoadedMsg{deepSearchQuery: query}
+		}
+		entries, err := eng.ConversationSearch(query, limit)
+		return conversationsLoadedMsg{entries: entries, err: err, deepSearchQuery: query}
 	}
 }
 
@@ -70,187 +108,27 @@ func loadConversationPreviewCmd(eng *engine.Engine, id string) tea.Cmd {
 		if len(msgs) > conversationsPreviewMessages {
 			msgs = msgs[:conversationsPreviewMessages]
 		}
-		return conversationPreviewMsg{id: id, msgs: msgs}
+		// Surface the branch list so the preview can render them.
+		// We only build the summary when the conversation has more
+		// than one branch — single-branch conversations don't need
+		// the noise.
+		var branches []conversationBranchSummary
+		if conv != nil && len(conv.Branches) > 1 {
+			for name, body := range conv.Branches {
+				branches = append(branches, conversationBranchSummary{
+					Name: name, Messages: len(body),
+				})
+			}
+		}
+		return conversationPreviewMsg{
+			id:           id,
+			msgs:         msgs,
+			branches:     branches,
+			activeBranch: conv.Branch,
+		}
 	}
 }
 
-// filteredConversations filters the loaded summaries by the search query.
-// We match on ID, provider, and model — the Summary itself doesn't carry
-// message bodies (Search() does that job via the store).
-func filteredConversations(entries []conversation.Summary, query string) []conversation.Summary {
-	q := strings.ToLower(strings.TrimSpace(query))
-	if q == "" {
-		return entries
-	}
-	out := entries[:0:0]
-	for _, e := range entries {
-		if strings.Contains(strings.ToLower(e.ID), q) ||
-			strings.Contains(strings.ToLower(e.Provider), q) ||
-			strings.Contains(strings.ToLower(e.Model), q) {
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
-// formatConversationRow renders one summary as a single line, clipped to
-// width. Shape: `2026-04-16 13:22  12 msgs  provider/model  id`.
-// Provider/model is elided when unknown (Manager returns "unknown" for
-// entries that were never active in this session).
-func formatConversationRow(s conversation.Summary, selected bool, width int) string {
-	ts := "               "
-	if !s.StartedAt.IsZero() {
-		ts = s.StartedAt.Local().Format("2006-01-02 15:04")
-	}
-	count := fmt.Sprintf("%3d msgs", s.MessageN)
-	head := subtleStyle.Render(ts) + "  " + count
-	tail := ""
-	if s.Provider != "" && s.Provider != "unknown" {
-		tail = "  " + accentStyle.Render(s.Provider)
-		if s.Model != "" && s.Model != "unknown" {
-			tail += subtleStyle.Render("/" + s.Model)
-		}
-	}
-	id := "  " + subtleStyle.Render(s.ID)
-	line := head + tail + id
-	if selected {
-		line = accentStyle.Render("▶ ") + line
-	} else {
-		line = "  " + line
-	}
-	if width > 0 {
-		line = truncateSingleLine(line, width)
-	}
-	return line
-}
-
-// formatConversationPreview renders the first few messages of the
-// highlighted conversation with role tags. Content is collapsed to a
-// single line per message to keep the pane compact; the idea is "jog the
-// memory", not "replay the session".
-func formatConversationPreview(msgs []types.Message, width int) []string {
-	if len(msgs) == 0 {
-		return []string{subtleStyle.Render("  (empty transcript)")}
-	}
-	out := make([]string, 0, len(msgs))
-	for _, msg := range msgs {
-		role := strings.ToUpper(strings.TrimSpace(string(msg.Role)))
-		if role == "" {
-			role = "???"
-		}
-		body := oneLine(msg.Content)
-		if len(body) > conversationsPreviewChars {
-			body = body[:conversationsPreviewChars-1] + "…"
-		}
-		head := subtleStyle.Render("[" + role + "]")
-		line := "  " + head + " " + body
-		if width > 0 {
-			line = truncateSingleLine(line, width)
-		}
-		out = append(out, line)
-	}
-	return out
-}
-
-func (m Model) renderConversationsView(width int) string {
-	width = clampInt(width, 24, 1000)
-	banner := m.conversationsTopBanner(width)
-	hint := subtleStyle.Render("j/k scroll · enter preview · / search · r refresh · c clear")
-	queryLine := subtleStyle.Render("query ")
-	if strings.TrimSpace(m.conversations.query) != "" {
-		queryLine += boldStyle.Render(m.conversations.query)
-	} else {
-		queryLine += subtleStyle.Render("(none)")
-	}
-	if m.conversations.searchActive {
-		queryLine += subtleStyle.Render("  · typing, enter to commit")
-	}
-	lines := []string{banner, queryLine, hint, renderDivider(width - 2)}
-
-	if m.conversations.err != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.conversations.err))
-		return strings.Join(lines, "\n")
-	}
-	if m.conversations.loading {
-		lines = append(lines, "", subtleStyle.Render("loading..."))
-		return strings.Join(lines, "\n")
-	}
-
-	filtered := filteredConversations(m.conversations.entries, m.conversations.query)
-	if len(filtered) == 0 {
-		lines = append(lines, "")
-		if len(m.conversations.entries) == 0 {
-			lines = append(lines,
-				subtleStyle.Render("No conversations persisted yet."),
-				subtleStyle.Render("Start a chat and DFMC will persist it under .dfmc/conversations/."),
-			)
-		} else {
-			lines = append(lines,
-				warnStyle.Render(fmt.Sprintf("No matches for %q in %d conversations.", m.conversations.query, len(m.conversations.entries))),
-				subtleStyle.Render("Press c to clear the query, or / to edit it."),
-			)
-		}
-		return strings.Join(lines, "\n")
-	}
-
-	scroll := m.conversations.scroll
-	if scroll < 0 {
-		scroll = 0
-	}
-	if scroll >= len(filtered) {
-		scroll = len(filtered) - 1
-	}
-
-	for i, s := range filtered[scroll:] {
-		selected := (scroll + i) == m.conversations.scroll
-		lines = append(lines, formatConversationRow(s, selected, width-2))
-	}
-
-	// Preview pane (only when the highlighted entry's preview is loaded).
-	selectedID := ""
-	if m.conversations.scroll >= 0 && m.conversations.scroll < len(filtered) {
-		selectedID = filtered[m.conversations.scroll].ID
-	}
-	if selectedID != "" && selectedID == m.conversations.previewID {
-		// Preview is read-only — Manager.LoadReadOnly does NOT change the
-		// active conversation. The chat tab keeps whatever was running
-		// before; switching tabs back to Chat shows the original session.
-		lines = append(lines, "",
-			subtleStyle.Render("preview · "+selectedID+" · read-only"),
-		)
-		lines = append(lines, formatConversationPreview(m.conversations.preview, width-2)...)
-	}
-
-	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
-		"%d shown · %d loaded",
-		len(filtered), len(m.conversations.entries),
-	)))
-	out := strings.Join(lines, "\n")
-	if m.actionMenu.open && m.actionMenu.owner == "Conversations" {
-		out += "\n\n" + m.renderActionMenu(width)
-	}
-	return out
-}
-
-// conversationsTopBanner — title + count chip + state chip on the
-// right. State: HEALTHY / EMPTY / ERROR / LOADING.
-func (m Model) conversationsTopBanner(width int) string {
-	title := titleStyle.Bold(true).Render("⎔ CONVERSATIONS")
-	chipText, chipStyle := " HEALTHY ", okStyle
-	switch {
-	case m.conversations.err != "":
-		chipText, chipStyle = " ERROR ", warnStyle
-	case m.conversations.loading:
-		chipText, chipStyle = " LOADING ", infoStyle
-	case len(m.conversations.entries) == 0:
-		chipText, chipStyle = " EMPTY ", subtleStyle
-	}
-	chip := chipStyle.Render(chipText)
-	countChip := subtleStyle.Render(fmt.Sprintf(" %d ", len(m.conversations.entries)))
-	chipStrip := countChip + " " + chip
-	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
-	return title + strings.Repeat(" ", gap) + chipStrip
-}
 
 // handleConversationsKey dispatches panel keys. Search mode consumes the
 // keyboard while active.
@@ -270,6 +148,32 @@ func (m Model) openConversationsActionMenu() Model {
 				m.conversations.preview = nil
 				return m, loadConversationPreviewCmd(m.eng, selected.ID)
 			}},
+		{Label: "Resume this conversation as the active one", Accel: "L",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				// Phase G item 2: Load action. Calls eng.ConversationLoad,
+				// flips the engine's active conversation to the selected
+				// entry, jumps to the Chat tab so the user sees their
+				// resumed transcript instead of staring at the picker.
+				filtered := filteredConversations(m.conversations.entries, m.conversations.query)
+				if len(filtered) == 0 || m.conversations.scroll < 0 || m.conversations.scroll >= len(filtered) {
+					return m, nil
+				}
+				selected := filtered[m.conversations.scroll]
+				if m.eng == nil {
+					m.notice = "Engine not available — cannot load conversation."
+					return m, nil
+				}
+				conv, err := m.eng.ConversationLoad(selected.ID)
+				if err != nil {
+					m.notice = "load failed: " + err.Error()
+					return m, nil
+				}
+				// Ride the same activeTab dance other panels use so the
+				// jump survives Phase A's tab demotion.
+				m.activeTab = m.activityTabIndex("Chat")
+				m.notice = fmt.Sprintf("Loaded %s (%d messages) — type to continue.", conv.ID, len(conv.Messages()))
+				return m, nil
+			}},
 		{Label: "Refresh list", Accel: "r",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				m.conversations.loading = true
@@ -281,10 +185,29 @@ func (m Model) openConversationsActionMenu() Model {
 				m.conversations.searchActive = true
 				return m, nil
 			}},
-		{Label: "Clear search query", Accel: "c",
+		{Label: "Deep search across message bodies (uses current query)", Accel: "S",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				query := strings.TrimSpace(m.conversations.query)
+				if query == "" {
+					m.notice = "Type a query with / first, then S deep-searches across message bodies."
+					return m, nil
+				}
+				m.conversations.loading = true
+				m.conversations.err = ""
+				m.conversations.deepSearchActive = true
+				m.conversations.deepSearchQuery = query
+				return m, searchConversationsCmd(m.eng, query, 50)
+			}},
+		{Label: "Clear search (drop deep-search results, reload list)", Accel: "c",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				m.conversations.query = ""
 				m.conversations.scroll = 0
+				if m.conversations.deepSearchActive {
+					m.conversations.deepSearchActive = false
+					m.conversations.deepSearchQuery = ""
+					m.conversations.loading = true
+					return m, loadConversationsCmd(m.eng)
+				}
 				return m, nil
 			}},
 	}
@@ -351,9 +274,55 @@ func (m Model) handleConversationsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.conversations.searchActive = true
 		return m, nil
+	case "L":
+		// Phase G item 2: Load action — flip the engine's active
+		// conversation to the highlighted entry and jump to Chat. The
+		// previous in-memory conversation persists on disk (auto-save
+		// fired at every turn) so this is reversible by loading the
+		// other one back.
+		filtered := filteredConversations(m.conversations.entries, m.conversations.query)
+		if len(filtered) == 0 || m.conversations.scroll < 0 || m.conversations.scroll >= len(filtered) {
+			return m, nil
+		}
+		selected := filtered[m.conversations.scroll]
+		if m.eng == nil {
+			m.notice = "Engine not available — cannot load conversation."
+			return m, nil
+		}
+		conv, err := m.eng.ConversationLoad(selected.ID)
+		if err != nil {
+			m.notice = "load failed: " + err.Error()
+			return m, nil
+		}
+		m.activeTab = m.activityTabIndex("Chat")
+		m.notice = fmt.Sprintf("Loaded %s (%d messages) — type to continue.", conv.ID, len(conv.Messages()))
+		return m, nil
+	case "S":
+		// Phase G item 1: deep full-text search across message bodies.
+		// `/` filters the loaded summaries client-side (ID/provider/
+		// model substrings); `S` calls eng.ConversationSearch which
+		// loads each conversation and matches against assistant/user
+		// content. Slower but actually finds "the chat where I asked
+		// about <X>" when X isn't in the title.
+		query := strings.TrimSpace(m.conversations.query)
+		if query == "" {
+			m.notice = "Type a query with / first, then S deep-searches message bodies."
+			return m, nil
+		}
+		m.conversations.loading = true
+		m.conversations.err = ""
+		m.conversations.deepSearchActive = true
+		m.conversations.deepSearchQuery = query
+		return m, searchConversationsCmd(m.eng, query, 50)
 	case "c":
 		m.conversations.query = ""
 		m.conversations.scroll = 0
+		if m.conversations.deepSearchActive {
+			m.conversations.deepSearchActive = false
+			m.conversations.deepSearchQuery = ""
+			m.conversations.loading = true
+			return m, loadConversationsCmd(m.eng)
+		}
 	}
 	return m, nil
 }

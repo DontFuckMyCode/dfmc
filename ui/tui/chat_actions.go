@@ -82,7 +82,7 @@ func (m Model) refreshToolMutationState(path string) Model {
 			m.filesView.size = size
 		}
 	}
-	m.activeTab = 3
+	m.activeTab = m.activityTabIndex("Patch")
 	if len(m.patchView.changed) > 0 {
 		m.notice = "Tool updated workspace: " + strings.Join(m.patchView.changed, ", ")
 	} else {

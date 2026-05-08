@@ -29,6 +29,7 @@ go test ./internal/engine -run TestAgentLoop -v
 # Lint / format
 go vet ./...
 gofmt -w $(git ls-files '*.go')
+staticcheck ./...   # must be clean before merge — CI gates on it (see .github/workflows/ci.yml)
 ```
 
 **CGO matters.** Tree-sitter bindings (`tree-sitter-go`, `-javascript`, `-typescript`, `-python`) require CGO. With `CGO_ENABLED=0` the build still succeeds but AST silently falls back to the regex extractor in `internal/ast/backend_stub.go`, and `dfmc status` / `dfmc doctor` will report `ast_backend: regex`. If AST behavior looks wrong, check the backend before blaming the code.
@@ -116,7 +117,7 @@ All three UI packages keep their entry/dispatch file lean and split feature code
 
 The native tool loop has tunable knobs under `agent.*`:
 
-- **Caps**: `max_tool_steps` (default 60), `max_tool_tokens` (default 250000 — this is a live footprint cap, NOT a cumulative per-round sum), `max_tool_result_chars` (32K), `max_tool_result_data_chars` (12K), `parallel_batch_size` (4), `meta_call_budget` (64 — cumulative backend calls per turn dispatched via `tool_call`/`tool_batch_call`), `meta_depth_limit` (4 — meta-inside-meta nesting ceiling).
+- **Caps**: `max_tool_steps` (default 60), `max_tool_tokens` (default 250000 — this is a live footprint cap, NOT a cumulative per-round sum), `max_tool_result_chars` (32K), `max_tool_result_data_chars` (12K), `parallel_batch_size` (4), `meta_call_budget` (64 — cumulative backend calls per turn dispatched via `tool_call`/`tool_batch_call`), `meta_depth_limit` (4 — meta-inside-meta nesting ceiling), `read_snapshot_cap` (256 — read-before-mutation snapshot LRU; raise for sessions with very wide file fan-out), `recent_failure_cap` (256 — per-tool failure ledger that suppresses noisy retries on the same broken call).
 - **Round shaping**: `tool_round_soft_cap` (synthesis nudge), `tool_round_hard_cap` (force `tool_choice=none`), `budget_headroom_divisor` (preflight margin).
 - **Autonomous resume** (`autonomous_resume`, default `"auto"` → ON): when the loop hits `max_tool_tokens` mid-task, the autonomous wrapper force-compacts history and re-enters the loop transparently — the user sees one continuous answer instead of having to type `/continue` between every park. Set `"off"` (or `"manual"`/`"false"`/`"no"`/`"0"`) to revert to the old "park and wait" behavior; useful for CI runs that must hard-stop after one budget. `resume_max_multiplier` (default 10) is the cumulative ceiling: total work across all auto-resumes for a single root ask is capped at `max_tool_steps × multiplier` and `max_tool_tokens × multiplier`. Hit the ceiling and the wrapper surfaces `agent:loop:auto_resume_refused` so the user knows the auto-progression bottomed out and a manual `/continue` (or scope refinement) is needed.
 - **Tool self-narration** (`tool_reasoning`, default `"auto"` → ON): every tool's JSON schema gets an optional virtual `_reason` field. The model is nudged in the system prompt to fill it with a one-sentence "why" ("checking how the SSE handler closes the stream"); [tools.Engine.Execute](internal/tools/engine.go) strips it before dispatch and republishes via the engine's [tool:reasoning](internal/engine/engine.go) event so the TUI chip and web activity feed render the WHY above the tool result. Set `"off"` to skip the system-prompt nudge and the publisher entirely. The strip itself always runs (so tools never see the field as input). Pinned by [reason_test.go](internal/tools/reason_test.go) and [tool_reasoning_test.go](internal/engine/tool_reasoning_test.go).
@@ -146,7 +147,7 @@ Lives in [internal/drive](internal/drive/):
 
 - [planner.go](internal/drive/planner.go) — JSON DAG planner (cycle detection, code-fence stripping, dep validation). Planner LLM call goes through `Engine.NewDriveRunner().PlannerCall` → `Providers.Complete` directly (no tool loop, no intent layer, no history).
 - [scheduler.go](internal/drive/scheduler.go) — `readyBatch` returns up to N TODOs that have all deps Done AND don't conflict on `file_scope` with any Running TODO or each other. Empty `file_scope` means "owns everything" — runs alone.
-- [driver.go](internal/drive/driver.go) — main loop. Worker goroutines (capped by `MaxParallel`, default 3) fan out per batch; results channel drained as workers finish; new ready TODOs dispatched into freed slots.
+- [driver.go](internal/drive/driver.go) — `Run` / `RunPrepared` / `Resume` lifecycle setup + finalize/persist/publish. The phase work is split across siblings: [run_planner.go](internal/drive/run_planner.go) (plan-stage transition with EventPlanStart/Done/Failed + RunFailed publishing), [run_executor.go](internal/drive/run_executor.go) (parallel dispatch loop, worker goroutines capped by `MaxParallel` default 3, ready-batch + applyOutcome), [run_drainer.go](internal/drive/run_drainer.go) (terminal-status drain with bounded grace window).
 - [persistence.go](internal/drive/persistence.go) — bbolt `drive-runs` bucket, JSON-encoded per run. `Save` after every state transition; `dfmc drive resume <id>` re-enters from the persisted state.
 - [drive_adapter.go](internal/engine/drive_adapter.go) — engine-side `Engine.NewDriveRunner` that wires the `drive.Runner` interface to `Providers.Complete` (planner) and `RunSubagent` (executor); `Engine.PublishDriveEvent` mirrors driver events into the engine event bus.
 
@@ -191,6 +192,7 @@ Drive is also exposed over MCP for IDE hosts (Claude Desktop, Cursor, VSCode). `
 - New tool-surface entry points MUST call `executeToolWithLifecycle` (or `CallTool`, which wraps it) rather than `tools.Engine.Execute` directly. The former is the only place approval gate + pre/post hooks + panic guard + denial-logging events fire. Bypassing it silently disables both hooks and user approval for that path. MCP Drive tools in [cli_mcp_drive.go](ui/cli/cli_mcp_drive.go) are the deliberate exception — they route through `driveMCPHandler` to avoid recursive LLM steps, and that's explicitly called out in the Drive section.
 - The intent layer is fail-open by design — a broken classifier falls back to the raw prompt, so tests that assume "intent decided X" must build a Snapshot and call `Intent.Evaluate` directly rather than relying on the engine path, because the engine path will silently swallow classifier failures and return the raw message. Conversely, never add hard-fail paths inside `internal/intent/router.go`: the contract is "always returns a usable Decision."
 - A real tool timeout fires THREE events on the engine bus: `tool:error` (model-facing message), `tool:timeout` (structural fact, with `name`/`limit_ms`/`source`), and `tool:result` with `success=false` from the parallel dispatcher. Subscribers counting failures must NOT add these together. The canonical signal-of-record is `tool:result`; treat `tool:timeout` as cause-attribution telemetry and `tool:error` as the model-visible payload. All three fire within the same handler tick so a `(tool_name, ms-window of ~50ms)` tuple is a safe dedupe key for downstream metrics aggregators.
+- Engine and tools expose typed sentinel errors — detect via `errors.Is`, NOT `strings.Contains(err.Error(), …)`: `engine.ErrEngineNil` / `ErrEngineNotInitialized` (in [internal/engine/errors.go](internal/engine/errors.go)) / `ErrNoParkedAgent` / `ErrSubagentConcurrencyLimit`, and `tools.ErrEngineClosed` / `ErrMetaBudgetExhausted` / `ErrMetaDepthExceeded` (in [internal/tools/errors.go](internal/tools/errors.go)). Production sites wrap with `fmt.Errorf("%w …", ErrXxx, …)` so the human-readable message stays intact while the typed match keeps working. New tests must use `errors.Is(err, ErrXxx)`; new error sites should also wrap rather than copy the raw string.
 
 ## Project structure
 
@@ -225,3 +227,52 @@ ui/tui                   # bubbletea Model/View workbench
 ui/web                   # HTTP/SSE server + Drive cockpit + task CRUD
 pkg/types                # shared types and errors
 ```
+
+<!-- dfmt:v1 begin -->
+## Context Discipline
+
+This project uses DFMT to keep tool output from flooding the context
+window and to preserve session state across compactions. When working
+in this project, follow these rules.
+
+### Tool preferences
+
+Prefer DFMT's MCP tools over native ones:
+
+| Native     | DFMT replacement | `intent` required? |
+|------------|------------------|--------------------|
+| `Bash`     | `dfmt_exec`      | yes                |
+| `Read`     | `dfmt_read`      | yes                |
+| `WebFetch` | `dfmt_fetch`     | yes                |
+| `Glob`     | `dfmt_glob`      | yes                |
+| `Grep`     | `dfmt_grep`      | yes                |
+| `Edit`     | `dfmt_edit`      | n/a                |
+| `Write`    | `dfmt_write`     | n/a                |
+
+Every `dfmt_*` call MUST pass an `intent` parameter — a short phrase
+describing what you need from the output (e.g. "failing tests",
+"error message", "imports"). Without `intent` the tool returns raw
+bytes and the token savings are lost.
+
+On DFMT failure, report it to the user (one short line — which call,
+what error) and then fall back to the native tool so the session is
+not blocked. The ban is on *silent* fallback — every switch must be
+announced. After a fallback, drop a brief `dfmt_remember` note tagged
+`gap` when practical, so the journal records that a call was bypassed.
+If the native tool is also denied (permission rule, sandbox refusal),
+stop and ask the user; do not retry blindly.
+
+### Session memory
+
+DFMT tracks tool calls automatically. After substantive decisions or
+findings, call `dfmt_remember` with descriptive tags (`decision`,
+`finding`, `summary`) so future sessions can recall the context after
+compaction.
+
+### When native tools are acceptable
+
+Native `Bash` and `Read` are acceptable for outputs you know are small
+(< 2 KB) and will not be referenced again. For everything else, DFMT
+tools are preferred.
+<!-- dfmt:v1 end -->
+

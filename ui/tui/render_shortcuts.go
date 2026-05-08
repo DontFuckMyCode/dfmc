@@ -53,34 +53,39 @@ func (m Model) renderShortcutsView(width int) string {
 // user can scan all 17 tabs without scrolling.
 func (m Model) shortcutsTabsSection() []string {
 	out := []string{accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("PANELS")}
-	out = append(out, "  "+subtleStyle.Render("Tab/Shift+Tab cycle · F-keys jump direct · Alt-keys for diagnostic panels"))
+	out = append(out, "  "+subtleStyle.Render("Every panel has an F-key. F1..F12 cover 12 of 17; Shift+F1..F5 cover the rest. Tab/Shift+Tab cycle."))
 	out = append(out, "")
 	type row struct {
 		name, key, hint string
 	}
 	rows := []row{
+		// F1..F8 step through the 8 first-class tabs in tab-strip order.
+		// Alt+1..Alt+8 mirror them for terminals that swallow F-keys.
 		{"Chat", "F1", "main composer · transcript · slash commands"},
-		{"Status", "F2", "engine + provider + ast/codemap snapshot"},
-		{"Files", "F3", "project file picker · pin · preview"},
-		{"Patch", "F4", "worktree diff · staged hunks · apply/dry-run"},
-		{"Workflow", "F5", "drive cockpit · run list + TODO ladder"},
-		{"Tools", "F6", "tool registry · params editor · test runs"},
-		{"Activity", "F7", "event firehose · search/filter · follow tail"},
-		{"Memory", "F8", "working/episodic/semantic memory tiers"},
-		{"CodeMap", "F9", "symbol/dep graph · cycles · hotspots"},
-		{"Conversations", "F10", "saved conversations · branch nav"},
-		{"Prompts", "Alt+T", "task/role/language prompt overlays (F11 reserved — most terminals eat it for fullscreen; opens this help if it leaks through)"},
+		{"Files", "F2", "project file picker · pin · preview"},
+		{"Patch", "F3", "worktree diff · staged hunks · apply/dry-run"},
+		{"Workflow", "F4", "drive cockpit · run list + TODO ladder"},
+		{"Activity", "F5", "event firehose · search/filter · follow tail"},
+		{"Memory", "F6", "working/episodic/semantic memory tiers"},
+		{"Conversations", "F7", "saved conversations · branch nav"},
+		{"Providers", "F8", "provider catalog · keys · profiles"},
+		// F9..F12 reach the four most-trafficked demoted overlays.
+		{"Status", "F9", "engine + provider + ast/codemap snapshot"},
+		{"CodeMap", "F10", "symbol/dep graph · cycles · hotspots"},
+		{"Tools", "F11", "tool registry · params editor · test runs"},
 		{"Security", "F12", "scanner · secrets · vuln scan"},
-		{"Plans", "Ctrl+Y", "plan-split editor · subtask preview"},
-		{"Context", "Ctrl+W", "context-build preview · ranked snippets"},
-		{"Providers", "Ctrl+O", "provider catalog · keys · profiles"},
-		{"Orchestrate", "Alt+R", "agents/subagents/todos/drive/tokens hierarchy"},
-		{"Shortcuts", "Alt+H", "this screen — cheat sheet of everything"},
+		// Shift+F1..Shift+F5 reach the rest. Most terminals emit F13..F17
+		// codes for these — both shapes are bound. Help is on Ctrl+H/Alt+H.
+		{"Prompts", "Shift+F1", "task/role/language prompt overlays"},
+		{"Plans", "Shift+F2", "plan-split editor · subtask preview"},
+		{"Context", "Shift+F3", "context-build preview · ranked snippets"},
+		{"Orchestrate", "Shift+F4", "agents/subagents/todos/drive/tokens hierarchy"},
+		{"Shortcuts", "Shift+F5", "this screen — cheat sheet of everything"},
 	}
 	for _, r := range rows {
-		// Format: "  F1   Chat            main composer ..."
+		// Format: "  F1       Chat            main composer ..."
 		key := r.key
-		out = append(out, fmt.Sprintf("  %-7s %-14s %s",
+		out = append(out, fmt.Sprintf("  %-9s %-14s %s",
 			accentStyle.Render(key), titleStyle.Render(r.name),
 			subtleStyle.Render(truncateSingleLine(r.hint, 60))))
 	}

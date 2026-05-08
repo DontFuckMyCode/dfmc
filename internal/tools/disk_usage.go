@@ -86,7 +86,7 @@ func (t *DiskUsageTool) Execute(ctx context.Context, req Request) (Result, error
 
 	skipDirs := []string{".git", "node_modules", "vendor", "bin", "dist", ".dfmc", "__pycache__", ".venv", ".idea", ".vscode"}
 
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info == nil {
 			return nil
 		}
@@ -150,7 +150,7 @@ func buildDirSummaries(root string, maxDepth int, skipDirs []string) []dirEntry 
 	accMap := make(map[string]acc)
 	depthMap := make(map[string]int)
 
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info == nil {
 			return nil
 		}

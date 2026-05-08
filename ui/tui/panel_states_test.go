@@ -2,14 +2,17 @@ package tui
 
 import (
 	"testing"
+
+	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 func TestApplyDefaults_SetsCorrectInitialValues(t *testing.T) {
 	state := newDiagnosticPanelsState()
 
-	// memory panel defaults
-	if state.memory.tier != memoryTierAll {
-		t.Errorf("memory.tier: expected %q, got %q", memoryTierAll, state.memory.tier)
+	// memory panel defaults — Phase H item 2: opens on Working tier
+	// (recent scratchpad), not the merged All view.
+	if state.memory.tier != string(types.MemoryWorking) {
+		t.Errorf("memory.tier: expected %q, got %q", types.MemoryWorking, state.memory.tier)
 	}
 
 	// codemap panel defaults

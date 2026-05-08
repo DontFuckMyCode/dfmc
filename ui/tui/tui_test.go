@@ -36,8 +36,9 @@ func TestViewIncludesWorkbenchPanels(t *testing.T) {
 	}
 	// New top strip surfaces the active tab as a badge plus its
 	// immediate neighbours by F-key. Default starts on Chat (idx 0)
-	// so prev wraps to the LAST tab (Shortcuts) and next is Status.
-	for _, needle := range []string{"CHAT", "Status", "Shortcuts", "F1", "F2"} {
+	// so prev wraps to the LAST tab (Providers, F8 after the
+	// 2026-05-08 F-key remap) and next is Files (F2).
+	for _, needle := range []string{"CHAT", "Files", "Providers", "F1", "F2", "F8"} {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("expected new tab strip to contain %q, got:\n%s", needle, view)
 		}
@@ -79,17 +80,16 @@ func TestTabSwitching(t *testing.T) {
 func TestAltNumberSwitchesTabs(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 
-	// Alt+N maps to tab N (indices 0..14): alt+2 → Files (tab 2),
-	// alt+6 → Tools (tab 5), etc. Providers (tab 14) has its own
-	// dedicated chord (Ctrl+O / F4 / activateProvidersPanel) instead
-	// of overloading alt+2.
+	// Post-fix mapping (2026-05-08): alt+1..alt+8 mirror F1..F8 and
+	// step through the 8 first-class tabs in tab-strip order.
+	// alt+2 → Files (idx 1); alt+6 → Memory (idx 5).
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2"), Alt: true})
 	next, ok := nextModel.(Model)
 	if !ok {
 		t.Fatalf("expected Model after alt+2, got %T", nextModel)
 	}
-	if next.activeTab != 2 {
-		t.Fatalf("expected active tab 2 (Files) after alt+2, got %d", next.activeTab)
+	if next.activeTab != 1 {
+		t.Fatalf("expected active tab 1 (Files) after alt+2, got %d", next.activeTab)
 	}
 
 	finalModel, _ := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("6"), Alt: true})
@@ -98,7 +98,7 @@ func TestAltNumberSwitchesTabs(t *testing.T) {
 		t.Fatalf("expected Model after alt+6, got %T", finalModel)
 	}
 	if final.activeTab != 5 {
-		t.Fatalf("expected active tab 5 (Tools) after alt+6, got %d", final.activeTab)
+		t.Fatalf("expected active tab 5 (Memory) after alt+6, got %d", final.activeTab)
 	}
 }
 
@@ -219,10 +219,20 @@ func TestChatSlashProviderAndModelCommands(t *testing.T) {
 	}
 }
 
+// TestChatSlashProviderPersistWritesProjectConfig pins the EXPLICIT
+// `--persist` semantics: when the user spells out --persist they want
+// the choice locked into the project's own config.yaml, not the
+// user-global one. (Auto-persist without the flag goes to user-home —
+// see TestChatSlashProviderAutoPersistsUserConfig.)
 func TestChatSlashProviderPersistWritesProjectConfig(t *testing.T) {
 	eng := newTUITestEngine(t)
 	root := t.TempDir()
 	eng.ProjectRoot = root
+	// Redirect HOME so the auto-persist side-effect lands inside the
+	// test sandbox instead of polluting the developer's real
+	// ~/.dfmc/config.yaml.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
@@ -262,15 +272,24 @@ func TestChatSlashProviderPersistWritesProjectConfig(t *testing.T) {
 	if got := openaiProfile["model"]; got != "gpt-5.4" {
 		t.Fatalf("expected openai model persisted, got %#v", got)
 	}
-	if !strings.Contains(next.notice, "saved to") {
+	if !strings.Contains(next.notice, "saved") {
 		t.Fatalf("expected persist notice, got %q", next.notice)
 	}
 }
 
-func TestChatSlashProviderAutoPersistsProjectConfig(t *testing.T) {
+// TestChatSlashProviderAutoPersistsUserConfig pins the new default:
+// changing provider/model without --persist auto-saves to the user's
+// global config (~/.dfmc/config.yaml) so the choice survives across
+// project switches. The user's repeated complaint was that selections
+// were "kasıyoruz" (resetting) — they were actually saving fine, just
+// to the wrong scope (per-project).
+func TestChatSlashProviderAutoPersistsUserConfig(t *testing.T) {
 	eng := newTUITestEngine(t)
-	root := t.TempDir()
-	eng.ProjectRoot = root
+	projectRoot := t.TempDir()
+	eng.ProjectRoot = projectRoot
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
@@ -282,10 +301,10 @@ func TestChatSlashProviderAutoPersistsProjectConfig(t *testing.T) {
 		t.Fatalf("expected Model after provider command, got %T", nextModel)
 	}
 
-	path := filepath.Join(root, ".dfmc", "config.yaml")
-	data, err := os.ReadFile(path)
+	userPath := filepath.Join(homeDir, ".dfmc", "config.yaml")
+	data, err := os.ReadFile(userPath)
 	if err != nil {
-		t.Fatalf("read persisted config: %v", err)
+		t.Fatalf("read user config (%s): %v", userPath, err)
 	}
 	doc := map[string]any{}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -298,16 +317,13 @@ func TestChatSlashProviderAutoPersistsProjectConfig(t *testing.T) {
 	if got := providers["primary"]; got != "openai" {
 		t.Fatalf("expected providers.primary=openai, got %#v", got)
 	}
-	profiles, ok := providers["profiles"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected providers.profiles map, got %#v", providers["profiles"])
-	}
-	openaiProfile, ok := profiles["openai"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected openai profile map, got %#v", profiles["openai"])
-	}
-	if got := openaiProfile["model"]; got != "gpt-5.4" {
-		t.Fatalf("expected openai model persisted, got %#v", got)
+
+	// Without --persist, the per-project config must NOT be touched —
+	// otherwise we'd just be moving the "settings reset" complaint to
+	// a different file.
+	projectPath := filepath.Join(projectRoot, ".dfmc", "config.yaml")
+	if _, statErr := os.Stat(projectPath); statErr == nil {
+		t.Fatalf("auto-persist must not write project config (%s exists)", projectPath)
 	}
 }
 
@@ -2556,7 +2572,11 @@ func TestRenderChatViewUsesAgentConsoleLayout(t *testing.T) {
 	}
 
 	view := m.renderChatView(120)
-	for _, want := range []string{"DFMC CHAT", "Chat History", "ctx 45.0k/200.0k 22%", "2 messages", "USER", "ASSISTANT", "Input"} {
+	// Phase B dedup slice 4: the runtime strip Top row no longer carries
+	// `ctx X/Y N%` — the composer chip + footer chip already render that
+	// number as a bar. Provider/model and message count stay on the Top
+	// row; the bar is asserted separately by composer/footer tests.
+	for _, want := range []string{"DFMC CHAT", "Chat History", "openai/gpt-5.4", "2 messages", "USER", "ASSISTANT", "Input"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected console chat view to contain %q, got:\n%s", want, view)
 		}
@@ -2838,7 +2858,7 @@ func TestChatSlashContextFullIncludesDetailedFileEvidence(t *testing.T) {
 
 func TestWorkflowTabRendersRunList(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.activeTab = 4
+	m.activeTab = 3
 
 	// Simulate two drive runs loaded into the workflow panel
 	m.workflow.runs = []*drive.Run{
@@ -2864,7 +2884,7 @@ func TestWorkflowTabRendersRunList(t *testing.T) {
 
 func TestWorkflowTabEnterSelectsRun(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.activeTab = 4
+	m.activeTab = 3
 
 	m.workflow.runs = []*drive.Run{
 		{ID: "drv-abc123", Task: "Implement auth", Status: drive.RunDone},
@@ -2891,7 +2911,7 @@ func TestWorkflowTabEnterSelectsRun(t *testing.T) {
 
 func TestWorkflowTabJukNavigation(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.activeTab = 4
+	m.activeTab = 3
 
 	m.workflow.runs = []*drive.Run{
 		{ID: "drv-abc123", Task: "Implement auth", Status: drive.RunDone},
@@ -2932,7 +2952,7 @@ func TestWorkflowTabJukNavigation(t *testing.T) {
 
 func TestWorkflowTabEscDeselects(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.activeTab = 4
+	m.activeTab = 3
 
 	m.workflow.runs = []*drive.Run{
 		{ID: "drv-abc123", Task: "Implement auth", Status: drive.RunDone},
@@ -2953,29 +2973,114 @@ func TestWorkflowTabEscDeselects(t *testing.T) {
 	}
 }
 
-func TestF5OpensWorkflowTab(t *testing.T) {
-	m := NewModel(context.Background(), nil)
-
-	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyF5})
-	next, ok := nextModel.(Model)
-	if !ok {
-		t.Fatalf("expected Model after F5, got %T", nextModel)
+// TestFKeysMapToFirstClassTabs — post-2026-05-08 fix: F1..F8 map
+// straight to the 8 first-class tabs in tab-strip order, so the
+// "f1-f12 tabs" footer hint is honest. F9..F12 reach the four most-
+// used demoted panels (Status, CodeMap, Help overlay, Security).
+func TestFKeysMapToFirstClassTabs(t *testing.T) {
+	cases := []struct {
+		key      tea.KeyType
+		wantTab  int
+		wantNote string
+	}{
+		{tea.KeyF1, 0, "Chat"},
+		{tea.KeyF2, 1, "Files"},
+		{tea.KeyF3, 2, "Patch"},
+		{tea.KeyF4, 3, "Workflow"},
+		{tea.KeyF5, 4, "Activity"},
+		{tea.KeyF6, 5, "Memory"},
+		{tea.KeyF7, 6, "Conversations"},
 	}
-	if next.activeTab != 4 {
-		t.Fatalf("expected workflow tab index 4 after F5, got %d", next.activeTab)
+	for _, c := range cases {
+		m := NewModel(context.Background(), nil)
+		nextModel, _ := m.Update(tea.KeyMsg{Type: c.key})
+		next, ok := nextModel.(Model)
+		if !ok {
+			t.Fatalf("expected Model after %s, got %T", c.wantNote, nextModel)
+		}
+		if next.activeTab != c.wantTab {
+			t.Errorf("%s: expected activeTab=%d, got %d", c.wantNote, c.wantTab, next.activeTab)
+		}
 	}
 }
 
-func TestF6OpensToolsTab(t *testing.T) {
+// TestF8OpensProvidersTab — F8 is the eighth first-class tab
+// (Providers, idx 7). Routes through activateProvidersPanel so the
+// panel ALSO refreshes its row cache on entry — that side effect is
+// asserted by the loaded flag flipping true.
+func TestF8OpensProvidersTab(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-
-	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyF6})
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyF8})
 	next, ok := nextModel.(Model)
 	if !ok {
-		t.Fatalf("expected Model after F6, got %T", nextModel)
+		t.Fatalf("expected Model after F8, got %T", nextModel)
 	}
-	if next.activeTab != 5 {
-		t.Fatalf("expected tools tab index 5 after F6, got %d", next.activeTab)
+	if next.activeTab != 7 {
+		t.Fatalf("expected activeTab=7 (Providers) after F8, got %d", next.activeTab)
+	}
+	if !next.providers.loaded {
+		t.Fatalf("F8 should also seed the provider row cache (loaded=true), got false")
+	}
+}
+
+// TestF9F12ReachDemotedPanels — F9..F12 reach the four most-used
+// demoted overlays. F11 is the help overlay because most terminals
+// hijack F11 for window fullscreen — the binding is a fallback for
+// embedded terminals that pass it through.
+func TestF9F12ReachDemotedPanels(t *testing.T) {
+	// All four F9..F12 keys now open a panel overlay — F11 was previously
+	// reserved for the help overlay because most terminals eat it for
+	// fullscreen, but that left Tools without an F-key. Help is still
+	// reachable via Ctrl+H / Alt+H / /help (and a legacy Alt+0 alias).
+	cases := []struct {
+		key  tea.KeyType
+		kind string
+	}{
+		{tea.KeyF9, "status"},
+		{tea.KeyF10, "codemap"},
+		{tea.KeyF11, "tools"},
+		{tea.KeyF12, "security"},
+	}
+	for _, c := range cases {
+		m := NewModel(context.Background(), nil)
+		nextModel, _ := m.Update(tea.KeyMsg{Type: c.key})
+		next, ok := nextModel.(Model)
+		if !ok {
+			t.Fatalf("expected Model after F-key, got %T", nextModel)
+		}
+		if next.ui.panelOverlayKind != c.kind {
+			t.Errorf("%s: expected overlay kind %q, got %q", c.kind, c.kind, next.ui.panelOverlayKind)
+		}
+	}
+}
+
+// TestShiftF1F5ReachRemainingOverlays — the five panels that don't fit
+// in F1..F12 land on Shift+F1..Shift+F5, which most terminals emit as
+// the F13..F17 codes (xterm convention; bubbletea exposes those as
+// KeyF13..KeyF17). Without these bindings the only way to reach
+// Prompts / Plans / Context / Orchestrate / Shortcuts was via obscure
+// Alt-letter combos the user couldn't memorise.
+func TestShiftF1F5ReachRemainingOverlays(t *testing.T) {
+	cases := []struct {
+		key  tea.KeyType
+		kind string
+	}{
+		{tea.KeyF13, "prompts"},
+		{tea.KeyF14, "plans"},
+		{tea.KeyF15, "context"},
+		{tea.KeyF16, "orchestrate"},
+		{tea.KeyF17, "shortcuts"},
+	}
+	for _, c := range cases {
+		m := NewModel(context.Background(), nil)
+		nextModel, _ := m.Update(tea.KeyMsg{Type: c.key})
+		next, ok := nextModel.(Model)
+		if !ok {
+			t.Fatalf("%s: expected Model, got %T", c.kind, nextModel)
+		}
+		if next.ui.panelOverlayKind != c.kind {
+			t.Errorf("%s: expected overlay kind %q, got %q", c.kind, c.kind, next.ui.panelOverlayKind)
+		}
 	}
 }
 
@@ -3001,7 +3106,7 @@ func TestToolsTabRunsReadFilePreset(t *testing.T) {
 	eng.ProjectRoot = root
 
 	m := NewModel(context.Background(), eng)
-	m.activeTab = 5
+	m.ui.panelOverlayKind = "tools"
 	m.status = eng.Status()
 	m.filesView.entries = []string{"demo.txt"}
 	m.filesView.index = 0
@@ -3036,7 +3141,7 @@ func TestToolsTabRunsReadFilePreset(t *testing.T) {
 func TestToolsTabCanEditAndResetParams(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
-	m.activeTab = 5
+	m.ui.panelOverlayKind = "tools"
 	m.toolView.index = indexOfString(m.availableTools(), "write_file")
 	if m.toolView.index < 0 {
 		t.Fatal("expected write_file tool to be registered")
@@ -3077,7 +3182,7 @@ func TestToolsTabCanEditAndResetParams(t *testing.T) {
 func TestToolsTabAltShortcutOpensEditor(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
-	m.activeTab = 5
+	m.ui.panelOverlayKind = "tools"
 	m.toolView.index = indexOfString(m.availableTools(), "write_file")
 	if m.toolView.index < 0 {
 		t.Fatal("expected write_file tool to be registered")
@@ -3113,7 +3218,7 @@ func TestMutationToolRefreshesPatchAndPreview(t *testing.T) {
 	}
 
 	m := NewModel(context.Background(), eng)
-	m.activeTab = 5
+	m.ui.panelOverlayKind = "tools"
 	m.status = eng.Status()
 	m.filesView.entries = []string{"demo.txt"}
 	m.filesView.index = 0
@@ -3138,7 +3243,7 @@ func TestMutationToolRefreshesPatchAndPreview(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model after mutation tool result, got %T", finalModel)
 	}
-	if final.activeTab != 3 {
+	if final.activeTab != 2 {
 		t.Fatalf("expected mutation tool to switch to Patch tab, got %d", final.activeTab)
 	}
 	if final.filesView.path != "demo.txt" {
@@ -3158,7 +3263,7 @@ func TestMutationToolRefreshesPatchAndPreview(t *testing.T) {
 func TestToolsTabRunsCommandPreset(t *testing.T) {
 	eng := newTUITestEngine(t)
 	m := NewModel(context.Background(), eng)
-	m.activeTab = 5
+	m.ui.panelOverlayKind = "tools"
 	m.toolView.index = indexOfString(m.availableTools(), "run_command")
 	if m.toolView.index < 0 {
 		t.Fatal("expected run_command tool to be registered")
@@ -3303,7 +3408,7 @@ func TestExtractPatchHunks(t *testing.T) {
 
 func TestFilesTabNavigation(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.activeTab = 2
+	m.activeTab = 1
 	m.filesView.entries = []string{"a.go", "b.go", "c.go"}
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
@@ -3327,7 +3432,7 @@ func TestFilesTabNavigation(t *testing.T) {
 
 func TestFilesTabInsertSelectedFileMarker(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.activeTab = 2
+	m.activeTab = 1
 	m.filesView.entries = []string{"a.go", "b.go"}
 	m.filesView.index = 1
 	m.chat.input = "please inspect"
@@ -3347,7 +3452,7 @@ func TestFilesTabInsertSelectedFileMarker(t *testing.T) {
 
 func TestFilesTabTogglePinnedFile(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.activeTab = 2
+	m.activeTab = 1
 	m.filesView.entries = []string{"a.go", "b.go"}
 	m.filesView.index = 1
 
@@ -3372,7 +3477,7 @@ func TestFilesTabTogglePinnedFile(t *testing.T) {
 
 func TestFilesTabAltShortcutTogglePinnedFile(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.activeTab = 2
+	m.activeTab = 1
 	m.filesView.entries = []string{"a.go", "b.go"}
 	m.filesView.index = 1
 
@@ -3388,7 +3493,7 @@ func TestFilesTabAltShortcutTogglePinnedFile(t *testing.T) {
 
 func TestFilesTabPrepareExplainAndReviewPrompts(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.activeTab = 2
+	m.activeTab = 1
 	m.filesView.entries = []string{"internal/auth/service.go"}
 
 	explainModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
@@ -3403,7 +3508,7 @@ func TestFilesTabPrepareExplainAndReviewPrompts(t *testing.T) {
 		t.Fatalf("expected explain prompt to target selected file, got %q", explain.chat.input)
 	}
 
-	m.activeTab = 2
+	m.activeTab = 1
 	reviewModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
 	review, ok := reviewModel.(Model)
 	if !ok {
@@ -3727,8 +3832,12 @@ func TestRuntimeStripShowsContextBudgetWhenPanelHidden(t *testing.T) {
 	}
 
 	view := m.renderChatView(240)
+	// Phase B dedup slice 4: the Top-row `ctx X/Y N%` text is gone — the
+	// composer chip and footer chip already carry that summary as a bar.
+	// The Budget row still surfaces the deep dial readout (task / files /
+	// evidence / window / available / slice / zip / top / why) so users
+	// who keep the stats panel hidden still get the full breakdown.
 	for _, want := range []string{
-		"ctx 42.0k/1.1m 4%",
 		"budget:",
 		"task review",
 		"ctx files 4/8",
@@ -3745,9 +3854,27 @@ func TestRuntimeStripShowsContextBudgetWhenPanelHidden(t *testing.T) {
 			t.Fatalf("runtime strip should surface context budget %q, got:\n%s", want, view)
 		}
 	}
+	// Belt-and-braces: assert the Top-row dedup hasn't drifted back in.
+	for _, banned := range []string{"ctx 42.0k/1.1m 4%"} {
+		// The composer chip / footer chip render the bar form (e.g.
+		// `ctx [█░░...] 42k/1.1M (4%)`); the Top-row text version with
+		// trailing `%` is the duplicate that should stay out.
+		topStrip := stripANSI(strings.Join(runtimeStripTopParts(m.runtimeViewModel()), " "))
+		if strings.Contains(topStrip, banned) {
+			t.Fatalf("runtime strip Top row should no longer carry the duplicate %q, got top row:\n%s", banned, topStrip)
+		}
+	}
 }
 
-func TestRuntimeStripTopUsesWindowContextTokens(t *testing.T) {
+// TestRuntimeStripTopOmitsContextLabel — Phase B dedup slice 4. The
+// runtime strip Top row used to carry `ctx 88.5k/200.0k 44%` text right
+// next to the provider/model. The composer chip and the footer chip
+// both render the same number as a bar (and the deep view lives in the
+// stats panel CONTEXT section), so the runtime-strip text version was
+// the redundant third copy. The Top row no longer carries it; the
+// Budget row still surfaces evidence + window with their detailed
+// breakdown for users who want the full dial readout.
+func TestRuntimeStripTopOmitsContextLabel(t *testing.T) {
 	vm := runtimeViewModel{
 		State:               "ready",
 		Provider:            "openai",
@@ -3759,12 +3886,15 @@ func TestRuntimeStripTopUsesWindowContextTokens(t *testing.T) {
 	}
 
 	top := stripANSI(strings.Join(runtimeStripTopParts(vm), " "))
-	if !strings.Contains(top, "ctx 88.5k/200.0k 44%") {
-		t.Fatalf("top strip should show live window usage, got:\n%s", top)
+	if strings.Contains(top, "ctx ") || strings.Contains(top, "/200.0k") {
+		t.Fatalf("top strip should no longer echo the composer/footer context bar, got:\n%s", top)
+	}
+	if !strings.Contains(top, "openai/gpt-5.4") {
+		t.Fatalf("top strip should still carry provider/model (no other surface in chat view does), got:\n%s", top)
 	}
 	budget := stripANSI(strings.Join(runtimeStripBudgetParts(vm), " "))
 	if !strings.Contains(budget, "evidence 42.0k/160.0k") || !strings.Contains(budget, "window 88.5k/200.0k") {
-		t.Fatalf("budget strip should keep evidence and window separate, got:\n%s", budget)
+		t.Fatalf("budget strip should still carry the deep evidence + window breakdown, got:\n%s", budget)
 	}
 }
 
@@ -4020,6 +4150,35 @@ func TestHelpOverlayShowsTabKeysWhenToggled(t *testing.T) {
 	}
 }
 
+// TestHelpOverlayFiltersByChatInput — Phase K item 3: when the help
+// overlay is open, the chat composer line doubles as a live filter.
+// Lines matching the query (case-insensitive substring) stay; sections
+// whose body produces no match drop their header so the filtered view
+// stays tight.
+func TestHelpOverlayFiltersByChatInput(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.ui.showHelpOverlay = true
+	m.chat.input = "mention"
+	out := m.renderHelpOverlay(140)
+	if !strings.Contains(out, "filter: mention") {
+		t.Fatalf("expected active-filter chip in title, got:\n%s", out)
+	}
+	if !strings.Contains(out, "@ mention") {
+		t.Fatalf("expected mention line to survive filter, got:\n%s", out)
+	}
+	// "ctrl+y plans" is in the demoted panels section and has no
+	// "mention" substring; it must drop out.
+	if strings.Contains(out, "ctrl+y plans") {
+		t.Fatalf("expected unrelated demoted-panels line to be filtered out, got:\n%s", out)
+	}
+	// Empty filter restores everything.
+	m.chat.input = ""
+	out = m.renderHelpOverlay(140)
+	if !strings.Contains(out, "ctrl+y plans") {
+		t.Fatalf("clearing the filter should restore all sections, got:\n%s", out)
+	}
+}
+
 // TestHelpOverlayCoversEveryTab — regression guard: each tab in NewModel's
 // tabs array must have its own case in helpOverlayTabHints, not fall into
 // the default "tabs · palette · quit" bucket. When a new panel lands, this
@@ -4265,7 +4424,7 @@ func TestPatchFocusSummaryAndBestTarget(t *testing.T) {
 
 func TestFocusPatchFileUsesBestTarget(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.activeTab = 3
+	m.activeTab = 2
 	m.filesView.entries = []string{"a.go", "b.go", "c.go"}
 	m.filesView.index = 0
 	m.filesView.pinned = "b.go"
@@ -4281,7 +4440,7 @@ func TestFocusPatchFileUsesBestTarget(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model from focusPatchFile, got %T", nextModel)
 	}
-	if next.activeTab != 2 {
+	if next.activeTab != 1 {
 		t.Fatalf("expected focusPatchFile to switch to Files tab, got %d", next.activeTab)
 	}
 	if next.filesView.index != 1 {
@@ -4315,7 +4474,7 @@ func TestRenderPatchViewShowsPatchFiles(t *testing.T) {
 
 func TestShiftPatchTargetAndRenderPatchViewUsesCurrentSection(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.activeTab = 3
+	m.activeTab = 2
 	m.patchView.files = []string{"a.go", "b.go"}
 	m.patchView.set = []patchSection{
 		{
@@ -4359,7 +4518,7 @@ func TestShiftPatchTargetAndRenderPatchViewUsesCurrentSection(t *testing.T) {
 
 func TestShiftPatchHunkAndReviewHints(t *testing.T) {
 	m := NewModel(context.Background(), nil)
-	m.activeTab = 3
+	m.activeTab = 2
 	m.patchView.set = []patchSection{
 		{
 			Path:      "internal/auth/service.go",
@@ -4569,7 +4728,12 @@ func TestRenderStatsPanelShowsAllSections(t *testing.T) {
 		"TOOL LOOP", "tool loop", "2/6", "call budget 2/6", "read_file", "42ms",
 		"TOOLS", "enabled", "6 registered",
 		"FOCUS MODE", "expanded", "4s",
-		"WORKFLOW", "live now", "[####------]", "todos 4", "1 done", "1 doing", "active: Patch ui/tui stats panel", "subagents 2 active", "drive 3/12", "1 blocked", "plan 3 tasks", "parallel", "0.85", "recent: tool read_file completed",
+		// Phase B dedup slice 3: WORKFLOW section no longer prints
+		// `todos N | X done | Y doing | Z pending` or `active: <text>` —
+		// those duplicate the runtime strip Work-row that's already on
+		// screen. The `todos: alt+s for breakdown` pointer guides the
+		// user to the dedicated Todos mode where the full breakdown lives.
+		"WORKFLOW", "live now", "[####------]", "todos: alt+s for breakdown", "subagents 2 active", "drive 3/12", "1 blocked", "plan 3 tasks", "parallel", "0.85", "recent: tool read_file completed",
 		"GIT", "main", "+255", "-10",
 		"SESSION",
 		"alt+a/s/d/f/p again locks", "ctrl+s", "hide", "ctrl+h",
@@ -4614,7 +4778,12 @@ func TestRenderStatsPanelUnconfiguredShowsGuidance(t *testing.T) {
 	panel := renderStatsPanel(statsPanelInfo{
 		SessionElapsed: 10 * time.Second,
 	}, 16)
-	for _, want := range []string{"no provider", "f5 workflow", "/provider"} {
+	// Phase B dedup slice 5: the guidance row updated from
+	// "f5 workflow | /provider" to "alt+p providers · /provider"
+	// because the alt+p stats-panel mode is the actual deep view that
+	// fixes a missing provider; F5 is the Workflow tab, not what users
+	// need here.
+	for _, want := range []string{"no provider", "alt+p providers", "/provider"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("unconfigured stats panel should surface %q, got:\n%s", want, panel)
 		}

@@ -1,131 +1,25 @@
-// Parallel dispatch loop for the Drive runner. Extracted from
-// driver.go. Owns the executor side of the plan->execute->persist
-// pipeline: ready-batch dispatch under MaxParallel, goroutine-per-
-// TODO with a buffered results channel, per-result state updates,
-// and the two-phase drain that stamps a terminal status without
-// losing in-flight worker outcomes.
+// run_executor_outcome.go — per-TODO worker dispatch + outcome
+// application. Sibling of run_executor.go which keeps the parallel
+// dispatcher loop (executeLoop) plus the driveContextStopReason
+// helper used by the drainer.
+//
+// Splitting dispatch + outcome out keeps run_executor.go scoped to
+// "the scheduler tick" while this file owns "what does one worker do
+// and what happens when it returns." dispatchTodo spawns the
+// goroutine and is the only call site that mutates run.Todos under
+// dispatch; applyOutcome is the only call site that mutates
+// run.Todos when a worker returns. Both maintain the
+// "main-loop-is-sole-writer-of-run.Todos" invariant; pulling them
+// into one file makes that invariant easier to audit.
 
 package drive
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
-
-// executeLoop is the parallel dispatcher: pick ready TODOs (up to
-// cfg.MaxParallel), spawn each in a goroutine, wait for any to
-// finish, apply the result, repeat. Sequential execution is just
-// MaxParallel=1; the same code path handles both.
-//
-// Concurrency model:
-//   - The main loop is the SOLE writer of run.Todos. Workers only
-//     read the TODO they were dispatched with (passed by value into
-//     the goroutine) and never touch run.Todos directly.
-//   - Workers communicate back via a buffered results channel. The
-//     main loop drains one result per iteration and updates state.
-//   - When the result channel is empty AND no TODOs are inFlight AND
-//     no TODOs are ready, the run is over (done or skipped tail).
-//
-// Why not a sync.WaitGroup: the loop has to be reactive to *any*
-// worker completing so it can dispatch the next batch as soon as a
-// slot frees up. A WaitGroup only signals "all done"; we need
-// "first done", which is the channel idiom.
-func (d *Driver) executeLoop(ctx context.Context, run *Run) {
-	deadline := run.CreatedAt.Add(d.cfg.MaxWallTime)
-	if ctxDeadline, ok := ctx.Deadline(); ok {
-		deadline = ctxDeadline
-	} else if !run.EndedAt.IsZero() {
-		// Resume path may have cleared EndedAt; deadline is from
-		// resume time when the original deadline already passed.
-		deadline = time.Now().Add(d.cfg.MaxWallTime)
-	}
-	policy := schedulerPolicyForRun(run, d.cfg.MaxParallel)
-	consecutiveBlocked := 0
-	results := make(chan todoOutcome, policy.MaxParallel)
-	inFlight := 0
-
-	for {
-		// Termination checks before scheduling. Any in-flight workers
-		// will still publish their outcome; we drain those before
-		// finalizing so the run record reflects every TODO that
-		// actually executed.
-		if err := ctx.Err(); err != nil {
-			d.drainAndFinalize(ctx, run, results, inFlight, RunStopped,
-				driveContextStopReason(ctx, d.cfg.MaxWallTime, err))
-			return
-		}
-		if time.Now().After(deadline) {
-			d.drainAndFinalize(ctx, run, results, inFlight, RunStopped,
-				fmt.Sprintf("max_wall_time exceeded (%s)", d.cfg.MaxWallTime))
-			return
-		}
-		if consecutiveBlocked >= d.cfg.MaxFailedTodos {
-			d.drainAndFinalize(ctx, run, results, inFlight, RunFailed,
-				fmt.Sprintf("max_failed_todos exceeded: %d consecutive blocks", consecutiveBlocked))
-			return
-		}
-
-		// Dispatch as many ready TODOs as fit under MaxParallel.
-		available := policy.MaxParallel - inFlight
-		if available > 0 {
-			picks := readyBatchWithPolicy(run.Todos, policy, available)
-			for _, idx := range picks {
-				d.dispatchTodo(ctx, run, idx, results)
-				inFlight++
-			}
-		}
-
-		if inFlight == 0 {
-			// No workers running and nothing dispatched this pass.
-			// Either we're done, or we're stuck behind Blocked deps.
-			skipped := skipBlockedDescendants(run.Todos)
-			for _, id := range skipped {
-				d.publish(EventTodoSkipped, map[string]any{
-					"run_id":  run.ID,
-					"todo_id": id,
-					"reason":  reasonByID(run.Todos, id),
-				})
-			}
-			d.persist(run)
-			if runFinished(run.Todos) {
-				d.finalize(run, RunDone, "")
-				return
-			}
-			// Re-scan after the skip pass — a previously-blocked
-			// chain may now have ready siblings that don't depend on
-			// the blocked branch.
-			if len(readyBatchWithPolicy(run.Todos, policy, 1)) > 0 {
-				continue
-			}
-			d.finalize(run, RunFailed, "scheduler deadlock — no ready TODO and no progress possible")
-			return
-		}
-
-		// Wait for the next worker to finish. Block here is fine —
-		// at least one goroutine is in flight, so a result will
-		// arrive (or ctx will cancel through it). Honor ctx.Done in
-		// the select so a parent cancel doesn't deadlock us.
-		select {
-		case <-ctx.Done():
-			d.drainAndFinalize(ctx, run, results, inFlight, RunStopped,
-				driveContextStopReason(ctx, d.cfg.MaxWallTime, ctx.Err()))
-			return
-		case res := <-results:
-			inFlight--
-			d.applyOutcome(run, res, &consecutiveBlocked)
-		}
-	}
-}
-
-func driveContextStopReason(ctx context.Context, maxWallTime time.Duration, err error) string {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Sprintf("max_wall_time exceeded (%s)", maxWallTime)
-	}
-	return fmt.Sprintf("ctx cancelled: %v", err)
-}
 
 // dispatchTodo marks the TODO at idx as Running, publishes the start
 // event, and spawns a goroutine that calls runner.ExecuteTodo. The
@@ -340,67 +234,4 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 			"todos":       planSummary(added),
 		})
 	}
-}
-
-// drainAndFinalize collects the outcomes of in-flight workers before
-// stamping the final run status. Without this, a deadline trip or a
-// ctx cancel while workers are still running would lose their results
-// entirely — the goroutines would complete and write to a channel
-// nobody reads. The channel is buffered to MaxParallel so workers
-// never block on send.
-//
-// Two-phase drain: first non-blocking (pulls anything already queued
-// up), then a bounded grace period (give in-flight workers a chance
-// to flush). After the grace expires, any TODOs still Running stay
-// Running in the persisted record — that's accurate, they WERE
-// running when we stopped, and Resume will reset Running -> Pending
-// so they get re-attempted on the next run.
-//
-// Why we can't just block until all workers return: workers depend
-// on ctx through ExecuteTodo, but a malicious or buggy provider
-// could ignore cancellation. We bound our wait so a single stuck
-// worker can't keep the run from terminating.
-func (d *Driver) drainAndFinalize(ctx context.Context, run *Run, results <-chan todoOutcome, inFlight int, status RunStatus, reason string) {
-	consecutiveBlocked := 0 // applyOutcome takes a pointer; value is discarded after finalize
-
-	// Phase 1: non-blocking drain of anything already queued. This
-	// catches the common case where a worker finished concurrently
-	// with the cancel/deadline trip and its result is already on the
-	// channel. No grace period needed for these.
-	for inFlight > 0 {
-		select {
-		case res := <-results:
-			inFlight--
-			d.applyOutcome(run, res, &consecutiveBlocked)
-		default:
-			goto graceDrain
-		}
-	}
-
-graceDrain:
-	// Phase 2: give the rest of the workers a bounded grace period
-	// to return. We honor ctx.Done in case the parent has already
-	// fully torn down, but only after the grace window — otherwise
-	// a cancel that's already fired would short-circuit us before
-	// any worker had a chance to flush.
-	if inFlight > 0 {
-		grace := time.NewTimer(d.cfg.DrainGraceWindow)
-		defer grace.Stop()
-		for inFlight > 0 {
-			select {
-			case res := <-results:
-				inFlight--
-				d.applyOutcome(run, res, &consecutiveBlocked)
-			case <-grace.C:
-				// Time's up — leave any still-running TODOs as Running
-				// in the persisted record. Resume will reset them.
-				d.finalize(run, status, reason)
-				_ = ctx // ctx kept in signature for symmetry; future
-				// extension may want to differentiate ctx-cancel vs
-				// deadline drains.
-				return
-			}
-		}
-	}
-	d.finalize(run, status, reason)
 }

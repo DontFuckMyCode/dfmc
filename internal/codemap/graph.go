@@ -1,7 +1,6 @@
 package codemap
 
 import (
-	"sort"
 	"sync"
 )
 
@@ -71,7 +70,7 @@ func (g *Graph) AddEdge(edge Edge) {
 }
 
 func (g *Graph) addEdgeLocked(e Edge) {
-	key := edgeSlotKey{From: e.From, To: e.To, Type: e.Type}
+	key := edgeSlotKey(e)
 	if idx, ok := g.edgeIdx[key]; ok {
 		g.edges[idx] = e
 		return
@@ -113,7 +112,7 @@ func (g *Graph) RemoveEdge(edge Edge) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	key := edgeSlotKey{From: edge.From, To: edge.To, Type: edge.Type}
+	key := edgeSlotKey(edge)
 	idx, exists := g.edgeIdx[key]
 	if !exists {
 		return false
@@ -217,35 +216,6 @@ func (g *Graph) Counts() Counts {
 	return Counts{Nodes: len(g.nodes), Edges: len(g.edgeIdx)}
 }
 
-func (g *Graph) HotSpots(k int) []Node {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	type nodeDegree struct {
-		node   Node
-		degree int
-	}
-	degrees := make([]nodeDegree, 0, len(g.nodes))
-	for id, node := range g.nodes {
-		degree := activeEdgeIndexCount(g.edges, g.outIdx[id]) + activeEdgeIndexCount(g.edges, g.inIdx[id])
-		degrees = append(degrees, nodeDegree{node, degree})
-	}
-
-	sort.Slice(degrees, func(i, j int) bool {
-		return degrees[i].degree > degrees[j].degree
-	})
-
-	limit := k
-	if limit <= 0 || limit > len(degrees) {
-		limit = len(degrees)
-	}
-	result := make([]Node, 0, limit)
-	for i := 0; i < limit; i++ {
-		result = append(result, degrees[i].node)
-	}
-	return result
-}
-
 func (g *Graph) Outgoing(fromID string) []Edge {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -280,101 +250,6 @@ func (g *Graph) copyIncoming(toID string) []Edge {
 	return result
 }
 
-func (g *Graph) Descendants(startID string, maxDepth int) []Node {
-	return g.relatedNodes(startID, maxDepth, true)
-}
-
-func (g *Graph) Ancestors(startID string, maxDepth int) []Node {
-	return g.relatedNodes(startID, maxDepth, false)
-}
-
-func (g *Graph) relatedNodes(startID string, maxDepth int, outgoing bool) []Node {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	if maxDepth < 0 {
-		maxDepth = len(g.nodes)
-	}
-	type queueItem struct {
-		id    string
-		depth int
-	}
-	visited := map[string]bool{startID: true}
-	queue := []queueItem{{id: startID, depth: 0}}
-	out := []Node{}
-	for len(queue) > 0 {
-		item := queue[0]
-		queue = queue[1:]
-		if item.depth >= maxDepth {
-			continue
-		}
-		indices := g.outIdx[item.id]
-		if !outgoing {
-			indices = g.inIdx[item.id]
-		}
-		for _, idx := range indices {
-			edge := g.edges[idx]
-			nextID := edge.To
-			if !outgoing {
-				nextID = edge.From
-			}
-			if edge.From == "" || nextID == "" || visited[nextID] {
-				continue
-			}
-			visited[nextID] = true
-			if node, ok := g.nodes[nextID]; ok {
-				out = append(out, node)
-			}
-			queue = append(queue, queueItem{id: nextID, depth: item.depth + 1})
-		}
-	}
-	return out
-}
-
-func (g *Graph) ShortestPathLength(fromID, toID string) int {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	if fromID == toID {
-		if _, ok := g.nodes[fromID]; ok {
-			return 0
-		}
-	}
-	type queueItem struct {
-		id   string
-		dist int
-	}
-	visited := map[string]bool{fromID: true}
-	queue := []queueItem{{id: fromID, dist: 0}}
-	for len(queue) > 0 {
-		item := queue[0]
-		queue = queue[1:]
-		for _, idx := range g.outIdx[item.id] {
-			edge := g.edges[idx]
-			if edge.From == "" || edge.To == "" || visited[edge.To] {
-				continue
-			}
-			if edge.To == toID {
-				return item.dist + 1
-			}
-			visited[edge.To] = true
-			queue = append(queue, queueItem{id: edge.To, dist: item.dist + 1})
-		}
-	}
-	return -1
-}
-
-func (g *Graph) Orphans() []Node {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	var orphans []Node
-	for id, node := range g.nodes {
-		if activeEdgeIndexCount(g.edges, g.inIdx[id]) == 0 {
-			orphans = append(orphans, node)
-		}
-	}
-	return orphans
-}
-
 func (g *Graph) Nodes() []Node {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -407,49 +282,3 @@ func (g *Graph) Clear() {
 	g.edgeIdx = map[edgeSlotKey]int{}
 }
 
-func (g *Graph) WalkDepthFirst(startID string, visitor func(Node)) {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	visited := make(map[string]bool)
-	var walk func(id string)
-	walk = func(id string) {
-		if visited[id] {
-			return
-		}
-		visited[id] = true
-		if node, ok := g.nodes[id]; ok {
-			visitor(node)
-		}
-		for _, idx := range g.outIdx[id] {
-			if to := g.edges[idx].To; to != "" {
-				walk(to)
-			}
-		}
-	}
-	walk(startID)
-}
-
-func (g *Graph) WalkBreadthFirst(startID string, visitor func(Node)) {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	visited := make(map[string]bool)
-	queue := []string{startID}
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		if visited[id] {
-			continue
-		}
-		visited[id] = true
-		if node, ok := g.nodes[id]; ok {
-			visitor(node)
-		}
-		for _, idx := range g.outIdx[id] {
-			if to := g.edges[idx].To; to != "" && !visited[to] {
-				queue = append(queue, to)
-			}
-		}
-	}
-}

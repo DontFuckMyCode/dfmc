@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -316,6 +317,58 @@ func TestUpdate_patchApplyMsg_ApplyError(t *testing.T) {
 	nm := m2.(Model)
 	if nm.notice == "" {
 		t.Error("expected notice with error")
+	}
+}
+
+// TestPostApplyValidationHint_PicksLanguage — Phase F item 2: the
+// suffix appended to a successful "Patch applied" notice must steer
+// the user to the project-aware validation command. Detection runs
+// off the first changed file's extension; unknown extensions return
+// "" so the notice stays clean.
+func TestPostApplyValidationHint_PicksLanguage(t *testing.T) {
+	cases := []struct {
+		name    string
+		changed []string
+		want    string
+	}{
+		{"go", []string{"internal/auth/service.go"}, "go build"},
+		{"python", []string{"src/foo.py"}, "pytest"},
+		{"typescript", []string{"src/index.ts"}, "tsc"},
+		{"javascript", []string{"src/index.js"}, "npm test"},
+		{"rust", []string{"src/lib.rs"}, "cargo"},
+		{"java", []string{"src/Main.java"}, "mvn"},
+		{"unknown", []string{"README.md"}, ""},
+		{"empty", nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := postApplyValidationHint(tc.changed)
+			if tc.want == "" {
+				if got != "" {
+					t.Errorf("expected empty hint for %v, got %q", tc.changed, got)
+				}
+				return
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("expected hint to mention %q for %v, got %q", tc.want, tc.changed, got)
+			}
+		})
+	}
+}
+
+// TestUpdate_patchApplyMsg_AppliedAppendsValidationHint — end-to-end
+// pin: the apply path constructs the notice with the validation
+// suffix when the changed list points at a known language.
+func TestUpdate_patchApplyMsg_AppliedAppendsValidationHint(t *testing.T) {
+	m := NewModel(context.TODO(), nil)
+	msg := patchApplyMsg{checkOnly: false, changed: []string{"main.go"}}
+	m2, _ := m.Update(msg)
+	nm := m2.(Model)
+	if !strings.Contains(nm.notice, "Patch applied") {
+		t.Fatalf("expected applied prefix, got %q", nm.notice)
+	}
+	if !strings.Contains(nm.notice, "go build") {
+		t.Fatalf("expected go-build hint in notice, got %q", nm.notice)
 	}
 }
 

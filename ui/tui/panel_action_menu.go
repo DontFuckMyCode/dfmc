@@ -21,9 +21,9 @@ import (
 // accelerator (e.g. "p" for pin), and a handler that returns the new
 // model + an optional command.
 type panelAction struct {
-	Label    string
-	Accel    string // optional single-letter accelerator hint
-	Handler  func(Model) (Model, tea.Cmd)
+	Label   string
+	Accel   string // optional single-letter accelerator hint
+	Handler func(Model) (Model, tea.Cmd)
 }
 
 // panelActionMenu owns the open/closed state plus the action list and

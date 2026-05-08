@@ -2,8 +2,8 @@
 //
 // Arrow keys (and h/j/k/l) move the card selection. Enter activates
 // the selected card by jumping to the related detail tab. r refreshes
-// the status snapshot. The mapping mirrors what the panel's footer
-// hints advertise so a user never has to read code to learn the keys.
+// the status snapshot. → opens the action menu (Phase D — every panel
+// gets a discoverable surface; accelerators stay for power users).
 
 package tui
 
@@ -11,14 +11,74 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// openStatusActionMenu — arrow-driven discovery surface for Status
+// card-grid actions. Matches the pattern in activity_key.go etc.
+func (m Model) openStatusActionMenu() Model {
+	actions := []panelAction{
+		{Label: "Open the selected card's detail tab", Accel: "enter",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m.activateSelectedStatusCard(), nil
+			}},
+		{Label: "Refresh status snapshot", Accel: "r",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m, loadStatusCmd(m.eng)
+			}},
+		{Label: "Jump to Files (Project card)", Accel: "1",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m.activateDiagnosticTab("Files"), nil
+			}},
+		{Label: "Jump to Providers (Provider card)", Accel: "2",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m.activateDiagnosticTab("Providers"), nil
+			}},
+		{Label: "Jump to CodeMap (AST card)", Accel: "3",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m.activateDiagnosticTab("CodeMap"), nil
+			}},
+		{Label: "Jump to Memory", Accel: "4",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m.activateDiagnosticTab("Memory"), nil
+			}},
+		{Label: "Jump to Orchestrate (subagents / drive overview)", Accel: "5",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				return m.activateDiagnosticTab("Orchestrate"), nil
+			}},
+		{Label: "First card", Accel: "g",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				m.diagnosticPanelsState.statusPanel.selectedCard = 0
+				return m, nil
+			}},
+		{Label: "Last card", Accel: "G",
+			Handler: func(m Model) (Model, tea.Cmd) {
+				count := m.diagnosticPanelsState.statusPanel.cardCount
+				if count > 0 {
+					m.diagnosticPanelsState.statusPanel.selectedCard = count - 1
+				}
+				return m, nil
+			}},
+	}
+	return m.openActionMenu("Status", "Status actions", actions)
+}
+
 func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
 	switch msg.String() {
 	case "r":
 		return m, loadStatusCmd(m.eng)
 	case "left", "h":
 		return m.shiftStatusCard(-1), nil
-	case "right", "l":
+	case "l":
+		// vim-style move right inside the 2D card grid. The action
+		// menu deliberately uses bare `right` so `l` keeps its move
+		// meaning (h/j/k/l form the Status panel's directional set).
 		return m.shiftStatusCard(1), nil
+	case "right":
+		// Right opens the action menu — arrow-driven discovery of
+		// refresh / jump-to-detail-tab / enter without making the user
+		// remember the per-card index mapping.
+		return m.openStatusActionMenu(), nil
 	case "up", "k":
 		// 2-column grid: up = -2 (one row up). Falls back to -1
 		// when there's only one column on narrow terminals.

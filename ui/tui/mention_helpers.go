@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -188,4 +189,42 @@ func fitPanelContentHeight(content string, maxLines int) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// fitPanelContentScrollable is the scroll-aware sibling of
+// fitPanelContentHeight. Used by overlays whose body is longer than
+// the viewport — the caller passes the user's scroll offset (lines from
+// the top) and the helper slices the body to fit, surfacing a `↑ N
+// earlier` / `↓ N more` hint at the edges so the user can tell how
+// much remains. Returns the clamped scroll value so the caller can
+// keep its state honest when the content shrinks under the cursor.
+func fitPanelContentScrollable(content string, maxLines, scroll int) (string, int) {
+	if maxLines <= 0 {
+		return content, 0
+	}
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	lines := strings.Split(content, "\n")
+	total := len(lines)
+	if total <= maxLines {
+		return strings.Join(lines, "\n"), 0
+	}
+	if scroll < 0 {
+		scroll = 0
+	}
+	maxScroll := total - maxLines
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	end := scroll + maxLines
+	if end > total {
+		end = total
+	}
+	window := append([]string{}, lines[scroll:end]...)
+	if scroll > 0 && len(window) > 0 {
+		window[0] = subtleStyle.Render(fmt.Sprintf("  ↑ %d earlier · k/pgup/g to scroll", scroll))
+	}
+	if end < total && len(window) > 0 {
+		window[len(window)-1] = subtleStyle.Render(fmt.Sprintf("  ↓ %d more · j/pgdn/G to scroll", total-end))
+	}
+	return strings.Join(window, "\n"), scroll
 }

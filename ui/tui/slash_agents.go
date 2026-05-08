@@ -167,4 +167,3 @@ func formatAgentProfileShow(p engine.AgentProfile) string {
 	fmt.Fprintf(&b, "  configured: %s\n", cfg)
 	return strings.TrimRight(b.String(), "\n")
 }
-

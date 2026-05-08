@@ -16,7 +16,6 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
-	"github.com/dontfuckmycode/dfmc/internal/security"
 )
 
 type Status struct {
@@ -190,19 +189,19 @@ type ContextBudgetInfo struct {
 	ReserveResponseTokens  int `json:"reserve_response_tokens"`
 	ReserveToolTokens      int `json:"reserve_tool_tokens"`
 
-	MaxFiles         int    `json:"max_files"`
-	MaxTokensTotal   int    `json:"max_tokens_total"`
-	MaxTokensPerFile int    `json:"max_tokens_per_file"`
-	MaxHistoryTokens   int `json:"max_history_tokens"`
+	MaxFiles         int `json:"max_files"`
+	MaxTokensTotal   int `json:"max_tokens_total"`
+	MaxTokensPerFile int `json:"max_tokens_per_file"`
+	MaxHistoryTokens int `json:"max_history_tokens"`
 	// MaxHistoryMessages is the resolved trim-window message ceiling
 	// (config override or engine default). Surfaced so CLI/HTTP/remote
 	// consumers can show "you're at N/M stored messages" without
 	// duplicating the resolution logic.
 	MaxHistoryMessages int    `json:"max_history_messages"`
 	Compression        string `json:"compression"`
-	AutoIncludeFiles bool   `json:"auto_include_files"`
-	IncludeTests     bool   `json:"include_tests"`
-	IncludeDocs      bool   `json:"include_docs"`
+	AutoIncludeFiles   bool   `json:"auto_include_files"`
+	IncludeTests       bool   `json:"include_tests"`
+	IncludeDocs        bool   `json:"include_docs"`
 }
 
 type ContextRecommendation struct {
@@ -249,79 +248,6 @@ type PromptRecommendationInfo struct {
 	CacheablePercent int `json:"cacheable_percent"`
 
 	Hints []ContextRecommendation `json:"hints"`
-}
-
-type AnalyzeReport struct {
-	ProjectRoot string             `json:"project_root"`
-	Files       int                `json:"files"`
-	Nodes       int                `json:"nodes"`
-	Edges       int                `json:"edges"`
-	Cycles      int                `json:"cycles"`
-	HotSpots    []codemap.Node     `json:"hotspots"`
-	Security    *security.Report   `json:"security,omitempty"`
-	DeadCode    []DeadCodeItem     `json:"dead_code,omitempty"`
-	Complexity  *ComplexityReport  `json:"complexity,omitempty"`
-	Duplication *DuplicationReport `json:"duplication,omitempty"`
-	Todos       *TodoReport        `json:"todos,omitempty"`
-}
-
-type AnalyzeOptions struct {
-	Path        string
-	Full        bool
-	Security    bool
-	DeadCode    bool
-	Complexity  bool
-	Duplication bool
-	Todos       bool
-}
-
-type DeadCodeItem struct {
-	Name        string `json:"name"`
-	Kind        string `json:"kind"`
-	File        string `json:"file"`
-	Line        int    `json:"line"`
-	Occurrences int    `json:"occurrences"`
-}
-
-type FunctionComplexity struct {
-	Name  string `json:"name"`
-	File  string `json:"file"`
-	Line  int    `json:"line"`
-	Score int    `json:"score"`
-}
-
-type ComplexityReport struct {
-	Files         int                  `json:"files"`
-	Average       float64              `json:"average"`
-	Max           int                  `json:"max"`
-	TopFunctions  []FunctionComplexity `json:"top_functions,omitempty"`
-	TopFiles      []FunctionComplexity `json:"top_files,omitempty"`
-	TotalSymbols  int                  `json:"total_symbols"`
-	ScannedSymbol int                  `json:"scanned_symbols"`
-}
-
-// DuplicationLocation marks where one copy of a duplicate block sits.
-type DuplicationLocation struct {
-	File      string `json:"file"`
-	StartLine int    `json:"start_line"`
-	EndLine   int    `json:"end_line"`
-}
-
-// DuplicationGroup clusters all locations that share the same
-// normalized window of code. Length is the number of non-blank
-// normalized lines in the window — NOT raw end-start+1, because
-// blanks + comments are stripped before matching.
-type DuplicationGroup struct {
-	Length    int                   `json:"length"`
-	Locations []DuplicationLocation `json:"locations"`
-}
-
-type DuplicationReport struct {
-	MinLines        int                `json:"min_lines"`
-	FilesScanned    int                `json:"files_scanned"`
-	WindowsHashed   int                `json:"windows_hashed"`
-	Groups          []DuplicationGroup `json:"groups,omitempty"`
-	DuplicatedLines int                `json:"duplicated_lines"`
 }
 
 // ContextBreakdown is the canonical real-time context budget snapshot.

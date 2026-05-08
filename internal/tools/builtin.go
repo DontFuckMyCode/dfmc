@@ -5,18 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 )
 
-const (
-	maxIntValue = int(^uint(0) >> 1)
-	minIntValue = -maxIntValue - 1
-)
+// Param-coercion helpers (asString, asInt, asStringSlice,
+// coerceStringSlice, asBool) and the maxIntValue/minIntValue
+// constants live in builtin_coerce.go.
 
 type WriteFileTool struct {
 	engine *Engine
@@ -157,169 +154,6 @@ func valueLooksLikePath(s string) bool {
 // Perl syntax" which gave the model nothing to recover from. Post-fix
 // the error names the offending construct AND suggests the RE2
 // equivalent so the next call self-corrects.
-
-func asString(m map[string]any, key, fallback string) string {
-	if m == nil {
-		return fallback
-	}
-	v, ok := m[key]
-	if !ok {
-		return fallback
-	}
-	// Nil + slice + map all produce gibberish via fmt.Sprint:
-	//   nil      → "<nil>"
-	//   []any{x} → "[x]"
-	//   map      → "map[k:v]"
-	// Tools using these as paths/queries would silently fail with
-	// "file <nil> not found" style errors. Return fallback so the
-	// caller's required-field check fires with a useful message
-	// instead, or the default value applies.
-	if v == nil {
-		return fallback
-	}
-	switch vv := v.(type) {
-	case string:
-		return vv
-	case []any, map[string]any:
-		_ = vv
-		return fallback
-	default:
-		return fmt.Sprint(v)
-	}
-}
-
-func asInt(m map[string]any, key string, fallback int) int {
-	if m == nil {
-		return fallback
-	}
-	v, ok := m[key]
-	if !ok {
-		return fallback
-	}
-	switch vv := v.(type) {
-	case int:
-		return vv
-	case int32:
-		return int(vv)
-	case int64:
-		return int(vv)
-	case float64:
-		if math.IsNaN(vv) || math.IsInf(vv, 0) || vv != math.Trunc(vv) {
-			return fallback
-		}
-		if vv < float64(minIntValue) || vv > float64(maxIntValue) {
-			return fallback
-		}
-		return int(vv)
-	case string:
-		n, err := strconv.Atoi(strings.TrimSpace(vv))
-		if err == nil {
-			return n
-		}
-	}
-	return fallback
-}
-
-// asStringSlice extracts a list-of-strings param tolerating the
-// shapes providers and weaker models actually serialize:
-//   - []string                 → trimmed copy
-//   - []any{"a", "b"}          → stringified + trimmed
-//   - "a, b , c"               → CSV split
-//   - "a"                      → []string{"a"}  (single bare string)
-//   - nil / missing / wrong    → nil
-//
-// Empty entries are dropped so `include: ", , *.go"` produces
-// ["*.go"] not ["", "", "*.go"]. The pre-consolidation helpers
-// (splitGlobList, stringSliceArg) had small contract drifts; this
-// is the single source of truth so all tools accept the same shapes.
-func asStringSlice(m map[string]any, key string) []string {
-	if m == nil {
-		return nil
-	}
-	return coerceStringSlice(m[key])
-}
-
-// coerceStringSlice is the shape-agnostic core; callers that already
-// extracted the raw value (e.g. from a nested struct) use this directly.
-func coerceStringSlice(raw any) []string {
-	if raw == nil {
-		return nil
-	}
-	switch v := raw.(type) {
-	case []string:
-		out := make([]string, 0, len(v))
-		for _, s := range v {
-			if s = strings.TrimSpace(s); s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if item == nil {
-				continue
-			}
-			s := strings.TrimSpace(fmt.Sprint(item))
-			if s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	case string:
-		out := make([]string, 0, 4)
-		for _, part := range strings.Split(v, ",") {
-			if s := strings.TrimSpace(part); s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	}
-	return nil
-}
-
-func asBool(m map[string]any, key string, fallback bool) bool {
-	if m == nil {
-		return fallback
-	}
-	v, ok := m[key]
-	if !ok {
-		return fallback
-	}
-	switch vv := v.(type) {
-	case bool:
-		return vv
-	case string:
-		// Trim+lower so " True ", "TRUE", "yes", etc. don't fall
-		// through to the fallback. Earlier the EqualFold/== checks
-		// matched only bare "true"/"1" — a model passing `"True"` for
-		// case_sensitive silently got false, which is exactly the
-		// kind of provider-side serialization variance the asInt /
-		// asString helpers already tolerate.
-		s := strings.ToLower(strings.TrimSpace(vv))
-		switch s {
-		case "true", "yes", "y", "1", "on":
-			return true
-		case "false", "no", "n", "0", "off", "":
-			return false
-		}
-		return fallback
-	case int:
-		return vv != 0
-	case int32:
-		return vv != 0
-	case int64:
-		return vv != 0
-	case float64:
-		// Tolerate JSON-decoded `1`/`0` which arrive as float64 here.
-		// Reject NaN to avoid the surprising `NaN != 0 == true` case.
-		if vv != vv { // NaN check
-			return fallback
-		}
-		return vv != 0
-	}
-	return fallback
-}
 
 func truncateToolTextWithMarker(s string, maxBytes int, marker string) string {
 	if maxBytes <= 0 {

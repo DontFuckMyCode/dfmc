@@ -49,7 +49,6 @@ func TestRenderTimelineEventMessage_HeaderLineThenIndentedBody(t *testing.T) {
 	}
 }
 
-
 func TestMutationImpactTimelineLineSummarizesDiffShape(t *testing.T) {
 	payload := map[string]any{
 		"changed_files": []string{"a.go", "b.go"},

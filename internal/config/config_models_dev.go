@@ -91,7 +91,7 @@ func FetchModelsDevCatalog(ctx context.Context, apiURL string) (ModelsDevCatalog
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("models.dev error status %d", resp.StatusCode)
 	}

@@ -243,6 +243,116 @@ func (s *Store) Search(query string, tier types.MemoryTier, limit int, project s
 	return out, nil
 }
 
+// Delete removes a single entry by ID. Walks both episodic and semantic
+// buckets so callers don't have to know which tier the entry lives in
+// (the TUI surface — Phase H item 1 — already shows merged tiers).
+// Returns nil when the ID isn't found so callers can treat "already
+// gone" as success; pair with a List/Search beforehand if presence
+// matters.
+func (s *Store) Delete(id string) error {
+	if s.storage == nil || s.storage.DB() == nil {
+		return fmt.Errorf("memory storage is not available")
+	}
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("memory entry id is required")
+	}
+	return s.storage.DB().Update(func(tx *bbolt.Tx) error {
+		for _, bucket := range []string{bucketEpisodic, bucketSemantic} {
+			b := tx.Bucket([]byte(bucket))
+			if b == nil {
+				continue
+			}
+			if v := b.Get([]byte(id)); v != nil {
+				return b.Delete([]byte(id))
+			}
+		}
+		return nil
+	})
+}
+
+// Update mutates the human-editable fields of an existing entry: Key,
+// Value, Category. Tier and Project are immutable through this path —
+// promote moves between tiers, and Project is the bbolt-level scope so
+// changing it would orphan the row from List filters. Returns an error
+// when the ID isn't found.
+func (s *Store) Update(id string, key, value, category string) error {
+	if s.storage == nil || s.storage.DB() == nil {
+		return fmt.Errorf("memory storage is not available")
+	}
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("memory entry id is required")
+	}
+	return s.storage.DB().Update(func(tx *bbolt.Tx) error {
+		for _, bucket := range []string{bucketEpisodic, bucketSemantic} {
+			b := tx.Bucket([]byte(bucket))
+			if b == nil {
+				continue
+			}
+			data := b.Get([]byte(id))
+			if data == nil {
+				continue
+			}
+			var entry types.MemoryEntry
+			if err := json.Unmarshal(data, &entry); err != nil {
+				return fmt.Errorf("decode entry %q: %w", id, err)
+			}
+			entry.Key = key
+			entry.Value = value
+			entry.Category = category
+			entry.UpdatedAt = time.Now()
+			out, err := json.Marshal(entry)
+			if err != nil {
+				return err
+			}
+			return b.Put([]byte(id), out)
+		}
+		return fmt.Errorf("memory entry %q not found", id)
+	})
+}
+
+// Promote moves an entry from the episodic bucket into the semantic
+// bucket — the canonical "this turned out to be a long-lived fact"
+// graduation path. No-op when the entry is already semantic. Returns an
+// error when the ID isn't found in either bucket.
+func (s *Store) Promote(id string) error {
+	if s.storage == nil || s.storage.DB() == nil {
+		return fmt.Errorf("memory storage is not available")
+	}
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("memory entry id is required")
+	}
+	return s.storage.DB().Update(func(tx *bbolt.Tx) error {
+		ep := tx.Bucket([]byte(bucketEpisodic))
+		sem := tx.Bucket([]byte(bucketSemantic))
+		if ep == nil || sem == nil {
+			return fmt.Errorf("memory buckets not initialised")
+		}
+		// Already semantic? Treat as a no-op so the TUI can call promote
+		// without first checking the current tier.
+		if sem.Get([]byte(id)) != nil {
+			return nil
+		}
+		data := ep.Get([]byte(id))
+		if data == nil {
+			return fmt.Errorf("memory entry %q not found in episodic tier", id)
+		}
+		var entry types.MemoryEntry
+		if err := json.Unmarshal(data, &entry); err != nil {
+			return fmt.Errorf("decode entry %q: %w", id, err)
+		}
+		entry.Tier = types.MemorySemantic
+		entry.UpdatedAt = time.Now()
+		out, err := json.Marshal(entry)
+		if err != nil {
+			return err
+		}
+		if err := sem.Put([]byte(id), out); err != nil {
+			return err
+		}
+		return ep.Delete([]byte(id))
+	})
+}
+
 func (s *Store) Clear(tier types.MemoryTier) error {
 	if s.storage == nil || s.storage.DB() == nil {
 		return nil

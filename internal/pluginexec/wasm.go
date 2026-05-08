@@ -46,13 +46,13 @@ func WasmLoader(ctx context.Context, spec WasmSpec) (*WasmModule, error) {
 	// Instantiate the module with an empty config.
 	compiled, err := runtime.CompileModule(ctx, spec.Module)
 	if err != nil {
-		runtime.Close(ctx)
+		_ = runtime.Close(ctx)
 		return nil, fmt.Errorf("compile WASM module: %w", err)
 	}
 
 	mod, err := runtime.InstantiateModule(ctx, compiled, wazero.NewModuleConfig().WithName(spec.Name))
 	if err != nil {
-		runtime.Close(ctx)
+		_ = runtime.Close(ctx)
 		return nil, fmt.Errorf("instantiate WASM module: %w", err)
 	}
 
@@ -139,7 +139,7 @@ func (m *WasmModule) Close(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.runtime != nil {
-		m.runtime.Close(ctx)
+		_ = m.runtime.Close(ctx)
 		m.runtime = nil
 		m.mod = nil
 	}

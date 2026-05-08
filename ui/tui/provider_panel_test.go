@@ -158,9 +158,15 @@ func TestCycleProviderModel_SingleModel(t *testing.T) {
 		Models: []string{"only-model"},
 	}
 	eng := &engine.Engine{Config: cfg, ProjectRoot: t.TempDir()}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	m := NewModel(context.TODO(), eng)
 	m = m.cycleProviderModel("single")
-	if m.notice != "cycle single model → only-model" {
+	// Notice now includes a "saved → <path>" suffix so the user has
+	// visible confirmation that their choice was persisted to user
+	// home — that was the load-bearing UX gap behind "save ediyorsam
+	// save olsun, sürekli kasıyoruz". Just check the action prefix.
+	if !strings.HasPrefix(m.notice, "cycle single model → only-model") {
 		t.Errorf("notice: %s", m.notice)
 	}
 }
@@ -177,6 +183,10 @@ func TestToggleFallbackProvider_AddToFallback(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers.Fallback = nil
 	eng := &engine.Engine{Config: cfg, ProjectRoot: t.TempDir()}
+	// Isolate HOME so the persist side-effect lands in a sandbox
+	// instead of polluting the developer's real ~/.dfmc/config.yaml.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	m := NewModel(context.TODO(), eng)
 	m = m.toggleFallbackProvider("offline")
 	if m.eng.Config.Providers.Fallback == nil {
@@ -191,6 +201,8 @@ func TestToggleFallbackProvider_RemoveFromFallback(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers.Fallback = []string{"offline", "deepseek"}
 	eng := &engine.Engine{Config: cfg, ProjectRoot: t.TempDir()}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	m := NewModel(context.TODO(), eng)
 	m = m.toggleFallbackProvider("offline")
 	if len(m.eng.Config.Providers.Fallback) != 1 {

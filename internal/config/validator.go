@@ -21,6 +21,14 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("providers.primary %q not found in providers.profiles", c.Providers.Primary)
 	}
 	for _, fb := range c.Providers.Fallback {
+		// "offline" is the always-registered built-in provider — the
+		// engine adds it to the router unconditionally, so it's a
+		// valid fallback even when no explicit `offline` profile is
+		// declared. Skipping the profile lookup here matches what the
+		// loop body below already does for the offline profile.
+		if strings.EqualFold(strings.TrimSpace(fb), "offline") {
+			continue
+		}
 		if _, ok := c.Providers.Profiles[fb]; !ok {
 			return fmt.Errorf("providers.fallback %q not found in providers.profiles", fb)
 		}

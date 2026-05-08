@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -95,7 +96,7 @@ func TestFilterVulnsMatchesCWE(t *testing.T) {
 
 func TestFormatSecretRowContainsSignalFields(t *testing.T) {
 	s := sampleSecurityReport().Secrets[0]
-	row := formatSecretRow(s, false, 200)
+	row := formatSecretRow(s, false, false, 200)
 	for _, want := range []string{"CRIT", "pkg/foo.go:17", "AWS Access Key", "AKIA****XYZ"} {
 		if !strings.Contains(row, want) {
 			t.Errorf("row missing %q: %s", want, row)
@@ -105,8 +106,8 @@ func TestFormatSecretRowContainsSignalFields(t *testing.T) {
 
 func TestFormatSecretRowHighlightsSelected(t *testing.T) {
 	s := sampleSecurityReport().Secrets[0]
-	selected := formatSecretRow(s, true, 200)
-	unselected := formatSecretRow(s, false, 200)
+	selected := formatSecretRow(s, true, false, 200)
+	unselected := formatSecretRow(s, false, false, 200)
 	if !strings.Contains(selected, "▶") {
 		t.Fatalf("selected row missing arrow: %q", selected)
 	}
@@ -115,9 +116,72 @@ func TestFormatSecretRowHighlightsSelected(t *testing.T) {
 	}
 }
 
+// TestFormatSecretRowMarksIgnoredFinding — Phase J item 1: rows with
+// the ignored flag carry an [IGN] prefix and drop the severity chip
+// so triage attention falls off naturally.
+func TestFormatSecretRowMarksIgnoredFinding(t *testing.T) {
+	s := sampleSecurityReport().Secrets[0]
+	row := formatSecretRow(s, false, true, 200)
+	if !strings.Contains(row, "[IGN]") {
+		t.Fatalf("ignored row missing [IGN] prefix: %s", row)
+	}
+}
+
+// TestSecurityFixInChat — Phase J item 2: `f` seeds the chat composer
+// with a structured fix-request prompt for the highlighted finding
+// and switches to the Chat tab so the user can review/send.
+func TestSecurityFixInChat(t *testing.T) {
+	m := newSecurityTestModel()
+	m.tabs = []string{"Chat", "Files", "Patch", "Workflow", "Activity", "Memory", "Conversations", "Providers"}
+	m.activeTab = 0 // simulate user opening the Security overlay from Chat
+	m.security.report = sampleSecurityReport()
+	m.security.view = securityViewSecrets
+	m.security.scroll = 0
+
+	got, _ := m.handleSecurityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	gm := got.(Model)
+	if gm.activeTab != 0 {
+		t.Fatalf("expected active tab to land on Chat (idx 0), got %d", gm.activeTab)
+	}
+	composer := gm.chat.input
+	for _, want := range []string{"Security:", "pkg/foo.go", "L17", "rotate"} {
+		if !strings.Contains(composer, want) {
+			t.Errorf("expected composer to contain %q, got %q", want, composer)
+		}
+	}
+}
+
+// TestSecurityToggleIgnore — Phase J item 1: `i` flips the highlighted
+// finding's ignore flag in the panel state and persists across panel
+// keypresses. A second `i` reverts. The summary line subtracts ignored
+// findings from the active count and surfaces the ignored total.
+func TestSecurityToggleIgnore(t *testing.T) {
+	m := newSecurityTestModel()
+	m.security.report = sampleSecurityReport()
+	m.security.view = securityViewSecrets
+	m.security.scroll = 0
+
+	got, _ := m.handleSecurityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	gm := got.(Model)
+	if len(gm.security.ignored) != 1 {
+		t.Fatalf("expected one fingerprint marked ignored, got %d", len(gm.security.ignored))
+	}
+
+	out := gm.renderSecurityView(120)
+	if !strings.Contains(out, "1 ignored") {
+		t.Errorf("expected summary line to count ignored findings, got:\n%s", out)
+	}
+
+	got, _ = gm.handleSecurityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	gm = got.(Model)
+	if len(gm.security.ignored) != 0 {
+		t.Fatalf("expected ignore to be reverted on second toggle, got %d", len(gm.security.ignored))
+	}
+}
+
 func TestFormatVulnRowContainsCWEAndSnippet(t *testing.T) {
 	v := sampleSecurityReport().Vulnerabilities[0]
-	row := formatVulnRow(v, false, 400)
+	row := formatVulnRow(v, false, false, 400)
 	for _, want := range []string{"HIGH", "pkg/db.go:22", "SQL Injection", "CWE-89", "SELECT"} {
 		if !strings.Contains(row, want) {
 			t.Errorf("row missing %q: %s", want, row)
@@ -131,7 +195,7 @@ func TestRenderSecurityViewNeedsScanCopy(t *testing.T) {
 	if !strings.Contains(out, "SECURITY") {
 		t.Fatalf("header missing: %s", out)
 	}
-	if !strings.Contains(out, "Press r to run a security scan") {
+	if !strings.Contains(out, "No security scan run yet") {
 		t.Fatalf("initial copy missing: %s", out)
 	}
 }
@@ -271,6 +335,70 @@ func TestSecurityRefreshSetsLoading(t *testing.T) {
 	}
 	if m.security.err != "" {
 		t.Fatalf("r should clear error, got %q", m.security.err)
+	}
+}
+
+// TestSecurityIgnoresRoundTrip — Phase J item 1 persistence layer:
+// saveSecurityIgnoresToDisk writes the fingerprint set to
+// .dfmc/security_ignores.yaml, and loadSecurityIgnoresFromDisk reads
+// it back into an equal map. Empty path is a no-op (no file created).
+func TestSecurityIgnoresRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".dfmc", "security_ignores.yaml")
+
+	want := map[string]bool{
+		"abc123def456": true,
+		"deadbeefcafe": true,
+		// `false` entries should NOT round-trip — saveSecurityIgnoresToDisk
+		// only persists the active marks so the file diffs cleanly.
+		"00000000": false,
+	}
+	if err := saveSecurityIgnoresToDisk(path, want); err != nil {
+		t.Fatalf("save failed: %v", err)
+	}
+	got, err := loadSecurityIgnoresFromDisk(path)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 fingerprints round-tripped, got %d: %#v", len(got), got)
+	}
+	if !got["abc123def456"] || !got["deadbeefcafe"] {
+		t.Fatalf("expected active fingerprints to round-trip, got %#v", got)
+	}
+	if got["00000000"] {
+		t.Fatalf("inactive fingerprint should not have been persisted")
+	}
+}
+
+// TestSecurityIgnoresLoadMissingFile — a fresh project with no
+// security_ignores.yaml returns an empty set without error so the
+// panel starts clean rather than blocking on a phantom file.
+func TestSecurityIgnoresLoadMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".dfmc", "security_ignores.yaml")
+	got, err := loadSecurityIgnoresFromDisk(path)
+	if err != nil {
+		t.Fatalf("missing file should not error, got %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("missing file should yield empty set, got %#v", got)
+	}
+}
+
+// TestSecurityIgnoresEmptyPath — when no project root is configured
+// the path resolver returns "" and both load/save are no-ops. Keeps
+// the in-memory map intact so toggles still work in scratch sessions.
+func TestSecurityIgnoresEmptyPath(t *testing.T) {
+	if err := saveSecurityIgnoresToDisk("", map[string]bool{"x": true}); err != nil {
+		t.Fatalf("empty path save should be a no-op, got %v", err)
+	}
+	got, err := loadSecurityIgnoresFromDisk("")
+	if err != nil {
+		t.Fatalf("empty path load should be a no-op, got %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("empty path load should return empty map, got %#v", got)
 	}
 }
 

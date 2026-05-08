@@ -1,102 +1,19 @@
 package tui
 
-// provider_panel_render.go
+// provider_panel_render.go — F-key Providers panel render dispatcher
+// + V2 banner + new-provider draft view + the action-menu and confirm
+// dialog overlays. Pre-V2 inline list view (renderProviderListViewLegacy)
+// and the row/detail formatters (formatProviderRowNumbered,
+// formatProviderDetail) live in provider_panel_render_legacy.go.
+// V2 cards (renderProviderListViewV2) and pipeline/detail subviews live
+// in their own provider_panel_*.go siblings.
 
 import (
 	"fmt"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/dontfuckmycode/dfmc/internal/config"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
-
-// formatProviderRowNumbered renders one numbered line. Shape:
-// `▶ 1. [READY] anthropic*  claude-opus-4  [key:ok]  max=200k  tools=on`.
-func formatProviderRowNumbered(row providerRow, num int, selected bool, fallbackPos map[string]int, width int) string {
-	marker := "  "
-	if selected {
-		marker = accentStyle.Render("▶ ")
-	}
-	tag := providerStatusStyle(row.Status)
-	name := row.Name
-	if row.IsPrimary {
-		name = accentStyle.Render(name) + subtleStyle.Render("*")
-	} else if pos, ok := fallbackPos[strings.ToLower(strings.TrimSpace(row.Name))]; ok {
-		name = subtleStyle.Render(name) + subtleStyle.Render(fmt.Sprintf("↓[%d]", pos))
-	}
-
-	keyBadge := subtleStyle.Render("[key:--]")
-	if row.Status == "ready" {
-		keyBadge = accentStyle.Render("[key:ok]")
-	}
-
-	model := row.Model
-	if strings.TrimSpace(model) == "" {
-		model = "(no model)"
-	}
-	modelCount := subtleStyle.Render(fmt.Sprintf("models=%d", len(row.Models)))
-	if len(row.Models) == 0 {
-		modelCount = warnStyle.Render("models=0")
-	}
-	line := fmt.Sprintf("%s%d. %s  %s  %s  %s  %s  %s  %s",
-		marker, num, tag, name,
-		subtleStyle.Render(model),
-		keyBadge,
-		modelCount,
-		subtleStyle.Render(fmt.Sprintf("max=%d", row.MaxContext)),
-		subtleStyle.Render(fmt.Sprintf("tools=%v", row.SupportsTools)),
-	)
-	if row.ToolStyle != "" {
-		line += "  " + subtleStyle.Render(row.ToolStyle)
-	}
-	if strings.TrimSpace(row.Protocol) != "" {
-		line += "  " + subtleStyle.Render("protocol="+row.Protocol)
-	}
-	if len(row.BestFor) > 0 {
-		tags := strings.Join(row.BestFor, ",")
-		if len(tags) > 20 {
-			tags = tags[:20] + "..."
-		}
-		line += "  " + subtleStyle.Render("best_for="+tags)
-	}
-	if width > 0 {
-		line = truncateSingleLine(line, width)
-	}
-	return line
-}
-
-// formatProviderDetail renders the selected row's extended info beneath the list.
-func formatProviderDetail(row providerRow, width int) []string {
-	var out []string
-	head := row.Name
-	if row.IsPrimary {
-		head = accentStyle.Render(row.Name) + subtleStyle.Render(" · primary")
-	}
-	out = append(out, "    "+head)
-	out = append(out, "    "+subtleStyle.Render(fmt.Sprintf(
-		"model=%s  max_context=%d  tool_style=%s  tools=%v",
-		nonEmpty(row.Model, "(none)"), row.MaxContext, nonEmpty(row.ToolStyle, "(none)"), row.SupportsTools,
-	)))
-	if len(row.Models) > 1 {
-		out = append(out, "    "+subtleStyle.Render(fmt.Sprintf("(%d models configured)", len(row.Models))))
-	}
-	if len(row.BestFor) > 0 {
-		out = append(out, "    "+subtleStyle.Render("best_for: ")+strings.Join(row.BestFor, ", "))
-	}
-	switch row.Status {
-	case "no-key":
-		var hint string
-		if envVar := config.EnvVarForProvider(row.Name); envVar != "" {
-			hint = "missing API key — set " + envVar + " or add api_key to providers.profiles." + row.Name
-		} else {
-			hint = "missing API key — add api_key to providers.profiles." + row.Name
-		}
-		out = append(out, "    "+warnStyle.Render(hint))
-	case "offline":
-		out = append(out, "    "+subtleStyle.Render("offline provider — deterministic fallback, no network."))
-	}
-	_ = width
-	return out
-}
 
 func (m Model) renderProvidersView(width int) string {
 	out := m.renderProvidersViewInner(width)
@@ -168,117 +85,6 @@ func (m Model) renderProviderListView(width int) string {
 		return out
 	}
 	return m.renderProviderListViewLegacy(width)
-}
-
-func (m Model) renderProviderListViewLegacy(width int) string {
-	width = clampInt(width, 24, 1000)
-	banner := m.providersTopBanner(width)
-	hint := subtleStyle.Render("j/k scroll · p primary · f fallback · m model · s save · n new · enter menu · / search · r refresh")
-
-	rows := filteredProviderRows(m.providers.rows, m.providers.query)
-	order := resolveProviderOrder(m.eng)
-
-	lines := []string{banner, hint}
-
-	if m.providers.activePipeline != "" {
-		lines = append(lines, subtleStyle.Render("active pipeline: ")+accentStyle.Render(m.providers.activePipeline))
-	}
-	if len(order) > 0 {
-		var numbered []string
-		for i, name := range order {
-			numbered = append(numbered, fmt.Sprintf("%d.%s", i+1, accentStyle.Render(name)))
-		}
-		chainLine := subtleStyle.Render("fallback chain: ") + strings.Join(numbered, subtleStyle.Render(" → "))
-		if width > 0 {
-			chainLine = truncateSingleLine(chainLine, width-2)
-		}
-		lines = append(lines, chainLine)
-	}
-	lines = append(lines, renderDivider(width-2))
-
-	if m.providers.err != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.providers.err))
-		return strings.Join(lines, "\n")
-	}
-
-	if m.providers.searchActive {
-		searchLine := "search: " + accentStyle.Render(m.providers.query) + subtleStyle.Render("  · enter confirm · esc cancel")
-		lines = append(lines, "", searchLine)
-	}
-
-	if len(rows) == 0 {
-		if m.providers.query != "" {
-			lines = append(lines, "", subtleStyle.Render("No providers match your search."))
-		} else {
-			lines = append(lines,
-				"",
-				warnStyle.Render("No providers registered"),
-				subtleStyle.Render("The engine started without loading providers — usually because another dfmc process holds the store lock."),
-				subtleStyle.Render("Run `dfmc doctor` for a health read, or close the other process and reopen."),
-				"",
-				subtleStyle.Render("Press Enter → New Provider to add one."),
-			)
-		}
-		return strings.Join(lines, "\n")
-	}
-
-	readyCount := 0
-	noKeyCount := 0
-	for _, r := range m.providers.rows {
-		switch r.Status {
-		case "ready":
-			readyCount++
-		case "no-key":
-			noKeyCount++
-		}
-	}
-	offlineCount := len(m.providers.rows) - readyCount - noKeyCount
-	primaryName := ""
-	if m.eng != nil {
-		primaryName = strings.TrimSpace(m.eng.Config.Providers.Primary)
-	}
-	summary := fmt.Sprintf("%d providers · %d ready · %d missing keys · %d offline", len(m.providers.rows), readyCount, noKeyCount, offlineCount)
-	if primaryName != "" {
-		summary += " · primary: " + primaryName
-	}
-	if m.providers.syncing {
-		summary = runningStyle.Render("syncing models...") + "  " + subtleStyle.Render(summary)
-	} else if !m.providers.lastSyncedAt.IsZero() {
-		summary += subtleStyle.Render(" · synced " + formatRelativeTime(m.providers.lastSyncedAt))
-	}
-	if m.providers.query != "" {
-		summary += subtleStyle.Render(fmt.Sprintf("  · showing %d of %d", len(rows), len(m.providers.rows)))
-	}
-	lines = append(lines, subtleStyle.Render(summary), "")
-
-	// Build fallback map for markers (name -> 1-based position)
-	fallbackPos := map[string]int{}
-	if m.eng != nil {
-		for idx, n := range m.eng.FallbackProviders() {
-			fallbackPos[strings.ToLower(strings.TrimSpace(n))] = idx + 1
-		}
-	}
-
-	scroll := clampScroll(m.providers.scroll, len(rows))
-	lastStatus := ""
-	for i, row := range rows[scroll:] {
-		idx := scroll + i
-		if lastStatus != "" && row.Status != lastStatus {
-			label := strings.ToUpper(row.Status)
-			lines = append(lines, subtleStyle.Render("  ─── "+label+" ───"))
-		}
-		lastStatus = row.Status
-		selected := idx == m.providers.scroll
-		lines = append(lines, formatProviderRowNumbered(row, idx+1, selected, fallbackPos, width-2))
-	}
-
-	if scroll >= 0 && scroll < len(rows) {
-		lines = append(lines, "")
-		lines = append(lines, formatProviderDetail(rows[scroll], width-2)...)
-	}
-
-	lines = append(lines, m.renderProvidersMenu(width-2)...)
-	return strings.Join(lines, "\n")
 }
 
 // refreshProvidersRows re-reads the router and stamps the fresh rows

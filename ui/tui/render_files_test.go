@@ -147,9 +147,9 @@ func TestTruncatePathHead(t *testing.T) {
 
 func TestScrollWindow(t *testing.T) {
 	cases := []struct {
-		name                            string
-		cursor, total, budget           int
-		wantStart, wantEnd              int
+		name                  string
+		cursor, total, budget int
+		wantStart, wantEnd    int
 	}{
 		{"empty", 0, 0, 5, 0, 0},
 		{"top", 0, 20, 6, 0, 6},

@@ -4,12 +4,18 @@
 // Scope: read-only PR queries (view, list, diff, checks, status).
 // Write operations (comment, close, merge) are intentionally omitted —
 // use run_command with explicit approval for those.
+//
+// File layout: this file owns the tool surface (Spec, Execute, the
+// per-action listPRs / viewPR / diffPR / checksPR / statusPR methods)
+// and the public types. JSON parsers + auth check
+// (parsePRListJSON / parsePRViewJSON / parsePRReviewsJSON /
+// parseCheckStatus / checkGH_auth) and resolvePRAction live in
+// gh_pr_parse.go.
 package tools
 
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -112,17 +118,6 @@ func (t *GHPullRequestTool) Execute(ctx context.Context, req Request) (Result, e
 	default:
 		return Result{}, fmt.Errorf("unknown pr action %q", action)
 	}
-}
-
-func resolvePRAction(action string, params map[string]any) string {
-	if action != "" {
-		return action
-	}
-	number := strings.TrimSpace(asString(params, "number", ""))
-	if number != "" {
-		return "view"
-	}
-	return "list"
 }
 
 func (t *GHPullRequestTool) listPRs(ctx context.Context, repo, projectRoot string, timeout time.Duration, params map[string]any) (Result, error) {
@@ -307,165 +302,3 @@ func (t *GHPullRequestTool) statusPR(ctx context.Context, repo, projectRoot stri
 	}, nil
 }
 
-// JSON parsers — gh outputs JSON arrays for list and JSON objects for view.
-
-func parsePRListJSON(raw string) ([]map[string]any, error) {
-	// Try to parse as a JSON array of PR objects.
-	// gh --json outputs valid JSON; we do a quick field extraction without
-	// a full unmarshal to avoid adding a dependency.
-	results := make([]map[string]any, 0, 20)
-	lines := strings.Split(raw, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "{") {
-			continue
-		}
-		// Extract key fields via regex.
-		get := func(name string) string {
-			re := regexp.MustCompile(`"` + name + `"\s*:\s*("([^"]*)"|([0-9]+)|(\[[^\]]*\]))`)
-			m := re.FindStringSubmatch(line)
-			if len(m) < 2 {
-				return ""
-			}
-			if m[2] != "" {
-				return m[2]
-			}
-			return m[3]
-		}
-		num := get("number")
-		if num == "" {
-			continue
-		}
-		entry := map[string]any{
-			"number":   num,
-			"title":    get("title"),
-			"state":    get("state"),
-			"head_ref": get("headRefName"),
-			"base_ref": get("baseRefName"),
-			"author":   get("author"),
-			"url":      get("url"),
-		}
-		results = append(results, entry)
-	}
-	if len(results) == 0 && strings.TrimSpace(raw) != "" {
-		// Fallback: just return the raw output
-		return []map[string]any{{"raw": raw}}, nil
-	}
-	return results, nil
-}
-
-func parsePRViewJSON(raw string) (GHPullRequestSpec, error) {
-	var pr GHPullRequestSpec
-	get := func(name string) string {
-		re := regexp.MustCompile(`"` + name + `"\s*:\s*"([^"]*)"`)
-		m := re.FindStringSubmatch(raw)
-		if len(m) > 1 {
-			return m[1]
-		}
-		// Also try number fields
-		re2 := regexp.MustCompile(`"` + name + `"\s*:\s*([0-9]+)`)
-		m2 := re2.FindStringSubmatch(raw)
-		if len(m2) > 1 {
-			return m2[1]
-		}
-		return ""
-	}
-	if n := get("number"); n != "" {
-		fmt.Sscanf(n, "%d", &pr.Number)
-	}
-	pr.Title = get("title")
-	pr.State = get("state")
-	pr.HeadRef = get("headRefName")
-	pr.BaseRef = get("baseRefName")
-	pr.Author = get("author")
-	pr.URL = get("url")
-	pr.Body = get("body")
-
-	// changedFiles, additions, deletions
-	if ai := strings.Index(raw, `"additions":`); ai >= 0 {
-		snippet := raw[ai:]
-		re := regexp.MustCompile(`([0-9]+)`)
-		m := re.FindStringSubmatch(snippet)
-		if len(m) > 0 {
-			fmt.Sscanf(m[1], "%d", &pr.Additions)
-		}
-	}
-	if di := strings.Index(raw, `"deletions":`); di >= 0 {
-		snippet := raw[di:]
-		re := regexp.MustCompile(`([0-9]+)`)
-		m := re.FindStringSubmatch(snippet)
-		if len(m) > 0 {
-			fmt.Sscanf(m[1], "%d", &pr.Deletions)
-		}
-	}
-	if ci := strings.Index(raw, `"comments":`); ci >= 0 {
-		snippet := raw[ci:]
-		re := regexp.MustCompile(`([0-9]+)`)
-		m := re.FindStringSubmatch(snippet)
-		if len(m) > 0 {
-			fmt.Sscanf(m[1], "%d", &pr.Comments)
-		}
-	}
-	if co := strings.Index(raw, `"commits":`); co >= 0 {
-		snippet := raw[co:]
-		re := regexp.MustCompile(`([0-9]+)`)
-		m := re.FindStringSubmatch(snippet)
-		if len(m) > 0 {
-			fmt.Sscanf(m[1], "%d", &pr.Commits)
-		}
-	}
-	return pr, nil
-}
-
-func parsePRReviewsJSON(raw string) []GHPullRequestReview {
-	var reviews []GHPullRequestReview
-	lines := strings.Split(raw, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "{") {
-			continue
-		}
-		get := func(name string) string {
-			re := regexp.MustCompile(`"` + name + `"\s*:\s*"([^"]*)"`)
-			m := re.FindStringSubmatch(line)
-			if len(m) > 1 {
-				return m[1]
-			}
-			return ""
-		}
-		state := get("state")
-		if state == "" {
-			continue
-		}
-		reviews = append(reviews, GHPullRequestReview{
-			Author:    get("author"),
-			State:     state,
-			Submitted: get("submittedAt"),
-		})
-	}
-	return reviews
-}
-
-func parseCheckStatus(raw string) string {
-	if strings.Contains(raw, "FAIL") || strings.Contains(raw, "ERROR") {
-		return "fail"
-	}
-	if strings.Contains(raw, "PASS") || strings.Contains(raw, "SUCCESS") {
-		return "pass"
-	}
-	if strings.Contains(raw, "PENDING") || strings.Contains(raw, "IN PROGRESS") {
-		return "pending"
-	}
-	return "unknown"
-}
-
-// checkGH_auth verifies the gh CLI is authenticated.
-func checkGH_auth() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	stdout, stderr, exit, _ := runGH(ctx, ".", 5*time.Second, "auth", "status", "--json", "user")
-	if exit != 0 || strings.Contains(stdout+stderr, "not logged in") || strings.Contains(stdout+stderr, "authenticate") {
-		return fmt.Errorf("gh is not authenticated — run `gh auth login` first")
-	}
-	return nil
-}
