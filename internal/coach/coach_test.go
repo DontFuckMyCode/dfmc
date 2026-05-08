@@ -401,3 +401,133 @@ func TestLooksActionable_CaseInsensitive(t *testing.T) {
 		t.Error("Add More Tests should be actionable")
 	}
 }
+
+func TestRuleObserver_GrepThrashSurfaced(t *testing.T) {
+	// Five greps with no edits and no parking → should surface the
+	// "use find_symbol / codemap" hint.
+	notes := NewRuleObserver().Observe(Snapshot{
+		ToolsUsed: []string{
+			"grep_codebase", "grep_codebase", "grep_codebase",
+			"grep_codebase", "grep_codebase",
+		},
+		TokensUsed: 5000,
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "grep_thrash" {
+			found = true
+			if n.Severity != SeverityInfo {
+				t.Errorf("grep_thrash should be info, got %q", n.Severity)
+			}
+			if !strings.Contains(n.Text, "find_symbol") || !strings.Contains(n.Text, "codemap") {
+				t.Errorf("grep_thrash should suggest find_symbol + codemap, got %q", n.Text)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected grep_thrash note, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_GrepThrashSilentWhenMutated(t *testing.T) {
+	// Greps + a mutation = "research → edit" workflow; not thrashing.
+	notes := NewRuleObserver().Observe(Snapshot{
+		ToolsUsed: []string{
+			"grep_codebase", "grep_codebase", "grep_codebase",
+			"grep_codebase", "grep_codebase", "edit_file",
+		},
+		Mutations:  []string{"internal/foo.go"},
+		TokensUsed: 5000,
+	})
+	for _, n := range notes {
+		if n.Origin == "grep_thrash" {
+			t.Errorf("grep_thrash should NOT fire when mutations happened: %+v", n)
+		}
+	}
+}
+
+func TestRuleObserver_ToolFloodSurfaced(t *testing.T) {
+	notes := NewRuleObserver().Observe(Snapshot{
+		ToolsUsed:  []string{"read_file"},
+		ToolSteps:  35,
+		TokensUsed: 5000,
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "tool_flood" {
+			found = true
+			if !strings.Contains(n.Text, "/split") {
+				t.Errorf("tool_flood should suggest /split, got %q", n.Text)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected tool_flood note, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_ToolFloodSilentWhenParked(t *testing.T) {
+	// Parked rules already surface; tool_flood should defer so the
+	// user isn't double-warned about the same wide turn.
+	notes := NewRuleObserver().Observe(Snapshot{
+		ToolSteps:  60,
+		Parked:     true,
+		ParkReason: "budget_exhausted",
+	})
+	for _, n := range notes {
+		if n.Origin == "tool_flood" {
+			t.Errorf("tool_flood should NOT fire alongside parked: %+v", n)
+		}
+	}
+}
+
+func TestRuleObserver_MutationBlindSurfaced(t *testing.T) {
+	// Mutations happened but no git_status / git_diff in the same
+	// turn — the user should be nudged to check git state before
+	// trusting the changes.
+	notes := NewRuleObserver().Observe(Snapshot{
+		ToolsUsed:      []string{"read_file", "edit_file"},
+		Mutations:      []string{"internal/foo.go"},
+		Answer:         "Edited the parser. ran go test ./... (passes).",
+		TokensUsed:     3500,
+		ValidationHint: "go test ./internal/foo/...",
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "mutation_blind" {
+			found = true
+			if !strings.Contains(n.Text, "git status") {
+				t.Errorf("mutation_blind should mention `git status`, got %q", n.Text)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected mutation_blind note, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_MutationBlindSilentWhenGitStatusUsed(t *testing.T) {
+	// git_status in the trace clears the rule.
+	notes := NewRuleObserver().Observe(Snapshot{
+		ToolsUsed:      []string{"git_status", "edit_file"},
+		Mutations:      []string{"internal/foo.go"},
+		Answer:         "Edited the parser; go vet clean.",
+		TokensUsed:     3500,
+		ValidationHint: "go vet ./...",
+	})
+	for _, n := range notes {
+		if n.Origin == "mutation_blind" {
+			t.Errorf("mutation_blind should NOT fire when git_status was used: %+v", n)
+		}
+	}
+}
+
+func TestCountTool_CaseInsensitiveAndTrim(t *testing.T) {
+	used := []string{"grep_codebase", " GREP_CODEBASE ", "edit_file", ""}
+	if got := countTool(used, "grep_codebase"); got != 2 {
+		t.Errorf("countTool: want 2, got %d", got)
+	}
+	if got := countTool(used, ""); got != 0 {
+		t.Errorf("countTool empty target should yield 0, got %d", got)
+	}
+}

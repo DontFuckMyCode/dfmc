@@ -193,6 +193,59 @@ func (r *RuleObserver) Observe(s Snapshot) []Note {
 		}
 	}
 
+	// Grep-thrash: many grep_codebase calls without mutating or
+	// resolving any symbol. The model is searching for needles
+	// without using the cheaper layered tools the read-stack
+	// recommends. Common when the user asked "where is X" and the
+	// model didn't try find_symbol / codemap first.
+	//
+	// Threshold: 5+ grep calls. Tighter would catch every
+	// medium-complexity research turn; looser misses the actual
+	// thrashing case (10+ greps for one finding).
+	if greps := countTool(s.ToolsUsed, "grep_codebase"); greps >= 5 && len(s.Mutations) == 0 && !s.Parked {
+		if push(Note{
+			Text:     fmt.Sprintf("%d grep calls this turn with no edit. If you know the symbol name, find_symbol returns the body in one call. For a project outline, codemap is the cheaper survey.", greps),
+			Severity: SeverityInfo,
+			Origin:   "grep_thrash",
+		}) {
+			return out
+		}
+	}
+
+	// Tool flood: 30+ tool calls in a single turn is almost always a
+	// planning failure — either the request was too broad or the
+	// model is iterating instead of thinking. Distinct from the
+	// "parked" rules above, which only fire when the loop hit a
+	// hard cap; this fires on completed turns that just went wide.
+	if s.ToolSteps >= 30 && !s.Parked {
+		if push(Note{
+			Text:     fmt.Sprintf("Wide turn: %d tool calls. If the same kind of work repeats, the next pass benefits from /split into focused subtasks (or a tighter [[file:...]] marker so retrieval seeds the right region).", s.ToolSteps),
+			Severity: SeverityInfo,
+			Origin:   "tool_flood",
+		}) {
+			return out
+		}
+	}
+
+	// Mutations without ever checking git state. The model edited
+	// files but never ran git_status / git_diff this turn, so the
+	// answer can't tell the user how this turn's changes compose
+	// with whatever was already in the working tree (e.g. a stash
+	// of unrelated WIP). Worth a heads-up so the user runs
+	// `git status` themselves before assuming the mutations stand
+	// alone.
+	if len(s.Mutations) > 0 &&
+		countTool(s.ToolsUsed, "git_status") == 0 &&
+		countTool(s.ToolsUsed, "git_diff") == 0 {
+		if push(Note{
+			Text:     "Mutations landed without a git_status / git_diff this turn. Worth running `git status` before treating the changes as standalone — pre-existing WIP in the tree can mix with this turn's edits.",
+			Severity: SeverityInfo,
+			Origin:   "mutation_blind",
+		}) {
+			return out
+		}
+	}
+
 	if len(s.ToolsUsed) > 0 && len(s.FailedTools) == 0 && !s.Parked && s.TokensUsed > 0 && s.TokensUsed < 8000 {
 		if push(Note{
 			Text:     "Clean pass - tools used, no failures, tight token spend.",
@@ -249,6 +302,25 @@ func looksActionable(question string) bool {
 		}
 	}
 	return false
+}
+
+// countTool returns how many times `name` appears in the (call-order)
+// tools-used slice. Used by the rules above to distinguish "the
+// model used grep once" from "the model thrashed grep ten times".
+// Empty/whitespace tool names are ignored — defensive against any
+// future Snapshot path that pushes blank entries.
+func countTool(used []string, name string) int {
+	target := strings.ToLower(strings.TrimSpace(name))
+	if target == "" {
+		return 0
+	}
+	n := 0
+	for _, u := range used {
+		if strings.EqualFold(strings.TrimSpace(u), target) {
+			n++
+		}
+	}
+	return n
 }
 
 func trimPaths(paths []string, max int) []string {
