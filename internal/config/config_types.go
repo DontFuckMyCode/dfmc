@@ -32,7 +32,16 @@ type Config struct {
 	Intent      IntentConfig              `yaml:"intent"`
 	AST         ASTConfig                 `yaml:"ast"`
 	MCP         MCPConfig                 `yaml:"mcp"`
+	Telegram    TelegramConfig            `yaml:"telegram"`
 	DataDirPath string                    `yaml:"data_dir"`
+}
+
+// TelegramConfig holds Telegram bot integration settings.
+type TelegramConfig struct {
+	Enabled      bool    `yaml:"enabled"`
+	Token        string  `yaml:"token"`
+	AllowedUsers []int64 `yaml:"allowed_users"` // Telegram user IDs that can chat with this instance
+	SessionName  string  `yaml:"session_name"`  // Display name for this DFMC instance (e.g. "work", "home")
 }
 
 type ASTConfig struct {

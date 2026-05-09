@@ -13,6 +13,16 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 	if height < 4 {
 		height = 4
 	}
+	// Panel switcher overlay — appears on top of whatever tab is active.
+	// Must be checked before any tab-specific content so it covers everything.
+	if m.panelSwitcher.active {
+		body := m.renderPanelSwitcher(width)
+		frame := lipgloss.NewStyle().
+			Background(colorPanelBg).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(pal.Border)
+		return frame.Width(width).Height(height).Render(body)
+	}
 	contentWidth := width - 6
 	if contentWidth < 20 {
 		contentWidth = 20
@@ -94,7 +104,9 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 			if boosted {
 				body = lipgloss.NewStyle().Faint(true).Render(body)
 			}
-			panel := renderStatsPanelSized(m.statsPanelInfo(), innerHeight, panelWidth)
+			info := m.statsPanelInfo()
+			info.StatsPanelScroll = m.ui.statsPanelScroll
+			panel := renderStatsPanelSized(info, innerHeight, panelWidth)
 			body = lipgloss.JoinHorizontal(lipgloss.Top, body, "  ", panel)
 		}
 		content = body

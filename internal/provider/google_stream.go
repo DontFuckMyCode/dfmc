@@ -67,7 +67,7 @@ func (p *GoogleProvider) Stream(ctx context.Context, req CompletionRequest) (<-c
 		var usage Usage
 		usageSet := false
 		stopReason := StopUnknown
-		emittedToolCall := false
+		var toolCalls []ToolCall
 
 		emitStart := func() {
 			if startAnnounced {
@@ -82,7 +82,13 @@ func (p *GoogleProvider) Stream(ctx context.Context, req CompletionRequest) (<-c
 
 		finish := func() {
 			emitStart()
-			done := StreamEvent{Type: StreamDone, Provider: providerName, Model: model, StopReason: stopReason}
+			done := StreamEvent{
+				Type:       StreamDone,
+				Provider:   providerName,
+				Model:      model,
+				StopReason: stopReason,
+				ToolCalls:  toolCalls,
+			}
 			if usageSet {
 				u := usage
 				if u.TotalTokens == 0 {
@@ -124,7 +130,15 @@ func (p *GoogleProvider) Stream(ctx context.Context, req CompletionRequest) (<-c
 			cand := evt.Candidates[0]
 			for _, part := range cand.Content.Parts {
 				if part.FunctionCall != nil {
-					emittedToolCall = true
+					input := map[string]any{}
+					if len(part.FunctionCall.Args) > 0 {
+						_ = json.Unmarshal(part.FunctionCall.Args, &input)
+					}
+					toolCalls = append(toolCalls, ToolCall{
+						ID:    fmt.Sprintf("call_%s_%d", part.FunctionCall.Name, len(toolCalls)),
+						Name:  part.FunctionCall.Name,
+						Input: input,
+					})
 				}
 				if strings.TrimSpace(part.Text) == "" {
 					continue
@@ -138,14 +152,14 @@ func (p *GoogleProvider) Stream(ctx context.Context, req CompletionRequest) (<-c
 				}
 			}
 			if fr := strings.TrimSpace(cand.FinishReason); fr != "" {
-				stopReason = googleStopReason(fr, emittedToolCall)
+				stopReason = googleStopReason(fr, len(toolCalls) > 0)
 			}
 		}
 		if err := sc.Err(); err != nil {
 			ch <- StreamEvent{Type: StreamError, Err: err}
 			return
 		}
-		if emittedToolCall && stopReason == StopUnknown {
+		if len(toolCalls) > 0 && stopReason == StopUnknown {
 			stopReason = StopTool
 		}
 		finish()

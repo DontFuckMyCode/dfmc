@@ -56,6 +56,25 @@ func (m Model) handleChatRunesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.slashMenu.mention = 0
 	m.slashMenu.quickAction = 0
 	inserted := string(msg.Runes)
+	// Single-line paste: submit directly without creating a pasteBlock.
+	// Multi-line paste (or content with newlines) creates a pasteBlock
+	// placeholder and requires explicit Enter to submit.
+	if msg.Paste && !strings.ContainsAny(inserted, "\r\n") {
+		m.setChatInput(inserted)
+		if m.chat.sending {
+			if len(m.chat.pendingQueue) >= pendingQueueCap {
+				m.notice = fmt.Sprintf("Queue full (%d max) — paste kept in input.", pendingQueueCap)
+				return m, nil
+			}
+			m.chat.pendingQueue = append(m.chat.pendingQueue, inserted)
+			m.notice = fmt.Sprintf("Pasted text queued as one message (#%d)", len(m.chat.pendingQueue))
+			m = m.appendSystemMessage(fmt.Sprintf("queued paste #%d: %s", len(m.chat.pendingQueue), inserted))
+			m.setChatInput("")
+			return m, nil
+		}
+		suggestions := m.buildChatSuggestionState()
+		return m.submitChatComposer(suggestions)
+	}
 	if msg.Paste || strings.ContainsAny(inserted, "\r\n") {
 		m.clearPasteBurst()
 		block := m.addPasteBlock(inserted)
@@ -128,10 +147,8 @@ func (m Model) handleChatNewlineInsert() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleChatEnterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Alt+Enter also inserts a newline rather than submitting — some
-	// terminals deliver Alt+Enter as KeyEnter with Alt=true. On
-	// terminals without a real Alt key this is a no-op for regular
-	// Enter and submission still works.
+	// Alt+Enter or Shift+Enter (delivered as KeyEnter with modifiers) 
+	// inserts a newline rather than submitting.
 	if msg.Alt {
 		m.exitInputHistoryNavigation()
 		m.insertInputText("\n")
@@ -175,17 +192,9 @@ func (m Model) handleChatEnterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.notice = pasteCollectingNotice
 		return m, nil
 	}
-	if len(m.chat.pasteBlocks) == 0 && strings.HasPrefix(strings.TrimSpace(m.chat.input), "/") {
-		return m.submitChatComposer(suggestions)
-	}
-	m.exitInputHistoryNavigation()
-	m.insertInputText("\n")
-	m.clearPasteBurst()
-	m.slashMenu.command = 0
-	m.slashMenu.commandArg = 0
-	m.slashMenu.mention = 0
-	m.slashMenu.quickAction = 0
-	return m, nil
+	
+	// Default: Enter SUBMITS the composer.
+	return m.submitChatComposer(suggestions)
 }
 
 // handleChatPrintableFallback handles key events that didn't match any

@@ -103,6 +103,23 @@ func (m Model) handleToolsSlash(args []string) (tea.Model, tea.Cmd, bool) {
 	return m.appendSystemMessage("Tool-call strip is now " + state + ". Toggle again with /tools, or `/tools list` for the registered catalog."), nil, true
 }
 
+func (m Model) handleUpdateSlash(args []string) (tea.Model, tea.Cmd, bool) {
+	m.chat.input = ""
+	if m.eng == nil {
+		return m.appendSystemMessage("Engine not initialized."), nil, true
+	}
+	update, err := m.eng.CheckForUpdates(m.ctx, m.eng.Version)
+	if err != nil {
+		return m.appendSystemMessage("Update check failed: " + err.Error()), nil, true
+	}
+	if !update.UpdateAvailable {
+		return m.appendSystemMessage("You are on the latest version (" + m.eng.Version + ")."), nil, true
+	}
+	msg := fmt.Sprintf("A new version is available: %s (current: %s)\n\nDownload it here: %s",
+		update.LatestVersion, update.CurrentVersion, update.ReleaseURL)
+	return m.appendSystemMessage(msg), nil, true
+}
+
 // shortRunID returns the leading 8 chars of a Drive run id so the user has
 // a stable, scannable handle ("Drive [abc12345] started") that still maps
 // 1-to-1 to the persisted run. Drive run ids are unique by their first

@@ -134,6 +134,12 @@ const (
 	RoleTool      MessageRole = "tool"
 )
 
+type Attachment struct {
+	MimeType string            `json:"mime_type"`
+	Data     string            `json:"data"` // base64 encoded
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
 type Message struct {
 	// ID is a short, opaque identifier (e.g. "u-3f29a1", "a-7b40c2")
 	// generated when the message is appended to a Conversation. It is
@@ -149,6 +155,8 @@ type Message struct {
 	Metadata  map[string]string  `json:"metadata,omitempty"`
 	ToolCalls []ToolCallRecord   `json:"tool_calls,omitempty"`
 	Results   []ToolResultRecord `json:"tool_results,omitempty"`
+
+	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
 type ToolCallRecord struct {

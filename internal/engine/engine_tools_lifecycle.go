@@ -115,6 +115,23 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 		})
 		return tools.Result{}, fmt.Errorf("tool %s denied: %s", name, denial)
 	}
+	// Skill allowlist gate — when ALL active skills declare
+	// allowed_tools the union becomes a hard dispatch-time gate.
+	// AND-composes with the subagent gate above; both must permit.
+	if denial := checkSkillAllowlist(ctx, name, metaInnerNames(name, params)); denial != "" {
+		e.recordDenial(name, source, denial)
+		e.EventBus.Publish(Event{
+			Type:   "tool:denied",
+			Source: "engine",
+			Payload: map[string]any{
+				"name":   name,
+				"reason": denial,
+				"source": sourceStr,
+				"scope":  "skill",
+			},
+		})
+		return tools.Result{}, fmt.Errorf("tool %s denied: %s", name, denial)
+	}
 	// Sub-agent path-scope gate — refuses write tools whose path
 	// argument escapes the allow_paths list. Runs after the allowlist
 	// gate (so the tool itself is permitted) and before approval (so a

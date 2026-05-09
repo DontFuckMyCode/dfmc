@@ -37,13 +37,13 @@ import (
 // Source label ("ask" / "resume") is recorded on the auto_resume event
 // so observability can tell apart the autonomous progression from a
 // user-driven /continue chain.
-func (e *Engine) runNativeToolLoopAutonomous(ctx context.Context, seed *parkedAgentState, lim agentLimits, source string) (nativeToolCompletion, error) {
+func (e *Engine) runNativeToolLoopAutonomous(ctx context.Context, seed *parkedAgentState, lim agentLimits, source string, onDelta func(string)) (nativeToolCompletion, error) {
 	const safetyBound = 64 // belt-and-braces; cumulative ceiling is the real cap
 	for attempt := 0; attempt < safetyBound; attempt++ {
 		if ctx.Err() != nil {
 			return nativeToolCompletion{}, ctx.Err()
 		}
-		completion, err := e.runNativeToolLoop(ctx, seed, lim)
+		completion, err := e.runNativeToolLoop(ctx, seed, lim, onDelta)
 		if err != nil || !completion.Parked {
 			return completion, err
 		}
@@ -73,7 +73,7 @@ func (e *Engine) runNativeToolLoopAutonomous(ctx context.Context, seed *parkedAg
 		"provider":     seed.LastProvider,
 		"model":        seed.LastModel,
 	})
-	res, err := e.runNativeToolLoop(ctx, seed, lim)
+	res, err := e.runNativeToolLoop(ctx, seed, lim, onDelta)
 	return res, err
 }
 

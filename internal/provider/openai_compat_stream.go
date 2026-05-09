@@ -90,6 +90,9 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 		usage := Usage{}
 		usageSet := false
 		stopReason := StopUnknown
+		var toolCalls []ToolCall
+		var currentCalls map[int]*ToolCall
+		var currentArgs map[int]*strings.Builder
 
 		emitStart := func() {
 			if startAnnounced {
@@ -105,7 +108,20 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 
 		finish := func() {
 			emitStart()
-			done := StreamEvent{Type: StreamDone, Provider: providerName, Model: resolvedModel, StopReason: stopReason}
+			// Finalize any in-flight tool calls
+			for i, tc := range currentCalls {
+				if args, ok := currentArgs[i]; ok {
+					_ = json.Unmarshal([]byte(args.String()), &tc.Input)
+				}
+				toolCalls = append(toolCalls, *tc)
+			}
+			done := StreamEvent{
+				Type:       StreamDone,
+				Provider:   providerName,
+				Model:      resolvedModel,
+				StopReason: stopReason,
+				ToolCalls:  toolCalls,
+			}
 			if usageSet {
 				u := usage
 				u.TotalTokens = u.InputTokens + u.OutputTokens
@@ -139,7 +155,16 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 				Model   string `json:"model"`
 				Choices []struct {
 					Delta struct {
-						Content string `json:"content"`
+						Content   string `json:"content"`
+						ToolCalls []struct {
+							Index    int    `json:"index"`
+							ID       string `json:"id"`
+							Type     string `json:"type"`
+							Function struct {
+								Name      string `json:"name"`
+								Arguments string `json:"arguments"`
+							} `json:"function"`
+						} `json:"tool_calls"`
 					} `json:"delta"`
 					FinishReason string `json:"finish_reason"`
 				} `json:"choices"`
@@ -175,6 +200,25 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 			if fr := strings.TrimSpace(evt.Choices[0].FinishReason); fr != "" {
 				stopReason = openaiStopReason(fr)
 			}
+			
+			// Process Tool Calls
+			for _, tcDelta := range evt.Choices[0].Delta.ToolCalls {
+				if currentCalls == nil {
+					currentCalls = make(map[int]*ToolCall)
+					currentArgs = make(map[int]*strings.Builder)
+				}
+				if _, ok := currentCalls[tcDelta.Index]; !ok {
+					currentCalls[tcDelta.Index] = &ToolCall{
+						ID:   tcDelta.ID,
+						Name: tcDelta.Function.Name,
+					}
+					currentArgs[tcDelta.Index] = &strings.Builder{}
+				}
+				if tcDelta.Function.Arguments != "" {
+					currentArgs[tcDelta.Index].WriteString(tcDelta.Function.Arguments)
+				}
+			}
+
 			delta := evt.Choices[0].Delta.Content
 			if delta == "" {
 				continue

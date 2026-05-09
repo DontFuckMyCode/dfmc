@@ -118,6 +118,8 @@ func todoStatusIcon(s drive.TodoStatus) string {
 		return "⏳"
 	case drive.TodoRunning:
 		return "🔄"
+	case drive.TodoVerifying:
+		return "🔍"
 	case drive.TodoDone:
 		return "✅"
 	case drive.TodoBlocked:

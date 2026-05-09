@@ -86,7 +86,7 @@ func workflowPanelWidths(total int, threePane, twoPane bool) (listW, treeW, meta
 // --- BANNER ------------------------------------------------------------------
 
 func (m Model) workflowTopBanner(width int) string {
-	title := titleStyle.Bold(true).Render("⚡ WORKFLOW")
+	title := titleStyle.Bold(true).Render(" ◎ WORKFLOW")
 	counts := m.workflowRunCounts()
 
 	chips := []string{
@@ -99,13 +99,13 @@ func (m Model) workflowTopBanner(width int) string {
 	chipStrip := strings.Join(chips, " ")
 
 	if len(m.workflow.runs) == 0 {
-		hint := subtleStyle.Render("no drive runs yet — start with /drive <task>")
+		hint := subtleStyle.Render("no drive runs yet")
 		gap := max(width-lipgloss.Width(title)-lipgloss.Width(hint)-4, 1)
-		return title + strings.Repeat(" ", gap) + hint + "\n" + renderDivider(width-2)
+		return title + strings.Repeat(" ", gap) + hint + "\n" + subtleStyle.Render(strings.Repeat("─", width-2))
 	}
 
 	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
-	return title + strings.Repeat(" ", gap) + chipStrip + "\n" + renderDivider(width-2)
+	return title + strings.Repeat(" ", gap) + chipStrip + "\n" + subtleStyle.Render(strings.Repeat("─", width-2))
 }
 
 type workflowCounts struct {
@@ -137,22 +137,12 @@ func (m Model) renderWorkflowRunsPane(width, height int, pal tabPaletteEntry) st
 	header := m.workflowRunsHeader(width)
 	lines := []string{
 		header,
-		renderDivider(width - 2),
+		subtleStyle.Render(strings.Repeat("─", width-2)),
 		"",
 	}
 	if len(m.workflow.runs) == 0 {
 		lines = append(lines,
-			subtleStyle.Render("No drive runs yet."),
-			"",
-			subtleStyle.Render("Drive is the autonomous plan/execute loop — a planner LLM breaks the task into a TODO DAG, then sub-agents work each TODO in parallel under file-scope locking."),
-			subtleStyle.Render("Best for multi-step refactors, multi-file feature work, and \"go look at the whole codebase and fix X\" jobs that would burn the chat context window."),
-			"",
-			subtleStyle.Render("Start one from Chat:"),
-			subtleStyle.Render("  /drive <task description>"),
-			"",
-			subtleStyle.Render("Or via CLI:"),
-			subtleStyle.Render("  dfmc drive \"<task>\" --route plan=opus --route code=sonnet"),
-		)
+			"  "+subtleStyle.Render("No drive runs yet."))
 	} else {
 		rowBudget := max(height-6, 6)
 		cursor := m.workflow.selectedIndex
@@ -192,71 +182,72 @@ func (m Model) renderWorkflowRunRow(i, width int, pal tabPaletteEntry, cursorIdx
 	selected := i == cursorIdx
 	cursor := "  "
 	if selected {
-		cursor = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render("▶ ")
+		cursor = accentStyle.Bold(true).Render("· ")
 	}
 	statusChip := renderRunStatusChip(r.Status)
-	// Show the FULL run ID — users need it for /drive stop and
-	// /drive resume. The 8-char truncation made cancel/remove
-	// impossible because there was no way to copy the full one. The
-	// row gets two lines on narrow widths instead.
 	idLabel := r.ID
 
-	chrome := lipgloss.Width(cursor) + lipgloss.Width(statusChip) + 4
+	chrome := lipgloss.Width(cursor) + lipgloss.Width(statusChip) + 3
 	idWidth := lipgloss.Width(idLabel)
 	taskWidth := width - chrome - idWidth - 2
+	
+	var row string
 	if taskWidth < 12 {
-		// Two-line layout: ID on its own line above, task + status on
-		// the next so the ID stays whole on narrow terminals.
 		taskWidth = max(width-chrome, 12)
 		task := truncateForLine(r.Task, taskWidth)
-		if selected {
-			task = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render(task)
-		}
-		return cursor + subtleStyle.Render(idLabel) + "\n  " +
-			"  " + task + "  " + statusChip
+		row = cursor + subtleStyle.Render(idLabel) + "\n  " + "  " + task + " " + statusChip
+	} else {
+		task := truncateForLine(r.Task, taskWidth)
+		row = cursor + subtleStyle.Render(idLabel) + "  " + task + " " + statusChip
 	}
-	task := truncateForLine(r.Task, taskWidth)
-	if selected {
-		task = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render(task)
-	}
-	return cursor + subtleStyle.Render(idLabel) + "  " + task + "  " + statusChip
-}
 
-// --- TREE PANE ---------------------------------------------------------------
+	if selected {
+		row = lipgloss.NewStyle().
+			Background(colorTabActiveBg).
+			Foreground(colorTitleFg).
+			Bold(true).
+			Width(width).
+			Render(row)
+	}
+	return row
+}
 
 func (m Model) renderWorkflowTreePane(width, height int, pal tabPaletteEntry) string {
 	_ = pal
 	header := m.workflowTreeHeader(width)
 	lines := []string{
 		header,
-		renderDivider(width - 2),
+		subtleStyle.Render(strings.Repeat("─", width-2)),
 		"",
 	}
 	run := m.selectedRunForWorkflow()
 	if run == nil {
 		lines = append(lines,
-			subtleStyle.Render("Select a run on the left (j/k + enter) to inspect its TODO tree."),
-			"",
-			subtleStyle.Render("Press r on the runs list to open the routing editor."))
+			"  "+subtleStyle.Render("Select a run to inspect its tasks"))
 		return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 	}
 
 	// Counts strip under the tree header.
 	done, blocked, skipped, pending := run.Counts()
 	running := 0
+	verifying := 0
 	for _, t := range run.Todos {
 		if t.Status == drive.TodoRunning {
 			running++
+		}
+		if t.Status == drive.TodoVerifying {
+			verifying++
 		}
 	}
 	stripParts := []string{
 		doneStyle.Render(fmt.Sprintf("%d done", done)),
 		runningStyle.Render(fmt.Sprintf("%d running", running)),
-		pendingStyle.Render(fmt.Sprintf("%d pending", pending)),
+		infoStyle.Render(fmt.Sprintf("%d verifying", verifying)),
+		pendingStyle.Render(fmt.Sprintf("%d pending", pending-running-verifying)),
 		blockedStyle.Render(fmt.Sprintf("%d blocked", blocked)),
 		skippedStyle.Render(fmt.Sprintf("%d skipped", skipped)),
 	}
-	lines = append(lines, strings.Join(stripParts, "  ·  "), "")
+	lines = append(lines, "  "+strings.Join(stripParts, "  ·  "), "")
 
 	rowBudget := max(height-10, 8)
 	rows := m.renderWorkflowTreeRows(run, width)
@@ -266,7 +257,7 @@ func (m Model) renderWorkflowTreePane(width, height int, pal tabPaletteEntry) st
 	lines = append(lines, rows...)
 
 	if m.workflow.selectedTodoID != "" {
-		lines = append(lines, "", renderDivider(width-2), "")
+		lines = append(lines, "", subtleStyle.Render(strings.Repeat("─", width-2)), "")
 		lines = append(lines, m.renderWorkflowTodoDetail(run, width)...)
 	}
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))

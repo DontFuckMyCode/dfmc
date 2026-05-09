@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -123,17 +124,35 @@ func (m Model) View() string {
 		return m.viewCache.value
 	}
 	m.ensureDiagnostics()
+
+	// 1. Global Branding Header (New)
+	branding := " DON'T FUCK MY CODE (DFMC) · dfmc.dev "
+	versionInfo := " dev "
+	if m.eng != nil && m.eng.Version != "" {
+		versionInfo = " " + m.eng.Version + " "
+	}
+	
+	updateBadge := ""
+	if m.eng != nil {
+		if update := m.eng.LatestUpdate(); update.UpdateAvailable {
+			updateBadge = okStyle.Bold(true).Render(" NEW ") + " "
+		}
+	}
+	
+	headerLine := headerStyle.Width(width).Render(
+		lipgloss.JoinHorizontal(lipgloss.Center,
+			branding,
+			strings.Repeat(" ", max(0, width-lipgloss.Width(branding)-lipgloss.Width(versionInfo)-lipgloss.Width(updateBadge)-2)),
+			updateBadge,
+			versionInfo,
+		),
+	)
+
 	bodyWidth := width - 4
 	if bodyWidth < 20 {
 		bodyWidth = width
 	}
 
-	// New header: a single dense strip with brand on the left, the
-	// active tab badge centered between its prev/next neighbours, and
-	// a navigation hint on the right. Replaces the old two-line
-	// banner + 15-tab row that wrapped on narrow terminals and made
-	// the active tab hard to spot. The "DFMC WORKBENCH" text is kept
-	// for tests and for users who grep their terminal scrollback.
 	planMode := m.ui.planMode
 	tabName := ""
 	if m.activeTab >= 0 && m.activeTab < len(m.tabs) {
@@ -141,22 +160,20 @@ func (m Model) View() string {
 	}
 	pal := paletteForTab(tabName, planMode)
 	strip := renderTopTabStrip(m.tabs, m.activeTab, planMode, width)
-	// Phase B (single source of truth): runtime/agent state lives in the
-	// footer (`footerRuntimeSegment`) and the stats panel — repeating it
-	// on the brand line was the highest-traffic offender from Section
-	// 1.2's "same info three places" table. The brand string itself
-	// stays for scrollback grep / branding parity.
+	
 	brandLine := "DFMC WORKBENCH · " + tabName
 	brandTag := subtleStyle.Render(brandLine)
-	header := strip + "\n" + brandTag
+	
+	tabArea := strip + "\n" + brandTag
 	footer := statusBarStyle.Width(width).Render(m.renderFooter(width))
-	bodyHeight := height - lipgloss.Height(header) - lipgloss.Height(footer)
+	
+	bodyHeight := height - lipgloss.Height(headerLine) - lipgloss.Height(tabArea) - lipgloss.Height(footer)
 	if bodyHeight < 6 {
 		bodyHeight = 6
 	}
 	body := m.renderActiveView(bodyWidth, bodyHeight, pal)
 
-	out := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	out := lipgloss.JoinVertical(lipgloss.Left, headerLine, tabArea, body, footer)
 	if m.viewCache != nil {
 		m.viewCache.width = width
 		m.viewCache.height = height

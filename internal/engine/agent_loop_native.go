@@ -57,7 +57,7 @@ const maxBudgetAutoRecoveries = 1
 // when we have evidence the default is wrong for some workload.
 const stuckStreakHardstopThreshold = 3
 
-func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, lim agentLimits) (nativeToolCompletion, error) {
+func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, lim agentLimits, onDelta func(string)) (nativeToolCompletion, error) {
 	callBudget, depthLimit := 0, 0
 	if e.Config != nil {
 		callBudget = e.Config.Agent.MetaCallBudget
@@ -96,6 +96,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		descriptors:  seed.Descriptors,
 		lim:          lim,
 		cacheMu:      &sync.Mutex{},
+		OnDelta:      onDelta,
 	}
 
 	// One-shot flags for recovery paths below. These are per-invocation
@@ -195,7 +196,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 
 		req := e.buildNativeLoopRequest(s, toolChoice)
 
-		resp, usedProvider, err := e.Providers.Complete(ctx, req)
+		resp, usedProvider, err := e.streamAgentRound(ctx, s, req)
 		if err != nil {
 			// Ctx cancellation mid-round (user interrupt, parent timeout)
 			// would otherwise discard every trace + msg the loop has built.
@@ -268,7 +269,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		}
 
 		// Run the round's tool calls (executeAndAppendToolBatch in
-		// agent_loop_phases.go), then layer trajectory-aware coach
+		// agent_loop_phases_batch.go), then layer trajectory-aware coach
 		// hints over the result before the next provider round.
 		freshStart := e.executeAndAppendToolBatch(ctx, s, resp)
 		e.injectTrajectoryHints(s, freshStart)
@@ -290,4 +291,45 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 	}
 
 	return nativeToolCompletion{}, fmt.Errorf("agent tool loop ended unexpectedly")
+}
+
+// streamAgentRound handles one LLM round in the agent loop using the
+// streaming interface. It collects text and tool calls while piping
+// deltas to the loop state's OnDelta callback.
+func (e *Engine) streamAgentRound(ctx context.Context, s *loopRunState, req provider.CompletionRequest) (*provider.CompletionResponse, string, error) {
+	stream, usedProvider, err := e.Providers.Stream(ctx, req)
+	if err != nil {
+		return nil, "", err
+	}
+
+	var fullText strings.Builder
+	var finalResp *provider.CompletionResponse
+
+	for ev := range stream {
+		switch ev.Type {
+		case provider.StreamDelta:
+			fullText.WriteString(ev.Delta)
+			if s.OnDelta != nil {
+				s.OnDelta(ev.Delta)
+			}
+		case provider.StreamDone:
+			finalResp = &provider.CompletionResponse{
+				Text:       fullText.String(),
+				Model:      ev.Model,
+				ToolCalls:  ev.ToolCalls,
+				StopReason: ev.StopReason,
+			}
+			if ev.Usage != nil {
+				finalResp.Usage = *ev.Usage
+			}
+		case provider.StreamError:
+			return nil, usedProvider, ev.Err
+		}
+	}
+
+	if finalResp == nil {
+		return nil, usedProvider, fmt.Errorf("stream closed without StreamDone")
+	}
+
+	return finalResp, usedProvider, nil
 }

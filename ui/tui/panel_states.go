@@ -145,6 +145,8 @@ type diagnosticPanelsState struct {
 	// helpOverlay scroll is shared by the Ctrl+H overlay rendered on
 	// non-Chat tabs (the Chat-tab inline widget has its own scroll
 	// behaviour). j/k/pgup/pgdn/g/G adjust it via handleHelpOverlayKey.
+	// telegram panel state — accessed via Shift+F8 or Ctrl+B → Telegram.
+	telegram telegramPanelState
 	helpOverlay scrollOnlyPanelState
 }
 
@@ -192,6 +194,9 @@ func (d *diagnosticPanelsState) applyDefaults() {
 	if d.codemap.view == "" {
 		d.codemap.view = codemapViewOverview
 	}
+	if d.codemap.visualExpanded == nil {
+		d.codemap.visualExpanded = make(map[string]bool)
+	}
 	if d.security.view == "" {
 		d.security.view = securityViewSecrets
 	}
@@ -228,12 +233,14 @@ type plansPanelState struct {
 // codemapPanelState — snapshot of the symbol/dep graph from internal/codemap.
 // View rotates overview/hotspots/orphans/cycles.
 type codemapPanelState struct {
-	snap    codemapSnapshot
-	view    string
-	scroll  int
-	loading bool
-	err     string
-	loaded  bool
+	snap           codemapSnapshot
+	view           string
+	scroll         int
+	loading        bool
+	err            string
+	loaded         bool
+	visualExpanded map[string]bool // nodeID -> expanded
+	visualCursor   int             // current line in the flattened visual tree
 }
 
 // memoryPanelState — read view over internal/memory. Tier is a string

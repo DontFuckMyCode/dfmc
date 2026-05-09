@@ -41,7 +41,7 @@ func filteredMemoryEntries(entries []types.MemoryEntry, query string) []types.Me
 // formatMemoryRow renders one entry as a single line, clipped to width.
 // Shape: `[tier] category · key — value`. When Category/Key are blank
 // (bare episodic interaction) we fall back to the value on its own.
-func formatMemoryRow(e types.MemoryEntry, width int) string {
+func formatMemoryRow(e types.MemoryEntry, width int, selected bool) string {
 	tierLabel := strings.ToUpper(string(e.Tier))
 	if tierLabel == "" {
 		tierLabel = "MEM"
@@ -134,19 +134,18 @@ func (m Model) renderMemoryView(width int) string {
 		tier = memoryTierAll
 	}
 	banner := m.memoryTopBanner(width, tier)
-	hint := subtleStyle.Render("j/k scroll · enter expand/collapse · t toggle tier · / search · r refresh · c clear")
 	tierLine := subtleStyle.Render("tier ") + accentStyle.Render(tier)
 	if strings.TrimSpace(m.memory.query) != "" {
 		tierLine += subtleStyle.Render(" · query ") + boldStyle.Render(m.memory.query)
 	}
-	lines := []string{banner, tierLine, hint, renderDivider(width - 2)}
+	lines := []string{banner, tierLine, subtleStyle.Render(strings.Repeat("─", width-2))}
 
 	if m.memory.err != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.memory.err))
+		lines = append(lines, "", "  "+warnStyle.Render("error · "+m.memory.err))
 		return strings.Join(lines, "\n")
 	}
 	if m.memory.loading {
-		lines = append(lines, "", subtleStyle.Render("loading..."))
+		lines = append(lines, "", "  "+subtleStyle.Render("loading..."))
 		return strings.Join(lines, "\n")
 	}
 
@@ -155,15 +154,11 @@ func (m Model) renderMemoryView(width int) string {
 		lines = append(lines, "")
 		if len(m.memory.entries) == 0 {
 			lines = append(lines,
-				subtleStyle.Render("No memory entries in this view."),
-				subtleStyle.Render("Memory is the engine's long-term recall — it fills as you chat and the agent saves facts about the project."),
-				subtleStyle.Render("Send a message in /chat to start, or use `dfmc memory add <text>`. 1/2/3 cycle Working / Episodic / Semantic tiers."),
+				"  "+subtleStyle.Render("No memory entries."),
 			)
 		} else {
 			lines = append(lines,
-				warnStyle.Render(fmt.Sprintf("No matches for %q in %d memory entries.", m.memory.query, len(m.memory.entries))),
-				subtleStyle.Render("Press c to clear the query, or / to edit it."),
-			)
+				"  "+warnStyle.Render(fmt.Sprintf("No matches for %q", m.memory.query)))
 		}
 		return strings.Join(lines, "\n")
 	}
@@ -177,17 +172,16 @@ func (m Model) renderMemoryView(width int) string {
 		scroll = len(filtered) - 1
 	}
 	for _, e := range filtered[scroll:] {
-		lines = append(lines, formatMemoryRow(e, width-2))
-		if e.ID != "" && e.ID == m.memory.expandedID {
-			// Phase H item 3: render the full value as wrapped lines
-			// indented under the one-line summary so the layout stays
-			// tabular but the user can read the full body without
-			// jumping into a separate detail surface.
+		selected := e.ID != "" && e.ID == m.memory.expandedID
+		row := formatMemoryRow(e, width-4, selected)
+		lines = append(lines, row)
+		
+		if selected {
 			body := strings.TrimSpace(e.Value)
 			if body != "" {
 				for _, raw := range strings.Split(body, "\n") {
 					raw = strings.ReplaceAll(raw, "\t", "    ")
-					for _, chunk := range memoryDetailWrap(raw, width-6) {
+					for _, chunk := range memoryDetailWrap(raw, width-8) {
 						lines = append(lines, "    "+subtleStyle.Render(chunk))
 					}
 				}
@@ -210,8 +204,8 @@ func (m Model) renderMemoryView(width int) string {
 			}
 		}
 	}
-
-	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
+	
+	lines = append(lines, "", "  "+subtleStyle.Render(fmt.Sprintf(
 		"%d shown · %d loaded · tier=%s",
 		len(filtered), len(m.memory.entries), tier,
 	)))

@@ -60,6 +60,9 @@ type loopRunState struct {
 	descriptors  []provider.ToolDescriptor
 	lim          agentLimits
 	cacheMu      *sync.Mutex
+
+	// OnDelta is an optional callback for incremental text streaming.
+	OnDelta func(string)
 }
 
 // park freezes the current state and returns the parked completion.

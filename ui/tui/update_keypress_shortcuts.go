@@ -109,6 +109,16 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 			m.ui.statsPanelMode = statsPanelModeOverview
 		}
 		return m, nil, true
+	case "pgup":
+		if m.activeTab == 0 && m.statsPanelVisible(100) {
+			m.ui.statsPanelScroll = max(0, m.ui.statsPanelScroll-3)
+			return m, nil, true
+		}
+	case "pgdn":
+		if m.activeTab == 0 && m.statsPanelVisible(100) {
+			m.ui.statsPanelScroll++
+			return m, nil, true
+		}
 	case "alt+x":
 		if m.activeTab == 0 {
 			nm, cmd := m.setSelectionMode(!m.ui.selectionModeActive)

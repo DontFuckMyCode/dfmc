@@ -62,11 +62,7 @@ func RenderStepBar(step, maxSteps, cells, frame int) string {
 	case remaining <= 3:
 		style = WarnStyle
 	}
-	filledStr := strings.Repeat("█", filled)
-	if filled > 0 && step < maxSteps && frame%2 == 1 {
-		filledStr = strings.Repeat("█", filled-1) + "▓"
-	}
-	bar := style.Render(filledStr) + SubtleStyle.Render(strings.Repeat("░", cells-filled))
+	bar := style.Render(strings.Repeat("━", filled)) + SubtleStyle.Render(strings.Repeat("─", cells-filled))
 	label := fmt.Sprintf(" %d/%d", step, maxSteps)
 	return "[" + bar + "]" + style.Bold(true).Render(label)
 }
@@ -100,11 +96,7 @@ func RenderContextBarFrame(used, max, cells, frame int) string {
 	case pct >= 60:
 		style = WarnStyle
 	}
-	filledStr := strings.Repeat("█", filled)
-	if filled > 0 && filled < cells && pct >= 60 && frame%2 == 1 {
-		filledStr = strings.Repeat("█", filled-1) + "▓"
-	}
-	bar := style.Render(filledStr) + SubtleStyle.Render(strings.Repeat("░", cells-filled))
+	bar := style.Render(strings.Repeat("━", filled)) + SubtleStyle.Render(strings.Repeat("─", cells-filled))
 	label := fmt.Sprintf("%s/%s (%d%%)", CompactTokens(used), CompactTokens(max), pct)
 	return "[" + bar + "] " + style.Bold(true).Render(label)
 }

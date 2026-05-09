@@ -10,27 +10,29 @@ import "github.com/charmbracelet/lipgloss"
 // --- palette --------------------------------------------------------------
 
 var (
-	ColorPanelBorder = lipgloss.Color("#2F4F6A")
-	ColorPanelBg     = lipgloss.Color("#0B1220")
-	ColorTitleBg     = lipgloss.Color("#11B981")
-	ColorTitleFg     = lipgloss.Color("#041014")
-	ColorMuted       = lipgloss.Color("#93A4BF")
-	ColorTabActiveBg = lipgloss.Color("#1E3A8A")
-	ColorStatusBg    = lipgloss.Color("#111A2A")
-	ColorStatusFg    = lipgloss.Color("#D9E6FF")
+	ColorPanelBorder = lipgloss.Color("#2A3241")
+	ColorPanelBg     = lipgloss.Color("#0D1117")
+	ColorTitleBg     = lipgloss.Color("#3B82F6")
+	ColorTitleFg     = lipgloss.Color("#F8FAFC")
+	ColorMuted       = lipgloss.Color("#64748B")
+	ColorTabActiveBg = lipgloss.Color("#1E293B")
+	ColorStatusBg    = lipgloss.Color("#161B22")
+	ColorStatusFg    = lipgloss.Color("#94A3B8")
+	ColorHeaderBg    = lipgloss.Color("#1E293B")
+	ColorHeaderFg    = lipgloss.Color("#F8FAFC")
 
-	ColorRoleUser      = lipgloss.Color("#8BC7FF")
-	ColorRoleAssistant = lipgloss.Color("#8AF0CF")
-	ColorRoleSystem    = lipgloss.Color("#F6D38A")
-	ColorRoleTool      = lipgloss.Color("#C4A7FF")
-	ColorRoleCoach     = lipgloss.Color("#F4B8D6")
+	ColorRoleUser      = lipgloss.Color("#60A5FA")
+	ColorRoleAssistant = lipgloss.Color("#34D399")
+	ColorRoleSystem    = lipgloss.Color("#FBBF24")
+	ColorRoleTool      = lipgloss.Color("#A78BFA")
+	ColorRoleCoach     = lipgloss.Color("#F472B6")
 
-	ColorOk     = lipgloss.Color("#6EE7A7")
-	ColorFail   = lipgloss.Color("#FF8A8A")
-	ColorWarn   = lipgloss.Color("#F6D38A")
-	ColorInfo   = lipgloss.Color("#67E8F9")
-	ColorAccent = lipgloss.Color("#BFA9FF")
-	ColorCode   = lipgloss.Color("#F2E5A1")
+	ColorOk     = lipgloss.Color("#10B981")
+	ColorFail   = lipgloss.Color("#EF4444")
+	ColorWarn   = lipgloss.Color("#F59E0B")
+	ColorInfo   = lipgloss.Color("#0EA5E9")
+	ColorAccent = lipgloss.Color("#818CF8")
+	ColorCode   = lipgloss.Color("#E2E8F0")
 
 	// Tab-accent colours used by the TUI's per-tab palette in
 	// ui/tui/tui_palette.go. Defined here so every hex literal lives
@@ -127,4 +129,9 @@ var (
 	RunningStyle = lipgloss.NewStyle().Foreground(ColorAccent)
 	BlockedStyle = lipgloss.NewStyle().Foreground(ColorFail)
 	SkippedStyle = lipgloss.NewStyle().Foreground(ColorWarn)
+
+	HeaderStyle = lipgloss.NewStyle().
+			Foreground(ColorHeaderFg).
+			Background(ColorHeaderBg).
+			Padding(0, 1)
 )

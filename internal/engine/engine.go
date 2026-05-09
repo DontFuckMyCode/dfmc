@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
+	"github.com/dontfuckmycode/dfmc/internal/bot"
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
@@ -67,6 +68,7 @@ type Engine struct {
 	Storage     *storage.Store
 	EventBus    *EventBus
 	ProjectRoot string
+	Version     string
 	AST         *ast.Engine
 	CodeMap     *codemap.Engine
 	Context     *ctxmgr.Manager
@@ -87,6 +89,18 @@ type Engine struct {
 	// (user_prompt_submit, pre_tool, post_tool, session_start/end). A nil
 	// value is safe — Fire is a no-op on nil.
 	Hooks *hooks.Dispatcher
+
+	// TelegramBot is the optional Telegram bot. nil means Telegram is
+	// not enabled for this instance. When set, messages from Telegram
+	// users are routed to the agent loop and replies are sent back
+	// via the same bot instance.
+	TelegramBot *bot.TelegramBot
+	// TelegramSessionName is the display name shown in Telegram messages
+	// (e.g. "work", "home"). Distinguishes multiple DFMC instances.
+	TelegramSessionName string
+	// TelegramAllowedUsers restricts Telegram access to specific user IDs.
+	// nil means allow all (subject to config AllowedUsers list).
+	TelegramAllowedUsers []int64
 
 	// ProviderLog persists every provider:complete event to a daily
 	// JSONL file under <data-dir>/provider_calls/. Survives session
@@ -135,6 +149,8 @@ type Engine struct {
 	// LLM context build. Status only exposes metadata; this powers the TUI
 	// debug/full context view without recomputing a different retrieval.
 	lastContextDebug ContextDebugStatus
+
+	latestUpdate UpdateInfo
 
 	// memoryDegraded is set when Memory.Load() failed during Init. The
 	// engine keeps running with an empty in-memory store so the user
@@ -187,14 +203,28 @@ type Engine struct {
 // loop) instead of mixing JSON-shape data carriers in alongside.
 
 func New(cfg *config.Config) (*Engine, error) {
+	return NewWithVersion(cfg, "dev")
+}
+
+func NewWithVersion(cfg *config.Config, version string) (*Engine, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is nil")
 	}
 	return &Engine{
 		Config:   cfg,
+		Version:  version,
 		EventBus: NewEventBus(),
 		state:    StateCreated,
 	}, nil
+}
+
+// SetTelegramBot wires a Telegram bot into the engine. Must be called
+// after New and before Init. The bot's message handler forwards Telegram
+// messages to the agent loop; responses are sent back via the same bot.
+func (e *Engine) SetTelegramBot(tgBot *bot.TelegramBot, sessionName string, allowedUsers []int64) {
+	e.TelegramBot = tgBot
+	e.TelegramSessionName = sessionName
+	e.TelegramAllowedUsers = allowedUsers
 }
 
 // Init lives in engine_init.go — it wires storage / AST / codemap /

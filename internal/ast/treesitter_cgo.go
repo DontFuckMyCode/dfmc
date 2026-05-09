@@ -208,19 +208,67 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Name:     name,
 					Kind:     "function",
 					Path:     path,
+					Language: "go",
 					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+				})
+			}
+		case "method_declaration":
+			name := childText(n, "name", content)
+			if name == "" {
+				name = childText(n, "field_identifier", content)
+			}
+			receiver := ""
+			for i := 0; i < int(n.ChildCount()); i++ {
+				child := n.Child(i)
+				if child.Type() == "parameter_list" {
+					receiver = textForNode(child, content)
+					break
+				}
+			}
+			if name != "" {
+				symbols = append(symbols, types.Symbol{
+					Name:     name,
+					Kind:     "method",
+					Path:     path,
+					Language: "go",
+					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+					Metadata: map[string]string{"receiver": receiver},
 				})
 			}
 		case "type_declaration":
 			name := childText(n, "type_identifier", content)
+			if name == "" {
+				for i := 0; i < int(n.ChildCount()); i++ {
+					c := n.Child(i)
+					if c.Type() == "type_spec" {
+						name = childText(c, "name", content)
+						break
+					}
+				}
+			}
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
 					Name:     name,
 					Kind:     "type",
 					Path:     path,
+					Language: "go",
 					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
 				})
+			}
+		case "call_expression":
+			fn := n.ChildByFieldName("function")
+			if fn != nil {
+				name := textForNode(fn, content)
+				if name != "" {
+					symbols = append(symbols, types.Symbol{
+						Name:     name,
+						Kind:     "call",
+						Path:     path,
+						Language: "go",
+						Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+					})
+				}
 			}
 		}
 		for i := 0; i < int(n.ChildCount()); i++ {
@@ -250,7 +298,7 @@ func extractGoTreeSitterImports(root *tree_sitter.Node, content []byte) []string
 
 func extractImportPath(node *tree_sitter.Node, content []byte) string {
 	var find StringVisitor
-	find.visit(node)
+	find.visit(node, content)
 	if find.result != "" && len(find.result) >= 2 {
 		return find.result[1 : len(find.result)-1]
 	}
@@ -262,17 +310,17 @@ type StringVisitor struct {
 	done   bool
 }
 
-func (f *StringVisitor) visit(n *tree_sitter.Node) {
+func (f *StringVisitor) visit(n *tree_sitter.Node, content []byte) {
 	if f.done {
 		return
 	}
-	if n.Type() == "string" {
+	if n.Type() == "string" || n.Type() == "string_literal" || n.Type() == "string_content" {
 		f.result = textForNode(n, content)
 		f.done = true
 		return
 	}
 	for i := 0; i < int(n.ChildCount()); i++ {
-		f.visit(n.Child(i))
+		f.visit(n.Child(i), content)
 	}
 }
 
@@ -284,12 +332,26 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 	var walk func(n *tree_sitter.Node)
 	walk = func(n *tree_sitter.Node) {
 		switch n.Type() {
-		case "function_declaration", "function":
+		case "function_declaration":
 			name := childText(n, "identifier", content)
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
-					Name: name, Kind: "function", Path: path,
+					Name:     name,
+					Kind:     "function",
+					Path:     path,
+					Language: lang,
+					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+				})
+			}
+		case "method_definition":
+			name := childText(n, "property_identifier", content)
+			if name != "" {
+				symbols = append(symbols, types.Symbol{
+					Name:     name,
+					Kind:     "method",
+					Path:     path,
+					Language: lang,
 					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
 				})
 			}
@@ -298,13 +360,30 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
-					Name: name, Kind: "class", Path: path,
+					Name:     name,
+					Kind:     "class",
+					Path:     path,
+					Language: lang,
 					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
 				})
 			}
 		case "import_statement":
 			if imp := extractImportPath(n, content); imp != "" {
 				imports = append(imports, imp)
+			}
+		case "call_expression":
+			fn := n.ChildByFieldName("function")
+			if fn != nil {
+				name := textForNode(fn, content)
+				if name != "" {
+					symbols = append(symbols, types.Symbol{
+						Name:     name,
+						Kind:     "call",
+						Path:     path,
+						Language: lang,
+						Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+					})
+				}
 			}
 		}
 		for i := 0; i < int(n.ChildCount()); i++ {
@@ -324,26 +403,49 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 	walk = func(n *tree_sitter.Node) {
 		switch n.Type() {
 		case "function_definition":
-			name := childText(n, "identifier", content)
+			name := childText(n, "name", content)
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
-					Name: name, Kind: "function", Path: path,
+					Name:     name,
+					Kind:     "function",
+					Path:     path,
+					Language: lang,
 					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
 				})
 			}
 		case "class_definition":
-			name := childText(n, "identifier", content)
+			name := childText(n, "name", content)
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
-					Name: name, Kind: "class", Path: path,
+					Name:     name,
+					Kind:     "class",
+					Path:     path,
+					Language: lang,
 					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
 				})
 			}
 		case "import_statement", "import_from_statement":
-			if imp := extractImportPath(n, content); imp != "" {
-				imports = append(imports, imp)
+			// Python imports can be complex, using basic extractor for now
+			var find StringVisitor
+			find.visit(n, content)
+			if find.result != "" {
+				imports = append(imports, find.result)
+			}
+		case "call":
+			fn := n.ChildByFieldName("function")
+			if fn != nil {
+				name := textForNode(fn, content)
+				if name != "" {
+					symbols = append(symbols, types.Symbol{
+						Name:     name,
+						Kind:     "call",
+						Path:     path,
+						Language: lang,
+						Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+					})
+				}
 			}
 		}
 		for i := 0; i < int(n.ChildCount()); i++ {

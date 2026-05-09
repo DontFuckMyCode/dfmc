@@ -61,8 +61,13 @@ func (e *Engine) autoContinueConfig() autoContinueConfig {
 // nativeToolCompletion's Answer is the concatenated, marker-stripped
 // view of every iteration; ToolTraces accumulates across iterations
 // so coach hints / event consumers see the full trajectory.
-func (e *Engine) askWithNativeToolsAutoContinue(ctx context.Context, question string) (nativeToolCompletion, error) {
-	first, err := e.askWithNativeTools(ctx, question)
+func (e *Engine) askWithNativeToolsAutoContinue(ctx context.Context, question string, onDelta ...func(string)) (nativeToolCompletion, error) {
+	var deltaFn func(string)
+	if len(onDelta) > 0 {
+		deltaFn = onDelta[0]
+	}
+
+	first, err := e.askWithNativeTools(ctx, question, deltaFn)
 	if err != nil {
 		return first, err
 	}
@@ -107,7 +112,11 @@ func (e *Engine) askWithNativeToolsAutoContinue(ctx context.Context, question st
 					},
 				})
 			}
-			parts = append(parts, "\n*— engine paused: no `[next:]` action and `[done: true]` was not asserted. Reply with the next step (or `/cancel` to stop here).*")
+			nudge := "\n*— engine paused: no `[next:]` action and `[done: true]` was not asserted. Reply with the next step (or `/cancel` to stop here).*"
+			parts = append(parts, nudge)
+			if deltaFn != nil {
+				deltaFn("\n\n" + nudge)
+			}
 			break
 		}
 		nextPrompt := strings.TrimSpace(hints.NextActions[0])
@@ -123,7 +132,11 @@ func (e *Engine) askWithNativeToolsAutoContinue(ctx context.Context, question st
 					},
 				})
 			}
-			parts = append(parts, "\n*— engine paused: `[next:]` was empty. Reply with the concrete next step (or `/cancel`).*")
+			nudge := "\n*— engine paused: `[next:]` was empty. Reply with the concrete next step (or `/cancel`).*"
+			parts = append(parts, nudge)
+			if deltaFn != nil {
+				deltaFn("\n\n" + nudge)
+			}
 			break
 		}
 		if e.EventBus != nil {
@@ -138,7 +151,14 @@ func (e *Engine) askWithNativeToolsAutoContinue(ctx context.Context, question st
 				},
 			})
 		}
-		next, err := e.askWithNativeTools(ctx, nextPrompt)
+
+		banner := fmt.Sprintf("\n\n--- auto-continue %d/%d · %s ---\n\n",
+			iter, cfg.MaxIterations, truncateRunesWithMarker(nextPrompt, 80, "…"))
+		if deltaFn != nil {
+			deltaFn(banner)
+		}
+
+		next, err := e.askWithNativeTools(ctx, nextPrompt, deltaFn)
 		if err != nil {
 			// Surface the error but keep the partial chain so the
 			// user sees what got done before the failure. The caller

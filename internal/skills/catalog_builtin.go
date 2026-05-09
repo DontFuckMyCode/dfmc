@@ -1,5 +1,19 @@
 package skills
 
+import "regexp"
+
+// builtinTrigger compiles a (pattern, weight) pair for the builtin
+// catalog. Patterns are author-controlled constants so a regex
+// syntax error is a build bug — MustCompile panics loudly on
+// startup if a pattern is malformed.
+func builtinTrigger(pattern string, weight float64) Trigger {
+	return Trigger{
+		Pattern: regexp.MustCompile("(?i)" + pattern),
+		Raw:     pattern,
+		Weight:  weight,
+	}
+}
+
 // catalog_builtin.go — the ten skills the binary ships with. Each entry
 // pairs a short description with a 6-step playbook the model is told to
 // follow when the skill activates. Discover() prepends this list before
@@ -21,6 +35,10 @@ func builtinCatalog() []Skill {
 			Task:        "review",
 			Role:        "code_reviewer",
 			Preferred:   []string{"git_diff", "read_file", "grep_codebase", "find_symbol", "git_blame"},
+			Triggers: []Trigger{
+				builtinTrigger(`\breview\b|code\s*review|pr\s*review|pull\s*request`, 0.85),
+				builtinTrigger(`looks?\s+(good|ok)|sanity\s+check|sign\s*off`, 0.65),
+			},
 			System: `You are running the REVIEW skill. Review the changed code for correctness, risk, and test coverage — not style nits.
 
 Playbook:
@@ -39,6 +57,9 @@ Do not restate what the code already says. Do not pad the review when the change
 			Source:      "builtin",
 			Builtin:     true,
 			Preferred:   []string{"find_symbol", "read_file", "grep_codebase", "codemap"},
+			Triggers: []Trigger{
+				builtinTrigger(`\bexplain\b|how\s+does|what\s+does\s+(this|that|it)\s+do|walk\s+(me\s+)?through`, 0.85),
+			},
 			System: `You are running the EXPLAIN skill. Produce a working mental model of the target, not a paraphrase of the source.
 
 Playbook:
@@ -58,6 +79,9 @@ Do not narrate line-by-line. Do not guess when more files need to be read.`,
 			Builtin:     true,
 			Task:        "refactor",
 			Preferred:   []string{"grep_codebase", "find_symbol", "edit_file", "apply_patch", "run_command"},
+			Triggers: []Trigger{
+				builtinTrigger(`\brefactor(ing)?\b|restructure|reorganize|extract\s+(method|function|module)`, 0.85),
+			},
 			System: `You are running the REFACTOR skill. Ship a concrete, reversible refactor — not a design essay.
 
 Playbook:
@@ -77,6 +101,10 @@ Stop and ask if the request implies a hidden behavior change.`,
 			Builtin:     true,
 			Task:        "debug",
 			Preferred:   []string{"run_command", "grep_codebase", "read_file", "git_blame", "edit_file"},
+			Triggers: []Trigger{
+				builtinTrigger(`\bdebug(ging)?\b|stack\s*trace|panic|segfault|crash(es|ing|ed)?\b|exception`, 0.9),
+				builtinTrigger(`\bbug\b|\bfix\b|broken|not\s+working|fails?\b|error(s)?\b|throws?\b`, 0.75),
+			},
 			System: `You are running the DEBUG skill. Root-cause the problem; do not paper over it.
 
 Playbook:
@@ -96,6 +124,10 @@ If you cannot reproduce, say so clearly instead of guessing.`,
 			Builtin:     true,
 			Task:        "test",
 			Preferred:   []string{"read_file", "grep_codebase", "edit_file", "write_file", "run_command"},
+			Triggers: []Trigger{
+				builtinTrigger(`\btest(s|ing|cases?)?\b|unit\s*test|integration\s*test|coverage\b|spec\b`, 0.85),
+				builtinTrigger(`add\s+tests?|write\s+tests?|test\s+for|missing\s+tests?`, 0.85),
+			},
 			System: `You are running the TEST skill. Ship tests that actually execute, not pseudocode.
 
 Playbook:
@@ -115,6 +147,9 @@ Do not add ornate mocking layers the repository does not already use.`,
 			Builtin:     true,
 			Task:        "doc",
 			Preferred:   []string{"read_file", "find_symbol", "grep_codebase"},
+			Triggers: []Trigger{
+				builtinTrigger(`\b(doc|docs|documentation|docstring|godoc|jsdoc)\b|readme\b`, 0.85),
+			},
 			System: `You are running the DOC skill. Write documentation a future engineer can act on — not a pretty-printed function signature.
 
 Playbook:
@@ -133,6 +168,9 @@ Do not document trivially obvious code.`,
 			Source:      "builtin",
 			Builtin:     true,
 			Preferred:   []string{"read_file", "grep_codebase", "edit_file", "write_file", "run_command"},
+			Triggers: []Trigger{
+				builtinTrigger(`\bgenerate\b|scaffold|boilerplate|new\s+(component|module|package|service|endpoint)`, 0.8),
+			},
 			System: `You are running the GENERATE skill. Ship working, tested code — not scaffolding.
 
 Playbook:
@@ -154,6 +192,12 @@ Do not introduce speculative abstractions or dead options.`,
 			Task:        "security",
 			Role:        "security_auditor",
 			Preferred:   []string{"grep_codebase", "read_file", "find_symbol", "git_blame"},
+			Triggers: []Trigger{
+				builtinTrigger(`\bsecurity\b|\bvulnerabilit(y|ies)\b|\baudit(s|ing)?\b|\bcve\b|\bexploit(s|able|ation)?\b|\bpentest|penetration\s*test`, 0.95),
+				builtinTrigger(`sql\s*inject(ion)?|xss\b|csrf\b|ssrf\b|rce\b|path\s*traversal|cmd\s*inject(ion)?`, 0.95),
+				builtinTrigger(`hard[-\s]?coded\s+(secret|password|token|key)|api[-\s]?key\s+leak|leak(ed|s)?\s+(secret|credential|token)`, 0.9),
+				builtinTrigger(`secure\s+(this|the)|threat\s*model|owasp\b|cwe[-\s]?\d+`, 0.8),
+			},
 			System: `You are running the AUDIT skill. Produce a triaged security report — exploitable findings first, theoretical concerns last.
 
 Playbook:
@@ -174,6 +218,10 @@ Do not invent findings to pad the report.`,
 			Task:        "planning",
 			Role:        "planner",
 			Preferred:   []string{"codemap", "read_file", "find_symbol", "list_dir"},
+			Triggers: []Trigger{
+				builtinTrigger(`\bonboard(ing)?\b|new\s+(to|here)|first\s+time|getting\s+started|where\s+(do\s+i\s+)?(start|begin)`, 0.85),
+				builtinTrigger(`tour\s+(of|through)|walk\s*through\s+(of\s+)?(the\s+)?(code|codebase|project|repo)`, 0.8),
+			},
 			System: `You are running the ONBOARD skill. Give a new contributor the shortest path to being productive — not a table of contents.
 
 Playbook:

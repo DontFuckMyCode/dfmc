@@ -174,5 +174,11 @@ func DefaultConfig() *Config {
 			FailOpen:         true,
 			MaxSnapshotChars: 2000,
 		},
+		Telegram: TelegramConfig{
+			Enabled:      false,
+			Token:        "",
+			AllowedUsers: []int64{},
+			SessionName:  "dfmc",
+		},
 	}
 }

@@ -145,6 +145,9 @@ type Model struct {
 	// panel_states.go.
 	intent intentState
 
+	// Ctrl+B panel switcher overlay state. See panel_switcher.go.
+	panelSwitcher panelSwitcherState
+
 	// Latest assistant `[next: ...]` tail block parsed by the engine
 	// (assistant_hints.go). The chat composer renders these as a
 	// numbered starter strip below the most recent assistant turn so

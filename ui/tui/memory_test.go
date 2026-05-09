@@ -90,7 +90,7 @@ func TestFilteredMemoryEntriesMatchesCategoryKeyValue(t *testing.T) {
 
 func TestFormatMemoryRowShapesLineWithTier(t *testing.T) {
 	e := types.MemoryEntry{Tier: types.MemoryEpisodic, Category: "qa", Key: "x", Value: "y"}
-	line := formatMemoryRow(e, 120)
+	line := formatMemoryRow(e, 120, false)
 	if !strings.Contains(line, "[EPISODIC]") {
 		t.Fatalf("expected tier label, got %q", line)
 	}
@@ -105,7 +105,7 @@ func TestFormatMemoryRowCollapsesWhitespace(t *testing.T) {
 		Key:   "multi",
 		Value: "line\n\twith\nbreaks",
 	}
-	line := formatMemoryRow(e, 200)
+	line := formatMemoryRow(e, 200, false)
 	if strings.Contains(line, "\n") {
 		t.Fatalf("embedded newline leaked into row: %q", line)
 	}

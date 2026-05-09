@@ -126,7 +126,7 @@ func RenderRuntimeCard(rs RuntimeSummary, width int) string {
 		parts = append(parts, SubtleStyle.Render(fmt.Sprintf("tools %d", rs.ToolRounds)))
 	}
 	if tool := strings.TrimSpace(rs.LastTool); tool != "" {
-		icon, style := chipIconStyle(rs.LastStatus)
+		icon, style := ChipIconStyle(rs.LastStatus)
 		tail := icon + " " + tool
 		if rs.LastDuration > 0 {
 			tail += fmt.Sprintf(" %dms", rs.LastDuration)

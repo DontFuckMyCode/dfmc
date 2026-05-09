@@ -174,7 +174,7 @@ func (r *Run) Counts() (done, blocked, skipped, pending int) {
 			blocked++
 		case TodoSkipped:
 			skipped++
-		case TodoPending, TodoRunning:
+		case TodoPending, TodoRunning, TodoVerifying, TodoWaiting:
 			pending++
 		}
 	}

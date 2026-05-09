@@ -81,16 +81,16 @@ func patchPanelWidths(total int, threePane, twoPane bool) (listW, diffW, metaW i
 func (m Model) patchTopBanner(width int) string {
 	chip, chipStyle := m.patchStatusChip()
 	chipRendered := chipStyle.Render(" " + chip + " ")
-	title := titleStyle.Bold(true).Render("◈ PATCH LAB")
+	title := titleStyle.Bold(true).Render("⇄ PATCH LAB")
 	files := strings.Join(m.patchFilesOrNone(), ", ")
 	if files == "(none)" {
-		files = subtleStyle.Render("no assistant patch loaded — ask DFMC to refactor / fix in Chat")
+		files = subtleStyle.Render("no active patch")
 	} else {
 		files = subtleStyle.Render(truncateForLine(files, width-32))
 	}
 	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipRendered)-lipgloss.Width(files)-4, 1)
 	line := title + "  " + files + strings.Repeat(" ", gap) + chipRendered
-	return line + "\n" + renderDivider(width-2)
+	return line + "\n" + subtleStyle.Render(strings.Repeat("─", width-2))
 }
 
 func (m Model) patchStatusChip() (string, lipgloss.Style) {
@@ -115,20 +115,12 @@ func (m Model) renderPatchFilesPane(width, height int, pal tabPaletteEntry) stri
 	header := m.patchFilesHeader(width)
 	lines := []string{
 		header,
-		renderDivider(width - 2),
+		subtleStyle.Render(strings.Repeat("─", width-2)),
 		"",
 	}
 	if len(m.patchView.set) == 0 {
 		lines = append(lines,
-			subtleStyle.Render("No assistant patch yet."),
-			"",
-			subtleStyle.Render("Ask DFMC in Chat to:"),
-			subtleStyle.Render("  · refactor a function"),
-			subtleStyle.Render("  · fix a bug"),
-			subtleStyle.Render("  · rewrite a file"),
-			"",
-			subtleStyle.Render("the generated diff lands here."),
-		)
+			"  "+subtleStyle.Render("No active patch."))
 	} else {
 		rowBudget := max(height-6, 6)
 		start, end := scrollWindow(m.patchView.index, len(m.patchView.set), rowBudget)
@@ -136,7 +128,7 @@ func (m Model) renderPatchFilesPane(width, height int, pal tabPaletteEntry) stri
 			lines = append(lines, m.renderPatchFileRow(i, width, pal))
 		}
 		lines = append(lines, "",
-			subtleStyle.Render(fmt.Sprintf("%d / %d files",
+			"  "+subtleStyle.Render(fmt.Sprintf("%d / %d files",
 				m.patchView.index+1, len(m.patchView.set))))
 	}
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
@@ -150,7 +142,7 @@ func (m Model) patchFilesHeader(width int) string {
 		chip = warnStyle
 		chipText = " 0 "
 	}
-	title := titleStyle.Bold(true).Render("⇄ FILES")
+	title := titleStyle.Bold(true).Render(" ◎ FILES")
 	chipRendered := chip.Render(chipText)
 	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipRendered)-2, 1)
 	return title + strings.Repeat(" ", gap) + chipRendered
@@ -161,10 +153,10 @@ func (m Model) renderPatchFileRow(i, width int, pal tabPaletteEntry) string {
 	selected := i == m.patchView.index
 	cursor := "  "
 	if selected {
-		cursor = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render("▶ ")
+		cursor = accentStyle.Bold(true).Render("· ")
 	}
 	adds, dels := patchLineCounts(section.Content)
-	stat := fmt.Sprintf("+%d/-%d", adds, dels)
+	stat := fmt.Sprintf("+%d -%d", adds, dels)
 	statStyle := subtleStyle
 	if adds > 0 && dels == 0 {
 		statStyle = okStyle
@@ -174,15 +166,22 @@ func (m Model) renderPatchFileRow(i, width int, pal tabPaletteEntry) string {
 	statRendered := " " + statStyle.Render(stat)
 	hunkBadge := ""
 	if section.HunkCount > 1 {
-		hunkBadge = " " + subtleStyle.Render(fmt.Sprintf("·%dh", section.HunkCount))
+		hunkBadge = " " + subtleStyle.Render(fmt.Sprintf("%dh", section.HunkCount))
 	}
-	chrome := lipgloss.Width(cursor) + lipgloss.Width(statRendered) + lipgloss.Width(hunkBadge) + 1
+	chrome := lipgloss.Width(cursor) + lipgloss.Width(statRendered) + lipgloss.Width(hunkBadge) + 2
 	nameWidth := max(width-chrome, 12)
 	name := truncatePathHead(section.Path, nameWidth)
+	
+	row := cursor + name + statRendered + hunkBadge
 	if selected {
-		name = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render(name)
+		row = lipgloss.NewStyle().
+			Background(colorTabActiveBg).
+			Foreground(colorTitleFg).
+			Bold(true).
+			Width(width).
+			Render(row)
 	}
-	return cursor + name + statRendered + hunkBadge
+	return row
 }
 
 // DIFF + METADATA pane renderers (renderPatchDiffPane, patchDiffHeader,

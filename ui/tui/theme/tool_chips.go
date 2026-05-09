@@ -14,125 +14,75 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 )
 
 func RenderToolChip(chip ToolChip, width int) string {
-	icon, styleFor := chipIconStyle(chip.Status)
+	icon, styleFor := ChipIconStyle(chip.Status)
 	name := strings.TrimSpace(chip.Name)
 	if name == "" {
 		name = "tool"
 	}
 	status := strings.TrimSpace(chip.Status)
-	var head string
+	
+	// Compact Name: Use SUB prefix for subagents
+	displayName := name
 	if isSubagentToolChip(chip) {
-		head = styleFor.Render(icon+" ") + AccentStyle.Render("SUBAGENT") + " " + styleFor.Render(name)
-	} else {
-		head = styleFor.Render(icon+" ") + chipNameStyle(name, status).Render(name)
+		displayName = "SUB " + name
 	}
-	meta := []string{}
-	if chip.Step > 0 {
-		meta = append(meta, fmt.Sprintf("step %d", chip.Step))
+	
+	// Narrative headline: Use Reason if available, else Tool Name
+	headline := displayName
+	reason := strings.TrimSpace(chip.Reason)
+	if reason != "" {
+		headline = reason
+	}
+	
+	// Technical Tail: [Icon] [Name if reason used] [Duration] [Tokens]
+	var tail []string
+	if reason != "" {
+		tail = append(tail, displayName)
 	}
 	if chip.DurationMs > 0 {
-		meta = append(meta, fmt.Sprintf("%dms", chip.DurationMs))
+		tail = append(tail, FormatDurationShort(chip.DurationMs))
 	}
 	if chip.OutputTokens > 0 {
-		if chip.Truncated {
-			meta = append(meta, fmt.Sprintf("+%s tok⚠", FormatToolTokenCount(chip.OutputTokens)))
-		} else {
-			meta = append(meta, fmt.Sprintf("+%s tok", FormatToolTokenCount(chip.OutputTokens)))
-		}
+		tail = append(tail, FormatToolTokenCount(chip.OutputTokens)+"t")
 	}
-	if chip.SavedChars > 0 {
-		if chip.CompressionPct > 0 {
-			meta = append(meta, fmt.Sprintf("rtk −%s (%d%%)", FormatToolTokenCount(chip.SavedChars), chip.CompressionPct))
-		} else {
-			meta = append(meta, fmt.Sprintf("rtk −%s", FormatToolTokenCount(chip.SavedChars)))
-		}
+
+	headLine := styleFor.Render(icon) + " " + ChipNameStyle(name, status).Render(headline)
+	if len(tail) > 0 {
+		headLine += " " + SubtleStyle.Render(strings.Join(tail, " · "))
 	}
-	// Hard-truncation badge — distinct from `rtk` (compression of
-	// noise) and from `Truncated` (the sandbox flag). This fires when
-	// the per-call char cap forced bytes out of the model-bound
-	// payload — meaning the model is missing real content. Prominent
-	// warn style so the user knows to widen the window or split the
-	// call. The rune count tells them HOW MUCH was lost so they can
-	// judge severity at a glance.
-	if chip.HardTruncated {
-		label := "✂ truncated"
-		if chip.HardTruncatedRunes > 0 {
-			label = fmt.Sprintf("✂ −%s chars cut", FormatToolTokenCount(chip.HardTruncatedRunes))
-		}
-		meta = append(meta, WarnStyle.Bold(true).Render(label))
-	}
-	if status != "" && status != "ok" && status != "running" {
-		meta = append(meta, status)
-	}
-	head1 := head
-	if len(meta) > 0 {
-		head1 += " " + SubtleStyle.Render("· "+strings.Join(meta, " · "))
-	}
-	verb := strings.TrimSpace(chip.Verb)
+
 	preview := strings.TrimSpace(chip.Preview)
-	reason := strings.TrimSpace(chip.Reason)
-	if len(reason) > 140 {
-		reason = reason[:137] + "..."
-	}
-	innerWidth := max(width-2, 16)
-	if verb != "" && preview != "" {
-		out := strings.Builder{}
-		out.WriteString(TruncateSingleLine(head1, width))
-		if reason != "" {
-			out.WriteString("\n  ")
-			out.WriteString(SubtleStyle.Render(TruncateSingleLine("↳ "+reason, innerWidth)))
-		}
-		out.WriteString("\n  ")
-		out.WriteString(SubtleStyle.Render(TruncateSingleLine(verb, innerWidth)))
-		out.WriteString("\n  ")
-		out.WriteString(SubtleStyle.Render(TruncateSingleLine("→ "+preview, innerWidth)))
-		appendInnerLines(&out, chip.InnerLines, innerWidth)
-		return out.String()
-	}
-	if verb != "" {
-		single := head1 + " " + SubtleStyle.Render("· "+verb)
-		if reason == "" && ansi.StringWidth(single) <= width && len(chip.InnerLines) == 0 {
-			return single
-		}
-		out := strings.Builder{}
-		out.WriteString(TruncateSingleLine(head1, width))
-		if reason != "" {
-			out.WriteString("\n  ")
-			out.WriteString(SubtleStyle.Render(TruncateSingleLine("↳ "+reason, innerWidth)))
-		}
-		out.WriteString("\n  ")
-		out.WriteString(SubtleStyle.Render(TruncateSingleLine(verb, innerWidth)))
-		appendInnerLines(&out, chip.InnerLines, innerWidth)
-		return out.String()
-	}
-	var headRendered string
-	if preview != "" {
-		single := head1 + " " + SubtleStyle.Render("· "+preview)
-		if reason == "" && ansi.StringWidth(single) <= width && len(chip.InnerLines) == 0 {
-			return single
-		}
-		headRendered = TruncateSingleLine(head1, width)
-		if reason != "" {
-			headRendered += "\n  " + SubtleStyle.Render(TruncateSingleLine("↳ "+reason, innerWidth))
-		}
-		headRendered += "\n  " + SubtleStyle.Render(TruncateSingleLine(preview, innerWidth))
-	} else {
-		headRendered = TruncateSingleLine(head1, width)
-		if reason != "" {
-			headRendered += "\n  " + SubtleStyle.Render(TruncateSingleLine("↳ "+reason, innerWidth))
-		}
-	}
-	if len(chip.InnerLines) == 0 {
-		return headRendered
-	}
+	innerWidth := max(width-4, 16)
 	out := strings.Builder{}
-	out.WriteString(headRendered)
-	appendInnerLines(&out, chip.InnerLines, innerWidth)
+	out.WriteString(TruncateSingleLine(headLine, width))
+
+	// Collapsible logic: only show details if expanded
+	if chip.Expanded {
+		// Only show preview if it's helpful and not in running state
+		if preview != "" && status != "running" {
+			out.WriteString("\n  " + SubtleStyle.Render(TruncateSingleLine("→ "+preview, innerWidth)))
+		}
+		
+		// Keep inner lines (e.g. command output) but keep them very subtle
+		for _, ln := range chip.InnerLines {
+			ln = strings.TrimSpace(ln)
+			if ln != "" {
+				out.WriteString("\n    " + SubtleStyle.Render(TruncateSingleLine(ln, innerWidth-2)))
+			}
+		}
+	}
+
 	return out.String()
+}
+
+func FormatDurationShort(ms int) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return fmt.Sprintf("%.1fs", float64(ms)/1000)
 }
 
 func appendInnerLines(out *strings.Builder, lines []string, innerWidth int) {
@@ -164,20 +114,20 @@ func isSubagentToolChip(chip ToolChip) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(chip.Status)), "subagent-")
 }
 
-func chipIconStyle(status string) (string, lipgloss.Style) {
+func ChipIconStyle(status string) (string, lipgloss.Style) {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "ok", "success", "done":
-		return "✓", OkStyle
+		return "·", OkStyle
 	case "failed", "error", "fail":
-		return "✗", FailStyle
+		return "×", FailStyle
 	case "running", "start", "pending":
 		return "◌", InfoStyle
 	case "compact", "compacted":
-		return "⇵", AccentStyle
+		return "↕", AccentStyle
 	case "budget", "budget_exhausted":
-		return "✦", WarnStyle
+		return "!", WarnStyle
 	case "handoff":
-		return "⇨", AccentStyle
+		return "→", AccentStyle
 	case "subagent-running":
 		return "◈", AccentStyle
 	case "subagent-ok":
@@ -185,11 +135,11 @@ func chipIconStyle(status string) (string, lipgloss.Style) {
 	case "subagent-failed":
 		return "◈", FailStyle
 	default:
-		return "•", SubtleStyle
+		return "·", SubtleStyle
 	}
 }
 
-func chipNameStyle(name, status string) lipgloss.Style {
+func ChipNameStyle(name, status string) lipgloss.Style {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "failed", "error", "fail":
 		return FailStyle
@@ -201,11 +151,11 @@ func chipNameStyle(name, status string) lipgloss.Style {
 		return WarnStyle
 	case "read_file", "list_dir", "glob":
 		return InfoStyle
-	case "grep_codebase", "semantic_search", "ast_query":
+	case "grep_codebase", "semantic_search", "ast_query", "call_graph":
 		return AccentStyle
 	case "run_command":
 		return ToolStyle
 	default:
-		return OkStyle
+		return SubtleStyle
 	}
 }

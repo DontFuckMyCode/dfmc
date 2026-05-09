@@ -54,7 +54,7 @@ func (m Model) renderTimelineComposer(width int) []string {
 	// and the new alt+m / alt+P model/provider quick switchers so the
 	// user doesn't have to leave chat to reconfigure.
 	hintRows := []string{
-		"  ctrl+x send · enter newline · / commands · @ mention",
+		"  enter send · alt+enter newline · / commands · @ mention",
 		"  alt+m model · alt+P provider · alt+p providers · ctrl+p palette · f1-f12 tabs",
 	}
 	// Phase E item 2 — live budget meter pinned at the composer footer

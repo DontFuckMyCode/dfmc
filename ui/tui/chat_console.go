@@ -40,30 +40,63 @@ func (m Model) renderTimelineMessages(width int) []string {
 	if len(m.chat.transcript) == 0 {
 		lines = append(lines,
 			subtleStyle.Render("  paste text, type a prompt, or use /commands"),
-			subtleStyle.Render("  ctrl+x sends, enter inserts a newline"),
+			subtleStyle.Render("  enter sends, alt+enter inserts a newline"),
 		)
 		return lines
 	}
+	
 	assistantCounter := 0
 	for i, item := range m.chat.transcript {
+		streaming := m.chat.streamIndex == i && m.chat.sending
+		
+		// Logic to prevent excessive spacing between interleaved items
 		eventRow := isTimelineEventMessage(item)
 		prevEventRow := i > 0 && isTimelineEventMessage(m.chat.transcript[i-1])
-		if i > 0 && !(eventRow && prevEventRow) {
-			lines = append(lines, "")
+		
+		// Spacing: add newline between distinct turns or blocks.
+		// Keep assistant text and its immediately subsequent tools tight.
+		if i > 0 {
+			isAssistantToTool := m.chat.transcript[i-1].Role.Eq(chatRoleAssistant) && eventRow
+			isUserToAnything := m.chat.transcript[i-1].Role.Eq(chatRoleUser)
+			if (isUserToAnything || !isAssistantToTool) && !(eventRow && prevEventRow) {
+				lines = append(lines, "")
+			}
 		}
-		streaming := m.chat.streamIndex == i && m.chat.sending
+
 		durationMs := item.DurationMs
 		if streaming && !m.chat.streamStartedAt.IsZero() {
 			durationMs = int(time.Since(m.chat.streamStartedAt).Milliseconds())
 		}
-		copyIdx := 0
+		
 		if item.Role.Eq(chatRoleAssistant) {
 			assistantCounter++
-			copyIdx = assistantCounter
 		}
-		lines = append(lines, m.renderTimelineMessage(item, width, streaming, durationMs, copyIdx)...)
+		
+		lines = append(lines, m.renderTimelineMessage(item, width, streaming, durationMs, assistantCounter)...)
 	}
 	return lines
+}
+
+func (m Model) renderTimelineMessage(item chatLine, width int, streaming bool, durationMs, copyIdx int) []string {
+	streamTokens := m.streamingHeaderTokenParts(item, streaming)
+	if isTimelineEventMessage(item) {
+		header := renderTimelineEventHeader(item, streaming, durationMs, m.chat.spinnerFrame, streamTokens)
+		return renderTimelineEventMessage(item, header, width)
+	}
+	
+	header := renderChatHistoryMessageHeader(item, streaming, durationMs, copyIdx, m.chat.spinnerFrame, streamTokens)
+	
+	// Interleaved logic: if it's an assistant message, we don't necessarily 
+	// want a full bubble if it's part of a multi-step sequence.
+	// But for now, we'll keep the bubble and just ensure it's positioned correctly.
+	out := []string{renderMessageBubble(string(item.Role), chatBubbleContent(item, streaming), header, width)}
+	
+	if !streaming && copyIdx > 0 && item.Role.Eq(chatRoleAssistant) && strings.TrimSpace(item.Content) != "" {
+		if chip := m.renderAssistantTurnChips(copyIdx, width); chip != "" {
+			out = append(out, chip)
+		}
+	}
+	return out
 }
 
 func humanizeWorkflowText(text string) string {
@@ -137,28 +170,6 @@ func (m Model) renderTimelineHistoryHeader(width int) string {
 		parts = append(parts, spinnerFrame(m.chat.spinnerFrame)+" live")
 	}
 	return truncateSingleLine(subtleStyle.Render(strings.Join(parts, "  |  ")), width)
-}
-
-func (m Model) renderTimelineMessage(item chatLine, width int, streaming bool, durationMs, copyIdx int) []string {
-	streamTokens := m.streamingHeaderTokenParts(item, streaming)
-	if isTimelineEventMessage(item) {
-		header := renderTimelineEventHeader(item, streaming, durationMs, m.chat.spinnerFrame, streamTokens)
-		return renderTimelineEventMessage(item, header, width)
-	}
-	header := renderChatHistoryMessageHeader(item, streaming, durationMs, copyIdx, m.chat.spinnerFrame, streamTokens)
-	out := []string{renderMessageBubble(string(item.Role), chatBubbleContent(item, streaming), header, width)}
-	// Phase E item 1 — pin/fork/save chips: under finished assistant
-	// turns (not while streaming so the chip line doesn't flash) render
-	// a one-line affordance strip with the slash commands the user can
-	// run against this turn. When pinned, the chip flips to ★ and
-	// advertises /unpin instead of /pin. The chip line is intentionally
-	// subtle styling so it doesn't compete with the answer body.
-	if !streaming && copyIdx > 0 && item.Role.Eq(chatRoleAssistant) && strings.TrimSpace(item.Content) != "" {
-		if chip := m.renderAssistantTurnChips(copyIdx, width); chip != "" {
-			out = append(out, chip)
-		}
-	}
-	return out
 }
 
 // renderAssistantTurnChips builds the per-turn affordance line shown

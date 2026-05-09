@@ -107,29 +107,47 @@ func tryAgentSkillFormat(data []byte, path, source string) Skill {
 		}
 	}
 
-	// compatibility and metadata are informational only — stash in description.
-	var extra []string
-	if v, ok := raw["compatibility"].(string); ok && strings.TrimSpace(v) != "" {
-		extra = append(extra, "compatibility: "+strings.TrimSpace(v))
-	}
-	if meta, ok := raw["metadata"].(map[string]any); ok {
-		for k, rv := range meta {
-			extra = append(extra, k+"="+fmt.Sprint(rv))
-		}
-	}
-	desc := description
-	if len(extra) > 0 {
-		desc = desc + " (" + strings.Join(extra, ", ") + ")"
-	}
-
-	return Skill{
+	skill := Skill{
 		Name:        name,
-		Description: desc,
+		Description: description,
 		Path:        path,
 		Source:      source,
 		Builtin:     false,
 		System:      system,
 		Allowed:     allowed,
+	}
+	applyExtendedFields(&skill, raw)
+	return skill
+}
+
+// applyExtendedFields pulls AgentSkills.io-flavoured optional fields
+// (triggers, requires, version, metadata.author/tags, compatibility)
+// out of the already-decoded YAML map. Used by both the SKILL.md
+// path (tryAgentSkillFormat) and the native YAML path (readSkillFile)
+// so a single field-name list applies to both formats.
+//
+// metadata.author and metadata.tags become Skill.Author and
+// Skill.Tags; everything else under metadata is dropped — we don't
+// store free-form blobs to keep the prompt surface predictable.
+func applyExtendedFields(skill *Skill, raw map[string]any) {
+	if skill == nil || raw == nil {
+		return
+	}
+	if v, ok := raw["version"]; ok {
+		skill.Version = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if v, ok := raw["compatibility"].(string); ok {
+		skill.Compatibility = strings.TrimSpace(v)
+	}
+	skill.Triggers = parseTriggers(raw["triggers"], skill.Name)
+	skill.Requires = parseRequires(raw["requires"], skill.Name)
+	if meta, ok := raw["metadata"].(map[string]any); ok {
+		if v, ok := meta["author"]; ok {
+			skill.Author = strings.TrimSpace(fmt.Sprint(v))
+		}
+		if tags, ok := meta["tags"]; ok {
+			skill.Tags = parseStringList(tags)
+		}
 	}
 }
 
@@ -148,20 +166,22 @@ func readSkillFile(path, source string) Skill {
 	if err := yaml.Unmarshal(data, &item); err == nil && strings.TrimSpace(item.Name) != "" {
 		item.Source = source
 		item.Path = path
-		// SKILL.md files: yaml tag mapping misses `allowed-tools` (hyphen vs underscore).
-		// If Allowed is still empty, re-parse as raw map and pull allowed-tools.
+		// Re-parse as raw map for fields that don't have yaml tags on
+		// the Skill struct (triggers/requires/metadata/version/
+		// compatibility, plus the hyphenated `allowed-tools` from the
+		// SKILL.md spec).
+		raw := map[string]any{}
+		_ = yaml.Unmarshal(data, &raw)
 		if len(item.Allowed) == 0 && strings.HasPrefix(string(data), "---") {
-			raw := map[string]any{}
-			if yaml.Unmarshal(data, &raw) == nil {
-				if v, ok := raw["allowed-tools"].(string); ok && strings.TrimSpace(v) != "" {
-					for tok := range strings.FieldsSeq(v) {
-						if t := strings.TrimSpace(tok); t != "" {
-							item.Allowed = append(item.Allowed, t)
-						}
+			if v, ok := raw["allowed-tools"].(string); ok && strings.TrimSpace(v) != "" {
+				for tok := range strings.FieldsSeq(v) {
+					if t := strings.TrimSpace(tok); t != "" {
+						item.Allowed = append(item.Allowed, t)
 					}
 				}
 			}
 		}
+		applyExtendedFields(&item, raw)
 		// SKILL.md: System field maps from system_prompt but the markdown body
 		// is the actual skill content. Extract it when System is empty.
 		if item.System == "" && strings.HasPrefix(string(data), "---") {

@@ -62,6 +62,7 @@ var (
 	runningStyle            = theme.RunningStyle
 	blockedStyle            = theme.BlockedStyle
 	skippedStyle            = theme.SkippedStyle
+	headerStyle             = theme.HeaderStyle
 )
 
 // --- stats panel constants --------------------------------------------------

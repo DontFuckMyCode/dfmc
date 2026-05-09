@@ -45,6 +45,7 @@ type ToolChip struct {
 	HardTruncatedRunes int
 	InnerLines         []string
 	Reason             string
+	Expanded           bool // Whether to show details
 }
 
 // --- todo strip ---------------------------------------------------------
@@ -221,6 +222,7 @@ type StatsPanelInfo struct {
 	Boosted                 bool
 	BoostSeconds            int
 	FocusLocked             bool
+	StatsPanelScroll        int
 	SubagentLines           []string
 	SubagentSummary         string
 	ActiveSubagents         int

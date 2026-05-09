@@ -122,6 +122,12 @@ type ToolCall struct {
 	Input map[string]any `json:"input,omitempty"`
 }
 
+type Attachment struct {
+	MimeType string            `json:"mime_type"`
+	Data     string            `json:"data"` // base64
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
 type Message struct {
 	Role    types.MessageRole `json:"role"`
 	Content string            `json:"content"`
@@ -138,6 +144,9 @@ type Message struct {
 	ToolName string `json:"tool_name,omitempty"`
 	// ToolError: result turns surface execution failure to the model.
 	ToolError bool `json:"tool_error,omitempty"`
+
+	// Attachments: multimodal data like images.
+	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
 // SystemBlock is a labelled fragment of the system prompt that carries a
@@ -237,6 +246,8 @@ type StreamEvent struct {
 	Usage *Usage `json:"usage,omitempty"`
 	// StopReason explains why generation ended. Populated on StreamDone.
 	StopReason StopReason `json:"stop_reason,omitempty"`
+	// ToolCalls carries the collected tool calls in the terminal StreamDone event.
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
 type ProviderHints struct {

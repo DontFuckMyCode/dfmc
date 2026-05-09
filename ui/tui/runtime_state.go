@@ -22,6 +22,7 @@ type uiToggles struct {
 	showHelpOverlay       bool // ctrl+h: keybinding card overlay
 	showStatsPanel        bool // ctrl+s: right-side stats panel on chat tab
 	statsPanelMode        statsPanelMode
+	statsPanelScroll      int  // scroll offset for the right-hand stats panel
 	statsPanelBoostUntil  time.Time
 	statsPanelFocusLocked bool
 	keyLogEnabled         bool // /keylog or DFMC_KEYLOG=1: dump KeyMsg into notice

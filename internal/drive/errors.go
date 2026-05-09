@@ -7,6 +7,49 @@ import (
 	"strings"
 )
 
+// Sentinel errors for robust failure classification via errors.Is.
+var (
+	// Denial errors — never retry.
+	ErrDenied         = errors.New("denied")
+	ErrUserDenied     = errors.New("user denied")
+	ErrApprovalDenied = errors.New("approval denied")
+
+	// Auth errors — never retry.
+	ErrUnauthorized = errors.New("unauthorized")
+	ErrAuth401       = errors.New("auth 401")
+	ErrAuth403       = errors.New("auth 403")
+
+	// Rate limit / transient errors — retry immediately.
+	ErrRateLimit  = errors.New("rate limit")
+	ErrStatus429  = errors.New("status code 429")
+	ErrTooManyReq = errors.New("too many requests")
+
+	// Fallback-worthy errors — retry with different provider/model.
+	ErrStatus500      = errors.New("status code 500")
+	ErrStatus502      = errors.New("status code 502")
+	ErrStatus503      = errors.New("status code 503")
+	ErrStatus504      = errors.New("status code 504")
+	ErrNoSuchHost     = errors.New("no such host")
+	ErrConnRefused    = errors.New("connection refused")
+	ErrConnReset      = errors.New("connection reset")
+	ErrNetUnreachable = errors.New("network unreachable")
+
+	// Timeout errors — retry with same or shorter budget.
+	ErrTimeout   = errors.New("timeout")
+	ErrTimedOut  = errors.New("timed out")
+	ErrIOTimeout = errors.New("i/o timeout")
+
+	// Model-level errors — fallback recommended.
+	ErrModelError         = errors.New("model error")
+	ErrOverloaded         = errors.New("overloaded")
+	ErrServiceUnavailable = errors.New("service unavailable")
+
+	// URL/cert errors — config problem, never retry.
+	ErrInvalidURL   = errors.New("invalid url")
+	ErrX509         = errors.New("x509")
+	ErrCertificate = errors.New("certificate")
+)
+
 // FailureClass categorizes a sub-agent error into a retry strategy.
 // This determines how applyOutcome handles a failed TODO.
 type FailureClass int
@@ -43,10 +86,15 @@ func (c FailureClass) String() string {
 // FailureClassify returns the retry strategy for a given error.
 // The classification is conservative: when in doubt, RetryTransient wins
 // to avoid silently dropping work.
+//
+// Classification uses sentinel errors (errors.Is) where possible for
+// robust matching. For wrapped or third-party errors, string matching
+// is used as fallback.
 func FailureClassify(err error) FailureClass {
 	if err == nil {
 		return Fatal // nil is not an error; should not reach here
 	}
+
 	// Context cancellations are user-initiated stops — never retry.
 	if errors.Is(err, context.Canceled) {
 		return Fatal
@@ -57,61 +105,72 @@ func FailureClassify(err error) FailureClass {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return RetryTransient
 	}
+
+	// Sentinel error matching (preferred) — handles wrapped errors.
+	// Denial errors — never retry.
+	if errors.Is(err, ErrDenied) || errors.Is(err, ErrUserDenied) || errors.Is(err, ErrApprovalDenied) {
+		return Fatal
+	}
+	// Auth errors — never retry.
+	if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrAuth401) || errors.Is(err, ErrAuth403) {
+		return Fatal
+	}
+	// Rate limit / transient — retry immediately.
+	if errors.Is(err, ErrRateLimit) || errors.Is(err, ErrStatus429) || errors.Is(err, ErrTooManyReq) {
+		return RetryTransient
+	}
+	// Fallback-worthy — retry with different provider/model.
+	if errors.Is(err, ErrStatus500) || errors.Is(err, ErrStatus502) ||
+		errors.Is(err, ErrStatus503) || errors.Is(err, ErrStatus504) ||
+		errors.Is(err, ErrNoSuchHost) || errors.Is(err, ErrConnRefused) ||
+		errors.Is(err, ErrConnReset) || errors.Is(err, ErrNetUnreachable) {
+		return RetryWithFallback
+	}
+	// Timeout errors — retry with same or shorter budget.
+	if errors.Is(err, ErrTimeout) || errors.Is(err, ErrTimedOut) || errors.Is(err, ErrIOTimeout) {
+		return RetryTransient
+	}
+	// Model-level errors — fallback recommended.
+	if errors.Is(err, ErrModelError) || errors.Is(err, ErrOverloaded) || errors.Is(err, ErrServiceUnavailable) {
+		return RetryWithFallback
+	}
+	// Config errors — never retry.
+	if errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrX509) || errors.Is(err, ErrCertificate) {
+		return Fatal
+	}
+
+	// String-based fallback for wrapped/third-party errors.
 	msg := strings.ToLower(err.Error())
 
-	// Fatal: user or approval denial. The model hit a hard wall.
-	if strings.Contains(msg, "denied:") || strings.Contains(msg, "user denied") {
+	// Fatal: denial.
+	if strings.Contains(msg, "denied:") || strings.Contains(msg, "user denied") || strings.Contains(msg, "approval denied") {
 		return Fatal
 	}
-	if strings.Contains(msg, "approval denied") {
+	// Fatal: auth.
+	if strings.Contains(msg, "unauthorized") || (strings.Contains(msg, "auth") && (strings.Contains(msg, "401") || strings.Contains(msg, "403"))) {
 		return Fatal
 	}
-
-	// Fatal: authentication / authorization failures. No point retrying.
-	if strings.Contains(msg, "unauthorized") ||
-		strings.Contains(msg, "auth") && (strings.Contains(msg, "401") || strings.Contains(msg, "403")) {
-		return Fatal
-	}
-
-	// Transient: explicit rate-limiting from a provider.
-	if strings.Contains(msg, "rate limit") ||
-		strings.Contains(msg, "status code 429") ||
-		(strings.Contains(msg, "429")) && strings.Contains(msg, "too many") {
+	// Transient: rate limit.
+	if strings.Contains(msg, "rate limit") || strings.Contains(msg, "status code 429") || (strings.Contains(msg, "429") && strings.Contains(msg, "too many")) {
 		return RetryTransient
 	}
-
-	// RetryWithFallback: provider/server errors that may succeed on a
-	// different model or endpoint. Check these BEFORE generic timeout
-	// to avoid "gateway timeout" being classified as transient.
-	if strings.Contains(msg, "status code 500") ||
-		strings.Contains(msg, "status code 502") ||
-		strings.Contains(msg, "status code 503") ||
-		strings.Contains(msg, "status code 504") ||
-		strings.Contains(msg, "no such host") ||
-		strings.Contains(msg, "connection refused") ||
-		strings.Contains(msg, "connection reset") ||
-		strings.Contains(msg, "network") && strings.Contains(msg, "unreachable") {
+	// Fallback: server/provider errors.
+	if strings.Contains(msg, "status code 500") || strings.Contains(msg, "status code 502") ||
+		strings.Contains(msg, "status code 503") || strings.Contains(msg, "status code 504") ||
+		strings.Contains(msg, "no such host") || strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "connection reset") || (strings.Contains(msg, "network") && strings.Contains(msg, "unreachable")) {
 		return RetryWithFallback
 	}
-
-	// Transient: timeout-like conditions.
-	if strings.Contains(msg, "timeout") ||
-		strings.Contains(msg, "timed out") ||
-		strings.Contains(msg, "i/o timeout") {
+	// Transient: timeouts.
+	if strings.Contains(msg, "timeout") || strings.Contains(msg, "timed out") || strings.Contains(msg, "i/o timeout") {
 		return RetryTransient
 	}
-
-	// RetryWithFallback: model-level errors from the LLM.
-	if strings.Contains(msg, "model error") ||
-		strings.Contains(msg, "overloaded") ||
-		strings.Contains(msg, "service unavailable") {
+	// Fallback: model errors.
+	if strings.Contains(msg, "model error") || strings.Contains(msg, "overloaded") || strings.Contains(msg, "service unavailable") {
 		return RetryWithFallback
 	}
-
-	// Fatal: URL parse / certificate errors from BaseURL misconfig.
-	if strings.Contains(msg, "invalid url") ||
-		strings.Contains(msg, "x509") ||
-		strings.Contains(msg, "certificate") {
+	// Fatal: URL/cert.
+	if strings.Contains(msg, "invalid url") || strings.Contains(msg, "x509") || strings.Contains(msg, "certificate") {
 		return Fatal
 	}
 

@@ -28,10 +28,16 @@ import (
 // An optional note is appended as a user message before the next round-trip,
 // e.g. /continue focus on the auth tests. Returns an error when there is no
 // parked loop, or when the cumulative work ceiling has been hit.
-func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolCompletion, error) {
+func (e *Engine) ResumeAgent(ctx context.Context, note string, onDelta ...func(string)) (nativeToolCompletion, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	var deltaFn func(string)
+	if len(onDelta) > 0 {
+		deltaFn = onDelta[0]
+	}
+
 	seed := e.takeParkedAgent()
 	if seed == nil {
 		return nativeToolCompletion{}, ErrNoParkedAgent
@@ -61,7 +67,7 @@ func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolComple
 		e.saveParkedAgent(seed)
 		e.publishAgentLoopEvent("agent:loop:resume_refused", map[string]any{
 			"reason":            "cumulative_steps_ceiling",
-			"cumulative_steps": seed.CumulativeSteps,
+			"cumulative_steps":  seed.CumulativeSteps,
 			"ceiling":           stepCeiling,
 			"max_steps_per_run": lim.MaxSteps,
 			"multiplier":        mult,
@@ -129,5 +135,5 @@ func (e *Engine) ResumeAgent(ctx context.Context, note string) (nativeToolComple
 	// budget keeps progressing inside the same call instead of forcing
 	// the user to type /continue twice. The cumulative ceiling above
 	// still caps total work.
-	return e.runNativeToolLoopAutonomous(ctx, seed, lim, "resume")
+	return e.runNativeToolLoopAutonomous(ctx, seed, lim, "resume", deltaFn)
 }

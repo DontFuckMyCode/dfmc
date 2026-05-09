@@ -94,17 +94,14 @@ func (m Model) renderFilesListPane(width, height int, pal tabPaletteEntry) strin
 	header := m.filesListHeader(width)
 	lines := []string{
 		header,
-		renderDivider(width - 2),
+		subtleStyle.Render(strings.Repeat("─", width-2)),
 		"",
 	}
 	if len(m.filesView.entries) == 0 {
 		lines = append(lines,
-			warnStyle.Render("No indexed project files yet."),
+			"  "+warnStyle.Render("No indexed files."),
 			"",
-			subtleStyle.Render("Try one of these:"),
-			subtleStyle.Render("  · /analyze in Chat"),
-			subtleStyle.Render("  · press 'r' to refresh"),
-			subtleStyle.Render("  · launch dfmc from the project root"),
+			"  "+subtleStyle.Render("Press 'r' to refresh"),
 		)
 	} else {
 		// Reserve rows for header (3) + footer (3).
@@ -116,15 +113,12 @@ func (m Model) renderFilesListPane(width, height int, pal tabPaletteEntry) strin
 		}
 		// Scroll-position indicator + count.
 		lines = append(lines, "",
-			subtleStyle.Render(fmt.Sprintf("%d / %d files",
+			"  "+subtleStyle.Render(fmt.Sprintf("%d / %d files",
 				m.filesView.index+1, len(m.filesView.entries))))
 		if pinned := strings.TrimSpace(m.filesView.pinned); pinned != "" {
 			lines = append(lines,
-				infoStyle.Render("📌 ")+subtleStyle.Render(truncateForLine(pinned, width-6)))
+				"  "+infoStyle.Render("📌 ")+subtleStyle.Render(truncateForLine(pinned, width-6)))
 		}
-		// Always-visible keyboard contract — same shape the other panels use.
-		lines = append(lines,
-			subtleStyle.Render("j/k scroll · enter/→ action menu · p pin · i insert · e explain · v review · r reload"))
 	}
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 }
@@ -137,7 +131,7 @@ func (m Model) filesListHeader(width int) string {
 		chip = warnStyle
 		chipText = " 0 "
 	}
-	title := titleStyle.Bold(true).Render("▦ FILES")
+	title := titleStyle.Bold(true).Render(" ◎ FILES")
 	chipRendered := chip.Render(chipText)
 	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipRendered)-2, 1)
 	return title + strings.Repeat(" ", gap) + chipRendered
@@ -149,31 +143,48 @@ func (m Model) renderFilesListRow(i, width int, pal tabPaletteEntry) string {
 	selected := i == m.filesView.index
 
 	// Layout per row:
-	//   ▶/space  filename                      ext  pin?
+	//   ▶/space  [icon] filename                      ext  [git] [pin]
 	cursor := "  "
 	if selected {
-		cursor = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render("▶ ")
+		cursor = accentStyle.Bold(true).Render("· ")
 	}
+
+	ext := strings.ToLower(filepath.Ext(path))
+	icon := "📄"
+	if ext == "" {
+		icon = "📁" // Assuming no ext might be a dir or just unknown, but usually files have tags in dfmc
+	}
+	
+	gitMarker := ""
+	// TODO: Integrate real git status per file if available in m.gitInfo
+	
 	pinChip := ""
 	if pinned {
-		pinChip = " " + infoStyle.Render("PIN")
+		pinChip = " " + infoStyle.Render("📌")
 	}
-	ext := strings.ToLower(filepath.Ext(path))
+
 	if ext != "" {
 		ext = strings.TrimPrefix(ext, ".")
 	}
 	extBadge := ""
 	if ext != "" {
-		extBadge = " " + subtleStyle.Render("·"+ext)
+		extBadge = " " + subtleStyle.Render(ext)
 	}
-	// Reserve room for cursor (2) + ext badge + pin chip + 1 padding.
-	chrome := lipgloss.Width(cursor) + lipgloss.Width(extBadge) + lipgloss.Width(pinChip) + 1
+
+	chrome := lipgloss.Width(cursor) + lipgloss.Width(icon) + lipgloss.Width(extBadge) + lipgloss.Width(pinChip) + 2
 	nameWidth := max(width-chrome, 12)
 	name := truncatePathHead(path, nameWidth)
+	
+	row := cursor + icon + " " + name + extBadge + gitMarker + pinChip
 	if selected {
-		name = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render(name)
+		row = lipgloss.NewStyle().
+			Background(colorTabActiveBg).
+			Foreground(colorTitleFg).
+			Bold(true).
+			Width(width).
+			Render(row)
 	}
-	return cursor + name + extBadge + pinChip
+	return row
 }
 
 // truncatePathHead trims long paths from the FRONT (keeping the
@@ -210,31 +221,27 @@ func scrollWindow(cursor, total, rowBudget int) (start, end int) {
 	return start, end
 }
 
-// --- PREVIEW PANE ------------------------------------------------------------
-
 func (m Model) renderFilesPreviewPane(width, height int, pal tabPaletteEntry) string {
 	header := m.filesPreviewHeader(width, pal)
 	lines := []string{
 		header,
-		renderDivider(width - 2),
+		subtleStyle.Render(strings.Repeat("─", width-2)),
 		"",
 	}
 	rowBudget := max(height-6, 6)
 	if strings.TrimSpace(m.filesView.preview) == "" {
-		lines = append(lines, subtleStyle.Render("Select a file with j/k or enter to load preview."))
+		lines = append(lines, "  "+subtleStyle.Render("Select a file to preview"))
 	} else {
-		// Number each visible line so the user can talk about specific
-		// lines ("look at line 42") without counting from zero.
 		previewLines := splitLines(m.filesView.preview)
 		if len(previewLines) > rowBudget {
 			previewLines = previewLines[:rowBudget]
 		}
-		gutter := digitsForCount(len(previewLines))
+		gutter := max(digitsForCount(len(previewLines)), 3)
 		for i, line := range previewLines {
 			ln := fmt.Sprintf("%*d", gutter, i+1)
-			rendered := truncateSingleLine(line, width-gutter-3)
+			rendered := truncateSingleLine(line, width-gutter-5)
 			lines = append(lines,
-				subtleStyle.Render(ln+" │ ")+rendered)
+				subtleStyle.Render(" "+ln+" │ ")+rendered)
 		}
 	}
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))

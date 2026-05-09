@@ -20,11 +20,17 @@ import (
 )
 
 // googlePart is one element of a content's parts array. Exactly one of Text,
-// FunctionCall, or FunctionResponse is populated per part.
+// FunctionCall, FunctionResponse, or InlineData is populated per part.
 type googlePart struct {
 	Text             string                  `json:"text,omitempty"`
 	FunctionCall     *googleFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *googleFunctionResponse `json:"functionResponse,omitempty"`
+	InlineData       *googleInlineData       `json:"inline_data,omitempty"`
+}
+
+type googleInlineData struct {
+	MimeType string `json:"mime_type"`
+	Data     string `json:"data"`
 }
 
 type googleFunctionCall struct {
@@ -79,12 +85,24 @@ func buildGoogleContents(req CompletionRequest) []googleContent {
 			}
 			contents = append(contents, googleContent{Role: "model", Parts: parts})
 		default:
+			parts := make([]googlePart, 0, 1+len(m.Attachments))
 			text := m.Content
 			if role == "user" && !contextInjected && len(req.Context) > 0 {
 				text = renderContextChunks(req.Context) + "\n" + text
 				contextInjected = true
 			}
-			contents = append(contents, googleContent{Role: role, Parts: []googlePart{{Text: text}}})
+			if strings.TrimSpace(text) != "" {
+				parts = append(parts, googlePart{Text: text})
+			}
+			for _, att := range m.Attachments {
+				parts = append(parts, googlePart{
+					InlineData: &googleInlineData{
+						MimeType: att.MimeType,
+						Data:     att.Data,
+					},
+				})
+			}
+			contents = append(contents, googleContent{Role: role, Parts: parts})
 		}
 	}
 	return contents

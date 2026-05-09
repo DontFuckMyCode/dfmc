@@ -78,7 +78,7 @@ func loopRows(info StatsPanelInfo) []string {
 		rows = append(rows, fmt.Sprintf("tool rounds %d", info.ToolRounds))
 	}
 	if tool := strings.TrimSpace(info.LastTool); tool != "" {
-		icon, style := chipIconStyle(info.LastStatus)
+		icon, style := ChipIconStyle(info.LastStatus)
 		line := icon + " " + tool
 		if info.LastDurationMs > 0 {
 			line += fmt.Sprintf(" | %dms", info.LastDurationMs)

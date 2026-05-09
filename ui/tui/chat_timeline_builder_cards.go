@@ -24,15 +24,15 @@ import (
 func toolCallCardLine(toolName string) string {
 	switch strings.ToLower(strings.TrimSpace(toolName)) {
 	case "read_file":
-		return "card: READ | waiting for file slice"
+		return "READING file slice..."
 	case "list_dir":
-		return "card: LIST | waiting for entries"
+		return "LISTING directory entries..."
 	case "glob":
-		return "card: GLOB | waiting for paths"
-	case "grep_codebase", "semantic_search", "ast_query":
-		return "card: SEARCH | waiting for matches"
+		return "SCANNING paths..."
+	case "grep_codebase", "semantic_search", "ast_query", "call_graph":
+		return "SEARCHING for matches..."
 	case "run_command":
-		return "card: RUN | waiting for exit"
+		return "EXECUTING command..."
 	default:
 		return ""
 	}
@@ -41,32 +41,32 @@ func toolCallCardLine(toolName string) string {
 func toolResultCardLine(toolName string, success bool) string {
 	state := "OK"
 	if !success {
-		state = "FAILED"
+		state = "FAIL"
 	}
 	switch strings.ToLower(strings.TrimSpace(toolName)) {
 	case "read_file":
-		return "card: READ " + state + " | output summarized"
+		return "READ " + state
 	case "list_dir":
-		return "card: LIST " + state + " | entries summarized"
+		return "LIST " + state
 	case "glob":
-		return "card: GLOB " + state + " | paths summarized"
-	case "grep_codebase", "semantic_search", "ast_query":
-		return "card: SEARCH " + state + " | matches summarized"
+		return "GLOB " + state
+	case "grep_codebase", "semantic_search", "ast_query", "call_graph":
+		return "SEARCH " + state
 	case "run_command":
-		return "card: RUN " + state + " | output summarized"
+		return "RUN " + state
 	default:
-		return ""
+		return state
 	}
 }
 
 func mutationCallCardLine(toolName string) string {
 	switch strings.ToLower(strings.TrimSpace(toolName)) {
 	case "write_file":
-		return "card: WRITE | content hidden | diff after result"
+		return "WRITING file..."
 	case "edit_file":
-		return "card: EDIT | strings hidden | diff after result"
+		return "EDITING file..."
 	case "apply_patch":
-		return "card: PATCH | hunks hidden | diff after result"
+		return "PATCHING files..."
 	default:
 		return ""
 	}
@@ -75,17 +75,17 @@ func mutationCallCardLine(toolName string) string {
 func mutationResultCardLine(toolName string, success bool) string {
 	state := "OK"
 	if !success {
-		state = "FAILED"
+		state = "FAIL"
 	}
 	switch strings.ToLower(strings.TrimSpace(toolName)) {
 	case "write_file":
-		return "card: WRITE " + state + " | raw content hidden"
+		return "WRITE " + state
 	case "edit_file":
-		return "card: EDIT " + state + " | raw strings hidden"
+		return "EDIT " + state
 	case "apply_patch":
-		return "card: PATCH " + state + " | raw hunks hidden"
+		return "PATCH " + state
 	default:
-		return ""
+		return state
 	}
 }
 

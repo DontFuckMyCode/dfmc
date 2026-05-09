@@ -61,6 +61,7 @@ func panelSwitcherEntries() []panelSwitcherEntry {
 		{Label: "Shortcuts", KeyHint: "Shift+F5 · Alt+H", Activate: "Shortcuts", Hint: "this cheat sheet"},
 		{Label: "Contexts", KeyHint: "Shift+F6", Activate: "Contexts", Hint: "live agents · main · parked · subagents"},
 		{Label: "ProviderLog", KeyHint: "Shift+F7 · Ctrl+L", Activate: "ProviderLog", Hint: "every provider call (model · in/out tokens · preview)"},
+		{Label: "Telegram", KeyHint: "Shift+F8", Activate: "Telegram", Hint: "telegram bot messages · connection status"},
 	}
 }
 

@@ -68,18 +68,18 @@ func formatActivityLine(entry activityEntry, width int, selected bool) string {
 	icon := kindIcon(entry.Kind)
 	count := ""
 	if entry.Count > 1 {
-		count = subtleStyle.Render(fmt.Sprintf(" x%d", entry.Count))
+		count = subtleStyle.Render(fmt.Sprintf(" ×%d", entry.Count))
 	}
 	prefix := "  "
 	if selected {
-		prefix = accentStyle.Render("› ")
+		prefix = accentStyle.Bold(true).Render("· ")
 	}
 	line := prefix + subtleStyle.Render(ts) + " " + icon + " " + entry.Text + count
 	line = truncateSingleLine(line, width)
 	if selected {
 		line = lipgloss.NewStyle().
 			Foreground(colorTitleFg).
-			Background(colorAccent).
+			Background(colorTabActiveBg).
 			Bold(true).
 			Render(line)
 	}

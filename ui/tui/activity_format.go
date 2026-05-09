@@ -162,19 +162,19 @@ func payloadIntAny(data map[string]any, fallback int, keys ...string) int {
 func kindIcon(kind activityKind) string {
 	switch kind {
 	case activityKindError:
-		return warnStyle.Render("!")
+		return failStyle.Render("×")
 	case activityKindTool:
-		return accentStyle.Render("*")
+		return accentStyle.Render("·")
 	case activityKindAgent:
-		return accentStyle.Render("@")
+		return accentStyle.Render("◈")
 	case activityKindStream:
-		return infoStyle.Render(">")
+		return infoStyle.Render("»")
 	case activityKindCtx:
-		return infoStyle.Render("#")
+		return infoStyle.Render("▢")
 	case activityKindIndex:
-		return subtleStyle.Render("=")
+		return subtleStyle.Render("▤")
 	default:
-		return subtleStyle.Render(".")
+		return subtleStyle.Render("·")
 	}
 }
 

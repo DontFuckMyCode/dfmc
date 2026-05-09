@@ -40,6 +40,14 @@ const (
 	codemapViewHotspots = "hotspots"
 	codemapViewOrphans  = "orphans"
 	codemapViewCycles   = "cycles"
+	codemapViewCallers  = "callers"
+	codemapViewCallees  = "callees"
+	codemapViewVisual   = "visual"
+
+	// codemapCallEdgeLimit caps how many `calls` edges the snapshot
+	// retains. Render passes still scroll, but unbounded edge lists
+	// would slow the loader on huge codebases without adding new info.
+	codemapCallEdgeLimit = 512
 )
 
 // codemapSnapshot is the data the panel actually renders. Holding a
@@ -53,6 +61,9 @@ type codemapSnapshot struct {
 	Hotspots  []codemap.Node
 	Orphans   []codemap.Node
 	Cycles    [][]string
+	CallEdges []codemap.Edge
+	AllNodes  map[string]codemap.Node
+	AllEdges  []codemap.Edge
 }
 
 type codemapLoadedMsg struct {
@@ -103,6 +114,23 @@ func loadCodemapCmd(eng *engine.Engine) tea.Cmd {
 			}
 		}
 
+		allNodes := make(map[string]codemap.Node)
+		for _, n := range nodes {
+			allNodes[n.ID] = n
+		}
+
+		allEdges := g.Edges()
+		callEdges := make([]codemap.Edge, 0, codemapCallEdgeLimit)
+		for _, e := range allEdges {
+			if e.Type != "calls" {
+				continue
+			}
+			callEdges = append(callEdges, e)
+			if len(callEdges) >= codemapCallEdgeLimit {
+				break
+			}
+		}
+
 		return codemapLoadedMsg{snap: codemapSnapshot{
 			Nodes:     counts.Nodes,
 			Edges:     counts.Edges,
@@ -111,11 +139,14 @@ func loadCodemapCmd(eng *engine.Engine) tea.Cmd {
 			Hotspots:  hotspots,
 			Orphans:   orphans,
 			Cycles:    cycles,
+			CallEdges: callEdges,
+			AllNodes:  allNodes,
+			AllEdges:  allEdges,
 		}}
 	}
 }
 
-// nextCodemapView cycles overview → hotspots → orphans → cycles → overview.
+// nextCodemapView cycles overview → hotspots → orphans → cycles → callers → callees → visual → overview.
 func nextCodemapView(current string) string {
 	switch current {
 	case codemapViewOverview:
@@ -124,6 +155,12 @@ func nextCodemapView(current string) string {
 		return codemapViewOrphans
 	case codemapViewOrphans:
 		return codemapViewCycles
+	case codemapViewCycles:
+		return codemapViewCallers
+	case codemapViewCallers:
+		return codemapViewCallees
+	case codemapViewCallees:
+		return codemapViewVisual
 	default:
 		return codemapViewOverview
 	}
@@ -165,11 +202,44 @@ func (m Model) handleCodemapKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
 		return nm, cmd
 	}
+
+	// Total for scroll clamping depends on active view.
+	total := codemapViewRowCount(m.codemap.view, m.codemap.snap)
+	
+	if m.codemap.view == codemapViewVisual {
+		switch msg.String() {
+		case "j", "down":
+			m.codemap.visualCursor++
+			if m.codemap.visualCursor >= total {
+				m.codemap.visualCursor = total - 1
+			}
+			return m, nil
+		case "k", "up":
+			m.codemap.visualCursor--
+			if m.codemap.visualCursor < 0 {
+				m.codemap.visualCursor = 0
+			}
+			return m, nil
+		case "enter", "right", "l":
+			// Expand/collapse logic needs to know which node is under the cursor
+			// We can find this by re-walking the tree briefly
+			nodeID := m.findVisualNodeAtCursor()
+			if nodeID != "" {
+				m.codemap.visualExpanded[nodeID] = !m.codemap.visualExpanded[nodeID]
+			}
+			return m, nil
+		case "left", "h":
+			nodeID := m.findVisualNodeAtCursor()
+			if nodeID != "" {
+				m.codemap.visualExpanded[nodeID] = false
+			}
+			return m, nil
+		}
+	}
+
 	if s := msg.String(); s == "enter" || s == "right" || s == "l" {
 		return m.openCodemapActionMenu(), nil
 	}
-	// Total for scroll clamping depends on active view.
-	total := codemapViewRowCount(m.codemap.view, m.codemap.snap)
 	step := 1
 	pageStep := 10
 	switch msg.String() {
@@ -212,6 +282,61 @@ func (m Model) handleCodemapKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) findVisualNodeAtCursor() string {
+	snap := m.codemap.snap
+	if len(snap.Hotspots) == 0 {
+		return ""
+	}
+
+	lineIdx := 0
+	var foundID string
+	seen := make(map[string]bool)
+	
+	var walk func(nodeID string, depth int) bool
+	walk = func(nodeID string, depth int) bool {
+		if depth > 8 || seen[nodeID] {
+			return false
+		}
+		seen[nodeID] = true
+		defer delete(seen, nodeID)
+
+		if lineIdx == m.codemap.visualCursor {
+			foundID = nodeID
+			return true
+		}
+		lineIdx++
+
+		if m.codemap.visualExpanded[nodeID] {
+			var callees []string
+			for _, e := range snap.AllEdges {
+				if e.From == nodeID && e.Type == "calls" {
+					callees = append(callees, e.To)
+				}
+			}
+			sort.Strings(callees)
+			for _, calleeID := range callees {
+				if walk(calleeID, depth+1) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	for i := 0; i < 10 && i < len(snap.Hotspots); i++ {
+		h := snap.Hotspots[i]
+		if h.Kind != "function" && h.Kind != "method" {
+			continue
+		}
+		if walk(h.ID, 0) {
+			break
+		}
+		lineIdx++ // Spacer row
+	}
+
+	return foundID
+}
+
 func codemapViewRowCount(view string, snap codemapSnapshot) int {
 	switch view {
 	case codemapViewHotspots:
@@ -220,6 +345,10 @@ func codemapViewRowCount(view string, snap codemapSnapshot) int {
 		return len(snap.Orphans)
 	case codemapViewCycles:
 		return len(snap.Cycles)
+	case codemapViewCallers, codemapViewCallees:
+		return len(snap.CallEdges)
+	case codemapViewVisual:
+		return 1000 // Arbitrary high limit for tree rendering
 	default:
 		// Overview is fixed-length-ish; scrolling through it isn't useful.
 		return 0

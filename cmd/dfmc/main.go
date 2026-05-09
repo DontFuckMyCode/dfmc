@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
 
+	"github.com/dontfuckmycode/dfmc/internal/bot"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/hooks"
@@ -34,6 +36,34 @@ func extractDataDir(args []string) string {
 	return ""
 }
 
+// extractTelegramToken scans args for --telegram-token before flag parsing.
+func extractTelegramToken(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--telegram-token" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(arg, "--telegram-token=") {
+			return strings.TrimPrefix(arg, "--telegram-token=")
+		}
+	}
+	return ""
+}
+
+// extractSessionName returns the --session-name value.
+func extractSessionName(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--session-name" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(arg, "--session-name=") {
+			return strings.TrimPrefix(arg, "--session-name=")
+		}
+	}
+	return ""
+}
+
 var version = "dev"
 
 func main() {
@@ -51,6 +81,8 @@ func run() int {
 	defer cancel()
 
 	dataDir := extractDataDir(os.Args[1:])
+	telegramToken := extractTelegramToken(os.Args[1:])
+	sessionName := extractSessionName(os.Args[1:])
 	loadOpts := config.LoadOptions{}
 	if dataDir != "" {
 		loadOpts.DataDirPath = dataDir
@@ -60,6 +92,24 @@ func run() int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		return 1
+	}
+
+	if telegramToken != "" {
+		cfg.Telegram.Token = telegramToken
+	}
+	if sessionName != "" {
+		cfg.Telegram.SessionName = sessionName
+	}
+
+	// Initialize Telegram bot if token is configured
+	var tgBot *bot.TelegramBot
+	if cfg.Telegram.Enabled && cfg.Telegram.Token != "" {
+		tgBot, err = bot.New(cfg.Telegram.Token)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "telegram init error: %v\n", err)
+			return 1
+		}
+		log.Printf("[telegram] bot started (session: %s)", cfg.Telegram.SessionName)
 	}
 
 	// VULN-036: warn if config files are group/world-writable — a hostile
@@ -97,15 +147,37 @@ func run() int {
 		}
 	}
 
-	eng, err := engine.New(cfg)
+	eng, err := engine.NewWithVersion(cfg, version)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "engine error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "engine init error: %v\n", err)
 		return 1
 	}
+
 	// Cover every exit path including init-failure-with-degraded-allow
 	// and panic-out-of-cli.Run. Engine.Shutdown is safe to call after
 	// a partial Init (it no-ops on subsystems that never started).
 	defer func() { _ = eng.Shutdown() }()
+
+	// Wire Telegram bot into engine if enabled
+	var tgStopFunc func()
+	if tgBot != nil {
+		eng.SetTelegramBot(tgBot, cfg.Telegram.SessionName, cfg.Telegram.AllowedUsers)
+		// Forward Telegram messages to the engine's agent loop
+		tgBot.SetMessageHandler(func(userID int64, text string) {
+			// TODO: route to engine ask/prompt interface
+			log.Printf("[telegram] user=%d msg: %s", userID, text)
+		})
+		go tgBot.Start()
+		tgStopFunc = func() { tgBot.Stop() }
+	}
+
+	defer func() {
+		_ = eng.Shutdown()
+		cancel()
+		if tgStopFunc != nil {
+			tgStopFunc()
+		}
+	}()
 
 	if err := eng.Init(ctx); err != nil {
 		if !allowsDegradedStartup(os.Args[1:]) {

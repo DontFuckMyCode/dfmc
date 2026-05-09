@@ -93,6 +93,9 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 		usage := Usage{}
 		usageSet := false
 		stopReason := StopUnknown
+		var toolCalls []ToolCall
+		var currentToolCall *ToolCall
+		var currentInput strings.Builder
 
 		emitStart := func() {
 			if startAnnounced {
@@ -125,11 +128,18 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 
 			var evt struct {
 				Type  string `json:"type"`
+				Index int    `json:"index"`
 				Delta struct {
-					Type       string `json:"type"`
-					Text       string `json:"text"`
-					StopReason string `json:"stop_reason"`
+					Type         string `json:"type"`
+					Text         string `json:"text"`
+					PartialJSON  string `json:"partial_json"`
+					StopReason   string `json:"stop_reason"`
 				} `json:"delta"`
+				ContentBlock struct {
+					Type string `json:"type"`
+					ID   string `json:"id"`
+					Name string `json:"name"`
+				} `json:"content_block"`
 				Message struct {
 					Model string `json:"model"`
 					Usage struct {
@@ -162,15 +172,31 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 					usageSet = true
 				}
 				emitStart()
+			case "content_block_start":
+				if evt.ContentBlock.Type == "tool_use" {
+					currentToolCall = &ToolCall{
+						ID:   evt.ContentBlock.ID,
+						Name: evt.ContentBlock.Name,
+					}
+					currentInput.Reset()
+				}
 			case "content_block_delta":
-				emitStart()
-				if evt.Delta.Text != "" {
+				if evt.Delta.Type == "text_delta" && evt.Delta.Text != "" {
+					emitStart()
 					select {
 					case <-ctx.Done():
 						ch <- StreamEvent{Type: StreamError, Err: ctx.Err()}
 						return
 					case ch <- StreamEvent{Type: StreamDelta, Delta: evt.Delta.Text}:
 					}
+				} else if evt.Delta.Type == "input_json_delta" && evt.Delta.PartialJSON != "" {
+					currentInput.WriteString(evt.Delta.PartialJSON)
+				}
+			case "content_block_stop":
+				if currentToolCall != nil {
+					_ = json.Unmarshal([]byte(currentInput.String()), &currentToolCall.Input)
+					toolCalls = append(toolCalls, *currentToolCall)
+					currentToolCall = nil
 				}
 			case "message_delta":
 				if strings.TrimSpace(evt.Delta.StopReason) != "" {
@@ -182,7 +208,13 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 				}
 			case "message_stop":
 				emitStart()
-				done := StreamEvent{Type: StreamDone, Provider: "anthropic", Model: resolvedModel, StopReason: stopReason}
+				done := StreamEvent{
+					Type:       StreamDone,
+					Provider:   "anthropic",
+					Model:      resolvedModel,
+					StopReason: stopReason,
+					ToolCalls:  toolCalls,
+				}
 				if usageSet {
 					u := usage
 					u.TotalTokens = u.InputTokens + u.OutputTokens
@@ -204,7 +236,13 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 			return
 		}
 		emitStart()
-		done := StreamEvent{Type: StreamDone, Provider: "anthropic", Model: resolvedModel, StopReason: stopReason}
+		done := StreamEvent{
+			Type:       StreamDone,
+			Provider:   "anthropic",
+			Model:      resolvedModel,
+			StopReason: stopReason,
+			ToolCalls:  toolCalls,
+		}
 		if usageSet {
 			u := usage
 			u.TotalTokens = u.InputTokens + u.OutputTokens

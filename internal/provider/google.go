@@ -181,9 +181,63 @@ func (p *GoogleProvider) statusError(code int, raw []byte) error {
 }
 
 func (p *GoogleProvider) CountTokens(text string) int {
-	// Gemini doesn't expose a cheap local tokenizer; fields-based estimate
-	// matches what other providers use for their fallback path.
+	if strings.TrimSpace(text) == "" {
+		return 0
+	}
+	// Fallback to heuristic if we can't make a network call (CountTokens
+	// interface doesn't take context, which is a design limitation of the
+	// process-wide token budgeter).
+	// TODO: Update Provider interface to allow context-aware counting.
 	return len(strings.Fields(text))
+}
+
+// PreciseCountTokens is a Google-specific extension that uses the API.
+func (p *GoogleProvider) PreciseCountTokens(ctx context.Context, model, text string) (int, error) {
+	if strings.TrimSpace(text) == "" {
+		return 0, nil
+	}
+	m := nonEmpty(model, p.model)
+	endpoint := fmt.Sprintf("%s/models/%s:countTokens", p.baseURL, m)
+	
+	payload := map[string]any{
+		"contents": []map[string]any{
+			{
+				"parts": []map[string]any{
+					{"text": text},
+				},
+			},
+		},
+	}
+	
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(buf))
+	if err != nil {
+		return 0, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-goog-api-key", p.apiKey)
+
+	resp, err := p.httpClient.Do(httpReq)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 400 {
+		return 0, fmt.Errorf("google countTokens status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		TotalTokens int `json:"totalTokens"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	return result.TotalTokens, nil
 }
 
 func (p *GoogleProvider) MaxContext() int {

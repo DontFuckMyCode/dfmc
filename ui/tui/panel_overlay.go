@@ -63,6 +63,10 @@ func (m Model) renderPanelOverlayBody(kind string, contentWidth, innerHeight int
 		// provider:complete event today. Scroll grammar matches
 		// orchestrate/shortcuts (j/k/pgup/pgdn/g/G).
 		body, _ = fitPanelContentScrollable(m.renderProviderLogView(contentWidth), bodyHeight, m.providerLog.scroll)
+	case "telegram":
+		// Telegram bot messages — shows connection status and incoming/outgoing messages.
+		// Requires `go build -tags telegram_bot_wip` and --telegram-token flag.
+		body = fitPanelContentHeight(m.renderTelegramPanel(), bodyHeight)
 	default:
 		body = subtleStyle.Render("(unknown overlay: " + kind + ")")
 	}

@@ -64,7 +64,7 @@ func (e *Engine) shouldUseNativeToolLoop() bool {
 	return p.Hints().SupportsTools
 }
 
-func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativeToolCompletion, error) {
+func (e *Engine) askWithNativeTools(ctx context.Context, question string, onDelta ...func(string)) (nativeToolCompletion, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -93,6 +93,11 @@ func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativ
 		}
 	}
 
+	var deltaFn func(string)
+	if len(onDelta) > 0 {
+		deltaFn = onDelta[0]
+	}
+
 	seed := &parkedAgentState{
 		Question:      question,
 		Messages:      e.buildToolLoopRequestMessages(question, chunks, systemPrompt, kickoffTail),
@@ -119,7 +124,7 @@ func (e *Engine) askWithNativeTools(ctx context.Context, question string) (nativ
 		"context_tokens":  contextTokens,
 		"meta_tools":      metaToolNames(descriptors),
 	})
-	return e.runNativeToolLoopAutonomous(ctx, seed, lim, "ask")
+	return e.runNativeToolLoopAutonomous(ctx, seed, lim, "ask", deltaFn)
 }
 
 // initialSynthesisFlag computes the starting value of the

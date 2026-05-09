@@ -129,9 +129,32 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 	} else if info.Boosted {
 		footerRows = []string{"alt+a/s/d/f/p again locks", "ctrl+s hide | ctrl+h | " + statsPanelModeActionHint(mode)}
 	}
-	b.footer(footerRows, height)
+	b.footer(footerRows, height, info.StatsPanelScroll)
 
 	body := strings.Join(b.lines, "\n")
+
+	// Show scroll indicator when content overflows the panel height.
+	if info.StatsPanelScroll > 0 || len(b.lines) > height {
+		totalContent := len(b.lines)
+		visible := height - len(footerRows) - 1 // exclude divider + footer rows
+		if visible < 1 {
+			visible = 1
+		}
+		scrollMax := totalContent - visible
+		if scrollMax < 0 {
+			scrollMax = 0
+		}
+		if info.StatsPanelScroll > 0 || scrollMax > 0 {
+			pct := 0
+			if scrollMax > 0 {
+				pct = int(float64(info.StatsPanelScroll) / float64(scrollMax) * 100)
+				if pct > 100 {
+					pct = 100
+				}
+			}
+			body += "\n" + AccentStyle.Faint(true).Render(fmt.Sprintf(" ▲ %d%% ", pct))
+		}
+	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorPanelBorder).
@@ -159,7 +182,7 @@ func (b *statsPanelBuilder) section(title string, rows []string) {
 	}
 }
 
-func (b *statsPanelBuilder) footer(rows []string, height int) {
+func (b *statsPanelBuilder) footer(rows []string, height int, scroll int) {
 	footer := make([]string, 0, len(rows))
 	for _, row := range rows {
 		row = strings.TrimSpace(row)
@@ -183,6 +206,30 @@ func (b *statsPanelBuilder) footer(rows []string, height int) {
 	}
 	for len(b.lines) < height {
 		b.lines = append(b.lines, "")
+	}
+	// Apply scroll offset: drop lines from the top of body content
+	// (above the footer). The visible window excludes the footer rows.
+	if scroll > 0 && len(b.lines) > height {
+		// body lines = total - footer rows - divider
+		footerRowCount := len(footer) + 1 // footer lines + their divider
+		bodyEnd := len(b.lines) - footerRowCount
+		if bodyEnd < 0 {
+			bodyEnd = 0
+		}
+		start := scroll
+		if start > bodyEnd {
+			start = bodyEnd
+		}
+		// Reconstruct: header portion + scrolled body portion + footer
+		headerEnd := 2 // mode-tabs line + optional focus line
+		if start < headerEnd {
+			start = headerEnd
+		}
+		visibleBody := b.lines[start:bodyEnd]
+		remainder := b.lines[bodyEnd:]
+		b.lines = append(b.lines[:0], b.lines[:headerEnd]...)
+		b.lines = append(b.lines, visibleBody...)
+		b.lines = append(b.lines, remainder...)
 	}
 }
 

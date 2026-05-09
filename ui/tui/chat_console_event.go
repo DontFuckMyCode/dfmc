@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
 )
 
 func renderTimelineEventMessage(item chatLine, header string, width int) []string {
@@ -35,32 +36,63 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 	}
 	badge := timelineEventBadgeForItem(item)
 	headerLine := badge
-	if item.Role.Eq(chatRoleTool) && len(item.EventLines) > 0 {
-		if pill := timelineToolStatusPill(item.EventLines[0]); pill != "" {
-			headerLine += " " + pill
-		}
-	}
+	
 	if strings.TrimSpace(header) != "" {
 		headerLine += "  " + subtleStyle.Render(header)
 	}
 
-	// "+Ns" elapsed marker for running tools — kept on the header line
-	// because it's part of the event identity, not body content.
 	if strings.HasPrefix(strings.ToLower(content), "running:") {
 		if elapsed := elapsedLabel(item.Timestamp); elapsed != "" {
-			headerLine += "  " + ToolStyle.Render(" "+elapsed+" ")
+			headerLine += "  " + ToolStyle.Render(elapsed)
 		}
 	}
 
 	const bodyIndent = "  "
 	limit := max(width-len(bodyIndent), 18)
-	rows := wrapTimelineEventContent(content, limit)
-	if len(rows) == 0 {
+	
+	// Filter and wrap content rows
+	allRows := strings.Split(content, "\n")
+	filteredRows := make([]string, 0, len(allRows))
+	for _, row := range allRows {
+		row = strings.TrimSpace(row)
+		if row == "" {
+			continue
+		}
+		lower := strings.ToLower(row)
+		// Hide boilerplate rows
+		if strings.HasPrefix(lower, "state:") || strings.HasPrefix(lower, "card:") || strings.Contains(lower, "summarized") {
+			continue
+		}
+		
+		// Clean up labels
+		row = strings.Replace(row, "target: ", "· ", 1)
+		row = strings.Replace(row, "returned: ", "» ", 1)
+		row = strings.Replace(row, "result: ", "» ", 1)
+		row = strings.Replace(row, "command: ", "$ ", 1)
+		row = strings.Replace(row, "error: ", "× ", 1)
+		row = strings.Replace(row, "_reason: ", "💭 ", 1)
+		row = strings.Replace(row, "reason: ", "💭 ", 1)
+
+		wrapped := wrapBubbleLine(row, limit)
+		for _, r := range wrapped {
+			filteredRows = append(filteredRows, truncateSingleLine(r, limit))
+			if len(filteredRows) >= 6 { // Tighter cap
+				break
+			}
+		}
+		if len(filteredRows) >= 6 {
+			filteredRows = appendTimelineOverflowMarker(filteredRows, limit)
+			break
+		}
+	}
+
+	if len(filteredRows) == 0 {
 		return []string{headerLine}
 	}
-	out := make([]string, 0, len(rows)+1)
+	
+	out := make([]string, 0, len(filteredRows)+1)
 	out = append(out, headerLine)
-	for _, row := range rows {
+	for _, row := range filteredRows {
 		out = append(out, subtleStyle.Render(bodyIndent)+timelineEventRowStyle(row, content).Render(row))
 	}
 	return out
@@ -115,59 +147,34 @@ func timelineToolEventBadge(ev chatEventLine) string {
 	if name == "" {
 		name = strings.ToLower(strings.TrimSpace(ev.Title))
 	}
-	label := "TOOL"
-	style := ToolLineStyle
+	
+	icon, style := theme.ChipIconStyle(ev.Status)
+	label := strings.ToUpper(name)
+	
 	switch name {
 	case "read_file", "list_dir", "glob":
-		label = "TOOL READ"
-		style = infoStyle.Background(colorPanelBg).Bold(true)
-	case "grep_codebase", "semantic_search", "ast_query":
-		label = "TOOL SEARCH"
-		style = accentStyle.Background(colorPanelBg).Bold(true)
+		label = "READ"
+	case "grep_codebase", "semantic_search", "ast_query", "call_graph":
+		label = "SEARCH"
 	case "run_command":
-		label = "TOOL RUN"
-		style = ToolStyle.Background(colorPanelBg).Bold(true)
-	case "write_file":
-		label = "TOOL WRITE"
-		style = warnStyle.Background(colorPanelBg).Bold(true)
-	case "edit_file":
-		label = "TOOL EDIT"
-		style = warnStyle.Background(colorPanelBg).Bold(true)
-	case "apply_patch":
-		label = "TOOL PATCH"
-		style = okStyle.Background(colorPanelBg).Bold(true)
+		label = "RUN"
+	case "write_file", "edit_file", "apply_patch":
+		label = "EDIT"
 	case "tool_batch_call":
-		label = "TOOL BATCH"
-		style = accentStyle.Background(colorPanelBg).Bold(true)
+		label = "BATCH"
 	}
-	if strings.EqualFold(ev.Status, "failed") || strings.EqualFold(ev.Status, "error") {
-		style = failStyle.Background(colorPanelBg).Bold(true)
-	}
-	return style.Render(" " + label + " ")
-}
-
-func timelineToolStatusPill(ev chatEventLine) string {
-	status := strings.ToLower(strings.TrimSpace(ev.Status))
-	label := "INFO"
-	style := subtleStyle.Background(colorPanelBg).Bold(true)
-	switch status {
-	case "running":
-		label = "CALL"
-		style = infoStyle.Background(colorPanelBg).Bold(true)
-	case "ok", "done":
-		label = "DONE"
-		style = okStyle.Background(colorPanelBg).Bold(true)
-	case "failed", "error":
-		label = "FAIL"
-		style = failStyle.Background(colorPanelBg).Bold(true)
-	case "warn", "throttle":
-		label = "WARN"
-		style = warnStyle.Background(colorPanelBg).Bold(true)
-	}
+	
 	if ev.Step > 0 {
 		label += fmt.Sprintf(" #%d", ev.Step)
 	}
-	return style.Render(" " + label + " ")
+
+	return style.Render(icon + " " + label)
+}
+
+func timelineToolStatusPill(ev chatEventLine) string {
+	// Redundant now that badge has icon+status-color, returning empty
+	// to clear space on the header line.
+	return ""
 }
 
 func timelineEventStyle(content string) lipgloss.Style {
@@ -187,30 +194,20 @@ func timelineEventStyle(content string) lipgloss.Style {
 func timelineEventRowStyle(row, content string) lipgloss.Style {
 	trimmed := strings.ToLower(strings.TrimSpace(row))
 	switch {
-	case strings.HasPrefix(trimmed, "state:"):
-		return infoStyle
-	case strings.HasPrefix(trimmed, "_reason:"):
+	case strings.HasPrefix(trimmed, "state:"), strings.HasPrefix(trimmed, "card:"):
 		return subtleStyle
-	case strings.HasPrefix(trimmed, "target:"), strings.HasPrefix(trimmed, "range:"), strings.HasPrefix(trimmed, "command:"), strings.HasPrefix(trimmed, "cwd:"), strings.HasPrefix(trimmed, "files:"):
+	case strings.HasPrefix(trimmed, "💭"):
+		return accentStyle.Italic(true)
+	case strings.HasPrefix(trimmed, "· "), strings.HasPrefix(trimmed, "$ "):
 		return infoStyle
-	case strings.HasPrefix(trimmed, "diff:"), strings.HasPrefix(trimmed, "impact:"), strings.HasPrefix(trimmed, "review:"), strings.HasPrefix(trimmed, "next:"), strings.HasPrefix(trimmed, "verify:"):
-		return accentStyle
-	case strings.HasPrefix(trimmed, "card:"):
-		return ToolStyle
-	case strings.HasPrefix(trimmed, "output:"), strings.HasPrefix(trimmed, "returned:"), strings.HasPrefix(trimmed, "summary:"), strings.HasPrefix(trimmed, "outcome:"):
+	case strings.HasPrefix(trimmed, "diff:"), strings.HasPrefix(trimmed, "impact:"), strings.HasPrefix(trimmed, "outcome:"), strings.HasPrefix(trimmed, "» "):
 		return okStyle
-	case strings.HasPrefix(trimmed, "error:"):
+	case strings.HasPrefix(trimmed, "× "):
 		return failStyle
-	case strings.HasPrefix(trimmed, "mode:"), strings.HasPrefix(trimmed, "payload:"):
-		return ToolStyle
-	case strings.HasPrefix(trimmed, "input:"), strings.HasPrefix(trimmed, "params:"):
-		return ToolStyle
-	case strings.HasPrefix(trimmed, "calls:"):
-		return subtleStyle
-	case strings.HasPrefix(row, "  "):
+	case strings.HasPrefix(trimmed, "input:"), strings.HasPrefix(trimmed, "params:"), strings.HasPrefix(trimmed, "payload:"):
 		return subtleStyle
 	default:
-		return timelineEventStyle(content)
+		return subtleStyle
 	}
 }
 

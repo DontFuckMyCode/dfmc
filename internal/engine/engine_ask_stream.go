@@ -59,11 +59,30 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 	// Clarify short-circuits to streaming the follow-up question text.
 	decision := e.routeIntent(ctx, question)
 	if decision.Intent == "resume" && e.HasParkedAgent() {
-		completion, err := e.ResumeAgent(ctx, question)
-		if err != nil {
-			return nil, err
-		}
-		return streamAnswerText(ctx, completion.Answer), nil
+		out := make(chan provider.StreamEvent, 32)
+		go func() {
+			defer close(out)
+			onDelta := func(delta string) {
+				select {
+				case out <- provider.StreamEvent{Type: provider.StreamDelta, Delta: delta}:
+				case <-ctx.Done():
+				}
+			}
+			completion, err := e.ResumeAgent(ctx, question, onDelta)
+			if err != nil {
+				select {
+				case out <- provider.StreamEvent{Type: provider.StreamError, Err: err}:
+				case <-ctx.Done():
+				}
+				return
+			}
+			select {
+			case out <- provider.StreamEvent{Type: provider.StreamDone, StopReason: provider.StopEnd}:
+			case <-ctx.Done():
+			}
+			_ = completion
+		}()
+		return out, nil
 	}
 	if decision.Intent == "clarify" && decision.FollowUpQuestion != "" {
 		e.recordInteraction(question, decision.FollowUpQuestion, "intent-layer", "clarify", 0, nil)
@@ -76,11 +95,31 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 
 	e.maybeAutoHandoff(prompt)
 	if e.shouldUseNativeToolLoop() {
-		completion, err := e.askWithNativeToolsAutoContinue(ctx, prompt)
-		if err != nil {
-			return nil, err
-		}
-		return streamAnswerText(ctx, completion.Answer), nil
+		out := make(chan provider.StreamEvent, 32)
+		go func() {
+			defer close(out)
+			onDelta := func(delta string) {
+				select {
+				case out <- provider.StreamEvent{Type: provider.StreamDelta, Delta: delta}:
+				case <-ctx.Done():
+				}
+			}
+			completion, err := e.askWithNativeToolsAutoContinue(ctx, prompt, onDelta)
+			if err != nil {
+				select {
+				case out <- provider.StreamEvent{Type: provider.StreamError, Err: err}:
+				case <-ctx.Done():
+				}
+				return
+			}
+			select {
+			case out <- provider.StreamEvent{Type: provider.StreamDone, StopReason: provider.StopEnd}:
+			case <-ctx.Done():
+			}
+			// recordInteraction is already handled inside the agent loop
+			_ = completion
+		}()
+		return out, nil
 	}
 	e.ensureIndexed(ctx)
 

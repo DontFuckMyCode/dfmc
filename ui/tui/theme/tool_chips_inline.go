@@ -32,12 +32,38 @@ func RenderInlineToolChips(chips []ToolChip, width int) string {
 	if inner < 16 {
 		inner = 16
 	}
+	
+	// Batch Grouping Logic: collapse identical consecutive tools
+	type batch struct {
+		chip  ToolChip
+		count int
+	}
+	batches := []batch{}
+	for _, c := range chips {
+		if len(batches) > 0 && batches[len(batches)-1].chip.Name == c.Name && batches[len(batches)-1].chip.Status == c.Status && !c.Expanded {
+			batches[len(batches)-1].count++
+			batches[len(batches)-1].chip.DurationMs += c.DurationMs
+			batches[len(batches)-1].chip.OutputTokens += c.OutputTokens
+		} else {
+			batches = append(batches, batch{chip: c, count: 1})
+		}
+	}
+
 	var b strings.Builder
-	for i, chip := range chips {
+	for i, bt := range batches {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		for j, line := range strings.Split(RenderToolChip(chip, inner), "\n") {
+		
+		rendered := RenderToolChip(bt.chip, inner)
+		if bt.count > 1 {
+			// Add batch multiplier to the first line
+			lines := strings.Split(rendered, "\n")
+			lines[0] += SubtleStyle.Render(fmt.Sprintf(" ×%d", bt.count))
+			rendered = strings.Join(lines, "\n")
+		}
+
+		for j, line := range strings.Split(rendered, "\n") {
 			if j > 0 {
 				b.WriteByte('\n')
 			}

@@ -69,7 +69,7 @@ func (m Model) renderCodemapView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	body := renderCodemapBody(view, snap, m.codemap.scroll, width-2)
+	body := m.renderCodemapBody(view, snap, m.codemap.scroll, width-2)
 	lines = append(lines, body...)
 	summaryParts := []string{
 		accentStyle.Render(fmt.Sprintf("%d nodes", snap.Nodes)),
@@ -108,7 +108,7 @@ func (m Model) codemapTopBanner(width int, view string) string {
 // renderCodemapBody returns the view-specific rows. It's split out from
 // renderCodemapView so the scroll offset is applied uniformly and the
 // test suite can exercise one view in isolation.
-func renderCodemapBody(view string, snap codemapSnapshot, scroll, width int) []string {
+func (m Model) renderCodemapBody(view string, snap codemapSnapshot, scroll, width int) []string {
 	switch view {
 	case codemapViewHotspots:
 		rows := make([]string, 0, len(snap.Hotspots))
@@ -129,9 +129,148 @@ func renderCodemapBody(view string, snap codemapSnapshot, scroll, width int) []s
 			rows = append(rows, truncateSingleLine(label, width))
 		}
 		return applyScroll(rows, scroll)
+	case codemapViewCallers:
+		rows := make([]string, 0, len(snap.CallEdges))
+		for _, e := range snap.CallEdges {
+			label := fmt.Sprintf("◀ %s", formatEdgeLabel(e, true))
+			rows = append(rows, truncateSingleLine(label, width))
+		}
+		sort.Strings(rows)
+		return applyScroll(rows, scroll)
+	case codemapViewCallees:
+		rows := make([]string, 0, len(snap.CallEdges))
+		for _, e := range snap.CallEdges {
+			label := fmt.Sprintf("▶ %s", formatEdgeLabel(e, false))
+			rows = append(rows, truncateSingleLine(label, width))
+		}
+		sort.Strings(rows)
+		return applyScroll(rows, scroll)
+	case codemapViewVisual:
+		return m.renderVisualCallGraph(snap, scroll, width)
 	default:
 		return renderCodemapOverview(snap, width)
 	}
+}
+
+func (m Model) renderVisualCallGraph(snap codemapSnapshot, scroll, width int) []string {
+	if len(snap.Hotspots) == 0 {
+		return []string{subtleStyle.Render("  No hotspots to start from.")}
+	}
+
+	var rows []string
+	seen := make(map[string]bool)
+	
+	// Track current line to handle cursor highlighting
+	lineIdx := 0
+	
+	// Start from the top 10 hotspots for a rich entry point
+	for i := 0; i < 10 && i < len(snap.Hotspots); i++ {
+		h := snap.Hotspots[i]
+		if h.Kind != "function" && h.Kind != "method" {
+			continue
+		}
+		
+		rows = m.walkVisualTree(rows, &lineIdx, snap, h.ID, "", true, 0, seen)
+		rows = append(rows, "") // Spacer between roots
+		lineIdx++
+	}
+	
+	if len(rows) == 0 {
+		return []string{subtleStyle.Render("  No function hotspots found.")}
+	}
+
+	return applyScroll(rows, scroll)
+}
+
+func (m Model) walkVisualTree(rows []string, lineIdx *int, snap codemapSnapshot, nodeID string, indent string, isLast bool, depth int, seen map[string]bool) []string {
+	if depth > 8 { // Safety limit to prevent extreme UI depth
+		return rows
+	}
+	
+	n, ok := snap.AllNodes[nodeID]
+	if !ok {
+		return rows
+	}
+	
+	if seen[nodeID] {
+		return append(rows, indent+subtleStyle.Render("↺ "+n.Name+" (recursion)"))
+	}
+	seen[nodeID] = true
+	defer delete(seen, nodeID)
+
+	expanded := m.codemap.visualExpanded[nodeID]
+	selected := *lineIdx == m.codemap.visualCursor
+	
+	line := indent
+	if indent != "" {
+		if isLast {
+			line += "└─ "
+		} else {
+			line += "├─ "
+		}
+	}
+	
+	// Prefix with expand/collapse hint
+	expandIcon := " "
+	if len(m.getCallees(snap, nodeID)) > 0 {
+		if expanded {
+			expandIcon = "▼"
+		} else {
+			expandIcon = "▶"
+		}
+	}
+	
+	rowText := line + subtleStyle.Render(expandIcon+" ") + formatCodemapNodeRow(n)
+	if selected {
+		rowText = lipgloss.NewStyle().
+			Background(colorTabActiveBg).
+			Foreground(colorTitleFg).
+			Bold(true).
+			Render(truncateSingleLine(rowText, 200))
+	}
+	rows = append(rows, rowText)
+	*lineIdx++
+	
+	if expanded {
+		callees := m.getCallees(snap, nodeID)
+		
+		newIndent := indent
+		if indent != "" {
+			if isLast {
+				newIndent += "   "
+			} else {
+				newIndent += "│  "
+			}
+		} else {
+			newIndent = " "
+		}
+		
+		for i, calleeID := range callees {
+			childLast := i == len(callees)-1
+			rows = m.walkVisualTree(rows, lineIdx, snap, calleeID, newIndent, childLast, depth+1, seen)
+		}
+	}
+	
+	return rows
+}
+
+func (m Model) getCallees(snap codemapSnapshot, nodeID string) []string {
+	var callees []string
+	for _, e := range snap.AllEdges {
+		if e.From == nodeID && e.Type == "calls" {
+			callees = append(callees, e.To)
+		}
+	}
+	sort.Strings(callees)
+	return callees
+}
+
+func formatEdgeLabel(e codemap.Edge, reverse bool) string {
+	from, to := e.From, e.To
+	if reverse {
+		return fmt.Sprintf("%s called by %s", strings.TrimPrefix(to, "sym:"), strings.TrimPrefix(from, "sym:"))
+	}
+	return fmt.Sprintf("%s calls %s", strings.TrimPrefix(from, "sym:"), strings.TrimPrefix(to, "sym:"))
 }
 
 func renderCodemapOverview(snap codemapSnapshot, width int) []string {

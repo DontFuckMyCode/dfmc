@@ -248,6 +248,9 @@ func (e *Engine) Init(ctx context.Context) error {
 		"project_root": e.ProjectRoot,
 	})
 
+	// Start background update checker
+	e.StartUpdateChecker(e.backgroundCtx, e.Version)
+
 	e.setState(StateReady)
 	e.EventBus.Publish(Event{Type: "engine:ready", Source: "engine"})
 	return nil

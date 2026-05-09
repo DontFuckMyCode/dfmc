@@ -83,20 +83,6 @@ type Client struct {
 	maxFrameBytes int
 }
 
-type rpcRequest struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      int64  `json:"id"`
-	Method  string `json:"method"`
-	Params  any    `json:"params,omitempty"`
-}
-
-type rpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      int64           `json:"id"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *RPCError       `json:"error,omitempty"`
-}
-
 // RPCError is the body of a JSON-RPC error reply. Exposed so callers can
 // inspect the numeric code.
 type RPCError struct {

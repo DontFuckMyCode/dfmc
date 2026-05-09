@@ -18,24 +18,35 @@ import (
 )
 
 type Skill struct {
-	Name        string   `json:"name" yaml:"name"`
-	Description string   `json:"description,omitempty" yaml:"description"`
-	Path        string   `json:"path,omitempty" yaml:"-"`
-	Source      string   `json:"source" yaml:"-"`
-	Builtin     bool     `json:"builtin" yaml:"-"`
-	Prompt      string   `json:"-" yaml:"prompt"`
-	System      string   `json:"-" yaml:"system_prompt"`
-	Task        string   `json:"task,omitempty" yaml:"task"`
-	Role        string   `json:"role,omitempty" yaml:"role"`
-	Profile     string   `json:"profile,omitempty" yaml:"profile"`
-	Preferred   []string `json:"preferred_tools,omitempty" yaml:"preferred_tools"`
-	Allowed     []string `json:"allowed_tools,omitempty" yaml:"allowed_tools"`
+	Name          string        `json:"name" yaml:"name"`
+	Description   string        `json:"description,omitempty" yaml:"description"`
+	Path          string        `json:"path,omitempty" yaml:"-"`
+	Source        string        `json:"source" yaml:"-"`
+	Builtin       bool          `json:"builtin" yaml:"-"`
+	Prompt        string        `json:"-" yaml:"prompt"`
+	System        string        `json:"-" yaml:"system_prompt"`
+	Task          string        `json:"task,omitempty" yaml:"task"`
+	Role          string        `json:"role,omitempty" yaml:"role"`
+	Profile       string        `json:"profile,omitempty" yaml:"profile"`
+	Preferred     []string      `json:"preferred_tools,omitempty" yaml:"preferred_tools"`
+	Allowed       []string      `json:"allowed_tools,omitempty" yaml:"allowed_tools"`
+	Version       string        `json:"version,omitempty" yaml:"-"`
+	Author        string        `json:"author,omitempty" yaml:"-"`
+	Tags          []string      `json:"tags,omitempty" yaml:"-"`
+	Compatibility string        `json:"compatibility,omitempty" yaml:"-"`
+	Triggers      []Trigger     `json:"triggers,omitempty" yaml:"-"`
+	Requires      []Requirement `json:"requires,omitempty" yaml:"-"`
 }
 
+// Selection is the result of ResolveForQuery. Origin records WHY
+// each skill activated ("explicit" / "trigger" / "task" / "required")
+// so UI surfaces can render badges without re-running resolution.
 type Selection struct {
-	Query    string
-	Skills   []Skill
-	Explicit bool
+	Query     string
+	Skills    []Skill
+	Explicit  bool
+	Triggered bool
+	Origin    map[string]string
 }
 
 var (
@@ -153,6 +164,16 @@ func SkillForName(projectRoot, name string) (Skill, bool) {
 	return Lookup(projectRoot, name)
 }
 
+// ResolveForQuery picks skills to activate for `query`. Priority:
+//
+//  1. Explicit [[skill:name]] markers (user wins).
+//  2. Trigger match — highest-weighted regex hit ≥ MinTriggerScore.
+//  3. Task-hint fallback (skillForTask map).
+//
+// After the primary set is picked, `requires:` deps are expanded
+// depth-first and prepended (transitive prerequisites land before
+// their dependants). Selection.Origin maps lower-cased skill name
+// to "explicit" / "trigger" / "task" / "required".
 func ResolveForQuery(projectRoot, query, detectedTask string) Selection {
 	all := Discover(projectRoot)
 	byName := make(map[string]Skill, len(all))
@@ -160,38 +181,72 @@ func ResolveForQuery(projectRoot, query, detectedTask string) Selection {
 		byName[strings.ToLower(strings.TrimSpace(item.Name))] = item
 	}
 
-	add := func(dst *[]Skill, seen map[string]struct{}, name string) {
+	cleanQuery := StripMarkers(query)
+	origin := map[string]string{}
+	selected := make([]Skill, 0, 2)
+	selectedSeen := map[string]struct{}{}
+
+	add := func(name, why string) {
 		key := strings.ToLower(strings.TrimSpace(name))
 		if key == "" {
 			return
 		}
-		if _, ok := seen[key]; ok {
+		if _, ok := selectedSeen[key]; ok {
 			return
 		}
 		item, ok := byName[key]
 		if !ok {
 			return
 		}
-		seen[key] = struct{}{}
-		*dst = append(*dst, item)
+		selectedSeen[key] = struct{}{}
+		selected = append(selected, item)
+		origin[key] = why
 	}
 
-	selected := make([]Skill, 0, 2)
-	selectedSeen := map[string]struct{}{}
 	explicit := explicitNames(query)
 	for _, name := range explicit {
-		add(&selected, selectedSeen, name)
+		add(name, "explicit")
 	}
+
+	triggered := false
+	if len(selected) == 0 {
+		if name := matchTriggers(all, cleanQuery); name != "" {
+			before := len(selected)
+			add(name, "trigger")
+			if len(selected) > before {
+				triggered = true
+			}
+		}
+	}
+
 	if len(selected) == 0 {
 		if mapped := skillForTask(detectedTask); mapped != "" {
-			add(&selected, selectedSeen, mapped)
+			add(mapped, "task")
+		}
+	}
+
+	if len(selected) > 0 {
+		deps := expandRequires(selected, byName)
+		if len(deps) > 0 {
+			merged := make([]Skill, 0, len(deps)+len(selected))
+			for _, dep := range deps {
+				key := strings.ToLower(strings.TrimSpace(dep.Name))
+				if _, ok := origin[key]; !ok {
+					origin[key] = "required"
+				}
+				merged = append(merged, dep)
+			}
+			merged = append(merged, selected...)
+			selected = merged
 		}
 	}
 
 	return Selection{
-		Query:    StripMarkers(query),
-		Skills:   selected,
-		Explicit: len(explicit) > 0,
+		Query:     cleanQuery,
+		Triggered: triggered,
+		Origin:    origin,
+		Skills:    selected,
+		Explicit:  len(explicit) > 0,
 	}
 }
 

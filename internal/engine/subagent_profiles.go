@@ -164,9 +164,9 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 		var completion nativeToolCompletion
 		var runErr error
 		if req.Autonomous {
-			completion, runErr = e.runNativeToolLoopAutonomous(ctx, attemptSeed, lim, "subagent")
+			completion, runErr = e.runNativeToolLoopAutonomous(ctx, attemptSeed, lim, "subagent", nil)
 		} else {
-			completion, runErr = e.runNativeToolLoop(ctx, attemptSeed, lim)
+			completion, runErr = e.runNativeToolLoop(ctx, attemptSeed, lim, nil)
 		}
 		if runErr == nil {
 			dur := time.Since(start).Milliseconds()

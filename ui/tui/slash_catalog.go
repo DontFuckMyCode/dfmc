@@ -77,11 +77,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "quit", Template: "/quit", Description: "exit DFMC"},
 		{Command: "providers", Template: "/providers", Description: "list configured providers"},
 		{Command: "models", Template: "/models", Description: "show configured model"},
-		{Command: "key", Template: "/key", Description: "show API key status (provider · source · masked)"},
-		{Command: "key set", Template: "/key set anthropic ", Description: "save an API key to ~/.dfmc/config.yaml (no .env required)"},
-		{Command: "key clear", Template: "/key clear anthropic", Description: "remove an API key from ~/.dfmc/config.yaml"},
-		{Command: "key migrate", Template: "/key migrate", Description: "copy keys from project .env into ~/.dfmc/config.yaml"},
-		{Command: "tools", Template: "/tools", Description: "list tools and open panel"},
+		
 		{Command: "log", Template: "/log", Description: "show recent provider calls (model · in/out tokens · preview)"},
 		{Command: "ls", Template: "/ls .", Description: "list project files"},
 		{Command: "read", Template: "/read " + blankFallback(m.toolTargetFile(), "path/to/file.go"), Description: "read file lines"},
