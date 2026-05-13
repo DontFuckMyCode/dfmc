@@ -97,7 +97,7 @@ func helpOverlaySections(tab string) []helpOverlaySection {
 			Body: []string{
 				"f9 status · f10 codemap · f11 tools · f12 security",
 				"shift+f1 prompts · shift+f2 plans · shift+f3 context · shift+f4 orchestrate · shift+f5 shortcuts",
-				"shift+f6 contexts · shift+f7 provider log · shift+f8 telegram · ctrl+alt+t tool status",
+				"shift+f6 contexts · shift+f7 provider log · shift+f8 telegram · ctrl+shift+t tool status",
 				"legacy aliases still work: alt+i tools · ctrl+y plans · ctrl+w context · alt+r orchestrate",
 			},
 		},

@@ -82,27 +82,72 @@ type plannerOutput struct {
 // The error includes the raw model output for debugging when JSON
 // parsing fails - without that, debugging a planner that consistently
 // produces bad output is nearly impossible.
-func runPlanner(ctx context.Context, runner Runner, task, model string) ([]Todo, error) {
+func runPlanner(ctx context.Context, runner Runner, task, model string, extraContext string, fallbackModels []string) ([]Todo, error) {
 	if strings.TrimSpace(task) == "" {
 		return nil, fmt.Errorf("planner: task is empty")
 	}
-	resp, err := runner.PlannerCall(ctx, PlannerRequest{
-		Model:  model,
-		System: plannerSystemPrompt,
-		User:   task,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("planner call failed: %w", err)
+
+	// Build ordered model chain: primary first, then fallbacks.
+	// Filter out empty strings. If the chain ends up empty, fall back
+	// to a single empty-model call — the runner may implement its own
+	// default-provider behavior for the empty model.
+	models := make([]string, 0, 1+len(fallbackModels))
+	if model != "" {
+		models = append(models, model)
 	}
-	todos, perr := parsePlannerOutput(resp.Text)
-	if perr != nil {
-		return nil, fmt.Errorf("planner output unparseable (model=%s): %w\n--- raw output ---\n%s\n--- end ---",
-			resp.Model, perr, truncate(resp.Text, 2000))
+	for _, fb := range fallbackModels {
+		if fb != "" {
+			models = append(models, fb)
+		}
 	}
-	if err := validateTodos(todos); err != nil {
-		return nil, fmt.Errorf("planner output invalid: %w", err)
+	if len(models) == 0 {
+		models = append(models, "") // runner's default
 	}
-	return todos, nil
+
+	var lastErr error
+	for i, m := range models {
+		system := plannerSystemPrompt
+		if extraContext != "" {
+			system = plannerSystemPrompt + "\n\n[Additional context from operator]\n" + extraContext
+		}
+		resp, err := runner.PlannerCall(ctx, PlannerRequest{
+			Model:  m,
+			System: system,
+			User:   task,
+		})
+		if err != nil {
+			lastErr = fmt.Errorf("planner call failed (model=%s): %w", m, err)
+			if i < len(models)-1 {
+				continue // runtime error, try next model
+			}
+			break
+		}
+		todos, perr := parsePlannerOutput(resp.Text)
+		if perr != nil {
+			lastErr = fmt.Errorf("planner output unparseable (model=%s): %w\n--- raw output ---\n%s\n--- end ---",
+				resp.Model, perr, truncate(resp.Text, 2000))
+			if i < len(models)-1 {
+				continue // parse error, try next model
+			}
+			break
+		}
+		if vErr := validateTodos(todos); vErr != nil {
+			lastErr = fmt.Errorf("planner output invalid (model=%s): %w", m, vErr)
+			if i < len(models)-1 {
+				continue // validation error, try next model
+			}
+			break
+		}
+		// Success on this model.
+		if i > 0 {
+			fmt.Printf("drive: planner fallback used model=%s (primary would have failed)\n", m)
+		}
+		return todos, nil
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("planner: no working model in chain (tried %d models)", len(models))
 }
 
 // parsePlannerOutput pulls the JSON envelope out of whatever the model

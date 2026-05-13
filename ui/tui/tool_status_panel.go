@@ -1,6 +1,6 @@
 package tui
 
-// tool_status_panel.go — Ctrl+Alt+T overlay panel: scrollable, detailed
+// tool_status_panel.go — Ctrl+Shift+T overlay panel: scrollable, detailed
 // tool-call history. Every tool:call/result/error/denied event feeds a
 // rolling buffer (toolCallLog) that this panel renders as a timeline.
 // The chat transcript gets single-line summaries; full params, results,
@@ -84,7 +84,7 @@ func (m Model) renderToolStatusView(width int) string {
 		}
 	}
 
-	footer := subtleStyle.Render("j/k scroll · G top · g bottom · esc close · ctrl+alt+t toggle")
+	footer := subtleStyle.Render("j/k scroll · G top · g bottom · esc close · ctrl+shift+t toggle")
 
 	return header + "\n" + strings.Join(visible, "\n") + "\n" + footer
 }

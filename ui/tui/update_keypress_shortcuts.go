@@ -369,9 +369,10 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		// 17-tab era). Primary binding is now F11.
 		m = m.activateDiagnosticTab("Tools")
 		return m, nil, true
-	case "ctrl+alt+t", "alt+ctrl+t", "alt+t":
-		// Ctrl+Alt+T opens the Tool Status panel. Alt+T remains a legacy
-		// alias for terminals/users that already learned it.
+	case "ctrl+shift+t", "ctrl+alt+t", "alt+ctrl+t", "alt+t", "alt+o":
+		// Ctrl+Shift+T opens the Tool Status panel. Alt+O is cleaner than
+		// Ctrl+Shift+T (terminal new-tab conflict). Alt+T and Ctrl+Alt+T
+		// remain as legacy aliases.
 		m = m.activateDiagnosticTab("ToolStatus")
 		return m, nil, true
 	case "ctrl+i":
@@ -429,7 +430,7 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 func isToolStatusShortcut(msg tea.KeyMsg) bool {
 	key := strings.ToLower(strings.TrimSpace(msg.String()))
 	switch key {
-	case "ctrl+alt+t", "alt+ctrl+t", "alt+t":
+	case "ctrl+shift+t", "ctrl+alt+t", "alt+ctrl+t", "alt+t":
 		return true
 	}
 	if msg.Alt && msg.Type == tea.KeyCtrlT {

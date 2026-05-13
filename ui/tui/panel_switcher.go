@@ -63,7 +63,7 @@ func panelSwitcherEntries() []panelSwitcherEntry {
 		{Label: "Contexts", KeyHint: "Shift+F6", Activate: "Contexts", Hint: "live agents · main · parked · subagents"},
 		{Label: "ProviderLog", KeyHint: "Shift+F7 · Ctrl+L", Activate: "ProviderLog", Hint: "every provider call (model · in/out tokens · preview)"},
 		{Label: "Telegram", KeyHint: "Shift+F8", Activate: "Telegram", Hint: "telegram bot messages · connection status"},
-		{Label: "ToolStatus", KeyHint: "Ctrl+Alt+T", Activate: "ToolStatus", Hint: "detailed tool call history with params/results/errors"},
+		{Label: "ToolStatus", KeyHint: "Ctrl+Shift+T", Activate: "ToolStatus", Hint: "detailed tool call history with params/results/errors"},
 	}
 }
 

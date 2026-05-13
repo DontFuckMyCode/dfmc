@@ -73,7 +73,7 @@ func (m Model) runPanelCommand(cmd string, args []string) (tea.Model, tea.Cmd, b
 	case "toolstatus", "toolcalls":
 		m.chat.input = ""
 		m = m.activateDiagnosticTab("ToolStatus")
-		m.notice = "ToolStatus opened. Esc closes; Ctrl+Alt+T toggles from chat."
+		m.notice = "ToolStatus opened. Esc closes; Ctrl+Shift+T toggles from chat."
 		return m, nil, true
 	case "queue":
 		m.chat.input = ""

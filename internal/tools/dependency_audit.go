@@ -16,6 +16,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/security"
 )
 
 // DependencyAuditTool scans Go dependencies for security and compliance issues.
@@ -26,7 +29,7 @@ type DependencyAuditTool struct {
 // NewDependencyAuditTool creates a new audit tool.
 func NewDependencyAuditTool() *DependencyAuditTool {
 	return &DependencyAuditTool{
-		httpClient: &http.Client{Timeout: 10 * 1000000000},
+		httpClient: security.NewSafeHTTPClient(10*time.Second, "https://osv.dev"),
 	}
 }
 

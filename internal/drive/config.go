@@ -10,7 +10,9 @@
 package drive
 
 import (
+	"errors"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -48,12 +50,6 @@ type Config struct {
 	// drift) without blowing budget.
 	Retries int
 
-	// PlannerModel is an optional override for the planner LLM.
-	// Empty = use the engine's active provider/model. Setting this
-	// to a stronger model (e.g. opus) is recommended in production
-	// because planning quality dominates the rest of the run.
-	PlannerModel string
-
 	// MaxParallel is the upper bound on concurrent TODO executors.
 	// Default 3 — enough to overlap I/O-bound waits (LLM calls take
 	// seconds, file reads are cheap) without triggering provider
@@ -65,6 +61,20 @@ type Config struct {
 	// at scheduling time (see readyBatch); this is just the ceiling
 	// in the no-conflict happy path.
 	MaxParallel int
+
+	// PlannerModel is an optional override for the planner LLM.
+	// Empty = use the engine's active provider/model. Setting this
+	// to a stronger model (e.g. opus) is recommended in production
+	// because planning quality dominates the rest of the run.
+	PlannerModel string
+
+	// PlannerFallbackModels is a chain of models tried in order when
+	// the primary PlannerModel fails (parse error or validation error).
+	// Each fallback model receives the same prompt as the primary.
+	// Useful for: primary=fast/cheap, fallback=stronger. Empty = no
+	// fallback (single model, current default). Errors are only returned
+	// when ALL models in the chain fail.
+	PlannerFallbackModels []string
 
 	// Routing maps a TODO ProviderTag (e.g. "code", "review", "test")
 	// to a provider profile name registered with the engine's
@@ -104,11 +114,58 @@ type Config struct {
 	// caller explicitly opts into stronger end-of-run verification.
 	AutoVerify bool
 
-	// AutoSurvey prepends a deterministic supervisor-generated
-	// discovery/survey TODO when the planner skipped an initial repo
-	// mapping step. The synthetic task becomes the parent of every root
-	// task so later workers start from a shared understanding.
+	// PlannerContextProvider injects extra context into the planner LLM
+	// call. When non-nil, Context() is called with the task and its
+	// returned text is appended to the planner system prompt. This lets
+	// operators supply repository structure, active-file summaries, or
+	// custom persona instructions without hard-coding them in the
+	// planner package. Nil = no injection (default).
+	PlannerContextProvider PlannerContextProvider
+
+	// AutoSurvey runs a pre-flight "survey" pass before the main
+	// planner call. The survey TODO inspects the repository state
+	// (file structure, active bugs, recent commits) and its output
+	// is fed back into the planner as extra context. Default false.
+	// When true, the supervisor expands the plan with a survey phase
+	// before the planner LLM is called.
 	AutoSurvey bool
+
+	// AdaptiveStepBudget enables runtime step-budget adjustment. When
+	// non-nil, BudgetFor is called per-TODO dispatch to determine step
+	// count. Nil = static lane-based defaults (default behavior).
+	AdaptiveStepBudget StepBudgetProvider
+
+	// RetryBackoff computes how long to wait before retrying a transient-
+	// failed TODO. Nil = no delay (immediate retry). Non-nil = the function
+	// is called with the current attempt number and returns the wait duration.
+	// DefaultRetryBackoff (2s * 2^attempt, capped at 5 min) is used when this
+	// field is nil AND Retries > 0. Setting Retries=0 disables retry entirely.
+	//
+	// Common configs:
+	//   - nil         → immediate retry (existing behavior)
+	//   - nil, Retries=1 → DefaultRetryBackoff: 2s, 4s
+	//   - custom func → inject jitter, fixed delays, or rate-limit-aware backoff
+	RetryBackoff RetryBackoffFunc
+
+	// PlannerCircuitBreaker tunes the planner stage circuit breaker.
+	// Zero fields default to FailureThreshold=5, RecoveryTimeout=2min.
+	PlannerCircuitBreaker CircuitBreakerConfig
+	// ExecutorCircuitBreaker tunes the executor stage circuit breaker.
+	ExecutorCircuitBreaker CircuitBreakerConfig
+	// VerifierCircuitBreaker tunes the verifier stage circuit breaker.
+	VerifierCircuitBreaker CircuitBreakerConfig
+}
+
+// PlannerContextProvider is implemented by callers that want to
+// inject structured context (repo overview, active files, custom
+// rules) into the planner LLM call. Returning the empty string
+// is valid — the driver treats it as "no context to inject".
+type PlannerContextProvider interface {
+	// Context receives the raw task string and returns free-form
+	// text to append to the planner system prompt. The text is
+	// injected as-is with no escaping; keep it concise (under 1 KB)
+	// to avoid truncating the planner's output budget.
+	Context(task string) string
 }
 
 // DefaultConfig is the safety-leaning preset used when the caller
@@ -173,3 +230,157 @@ func (c Config) providerForTag(tag string) string {
 	}
 	return ""
 }
+
+// CircuitBreakerConfig tunes the per-stage circuit breaker. All values
+// are treated as defaults when zero.
+type CircuitBreakerConfig struct {
+	// FailureThreshold blocks the stage when this many consecutive failures
+	// are recorded. Default 5.
+	FailureThreshold int
+	// RecoveryTimeout re-enables a closed circuit after this much idle time
+	// following a circuit-open event. Default 2 minutes.
+	RecoveryTimeout time.Duration
+	// HalfOpenMaxCalls allows this many calls through while probing recovery.
+	// Default 3.
+	HalfOpenMaxCalls int
+}
+
+// State returns the current circuit state. Exported so callers can
+// expose it in events/UI.
+type CircuitState int
+
+const (
+	CircuitClosed CircuitState = iota
+	CircuitOpen
+	CircuitHalfOpen
+)
+
+// String implements fmt.Stringer.
+func (s CircuitState) String() string {
+	 switch s {
+	 case CircuitClosed:  return "closed"
+	 case CircuitOpen:     return "open"
+	 case CircuitHalfOpen: return "half_open"
+	 }
+	 return "unknown"
+}
+
+// CircuitBreaker implements the circuit breaker pattern for a named stage
+// (e.g. "planner", "executor"). It is safe to use concurrently.
+type CircuitBreaker struct {
+	cfg        CircuitBreakerConfig
+	state      CircuitState
+	mu         sync.Mutex
+	failures   int
+	lastFailure time.Time
+	halfOpenTried int // how many probe calls have fired in half-open
+}
+
+// NewCircuitBreaker creates a breaker with the given config and
+// defaults applied.
+func NewCircuitBreaker(cfg CircuitBreakerConfig) *CircuitBreaker {
+	if cfg.FailureThreshold <= 0 {
+		cfg.FailureThreshold = 5
+	}
+	if cfg.RecoveryTimeout <= 0 {
+		cfg.RecoveryTimeout = 2 * time.Minute
+	}
+	if cfg.HalfOpenMaxCalls <= 0 {
+		cfg.HalfOpenMaxCalls = 3
+	}
+	return &CircuitBreaker{cfg: cfg, state: CircuitClosed}
+}
+
+// Check returns true when the circuit is closed or half-open AND a probe
+// slot is available. When false the caller should return a
+// ErrCircuitOpen error immediately.
+func (cb *CircuitBreaker) Check() bool {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	switch cb.state {
+	case CircuitClosed:
+		return true
+	case CircuitOpen:
+		if time.Since(cb.lastFailure) > cb.cfg.RecoveryTimeout {
+			cb.state = CircuitHalfOpen
+			cb.halfOpenTried = 0
+			return true
+		}
+		return false
+	case CircuitHalfOpen:
+		if cb.halfOpenTried < cb.cfg.HalfOpenMaxCalls {
+			cb.halfOpenTried++
+			return true
+		}
+		return false
+	}
+	return false // unreachable
+}
+
+// Record registers a failure. The circuit is tripped to Open when
+// FailureThreshold consecutive failures are seen.
+func (cb *CircuitBreaker) Record(success bool) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if success {
+		if cb.state == CircuitHalfOpen {
+			cb.state = CircuitClosed
+			cb.failures = 0
+			cb.halfOpenTried = 0
+		}
+		cb.failures = 0
+		return
+	}
+	cb.failures++
+	cb.lastFailure = time.Now()
+	switch cb.state {
+	case CircuitClosed:
+		if cb.failures >= cb.cfg.FailureThreshold {
+			cb.state = CircuitOpen
+		}
+	case CircuitHalfOpen:
+		cb.state = CircuitOpen
+		cb.halfOpenTried = 0
+	}
+}
+
+// State returns the current circuit state.
+func (cb *CircuitBreaker) State() CircuitState {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	return cb.state
+}
+
+// ErrCircuitOpen is returned by a stage when the circuit is open.
+var ErrCircuitOpen = errors.New("circuit breaker is open")
+
+// StepBudgetProvider lets the caller inject a dynamic per-TODO step
+// budget instead of using the static Config.ExecutorStepBudget.
+// Return 0 to fall back to the config default.
+type StepBudgetProvider interface {
+	// BudgetFor returns the max steps to allow for this TODO. Returning 0
+	// falls back to the static executor step budget from Config.
+	BudgetFor(todo Todo, run *Run) int
+}
+
+// RetryBackoffFunc computes the backoff delay for a given retry attempt.
+// Implementations must be safe to call concurrently.
+type RetryBackoffFunc func(attempt int) time.Duration
+
+// DefaultRetryBackoff implements exponential backoff with a 2s base, capped
+// at 5 minutes.  attempt=0 → 2s, attempt=1 → 4s, attempt=2 → 8s, ...
+var DefaultRetryBackoff RetryBackoffFunc = func(attempt int) time.Duration {
+	const base = 2 * time.Second
+	const maxDelay = 5 * time.Minute
+	delay := base * time.Duration(1<<attempt)
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+	if delay < base {
+		delay = base
+	}
+	return delay
+}
+
+

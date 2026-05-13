@@ -76,12 +76,12 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 		wrapped := wrapBubbleLine(row, limit)
 		for _, r := range wrapped {
 			filteredRows = append(filteredRows, truncateSingleLine(r, limit))
-			if len(filteredRows) >= 1 { // One-line only; full details in Ctrl+Alt+T
+			if len(filteredRows) >= 1 { // One-line only; full details in Ctrl+Shift+T
 				break
 			}
 		}
 		if len(filteredRows) >= 1 {
-			// Full detail in Ctrl+Alt+T panel
+			// Full detail in Ctrl+Shift+T panel
 			break
 		}
 	}
@@ -93,7 +93,7 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 	// Inline the first content row onto the header line so each event
 	// occupies a single row (badge + header + body on one line). This
 	// halves the vertical space: a running+done pair drops from 4 lines
-	// to 2. Full detail remains in Ctrl+Alt+T panel.
+	// to 2. Full detail remains in Ctrl+Shift+T panel.
 	row := filteredRows[0]
 	combined := headerLine + subtleStyle.Render(bodyIndent) + timelineEventRowStyle(row).Render(row)
 	return []string{combined}

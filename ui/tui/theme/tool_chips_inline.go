@@ -141,7 +141,7 @@ func RenderInlineToolChipsSummary(chips []ToolChip, width int) string {
 		parts = append(parts, fmt.Sprintf("%dms", totalMs))
 	}
 	headline := SubtleStyle.Render("▸ tools · "+strings.Join(parts, " · ")) + "  " +
-		AccentStyle.Render("[ctrl+alt+t]") + SubtleStyle.Render(" details")
+		AccentStyle.Render("[ctrl+shift+t]") + SubtleStyle.Render(" details")
 
 	breakdown := []string{}
 	for _, name := range order {

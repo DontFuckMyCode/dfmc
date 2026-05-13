@@ -99,6 +99,19 @@ func executorStepBudgetFor(todo Todo) int {
 	}
 }
 
+// adaptiveBudgetFor picks a step budget for the given TODO. When the
+// config's AdaptiveStepBudget is set, its BudgetFor method is called
+// with the TODO and the current run. If it returns > 0 that value is
+// used; otherwise we fall back to the static lane-based budget.
+func adaptiveBudgetFor(todo Todo, run *Run, provider StepBudgetProvider) int {
+	if provider != nil {
+		if budget := provider.BudgetFor(todo, run); budget > 0 {
+			return budget
+		}
+	}
+	return executorStepBudgetFor(todo)
+}
+
 // reasonByID retrieves the per-TODO Error/reason for the skipped
 // event payload. Avoids a second pass over the slice in the caller.
 func reasonByID(todos []Todo, id string) string {

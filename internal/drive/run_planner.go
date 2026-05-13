@@ -55,8 +55,23 @@ func (d *Driver) runPlannerPhase(ctx context.Context, run *Run) error {
 		return nil
 	}
 	d.publish(EventPlanStart, map[string]any{"run_id": run.ID, "model": d.cfg.PlannerModel})
-	todos, err := runPlanner(ctx, d.runner, run.Task, d.cfg.PlannerModel)
+	if !d.plannerBreaker.Check() {
+		err := ErrCircuitOpen
+		run.Status = RunFailed
+		run.Reason = "planner circuit breaker is open"
+		run.EndedAt = time.Now()
+		d.persist(run)
+		d.publish(EventPlanFailed, map[string]any{"run_id": run.ID, "error": err.Error()})
+		d.publish(EventRunFailed, map[string]any{"run_id": run.ID, "reason": run.Reason})
+		return err
+	}
+	extraCtx := ""
+	if d.cfg.PlannerContextProvider != nil {
+		extraCtx = d.cfg.PlannerContextProvider.Context(run.Task)
+	}
+	todos, err := runPlanner(ctx, d.runner, run.Task, d.cfg.PlannerModel, extraCtx, d.cfg.PlannerFallbackModels)
 	if err != nil {
+		d.plannerBreaker.Record(false)
 		run.Status = RunFailed
 		run.Reason = fmt.Sprintf("plan failed: %v", err)
 		run.EndedAt = time.Now()
@@ -65,6 +80,7 @@ func (d *Driver) runPlannerPhase(ctx context.Context, run *Run) error {
 		d.publish(EventRunFailed, map[string]any{"run_id": run.ID, "reason": run.Reason})
 		return fmt.Errorf("plan failed: %w", err)
 	}
+	d.plannerBreaker.Record(true)
 	if len(todos) > d.cfg.MaxTodos {
 		// Truncate noisily — surface the cap so the user sees why later
 		// TODOs are missing, instead of silently dropping work. Publishes

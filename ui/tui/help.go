@@ -60,7 +60,7 @@ func renderTUIHelp() string {
 		"  Shift+F1 Prompts    Shift+F2 Plans       Shift+F3 Context",
 		"  Shift+F4 Orchestrate Shift+F5 Shortcuts",
 		"  Shift+F6 Contexts    Shift+F7 ProviderLog Shift+F8 Telegram",
-		"  Ctrl+Alt+T ToolStatus",
+		"  Ctrl+Shift+T ToolStatus  Alt+O (avoids terminal new-tab conflict)",
 		"  (terminals that don't send Shift+F send F13..F20 — same binding)",
 		"",
 		"  Help overlay: Ctrl+H · Alt+H · /help · Alt+0",

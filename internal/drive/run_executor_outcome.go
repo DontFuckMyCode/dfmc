@@ -54,7 +54,7 @@ func (d *Driver) dispatchTodo(ctx context.Context, run *Run, idx int, results ch
 		Model:             d.cfg.providerForTag(t.ProviderTag),
 		ProfileCandidates: nil,
 		AllowedTools:      append([]string(nil), t.AllowedTools...),
-		MaxSteps:          executorStepBudgetFor(*t),
+		MaxSteps:          adaptiveBudgetFor(*t, run, d.cfg.AdaptiveStepBudget),
 	}
 	d.publish(EventTodoStart, map[string]any{
 		"run_id":           run.ID,
@@ -148,14 +148,17 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 
 	if res.Err != nil {
 		class := FailureClassify(res.Err)
-		if class == Fatal || t.Attempts > d.cfg.Retries {
+		backoff := d.cfg.RetryBackoff
+		if backoff == nil {
+			backoff = DefaultRetryBackoff
+		}
+		// If max retries are exhausted, transition to Blocked immediately
+		// (no backoff needed — no more attempts allowed).
+		if t.Attempts > d.cfg.Retries {
 			t.Status = TodoBlocked
+			t.BlockedReason = BlockReasonRetriesExhausted
 			t.Error = res.Err.Error()
-			if class == Fatal {
-				t.BlockedReason = BlockReasonFatal
-			} else {
-				t.BlockedReason = BlockReasonRetriesExhausted
-			}
+			t.RetryScheduledAt = time.Time{}
 			*consecutiveBlocked++
 			d.persist(run)
 			d.publish(EventTodoBlocked, map[string]any{
@@ -168,13 +171,19 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 			})
 			return
 		}
-		t.Status = TodoPending
+		t.Status = TodoRetrying
+		// Use zero time as the sentinel for "retries remaining, ready NOW".
+		// readyBatch checks for time.IsZero() to make zero-time Retrying
+		// TODOs immediately pickable (no artificial delay).
+		t.RetryScheduledAt = time.Time{}
 		d.publish(EventTodoRetry, map[string]any{
-			"run_id":     run.ID,
-			"todo_id":    t.ID,
-			"attempt":    t.Attempts,
-			"last_error": res.Err.Error(),
-			"class":      class.String(),
+			"run_id":          run.ID,
+			"todo_id":         t.ID,
+			"attempt":         t.Attempts,
+			"last_error":      res.Err.Error(),
+			"class":           class.String(),
+			"retry_at":        t.RetryScheduledAt.Format(time.RFC3339),
+			"backoff_seconds": t.RetryScheduledAt.Sub(time.Now()).Seconds(),
 		})
 		d.persist(run)
 		return
@@ -188,6 +197,7 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 		t.Error = "spawn_todos invalid: " + spawnErr.Error()
 		t.BlockedReason = BlockReasonSpawnInvalid
 		*consecutiveBlocked++
+		d.executorBreaker.Record(false)
 		d.persist(run)
 		d.publish(EventTodoBlocked, map[string]any{
 			"run_id":         run.ID,
@@ -199,6 +209,7 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 		return
 	}
 	t.Brief = strings.TrimSpace(brief)
+	d.executorBreaker.Record(true)
 	var added []Todo
 	if len(spawned) > 0 {
 		added = applySpawnedTodos(run, *t, spawned, d.cfg.MaxTodos, d.cfg.MaxParallel)

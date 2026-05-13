@@ -74,7 +74,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 			m.eng.ConversationStart()
 		}
 		m.notice = "Transcript cleared."
-		return m.appendSystemMessage("Transcript cleared. Memory and conversation history are untouched."), nil, true
+		return m.appendSystemMessage("Transcript, context, and session cleared. Memory is untouched."), nil, true
 	case "export", "save":
 		// Dump the current transcript to a markdown file under the project
 		// root (or to the path given as /export path.md). Writes locally,

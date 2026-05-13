@@ -265,7 +265,7 @@ Diagnostic panels:
 - `Shift+F6` Contexts
 - `Shift+F7` ProviderLog
 - `Shift+F8` Telegram
-- `Ctrl+Alt+T` ToolStatus
+- `Ctrl+Shift+T` / `Alt+O` ToolStatus
 
 Use `Ctrl+B` for the fuzzy panel switcher. Use `Ctrl+G` to jump to Activity. Use `/help` inside Chat for the live slash-command list.
 

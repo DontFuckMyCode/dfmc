@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/security"
 )
 
 // UpdateInfo holds version information from GitHub.
@@ -24,7 +26,7 @@ func (e *Engine) CheckForUpdates(ctx context.Context, currentVersion string) (Up
 		return UpdateInfo{CurrentVersion: "dev"}, nil
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := security.NewSafeHTTPClient(5*time.Second, "https://api.github.com")
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/repos/dontfuckmycode/dfmc/releases/latest", nil)
 	if err != nil {
 		return UpdateInfo{}, err

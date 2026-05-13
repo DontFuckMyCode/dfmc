@@ -94,12 +94,19 @@ func (d *Driver) executeLoop(ctx context.Context, run *Run) {
 				d.finalize(run, RunDone, "")
 				return
 			}
-			// Re-scan after the skip pass — a previously-blocked
-			// chain may now have ready siblings that don't depend on
-			// the blocked branch.
+			// Re-scan after the skip pass. If nothing is pickable (no
+			// Pending, no Retry-Ready TODOs), the run is deadlocked.
+			// runFinished treats Retrying as non-terminal so we don't
+			// falsely fail when TODOs are merely awaiting their backoff.
+			if runFinished(run.Todos) {
+				d.finalize(run, RunDone, "")
+				return
+			}
+			// If any TODO is pickable (Pending or retry-due), keep going.
 			if len(readyBatchWithPolicy(run.Todos, policy, 1)) > 0 {
 				continue
 			}
+			// Nothing pickable and nothing pending = deadlocked.
 			d.finalize(run, RunFailed, "scheduler deadlock — no ready TODO and no progress possible")
 			return
 		}

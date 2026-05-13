@@ -48,6 +48,7 @@ const (
 	TodoSkipped        TodoStatus = "skipped"
 	TodoVerifying      TodoStatus = "verifying"
 	TodoWaiting        TodoStatus = "waiting"
+	TodoRetrying       TodoStatus = "retrying"
 	TodoExternalReview TodoStatus = "external_review"
 )
 
@@ -117,6 +118,11 @@ type Todo struct {
 	// Budget holds the max tool steps allowed for this TODO. When zero,
 	// the executor derives a budget from WorkerClass at dispatch time.
 	Budget int `json:"budget,omitempty"`
+	// RetryScheduledAt is the wall-clock time when this TODO should be
+	// re-dispatched after a transient failure. Zero = dispatch immediately
+	// (existing behavior). Non-zero = scheduler skips it until the time
+	// passes, giving rate limits and transient errors time to clear.
+	RetryScheduledAt time.Time `json:"retry_scheduled_at,omitempty"`
 }
 
 // RunStatus is the lifecycle state of an entire drive run.
@@ -152,15 +158,15 @@ type Run struct {
 }
 
 type ExecutionPlanSnapshot struct {
-	Layers         [][]string     `json:"layers,omitempty"`
-	Roots          []string       `json:"roots,omitempty"`
-	Leaves         []string       `json:"leaves,omitempty"`
-	WorkerCounts   map[string]int `json:"worker_counts,omitempty"`
-	LaneCaps       map[string]int `json:"lane_caps,omitempty"`
-	LaneOrder      []string       `json:"lane_order,omitempty"`
-	SurveyID       string         `json:"survey_id,omitempty"`
-	VerificationID string         `json:"verification_id,omitempty"`
-	MaxParallel    int            `json:"max_parallel,omitempty"`
+	Layers          [][]string     `json:"layers,omitempty"`
+	Roots           []string       `json:"roots,omitempty"`
+	Leaves          []string       `json:"leaves,omitempty"`
+	WorkerCounts    map[string]int `json:"worker_counts,omitempty"`
+	LaneCaps        map[string]int `json:"lane_caps,omitempty"`
+	LaneOrder       []string       `json:"lane_order,omitempty"`
+	SurveyID        string         `json:"survey_id,omitempty"`
+	VerificationID  string         `json:"verification_id,omitempty"`
+	MaxParallel     int            `json:"max_parallel,omitempty"`
 }
 
 // Counts returns done/blocked/skipped tallies. Convenience for the
@@ -180,4 +186,3 @@ func (r *Run) Counts() (done, blocked, skipped, pending int) {
 	}
 	return
 }
-

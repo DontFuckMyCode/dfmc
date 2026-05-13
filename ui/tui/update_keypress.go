@@ -56,7 +56,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Allow stats-panel mode switches through even while typing;
 			// these specific alt combos are not Turkish-character inputs.
 			switch msg.String() {
-			case "alt+a", "alt+s", "alt+d", "alt+f", "alt+p", "alt+t", "ctrl+alt+t", "alt+ctrl+t":
+			case "ctrl+shift+t", "alt+a", "alt+s", "alt+d", "alt+f", "alt+p", "alt+t", "ctrl+alt+t", "alt+ctrl+t":
 				// fall through to global shortcut handler
 			default:
 				return m.handleChatKey(msg)

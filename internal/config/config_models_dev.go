@@ -32,6 +32,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/security"
+	"github.com/dontfuckmycode/dfmc/pkg/jsonutil"
 )
 
 const DefaultModelsDevAPIURL = "https://models.dev/api.json"
@@ -86,7 +89,7 @@ func FetchModelsDevCatalog(ctx context.Context, apiURL string) (ModelsDevCatalog
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := security.NewSafeHTTPClient(20*time.Second, endpoint)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -158,10 +161,7 @@ func SaveModelsDevCatalog(path string, catalog ModelsDevCatalog) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(catalog, "", "  ")
-	if err != nil {
-		return err
-	}
+	data := jsonutil.MustMarshal(catalog)
 	return os.WriteFile(path, data, 0o600)
 }
 

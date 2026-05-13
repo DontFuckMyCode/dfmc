@@ -111,7 +111,7 @@ func handleCoachStuck(m Model, eventType string, event engine.Event, payload map
 	noticeKey := strings.ToLower(strings.TrimSpace(tool)) + "\x00" + strings.ToLower(strings.TrimSpace(errClass))
 	if m.agentLoop.stuckNoticeKey == noticeKey && count <= m.agentLoop.stuckNoticeAt+1 {
 		m.agentLoop.stuckNoticeAt = max(m.agentLoop.stuckNoticeAt, count)
-		m.notice = fmt.Sprintf("Loop still stalled on %s ×%d - repeated coach note kept out of chat history. Open ToolStatus with Ctrl+Alt+T.", tool, count)
+		m.notice = fmt.Sprintf("Loop still stalled on %s ×%d - repeated coach note kept out of chat history. Open ToolStatus with Ctrl+Shift+T.", tool, count)
 		return m, ""
 	}
 	m.agentLoop.stuckNoticeKey = noticeKey

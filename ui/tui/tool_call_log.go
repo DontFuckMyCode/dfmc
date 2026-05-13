@@ -1,7 +1,7 @@
 package tui
 
 // tool_call_log.go — rolling buffer of every tool:call / tool:result /
-// tool:error / tool:denied event with full detail for the Ctrl+Alt+T Tool
+// tool:error / tool:denied event with full detail for the Ctrl+Shift+T Tool
 // Status panel. The chat transcript gets temporary live rows only; the
 // full params/results/errors/reasoning live here so the panel can show
 // a scrollable detailed history after the run finishes.
@@ -14,7 +14,7 @@ import (
 const toolCallLogCap = 200
 
 // toolCallLogEntry captures one tool lifecycle event (call + eventual
-// result) so the Ctrl+Alt+T panel can render a detailed timeline.
+// result) so the Ctrl+Shift+T panel can render a detailed timeline.
 type toolCallLogEntry struct {
 	ToolName    string
 	Status      string // "running", "ok", "failed", "denied", "timeout"

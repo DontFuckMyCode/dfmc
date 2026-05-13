@@ -97,7 +97,7 @@ type activityPanelState struct {
 	searchActive bool
 }
 
-// toolStatusPanelState -- Ctrl+Alt+T Tool Status overlay scroll state.
+// toolStatusPanelState -- Ctrl+Shift+T Tool Status overlay scroll state.
 type toolStatusPanelState struct {
 	scroll int
 }

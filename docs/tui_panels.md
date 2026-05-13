@@ -76,7 +76,7 @@ Kaynak listedeki paneller:
 | Contexts | `Shift+F6` | Live contexts |
 | ProviderLog | `Shift+F7`, `Ctrl+L` | Provider call log |
 | Telegram | `Shift+F8` | WIP telegram panel |
-| ToolStatus | `Alt+T` | Tool call history |
+| ToolStatus | `Ctrl+Shift+T` | Tool call history |
 
 Not: `Ctrl+B` listesi tüm panel overlaylerini kapsıyor; `Shift+F8/F20` Telegram overlay'e bağlandı.
 
@@ -208,7 +208,7 @@ Bu paneller ana tab değil; aktif gövdeyi overlay olarak kaplar. `Esc` veya `q`
 | Contexts | `Shift+F6`/`F18` | Main/parked/subagent/drive active contexts | Render-only overlay; close with `Esc/q` |
 | ProviderLog | `Shift+F7`/`F19`, `Ctrl+L` | Provider calls, model, tokens, prompt/reply preview | Read-only scroll: `j/k`, `PgUp/PgDn`, `g/G` |
 | Telegram | `Shift+F8`/`F20` | Telegram bot status/messages, WIP build tag panel | Render-only overlay; close with `Esc/q` |
-| ToolStatus | `Alt+T` | Detailed tool call history, params/results/errors | `j/k`, `PgUp/PgDn`, `g/G`, `Esc/q` |
+| ToolStatus | `Ctrl+Shift+T` | Detailed tool call history, params/results/errors | `j/k`, `PgUp/PgDn`, `g/G`, `Esc/q` |
 
 ## Context Panel Alt Görünümleri
 

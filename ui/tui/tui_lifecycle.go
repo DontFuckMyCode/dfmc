@@ -69,7 +69,7 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 			showStatsPanel:    true,
 			statsPanelMode:    statsPanelModeOverview,
 			keyLogEnabled:     os.Getenv("DFMC_KEYLOG") == "1",
-			toolStripExpanded: false, // collapsed by default; full details in Ctrl+Alt+T panel
+			toolStripExpanded: false, // collapsed by default; full details in Ctrl+Shift+T panel
 		},
 		viewCache: &viewCacheState{},
 		session:   newSessionUI(),

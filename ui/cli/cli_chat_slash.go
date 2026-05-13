@@ -815,7 +815,7 @@ func runChatSlash(ctx context.Context, eng *engine.Engine, line string) (exit bo
 		fmt.Println("  Tab             completions (if enabled)")
 		fmt.Println("TUI shortcuts (run 'dfmc tui', press Alt+h):")
 		fmt.Println("  Alt+h           open shortcuts cheat sheet")
-		fmt.Println("  Alt+t           toggle todo panel")
+		fmt.Println("  Ctrl+shift+t   toggle tool status panel")
 		fmt.Println("  Alt+d           toggle drive panel")
 		fmt.Println("  Ctrl+C          cancel agent loop")
 		return false, true

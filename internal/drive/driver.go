@@ -38,18 +38,14 @@ type Publisher func(eventType string, payload map[string]any)
 // NewDriver. All fields are required — nil runner panics on Run, nil
 // store skips persistence (useful in tests).
 type Driver struct {
-	runner    Runner
-	store     *Store
-	publisher Publisher
-	cfg       Config
-	// reportDir, when non-empty, receives a Markdown rollup of every
-	// terminal run as drive-<runID>.md. Empty disables report writing
-	// (tests, headless contexts). The engine adapter sets this to
-	// <project>/.dfmc/reports/ so each run leaves a durable trace next
-	// to the existing JSON persistence — same theme as the provider
-	// log archive: every important event has a place to land outside
-	// the in-memory transcript.
-	reportDir string
+	runner              Runner
+	store               *Store
+	publisher           Publisher
+	cfg                 Config
+	reportDir           string
+	plannerBreaker      *CircuitBreaker
+	executorBreaker     *CircuitBreaker
+	verifierBreaker     *CircuitBreaker
 }
 
 // SetReportDir configures the directory where finalize() writes a
@@ -68,12 +64,17 @@ const emptyTaskError = "drive task is empty; pass a non-empty task description"
 // callers can pass a zero Config and get the defaults. Publisher may
 // be nil; store may be nil for in-memory test runs.
 func NewDriver(runner Runner, store *Store, publisher Publisher, cfg Config) *Driver {
-	return &Driver{
-		runner:    runner,
-		store:     store,
-		publisher: publisher,
-		cfg:       cfg.Apply(),
+	cfg = cfg.Apply()
+	d := &Driver{
+		runner:              runner,
+		store:               store,
+		publisher:           publisher,
+		cfg:                 cfg,
+		plannerBreaker:      NewCircuitBreaker(cfg.PlannerCircuitBreaker),
+		executorBreaker:    NewCircuitBreaker(cfg.ExecutorCircuitBreaker),
+		verifierBreaker:     NewCircuitBreaker(cfg.VerifierCircuitBreaker),
 	}
+	return d
 }
 
 // NewRun allocates the persisted record for a brand-new drive invocation.
@@ -227,7 +228,12 @@ func (d *Driver) Resume(ctx context.Context, runID string) (*Run, error) {
 		return run, fmt.Errorf("run %q already terminal (status=%s)", runID, run.Status)
 	}
 	for i := range run.Todos {
-		if run.Todos[i].Status == TodoRunning {
+		switch run.Todos[i].Status {
+		case TodoRunning:
+			run.Todos[i].Status = TodoPending
+		case TodoRetrying:
+			// Retry not yet scheduled — reset so it can be picked up
+			// by the scheduler on the next tick.
 			run.Todos[i].Status = TodoPending
 		}
 	}

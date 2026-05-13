@@ -8,6 +8,8 @@
 
 package drive
 
+import "time"
+
 type SchedulerPolicy struct {
 	MaxParallel int
 	LaneCaps    map[string]int
@@ -19,7 +21,7 @@ type SchedulerPolicy struct {
 // done OR everything pending is blocked behind a Blocked dep).
 //
 // Eligibility rules:
-//  1. Status must be TodoPending.
+//  1. Status must be TodoPending or TodoRetrying (if scheduled time has passed).
 //  2. Every depends_on id must point at a Done TODO. Pending deps
 //     mean "not ready yet"; Blocked deps mean "will never be ready
 //     via this TODO" (caller marks it Skipped).
@@ -82,7 +84,11 @@ func skipBlockedDescendants(todos []Todo) []string {
 		for i := range todos {
 			t := &todos[i]
 			if t.Status != TodoPending {
-				continue
+				if t.Status == TodoRetrying && !time.Now().Before(t.RetryScheduledAt) {
+					// Retry scheduled time has passed — act on it.
+				} else {
+					continue
+				}
 			}
 			for _, dep := range t.DependsOn {
 				if s := statusByID[dep]; s == TodoBlocked || s == TodoSkipped {
@@ -108,7 +114,15 @@ func skipBlockedDescendants(todos []Todo) []string {
 // the final summary.
 func runFinished(todos []Todo) bool {
 	for _, t := range todos {
-		if t.Status == TodoPending || t.Status == TodoRunning {
+		// Retrying is not terminal — RetryScheduledAt controls when to act.
+		switch t.Status {
+		case TodoDone, TodoBlocked, TodoSkipped:
+			// terminal — keep scanning
+		case TodoRetrying:
+			// not terminal, but will become Pending once scheduled time passes
+			return false
+		default:
+			// Pending, Running, etc. — not terminal
 			return false
 		}
 	}
@@ -169,7 +183,11 @@ func readyBatchWithPolicy(todos []Todo, policy SchedulerPolicy, limit int) []int
 	for _, i := range orderedCandidateIndices(todos, policy) {
 		t := &todos[i]
 		if t.Status != TodoPending {
-			continue
+			if t.Status == TodoRetrying && !time.Now().Before(t.RetryScheduledAt) {
+				// Retry scheduled time has passed — treat as pickable.
+			} else {
+				continue
+			}
 		}
 		if depsReady(t, statusByID) != depsAllDone {
 			continue
