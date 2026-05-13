@@ -17,6 +17,7 @@ type sessionProvider interface {
 	GetAgent(id AgentID) *Agent
 	Attention() *SharedAttention
 	Delegate(from, to AgentID, task string, systemPrompt string, autonomy AutonomyLevel, await bool) error
+	writeEvent(event string, fields map[string]any)
 }
 
 // Agent is an isolated worker agent within a Session.
@@ -27,11 +28,11 @@ type sessionProvider interface {
 //   - Tool execution → EngineProvider.ExecuteTool
 //   - LLM completion → EngineProvider.Complete
 type Agent struct {
-	id     AgentID
-	name   string
+	id   AgentID
+	name string
 
 	// Tree structure
-	parent   AgentID    // coordinator (nil=0 for root)
+	parent   AgentID // coordinator (nil=0 for root)
 	children []AgentID
 
 	// Per-agent isolated state
@@ -40,7 +41,7 @@ type Agent struct {
 
 	// Model config for this agent
 	model    ModelConfig
-	autonomy  AutonomyLevel
+	autonomy AutonomyLevel
 
 	// Per-agent budget
 	maxToolSteps  int
@@ -51,9 +52,9 @@ type Agent struct {
 	// Loop state
 	status         AgentStatus
 	statusMu       sync.RWMutex
-	inbox          chan DelegationTask        // incoming tasks from parent
+	inbox          chan DelegationTask // incoming tasks from parent
 	pendingResults map[uuid.UUID]chan DelegationResult
-	pendingMu      sync.Mutex                 // guards pendingResults
+	pendingMu      sync.Mutex // guards pendingResults
 
 	// Lifecycle
 	runCtx    context.Context
@@ -94,26 +95,26 @@ func (cr *conversationRef) clear() {
 // ModelConfig holds the current model/provider for an agent.
 type ModelConfig struct {
 	Provider string `json:"provider"` // "anthropic", "openai", etc.
-	Model   string `json:"model"`    // "claude-sonnet-4-6", "gpt-4o", etc.
+	Model    string `json:"model"`    // "claude-sonnet-4-6", "gpt-4o", etc.
 }
 
 // newAgent creates an agent but does not start it. Use Session.SpawnAgent instead.
 func newAgent(session sessionProvider, id AgentID, name string, parent AgentID) *Agent {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Agent{
-		id:            id,
-		name:          name,
-		parent:        parent,
-		conversation:  &conversationRef{},
-		maxToolSteps:  60,     // default; overridden per agent
-		maxToolTokens: 250000,
-		autonomy:      AutonomyFull,
-		status:        StatusIdle,
-		inbox:         make(chan DelegationTask, 10),
+		id:             id,
+		name:           name,
+		parent:         parent,
+		conversation:   &conversationRef{},
+		maxToolSteps:   60, // default; overridden per agent
+		maxToolTokens:  250000,
+		autonomy:       AutonomyFull,
+		status:         StatusIdle,
+		inbox:          make(chan DelegationTask, 10),
 		pendingResults: make(map[uuid.UUID]chan DelegationResult),
-		runCtx:        ctx,
-		runCancel:     cancel,
-		session:       session,
+		runCtx:         ctx,
+		runCancel:      cancel,
+		session:        session,
 	}
 }
 
@@ -168,7 +169,6 @@ func PublishStatusEvent(id AgentID, old, new AgentStatus, task string) {
 	}
 }
 
-
 func (a *Agent) setStatus(s AgentStatus) {
 	a.statusMu.Lock()
 	old := a.status
@@ -179,6 +179,13 @@ func (a *Agent) setStatus(s AgentStatus) {
 			statusHook(a.id, old, s)
 		}
 		PublishStatusEvent(a.id, old, s, "")
+		if a.session != nil {
+			a.session.writeEvent("agent:status", map[string]any{
+				"agent_id": a.id,
+				"from":     old.String(),
+				"to":       s.String(),
+			})
+		}
 	}
 }
 
@@ -372,11 +379,11 @@ func (a *Agent) think(task DelegationTask) (*LLMResponse, error) {
 
 	msgs := a.conversation.messagesCopy()
 	req := CompletionRequest{
-		AgentID:      a.id,
-		Model:        a.model.Model,
-		Provider:     a.model.Provider,
-		Messages:     msgs,
-		MaxTokens:    4096,
+		AgentID:   a.id,
+		Model:     a.model.Model,
+		Provider:  a.model.Provider,
+		Messages:  msgs,
+		MaxTokens: 4096,
 	}
 
 	resp := a.engine.Complete(a.runCtx, req)

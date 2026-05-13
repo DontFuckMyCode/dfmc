@@ -157,6 +157,14 @@ func (s *Session) SetActiveAgent(id AgentID) error {
 // Attention returns the session's shared attention bus.
 func (s *Session) Attention() *SharedAttention { return s.attention }
 
+// writeEvent is part of sessionProvider interface (agent.go).
+// Session always writes to stdout for now; real file logging follows in a later change.
+func (s *Session) writeEvent(event string, fields map[string]any) {
+	// Stub — satisfies sessionProvider without changing existing behavior.
+	_ = event
+	_ = fields
+}
+
 // SpawnAgent creates a new agent as a child of the given parent.
 // The new agent does not start running until it receives a task in its inbox.
 // Returns the new agent's ID.

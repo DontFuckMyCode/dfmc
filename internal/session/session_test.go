@@ -259,10 +259,10 @@ type stubContext struct{}
 func (c *stubContext) Build(ctx context.Context, msgs []Message) (string, TokenUsage, error) {
 	return "", TokenUsage{}, nil
 }
-func (c *stubContext) BudgetRemaining() int { return 100000 }
-func (c *stubContext) SetBudget(int)        {}
+func (c *stubContext) BudgetRemaining() int   { return 100000 }
+func (c *stubContext) SetBudget(int)          {}
 func (c *stubContext) RecordUsage(TokenUsage) {}
-func (c *stubContext) Reset()                {}
+func (c *stubContext) Reset()                 {}
 
 // TestWithStubEngine tests that an agent runs and completes with a stub engine.
 func TestWithStubEngine(t *testing.T) {
@@ -357,8 +357,8 @@ func TestSharedAttentionSubscription(t *testing.T) {
 
 	// Publish an event from the child.
 	s.attention.Publish(AttentionEvent{
-		From:  child.ID(),
-		Type:  AttentionToolResult,
+		From:    child.ID(),
+		Type:    AttentionToolResult,
 		Payload: []byte(`{"tool":"test","output":"ok"}`),
 	})
 

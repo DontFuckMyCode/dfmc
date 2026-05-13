@@ -17,12 +17,12 @@ type AgentStatus int
 
 const (
 	StatusIdle              AgentStatus = iota // not started yet
-	StatusRunning                               // actively working (tool loop)
-	StatusWaitingDelegation                     // has a task in inbox, will process soon
-	StatusWaitingUserInput                       // autonomy=limited + cap hit; needs input
-	StatusParked                                 // paused, waiting to be resumed
-	StatusDone                                   // finished cleanly
-	StatusFailed                                 // finished with an error
+	StatusRunning                              // actively working (tool loop)
+	StatusWaitingDelegation                    // has a task in inbox, will process soon
+	StatusWaitingUserInput                     // autonomy=limited + cap hit; needs input
+	StatusParked                               // paused, waiting to be resumed
+	StatusDone                                 // finished cleanly
+	StatusFailed                               // finished with an error
 )
 
 func (s AgentStatus) String() string {
@@ -135,9 +135,9 @@ func (a AttentionType) String() string {
 
 // DelegationTask represents a unit of work assigned from a parent to a child agent.
 type DelegationTask struct {
-	ID     uuid.UUID `json:"id"`
-	From   AgentID   `json:"from"` // direct parent only (enforced by Session.Delegate)
-	Task   string    `json:"task"` // natural language description
+	ID   uuid.UUID `json:"id"`
+	From AgentID   `json:"from"` // direct parent only (enforced by Session.Delegate)
+	Task string    `json:"task"` // natural language description
 
 	// SystemPrompt is set by the orchestrating agent to give this child agent
 	// a task-specific identity or context. It is prepended to the child's
@@ -166,24 +166,24 @@ type DelegationTask struct {
 
 // DelegationResult is the output of a completed delegation task.
 type DelegationResult struct {
-	TaskID      uuid.UUID `json:"task_id"`
-	Status      TaskStatus `json:"status"`      // done or failed
-	Summary     string    `json:"summary"`      // short human-readable summary
-	ToolCount   int       `json:"tool_count"`   // number of tool calls made
-	TokensUsed  int       `json:"tokens_used"`  // approximate tokens consumed
-	FilesTouched []string `json:"files_touched"`// files created or modified
-	Payload     json.RawMessage `json:"payload,omitempty"` // extra data (error message, etc.)
+	TaskID       uuid.UUID       `json:"task_id"`
+	Status       TaskStatus      `json:"status"`            // done or failed
+	Summary      string          `json:"summary"`           // short human-readable summary
+	ToolCount    int             `json:"tool_count"`        // number of tool calls made
+	TokensUsed   int             `json:"tokens_used"`       // approximate tokens consumed
+	FilesTouched []string        `json:"files_touched"`     // files created or modified
+	Payload      json.RawMessage `json:"payload,omitempty"` // extra data (error message, etc.)
 }
 
 // AttentionEvent is a short-lived notification published by an agent.
 // Unlike DelegationTask (work assignment), AttentionEvent is for awareness.
 // It is NOT auto-injected into any agent's context.
 type AttentionEvent struct {
-	ID        uuid.UUID       `json:"id"`
-	From      AgentID         `json:"from"`
-	Type      AttentionType   `json:"type"`
-	Payload   json.RawMessage `json:"payload"`
-	Timestamp time.Time       `json:"timestamp"`
+	ID        uuid.UUID        `json:"id"`
+	From      AgentID          `json:"from"`
+	Type      AttentionType    `json:"type"`
+	Payload   json.RawMessage  `json:"payload"`
+	Timestamp time.Time        `json:"timestamp"`
 	ReadBy    map[AgentID]bool `json:"read_by"` // agents that have consumed this
 }
 
@@ -193,7 +193,7 @@ type AgentTreeNode struct {
 	ID       AgentID     `json:"id"`
 	Name     string      `json:"name"`
 	Status   AgentStatus `json:"status"`
-	Parent   AgentID     `json:"parent"`   // 0 for root
+	Parent   AgentID     `json:"parent"` // 0 for root
 	Children []AgentID   `json:"children"`
-	Depth    int         `json:"depth"`    // distance from root
+	Depth    int         `json:"depth"` // distance from root
 }

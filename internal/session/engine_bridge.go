@@ -35,25 +35,25 @@ type EngineProvider interface {
 
 // CompletionRequest is a non-streaming LLM completion request.
 type CompletionRequest struct {
-	AgentID    AgentID
-	Model      string // model name, e.g. "claude-sonnet-4-6"
-	Provider   string // provider profile name, e.g. "anthropic"
+	AgentID      AgentID
+	Model        string // model name, e.g. "claude-sonnet-4-6"
+	Provider     string // provider profile name, e.g. "anthropic"
 	SystemPrompt string
-	Messages   []Message
-	MaxTokens  int
+	Messages     []Message
+	MaxTokens    int
 }
 
 // CompletionResponse is the result of an LLM completion.
 type CompletionResponse struct {
-	Content   string
+	Content    string
 	StopReason string
-	Usage     TokenUsage
-	Error     string
+	Usage      TokenUsage
+	Error      string
 }
 
 // Message is a single conversation message.
 type Message struct {
-	Role    string `json:"role"`    // "user" | "assistant" | "system"
+	Role    string `json:"role"` // "user" | "assistant" | "system"
 	Content string `json:"content"`
 }
 
@@ -78,5 +78,3 @@ type ContextManagerHandle interface {
 	// Reset clears the context.
 	Reset()
 }
-
-

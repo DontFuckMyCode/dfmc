@@ -55,20 +55,12 @@ func (e *Engine) NewSupervisor(run *supervisor.Run, plan *supervisor.ExecutionPl
 	return sup
 }
 
-// tokenAllocator is the budget-pool capability the engine needs from an
-// active supervisor: alloc/restore tokens for sub-agent budget halving.
-// Optional capabilities (Status, Remaining) are sniffed via type
-// assertion at the call site so a supervisor that doesn't expose them
-// still satisfies the required core.
-type tokenAllocator interface {
-	AllocTokens(int) int
-	RestoreTokens(int)
-}
+
 
 // SetSupervisor registers the active supervisor for budget accounting.
 // Sub-agent budget halving uses the supervisor pool when non-nil.
 // Called by the supervisor start path; cleared when the supervisor finishes.
-func (e *Engine) SetSupervisor(supervisor tokenAllocator) {
+func (e *Engine) SetSupervisor(supervisor supervisor.TokenAllocator) {
 	e.activeSupervisor = supervisor
 }
 
@@ -80,12 +72,8 @@ func (e *Engine) ClearSupervisor() {
 // SupervisorStatus returns the current supervisor state, or a zero-valued
 // struct if no supervisor is active.
 func (e *Engine) SupervisorStatus() supervisor.SupervisorStatus {
-	// If the engine's active supervisor implements the Status() method,
-	// call it. Otherwise return zero status.
-	type statuser interface {
-		Status() supervisor.SupervisorStatus
-	}
-	if s, ok := e.activeSupervisor.(statuser); ok {
+	// If the engine's active supervisor implements Statuser, use it.
+	if s, ok := e.activeSupervisor.(supervisor.Statuser); ok {
 		return s.Status()
 	}
 	return supervisor.SupervisorStatus{}
@@ -94,13 +82,10 @@ func (e *Engine) SupervisorStatus() supervisor.SupervisorStatus {
 // ActiveSupervisorBudget returns the remaining token budget if a supervisor
 // is active and has a token cap, or -1 for unlimited.
 func (e *Engine) ActiveSupervisorBudget() int {
-	type budgeter interface {
-		Remaining() int
-	}
 	if e.activeSupervisor == nil {
 		return -1
 	}
-	if b, ok := e.activeSupervisor.(budgeter); ok {
+	if b, ok := e.activeSupervisor.(supervisor.Budgeter); ok {
 		return b.Remaining()
 	}
 	return -1

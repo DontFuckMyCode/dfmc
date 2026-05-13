@@ -4,7 +4,9 @@ package drive
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 )
 
 // Sentinel errors for robust failure classification via errors.Is.
@@ -211,4 +213,182 @@ func FailureClassifyIsFallbackWorthy(err error) bool {
 // IsFatal reports true when err should never be retried.
 func FailureClassifyIsFatal(err error) bool {
 	return FailureClassify(err) == Fatal
+}
+
+// ─────────────────────────────────────────────────────────────────
+// ErrorCategorizer — collates error statistics for observability
+// ─────────────────────────────────────────────────────────────────
+
+// ErrorStats holds aggregated error counts per classification.
+type ErrorStats struct {
+	Transient  int // RetryTransient count
+	Fallback   int // RetryWithFallback count
+	Fatal      int // Fatal count
+	Total      int // sum of all
+	ByProvider map[string]int
+	ByTool     map[string]int
+}
+
+// NewErrorStats initializes an empty stats accumulator.
+func NewErrorStats() *ErrorStats {
+	return &ErrorStats{
+		ByProvider: make(map[string]int),
+		ByTool:     make(map[string]int),
+	}
+}
+
+// Record increments counts for the given classification, provider, and tool.
+func (s *ErrorStats) Record(class FailureClass, provider, tool string) {
+	s.Total++
+	switch class {
+	case RetryTransient:
+		s.Transient++
+	case RetryWithFallback:
+		s.Fallback++
+	case Fatal:
+		s.Fatal++
+	}
+	if provider != "" {
+		s.ByProvider[provider]++
+	}
+	if tool != "" {
+		s.ByTool[tool]++
+	}
+}
+
+// Merge adds counts from another ErrorStats into s.
+func (s *ErrorStats) Merge(o *ErrorStats) {
+	s.Transient += o.Transient
+	s.Fallback += o.Fallback
+	s.Fatal += o.Fatal
+	s.Total += o.Total
+	for k, v := range o.ByProvider {
+		s.ByProvider[k] += v
+	}
+	for k, v := range o.ByTool {
+		s.ByTool[k] += v
+	}
+}
+
+// RetryRate returns the fraction of errors that are RetryTransient (0..1).
+func (s *ErrorStats) RetryRate() float64 {
+	if s.Total == 0 {
+		return 0
+	}
+	return float64(s.Transient) / float64(s.Total)
+}
+
+// FatalRate returns the fraction of errors that are Fatal (0..1).
+func (s *ErrorStats) FatalRate() float64 {
+	if s.Total == 0 {
+		return 0
+	}
+	return float64(s.Fatal) / float64(s.Total)
+}
+
+// ErrorCategorizer tracks error stats and can classify new errors.
+// Zero-value is ready to use.
+type ErrorCategorizer struct {
+	Stats       *ErrorStats
+	ByProvider  map[string]*ErrorStats // per-provider breakdown
+	ByTool      map[string]*ErrorStats  // per-tool breakdown
+	TotalErrors int
+}
+
+// NewErrorCategorizer creates a fresh categorizer.
+func NewErrorCategorizer() *ErrorCategorizer {
+	return &ErrorCategorizer{
+		Stats:      NewErrorStats(),
+		ByProvider: make(map[string]*ErrorStats),
+		ByTool:     make(map[string]*ErrorStats),
+	}
+}
+
+// RecordError classifies err and records it into aggregate and breakdown stats.
+func (c *ErrorCategorizer) RecordError(err error, provider, tool string) {
+	class := FailureClassify(err)
+	c.Stats.Record(class, provider, tool)
+	c.TotalErrors++
+
+	if provider != "" {
+		if c.ByProvider[provider] == nil {
+			c.ByProvider[provider] = NewErrorStats()
+		}
+		c.ByProvider[provider].Record(class, provider, tool)
+	}
+
+	if tool != "" {
+		if c.ByTool[tool] == nil {
+			c.ByTool[tool] = NewErrorStats()
+		}
+		c.ByTool[tool].Record(class, provider, tool)
+	}
+}
+
+// TopProviders returns the top N providers by total error count.
+func (c *ErrorCategorizer) TopProviders(n int) []string {
+	type kv struct{ k string; v int }
+	var sorted []kv
+	for k, v := range c.ByProvider {
+		sorted = append(sorted, kv{k, v.Total})
+	}
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j].v > sorted[i].v {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+	if n > len(sorted) {
+		n = len(sorted)
+	}
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		out[i] = sorted[i].k
+	}
+	return out
+}
+
+// Summary returns a human-readable summary of the categorizer stats.
+func (c *ErrorCategorizer) Summary() string {
+	if c.TotalErrors == 0 {
+		return "ErrorCategorizer: no errors recorded"
+	}
+	return fmt.Sprintf(
+		"ErrorCategorizer: %d total | retry=%d (%.1f%%) | fallback=%d | fatal=%d (%.1f%%)",
+		c.TotalErrors,
+		c.Stats.Transient, c.Stats.RetryRate()*100,
+		c.Stats.Fallback,
+		c.Stats.Fatal, c.Stats.FatalRate()*100,
+	)
+}
+
+// MetricsExport represents a structured export of all error stats.
+type MetricsExport struct {
+	Total      ErrorStats            `json:"total"`
+	ByProvider map[string]ErrorStats `json:"by_provider"`
+	ByTool     map[string]ErrorStats `json:"by_tool"`
+	RetryRate  float64               `json:"retry_rate"`
+	FatalRate  float64              `json:"fatal_rate"`
+	Timestamp  time.Time             `json:"timestamp"`
+}
+
+// Export returns a serializable metrics snapshot.
+func (c *ErrorCategorizer) Export() MetricsExport {
+	byProvider := make(map[string]ErrorStats)
+	for k, v := range c.ByProvider {
+		byProvider[k] = *v
+	}
+	byTool := make(map[string]ErrorStats)
+	for k, v := range c.ByTool {
+		byTool[k] = *v
+	}
+	return MetricsExport{
+		Total:      *c.Stats,
+		ByProvider: byProvider,
+		ByTool:     byTool,
+		RetryRate:  c.Stats.RetryRate(),
+		FatalRate:  c.Stats.FatalRate(),
+		Timestamp:  time.Now(),
+	}
 }

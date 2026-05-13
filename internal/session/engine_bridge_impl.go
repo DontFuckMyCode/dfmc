@@ -9,8 +9,9 @@ import (
 
 // engineBridge is a minimal EngineProvider that wraps an opaque engine reference.
 // Stored as interface{} in session to avoid importing engine from session:
-//   engine → session (for *session.Session in AttachSession)
-//   session → engine (via interface{} cast at call site, no import needed)
+//
+//	engine → session (for *session.Session in AttachSession)
+//	session → engine (via interface{} cast at call site, no import needed)
 //
 // The real engine is passed as an opaque interface{} and cast at execution time.
 type engineBridge struct {
@@ -137,8 +138,6 @@ func (b *engineBridge) Complete(ctx context.Context, req CompletionRequest) Comp
 		},
 	}
 }
-
-
 
 func (b *engineBridge) PublishAttention(event AttentionEvent) {
 	if b.engine == nil {
