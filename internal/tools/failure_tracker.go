@@ -59,11 +59,27 @@ func (e *Engine) clearFailure(key string) {
 	e.failureMu.Lock()
 	defer e.failureMu.Unlock()
 	delete(e.recentFailures, key)
-	// O(1) reverse lookup via map instead of O(n) slice scan.
 	if e.failureOrderIdx == nil {
 		e.failureOrderIdx = map[string]int{}
 	}
 	delete(e.failureOrderIdx, key)
+	// Lazy compaction: when order slice exceeds 2x cap, rebuild.
+	cap := e.recentFailureCap
+	if cap <= 0 {
+		cap = maxRecentFailures
+	}
+	if len(e.recentFailOrder) > cap*2 {
+		compact := make([]string, 0, len(e.recentFailures))
+		for _, k := range e.recentFailOrder {
+			if _, ok := e.recentFailures[k]; ok {
+				compact = append(compact, k)
+			}
+		}
+		e.recentFailOrder = compact
+		for i, k := range e.recentFailOrder {
+			e.failureOrderIdx[k] = i
+		}
+	}
 }
 
 func toolFailureKey(name string, params map[string]any) string {

@@ -1,6 +1,6 @@
 # DFMC Architecture
 
-Updated: 2026-05-05
+Updated: 2026-05-11
 
 Module: `github.com/dontfuckmycode/dfmc`
 Go: 1.25+
@@ -34,7 +34,9 @@ This document is generated from the current repository structure and source file
 13. Skills, plugins, hooks, commands
 14. Event model and observability
 15. Package map
-16. Critical invariants
+16. File ownership inventory
+17. Excess and gap ledger
+18. Critical invariants
 
 ## 1. System Map
 
@@ -756,7 +758,175 @@ security-report           generated security audit artifacts
 .dfmc                     local project state, config, MagicDoc
 ```
 
-## 16. Critical Invariants
+## 16. File Ownership Inventory
+
+This section is the maintenance map: which production files own which responsibility. Test files are intentionally omitted here; they validate behavior but should not define architecture. In large packages, the filename prefix is part of the design contract.
+
+### Root And Entrypoint
+
+| File | Responsibility | Review signal |
+|---|---|---|
+| `cmd/dfmc/main.go` | Process bootstrap: parse global flags, load config, create engine, delegate to CLI. | Should stay thin; business logic belongs in `internal/*` or `ui/*`. |
+| `pkg/types/types.go` | Shared message, tool call, tool result, model/provider-adjacent types. | Keep stable; churn here ripples everywhere. |
+| `pkg/types/errors.go` | Shared typed error helpers/contracts. | Good place for cross-package error semantics only. |
+| `pkg/session/path_utils.go` | Session/path normalization helpers. | If more session state appears, consider an explicit session package boundary. |
+| `pkg/llm/llm_logger.go` | Artifact logger for LLM traffic. | Overlaps conceptually with `providerlog` and `toolhistory`; decide one observability story. |
+
+### Configuration And Provider Catalog
+
+| File / group | Responsibility | Review signal |
+|---|---|---|
+| `internal/config/config_types.go` | Top-level config structs. | Must remain the source of schema truth. |
+| `config.go`, `defaults.go`, `validator.go` | Load, default, validate config. | Validation should reject broken provider/routing state before engine init. |
+| `config_env.go`, `config_windows.go` | Environment and OS-specific config details. | Avoid provider-specific policy here. |
+| `config_runtime.go`, `config_model.go`, `config_routing.go` | Runtime provider/model/tier/route config. | This is where "my provider", primary/fallback, and skill route persistence should converge. |
+| `config_models_dev.go`, `modelsdev_test.go` | `models.dev/api.json` cache/reference schema and sync helpers. | Treat as reference data only; user-owned provider records must remain editable overrides. |
+| `provider_advisories.go`, `config_audit.go`, `config_memory.go`, `config_other.go` | Secondary config domains. | Keep advisory/reporting separate from enforcement. |
+
+### Engine Core
+
+| File / group | Responsibility | Review signal |
+|---|---|---|
+| `internal/engine/engine.go` | `Engine` struct, construction entry, shared subsystem fields. | Should describe ownership, not contain domain-heavy flows. |
+| `engine_init.go`, `engine_lifecycle.go` | Subsystem initialization, shutdown, lifecycle events. | New runtime services must be wired here or they are probably dead. |
+| `eventbus.go`, `provider_observers.go` | Internal event stream and provider telemetry bridge. | Event names are public-ish contracts for TUI/Web/CLI. |
+| `engine_ask*.go` | Chat/ask request assembly, history, streaming, request execution. | Keep provider protocol details out; use provider package. |
+| `engine_context*.go`, `context_gc.go` | Context build/status/recommendation/options/GC. | Context-limit handling and summarize/resume policy should be visible here. |
+| `engine_prompt*.go` | Prompt library access, prompt rendering notices. | Prompt text should live in promptlib/docs, not hard-coded here unless runtime-specific. |
+| `engine_tools*.go` | Tool lifecycle, approvals, hooks, timeout/panic/error emission. | Every real tool call should pass through this layer. |
+| `engine_passthrough*.go` | UI/API facade methods for config, provider, memory, tasks, conversations. | Useful boundary; avoid growing into business logic. |
+| `engine_analyze*.go`, `security_audit.go` | Analysis, dead-code/complexity/security entrypoints. | Should delegate to AST/CodeMap/Security packages. |
+| `drive_adapter*.go`, `engine_drive_spec.go`, `engine_supervisor.go` | Engine-to-Drive/Supervisor bridge. | This is a key duplication hotspot while Drive and Supervisor both exist. |
+| `agent_loop*.go` | Provider-native loop, tool loop, phases, parallel tool calls, cache, events, result parsing. | Keep one canonical continuation/autonomous-loop policy; avoid duplicate stop criteria. |
+| `agent_loop_autocontinue.go`, `agent_loop_autonomous*.go`, `agent_parking.go` | Long-running autonomous continuation, resume, and parked state. | Central place for "continue until done" behavior. |
+| `agent_compact*.go` | Compaction and summary when context pressure grows. | Must be tested with tool-tail/history preservation. |
+| `subagent*.go` | Sub-agent run, profiles, memory, path scope, allowlist. | Allowed tools are currently partly guidance; strict enforcement belongs here/tools lifecycle. |
+| `approver.go`, `skill_allowlist.go`, `terminal_sanitize.go` | Safety and policy helpers. | Should remain small and auditable. |
+| `assistant_hints.go`, `agent_coach*.go`, `agent_handoff*.go` | Model-facing guidance, coach notices, handoff summaries. | Watch for prompt duplication with promptlib. |
+| `status_types*.go`, `todos.go`, `errors.go` | Status DTOs, todo DTO helpers, engine errors. | DTO churn affects every UI surface. |
+
+### Provider System
+
+| File / group | Responsibility | Review signal |
+|---|---|---|
+| `internal/provider/interface.go` | Provider request/response/tool capability contract. | Must model all protocol variants without leaking UI concerns. |
+| `router*.go` | Provider selection, fallback, profile/routing dispatch. | Should become the single runtime policy for tier primary/fallback and skill routes. |
+| `anthropic*.go` | Anthropic requests, streaming, native tools, XML tool parsing. | Supports both native tool blocks and XML-style tool call recovery. |
+| `openai_compat*.go`, `openai_tools.go` | OpenAI/OpenAI-compatible chat/stream/tool schema. | Compatible providers should vary by config, not copy-pasted provider code. |
+| `google*.go`, `google_tools.go` | Gemini request/stream/tool schema. | Keep function-call parsing provider-native. |
+| `retry*.go`, `throttle.go`, `circuit.go`, `race.go`, `stream_recovery.go` | Reliability: fallback, context overflow retry, throttling, circuit breaker, race mode, stream recovery. | Policy should not fork between chat, Drive, and sub-agent calls. |
+| `offline*.go`, `placeholder.go` | Offline analyzer/fallback and configured-but-missing placeholders. | Useful for degraded mode; keep visibly last in live routing. |
+| `http_client.go` | Provider HTTP client construction. | Timeouts and safe defaults belong here. |
+
+### Tools
+
+| File / group | Responsibility | Review signal |
+|---|---|---|
+| `internal/tools/engine.go`, `registry.go`, `spec*.go`, `params.go`, `output.go`, `errors.go` | Tool registry, specs, parameter coercion, result contract. | Model-facing schema changes must be intentional. |
+| `engine_register_defaults.go`, `builtin_specs*.go` | Default backend tool registration and metadata. | This defines the real tool surface. |
+| `meta*.go` | Compact model-facing meta tools: search/read/edit/run orchestration. | Meta tools must not recursively call meta tools. |
+| `lifecycle.go`, `timeout.go`, `failure_tracker.go`, `bounded_buffer.go` | Execution support utilities. | Keep lifecycle events in engine; utilities stay provider/UI-agnostic. |
+| `builtin_read/list/grep/edit.go`, `apply_patch*.go`, `fileutil.go`, `path_utils.go`, `snapshot_cache.go` | File read/list/search/edit/patch primitives and mutation safety. | Mutation tools require prior read snapshot and path lock discipline. |
+| `command*.go`, `destructive.go` | Shell command execution, validation, recovery, destructive command policy. | High-risk area; keep policy explicit and tested. |
+| `git*.go`, `gh*.go` | Git and GitHub command wrappers. | `gh_runner.go` currently has encoding/syntax risk; fix before trusting. |
+| `ast_query.go`, `codemap*.go`, `call_graph.go`, `dependency_graph*.go`, `find_symbol*.go`, `semantic_search*.go`, `glob.go` | Code intelligence tools. | Duplicates AST/CodeMap capabilities; keep tool UX thin. |
+| `orchestrate*.go`, `delegate.go`, `task_split.go`, `todo_write*.go`, `subagent_retry.go` | Planning, delegation, DAG orchestration, todos. | Overlaps with Drive/Supervisor; define which layer is authoritative. |
+| `spec_parse/validate/search/to_todo.go` | Spec ingestion and TODO conversion tools. | Should align with `internal/drive/spec_ingest.go`. |
+| `web*.go` | Web fetch/search/html helpers. | Network policy and redaction should be explicit. |
+| `_*.js` files under `internal/tools` | Ad-hoc repair/migration scripts. | Excess: not part of Go build; move to `scripts/` or delete. |
+
+### Context, Prompt, Memory, Conversation
+
+| File / group | Responsibility | Review signal |
+|---|---|---|
+| `internal/context/manager*.go` | Context manager, build path, prompt input assembly. | This is the main context boundary for ask/drive. |
+| `budget_trimmer.go`, `compress.go`, `snapshot.go`, `symbol_expand.go` | Context reduction, compression, snapshots, symbol expansion. | Must preserve recent user/tool-tail correctness. |
+| `prompt_render*.go`, `injected.go`, `skill_aggregator.go` | Prompt block rendering, injected context, skill prompt contribution. | Test signature drift currently exists in skill aggregator tests. |
+| `ranking_heuristics.go`, `trajectory*.go`, `language_detector.go`, `inspector.go` | Retrieval/ranking diagnostics and trajectory detection. | Good candidates for observability output. |
+| `internal/promptlib/*` | Prompt catalog loading, decoding, detection, rendering, stats. | Keep prompt content in YAML/defaults where possible. |
+| `internal/memory/store.go` | Memory store facade over storage. | Startup must degrade if memory fails. |
+| `internal/conversation/manager*.go` | Conversation JSONL persistence, clone/branch/query. | Session/resume behavior depends on this staying stable. |
+| `internal/storage/store*.go` | Bolt store and backup/conversation helpers. | Must close after background workers stop. |
+
+### Drive, Supervisor, Tasks
+
+| File / group | Responsibility | Review signal |
+|---|---|---|
+| `internal/drive/driver*.go`, `runner.go` | Synchronous autonomous Drive run orchestration. | `Run()` is the central entry; avoid alternate hidden run loops. |
+| `planner*.go`, `run_planner*.go`, `spec_ingest.go` | Plan generation, normalization, validation, spec ingestion. | Planner policy should share model routing with provider router. |
+| `scheduler*.go`, `run_executor*.go`, `run_drainer.go`, `expansion.go`, `verification.go` | TODO scheduling, execution, draining, dynamic expansion, verification. | File-scope parallelism and retry rules live here. |
+| `persistence.go`, `registry.go`, `events.go`, `report.go`, `routing.go`, `supervision.go`, `types.go`, `errors.go`, `config.go` | Run storage, active registry, events, reports, route selection, DTOs. | Some responsibilities overlap with supervisor/taskstore. |
+| `internal/supervisor/*` | Richer execution-plan model, coordinator/executor/persistence/policies. | Architectural gap: not yet single source of truth for Drive. |
+| `internal/supervisor/bridge/*` | Mapping Drive runs to Supervisor model and policy normalization. | Bridge suggests migration path from Drive scheduler to Supervisor. |
+| `internal/taskstore/*` | Persistent task IDs and task records. | Should eventually align with Drive TODO persistence. |
+
+### Code Intelligence And Security
+
+| File / group | Responsibility | Review signal |
+|---|---|---|
+| `internal/ast/backend*.go`, `treesitter*.go`, `regex.go` | AST backend selection and tree-sitter/regex extraction. | `childrenOfType` appears unused; verify before cleanup. |
+| `detect.go`, `extract.go`, `go_extract.go`, `metrics.go`, `cache.go`, `engine.go` | Language detection, extraction, metrics, cache, public AST engine. | Keep parser fallback deterministic. |
+| `internal/codemap/*` | Code graph, algorithms, traversal, metrics. | CodeMap should remain engine-agnostic. |
+| `internal/langintel/*_kb.go`, `registry.go`, `types.go` | Language-specific knowledge base and registry. | Useful but static; consider version/source metadata later. |
+| `internal/security/*` | Secret scanning, AST security smells, deps audit, safe HTTP, redaction. | High-value shared subsystem; avoid UI-only assumptions. |
+
+### UI Surfaces
+
+| File / group | Responsibility | Review signal |
+|---|---|---|
+| `ui/cli/cli.go` | CLI dispatcher. | Keep as routing table; domain logic in sibling files. |
+| `ui/cli/cli_*.go`, `provider_cli.go`, `suggest.go`, `tool_show.go`, `hooks_cli.go`, `approvals_cli.go` | CLI command families for ask/chat/config/drive/mcp/remote/plugin/provider/etc. | CLI is broad; each command should delegate to engine/domain packages quickly. |
+| `ui/tui/tui*.go`, `update*.go`, `input*.go`, `messages.go` | Bubble Tea model, lifecycle, reducer, input handling. | Reducer should route to feature handlers, not grow feature logic. |
+| `chat_*.go`, `stream_cmds.go`, `transcript.go` | Chat state, commands, submit, streaming, timeline. | `handleUpdateSlash` and Telegram command wiring need review. |
+| `engine_events*.go`, `event_helpers.go` | Engine EventBus to TUI state/timeline adapters. | Event schema changes must update these files. |
+| `provider_panel*.go`, `provider_selection*.go`, `render_providers*.go` | Provider/key/model/tier panel state, persistence, rendering. | This should mirror the config/provider router model exactly. |
+| `render_*.go`, `panel_*.go`, `activity*.go`, `runtime_*.go` | Panel rendering and runtime view models. | Legacy render entrypoints should be pruned once tests move. |
+| `context_panel*.go`, `memory*.go`, `prompts*.go`, `plans*.go`, `security*.go`, `drive.go` | Feature panels and domain-specific TUI actions. | Keep UI state separate from engine state. |
+| `slash_*.go`, `command_picker*.go`, `command_summaries.go` | Slash catalog, picker, templates, command summaries. | Shortcut policy should match keyboard UX rules. |
+| `patch_*.go`, `diff_sidebyside.go`, `filesystem.go`, `files_util.go`, `gitinfo.go` | File/patch/diff/git presentation helpers. | Avoid direct mutation bypassing tools/engine lifecycle. |
+| `ui/tui/theme/*` and `ui/tui/theme.go` | Theme components and compatibility re-exports. | `theme.go` contains shim-like helpers; migrate tests/callers to `theme/*` over time. |
+| `ui/web/server*.go`, `ui/web/static`, `ui/web/frontend`, `ui/web/app` | HTTP API, SSE/WS, embedded workbench/frontend app. | Existing architecture covers routes; detailed web inventory should live in a web-specific doc if it keeps growing. |
+
+### Extension And Integration
+
+| File / group | Responsibility | Review signal |
+|---|---|---|
+| `internal/mcp/*` | MCP protocol client/server/bridge. | Keep synthetic Drive tools separate from backend registry. |
+| `internal/pluginexec/*` | Plugin manager/client/WASM runtime. | Core does not currently reach it; CLI plugin flow keeps it alive. |
+| `internal/hooks/*` | Hook config, bounded output, process running, PGID handling. | Best-effort and timeout-bound by design. |
+| `internal/skills/*` | Skill catalog, built-ins, enforcement, requires, scaffold, triggers. | Skill route/model config should connect to provider routing. |
+| `internal/commands/*` | Command metadata registry/defaults/help. | UI command discovery should use this instead of duplicated lists. |
+| `internal/bot/*` | Telegram bot wrapper. | TUI command wiring appears incomplete. |
+| `internal/coach/coach.go`, `internal/planning/splitter.go`, `internal/intent/*`, `internal/tokens/counter.go` | Coach hints, task split heuristic, intent router, heuristic token counter. | Small packages; keep their contracts narrow. |
+
+### Observability Artifacts
+
+| File / group | Responsibility | Review signal |
+|---|---|---|
+| `internal/providerlog/logger.go` | Provider completion JSONL logging. | Wired from engine init. |
+| `internal/toolhistory/*` | Tool call/result JSONL logging. | Excess or missing wire: package exists but no `toolhistory.Init` call. |
+| `internal/applog/applog.go` | App-level structured logger wrapper. | Currently unreachable and imports missing `pkg/logcore`. |
+
+## 17. Excess And Gap Ledger
+
+This is not a deletion list by itself. It is a short list of places where the architecture map and current code disagree.
+
+| Area | Current signal | Likely decision |
+|---|---|---|
+| `internal/applog` | Not imported; depends on missing `pkg/logcore`; breaks package discovery. | Wire into runtime logging with a real `logcore`, or remove. |
+| `internal/toolhistory` | Designed sibling of provider logging but not initialized. | Wire in `engine_init.go` and close on shutdown, or remove. |
+| `internal/toolhistory/logger_helpers_*` | Platform helpers define `syncDirPlatform` but package uses another path. | Connect or delete. |
+| `.claude/*.moved.bak` | Dozens of moved backup files outside build. | Move out of repo or delete after confirming history is enough. |
+| `internal/tools/_*.js` | Temporary scripts in production package directory. | Move to `scripts/maintenance` or delete. |
+| TUI Telegram panel | Panel and build-tag bot remain WIP; disconnected `/telegram` slash config helper was removed. | Decide whether Telegram is a real TUI feature before adding more surface. |
+| TUI legacy render helpers | Some render/theme helpers are test-only or shim-like. | Migrate tests to current render entrypoints, then prune. |
+| Drive vs Supervisor | Both model task execution; bridge exists. | Pick migration direction and document ownership. |
+| Provider routing | Config has tiers/routes; provider router owns fallback; Drive has route selection too. | Consolidate into one routing policy shared by chat, Drive, and skills. |
+| Tool-call protocols | Anthropic/OpenAI-compatible/Gemini support different native formats plus XML/text fallbacks. | Keep provider-native parsing in provider files; normalize only into `types.ToolCall`. |
+| Long autonomous continuation | Auto-continue, autonomous resume, compaction, and parking are separate files. | Maintain one canonical loop-state machine and make TUI/Web observe it. |
+| Observability | Provider log, tool history, LLM logger, EventBus all overlap. | Define trace/cost/run artifact model so logs are not fragmented. |
+
+## 18. Critical Invariants
 
 1. Every tool call must go through `engine.executeToolWithLifecycle` unless it is an explicitly documented synthetic MCP Drive tool.
 2. Tool-capable agent loops expose meta tools, not the entire backend registry.

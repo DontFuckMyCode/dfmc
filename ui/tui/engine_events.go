@@ -73,10 +73,10 @@ func shouldMirrorEventToTranscript(eventType string) bool {
 		"agent:loop:budget_exhausted", "agent:loop:tools_force_stop",
 		"agent:loop:interrupted", "agent:loop:shutdown_parked",
 		"agent:loop:resume_refused", "agent:loop:safety_bound",
-		"agent:loop:empty_final", "agent:loop:start", "agent:loop:thinking",
+		"agent:loop:empty_final", "agent:loop:start",
 		"agent:loop:final", "provider:throttle:retry",
 		"context:lifecycle:compacted", "context:lifecycle:handoff",
-		"conversation:save:error", "coach:note", "tool:denied",
+		"conversation:save:error", "coach:note",
 		"runtime:panic", "tool:panicked", "security:config_permissions",
 		"memory:degraded", "context:error", "engine:shutdown_error",
 		"provider:fallback", "config:reload:auto_failed", "index:error",
@@ -132,4 +132,6 @@ func (m *Model) resetAgentRuntime() {
 	m.agentLoop.lastOutput = ""
 	m.agentLoop.contextScope = ""
 	m.agentLoop.sessionCoachNotes = nil
+	m.agentLoop.stuckNoticeKey = ""
+	m.agentLoop.stuckNoticeAt = 0
 }

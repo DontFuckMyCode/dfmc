@@ -28,6 +28,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -75,6 +76,15 @@ func (e *Engine) askWithNativeToolsAutoContinue(ctx context.Context, question st
 	if !cfg.Enabled {
 		return first, nil
 	}
+	// Parked completions (budget/step-cap/shutdown/interrupted) are not
+	// auto-continue candidates — the park notice is an engine signal to
+	// the user, not a model answer to chain from. When the loop parks and
+	// autonomous resume is off (or the cumulative ceiling was hit), the
+	// wrapper must surface the park as-is instead of treating the notice
+	// as a regular answer and trying to continue past it.
+	if first.Parked {
+		return first, nil
+	}
 	parts := []string{}
 	if _, _, stripped := parseAssistantHints(first.Answer); stripped != "" {
 		parts = append(parts, stripped)
@@ -89,35 +99,47 @@ func (e *Engine) askWithNativeToolsAutoContinue(ctx context.Context, question st
 		// concrete to continue with. Empty NextActions means we'd be
 		// guessing — better to stop cleanly than loop on a vague
 		// "verify the result" stub.
-		if hints.Done {
+		choiceGate := looksLikeUserChoiceGate(last.Answer)
+		if hints.Done && !choiceGate {
 			break
 		}
 		if len(hints.NextActions) == 0 {
-			// "Stuck" state: model didn't mark the turn done AND gave us
-			// no next action to chain into. Pre-fix the wrapper just
-			// stopped silently — looked to the user like the engine had
-			// silently given up mid-task. Now publish a clarify-needed
-			// event AND embed a one-line nudge into the final answer so
-			// the user can see WHY the engine paused and what to type
-			// next. The TUI surfaces the event as a notice + the answer
-			// keeps the stripped body intact so the work isn't lost.
+			nextPrompt := autonomousFallbackPrompt(last.Answer)
 			if e.EventBus != nil {
 				e.EventBus.Publish(Event{
-					Type:   "assistant:auto_continue:clarify",
+					Type:   "assistant:auto_continue",
 					Source: "engine",
 					Payload: map[string]any{
 						"iteration":      iter,
 						"max_iterations": cfg.MaxIterations,
+						"prompt":         nextPrompt,
 						"reason":         "missing_next_action",
+						"choice_gate":    choiceGate,
 					},
 				})
 			}
-			nudge := "\n*— engine paused: no `[next:]` action and `[done: true]` was not asserted. Reply with the next step (or `/cancel` to stop here).*"
-			parts = append(parts, nudge)
+
+			banner := fmt.Sprintf("\n\n--- auto-continue %d/%d - self-select next step ---\n\n",
+				iter, cfg.MaxIterations)
 			if deltaFn != nil {
-				deltaFn("\n\n" + nudge)
+				deltaFn(banner)
 			}
-			break
+
+			next, err := e.askWithNativeTools(ctx, nextPrompt, deltaFn)
+			if err != nil {
+				last.Answer = joinAutoContinueParts(parts)
+				return last, err
+			}
+			if _, _, stripped := parseAssistantHints(next.Answer); stripped != "" {
+				parts = append(parts, fmt.Sprintf(
+					"--- auto-continue %d/%d - self-select next step ---\n\n%s",
+					iter, cfg.MaxIterations, stripped,
+				))
+			}
+			last.ToolTraces = append(last.ToolTraces, next.ToolTraces...)
+			last.TokenCount += next.TokenCount
+			last.Answer = next.Answer
+			continue
 		}
 		nextPrompt := strings.TrimSpace(hints.NextActions[0])
 		if nextPrompt == "" {
@@ -205,4 +227,80 @@ func autoContinueReason(h AssistantHints) string {
 		return "done_false"
 	}
 	return "no_done_marker"
+}
+
+var numberedChoiceLinePattern = regexp.MustCompile(`(?m)^\s*(?:[1-9][0-9]*[.)]|[-*]\s*(?:option|secenek|seçenek)\s*[1-9])\s+\S`)
+
+func looksLikeUserChoiceGate(answer string) bool {
+	text := strings.TrimSpace(stripped_(answer, AssistantHints{}))
+	if text == "" {
+		return false
+	}
+	lower := strings.ToLower(text)
+	for _, marker := range []string{
+		"choose one",
+		"choose an option",
+		"select one",
+		"select an option",
+		"pick one",
+		"press 1",
+		"press 2",
+		"press 3",
+		"type 1",
+		"type 2",
+		"type 3",
+		"reply with 1",
+		"reply with 2",
+		"reply with 3",
+		"option 1",
+		"option 2",
+		"option 3",
+		"birini sec",
+		"birini seç",
+		"secenek sec",
+		"seçenek seç",
+		"seçenek",
+		"secenek",
+		"1'e bas",
+		"2'ye bas",
+		"3'e bas",
+		"1 yaz",
+		"2 yaz",
+		"3 yaz",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return len(numberedChoiceLinePattern.FindAllStringIndex(text, 3)) >= 2 &&
+		(strings.Contains(lower, "which") ||
+			strings.Contains(lower, "choose") ||
+			strings.Contains(lower, "select") ||
+			strings.Contains(lower, "pick") ||
+			strings.Contains(lower, "hang") ||
+			strings.Contains(lower, "seç") ||
+			strings.Contains(lower, "sec") ||
+			strings.Contains(lower, "bas") ||
+			strings.Contains(lower, "yaz"))
+}
+
+func autonomousFallbackPrompt(answer string) string {
+	_, _, stripped := parseAssistantHints(answer)
+	stripped = strings.TrimSpace(stripped)
+	if stripped == "" {
+		stripped = strings.TrimSpace(answer)
+	}
+	if stripped != "" {
+		stripped = truncateRunesWithMarker(stripped, 1200, "...")
+	}
+	var b strings.Builder
+	b.WriteString("[DFMC autonomous continuation]\n")
+	b.WriteString("The previous assistant turn stopped without a usable [next:] action, or it asked the user to choose between options. Do not wait for the user.\n")
+	b.WriteString("Pick the safest, highest-value next step yourself from the original goal and current evidence, then continue using tools as needed. If the work is actually complete, return a concise final summary and end with [done: true].\n")
+	b.WriteString("Do not ask the user to press 1/2/3 or choose an option; make the operational choice yourself and proceed.\n")
+	if stripped != "" {
+		b.WriteString("\nPrevious stalled answer:\n")
+		b.WriteString(stripped)
+	}
+	return b.String()
 }

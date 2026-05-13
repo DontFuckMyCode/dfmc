@@ -1,95 +1,162 @@
 package provider
 
 // router_profile.go — config.ModelConfig → provider.Provider
-// constructor logic. Sibling of router.go which keeps the Router
-// struct, the observer wiring, the public Register/Primary/Fallback/
-// Get/List/ResolveOrder surface, and the top-level Complete/Stream
-// entry points (with retry siblings retry_throttle.go +
-// retry_chain.go + retry_context.go + race.go + stream_recovery.go).
-//
-// Splitting the profile→provider constructor out keeps router.go
-// scoped to "what is the lookup cascade and how do I observe it"
-// while this file owns "given a config block, which concrete
-// Provider does the router get?" — the protocol normalize, the
-// per-protocol switch (anthropic / google / openai-compat /
-// placeholder), the api-key-missing→placeholder fallback, and the
-// Z.AI Anthropic-endpoint→OpenAI-compatible self-heal that DFMC
-// applies because the Claude-style /api/anthropic surface 404s
-// against Z.AI's actual deployment.
+// constructor logic. Now delegates to the plugin registry in
+// plugins/registry.go instead of a hardcoded switch statement.
 
 import (
 	"strings"
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/internal/provider/plugins"
 )
 
+// providerFromProfile constructs a Provider from a ModelConfig using
+// the plugin registry. Falls back to PlaceholderProvider when no
+// factory is registered or credentials are missing.
 func providerFromProfile(name string, profile config.ModelConfig) Provider {
-	name = normalizeProviderName(name)
-	model := profile.Model
-	apiKey := strings.TrimSpace(profile.APIKey)
-	baseURL := strings.TrimSpace(profile.BaseURL)
-	protocol := normalizedProtocol(name, profile.Protocol)
-	if name == "zai" && (protocol == "anthropic" || strings.Contains(strings.ToLower(baseURL), "/api/anthropic")) {
-		// Z.AI documents an Anthropic-compatible endpoint for Claude Code style
-		// clients, but DFMC's runtime behaves more reliably against Z.AI's
-		// OpenAI-compatible `/api/paas/v4` surface. Users often paste the
-		// Claude-style base URL into DFMC and hit 404_NOT_FOUND; remap that
-		// configuration onto the stable OpenAI-compatible endpoint so the
-		// profile self-heals instead of failing at runtime.
-		protocol = "openai-compatible"
-		baseURL = defaultOpenAIBaseURL(name)
+	// Determine protocol from name or explicit protocol field
+	protocol := plugins.NormalizedProtocol(name, profile.Protocol)
+
+	// Z.AI self-heal: if using anthropic protocol with Z.AI anthropic-style URL,
+	// remap to OpenAI-compatible paas/v4 endpoint
+	if name == "zai" && (protocol == "anthropic" || strings.Contains(strings.ToLower(profile.BaseURL), "/api/anthropic")) {
+		protocol = plugins.ProtocolOpenAICompatible
+		// Only update baseURL if it's empty
+		if profile.BaseURL == "" {
+			profile.BaseURL = defaultOpenAIBaseURL("zai")
+		}
 	}
 
+	// Try the plugin registry first
+	factory := plugins.Get(protocol)
+	if factory != nil {
+		cfg := factory.BuildConfig(name, profile)
+
+		// Z.AI post-build fix: if still using anthropic-style URL, fix it
+		if name == "zai" && strings.Contains(strings.ToLower(cfg.BaseURL), "/api/anthropic") {
+			cfg.BaseURL = defaultOpenAIBaseURL("zai")
+		}
+
+		if cfg.APIKey == "" && cfg.BaseURL == "" {
+			// Missing credentials — use placeholder
+			return withProfileModelChain(NewPlaceholderProvider(name, cfg.BestModel(), false, profile.MaxContext), profile)
+		}
+		// Build actual provider using existing NewXXX functions
+		p := buildProvider(name, protocol, cfg)
+		if p != nil {
+			return withProfileModelChain(p, profile)
+		}
+		// BuildConfig returned nil — fallback
+		return withProfileModelChain(NewPlaceholderProvider(name, cfg.BestModel(), false, profile.MaxContext), profile)
+	}
+
+	// No factory registered — fall back to PlaceholderProvider
+	configured := profile.APIKey != "" || profile.BaseURL != ""
+	model := profile.Model
+	if model == "" && len(profile.Models) > 0 {
+		model = profile.Models[0]
+	}
+	return withProfileModelChain(NewPlaceholderProvider(name, model, configured, profile.MaxContext), profile)
+}
+
+// buildProvider constructs the actual provider based on protocol.
+func buildProvider(name, protocol string, cfg plugins.Config) Provider {
 	switch protocol {
-	case "anthropic":
-		if apiKey == "" {
-			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
-		}
-		return NewNamedAnthropicProvider(name, model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext, httpTimeout(profile.HTTPTimeout))
-	case "google", "gemini":
-		if apiKey == "" {
-			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
-		}
-		return NewGoogleProvider(model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext, httpTimeout(profile.HTTPTimeout))
-	case "openai", "openai-compatible":
-		if name == "generic" && strings.TrimSpace(baseURL) == "" {
-			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
-		}
-		if name != "generic" && apiKey == "" {
-			return NewPlaceholderProvider(name, model, false, profile.MaxContext)
-		}
-		return NewOpenAICompatibleProvider(name, model, apiKey, baseURL, profile.MaxTokens, profile.MaxContext, httpTimeout(profile.HTTPTimeout))
+	case plugins.ProtocolAnthropic:
+		return newAnthropicProvider(name, cfg)
+	case plugins.ProtocolGoogle:
+		return newGoogleProvider(name, cfg)
+	case plugins.ProtocolOpenAI, plugins.ProtocolOpenAICompatible:
+		return newOpenAICompatibleProvider(name, cfg)
 	default:
-		configured := apiKey != "" || baseURL != ""
-		return NewPlaceholderProvider(name, model, configured, profile.MaxContext)
+		return nil
 	}
 }
 
+// newAnthropicProvider wraps NewNamedAnthropicProvider.
+func newAnthropicProvider(name string, cfg plugins.Config) Provider {
+	timeout := httpTimeout(cfg.HTTPTimeout)
+	return NewNamedAnthropicProvider(name, cfg.Model, cfg.APIKey, cfg.BaseURL, cfg.MaxTokens, cfg.MaxContext, timeout)
+}
+
+// newGoogleProvider wraps NewGoogleProvider.
+func newGoogleProvider(name string, cfg plugins.Config) Provider {
+	timeout := httpTimeout(cfg.HTTPTimeout)
+	return NewGoogleProvider(cfg.Model, cfg.APIKey, cfg.BaseURL, cfg.MaxTokens, cfg.MaxContext, timeout)
+}
+
+// newOpenAICompatibleProvider wraps NewOpenAICompatibleProvider.
+func newOpenAICompatibleProvider(name string, cfg plugins.Config) Provider {
+	timeout := httpTimeout(cfg.HTTPTimeout)
+	return NewOpenAICompatibleProvider(name, cfg.Model, cfg.APIKey, cfg.BaseURL, cfg.MaxTokens, cfg.MaxContext, timeout)
+}
+
+func profileModelChain(profile config.ModelConfig) []string {
+	chain := make([]string, 0, 1+len(profile.FallbackModels))
+	if primary := strings.TrimSpace(profile.Model); primary != "" {
+		chain = append(chain, primary)
+	} else if len(profile.Models) > 0 {
+		if primary := strings.TrimSpace(profile.Models[0]); primary != "" {
+			chain = append(chain, primary)
+		}
+	}
+	for _, model := range profile.FallbackModels {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		seen := false
+		for _, existing := range chain {
+			if strings.EqualFold(existing, model) {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			chain = append(chain, model)
+		}
+	}
+	return chain
+}
+
+func withProfileModelChain(p Provider, profile config.ModelConfig) Provider {
+	chain := profileModelChain(profile)
+	if len(chain) == 0 {
+		return p
+	}
+	if sp, ok := p.(interface{ SetModels([]string) }); ok {
+		sp.SetModels(chain)
+		return p
+	}
+	switch v := p.(type) {
+	case *AnthropicProvider:
+		v.model = chain[0]
+		v.models = chain
+	case *GoogleProvider:
+		v.model = chain[0]
+		v.models = chain
+	case *OpenAICompatibleProvider:
+		v.model = chain[0]
+		v.models = chain
+	case *PlaceholderProvider:
+		v.model = chain[0]
+		v.models = chain
+	}
+	return p
+}
+
+// normalizedProtocol delegates to plugins.NormalizedProtocol for backward
+// compatibility with tests and external callers.
+func normalizedProtocol(name, protocol string) string {
+	return plugins.NormalizedProtocol(name, protocol)
+}
+
 // httpTimeout converts an HTTPTimeout field value (seconds) to a time.Duration.
-// 0 returns 0 (caller uses default via newProviderHTTPClient(0)).
 func httpTimeout(seconds int) time.Duration {
 	if seconds <= 0 {
 		return 0
 	}
 	return time.Duration(seconds) * time.Second
-}
-
-func normalizedProtocol(name, protocol string) string {
-	p := strings.ToLower(strings.TrimSpace(protocol))
-	if p != "" {
-		return p
-	}
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "anthropic", "minimax":
-		return "anthropic"
-	case "openai":
-		return "openai"
-	case "google", "gemini":
-		return "google"
-	case "deepseek", "generic", "kimi", "zai", "alibaba":
-		return "openai-compatible"
-	default:
-		return ""
-	}
 }

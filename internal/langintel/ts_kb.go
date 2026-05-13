@@ -9,7 +9,7 @@ func tsKB() *Registry {
 				Summary: "Enable strict mode in tsconfig.json",
 				Body:    `Enable "strict": true in tsconfig.json. It bundles noImplicitAny, noImplicitThis, strictNullChecks, and strictFunctionTypes — catching more bugs at compile time rather than runtime.`,
 				Langs:   []string{"typescript"},
-				Kinds:   []string{"tsconfig", "project_file"},
+				Kinds:   []string{"program", "project_file"},
 				Tags:    []string{"type-safety"},
 			},
 			{

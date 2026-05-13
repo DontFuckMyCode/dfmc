@@ -211,7 +211,7 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 							"provider":          usedProvider,
 							"model":             req.Model,
 							"tokens":            usage.TotalTokens,
-							"input_tokens":     usage.InputTokens,
+							"input_tokens":      usage.InputTokens,
 							"output_tokens":     usage.OutputTokens,
 							"total_tokens":      usage.TotalTokens,
 							"source":            "stream",

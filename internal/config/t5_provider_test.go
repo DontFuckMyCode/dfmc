@@ -51,7 +51,7 @@ providers:
 	cfg, err := LoadWithOptions(LoadOptions{
 		GlobalPath:  fakeGlobal,
 		ProjectPath: fakeGlobal,
-		CWD:        tmp,
+		CWD:         tmp,
 	})
 	if err != nil {
 		t.Fatalf("LoadWithOptions: %v", err)
@@ -138,7 +138,7 @@ func TestT5_BothKeysSet_BothPopulated(t *testing.T) {
 	cfg, err := LoadWithOptions(LoadOptions{
 		GlobalPath:  fakeGlobal,
 		ProjectPath: fakeGlobal,
-		CWD:        tmp,
+		CWD:         tmp,
 	})
 	if err != nil {
 		t.Fatalf("LoadWithOptions: %v", err)

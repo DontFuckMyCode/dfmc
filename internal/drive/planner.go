@@ -123,6 +123,10 @@ func parsePlannerOutput(raw string) ([]Todo, error) {
 	}
 	var lastErr error
 	for _, candidate := range candidates {
+		if len(candidate) > 1<<20 {
+			lastErr = fmt.Errorf("payload too large: %d bytes", len(candidate))
+			continue
+		}
 		var out plannerOutput
 		if err := json.Unmarshal([]byte(candidate), &out); err != nil {
 			lastErr = fmt.Errorf("json decode: %w", err)

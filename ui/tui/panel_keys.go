@@ -137,14 +137,14 @@ func (m Model) openToolsActionMenu() Model {
 				m.notice = "Running tool: " + name
 				return m, runToolCmd(m.ctx, m.eng, name, params)
 			}},
-		{Label: "Edit params (opens param editor)", Accel: "e",
+		{Label: "Edit params (opens param editor)", Accel: "enter",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				m.toolView.editing = true
 				m.toolView.draft = m.toolPresetSummary(name)
 				m.notice = "Editing params for " + name
 				return m, nil
 			}},
-		{Label: "Reset params to default", Accel: "x",
+		{Label: "Reset params to default", Accel: "enter",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				if m.toolView.overrides != nil {
 					delete(m.toolView.overrides, name)
@@ -153,7 +153,7 @@ func (m Model) openToolsActionMenu() Model {
 				m.notice = "Reset params for " + name
 				return m, nil
 			}},
-		{Label: "Re-run last invocation", Accel: "r",
+		{Label: "Re-run last invocation", Accel: "enter",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				params, err := m.toolPresetParams(name)
 				if err != nil {
@@ -163,6 +163,36 @@ func (m Model) openToolsActionMenu() Model {
 				m.notice = "Re-running tool: " + name
 				return m, runToolCmd(m.ctx, m.eng, name, params)
 			}},
+	}
+	// Toggle enable/disable (label changes based on current state).
+	if m.eng != nil {
+		isDisabled := m.eng.IsToolDisabled(name)
+		isProtected := m.eng.ToolIsProtected(name)
+		if isDisabled {
+			actions = append(actions, panelAction{
+				Label: "Enable tool", Accel: "enter",
+				Handler: func(m Model) (Model, tea.Cmd) {
+					if err := m.eng.SetToolEnabled(name, true); err != nil {
+						m.notice = "enable failed: " + err.Error()
+						return m, nil
+					}
+					m.notice = name + " enabled"
+					return m, nil
+				},
+			})
+		} else if !isProtected {
+			actions = append(actions, panelAction{
+				Label: "Disable tool", Accel: "enter",
+				Handler: func(m Model) (Model, tea.Cmd) {
+					if err := m.eng.SetToolEnabled(name, false); err != nil {
+						m.notice = "disable failed: " + err.Error()
+						return m, nil
+					}
+					m.notice = name + " disabled"
+					return m, nil
+				},
+			})
+		}
 	}
 	return m.openActionMenu("Tools", "Actions for "+name, actions)
 }
@@ -177,7 +207,7 @@ func (m Model) handleToolsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
 			return nm, cmd
 		}
-		if s := msg.String(); s == "right" || s == "l" {
+		if msg.String() == "right" {
 			return m.openToolsActionMenu(), nil
 		}
 	}
@@ -219,34 +249,24 @@ func (m Model) handleToolsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "down", "j", "alt+j":
+	case "down":
 		if m.toolView.index < len(tools)-1 {
 			m.toolView.index++
 		}
 		m.notice = "Tool selection: " + tools[m.toolView.index]
 		return m, nil
-	case "up", "k", "alt+k":
+	case "up":
 		if m.toolView.index > 0 {
 			m.toolView.index--
 		}
 		m.notice = "Tool selection: " + tools[m.toolView.index]
 		return m, nil
-	case "e", "alt+e":
+	case "enter":
 		name := tools[m.toolView.index]
-		m.toolView.editing = true
-		m.toolView.draft = m.toolPresetSummary(name)
-		m.notice = "Editing params for " + name
-		return m, nil
-	case "x", "alt+x":
-		name := tools[m.toolView.index]
-		if m.toolView.overrides != nil {
-			delete(m.toolView.overrides, name)
+		if m.eng != nil && m.eng.IsToolDisabled(name) {
+			m.notice = name + " is disabled — press → to open action menu"
+			return m, nil
 		}
-		m.toolView.draft = ""
-		m.notice = "Reset params for " + name
-		return m, nil
-	case "enter", "r", "alt+r":
-		name := tools[m.toolView.index]
 		params, err := m.toolPresetParams(name)
 		if err != nil {
 			m.toolView.output = fmt.Sprintf("Tool: %s\nStatus: blocked\n\n%s", name, err.Error())
@@ -255,6 +275,9 @@ func (m Model) handleToolsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.notice = "Running tool: " + name
 		return m, runToolCmd(m.ctx, m.eng, name, params)
+	case "right":
+		return m.openToolsActionMenu(), nil
 	}
 	return m, nil
 }
+	

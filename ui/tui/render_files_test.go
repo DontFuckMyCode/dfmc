@@ -74,7 +74,7 @@ func TestFilesViewV2_EmptyStateOffersGuidance(t *testing.T) {
 }
 
 // TestFilesViewV2_PinnedFileShowsBadge — a pinned file should show
-// the PIN chip in the list and a "Pinned: yes" row in the STATUS card.
+// the 📌 chip in the list and a "Pinned: yes" row in the STATUS card.
 func TestFilesViewV2_PinnedFileShowsBadge(t *testing.T) {
 	m := newCoverageModel(t)
 	m.filesView = filesViewState{
@@ -86,7 +86,8 @@ func TestFilesViewV2_PinnedFileShowsBadge(t *testing.T) {
 		size:    100,
 	}
 	view := stripANSI(m.renderFilesViewV2(140, 24))
-	if !strings.Contains(view, "PIN") {
+	// The list row should contain the 📌 emoji chip.
+	if !strings.Contains(view, "📌") {
 		t.Errorf("pinned chip missing in list. Got:\n%s", view)
 	}
 	if !strings.Contains(view, "yes") {

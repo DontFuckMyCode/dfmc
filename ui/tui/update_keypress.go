@@ -37,6 +37,11 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return nm, cmd
 		}
 	}
+	if isToolStatusShortcut(msg) {
+		if nm, cmd, handled := m.handleGlobalShortcuts(msg); handled {
+			return nm, cmd
+		}
+	}
 	// Turkish keyboards on MinTTY / Windows Terminal occasionally
 	// deliver a plain letter keystroke with Alt=true during paste
 	// or fast typing (the same ESC-prefix quirk that ships '@' as
@@ -51,7 +56,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Allow stats-panel mode switches through even while typing;
 			// these specific alt combos are not Turkish-character inputs.
 			switch msg.String() {
-			case "alt+a", "alt+s", "alt+d", "alt+f", "alt+p":
+			case "alt+a", "alt+s", "alt+d", "alt+f", "alt+p", "alt+t", "ctrl+alt+t", "alt+ctrl+t":
 				// fall through to global shortcut handler
 			default:
 				return m.handleChatKey(msg)
@@ -163,6 +168,10 @@ func (m Model) routeKeyByActiveTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.handleShortcutsKey(msg)
 		case "providerlog":
 			return m.handleProviderLogKey(msg)
+		case "toolstatus":
+			return m.handleToolStatusOverlayKey(msg)
+		case "telegram":
+			return m.handleTelegramOverlayKey(msg)
 		}
 	}
 	if m.activeTab < 0 || m.activeTab >= len(m.tabs) {

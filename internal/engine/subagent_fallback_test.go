@@ -36,8 +36,12 @@ func (p *failingProvider) Complete(_ context.Context, req provider.CompletionReq
 	}
 	return nil, p.err
 }
-func (p *failingProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
-	return nil, fmt.Errorf("unexpected stream")
+func (p *failingProvider) Stream(_ context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	p.requests = append(p.requests, req)
+	if p.err == nil {
+		p.err = fmt.Errorf("simulated failure")
+	}
+	return nil, p.err
 }
 
 func TestRunSubagent_ModelOverrideUsesSelectedProfile(t *testing.T) {

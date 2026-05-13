@@ -169,6 +169,9 @@ func (t *CodemapTool) Execute(ctx context.Context, req Request) (Result, error) 
 		if err != nil {
 			return nil
 		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if d.IsDir() {
 			if path == root {
 				return nil

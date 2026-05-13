@@ -56,7 +56,7 @@ func (m Model) renderTasksPanel(width, height int) string {
 	}
 
 	header := theme.SectionTitleStyle.Render("Tasks")
-	headerLine := fmt.Sprintf("%s  /tasks to close", header)
+	headerLine := fmt.Sprintf("%s  esc/q or /tasks close", header)
 
 	lines := []string{headerLine, theme.DividerStyle.Render(strings.Repeat("─", innerWidth))}
 

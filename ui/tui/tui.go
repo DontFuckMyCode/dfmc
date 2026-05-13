@@ -128,7 +128,9 @@ type Model struct {
 	// Native tool-loop telemetry surfaced by the chat header chips, the
 	// stats panel, and the per-step toolTimeline strip. See agentLoopState
 	// in panel_states.go — engine events are the only writers.
-	agentLoop agentLoopState
+	agentLoop    agentLoopState
+	toolCallLog  toolCallLogState
+	toolStatus   toolStatusPanelState
 
 	// Running counters surfaced by the chat header chips and the stats
 	// panel — RTK-style compression aggregates plus in-flight fan-out
@@ -166,6 +168,9 @@ type Model struct {
 	pendingApproval *pendingApproval
 
 	viewCache *viewCacheState
+
+	// session holds the multi-agent session state. nil when session feature is disabled.
+	session *sessionUI
 }
 
 // Update (the bubbletea reducer / message dispatcher) lives in update.go.

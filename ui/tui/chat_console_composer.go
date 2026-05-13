@@ -51,11 +51,10 @@ func (m Model) renderTimelineComposer(width int) []string {
 	lines = append(lines, renderInputBox(inputLine, max(width-2, 20)))
 	// Persistent composer hint: send / newline first (the load-bearing
 	// pair people forget), then the discovery row — slash, mention,
-	// and the new alt+m / alt+P model/provider quick switchers so the
-	// user doesn't have to leave chat to reconfigure.
+	// model command, compact status, palette, and tabs.
 	hintRows := []string{
 		"  enter send · alt+enter newline · / commands · @ mention",
-		"  alt+m model · alt+P provider · alt+p providers · ctrl+p palette · f1-f12 tabs",
+		"  /model model · alt+p status · ctrl+p palette · f1-f12 tabs",
 	}
 	// Phase E item 2 — live budget meter pinned at the composer footer
 	// so the user can read context pressure while typing without

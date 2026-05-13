@@ -32,6 +32,43 @@ func TestPanelSwitcherCtrlBTogglesOpen(t *testing.T) {
 	}
 }
 
+func TestCtrlAltTOpensToolStatus(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+
+	next, _, handled := m.handleGlobalShortcuts(tea.KeyMsg{Type: tea.KeyCtrlT, Alt: true})
+	if !handled {
+		t.Fatal("Ctrl+Alt+T should be handled as the ToolStatus shortcut")
+	}
+	mm := next.(Model)
+	if mm.ui.panelOverlayKind != "toolstatus" {
+		t.Fatalf("Ctrl+Alt+T should open ToolStatus, got %q", mm.ui.panelOverlayKind)
+	}
+}
+
+func TestAltTOpensToolStatusEvenWithChatInput(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 0
+	m.setChatInput("typing")
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}, Alt: true})
+	mm := next.(Model)
+	if mm.ui.panelOverlayKind != "toolstatus" {
+		t.Fatalf("Alt+T should open ToolStatus even while typing, got %q", mm.ui.panelOverlayKind)
+	}
+}
+
+func TestToolStatusOverlayOwnsKeys(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.ui.panelOverlayKind = "toolstatus"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mm := next.(Model)
+	if mm.ui.panelOverlayKind != "" {
+		t.Fatalf("Esc should close ToolStatus overlay, got %q", mm.ui.panelOverlayKind)
+	}
+}
+
 // Filtering must narrow the entry list. Typing "cont" filters down to
 // Contexts/Conversations/Context — three entries that all carry the
 // substring.
@@ -76,6 +113,56 @@ func TestPanelSwitcherEnterSwitchesToPanel(t *testing.T) {
 	// "context" filter matches Context overlay first (canonical order).
 	if mm.ui.panelOverlayKind != "context" {
 		t.Errorf("expected panelOverlayKind=context after switching, got %q", mm.ui.panelOverlayKind)
+	}
+}
+
+func TestPanelSwitcherProvidersOpensStatsProviderMode(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.activeTab = 2
+	m = m.openPanelSwitcher()
+	for _, r := range "providers" {
+		next, _, _ := m.handlePanelSwitcherKey(tea.KeyMsg{
+			Type: tea.KeyRunes, Runes: []rune{r},
+		})
+		m = next.(Model)
+	}
+
+	next, _, handled := m.handlePanelSwitcherKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if !handled {
+		t.Fatal("enter must be handled by the switcher")
+	}
+	mm := next.(Model)
+	if mm.activeTab != 0 {
+		t.Fatalf("Providers switcher entry should return to Chat stats panel, got tab %d", mm.activeTab)
+	}
+	if mm.ui.panelOverlayKind != "" {
+		t.Fatalf("Providers status should not leave a panel overlay open, got %q", mm.ui.panelOverlayKind)
+	}
+	if !mm.ui.showStatsPanel || mm.ui.statsPanelMode != statsPanelModeProviders {
+		t.Fatalf("Providers switcher entry should open stats providers mode, show=%v mode=%q", mm.ui.showStatsPanel, mm.ui.statsPanelMode)
+	}
+}
+
+func TestPanelSwitcherProviderConfigOpensProvidersTab(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m = m.openPanelSwitcher()
+	for _, r := range "config" {
+		next, _, _ := m.handlePanelSwitcherKey(tea.KeyMsg{
+			Type: tea.KeyRunes, Runes: []rune{r},
+		})
+		m = next.(Model)
+	}
+
+	next, _, handled := m.handlePanelSwitcherKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if !handled {
+		t.Fatal("enter must be handled by the switcher")
+	}
+	mm := next.(Model)
+	if mm.activeTab != 7 {
+		t.Fatalf("Provider Config should open the providers config tab, got tab %d", mm.activeTab)
+	}
+	if !mm.providers.loaded {
+		t.Fatal("Provider Config should refresh/seed provider rows")
 	}
 }
 

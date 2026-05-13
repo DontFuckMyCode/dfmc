@@ -13,9 +13,16 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
+
+var defaultWalkSkipDirs = map[string]bool{
+	".git": true, ".dfmc": true, "node_modules": true, "vendor": true,
+	"bin": true, "dist": true, "build": true, "target": true,
+	".venv": true, ".idea": true, ".vscode": true, "__pycache__": true,
+}
 
 // dropDirsForCodemap mirrors the grep_codebase exclude list so the two
 // surfaces agree on "what counts as project source". Anything here is
@@ -141,7 +148,7 @@ func codemapSymbolLine(sym types.Symbol) string {
 		sig = string(runes[:sigBudget-3]) + "..."
 	}
 	const lineCol = 80
-	pad := lineCol - len(sig) - 2 // " " gap on either side of the line marker
+	pad := lineCol - utf8.RuneCountInString(sig) - 2 // " " gap on either side of the line marker
 	if pad < 1 {
 		pad = 1
 	}

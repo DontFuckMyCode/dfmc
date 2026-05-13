@@ -114,6 +114,10 @@ type Engine struct {
 	// from multiple goroutines; without serialisation the window between
 	// EnsureReadBeforeMutation and os.WriteFile is a TOCTOU race.
 	pathLocks sync.Map
+
+	// disabled tracks tools that have been disabled at runtime. A disabled
+	// tool is filtered out of Specs/Search/List and refused at Execute.
+	disabled *disabledState
 }
 
 // ReasoningPublisher is the callback shape the higher-level engine wires
@@ -211,6 +215,9 @@ func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result,
 				`{"name":"tool_search","args":{"query":"%s"}}. `+
 				"Common backend tools: read_file, write_file, edit_file, list_dir, grep_codebase, glob, find_symbol, codemap, ast_query, run_command, web_fetch, todo_write",
 			name, name)
+	}
+	if e.disabled.IsDisabled(name) {
+		return Result{}, fmt.Errorf("%w: %q is disabled and cannot be called. Enable it via the tools panel or dfmc tools enable %s", ErrToolDisabled, name, name)
 	}
 
 	projectRoot := strings.TrimSpace(req.ProjectRoot)

@@ -51,8 +51,8 @@ func TestMergeProviderProfilesFromModelsDev(t *testing.T) {
 
 	merged := MergeProviderProfilesFromModelsDev(current, catalog, ModelsDevMergeOptions{})
 
-	if got := merged["anthropic"].Model; got != "claude-sonnet-4-6" {
-		t.Fatalf("expected anthropic model to be corrected, got %q", got)
+	if got := merged["anthropic"].Model; got != "glm-5.1" {
+		t.Fatalf("expected explicit anthropic model pin preserved, got %q", got)
 	}
 	if got := merged["anthropic"].APIKey; got != "k-test" {
 		t.Fatalf("expected anthropic api key preserved, got %q", got)
@@ -68,6 +68,52 @@ func TestMergeProviderProfilesFromModelsDev(t *testing.T) {
 	}
 	if got := merged["generic"].Model; got != "qwen-local" {
 		t.Fatalf("expected generic profile unchanged, got %q", got)
+	}
+}
+
+func TestMergeProviderProfilesFromModelsDevHydratesMultipleAliasesByCatalogID(t *testing.T) {
+	current := map[string]ModelConfig{
+		"zai-work":     {CatalogID: "zai-coding-plan", APIKey: "work-key"},
+		"zai-personal": {CatalogID: "zai-coding-plan", APIKey: "personal-key", Model: "glm-5v"},
+	}
+	catalog := ModelsDevCatalog{
+		"zai-coding-plan": {
+			ID:  "zai-coding-plan",
+			NPM: "@ai-sdk/openai-compatible",
+			API: "https://api.z.ai/api/coding/paas/v4",
+			Models: map[string]ModelsDevModel{
+				"glm-5.1": {
+					ID:       "glm-5.1",
+					ToolCall: true,
+					Limit:    ModelsDevLimits{Context: 200000, Output: 131072},
+				},
+				"glm-5v": {
+					ID:       "glm-5v",
+					ToolCall: true,
+					Limit:    ModelsDevLimits{Context: 128000, Output: 64000},
+				},
+			},
+		},
+	}
+
+	merged := MergeProviderProfilesFromModelsDev(current, catalog, ModelsDevMergeOptions{})
+
+	for _, name := range []string{"zai-work", "zai-personal"} {
+		if got := merged[name].CatalogID; got != "zai-coding-plan" {
+			t.Fatalf("%s catalog_id changed: %q", name, got)
+		}
+		if got := merged[name].Models; len(got) != 2 || got[0] != "glm-5.1" || got[1] != "glm-5v" {
+			t.Fatalf("%s models not hydrated from catalog ref: %v", name, got)
+		}
+	}
+	if got := merged["zai-work"].APIKey; got != "work-key" {
+		t.Fatalf("work key should be preserved, got %q", got)
+	}
+	if got := merged["zai-personal"].APIKey; got != "personal-key" {
+		t.Fatalf("personal key should be preserved, got %q", got)
+	}
+	if got := merged["zai-personal"].Model; got != "glm-5v" {
+		t.Fatalf("explicit alias model should be preserved, got %q", got)
 	}
 }
 
@@ -108,6 +154,38 @@ func TestFetchAndSaveModelsDevCatalog(t *testing.T) {
 	}
 	if got := reloaded["openai"].Models["gpt-5.4"].Limit.Context; got != 1050000 {
 		t.Fatalf("expected persisted context limit, got %d", got)
+	}
+}
+
+func TestLoadModelsDevCatalogCachedInvalidatesWhenFileChanges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.dev.json")
+	if err := SaveModelsDevCatalog(path, ModelsDevCatalog{
+		"zai": {ID: "zai", Models: map[string]ModelsDevModel{
+			"glm-5.1": {ID: "glm-5.1", Limit: ModelsDevLimits{Context: 131072}},
+		}},
+	}); err != nil {
+		t.Fatalf("SaveModelsDevCatalog initial: %v", err)
+	}
+	first, err := LoadModelsDevCatalogCached(path)
+	if err != nil {
+		t.Fatalf("LoadModelsDevCatalogCached first: %v", err)
+	}
+	if got := first["zai"].Models["glm-5.1"].Limit.Context; got != 131072 {
+		t.Fatalf("expected initial context, got %d", got)
+	}
+	if err := SaveModelsDevCatalog(path, ModelsDevCatalog{
+		"zai": {ID: "zai", Name: "Z.AI", Models: map[string]ModelsDevModel{
+			"glm-5.1": {ID: "glm-5.1", Name: "GLM-5.1", Limit: ModelsDevLimits{Context: 200000, Output: 131072}},
+		}},
+	}); err != nil {
+		t.Fatalf("SaveModelsDevCatalog update: %v", err)
+	}
+	second, err := LoadModelsDevCatalogCached(path)
+	if err != nil {
+		t.Fatalf("LoadModelsDevCatalogCached second: %v", err)
+	}
+	if got := second["zai"].Models["glm-5.1"].Limit.Context; got != 200000 {
+		t.Fatalf("expected refreshed context after file change, got %d", got)
 	}
 }
 
@@ -159,8 +237,8 @@ providers:
 	if err != nil {
 		t.Fatalf("LoadWithOptions: %v", err)
 	}
-	if got := cfg.Providers.Profiles["anthropic"].Model; got != "claude-sonnet-4-6" {
-		t.Fatalf("expected anthropic model corrected from cache, got %q", got)
+	if got := cfg.Providers.Profiles["anthropic"].Model; got != "glm-5.1" {
+		t.Fatalf("expected explicit anthropic model pin preserved from cache, got %q", got)
 	}
 	if got := cfg.Providers.Profiles["anthropic"].MaxContext; got != 1000000 {
 		t.Fatalf("expected anthropic max context from cache, got %d", got)

@@ -32,17 +32,21 @@ func findCompanionTests(root, target, language string) []string {
 	nameWithoutExt := strings.TrimSuffix(base, ext)
 
 	var candidates []string
-	switch {
-	case language == "" || language == "go":
+	addGo := language == "" || language == "go"
+	addPython := language == "" || language == "python"
+	addJS := language == "" || language == "javascript" || language == "typescript" || language == "jsx" || language == "tsx"
+	if addGo {
 		candidates = append(candidates, filepath.Join(dir, nameWithoutExt+"_test.go"))
-	case language == "" || language == "python":
+	}
+	if addPython {
 		candidates = append(candidates,
 			filepath.Join(dir, "test_"+nameWithoutExt+".py"),
 			filepath.Join(dir, nameWithoutExt+"_test.py"),
 			filepath.Join(dir, "tests", nameWithoutExt+".py"),
 			filepath.Join(dir, "test", nameWithoutExt+".py"),
 		)
-	case language == "" || language == "javascript" || language == "typescript" || language == "jsx" || language == "tsx":
+	}
+	if addJS {
 		candidates = append(candidates,
 			filepath.Join(dir, nameWithoutExt+".test.ts"),
 			filepath.Join(dir, nameWithoutExt+".spec.ts"),

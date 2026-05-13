@@ -34,7 +34,7 @@ func modelChainRetry[T any](
 	throttle func(CompletionRequest) (T, error),
 ) (T, string, error) {
 	var zero T
-	models := p.Models()
+	models := modelAttemptOrder(req.Model, p.Models())
 	if len(models) == 0 {
 		v, err := throttle(req)
 		return v, p.Name(), err
@@ -83,6 +83,31 @@ func modelChainRetry[T any](
 		}
 	}
 	return zero, p.Name(), errors.Join(errs...)
+}
+
+func modelAttemptOrder(requested string, chain []string) []string {
+	requested = strings.TrimSpace(requested)
+	out := make([]string, 0, len(chain)+1)
+	if requested != "" {
+		out = append(out, requested)
+	}
+	for _, model := range chain {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		seen := false
+		for _, existing := range out {
+			if strings.EqualFold(existing, model) {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			out = append(out, model)
+		}
+	}
+	return out
 }
 
 // completeWithProviderRetry tries a provider's model chain (primary + FallbackModels)

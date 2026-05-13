@@ -17,7 +17,7 @@ func (m Model) renderPipelinesView(width int) string {
 		return m.renderPipelineEditView(width, header)
 	}
 
-	hint := subtleStyle.Render("j/k scroll · g/G/home/end top/bottom · pgup/pgdown page · enter menu · esc/q back")
+	hint := subtleStyle.Render("up/down move - home/end top/bottom - pgup/pgdown page - enter actions - esc back")
 	lines := []string{header, hint, renderDivider(width - 2)}
 
 	names := m.providers.pipelineNames
@@ -80,16 +80,15 @@ func (m Model) renderPipelinesView(width int) string {
 		}
 	}
 
-	lines = append(lines, m.renderProvidersMenu(width-2)...)
 	return strings.Join(lines, "\n")
 }
 
 func (m Model) renderPipelineEditView(width int, header string) string {
-	hint := subtleStyle.Render("j/k step · tab field · enter commit · d delete step · esc cancel")
+	hint := subtleStyle.Render("up/down step - tab field - enter commit - backspace delete empty step - esc cancel")
 	if m.providers.pipelineEditStep == -1 {
-		hint = subtleStyle.Render("type name · tab next · enter save · esc cancel")
+		hint = subtleStyle.Render("type name - tab next - enter save - esc cancel")
 	} else if m.providers.pipelineEditStep == len(m.providers.pipelineDraftSteps) {
-		hint = subtleStyle.Render("enter add step · k back · esc cancel")
+		hint = subtleStyle.Render("enter add step - up back - esc cancel")
 	}
 	lines := []string{header, hint, renderDivider(width - 2), ""}
 
@@ -144,6 +143,5 @@ func (m Model) renderPipelineEditView(width int, header string) string {
 	} else {
 		lines = append(lines, "    "+subtleStyle.Render("+ Add Step"))
 	}
-	lines = append(lines, m.renderProvidersMenu(width-2)...)
 	return strings.Join(lines, "\n")
 }

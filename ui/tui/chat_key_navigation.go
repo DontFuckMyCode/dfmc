@@ -76,10 +76,7 @@ func (m Model) handleChatUpKey() (tea.Model, tea.Cmd) {
 		}
 	}
 	if !m.chat.sending && m.recallInputHistoryPrev() {
-		m.slashMenu.command = 0
-		m.slashMenu.commandArg = 0
-		m.slashMenu.mention = 0
-		m.slashMenu.quickAction = 0
+		m.slashMenu.resetIndices()
 		m.notice = "History: previous input"
 		return m, nil
 	}
@@ -141,10 +138,7 @@ func (m Model) handleChatDownKey() (tea.Model, tea.Cmd) {
 		}
 	}
 	if !m.chat.sending && m.recallInputHistoryNext() {
-		m.slashMenu.command = 0
-		m.slashMenu.commandArg = 0
-		m.slashMenu.mention = 0
-		m.slashMenu.quickAction = 0
+		m.slashMenu.resetIndices()
 		m.notice = "History: next input"
 		return m, nil
 	}

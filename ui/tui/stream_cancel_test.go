@@ -76,6 +76,30 @@ func TestChatErrMsg_UserCancelEmitsFriendlyNoticeAndMarker(t *testing.T) {
 	}
 }
 
+func TestChatErrMsg_UserCancelDropsEmptyAssistantPlaceholder(t *testing.T) {
+	eng := newTUITestEngine(t)
+	m := NewModel(context.Background(), eng)
+	m.chat.sending = true
+	m.chat.userCancelledStream = true
+	m.chat.streamIndex = 1
+	m.chat.transcript = []chatLine{
+		newChatLine(chatRoleUser, "do the thing"),
+		newChatLine(chatRoleAssistant, ""),
+	}
+
+	next, _ := m.Update(chatErrMsg{err: context.Canceled})
+	nm := next.(Model)
+
+	for _, line := range nm.chat.transcript {
+		if line.Role == chatRoleAssistant && strings.TrimSpace(line.Content) == "" {
+			t.Fatalf("empty streaming assistant placeholder should be removed, got %#v", nm.chat.transcript)
+		}
+	}
+	if got := nm.chat.transcript[len(nm.chat.transcript)-1].Role; got != chatRoleSystem {
+		t.Fatalf("cancel marker should still be appended as a system line, got %q", got)
+	}
+}
+
 func TestChatErrMsg_ContextCanceledTreatedAsUserCancel(t *testing.T) {
 	// Even when userCancelledStream didn't get set (e.g. process-wide
 	// cancel from the host), context.Canceled is a cleaner signal than
@@ -127,5 +151,27 @@ func TestEsc_DuringStream_FiresCancel(t *testing.T) {
 
 	if !fired {
 		t.Fatal("Esc during a stream should invoke the cancel func")
+	}
+}
+
+func TestEsc_LockedStatsPanelUnlocksBeforeStreamCancel(t *testing.T) {
+	eng := newTUITestEngine(t)
+	m := NewModel(context.Background(), eng)
+	m.chat.sending = true
+	m.ui.statsPanelFocusLocked = true
+	fired := false
+	m.chat.streamCancel = func() { fired = true }
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	nm := next.(Model)
+
+	if nm.ui.statsPanelFocusLocked {
+		t.Fatal("Esc should unlock a focused stats panel first")
+	}
+	if fired {
+		t.Fatal("Esc used to unlock the stats panel should not also cancel the stream")
+	}
+	if nm.chat.streamCancel == nil {
+		t.Fatal("stream cancel func should remain armed after panel unlock")
 	}
 }

@@ -28,24 +28,28 @@ func (s *Store) BackupTo(dst string) error {
 	if s == nil || s.db == nil {
 		return errors.New("store is not open")
 	}
-	// M5: use CreateTemp instead of a predictable .dfmc-backup-tmp name.
-	// This prevents a TOCTOU symlink attack where an attacker pre-creates
-	// a symlink at the predictable path, causing BackupTo to overwrite
-	// an arbitrary target file.
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".dfmc-backup-*.tmp")
+	// M5: use os.MkdirTemp instead of os.CreateTemp to avoid class 1 WORM
+	// vulnerability (predictable temp name + attacker pre-creates symlink).
+	// MkdirTemp creates a directory only, then we open the file inside it.
+	tmpDir, err := os.MkdirTemp(filepath.Dir(dst), ".dfmc-backup-*")
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(tmpDir, filepath.Base(dst))
+	f, err := os.Create(tmp)
 	if err != nil {
 		return fmt.Errorf("create backup temp file: %w", err)
 	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
+	tmpPath := f.Name()
+	defer func() { _ = os.RemoveAll(tmpDir) }() // remove dir (file is already closed here)
 	if err := s.db.View(func(tx *bbolt.Tx) error {
-		_, err := tx.WriteTo(tmp)
+		_, err := tx.WriteTo(f)
 		return err
 	}); err != nil {
-		_ = tmp.Close()
+		_ = f.Close()
 		return fmt.Errorf("backup write: %w", err)
 	}
-	if err := tmp.Close(); err != nil {
+	if err := f.Close(); err != nil {
 		return fmt.Errorf("close backup: %w", err)
 	}
 	if err := os.Rename(tmpPath, dst); err != nil {

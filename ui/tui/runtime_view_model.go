@@ -22,6 +22,8 @@ package tui
 
 import (
 	"strings"
+
+	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
 )
 
 type runtimeViewModel struct {
@@ -36,6 +38,7 @@ type runtimeViewModel struct {
 	ContextTokens          int
 	ContextWindowTokens    int
 	MaxContext             int
+	ContextPayload         theme.ContextPayloadSnapshot
 	ContextTask            string
 	ContextBudgetTokens    int
 	ContextFileCount       int
@@ -209,6 +212,7 @@ func (m Model) runtimeViewModel() runtimeViewModel {
 		ContextTokens:          info.ContextTokens,
 		ContextWindowTokens:    info.ContextWindowTokens,
 		MaxContext:             info.MaxContext,
+		ContextPayload:         theme.ContextPayloadFromStats(info),
 		ContextTask:            info.ContextTask,
 		ContextBudgetTokens:    info.ContextBudgetTokens,
 		ContextFileCount:       info.ContextFileCount,
@@ -303,8 +307,8 @@ func (m Model) runtimeViewModel() runtimeViewModel {
 // runtimeStateLabel returns the (label, style-tag) for the chat state
 // chip. Phase E item 3 — compose state precedence:
 //
-//   Streaming > AgentActive > Parked > Drive > Working > Queued >
-//   Needs-key > Needs-provider > Ready
+//	Streaming > AgentActive > Parked > Drive > Working > Queued >
+//	Needs-key > Needs-provider > Ready
 //
 // Why Streaming first: when a new turn is being received, that fact
 // supersedes the previous parked / queued / drive states even if their

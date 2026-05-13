@@ -123,7 +123,7 @@ func ClassifyFailure(err error, toolName string) FailureClass {
 	if strings.Contains(msg, "syntax error") ||
 		strings.Contains(msg, "type error") ||
 		strings.Contains(msg, "compile failed") ||
-		strings.Contains(msg, "cannot find") && strings.Contains(msg, "symbol") ||
+		(strings.Contains(msg, "cannot find") && strings.Contains(msg, "symbol")) ||
 		strings.Contains(msg, "undefined") ||
 		strings.Contains(msg, "rejected") && strings.Contains(msg, "edit") ||
 		strings.Contains(msg, "refused") && strings.Contains(msg, "edit") ||

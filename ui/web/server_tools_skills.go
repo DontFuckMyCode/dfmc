@@ -20,6 +20,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/skills"
+	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -61,8 +62,55 @@ func (s *Server) handleCodeMap(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleTools(w http.ResponseWriter, _ *http.Request) {
+	type toolEntry struct {
+		Name      string `json:"name"`
+		Disabled  bool   `json:"disabled"`
+		Protected bool   `json:"protected"`
+	}
+	allTools := s.engine.Tools.ListAll()
+	disabledSet := map[string]bool{}
+	for _, d := range s.engine.ListDisabledTools() {
+		disabledSet[d] = true
+	}
+	entries := make([]toolEntry, 0, len(allTools))
+	for _, name := range allTools {
+		entries = append(entries, toolEntry{
+			Name:      name,
+			Disabled:  disabledSet[name],
+			Protected: s.engine.ToolIsProtected(name),
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tools": s.engine.ListTools(),
+		"tools": entries,
+	})
+}
+
+func (s *Server) handleToolToggle(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "tool name is required"})
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	if err := s.engine.SetToolEnabled(name, req.Enabled); err != nil {
+		if errors.Is(err, tools.ErrToolProtected) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": fmt.Sprintf("tool %q is protected and cannot be disabled", name)})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name":    name,
+		"enabled": req.Enabled,
 	})
 }
 

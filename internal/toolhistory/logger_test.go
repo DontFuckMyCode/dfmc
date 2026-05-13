@@ -307,14 +307,14 @@ func TestOnResult_ParsesPayloadAndPushesRecord(t *testing.T) {
 	}
 
 	l.onResult(map[string]any{
-		"provider":        "anthropic",
-		"model":           "claude-3",
-		"tool":            "write_file",
-		"step":            5,
-		"success":         true,
-		"durationMs":      150,
-		"output_preview":  "file written",
-		"output_tokens":   42,
+		"provider":       "anthropic",
+		"model":          "claude-3",
+		"tool":           "write_file",
+		"step":           5,
+		"success":        true,
+		"durationMs":     150,
+		"output_preview": "file written",
+		"output_tokens":  42,
 	})
 
 	l.mu.Lock()

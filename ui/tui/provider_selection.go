@@ -32,7 +32,10 @@ func (m Model) availableProviders() []string {
 		return nil
 	}
 	names := make([]string, 0, len(m.eng.Config.Providers.Profiles))
-	for name := range m.eng.Config.Providers.Profiles {
+	for name, profile := range m.eng.Config.Providers.Profiles {
+		if !providerProfileLooksConfigured(name, profile) {
+			continue
+		}
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -48,19 +51,28 @@ func (m Model) providerPanelRows() []theme.ProviderPanelRow {
 	cfg := m.eng.Config.Providers
 	primary := strings.TrimSpace(cfg.Primary)
 	currentProvider := strings.TrimSpace(m.currentProvider())
+	fallbacks := map[string]struct{}{}
+	for _, name := range cfg.Fallback {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name != "" {
+			fallbacks[name] = struct{}{}
+		}
+	}
 
 	var rows []theme.ProviderPanelRow
 	for name, profile := range cfg.Profiles {
-		hasAPIKey := strings.TrimSpace(profile.APIKey) != ""
+		hasAPIKey := providerProfileHasCredential(profile)
 		status := "ready"
 		isPlaceholder := false
-		if !hasAPIKey && strings.TrimSpace(profile.BaseURL) == "" {
+		if !providerProfileLooksConfigured(name, profile) || (providerProfileLooksLikeSeed(name, profile) && !hasAPIKey) {
 			status = "no-key"
 		}
+		_, fallback := fallbacks[strings.ToLower(strings.TrimSpace(name))]
 		rows = append(rows, theme.ProviderPanelRow{
 			Name:           name,
 			Active:         strings.EqualFold(name, currentProvider),
 			Primary:        strings.EqualFold(name, primary),
+			Fallback:       fallback,
 			Models:         profile.AllModels(),
 			FallbackModels: profile.FallbackModels,
 			MaxContext:     profile.MaxContext,
@@ -83,6 +95,7 @@ func (m Model) providerPanelRows() []theme.ProviderPanelRow {
 			Name:           "offline",
 			Active:         strings.EqualFold("offline", currentProvider),
 			Primary:        strings.EqualFold("offline", primary),
+			Fallback:       false,
 			Models:         []string{"offline-analyzer-v1"},
 			FallbackModels: nil,
 			MaxContext:     12000,
@@ -93,6 +106,105 @@ func (m Model) providerPanelRows() []theme.ProviderPanelRow {
 		})
 	}
 	return rows
+}
+
+func (m Model) providerStatusPanelRows() []theme.ProviderPanelRow {
+	rows := m.providerPanelRows()
+	if len(rows) == 0 {
+		return nil
+	}
+	keep := make([]theme.ProviderPanelRow, 0, len(rows))
+	seen := map[string]struct{}{}
+	add := func(row theme.ProviderPanelRow) {
+		key := strings.ToLower(strings.TrimSpace(row.Name))
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		keep = append(keep, row)
+	}
+	for _, row := range rows {
+		switch {
+		case row.Active:
+			add(row)
+		case row.Fallback && row.Status == "ready" && m.isUserOwnedProvider(row.Name):
+			add(row)
+		}
+	}
+	sort.SliceStable(keep, func(i, j int) bool {
+		return providerStatusRank(keep[i]) < providerStatusRank(keep[j]) ||
+			(providerStatusRank(keep[i]) == providerStatusRank(keep[j]) &&
+				strings.ToLower(keep[i].Name) < strings.ToLower(keep[j].Name))
+	})
+	return keep
+}
+
+func providerStatusRank(row theme.ProviderPanelRow) int {
+	switch {
+	case row.Active:
+		return 0
+	case row.Primary:
+		return 1
+	case row.Fallback:
+		return 2
+	case row.Status == "ready":
+		return 3
+	default:
+		return 4
+	}
+}
+
+func (m Model) isUserOwnedProvider(name string) bool {
+	if m.eng == nil || m.eng.Config == nil {
+		return false
+	}
+	profile, ok := m.eng.Config.Providers.Profiles[strings.TrimSpace(name)]
+	if !ok {
+		return false
+	}
+	if providerProfileHasCredential(profile) {
+		return true
+	}
+	if providerProfileHasTag(profile, "my-provider") {
+		return true
+	}
+	return strings.TrimSpace(profile.BaseURL) != "" &&
+		strings.TrimSpace(profile.CatalogID) == "" &&
+		!providerProfileLooksLikeSeed(name, profile)
+}
+
+func providerProfileHasCredential(profile config.ModelConfig) bool {
+	return strings.TrimSpace(profile.APIKey) != "" ||
+		strings.TrimSpace(profile.APIKeyEncrypted) != ""
+}
+
+func providerProfileHasTag(profile config.ModelConfig, want string) bool {
+	want = strings.ToLower(strings.TrimSpace(want))
+	if want == "" {
+		return false
+	}
+	for _, tag := range profile.Tags {
+		if strings.ToLower(strings.TrimSpace(tag)) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func providerProfileLooksLikeSeed(name string, profile config.ModelConfig) bool {
+	if providerProfileHasCredential(profile) || providerProfileHasTag(profile, "my-provider") {
+		return false
+	}
+	seed, ok := config.ModelsDevSeedProfiles()[strings.TrimSpace(name)]
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(profile.BaseURL), strings.TrimSpace(seed.BaseURL)) &&
+		strings.EqualFold(strings.TrimSpace(profile.Protocol), strings.TrimSpace(seed.Protocol)) &&
+		(strings.TrimSpace(profile.Model) == "" || strings.EqualFold(strings.TrimSpace(profile.Model), strings.TrimSpace(seed.Model)))
 }
 
 func (m Model) currentProvider() string {
@@ -156,8 +268,11 @@ func providerProfileLooksConfigured(name string, profile config.ModelConfig) boo
 	if strings.EqualFold(strings.TrimSpace(name), "offline") {
 		return true
 	}
-	if strings.TrimSpace(profile.APIKey) != "" {
+	if providerProfileHasCredential(profile) {
 		return true
+	}
+	if providerProfileLooksLikeSeed(name, profile) {
+		return false
 	}
 	return strings.TrimSpace(profile.BaseURL) != ""
 }
@@ -231,6 +346,7 @@ func (m Model) applyProviderModelSelection(providerName, model string) Model {
 			profile := m.eng.Config.Providers.Profiles[providerName]
 			if model != "" {
 				profile.Model = model
+				profile = applyCatalogModelLimits(profile, model)
 			}
 			m.eng.Config.Providers.Profiles[providerName] = profile
 		}

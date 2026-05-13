@@ -71,6 +71,12 @@ func asInt(m map[string]any, key string, fallback int) int {
 		return int(vv)
 	case int64:
 		return int(vv)
+	case uint:
+		return int(vv)
+	case uint32:
+		return int(vv)
+	case uint64:
+		return int(vv)
 	case float64:
 		if math.IsNaN(vv) || math.IsInf(vv, 0) || vv != math.Trunc(vv) {
 			return fallback
@@ -83,6 +89,47 @@ func asInt(m map[string]any, key string, fallback int) int {
 		n, err := strconv.Atoi(strings.TrimSpace(vv))
 		if err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+func asFloat(m map[string]any, key string, fallback float64) float64 {
+	if m == nil {
+		return fallback
+	}
+	v, ok := m[key]
+	if !ok {
+		return fallback
+	}
+	switch vv := v.(type) {
+	case float64:
+		if math.IsNaN(vv) || math.IsInf(vv, 0) {
+			return fallback
+		}
+		return vv
+	case float32:
+		f := float64(vv)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return fallback
+		}
+		return f
+	case int:
+		return float64(vv)
+	case int32:
+		return float64(vv)
+	case int64:
+		return float64(vv)
+	case uint:
+		return float64(vv)
+	case uint32:
+		return float64(vv)
+	case uint64:
+		return float64(vv)
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(vv), 64)
+		if err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
+			return f
 		}
 	}
 	return fallback

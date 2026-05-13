@@ -92,7 +92,15 @@ func startChatResumeStream(ctx context.Context, eng *engine.Engine, note string)
 		}
 		completion, err := eng.ResumeAgent(ctx, note)
 		if err != nil {
+			if ctx != nil && ctx.Err() != nil {
+				out <- chatErrMsg{err: ctx.Err()}
+				return
+			}
 			out <- chatErrMsg{err: err}
+			return
+		}
+		if ctx != nil && ctx.Err() != nil {
+			out <- chatErrMsg{err: ctx.Err()}
 			return
 		}
 		if answer := strings.TrimSpace(completion.Answer); answer != "" {

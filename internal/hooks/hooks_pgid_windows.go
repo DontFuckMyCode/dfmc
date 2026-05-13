@@ -3,12 +3,9 @@
 // Process-group isolation for hook subprocess trees on Windows.
 //
 // Windows doesn't have POSIX process groups, but we can still do
-// best-effort tree cleanup without invoking an external shell command.
-// We snapshot the process table, walk descendants rooted at the hook
-// shell's PID, then terminate children before the parent. This avoids
-// spawning `taskkill.exe`, which security scanners often flag as a
-// command-injection sink even though the old call only passed a numeric
-// PID as argv.
+// best-effort tree cleanup. We snapshot the process table, walk
+// descendants rooted at the hook shell's PID, then terminate children
+// before the parent.
 
 package hooks
 

@@ -138,10 +138,6 @@ func truncateRunesWithMarker(s string, maxRunes int, marker string) string {
 	return strings.TrimSpace(string(r[:cut])) + marker
 }
 
-func (e *Engine) publishProviderComplete(providerName, model string, tokenCount int, usageParts ...provider.Usage) {
-	e.publishProviderCompleteWithSource(providerName, model, tokenCount, "agent_loop", "", "", usageParts...)
-}
-
 // publishProviderCompleteWithSource is the richer variant used when the
 // caller has the original prompt + assistant response in hand. The
 // providerlog archive consumes the previews and the source label so a

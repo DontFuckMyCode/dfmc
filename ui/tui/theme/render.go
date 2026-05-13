@@ -66,6 +66,26 @@ func SectionHeader(icon, label string) string {
 	return SectionTitleStyle.Render(icon + " " + label)
 }
 
+// PanelBanner renders a standardised panel title bar: bold icon+title on
+// the left, a status chip on the right, with spacing between them.
+// Pass an empty chipText to omit the right chip.
+func PanelBanner(title, chipText string, chipStyle lipgloss.Style, width int) string {
+	renderedTitle := TitleStyle.Bold(true).Render(title)
+	gap := width - lipgloss.Width(renderedTitle) - 4
+	if gap < 2 {
+		gap = 2
+	}
+	right := ""
+	if chipText != "" {
+		right = chipStyle.Render(chipText)
+		gap -= lipgloss.Width(right)
+		if gap < 1 {
+			gap = 1
+		}
+	}
+	return renderedTitle + strings.Repeat(" ", gap) + right
+}
+
 // --- todo strip ---------------------------------------------------------
 
 func RenderTodoStrip(items []TodoStripItem, width int) string {

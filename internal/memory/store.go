@@ -325,7 +325,7 @@ func (s *Store) Promote(id string) error {
 		ep := tx.Bucket([]byte(bucketEpisodic))
 		sem := tx.Bucket([]byte(bucketSemantic))
 		if ep == nil || sem == nil {
-			return fmt.Errorf("memory buckets not initialised")
+			return fmt.Errorf("memory buckets not initialized")
 		}
 		// Already semantic? Treat as a no-op so the TUI can call promote
 		// without first checking the current tier.

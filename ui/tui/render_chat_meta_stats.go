@@ -33,9 +33,12 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 	contextTopFiles := []string{}
 	contextSystemTokens := 0
 	contextHistoryTokens := 0
+	contextHistoryReserve := 0
 	contextResponseTokens := 0
 	contextToolTokens := 0
 	contextWindowTokens := head.ContextWindowTokens
+	contextProvider := strings.TrimSpace(head.Provider)
+	contextModel := strings.TrimSpace(head.Model)
 	if report := m.status.ContextIn; report != nil {
 		contextTask = strings.TrimSpace(report.Task)
 		contextFileCount = report.FileCount
@@ -76,8 +79,15 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		contextAvailableTokens = live.available
 		contextSystemTokens = live.systemTokens
 		contextHistoryTokens = live.historyTokens
+		contextHistoryReserve = live.historyReserve
 		contextResponseTokens = live.responseTokens
 		contextToolTokens = live.toolTokens
+		if live.provider != "" {
+			contextProvider = live.provider
+		}
+		if live.model != "" {
+			contextModel = live.model
+		}
 		if live.task != "" {
 			contextTask = live.task
 		}
@@ -401,6 +411,33 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 			boostSeconds = 1
 		}
 	}
+	providerRows := m.providerStatusPanelRows()
+	providerSelected := clampScroll(m.providers.selectedIndex, len(providerRows))
+	contextMessageCount, contextToolCallCount, contextMessageTokens := m.contextConversationStats()
+	if contextHistoryTokens <= 0 {
+		contextHistoryTokens = contextMessageTokens
+	}
+	contextLimitSource := m.contextWindowLimitSource(contextProvider, contextModel, head.MaxContext)
+	contextPayload := theme.ContextPayloadSnapshot{
+		Provider:             contextProvider,
+		Model:                contextModel,
+		LimitSource:          contextLimitSource,
+		MaxContext:           head.MaxContext,
+		WindowTokens:         contextWindowTokens,
+		EvidenceTokens:       head.ContextTokens,
+		EvidenceBudgetTokens: contextBudgetTokens,
+		SystemTokens:         contextSystemTokens,
+		MessageTokens:        contextHistoryTokens,
+		ResponseReserve:      contextResponseTokens,
+		ToolReserve:          contextToolTokens,
+		HistoryReserve:       contextHistoryReserve,
+		MessageCount:         contextMessageCount,
+		ToolCallCount:        contextToolCallCount,
+		WorkspaceEvidenceOff: statsContextReasonContains(contextReasons, "conversation history only"),
+	}
+	if contextPayload.MaxContext > 0 && contextPayload.WindowTokens > 0 {
+		contextPayload.FreeTokens = contextPayload.MaxContext - contextPayload.WindowTokens
+	}
 
 	return statsPanelInfo{
 		Mode:                    theme.StatsPanelMode(mode),
@@ -411,6 +448,9 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		ContextTokens:           head.ContextTokens,
 		ContextWindowTokens:     contextWindowTokens,
 		MaxContext:              head.MaxContext,
+		ContextProvider:         contextProvider,
+		ContextModel:            contextModel,
+		ContextLimitSource:      contextLimitSource,
 		ContextTask:             contextTask,
 		ContextFileCount:        contextFileCount,
 		ContextMaxFiles:         contextMaxFiles,
@@ -422,8 +462,12 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		ContextTopFiles:         contextTopFiles,
 		ContextSystemTokens:     contextSystemTokens,
 		ContextHistoryTokens:    contextHistoryTokens,
+		ContextHistoryReserve:   contextHistoryReserve,
 		ContextResponseTokens:   contextResponseTokens,
 		ContextToolTokens:       contextToolTokens,
+		ContextMessageCount:     contextMessageCount,
+		ContextToolCallCount:    contextToolCallCount,
+		ContextPayload:          contextPayload,
 		ComposerTokens:          composerTokens,
 		TranscriptInputTokens:   transcriptInputTokens,
 		TranscriptOutputTokens:  transcriptOutputTokens,
@@ -490,7 +534,20 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		PlanParallel:            planParallel,
 		PlanConfidence:          planConfidence,
 		SpinnerFrame:            m.chat.spinnerFrame,
-		Providers:               m.providerPanelRows(),
-		ProvidersSelectedIndex:  m.providers.selectedIndex,
+		Providers:               providerRows,
+		ProvidersSelectedIndex:  providerSelected,
 	}
+}
+
+func statsContextReasonContains(reasons []string, needle string) bool {
+	needle = strings.ToLower(strings.TrimSpace(needle))
+	if needle == "" {
+		return false
+	}
+	for _, reason := range reasons {
+		if strings.Contains(strings.ToLower(reason), needle) {
+			return true
+		}
+	}
+	return false
 }

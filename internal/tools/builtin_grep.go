@@ -37,7 +37,7 @@ func (t *GrepCodebaseTool) Name() string     { return "grep_codebase" }
 func (t *GrepCodebaseTool) Description() string {
 	return "Regex search across project files."
 }
-func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, error) {
+func (t *GrepCodebaseTool) Execute(ctx context.Context, req Request) (Result, error) {
 	pattern := asString(req.Params, "pattern", "")
 	if strings.TrimSpace(pattern) == "" {
 		pattern = asString(req.Params, "query", "")
@@ -119,9 +119,11 @@ func (t *GrepCodebaseTool) Execute(_ context.Context, req Request) (Result, erro
 		if err != nil {
 			return nil
 		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if d.IsDir() {
-			switch d.Name() {
-			case ".git", ".dfmc", "node_modules", "vendor", "bin", "dist":
+			if defaultWalkSkipDirs[d.Name()] {
 				return fs.SkipDir
 			}
 			if ignoreMatcher != nil {

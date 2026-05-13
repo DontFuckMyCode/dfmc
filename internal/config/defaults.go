@@ -48,11 +48,11 @@ func DefaultConfig() *Config {
 			// current turn. Users who DO want a specific file pulled
 			// in opt back in per-turn with `[[file:path]]` markers or
 			// `#ctx-files` / `#context:on` flags in the prompt.
-			AutoIncludeFiles:   false,
-			IncludeTests:       false,
-			IncludeDocs:        true,
-			SymbolAware:        true,
-			GraphDepth:         2,
+			AutoIncludeFiles: false,
+			IncludeTests:     false,
+			IncludeDocs:      true,
+			SymbolAware:      true,
+			GraphDepth:       2,
 		},
 		Memory: MemoryConfig{
 			Enabled:               true,
@@ -132,9 +132,9 @@ func DefaultConfig() *Config {
 			ToolDefaultTimeoutSeconds: 30,
 			ReadSnapshotCap:           256,
 			RecentFailureCap:          256,
-		// ChatAutoDecompose: chat prompt'lar otomatik Drive'a yönlendirilir
-		// eğer çok adımlı iş gibi görünüyorsa. Tek adımlık sorular Ask() ile kalır.
-		ChatAutoDecompose:         true,
+			// ChatAutoDecompose: routes multi-step chat prompts to Drive if the task
+			// looks like it needs multiple steps. Single-step questions stay with Ask().
+			ChatAutoDecompose: true,
 		},
 		Hooks: HooksConfig{
 			AllowProject: false,

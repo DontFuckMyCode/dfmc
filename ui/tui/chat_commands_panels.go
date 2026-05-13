@@ -70,6 +70,11 @@ func (m Model) runPanelCommand(cmd string, args []string) (tea.Model, tea.Cmd, b
 		m.chat.input = ""
 		m.notice = "Subagent activity below."
 		return m.appendSystemMessage(m.describeSubagents()), nil, true
+	case "toolstatus", "toolcalls":
+		m.chat.input = ""
+		m = m.activateDiagnosticTab("ToolStatus")
+		m.notice = "ToolStatus opened. Esc closes; Ctrl+Alt+T toggles from chat."
+		return m, nil, true
 	case "queue":
 		m.chat.input = ""
 		return m.handleQueueSlash(args)

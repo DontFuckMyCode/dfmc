@@ -51,10 +51,7 @@ func (m Model) handleChatRunesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.exitInputHistoryNavigation()
-	m.slashMenu.command = 0
-	m.slashMenu.commandArg = 0
-	m.slashMenu.mention = 0
-	m.slashMenu.quickAction = 0
+	m.slashMenu.resetIndices()
 	inserted := string(msg.Runes)
 	// Single-line paste: submit directly without creating a pasteBlock.
 	// Multi-line paste (or content with newlines) creates a pasteBlock
@@ -129,20 +126,14 @@ func (m Model) handleChatSpaceKey() (tea.Model, tea.Cmd) {
 		m.notice = pasteCollectingNotice
 		return m, nil
 	}
-	m.slashMenu.command = 0
-	m.slashMenu.commandArg = 0
-	m.slashMenu.mention = 0
-	m.slashMenu.quickAction = 0
+	m.slashMenu.resetIndices()
 	return m, nil
 }
 
 func (m Model) handleChatNewlineInsert() (tea.Model, tea.Cmd) {
 	m.exitInputHistoryNavigation()
 	m.insertInputText("\n")
-	m.slashMenu.command = 0
-	m.slashMenu.commandArg = 0
-	m.slashMenu.mention = 0
-	m.slashMenu.quickAction = 0
+	m.slashMenu.resetIndices()
 	return m, nil
 }
 
@@ -153,10 +144,7 @@ func (m Model) handleChatEnterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.exitInputHistoryNavigation()
 		m.insertInputText("\n")
 		m.clearPasteBurst()
-		m.slashMenu.command = 0
-		m.slashMenu.commandArg = 0
-		m.slashMenu.mention = 0
-		m.slashMenu.quickAction = 0
+		m.slashMenu.resetIndices()
 		return m, nil
 	}
 	suggestions := m.buildChatSuggestionState()
@@ -224,10 +212,7 @@ func (m Model) handleChatPrintableFallback(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	if strings.ContainsRune(string(msg.Runes), '@') {
 		m.chat.mentionPickerOpen = true
 	}
-	m.slashMenu.command = 0
-	m.slashMenu.commandArg = 0
-	m.slashMenu.mention = 0
-	m.slashMenu.quickAction = 0
+	m.slashMenu.resetIndices()
 	if m.ui.keyLogEnabled {
 		m.notice = fmt.Sprintf("[keylog] inserted %q", string(msg.Runes))
 	}

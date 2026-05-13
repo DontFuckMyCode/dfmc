@@ -47,6 +47,7 @@ var (
 	ColorTabProviders     = lipgloss.Color("#F0ABFC")
 	ColorTabOrchestrate   = lipgloss.Color("#FDE68A")
 	ColorTabShortcuts     = lipgloss.Color("#A7F3D0")
+	ColorTabTelegram      = lipgloss.Color("#8B5CF6")
 
 	// Misc one-off colours that previously lived as inline literals.
 	ColorInputForeground = lipgloss.Color("#E5F2FF")

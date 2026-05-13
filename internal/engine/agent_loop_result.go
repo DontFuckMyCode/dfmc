@@ -197,4 +197,3 @@ func formatNativeToolResultPayloadDetailed(res tools.Result, toolErr error, maxO
 	}
 	return out, false, stats
 }
-

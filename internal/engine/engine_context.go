@@ -35,7 +35,7 @@ const (
 	// overrides for users on big-context models.
 	defaultHistoryBudgetTokens = 4096
 	maxHistoryBudgetTokens     = 32768
-	maxHistoryMessages         = 60
+	maxHistoryMessages         = 120
 	minHistorySummaryTokens    = 64
 	maxHistorySummaryTokens    = 1024
 	maxResponseReserveTokens   = 16384

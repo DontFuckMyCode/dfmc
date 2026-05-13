@@ -99,6 +99,14 @@ func buildTaskTreeRows(storeTasks []*supervisor.Task, expanded map[string]bool, 
 // on the Chat tab. Handles up/down/j/k navigation, left/right/enter expand/collapse,
 // and updates scroll to keep the cursor in view.
 func (m *Model) handleTasksPanelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc", "q":
+		m.ui.showTasksPanel = false
+		m.notice = "Tasks panel closed."
+		return m, nil
+	}
+
 	if m.eng == nil || m.eng.Tools == nil || m.eng.Tools.TaskStore() == nil {
 		return m, nil
 	}
@@ -118,11 +126,7 @@ func (m *Model) handleTasksPanelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	key := msg.String()
 	switch key {
-	case "esc":
-		m.ui.showTasksPanel = false
-		m.notice = "Tasks panel closed."
 	case "up", "k":
 		if m.tasksPanel.selectedIndex > 0 {
 			m.tasksPanel.selectedIndex--

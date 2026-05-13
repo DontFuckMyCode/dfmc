@@ -100,11 +100,11 @@ func (e *Engine) resolveSubagentProfileTarget(profile string) (string, string, e
 // ensure skills import usage doesn't become unused in edits.
 var _ = skills.Skill{}
 
-func resolveSubagentSkillTexts(projectRoot string, names []string) []string {
-	if len(names) == 0 || projectRoot == "" {
+func resolveSubagentSkills(projectRoot string, names []string) []skills.Skill {
+	if len(names) == 0 {
 		return nil
 	}
-	var out []string
+	var out []skills.Skill
 	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {
 		name = strings.TrimSpace(name)
@@ -117,9 +117,20 @@ func resolveSubagentSkillTexts(projectRoot string, names []string) []string {
 		}
 		seen[key] = struct{}{}
 		if s, ok := skills.Lookup(projectRoot, name); ok {
-			if text := strings.TrimSpace(s.SystemInstruction()); text != "" {
-				out = append(out, text)
-			}
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func subagentSkillTexts(active []skills.Skill) []string {
+	if len(active) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(active))
+	for _, s := range active {
+		if text := strings.TrimSpace(s.SystemInstruction()); text != "" {
+			out = append(out, text)
 		}
 	}
 	return out

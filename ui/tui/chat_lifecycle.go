@@ -173,7 +173,9 @@ func (m Model) startChatResume(note string) (Model, tea.Cmd) {
 	m.chat.streamStartedAt = time.Now()
 	m.chat.streamInputTokens = m.estimateLiveInputTokens(note)
 	m.notice = "Resuming agent loop..."
-	m.chat.streamMessages = startChatResumeStream(m.ctx, m.eng, note)
+	streamCtx, cancel := context.WithCancel(m.ctx)
+	m.chat.streamCancel = cancel
+	m.chat.streamMessages = startChatResumeStream(streamCtx, m.eng, note)
 	return m, tea.Batch(waitForStreamMsg(m.chat.streamMessages), m.ensureSpinnerTick())
 }
 

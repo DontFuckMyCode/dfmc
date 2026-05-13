@@ -39,6 +39,13 @@ func (t *toolHelpTool) Execute(_ context.Context, req Request) (Result, error) {
 	if name == "" {
 		return Result{}, missingNameError("tool_help", req.Params, `{"name":"grep_codebase"}`)
 	}
+	if t.engine.IsDisabled(name) {
+		return Result{}, fmt.Errorf(
+			"tool_help: %q is currently disabled and cannot be used. "+
+				"Enable it via the tools panel or `dfmc tools enable %s`. "+
+				"Disabled tools are excluded from tool_search results",
+			name, name)
+	}
 	spec, ok := t.engine.Spec(name)
 	if !ok {
 		return Result{}, fmt.Errorf(

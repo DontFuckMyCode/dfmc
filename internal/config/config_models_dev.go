@@ -9,10 +9,9 @@
 //     (MergeProviderProfilesFromModelsDev);
 //   - seed sensible defaults for providers the user hasn't configured
 //     yet (ModelsDevSeedProfiles);
-//   - pick the "best" model per provider when the configured pin is
-//     stale — tool-call capable first, then reasoning, then largest
-//     context, then alphabetical — via selectModelsDevModel /
-//     compareModelsDevModels.
+//   - pick the "best" model per provider when no explicit pin exists
+//     yet: tool-call capable first, then reasoning, then largest
+//     context, then alphabetical.
 //
 // ModelsDevProviderAliases translates our local profile names
 // ("kimi", "alibaba") to their registry IDs ("moonshotai",
@@ -31,6 +30,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -114,6 +114,46 @@ func LoadModelsDevCatalog(path string) (ModelsDevCatalog, error) {
 	return out, nil
 }
 
+type modelsDevCatalogCacheEntry struct {
+	modTime time.Time
+	size    int64
+	catalog ModelsDevCatalog
+}
+
+var modelsDevCatalogCache = struct {
+	sync.Mutex
+	entries map[string]modelsDevCatalogCacheEntry
+}{entries: map[string]modelsDevCatalogCacheEntry{}}
+
+func LoadModelsDevCatalogCached(path string) (ModelsDevCatalog, error) {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	modelsDevCatalogCache.Lock()
+	if entry, ok := modelsDevCatalogCache.entries[path]; ok &&
+		entry.size == stat.Size() &&
+		entry.modTime.Equal(stat.ModTime()) {
+		catalog := entry.catalog
+		modelsDevCatalogCache.Unlock()
+		return catalog, nil
+	}
+	modelsDevCatalogCache.Unlock()
+
+	catalog, err := LoadModelsDevCatalog(path)
+	if err != nil {
+		return nil, err
+	}
+	modelsDevCatalogCache.Lock()
+	modelsDevCatalogCache.entries[path] = modelsDevCatalogCacheEntry{
+		modTime: stat.ModTime(),
+		size:    stat.Size(),
+		catalog: catalog,
+	}
+	modelsDevCatalogCache.Unlock()
+	return catalog, nil
+}
+
 func SaveModelsDevCatalog(path string, catalog ModelsDevCatalog) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -159,16 +199,25 @@ func MergeProviderProfilesFromModelsDev(existing map[string]ModelConfig, catalog
 			continue
 		}
 		current := out[name]
-		selected, ok := selectModelsDevModel(provider, current.Model, name)
-		if !ok {
-			continue
-		}
-		current.Model = selected.ID
-		if selected.Limit.Output > 0 {
-			current.MaxTokens = selected.Limit.Output
-		}
-		if selected.Limit.Context > 0 {
-			current.MaxContext = selected.Limit.Context
+		if selected, ok := lookupModelsDevModel(provider, current.Model); ok {
+			if selected.Limit.Output > 0 {
+				current.MaxTokens = selected.Limit.Output
+			}
+			if selected.Limit.Context > 0 {
+				current.MaxContext = selected.Limit.Context
+			}
+		} else if strings.TrimSpace(current.Model) == "" {
+			selected, ok := selectModelsDevModel(provider, "", name)
+			if !ok {
+				continue
+			}
+			current.Model = selected.ID
+			if selected.Limit.Output > 0 {
+				current.MaxTokens = selected.Limit.Output
+			}
+			if selected.Limit.Context > 0 {
+				current.MaxContext = selected.Limit.Context
+			}
 		}
 		if protocol := protocolFromModelsDevProvider(provider); protocol != "" {
 			current.Protocol = protocol
@@ -180,6 +229,58 @@ func MergeProviderProfilesFromModelsDev(existing map[string]ModelConfig, catalog
 		}
 		out[name] = current
 	}
+	for name, current := range out {
+		catalogID := strings.TrimSpace(current.CatalogID)
+		if catalogID == "" {
+			continue
+		}
+		provider, ok := lookupModelsDevProvider(catalog, catalogID)
+		if !ok {
+			continue
+		}
+		current.Models = modelsDevModelIDs(provider)
+		selectedID := strings.TrimSpace(current.Model)
+		if selectedID == "" && len(current.Models) > 0 {
+			selectedID = current.Models[0]
+			current.Model = selectedID
+		}
+		if selected, ok := lookupModelsDevModel(provider, selectedID); ok {
+			current.MaxTokens = selected.Limit.Output
+			current.MaxContext = selected.Limit.Context
+		}
+		out[name] = current
+	}
+	return out
+}
+
+func lookupModelsDevProvider(catalog ModelsDevCatalog, id string) (ModelsDevProvider, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ModelsDevProvider{}, false
+	}
+	if provider, ok := catalog[id]; ok {
+		return provider, true
+	}
+	for key, provider := range catalog {
+		if strings.EqualFold(strings.TrimSpace(key), id) || strings.EqualFold(strings.TrimSpace(provider.ID), id) {
+			return provider, true
+		}
+	}
+	return ModelsDevProvider{}, false
+}
+
+func modelsDevModelIDs(provider ModelsDevProvider) []string {
+	out := make([]string, 0, len(provider.Models))
+	for key, model := range provider.Models {
+		id := strings.TrimSpace(model.ID)
+		if id == "" {
+			id = strings.TrimSpace(key)
+		}
+		if id != "" && !strings.EqualFold(strings.TrimSpace(model.Status), "deprecated") {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
 	return out
 }
 
@@ -269,7 +370,7 @@ func compareModelsDevModels(a, b ModelsDevModel) int {
 		return 1
 	}
 	if a.Reasoning != b.Reasoning {
-		if !a.Reasoning {
+		if a.Reasoning {
 			return -1
 		}
 		return 1

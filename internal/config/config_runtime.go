@@ -45,6 +45,7 @@ type SandboxConfig struct {
 
 type ToolsConfig struct {
 	Enabled                []string           `yaml:"enabled"`
+	Disabled               []string           `yaml:"disabled"`
 	Shell                  ShellToolConfig    `yaml:"shell"`
 	Extra                  map[string]any     `yaml:"extra,omitempty"`
 	Params                 map[string]string  `yaml:"params,omitempty"`
@@ -102,6 +103,9 @@ type AgentConfig struct {
 	// automatically routes it through Drive for TODO decomposition and
 	// adım-adım execution instead of a single-shot ask. Default true.
 	ChatAutoDecompose bool `yaml:"chat_auto_decompose"`
+	// OrchestrateAutoSubtasks: max subtasks from deterministic split before
+	// truncation. Default 8. 0 falls back to the built-in default.
+	OrchestrateAutoSubtasks int `yaml:"orchestrate_auto_subtasks"`
 }
 
 type ContextLifecycleConfig struct {

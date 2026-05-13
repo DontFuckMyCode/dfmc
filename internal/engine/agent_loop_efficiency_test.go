@@ -275,7 +275,7 @@ func TestNativeToolLoop_DedupsIdenticalReadAcrossRounds(t *testing.T) {
 		responses: []scriptedResponse{
 			{ToolCalls: []provider.ToolCall{sameReadCall("r1")}},
 			{ToolCalls: []provider.ToolCall{sameReadCall("r2")}},
-			{Text: "done"},
+			{Text: "done [done: true]"},
 		},
 	}
 	router.Register(stub)

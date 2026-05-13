@@ -268,6 +268,15 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 			return completion, nil
 		}
 
+		// Publish the LLM's narration text when it talks alongside tool
+		// calls so the TUI can surface it in the chat timeline.
+		if text := strings.TrimSpace(resp.Text); text != "" {
+			e.publishAgentLoopEvent("agent:loop:narration", map[string]any{
+				"step":  step,
+				"text":  text,
+				"tools": len(resp.ToolCalls),
+			})
+		}
 		// Run the round's tool calls (executeAndAppendToolBatch in
 		// agent_loop_phases_batch.go), then layer trajectory-aware coach
 		// hints over the result before the next provider round.

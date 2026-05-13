@@ -239,6 +239,9 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 		// a safe dedupe key for downstream metrics aggregators.
 		var tte *tools.ToolTimeoutError
 		if errors.As(err, &tte) {
+			if e.AppLog != nil {
+				e.AppLog.Warn("tool timeout", map[string]any{"tool": tte.Name, "limit_ms": tte.Limit.Milliseconds()})
+			}
 			e.EventBus.Publish(Event{
 				Type:   "tool:timeout",
 				Source: "engine",

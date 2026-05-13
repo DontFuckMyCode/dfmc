@@ -54,8 +54,17 @@ func nextRows(info StatsPanelInfo, mode StatsPanelMode) []string {
 			rows = append(rows, "configure .dfmc/config.yaml providers")
 		}
 	default:
-		if len(rows) == 0 {
-			return nil
+		switch {
+		case info.TodoDoing > 0 && strings.TrimSpace(info.TodoActive) != "":
+			rows = append(rows, AccentStyle.Render("finish active todo: "+info.TodoActive))
+		case len(info.TaskTreeLines) > 0 || info.PlanSubtasks > 0:
+			rows = append(rows, AccentStyle.Render("inspect graph: /tasks tree"))
+		case strings.TrimSpace(info.DriveRunID) != "" || info.DriveTotal > 0:
+			rows = append(rows, AccentStyle.Render("inspect drive: /drive active"))
+		case info.ActiveSubagents > 0:
+			rows = append(rows, AccentStyle.Render("watch live agents in F7 Activity"))
+		case strings.TrimSpace(info.Provider) != "" && info.Configured:
+			rows = append(rows, SubtleStyle.Render("ready for input"))
 		}
 	}
 	return firstNNonEmpty(rows, 5)

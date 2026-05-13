@@ -65,10 +65,10 @@ func (m Model) providerSetupSummary() string {
 		b.WriteString(fmt.Sprintf("   Your user-home primary (%s) is being shadowed on load.\n", userPrimary))
 		b.WriteString("   Run /setup clean to remove the project's providers block and let user-home win.\n")
 	} else if userPrimary == "" && projectPrimary == "" {
-		b.WriteString("\n⚠ No primary set anywhere. Use alt+P (provider picker) or /provider NAME.\n")
+		b.WriteString("\n⚠ No primary set anywhere. Use /provider NAME.\n")
 	} else if projectPrimary != "" && userPrimary == "" {
 		b.WriteString("\n⚠ Project config defines providers but user-home does not.\n")
-		b.WriteString("   Pick a provider via alt+P so it lands in user-home, then /setup clean to drop the project block.\n")
+		b.WriteString("   Pick a provider with /provider so it lands in user-home, then /setup clean to drop the project block.\n")
 	}
 
 	// API-key sanity for the resolved provider — second-most-likely
@@ -88,11 +88,10 @@ func (m Model) providerSetupSummary() string {
 	}
 
 	b.WriteString("\nNext actions:\n")
-	b.WriteString("  alt+m         model picker (one keystroke, auto-saves)\n")
-	b.WriteString("  alt+P         provider picker\n")
-	b.WriteString("  alt+p         providers list (read-only browse)\n")
+	b.WriteString("  /model X      switch model\n")
+	b.WriteString("  alt+p         compact runtime status\n")
 	b.WriteString("  /provider X   switch + auto-save\n")
-	b.WriteString("  f4            full Providers panel (api_key, base_url, max_context edits)\n")
+	b.WriteString("  f8            Models & Providers panel (keys, endpoint, catalog models, tiers)\n")
 
 	return b.String()
 }

@@ -45,6 +45,9 @@ func RenderToolChip(chip ToolChip, width int) string {
 	if chip.DurationMs > 0 {
 		tail = append(tail, FormatDurationShort(chip.DurationMs))
 	}
+	if chip.SavedChars > 0 && chip.CompressionPct > 0 {
+		tail = append(tail, fmt.Sprintf("rtk −%d (%d%%)", chip.SavedChars, chip.CompressionPct))
+	}
 	if chip.OutputTokens > 0 {
 		tail = append(tail, FormatToolTokenCount(chip.OutputTokens)+"t")
 	}
@@ -83,17 +86,6 @@ func FormatDurationShort(ms int) string {
 		return fmt.Sprintf("%dms", ms)
 	}
 	return fmt.Sprintf("%.1fs", float64(ms)/1000)
-}
-
-func appendInnerLines(out *strings.Builder, lines []string, innerWidth int) {
-	for _, ln := range lines {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
-		out.WriteString("\n  ")
-		out.WriteString(SubtleStyle.Render(TruncateSingleLine(ln, innerWidth)))
-	}
 }
 
 func FormatToolTokenCount(n int) string {

@@ -8,7 +8,14 @@ package config
 // RoutingConfig holds the ordered list of routing rules evaluated
 // by the engine's router on every request.
 type RoutingConfig struct {
-	Rules []RoutingRule `yaml:"rules"`
+	Rules       []RoutingRule          `yaml:"rules"`
+	Tiers       map[string]TierRouting `yaml:"tiers,omitempty"`
+	SkillModels map[string]string      `yaml:"skill_models,omitempty"`
+}
+
+type TierRouting struct {
+	Primary   string   `yaml:"primary,omitempty"`
+	Fallbacks []string `yaml:"fallbacks,omitempty"`
 }
 
 // RoutingRule describes one match condition and its assigned provider/model.

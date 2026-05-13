@@ -19,10 +19,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dontfuckmycode/dfmc/internal/config"
 )
 
 func (m *Model) savePipelineDraft() error {
@@ -92,22 +93,33 @@ func (m *Model) commitProfileEditField() {
 		return
 	}
 	draft := strings.TrimSpace(m.providers.profileEditDraft)
+	if m.providers.profileEditField == 2 {
+		var changed bool
+		draft, changed = cleanProviderSecretInput(draft)
+		if changed {
+			m.notice = "key input: line breaks/control chars ignored"
+		}
+	}
 	if draft == "" {
 		return
 	}
 	switch m.providers.profileEditField {
 	case 0:
+		if !providerProtocolAllowed(draft) {
+			m.notice = "protocol must be selected from supported values"
+			return
+		}
 		prof.Protocol = draft
 	case 1:
 		prof.BaseURL = draft
 	case 2:
-		if v, err := strconv.Atoi(draft); err == nil {
-			prof.MaxContext = v
+		prof.APIKey = draft
+		encrypted, err := config.EncryptSecret(draft)
+		if err != nil {
+			m.notice = "key encrypt failed: " + err.Error()
+			return
 		}
-	case 3:
-		if v, err := strconv.Atoi(draft); err == nil {
-			prof.MaxTokens = v
-		}
+		prof.APIKeyEncrypted = encrypted
 	}
 	m.eng.Config.Providers.Profiles[m.providers.detailProvider] = prof
 	m.providers.profileEditDraft = ""
@@ -150,23 +162,40 @@ func (m *Model) persistProfileEdits() error {
 
 	profilesNode := ensureStringAnyMap(ensureStringAnyMap(doc, "providers"), "profiles")
 	profileNode := ensureStringAnyMap(profilesNode, m.providers.detailProvider)
+	delete(profileNode, "protocol")
+	delete(profileNode, "max_context")
+	delete(profileNode, "max_tokens")
+	delete(profileNode, "models")
+	delete(profileNode, "fallback_models")
 	if strings.TrimSpace(prof.Protocol) != "" {
 		profileNode["protocol"] = prof.Protocol
 	}
 	if strings.TrimSpace(prof.BaseURL) != "" {
 		profileNode["base_url"] = prof.BaseURL
 	}
-	if prof.MaxTokens > 0 {
-		profileNode["max_tokens"] = prof.MaxTokens
-	}
-	if prof.MaxContext > 0 {
-		profileNode["max_context"] = prof.MaxContext
-	}
-	if strings.TrimSpace(prof.Model) != "" {
+	if strings.TrimSpace(prof.CatalogID) != "" {
+		profileNode["catalog_id"] = prof.CatalogID
+		delete(profileNode, "model")
+	} else if strings.TrimSpace(prof.Model) != "" {
 		profileNode["model"] = prof.Model
 	}
-	if len(prof.Models) > 0 {
+	if strings.TrimSpace(prof.APIKey) != "" {
+		encrypted := strings.TrimSpace(prof.APIKeyEncrypted)
+		if encrypted == "" {
+			var err error
+			encrypted, err = config.EncryptSecret(prof.APIKey)
+			if err != nil {
+				return fmt.Errorf("encrypt api_key: %w", err)
+			}
+		}
+		profileNode["api_key_enc"] = encrypted
+		delete(profileNode, "api_key")
+	}
+	if strings.TrimSpace(prof.CatalogID) == "" && len(prof.Models) > 0 {
 		profileNode["models"] = prof.Models
+	}
+	if strings.TrimSpace(prof.CatalogID) == "" && len(prof.FallbackModels) > 0 {
+		profileNode["fallback_models"] = prof.FallbackModels
 	}
 
 	out, marshalErr := yaml.Marshal(doc)

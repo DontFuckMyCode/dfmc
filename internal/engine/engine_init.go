@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dontfuckmycode/dfmc/internal/applog"
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/internal/config"
@@ -37,6 +38,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/internal/storage"
 	"github.com/dontfuckmycode/dfmc/internal/taskstore"
+	"github.com/dontfuckmycode/dfmc/internal/toolhistory"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -46,6 +48,13 @@ func (e *Engine) Init(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	e.setState(StateInitializing)
+
+	// Structured application logger — best-effort; init failure is not fatal.
+	if appLog, err := applog.New(applog.Config{DataDir: e.Config.DataDir()}); err == nil {
+		e.AppLog = appLog.WithComponent("engine").WithOperation("init")
+	} else if e.AppLog != nil {
+		e.AppLog.Error("applog init failed", err)
+	}
 	e.EventBus.Publish(Event{Type: "engine:initializing", Source: "engine"})
 
 	// Wire SafeGo's panic observer so background-goroutine panics that
@@ -68,6 +77,9 @@ func (e *Engine) Init(ctx context.Context) error {
 
 	store, err := storage.Open(e.Config.DataDir())
 	if err != nil {
+		if e.AppLog != nil {
+			e.AppLog.Error("storage init failed", err)
+		}
 		return fmt.Errorf("storage init failed: %w", err)
 	}
 	e.Storage = store
@@ -82,8 +94,25 @@ func (e *Engine) Init(ctx context.Context) error {
 			pl.Record(ev.Payload)
 		})
 	}
+
+	// LearnedPatterns persists successful tool interaction patterns
+	// for self-improvement. Loads from two locations:
+	//   1. Project-local: <ProjectRoot>/.dfmc/learned_patterns/ (if ProjectRoot set)
+	//   2. Global fallback: <DataDir>/learned_patterns/
+	// nil-safe: unwritable artifacts dir skips init.
+	if lp, lperr := toolhistory.InitLearnedPatterns(e.Config.DataDir()); lperr == nil && lp != nil {
+		e.LearnedPatterns = lp
+		// Also load project-local patterns if ProjectRoot is set.
+		if projectPatterns := e.Config.ProjectLearnedPatternsDir(); projectPatterns != "" {
+			if pp, pperr := toolhistory.InitLearnedPatterns(projectPatterns); pperr == nil && pp != nil {
+				pp.MergeFrom(lp)
+				e.LearnedPatterns = pp
+			}
+		}
+	}
+
 	e.AST = ast.NewWithCacheSize(e.Config.AST.CacheSize)
-	e.CodeMap = codemap.New(e.AST)
+	e.CodeMap = codemap.New(e.AST, &e.Config.Codemap)
 	e.Context = ctxmgr.New(e.CodeMap)
 	e.Tools = tools.New(*e.Config)
 	// Size the subagent-retry ring buffer from config before any retry
@@ -101,6 +130,9 @@ func (e *Engine) Init(ctx context.Context) error {
 	// bridge adapter can add MCP tools to the same registry without
 	// replacing any native tools with the same name.
 	if err := loadMCPClients(e.Config, e.Tools); err != nil {
+		if e.AppLog != nil {
+			e.AppLog.Error("mcp clients init failed", err)
+		}
 		return fmt.Errorf("mcp clients: %w", err)
 	}
 	// Wire tool self-narration: the tools.Engine strips the optional
@@ -131,6 +163,9 @@ func (e *Engine) Init(ctx context.Context) error {
 		e.memoryDegraded = true
 		e.memoryLoadErr = err.Error()
 		e.mu.Unlock()
+		if e.AppLog != nil {
+			e.AppLog.Warn("memory load degraded", map[string]any{"reason": err.Error()})
+		}
 		e.EventBus.Publish(Event{
 			Type:   "memory:degraded",
 			Source: "engine",
@@ -162,6 +197,9 @@ func (e *Engine) Init(ctx context.Context) error {
 
 	e.Providers, err = provider.NewRouter(e.Config.Providers)
 	if err != nil {
+		if e.AppLog != nil {
+			e.AppLog.Error("provider router init failed", err)
+		}
 		return fmt.Errorf("provider router init failed: %w", err)
 	}
 	e.attachProviderObservers(e.Providers)
@@ -203,6 +241,9 @@ func (e *Engine) Init(ctx context.Context) error {
 	})
 
 	e.ProjectRoot = config.FindProjectRoot("")
+	// Sync ProjectRoot to Config so that Config.ProjectLearnedPatternsDir()
+	// returns the project-local .dfmc/learned_patterns/ path.
+	e.Config.SetProjectRoot(e.ProjectRoot)
 	e.refreshProjectConfigSnapshot(e.projectConfigPath())
 	if e.ProjectRoot != "" {
 		// Derive a cancellable child context so Shutdown can tell the
@@ -251,6 +292,9 @@ func (e *Engine) Init(ctx context.Context) error {
 	// Start background update checker
 	e.StartUpdateChecker(e.backgroundCtx, e.Version)
 
+	if e.AppLog != nil {
+		e.AppLog.Info("engine init completed")
+	}
 	e.setState(StateReady)
 	e.EventBus.Publish(Event{Type: "engine:ready", Source: "engine"})
 	return nil

@@ -61,10 +61,26 @@ func (m Model) handleSpinnerTickMsg(_ spinnerTickMsg) (tea.Model, tea.Cmd) {
 // when no events are in flight. 1Hz cadence, one int bump and a
 // repaint per second — cheap.
 func (m Model) handleHeartbeatTickMsg(_ heartbeatTickMsg) (tea.Model, tea.Cmd) {
+	if !m.chat.sending && !m.agentLoop.active && !m.statsPanelBoostActive(time.Now()) {
+		return m, nil
+	}
 	return m, heartbeatTickCmd()
 }
 
 func (m Model) handleChatDoneMsg(msg chatDoneMsg) (tea.Model, tea.Cmd) {
+	if m.dropEmptyStreamingAssistant() {
+		m.chat.streamStartedAt = time.Time{}
+		m.chat.streamInputTokens = 0
+		m.chat.sending = false
+		m.chat.streamMessages = nil
+		m.chat.streamIndex = -1
+		m.clearStreamCancel()
+		m.resetAgentRuntime()
+		m.chat.pendingNoteCount = 0
+		m.notice = ""
+		next, drainCmd := m.drainPendingQueue()
+		return next, tea.Batch(loadStatusCmd(m.eng), loadLatestPatchCmd(m.eng), loadGitInfoCmd(m.projectRoot()), drainCmd)
+	}
 	m.annotateAssistantPatch(m.chat.streamIndex)
 	m.annotateAssistantToolUsage(m.chat.streamIndex)
 	if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) && !m.chat.streamStartedAt.IsZero() {
@@ -88,6 +104,7 @@ func (m Model) handleChatDoneMsg(msg chatDoneMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleChatErrMsg(msg chatErrMsg) (tea.Model, tea.Cmd) {
+	m.dropEmptyStreamingAssistant()
 	m.chat.sending = false
 	m.chat.streamMessages = nil
 	m.chat.streamIndex = -1
@@ -112,7 +129,7 @@ func (m Model) handleChatErrMsg(msg chatErrMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	m.notice = "chat: " + msg.err.Error()
+	m.notice = "chat: " + truncateNotice(msg.err)
 	if len(m.chat.pendingQueue) > 0 {
 		m.notice += fmt.Sprintf(" — %d queued message(s) kept.", len(m.chat.pendingQueue))
 	}
@@ -120,6 +137,7 @@ func (m Model) handleChatErrMsg(msg chatErrMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleStreamClosedMsg(_ streamClosedMsg) (tea.Model, tea.Cmd) {
+	m.dropEmptyStreamingAssistant()
 	m.chat.sending = false
 	m.chat.streamMessages = nil
 	m.chat.streamIndex = -1
@@ -129,6 +147,19 @@ func (m Model) handleStreamClosedMsg(_ streamClosedMsg) (tea.Model, tea.Cmd) {
 	m.chat.pendingNoteCount = 0
 	next, drainCmd := m.drainPendingQueue()
 	return next, drainCmd
+}
+
+func (m *Model) dropEmptyStreamingAssistant() bool {
+	idx := m.chat.streamIndex
+	if idx < 0 || idx >= len(m.chat.transcript) {
+		return false
+	}
+	line := m.chat.transcript[idx]
+	if line.Role != chatRoleAssistant || strings.TrimSpace(line.Content) != "" {
+		return false
+	}
+	m.chat.transcript = append(m.chat.transcript[:idx], m.chat.transcript[idx+1:]...)
+	return true
 }
 
 func (m Model) handleApprovalRequestedMsg(msg approvalRequestedMsg) (tea.Model, tea.Cmd) {

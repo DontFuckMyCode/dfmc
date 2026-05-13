@@ -81,24 +81,36 @@ func (e *Engine) Shutdown() error {
 		e.Conversation.Close()
 		if err := e.Conversation.SaveActive(); err != nil {
 			errs = append(errs, fmt.Errorf("save_conversation: %w", err))
+			if e.AppLog != nil {
+				e.AppLog.Error("shutdown save_conversation failed", err)
+			}
 			e.publishShutdownError("save_conversation", err)
 		}
 	}
 	if e.Memory != nil {
 		if err := e.Memory.Persist(); err != nil {
 			errs = append(errs, fmt.Errorf("persist_memory: %w", err))
+			if e.AppLog != nil {
+				e.AppLog.Error("shutdown persist_memory failed", err)
+			}
 			e.publishShutdownError("persist_memory", err)
 		}
 	}
 	if e.Tools != nil {
 		if err := e.Tools.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close_tools: %w", err))
+			if e.AppLog != nil {
+				e.AppLog.Error("shutdown close_tools failed", err)
+			}
 			e.publishShutdownError("close_tools", err)
 		}
 	}
 	if e.Storage != nil {
 		if err := e.Storage.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close_storage: %w", err))
+			if e.AppLog != nil {
+				e.AppLog.Error("shutdown close_storage failed", err)
+			}
 			e.publishShutdownError("close_storage", err)
 		}
 	}

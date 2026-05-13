@@ -30,6 +30,52 @@ func (m Model) appendToolEventMessage(text string) Model {
 	return m
 }
 
+// appendAssistantNarration is called when an agent:loop:narration event
+// arrives. It snapshots the accumulated streaming text into a standalone
+// assistant entry (so it appears at the right position in the timeline,
+// interleaved with tool events) and starts a fresh streaming entry for
+// the next round's text.
+func (m Model) appendAssistantNarration(text string) Model {
+	text = strings.TrimSpace(text)
+
+	// Snapshot whatever the streaming entry has accumulated so far.
+	// The streaming entry is the one at streamIndex; it may already
+	// contain the narration text because the engine streams it before
+	// publishing the narration event. Freeze it and start fresh.
+	if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) {
+		existing := m.chat.transcript[m.chat.streamIndex]
+		existingContent := strings.TrimSpace(existing.Content)
+
+		// If the streaming entry already has this narration text appended,
+		// keep what came before it. Otherwise use the full content.
+		finalContent := existingContent
+		if existingContent != "" && strings.HasSuffix(existingContent, text) {
+			finalContent = strings.TrimSpace(strings.TrimSuffix(existingContent, text))
+		}
+
+		if finalContent != "" {
+			m.chat.transcript[m.chat.streamIndex].Content = finalContent
+			m.chat.transcript[m.chat.streamIndex].Preview = chatDigest(finalContent)
+			m.chat.transcript[m.chat.streamIndex].TokenCount = estimatedChatTokens(finalContent)
+		} else {
+			// Entry was empty or only had this narration — just overwrite.
+			m.chat.transcript[m.chat.streamIndex].Content = text
+			m.chat.transcript[m.chat.streamIndex].Preview = chatDigest(text)
+			m.chat.transcript[m.chat.streamIndex].TokenCount = estimatedChatTokens(text)
+		}
+	} else {
+		// No streaming entry — just append as a standalone line.
+		cl := newChatLine(chatRoleAssistant, text)
+		m.chat.transcript = append(m.chat.transcript, cl)
+	}
+
+	// Start a fresh streaming entry for the next round's text.
+	m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleAssistant, ""))
+	m.chat.streamIndex = len(m.chat.transcript) - 1
+	m.chat.scrollback = 0
+	return m
+}
+
 // appendCoachMessage inserts a coach-tagged transcript line carrying the
 // background observer's commentary. Severity decides the subtle leading
 // marker so warn/celebrate notes stand apart from plain info nudges without

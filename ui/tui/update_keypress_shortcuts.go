@@ -9,10 +9,14 @@
 package tui
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/dontfuckmycode/dfmc/internal/session"
 )
 
 // handleGlobalShortcuts covers keys that work regardless of which tab
@@ -20,6 +24,14 @@ import (
 // when a key was consumed; the caller falls through to per-tab
 // routing otherwise.
 func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
+	if isToolStatusShortcut(msg) {
+		if m.ui.panelOverlayKind == "toolstatus" {
+			m.ui.panelOverlayKind = ""
+		} else {
+			m = m.activateDiagnosticTab("ToolStatus")
+		}
+		return m, nil, true
+	}
 	switch msg.String() {
 	case "ctrl+c", "ctrl+q":
 		// Ctrl+C cancels paste blocks first; then cancels streaming
@@ -44,10 +56,7 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 			m.clearPasteBlocks()
 			m.setChatInput("")
 			m.chat.cursor = 0
-			m.slashMenu.mention = 0
-			m.slashMenu.command = 0
-			m.slashMenu.commandArg = 0
-			m.slashMenu.quickAction = 0
+			m.slashMenu.resetIndices()
 			m.notice = "Input cleared."
 			return m, nil, true
 		}
@@ -80,14 +89,14 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 			nm, cmd := m.handleTasksPanelKey(msg)
 			return nm, cmd, true
 		}
-		if m.chat.sending && m.cancelActiveStream() {
-			m.notice = "Cancelling…"
-			return m, nil, true
-		}
 		if m.activeTab == 0 && m.ui.statsPanelFocusLocked {
 			m.ui.statsPanelFocusLocked = false
 			m.ui.statsPanelBoostUntil = time.Time{}
 			m.notice = "Stats panel focus unlocked."
+			return m, nil, true
+		}
+		if m.chat.sending && m.cancelActiveStream() {
+			m.notice = "Cancelling…"
 			return m, nil, true
 		}
 	case "j", "k", "up", "down", "enter", "r":
@@ -170,9 +179,7 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 	case "ctrl+p":
 		m.activeTab = 0
 		m.setChatInput("/")
-		m.slashMenu.command = 0
-		m.slashMenu.commandArg = 0
-		m.slashMenu.mention = 0
+		m.slashMenu.resetIndices()
 		return m, nil, true
 	case "ctrl+b":
 		// Panel switcher — fuzzy-filter overlay over every panel. The
@@ -233,12 +240,15 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		m = m.resetTabSwitchAffordances()
 		m.ui.panelOverlayKind = ""
 		m.activeTab = 1 // Files
+		if len(m.filesView.entries) == 0 {
+			return m, loadFilesCmd(m.eng), true
+		}
 		return m, nil, true
 	case "f3", "alt+3":
 		m = m.resetTabSwitchAffordances()
 		m.ui.panelOverlayKind = ""
 		m.activeTab = 2 // Patch
-		return m, nil, true
+		return m, tea.Batch(loadWorkspaceCmd(m.eng), loadLatestPatchCmd(m.eng), loadGitInfoCmd(m.projectRoot())), true
 	case "f4", "alt+4":
 		m = m.resetTabSwitchAffordances()
 		m.ui.panelOverlayKind = ""
@@ -340,6 +350,12 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		// "L" for log) for terminals that eat Shift+F7.
 		m = m.activateDiagnosticTab("ProviderLog")
 		return m, nil, true
+	case "shift+f8", "f20":
+		// Telegram is a demoted overlay behind a WIP build tag. Keep it
+		// in the same F-key family as the other overlays so Ctrl+B and
+		// the physical keyboard map agree: every listed panel has a key.
+		m = m.activateDiagnosticTab("Telegram")
+		return m, nil, true
 	// Alt+9 / Alt+0 used to map to Memory/Conversations under the 17-tab
 	// era; after the F-key remap they would silently disagree with their
 	// F-key partners. Route both to the help overlay so the legacy
@@ -353,13 +369,10 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		// 17-tab era). Primary binding is now F11.
 		m = m.activateDiagnosticTab("Tools")
 		return m, nil, true
-	case "alt+t":
-		// Alt+T legacy alias for Prompts; primary is Shift+F1.
-		m = m.activateDiagnosticTab("Prompts")
-		if !m.prompts.loaded && !m.prompts.loading {
-			m.prompts.loading = true
-			return m, loadPromptsCmd(m.eng), true
-		}
+	case "ctrl+alt+t", "alt+ctrl+t", "alt+t":
+		// Ctrl+Alt+T opens the Tool Status panel. Alt+T remains a legacy
+		// alias for terminals/users that already learned it.
+		m = m.activateDiagnosticTab("ToolStatus")
 		return m, nil, true
 	case "ctrl+i":
 		m = m.activateDiagnosticTab("Status")
@@ -378,6 +391,31 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 	case "alt+r":
 		m = m.activateDiagnosticTab("Orchestrate")
 		return m, nil, true
+	case "ctrl+alt+1", "ctrl+alt+2", "ctrl+alt+3", "ctrl+alt+4", "ctrl+alt+5":
+		if m.session != nil {
+			target, err := strconv.Atoi(msg.String()[len(msg.String())-1:])
+			if err == nil && target >= 1 && target <= 5 {
+				tree := m.session.AgentTree()
+				seen := 0
+				for _, n := range tree {
+					if n.ID == session.RootAgentID {
+						continue
+					}
+					seen++
+					if seen == target {
+						m.session.SwitchToAgent(n.ID)
+						m.notice = fmt.Sprintf("Agent %d", n.ID)
+						break
+					}
+				}
+			}
+		}
+		return m, nil, true
+	case "ctrl+alt+a":
+		if m.session != nil {
+			m.session.overlayOpen = !m.session.overlayOpen
+		}
+		return m, nil, true
 	case "alt+h":
 		// Phase K (help unification): alt+h flips the same Ctrl+H help
 		// overlay rather than the legacy Shortcuts panel. One help
@@ -386,4 +424,16 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		return m, nil, true
 	}
 	return m, nil, false
+}
+
+func isToolStatusShortcut(msg tea.KeyMsg) bool {
+	key := strings.ToLower(strings.TrimSpace(msg.String()))
+	switch key {
+	case "ctrl+alt+t", "alt+ctrl+t", "alt+t":
+		return true
+	}
+	if msg.Alt && msg.Type == tea.KeyCtrlT {
+		return true
+	}
+	return false
 }

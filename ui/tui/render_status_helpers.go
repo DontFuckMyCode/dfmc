@@ -262,3 +262,17 @@ func formatModelsDevCacheSummaryTUI(cache engine.ModelsDevCacheStatus) string {
 	}
 	return strings.Join(parts, " ")
 }
+
+// truncateNotice truncates an error message for display in the footer
+// notice bar. Raw provider errors can exceed 500+ chars and blow past
+// the status-line width budget.
+func truncateNotice(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	if len(s) <= 120 {
+		return s
+	}
+	return s[:117] + "..."
+}

@@ -4,24 +4,18 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/session"
 )
 
-// renderStatusView is the legacy F2 panel renderer. Kept around as a
-// reference for the panel rebuild — render_status.go has the active
-// implementation (renderStatusViewV2). Deleted-after-stabilization; do
-// NOT route through this. Tests still call it for the old text-shape
-// regression so the new one stays comparable.
 func (m Model) renderStatusView(width int) string {
 	return m.renderStatusViewV2(width)
 }
 
 func (m Model) renderFilesView(width int) string {
-	return m.renderFilesViewSized(width, 24)
+	return m.renderFilesViewV2(width, 24)
 }
 
-// renderFilesViewSized delegates to the rebuilt 3-pane explorer in
-// render_files.go. The legacy text-shape lives in git history; the V2
-// renderer is the active implementation for the F3 panel.
 func (m Model) renderFilesViewSized(width, height int) string {
 	return m.renderFilesViewV2(width, height)
 }
@@ -67,6 +61,27 @@ func (m Model) footerSegments() []string {
 	out = append(out, renderContextBar(tokens, maxCtx, 10))
 	if runtime := strings.TrimSpace(m.footerRuntimeSegment()); runtime != "" {
 		out = append(out, runtime)
+	}
+	// Session agents segment — shows when there are multiple agents.
+	if m.session != nil && m.session.AgentCount() > 1 {
+		tree := m.session.AgentTree()
+		running := 0
+		waiting := 0
+		for _, n := range tree {
+			if n.Status == session.StatusRunning {
+				running++
+			} else if n.Status == session.StatusWaitingUserInput {
+				waiting++
+			}
+		}
+		label := fmt.Sprintf("agents:%d", m.session.AgentCount())
+		if running > 0 {
+			label += fmt.Sprintf(" · %d running", running)
+		}
+		if waiting > 0 {
+			label += accentStyle.Render(" · "+fmt.Sprintf("%d needs input", waiting))
+		}
+		out = append(out, label)
 	}
 
 	info := m.gitInfo

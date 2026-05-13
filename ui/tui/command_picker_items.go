@@ -183,7 +183,7 @@ func modelsFromModelsDevCache(providerName string) []string {
 	if providerName == "" {
 		return nil
 	}
-	catalog, err := config.LoadModelsDevCatalog(config.ModelsDevCachePath())
+	catalog, err := config.LoadModelsDevCatalogCached(config.ModelsDevCachePath())
 	if err != nil || len(catalog) == 0 {
 		return nil
 	}

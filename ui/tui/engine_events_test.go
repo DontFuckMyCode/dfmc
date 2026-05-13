@@ -548,6 +548,44 @@ func TestHandleEngineEvent_CoachStuck_FiresIndependentOfVerbose(t *testing.T) {
 	}
 }
 
+func TestHandleEngineEvent_CoachStuckDedupesRepeatedTranscriptNotes(t *testing.T) {
+	m := newCoverageModel(t)
+	first := engine.Event{
+		Type: "agent:coach:stuck",
+		Payload: map[string]any{
+			"tool":          "edit_file",
+			"failure_count": 4,
+			"error_class":   "old_string not found",
+		},
+	}
+	second := engine.Event{
+		Type: "agent:coach:stuck",
+		Payload: map[string]any{
+			"tool":          "edit_file",
+			"failure_count": 5,
+			"error_class":   "old_string not found",
+		},
+	}
+
+	m = m.handleEngineEvent(first)
+	notesAfterFirst := len(m.agentLoop.sessionCoachNotes)
+	transcriptAfterFirst := len(m.chat.transcript)
+	m = m.handleEngineEvent(second)
+
+	if len(m.agentLoop.sessionCoachNotes) != notesAfterFirst {
+		t.Fatalf("repeated stuck-loop note should stay out of chat history, got %d want %d", len(m.agentLoop.sessionCoachNotes), notesAfterFirst)
+	}
+	if len(m.chat.transcript) != transcriptAfterFirst {
+		t.Fatalf("repeated stuck-loop transcript rows: got %d want %d", len(m.chat.transcript), transcriptAfterFirst)
+	}
+	if !strings.Contains(m.notice, "ToolStatus") {
+		t.Fatalf("deduped stuck-loop should point to ToolStatus, got %q", m.notice)
+	}
+	if m.agentLoop.stuckCount != 5 {
+		t.Fatalf("dedupe should still update live stuck count, got %d", m.agentLoop.stuckCount)
+	}
+}
+
 // TestHandleEngineEvent_HeadroomThresholdNotifications pins the
 // pre-compact context-fill warnings: when tokens_used crosses 70/85/
 // 95% of the live loop budget for the FIRST time in a turn, the
@@ -833,6 +871,27 @@ func TestHandleEngineEvent_AgentLoopGuards_SurfaceNotices(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHandleEngineEvent_ToolsForceStop_CollapsesRepeatedTranscriptSpam(t *testing.T) {
+	m := newCoverageModel(t)
+	first := engine.Event{Type: "agent:loop:tools_force_stop", Payload: map[string]any{
+		"tool_rounds": 30,
+		"hard_cap":    30,
+	}}
+	second := engine.Event{Type: "agent:loop:tools_force_stop", Payload: map[string]any{
+		"tool_rounds": 31,
+		"hard_cap":    30,
+	}}
+	m = m.handleEngineEvent(first)
+	transcriptAfterFirst := len(m.chat.transcript)
+	m = m.handleEngineEvent(second)
+	if got := len(m.chat.transcript); got != transcriptAfterFirst {
+		t.Fatalf("repeated hard-cap event should not append transcript line: got %d want %d", got, transcriptAfterFirst)
+	}
+	if !strings.Contains(m.notice, "Chat history is collapsed") {
+		t.Fatalf("notice should explain collapsed history, got %q", m.notice)
 	}
 }
 
@@ -2135,6 +2194,41 @@ func TestHandleEngineEvent_CoachUnverified_FiresAtThreshold(t *testing.T) {
 	}
 }
 
+func TestHandleEngineEvent_CoachUnverified_CollapsesRepeatedNearCounts(t *testing.T) {
+	m := newCoverageModel(t)
+	base := engine.Event{
+		Type: "agent:coach:unverified",
+		Payload: map[string]any{
+			"file_count":   4,
+			"sample_paths": []any{"a.go", "b.go", "c.go", "d.go"},
+		},
+	}
+	repeat := engine.Event{
+		Type: "agent:coach:unverified",
+		Payload: map[string]any{
+			"file_count":   5,
+			"sample_paths": []any{"a.go", "b.go", "c.go", "d.go", "e.go"},
+		},
+	}
+	escalated := engine.Event{
+		Type: "agent:coach:unverified",
+		Payload: map[string]any{
+			"file_count":   7,
+			"sample_paths": []any{"a.go", "b.go", "c.go", "d.go", "e.go", "f.go", "g.go"},
+		},
+	}
+	m = m.handleEngineEvent(base)
+	notesAfterFirst := len(m.agentLoop.sessionCoachNotes)
+	m = m.handleEngineEvent(repeat)
+	if got := len(m.agentLoop.sessionCoachNotes); got != notesAfterFirst {
+		t.Fatalf("near-count unverified event should not add coach note: got %d want %d", got, notesAfterFirst)
+	}
+	m = m.handleEngineEvent(escalated)
+	if got := len(m.agentLoop.sessionCoachNotes); got != notesAfterFirst+1 {
+		t.Fatalf("count jump should add a new coach note: got %d want %d", got, notesAfterFirst+1)
+	}
+}
+
 func TestHandleEngineEvent_CoachUnverified_BelowThresholdDropped(t *testing.T) {
 	m := newCoverageModel(t)
 	before := len(m.agentLoop.sessionCoachNotes)
@@ -2148,6 +2242,86 @@ func TestHandleEngineEvent_CoachUnverified_BelowThresholdDropped(t *testing.T) {
 	m2 := m.handleEngineEvent(event)
 	if len(m2.agentLoop.sessionCoachNotes) != before {
 		t.Errorf("count<3 should not surface a notice, got %d new notes", len(m2.agentLoop.sessionCoachNotes)-before)
+	}
+}
+
+func TestToolCallRowsAreLiveOnlyAndFinishIntoToolStatus(t *testing.T) {
+	m := newCoverageModel(t)
+	m.chat.sending = true
+	m.chat.transcript = []chatLine{
+		newChatLine(chatRoleUser, "inspect"),
+		newChatLine(chatRoleAssistant, ""),
+	}
+	m.chat.streamIndex = 1
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:call",
+		Payload: map[string]any{
+			"tool":           "read_file",
+			"step":           1,
+			"params_preview": "path=main.go",
+		},
+	})
+	if got := len(m.chat.transcript); got != 3 {
+		t.Fatalf("running tool should be visible as one live row, got %d rows: %#v", got, m.chat.transcript)
+	}
+	if last := m.chat.transcript[len(m.chat.transcript)-1]; last.Role != chatRoleTool || !strings.Contains(last.Content, "running: read_file") {
+		t.Fatalf("expected live read_file row, got %#v", last)
+	}
+
+	m = m.handleEngineEvent(engine.Event{
+		Type: "tool:result",
+		Payload: map[string]any{
+			"tool":           "read_file",
+			"step":           1,
+			"success":        true,
+			"durationMs":     12,
+			"output_preview": "package main",
+		},
+	})
+	if got := len(m.chat.transcript); got != 2 {
+		t.Fatalf("finished tool row should be removed from chat history, got %d rows: %#v", got, m.chat.transcript)
+	}
+	if len(m.toolCallLog.entries) == 0 {
+		t.Fatal("ToolStatus log should retain the finished tool call")
+	}
+	lastLog := m.toolCallLog.entries[len(m.toolCallLog.entries)-1]
+	if lastLog.ToolName != "read_file" || lastLog.Status != "ok" || !strings.Contains(lastLog.Result, "package main") {
+		t.Fatalf("unexpected ToolStatus entry: %#v", lastLog)
+	}
+}
+
+func TestLiveToolRowsAreCapped(t *testing.T) {
+	m := newCoverageModel(t)
+	m.chat.sending = true
+	m.chat.transcript = []chatLine{
+		newChatLine(chatRoleUser, "inspect"),
+		newChatLine(chatRoleAssistant, ""),
+	}
+	m.chat.streamIndex = 1
+
+	for step := 1; step <= 6; step++ {
+		m = m.handleEngineEvent(engine.Event{
+			Type: "tool:call",
+			Payload: map[string]any{
+				"tool":           fmt.Sprintf("tool_%d", step),
+				"step":           step,
+				"params_preview": fmt.Sprintf("target=%d", step),
+			},
+		})
+	}
+
+	toolRows := 0
+	for _, row := range m.chat.transcript {
+		if row.Role.Eq(chatRoleTool) {
+			toolRows++
+			if strings.Contains(row.Content, "tool_1") || strings.Contains(row.Content, "tool_2") {
+				t.Fatalf("old live tool rows should be pruned, got %#v", m.chat.transcript)
+			}
+		}
+	}
+	if toolRows != 4 {
+		t.Fatalf("expected at most four live tool rows, got %d in %#v", toolRows, m.chat.transcript)
 	}
 }
 

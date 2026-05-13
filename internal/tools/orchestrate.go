@@ -31,7 +31,6 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/planning"
 )
 
-
 // defaultOrchestrateParallel is the fallback concurrency ceiling. Low on
 // purpose — the default config has ParallelBatchSize=4 and we want to match.
 const (
@@ -46,6 +45,9 @@ type OrchestrateTool struct {
 	// maxParallelCeiling comes from Engine config (ParallelBatchSize). 0
 	// means "use the per-call `max_parallel` as given".
 	maxParallelCeiling int
+	// maxAutoSubtasks limits how many subtasks the deterministic splitter
+	// can produce before truncation. 0 falls back to the default (8).
+	maxAutoSubtasks int
 }
 
 func NewOrchestrateTool() *OrchestrateTool { return &OrchestrateTool{} }
@@ -64,6 +66,30 @@ func (t *OrchestrateTool) SetMaxParallelCeiling(n int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.maxParallelCeiling = n
+}
+
+// SetMaxAutoSubtasks configures the subtask truncation ceiling. Values ≤0
+// reset to the default (8). The engine config key is OrchestrateAutoSubtasks.
+func (t *OrchestrateTool) SetMaxAutoSubtasks(n int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if n <= 0 {
+		t.maxAutoSubtasks = 0 // 0 means "use default" in effectiveMaxAutoSubtasks
+	} else {
+		t.maxAutoSubtasks = n
+	}
+}
+
+// effectiveMaxAutoSubtasks returns the configured subtask limit, falling back
+// to the default constant when the field is 0.
+func effectiveMaxAutoSubtasks(t *OrchestrateTool) int {
+	t.mu.RLock()
+	n := t.maxAutoSubtasks
+	t.mu.RUnlock()
+	if n <= 0 {
+		return maxOrchestrateAutoSubtasks
+	}
+	return n
 }
 
 func (t *OrchestrateTool) Spec() ToolSpec {
@@ -159,9 +185,10 @@ func (t *OrchestrateTool) Execute(ctx context.Context, req Request) (Result, err
 
 	plan := planning.SplitTask(task)
 	omittedSubtasks := 0
-	if len(plan.Subtasks) > maxOrchestrateAutoSubtasks {
-		omittedSubtasks = len(plan.Subtasks) - maxOrchestrateAutoSubtasks
-		plan.Subtasks = append([]planning.Subtask(nil), plan.Subtasks[:maxOrchestrateAutoSubtasks]...)
+	limit := effectiveMaxAutoSubtasks(t)
+	if len(plan.Subtasks) > limit {
+		omittedSubtasks = len(plan.Subtasks) - limit
+		plan.Subtasks = append([]planning.Subtask(nil), plan.Subtasks[:limit]...)
 	}
 
 	// Degenerate case: nothing to fan out. Run a single sub-agent so the
@@ -188,11 +215,11 @@ func (t *OrchestrateTool) Execute(ctx context.Context, req Request) (Result, err
 	parallel := plan.Parallel && !forceSequential
 	if parallel {
 		stages := t.runParallel(ctx, runner, plan, role, subSteps, maxParallel)
-		return assembleResult(task, "parallel", plan, stages, maxParallel, omittedSubtasks), firstStageError(stages)
+		return assembleResult(task, "parallel", plan, stages, maxParallel, limit, omittedSubtasks), firstStageError(stages)
 	}
 
 	stages := t.runSequential(ctx, runner, plan, role, subSteps)
-	return assembleResult(task, "sequential", plan, stages, 1, omittedSubtasks), firstStageError(stages)
+	return assembleResult(task, "sequential", plan, stages, 1, limit, omittedSubtasks), firstStageError(stages)
 }
 
 // runParallel / runSequential / runStage / subagentPromptFor /

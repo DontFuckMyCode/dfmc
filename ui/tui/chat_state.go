@@ -185,6 +185,13 @@ type slashMenuState struct {
 	quickAction int
 }
 
+func (s *slashMenuState) resetIndices() {
+	s.command = 0
+	s.commandArg = 0
+	s.mention = 0
+	s.quickAction = 0
+}
+
 // commandPickerState — modal chooser state for slash commands that need
 // an interactive selection (provider/model/skill). Active flips on while
 // the picker is open and pins keyboard focus to the picker handler.

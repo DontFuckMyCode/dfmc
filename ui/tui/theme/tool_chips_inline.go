@@ -9,7 +9,7 @@
 // Splitting the inline list views out keeps tool_chips.go scoped to
 // "what does one chip look like and how do we colour it" while this
 // file owns "how do we present a slice of chips inside an assistant
-// message" — both the expanded "every chip on its own row" view and
+// message" — both the detailsed "every chip on its own row" view and
 // the collapsed "N tool calls · A ok · F fail" summary used when
 // /tools collapses the strip to keep signal density tight.
 
@@ -32,7 +32,7 @@ func RenderInlineToolChips(chips []ToolChip, width int) string {
 	if inner < 16 {
 		inner = 16
 	}
-	
+
 	// Batch Grouping Logic: collapse identical consecutive tools
 	type batch struct {
 		chip  ToolChip
@@ -54,7 +54,7 @@ func RenderInlineToolChips(chips []ToolChip, width int) string {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		
+
 		rendered := RenderToolChip(bt.chip, inner)
 		if bt.count > 1 {
 			// Add batch multiplier to the first line
@@ -141,7 +141,7 @@ func RenderInlineToolChipsSummary(chips []ToolChip, width int) string {
 		parts = append(parts, fmt.Sprintf("%dms", totalMs))
 	}
 	headline := SubtleStyle.Render("▸ tools · "+strings.Join(parts, " · ")) + "  " +
-		AccentStyle.Render("[/tools]") + SubtleStyle.Render(" expand")
+		AccentStyle.Render("[ctrl+alt+t]") + SubtleStyle.Render(" details")
 
 	breakdown := []string{}
 	for _, name := range order {

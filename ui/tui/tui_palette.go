@@ -32,6 +32,7 @@ type tabPaletteEntry struct {
 	Border lipgloss.Color
 	Accent lipgloss.Color
 	Glyph  string
+	FKey   string
 }
 
 // Pre-computed entries for every tab name in the canonical order.
@@ -42,23 +43,23 @@ type tabPaletteEntry struct {
 // Status=Ok, etc.) reuse the existing role/severity colours; the
 // remaining 8 unique tab tones are exported as theme.ColorTab*.
 var tabPalette = map[string]tabPaletteEntry{
-	"Chat":          {Border: theme.ColorInfo, Accent: theme.ColorInfo, Glyph: "◆"},
-	"Status":        {Border: theme.ColorOk, Accent: theme.ColorOk, Glyph: "◉"},
-	"Files":         {Border: theme.ColorWarn, Accent: theme.ColorWarn, Glyph: "▦"},
-	"Patch":         {Border: theme.ColorTabPatch, Accent: theme.ColorTabPatch, Glyph: "◈"},
-	"Workflow":      {Border: theme.ColorAccent, Accent: theme.ColorAccent, Glyph: "⚙"},
-	"Tools":         {Border: theme.ColorRoleCoach, Accent: theme.ColorRoleCoach, Glyph: "⚒"},
-	"Activity":      {Border: theme.ColorRoleUser, Accent: theme.ColorRoleUser, Glyph: "✦"},
-	"Memory":        {Border: theme.ColorRoleTool, Accent: theme.ColorRoleTool, Glyph: "❖"},
-	"CodeMap":       {Border: theme.ColorTabCodeMap, Accent: theme.ColorTabCodeMap, Glyph: "◇"},
-	"Conversations": {Border: theme.ColorTabConversations, Accent: theme.ColorTabConversations, Glyph: "❍"},
-	"Prompts":       {Border: theme.ColorCode, Accent: theme.ColorCode, Glyph: "✎"},
-	"Security":      {Border: theme.ColorFail, Accent: theme.ColorFail, Glyph: "⛒"},
-	"Plans":         {Border: theme.ColorTabPlans, Accent: theme.ColorTabPlans, Glyph: "▣"},
-	"Context":       {Border: theme.ColorTabContext, Accent: theme.ColorTabContext, Glyph: "◐"},
-	"Providers":     {Border: theme.ColorTabProviders, Accent: theme.ColorTabProviders, Glyph: "◌"},
-	"Orchestrate":   {Border: theme.ColorTabOrchestrate, Accent: theme.ColorTabOrchestrate, Glyph: "◬"},
-	"Shortcuts":     {Border: theme.ColorTabShortcuts, Accent: theme.ColorTabShortcuts, Glyph: "?"},
+	"Chat":          {Border: theme.ColorInfo, Accent: theme.ColorInfo, Glyph: "◆", FKey: "F1"},
+	"Status":        {Border: theme.ColorOk, Accent: theme.ColorOk, Glyph: "◉", FKey: "F9"},
+	"Files":         {Border: theme.ColorWarn, Accent: theme.ColorWarn, Glyph: "▦", FKey: "F2"},
+	"Patch":         {Border: theme.ColorTabPatch, Accent: theme.ColorTabPatch, Glyph: "◈", FKey: "F3"},
+	"Workflow":      {Border: theme.ColorAccent, Accent: theme.ColorAccent, Glyph: "⚙", FKey: "F4"},
+	"Tools":         {Border: theme.ColorRoleCoach, Accent: theme.ColorRoleCoach, Glyph: "⚒", FKey: "F11"},
+	"Activity":      {Border: theme.ColorRoleUser, Accent: theme.ColorRoleUser, Glyph: "✦", FKey: "F5"},
+	"Memory":        {Border: theme.ColorRoleTool, Accent: theme.ColorRoleTool, Glyph: "❖", FKey: "F6"},
+	"CodeMap":       {Border: theme.ColorTabCodeMap, Accent: theme.ColorTabCodeMap, Glyph: "◇", FKey: "F10"},
+	"Conversations": {Border: theme.ColorTabConversations, Accent: theme.ColorTabConversations, Glyph: "❍", FKey: "F7"},
+	"Prompts":       {Border: theme.ColorCode, Accent: theme.ColorCode, Glyph: "✎", FKey: "Shift+F1"},
+	"Security":      {Border: theme.ColorFail, Accent: theme.ColorFail, Glyph: "⛒", FKey: "F12"},
+	"Plans":         {Border: theme.ColorTabPlans, Accent: theme.ColorTabPlans, Glyph: "▣", FKey: "Shift+F2"},
+	"Context":       {Border: theme.ColorTabContext, Accent: theme.ColorTabContext, Glyph: "◐", FKey: "Shift+F3"},
+	"Providers":     {Border: theme.ColorTabProviders, Accent: theme.ColorTabProviders, Glyph: "◌", FKey: "F8"},
+	"Orchestrate":   {Border: theme.ColorTabOrchestrate, Accent: theme.ColorTabOrchestrate, Glyph: "◬", FKey: "Shift+F4"},
+	"Shortcuts":     {Border: theme.ColorTabShortcuts, Accent: theme.ColorTabShortcuts, Glyph: "?", FKey: "Shift+F5"},
 }
 
 // planChatPaletteOverride kicks in when chat is in plan mode. The
@@ -90,52 +91,11 @@ func paletteForTab(tab string, planMode bool) tabPaletteEntry {
 	return fallbackPalette
 }
 
-// tabFKeyHint returns the keyboard hint a user should see for jumping
-// to a tab — F1..F12 where defined, otherwise the alt+key alias.
-// Kept aligned with the switch in handleAnyKey so the strip stays
-// honest about how to navigate.
+// tabFKeyHint returns the keyboard hint for jumping to a tab.
+// Backed by tabPalette so adding a new tab only requires one entry.
 func tabFKeyHint(tab string) string {
-	switch tab {
-	// Eight first-class tabs — F1..F8 step in tab-strip order.
-	// Alt+1..Alt+8 mirror them for terminals that swallow F-keys.
-	case "Chat":
-		return "F1"
-	case "Files":
-		return "F2"
-	case "Patch":
-		return "F3"
-	case "Workflow":
-		return "F4"
-	case "Activity":
-		return "F5"
-	case "Memory":
-		return "F6"
-	case "Conversations":
-		return "F7"
-	case "Providers":
-		return "F8"
-	// Demoted overlays — F9..F12 cover the four most-trafficked
-	// (Status, CodeMap, Tools, Security); the remaining five live on
-	// Shift+F1..Shift+F5 so every panel still has an F-key. Help is
-	// reachable via Ctrl+H / Alt+H, not an F-key.
-	case "Status":
-		return "F9"
-	case "CodeMap":
-		return "F10"
-	case "Tools":
-		return "F11"
-	case "Security":
-		return "F12"
-	case "Prompts":
-		return "Shift+F1"
-	case "Plans":
-		return "Shift+F2"
-	case "Context":
-		return "Shift+F3"
-	case "Orchestrate":
-		return "Shift+F4"
-	case "Shortcuts":
-		return "Shift+F5"
+	if entry, ok := tabPalette[tab]; ok {
+		return entry.FKey
 	}
 	return ""
 }

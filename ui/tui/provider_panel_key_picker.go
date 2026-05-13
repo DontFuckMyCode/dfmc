@@ -1,12 +1,9 @@
 package tui
 
-// provider_panel_key_picker.go — pickers and the stats-panel provider
-// chip handler. Three keyboard surfaces live here because they share
-// the same shape: a list-with-cursor where j/k/g/G/pgup/pgdown move,
-// enter commits, esc cancels, and m cycles. The text-entry edit modes
-// (new provider / profile edit / pipeline edit) live in
-// provider_panel_key_edit.go; the dispatcher + list/search/detail keys
-// live in provider_panel_key.go.
+// provider_panel_key_picker.go - pickers and the stats-panel provider
+// chip handler. Provider panel pickers use arrow/home/end/page keys,
+// Enter to commit, Esc to cancel, and Space only where the local
+// surface needs a mode switch.
 
 import (
 	"strings"
@@ -28,14 +25,22 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.providers.modelPickerActive = false
 			m.providers.modelPickerDraft = ""
 		case "backspace":
-			if len(m.providers.modelPickerDraft) > 0 {
-				m.providers.modelPickerDraft = m.providers.modelPickerDraft[:len(m.providers.modelPickerDraft)-1]
+			if r := []rune(m.providers.modelPickerDraft); len(r) > 0 {
+				m.providers.modelPickerDraft = string(r[:len(r)-1])
 			}
 		default:
-			if msg.Type == tea.KeyRunes {
+			if msg.Type == tea.KeySpace {
+				m.providers.modelPickerDraft += " "
+			} else if msg.Type == tea.KeyRunes {
 				m.providers.modelPickerDraft += string(msg.Runes)
 			}
 		}
+		return m, nil
+	}
+
+	if msg.Type == tea.KeySpace {
+		m.providers.modelPickerManual = true
+		m.providers.modelPickerDraft = ""
 		return m, nil
 	}
 
@@ -49,17 +54,17 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.addModelToProvider(m.providers.detailProvider, items[m.providers.modelPickerIndex])
 		}
 		m.providers.modelPickerActive = false
-	case "j", "down":
+	case "down":
 		if m.providers.modelPickerIndex+1 < len(m.providers.modelPickerItems) {
 			m.providers.modelPickerIndex++
 		}
-	case "k", "up":
+	case "up":
 		if m.providers.modelPickerIndex > 0 {
 			m.providers.modelPickerIndex--
 		}
-	case "g", "home":
+	case "home":
 		m.providers.modelPickerIndex = 0
-	case "G", "end":
+	case "end":
 		if len(m.providers.modelPickerItems) > 0 {
 			m.providers.modelPickerIndex = len(m.providers.modelPickerItems) - 1
 		}
@@ -73,9 +78,6 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.providers.modelPickerIndex < 0 {
 			m.providers.modelPickerIndex = 0
 		}
-	case "m":
-		m.providers.modelPickerManual = true
-		m.providers.modelPickerDraft = ""
 	}
 	return m, nil
 }
@@ -84,23 +86,26 @@ func (m Model) handleProvidersPipelineKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.providers.pipelineEditMode {
 		return m.handlePipelineEditKey(msg)
 	}
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
 
 	names := m.providers.pipelineNames
 	total := len(names)
 	switch msg.String() {
-	case "esc", "q":
+	case "esc", "left":
 		m.providers.viewMode = "list"
-	case "j", "down":
+	case "down":
 		if m.providers.pipelineScroll+1 < total {
 			m.providers.pipelineScroll++
 		}
-	case "k", "up":
+	case "up":
 		if m.providers.pipelineScroll > 0 {
 			m.providers.pipelineScroll--
 		}
-	case "g", "home":
+	case "home":
 		m.providers.pipelineScroll = 0
-	case "G", "end":
+	case "end":
 		if total > 0 {
 			m.providers.pipelineScroll = total - 1
 		}
@@ -116,28 +121,20 @@ func (m Model) handleProvidersPipelineKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.providers.pipelineScroll = 0
 		}
-	case "enter":
-		labels, actions, disabled, reasons := m.buildPipelineMenu()
-		if len(labels) > 0 {
-			m.providers.menuActive = true
-			m.providers.menuLabels = labels
-			m.providers.menuActions = actions
-			m.providers.menuDisabled = disabled
-			m.providers.menuDisabledReasons = reasons
-			m.providers.menuIndex = 0
-		}
+	case "enter", "right", "space":
+		return m.openProvidersPipelineActionMenu(), nil
 	}
 	return m, nil
 }
 
 func (m Model) handleStatsPanelProviderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Ensure rows are populated
-	panelRows := m.providerPanelRows()
+	panelRows := m.providerStatusPanelRows()
 	if len(panelRows) == 0 {
 		return m, nil
 	}
 
 	total := len(panelRows)
+	m.providers.selectedIndex = clampScroll(m.providers.selectedIndex, total)
 	step := 1
 
 	switch msg.String() {

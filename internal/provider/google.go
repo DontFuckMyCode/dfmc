@@ -29,6 +29,7 @@ const defaultGoogleBaseURL = "https://generativelanguage.googleapis.com/v1beta"
 type GoogleProvider struct {
 	name       string
 	model      string
+	models     []string
 	apiKey     string
 	baseURL    string
 	maxTokens  int
@@ -55,9 +56,14 @@ func NewGoogleProvider(model, apiKey, baseURL string, maxTokens, maxContext int,
 	}
 }
 
-func (p *GoogleProvider) Name() string     { return p.name }
-func (p *GoogleProvider) Model() string    { return p.model }
-func (p *GoogleProvider) Models() []string { return []string{p.model} }
+func (p *GoogleProvider) Name() string  { return p.name }
+func (p *GoogleProvider) Model() string { return p.model }
+func (p *GoogleProvider) Models() []string {
+	if len(p.models) > 0 {
+		return append([]string(nil), p.models...)
+	}
+	return []string{p.model}
+}
 
 func (p *GoogleProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	if strings.TrimSpace(p.apiKey) == "" {
@@ -198,7 +204,7 @@ func (p *GoogleProvider) PreciseCountTokens(ctx context.Context, model, text str
 	}
 	m := nonEmpty(model, p.model)
 	endpoint := fmt.Sprintf("%s/models/%s:countTokens", p.baseURL, m)
-	
+
 	payload := map[string]any{
 		"contents": []map[string]any{
 			{
@@ -208,7 +214,7 @@ func (p *GoogleProvider) PreciseCountTokens(ctx context.Context, model, text str
 			},
 		},
 	}
-	
+
 	buf, err := json.Marshal(payload)
 	if err != nil {
 		return 0, err

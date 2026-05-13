@@ -1,16 +1,16 @@
-// provider_panel_crud.go — write-path operations for the Providers
-// tab. Three surfaces, all of which mutate the project-level config
-// file (.dfmc/config.yaml) via a read-modify-write cycle on the raw
-// YAML document so comments and unrelated keys survive:
+// provider_panel_crud.go - write-path operations for the Providers
+// tab. Provider/key/model settings are personal state, so panel writes
+// go to the user-global config (~/.dfmc/config.yaml). Project config
+// remains for project-only routing/pipelines/hooks:
 //
 //   - syncModelsDevCmd: the "Sync Models" action. Fetches the
-//     models.dev catalog, merges it into the Providers.Profiles
-//     block (preserving API keys), saves, and reloads engine config.
+//     models.dev catalog, merges it into user Providers.Profiles
+//     (preserving API keys/endpoints), saves, and reloads engine config.
 //     Reports the diff (added / model-changed / context-changed) so
 //     the user sees what actually moved.
 //   - createProvider: the "New Provider" action. Seeds a minimal
-//     openai-compatible profile, writes the protocol key to
-//     .dfmc/config.yaml, and reloads engine config.
+//     openai-compatible profile, writes the protocol key to user
+//     config, and reloads engine config.
 //   - deleteProvider: the "Delete Provider" action. Removes the
 //     profile from the doc, writes back, reloads, and finally clears
 //     the name from Primary / Fallback references in the engine's
@@ -50,25 +50,32 @@ func syncModelsDevCmd(eng *engine.Engine) tea.Cmd {
 		if err != nil {
 			return syncModelsDevMsg{err: fmt.Errorf("fetch: %w", err)}
 		}
+		providerCount, modelCount := modelsDevCatalogCounts(catalog)
 		if err := config.SaveModelsDevCatalog(config.ModelsDevCachePath(), catalog); err != nil {
 			return syncModelsDevMsg{err: fmt.Errorf("cache: %w", err)}
 		}
 
-		cwd := eng.ProjectRoot
+		cwd := strings.TrimSpace(eng.ProjectRoot)
 		if cwd == "" {
 			cwd = "."
 		}
-		path := filepath.Join(cwd, config.DefaultDirName, "config.yaml")
+		path := filepath.Join(config.UserConfigDir(), "config.yaml")
 
-		cloned, err := config.LoadWithOptions(config.LoadOptions{CWD: cwd})
-		if err != nil {
-			cloned = config.DefaultConfig()
+		cloned := config.DefaultConfig()
+		if data, readErr := os.ReadFile(path); readErr == nil {
+			if len(strings.TrimSpace(string(data))) > 0 {
+				if unmarshalErr := yaml.Unmarshal(data, cloned); unmarshalErr != nil {
+					return syncModelsDevMsg{err: fmt.Errorf("parse user config: %w", unmarshalErr)}
+				}
+			}
+		} else if !errors.Is(readErr, os.ErrNotExist) {
+			return syncModelsDevMsg{err: fmt.Errorf("read user config: %w", readErr)}
 		}
 		before := map[string]config.ModelConfig{}
 		for n, p := range cloned.Providers.Profiles {
 			before[n] = p
 		}
-		cloned.Providers.Profiles = config.MergeProviderProfilesFromModelsDev(cloned.Providers.Profiles, catalog, config.ModelsDevMergeOptions{RewriteBaseURL: true})
+		cloned.Providers.Profiles = config.MergeProviderProfilesFromModelsDev(cloned.Providers.Profiles, catalog, config.ModelsDevMergeOptions{})
 		if err := cloned.Save(path); err != nil {
 			return syncModelsDevMsg{err: fmt.Errorf("save: %w", err)}
 		}
@@ -90,8 +97,16 @@ func syncModelsDevCmd(eng *engine.Engine) tea.Cmd {
 				changes = append(changes, fmt.Sprintf("~%s context %d → %d", n, beforeProf.MaxContext, after.MaxContext))
 			}
 		}
-		return syncModelsDevMsg{path: path, changes: changes}
+		return syncModelsDevMsg{path: path, changes: changes, providerCount: providerCount, modelCount: modelCount}
 	}
+}
+
+func modelsDevCatalogCounts(catalog config.ModelsDevCatalog) (providers, models int) {
+	for _, provider := range catalog {
+		providers++
+		models += len(provider.Models)
+	}
+	return providers, models
 }
 
 func (m *Model) createProvider(name string) error {
@@ -109,6 +124,7 @@ func (m *Model) createProvider(name string) error {
 	prof := config.ModelConfig{
 		Protocol: "openai-compatible",
 		Models:   []string{},
+		Tags:     []string{"my-provider"},
 	}
 	m.eng.Config.Providers.Profiles[name] = prof
 

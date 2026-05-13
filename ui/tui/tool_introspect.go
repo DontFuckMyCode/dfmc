@@ -15,10 +15,10 @@ import (
 )
 
 func (m Model) availableTools() []string {
-	if m.eng == nil {
+	if m.eng == nil || m.eng.Tools == nil {
 		return nil
 	}
-	tools := append([]string(nil), m.eng.ListTools()...)
+	tools := append([]string(nil), m.eng.Tools.ListAll()...)
 	sort.Strings(tools)
 	return tools
 }
@@ -181,3 +181,5 @@ func (m Model) toolGrepPattern() string {
 	}
 	return regexp.QuoteMeta(base)
 }
+
+

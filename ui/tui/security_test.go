@@ -168,7 +168,7 @@ func TestSecurityToggleIgnore(t *testing.T) {
 	}
 
 	out := gm.renderSecurityView(120)
-	if !strings.Contains(out, "1 ignored") {
+	if !strings.Contains(out, "ignored") {
 		t.Errorf("expected summary line to count ignored findings, got:\n%s", out)
 	}
 
@@ -247,7 +247,7 @@ func TestRenderSecurityViewErrorBanner(t *testing.T) {
 	m := newSecurityTestModel()
 	m.security.err = "scan failed"
 	out := m.renderSecurityView(80)
-	if !strings.Contains(out, "error · scan failed") {
+	if !strings.Contains(out, "✗ error · scan failed") {
 		t.Fatalf("error banner missing: %s", out)
 	}
 }

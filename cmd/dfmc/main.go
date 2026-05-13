@@ -117,7 +117,12 @@ func run() int {
 	globalPath, projectPath := config.ConfigPaths("")
 	for _, path := range []string{globalPath, projectPath} {
 		if msg := hooks.CheckConfigPermissions(path); msg != "" {
-			fmt.Fprintf(os.Stderr, "[DFMC] %s\n", msg)
+			if !unsafeHooksOverrideEnabled() {
+				fmt.Fprintf(os.Stderr, "[DFMC] ERROR: %s\n", msg)
+				fmt.Fprintln(os.Stderr, "[DFMC] Refusing to run hooks from writable config. Fix file permissions or set DFMC_UNSAFE_HOOKS=1 to override.")
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "[DFMC] WARNING: %s (DFMC_UNSAFE_HOOKS=1 override active)\n", msg)
 		}
 	}
 
@@ -139,8 +144,8 @@ func run() int {
 				localCfg := config.DefaultConfig()
 				localCfg.DataDirPath = dd
 				if cfgPathErr := localCfg.Save(filepath.Join(dfmcDir, "config.yaml")); cfgPathErr == nil {
-					_ = os.WriteFile(filepath.Join(dfmcDir, "knowledge.json"), []byte("{}\n"), 0o644)
-					_ = os.WriteFile(filepath.Join(dfmcDir, "conventions.json"), []byte("{}\n"), 0o644)
+					_ = os.WriteFile(filepath.Join(dfmcDir, "knowledge.json"), []byte("{}\n"), 0o600)
+					_ = os.WriteFile(filepath.Join(dfmcDir, "conventions.json"), []byte("{}\n"), 0o600)
 					fmt.Fprintf(os.Stderr, "[DFMC] initialized project at %s\n", projectRoot)
 				}
 			}
@@ -163,9 +168,22 @@ func run() int {
 	if tgBot != nil {
 		eng.SetTelegramBot(tgBot, cfg.Telegram.SessionName, cfg.Telegram.AllowedUsers)
 		// Forward Telegram messages to the engine's agent loop
-		tgBot.SetMessageHandler(func(userID int64, text string) {
-			// TODO: route to engine ask/prompt interface
-			log.Printf("[telegram] user=%d msg: %s", userID, text)
+		tgBot.SetOnMessage(func(userID int64, text string, replyFn func(string)) {
+			// Forward Telegram message to DFMC engine
+			ctx := context.Background()
+			go func() {
+				resp, err := eng.Ask(ctx, text)
+				if err != nil {
+					log.Printf("[telegram] ask error: %v", err)
+					replyFn("⚠️ DFMC error: " + err.Error())
+					return
+				}
+				// Truncate long responses for Telegram
+				if len(resp) > 4000 {
+					resp = resp[:3997] + "..."
+				}
+				replyFn(resp)
+			}()
 		})
 		go tgBot.Start()
 		tgStopFunc = func() { tgBot.Stop() }
@@ -229,6 +247,15 @@ func allowsDegradedStartup(args []string) bool {
 		}
 	}
 	return true
+}
+
+func unsafeHooksOverrideEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DFMC_UNSAFE_HOOKS"))) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func formatInitError(err error) string {

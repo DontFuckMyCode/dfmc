@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // TestSlashCancel_IdleReportsNothingToCancel — /cancel must produce
@@ -72,6 +74,35 @@ func TestSlashTasksClear_EmptyStoreReportsClearly(t *testing.T) {
 	// — the only failure mode is silent success or "Unknown command".
 	if strings.Contains(view, "Unknown chat command") {
 		t.Errorf("/tasks clear fell into Unknown fallback. Got:\n%s", view)
+	}
+}
+
+// TestSlashTasksListDoesNotOpenSidePanel pins the command surface:
+// /tasks list is a transcript report, not the floating right-side panel.
+func TestSlashTasksListDoesNotOpenSidePanel(t *testing.T) {
+	m := newCoverageModel(t)
+	m.ui.showTasksPanel = true
+	next, _, handled := m.executeChatCommand("/tasks list")
+	if !handled {
+		t.Fatal("/tasks list should be handled")
+	}
+	nm := next.(Model)
+	if nm.ui.showTasksPanel {
+		t.Fatal("/tasks list should not open the floating tasks panel")
+	}
+	view := stripANSI(modelTranscriptText(nm))
+	if strings.TrimSpace(view) == "" {
+		t.Fatal("/tasks list should append a transcript response")
+	}
+}
+
+func TestTasksPanelEscClosesEvenWithoutTaskStore(t *testing.T) {
+	m := newCoverageModel(t)
+	m.ui.showTasksPanel = true
+	next, _ := m.handleTasksPanelKey(tea.KeyMsg{Type: tea.KeyEsc})
+	nm := next.(*Model)
+	if nm.ui.showTasksPanel {
+		t.Fatal("esc should close the tasks panel before reading the task store")
 	}
 }
 

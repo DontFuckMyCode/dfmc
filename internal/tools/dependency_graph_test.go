@@ -10,7 +10,7 @@ import (
 
 func TestDependencyGraph_QueryRequiresQuery(t *testing.T) {
 	tmp := t.TempDir()
-	codemapEng := codemap.New(nil)
+	codemapEng := codemap.New(nil, nil)
 	eng := New(*config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
@@ -25,7 +25,7 @@ func TestDependencyGraph_QueryRequiresQuery(t *testing.T) {
 
 func TestDependencyGraph_InvalidQueryType(t *testing.T) {
 	tmp := t.TempDir()
-	codemapEng := codemap.New(nil)
+	codemapEng := codemap.New(nil, nil)
 	eng := New(*config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
@@ -40,7 +40,7 @@ func TestDependencyGraph_InvalidQueryType(t *testing.T) {
 
 func TestDependencyGraph_EmptyGraph(t *testing.T) {
 	tmp := t.TempDir()
-	codemapEng := codemap.New(nil)
+	codemapEng := codemap.New(nil, nil)
 	eng := New(*config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
@@ -58,7 +58,7 @@ func TestDependencyGraph_EmptyGraph(t *testing.T) {
 
 func TestDependencyGraph_Importers(t *testing.T) {
 	tmp := t.TempDir()
-	codemapEng := codemap.New(nil)
+	codemapEng := codemap.New(nil, nil)
 	g := codemapEng.Graph()
 	g.AddNode(codemap.Node{ID: "file:pkg/a.go", Name: "a.go", Kind: "file", Path: "pkg/a.go"})
 	g.AddNode(codemap.Node{ID: "file:pkg/b.go", Name: "b.go", Kind: "file", Path: "pkg/b.go"})
@@ -91,7 +91,7 @@ func TestDependencyGraph_Importers(t *testing.T) {
 
 func TestDependencyGraph_Imports(t *testing.T) {
 	tmp := t.TempDir()
-	codemapEng := codemap.New(nil)
+	codemapEng := codemap.New(nil, nil)
 	g := codemapEng.Graph()
 	g.AddNode(codemap.Node{ID: "file:pkg/a.go", Name: "a.go", Kind: "file", Path: "pkg/a.go"})
 	g.AddNode(codemap.Node{ID: "module:foo/bar", Name: "foo/bar", Kind: "module"})
@@ -102,7 +102,7 @@ func TestDependencyGraph_Imports(t *testing.T) {
 
 	res, err := eng.Execute(context.Background(), "dependency_graph", Request{
 		ProjectRoot: tmp,
-		Params:      map[string]any{"query": "imports", "file": "pkg/a.go"},
+		Params:      map[string]any{"query": "imports", "file": "pkg/a.go", "module": "pkg/a.go"},
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -119,7 +119,7 @@ func TestDependencyGraph_Imports(t *testing.T) {
 
 func TestDependencyGraph_FanOut(t *testing.T) {
 	tmp := t.TempDir()
-	codemapEng := codemap.New(nil)
+	codemapEng := codemap.New(nil, nil)
 	g := codemapEng.Graph()
 	g.AddNode(codemap.Node{ID: "file:main.go", Name: "main.go", Kind: "file", Path: "main.go"})
 	g.AddNode(codemap.Node{ID: "file:util.go", Name: "util.go", Kind: "file", Path: "util.go"})
@@ -150,7 +150,7 @@ func TestDependencyGraph_FanOut(t *testing.T) {
 
 func TestDependencyGraph_FanIn(t *testing.T) {
 	tmp := t.TempDir()
-	codemapEng := codemap.New(nil)
+	codemapEng := codemap.New(nil, nil)
 	g := codemapEng.Graph()
 	g.AddNode(codemap.Node{ID: "file:main.go", Name: "main.go", Kind: "file", Path: "main.go"})
 	g.AddNode(codemap.Node{ID: "file:util.go", Name: "util.go", Kind: "file", Path: "util.go"})
@@ -180,7 +180,7 @@ func TestDependencyGraph_FanIn(t *testing.T) {
 
 func TestDependencyGraph_MaxResults(t *testing.T) {
 	tmp := t.TempDir()
-	codemapEng := codemap.New(nil)
+	codemapEng := codemap.New(nil, nil)
 	g := codemapEng.Graph()
 	g.AddNode(codemap.Node{ID: "module:foo", Name: "foo", Kind: "module"})
 	letters := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
@@ -215,7 +215,7 @@ func TestDependencyGraph_MaxResults(t *testing.T) {
 
 func TestDependencyGraph_PathNotFound(t *testing.T) {
 	tmp := t.TempDir()
-	codemapEng := codemap.New(nil)
+	codemapEng := codemap.New(nil, nil)
 	g := codemapEng.Graph()
 	g.AddNode(codemap.Node{ID: "file:a.go", Name: "a.go", Kind: "file", Path: "a.go"})
 	g.AddNode(codemap.Node{ID: "file:b.go", Name: "b.go", Kind: "file", Path: "b.go"})
@@ -237,7 +237,7 @@ func TestDependencyGraph_PathNotFound(t *testing.T) {
 
 func TestDependencyGraph_EdgeTypeFilter(t *testing.T) {
 	tmp := t.TempDir()
-	codemapEng := codemap.New(nil)
+	codemapEng := codemap.New(nil, nil)
 	g := codemapEng.Graph()
 	g.AddNode(codemap.Node{ID: "file:a.go", Name: "a.go", Kind: "file", Path: "a.go"})
 	g.AddNode(codemap.Node{ID: "file:b.go", Name: "b.go", Kind: "file", Path: "b.go"})
@@ -248,7 +248,7 @@ func TestDependencyGraph_EdgeTypeFilter(t *testing.T) {
 
 	res, err := eng.Execute(context.Background(), "dependency_graph", Request{
 		ProjectRoot: tmp,
-		Params:      map[string]any{"query": "imports", "file": "a.go", "edge_type": "calls"},
+		Params:      map[string]any{"query": "imports", "file": "a.go", "edge_type": "calls", "module": "a.go"},
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)

@@ -143,6 +143,28 @@ func EnvVarForProvider(name string) string {
 	return canonical[key]
 }
 
+// applyTelegramEnv applies DFMC_TELEGRAM_TOKEN, DFMC_TELEGRAM_ALLOWED_USERS,
+// and DFMC_TELEGRAM_SESSION_NAME environment variables to c.Telegram.
+func (c *Config) applyTelegramEnv() {
+	if token := os.Getenv("DFMC_TELEGRAM_TOKEN"); token != "" {
+		c.Telegram.Token = strings.TrimSpace(token)
+	}
+	if users := os.Getenv("DFMC_TELEGRAM_ALLOWED_USERS"); users != "" {
+		for _, id := range strings.Split(users, ",") {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				continue
+			}
+			if parsed, err := strconv.ParseInt(id, 10, 64); err == nil {
+				c.Telegram.AllowedUsers = append(c.Telegram.AllowedUsers, parsed)
+			}
+		}
+	}
+	if name := os.Getenv("DFMC_TELEGRAM_SESSION_NAME"); name != "" {
+		c.Telegram.SessionName = strings.TrimSpace(name)
+	}
+}
+
 func (c *Config) applyEnv(dotEnv map[string]string) {
 	if c.Providers.Profiles == nil {
 		c.Providers.Profiles = map[string]ModelConfig{}

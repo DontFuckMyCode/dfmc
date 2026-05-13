@@ -116,6 +116,22 @@ func TestContinueCommandWarnsWhenNoParkedLoop(t *testing.T) {
 	}
 }
 
+func TestStartChatResumeInstallsPerTurnCancel(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+
+	next, cmd := m.startChatResume("")
+
+	if cmd == nil {
+		t.Fatal("resume should return a stream wait command")
+	}
+	if next.chat.streamCancel == nil {
+		t.Fatal("resume stream should install a per-turn cancel function")
+	}
+	if !next.chat.sending {
+		t.Fatal("resume should enter sending state")
+	}
+}
+
 func TestResumeAliasRoutesToContinue(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.setChatInput("/resume")

@@ -9,6 +9,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -108,6 +109,29 @@ func formatToolResultForPanel(name string, params map[string]any, res toolruntim
 	}
 	if res.DurationMs > 0 {
 		lines = append(lines, fmt.Sprintf("Duration: %dms", res.DurationMs))
+	}
+	// Files touched — extract from apply_patch, edit_file, write_file, read_file results
+	if res.Data != nil {
+		if files := coerceToolResultFileEntries(res.Data["files"]); len(files) > 0 {
+			paths := make([]string, 0, len(files))
+			for _, f := range files {
+				if p := strings.TrimSpace(toolResultString(f, "path")); p != "" {
+					paths = append(paths, filepath.Base(p))
+				}
+			}
+			if len(paths) > 0 {
+				lines = append(lines, fmt.Sprintf("Files: %s", strings.Join(paths, ", ")))
+			}
+		}
+		if path := strings.TrimSpace(fmt.Sprint(res.Data["path"])); path != "" && path != "<nil>" {
+			lines = append(lines, "File: "+filepath.Base(path))
+		}
+		if tokens := toolResultInt(res.Data, "tokens"); tokens > 0 {
+			lines = append(lines, fmt.Sprintf("Tokens: %d", tokens))
+		}
+		if linesChanged := toolResultInt(res.Data, "lines_changed"); linesChanged > 0 {
+			lines = append(lines, fmt.Sprintf("Lines: +%d", linesChanged))
+		}
 	}
 	if res.Truncated {
 		lines = append(lines, "Output: truncated")

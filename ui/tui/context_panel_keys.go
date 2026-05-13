@@ -22,13 +22,28 @@ func (m Model) handleContextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.contextPanel.inputActive {
 		return m.handleContextInputKey(msg)
 	}
+	// Route to Context Manager sub-view when active.
+	if nm, cmd, handled := m.handleContextManagerKey(msg); handled {
+		return nm, cmd
+	}
 	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
 		return nm, cmd
 	}
 	if s := msg.String(); s == "right" || s == "l" {
+		if m.contextPanel.manager.active {
+			return m.openContextManagerActionMenu(), nil
+		}
 		return m.openContextActionMenu(), nil
 	}
 	switch msg.String() {
+	case "m":
+		// Toggle Context Manager sub-view
+		if m.contextPanel.manager.active {
+			m = m.deactivateContextManager()
+		} else {
+			m = m.activateContextManager()
+		}
+		return m, nil
 	case "a", "f":
 		m = m.loadActiveContextDebug()
 		return m, nil

@@ -103,14 +103,24 @@ func sortStrings(s []string) {
 // meta tools here would short-circuit legitimate dispatches before
 // the inner check runs. Mirrors the subagent-allowlist semantic
 // (see internal/engine/subagent_allowlist.go's checkSubagentAllowlist).
+// Sub-agent spawning tools (delegate_task, etc.) are always blocked when
+// enforced=true because they can invoke any tool (including destructive
+// ones) and would bypass the per-skill allowlist. Restricting the
+// sub-agent's effective allowlist to the same union is tracked as a
+// follow-up (see audit VULN-NEW-1 remediation).
 func IsToolAllowedBySkills(name string, allowed []string, enforced bool) bool {
 	if !enforced || len(allowed) == 0 {
 		return true
 	}
 	outer := strings.ToLower(strings.TrimSpace(name))
+	// Hard-block: meta tools are always allowed through (re-entry
+	// handles inner tool checks). Sub-agent tools are always blocked
+	// when enforced — they can invoke any tool internally.
 	switch outer {
 	case "tool_search", "tool_help", "tool_call", "tool_batch_call":
 		return true
+	case "delegate_task", "subagent":
+		return false
 	}
 	for _, t := range allowed {
 		if strings.ToLower(strings.TrimSpace(t)) == outer {

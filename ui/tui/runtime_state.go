@@ -22,7 +22,7 @@ type uiToggles struct {
 	showHelpOverlay       bool // ctrl+h: keybinding card overlay
 	showStatsPanel        bool // ctrl+s: right-side stats panel on chat tab
 	statsPanelMode        statsPanelMode
-	statsPanelScroll      int  // scroll offset for the right-hand stats panel
+	statsPanelScroll      int // scroll offset for the right-hand stats panel
 	statsPanelBoostUntil  time.Time
 	statsPanelFocusLocked bool
 	keyLogEnabled         bool // /keylog or DFMC_KEYLOG=1: dump KeyMsg into notice
@@ -154,6 +154,8 @@ type agentLoopState struct {
 	stuckCount     int
 	stuckErrClass  string
 	stuckClearedAt int // step number where the stall was last cleared (0=never)
+	stuckNoticeKey string
+	stuckNoticeAt  int
 	// cumulative* — running totals across auto-resume cycles within a
 	// single root ask. The autonomous wrapper accumulates these on
 	// every park→compact→resume transition, and the engine refuses
@@ -241,4 +243,10 @@ type agentLoopState struct {
 	// denials — the goal is to capture turn-level fragility, not to
 	// taxonomize causes. Reset on agent:loop:start.
 	toolErrorsThisTurn int
+
+	// Transcript-noise guards. Activity still receives every raw event, but
+	// chat history should not fill with the same operational warning every
+	// round during a long run.
+	toolForceStopNotified    bool
+	unverifiedCoachLastCount int
 }

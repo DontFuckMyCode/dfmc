@@ -135,7 +135,7 @@ func firstLine(s string) string {
 		s = s[:idx]
 	}
 	if len(s) > 160 {
-		s = s[:160] + "…"
+		s = s[:160] + "..."
 	}
 	return s
 }

@@ -27,7 +27,7 @@ func TestLookup_NotFound(t *testing.T) {
 func TestLookup_BuiltinCaseInsensitive(t *testing.T) {
 	s, ok := Lookup("", "REVIEW")
 	if !ok {
-		t.Fatal("expected to find REIVEW (uppercase)")
+		t.Fatal("expected to find REVIEW (uppercase)")
 	}
 	if s.Name != "review" {
 		t.Fatalf("expected name 'review', got %q", s.Name)

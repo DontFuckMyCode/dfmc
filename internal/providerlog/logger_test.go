@@ -13,7 +13,7 @@ func TestRecord_PersistsAndTails(t *testing.T) {
 	}
 	l.Record(map[string]any{
 		"provider":          "anthropic",
-		"model":             "claude-opus-4-7",
+		"model":             "claude-opus-4-6",
 		"input_tokens":      1234,
 		"output_tokens":     567,
 		"total_tokens":      1801,
@@ -26,7 +26,7 @@ func TestRecord_PersistsAndTails(t *testing.T) {
 		t.Fatalf("Tail count: want 1, got %d", len(got))
 	}
 	r := got[0]
-	if r.Provider != "anthropic" || r.Model != "claude-opus-4-7" {
+	if r.Provider != "anthropic" || r.Model != "claude-opus-4-6" {
 		t.Errorf("provider/model: %q/%q", r.Provider, r.Model)
 	}
 	if r.InputTokens != 1234 || r.OutputTokens != 567 || r.TotalTokens != 1801 {

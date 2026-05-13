@@ -14,8 +14,9 @@ package theme
 // This file owns the StatsPanelMode → section ordering switch, the
 // section/footer/line primitives on statsPanelBuilder, and the small
 // usage helpers (window/used/pct) that runtime and workflow rows both
-// read. The panel is kept dense on purpose: it should behave like an
-// operator console, not a second transcript.
+// read. The panel is intentionally summary-first: active state, next
+// action, and critical budget belong here; deep diagnostics belong in
+// their dedicated panels.
 
 import (
 	"fmt"
@@ -25,7 +26,7 @@ import (
 )
 
 const (
-	StatsPanelWidth = 38
+	StatsPanelWidth         = 38
 	StatsPanelBoostWidthMin = 48
 	// StatsPanelBoostMinContentWidth is the threshold above which the
 	// panel is allowed to grow into "boost mode" (≥48 cols); below this
@@ -84,44 +85,9 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 	}
 	b.line(statsPanelStateLine(info, inner))
 
-	switch mode {
-	case StatsPanelModeTodos:
-		b.section("TODO STATE", todoRows(info, inner))
-		b.section("NEXT", nextRows(info, mode))
-		b.section("LIVE LOOP", loopRows(info))
-		b.section("CONTEXT", contextRows(info))
-	case StatsPanelModeTasks:
-		b.section("TASK GRAPH", taskRows(info))
-		b.section("DRIVE", driveRows(info))
-		b.section("NEXT", nextRows(info, mode))
-		b.section("ORCHESTRATION MAP", orchestrationMapRows(info, inner))
-		b.section("LIVE LOOP", loopRows(info))
-	case StatsPanelModeSubagents:
-		b.section("SUBAGENTS", subagentRows(info))
-		b.section("NEXT", nextRows(info, mode))
-		b.section("LIVE LOOP", loopRows(info))
-		b.section("RECENT", recentRows(info, 4))
-	case StatsPanelModeProviders:
-		b.section("ACTIVE", providerActiveRows(info))
-		b.section("ROUTING", providerRoutingRows(info))
-		b.section("NEXT", nextRows(info, mode))
-		b.section("PROVIDERS", providerListRows(info))
-		b.section("CONTEXT", contextRows(info))
-		b.section("TOKENS", tokenRows(info))
-		b.section("SESSION", sessionRows(info))
-	default:
-		b.section("PROVIDER", providerRows(info))
-		b.section("NEXT", nextRows(info, mode))
-		b.section("CONTEXT", contextRows(info))
-		b.section("TOKENS", tokenRows(info))
-		b.section("TOOL LOOP", loopRows(info))
-		b.section("TOOLS", toolsRows(info))
-		b.section("WORKFLOW", workflowRows(info, inner))
-		if rows := gitRows(info); len(rows) > 0 {
-			b.section("GIT", rows)
-		}
-		b.section("SESSION", sessionRows(info))
-	}
+	b.section("ACTIVE", statsPanelActiveRows(info, mode, inner))
+	b.section("NEXT", nextRows(info, mode))
+	b.section("BUDGET", statsPanelBudgetRows(info))
 
 	footerRows := statsPanelFooterRows(mode)
 	if info.FocusLocked {
@@ -257,4 +223,3 @@ func RenderStatsPanelModeTabs(mode StatsPanelMode, width int) string {
 	}
 	return TruncateSingleLine(strings.Join(parts, "  "), width)
 }
-

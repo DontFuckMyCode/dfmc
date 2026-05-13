@@ -4,7 +4,7 @@
 // to memorize F-key positions or scroll through /help to find what
 // they need.
 //
-// Reachable via Alt+H from any tab. Distinct from the Ctrl+H per-tab
+// Reachable via Shift+F5 from any tab. Distinct from the Ctrl+H per-tab
 // help overlay (which is a popup of just THIS tab's hints) and from
 // /help (which is a transcript message). The Shortcuts tab is the
 // one place that surveys everything.
@@ -27,7 +27,7 @@ func (m Model) renderShortcutsView(width int) string {
 
 	parts := []string{
 		sectionHeader("?", "Shortcuts"),
-		subtleStyle.Render("alt+h jumps here · ctrl+h toggles per-tab popup · /help prints in chat"),
+		subtleStyle.Render("shift+f5 jumps here · ctrl+h toggles per-tab popup · /help prints in chat"),
 		renderDivider(inner),
 		"",
 	}
@@ -50,10 +50,10 @@ func (m Model) renderShortcutsView(width int) string {
 // shortcutsTabsSection — the panel catalog. Pulls live tab names
 // and F-key hints from tabFKeyHint so this list never drifts from
 // what the rest of the UI actually does. Two-column layout so the
-// user can scan all 17 tabs without scrolling.
+// user can scan every panel without scrolling.
 func (m Model) shortcutsTabsSection() []string {
 	out := []string{accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("PANELS")}
-	out = append(out, "  "+subtleStyle.Render("Every panel has an F-key. F1..F12 cover 12 of 17; Shift+F1..F5 cover the rest. Tab/Shift+Tab cycle."))
+	out = append(out, "  "+subtleStyle.Render("Use F1 to return Chat. Ctrl+B opens every panel. F1..F12 plus Shift+F1..F8 cover the direct map."))
 	out = append(out, "")
 	type row struct {
 		name, key, hint string
@@ -74,14 +74,17 @@ func (m Model) shortcutsTabsSection() []string {
 		{"CodeMap", "F10", "symbol/dep graph · cycles · hotspots"},
 		{"Tools", "F11", "tool registry · params editor · test runs"},
 		{"Security", "F12", "scanner · secrets · vuln scan"},
-		// Shift+F1..Shift+F5 reach the rest. Most terminals emit F13..F17
-		// codes for these — both shapes are bound. Help is on Ctrl+H/Alt+H.
+		// Shift+F1..Shift+F8 reach the rest. Most terminals emit F13..F20
+		// codes for these — both shapes are bound where the terminal sends them.
 		{"Prompts", "Shift+F1", "task/role/language prompt overlays"},
 		{"Plans", "Shift+F2", "plan-split editor · subtask preview"},
 		{"Context", "Shift+F3", "context-build preview · ranked snippets"},
 		{"Orchestrate", "Shift+F4", "agents/subagents/todos/drive/tokens hierarchy"},
 		{"Shortcuts", "Shift+F5", "this screen — cheat sheet of everything"},
 		{"Contexts", "Shift+F6", "live agents — main · parked · subagents · drive run"},
+		{"ProviderLog", "Shift+F7", "provider call log · prompts/replies/tokens"},
+		{"Telegram", "Shift+F8", "telegram bot messages · connection status"},
+		{"ToolStatus", "Ctrl+Alt+T", "detailed tool call history"},
 	}
 	for _, r := range rows {
 		// Format: "  F1       Chat            main composer ..."
@@ -103,7 +106,8 @@ func (m Model) shortcutsChatComposerSection() []string {
 	}{
 		{"Send / queue", [][2]string{
 			{"Ctrl+X", "send composer (or queue while streaming)"},
-			{"Enter / Ctrl+J", "literal newline (Alt+Enter also works)"},
+			{"Enter", "send composer"},
+			{"Alt+Enter", "literal newline"},
 			{"Ctrl+C", "cancel active turn (or rage-quit if idle)"},
 			{"Esc", "dismiss resume prompt · close picker"},
 		}},

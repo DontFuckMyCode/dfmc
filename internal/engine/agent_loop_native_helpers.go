@@ -107,6 +107,9 @@ func (e *Engine) buildNativeLoopRequest(s *loopRunState, toolChoice string) prov
 	}
 	reqModel := strings.TrimSpace(s.lastModel)
 	if reqModel == "" {
+		reqModel = strings.TrimSpace(e.modelForProvider(reqProvider))
+	}
+	if reqModel == "" && e.Providers != nil {
 		if selected, ok := e.Providers.Get(reqProvider); ok && selected != nil {
 			reqModel = strings.TrimSpace(selected.Model())
 		}

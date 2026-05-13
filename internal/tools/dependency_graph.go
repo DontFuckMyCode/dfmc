@@ -134,6 +134,28 @@ func (t *DependencyGraphTool) Execute(ctx context.Context, req Request) (Result,
 		return Result{}, fmt.Errorf(`query must be one of: "importers" | "callers" | "imports" | "fan_out" | "fan_in" | "path"`)
 	}
 
+	// Validate required params per query type.
+	switch query {
+	case "importers", "imports":
+		if module == "" {
+			return Result{}, missingParamError("dependency_graph", "module", req.Params,
+				`{"query":"importers","module":"github.com/foo/bar"}`,
+				`module is required for query type "`+query+`".`)
+		}
+	case "callers":
+		if symbol == "" {
+			return Result{}, missingParamError("dependency_graph", "symbol", req.Params,
+				`{"query":"callers","symbol":"Authenticate"}`,
+				`symbol is required for query type "callers".`)
+		}
+	case "fan_out", "fan_in", "path":
+		if file == "" {
+			return Result{}, missingParamError("dependency_graph", "file", req.Params,
+				`{"query":"fan_out","file":"internal/engine/engine.go"}`,
+				`file is required for query type "`+query+`".`)
+		}
+	}
+
 	graph := t.engine.codemap.Graph()
 	if graph == nil {
 		return Result{}, fmt.Errorf("codemap graph is not built yet — run codemap first")

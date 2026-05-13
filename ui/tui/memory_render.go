@@ -115,17 +115,6 @@ func memoryDetailWrap(s string, width int) []string {
 	return out
 }
 
-// oneLine collapses internal whitespace so the panel stays aligned
-// even when entries carry embedded newlines or tabs.
-func oneLine(s string) string {
-	s = strings.ReplaceAll(s, "\r", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\t", " ")
-	for strings.Contains(s, "  ") {
-		s = strings.ReplaceAll(s, "  ", " ")
-	}
-	return strings.TrimSpace(s)
-}
 
 func (m Model) renderMemoryView(width int) string {
 	width = clampInt(width, 24, 1000)

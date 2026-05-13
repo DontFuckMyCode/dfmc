@@ -1,7 +1,9 @@
-.gitattributes text eol=lf
-*.go text eol=lf
-*.mod text eol=lf
-*.sum text eol=lf
-*.yml text eol=lf
-*.yaml text eol=lf
-Makefile text eol=lf
+node_modules/
+.dfmc/
+.dfmt/
+.project/
+docs/
+.exe
+.out
+coverage/
+.exe~

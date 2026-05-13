@@ -49,19 +49,21 @@ func panelSwitcherEntries() []panelSwitcherEntry {
 		{Label: "Activity", KeyHint: "F5 · Alt+5", Activate: "Activity", Hint: "event firehose"},
 		{Label: "Memory", KeyHint: "F6 · Alt+6", Activate: "Memory", Hint: "working/episodic/semantic"},
 		{Label: "Conversations", KeyHint: "F7 · Alt+7", Activate: "Conversations", Hint: "saved conversations + branches"},
-		{Label: "Providers", KeyHint: "F8 · Alt+8 · Ctrl+O", Activate: "Providers", Hint: "provider catalog + keys"},
+		{Label: "Providers", KeyHint: "Alt+P", Activate: "ProviderStatus", Hint: "active provider + fallbacks + token window"},
+		{Label: "Provider Config", KeyHint: "F8 · Alt+8 · Ctrl+O", Activate: "Providers", Hint: "advanced provider catalog + keys"},
 		{Label: "Status", KeyHint: "F9 · Ctrl+I", Activate: "Status", Hint: "engine + provider snapshot"},
 		{Label: "CodeMap", KeyHint: "F10", Activate: "CodeMap", Hint: "symbol + dep graph"},
 		{Label: "Tools", KeyHint: "F11 · Alt+I", Activate: "Tools", Hint: "tool registry + params"},
 		{Label: "Security", KeyHint: "F12", Activate: "Security", Hint: "scanner · secrets · vulns"},
-		{Label: "Prompts", KeyHint: "Shift+F1 · Alt+T", Activate: "Prompts", Hint: "prompt overlay catalog"},
+		{Label: "Prompts", KeyHint: "Shift+F1", Activate: "Prompts", Hint: "prompt overlay catalog"},
 		{Label: "Plans", KeyHint: "Shift+F2 · Ctrl+Y", Activate: "Plans", Hint: "task split editor"},
 		{Label: "Context", KeyHint: "Shift+F3 · Ctrl+W", Activate: "Context", Hint: "context build preview"},
 		{Label: "Orchestrate", KeyHint: "Shift+F4", Activate: "Orchestrate", Hint: "agents/subagents/todos/drive"},
-		{Label: "Shortcuts", KeyHint: "Shift+F5 · Alt+H", Activate: "Shortcuts", Hint: "this cheat sheet"},
+		{Label: "Shortcuts", KeyHint: "Shift+F5", Activate: "Shortcuts", Hint: "this cheat sheet"},
 		{Label: "Contexts", KeyHint: "Shift+F6", Activate: "Contexts", Hint: "live agents · main · parked · subagents"},
 		{Label: "ProviderLog", KeyHint: "Shift+F7 · Ctrl+L", Activate: "ProviderLog", Hint: "every provider call (model · in/out tokens · preview)"},
 		{Label: "Telegram", KeyHint: "Shift+F8", Activate: "Telegram", Hint: "telegram bot messages · connection status"},
+		{Label: "ToolStatus", KeyHint: "Ctrl+Alt+T", Activate: "ToolStatus", Hint: "detailed tool call history with params/results/errors"},
 	}
 }
 
@@ -139,10 +141,10 @@ func (m Model) handlePanelSwitcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool)
 			return m, nil, true
 		}
 		idx := clampIndex(m.panelSwitcher.index, len(items))
-		target := items[idx].Activate
+		entry := items[idx]
 		m = m.closePanelSwitcher()
-		m = m.activateDiagnosticTab(target)
-		m.notice = "Switched to " + target + "."
+		m = m.activatePanelSwitcherEntry(entry)
+		m.notice = "Switched to " + entry.Label + "."
 		return m, nil, true
 	case tea.KeyBackspace, tea.KeyCtrlH:
 		if len(m.panelSwitcher.query) > 0 {
@@ -161,6 +163,21 @@ func (m Model) handlePanelSwitcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool)
 		return m, nil, true
 	}
 	return m, nil, true
+}
+
+func (m Model) activatePanelSwitcherEntry(entry panelSwitcherEntry) Model {
+	switch entry.Activate {
+	case "ProviderStatus":
+		m = m.resetTabSwitchAffordances()
+		m.activeTab = 0
+		m.ui.panelOverlayKind = ""
+		m.activateStatsPanelMode(statsPanelModeProviders, "providers")
+		return m
+	case "Providers":
+		return m.activateProvidersPanel("", false)
+	default:
+		return m.activateDiagnosticTab(entry.Activate)
+	}
 }
 
 // renderPanelSwitcher renders the picker as a centered modal. Caller

@@ -37,9 +37,11 @@ type providerRow struct {
 // syncModelsDevMsg carries the result of the async models.dev refresh
 // dispatched from provider_panel_crud.go's syncModelsDevCmd.
 type syncModelsDevMsg struct {
-	path    string
-	changes []string
-	err     error
+	path          string
+	changes       []string
+	providerCount int
+	modelCount    int
+	err           error
 }
 
 // providerStatusTag derives the short status label from a Provider's
@@ -130,29 +132,35 @@ func filteredProviderRows(rows []providerRow, query string) []providerRow {
 	return out
 }
 
-// resolveProviderOrder returns the fallback chain the router would walk
-// for a request that does not name an explicit provider. Thin wrapper
-// so the panel can render it without depending on provider.Router.
-func resolveProviderOrder(eng *engine.Engine) []string {
-	if eng == nil || eng.Providers == nil {
-		return nil
-	}
-	return eng.Providers.ResolveOrder("")
+func (m Model) visibleProviderRows() []providerRow {
+	return m.filterMyProviderRows(filteredProviderRows(m.providers.rows, m.providers.query))
 }
 
-// providerStatusStyle picks the colour for the status tag so the eye
-// catches "no-key" before reading the label.
-func providerStatusStyle(status string) string {
-	switch strings.ToLower(status) {
-	case "ready":
-		return accentStyle.Render("READY")
-	case "offline":
-		return subtleStyle.Render("OFFLINE")
-	case "no-key":
-		return warnStyle.Render("NO-KEY")
-	default:
-		return subtleStyle.Render(strings.ToUpper(status))
+func (m Model) filterMyProviderRows(rows []providerRow) []providerRow {
+	out := make([]providerRow, 0, len(rows))
+	for _, row := range rows {
+		if m.isMyProvider(row.Name) {
+			out = append(out, row)
+		}
 	}
+	return out
+}
+
+func (m Model) selectedProviderRow() (providerRow, bool) {
+	rows := m.visibleProviderRows()
+	if len(rows) == 0 {
+		return providerRow{}, false
+	}
+	idx := clampScroll(m.providers.scroll, len(rows))
+	return rows[idx], true
+}
+
+func (m Model) providerProfileForRow(name string) (config.ModelConfig, bool) {
+	if m.eng == nil || m.eng.Config == nil {
+		return config.ModelConfig{}, false
+	}
+	prof, ok := m.eng.Config.Providers.Profiles[name]
+	return prof, ok
 }
 
 // formatRelativeTime returns a human-friendly elapsed string like "2m ago"
@@ -204,7 +212,7 @@ func (m Model) refreshProvidersRows() Model {
 	} else {
 		m.providers.err = ""
 	}
-	m.providers.scroll = clampScroll(m.providers.scroll, len(filteredProviderRows(rows, m.providers.query)))
+	m.providers.scroll = clampScroll(m.providers.scroll, len(m.visibleProviderRows()))
 	return m
 }
 
@@ -213,6 +221,13 @@ func (m Model) focusProviderRow(provider string) Model {
 	if provider == "" {
 		return m
 	}
+	for i, row := range m.visibleProviderRows() {
+		if strings.EqualFold(strings.TrimSpace(row.Name), provider) {
+			m.providers.scroll = i
+			return m
+		}
+	}
+	m.providers.query = ""
 	for i, row := range m.providers.rows {
 		if strings.EqualFold(strings.TrimSpace(row.Name), provider) {
 			m.providers.scroll = i
@@ -223,7 +238,10 @@ func (m Model) focusProviderRow(provider string) Model {
 }
 
 func isProvidersInputMode(m Model) bool {
-	return m.providers.newProviderDraft != "" ||
+	return m.providers.textEditActive ||
+		m.providers.viewMode == "new_provider" ||
+		m.providers.newProviderDraft != "" ||
+		m.providers.viewMode == providerViewCatalogForm ||
 		m.providers.profileEditMode ||
 		m.providers.modelPickerManual ||
 		m.providers.pipelineEditMode
@@ -237,35 +255,44 @@ func (m Model) detailProviderModels() []string {
 	if !ok {
 		return nil
 	}
+	if strings.TrimSpace(prof.CatalogID) != "" {
+		return catalogModelsForRef(prof.CatalogID)
+	}
 	return prof.AllModels()
 }
 
-func (m Model) loadModelsDevForProvider(providerName string) []string {
-	providerName = strings.ToLower(strings.TrimSpace(providerName))
-	catalog, err := config.LoadModelsDevCatalog(config.ModelsDevCachePath())
-	if err != nil {
-		return nil
+func (m Model) detailProviderVisibleModels() []string {
+	models := m.detailProviderModels()
+	query := strings.ToLower(strings.TrimSpace(m.providers.modelQuery))
+	if query == "" {
+		return models
 	}
-	alias := ""
-	for name, id := range config.ModelsDevProviderAliases() {
-		if strings.EqualFold(name, providerName) {
-			alias = id
-			break
+	out := make([]string, 0, len(models))
+	for _, model := range models {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(model)), query) {
+			out = append(out, model)
 		}
 	}
-	if alias == "" {
-		return nil
+	return out
+}
+
+func (m Model) loadModelsDevForProvider(providerName string) []string {
+	providerName = strings.TrimSpace(providerName)
+	refID := ""
+	if m.eng != nil && m.eng.Config != nil {
+		if prof, ok := m.eng.Config.Providers.Profiles[providerName]; ok {
+			refID = strings.TrimSpace(prof.CatalogID)
+		}
 	}
-	p, ok := catalog[alias]
-	if !ok {
-		return nil
+	if refID == "" {
+		for name, id := range config.ModelsDevProviderAliases() {
+			if strings.EqualFold(name, providerName) {
+				refID = id
+				break
+			}
+		}
 	}
-	var items []string
-	for id := range p.Models {
-		items = append(items, id)
-	}
-	sort.Strings(items)
-	return items
+	return catalogModelsForRef(refID)
 }
 
 func (m Model) pipelineNamesFromEngine() []string {

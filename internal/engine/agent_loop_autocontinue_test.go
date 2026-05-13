@@ -153,6 +153,89 @@ func TestAutoContinue_StopsOnDoneTrue(t *testing.T) {
 	}
 }
 
+func TestAutoContinue_SelfSelectsWhenNextMissing(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.Providers.Primary = "stub"
+	cfg.Providers.Profiles["stub"] = config.ModelConfig{Model: "stub-model", MaxTokens: 4096, MaxContext: 128000}
+	cfg.Agent.AutoContinue = "auto"
+	cfg.Agent.MaxAutoContinueIterations = 3
+	cfg.Intent.Enabled = false
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	stub := &scriptedProvider{name: "stub", model: "stub-model", hints: newNativeHints(), responses: []scriptedResponse{
+		{Text: "I can continue in a few ways:\n1. inspect the failing area\n2. write the fix\n3. run tests\nWhich option should I choose?"},
+		{Text: "I chose the safest next step and completed it.\n\n[next:\n- nothing pending]\n[cleanup: ]\n[done: true]"},
+	}}
+	router.Register(stub)
+	bus := NewEventBus()
+	evCh := bus.Subscribe("*")
+	defer bus.Unsubscribe("*", evCh)
+	eng := &Engine{Config: cfg, EventBus: bus, ProjectRoot: tmp, Providers: router, Tools: tools.New(*cfg), Conversation: conversation.New(nil)}
+	eng.setState(StateReady)
+	answer, err := eng.AskWithMetadata(context.Background(), "finish the task autonomously")
+	if err != nil {
+		t.Fatalf("AskWithMetadata: %v", err)
+	}
+	if !strings.Contains(answer, "I chose the safest next step") {
+		t.Fatalf("expected self-selected continuation answer, got %q", answer)
+	}
+	stub.mu.Lock()
+	requestCount := len(stub.requests)
+	var secondReq provider.CompletionRequest
+	if requestCount >= 2 {
+		secondReq = stub.requests[1]
+	}
+	stub.mu.Unlock()
+	if requestCount != 2 {
+		t.Fatalf("expected 2 provider requests after self-select fallback, got %d", requestCount)
+	}
+	if !requestContainsUserText(secondReq, "Do not wait for the user") {
+		t.Fatalf("second request did not include autonomous fallback prompt: %#v", secondReq.Messages)
+	}
+	if got := countEventsByType(evCh, "assistant:auto_continue"); got != 1 {
+		t.Errorf("expected one auto-continue event, got %d", got)
+	}
+	if got := countEventsByType(evCh, "assistant:auto_continue:clarify"); got != 0 {
+		t.Errorf("expected no clarify pause event, got %d", got)
+	}
+}
+
+func TestAutoContinue_DoneTrueChoiceGateStillContinues(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.Providers.Primary = "stub"
+	cfg.Providers.Profiles["stub"] = config.ModelConfig{Model: "stub-model", MaxTokens: 4096, MaxContext: 128000}
+	cfg.Agent.AutoContinue = "auto"
+	cfg.Agent.MaxAutoContinueIterations = 3
+	cfg.Intent.Enabled = false
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	stub := &scriptedProvider{name: "stub", model: "stub-model", hints: newNativeHints(), responses: []scriptedResponse{
+		{Text: "Choose one option:\n1. inspect\n2. edit\n3. test\n\n[cleanup: ]\n[done: true]"},
+		{Text: "Continued without waiting for a numbered choice.\n\n[next:\n- nothing pending]\n[cleanup: ]\n[done: true]"},
+	}}
+	router.Register(stub)
+	eng := &Engine{Config: cfg, EventBus: NewEventBus(), ProjectRoot: tmp, Providers: router, Tools: tools.New(*cfg), Conversation: conversation.New(nil)}
+	eng.setState(StateReady)
+	answer, err := eng.AskWithMetadata(context.Background(), "finish without asking me")
+	if err != nil {
+		t.Fatalf("AskWithMetadata: %v", err)
+	}
+	if !strings.Contains(answer, "Continued without waiting") {
+		t.Fatalf("expected continuation despite done=true choice gate, got %q", answer)
+	}
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if len(stub.requests) != 2 {
+		t.Fatalf("expected 2 provider requests, got %d", len(stub.requests))
+	}
+}
+
 // TestAutoContinue_RespectsIterationCap verifies the wrapper stops at
 // MaxAutoContinueIterations even if the model never emits [done: true].
 func TestAutoContinue_RespectsIterationCap(t *testing.T) {
@@ -301,4 +384,13 @@ func TestAutoContinueConfig_Defaults(t *testing.T) {
 			}
 		})
 	}
+}
+
+func requestContainsUserText(req provider.CompletionRequest, needle string) bool {
+	for _, msg := range req.Messages {
+		if msg.Role == "user" && strings.Contains(msg.Content, needle) {
+			return true
+		}
+	}
+	return false
 }

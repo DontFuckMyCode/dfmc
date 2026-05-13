@@ -63,9 +63,11 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "workflow", Template: "/workflow", Description: "show todos, active subagents, drive progress, and the latest plan"},
 		{Command: "todos", Template: "/todos", Description: "print the shared todo list the agent is currently tracking"},
 		{Command: "todos clear", Template: "/todos clear", Description: "wipe the shared todo list (the agent will start a new plan on the next turn)"},
-		{Command: "tasks", Template: "/tasks", Description: "open the task store panel (j/k, enter, esc to close)"},
+		{Command: "tasks", Template: "/tasks", Description: "toggle the task store panel (j/k, enter, esc/q to close)"},
+		{Command: "tasks list", Template: "/tasks list", Description: "print tasks in chat without opening the side panel"},
 		{Command: "tasks clear", Template: "/tasks clear", Description: "wipe non-drive tasks from the store · drive-owned tasks kept"},
 		{Command: "subagents", Template: "/subagents", Description: "show current subagent fan-out and recent delegation activity"},
+		{Command: "toolstatus", Template: "/toolstatus", Description: "open ToolStatus: detailed tool call history with params/results/errors"},
 		{Command: "cancel", Template: "/cancel", Description: "cancel the active agent turn (slash equivalent of Ctrl+C) · /drive stop for drive runs"},
 		{Command: "shortcuts", Template: "/shortcuts", Description: "open the Shortcuts cheat sheet (alt+h) · /keys is an alias"},
 		{Command: "queue", Template: "/queue", Description: "inspect or clear queued follow-up prompts"},
@@ -77,7 +79,7 @@ func (m Model) slashCommandCatalog() []slashCommandItem {
 		{Command: "quit", Template: "/quit", Description: "exit DFMC"},
 		{Command: "providers", Template: "/providers", Description: "list configured providers"},
 		{Command: "models", Template: "/models", Description: "show configured model"},
-		
+
 		{Command: "log", Template: "/log", Description: "show recent provider calls (model · in/out tokens · preview)"},
 		{Command: "ls", Template: "/ls .", Description: "list project files"},
 		{Command: "read", Template: "/read " + blankFallback(m.toolTargetFile(), "path/to/file.go"), Description: "read file lines"},

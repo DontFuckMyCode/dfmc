@@ -60,7 +60,7 @@ func TestResolveSymbolSeeds_MatchesByName(t *testing.T) {
 		t.Fatalf("write other.go: %v", err)
 	}
 
-	cm := codemap.New(ast.New())
+	cm := codemap.New(ast.New(), nil)
 	if err := cm.BuildFromFiles(context.Background(), []string{tokenGo, otherGo}); err != nil {
 		t.Fatalf("build codemap: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestBuildWithOptions_SymbolAwarePullsDefiningFile(t *testing.T) {
 		t.Fatalf("write unrelated.go: %v", err)
 	}
 
-	cm := codemap.New(ast.New())
+	cm := codemap.New(ast.New(), nil)
 	if err := cm.BuildFromFiles(context.Background(), []string{tokenGo, unrelatedGo}); err != nil {
 		t.Fatalf("build codemap: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestBuildWithOptions_SymbolAwareDisabled(t *testing.T) {
 		t.Fatalf("write token.go: %v", err)
 	}
 
-	cm := codemap.New(ast.New())
+	cm := codemap.New(ast.New(), nil)
 	if err := cm.BuildFromFiles(context.Background(), []string{tokenGo}); err != nil {
 		t.Fatalf("build codemap: %v", err)
 	}

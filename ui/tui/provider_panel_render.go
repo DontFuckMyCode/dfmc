@@ -1,13 +1,5 @@
 package tui
 
-// provider_panel_render.go — F-key Providers panel render dispatcher
-// + V2 banner + new-provider draft view + the action-menu and confirm
-// dialog overlays. Pre-V2 inline list view (renderProviderListViewLegacy)
-// and the row/detail formatters (formatProviderRowNumbered,
-// formatProviderDetail) live in provider_panel_render_legacy.go.
-// V2 cards (renderProviderListViewV2) and pipeline/detail subviews live
-// in their own provider_panel_*.go siblings.
-
 import (
 	"fmt"
 	"strings"
@@ -30,6 +22,14 @@ func (m Model) renderProvidersViewInner(width int) string {
 	switch m.providers.viewMode {
 	case "detail":
 		return m.renderProviderDetailView(width)
+	case providerViewCatalog:
+		return m.renderProviderCatalogView(width)
+	case providerViewCatalogForm:
+		return m.renderProviderCatalogFormView(width)
+	case providerViewTiers:
+		return m.renderProviderTiersView(width)
+	case providerViewSkills:
+		return m.renderProviderSkillsView(width)
 	case "pipelines":
 		return m.renderPipelinesView(width)
 	case "new_provider":
@@ -39,12 +39,11 @@ func (m Model) renderProvidersViewInner(width int) string {
 	}
 }
 
-// providersTopBanner — title + ready/no-key/offline chip summary on
-// the right. Mirrors the F2-F11 banner pattern.
 func (m Model) providersTopBanner(width int) string {
-	title := titleStyle.Bold(true).Render("⚑ PROVIDERS")
+	title := titleStyle.Bold(true).Render("MODELS & PROVIDERS")
 	ready, noKey := 0, 0
-	for _, r := range m.providers.rows {
+	rows := m.visibleProviderRows()
+	for _, r := range rows {
 		switch r.Status {
 		case "ready":
 			ready++
@@ -52,9 +51,10 @@ func (m Model) providersTopBanner(width int) string {
 			noKey++
 		}
 	}
-	offline := len(m.providers.rows) - ready - noKey
-	chips := []string{
-		okStyle.Render(fmt.Sprintf(" %d ready ", ready)),
+	offline := len(rows) - ready - noKey
+	chips := []string{okStyle.Render(fmt.Sprintf(" %d my providers ", len(rows)))}
+	if ready > 0 {
+		chips = append(chips, okStyle.Render(fmt.Sprintf(" %d ready ", ready)))
 	}
 	if noKey > 0 {
 		chips = append(chips, warnStyle.Render(fmt.Sprintf(" %d no-key ", noKey)))
@@ -71,103 +71,19 @@ func (m Model) providersTopBanner(width int) string {
 }
 
 func (m Model) renderProviderListView(width int) string {
-	// V2 layout: clean 3-pane explorer with banner + per-provider
-	// detail card + ROUTING/ACTIONS cards. Falls back to legacy when
-	// the action menu's built-in confirm or pipeline editor needs the
-	// older inline shape (handled in the wrapper above).
-	if !m.providers.menuActive {
-		out := m.renderProviderListViewV2(width)
-		// Keep the legacy overlay menu rendering compatibility for
-		// users mid-flow — it doesn't show unless menuActive=true.
-		if extras := m.renderProvidersMenu(width - 2); len(extras) > 0 {
-			out += "\n" + strings.Join(extras, "\n")
-		}
-		return out
-	}
-	return m.renderProviderListViewLegacy(width)
+	return m.renderProviderListViewV2(width)
 }
 
-// refreshProvidersRows re-reads the router and stamps the fresh rows
-// into the Model. Pure — invoked from 'r' and from the tab-switch
-// first-activation path.
 func (m Model) renderNewProviderView(width int) string {
 	width = clampInt(width, 24, 1000)
-	header := sectionHeader("⚑", "New Provider")
-	hint := subtleStyle.Render("type name · enter create · esc cancel")
+	header := sectionHeader("+", "New Provider")
+	hint := subtleStyle.Render("enter edit/create - esc cancel")
 	lines := []string{header, hint, renderDivider(width - 2), ""}
 	lines = append(lines, "  name: "+accentStyle.Render(m.providers.newProviderDraft))
+	if m.providers.textEditActive {
+		lines = append(lines, "", m.renderProviderTextEditBox(width))
+	}
 	return strings.Join(lines, "\n")
-}
-
-func (m Model) renderProvidersMenu(width int) []string {
-	if !m.providers.menuActive {
-		return nil
-	}
-	labels := m.providers.menuLabels
-	index := m.providers.menuIndex
-	if len(labels) == 0 {
-		return nil
-	}
-
-	var lines []string
-	lines = append(lines, "")
-
-	// Title with target context
-	title := "Actions"
-	switch m.providers.viewMode {
-	case "detail":
-		title = "Actions for " + m.providers.detailProvider
-	case "pipelines":
-		scroll := clampScroll(m.providers.pipelineScroll, len(m.providers.pipelineNames))
-		if scroll >= 0 && scroll < len(m.providers.pipelineNames) {
-			title = "Actions for pipeline " + m.providers.pipelineNames[scroll]
-		} else {
-			title = "Pipeline Actions"
-		}
-	default:
-		scroll := clampScroll(m.providers.scroll, len(m.providers.rows))
-		if scroll >= 0 && scroll < len(m.providers.rows) {
-			title = "Actions for " + m.providers.rows[scroll].Name
-		}
-	}
-	lines = append(lines, sectionTitleStyle.Render(title))
-
-	disabled := m.providers.menuDisabled
-	reasons := m.providers.menuDisabledReasons
-	for i, label := range labels {
-		num := fmt.Sprintf("%d. ", i+1)
-		var prefix string
-		l := label
-		isDisabled := i < len(disabled) && disabled[i]
-		isDanger := strings.Contains(strings.ToLower(label), "delete")
-		if i == index {
-			prefix = accentStyle.Render("▶ ") + accentStyle.Render(num)
-			if isDisabled {
-				l = disabledStyle.Render(l)
-			} else if isDanger {
-				l = failStyle.Render(l)
-			} else {
-				l = accentStyle.Render(l)
-			}
-		} else {
-			prefix = "   " + subtleStyle.Render(num)
-			if isDisabled {
-				l = disabledStyle.Render(l)
-			} else if isDanger {
-				l = warnStyle.Render(l)
-			} else {
-				l = subtleStyle.Render(l)
-			}
-		}
-		if isDisabled && i < len(reasons) && reasons[i] != "" {
-			l += subtleStyle.Render(" (" + reasons[i] + ")")
-		}
-		lines = append(lines, prefix+l)
-	}
-
-	hint := "j/k scroll · 1-9 jump · enter select · esc cancel"
-	lines = append(lines, subtleStyle.Render("  "+hint))
-	return lines
 }
 
 func (m Model) renderProvidersConfirm(width int) string {
@@ -177,45 +93,48 @@ func (m Model) renderProvidersConfirm(width int) string {
 	var icon, question string
 	switch m.providers.confirmAction {
 	case "delete_provider":
-		icon = warnStyle.Render("⚠")
+		icon = warnStyle.Render("!")
 		question = fmt.Sprintf("Delete provider %s?", accentStyle.Render(m.providers.confirmTarget))
 	case "delete_model":
-		icon = warnStyle.Render("⚠")
+		icon = warnStyle.Render("!")
 		question = fmt.Sprintf("Delete model %s from %s?",
 			accentStyle.Render(m.providers.confirmTarget),
 			subtleStyle.Render(m.providers.detailProvider))
 	case "delete_pipeline":
-		icon = warnStyle.Render("⚠")
+		icon = warnStyle.Render("!")
 		question = fmt.Sprintf("Delete pipeline %s?", accentStyle.Render(m.providers.confirmTarget))
+	case "reset_all_keys":
+		icon = warnStyle.Render("!")
+		question = "Reset all saved provider keys?"
 	default:
 		icon = subtleStyle.Render("?")
 		question = "Are you sure?"
 	}
 
 	lines = append(lines, "  "+icon+"  "+question)
-	if m.providers.confirmAction == "delete_provider" {
-		if m.eng != nil && strings.EqualFold(m.eng.Config.Providers.Primary, m.providers.confirmTarget) {
-			lines = append(lines, "     "+warnStyle.Render("→ currently set as primary"))
+	if m.providers.confirmAction == "delete_provider" && m.eng != nil && m.eng.Config != nil {
+		if strings.EqualFold(m.eng.Config.Providers.Primary, m.providers.confirmTarget) {
+			lines = append(lines, "     "+warnStyle.Render("currently set as primary"))
 		}
-		if m.eng != nil {
-			for _, fb := range m.eng.Config.Providers.Fallback {
-				if strings.EqualFold(fb, m.providers.confirmTarget) {
-					lines = append(lines, "     "+warnStyle.Render("→ in fallback chain"))
-					break
-				}
+		for _, fb := range m.eng.Config.Providers.Fallback {
+			if strings.EqualFold(fb, m.providers.confirmTarget) {
+				lines = append(lines, "     "+warnStyle.Render("in fallback chain"))
+				break
 			}
 		}
 	}
+	if m.providers.confirmAction == "reset_all_keys" {
+		lines = append(lines, "     "+warnStyle.Render("This removes api_key/api_key_enc for every provider in ~/.dfmc/config.yaml."))
+	}
 	lines = append(lines, "")
-	lines = append(lines, "     "+okStyle.Render("y")+subtleStyle.Render(" confirm  ")+
-		failStyle.Render("n")+subtleStyle.Render(" cancel"))
+	lines = append(lines, "     "+okStyle.Render("enter")+subtleStyle.Render(" confirm  ")+
+		failStyle.Render("esc")+subtleStyle.Render(" cancel"))
 
 	content := strings.Join(lines, "\n")
-	// Frame the dialog with a warning-colored border
-	frameStyle := lipgloss.NewStyle().
+	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorWarn).
 		Padding(0, 1).
-		Width(width - 4)
-	return frameStyle.Render(content)
+		Width(width - 4).
+		Render(content)
 }

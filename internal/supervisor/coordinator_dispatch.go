@@ -22,6 +22,7 @@ package supervisor
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -33,6 +34,25 @@ type workerResult struct {
 }
 
 func (s *Supervisor) dispatchWorker(ctx context.Context, task Task, attempt int, results chan<- workerResult) {
+	// Panic shield: if the workerFn panics we must still decrement inFlight
+	// and restore any allocated budget so the supervisor does not deadlock.
+	var tokensUsed int
+	defer func() {
+		if r := recover(); r != nil {
+			s.mu.Lock()
+			s.inFlight--
+			s.mu.Unlock()
+			if tokensUsed > 0 {
+				s.budget.RestoreTokens(tokensUsed)
+			}
+			results <- workerResult{
+				TaskID: task.ID,
+				OK:     false,
+				Err:    fmt.Errorf("worker panic: %v", r),
+			}
+		}
+	}()
+
 	// Build the task brief from Summary if present
 	brief := task.Summary
 	if brief == "" {
@@ -66,6 +86,9 @@ func (s *Supervisor) dispatchWorker(ctx context.Context, task Task, attempt int,
 		}
 	}
 
+	// Track tokens for deferred restoration on panic
+	tokensUsed = allocBudget
+
 	req := ExecuteTaskRequest{
 		TaskID:       task.ID,
 		ProviderTag:  string(task.ProviderTag),
@@ -80,6 +103,14 @@ func (s *Supervisor) dispatchWorker(ctx context.Context, task Task, attempt int,
 	}
 
 	result, err := s.workerFn(ctx, req)
+
+	// Defensively restore budget even in normal path to prevent any
+	// double-counting if handleResult fails to be called.
+	if tokensUsed > 0 {
+		s.budget.RestoreTokens(tokensUsed)
+		tokensUsed = 0
+	}
+
 	results <- workerResult{
 		TaskID:   task.ID,
 		OK:       err == nil,

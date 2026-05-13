@@ -60,6 +60,19 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		m.chat.input = ""
 		m.chat.transcript = nil
 		m.chat.scrollback = 0
+		// Cancel any in-flight stream and reset all streaming state so the
+		// next turn starts clean — like opening a brand-new session.
+		m.cancelActiveStream()
+		m.chat.sending = false
+		m.chat.streamIndex = -1
+		m.chat.streamMessages = nil
+		m.chat.streamCancel = nil
+		m.resetAgentRuntime()
+		// Start a fresh conversation on the engine so prior messages are
+		// gone from the LLM's context window too.
+		if m.eng != nil {
+			m.eng.ConversationStart()
+		}
 		m.notice = "Transcript cleared."
 		return m.appendSystemMessage("Transcript cleared. Memory and conversation history are untouched."), nil, true
 	case "export", "save":

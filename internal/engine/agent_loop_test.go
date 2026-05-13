@@ -82,11 +82,37 @@ func (p *scriptedProvider) Complete(_ context.Context, req provider.CompletionRe
 	}, nil
 }
 
-func (p *scriptedProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+func (p *scriptedProvider) Stream(ctx context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
 	p.mu.Lock()
+	p.requests = append(p.requests, req)
+	if len(p.responses) == 0 {
+		p.mu.Unlock()
+		return nil, fmt.Errorf("no scripted response left")
+	}
+	next := p.responses[0]
+	p.responses = p.responses[1:]
 	p.streamUsed = true
 	p.mu.Unlock()
-	return nil, fmt.Errorf("unexpected stream call")
+
+	stop := provider.StopEnd
+	if len(next.ToolCalls) > 0 {
+		stop = provider.StopTool
+	}
+	usage := provider.Usage{InputTokens: 12, OutputTokens: 18, TotalTokens: 30}
+	if next.Usage != nil {
+		usage = *next.Usage
+	}
+
+	ch := make(chan provider.StreamEvent, 16)
+	go func() {
+		defer close(ch)
+		ch <- provider.StreamEvent{Type: provider.StreamStart, Provider: p.name, Model: p.model}
+		if next.Text != "" {
+			ch <- provider.StreamEvent{Type: provider.StreamDelta, Delta: next.Text}
+		}
+		ch <- provider.StreamEvent{Type: provider.StreamDone, StopReason: stop, Usage: &usage, ToolCalls: next.ToolCalls}
+	}()
+	return ch, nil
 }
 
 type kickoffRunner struct{}
@@ -152,7 +178,7 @@ func TestAskWithMetadata_NativeToolLoop_DiscoverAndCall(t *testing.T) {
 					},
 				},
 			},
-			{Text: "The first line in note.txt is alpha."},
+			{Text: "The first line in note.txt is alpha. [done: true]"},
 		},
 	}
 	router.Register(stub)
@@ -245,7 +271,7 @@ func TestAskWithMetadata_NativeToolLoop_AutonomyPreflightSeedsTodos(t *testing.T
 		model: "stub-model",
 		hints: newNativeHints(),
 		responses: []scriptedResponse{
-			{Text: "Done."},
+			{Text: "Done. [done: true]"},
 		},
 	}
 	router.Register(stub)
@@ -328,7 +354,7 @@ func TestRunSubagent_AutonomyPreflightInjected(t *testing.T) {
 		model: "stub-model",
 		hints: newNativeHints(),
 		responses: []scriptedResponse{
-			{Text: "Subagent done."},
+			{Text: "Subagent done. [done: true]"},
 		},
 	}
 	router.Register(stub)
@@ -556,7 +582,7 @@ func TestAskWithMetadata_NativeToolLoop_PublishesLifecycleEvents(t *testing.T) {
 					},
 				},
 			},
-			{Text: "alpha"},
+			{Text: "alpha [done: true]"},
 		},
 	}
 	router.Register(stub)
@@ -636,7 +662,7 @@ func TestStreamAsk_NativeToolLoop_AvoidsProviderStream(t *testing.T) {
 					},
 				},
 			},
-			{Text: "File starts with package main."},
+			{Text: "File starts with package main. [done: true]"},
 		},
 	}
 	router.Register(stub)
@@ -666,8 +692,8 @@ func TestStreamAsk_NativeToolLoop_AvoidsProviderStream(t *testing.T) {
 	if !strings.Contains(out.String(), "package main") {
 		t.Fatalf("expected streamed answer to mention package main, got %q", out.String())
 	}
-	if stub.streamUsed {
-		t.Fatal("native tool loop must not invoke provider Stream")
+	if !stub.streamUsed {
+		t.Fatal("native tool loop should invoke provider Stream")
 	}
 }
 
@@ -710,7 +736,7 @@ func TestAskWithMetadata_NativeToolLoop_BatchCall(t *testing.T) {
 					},
 				},
 			},
-			{Text: "Both files are one byte long."},
+			{Text: "Both files are one byte long. [done: true]"},
 		},
 	}
 	router.Register(stub)
@@ -753,6 +779,7 @@ func TestAskWithMetadata_NativeToolLoop_RespectsConfiguredMaxSteps(t *testing.T)
 	}
 	cfg.Agent.MaxToolSteps = 2
 	cfg.Agent.MaxToolTokens = 0 // disable token budget for this test
+	cfg.Agent.AutonomousResume = "off"
 
 	router, err := provider.NewRouter(cfg.Providers)
 	if err != nil {
@@ -844,6 +871,9 @@ func TestAskWithMetadata_NativeToolLoop_RespectsTokenBudget(t *testing.T) {
 	}
 	cfg.Agent.MaxToolSteps = 8
 	cfg.Agent.MaxToolTokens = 25 // below scripted per-call usage of 30
+	p := cfg.Providers.Profiles["stub"]
+	p.MaxContext = 40 // tight window prevents elastic scaling
+	cfg.Providers.Profiles["stub"] = p
 	// This test asserts the budget-park notice surfaces — pin
 	// AutonomousResume off so the autonomous wrapper doesn't transparently
 	// chain into the next attempt and mask the park.

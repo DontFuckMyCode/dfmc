@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const maxRecentBuildSamples = 8
+const defaultMaxRecentBuildSamples = 8
 
 type BuildSample struct {
 	StartedAt      time.Time        `json:"started_at"`
@@ -61,10 +61,37 @@ type buildMetricsTracker struct {
 	lastNodesAdded  int64
 	lastEdgesAdded  int64
 	recent          []BuildSample
+	maxRecent       int
 }
 
-func newBuildMetricsTracker() *buildMetricsTracker {
-	return &buildMetricsTracker{}
+func newBuildMetricsTracker(opts ...BuildOption) *buildMetricsTracker {
+	m := &buildMetricsTracker{
+		maxRecent: defaultMaxRecentBuildSamples,
+	}
+	for _, o := range opts {
+		o(m)
+	}
+	return m
+}
+
+type BuildOption func(*buildMetricsTracker)
+
+func WithMaxRecent(n int) BuildOption {
+	return func(m *buildMetricsTracker) {
+		m.maxRecent = n
+	}
+}
+
+func (m *buildMetricsTracker) SetMaxRecent(n int) {
+	if n <= 0 {
+		n = defaultMaxRecentBuildSamples
+	}
+	m.mu.Lock()
+	m.maxRecent = n
+	if len(m.recent) > n {
+		m.recent = m.recent[len(m.recent)-n:]
+	}
+	m.mu.Unlock()
 }
 
 func (m *buildMetricsTracker) recordBuild(sample BuildSample) {
@@ -86,8 +113,8 @@ func (m *buildMetricsTracker) recordBuild(sample BuildSample) {
 	m.lastNodesAdded = sample.NodesAdded
 	m.lastEdgesAdded = sample.EdgesAdded
 	m.recent = append(m.recent, cloneBuildSample(sample))
-	if len(m.recent) > maxRecentBuildSamples {
-		m.recent = append([]BuildSample(nil), m.recent[len(m.recent)-maxRecentBuildSamples:]...)
+	if len(m.recent) > m.maxRecent {
+		m.recent = append([]BuildSample(nil), m.recent[len(m.recent)-m.maxRecent:]...)
 	}
 }
 

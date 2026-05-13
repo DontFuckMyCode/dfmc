@@ -24,17 +24,46 @@ func (m Model) tasksSlash(args []string) (Model, string) {
 		sub = strings.ToLower(strings.TrimSpace(args[0]))
 	}
 	switch sub {
-	case "", "list":
+	case "":
 		m.ui.showTasksPanel = !m.ui.showTasksPanel
 		if m.ui.showTasksPanel {
-			m.notice = "Tasks panel open — j/k navigate, enter/right expand, left collapse, esc closes."
+			m.notice = "Tasks panel open - j/k navigate, enter/right expand, left collapse, esc closes."
 			if m.tasksPanel.expanded == nil {
 				m.tasksPanel.expanded = make(map[string]bool)
 			}
 		}
+		if !m.ui.showTasksPanel {
+			m.notice = "Tasks panel closed."
+		}
 		return m, ""
+	case "open", "panel":
+		m.ui.showTasksPanel = true
+		m.notice = "Tasks panel open - j/k navigate, enter/right expand, left collapse, esc closes."
+		if m.tasksPanel.expanded == nil {
+			m.tasksPanel.expanded = make(map[string]bool)
+		}
+		return m, ""
+	case "close", "hide":
+		m.ui.showTasksPanel = false
+		m.notice = "Tasks panel closed."
+		return m, ""
+	case "list":
+		m.ui.showTasksPanel = false
+		if m.eng == nil || m.eng.Tools == nil {
+			return m, "Engine unavailable."
+		}
+		store := m.eng.Tools.TaskStore()
+		if store == nil {
+			return m, "Task store not initialized."
+		}
+		all, err := store.ListTasks(taskstore.ListOptions{})
+		if err != nil {
+			return m, "error: " + err.Error()
+		}
+		return m, renderTasksInlineList(all)
 	case "tree":
-		if m.eng == nil {
+		m.ui.showTasksPanel = false
+		if m.eng == nil || m.eng.Tools == nil {
 			return m, "Engine unavailable."
 		}
 		store := m.eng.Tools.TaskStore()
@@ -43,11 +72,12 @@ func (m Model) tasksSlash(args []string) (Model, string) {
 		}
 		return m, renderTasksInlineTree(store, "")
 	case "show":
+		m.ui.showTasksPanel = false
 		if len(args) < 2 {
 			return m, "Usage: /tasks show <id>"
 		}
 		id := strings.TrimSpace(args[1])
-		if m.eng == nil {
+		if m.eng == nil || m.eng.Tools == nil {
 			return m, "Engine unavailable."
 		}
 		store := m.eng.Tools.TaskStore()
@@ -63,7 +93,8 @@ func (m Model) tasksSlash(args []string) (Model, string) {
 		}
 		return m, formatTaskDetailInline(t)
 	case "roots":
-		if m.eng == nil {
+		m.ui.showTasksPanel = false
+		if m.eng == nil || m.eng.Tools == nil {
 			return m, "Engine unavailable."
 		}
 		store := m.eng.Tools.TaskStore()
@@ -82,6 +113,7 @@ func (m Model) tasksSlash(args []string) (Model, string) {
 		}
 		return m, renderTasksInlineList(roots)
 	case "clear", "reset":
+		m.ui.showTasksPanel = false
 		// Wipe every task in the store. Walks the list and DeleteTask's
 		// each entry so the operation is observable through the same
 		// path /api/v1/task uses, and so children of deleted parents
@@ -127,7 +159,7 @@ func (m Model) tasksSlash(args []string) (Model, string) {
 		}
 		return m, out
 	default:
-		return m, "tasks: unknown subcommand. Try: /tasks [list|tree|show <id>|roots|clear]"
+		return m, "tasks: unknown subcommand. Try: /tasks [list|tree|show <id>|roots|clear|open|close]"
 	}
 }
 

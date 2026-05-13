@@ -13,26 +13,25 @@ package tui
 // file's Update/handleChatKey switch still drives every keystroke,
 // these helpers just stop crowding it.
 
-
 // syncChatCursor reconciles the visible cursor with the current input
 // buffer. The cursor is "manual" once the user has explicitly moved
 // it (arrow keys, Home/End, etc.) — autocomplete / setChatInput /
 // history recall reset it back to end-of-input.
 func (m *Model) syncChatCursor() {
-	max := len([]rune(m.chat.input))
+	inputLen := len([]rune(m.chat.input))
 	if m.chat.cursorManual && m.chat.cursorInput != m.chat.input {
 		m.chat.cursorManual = false
 	}
 	if !m.chat.cursorManual {
-		m.chat.cursor = max
+		m.chat.cursor = inputLen
 		m.chat.cursorInput = m.chat.input
 		return
 	}
 	if m.chat.cursor < 0 {
 		m.chat.cursor = 0
 	}
-	if m.chat.cursor > max {
-		m.chat.cursor = max
+	if m.chat.cursor > inputLen {
+		m.chat.cursor = inputLen
 	}
 	m.chat.cursorInput = m.chat.input
 }
@@ -173,4 +172,3 @@ func (m *Model) moveChatCursor(delta int) {
 // deleteInputToEndOfLine + the chatInputLineHome/End and
 // chatInputWordBoundaryLeft/Right + isInputWordSeparator helpers)
 // live in input_navigation.go.
-

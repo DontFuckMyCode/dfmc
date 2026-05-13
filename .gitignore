@@ -1,28 +1,131 @@
 # Build output
 /bin/
 /dist/
+/build/
+/out/
+/release/
+/releases/
+/artifacts/
 *.exe
-
-# DFMC data
-/.dfmc/
+*.exe~
+*.msi
+*.pkg
+*.deb
+*.rpm
+*.dll
+*.so
+*.dylib
+*.a
 
 # Go
 *.test
 *.out
 coverage.out
+coverage.html
+*.coverprofile
+*.prof
+*.pprof
+*.trace
+cpu.prof
+mem.prof
+trace.out
+/coverage/
+/cover/
+go.work
+go.work.sum
 
-# OS/editor
+# Node / frontend
+node_modules/
+**/node_modules/
+**/.vite/
+**/dist/
+**/build/
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+.eslintcache
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# DFMC / local agent state
+/.dfmc/
+/.dfmt/
+/.claude/
+/.codex/
+/.project/
+
+# Environment files
+.env
+.env.*
+!.env.example
+.envrc
+.direnv/
+
+# OS / editor
 .DS_Store
 Thumbs.db
+Desktop.ini
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+*.Zone.Identifier
 .idea/
 .vscode/
+.fleet/
+.zed/
+*.swp
+*.swo
+*~
+
+# Logs / runtime data
+*.log
+logs/
+log/
+*.pid
+*.seed
+*.pid.lock
+
+# Local databases / stores
+*.db
+*.sqlite
+*.sqlite3
+*.bolt
+*.bbolt
 
 # Reports and temp docs
 report.md
+reports/
+test-results/
+junit.xml
+coverage.xml
+*.sarif
 
-.project/
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
 
+# Patches / merge leftovers / temp files
+*.tmp
+*.temp
+tmp/
+temp/
+*.bak
+*.backup
+*.orig
+*.rej
+*.patch
+*.diff
 
-.env
-.env.local
-.dfmt/
+# Local Docker overrides
+docker-compose.override.yml

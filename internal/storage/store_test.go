@@ -280,16 +280,15 @@ func TestStore_DB(t *testing.T) {
 // validateConvID error messages are specific.
 func TestValidateConvID_ErrorMessages(t *testing.T) {
 	tests := []struct {
-		id    string
-		want  string
-		slice []string
+		id   string
+		want string
 	}{
-		{"", "conversation id is required", nil},
-		{"/abs", "invalid conversation id", nil},
-		{"a/b", "path separators", nil},
-		{"..", "must not contain `..`", nil},
-		{"a\x00b", "control character", nil},
-		{".", "must not contain `..`", nil},
+		{"", "conversation id is required"},
+		{"/abs", "invalid conversation id"},
+		{"a/b", "path separators"},
+		{"..", "must not contain `..`"},
+		{"a\x00b", "control character"},
+		{".", "must not contain `..`"},
 	}
 	for _, tt := range tests {
 		err := validateConvID(tt.id)

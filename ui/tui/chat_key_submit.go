@@ -25,6 +25,20 @@ func (m Model) submitChatComposer(suggestions chatSuggestionState) (tea.Model, t
 	// situation. The new turn either gets its own strip from the
 	// engine or none.
 	m.assistantNextActions.actions = nil
+
+	// If any agent is waiting for user input, route there instead of root.
+	if m.session != nil && m.session.HasWaitingAgents() && !m.chat.sending {
+		raw := strings.TrimSpace(m.chat.input)
+		if raw == "" {
+			return m, nil
+		}
+		m.setChatInput("")
+		if m.sendToWaitingAgent(raw) {
+			return m, nil
+		}
+		// Fall through if sendToWaitingAgent didn't find anyone
+	}
+
 	if len(m.chat.pasteBlocks) > 0 {
 		full := m.composeInput()
 		n := len(m.chat.pasteBlocks)

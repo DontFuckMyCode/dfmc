@@ -147,7 +147,7 @@ func (t *SemanticSearchTool) Execute(ctx context.Context, req Request) (Result, 
 		if len(matches) >= maxResults {
 			break
 		}
-		fileMatches, fileBackend := searchFileWithEngine(astEngine, fpath, pq)
+		fileMatches, fileBackend := searchFileWithEngine(ctx, astEngine, fpath, pq)
 		if len(fileMatches) > 0 {
 			if backend == "unknown" {
 				backend = fileBackend
@@ -172,13 +172,13 @@ func (t *SemanticSearchTool) Execute(ctx context.Context, req Request) (Result, 
 	}, nil
 }
 
-func searchFileWithEngine(engine *ast.Engine, fpath string, pq parsedQuery) ([]semanticMatch, string) {
+func searchFileWithEngine(ctx context.Context, engine *ast.Engine, fpath string, pq parsedQuery) ([]semanticMatch, string) {
 	content, err := os.ReadFile(fpath)
 	if err != nil {
 		return nil, ""
 	}
 
-	res, err := engine.ParseContent(context.Background(), fpath, content)
+	res, err := engine.ParseContent(ctx, fpath, content)
 	if err != nil {
 		return nil, ""
 	}

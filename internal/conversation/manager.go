@@ -52,7 +52,7 @@ func AssignMessageID(role types.MessageRole) string {
 		// Fallback to a timestamp-based ID — uniqueness is good enough
 		// because rand.Read essentially never fails on Linux/Windows,
 		// but a panic here would kill an interactive session.
-		return fmt.Sprintf("%s-%x", prefix, time.Now().UnixNano()&0xffffff)
+		return fmt.Sprintf("%s-%x", prefix, time.Now().UnixNano()&0xFFFFFFFF)
 	}
 	return prefix + "-" + hex.EncodeToString(buf[:])[:6]
 }

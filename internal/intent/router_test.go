@@ -233,7 +233,7 @@ func TestEvaluate_RespectsTimeout(t *testing.T) {
 	start := time.Now()
 	dec, _ := r.Evaluate(context.Background(), "hello", Snapshot{})
 	elapsed := time.Since(start)
-	if elapsed > 150*time.Millisecond {
+	if elapsed > 50*time.Millisecond {
 		t.Fatalf("router should have given up at ~30ms, ran for %v", elapsed)
 	}
 	if dec.Source != "fallback" {

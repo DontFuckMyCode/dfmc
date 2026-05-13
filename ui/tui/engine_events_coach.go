@@ -108,6 +108,14 @@ func handleCoachStuck(m Model, eventType string, event engine.Event, payload map
 	m.agentLoop.stuckCount = count
 	m.agentLoop.stuckErrClass = truncatedErr
 	m.agentLoop.turnCoachInterventions++
+	noticeKey := strings.ToLower(strings.TrimSpace(tool)) + "\x00" + strings.ToLower(strings.TrimSpace(errClass))
+	if m.agentLoop.stuckNoticeKey == noticeKey && count <= m.agentLoop.stuckNoticeAt+1 {
+		m.agentLoop.stuckNoticeAt = max(m.agentLoop.stuckNoticeAt, count)
+		m.notice = fmt.Sprintf("Loop still stalled on %s ×%d - repeated coach note kept out of chat history. Open ToolStatus with Ctrl+Alt+T.", tool, count)
+		return m, ""
+	}
+	m.agentLoop.stuckNoticeKey = noticeKey
+	m.agentLoop.stuckNoticeAt = count
 	notice := fmt.Sprintf(
 		"⚠ Loop stalled — %s failed %d times with the same error class. The agent has been told to switch tactic.",
 		tool, count,
@@ -127,6 +135,11 @@ func handleCoachUnverified(m Model, eventType string, event engine.Event, payloa
 	if fileCount < 3 {
 		return m, ""
 	}
+	if m.agentLoop.unverifiedCoachLastCount > 0 && fileCount < m.agentLoop.unverifiedCoachLastCount+3 {
+		m.notice = fmt.Sprintf("%d unverified edits - validation still needed. Repeated coach note kept out of chat history.", fileCount)
+		return m, ""
+	}
+	m.agentLoop.unverifiedCoachLastCount = fileCount
 	samplePaths := payloadStringSlice(payload, "sample_paths")
 	preview := ""
 	if len(samplePaths) > 0 {

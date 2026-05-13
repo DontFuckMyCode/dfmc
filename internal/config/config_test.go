@@ -718,7 +718,6 @@ func TestParseDotEnvValue_RealValuesPassThrough(t *testing.T) {
 		{"<end_of_line", "<end_of_line"},   // missing closing > — not a placeholder
 		{"< >", "< >"},                     // empty interior — not a placeholder
 		{"plainnoangles", "plainnoangles"}, // no angle brackets at all
-		{"plainnoangles", "plainnoangles"}, // no angle brackets at all
 		{"", ""},
 	}
 	for _, tc := range cases {

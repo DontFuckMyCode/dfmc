@@ -26,6 +26,10 @@ func parseSpawnedTodos(raw string, parent Todo, existing []Todo) (string, []Todo
 	}
 	var lastErr error
 	for _, candidate := range candidates {
+		if len(candidate) > 1<<20 {
+			lastErr = fmt.Errorf("spawn payload too large: %d bytes", len(candidate))
+			continue
+		}
 		var out expansionOutput
 		if err := json.Unmarshal([]byte(candidate), &out); err != nil {
 			continue

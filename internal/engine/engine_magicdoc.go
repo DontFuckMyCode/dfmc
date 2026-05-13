@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -148,32 +147,6 @@ func (e *Engine) BuildMagicDoc(ctx context.Context, title string, hotspotLimit, 
 	b.WriteString("- Refresh this file: `dfmc magicdoc update`\n")
 
 	return b.String(), nil
-}
-
-// maybeAutoUpdateMagicDoc checks if the magic doc is missing or older than
-// 24 hours and updates it if so. Runs as a non-blocking background task.
-func (e *Engine) maybeAutoUpdateMagicDoc(ctx context.Context) {
-	if e.ProjectRoot == "" {
-		return
-	}
-	path := filepath.Join(e.ProjectRoot, ".dfmc", "magic", "MAGIC_DOC.md")
-	info, err := os.Stat(path)
-	if err == nil {
-		// If it's fresh (less than 24h old), skip.
-		if time.Since(info.ModTime()) < 24*time.Hour {
-			return
-		}
-	}
-
-	// Update in background
-	go func() {
-		content, err := e.BuildMagicDoc(ctx, "DFMC Project Brief", 8, 8, 5)
-		if err != nil {
-			return
-		}
-		_ = os.MkdirAll(filepath.Dir(path), 0o755)
-		_ = os.WriteFile(path, []byte(content), 0o644)
-	}()
 }
 
 type depStat struct {

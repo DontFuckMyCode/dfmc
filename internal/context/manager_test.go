@@ -30,7 +30,7 @@ func VerifyToken(token string) bool { return token != "" }`), 0o644); err != nil
 	}
 
 	ae := ast.New()
-	cm := codemap.New(ae)
+	cm := codemap.New(ae, nil)
 	if err := cm.BuildFromFiles(context.Background(), []string{mainGo, authGo}); err != nil {
 		t.Fatalf("build codemap: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestBuildSystemPromptUsesPromptLibrary(t *testing.T) {
 	}
 
 	ae := ast.New()
-	cm := codemap.New(ae)
+	cm := codemap.New(ae, nil)
 	if err := cm.BuildFromFiles(context.Background(), []string{mainGo}); err != nil {
 		t.Fatalf("build codemap: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestBuildSystemPromptBundleSurfacesPromptOverrideLoadWarning(t *testing.T) 
 		t.Fatalf("write prompts sentinel: %v", err)
 	}
 
-	mgr := New(codemap.New(ast.New()))
+	mgr := New(codemap.New(ast.New(), nil))
 	bundle := mgr.BuildSystemPromptBundle(tmp, "review auth flow", nil, []string{"read_file"}, PromptRuntime{})
 	text := bundle.Text()
 	if !strings.Contains(text, "Prompt override warning:") {
@@ -101,7 +101,7 @@ func TestBuildSystemPromptBundleSurfacesPromptOverrideLoadWarning(t *testing.T) 
 
 func TestBuildSystemPromptBundle_InjectsExplicitSkillSectionAndStripsMarker(t *testing.T) {
 	tmp := t.TempDir()
-	mgr := New(codemap.New(ast.New()))
+	mgr := New(codemap.New(ast.New(), nil))
 
 	bundle := mgr.BuildSystemPromptBundle(tmp, "[[skill:debug]] investigate auth refresh failure", nil, []string{"read_file"}, PromptRuntime{})
 	text := bundle.Text()
@@ -118,7 +118,7 @@ func TestBuildSystemPromptBundle_InjectsExplicitSkillSectionAndStripsMarker(t *t
 
 func TestBuildSystemPromptBundle_AutoSelectsAuditForSecurityTask(t *testing.T) {
 	tmp := t.TempDir()
-	mgr := New(codemap.New(ast.New()))
+	mgr := New(codemap.New(ast.New(), nil))
 
 	bundle := mgr.BuildSystemPromptBundle(tmp, "security audit auth middleware", nil, []string{"grep_codebase"}, PromptRuntime{})
 	cacheable := bundle.CacheableText()
@@ -132,7 +132,7 @@ func TestBuildSystemPromptBundle_AutoSelectsAuditForSecurityTask(t *testing.T) {
 
 func TestBuildSystemPromptWithRuntimeToolPolicy(t *testing.T) {
 	tmp := t.TempDir()
-	mgr := New(codemap.New(ast.New()))
+	mgr := New(codemap.New(ast.New(), nil))
 
 	prompt := mgr.BuildSystemPromptWithRuntime(
 		tmp,
@@ -162,7 +162,7 @@ func TestBuildSystemPromptWithRuntimeToolPolicy(t *testing.T) {
 
 func TestBuildSystemPromptUsesRichToolAndSkillInventory(t *testing.T) {
 	tmp := t.TempDir()
-	mgr := New(codemap.New(ast.New()))
+	mgr := New(codemap.New(ast.New(), nil))
 
 	prompt := mgr.BuildSystemPromptWithRuntime(
 		tmp,
@@ -213,7 +213,7 @@ func VerifyToken(token string) bool {
 	}
 
 	ae := ast.New()
-	cm := codemap.New(ae)
+	cm := codemap.New(ae, nil)
 	if err := cm.BuildFromFiles(context.Background(), []string{target}); err != nil {
 		t.Fatalf("build codemap: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestExtractInjectedContextCapsHugeFileRanges(t *testing.T) {
 
 func TestBuildSystemPromptInjectsQueryCodeFenceContext(t *testing.T) {
 	tmp := t.TempDir()
-	mgr := New(codemap.New(ast.New()))
+	mgr := New(codemap.New(ast.New(), nil))
 	query := "please inspect this snippet ```go\nfunc Verify(token string) bool { return token != \"\" }\n```"
 
 	prompt := mgr.BuildSystemPrompt(tmp, query, nil, nil)
@@ -280,7 +280,7 @@ func TestBuildSystemPromptInjectsProjectBrief(t *testing.T) {
 	}
 
 	ae := ast.New()
-	cm := codemap.New(ae)
+	cm := codemap.New(ae, nil)
 	if err := cm.BuildFromFiles(context.Background(), []string{target}); err != nil {
 		t.Fatalf("build codemap: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestBuildSystemPromptInjectionBudgetCompactVsDeep(t *testing.T) {
 	}
 
 	ae := ast.New()
-	cm := codemap.New(ae)
+	cm := codemap.New(ae, nil)
 	if err := cm.BuildFromFiles(context.Background(), []string{target}); err != nil {
 		t.Fatalf("build codemap: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestBuildSystemPromptInjectionBudgetCompactVsDeep(t *testing.T) {
 
 func TestBuildSystemPromptRespectsPromptTokenBudget(t *testing.T) {
 	tmp := t.TempDir()
-	mgr := New(codemap.New(ast.New()))
+	mgr := New(codemap.New(ast.New(), nil))
 	runtime := PromptRuntime{
 		Provider:    "openai",
 		Model:       "glm-5.1",
@@ -396,7 +396,7 @@ func TestBuildWithOptions_RespectsTokenBudgets(t *testing.T) {
 	}
 
 	ae := ast.New()
-	cm := codemap.New(ae)
+	cm := codemap.New(ae, nil)
 	if err := cm.BuildFromFiles(context.Background(), []string{big}); err != nil {
 		t.Fatalf("build codemap: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestBuildWithOptions_TrimsOversizedChunkToRemainingBudget(t *testing.T) {
 	}
 
 	ae := ast.New()
-	cm := codemap.New(ae)
+	cm := codemap.New(ae, nil)
 	if err := cm.BuildFromFiles(context.Background(), []string{first, second}); err != nil {
 		t.Fatalf("build codemap: %v", err)
 	}
@@ -495,7 +495,7 @@ func TestBuildWithOptions_ExcludesTestsAndDocsWhenDisabled(t *testing.T) {
 	}
 
 	ae := ast.New()
-	cm := codemap.New(ae)
+	cm := codemap.New(ae, nil)
 	if err := cm.BuildFromFiles(context.Background(), []string{mainGo, testGo, docsGo}); err != nil {
 		t.Fatalf("build codemap: %v", err)
 	}

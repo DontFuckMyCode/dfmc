@@ -4,12 +4,15 @@ import "strings"
 
 type liveContextSnapshot struct {
 	ok             bool
+	provider       string
+	model          string
 	maxContext     int
 	codeTokens     int
 	windowTokens   int
 	available      int
 	systemTokens   int
 	historyTokens  int
+	historyReserve int
 	responseTokens int
 	toolTokens     int
 	task           string
@@ -76,12 +79,15 @@ func (m Model) liveContextSnapshot() liveContextSnapshot {
 
 	return liveContextSnapshot{
 		ok:             maxContext > 0 || windowTokens > 0 || codeTokens > 0,
+		provider:       strings.TrimSpace(breakdown.Provider),
+		model:          strings.TrimSpace(breakdown.Model),
 		maxContext:     maxContext,
 		codeTokens:     codeTokens,
 		windowTokens:   windowTokens,
 		available:      available,
 		systemTokens:   breakdown.SystemPrompt,
-		historyTokens:  breakdown.History,
+		historyTokens:  breakdown.HistoryActual,
+		historyReserve: breakdown.History,
 		responseTokens: breakdown.Response,
 		toolTokens:     breakdown.ToolReserve,
 		task:           strings.TrimSpace(breakdown.Task),

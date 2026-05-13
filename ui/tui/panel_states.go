@@ -69,22 +69,41 @@ type providersPanelState struct {
 	modelPickerIndex  int
 	modelPickerManual bool
 	modelPickerDraft  string
+	modelQuery        string
+	modelSearchActive bool
 	// provider CRUD state
 	newProviderDraft string // name buffer when adding a new provider
 	// profile field editor state
 	profileEditMode  bool
-	profileEditField int // 0=protocol, 1=base_url, 2=max_context, 3=max_tokens
+	profileEditField int // 0=protocol, 1=base_url, 2=api_key
 	profileEditDraft string
 	// sync state
 	syncing      bool
 	lastSyncedAt time.Time
+	// catalog/provider setup state for the F8 Models & Providers screen.
+	catalogItems      []catalogProviderItem
+	catalogScroll     int
+	catalogLoaded     bool
+	catalogRefID      string
+	catalogFormField  int // 0=name, 1=endpoint, 2=compatible cycle, 3=key
+	catalogFormName   string
+	catalogFormURL    string
+	catalogFormCompat string
+	catalogFormKey    string
+	textEditActive    bool
+	textEditTarget    string
+	textEditField     int
+	textEditTitle     string
+	textEditDraft     string
+	textEditSecret    bool
+	// tier matrix state. Tiers have one primary slot and three fallback slots.
+	tierCursor       int
+	tierSlot         int
+	modelCursor      int
+	sessionModel     bool
+	skillCursor      int
+	skillModelCursor int
 	// action menu state — replaces single-key shortcuts with Enter-activated menus
-	menuActive          bool
-	menuLabels          []string
-	menuActions         []string
-	menuDisabled        []bool
-	menuDisabledReasons []string
-	menuIndex           int
 	// search state — filters the provider list by name, model, or status
 	query        string
 	searchActive bool
@@ -146,7 +165,7 @@ type diagnosticPanelsState struct {
 	// non-Chat tabs (the Chat-tab inline widget has its own scroll
 	// behaviour). j/k/pgup/pgdn/g/G adjust it via handleHelpOverlayKey.
 	// telegram panel state — accessed via Shift+F8 or Ctrl+B → Telegram.
-	telegram telegramPanelState
+	telegram    telegramPanelState
 	helpOverlay scrollOnlyPanelState
 }
 
@@ -218,6 +237,26 @@ type contextPanelState struct {
 	scroll      int
 	err         string
 	inputActive bool
+	// manager holds the interactive Context Manager sub-view state.
+	// Activated with 'm' when showing active context; provides
+	// multi-select + delete of conversation messages.
+	manager contextManagerState
+}
+
+// contextManagerState is the interactive message manager sub-view inside
+// the Context panel. Rows are loaded on activation from the active
+// conversation's message list; the user navigates with arrows, marks
+// with space, and deletes with x/d.
+type contextManagerState struct {
+	active        bool
+	rows          []contextManagerRow
+	cursor        int
+	scroll        int
+	marked        map[int]bool // index -> selected
+	pinned        map[string]bool
+	kept          map[string]bool
+	confirmDelete bool
+	statusMsg     string
 }
 
 // plansPanelState — diagnostic view over internal/planning.SplitTask.
@@ -318,6 +357,6 @@ type conversationsPanelState struct {
 	// previewBranches is the branch list of the currently-previewed
 	// conversation. Empty when the conversation only has the default
 	// `main` branch. Phase G item 3 — branch tree visualization.
-	previewBranches      []conversationBranchSummary
-	previewActiveBranch  string
+	previewBranches     []conversationBranchSummary
+	previewActiveBranch string
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func makeTranscript(n int) []chatLine {
@@ -261,6 +262,71 @@ func TestFitChatBodyUnifiedFeedShowsScrollbar(t *testing.T) {
 	}
 	if !strings.Contains(out, "█") {
 		t.Fatalf("unified feed should render a scrollbar thumb, got:\n%s", out)
+	}
+}
+
+func TestRenderChatScrollbarKeepsMarkerInOneColumn(t *testing.T) {
+	lines := []string{"short", strings.Repeat("x", 80), "mid"}
+	out := renderChatScrollbar(lines, 300, 120, 123, 40)
+	for i, line := range out {
+		if got := ansi.StringWidth(line); got != 40 {
+			t.Fatalf("scrollbar row %d width = %d, want 40: %q", i, got, stripANSI(line))
+		}
+	}
+}
+
+func TestChatComposerLivesInTailOutsideHistoryScrollbar(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.transcript = []chatLine{
+		{Role: "assistant", Content: strings.Repeat("long wrapped sentence ", 20)},
+	}
+	m.setChatInput(strings.Repeat("input text ", 12))
+
+	parts := m.renderChatViewParts(70, true)
+	if strings.Contains(parts.Head, "› Input") {
+		t.Fatalf("composer must not live in scrollable history head")
+	}
+	if !strings.Contains(parts.Tail, "› Input") {
+		t.Fatalf("composer should live in pinned tail, got:\n%s", parts.Tail)
+	}
+	view := fitChatBodyWithScrollbar(parts.Head, parts.Tail, 18, 0, 70)
+	for i, line := range strings.Split(view, "\n") {
+		if got := ansi.StringWidth(line); got > 70 {
+			t.Fatalf("rendered chat row %d width = %d, want <=70: %q", i, got, stripANSI(line))
+		}
+	}
+}
+
+func TestChatScrollbarDoesNotClipMarkdownTableRightBorder(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	table := strings.Join([]string{
+		"| Yapildi | Not |",
+		"|---|---|",
+		"| Proje geneli inceleme | Yinelenen dosyalar ve dokuman ortusmeleri |",
+		"| Build dogrulamasi | Basarili |",
+	}, "\n")
+	m.chat.transcript = []chatLine{
+		{Role: "assistant", Content: strings.Repeat("onceki satir\n", 24) + table},
+	}
+	m.setChatInput("ok")
+
+	parts := m.renderChatViewParts(70, true)
+	view := fitChatBodyWithScrollbar(parts.Head, parts.Tail, 18, 0, 70)
+	seenTableTop := false
+	for i, line := range strings.Split(view, "\n") {
+		if got := ansi.StringWidth(line); got > 70 {
+			t.Fatalf("rendered row %d width = %d, want <=70: %q", i, got, stripANSI(line))
+		}
+		plain := stripANSI(line)
+		if strings.Contains(plain, "┌") {
+			seenTableTop = true
+			if !strings.Contains(plain, "┐") {
+				t.Fatalf("table top border lost right corner after scrollbar clipping: %q", plain)
+			}
+		}
+	}
+	if !seenTableTop {
+		t.Fatalf("expected rendered table top border in view:\n%s", stripANSI(view))
 	}
 }
 

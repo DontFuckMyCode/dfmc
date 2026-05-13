@@ -255,6 +255,7 @@ func (m Model) handleSecurityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.security.scroll = 0
 	case "r":
 		m.security.loading = true
+		m.security.loaded = false
 		m.security.err = ""
 		return m, loadSecurityCmd(m.eng)
 	case "/":

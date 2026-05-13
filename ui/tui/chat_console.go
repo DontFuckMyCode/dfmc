@@ -22,11 +22,19 @@ func (m Model) renderChatConsoleViewParts(width int, slimHeader bool) chatViewPa
 	if width < 40 {
 		width = 40
 	}
-	lines := []string{}
-	lines = append(lines, m.renderTimelineTop(width, slimHeader)...)
-	lines = append(lines, m.renderTimelineMessages(width)...)
-	lines = append(lines, m.renderTimelineComposer(width)...)
-	return chatViewParts{Head: strings.Join(lines, "\n"), Tail: ""}
+	headWidth := width
+	if width > 42 {
+		// The transcript can receive a right-edge scrollbar after it is
+		// rendered. Keep a small gutter reserved up front so full-width
+		// markdown tables do not lose their right border when the marker
+		// column is added.
+		headWidth = width - 2
+	}
+	head := []string{}
+	head = append(head, m.renderTimelineTop(headWidth, slimHeader)...)
+	head = append(head, m.renderTimelineMessages(headWidth)...)
+	tail := m.renderTimelineComposer(width)
+	return chatViewParts{Head: strings.Join(head, "\n"), Tail: strings.Join(tail, "\n")}
 }
 
 func (m Model) renderTimelineTop(width int, slimHeader bool) []string {
@@ -44,15 +52,27 @@ func (m Model) renderTimelineMessages(width int) []string {
 		)
 		return lines
 	}
-	
+
 	assistantCounter := 0
-	for i, item := range m.chat.transcript {
+	for i := 0; i < len(m.chat.transcript); i++ {
+		item := m.chat.transcript[i]
 		streaming := m.chat.streamIndex == i && m.chat.sending
-		
+		collapseKey, collapseLabel := timelineEventCollapseKey(item)
+		collapsed := 0
+		if collapseKey != "" && !streaming {
+			for next := i + 1; next < len(m.chat.transcript); next++ {
+				nextKey, _ := timelineEventCollapseKey(m.chat.transcript[next])
+				if nextKey != collapseKey {
+					break
+				}
+				collapsed++
+			}
+		}
+
 		// Logic to prevent excessive spacing between interleaved items
 		eventRow := isTimelineEventMessage(item)
 		prevEventRow := i > 0 && isTimelineEventMessage(m.chat.transcript[i-1])
-		
+
 		// Spacing: add newline between distinct turns or blocks.
 		// Keep assistant text and its immediately subsequent tools tight.
 		if i > 0 {
@@ -67,14 +87,34 @@ func (m Model) renderTimelineMessages(width int) []string {
 		if streaming && !m.chat.streamStartedAt.IsZero() {
 			durationMs = int(time.Since(m.chat.streamStartedAt).Milliseconds())
 		}
-		
+
 		if item.Role.Eq(chatRoleAssistant) {
 			assistantCounter++
 		}
-		
+
 		lines = append(lines, m.renderTimelineMessage(item, width, streaming, durationMs, assistantCounter)...)
+		if collapsed > 0 {
+			summary := newChatLine(item.Role, fmt.Sprintf("collapsed %d repeated %s event(s) - full stream in Activity; details in ToolStatus", collapsed, collapseLabel))
+			lines = append(lines, m.renderTimelineMessage(summary, width, false, 0, assistantCounter)...)
+			i += collapsed
+		}
 	}
 	return lines
+}
+
+func timelineEventCollapseKey(item chatLine) (string, string) {
+	if !isTimelineEventMessage(item) {
+		return "", ""
+	}
+	text := strings.ToLower(strings.TrimSpace(item.Content))
+	switch {
+	case strings.Contains(text, "tool round hard cap reached") || strings.Contains(text, "tool round cap still active"):
+		return "tool-hard-cap", "tool hard-cap"
+	case strings.Contains(text, "unverified edits") && strings.Contains(text, "stop editing"):
+		return "coach-unverified-edits", "unverified-edits coach"
+	default:
+		return "", ""
+	}
 }
 
 func (m Model) renderTimelineMessage(item chatLine, width int, streaming bool, durationMs, copyIdx int) []string {
@@ -83,14 +123,14 @@ func (m Model) renderTimelineMessage(item chatLine, width int, streaming bool, d
 		header := renderTimelineEventHeader(item, streaming, durationMs, m.chat.spinnerFrame, streamTokens)
 		return renderTimelineEventMessage(item, header, width)
 	}
-	
+
 	header := renderChatHistoryMessageHeader(item, streaming, durationMs, copyIdx, m.chat.spinnerFrame, streamTokens)
-	
-	// Interleaved logic: if it's an assistant message, we don't necessarily 
+
+	// Interleaved logic: if it's an assistant message, we don't necessarily
 	// want a full bubble if it's part of a multi-step sequence.
 	// But for now, we'll keep the bubble and just ensure it's positioned correctly.
 	out := []string{renderMessageBubble(string(item.Role), chatBubbleContent(item, streaming), header, width)}
-	
+
 	if !streaming && copyIdx > 0 && item.Role.Eq(chatRoleAssistant) && strings.TrimSpace(item.Content) != "" {
 		if chip := m.renderAssistantTurnChips(copyIdx, width); chip != "" {
 			out = append(out, chip)

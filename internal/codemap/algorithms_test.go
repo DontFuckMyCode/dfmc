@@ -145,10 +145,10 @@ func TestHotSpots_LimitZeroReturnsAll(t *testing.T) {
 
 // FindSymbol on the Engine wraps graph node lookup with case-folded
 // matching. Pin both the case-fold contract and the empty-name guard.
-// We hand-roll a minimal Engine — codemap.New(nil) is enough because
+// We hand-roll a minimal Engine — codemap.New(nil, nil) is enough because
 // FindSymbol only walks the graph, never the AST engine.
 func TestFindSymbol_CaseInsensitiveAndGuards(t *testing.T) {
-	e := New(nil)
+	e := New(nil, nil)
 	e.graph.AddNode(Node{ID: "pkg/file.go::Foo", Name: "Foo"})
 	e.graph.AddNode(Node{ID: "pkg/other.go::foo", Name: "foo"})
 	e.graph.AddNode(Node{ID: "pkg/other.go::Bar", Name: "Bar"})

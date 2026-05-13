@@ -95,7 +95,7 @@ func (g *Graph) Cycles() [][]string {
 func (g *Graph) hasSelfLoopLocked(id string) bool {
 	for _, edgeIdx := range g.outIdx[id] {
 		edge := g.edges[edgeIdx]
-		if edge.From != "" && edge.To == id {
+		if edge.From == id && edge.To == id {
 			return true
 		}
 	}

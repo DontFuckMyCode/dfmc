@@ -50,7 +50,7 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// S7: Truncated reports whether the buffer truncated its output.
+// Truncated reports whether the buffer truncated its output.
 func (b *boundedBuffer) Truncated() bool {
 	return b.truncated
 }

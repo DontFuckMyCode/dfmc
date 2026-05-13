@@ -75,7 +75,9 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.applyEncryptedProviderKeys()
 	cfg.applyEnv(dotEnv)
+	cfg.applyTelegramEnv()
 	cfg.Providers.Profiles = MergeProviderProfilesFromModelsDev(cfg.Providers.Profiles, nil, ModelsDevMergeOptions{})
 	if catalog, err := LoadModelsDevCatalog(ModelsDevCachePath()); err == nil {
 		cfg.Providers.Profiles = MergeProviderProfilesFromModelsDev(cfg.Providers.Profiles, catalog, ModelsDevMergeOptions{})
@@ -201,6 +203,22 @@ func (c *Config) DataDir() string {
 
 func ModelsDevCachePath() string {
 	return filepath.Join(UserConfigDir(), "cache", "models.dev.json")
+}
+
+// ProjectLearnedPatternsDir returns the .dfmc/ directory path for project-local
+// learned patterns (e.g., projectRoot/.dfmc/learned_patterns/).
+// Returns empty string if ProjectRoot is not set.
+func (c *Config) ProjectLearnedPatternsDir() string {
+	if c.ProjectRoot == "" {
+		return ""
+	}
+	return filepath.Join(c.ProjectRoot, ".dfmc", "learned_patterns")
+}
+
+// SetProjectRoot sets the project root path. Used by the engine to locate
+// project-local resources (e.g., .dfmc/ directory).
+func (c *Config) SetProjectRoot(path string) {
+	c.ProjectRoot = path
 }
 
 func (c *Config) PluginDir() string {

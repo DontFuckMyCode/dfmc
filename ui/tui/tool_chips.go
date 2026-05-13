@@ -68,6 +68,7 @@ func (m *Model) pushToolChip(chip toolChip) {
 	if chip.Name == "" {
 		return
 	}
+	chip.Expanded = false
 	m.agentLoop.toolTimeline = append(m.agentLoop.toolTimeline, chip)
 	if len(m.agentLoop.toolTimeline) > maxToolTimelineChips {
 		drop := len(m.agentLoop.toolTimeline) - maxToolTimelineChips
@@ -87,6 +88,7 @@ func (m *Model) pushStreamingMessageToolChip(chip toolChip) {
 	if m.chat.streamIndex < 0 || m.chat.streamIndex >= len(m.chat.transcript) {
 		return
 	}
+	chip.Expanded = false
 	const maxPerMessage = 32
 	line := &m.chat.transcript[m.chat.streamIndex]
 	line.ToolChips = append(line.ToolChips, chip)
@@ -155,6 +157,7 @@ func (m *Model) finishStreamingMessageToolChip(chip toolChip) {
 		if len(chip.InnerLines) > 0 {
 			merged.InnerLines = chip.InnerLines
 		}
+		merged.Expanded = false
 		line.ToolChips[i] = merged
 		return
 	}
@@ -217,6 +220,7 @@ func (m *Model) finishToolChip(chip toolChip) {
 		if len(chip.InnerLines) > 0 {
 			merged.InnerLines = chip.InnerLines
 		}
+		merged.Expanded = false
 		m.agentLoop.toolTimeline[i] = merged
 		return
 	}

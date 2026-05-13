@@ -180,7 +180,7 @@ func pyKB() *Registry {
 		Idioms: []Idiom{
 			{ID: "py-snake-case", Lang: "python", Rule: "Use snake_case for functions, variables, and module names",
 				Detail: "Python convention (PEP 8): function names and variable names use lowercase_with_underscores. Class names use PascalCase.",
-				Kinds:  []string{"function_def", "variable_name"}},
+				Kinds:  []string{"function_def", "name"}},
 			{ID: "py-guard", Lang: "python", Rule: "Use if __name__ == '__main__': guard for entry points",
 				Detail: "The guard ensures code only runs when the module is executed directly, not when imported. Always wrap main() calls in this guard in scripts.",
 				Kinds:  []string{"if_statement"}},

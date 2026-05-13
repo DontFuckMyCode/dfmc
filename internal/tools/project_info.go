@@ -67,7 +67,7 @@ func (t *ProjectInfoTool) Execute(ctx context.Context, req Request) (Result, err
 	data := make(map[string]any)
 
 	// Module info section.
-	modInfo := fetchModuleInfo(projectRoot)
+	modInfo := fetchModuleInfo(ctx, projectRoot)
 	data["module"] = modInfo
 
 	// File stats section.
@@ -91,7 +91,7 @@ func (t *ProjectInfoTool) Execute(ctx context.Context, req Request) (Result, err
 
 // --- module info ---
 
-func fetchModuleInfo(projectRoot string) map[string]any {
+func fetchModuleInfo(ctx context.Context, projectRoot string) map[string]any {
 	info := map[string]any{
 		"module_path": "unknown",
 		"go_version":  "unknown",
@@ -117,7 +117,7 @@ func fetchModuleInfo(projectRoot string) map[string]any {
 		info["has_go_sum"] = true
 	}
 	// Count deps (non-test imports).
-	if depsOut, err := runCommandContext(ctxBg(), projectRoot, "go", "list", "-m", "all"); err == nil {
+	if depsOut, err := runCommandContext(ctx, projectRoot, "go", "list", "-m", "all"); err == nil {
 		lines := strings.Split(depsOut, "\n")
 		info["deps_count"] = max(0, len(lines)-1) // subtract header or empty
 	}
@@ -200,7 +200,6 @@ func fetchFileStats(projectRoot string) map[string]any {
 
 	return map[string]any{
 		"total_files":     stats.TotalFiles,
-		"total_lines":     stats.TotalLines, // 0 — actual count requires reading files
 		"by_extension":    stats.ByExtension,
 		"by_language":     stats.ByLanguage,
 		"skipped_dirs":    stats.SkippedDirs,
@@ -264,9 +263,6 @@ func fetchConfigInfo(engine *Engine, _ string) map[string]any {
 
 	return out
 }
-
-// ctxBg returns a background context for non-critical bg ops.
-func ctxBg() context.Context { return context.Background() }
 
 // runCommandContext is a minimal exec helper for background data collection.
 func runCommandContext(ctx context.Context, dir, name string, args ...string) (string, error) {

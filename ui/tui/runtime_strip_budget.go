@@ -19,6 +19,7 @@ import (
 
 func runtimeStripBudgetParts(vm runtimeViewModel) []string {
 	parts := []string{}
+	payload := vm.ContextPayload
 	if task := strings.TrimSpace(vm.ContextTask); task != "" {
 		parts = append(parts, "task "+task)
 	}
@@ -29,12 +30,12 @@ func runtimeStripBudgetParts(vm runtimeViewModel) []string {
 		}
 		parts = append(parts, label)
 	}
-	if vm.ContextBudgetTokens > 0 {
-		parts = append(parts, fmt.Sprintf("evidence %s/%s", compactMetric(vm.ContextTokens), compactMetric(vm.ContextBudgetTokens)))
+	if payload.EvidenceBudgetTokens > 0 {
+		parts = append(parts, fmt.Sprintf("evidence %s/%s", compactMetric(payload.EvidenceTokens), compactMetric(payload.EvidenceBudgetTokens)))
 	}
 	if used, remaining := runtimeWindowUsage(vm); used > 0 {
-		if vm.MaxContext > 0 {
-			parts = append(parts, fmt.Sprintf("window %s/%s", compactMetric(used), compactMetric(vm.MaxContext)))
+		if payload.MaxContext > 0 {
+			parts = append(parts, fmt.Sprintf("window %s/%s", compactMetric(used), compactMetric(payload.MaxContext)))
 			if remaining >= 0 {
 				parts = append(parts, "left "+compactMetric(remaining))
 			} else {
@@ -50,11 +51,11 @@ func runtimeStripBudgetParts(vm runtimeViewModel) []string {
 	if vm.ContextMaxPerFile > 0 {
 		parts = append(parts, "slice "+compactMetric(vm.ContextMaxPerFile))
 	}
-	if vm.ContextSystemTokens > 0 || vm.ContextHistoryTokens > 0 {
-		parts = append(parts, fmt.Sprintf("sys %s hist %s", compactMetric(vm.ContextSystemTokens), compactMetric(vm.ContextHistoryTokens)))
+	if payload.SystemTokens > 0 || payload.MessageTokens > 0 {
+		parts = append(parts, fmt.Sprintf("sys %s hist %s", compactMetric(payload.SystemTokens), compactMetric(payload.MessageTokens)))
 	}
-	if vm.ContextResponseTokens > 0 || vm.ContextToolTokens > 0 {
-		parts = append(parts, fmt.Sprintf("resp %s tools %s", compactMetric(vm.ContextResponseTokens), compactMetric(vm.ContextToolTokens)))
+	if payload.ResponseReserve > 0 || payload.ToolReserve > 0 {
+		parts = append(parts, fmt.Sprintf("resp %s tools %s", compactMetric(payload.ResponseReserve), compactMetric(payload.ToolReserve)))
 	}
 	if c := strings.TrimSpace(vm.ContextCompression); c != "" {
 		parts = append(parts, "zip "+c)

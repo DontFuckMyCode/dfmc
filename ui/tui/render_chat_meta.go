@@ -145,20 +145,15 @@ func (m Model) statsPanelBoostActive(now time.Time) bool {
 }
 
 func (m Model) statsPanelRenderWidth(contentWidth int) int {
-	if !m.statsPanelBoostActive(time.Now()) {
-		return statsPanelWidth
-	}
 	return m.statsPanelReservedWidth(contentWidth)
 }
 
-// statsPanelReservedWidth is the column width the chat layout must
-// always hold open for the stats panel whenever it is visible,
-// regardless of current boost state. Reserving the max possible
-// panel width keeps the chat body's word-wrap boundary stable across
-// boost expand/collapse so the transcript never reflows mid-session.
-// The panel itself still renders at its variable statsPanelRenderWidth
-// inside this reserved column — unused slack appears as right-side
-// padding in the outer frame, not as a re-wrap of the chat text.
+// statsPanelReservedWidth computes the panel width proportional to
+// the terminal width. Wide terminals get a wider panel (up to 64 cols);
+// narrow terminals stay compact (down to StatsPanelWidth = 38). The
+// formula keeps the chat body's word-wrap boundary stable so the
+// transcript never reflows as the user switches stats modes or toggles
+// focus lock. Chat width = contentWidth - reserved - 2 separator cols.
 func (m Model) statsPanelReservedWidth(contentWidth int) int {
 	width := contentWidth*2/5 + 2
 	if width < statsPanelBoostWidthMin {

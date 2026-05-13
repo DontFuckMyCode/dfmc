@@ -68,7 +68,7 @@ func buildClassifierMessages(snapshot, raw string) (system, user string) {
 	return systemPrompt, b.String()
 }
 
-// errInvalidJSON is the canonical error wrapper for JSON parse failures.
+// invalidJSONError is the canonical error wrapper for JSON parse failures.
 // We return it as a typed sentinel so the router can distinguish "the
 // LLM responded but malformed" from "the provider call itself failed",
 // which matters for fail-open accounting.

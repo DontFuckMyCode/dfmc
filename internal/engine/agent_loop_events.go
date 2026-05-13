@@ -235,4 +235,3 @@ func (e *Engine) publishNativeToolResultWithPayloadAndStats(trace nativeToolTrac
 		Payload: payload,
 	})
 }
-

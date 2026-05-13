@@ -36,7 +36,7 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 	}
 	badge := timelineEventBadgeForItem(item)
 	headerLine := badge
-	
+
 	if strings.TrimSpace(header) != "" {
 		headerLine += "  " + subtleStyle.Render(header)
 	}
@@ -49,7 +49,7 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 
 	const bodyIndent = "  "
 	limit := max(width-len(bodyIndent), 18)
-	
+
 	// Filter and wrap content rows
 	allRows := strings.Split(content, "\n")
 	filteredRows := make([]string, 0, len(allRows))
@@ -63,7 +63,7 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 		if strings.HasPrefix(lower, "state:") || strings.HasPrefix(lower, "card:") || strings.Contains(lower, "summarized") {
 			continue
 		}
-		
+
 		// Clean up labels
 		row = strings.Replace(row, "target: ", "· ", 1)
 		row = strings.Replace(row, "returned: ", "» ", 1)
@@ -76,12 +76,12 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 		wrapped := wrapBubbleLine(row, limit)
 		for _, r := range wrapped {
 			filteredRows = append(filteredRows, truncateSingleLine(r, limit))
-			if len(filteredRows) >= 6 { // Tighter cap
+			if len(filteredRows) >= 1 { // One-line only; full details in Ctrl+Alt+T
 				break
 			}
 		}
-		if len(filteredRows) >= 6 {
-			filteredRows = appendTimelineOverflowMarker(filteredRows, limit)
+		if len(filteredRows) >= 1 {
+			// Full detail in Ctrl+Alt+T panel
 			break
 		}
 	}
@@ -89,13 +89,14 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 	if len(filteredRows) == 0 {
 		return []string{headerLine}
 	}
-	
-	out := make([]string, 0, len(filteredRows)+1)
-	out = append(out, headerLine)
-	for _, row := range filteredRows {
-		out = append(out, subtleStyle.Render(bodyIndent)+timelineEventRowStyle(row, content).Render(row))
-	}
-	return out
+
+	// Inline the first content row onto the header line so each event
+	// occupies a single row (badge + header + body on one line). This
+	// halves the vertical space: a running+done pair drops from 4 lines
+	// to 2. Full detail remains in Ctrl+Alt+T panel.
+	row := filteredRows[0]
+	combined := headerLine + subtleStyle.Render(bodyIndent) + timelineEventRowStyle(row).Render(row)
+	return []string{combined}
 }
 
 func wrapTimelineEventContent(content string, limit int) []string {
@@ -147,10 +148,10 @@ func timelineToolEventBadge(ev chatEventLine) string {
 	if name == "" {
 		name = strings.ToLower(strings.TrimSpace(ev.Title))
 	}
-	
+
 	icon, style := theme.ChipIconStyle(ev.Status)
 	label := strings.ToUpper(name)
-	
+
 	switch name {
 	case "read_file", "list_dir", "glob":
 		label = "READ"
@@ -163,7 +164,7 @@ func timelineToolEventBadge(ev chatEventLine) string {
 	case "tool_batch_call":
 		label = "BATCH"
 	}
-	
+
 	if ev.Step > 0 {
 		label += fmt.Sprintf(" #%d", ev.Step)
 	}
@@ -171,27 +172,7 @@ func timelineToolEventBadge(ev chatEventLine) string {
 	return style.Render(icon + " " + label)
 }
 
-func timelineToolStatusPill(ev chatEventLine) string {
-	// Redundant now that badge has icon+status-color, returning empty
-	// to clear space on the header line.
-	return ""
-}
-
-func timelineEventStyle(content string) lipgloss.Style {
-	lower := strings.ToLower(strings.TrimSpace(content))
-	switch {
-	case strings.HasPrefix(lower, "failed:"), strings.Contains(lower, "error"), strings.Contains(lower, "conflict"):
-		return warnStyle
-	case strings.HasPrefix(lower, "done:"):
-		return okStyle
-	case strings.HasPrefix(lower, "running:"):
-		return infoStyle
-	default:
-		return subtleStyle
-	}
-}
-
-func timelineEventRowStyle(row, content string) lipgloss.Style {
+func timelineEventRowStyle(row string) lipgloss.Style {
 	trimmed := strings.ToLower(strings.TrimSpace(row))
 	switch {
 	case strings.HasPrefix(trimmed, "state:"), strings.HasPrefix(trimmed, "card:"):

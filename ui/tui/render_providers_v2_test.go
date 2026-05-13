@@ -7,7 +7,7 @@ import (
 
 // TestProvidersListV2_RendersAllThreePanesOnWideTerminal — wide
 // terminal must show the cleaned-up list rows AND the DETAIL card
-// AND the ROUTING/ACTIONS cards. Each fact lives in exactly one
+// AND the ROUTING/KEYS cards. Each fact lives in exactly one
 // place — list rows are now scannable, not crammed.
 func TestProvidersListV2_RendersAllThreePanesOnWideTerminal(t *testing.T) {
 	m := newCoverageModel(t)
@@ -34,7 +34,7 @@ func TestProvidersListV2_RendersAllThreePanesOnWideTerminal(t *testing.T) {
 		"DETAIL",
 		"Status:", "Model:", "Protocol:", "Max context:", "Tool support:",
 		"ROUTING",
-		"ACTIONS",
+		"KEYS",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("wide V2 view missing %q. Got:\n%s", want, view)
@@ -69,7 +69,7 @@ func TestProvidersListV2_EmptyStatePointsAtNewProvider(t *testing.T) {
 	for _, want := range []string{
 		"PROVIDERS",
 		"No providers registered",
-		"new provider",
+		"custom provider",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("empty V2 view missing %q. Got:\n%s", want, view)

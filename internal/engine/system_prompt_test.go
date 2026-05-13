@@ -16,7 +16,7 @@ import (
 func newTestEngine(t *testing.T) *Engine {
 	t.Helper()
 	cfg := config.DefaultConfig()
-	mgr := ctxmgr.New(codemap.New(ast.New()))
+	mgr := ctxmgr.New(codemap.New(ast.New(), nil))
 	return &Engine{
 		Config:      cfg,
 		Context:     mgr,

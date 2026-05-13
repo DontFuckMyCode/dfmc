@@ -135,6 +135,7 @@ func TestResumeAgent_RefusesAfterCumulativeStepsCeiling(t *testing.T) {
 	// for sustained orchestration; without this override we'd need 11
 	// scripted resume rounds to reach the refusal path.
 	eng.Config.Agent.ResumeMaxMultiplier = 3
+	eng.Config.Agent.AutonomousResume = "off"
 
 	// Initial ask — this consumes the FIRST budget (MaxSteps=1) and
 	// parks, accumulating CumulativeSteps=1 after the next resume.

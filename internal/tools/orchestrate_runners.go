@@ -39,7 +39,13 @@ func (t *OrchestrateTool) runParallel(
 	var wg sync.WaitGroup
 	for i, sub := range plan.Subtasks {
 		wg.Add(1)
-		sem <- struct{}{}
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Done()
+			stages[i] = map[string]any{"title": sub.Title, "status": "skipped", "error": ctx.Err().Error()}
+			continue
+		}
 		go func(idx int, s planning.Subtask) {
 			defer wg.Done()
 			defer func() { <-sem }()
@@ -141,7 +147,7 @@ func subagentPromptFor(sub planning.Subtask, priorSummaries []string) string {
 // assembleResult collects stage maps into a Result, with a compact Output
 // line per stage for the model's tool_result content and the full detail
 // in Data.
-func assembleResult(task, mode string, plan planning.Plan, stages []map[string]any, parallel int, omittedSubtasks int) Result {
+func assembleResult(task, mode string, plan planning.Plan, stages []map[string]any, parallel, maxAutoSubtasks, omittedSubtasks int) Result {
 	lines := make([]string, 0, len(stages))
 	aggregated := make([]string, 0, len(stages))
 	for i, stage := range stages {
@@ -156,7 +162,7 @@ func assembleResult(task, mode string, plan planning.Plan, stages []map[string]a
 		}
 	}
 	if omittedSubtasks > 0 {
-		lines = append(lines, fmt.Sprintf("[orchestrate capped auto-split at %d stages; omitted %d additional subtasks]", maxOrchestrateAutoSubtasks, omittedSubtasks))
+		lines = append(lines, fmt.Sprintf("[orchestrate capped auto-split at %d stages; omitted %d additional subtasks]", maxAutoSubtasks, omittedSubtasks))
 	}
 	return Result{
 		Output: strings.Join(lines, "\n"),

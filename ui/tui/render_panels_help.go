@@ -97,13 +97,14 @@ func helpOverlaySections(tab string) []helpOverlaySection {
 			Body: []string{
 				"f9 status · f10 codemap · f11 tools · f12 security",
 				"shift+f1 prompts · shift+f2 plans · shift+f3 context · shift+f4 orchestrate · shift+f5 shortcuts",
-				"legacy aliases still work: alt+i tools · alt+t prompts · ctrl+y plans · ctrl+w context · alt+r orchestrate · alt+h shortcuts",
+				"shift+f6 contexts · shift+f7 provider log · shift+f8 telegram · ctrl+alt+t tool status",
+				"legacy aliases still work: alt+i tools · ctrl+y plans · ctrl+w context · alt+r orchestrate",
 			},
 		},
 		{
 			Title: "Global · pickers, palettes, stats",
 			Body: []string{
-				"ctrl+p palette · alt+m model · alt+P provider · ctrl+s stats · ctrl+h/alt+h help",
+				"ctrl+p palette · ctrl+s stats · ctrl+h/alt+h help · /model changes model",
 				"chat stats: alt+a overview · alt+s todos · alt+d tasks · alt+f agents · alt+p providers",
 				"ctrl+c/ctrl+q quit · ctrl+u clear chat input · esc cancels streaming turn (or closes overlay / parked banner)",
 				"this overlay filters live — type in the composer to narrow the visible lines, ctrl+u or esc clears",
@@ -130,9 +131,9 @@ func helpOverlayTabHints(tab string) []string {
 	switch strings.TrimSpace(strings.ToLower(tab)) {
 	case "chat":
 		return []string{
-			"ctrl+x send · enter newline · / commands · @ mention",
+			"enter send · alt+enter newline · ctrl+x send/queue · / commands · @ mention",
 			"wheel · shift+↑/↓ · pgup/pgdn scroll transcript",
-			"alt+m model picker · alt+P provider picker — both auto-save to the winning config scope",
+			"/model changes model · alt+p opens compact runtime status",
 			"alt+a overview · alt+s todos · alt+d tasks · alt+f subagents · alt+p providers in the right stats panel",
 			"when parked: ctrl+x resumes · esc dismisses · type a note first to steer",
 		}
@@ -211,7 +212,7 @@ func helpOverlayTabHints(tab string) []string {
 		}
 	case "shortcuts":
 		return []string{
-			"shift+f5 (or alt+h) jumps here from any tab · /shortcuts and /keys also open this",
+			"shift+f5 jumps here from any tab · /shortcuts and /keys open the help overlay",
 			"j/k/pgup/pgdn/g/G scroll · per-tab quick hints: ctrl+h overlay",
 		}
 	case "contexts":

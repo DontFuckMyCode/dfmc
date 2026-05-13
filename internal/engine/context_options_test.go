@@ -161,33 +161,6 @@ func TestBuildContextChunks_AutoIncludeFilesOffByDefault(t *testing.T) {
 	}
 }
 
-// providerWindowScale is sized for modern 200K+ defaults: most
-// providers get 1.0 (no change to base config) and only the rarefied
-// 1M-window class (Opus 4.7 etc.) gets a modest 1.25 stretch. The
-// reserve/available-budget clamps already handle small-window
-// auto-throttle, so this scaler doesn't need <1.0 tiers.
-func TestProviderWindowScale_TiersByWindowSize(t *testing.T) {
-	cases := []struct {
-		windowTokens int
-		want         float64
-	}{
-		{0, 1.0},          // unknown — pass-through
-		{8_000, 1.0},      // tight (clamp handles fit)
-		{32_000, 1.0},     // small
-		{128_000, 1.0},    // mid
-		{200_000, 1.0},    // Sonnet/GPT class — base default
-		{511_999, 1.0},    // just under threshold
-		{512_000, 1.25},   // Opus 1M class
-		{1_000_000, 1.25}, // 1M
-	}
-	for _, tc := range cases {
-		got := providerWindowScale(tc.windowTokens)
-		if got != tc.want {
-			t.Errorf("providerWindowScale(%d): want %.2f, got %.2f", tc.windowTokens, tc.want, got)
-		}
-	}
-}
-
 // Auto-computed budgets (no user-set MaxFiles/MaxTokensTotal) should
 // scale UP for big-window providers but NEVER below the configured
 // floor for small-window providers. Explicit user values pass
@@ -390,6 +363,85 @@ func TestContextBudgetPreviewWithRuntime_UsesMaxContextOverride(t *testing.T) {
 	}
 	if tight.MaxTokensTotal >= base.MaxTokensTotal {
 		t.Fatalf("expected tighter runtime to reduce total budget, got tight=%d base=%d", tight.MaxTokensTotal, base.MaxTokensTotal)
+	}
+}
+
+func TestContextBudgetPreviewPrefersUpdatedProfileMaxContext(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers.Primary = "generic"
+	cfg.Providers.Profiles = map[string]config.ModelConfig{
+		"generic": {
+			BaseURL:    "http://localhost:11434/v1",
+			Model:      "old-model",
+			Protocol:   "openai-compatible",
+			MaxContext: 1000,
+		},
+	}
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{Config: cfg, Providers: router}
+
+	prof := cfg.Providers.Profiles["generic"]
+	prof.Model = "new-model"
+	prof.MaxContext = 200000
+	cfg.Providers.Profiles["generic"] = prof
+	eng.SetProviderModel("generic", "new-model")
+
+	preview := eng.ContextBudgetPreview("check updated model window")
+	if preview.ProviderMaxContext != 200000 {
+		t.Fatalf("expected updated profile max_context, got %d", preview.ProviderMaxContext)
+	}
+	runtime := eng.PromptRuntime()
+	if runtime.MaxContext != 200000 {
+		t.Fatalf("expected prompt runtime max_context from updated profile, got %d", runtime.MaxContext)
+	}
+}
+
+func TestContextBudgetPreviewPrefersModelsDevContextOverStaleProfile(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	if err := config.SaveModelsDevCatalog(config.ModelsDevCachePath(), config.ModelsDevCatalog{
+		"zai-coding-plan": {
+			ID: "zai-coding-plan",
+			Models: map[string]config.ModelsDevModel{
+				"glm-5.1": {
+					ID:    "glm-5.1",
+					Limit: config.ModelsDevLimits{Context: 200000, Output: 131072},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save models.dev cache: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Providers.Primary = "zai-coding-plan"
+	cfg.Providers.Profiles = map[string]config.ModelConfig{
+		"zai-coding-plan": {
+			CatalogID:  "zai-coding-plan",
+			BaseURL:    "http://localhost:11434/v1",
+			Model:      "glm-5.1",
+			Protocol:   "openai-compatible",
+			MaxContext: 131072,
+			MaxTokens:  131072,
+		},
+	}
+	router, err := provider.NewRouter(cfg.Providers)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	eng := &Engine{Config: cfg, Providers: router}
+
+	preview := eng.ContextBudgetPreview("check active model window")
+	if preview.ProviderMaxContext != 200000 {
+		t.Fatalf("expected models.dev context window 200000, got %d", preview.ProviderMaxContext)
+	}
+	runtime := eng.PromptRuntime()
+	if runtime.MaxContext != 200000 {
+		t.Fatalf("expected prompt runtime max_context from models.dev context, got %d", runtime.MaxContext)
 	}
 }
 

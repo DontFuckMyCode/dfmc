@@ -67,6 +67,8 @@ func (m Model) renderPanelOverlayBody(kind string, contentWidth, innerHeight int
 		// Telegram bot messages — shows connection status and incoming/outgoing messages.
 		// Requires `go build -tags telegram_bot_wip` and --telegram-token flag.
 		body = fitPanelContentHeight(m.renderTelegramPanel(), bodyHeight)
+	case "toolstatus":
+		body = fitPanelContentHeight(m.renderToolStatusView(contentWidth), bodyHeight)
 	default:
 		body = subtleStyle.Render("(unknown overlay: " + kind + ")")
 	}
@@ -100,6 +102,8 @@ func panelOverlayLabel(kind string) string {
 		return "CONTEXTS"
 	case "providerlog":
 		return "PROVIDER LOG"
+	case "toolstatus":
+		return "TOOL STATUS"
 	default:
 		return strings.ToUpper(kind)
 	}
@@ -109,9 +113,13 @@ func panelOverlayLabel(kind string) string {
 // (model, true) when there was something to close. Esc/q handlers call
 // this before falling through to other dismissal logic.
 func (m Model) closePanelOverlay() (Model, bool) {
-	if m.ui.panelOverlayKind == "" {
-		return m, false
+	if m.ui.panelOverlayKind != "" {
+		m.ui.panelOverlayKind = ""
+		return m, true
 	}
-	m.ui.panelOverlayKind = ""
-	return m, true
+	if m.session != nil && m.session.waitingDismissed {
+		m.session.waitingDismissed = false
+		return m, true
+	}
+	return m, false
 }

@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"go.etcd.io/bbolt"
+
+	"github.com/dontfuckmycode/dfmc/internal/security"
 )
 
 const (
@@ -151,7 +153,7 @@ func formatSubagentJournalSection(entries []subagentJournalEntry) string {
 			b.WriteString(ent.Task)
 		}
 		b.WriteString("\n  → ")
-		b.WriteString(ent.Summary)
+		b.WriteString(security.RedactSecrets(ent.Summary))
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")

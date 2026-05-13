@@ -70,6 +70,12 @@ type SubagentRequest struct {
 	// the wrapper force-compacts and re-enters the loop transparently
 	// up to resume_max_multiplier. Engine-internal flag; not on the wire.
 	Autonomous bool `json:"-"`
+	// Depth is the recursive delegation depth. The first call has Depth=0.
+	// If Depth >= maxRecursiveDepth, RunSubagent returns
+	// ErrSubagentDepthExceeded. This prevents unbounded recursive
+	// delegation that could otherwise exhaust resources. Internal flag;
+	// not on the wire — delegate_task always calls with Depth=0.
+	Depth int `json:"-"`
 }
 
 // SubagentResult is what the engine reports back to the parent tool loop.
@@ -138,6 +144,8 @@ func (t *DelegateTaskTool) Execute(ctx context.Context, req Request) (Result, er
 	allowed := parseStringListParam(req.Params, "allowed_tools")
 	allowedPaths := parseStringListParam(req.Params, "allowed_paths")
 
+	// Depth starts at 0 for delegate_task; internal callers (e.g. drive)
+	// may pass a non-zero depth from their own recursive context.
 	res, err := runSubagentRetrying(ctx, runner, SubagentRequest{
 		Task:         task,
 		Role:         role,

@@ -17,7 +17,7 @@ import (
 // findInHTML scans an HTML/XML/template file for the named id, class,
 // or tag and returns the balanced tag block(s). Multiple matches are
 // possible (e.g. multiple elements with the same class).
-func findInHTML(path, name, kind, mode string, bodyMax int, includeBody bool) []symbolMatch {
+func findInHTML(projectRoot, path, name, kind, mode string, bodyMax int, includeBody bool) []symbolMatch {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -66,7 +66,7 @@ func findInHTML(path, name, kind, mode string, bodyMax int, includeBody bool) []
 			truncated = true
 		}
 		out = append(out, symbolMatch{
-			Path:      path,
+			Path:      PathRelativeToRoot(projectRoot, path),
 			Language:  "html",
 			Name:      name,
 			Kind:      hit.kind,

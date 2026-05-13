@@ -31,10 +31,10 @@ func TestPathScopeAllows_PrefixBoundary(t *testing.T) {
 		path string
 		want bool
 	}{
-		{"internal/parsers", true},          // exact
-		{"internal/parsers/foo.go", true},   // direct child
-		{"internal/parsers/sub/x.go", true}, // nested
-		{"docs/specs/PLAN.md", true},        // alt root
+		{"internal/parsers", true},           // exact
+		{"internal/parsers/foo.go", true},    // direct child
+		{"internal/parsers/sub/x.go", true},  // nested
+		{"docs/specs/PLAN.md", true},         // alt root
 		{"internal/parsers_aux/x.go", false}, // adjacent name — must NOT admit
 		{"internal/other/x.go", false},
 		{"unrelated.go", false},

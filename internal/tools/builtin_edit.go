@@ -30,12 +30,15 @@ func (t *EditFileTool) SetEngine(e *Engine) { t.engine = e }
 // write. Without this, two concurrent edits to the same file could interleave
 // their read→process→write cycles.
 func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
+	if t.engine == nil {
+		return Result{}, fmt.Errorf("edit_file: engine not initialised")
+	}
 	path := asString(req.Params, "path", "")
 	oldStr := asString(req.Params, "old_string", "")
 	newStr := asString(req.Params, "new_string", "")
 	replaceAll := asBool(req.Params, "replace_all", false)
 
-	if strings.TrimSpace(oldStr) == "" {
+	if _, ok := req.Params["old_string"]; !ok {
 		return Result{}, missingParamError("edit_file", "old_string", req.Params,
 			`{"path":"main.go","old_string":"return nil","new_string":"return ctx.Err()"}`,
 			`old_string must be the EXACT text already in the file (whitespace, indentation, line endings included). Read the file first, then copy the unique anchor you want to replace.`)

@@ -91,7 +91,7 @@ func contextReasonContains(reasons []string, needle string) bool {
 func statsPanelWindowUsage(info StatsPanelInfo) (int, int) {
 	used := info.ContextWindowTokens
 	if used <= 0 {
-		used = info.ContextSystemTokens + info.ContextHistoryTokens + info.ContextTokens + info.ContextResponseTokens + info.ContextToolTokens
+		used = info.ContextSystemTokens + info.ContextHistoryTokens + info.ContextTokens
 	}
 	if used <= 0 {
 		used = info.ContextTokens
@@ -132,7 +132,7 @@ func statsPanelModeActionHint(mode StatsPanelMode) string {
 	case StatsPanelModeSubagents:
 		return "/subagents | F7 Activity | /drive active"
 	case StatsPanelModeProviders:
-		return "/provider | /model | /reload"
+		return "/model | /reload"
 	default:
 		return "alt+a/s/d/f/p switch | F7 Activity"
 	}

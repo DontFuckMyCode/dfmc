@@ -36,20 +36,25 @@ type patchViewState struct {
 // filesViewState — Files tab state. `entries` is the directory listing,
 // `index` the cursor row, `pinned` a sticky selection that survives
 // re-loads, and `path/preview/size` the currently shown file.
+// `query`/`searchActive` implement the Ctrl+S filter mode.
 type filesViewState struct {
-	entries []string
-	index   int
-	pinned  string
-	preview string
-	path    string
-	size    int
+	entries      []string
+	index        int
+	pinned       string
+	preview      string
+	path         string
+	size         int
+	query        string
+	searchActive bool
 }
 
-// toolViewState — Tools tab cursor position, current output for the
-// selected tool, and the in-place editor (editing flag, draft buffer,
-// per-key overrides) used to tweak parameters before re-running.
+// toolViewState — Tools tab cursor position, scroll offset for the
+// registry list, current output for the selected tool, and the in-place
+// editor (editing flag, draft buffer, per-key overrides) used to tweak
+// parameters before re-running.
 type toolViewState struct {
 	index     int
+	scroll    int // vertical scroll offset in the registry list
 	output    string
 	editing   bool
 	draft     string
@@ -90,4 +95,9 @@ type activityPanelState struct {
 	mode         activityViewMode
 	query        string
 	searchActive bool
+}
+
+// toolStatusPanelState -- Ctrl+Alt+T Tool Status overlay scroll state.
+type toolStatusPanelState struct {
+	scroll int
 }

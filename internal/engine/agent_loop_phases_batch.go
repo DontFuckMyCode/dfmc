@@ -118,6 +118,15 @@ func (e *Engine) executeAndAppendToolBatch(
 		trace := stepTraces[i]
 		if r.Err != nil {
 			trace.Err = r.Err.Error()
+			if e.LearnedPatterns != nil {
+				e.LearnedPatterns.Add(
+				"tool_failure",
+				call.Name,
+				r.Err.Error(),
+				"",
+				fmt.Sprintf("step=%d callID=%s", s.step, call.ID),
+			)
+			}
 		} else {
 			trace.Result = r.Result
 		}

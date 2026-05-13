@@ -26,7 +26,15 @@ func (m Model) handleProvidersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Input modes (typing) bypass menus and global shortcuts
 	if isProvidersInputMode(m) {
+		if m.providers.textEditActive {
+			return m.handleProviderTextEditKey(msg)
+		}
+		if nm, handled := m.handleProviderInputTextKey(msg); handled {
+			return nm, nil
+		}
 		switch m.providers.viewMode {
+		case providerViewCatalogForm:
+			return m.handleCatalogProviderFormKey(msg)
 		case "new_provider":
 			return m.handleNewProviderKey(msg)
 		case "pipelines":
@@ -46,16 +54,18 @@ func (m Model) handleProvidersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleProvidersSearchKey(msg)
 	}
 
-	if m.providers.menuActive {
-		return m.handleProvidersMenuKey(msg)
-	}
-
 	switch m.providers.viewMode {
 	case "detail":
 		if m.providers.modelPickerActive && !m.providers.modelPickerManual {
 			return m.handleModelPickerKey(msg)
 		}
 		return m.handleProvidersDetailKey(msg)
+	case providerViewCatalog:
+		return m.handleProviderCatalogKey(msg)
+	case providerViewTiers:
+		return m.handleProviderTiersKey(msg)
+	case providerViewSkills:
+		return m.handleProviderSkillsKey(msg)
 	case "pipelines":
 		return m.handleProvidersPipelineKey(msg)
 	case "new_provider":
@@ -94,33 +104,44 @@ func (m Model) handleProvidersSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleProvidersDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
+		return nm, cmd
+	}
+	if m.providers.modelSearchActive {
+		return m.handleProviderModelSearchKey(msg)
+	}
 	switch msg.String() {
-	case "esc", "q":
+	case "esc", "left":
 		m.providers.viewMode = "list"
 		m.providers.detailProvider = ""
 		m.providers.modelEditIdx = 0
-	case "j", "down":
-		models := m.detailProviderModels()
+		m.providers.modelQuery = ""
+		m.providers.modelSearchActive = false
+	case "/", "ctrl+f":
+		m.providers.modelSearchActive = true
+		m.notice = "model search: type to filter, enter keeps result, esc clears"
+	case "down":
+		models := m.detailProviderVisibleModels()
 		if len(models) > 0 && m.providers.modelEditIdx+1 < len(models) {
 			m.providers.modelEditIdx++
 		}
-	case "k", "up":
-		models := m.detailProviderModels()
+	case "up":
+		models := m.detailProviderVisibleModels()
 		if len(models) > 0 && m.providers.modelEditIdx > 0 {
 			m.providers.modelEditIdx--
 		}
-	case "g", "home":
-		models := m.detailProviderModels()
+	case "home":
+		models := m.detailProviderVisibleModels()
 		if len(models) > 0 {
 			m.providers.modelEditIdx = 0
 		}
-	case "G", "end":
-		models := m.detailProviderModels()
+	case "end":
+		models := m.detailProviderVisibleModels()
 		if len(models) > 0 {
 			m.providers.modelEditIdx = len(models) - 1
 		}
 	case "pgdown":
-		models := m.detailProviderModels()
+		models := m.detailProviderVisibleModels()
 		if len(models) > 0 {
 			m.providers.modelEditIdx += 12
 			if m.providers.modelEditIdx >= len(models) {
@@ -128,22 +149,77 @@ func (m Model) handleProvidersDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "pgup":
-		models := m.detailProviderModels()
+		models := m.detailProviderVisibleModels()
 		if len(models) > 0 {
 			m.providers.modelEditIdx -= 12
 			if m.providers.modelEditIdx < 0 {
 				m.providers.modelEditIdx = 0
 			}
 		}
-	case "enter":
-		labels, actions, disabled, reasons := m.buildDetailMenu()
-		if len(labels) > 0 {
-			m.providers.menuActive = true
-			m.providers.menuLabels = labels
-			m.providers.menuActions = actions
-			m.providers.menuDisabled = disabled
-			m.providers.menuDisabledReasons = reasons
-			m.providers.menuIndex = 0
+	case "enter", "right", "space":
+		return m.openProviderDetailActionMenu(), nil
+	}
+	return m, nil
+}
+
+func (m Model) handleProviderModelSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	models := m.detailProviderVisibleModels()
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.providers.modelSearchActive = false
+		m.providers.modelQuery = ""
+		m.providers.modelEditIdx = 0
+		m.notice = "model search cleared"
+		return m, nil
+	case tea.KeyEnter:
+		m.providers.modelSearchActive = false
+		m.providers.modelEditIdx = clampScroll(m.providers.modelEditIdx, len(models))
+		return m, nil
+	case tea.KeyBackspace:
+		if r := []rune(m.providers.modelQuery); len(r) > 0 {
+			m.providers.modelQuery = string(r[:len(r)-1])
+		}
+		m.providers.modelEditIdx = clampScroll(m.providers.modelEditIdx, len(m.detailProviderVisibleModels()))
+		return m, nil
+	case tea.KeyRunes, tea.KeySpace:
+		if msg.Type == tea.KeySpace {
+			m.providers.modelQuery += " "
+		} else {
+			m.providers.modelQuery += string(msg.Runes)
+		}
+		m.providers.modelEditIdx = 0
+		return m, nil
+	}
+	switch msg.String() {
+	case "ctrl+u":
+		m.providers.modelQuery = ""
+		m.providers.modelEditIdx = 0
+		return m, nil
+	case "down":
+		if len(models) > 0 && m.providers.modelEditIdx+1 < len(models) {
+			m.providers.modelEditIdx++
+		}
+	case "up":
+		if len(models) > 0 && m.providers.modelEditIdx > 0 {
+			m.providers.modelEditIdx--
+		}
+	case "home":
+		m.providers.modelEditIdx = 0
+	case "end":
+		if len(models) > 0 {
+			m.providers.modelEditIdx = len(models) - 1
+		}
+	case "pgdown":
+		if len(models) > 0 {
+			m.providers.modelEditIdx += 12
+			if m.providers.modelEditIdx >= len(models) {
+				m.providers.modelEditIdx = len(models) - 1
+			}
+		}
+	case "pgup":
+		m.providers.modelEditIdx -= 12
+		if m.providers.modelEditIdx < 0 {
+			m.providers.modelEditIdx = 0
 		}
 	}
 	return m, nil

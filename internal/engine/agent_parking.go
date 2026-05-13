@@ -221,10 +221,10 @@ func (e *Engine) parkNativeToolLoop(
 	// NOT flip into the "parked, press Enter to resume" UI state — doing so
 	// flashes a misleading prompt the user might act on before the wrapper
 	// gets to the next round, producing the "No parked agent loop" race the
-	// 2026-04-18 screenshot caught. Only budget-exhausted parks under an
-	// enabled autonomous policy qualify; step-cap and shutdown parks always
-	// surface to the user.
-	autonomousPending := reason == ParkReasonBudgetExhausted && e.autonomousResumeEnabled()
+	// 2026-04-18 screenshot caught. Budget-exhausted and step-cap parks
+	// under an enabled autonomous policy qualify; shutdown and interrupted
+	// parks always surface to the user.
+	autonomousPending := (reason == ParkReasonBudgetExhausted || reason == ParkReasonStepCap) && e.autonomousResumeEnabled()
 	e.publishAgentLoopEvent("agent:loop:parked", map[string]any{
 		"step":               step,
 		"max_tool_steps":     lim.MaxSteps,

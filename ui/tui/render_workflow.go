@@ -21,9 +21,6 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/drive"
 )
 
-// renderWorkflowView delegates to the rebuilt 3-pane Workflow panel
-// in render_workflow_v2.go. The legacy 2-column shape lives in git
-// history; the V2 renderer is the active F5 panel.
 func (m Model) renderWorkflowView(width int) string {
 	return m.renderWorkflowViewV2(width)
 }

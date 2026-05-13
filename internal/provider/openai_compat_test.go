@@ -120,6 +120,7 @@ func TestNormalizeOpenAIBaseURL(t *testing.T) {
 		{"trailing slash trimmed", "deepseek", "https://api.deepseek.com/v1/", "https://api.deepseek.com/v1"},
 		{"kimi bare host gets /v1", "kimi", "https://api.moonshot.ai", "https://api.moonshot.ai/v1"},
 		{"zai compatible path preserved", "zai", "https://api.z.ai/api/paas/v4", "https://api.z.ai/api/paas/v4"},
+		{"zai full chat endpoint becomes base", "zai", "https://api.z.ai/api/coding/paas/v4/chat/completions", "https://api.z.ai/api/coding/paas/v4"},
 		{"alibaba compatible-mode preserved", "alibaba", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"},
 		{"unknown host left alone", "custom", "https://my-proxy.internal", "https://my-proxy.internal"},
 		{"empty stays empty", "deepseek", "", ""},

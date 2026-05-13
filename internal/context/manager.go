@@ -81,14 +81,15 @@ type BuildOptions struct {
 }
 
 type PromptRuntime struct {
-	Provider    string
-	Model       string
-	ToolStyle   string
-	DefaultMode string
-	Cache       bool
-	LowLatency  bool
-	MaxContext  int
-	BestFor     []string
+	LearnedPatterns string // serialized learned patterns for context injection
+	Provider        string
+	Model           string
+	ToolStyle       string
+	DefaultMode     string
+	Cache           bool
+	LowLatency      bool
+	MaxContext      int
+	BestFor         []string
 	// ActiveSkills carries the resolved skill list from BuildSystemPromptBundle
 	// into the agent loop so executeToolWithLifecycle can consult Preferred/Allowed
 	// tool lists when enforcing skill-scoped tool policy.

@@ -41,8 +41,27 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 	if to <= 0 {
 		to = d.defaultTO
 	}
+	if h.disabledReason != "" {
+		return Report{
+			Event:    event,
+			Name:     h.name,
+			Command:  h.command,
+			ExitCode: -1,
+			Err:      fmt.Errorf("hook disabled: %s", h.disabledReason),
+		}
+	}
 	runCtx, cancel := context.WithTimeout(ctx, to)
 	defer cancel()
+
+	if hasDangerousHookArg(h.args) {
+		return Report{
+			Event:    event,
+			Name:     h.name,
+			Command:  h.command,
+			ExitCode: -1,
+			Err:      fmt.Errorf("hook blocked: argv contains shell metacharacters"),
+		}
+	}
 
 	cmd := hookCommand(runCtx, h)
 	// Strip secret-shaped env vars (ANTHROPIC_API_KEY, GITHUB_TOKEN,
@@ -102,6 +121,20 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 // hookCommand preserves the historical shell-wrapped command mode while also
 // supporting shell-free argv hooks (`command` + `args`) for payload-safe
 // dispatches that avoid shell metacharacter expansion entirely.
+// hasDangerousHookArg returns true when any element in h.args is a
+// shell metacharacter that would give an argv hook shell-like
+// interpretation of user-supplied input.
+func hasDangerousHookArg(args []string) bool {
+	for _, arg := range args {
+		if arg == "||" || arg == "&&" || arg == "|" || arg == ";" ||
+			strings.HasPrefix(arg, "$()") || strings.HasPrefix(arg, "${") ||
+			strings.HasPrefix(arg, "`") || strings.HasPrefix(arg, "<(") || strings.HasPrefix(arg, ">(") {
+			return true
+		}
+	}
+	return false
+}
+
 func hookCommand(ctx context.Context, h compiledHook) *exec.Cmd {
 	if !h.useShell {
 		return exec.CommandContext(ctx, h.command, h.args...)
@@ -120,6 +153,19 @@ func shellCommand(ctx context.Context, command string) *exec.Cmd {
 		return exec.CommandContext(ctx, "cmd.exe", "/C", command)
 	}
 	return exec.CommandContext(ctx, "sh", "-c", command)
+}
+
+func validateShellHookCommand(command string) error {
+	if len(command) > 8192 {
+		return fmt.Errorf("shell hook command too long (%d bytes)", len(command))
+	}
+	if strings.ContainsRune(command, '\x00') {
+		return fmt.Errorf("shell hook command contains NUL byte")
+	}
+	if strings.ContainsAny(command, "\r\n") {
+		return fmt.Errorf("shell hook command must be a single line; use command+args or a script file")
+	}
+	return nil
 }
 
 // hookEnv projects the Payload into DFMC_<KEY>=<value> env vars, always

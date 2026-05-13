@@ -8,6 +8,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
@@ -20,6 +21,7 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 	case "tool:result":
 		return m.handleToolResultEvent(payload)
 	case "tool:error":
+		toolName := payloadString(payload, "tool", payloadString(payload, "name", "tool"))
 		switch p := event.Payload.(type) {
 		case string:
 			line = "Tool error: " + strings.TrimSpace(p)
@@ -27,6 +29,14 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 			_ = p
 			line = "Tool error occurred."
 		}
+		now := time.Now()
+		m.pushToolCallLogEntry(toolCallLogEntry{
+			ToolName:   toolName,
+			Status:     "failed",
+			StartedAt:  now,
+			FinishedAt: now,
+			Error:      strings.TrimSpace(strings.TrimPrefix(line, "Tool error:")),
+		})
 	case "tool:timeout":
 		// Distinct line from tool:error so an operator scanning the feed
 		// sees the gate firing without having to read tool error text.
@@ -39,6 +49,14 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		} else {
 			line = fmt.Sprintf("Tool timeout: %s.", toolName)
 		}
+		now := time.Now()
+		m.pushToolCallLogEntry(toolCallLogEntry{
+			ToolName:   toolName,
+			Status:     "timeout",
+			StartedAt:  now,
+			FinishedAt: now,
+			Error:      line,
+		})
 	case "tool:denied":
 		// Approval gate or sub-agent allowlist refused this tool. Fires
 		// BEFORE the tool would have run — there's no chip to finalize,
@@ -73,6 +91,15 @@ func (m Model) handleToolEvent(eventType string, event engine.Event, payload map
 		} else {
 			line = fmt.Sprintf("Tool denied: %s — %s", toolName, truncateSingleLine(reason, 120))
 		}
+		now := time.Now()
+		m.pushToolCallLogEntry(toolCallLogEntry{
+			ToolName:   toolName,
+			Status:     "denied",
+			StartedAt:  now,
+			FinishedAt: now,
+			Reason:     reason,
+			Error:      detail,
+		})
 	case "tool:reasoning":
 		// Self-narration: backfill the most recent running chip for
 		// this tool with the model's `_reason` text. Fires AFTER

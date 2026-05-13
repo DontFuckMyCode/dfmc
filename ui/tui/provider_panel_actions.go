@@ -40,15 +40,169 @@ func (m *Model) addModelToProvider(provider, model string) {
 	if m.eng == nil || m.eng.Config == nil {
 		return
 	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return
+	}
 	prof, ok := m.eng.Config.Providers.Profiles[provider]
 	if !ok {
 		return
 	}
 	models := prof.AllModels()
-	prof.Models = append(models, model)
-	prof.Model = model
+	found := false
+	for _, existing := range models {
+		if strings.EqualFold(strings.TrimSpace(existing), model) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		models = append(models, model)
+	}
+	prof.Models = models
+	if strings.TrimSpace(prof.Model) == "" {
+		prof.Model = model
+	}
 	m.eng.Config.Providers.Profiles[provider] = prof
 	m.notice = fmt.Sprintf("added model %s to %s", model, provider)
+	path, err := m.persistProviderModelUserConfig(provider, prof.Model)
+	if err != nil {
+		m.notice += " (save failed: " + err.Error() + ")"
+	} else {
+		if m.eng != nil && strings.TrimSpace(m.eng.ProjectRoot) != "" {
+			if reloadErr := m.reloadEngineConfig(); reloadErr != nil {
+				m.notice += " (reload failed: " + reloadErr.Error() + ")"
+			}
+		}
+		m.notice += " - saved -> " + displayConfigPath(path)
+	}
+	*m = m.refreshProvidersRows()
+	*m = m.focusProviderRow(provider)
+}
+
+func (m Model) setProviderActiveModel(provider, model string) Model {
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if provider == "" || model == "" || m.eng == nil || m.eng.Config == nil {
+		return m
+	}
+	prof, ok := m.eng.Config.Providers.Profiles[provider]
+	if !ok {
+		m.notice = "provider not found"
+		return m
+	}
+	models := prof.AllModels()
+	found := false
+	for _, item := range models {
+		if strings.EqualFold(strings.TrimSpace(item), model) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		models = append(models, model)
+		prof.Models = models
+	}
+	prof.Model = model
+	prof.FallbackModels = removeModelFromList(prof.FallbackModels, model)
+	prof = applyCatalogModelLimits(prof, model)
+	m.eng.Config.Providers.Profiles[provider] = prof
+	m.eng.SetProviderModel(provider, model)
+	path, err := m.persistProviderModelUserConfig(provider, model)
+	if err != nil {
+		m.notice = "model saved in memory but persist failed: " + err.Error()
+	} else if m.eng != nil && strings.TrimSpace(m.eng.ProjectRoot) != "" {
+		if reloadErr := m.reloadEngineConfig(); reloadErr != nil {
+			m.notice = "model saved but reload failed: " + reloadErr.Error()
+		} else {
+			m.eng.SetProviderModel(provider, model)
+			m.notice = fmt.Sprintf("model saved -> %s", displayConfigPath(path))
+		}
+	} else {
+		m.eng.SetProviderModel(provider, model)
+		m.notice = fmt.Sprintf("model saved -> %s", displayConfigPath(path))
+	}
+	m = m.refreshProvidersRows()
+	m = m.focusProviderRow(provider)
+	m.status = m.eng.Status()
+	return m
+}
+
+func removeModelFromList(models []string, model string) []string {
+	model = strings.TrimSpace(model)
+	out := make([]string, 0, len(models))
+	for _, existing := range models {
+		existing = strings.TrimSpace(existing)
+		if existing == "" || strings.EqualFold(existing, model) {
+			continue
+		}
+		out = append(out, existing)
+	}
+	return out
+}
+
+func (m Model) toggleProviderFallbackModel(provider, model string) Model {
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if provider == "" || model == "" || m.eng == nil || m.eng.Config == nil {
+		return m
+	}
+	prof, ok := m.eng.Config.Providers.Profiles[provider]
+	if !ok {
+		m.notice = "provider not found"
+		return m
+	}
+	if strings.EqualFold(strings.TrimSpace(prof.Model), model) {
+		m.notice = "primary model cannot also be fallback"
+		return m
+	}
+	next := make([]string, 0, len(prof.FallbackModels)+1)
+	found := false
+	for _, existing := range prof.FallbackModels {
+		existing = strings.TrimSpace(existing)
+		if existing == "" {
+			continue
+		}
+		if strings.EqualFold(existing, model) {
+			found = true
+			continue
+		}
+		next = append(next, existing)
+	}
+	if !found {
+		next = append(next, model)
+	}
+	prof.FallbackModels = next
+	models := prof.AllModels()
+	known := false
+	for _, existing := range models {
+		if strings.EqualFold(strings.TrimSpace(existing), model) {
+			known = true
+			break
+		}
+	}
+	if !known {
+		prof.Models = append(models, model)
+	}
+	m.eng.Config.Providers.Profiles[provider] = prof
+	path, err := m.persistProviderModelUserConfig(provider, prof.Model)
+	if err == nil && m.eng != nil && strings.TrimSpace(m.eng.ProjectRoot) != "" {
+		if reloadErr := m.reloadEngineConfig(); reloadErr != nil {
+			err = reloadErr
+		}
+	}
+	switch {
+	case err != nil:
+		m.notice = "model fallback save failed: " + err.Error()
+	case found:
+		m.notice = fmt.Sprintf("removed fallback model %s -> %s", model, displayConfigPath(path))
+	default:
+		m.notice = fmt.Sprintf("added fallback model %s -> %s", model, displayConfigPath(path))
+	}
+	m = m.refreshProvidersRows()
+	m = m.focusProviderRow(provider)
+	m.status = m.eng.Status()
+	return m
 }
 
 // savePipelineDraft + deletePipeline live in
@@ -77,6 +231,7 @@ func (m Model) cycleProviderModel(name string) Model {
 	}
 	idx = (idx + 1) % len(models)
 	prof.Model = models[idx]
+	prof = applyCatalogModelLimits(prof, prof.Model)
 	m.eng.Config.Providers.Profiles[name] = prof
 	path, err := m.persistProviderModelUserConfig(name, prof.Model)
 	switch {

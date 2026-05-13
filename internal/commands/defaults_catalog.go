@@ -251,7 +251,7 @@ func defaultCommands() []Command {
 				{Name: "show", Summary: "Print the merged effective config."},
 				{Name: "edit", Summary: "Open the project config in $EDITOR."},
 				{Name: "set", Summary: "Set a single key (dotted path)."},
-				{Name: "sync-models", Summary: "Rewrite providers.profiles.* from models.dev."},
+				{Name: "sync-models", Summary: "Sync model profiles from models.dev."},
 			},
 		},
 		{

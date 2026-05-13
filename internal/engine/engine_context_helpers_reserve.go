@@ -18,11 +18,15 @@ import (
 	"math"
 	"strings"
 
+	"github.com/dontfuckmycode/dfmc/internal/config"
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 	"github.com/dontfuckmycode/dfmc/internal/tokens"
 )
 
 func (e *Engine) providerMaxContext() int {
+	if max := e.configuredProviderMaxContext(e.provider(), e.model()); max > 0 {
+		return max
+	}
 	if e.Providers == nil {
 		return 0
 	}
@@ -38,8 +42,12 @@ func (e *Engine) providerMaxContextForRuntime(runtime ctxmgr.PromptRuntime) int 
 		return runtime.MaxContext
 	}
 	providerName := strings.TrimSpace(runtime.Provider)
+	modelName := strings.TrimSpace(runtime.Model)
 	if providerName == "" || strings.EqualFold(providerName, e.provider()) {
 		return e.providerMaxContext()
+	}
+	if max := e.configuredProviderMaxContext(providerName, modelName); max > 0 {
+		return max
 	}
 	if e.Providers == nil {
 		return 0
@@ -52,6 +60,79 @@ func (e *Engine) providerMaxContextForRuntime(runtime ctxmgr.PromptRuntime) int 
 		return max
 	}
 	return p.Hints().MaxContext
+}
+
+func (e *Engine) configuredProviderMaxContext(providerName, modelName string) int {
+	if e == nil || e.Config == nil {
+		return 0
+	}
+	providerName = strings.TrimSpace(providerName)
+	if providerName == "" {
+		return 0
+	}
+	profile, ok := e.Config.Providers.Profiles[providerName]
+	if !ok {
+		return 0
+	}
+	modelName = strings.TrimSpace(modelName)
+	if profile.MaxContext > 0 && (modelName == "" || strings.EqualFold(strings.TrimSpace(profile.Model), modelName)) {
+		if !profileContextLooksLikeOutputLimit(profile) {
+			return profile.MaxContext
+		}
+		if catalogMax := configuredProviderCatalogMaxContext(profile, modelName); catalogMax > 0 {
+			return catalogMax
+		}
+		return profile.MaxContext
+	}
+	if catalogMax := configuredProviderCatalogMaxContext(profile, modelName); catalogMax > 0 {
+		return catalogMax
+	}
+	return 0
+}
+
+func profileContextLooksLikeOutputLimit(profile config.ModelConfig) bool {
+	return strings.TrimSpace(profile.CatalogID) != "" &&
+		profile.MaxContext > 0 &&
+		profile.MaxTokens > 0 &&
+		profile.MaxContext == profile.MaxTokens
+}
+
+func configuredProviderCatalogMaxContext(profile config.ModelConfig, modelName string) int {
+	catalogID := strings.TrimSpace(profile.CatalogID)
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		modelName = strings.TrimSpace(profile.Model)
+	}
+	if catalogID == "" || modelName == "" {
+		return 0
+	}
+	catalog, err := config.LoadModelsDevCatalogCached(config.ModelsDevCachePath())
+	if err != nil {
+		return 0
+	}
+	provider, ok := catalog[catalogID]
+	if !ok {
+		for key, candidate := range catalog {
+			if strings.EqualFold(strings.TrimSpace(key), catalogID) || strings.EqualFold(strings.TrimSpace(candidate.ID), catalogID) {
+				provider = candidate
+				ok = true
+				break
+			}
+		}
+	}
+	if !ok {
+		return 0
+	}
+	for key, model := range provider.Models {
+		id := strings.TrimSpace(model.ID)
+		if id == "" {
+			id = strings.TrimSpace(key)
+		}
+		if strings.EqualFold(id, modelName) && model.Limit.Context > 0 {
+			return model.Limit.Context
+		}
+	}
+	return 0
 }
 
 func normalizeContextCompression(v string) string {

@@ -112,9 +112,15 @@ func autoResumeBadge(vm runtimeViewModel) string {
 }
 
 func runtimeWindowUsage(vm runtimeViewModel) (int, int) {
+	if vm.ContextPayload.WindowTokens > 0 {
+		if vm.ContextPayload.MaxContext <= 0 {
+			return vm.ContextPayload.WindowTokens, -1
+		}
+		return vm.ContextPayload.WindowTokens, vm.ContextPayload.FreeTokens
+	}
 	used := vm.ContextWindowTokens
 	if used <= 0 {
-		used = vm.ContextSystemTokens + vm.ContextHistoryTokens + vm.ContextTokens + vm.ContextResponseTokens + vm.ContextToolTokens
+		used = vm.ContextSystemTokens + vm.ContextHistoryTokens + vm.ContextTokens
 	}
 	if used <= 0 {
 		used = vm.ContextTokens

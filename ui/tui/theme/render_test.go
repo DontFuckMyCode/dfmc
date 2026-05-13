@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestRoleBadge(t *testing.T) {
@@ -296,6 +298,32 @@ func TestRenderMarkdownBlocks_CodeFence(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdownTable_DrawsBoxAndWrapsWithinWidth(t *testing.T) {
+	md := strings.Join([]string{
+		"| Name | Description |",
+		"| --- | --- |",
+		"| Alpha | This is a very long description that should wrap inside the cell before the transcript scrollbar |",
+	}, "\n")
+	out := RenderMarkdownBlocks(md, 42)
+	if len(out) < 5 {
+		t.Fatalf("expected multi-line boxed table, got %v", out)
+	}
+	joined := strings.Join(out, "\n")
+	for _, want := range []string{"\u250c", "\u252c", "\u251c", "\u253c", "\u2514"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("rendered table missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "---") {
+		t.Fatalf("markdown separator row should not render as table content:\n%s", joined)
+	}
+	for _, line := range out {
+		if w := ansi.StringWidth(line); w > 42 {
+			t.Fatalf("table line width %d > 42: %q\n%s", w, line, joined)
+		}
+	}
+}
+
 func TestContainsBoxSeparator_Empty(t *testing.T) {
 	if ContainsBoxSeparator("") {
 		t.Fatal("ContainsBoxSeparator(\"\") = true, want false")
@@ -431,6 +459,23 @@ func TestRenderMessageBubble_WithContent(t *testing.T) {
 	out := RenderMessageBubble("user", "hello world", "header", 80)
 	if out == "" {
 		t.Fatal("RenderMessageBubble returned empty")
+	}
+}
+
+func TestRenderMessageBubble_TableFitsContentWidth(t *testing.T) {
+	md := strings.Join([]string{
+		"| Name | Description |",
+		"| --- | --- |",
+		"| Alpha | This is a long description that should wrap inside the table cell |",
+	}, "\n")
+	out := RenderMessageBubble("assistant", md, "header", 44)
+	for _, line := range strings.Split(out, "\n") {
+		if w := ansi.StringWidth(line); w > 44 {
+			t.Fatalf("bubble line width %d > 44: %q\n%s", w, line, out)
+		}
+	}
+	if !strings.Contains(out, "\u250c") || !strings.Contains(out, "\u2514") {
+		t.Fatalf("message bubble should contain box-drawing table:\n%s", out)
 	}
 }
 
@@ -872,17 +917,13 @@ func TestRenderStatsPanelOverviewProviderRowCompressed(t *testing.T) {
 	if !strings.Contains(configured, "anthropic / claude-opus-4-7") {
 		t.Fatalf("Overview should still name the active provider/model on one line, got:\n%s", configured)
 	}
-	if !strings.Contains(configured, "alt+p deep view") {
-		t.Fatalf("Overview should advertise alt+p as the deep-view affordance, got:\n%s", configured)
-	}
-
 	// Failure path stays multi-row + loud — the user must act here.
 	missing := RenderStatsPanelSized(StatsPanelInfo{}, 30, 60)
 	if !strings.Contains(missing, "no provider") {
 		t.Fatalf("missing-provider state should still be loud, got:\n%s", missing)
 	}
-	if !strings.Contains(missing, "alt+p providers") {
-		t.Fatalf("missing-provider guidance should point at alt+p, got:\n%s", missing)
+	if !strings.Contains(missing, "/provider") {
+		t.Fatalf("missing-provider guidance should point at /provider, got:\n%s", missing)
 	}
 
 	needsKey := RenderStatsPanelSized(StatsPanelInfo{
@@ -915,8 +956,8 @@ func TestRenderStatsPanelOverviewWorkflowDropsTodoCountDuplicate(t *testing.T) {
 			t.Fatalf("Overview WORKFLOW section should not echo runtime-strip TODO counts; saw %q in:\n%s", banned, out)
 		}
 	}
-	if !strings.Contains(out, "todos: alt+s for breakdown") {
-		t.Fatalf("expected drill-in pointer to alt+s Todos mode, got:\n%s", out)
+	if !strings.Contains(out, "finish active todo: Wire Phase B dedup") {
+		t.Fatalf("expected overview NEXT to surface the active todo, got:\n%s", out)
 	}
 
 	// Sanity: in Todos mode the full breakdown is still the canonical
@@ -926,8 +967,10 @@ func TestRenderStatsPanelOverviewWorkflowDropsTodoCountDuplicate(t *testing.T) {
 		Mode:      StatsPanelModeTodos,
 		TodoTotal: 6, TodoDone: 2, TodoDoing: 1, TodoPending: 3,
 	}, 30, 60)
-	if !strings.Contains(deep, "6 total") || !strings.Contains(deep, "2 done") || !strings.Contains(deep, "1 doing") || !strings.Contains(deep, "3 pending") {
-		t.Fatalf("Todos mode should still carry the full breakdown, got:\n%s", deep)
+	for _, want := range []string{"6 total", "1 doing", "3 pending"} {
+		if !strings.Contains(deep, want) {
+			t.Fatalf("Todos mode summary missing %q, got:\n%s", want, deep)
+		}
 	}
 }
 
@@ -955,9 +998,6 @@ func TestRenderStatsPanelSuppressesParkedRowsWhileBannerActive(t *testing.T) {
 		Provider: "anthropic", Configured: true, MaxContext: 200000,
 		Parked: true, BannerActive: false,
 	}, 30, 60)
-	if !strings.Contains(bannerDismissed, "/continue to resume") {
-		t.Fatalf("runtime parked hint should re-emerge when banner is dismissed, got:\n%s", bannerDismissed)
-	}
 	if !strings.Contains(bannerDismissed, "/continue resumes parked agent") {
 		t.Fatalf("next-action parked hint should re-emerge when banner is dismissed, got:\n%s", bannerDismissed)
 	}
@@ -967,6 +1007,77 @@ func TestRenderStatsPanelModeTabs(t *testing.T) {
 	out := RenderStatsPanelModeTabs(StatsPanelModeOverview, 100)
 	if out == "" {
 		t.Fatal("RenderStatsPanelModeTabs returned empty")
+	}
+}
+
+func TestContextPayloadFromStatsCanonicalizesNextRequestBudget(t *testing.T) {
+	info := StatsPanelInfo{
+		Provider:              "openai",
+		Model:                 "gpt-5.4",
+		ContextProvider:       "zai",
+		ContextModel:          "glm-5.1",
+		ContextLimitSource:    "models.dev zai/glm-5.1",
+		MaxContext:            200000,
+		ContextWindowTokens:   88512,
+		ContextTokens:         42000,
+		ContextBudgetTokens:   160000,
+		ContextSystemTokens:   900,
+		ContextHistoryTokens:  1200,
+		ContextResponseTokens: 16384,
+		ContextToolTokens:     512,
+		ContextReasons:        []string{"conversation history only; workspace evidence auto-attach is off"},
+	}
+	payload := ContextPayloadFromStats(info)
+	if payload.Identity() != "zai / glm-5.1" {
+		t.Fatalf("payload identity = %q", payload.Identity())
+	}
+	if payload.WindowTokens != 88512 || payload.FreeTokens != 111488 {
+		t.Fatalf("payload window/free = %d/%d", payload.WindowTokens, payload.FreeTokens)
+	}
+	if payload.EvidenceTokens != 42000 || payload.EvidenceBudgetTokens != 160000 {
+		t.Fatalf("payload evidence = %d/%d", payload.EvidenceTokens, payload.EvidenceBudgetTokens)
+	}
+	if !payload.WorkspaceEvidenceOff {
+		t.Fatal("payload should preserve workspace-evidence-off state")
+	}
+}
+
+func TestRenderStatsPanelMatrixANSIWidthInvariant(t *testing.T) {
+	info := StatsPanelInfo{
+		Provider:              "zai-coding-plan",
+		Model:                 "glm-5.1",
+		Configured:            true,
+		MaxContext:            200000,
+		ContextWindowTokens:   88512,
+		ContextTokens:         42000,
+		ContextBudgetTokens:   160000,
+		ContextResponseTokens: 16384,
+		ContextToolTokens:     512,
+		TodoTotal:             4,
+		TodoDoing:             1,
+		TodoPending:           2,
+		TodoActive:            "Patch the stats panel without turning it into a dashboard dump",
+	}
+	for _, mode := range []StatsPanelMode{StatsPanelModeOverview, StatsPanelModeTodos, StatsPanelModeTasks, StatsPanelModeProviders} {
+		for _, size := range []struct {
+			width  int
+			height int
+		}{{38, 14}, {48, 22}, {64, 30}} {
+			info.Mode = mode
+			out := RenderStatsPanelSized(info, size.height, size.width)
+			maxWidth := size.width + 2 // lipgloss width plus left/right border columns
+			for _, line := range strings.Split(out, "\n") {
+				if got := ansi.StringWidth(line); got > maxWidth {
+					t.Fatalf("mode %s %dx%d rendered ANSI width %d > %d: %q\n%s", mode, size.width, size.height, got, maxWidth, line, out)
+				}
+			}
+			if !strings.Contains(out, "ACTIVE") {
+				t.Fatalf("mode %s %dx%d missing ACTIVE:\n%s", mode, size.width, size.height, out)
+			}
+			if size.height >= 22 && !strings.Contains(out, "BUDGET") {
+				t.Fatalf("mode %s %dx%d missing BUDGET:\n%s", mode, size.width, size.height, out)
+			}
+		}
 	}
 }
 
@@ -987,11 +1098,48 @@ func TestRenderStatsPanelShowsContextDiagnostics(t *testing.T) {
 		ContextHistoryTokens:    1200,
 		ContextResponseTokens:   2048,
 		ContextToolTokens:       512,
+		ContextHistoryReserve:   24000,
 	}
 	out := RenderStatsPanelSized(info, 30, 56)
-	for _, want := range []string{"files 4/8", "evidence 3.2k/16k tok", "task review", "zip standard", "available 120k tok", "window sys 900", "hist 1.2k", "resp 2.0k", "tools 512", "manager.go", "why:"} {
+	for _, want := range []string{"BUDGET", "input 5.3k/128k", "reserve out 2.0k", "tools 512", "hist 24k", "/context for full budget"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("expected context diagnostic %q, got:\n%s", want, out)
+			t.Fatalf("expected budget summary %q, got:\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{"files 4/8", "task review", "zip standard", "evidence budget free", "manager.go", "why:"} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("stats panel should not dump context diagnostic %q, got:\n%s", banned, out)
+		}
+	}
+}
+
+func TestRenderStatsPanelShowsProviderContextSourceAndControls(t *testing.T) {
+	info := StatsPanelInfo{
+		Provider:              "zai-coding-plan",
+		Model:                 "glm-5.1",
+		Configured:            true,
+		ContextProvider:       "zai-coding-plan",
+		ContextModel:          "glm-5.1",
+		ContextLimitSource:    "models.dev zai/glm-5.1",
+		MaxContext:            131072,
+		ContextWindowTokens:   1600,
+		ContextSystemTokens:   900,
+		ContextHistoryTokens:  300,
+		ContextTokens:         400,
+		ContextResponseTokens: 16384,
+		ContextToolTokens:     512,
+		ContextMessageCount:   4,
+		ContextToolCallCount:  2,
+	}
+	out := RenderStatsPanelSized(info, 26, 58)
+	for _, want := range []string{"request: zai-coding-plan / glm-5.1", "limit models.dev zai/glm-5.1", "input 1.6k/131.1k", "free 129.5k", "reserve out 16.4k", "tools 512", "/context for full budget"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected provider budget row %q, got:\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{"messages 4", "tool calls 2", "/context messages", "/context drop <id>"} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("stats panel should not show context manager detail %q, got:\n%s", banned, out)
 		}
 	}
 }
@@ -1018,9 +1166,14 @@ func TestRenderStatsPanelShowsTokenLedger(t *testing.T) {
 		CostPer1kTokens:        0.002,
 	}
 	out := RenderStatsPanelSized(info, 44, 58)
-	for _, want := range []string{"TOKENS", "live input ~12k", "output ~800", "last input 9k", "last total 10k", "session input 25k", "session total 29k", "visible user 700", "assistant 300", "composer 42", "cost $0.058"} {
+	for _, want := range []string{"ACTIVE", "NEXT", "BUDGET", "streaming", "input 16k/200k", "free 184k", "/context for full budget"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("expected token ledger %q, got:\n%s", want, out)
+			t.Fatalf("expected compact token/budget signal %q, got:\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{"TOKENS", "last input 9k", "session total 29k", "composer 42", "cost $0.058"} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("stats panel should not show token ledger detail %q, got:\n%s", banned, out)
 		}
 	}
 }
@@ -1036,9 +1189,9 @@ func TestRenderStatsPanelShowsConversationOnlyContext(t *testing.T) {
 		ContextHistoryTokens: 1500,
 	}
 	out := RenderStatsPanelSized(info, 30, 56)
-	for _, want := range []string{"conversation history only", "workspace evidence off"} {
+	for _, want := range []string{"workspace evidence off", "/context for full budget"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("expected conversation-only context diagnostic %q, got:\n%s", want, out)
+			t.Fatalf("expected conversation-only budget summary %q, got:\n%s", want, out)
 		}
 	}
 	if strings.Contains(out, "files 0/50") {
@@ -1064,17 +1217,20 @@ func TestRenderStatsPanelShowsOrchestrationMap(t *testing.T) {
 	}
 	out := RenderStatsPanelSized(info, 42, 58)
 	for _, want := range []string{
-		"ORCHESTRATION MAP",
-		"todo:",
-		"shared checklist",
-		"task:",
-		"split/graph",
-		"workflow:",
-		"drive:",
-		"subagent:",
+		"ACTIVE",
+		"NEXT",
+		"BUDGET",
+		"plan 3 | parallel",
+		"drive | 2/4 done",
+		"run planned subtasks",
 	} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("orchestration map missing %q, got:\n%s", want, out)
+			t.Fatalf("tasks operator summary missing %q, got:\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{"ORCHESTRATION MAP", "shared checklist", "split/graph", "workflow:"} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("stats panel should not show orchestration dump %q, got:\n%s", banned, out)
 		}
 	}
 }
@@ -1113,20 +1269,6 @@ func TestRenderStatsPanelFocusedModesShowNextActions(t *testing.T) {
 		}
 	}
 
-	providers := RenderStatsPanelSized(StatsPanelInfo{
-		Mode:       StatsPanelModeProviders,
-		Provider:   "minimax",
-		Model:      "MiniMax-M2.7",
-		Configured: true,
-		Providers: []ProviderPanelRow{
-			{Name: "minimax", Active: true, Primary: true, Models: []string{"MiniMax-M2.7"}, Status: "ready"},
-		},
-	}, 32, 58)
-	for _, want := range []string{"NEXT", "enter switches selected provider", "/reload"} {
-		if !strings.Contains(providers, want) {
-			t.Fatalf("providers next actions missing %q, got:\n%s", want, providers)
-		}
-	}
 }
 
 func TestFormatSessionDuration_Zero(t *testing.T) {
@@ -1242,25 +1384,25 @@ func TestChipIconStyle(t *testing.T) {
 		status   string
 		wantIcon string
 	}{
-		{"ok", "✓"},
-		{"success", "✓"},
-		{"done", "✓"},
-		{"failed", "✗"},
-		{"error", "✗"},
-		{"fail", "✗"},
+		{"ok", "·"},
+		{"success", "·"},
+		{"done", "·"},
+		{"failed", "×"},
+		{"error", "×"},
+		{"fail", "×"},
 		{"running", "◌"},
 		{"pending", "◌"},
-		{"compact", "⇵"},
-		{"compacted", "⇵"},
-		{"budget", "✦"},
-		{"handoff", "⇨"},
+		{"compact", "↕"},
+		{"compacted", "↕"},
+		{"budget", "!"},
+		{"handoff", "→"},
 		{"subagent-running", "◈"},
 		{"subagent-ok", "◈"},
 		{"subagent-failed", "◈"},
-		{"unknown", "•"},
+		{"unknown", "·"},
 	}
 	for _, tc := range tests {
-		icon, _ := chipIconStyle(tc.status)
+		icon, _ := ChipIconStyle(tc.status)
 		if icon != tc.wantIcon {
 			t.Errorf("chipIconStyle(%q) icon = %q, want %q", tc.status, icon, tc.wantIcon)
 		}

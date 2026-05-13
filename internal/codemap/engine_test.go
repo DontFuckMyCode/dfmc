@@ -42,7 +42,7 @@ def hello():
 		t.Fatalf("write py file: %v", err)
 	}
 
-	engine := New(ast.New())
+	engine := New(ast.New(), nil)
 	if err := engine.BuildFromFiles(context.Background(), []string{goPath}); err != nil {
 		t.Fatalf("build go files: %v", err)
 	}
@@ -114,7 +114,7 @@ func (t Type%d) String() string {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		engine := New(ast.NewWithCacheSize(0))
+		engine := New(ast.NewWithCacheSize(0), nil)
 		if err := engine.BuildFromFiles(context.Background(), paths); err != nil {
 			b.Fatalf("build files: %v", err)
 		}
@@ -141,7 +141,7 @@ func TestBuildFromFilesRespectsContextCancellation(t *testing.T) {
 		paths = append(paths, p)
 	}
 
-	engine := New(ast.NewWithCacheSize(0))
+	engine := New(ast.NewWithCacheSize(0), nil)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	progressCalls := 0
@@ -194,7 +194,7 @@ func Hello() {}
 		t.Fatalf("write file: %v", err)
 	}
 
-	engine := New(ast.New())
+	engine := New(ast.New(), nil)
 	if err := engine.BuildFromFiles(context.Background(), []string{goPath}); err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -235,7 +235,7 @@ func Hello() {}
 		t.Fatalf("write file: %v", err)
 	}
 
-	engine := New(ast.New())
+	engine := New(ast.New(), nil)
 	if err := engine.BuildFromFiles(context.Background(), []string{goPath}); err != nil {
 		t.Fatalf("build: %v", err)
 	}

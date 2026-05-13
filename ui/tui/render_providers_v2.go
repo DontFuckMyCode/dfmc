@@ -1,25 +1,8 @@
-// render_providers_v2.go — F4 Providers panel rebuilt as a clean
-// 3-pane explorer matching F2/F3/F4. The legacy provider list (each
-// row crammed 9+ fields onto one line) is the worst-readability tab
-// in the TUI; this rewrite reduces each row to "▶ name [STATUS]" and
-// pushes the full metadata into a per-selection DETAIL card on the
-// right.
-//
-// Layout strategy:
-//   ≥120 cols → 3 panes (28% list · 44% detail · 28% routing/actions)
-//   80-119    → 2 panes (35% list · 65% detail) + inline footer
-//   <80       → 1 pane stack
-//
-// Right column cards (wide):
-//   DETAILS    — model, protocol, max-context, tool-style, best-for
-//   ROUTING    — primary chip + fallback chain (numbered)
-//   ACTIONS    — every keyboard surface (set primary / fallback /
-//                cycle model / save / new / refresh / search / detail)
-
 package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -29,32 +12,30 @@ import (
 
 func providerEnvVarLookup(name string) string { return config.EnvVarForProvider(name) }
 
-// renderProviderListViewV2 is the rebuilt list view. Called from
-// renderProvidersViewInner when m.providers.viewMode is the default.
 func (m Model) renderProviderListViewV2(width int) string {
 	width = clampInt(width, 24, 1000)
 	height := 24
 
 	pal := paletteForTab("Providers", false)
-
 	threePane := width >= 120
 	twoPane := !threePane && width >= 80
 	listW, detailW, metaW := providersPanelWidths(width, threePane, twoPane)
 
-	rows := filteredProviderRows(m.providers.rows, m.providers.query)
-
+	rows := m.visibleProviderRows()
 	banner := m.providersTopBanner(width)
+	if len(rows) == 0 && strings.TrimSpace(m.providers.query) == "" {
+		return banner + "\n" + m.renderProviderSetupDashboard(width, height, pal, threePane, twoPane)
+	}
 	listBlock := m.renderProvidersListPane(listW, height, pal, rows)
 	detailBlock := m.renderProvidersDetailPane(detailW, height, pal, rows)
+
 	var body string
 	if threePane {
 		metaBlock := m.renderProvidersMetaPane(metaW, height, pal, rows)
-		body = lipgloss.JoinHorizontal(lipgloss.Top,
-			listBlock, "  ", detailBlock, "  ", metaBlock)
+		body = lipgloss.JoinHorizontal(lipgloss.Top, listBlock, "  ", detailBlock, "  ", metaBlock)
 	} else if twoPane {
 		footer := m.renderProvidersMetaInline(width, rows)
-		grid := lipgloss.JoinHorizontal(lipgloss.Top, listBlock, "  ", detailBlock)
-		body = grid + "\n" + footer
+		body = lipgloss.JoinHorizontal(lipgloss.Top, listBlock, "  ", detailBlock) + "\n" + footer
 	} else {
 		body = listBlock + "\n" + detailBlock
 	}
@@ -76,10 +57,106 @@ func providersPanelWidths(total int, threePane, twoPane bool) (listW, detailW, m
 	return total, total, 0
 }
 
-// --- LIST PANE ---------------------------------------------------------------
+func (m Model) renderProviderSetupDashboard(width, height int, pal tabPaletteEntry, threePane, twoPane bool) string {
+	listW, detailW, metaW := providersPanelWidths(width, threePane, twoPane)
+	actions := m.renderProviderSetupActionsPane(listW, height, pal)
+	cache := m.renderProviderSetupCachePane(detailW, height)
+	if threePane {
+		routes := m.renderProviderSetupRoutesPane(metaW, height, pal)
+		return lipgloss.JoinHorizontal(lipgloss.Top, actions, "  ", cache, "  ", routes)
+	}
+	if twoPane {
+		return lipgloss.JoinHorizontal(lipgloss.Top, actions, "  ", cache) + "\n" +
+			m.renderProvidersMetaInline(width, nil)
+	}
+	return actions + "\n" + cache
+}
+
+func (m Model) renderProviderSetupActionsPane(width, height int, pal tabPaletteEntry) string {
+	lines := []string{
+		titleStyle.Bold(true).Render("SETUP"),
+		renderDivider(width - 2),
+		"",
+		accentStyle.Render("> Enter") + subtleStyle.Render(" open actions"),
+		"  " + subtleStyle.Render("1. Sync models.dev catalog"),
+		"  " + subtleStyle.Render("2. Add provider from models.dev catalog"),
+		"  " + subtleStyle.Render("3. Paste key in the provider form"),
+		"  " + subtleStyle.Render("4. Assign models to tiers"),
+		"",
+		sectionTitleStyle.Render("Available Actions"),
+		"  " + okStyle.Render("Sync models.dev"),
+		"  " + okStyle.Render("Add provider from models.dev"),
+		"  " + okStyle.Render("Tiers"),
+		"  " + okStyle.Render("Skill model routes"),
+		"  " + warnStyle.Render("Reset all keys"),
+	}
+	out := splitLines(strings.Join(lines, "\n"))
+	if len(out) > height {
+		out = out[:height]
+	}
+	_ = pal
+	return lipgloss.NewStyle().Width(width).Render(strings.Join(out, "\n"))
+}
+
+func (m Model) renderProviderSetupCachePane(width, height int) string {
+	path := config.ModelsDevCachePath()
+	status := warnStyle.Render("missing")
+	detail := "Run Sync models.dev from actions."
+	if st, err := os.Stat(path); err == nil {
+		status = okStyle.Render("ready")
+		detail = fmt.Sprintf("%s · %s", displayConfigPath(path), formatRelativeTime(st.ModTime()))
+	}
+	lines := []string{
+		titleStyle.Bold(true).Render("CATALOG"),
+		renderDivider(width - 2),
+		"",
+		"  " + subtleStyle.Render("models.dev cache: ") + status,
+		"  " + subtleStyle.Render(truncateSingleLine(detail, max(width-4, 8))),
+		"",
+		sectionTitleStyle.Render("My Providers"),
+		"  " + warnStyle.Render("No keyed providers yet."),
+		"  " + subtleStyle.Render("Default providers are hidden here on purpose."),
+		"  " + subtleStyle.Render("Only your own saved keys appear in this list."),
+		"",
+		sectionTitleStyle.Render("Storage"),
+		"  " + subtleStyle.Render("config: ~/.dfmc/config.yaml"),
+		"  " + subtleStyle.Render("master: ~/.dfmc/secrets/master.key"),
+	}
+	out := splitLines(strings.Join(lines, "\n"))
+	if len(out) > height {
+		out = out[:height]
+	}
+	return lipgloss.NewStyle().Width(width).Render(strings.Join(out, "\n"))
+}
+
+func (m Model) renderProviderSetupRoutesPane(width, height int, pal tabPaletteEntry) string {
+	lines := []string{
+		titleStyle.Bold(true).Render("ROUTES"),
+		renderDivider(width - 2),
+		"",
+		sectionTitleStyle.Render("Tiers"),
+	}
+	for _, tier := range providerTierNames {
+		lines = append(lines, "  "+accentStyle.Render(tier)+subtleStyle.Render("  primary + 3 fallbacks"))
+	}
+	lines = append(lines,
+		"",
+		sectionTitleStyle.Render("Skills"),
+		"  "+subtleStyle.Render("Each skill can use a tier or a direct keyed model."),
+		"",
+		sectionTitleStyle.Render("Keys"),
+		"  "+subtleStyle.Render("Paste is plain text in the form; masking happens after input."),
+	)
+	out := splitLines(strings.Join(lines, "\n"))
+	if len(out) > height {
+		out = out[:height]
+	}
+	_ = pal
+	return lipgloss.NewStyle().Width(width).Render(strings.Join(out, "\n"))
+}
 
 func (m Model) renderProvidersListPane(width, height int, pal tabPaletteEntry, rows []providerRow) string {
-	header := titleStyle.Bold(true).Render("⚑ PROVIDERS")
+	header := titleStyle.Bold(true).Render("MY PROVIDERS")
 	count := len(rows)
 	chip := okStyle
 	if count == 0 {
@@ -87,10 +164,8 @@ func (m Model) renderProvidersListPane(width, height int, pal tabPaletteEntry, r
 	}
 	chipRendered := chip.Render(fmt.Sprintf(" %d ", count))
 	gap := max(width-lipgloss.Width(header)-lipgloss.Width(chipRendered)-2, 1)
-	headerLine := header + strings.Repeat(" ", gap) + chipRendered
-
 	lines := []string{
-		headerLine,
+		header + strings.Repeat(" ", gap) + chipRendered,
 		renderDivider(width - 2),
 		"",
 	}
@@ -99,18 +174,14 @@ func (m Model) renderProvidersListPane(width, height int, pal tabPaletteEntry, r
 		if m.providers.query != "" {
 			lines = append(lines,
 				subtleStyle.Render("No providers match your search."),
-				subtleStyle.Render("Press c to clear the query, or / to edit it."),
+				subtleStyle.Render("Esc clears search; Enter opens actions."),
 			)
 		} else {
 			lines = append(lines,
 				warnStyle.Render("No providers registered"),
 				"",
-				subtleStyle.Render("Add a new provider with → menu."),
-				subtleStyle.Render("Or /provider add."),
-				subtleStyle.Render("Or set ANTHROPIC_API_KEY / OPENAI_API_KEY in env."),
-				"",
-				subtleStyle.Render("Without one, DFMC falls back to the offline placeholder — chat works but every reply is canned."),
-				subtleStyle.Render("Tip: another dfmc process holding the store lock can also block providers — close it first."),
+				subtleStyle.Render("Open actions with Enter, sync models.dev, then add a provider from that catalog."),
+				subtleStyle.Render("Only providers with saved keys show here; keys are stored under ~/.dfmc."),
 			)
 		}
 		return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
@@ -122,32 +193,23 @@ func (m Model) renderProvidersListPane(width, height int, pal tabPaletteEntry, r
 	for i := start; i < end; i++ {
 		lines = append(lines, m.renderProviderListRowV2(rows[i], i, scroll, width, pal))
 	}
-	lines = append(lines, "",
-		subtleStyle.Render(fmt.Sprintf("%d / %d providers", scroll+1, len(rows))))
+	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf("%d / %d providers", scroll+1, len(rows))))
 	if m.providers.query != "" {
 		lines = append(lines, subtleStyle.Render("query: "+m.providers.query))
 	}
-	// Always-visible keyboard contract for the providers list pane.
-	// Right pane (action menu / detail) repeats its own subset.
-	lines = append(lines,
-		subtleStyle.Render("j/k scroll · enter detail · → action menu · / search · c clear"))
+	lines = append(lines, subtleStyle.Render("up/down move - enter actions - esc back - ctrl+f search"))
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 }
 
-// renderProviderListRowV2 — clean single-line row: cursor + name +
-// PRIMARY/fallback marker + status chip. Everything else is in the
-// detail pane.
 func (m Model) renderProviderListRowV2(row providerRow, idx, cursor, width int, pal tabPaletteEntry) string {
 	prefix := "  "
 	if idx == cursor {
-		prefix = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render("▶ ")
+		prefix = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render("> ")
 	}
 	statusChip := providerStatusChip(row.Status)
 	roleBadge := ""
 	if row.IsPrimary {
 		roleBadge = " " + accentStyle.Bold(true).Render("PRIMARY")
-	} else if pos := m.providerFallbackPosition(row.Name); pos > 0 {
-		roleBadge = " " + subtleStyle.Render(fmt.Sprintf("FB#%d", pos))
 	}
 	chrome := lipgloss.Width(prefix) + lipgloss.Width(statusChip) + lipgloss.Width(roleBadge) + 2
 	nameWidth := max(width-chrome, 8)
@@ -170,22 +232,3 @@ func providerStatusChip(status string) string {
 		return subtleStyle.Render(" " + strings.ToUpper(status) + " ")
 	}
 }
-
-// providerFallbackPosition — 1-based position in the fallback chain,
-// or 0 if the provider isn't in it.
-func (m Model) providerFallbackPosition(name string) int {
-	if m.eng == nil {
-		return 0
-	}
-	want := strings.ToLower(strings.TrimSpace(name))
-	for i, n := range m.eng.FallbackProviders() {
-		if strings.ToLower(strings.TrimSpace(n)) == want {
-			return i + 1
-		}
-	}
-	return 0
-}
-
-// DETAIL + METADATA panes (renderProvidersDetailPane / boolWord /
-// renderProvidersMetaPane / providersMetaCards / renderProvidersMetaInline)
-// live in render_providers_v2_panes.go.

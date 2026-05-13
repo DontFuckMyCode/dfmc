@@ -46,6 +46,9 @@ func (e *Engine) List() []string {
 	defer e.mu.RUnlock()
 	out := make([]string, 0, len(e.registry))
 	for name := range e.registry {
+		if e.disabled.IsDisabled(name) {
+			continue
+		}
 		out = append(out, name)
 	}
 	sort.Strings(out)
@@ -61,6 +64,9 @@ func (e *Engine) Specs() []ToolSpec {
 	defer e.mu.RUnlock()
 	out := make([]ToolSpec, 0, len(e.registry))
 	for _, tool := range e.registry {
+		if e.disabled.IsDisabled(tool.Name()) {
+			continue
+		}
 		out = append(out, specForTool(tool))
 	}
 	SortSpecs(out)
@@ -136,6 +142,43 @@ func (e *Engine) BackendSpecs() []ToolSpec {
 	return out
 }
 
+// SetEnabled enables or disables a tool by name. Protected tools cannot be
+// disabled. The change takes effect immediately in all registry read methods.
+func (e *Engine) SetEnabled(name string, enabled bool) error {
+	return e.disabled.SetEnabled(name, enabled, func(n string) bool {
+		_, ok := e.Get(n)
+		return ok
+	})
+}
+
+// IsDisabled reports whether a tool is currently disabled.
+func (e *Engine) IsDisabled(name string) bool {
+	return e.disabled.IsDisabled(name)
+}
+
+// ListDisabled returns a sorted list of all currently disabled tool names.
+func (e *Engine) ListDisabled() []string {
+	return e.disabled.ListDisabled()
+}
+
+// ListAll returns every registered tool name, including disabled ones.
+// Useful for admin/management UIs that need the full inventory.
+func (e *Engine) ListAll() []string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := make([]string, 0, len(e.registry))
+	for name := range e.registry {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// DisabledSnapshot returns the disabled set for config persistence.
+func (e *Engine) DisabledSnapshot() []string {
+	return e.disabled.Snapshot()
+}
+
 func specForTool(tool Tool) ToolSpec {
 	if s, ok := tool.(Specer); ok {
 		spec := s.Spec()
@@ -174,6 +217,9 @@ func (a *mcpToolAdapter) Execute(ctx context.Context, req Request) (Result, erro
 	result, err := a.bridge.Call(ctx, a.name, argBytes)
 	if err != nil {
 		return Result{}, err
+	}
+	if len(result.Content) == 0 {
+		return Result{Success: !result.IsError}, nil
 	}
 	return Result{Output: result.Content[0].Text, Success: !result.IsError}, nil
 }

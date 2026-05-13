@@ -31,7 +31,8 @@ var ghSafeSubcommands = map[string]struct{}{
 	"issue": {},
 	"run":   {},
 	"repo":  {},
-	"api":   {}, // raw API calls — limited to GET, handled in gh_api.go
+	"api":   {}, // raw API calls
+	"auth":  {},
 }
 
 // runGH executes `gh <args...>` inside projectRoot and returns
@@ -53,14 +54,9 @@ func runGH(ctx context.Context, projectRoot string, timeout time.Duration, args 
 		return "", "", 0, fmt.Errorf("gh %s: subcommand not supported by this tool surface (supported: pr, issue, run, repo, api GET)", sub)
 	}
 
-	// Block flag injection: any arg starting with `-` that appears before
-	// the subcommand subgroup (pr list, issue view, etc.) is rejected.
-	// gh itself is generally safe but this prevents a confused model
-	// from passing `-` values in a position git would interpret as a flag.
 	for _, a := range args[1:] {
-		if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") {
-			// Single-dash args are not valid gh invocations in any position
-			return "", "", 0, fmt.Errorf("gh argument %q looks like a flag; use --flag=value or separate the flag", a)
+		if err := rejectGHFlagInjection(a); err != nil {
+			return "", "", 0, err
 		}
 	}
 

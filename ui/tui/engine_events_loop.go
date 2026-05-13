@@ -10,6 +10,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -62,6 +63,8 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 		// Tool error counter resets per-turn so the summary card reflects
 		// just THIS turn's fragility, not a cumulative since-launch tally.
 		m.agentLoop.toolErrorsThisTurn = 0
+		m.agentLoop.toolForceStopNotified = false
+		m.agentLoop.unverifiedCoachLastCount = 0
 		// A fresh loop start means any previously parked banner is obsolete.
 		m.ui.resumePromptActive = false
 		files := payloadInt(payload, "context_files", 0)
@@ -106,6 +109,10 @@ func (m Model) handleAgentLoopEvent(eventType string, payload map[string]any) (M
 			line = fmt.Sprintf("Agent thinking: step %d/%d", m.agentLoop.step, m.agentLoop.maxToolStep)
 		} else {
 			line = "Agent thinking..."
+		}
+	case "agent:loop:narration":
+		if text := strings.TrimSpace(payloadString(payload, "text", "")); text != "" {
+			m = m.appendAssistantNarration(text)
 		}
 	case "agent:loop:final":
 		m.agentLoop.active = false

@@ -140,4 +140,3 @@ func (e *Engine) handleEmptyTurn(
 	})
 	return false, &completion
 }
-

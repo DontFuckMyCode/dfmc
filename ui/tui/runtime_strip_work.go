@@ -17,6 +17,72 @@ import (
 	"strings"
 )
 
+func runtimeStripUnifiedRuntimeParts(vm runtimeViewModel) []string {
+	parts := []string{}
+	if execution := strings.TrimSpace(vm.WorkflowExecution); execution != "" {
+		parts = append(parts, humanizeWorkflowText(execution))
+	} else if status := strings.TrimSpace(vm.WorkflowStatus); status != "" && status != "ready for input" {
+		parts = append(parts, humanizeWorkflowText(status))
+	}
+	if vm.TodoTotal > 0 {
+		label := fmt.Sprintf("todos %d/%d done, %d doing", vm.TodoDone, vm.TodoTotal, vm.TodoDoing)
+		if active := strings.TrimSpace(vm.TodoActive); active != "" {
+			label += " - " + active
+		}
+		parts = append(parts, label)
+	}
+	if vm.PlanSubtasks > 0 || len(vm.TaskTreeLines) > 0 {
+		parts = append(parts, runtimeTaskStoreSummary(vm))
+	}
+	if strings.TrimSpace(vm.DriveRunID) != "" || vm.DriveTotal > 0 {
+		parts = append(parts, runtimeDriveSummary(vm))
+	}
+	if vm.ActiveSubagents > 0 {
+		parts = append(parts, runtimeSubagentSummary(vm))
+	}
+	if len(parts) == 0 && len(vm.WorkflowRecent) > 0 {
+		parts = append(parts, "recent: "+humanizeWorkflowText(vm.WorkflowRecent[0]))
+	}
+	return parts
+}
+
+func runtimeTaskStoreSummary(vm runtimeViewModel) string {
+	if len(vm.TaskTreeLines) > 0 {
+		label := fmt.Sprintf("taskstore %d", len(vm.TaskTreeLines))
+		if line := firstUsefulTaskLine(vm.TaskTreeLines); line != "" {
+			label += " - " + line
+		}
+		return label
+	}
+	mode := "serial"
+	if vm.PlanParallel {
+		mode = "parallel"
+	}
+	return fmt.Sprintf("supervisor plan %d %s", vm.PlanSubtasks, mode)
+}
+
+func runtimeDriveSummary(vm runtimeViewModel) string {
+	label := fmt.Sprintf("drive %d/%d", vm.DriveDone, vm.DriveTotal)
+	if id := strings.TrimSpace(vm.DriveRunID); id != "" {
+		label = fmt.Sprintf("drive %s %d/%d", id, vm.DriveDone, vm.DriveTotal)
+	}
+	if vm.DriveBlocked > 0 {
+		label += fmt.Sprintf(", %d blocked", vm.DriveBlocked)
+	}
+	return label
+}
+
+func runtimeSubagentSummary(vm runtimeViewModel) string {
+	label := fmt.Sprintf("agents %d", vm.ActiveSubagents)
+	if vm.SubagentLimit > 0 {
+		label = fmt.Sprintf("agents %d/%d", vm.ActiveSubagents, vm.SubagentLimit)
+	}
+	if summary := strings.TrimSpace(vm.SubagentSummary); summary != "" {
+		label += " " + summary
+	}
+	return label
+}
+
 func runtimeStripWorkParts(vm runtimeViewModel) []string {
 	parts := []string{}
 	if execution := strings.TrimSpace(vm.WorkflowExecution); execution != "" {

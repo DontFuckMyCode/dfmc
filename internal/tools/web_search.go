@@ -69,6 +69,10 @@ func (t *WebSearchTool) Execute(ctx context.Context, req Request) (Result, error
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Result{}, fmt.Errorf("search returned HTTP %d", resp.StatusCode)
+	}
+
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if err != nil {
 		return Result{}, err
@@ -82,6 +86,9 @@ func (t *WebSearchTool) Execute(ctx context.Context, req Request) (Result, error
 	for _, m := range matches {
 		if len(results) >= limit {
 			break
+		}
+		if len(m) < 4 {
+			continue
 		}
 		href := decodeDuckRedirect(m[1])
 		// L3: filter result URLs that resolve to private/loopback IPs.

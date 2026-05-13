@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"runtime/debug"
 	"sync"
 )
 
@@ -139,6 +140,13 @@ func (t *toolBatchCallTool) Execute(ctx context.Context, req Request) (Result, e
 			lines[i] = fmt.Sprintf("#%d %s: refused (meta tool)", i+1, call.Name)
 			continue
 		}
+		if t.engine.IsDisabled(call.Name) {
+			entry["success"] = false
+			entry["error"] = fmt.Sprintf("%q is disabled and cannot be called. Enable it via the tools panel or `dfmc tools enable %s`", call.Name, call.Name)
+			results[i] = entry
+			lines[i] = fmt.Sprintf("#%d %s: disabled", i+1, call.Name)
+			continue
+		}
 		// Halt dispatch when ctx is already cancelled — no point firing
 		// goroutines that will immediately observe ctx.Err() and abort.
 		if err := batchCtx.Err(); err != nil {
@@ -174,7 +182,7 @@ func (t *toolBatchCallTool) Execute(ctx context.Context, req Request) (Result, e
 			func() {
 				defer func() {
 					if p := recover(); p != nil {
-						execErr = fmt.Errorf("panic in %s: %v", c.Name, p)
+						execErr = fmt.Errorf("panic in %s: %v\n%s", c.Name, p, string(debug.Stack()))
 					}
 				}()
 				res, execErr = t.engine.Execute(batchCtx, c.Name,

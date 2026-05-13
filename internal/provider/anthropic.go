@@ -20,6 +20,7 @@ import (
 type AnthropicProvider struct {
 	name       string
 	model      string
+	models     []string
 	apiKey     string
 	baseURL    string
 	maxTokens  int
@@ -54,8 +55,13 @@ func (p *AnthropicProvider) Name() string {
 	}
 	return p.name
 }
-func (p *AnthropicProvider) Model() string    { return p.model }
-func (p *AnthropicProvider) Models() []string { return []string{p.model} }
+func (p *AnthropicProvider) Model() string { return p.model }
+func (p *AnthropicProvider) Models() []string {
+	if len(p.models) > 0 {
+		return append([]string(nil), p.models...)
+	}
+	return []string{p.model}
+}
 
 func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	if strings.TrimSpace(p.apiKey) == "" {

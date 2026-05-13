@@ -37,6 +37,7 @@ var (
 	colorWarn        = theme.ColorWarn
 	colorInfo        = theme.ColorInfo
 	colorTabActiveBg = theme.ColorTabActiveBg
+	colorTabTelegram = theme.ColorTabTelegram
 )
 
 var (
@@ -53,7 +54,6 @@ var (
 	infoStyle               = theme.InfoStyle
 	ToolStyle               = theme.ToolStyle
 	ToolLineStyle           = theme.ToolLineStyle
-	disabledStyle           = theme.DisabledStyle
 	mentionPickerStyle      = theme.MentionPickerStyle
 	mentionSelectedRowStyle = theme.MentionSelectedRowStyle
 	bannerStyle             = theme.BannerStyle

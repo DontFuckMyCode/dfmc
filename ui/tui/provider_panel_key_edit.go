@@ -109,32 +109,21 @@ func (m Model) handlePipelineEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.providers.pipelineEditField = 0
 			}
 		}
-	case "j", "down":
+	case "down":
 		if stepIdx < len(steps) {
 			m.providers.pipelineEditStep = stepIdx + 1
 			m.providers.pipelineEditField = 0
 			m.providers.pipelineDraftBuf = ""
 		}
-	case "k", "up":
+	case "up":
 		if stepIdx > -1 {
 			m.providers.pipelineEditStep = stepIdx - 1
 			m.providers.pipelineEditField = 0
 			m.providers.pipelineDraftBuf = ""
 		}
-	case "d":
-		if stepIdx >= 0 && stepIdx < len(steps) {
-			m.providers.pipelineDraftSteps = append(steps[:stepIdx], steps[stepIdx+1:]...)
-			if stepIdx >= len(m.providers.pipelineDraftSteps) {
-				m.providers.pipelineEditStep = len(m.providers.pipelineDraftSteps) - 1
-			}
-			if m.providers.pipelineEditStep < -1 {
-				m.providers.pipelineEditStep = -1
-			}
-			m.providers.pipelineEditField = 0
-		}
 	case "backspace":
-		if len(m.providers.pipelineDraftBuf) > 0 {
-			m.providers.pipelineDraftBuf = m.providers.pipelineDraftBuf[:len(m.providers.pipelineDraftBuf)-1]
+		if r := []rune(m.providers.pipelineDraftBuf); len(r) > 0 {
+			m.providers.pipelineDraftBuf = string(r[:len(r)-1])
 		} else if stepIdx >= 0 && stepIdx < len(steps) {
 			// delete current step when buffer is empty
 			m.providers.pipelineDraftSteps = append(steps[:stepIdx], steps[stepIdx+1:]...)
@@ -148,7 +137,9 @@ func (m Model) handlePipelineEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	default:
 		// typing into active field
-		if msg.Type == tea.KeyRunes {
+		if msg.Type == tea.KeySpace {
+			m.providers.pipelineDraftBuf += " "
+		} else if msg.Type == tea.KeyRunes {
 			m.providers.pipelineDraftBuf += string(msg.Runes)
 		}
 	}
@@ -158,14 +149,14 @@ func (m Model) handlePipelineEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleNewProviderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
+		m = m.closeProviderTextEdit()
 		m.providers.viewMode = "list"
 		m.providers.newProviderDraft = ""
 		m.notice = "new provider cancelled"
 	case "enter":
 		name := strings.TrimSpace(m.providers.newProviderDraft)
 		if name == "" {
-			m.notice = "provider name is required"
-			return m, nil
+			return m.beginProviderTextEdit("new_provider", 0, "Provider name", "", false), nil
 		}
 		if err := m.createProvider(name); err != nil {
 			m.notice = "create failed: " + err.Error()
@@ -178,46 +169,120 @@ func (m Model) handleNewProviderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.notice = "created provider: " + name
 		}
 	case "backspace":
-		if len(m.providers.newProviderDraft) > 0 {
-			m.providers.newProviderDraft = m.providers.newProviderDraft[:len(m.providers.newProviderDraft)-1]
-		}
+		m.notice = "press Enter to edit provider name"
 	default:
-		if msg.Type == tea.KeyRunes {
-			m.providers.newProviderDraft += string(msg.Runes)
+		if textKeyMsg(msg) {
+			m.notice = "press Enter before typing or pasting"
 		}
 	}
 	return m, nil
 }
 
 func (m Model) handleProfileEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.providers.profileEditField == 0 {
+		switch msg.String() {
+		case "enter", "right", "space":
+			m = m.cycleProfileProtocol(1)
+			return m, nil
+		case "left":
+			m = m.cycleProfileProtocol(-1)
+			return m, nil
+		}
+	}
 	switch msg.String() {
 	case "esc":
+		m = m.closeProviderTextEdit()
 		m.providers.profileEditMode = false
 		m.providers.profileEditDraft = ""
 		m.notice = "profile edit cancelled"
 	case "enter":
-		m.commitProfileEditField()
-		if err := m.persistProfileEdits(); err != nil {
-			m.notice = "save failed: " + err.Error()
-		} else {
-			m = m.refreshProvidersRows()
-			m = m.focusProviderRow(m.providers.detailProvider)
-			m.notice = "saved profile for " + m.providers.detailProvider
-		}
-		m.providers.profileEditMode = false
-		m.providers.profileEditDraft = ""
+		return m.openProfileEditFieldEditor()
 	case "tab":
-		m.commitProfileEditField()
-		m.providers.profileEditField = (m.providers.profileEditField + 1) % 4
+		m.providers.profileEditField = (m.providers.profileEditField + 1) % 3
 		m.providers.profileEditDraft = ""
-	case "backspace":
-		if len(m.providers.profileEditDraft) > 0 {
-			m.providers.profileEditDraft = m.providers.profileEditDraft[:len(m.providers.profileEditDraft)-1]
+	case "down":
+		if m.providers.profileEditField < 2 {
+			m.providers.profileEditField++
 		}
+	case "up":
+		if m.providers.profileEditField > 0 {
+			m.providers.profileEditField--
+		}
+	case "backspace":
+		m.notice = "press Enter on a field to edit it"
 	default:
-		if msg.Type == tea.KeyRunes {
-			m.providers.profileEditDraft += string(msg.Runes)
+		if textKeyMsg(msg) {
+			m.notice = "press Enter on a field before typing or pasting"
 		}
 	}
 	return m, nil
+}
+
+func (m Model) openProfileEditFieldEditor() (tea.Model, tea.Cmd) {
+	title := "Protocol"
+	value := m.profileEditFieldValue(m.providers.profileEditField)
+	secret := false
+	switch m.providers.profileEditField {
+	case 0:
+		m = m.cycleProfileProtocol(1)
+		return m, nil
+	case 1:
+		title = "Endpoint"
+	case 2:
+		title = "API key"
+		secret = true
+	}
+	return m.beginProviderTextEdit("profile_edit", m.providers.profileEditField, title, value, secret), nil
+}
+
+func (m Model) cycleProfileProtocol(delta int) Model {
+	if m.eng == nil || m.eng.Config == nil {
+		return m
+	}
+	prof, ok := m.eng.Config.Providers.Profiles[m.providers.detailProvider]
+	if !ok {
+		m.notice = "provider not found"
+		return m
+	}
+	current := strings.TrimSpace(prof.Protocol)
+	idx := 0
+	for i, option := range providerCompatibleOptions {
+		if strings.EqualFold(option, current) {
+			idx = i
+			break
+		}
+	}
+	idx += delta
+	for idx < 0 {
+		idx += len(providerCompatibleOptions)
+	}
+	idx %= len(providerCompatibleOptions)
+	prof.Protocol = providerCompatibleOptions[idx]
+	m.eng.Config.Providers.Profiles[m.providers.detailProvider] = prof
+	if err := m.persistProfileEdits(); err != nil {
+		m.notice = "protocol save failed: " + err.Error()
+		return m
+	}
+	m = m.refreshProvidersRows()
+	m = m.focusProviderRow(m.providers.detailProvider)
+	m.status = m.eng.Status()
+	m.notice = "protocol -> " + nonEmpty(prof.Protocol, "(auto)") + " (cycled)"
+	return m
+}
+
+func (m Model) profileEditFieldValue(field int) string {
+	if m.eng == nil || m.eng.Config == nil {
+		return ""
+	}
+	prof := m.eng.Config.Providers.Profiles[m.providers.detailProvider]
+	switch field {
+	case 0:
+		return prof.Protocol
+	case 1:
+		return prof.BaseURL
+	case 2:
+		return prof.APIKey
+	default:
+		return ""
+	}
 }

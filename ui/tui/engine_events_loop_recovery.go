@@ -108,6 +108,15 @@ func (m Model) handleAgentLoopRecoveryEvent(eventType string, payload map[string
 		// access, not a model decision.
 		rounds := payloadInt(payload, "tool_rounds", 0)
 		hardCap := payloadInt(payload, "hard_cap", 0)
+		if rounds > m.agentLoop.toolRounds {
+			m.agentLoop.toolRounds = rounds
+		}
+		if m.agentLoop.toolForceStopNotified {
+			m.notice = fmt.Sprintf("Tool round cap still active (%d/%d). Chat history is collapsed; details remain in Activity/ToolStatus.", rounds, hardCap)
+			return m, "", true
+		}
+		m.agentLoop.toolForceStopNotified = true
+		m.ui.toolStripExpanded = false
 		m.pushToolChip(toolChip{
 			Name:    "force-stop",
 			Status:  "warn",

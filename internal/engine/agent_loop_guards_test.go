@@ -44,7 +44,7 @@ func buildGuardTestEngine(t *testing.T, budget int, steps int, responses []scrip
 	cfg.Providers.Profiles["stub"] = config.ModelConfig{
 		Model:      "stub-model",
 		MaxTokens:  4096,
-		MaxContext: 128000,
+		MaxContext: 70, // tight window prevents elastic scaling from overriding the test budget
 	}
 	cfg.Agent.MaxToolSteps = steps
 	cfg.Agent.MaxToolTokens = budget
@@ -182,7 +182,7 @@ func TestNativeToolLoop_SynthesisHintFiresOnceAtSoftCap(t *testing.T) {
 			ToolCalls: []provider.ToolCall{loopingReadToolCall("soft_" + padCallID(i))},
 		})
 	}
-	responses = append(responses, scriptedResponse{Text: "synthesized answer"})
+	responses = append(responses, scriptedResponse{Text: "synthesized answer\n\n[cleanup: ]\n[done: true]"})
 
 	eng, _, evCh := buildGuardTestEngine(t, 0, 20, responses) // budget disabled
 	// Pin caps to the historical 5/7 so the scripted 7-round test still
@@ -225,7 +225,7 @@ func TestNativeToolLoop_HardCapForcesToolChoiceNone(t *testing.T) {
 			ToolCalls: []provider.ToolCall{loopingReadToolCall("hard_" + padCallID(i))},
 		})
 	}
-	responses = append(responses, scriptedResponse{Text: "had to answer"})
+	responses = append(responses, scriptedResponse{Text: "had to answer\n\n[cleanup: ]\n[done: true]"})
 
 	eng, stub, evCh := buildGuardTestEngine(t, 0, 20, responses) // budget disabled
 	// Same narrowing as TestNativeToolLoop_SynthesisHintFiresOnceAtSoftCap:
@@ -267,9 +267,8 @@ func TestNativeToolLoop_HardCapForcesToolChoiceNone(t *testing.T) {
 func TestNativeToolLoop_EmptyResponseRecoveryProducesAnswer(t *testing.T) {
 	eng, stub, evCh := buildGuardTestEngine(t, 0, 10, []scriptedResponse{
 		{Text: ""}, // empty — triggers recovery
-		{Text: "recovered answer"},
+		{Text: "recovered answer [done: true]"},
 	})
-
 	answer, err := eng.AskWithMetadata(context.Background(), "empty recovery check")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -300,6 +299,7 @@ func TestNativeToolLoop_TwoEmptyResponsesSurfaceFailureNotice(t *testing.T) {
 		{Text: ""}, // first empty → recovery nudge
 		{Text: ""}, // second empty → give up with visible notice
 	})
+	eng.Config.Agent.AutoContinue = "off"
 
 	answer, err := eng.AskWithMetadata(context.Background(), "double-empty check")
 	if err != nil {
@@ -333,10 +333,10 @@ func TestNativeToolLoop_TwoEmptyResponsesSurfaceFailureNotice(t *testing.T) {
 // response #3 (the final text), so the user sees the answer in one
 // continuous Ask call.
 func TestNativeToolLoop_AutonomousResumeChainsThroughBudgetParks(t *testing.T) {
-	eng, _, evCh := buildGuardTestEngine(t, 70, 20, []scriptedResponse{
-		{ToolCalls: []provider.ToolCall{loopingReadToolCall("auto1")}}, // attempt 1, round 1
-		{ToolCalls: []provider.ToolCall{loopingReadToolCall("auto2")}}, // attempt 1, round 2 → parks before round 3
-		{Text: "all done after auto-resumes"},                          // attempt 2, round 1 → finalises
+	eng, stub, evCh := buildGuardTestEngine(t, 70, 20, []scriptedResponse{
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("auto1")}},     // attempt 1, round 1
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("auto2")}},     // attempt 1, round 2 → parks before round 3
+		{Text: "all done after auto-resumes\n\n[cleanup: ]\n[done: true]"}, // attempt 2, round 1 → finalises
 	})
 	eng.Config.Agent.AutonomousResume = "auto"
 	eng.Config.Agent.ResumeMaxMultiplier = 10
@@ -357,10 +357,77 @@ func TestNativeToolLoop_AutonomousResumeChainsThroughBudgetParks(t *testing.T) {
 	for _, e := range events {
 		if e.Type == "agent:loop:auto_resume" {
 			autoResumes++
+			payload, _ := e.Payload.(map[string]any)
+			prompt, _ := payload["continuation_prompt"].(string)
+			if !strings.Contains(prompt, "autonomous continuation") {
+				t.Fatalf("auto_resume event should contain continuation_prompt with task context, got %q", prompt)
+			}
+			if !strings.Contains(prompt, "autonomous chain check") {
+				t.Fatalf("continuation_prompt should mention the original task, got %q", prompt)
+			}
 		}
 	}
 	if autoResumes < 1 {
 		t.Fatalf("expected at least one agent:loop:auto_resume event, got 0 in %v", eventTypes(events))
+	}
+
+	// Verify the continuation prompt was actually sent to the provider
+	// in the messages of the resumed attempt (call #3).
+	stub.mu.Lock()
+	if len(stub.requests) < 3 {
+		stub.mu.Unlock()
+		t.Fatalf("expected at least 3 provider calls, got %d", len(stub.requests))
+	}
+	resumeReq := stub.requests[2]
+	stub.mu.Unlock()
+	if !requestContainsUserText(resumeReq, "autonomous continuation") {
+		t.Fatalf("3rd provider call (after auto-resume) should contain continuation prompt")
+	}
+	if !requestContainsUserText(resumeReq, "autonomous chain check") {
+		t.Fatalf("continuation prompt should mention the original task")
+	}
+}
+
+func TestNativeToolLoop_AutonomousResumeChainsThroughStepCapParks(t *testing.T) {
+	eng, _, evCh := buildGuardTestEngine(t, 0, 1, []scriptedResponse{
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("stepcap1")}},
+		{Text: "all done after step-cap auto-resume\n\n[cleanup: ]\n[done: true]"},
+	})
+	eng.Config.Agent.AutonomousResume = "auto"
+	eng.Config.Agent.ResumeMaxMultiplier = 10
+
+	answer, err := eng.AskWithMetadata(context.Background(), "step cap autonomous chain check")
+	if err != nil {
+		t.Fatalf("autonomous Ask must not error mid-step-cap chain: %v", err)
+	}
+	if !strings.Contains(answer, "all done after step-cap auto-resume") {
+		t.Fatalf("autonomous step-cap chain should reach final answer, got %q", answer)
+	}
+	if eng.HasParkedAgent() {
+		t.Fatal("after a clean finish there must be no parked state left")
+	}
+
+	events := collectRecentEvents(evCh, 256, 200*time.Millisecond)
+	var sawStepCapPark, sawAutoResume bool
+	for _, e := range events {
+		switch e.Type {
+		case "agent:loop:auto_resume":
+			sawAutoResume = true
+		case "agent:loop:parked":
+			payload, _ := e.Payload.(map[string]any)
+			if payload == nil {
+				continue
+			}
+			if reason, _ := payload["reason"].(string); reason == "step_cap" {
+				sawStepCapPark = true
+				if flag, _ := payload["autonomous_pending"].(bool); !flag {
+					t.Fatalf("step-cap park under autonomous mode must set autonomous_pending=true; payload=%v", payload)
+				}
+			}
+		}
+	}
+	if !sawStepCapPark || !sawAutoResume {
+		t.Fatalf("expected step-cap park and auto-resume events, got %v", eventTypes(events))
 	}
 }
 
@@ -376,7 +443,7 @@ func TestNativeToolLoop_BudgetParkAdvertisesAutonomousPending(t *testing.T) {
 	eng, _, evCh := buildGuardTestEngine(t, 70, 20, []scriptedResponse{
 		{ToolCalls: []provider.ToolCall{loopingReadToolCall("ap1")}},
 		{ToolCalls: []provider.ToolCall{loopingReadToolCall("ap2")}}, // parks
-		{Text: "done"},
+		{Text: "done [done: true]"},
 	})
 	eng.Config.Agent.AutonomousResume = "auto"
 	eng.Config.Agent.ResumeMaxMultiplier = 10
@@ -609,6 +676,11 @@ func (p *cancelOnCallProvider) Complete(ctx context.Context, req provider.Comple
 	return p.inner.Complete(ctx, req)
 }
 func (p *cancelOnCallProvider) Stream(ctx context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	p.calls++
+	if p.calls >= p.cancelOnCall {
+		p.cancel()
+		return nil, context.Canceled
+	}
 	return p.inner.Stream(ctx, req)
 }
 

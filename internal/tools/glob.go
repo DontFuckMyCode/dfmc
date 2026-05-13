@@ -26,7 +26,7 @@ func NewGlobTool() *GlobTool            { return &GlobTool{} }
 func (t *GlobTool) Name() string        { return "glob" }
 func (t *GlobTool) Description() string { return "Match file paths against a glob pattern." }
 
-func (t *GlobTool) Execute(_ context.Context, req Request) (Result, error) {
+func (t *GlobTool) Execute(ctx context.Context, req Request) (Result, error) {
 	pattern := strings.TrimSpace(asString(req.Params, "pattern", ""))
 	if pattern == "" {
 		hint := ""
@@ -63,9 +63,11 @@ func (t *GlobTool) Execute(_ context.Context, req Request) (Result, error) {
 		if err != nil {
 			return nil
 		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if d.IsDir() {
-			switch d.Name() {
-			case ".git", ".dfmc", "node_modules", "vendor", "bin", "dist", ".venv":
+			if defaultWalkSkipDirs[d.Name()] {
 				return fs.SkipDir
 			}
 			return nil
@@ -108,14 +110,15 @@ func (t *GlobTool) Execute(_ context.Context, req Request) (Result, error) {
 // falls back to filepath.Match on the forward-slash-normalized path.
 func globMatch(pattern, path string, doublestar bool) bool {
 	if !doublestar {
-		ok, _ := filepath.Match(pattern, path)
-		if ok {
+		if ok, err := filepath.Match(pattern, path); err == nil && ok {
 			return true
 		}
 		// Also try matching just the basename — mirrors the common "*.go"
 		// usage where the user expects recursive match.
-		ok, _ = filepath.Match(pattern, filepath.Base(path))
-		return ok
+		if ok, err := filepath.Match(pattern, filepath.Base(path)); err == nil && ok {
+			return true
+		}
+		return false
 	}
 	return doublestarMatch(pattern, path)
 }

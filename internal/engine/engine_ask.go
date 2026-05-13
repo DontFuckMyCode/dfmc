@@ -161,7 +161,7 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 		return e.formatDriveResult(result), nil
 	}
 
-e.ensureIndexed(ctx)
+	e.ensureIndexed(ctx)
 
 	chunks := e.buildContextChunks(prompt)
 
@@ -344,4 +344,3 @@ func (e *Engine) formatDriveResult(run *drive.Run) string {
 	}
 	return msg
 }
-

@@ -109,6 +109,7 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 			"response_policy":                BuildResponsePolicy(task, profile),
 			"active_skills":                  summarizeActiveSkills(skillSelection.Skills),
 			"skills_inventory":               summarizeSkillInventory(projectRoot, skillSelection.Skills, 10),
+			"learned_patterns":               runtime.LearnedPatterns,
 		},
 	})
 	bundle = appendSkillSections(bundle, skillSelection.Skills)
@@ -123,5 +124,6 @@ func (m *Manager) BuildSystemPromptBundle(projectRoot, query string, chunks []ty
 			Cacheable: false,
 		}}, bundle.Sections...)
 	}
+	bundle = appendLearnedPatternsSection(bundle, runtime.LearnedPatterns)
 	return bundle
 }

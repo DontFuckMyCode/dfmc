@@ -21,6 +21,7 @@ var demotedPanelKinds = map[string]string{
 	"ProviderLog": "providerlog",
 	// Telegram — demoted overlay panel (WIP build tag)
 	"Telegram":   "telegram",
+	"ToolStatus": "toolstatus",
 }
 
 // activateDiagnosticTab is the single entry point for "go look at the

@@ -26,7 +26,7 @@ func providerRows(info StatsPanelInfo) []string {
 	case provider == "":
 		return []string{
 			FailStyle.Bold(true).Render("no provider"),
-			SubtleStyle.Render("alt+p providers · /provider"),
+			SubtleStyle.Render("/provider to configure runtime"),
 		}
 	case !info.Configured:
 		return []string{
@@ -37,7 +37,7 @@ func providerRows(info StatsPanelInfo) []string {
 	default:
 		label := provider + " / " + blankFallback(model, "-")
 		return []string{
-			SubtleStyle.Render(label + " · alt+p deep view"),
+			SubtleStyle.Render(label),
 		}
 	}
 }
@@ -129,17 +129,16 @@ func toolsRows(info StatsPanelInfo) []string {
 func providerListRows(info StatsPanelInfo) []string {
 	if len(info.Providers) == 0 {
 		return []string{
-			"No providers registered.",
-			"Configure providers in .dfmc/config.yaml or dfmc providers setup.",
+			"No usable fallback providers.",
 		}
 	}
-	rows := []string{SubtleStyle.Render("* active | + primary | - available")}
+	rows := []string{SubtleStyle.Render("active + usable fallbacks")}
 	for i, row := range info.Providers {
 		cursor := "  "
 		if i == info.ProvidersSelectedIndex {
 			cursor = "> "
 		}
-		marker := "-"
+		marker := providerStatusMarker(row.Status)
 		style := SubtleStyle
 		switch {
 		case row.Active:
@@ -148,13 +147,18 @@ func providerListRows(info StatsPanelInfo) []string {
 		case row.Primary:
 			marker = "+"
 			style = AccentStyle
+		case row.Fallback:
+			marker = "~"
 		}
 		line := cursor + marker + " " + style.Bold(row.Active).Render(row.Name)
-		if len(row.Models) > 0 {
-			line += SubtleStyle.Render(" | " + strings.Join(row.Models, " > "))
+		if roles := providerRoleLabels(row); len(roles) > 0 {
+			line += SubtleStyle.Render(" | " + strings.Join(roles, ","))
 		}
 		rows = append(rows, line)
 		meta := []string{}
+		if model := providerDisplayModel(row); model != "" {
+			meta = append(meta, "model "+model)
+		}
 		if row.Protocol != "" {
 			meta = append(meta, row.Protocol)
 		}
@@ -168,10 +172,10 @@ func providerListRows(info StatsPanelInfo) []string {
 			rows = append(rows, SubtleStyle.Render("    "+strings.Join(meta, " | ")))
 		}
 		if row.Status == "no-key" {
-			rows = append(rows, SubtleStyle.Render("    no API key: providers.profiles."+row.Name+".api_key"))
+			rows = append(rows, WarnStyle.Render("    missing API key"))
 		}
 		if len(row.FallbackModels) > 0 {
-			rows = append(rows, SubtleStyle.Render("    fallback: "+strings.Join(row.FallbackModels, " > ")))
+			rows = append(rows, SubtleStyle.Render("    model fallback: "+strings.Join(row.FallbackModels, " > ")))
 		}
 	}
 	return rows
@@ -184,28 +188,63 @@ func providerRoutingRows(info StatsPanelInfo) []string {
 	} else {
 		rows = append(rows, FailStyle.Render("active: none"))
 	}
-	primary := ""
 	fallbacks := []string{}
 	for _, row := range info.Providers {
-		if row.Primary {
-			primary = row.Name
+		if row.Fallback {
+			label := row.Name
+			if row.Status != "" && row.Status != "ready" {
+				label += " (" + row.Status + ")"
+			}
+			fallbacks = append(fallbacks, label)
 		}
-		if !row.Active && !row.Primary && row.Status != "no-key" {
-			fallbacks = append(fallbacks, row.Name)
-		}
-	}
-	if primary != "" {
-		rows = append(rows, "primary: "+primary)
 	}
 	if len(fallbacks) > 0 {
-		rows = append(rows, "ready fallback: "+strings.Join(firstNNonEmpty(fallbacks, 3), ", "))
+		rows = append(rows, "fallback: "+strings.Join(firstNNonEmpty(fallbacks, 4), ", "))
+	} else {
+		rows = append(rows, SubtleStyle.Render("fallback: none usable"))
 	}
-	rows = append(rows,
-		SubtleStyle.Render("switch model:    "+AccentStyle.Render("alt+m")+SubtleStyle.Render(" — picker overlay")),
-		SubtleStyle.Render("switch provider: "+AccentStyle.Render("alt+P")+SubtleStyle.Render(" — picker overlay")),
-		SubtleStyle.Render("inline edit:     j/k select · enter switch · m cycle model"),
-	)
 	return rows
+}
+
+func providerStatusMarker(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "ready":
+		return "-"
+	case "no-key":
+		return "!"
+	case "offline":
+		return "o"
+	default:
+		return "-"
+	}
+}
+
+func providerRoleLabels(row ProviderPanelRow) []string {
+	roles := []string{}
+	if row.Active {
+		roles = append(roles, "active")
+	}
+	if row.Primary {
+		roles = append(roles, "primary")
+	}
+	if row.Fallback {
+		roles = append(roles, "fallback")
+	}
+	return roles
+}
+
+func providerDisplayModel(row ProviderPanelRow) string {
+	if len(row.Models) == 0 {
+		return ""
+	}
+	model := strings.TrimSpace(row.Models[0])
+	if model == "" {
+		return ""
+	}
+	if len(row.Models) > 1 {
+		return fmt.Sprintf("%s (+%d)", model, len(row.Models)-1)
+	}
+	return model
 }
 
 func gitRows(info StatsPanelInfo) []string {

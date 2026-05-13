@@ -105,6 +105,9 @@ func (t *toolCallTool) Execute(ctx context.Context, req Request) (Result, error)
 	if isMetaTool(name) {
 		return Result{}, fmt.Errorf("tool_call cannot invoke meta tools (got %q). Call the backend tool directly: {\"name\":\"read_file\",\"args\":{...}}. Meta tools (tool_call, tool_batch_call, tool_search, tool_help) are dispatched by the agent loop, not by each other", name)
 	}
+	if t.engine.IsDisabled(name) {
+		return Result{}, fmt.Errorf("tool_call: %q is disabled and cannot be called. Enable it via the tools panel or `dfmc tools enable %s`", name, name)
+	}
 	args, err := extractArgsObject(req.Params, "args")
 	if err != nil {
 		return Result{}, err

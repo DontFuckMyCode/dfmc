@@ -11,6 +11,7 @@ package cli
 //   - summarizeMessageUsage / estimateConversationCostUSD back /cost.
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -135,10 +136,28 @@ func handleSlashContext(eng *engine.Engine, args []string) {
 		for _, f := range w.RecentFiles {
 			fmt.Printf("- %s\n", f)
 		}
+	case "messages":
+		active := eng.ConversationActive()
+		if active == nil {
+			fmt.Println("no active conversation")
+			return
+		}
+		msgs := active.Messages()
+		for i, m := range msgs {
+			preview := m.Content
+			if len(preview) > 80 {
+				preview = preview[:80] + "..."
+			}
+			tokens := "?"
+			if m.TokenCnt > 0 {
+				tokens = fmt.Sprintf("~%d", m.TokenCnt)
+			}
+			fmt.Printf("  [%2d] %s %s: %s\n", i+1, m.Role, tokens, preview)
+		}
 	case "add", "rm", "remove":
 		fmt.Println("context add/remove is not available in this REPL yet")
 	default:
-		fmt.Fprintln(os.Stderr, "usage: /context [show|add <file>|rm <file>]")
+		fmt.Fprintln(os.Stderr, "usage: /context [show|messages|add <file>|rm <file>]")
 	}
 }
 
@@ -239,4 +258,114 @@ func estimateConversationCostUSD(provider string, totalTokens int) float64 {
 		return -1
 	}
 	return (float64(totalTokens) / 1_000_000.0) * rate
+}
+
+func printChatHelp() {
+	fmt.Println("DFMC slash commands")
+	fmt.Println(strings.Repeat("─", 50))
+	fmt.Println("  /help          show this list")
+	fmt.Println("  /clear         start a fresh conversation")
+	fmt.Println("  /save          save conversation to disk")
+	fmt.Println("  /load <id>     load a saved conversation")
+	fmt.Println("  /branch [list|create|switch|<name>]")
+	fmt.Println("  /context [show|add|rm]")
+	fmt.Println("  /provider [name]      show / switch provider")
+	fmt.Println("  /model [name]         show / switch model")
+	fmt.Println("  /providers            list configured providers")
+	fmt.Println("  /models               list models for current provider")
+	fmt.Println("  /undo                 undo the last assistant reply")
+	fmt.Println("  /redo                 redo the undone reply")
+	fmt.Println("  /apply [--check] [diff file]")
+	fmt.Println("  /retry                resend the last user message")
+	fmt.Println("  /cancel, /stop        cancel active agent loop")
+	fmt.Println("  /continue             resume parked agent loop")
+	fmt.Println("  /agents               list roles and profiles")
+	fmt.Println("  /stats                provider · model · project")
+	fmt.Println("  /version              dfmc version")
+	fmt.Println("  /drive                start autonomous run")
+	fmt.Println("  /drive active         show current run")
+	fmt.Println("  /drive list           list recent runs")
+	fmt.Println("  /drive stop           stop active run")
+	fmt.Println("  /drive resume <id>    resume a stopped run")
+	fmt.Println("  /plan                 plan mode (read-only; use TUI for full experience)")
+	fmt.Println("  /compact              transcript compaction (use TUI for full experience)")
+	fmt.Println("  /btw <note>           queue a note for the next step")
+	fmt.Println("  /split <task>         decompose a task into subtasks")
+	fmt.Println("  /doctor               health snapshot")
+	fmt.Println("  /ask <question>       ask a question")
+	fmt.Println("  /review <file>        review code")
+	fmt.Println("  /explain <file>       explain code")
+	fmt.Println("  /refactor <file>      refactor code")
+	fmt.Println("  /test <file>          generate tests")
+	fmt.Println("  /doc <file>           write documentation")
+	fmt.Println("  /map                  render codemap")
+	fmt.Println("  /scan                 scan for smells")
+	fmt.Println("  /file              file picker (TUI: @ or /file; use /ls in CLI)")
+	fmt.Println("  /coach             toggle background coach notes (TUI only)")
+	fmt.Println("  /hints             toggle trajectory hints (TUI only)")
+	fmt.Println("  /workflow          show todos, agent progress, drive status")
+	fmt.Println("  /todos             shared todo list (TUI panel; /todos clear to reset)")
+	fmt.Println("  /tasks             task store panel (TUI only; /tasks list in CLI)")
+	fmt.Println("  /subagents         subagent delegation view (TUI only)")
+	fmt.Println("  /toolstatus        tool call history (TUI only)")
+	fmt.Println("  /shortcuts, /keys  cheat sheet for TUI keybindings")
+	fmt.Println("  /queue             prompt queue inspector (TUI only; /btw for single note)")
+	fmt.Println("  /export            save transcript to .dfmc/exports/ (same as /save)")
+	fmt.Println("  /pin /unpin        pin assistant turns (TUI only)")
+	fmt.Println("  /fork              visual branch picker (TUI only; /branch for CLI)")
+	fmt.Println("  /copy              copy last reply to clipboard (TUI only)")
+	fmt.Println("  /intent            toggle intent rewriting (TUI only)")
+	fmt.Println("  /mouse             toggle mouse capture (TUI only)")
+	fmt.Println("  /select            selection mode (TUI only)")
+	fmt.Println("  /code              exit plan mode (TUI only)")
+	fmt.Println()
+	fmt.Println("  /magicdoc <target> generate documentation via AI")
+	fmt.Println("  /conversation [list|save|clear]")
+	fmt.Println("  /prompt [show|context]")
+	fmt.Println("  /skill [list|<name>]")
+	fmt.Println()
+	fmt.Println("TUI-only commands (/plan, /compact, /fork, …) — run `dfmc tui` for full experience.")
+	fmt.Println(strings.Repeat("─", 50))
+}
+
+// runAgentTemplate dispatches a named template command (review, explain,
+// refactor, test, doc, analyze, scan) by building a prompt that targets
+// the user's args and streaming the result to stdout — mirroring the
+// same pattern as /ask but with a skill-injected template context.
+func runAgentTemplate(ctx context.Context, eng *engine.Engine, args []string, skill string) (exit bool, handled bool) {
+	query := strings.TrimSpace(strings.Join(args, " "))
+	if query == "" {
+		fmt.Fprintf(os.Stderr, "usage: /%s <target or question>\n", skill)
+		return false, true
+	}
+
+	// Build a skill-prefixed prompt so the engine routes through the
+	// matching skill handler (review/explain/refactor/test/doc/etc.).
+	prompt := fmt.Sprintf("Skill: %s\n%s", skill, query)
+
+	stream, err := eng.StreamAsk(ctx, prompt)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "/%s error: %v\n", skill, err)
+		return false, true
+	}
+	printed := false
+	endsWithNL := true
+	for ev := range stream {
+		if ev.Type == "delta" {
+			fmt.Print(ev.Delta)
+			printed = true
+			endsWithNL = strings.HasSuffix(ev.Delta, "\n")
+		}
+		if ev.Type == "error" {
+			if printed && !endsWithNL {
+				fmt.Println()
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", ev.Err)
+			printed = false
+		}
+	}
+	if printed && !endsWithNL {
+		fmt.Println()
+	}
+	return false, true
 }

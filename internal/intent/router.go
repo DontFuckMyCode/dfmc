@@ -143,11 +143,17 @@ func (r *Router) resolveProvider() (provider.Provider, bool) {
 func (r *Router) handleErr(raw string, err error, latency time.Duration) (Decision, error) {
 	dec := Fallback(raw)
 	dec.Latency = latency
-	dec.Reasoning = fmt.Sprintf("intent layer failed open: %v", err)
-	if r.cfg.FailOpen {
-		return dec, nil
+	if r.cfg.FailClosed {
+		// Fail-closed: return the error so callers can distinguish a
+		// classifier error from ordinary fallback routing and emit a
+		// structured intent:error event. Routing decision is still safe
+		// (Fallback); only the error channel changes.
+		dec.Reasoning = fmt.Sprintf("intent layer failed closed: %v", err)
+		return dec, err
 	}
-	return dec, err
+	// Fail-open (default): raw input passes through without error.
+	dec.Reasoning = fmt.Sprintf("intent layer failed open: %v", err)
+	return dec, nil
 }
 
 // rawDecision matches the JSON contract spelled out in the system
@@ -168,6 +174,9 @@ func parseDecision(text, raw string) (Decision, error) {
 	cleaned := stripCodeFences(strings.TrimSpace(text))
 	if cleaned == "" {
 		return Decision{}, &invalidJSONError{raw: text, err: errors.New("empty response")}
+	}
+	if len(cleaned) > 1<<20 {
+		return Decision{}, &invalidJSONError{raw: text, err: errors.New("payload too large: >1MB")}
 	}
 	var rd rawDecision
 	if err := json.Unmarshal([]byte(cleaned), &rd); err != nil {

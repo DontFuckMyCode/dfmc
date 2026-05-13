@@ -177,4 +177,3 @@ func (e *Engine) saveActiveConversationWithWarning(surface string, payload map[s
 		e.publishAgentLoopEvent("conversation:save_error", payload)
 	}
 }
-

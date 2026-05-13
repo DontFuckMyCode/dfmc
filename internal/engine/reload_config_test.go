@@ -73,6 +73,10 @@ providers:
       base_url: http://localhost:11434/v1
       model: qwen-initial
       protocol: openai-compatible
+routing:
+  tiers:
+    frontier:
+      primary: generic:qwen-initial
 `)
 	if err := os.WriteFile(configPath, []byte(initial+"\n"), 0o644); err != nil {
 		t.Fatalf("write initial config: %v", err)
@@ -98,6 +102,10 @@ providers:
       base_url: http://localhost:11434/v1
       model: qwen-updated
       protocol: openai-compatible
+routing:
+  tiers:
+    frontier:
+      primary: generic:qwen-updated
 `)
 	if err := os.WriteFile(configPath, []byte(updated+"\n"), 0o644); err != nil {
 		t.Fatalf("write updated config: %v", err)

@@ -6,12 +6,10 @@ import (
 	"time"
 )
 
-// TestRenderTimelineEventMessage_HeaderLineThenIndentedBody pins the
-// "header on top, body indented 2 chars" layout. Earlier the first
-// content row rode on the same line as the badge+pill+header which
-// produced a deep right-aligned column when content wrapped — the
-// "her tool callın baş kısmında boşluk fazla" complaint.
-func TestRenderTimelineEventMessage_HeaderLineThenIndentedBody(t *testing.T) {
+// TestRenderTimelineEventMessage_SingleLineLayout pins the compact
+// 1-line-per-event layout: badge + header + body content all on one
+// line so a running+done pair occupies 2 lines instead of 4.
+func TestRenderTimelineEventMessage_SingleLineLayout(t *testing.T) {
 	item := chatLine{
 		Role:       chatRoleTool,
 		Timestamp:  time.Date(2026, 5, 6, 10, 49, 20, 0, time.Local),
@@ -20,32 +18,18 @@ func TestRenderTimelineEventMessage_HeaderLineThenIndentedBody(t *testing.T) {
 	}
 	header := "10:49:20  |  58 tok"
 	rows := renderTimelineEventMessage(item, header, 200)
-	if len(rows) < 4 {
-		t.Fatalf("expected at least 4 rows (header + 3 body), got %d:\n%v", len(rows), rows)
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly 1 row (inline layout), got %d:\n%v", len(rows), rows)
 	}
-	// First row is the header — must contain the timestamp/token header
-	// AND the status pill, but NOT the body content.
+	// Single row must contain header info AND body content
 	if !strings.Contains(rows[0], "10:49:20") {
-		t.Errorf("header row missing timestamp: %q", rows[0])
+		t.Errorf("row missing timestamp: %q", rows[0])
 	}
 	if !strings.Contains(rows[0], "58 tok") {
-		t.Errorf("header row missing token count: %q", rows[0])
+		t.Errorf("row missing token count: %q", rows[0])
 	}
-	if strings.Contains(rows[0], "done: batch") {
-		t.Errorf("header row should NOT carry body content, got %q", rows[0])
-	}
-	// Body rows must start with exactly 2 spaces of visible indent
-	// (lipgloss styles wrap the spaces but the rendered string still
-	// starts with the literal two spaces).
-	for i := 1; i < len(rows); i++ {
-		stripped := stripANSI(rows[i])
-		if !strings.HasPrefix(stripped, "  ") {
-			t.Errorf("body row %d should be indented 2 chars, got %q", i, stripped)
-		}
-		// And NOT 3+ spaces — we rejected the deep right-aligned column.
-		if strings.HasPrefix(stripped, "   ") {
-			t.Errorf("body row %d should NOT be indented more than 2 chars, got %q", i, stripped)
-		}
+	if !strings.Contains(rows[0], "done: batch") {
+		t.Errorf("row should carry body content inline, got %q", rows[0])
 	}
 }
 

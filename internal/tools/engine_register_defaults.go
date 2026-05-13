@@ -48,6 +48,7 @@ func New(cfg config.Config) *Engine {
 		readSnapshotLRU:  []string{},
 		readSnapshotCap:  readCap,
 		recentFailureCap: failCap,
+		disabled:         newDisabledState(cfg.Tools.Disabled),
 	}
 	e.Register(NewReadFileTool())
 	writeTool := NewWriteFileTool()
@@ -69,11 +70,23 @@ func New(cfg config.Config) *Engine {
 	hTool := NewHuntTool()
 	hTool.SetEngine(e)
 	e.Register(hTool)
+	aTool := NewAuditTool()
+	aTool.SetEngine(e)
+	e.Register(aTool)
+	dcTool := NewDeadCodeTool()
+	dcTool.SetEngine(e)
+	e.Register(dcTool)
 	e.Register(NewCodemapTool())
 	e.Register(NewSpecParseTool())
 	e.Register(NewSpecToTodoTool())
 	e.Register(NewSpecValidateTool())
 	e.Register(NewTestDiscoveryTool())
+	autoTestTool := NewAutoTestTool()
+	autoTestTool.SetEngine(e)
+	e.Register(autoTestTool)
+	depAuditTool := NewDependencyAuditTool()
+	depAuditTool.SetEngine(e)
+	e.Register(depAuditTool)
 	depTool := NewDependencyGraphTool()
 	// SetEngine uses a deferred pattern: it stores the engine and will
 	// re-read the codemap field when SetCodemap is called later (from
@@ -100,6 +113,16 @@ func New(cfg config.Config) *Engine {
 	benchTool := NewBenchmarkTool()
 	benchTool.SetEngine(e)
 	e.Register(benchTool)
+	regressTool := NewBenchmarkRegressionTool()
+	regressTool.SetEngine(e)
+	e.Register(regressTool)
+	intfDiffTool := NewInterfaceDiffTool()
+	intfDiffTool.SetEngine(e)
+	e.Register(intfDiffTool)
+	docGenTool := NewDocGenerateTool()
+	e.Register(docGenTool)
+	e.Register(NewGitReviewTool())
+	e.Register(NewChangelogGenerateTool())
 	symRenameTool := NewSymbolRenameTool()
 	symRenameTool.SetEngine(e)
 	e.Register(symRenameTool)
@@ -113,6 +136,7 @@ func New(cfg config.Config) *Engine {
 	e.Register(e.delegateTool)
 	e.orchestrateTool = NewOrchestrateTool()
 	e.orchestrateTool.SetMaxParallelCeiling(cfg.Agent.ParallelBatchSize)
+	e.orchestrateTool.SetMaxAutoSubtasks(cfg.Agent.OrchestrateAutoSubtasks)
 	e.Register(e.orchestrateTool)
 	timeout, err := time.ParseDuration(strings.TrimSpace(cfg.Tools.Shell.Timeout))
 	if err != nil || timeout <= 0 {

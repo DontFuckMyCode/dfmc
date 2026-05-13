@@ -107,6 +107,13 @@ func (t *ASTQueryTool) Execute(ctx context.Context, req Request) (Result, error)
 		lines = append(lines, "(no symbols matched)")
 	}
 
+	const maxASTQueryLines = 500
+	if len(lines) > maxASTQueryLines {
+		truncated := len(lines) - maxASTQueryLines
+		lines = lines[:maxASTQueryLines]
+		lines = append(lines, fmt.Sprintf("... (%d more symbols truncated)", truncated))
+	}
+
 	imports := append([]string(nil), result.Imports...)
 
 	return Result{

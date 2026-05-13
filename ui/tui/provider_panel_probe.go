@@ -54,7 +54,7 @@ func probeProviderCmd(eng *engine.Engine, name string) tea.Cmd {
 // circuits to a notice so the user understands why nothing happened.
 func (m Model) startProviderProbe(name string) (Model, tea.Cmd) {
 	if name == "" {
-		m.notice = "Select a provider row first — j/k highlights, then T probes."
+		m.notice = "Select a provider row first, then open actions and choose Test connection."
 		return m, nil
 	}
 	if m.eng == nil {

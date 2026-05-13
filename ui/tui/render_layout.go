@@ -31,6 +31,24 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 	if innerHeight < 1 {
 		innerHeight = 1
 	}
+	// Agent switcher overlay — shown when ctrl+alt+a is pressed.
+	if m.session != nil && m.session.overlayOpen {
+		body := m.session.RenderAgentSwitcher(width)
+		frame := lipgloss.NewStyle().
+			Background(colorPanelBg).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(pal.Border)
+		return frame.Width(width).Height(height).Render(body)
+	}
+	// Waiting-input overlay — shown when an agent needs user input.
+	if m.session != nil && m.session.HasWaitingAgents() {
+		body := m.renderWaitingInputOverlay(contentWidth, innerHeight)
+		frame := lipgloss.NewStyle().
+			Background(colorPanelBg).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(pal.Border)
+		return frame.Width(width).Height(height).Render(body)
+	}
 	// Help overlay covers the active body on EVERY tab except Chat.
 	// On Chat the overlay renders as a small section inside the chat
 	// console (Phase K: lets the composer double as a live filter). On
@@ -190,7 +208,7 @@ func fitChatBodyWithScrollbar(head, tail string, maxLines, scrollbackLines, widt
 		hint := subtleStyle.Render(fmt.Sprintf("  ↓ %d newer lines  ·  pgdown, end, shift+down to resume", len(headLines)-end))
 		window[len(window)-1] = hint
 	}
-	if len(tailLines) == 0 {
+	if width > 0 {
 		window = renderChatScrollbar(window, len(headLines), start, end, width)
 	}
 	return strings.Join(window, "\n") + "\n" + strings.Join(tailLines, "\n")
@@ -231,7 +249,7 @@ func renderChatScrollbar(lines []string, total, start, end, width int) []string 
 			}
 			clipped = truncateSingleLine(clipped+"  "+subtleStyle.Render(position), contentWidth)
 		}
-		pad := contentWidth - ansi.StringWidth(clipped)
+		pad := width - 1 - ansi.StringWidth(clipped)
 		if pad < 1 {
 			pad = 1
 		}
@@ -245,6 +263,18 @@ func splitLines(s string) []string {
 		return nil
 	}
 	return strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+}
+
+// oneLine collapses internal whitespace so the panel stays aligned
+// even when entries carry embedded newlines or tabs.
+func oneLine(s string) string {
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	return strings.TrimSpace(s)
 }
 
 // chatViewParts captures the scrollable head and the always-visible tail

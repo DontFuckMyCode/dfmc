@@ -56,7 +56,10 @@ func (e *Engine) TestProviderConnection(name string, timeout time.Duration) Prov
 		res.Err = "provider not registered"
 		return res
 	}
-	res.Model = p.Model()
+	res.Model = strings.TrimSpace(e.modelForProvider(name))
+	if res.Model == "" {
+		res.Model = p.Model()
+	}
 	if timeout <= 0 {
 		timeout = 8 * time.Second
 	}
@@ -205,6 +208,9 @@ func (e *Engine) provider() string {
 	if e.Config == nil {
 		return ""
 	}
+	if providerName, _, ok := e.tierPrimaryTarget(defaultChatTier); ok {
+		return providerName
+	}
 	return e.Config.Providers.Primary
 }
 
@@ -214,6 +220,9 @@ func (e *Engine) model() string {
 	}
 	if e.Config == nil {
 		return ""
+	}
+	if _, model, ok := e.tierPrimaryTarget(defaultChatTier); ok {
+		return model
 	}
 	profile, ok := e.Config.Providers.Profiles[e.provider()]
 	if !ok {
@@ -246,11 +255,16 @@ func (e *Engine) providerProfileStatusLocked() ProviderProfileStatus {
 		status.Configured = providerProfileConfigured(status.Name, profile)
 		status.Advisories = config.ProviderProfileAdvisories(status.Name, profile)
 	}
-	if status.Model == "" {
+	if resolvedModel := strings.TrimSpace(e.model()); resolvedModel != "" {
+		status.Model = resolvedModel
+	} else if status.Model == "" {
 		status.Model = strings.TrimSpace(e.model())
 	}
 	if override := strings.TrimSpace(e.modelOverride); override != "" {
 		status.Model = override
+	}
+	if maxContext := e.configuredProviderMaxContext(status.Name, status.Model); maxContext > 0 {
+		status.MaxContext = maxContext
 	}
 	return status
 }

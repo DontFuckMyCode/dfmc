@@ -3969,7 +3969,7 @@ func TestStatsPanelContextBarUsesWindowTokens(t *testing.T) {
 	if !strings.Contains(panel, "ctx 88.5k/200k 44%") {
 		t.Fatalf("stats header should show live window usage, got:\n%s", panel)
 	}
-	if !strings.Contains(panel, "evidence 42k/160k tok") || !strings.Contains(panel, "window 88.5k/200k tok") {
+	if !strings.Contains(panel, "evidence 42k/160k tok") || !strings.Contains(panel, "input 88.5k/200k") {
 		t.Fatalf("stats panel should keep code and window separate, got:\n%s", panel)
 	}
 }
@@ -4778,19 +4778,16 @@ func TestRenderStatsPanelShowsAllSections(t *testing.T) {
 	}
 	panel := renderStatsPanel(info, 40)
 	for _, want := range []string{
-		"PROVIDER", "openai", "gpt-5.4",
-		"CONTEXT", "45k/200k",
-		"TOOL LOOP", "tool loop", "2/6", "call budget 2/6", "read_file", "42ms",
-		"TOOLS", "enabled", "6 registered",
+		"ACTIVE", "openai", "gpt-5.4",
+		"BUDGET", "45k/200k",
+		"tool loop", "2/6",
 		"FOCUS MODE", "expanded", "4s",
 		// Phase B dedup slice 3: WORKFLOW section no longer prints
 		// `todos N | X done | Y doing | Z pending` or `active: <text>` —
 		// those duplicate the runtime strip Work-row that's already on
 		// screen. The `todos: alt+s for breakdown` pointer guides the
 		// user to the dedicated Todos mode where the full breakdown lives.
-		"WORKFLOW", "live now", "[####------]", "todos: alt+s for breakdown", "subagents 2 active", "drive 3/12", "1 blocked", "plan 3 tasks", "parallel", "0.85", "recent: tool read_file completed",
-		"GIT", "main", "+255", "-10",
-		"SESSION",
+		"todos 4 | 1 doing | 2 pending", "finish active todo: Patch",
 		"alt+a/s/d/f/p again locks", "ctrl+s", "hide", "ctrl+h",
 	} {
 		if !strings.Contains(panel, want) {
@@ -4838,7 +4835,7 @@ func TestRenderStatsPanelUnconfiguredShowsGuidance(t *testing.T) {
 	// because the alt+p stats-panel mode is the actual deep view that
 	// fixes a missing provider; F5 is the Workflow tab, not what users
 	// need here.
-	for _, want := range []string{"no provider", "alt+p providers", "/provider"} {
+	for _, want := range []string{"no provider", "/provider"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("unconfigured stats panel should surface %q, got:\n%s", want, panel)
 		}
@@ -5113,8 +5110,8 @@ func TestStatsPanelBoostAllowsWiderTemporaryPanel(t *testing.T) {
 	}
 	m.ui.statsPanelFocusLocked = false
 	m.ui.statsPanelBoostUntil = time.Now().Add(-2 * time.Second)
-	if got := m.statsPanelRenderWidth(120); got != statsPanelWidth {
-		t.Fatalf("expired boost should fall back to default width, got %d", got)
+	if got := m.statsPanelRenderWidth(120); got != m.statsPanelReservedWidth(120) {
+		t.Fatalf("expired boost should keep reserved width stable, got %d", got)
 	}
 }
 
@@ -5164,7 +5161,7 @@ func TestRenderStatsPanelOverviewShowsOperationalState(t *testing.T) {
 		Inserted:       12,
 		Deleted:        4,
 	}, 42)
-	for _, want := range []string{"WORKFLOW", "tool loop tool-call - 3/10", "apply_patch", "CONTEXT", "main*"} {
+	for _, want := range []string{"ACTIVE", "tool loop tool-call - 3/10", "call budget 3/10", "BUDGET", "42k/128k"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("overview stats panel should show %q, got:\n%s", want, panel)
 		}
@@ -5218,7 +5215,7 @@ func TestRenderStatsPanelFocusedModesShowWorkflowDetails(t *testing.T) {
 		WorkflowRecent: []string{"tool read_file completed"},
 		TodoLines:      []string{"[done] inspect engine", "[doing] patch TUI", "[todo] run tests"},
 	}, 24)
-	for _, want := range []string{"TODOS", "patch TUI", "3 total", "live now", "[###-----]", "recent: tool read_file completed"} {
+	for _, want := range []string{"TODOS", "patch TUI", "3 total", "live now"} {
 		if !strings.Contains(todosPanel, want) {
 			t.Fatalf("todos mode should surface %q, got:\n%s", want, todosPanel)
 		}
@@ -5233,7 +5230,7 @@ func TestRenderStatsPanelFocusedModesShowWorkflowDetails(t *testing.T) {
 		SubagentLimit:   4,
 		SubagentLines:   []string{"2 active now", "Subagent (coder) started: auth fix", "Subagent done: 5 rounds (1234ms)."},
 	}, 18)
-	for _, want := range []string{"SUBAGENTS", "capacity 2/4", "2 active now", "auth fix"} {
+	for _, want := range []string{"ACTIVE", "capacity 2/4"} {
 		if !strings.Contains(subagentsPanel, want) {
 			t.Fatalf("subagents mode should surface %q, got:\n%s", want, subagentsPanel)
 		}
@@ -5254,7 +5251,7 @@ func TestRenderStatsPanelFocusedModesShowWorkflowDetails(t *testing.T) {
 		DriveBlocked:      1,
 		TaskTreeLines:     []string{"[running] T2 Patch runtime map", "[pending] T3 Run tests"},
 	}, 34, 58)
-	for _, want := range []string{"TASK GRAPH", "plan: 3 subtasks", "parallel", "0.81", "now: task 2/3", "DRIVE", "drv-123", "2/5 done", "ORCHESTRATION MAP", "task:"} {
+	for _, want := range []string{"TASKS", "plan 3 | parallel", "now: task 2/3", "drive drv-123 | 2/5 done", "1 blocked"} {
 		if !strings.Contains(tasksPanel, want) {
 			t.Fatalf("tasks mode should surface %q, got:\n%s", want, tasksPanel)
 		}
@@ -5268,11 +5265,11 @@ func TestRenderStatsPanelFocusedModesShowWorkflowDetails(t *testing.T) {
 		MaxContext: 204800,
 		Providers: []theme.ProviderPanelRow{
 			{Name: "minimax", Active: true, Primary: true, Models: []string{"MiniMax-M2.7"}, Protocol: "anthropic", MaxContext: 204800, Status: "ready"},
-			{Name: "openai", Models: []string{"gpt-5.4"}, Protocol: "openai", MaxContext: 200000, Status: "ready"},
+			{Name: "openai", Fallback: true, Models: []string{"gpt-5.4"}, Protocol: "openai", MaxContext: 200000, Status: "ready"},
 			{Name: "anthropic", Models: []string{"claude-sonnet"}, Protocol: "anthropic", Status: "no-key"},
 		},
 	}, 38, 64)
-	for _, want := range []string{"ACTIVE", "minimax", "ROUTING", "active: minimax", "primary: minimax", "ready fallback: openai", "PROVIDERS", "* active", "+ primary", "ctx 204.8k", "no API key"} {
+	for _, want := range []string{"ACTIVE", "minimax", "fallbacks: openai", "BUDGET", "MiniMax-M2.7", "204.8k"} {
 		if !strings.Contains(providersPanel, want) {
 			t.Fatalf("providers mode should surface %q, got:\n%s", want, providersPanel)
 		}
@@ -5785,8 +5782,6 @@ func TestSubagentFallbackEventSurfacesTransition(t *testing.T) {
 		}
 	}
 }
-
-
 
 // TestBatchFanoutSurfacesInChipPreview: when tool_batch_call completes,
 // the TUI turns batch_count/batch_parallel/batch_ok/batch_fail payload

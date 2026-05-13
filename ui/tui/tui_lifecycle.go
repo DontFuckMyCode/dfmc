@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,15 +23,33 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/session"
 )
+
+// attachSessionBridge wires engine → session when a real Engine is available.
+var attachSessionBridge func(*engine.Engine, *session.Session)
+
+func init() {
+	attachSessionBridge = func(e *engine.Engine, s *session.Session) {
+		session.AttachSessionToEngine(s, e)
+	}
+	// Register the bridge function with the engine so AttachSession calls it.
+	engine.SetAttachProvider(func(e, s interface{}) {
+		if e != nil && s != nil {
+			attachSessionBridge(e.(*engine.Engine), s.(*session.Session))
+		}
+	})
+}
+
+const brandHeader = " DON'T FUCK MY CODE (DFMC) · dfmc.dev "
 
 func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	m := Model{
-		ctx:                   ctx,
-		eng:                   eng,
+		ctx: ctx,
+		eng: eng,
 		// First-class tabs: only the eight surfaces a user touches in the
 		// primary daily flow. The other nine (Status, Tools, CodeMap,
 		// Prompts, Security, Plans, Context, Orchestrate, Shortcuts)
@@ -50,9 +69,28 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 			showStatsPanel:    true,
 			statsPanelMode:    statsPanelModeOverview,
 			keyLogEnabled:     os.Getenv("DFMC_KEYLOG") == "1",
-			toolStripExpanded: true, // expanded by default; /tools toggles to collapsed
+			toolStripExpanded: false, // collapsed by default; full details in Ctrl+Alt+T panel
 		},
 		viewCache: &viewCacheState{},
+		session:   newSessionUI(),
+	}
+	// Wire session to engine if engine is available. The session holds the
+	// multi-agent agents; the engine provides the tool execution and LLM
+	// completion bridge via EngineProvider interface.
+	if eng != nil && m.session != nil {
+		sess := session.New()
+		m.session.s = sess
+		eng.AttachSession(sess)
+
+		// Subscribe to agent status change events so the TUI can surface
+		// waiting_input modals. We use a buffered channel so the session
+		// goroutine never blocks on a stalled subscriber.
+		statusCh := make(chan session.StatusEvent, 10)
+		session.StatusHookChannel = statusCh
+		go m.watchStatusEvents(m.ctx, statusCh)
+
+		// Start the session so the root agent begins processing.
+		_ = sess.Start()
 	}
 	// Seed status synchronously so the chat header renders with real
 	// provider info on the first paint, before the async loadStatusCmd
@@ -91,11 +129,6 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		tea.EnableBracketedPaste,
 		loadStatusCmd(m.eng),
-		loadWorkspaceCmd(m.eng),
-		loadLatestPatchCmd(m.eng),
-		loadFilesCmd(m.eng),
-		loadGitInfoCmd(m.projectRoot()),
-		heartbeatTickCmd(),
 	}
 	if !m.eventRelayExternal {
 		cmds = append(cmds, subscribeEventsCmd(m.eng))
@@ -126,19 +159,19 @@ func (m Model) View() string {
 	m.ensureDiagnostics()
 
 	// 1. Global Branding Header (New)
-	branding := " DON'T FUCK MY CODE (DFMC) · dfmc.dev "
+	branding := brandHeader
 	versionInfo := " dev "
 	if m.eng != nil && m.eng.Version != "" {
 		versionInfo = " " + m.eng.Version + " "
 	}
-	
+
 	updateBadge := ""
 	if m.eng != nil {
 		if update := m.eng.LatestUpdate(); update.UpdateAvailable {
 			updateBadge = okStyle.Bold(true).Render(" NEW ") + " "
 		}
 	}
-	
+
 	headerLine := headerStyle.Width(width).Render(
 		lipgloss.JoinHorizontal(lipgloss.Center,
 			branding,
@@ -160,13 +193,25 @@ func (m Model) View() string {
 	}
 	pal := paletteForTab(tabName, planMode)
 	strip := renderTopTabStrip(m.tabs, m.activeTab, planMode, width)
-	
-	brandLine := "DFMC WORKBENCH · " + tabName
+
+	modelLabel := strings.TrimSpace(m.status.Model)
+	projLabel := ""
+	if root := m.projectRoot(); root != "" {
+		projLabel = filepath.Base(root)
+	}
+	parts := []string{"DFMC WORKBENCH · " + tabName}
+	if modelLabel != "" {
+		parts = append(parts, modelLabel)
+	}
+	if projLabel != "" {
+		parts = append(parts, projLabel)
+	}
+	brandLine := strings.Join(parts, " · ")
 	brandTag := subtleStyle.Render(brandLine)
-	
+
 	tabArea := strip + "\n" + brandTag
 	footer := statusBarStyle.Width(width).Render(m.renderFooter(width))
-	
+
 	bodyHeight := height - lipgloss.Height(headerLine) - lipgloss.Height(tabArea) - lipgloss.Height(footer)
 	if bodyHeight < 6 {
 		bodyHeight = 6

@@ -18,6 +18,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 func (m Model) handleToolCallEvent(payload map[string]any) (Model, string) {
@@ -84,6 +85,14 @@ func (m Model) handleToolCallEvent(payload map[string]any) (Model, string) {
 		Step:          step,
 		RunningLog:    runningLog,
 		DetailLines:   toolCallTimelineLines(toolName, payload, paramsPreview),
+	})
+	m.pushToolCallLogEntry(toolCallLogEntry{
+		ToolName:  toolName,
+		Status:    "running",
+		StartedAt: time.Now(),
+		Step:      step,
+		Reason:    reason,
+		Params:    paramsPreview,
 	})
 	m.telemetry.activeToolCount++
 	line := ""
@@ -243,6 +252,23 @@ func (m Model) handleToolResultEvent(payload map[string]any) (Model, string) {
 		Step:        step,
 		RunningLog:  batchInner,
 		DetailLines: toolResultTimelineLines(toolName, payload, preview, success, compressionPct),
+	})
+	m.finalizeToolCallLogEntry(toolName, step, func(e *toolCallLogEntry) {
+		e.Status = status
+		e.FinishedAt = time.Now()
+		e.DurationMs = duration
+		e.Result = chipPreview
+		e.Tokens = payloadInt(payload, "output_tokens", 0)
+		e.OutputChars = payloadInt(payload, "output_chars", 0)
+		if !success {
+			e.Error = payloadString(payload, "error", "")
+		}
+		if batchCount > 0 {
+			e.IsBatch = true
+			e.BatchTotal = batchCount
+			e.BatchOK = payloadInt(payload, "batch_ok", 0)
+			e.BatchFail = payloadInt(payload, "batch_fail", 0)
+		}
 	})
 	if m.telemetry.activeToolCount > 0 {
 		m.telemetry.activeToolCount--

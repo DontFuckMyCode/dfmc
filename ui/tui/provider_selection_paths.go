@@ -148,30 +148,6 @@ func readProvidersPrimary(path string) string {
 	return strings.TrimSpace(primary)
 }
 
-// projectConfigHasProvidersOverride reports whether <project>/.dfmc/
-// config.yaml exists AND has a non-empty `providers` block. Used by
-// the Routing card to flag that a per-project override is shadowing
-// the user-global save target — otherwise the user wonders why their
-// global change didn't seem to apply for this project.
-func (m Model) projectConfigHasProvidersOverride() bool {
-	path, err := m.projectConfigPath()
-	if err != nil {
-		return false
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	var doc map[string]any
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return false
-	}
-	providers, ok := toStringAnyMap(doc["providers"])
-	if !ok {
-		return false
-	}
-	return len(providers) > 0
-}
 
 // displayConfigPath shortens an absolute config path for user-facing
 // notices — replaces the user's home dir with `~` so the line stays

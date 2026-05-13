@@ -16,7 +16,8 @@ type Snapshot struct {
 	// Parked: when true the previous agent loop was capped or budget-gated
 	// and is waiting for the user to resume. The presence of parked state
 	// is the strongest signal toward IntentResume — a bare "devam et" /
-	// "continue" / "go on" without parked state is much weaker.
+	// "continue" / "go on" without parked state is a much weaker signal
+	// for IntentResume compared to the same phrases WITH parked state.
 	Parked           bool
 	ParkedSummary    string // human-readable, e.g. "parked at step 7 — refactor tui.go"
 	ParkedStep       int

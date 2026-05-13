@@ -23,6 +23,9 @@ package engine
 import (
 	"context"
 	"strings"
+
+	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
 // runNativeToolLoopAutonomous wraps runNativeToolLoop with the
@@ -47,11 +50,12 @@ func (e *Engine) runNativeToolLoopAutonomous(ctx context.Context, seed *parkedAg
 		if err != nil || !completion.Parked {
 			return completion, err
 		}
-		if completion.ParkedReason != ParkReasonBudgetExhausted {
-			// Step cap and shutdown parks deliberately surface to the
-			// user — step cap means the model isn't converging, shutdown
-			// means the engine is going away. Auto-resume would mask
-			// both signals.
+		if completion.ParkedReason != ParkReasonBudgetExhausted && completion.ParkedReason != ParkReasonStepCap {
+			// Shutdown and interrupted parks deliberately surface to the
+			// user: shutdown means the engine is going away, interrupted
+			// means a caller cancelled this run. Budget and step caps are
+			// local loop ceilings, so autonomous mode can compact and
+			// continue until the cumulative guard trips.
 			return completion, err
 		}
 		if !e.autonomousResumeEnabled() {
@@ -157,23 +161,51 @@ func (e *Engine) attemptAutoResume(source string) (*parkedAgentState, bool) {
 		})
 	}
 
+	resumePrompt := e.buildAutonomousResumePrompt(seed)
+	seed.Messages = append(seed.Messages, provider.Message{
+		Role:    types.RoleUser,
+		Content: resumePrompt,
+	})
+
 	e.publishAgentLoopEvent("agent:loop:auto_resume", map[string]any{
-		"resumed_from_step": seed.Step,
-		"prior_tokens":      priorTokens,
-		"messages_before":   beforeMsgs,
-		"messages_after":    len(seed.Messages),
-		"cumulative_steps":  seed.CumulativeSteps,
-		"cumulative_tokens": seed.CumulativeTokens,
-		"step_ceiling":      stepCeiling,
-		"token_ceiling":     tokenCeiling,
-		"resumes_remaining": stepCeiling - seed.CumulativeSteps,
-		"source":            source,
-		"surface":           "native",
+		"resumed_from_step":   seed.Step,
+		"prior_tokens":        priorTokens,
+		"messages_before":     beforeMsgs,
+		"messages_after":      len(seed.Messages),
+		"cumulative_steps":    seed.CumulativeSteps,
+		"cumulative_tokens":   seed.CumulativeTokens,
+		"step_ceiling":        stepCeiling,
+		"token_ceiling":       tokenCeiling,
+		"resumes_remaining":   stepCeiling - seed.CumulativeSteps,
+		"source":              source,
+		"surface":             "native",
+		"continuation_prompt": resumePrompt,
 	})
 
 	seed.Step = 0
 	seed.TotalTokens = 0
 	return seed, true
+}
+
+// buildAutonomousResumePrompt generates a continuation user message from the
+// parked state so the model has clear direction after compaction, rather than
+// guessing from compressed history alone.
+func (e *Engine) buildAutonomousResumePrompt(seed *parkedAgentState) string {
+	var b strings.Builder
+	b.WriteString("[DFMC autonomous continuation]\n")
+	b.WriteString("The agent loop was paused due to budget limits. Continue the task from where you left off.\n\n")
+	if q := strings.TrimSpace(seed.Question); q != "" {
+		b.WriteString("Original task: ")
+		b.WriteString(truncateRunesWithMarker(q, 300, "…"))
+		b.WriteString("\n")
+	}
+	if summary := summarizeTraces(seed.Traces); summary != "" {
+		b.WriteString("Progress so far: ")
+		b.WriteString(summary)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nContinue using tools as needed. End with [done: true] when the task is complete.\n")
+	return b.String()
 }
 
 // defaultResumeMaxMultiplier is the outer ceiling on cumulative agent

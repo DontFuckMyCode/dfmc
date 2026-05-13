@@ -22,6 +22,7 @@ func notConfiguredError(name string) error {
 type PlaceholderProvider struct {
 	name       string
 	model      string
+	models     []string
 	configured bool
 	maxContext int
 }
@@ -39,8 +40,13 @@ func (p *PlaceholderProvider) Name() string {
 	return p.name
 }
 
-func (p *PlaceholderProvider) Model() string    { return p.model }
-func (p *PlaceholderProvider) Models() []string { return []string{p.model} }
+func (p *PlaceholderProvider) Model() string { return p.model }
+func (p *PlaceholderProvider) Models() []string {
+	if len(p.models) > 0 {
+		return append([]string(nil), p.models...)
+	}
+	return []string{p.model}
+}
 
 func (p *PlaceholderProvider) Complete(_ context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	if !p.configured {

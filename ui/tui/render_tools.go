@@ -107,8 +107,8 @@ func (m Model) renderToolsListPane(width, height int, pal tabPaletteEntry, tools
 		)
 	} else {
 		rowBudget := max(height-6, 6)
-		start, end := scrollWindow(m.toolView.index, len(tools), rowBudget)
-		for i := start; i < end; i++ {
+		scroll := m.toolView.scroll
+		for i := scroll; i < scroll+rowBudget && i < len(tools); i++ {
 			lines = append(lines, m.renderToolsListRow(i, width, pal, tools))
 		}
 		lines = append(lines, "",
@@ -127,11 +127,17 @@ func (m Model) renderToolsListRow(i, width int, pal tabPaletteEntry, tools []str
 	}
 	chrome := lipgloss.Width(cursor) + 1
 	nameWidth := max(width-chrome, 8)
-	label := truncateSingleLine(name, nameWidth)
+	label := truncateSingleLine(name, nameWidth-12)
 	if selected {
 		label = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render(label)
 	}
-	return cursor + label
+	badge := ""
+	if m.eng != nil && m.eng.IsToolDisabled(name) {
+		badge = " " + warnStyle.Render("[OFF]")
+	} else if m.eng != nil && m.eng.ToolIsProtected(name) {
+		badge = " " + subtleStyle.Render("[core]")
+	}
+	return cursor + label + badge
 }
 
 // --- SPEC PANE ---------------------------------------------------------------
@@ -148,7 +154,14 @@ func (m Model) renderToolsSpecPane(width, height int, _ tabPaletteEntry, tools [
 		return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 	}
 	selected := tools[m.toolView.index]
-	if m.eng != nil && m.eng.Tools != nil {
+	if m.eng != nil && m.eng.IsToolDisabled(selected) {
+		lines = append(lines,
+			warnStyle.Render(fmt.Sprintf("%s is DISABLED", selected)),
+			"",
+			"Press → to open actions and enable, or use:",
+			subtleStyle.Render("  dfmc tool enable "+selected),
+		)
+	} else if m.eng != nil && m.eng.Tools != nil {
 		if spec, ok := m.eng.Tools.Spec(selected); ok {
 			lines = append(lines, highlightToolSpecLines(formatToolSpec(spec), width)...)
 		} else {
@@ -251,17 +264,24 @@ func (m Model) toolsMetaCards(tools []string) []panelCard {
 	})
 
 	// ACTIONS card.
+	actionRows := []panelCardRow{
+		{Key: "↑ / ↓", Value: "navigate tools"},
+		{Key: "enter", Value: "run selected tool"},
+		{Key: "→", Value: "action menu (run/edit/enable/disable)"},
+	}
+	if m.eng != nil {
+		selected := tools[m.toolView.index]
+		if m.eng.IsToolDisabled(selected) {
+			actionRows = append(actionRows, panelCardRow{Key: "", Value: okStyle.Render("DISABLED - open action menu to enable")})
+		} else if m.eng.ToolIsProtected(selected) {
+			actionRows = append(actionRows, panelCardRow{Key: "", Value: subtleStyle.Render("core tool - cannot be disabled")})
+		}
+	}
 	cards = append(cards, panelCard{
-		Icon:  "⚒",
-		Title: "Actions",
-		Rows: []panelCardRow{
-			{Key: "j / k", Value: "next / prev tool"},
-			{Key: "enter", Value: "run with current params"},
-			{Key: "e", Value: "edit params"},
-			{Key: "x", Value: "reset params to default"},
-			{Key: "r", Value: "rerun last invocation"},
-		},
-		FooterHint: "ctrl+h keys",
+		Icon:        "⚒",
+		Title:       "Actions",
+		Rows:        actionRows,
+		FooterHint:  "ctrl+h keys",
 	})
 	return cards
 }
@@ -282,7 +302,7 @@ func (m Model) renderToolsMetaInline(width int, tools []string) string {
 		chipStyle.Render(" " + chip + " "),
 		titleStyle.Render(selected),
 		subtleStyle.Render(fmt.Sprintf("%d / %d", m.toolView.index+1, len(tools))),
-		subtleStyle.Render("enter run · e edit · x reset · r rerun"),
+		subtleStyle.Render("→ actions · enter run"),
 	}
 	return strings.Join(parts, "  ·  ")
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
+	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -19,13 +20,16 @@ type Engine struct {
 	ast   *ast.Engine
 	graph *Graph
 	stats *buildMetricsTracker
+	cfg   *config.CodemapConfig // nil-safe; BuildFromFiles uses it to decide parallel vs sequential
 }
 
-func New(astEngine *ast.Engine) *Engine {
+// New creates a new Engine. If cfg is nil, default settings are used.
+func New(astEngine *ast.Engine, cfg *config.CodemapConfig) *Engine {
 	return &Engine{
 		ast:   astEngine,
 		graph: NewGraph(),
 		stats: newBuildMetricsTracker(),
+		cfg:   cfg,
 	}
 }
 
@@ -39,6 +43,12 @@ func (e *Engine) Graph() *Graph {
 // cancellation — without this hook, cancellation is only detected between
 // files, causing multi-second delay on large projects.
 func (e *Engine) BuildFromFiles(ctx context.Context, paths []string, onProgress ...func(processed, total int)) error {
+	// Route to parallel variant if configured.
+	if e.cfg != nil && e.cfg.Parallel {
+		workers := e.cfg.WorkerCount
+		return e.BuildFromFilesParallel(ctx, paths, workers, onProgress...)
+	}
+
 	callback := func(processed, total int) {}
 	if len(onProgress) > 0 && onProgress[0] != nil {
 		callback = onProgress[0]

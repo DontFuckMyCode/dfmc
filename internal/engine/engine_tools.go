@@ -24,6 +24,37 @@ func (e *Engine) ListTools() []string {
 	return e.Tools.List()
 }
 
+// SetToolEnabled enables or disables a backend tool by name. Protected tools
+// cannot be disabled. The change takes effect immediately — disabled tools
+// vanish from Specs/Search/List and refuse Execute.
+func (e *Engine) SetToolEnabled(name string, enabled bool) error {
+	if e.Tools == nil {
+		return nil
+	}
+	return e.Tools.SetEnabled(name, enabled)
+}
+
+// IsToolDisabled reports whether a tool is currently disabled.
+func (e *Engine) IsToolDisabled(name string) bool {
+	if e.Tools == nil {
+		return false
+	}
+	return e.Tools.IsDisabled(name)
+}
+
+// ListDisabledTools returns a sorted list of all disabled tool names.
+func (e *Engine) ListDisabledTools() []string {
+	if e.Tools == nil {
+		return nil
+	}
+	return e.Tools.ListDisabled()
+}
+
+// ToolIsProtected reports whether a tool cannot be disabled.
+func (e *Engine) ToolIsProtected(name string) bool {
+	return tools.IsToolProtected(name)
+}
+
 // invalidateContextForTool tracks files modified by edit_file, write_file,
 // or apply_patch so the next buildContextChunks call excludes them from
 // context retrieval. This prevents stale context chunks from being served
@@ -191,4 +222,3 @@ func (e *Engine) callToolFromSource(ctx context.Context, name string, params map
 	})
 	return res, nil
 }
-

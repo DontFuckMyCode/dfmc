@@ -45,19 +45,13 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.exitInputHistoryNavigation()
 		m.deleteInputBeforeCursor()
 		m.refreshMentionPickerOpen()
-		m.slashMenu.command = 0
-		m.slashMenu.commandArg = 0
-		m.slashMenu.mention = 0
-		m.slashMenu.quickAction = 0
+		m.slashMenu.resetIndices()
 		return m, nil
 	case tea.KeyDelete:
 		m.exitInputHistoryNavigation()
 		m.deleteInputAtCursor()
 		m.refreshMentionPickerOpen()
-		m.slashMenu.command = 0
-		m.slashMenu.commandArg = 0
-		m.slashMenu.mention = 0
-		m.slashMenu.quickAction = 0
+		m.slashMenu.resetIndices()
 		return m, nil
 	case tea.KeyLeft:
 		m.moveChatCursor(-1)
@@ -91,20 +85,14 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// keeps @mentions and [[file:...]] markers atomic.
 		m.exitInputHistoryNavigation()
 		m.deleteInputWordBeforeCursor()
-		m.slashMenu.command = 0
-		m.slashMenu.commandArg = 0
-		m.slashMenu.mention = 0
-		m.slashMenu.quickAction = 0
+		m.slashMenu.resetIndices()
 		return m, nil
 	case tea.KeyCtrlK:
 		// Ctrl+K — kill to end of line. Pairs with Ctrl+U (kill whole
 		// line) so editors coming from bash/emacs feel at home.
 		m.exitInputHistoryNavigation()
 		m.deleteInputToEndOfLine()
-		m.slashMenu.command = 0
-		m.slashMenu.commandArg = 0
-		m.slashMenu.mention = 0
-		m.slashMenu.quickAction = 0
+		m.slashMenu.resetIndices()
 		return m, nil
 	case tea.KeyCtrlX:
 		suggestions := m.buildChatSuggestionState()

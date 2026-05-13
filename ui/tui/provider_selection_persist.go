@@ -202,20 +202,44 @@ func writeProviderProfileProjectConfig(profileNode map[string]any, prof config.M
 	if profileNode == nil {
 		return
 	}
-	if model := strings.TrimSpace(prof.Model); model != "" {
+	delete(profileNode, "max_context")
+	delete(profileNode, "max_tokens")
+	delete(profileNode, "models")
+	delete(profileNode, "fallback_models")
+	delete(profileNode, "protocol")
+	catalogID := strings.TrimSpace(prof.CatalogID)
+	if catalogID != "" {
+		profileNode["catalog_id"] = catalogID
+		if model := strings.TrimSpace(prof.Model); model != "" {
+			profileNode["model"] = model
+		} else {
+			delete(profileNode, "model")
+		}
+	} else if model := strings.TrimSpace(prof.Model); model != "" {
 		profileNode["model"] = model
+		if len(prof.Models) > 0 {
+			profileNode["models"] = prof.Models
+		}
+		if len(prof.FallbackModels) > 0 {
+			profileNode["fallback_models"] = prof.FallbackModels
+		}
+	}
+	if apiKeyEnc := strings.TrimSpace(prof.APIKeyEncrypted); apiKeyEnc != "" {
+		profileNode["api_key_enc"] = apiKeyEnc
+		delete(profileNode, "api_key")
+	} else if apiKey := strings.TrimSpace(prof.APIKey); apiKey != "" {
+		if encrypted, err := config.EncryptSecret(apiKey); err == nil {
+			profileNode["api_key_enc"] = encrypted
+			delete(profileNode, "api_key")
+		} else {
+			profileNode["api_key"] = apiKey
+		}
 	}
 	if protocol := strings.TrimSpace(prof.Protocol); protocol != "" {
 		profileNode["protocol"] = protocol
 	}
 	if baseURL := strings.TrimSpace(prof.BaseURL); baseURL != "" {
 		profileNode["base_url"] = baseURL
-	}
-	if prof.MaxTokens > 0 {
-		profileNode["max_tokens"] = prof.MaxTokens
-	}
-	if prof.MaxContext > 0 {
-		profileNode["max_context"] = prof.MaxContext
 	}
 }
 

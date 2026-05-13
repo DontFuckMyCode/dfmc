@@ -1,11 +1,11 @@
-//go:build telegram_bot_wip
-
 package bot
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,25 +14,35 @@ import (
 
 // TelegramBot is the main Telegram bot instance.
 type TelegramBot struct {
-	api     *tgbotapi.BotAPI
-	token   string
-	chatIDs map[int64]int64 // userID → chatID
-	mu      sync.RWMutex
+	api          *tgbotapi.BotAPI
+	token        string
+	allowedUsers map[int64]struct{} // whitelist of allowed user IDs
+	chatIDs      map[int64]int64     // userID → chatID
+	lastAction   map[int64]time.Time
+	mu           sync.RWMutex
 
-	onMessage func(userID int64, text string) // callback to engine
+	// onMessage is called when a message passes allowed-users check.
+	// args: userID, message text, replyFn.
+	onMessage func(userID int64, text string, replyFn func(string))
 
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
 // New creates a new Telegram bot with the given token.
+// Token must be a valid BotFather token.
+// Call SetAllowedUsers to restrict access by Telegram user ID.
 func New(token string) (*TelegramBot, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, fmt.Errorf("telegram token cannot be empty")
+	}
+
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, fmt.Errorf("telegram init: %w", err)
 	}
 
-	// Verify bot token with a simple API call
 	if api.Self.UserName == "" {
 		return nil, fmt.Errorf("telegram: invalid token or bot not found")
 	}
@@ -40,15 +50,55 @@ func New(token string) (*TelegramBot, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	bot := &TelegramBot{
-		api:     api,
-		token:   token,
-		chatIDs: make(map[int64]int64),
-		ctx:     ctx,
-		cancel:  cancel,
+		api:          api,
+		token:        token,
+		allowedUsers: make(map[int64]struct{}),
+		chatIDs:      make(map[int64]int64),
+		lastAction:   make(map[int64]time.Time),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 
 	log.Printf("[telegram] bot initialized: @%s", api.Self.UserName)
 	return bot, nil
+}
+
+// SetAllowedUsers replaces the allowed-users whitelist.
+// Empty slice = NO users allowed (secure by default).
+// IDs are stored in a map for O(1) lookup.
+func (b *TelegramBot) SetAllowedUsers(ids []int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.allowedUsers = make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id > 0 {
+			b.allowedUsers[id] = struct{}{}
+		}
+	}
+	log.Printf("[telegram] allowed users set: %d", len(ids))
+}
+
+// isAllowed returns true if the user is in the allowed-users whitelist.
+// Empty allowedUsers = nobody allowed.
+func (b *TelegramBot) isAllowed(userID int64) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if b.allowedUsers == nil {
+		return false
+	}
+	_, ok := b.allowedUsers[userID]
+	return ok
+}
+
+// AllowedUsers returns the current list of allowed user IDs.
+func (b *TelegramBot) AllowedUsers() []int64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	ids := make([]int64, 0, len(b.allowedUsers))
+	for id := range b.allowedUsers {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // Start begins the update loop. Blocks until Stop() is called.
@@ -70,10 +120,20 @@ func (b *TelegramBot) Start() error {
 			if !ok {
 				return fmt.Errorf("updates channel closed")
 			}
-			if update.Message != nil {
+			if update.Message != nil && update.Message.From != nil {
+				if !b.allowUserAction(update.Message.From.ID) {
+					log.Printf("[telegram] user=%d rate limited", update.Message.From.ID)
+					continue
+				}
 				go b.handleIncomingMessage(update)
 			}
-			if update.CallbackQuery != nil {
+			if update.CallbackQuery != nil && update.CallbackQuery.From != nil {
+				if !b.allowUserAction(update.CallbackQuery.From.ID) {
+					cbResp := tgbotapi.NewCallback(update.CallbackQuery.ID, "Slow down and try again.")
+					_, _ = b.api.Request(cbResp)
+					log.Printf("[telegram] user=%d callback rate limited", update.CallbackQuery.From.ID)
+					continue
+				}
 				go b.handleCallbackQuery(update)
 			}
 		}
@@ -85,8 +145,9 @@ func (b *TelegramBot) Stop() {
 	b.cancel()
 }
 
-// SetMessageHandler registers the callback for incoming messages.
-func (b *TelegramBot) SetMessageHandler(fn func(userID int64, text string)) {
+// SetOnMessage registers the callback for incoming messages that pass
+// the allowed-users check. replyFn is SendToUser.
+func (b *TelegramBot) SetOnMessage(fn func(userID int64, text string, replyFn func(string))) {
 	b.onMessage = fn
 }
 
@@ -142,14 +203,42 @@ func (b *TelegramBot) RegisteredUsers() int {
 // handleIncomingMessage processes an incoming message.
 func (b *TelegramBot) handleIncomingMessage(update tgbotapi.Update) {
 	msg := update.Message
+	if msg == nil || msg.From == nil {
+		return
+	}
 
-	// Track this user's chat ID
+	userID := msg.From.ID
+
+	// Always track chat ID for reply capability
 	b.mu.Lock()
-	b.chatIDs[msg.From.ID] = msg.Chat.ID
+	b.chatIDs[userID] = msg.Chat.ID
 	b.mu.Unlock()
 
 	// Log the message
-	log.Printf("[telegram] %s (%d): %s", msg.From.UserName, msg.From.ID, truncate(msg.Text, 50))
+	log.Printf("[telegram] %s (%d): %s", msg.From.UserName, userID, redactForLog(msg.Text, 80))
+
+	// Allow /help and /start even without explicit allowedUsers set
+	// (but only if allowedUsers is configured — empty = nobody allowed)
+	if msg.IsCommand() {
+		cmd := msg.Command()
+		if cmd == "help" || cmd == "start" {
+			b.handleCommand(msg)
+			return
+		}
+	}
+
+	// Check allowed-users whitelist
+	if !b.isAllowed(userID) {
+		log.Printf("[telegram] unauthorized user=%d rejected", userID)
+		b.reply(msg.Chat.ID, "⛔ Access denied. Contact the bot admin.")
+		return
+	}
+
+	// Rate limit check
+	if !b.allowUserAction(userID) {
+		b.reply(msg.Chat.ID, "⏳ Slow down — try again in a moment.")
+		return
+	}
 
 	// Route to handler
 	if msg.IsCommand() {
@@ -183,21 +272,30 @@ func (b *TelegramBot) handleCommand(msg *tgbotapi.Message) {
 
 // handleTextMessage handles non-command messages.
 func (b *TelegramBot) handleTextMessage(msg *tgbotapi.Message) {
+	userID := msg.From.ID
+
 	if b.onMessage != nil {
-		b.onMessage(msg.From.ID, msg.Text)
+		replyFn := func(text string) {
+			if err := b.SendToUser(userID, text); err != nil {
+				log.Printf("[telegram] reply error: %v", err)
+			}
+		}
+		b.onMessage(userID, msg.Text, replyFn)
 	} else {
-		b.reply(msg.Chat.ID, "DFMC engine not connected. Use /help to see available commands.")
+		b.reply(msg.Chat.ID, "🤖 DFMC engine not connected. Use /help.")
 	}
 }
 
 // cmdStart is the /start command.
 func (b *TelegramBot) cmdStart(msg *tgbotapi.Message) {
 	text := fmt.Sprintf(
-		"👋 *Welcome to DFMC Bot!*\n\n"+
-			"I'm your coding assistant bridge.\n"+
-			"Use /chat to send a message\n"+
-			"Use /status to check system health\n"+
-			"Use /help for all commands",
+		"👋 *Welcome to DFMC!*\n\n" +
+			"I'm your coding assistant bridge.\n\n" +
+			"*Available Commands*\n" +
+			"• /help — all commands\n" +
+			"• /status — system health\n" +
+			"• /chat `<message>` — send a message\n\n" +
+			"Just send any text to chat!",
 	)
 	b.reply(msg.Chat.ID, text)
 }
@@ -205,12 +303,12 @@ func (b *TelegramBot) cmdStart(msg *tgbotapi.Message) {
 // cmdHelp is the /help command.
 func (b *TelegramBot) cmdHelp(msg *tgbotapi.Message) {
 	text := "*Available Commands*\n\n" +
-		"• /start — Welcome message\n" +
-		"• /help — This help message\n" +
-		"• /chat <message> — Send a message to DFMC\n" +
-		"• /status — System health check\n" +
-		"• /subscribe — Receive notifications\n" +
-		"• /unsubscribe — Stop notifications\n\n" +
+		"• /start — welcome message\n" +
+		"• /help — this help\n" +
+		"• /status — system health check\n" +
+		"• /chat `<message>` — send a message to DFMC\n" +
+		"• /subscribe — receive notifications\n" +
+		"• /unsubscribe — stop notifications\n\n" +
 		"*Tips*\n" +
 		"• Send any text to chat with DFMC\n" +
 		"• Use /chat for multi-line messages\n" +
@@ -220,54 +318,68 @@ func (b *TelegramBot) cmdHelp(msg *tgbotapi.Message) {
 
 // cmdStatus is the /status command.
 func (b *TelegramBot) cmdStatus(msg *tgbotapi.Message) {
-	b.reply(msg.Chat.ID, "✅ DFMC is running\n🧠 Engine: ready\n📊 Active users: "+fmt.Sprint(b.RegisteredUsers()))
+	b.mu.RLock()
+	userCount := len(b.chatIDs)
+	b.mu.RUnlock()
+
+	b.reply(msg.Chat.ID, fmt.Sprintf(
+		"✅ *DFMC Status*\n\n🧠 Engine: ready\n📊 Users: %d\n🤖 Bot: @%s",
+		userCount,
+		b.api.Self.UserName,
+	))
 }
 
-// cmdChat is the /chat command.
+// cmdChat is the /chat command — forward to engine via callback.
 func (b *TelegramBot) cmdChat(msg *tgbotapi.Message) {
-	// Strip /chat prefix
 	text := msg.CommandArguments()
 	if text == "" {
 		b.reply(msg.Chat.ID, "Usage: /chat `<message>`")
 		return
 	}
 
-	// Acknowledge
-	b.reply(msg.Chat.ID, "⏳ Processing your request...")
+	userID := msg.From.ID
 
-	// Forward to engine
 	if b.onMessage != nil {
-		b.onMessage(msg.From.ID, text)
+		replyFn := func(response string) {
+			if err := b.SendToUser(userID, response); err != nil {
+				log.Printf("[telegram] chat reply error: %v", err)
+			}
+		}
+		// Acknowledge immediately
+		b.reply(msg.Chat.ID, "⏳ Processing your request...")
+		b.onMessage(userID, text, replyFn)
+	} else {
+		b.reply(msg.Chat.ID, "🤖 Engine not connected yet.")
 	}
 }
 
 // cmdSubscribe enables notifications for this user.
 func (b *TelegramBot) cmdSubscribe(msg *tgbotapi.Message) {
 	b.mu.Lock()
-	b.chatIDs[msg.From.ID] = msg.Chat.ID // ensure registered
+	b.chatIDs[msg.From.ID] = msg.Chat.ID
 	b.mu.Unlock()
-	b.reply(msg.Chat.ID, "🔔 Notifications enabled. You'll receive updates from DFMC.")
+	b.reply(msg.Chat.ID, "🔔 Notifications enabled.")
 }
 
-// cmdUnsubscribe disables notifications.
+// cmdUnsubscribe currently only sends confirmation.
 func (b *TelegramBot) cmdUnsubscribe(msg *tgbotapi.Message) {
-	// Note: we don't actually remove from chatIDs since we need it for replies
-	// Instead just mark them as unsubscribed (could add a separate map)
 	b.reply(msg.Chat.ID, "🔕 Notifications disabled.")
 }
 
 // handleCallbackQuery handles inline keyboard button presses.
 func (b *TelegramBot) handleCallbackQuery(update tgbotapi.Update) {
 	callback := update.CallbackQuery
+	if callback == nil || callback.Message == nil {
+		return
+	}
 	cbResp := tgbotapi.NewCallback(callback.ID, "")
-	b.api.Send(cbResp)
+	_, _ = b.api.Request(cbResp)
 
-	// Handle based on data
 	switch callback.Data {
 	case "refresh":
 		b.reply(callback.Message.Chat.ID, "🔄 Refreshing...")
 	case "status":
-		b.reply(callback.Message.Chat.ID, "✅ DFMC is running\n🧠 Engine: ready")
+		b.reply(callback.Message.Chat.ID, "✅ DFMC is running")
 	default:
 		b.reply(callback.Message.Chat.ID, "Callback: "+callback.Data)
 	}
@@ -282,19 +394,34 @@ func (b *TelegramBot) reply(chatID int64, text string) {
 	}
 }
 
-// notifyEngine sends a message to the DFMC engine via registered handler.
-func (b *TelegramBot) notifyEngine(userID int64, text string) {
-	if b.onMessage != nil {
-		b.onMessage(userID, text)
+const telegramRateLimitWindow = 750 * time.Millisecond
+
+func (b *TelegramBot) allowUserAction(userID int64) bool {
+	if b == nil {
+		return false
 	}
+	now := time.Now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.lastAction == nil {
+		b.lastAction = make(map[int64]time.Time)
+	}
+	if last, ok := b.lastAction[userID]; ok && now.Sub(last) < telegramRateLimitWindow {
+		return false
+	}
+	b.lastAction[userID] = now
+	return true
 }
 
 // Health returns bot health info.
-func (b *TelegramBot) Health() map[string]interface{} {
-	return map[string]interface{}{
-		"bot_username": b.api.Self.UserName,
-		"registered":   b.RegisteredUsers(),
-		"token_set":    b.token != "",
+func (b *TelegramBot) Health() map[string]any {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return map[string]any{
+		"bot_username":   b.api.Self.UserName,
+		"registered":     len(b.chatIDs),
+		"allowed_users":  len(b.allowedUsers),
+		"token_set":      b.token != "",
 	}
 }
 
@@ -306,13 +433,31 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+var telegramSecretPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*([^\s]+)`),
+	regexp.MustCompile(`(?i)\b(sk-[A-Za-z0-9_-]{8,})\b`),
+}
+
+func redactForLog(s string, maxLen int) string {
+	out := s
+	for _, re := range telegramSecretPatterns {
+		out = re.ReplaceAllStringFunc(out, func(match string) string {
+			if groups := re.FindStringSubmatch(match); len(groups) >= 3 {
+				return groups[1] + "=<redacted>"
+			}
+			return "<redacted>"
+		})
+	}
+	return truncate(out, maxLen)
+}
+
 // Message represents a Telegram message for the TUI panel.
 type Message struct {
-	ID        int64
-	FromID    int64
-	FromName  string
-	Text      string
-	Timestamp time.Time
+	ID         int64
+	FromID     int64
+	FromName   string
+	Text       string
+	Timestamp  time.Time
 	IsOutgoing bool // true = sent by bot, false = received
 }
 

@@ -19,8 +19,6 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/security"
 )
 
-// severityStyle maps a severity label to a colour style so the eye
-// picks out criticals before reading any text.
 func severityStyle(sev string) string {
 	tag := strings.ToUpper(strings.TrimSpace(sev))
 	if tag == "" {
@@ -37,9 +35,6 @@ func severityStyle(sev string) string {
 	}
 }
 
-// formatSecretRow shape: `CRIT  file.go:42  AWS Access Key  AKIA****XYZ`.
-// Phase J item 1: ignored findings render with a muted IGN prefix and
-// the rest of the row dimmed so triage attention drops naturally.
 func formatSecretRow(s security.SecretFinding, selected, ignored bool, width int) string {
 	loc := fmt.Sprintf("%s:%d", s.File, s.Line)
 	head := severityStyle(s.Severity) + "  " + loc
@@ -66,7 +61,6 @@ func formatSecretRow(s security.SecretFinding, selected, ignored bool, width int
 	return line
 }
 
-// formatVulnRow shape: `HIGH  file.go:42  SQL Injection  CWE-89  <snippet>`.
 func formatVulnRow(v security.VulnerabilityFinding, selected, ignored bool, width int) string {
 	loc := fmt.Sprintf("%s:%d", v.File, v.Line)
 	head := severityStyle(v.Severity) + "  " + loc
@@ -98,8 +92,6 @@ func formatVulnRow(v security.VulnerabilityFinding, selected, ignored bool, widt
 	return line
 }
 
-// securityTopBanner — title + view chip + state chip. State chip
-// flips: NOT SCANNED / SCANNING / CLEAN / SECRETS / VULNS / ERROR.
 func (m Model) securityTopBanner(width int, viewLabel string) string {
 	title := titleStyle.Bold(true).Render("⚠ SECURITY")
 	chipText, chipStyle := " NOT SCANNED ", subtleStyle
@@ -121,10 +113,8 @@ func (m Model) securityTopBanner(width int, viewLabel string) string {
 		}
 	}
 	chip := chipStyle.Render(chipText)
-	viewChip := accentStyle.Render(" view=" + viewLabel + " ")
-	chipStrip := viewChip + " " + chip
-	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
-	return title + strings.Repeat(" ", gap) + chipStrip
+	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chip)-2, 1)
+	return title + strings.Repeat(" ", gap) + chip
 }
 
 func (m Model) renderSecurityView(width int) string {
@@ -142,40 +132,29 @@ func (m Model) renderSecurityViewInner(width int) string {
 		viewLabel = "vulns"
 	}
 	banner := m.securityTopBanner(width, viewLabel)
-	hint := subtleStyle.Render("j/k scroll · v toggle secrets/vulns · i ignore · f fix-in-chat · / search · r rescan · c clear")
 
-	queryLine := subtleStyle.Render("query ")
-	if strings.TrimSpace(m.security.query) != "" {
-		queryLine += boldStyle.Render(m.security.query)
-	} else {
-		queryLine += subtleStyle.Render("(none)")
-	}
-	if m.security.searchActive {
-		queryLine += subtleStyle.Render("  · typing, enter to commit")
-	}
+	affordance := subtleStyle.Render(
+		"ctrl+f search  ·  ctrl+r rescan  ·  ctrl+i ignore  ·  ctrl+g/G top/bottom",
+	)
 
-	lines := []string{banner, queryLine, hint, renderDivider(width - 2)}
+	lines := []string{banner, affordance}
 
 	if m.security.err != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.security.err))
+		lines = append(lines, "", warnStyle.Render("✗ error · "+m.security.err))
 		return strings.Join(lines, "\n")
 	}
 	if m.security.loading {
-		lines = append(lines, "", subtleStyle.Render("scanning..."))
+		lines = append(lines, "", infoStyle.Render("◌ scanning..."))
 		return strings.Join(lines, "\n")
 	}
 	if m.security.report == nil {
 		lines = append(lines, "",
 			subtleStyle.Render("No security scan run yet."),
 			subtleStyle.Render("DFMC's heuristic scanner walks the project for hard-coded secrets (AWS keys, GitHub tokens, private keys, ...) and common vulnerability patterns (SQL string concat, command injection, weak crypto, ...)."),
-			subtleStyle.Render("Press r to scan, or run `dfmc security` from the CLI. 1/2 toggle Secrets / Vulnerabilities, / searches, c clears."))
+			subtleStyle.Render("Press ctrl+r to scan, or run `dfmc security` from the CLI."))
 		return strings.Join(lines, "\n")
 	}
 
-	// Always-present summary line so the user knows the scan actually ran.
-	// Phase J item 1: when the user has marked findings as ignored, the
-	// summary surfaces both totals and active counts so the user sees
-	// progress as they whitelist things.
 	ignoredSecrets := 0
 	for _, s := range m.security.report.Secrets {
 		if m.security.ignored[secretFingerprint(s)] {
@@ -190,25 +169,44 @@ func (m Model) renderSecurityViewInner(width int) string {
 	}
 	totalSecrets := len(m.security.report.Secrets)
 	totalVulns := len(m.security.report.Vulnerabilities)
-	summary := fmt.Sprintf(
-		"scanned %d files · %d secrets · %d vulnerabilities",
-		m.security.report.FilesScanned,
-		totalSecrets-ignoredSecrets,
-		totalVulns-ignoredVulns,
-	)
-	if ignoredSecrets+ignoredVulns > 0 {
-		summary += fmt.Sprintf(" · %d ignored (i toggles)", ignoredSecrets+ignoredVulns)
+	activeSecrets := totalSecrets - ignoredSecrets
+	activeVulns := totalVulns - ignoredVulns
+
+	if activeSecrets == 0 && activeVulns == 0 && totalSecrets == 0 && totalVulns == 0 {
+		lines = append(lines, "", okStyle.Render("✓ no secrets detected — commit with confidence."))
+		return strings.Join(lines, "\n")
 	}
-	lines = append(lines, subtleStyle.Render(summary), "")
+
+	if activeSecrets == 0 && activeVulns == 0 {
+		lines = append(lines, "", okStyle.Render("✓ all findings ignored."))
+	} else if activeSecrets+activeVulns == 1 {
+		single := ""
+		if activeSecrets == 1 {
+			single = fmt.Sprintf("%d secret", activeSecrets)
+		} else {
+			single = fmt.Sprintf("%d vulnerability", activeVulns)
+		}
+		if totalSecrets+totalVulns > 1 {
+			lines = append(lines, "", warnStyle.Render("⚠ 1 active ")+subtleStyle.Render(single+fmt.Sprintf(" remaining · %d ignored", ignoredSecrets+ignoredVulns)))
+		} else {
+			lines = append(lines, "", warnStyle.Render("⚠ 1 active ")+subtleStyle.Render(single))
+		}
+	} else {
+		summary := fmt.Sprintf("scanned %d files · %d secrets · %d vulns", m.security.report.FilesScanned, activeSecrets, activeVulns)
+		if ignoredSecrets+ignoredVulns > 0 {
+			summary += fmt.Sprintf(" · %d ignored (ctrl+i toggles)", ignoredSecrets+ignoredVulns)
+		}
+		lines = append(lines, "", subtleStyle.Render(summary))
+	}
 
 	if m.security.view == securityViewVulns {
 		all := sortVulns(m.security.report.Vulnerabilities)
 		filtered := filterVulns(all, m.security.query)
 		if len(filtered) == 0 {
 			if len(all) == 0 {
-				lines = append(lines, subtleStyle.Render("No vulnerabilities found. Codebase looks clean on heuristic rules."))
+				lines = append(lines, "", okStyle.Render("✓ no vulnerabilities found. Codebase looks clean."))
 			} else {
-				lines = append(lines, subtleStyle.Render("No vulnerabilities match this query."))
+				lines = append(lines, "", subtleStyle.Render("no vulnerabilities match this query"))
 			}
 			return strings.Join(lines, "\n")
 		}
@@ -218,10 +216,7 @@ func (m Model) renderSecurityViewInner(width int) string {
 			ignored := m.security.ignored[vulnFingerprint(v)]
 			lines = append(lines, formatVulnRow(v, selected, ignored, width-2))
 		}
-		lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
-			"%d shown · %d total",
-			len(filtered), len(all),
-		)))
+		lines = append(lines, "", subtleStyle.Render(fmt.Sprintf("%d shown · %d total", len(filtered), len(all))))
 		return strings.Join(lines, "\n")
 	}
 
@@ -229,9 +224,9 @@ func (m Model) renderSecurityViewInner(width int) string {
 	filtered := filterSecrets(all, m.security.query)
 	if len(filtered) == 0 {
 		if len(all) == 0 {
-			lines = append(lines, subtleStyle.Render("No secrets detected. Commit with confidence."))
+			lines = append(lines, "", okStyle.Render("✓ no secrets detected."))
 		} else {
-			lines = append(lines, subtleStyle.Render("No secrets match this query."))
+			lines = append(lines, "", subtleStyle.Render("no secrets match this query"))
 		}
 		return strings.Join(lines, "\n")
 	}
@@ -241,15 +236,10 @@ func (m Model) renderSecurityViewInner(width int) string {
 		ignored := m.security.ignored[secretFingerprint(s)]
 		lines = append(lines, formatSecretRow(s, selected, ignored, width-2))
 	}
-	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
-		"%d shown · %d total",
-		len(filtered), len(all),
-	)))
+	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf("%d shown · %d total", len(filtered), len(all))))
 	return strings.Join(lines, "\n")
 }
 
-// clampScroll keeps the cursor inside the visible range of the current
-// view. Separate from the Model so tests can hit it directly.
 func clampScroll(scroll, total int) int {
 	if scroll < 0 {
 		return 0
@@ -263,8 +253,6 @@ func clampScroll(scroll, total int) int {
 	return scroll
 }
 
-// securityViewTotal returns the count of items in the currently
-// selected view after filtering, used for scroll-bound maths.
 func (m Model) securityViewTotal() int {
 	if m.security.report == nil {
 		return 0

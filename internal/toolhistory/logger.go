@@ -203,4 +203,3 @@ func (l *Logger) Close() {
 	}
 	close(l.stopCh)
 }
-

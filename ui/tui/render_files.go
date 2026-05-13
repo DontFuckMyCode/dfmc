@@ -28,6 +28,31 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// renderScrollbar returns a │▓░│ style scrollbar track with the thumb
+// positioned at cursorIdx within total items. scrollWidth is the
+// track width in characters (excluding the two border characters).
+func renderScrollbar(cursorIdx, total, scrollWidth int) string {
+	if scrollWidth < 3 || total <= 1 {
+		return ""
+	}
+	thumbPos := 0
+	if total > 1 {
+		thumbPos = cursorIdx * (scrollWidth - 1) / (total - 1)
+	}
+	track := make([]rune, scrollWidth+2)
+	track[0] = '│'
+	track[scrollWidth+1] = '│'
+	for i := 1; i <= scrollWidth; i++ {
+		pos := i - 1
+		if pos == thumbPos {
+			track[i] = '▓'
+		} else {
+			track[i] = '░'
+		}
+	}
+	return string(track)
+}
+
 // renderFilesViewV2 is the new 3-pane Files panel. The legacy
 // renderFilesViewSized in render_panels.go now delegates here.
 func (m Model) renderFilesViewV2(width, height int) string {
@@ -36,9 +61,6 @@ func (m Model) renderFilesViewV2(width, height int) string {
 
 	pal := paletteForTab("Files", false)
 
-	// Layout breakpoints. The "metadata" pane only appears on wide
-	// terminals; on medium widths we collapse it into a footer strip
-	// under the preview to keep the list and preview readable.
 	threePane := width >= 120
 	twoPane := !threePane && width >= 80
 
@@ -52,18 +74,12 @@ func (m Model) renderFilesViewV2(width, height int) string {
 		body = lipgloss.JoinHorizontal(lipgloss.Top,
 			listBlock, "  ", previewBlock, "  ", metaBlock)
 	} else if twoPane {
-		// Metadata folded into a footer strip under the preview so
-		// the most-useful info still shows on medium terminals.
 		footer := m.renderFilesMetaInline(width)
 		previewBlock = previewBlock + "\n" + footer
 		body = lipgloss.JoinHorizontal(lipgloss.Top, listBlock, "  ", previewBlock)
 	} else {
-		// Single-pane: stack list above preview, drop metadata.
 		body = listBlock + "\n" + previewBlock
 	}
-	// Discoverable arrow-key path: when the action menu is open it
-	// stacks under the panel as a visible overlay so the user sees
-	// every action (pin/explain/review/...) without memorising keys.
 	if m.actionMenu.open && m.actionMenu.owner == "Files" {
 		body += "\n\n" + m.renderActionMenu(width)
 	}
@@ -91,30 +107,39 @@ func filesPanelWidths(total int, threePane, twoPane bool) (listW, previewW, meta
 // --- LIST PANE ---------------------------------------------------------------
 
 func (m Model) renderFilesListPane(width, height int, pal tabPaletteEntry) string {
-	header := m.filesListHeader(width)
+	filtered := filteredFilesEntries(m.filesView.entries, m.filesView.query)
+	filteredCount := len(filtered)
+
+	header := m.filesListHeader(width, filteredCount)
 	lines := []string{
 		header,
 		subtleStyle.Render(strings.Repeat("─", width-2)),
 		"",
 	}
-	if len(m.filesView.entries) == 0 {
-		lines = append(lines,
-			"  "+warnStyle.Render("No indexed files."),
-			"",
-			"  "+subtleStyle.Render("Press 'r' to refresh"),
-		)
+	if filteredCount == 0 {
+		if len(m.filesView.entries) == 0 {
+			lines = append(lines,
+				"  "+warnStyle.Render("No indexed project files."),
+				"",
+				"  "+subtleStyle.Render("Press Ctrl+R to refresh, or run /analyze"),
+			)
+		} else {
+			lines = append(lines,
+				"  "+warnStyle.Render("No files match filter."),
+				"",
+				"  "+subtleStyle.Render("Ctrl+Shift+C to clear"),
+			)
+		}
 	} else {
-		// Reserve rows for header (3) + footer (3).
 		rowBudget := max(height-6, 6)
-		start, end := scrollWindow(m.filesView.index, len(m.filesView.entries), rowBudget)
+		start, end := scrollWindow(m.filesView.index, filteredCount, rowBudget)
 		for i := start; i < end; i++ {
-			row := m.renderFilesListRow(i, width, pal)
+			row := m.renderFilesListRow(i, filtered, width, pal)
 			lines = append(lines, row)
 		}
-		// Scroll-position indicator + count.
+		sb := renderScrollbar(m.filesView.index, filteredCount, 3)
 		lines = append(lines, "",
-			"  "+subtleStyle.Render(fmt.Sprintf("%d / %d files",
-				m.filesView.index+1, len(m.filesView.entries))))
+			"  "+subtleStyle.Render(fmt.Sprintf("%d / %d files", m.filesView.index+1, filteredCount))+"   "+sb)
 		if pinned := strings.TrimSpace(m.filesView.pinned); pinned != "" {
 			lines = append(lines,
 				"  "+infoStyle.Render("📌 ")+subtleStyle.Render(truncateForLine(pinned, width-6)))
@@ -123,27 +148,36 @@ func (m Model) renderFilesListPane(width, height int, pal tabPaletteEntry) strin
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 }
 
-func (m Model) filesListHeader(width int) string {
-	count := len(m.filesView.entries)
+func (m Model) filesListHeader(width int, filteredCount int) string {
+	total := len(m.filesView.entries)
+	activeFilter := m.filesView.query != ""
 	chip := okStyle
-	chipText := fmt.Sprintf(" %d ", count)
-	if count == 0 {
+	chipText := fmt.Sprintf(" %d ", filteredCount)
+	if filteredCount == 0 {
 		chip = warnStyle
 		chipText = " 0 "
+	} else if activeFilter {
+		chip = accentStyle
+		chipText = fmt.Sprintf(" %d/%d ", filteredCount, total)
 	}
 	title := titleStyle.Bold(true).Render(" ◎ FILES")
+	if activeFilter {
+		title = titleStyle.Bold(true).Render(" ◎ FILES")
+		title += subtleStyle.Render(" [filter: "+m.filesView.query+"]")
+	}
 	chipRendered := chip.Render(chipText)
 	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipRendered)-2, 1)
 	return title + strings.Repeat(" ", gap) + chipRendered
 }
 
-func (m Model) renderFilesListRow(i, width int, pal tabPaletteEntry) string {
-	path := m.filesView.entries[i]
+func (m Model) renderFilesListRow(i int, entries []string, width int, pal tabPaletteEntry) string {
+	if i < 0 || i >= len(entries) {
+		return ""
+	}
+	path := entries[i]
 	pinned := path == strings.TrimSpace(m.filesView.pinned)
 	selected := i == m.filesView.index
 
-	// Layout per row:
-	//   ▶/space  [icon] filename                      ext  [git] [pin]
 	cursor := "  "
 	if selected {
 		cursor = accentStyle.Bold(true).Render("· ")
@@ -152,12 +186,9 @@ func (m Model) renderFilesListRow(i, width int, pal tabPaletteEntry) string {
 	ext := strings.ToLower(filepath.Ext(path))
 	icon := "📄"
 	if ext == "" {
-		icon = "📁" // Assuming no ext might be a dir or just unknown, but usually files have tags in dfmc
+		icon = "📁"
 	}
-	
-	gitMarker := ""
-	// TODO: Integrate real git status per file if available in m.gitInfo
-	
+
 	pinChip := ""
 	if pinned {
 		pinChip = " " + infoStyle.Render("📌")
@@ -174,8 +205,8 @@ func (m Model) renderFilesListRow(i, width int, pal tabPaletteEntry) string {
 	chrome := lipgloss.Width(cursor) + lipgloss.Width(icon) + lipgloss.Width(extBadge) + lipgloss.Width(pinChip) + 2
 	nameWidth := max(width-chrome, 12)
 	name := truncatePathHead(path, nameWidth)
-	
-	row := cursor + icon + " " + name + extBadge + gitMarker + pinChip
+
+	row := cursor + icon + " " + name + extBadge + pinChip
 	if selected {
 		row = lipgloss.NewStyle().
 			Background(colorTabActiveBg).
@@ -268,4 +299,3 @@ func digitsForCount(n int) int {
 	}
 	return d
 }
-

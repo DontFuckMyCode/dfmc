@@ -501,3 +501,28 @@ func TestCheckConfigPermissions_Nonexistent(t *testing.T) {
 		t.Errorf("nonexistent file: expected empty string, got %q", got)
 	}
 }
+
+func TestValidateShellHookCommandRejectsMultiline(t *testing.T) {
+	err := validateShellHookCommand("echo ok\nrm -rf /")
+	if err == nil {
+		t.Fatal("multiline shell hook command should be rejected")
+	}
+}
+
+func TestFire_DisabledUnsafeShellHookReportsWithoutExecuting(t *testing.T) {
+	var reports []Report
+	d := New(config.HooksConfig{Entries: map[string][]config.HookEntry{
+		"pre_tool": {{Name: "bad-shell", Command: "echo ok\nexit 1"}},
+	}}, func(r Report) { reports = append(reports, r) })
+
+	ran := d.Fire(context.Background(), EventPreTool, nil)
+	if ran != 1 {
+		t.Fatalf("disabled hook should still report once, got ran=%d", ran)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("expected one report, got %d", len(reports))
+	}
+	if reports[0].Err == nil || !strings.Contains(reports[0].Err.Error(), "hook disabled") {
+		t.Fatalf("expected disabled hook error, got %#v", reports[0].Err)
+	}
+}

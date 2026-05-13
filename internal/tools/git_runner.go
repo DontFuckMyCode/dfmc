@@ -90,6 +90,9 @@ func runGitWithAllowedBlockedArgs(ctx context.Context, projectRoot string, timeo
 // users back to explicit shell approval via run_command.
 func blockedGitArg(arg string, allowed map[string]struct{}) bool {
 	a := strings.ToLower(strings.TrimSpace(arg))
+	if idx := strings.Index(a, "="); idx >= 0 {
+		a = a[:idx]
+	}
 	if _, ok := allowed[a]; ok {
 		return false
 	}
@@ -97,7 +100,7 @@ func blockedGitArg(arg string, allowed map[string]struct{}) bool {
 	case "--no-verify", "--no-gpg-sign", "--amend", "-i", "--interactive", "--force", "-f", "--hard", "--no-checkout":
 		return true
 	}
-	for _, prefix := range []string{"--exec=", "--receive-pack=", "--upload-pack="} {
+	for _, prefix := range []string{"--exec", "--receive-pack", "--upload-pack"} {
 		if strings.HasPrefix(a, prefix) {
 			return true
 		}

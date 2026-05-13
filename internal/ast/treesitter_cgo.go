@@ -456,17 +456,6 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 	return symbols, imports
 }
 
-func childrenOfType(n *tree_sitter.Node, t string) []*tree_sitter.Node {
-	result := []*tree_sitter.Node{}
-	for i := 0; i < int(n.ChildCount()); i++ {
-		child := n.Child(i)
-		if child.Type() == t {
-			result = append(result, child)
-		}
-	}
-	return result
-}
-
 func childText(n *tree_sitter.Node, childType string, content []byte) string {
 	for i := 0; i < int(n.ChildCount()); i++ {
 		child := n.Child(i)

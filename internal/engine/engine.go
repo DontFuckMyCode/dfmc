@@ -34,6 +34,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/applog"
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/bot"
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
@@ -48,6 +49,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/providerlog"
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/internal/storage"
+	"github.com/dontfuckmycode/dfmc/internal/toolhistory"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -85,10 +87,15 @@ type Engine struct {
 	// patterns, bug patterns, security rules, and idioms during analysis.
 	// Nil is safe — callers check before using.
 	LangIntel *langintel.Registry
+
 	// Hooks dispatches user-configured shell commands on lifecycle events
 	// (user_prompt_submit, pre_tool, post_tool, session_start/end). A nil
 	// value is safe — Fire is a no-op on nil.
 	Hooks *hooks.Dispatcher
+
+	// LearnedPatterns persists successful tool interaction patterns.
+	// Initialized in engine_init.go. nil-safe.
+	LearnedPatterns *toolhistory.LearnedPatternStore
 
 	// TelegramBot is the optional Telegram bot. nil means Telegram is
 	// not enabled for this instance. When set, messages from Telegram
@@ -110,6 +117,10 @@ type Engine struct {
 	// is a no-op.
 	ProviderLog *providerlog.Logger
 
+	// AppLog is the structured application logger. Every error,
+	// warning, and operational event across the engine lands here as
+	// JSONL under <data-dir>/app/{YYYY-MM-DD}.jsonl. nil-safe.
+	AppLog *applog.Logger
 	// activeSkills holds the skill names resolved from the current
 	// prompt build (BuildSystemPromptBundle). executeToolWithLifecycle
 	// reads it to honour skill-scoped Preferred/Allowed tool lists.
@@ -227,6 +238,34 @@ func (e *Engine) SetTelegramBot(tgBot *bot.TelegramBot, sessionName string, allo
 	e.TelegramAllowedUsers = allowedUsers
 }
 
+// AttachSession wires a multi-agent session into the engine. The session
+// holds agents and calls back into the engine via an EngineProvider interface.
+// The provider is expected to be a *session.Session cast as any to avoid
+// importing session in engine.go. Call this after engine.Init completes.
+func (e *Engine) AttachSession(provider any) {
+	if e == nil || provider == nil {
+		return
+	}
+	if attachSessionProvider != nil {
+		attachSessionProvider(e, provider)
+	}
+}
+
+// attachSessionProvider is set by the session package via SetAttachProvider.
+var attachSessionProvider func(interface{}, interface{})
+
+// SetAttachProvider registers the session attachment function.
+// Called by the session package to wire the bridge from its init().
+func SetAttachProvider(fn func(interface{}, interface{})) {
+	attachSessionProvider = fn
+}
+
+// sessionBridgeInit is called by the session package in session's init().
+// The session package calls this to register its bridge function with the
+// engine before AttachSession is ever called. Declared here to avoid
+// importing session in engine.go.
+var sessionBridgeInit func(fn func(interface{}, interface{}))
+
 // Init lives in engine_init.go — it wires storage / AST / codemap /
 // context / tools / memory / conversation / providers / intent / hooks
 // and kicks off the initial codebase indexer.
@@ -314,8 +353,16 @@ func (e *Engine) StartBackgroundTask(name string, fn func(context.Context)) {
 // recordInteraction live in engine_ask.go.
 // buildSystemPrompt / memoryDegradedSystemNotice / bundleToSystemBlocks
 // live in engine_prompt.go.
-// Memory* and Conversation* passthroughs live in engine_passthrough.go.
 // ensureIndexed / Analyze / AnalyzeWithOptions / collectSourceFiles /
 // detectDeadCode / computeComplexity and the text-stripper /
 // complexity helpers / minInt / maxInt / estimateTokens live in
 // engine_analyze.go.
+
+// exportLearnedPatterns serializes the learned pattern store into a
+// context-injection string. Returns "" when there are no patterns.
+func (e *Engine) exportLearnedPatterns() string {
+	if e.LearnedPatterns == nil {
+		return ""
+	}
+	return e.LearnedPatterns.ExportForContext()
+}

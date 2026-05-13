@@ -25,6 +25,8 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -93,12 +95,13 @@ type Dispatcher struct {
 // compiledHook pairs a config entry with its pre-parsed timeout so the
 // dispatch path stays allocation-free on the hot loop.
 type compiledHook struct {
-	name      string
-	command   string
-	args      []string
-	condition string
-	timeout   time.Duration
-	useShell  bool
+	name           string
+	command        string
+	args           []string
+	condition      string
+	timeout        time.Duration
+	useShell       bool
+	disabledReason string
 }
 
 // New builds a dispatcher from config. An empty config yields a no-op
@@ -127,13 +130,20 @@ func New(cfg config.HooksConfig, observer Observer) *Dispatcher {
 			} else if len(entry.Args) > 0 {
 				useShell = false
 			}
+			disabledReason := ""
+			if useShell {
+				if err := validateShellHookCommand(cmd); err != nil {
+					disabledReason = err.Error()
+				}
+			}
 			d.entries[event] = append(d.entries[event], compiledHook{
-				name:      strings.TrimSpace(entry.Name),
-				command:   cmd,
-				args:      append([]string(nil), entry.Args...),
-				condition: strings.TrimSpace(entry.Condition),
-				timeout:   d.defaultTO,
-				useShell:  useShell,
+				name:           strings.TrimSpace(entry.Name),
+				command:        cmd,
+				args:           append([]string(nil), entry.Args...),
+				condition:      strings.TrimSpace(entry.Condition),
+				timeout:        d.defaultTO,
+				useShell:       useShell,
+				disabledReason: disabledReason,
 			})
 		}
 	}
@@ -155,7 +165,13 @@ func safeObserve(obs Observer, report Report) {
 	if obs == nil {
 		return
 	}
-	defer func() { _ = recover() }()
+	defer func() {
+		if p := recover(); p != nil {
+			buf := make([]byte, 4096)
+			n := runtime.Stack(buf, false)
+			fmt.Fprintf(os.Stderr, "[dfmc-hook-panic] source=safeObserve panic=%v stack=%s\n", p, string(buf[:n]))
+		}
+	}()
 	obs(report)
 }
 

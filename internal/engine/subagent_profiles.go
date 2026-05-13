@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/skills"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
@@ -15,15 +16,8 @@ import (
 // appendFallbackReason live in subagent_profiles_helpers.go.
 
 func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequest, profiles []string) (tools.SubagentResult, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if strings.TrimSpace(req.Task) == "" {
-		return tools.SubagentResult{}, fmt.Errorf("task is required")
-	}
-	if e == nil || e.Providers == nil {
-		return tools.SubagentResult{}, ErrEngineNotInitialized
-	}
+	
+	
 	profiles, err := e.normalizeSubagentProfiles(profiles, req.Model)
 	if err != nil {
 		return tools.SubagentResult{}, err
@@ -64,7 +58,8 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 		}
 	}
 
-	skillTexts := resolveSubagentSkillTexts(e.ProjectRoot, req.Skills)
+	activeSkills := resolveSubagentSkills(e.ProjectRoot, req.Skills)
+	skillTexts := subagentSkillTexts(activeSkills)
 	backendSpecs := e.Tools.BackendSpecs()
 	journalSection := formatSubagentJournalSection(e.loadSubagentJournal(req.Role))
 	task := buildSubagentPrompt(req, skillTexts, subagentPromptEnvironment{
@@ -111,6 +106,17 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 	// same lifecycle funnel, same empty-list-is-no-op contract.
 	ctx = withSubagentAllowlist(ctx, req.AllowedTools)
 	ctx = withSubagentPathScope(ctx, req.AllowedPaths)
+
+	// If the delegating skill set is enforced (every active skill
+	// declares allowed_tools), apply the union as a hard gate before
+	// any tool runs. This mirrors the checkSkillAllowlist gate in
+	// executeToolWithLifecycle so Drive TODOs are subject to the same
+	// constraint the main agent loop already enforces. Empty skill list
+	// or a skill without allowed_tools keeps the gate as a no-op.
+	if len(activeSkills) > 0 {
+		allowed, enforced := skills.EffectiveAllowedTools(activeSkills)
+		ctx = withSkillAllowlist(ctx, allowed, enforced)
+	}
 
 	start := time.Now()
 	e.publishAgentLoopEvent("agent:subagent:start", map[string]any{
@@ -245,5 +251,3 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 	})
 	return tools.SubagentResult{DurationMs: dur}, lastErr
 }
-
-

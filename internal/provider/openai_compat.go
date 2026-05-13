@@ -22,6 +22,7 @@ import (
 type OpenAICompatibleProvider struct {
 	name       string
 	model      string
+	models     []string
 	apiKey     string
 	baseURL    string
 	maxTokens  int
@@ -57,6 +58,10 @@ func normalizeOpenAIBaseURL(name, raw string) string {
 		return ""
 	}
 	lower := strings.ToLower(trimmed)
+	if strings.HasSuffix(lower, "/chat/completions") {
+		trimmed = strings.TrimRight(trimmed[:len(trimmed)-len("/chat/completions")], "/")
+		lower = strings.ToLower(trimmed)
+	}
 	// Already contains a version or path segment — leave it.
 	for _, seg := range []string{"/v1", "/v2", "/v3", "/v4", "/openai", "/compatible-mode", "/paas", "/anthropic", "/api/"} {
 		if strings.Contains(lower, seg) {
@@ -71,9 +76,14 @@ func normalizeOpenAIBaseURL(name, raw string) string {
 	return trimmed
 }
 
-func (p *OpenAICompatibleProvider) Name() string     { return p.name }
-func (p *OpenAICompatibleProvider) Model() string    { return p.model }
-func (p *OpenAICompatibleProvider) Models() []string { return []string{p.model} }
+func (p *OpenAICompatibleProvider) Name() string  { return p.name }
+func (p *OpenAICompatibleProvider) Model() string { return p.model }
+func (p *OpenAICompatibleProvider) Models() []string {
+	if len(p.models) > 0 {
+		return append([]string(nil), p.models...)
+	}
+	return []string{p.model}
+}
 
 func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	if strings.TrimSpace(p.baseURL) == "" {

@@ -38,6 +38,9 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 )
 
+// maxFindSymbolFileSize keeps symbol search from reading huge generated files.
+const maxFindSymbolFileSize = 10 << 20
+
 // goReceiverRE pulls the receiver type out of a Go method signature like
 // `func (s *Server) Start(...)` or `func (Server) Start(...)`. Group 1 is
 // the type name with leading `*` stripped.
@@ -121,9 +124,11 @@ func (t *FindSymbolTool) Execute(ctx context.Context, req Request) (Result, erro
 		if err != nil {
 			return nil
 		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if d.IsDir() {
-			switch d.Name() {
-			case ".git", ".dfmc", "node_modules", "vendor", "bin", "dist", ".venv", ".idea", "build", "target":
+			if defaultWalkSkipDirs[d.Name()] {
 				return fs.SkipDir
 			}
 			return nil
@@ -145,7 +150,7 @@ func (t *FindSymbolTool) Execute(ctx context.Context, req Request) (Result, erro
 		// out for non-HTML modes because templated files often hold IDs
 		// (e.g. .vue / .svelte) and the model may search for them.
 		if ext == ".html" || ext == ".htm" || ext == ".xml" || ext == ".vue" || ext == ".svelte" {
-			if hms := findInHTML(path, name, kind, matchMode, bodyMaxLines, includeBody); len(hms) > 0 {
+			if hms := findInHTML(req.ProjectRoot, path, name, kind, matchMode, bodyMaxLines, includeBody); len(hms) > 0 {
 				matches = appendCapped(matches, hms, maxResults)
 				return nil
 			}
@@ -169,6 +174,10 @@ func (t *FindSymbolTool) Execute(ctx context.Context, req Request) (Result, erro
 			return nil
 		}
 
+		info, _ := d.Info()
+		if info != nil && info.Size() > maxFindSymbolFileSize {
+			return nil
+		}
 		content, rerr := os.ReadFile(path)
 		if rerr != nil {
 			return nil

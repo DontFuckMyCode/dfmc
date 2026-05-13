@@ -1,12 +1,5 @@
 package tui
 
-// Provider detail view rendering. Split from provider_panel_render.go
-// because renderProviderDetailView alone is ~230 lines — the biggest
-// single render block in the providers surface. Covers the per-
-// provider page: header badges, profile fields (inline-editable),
-// best-for tags, numbered model list with scroll window, fallback
-// models, and the add-model picker (list mode + manual-entry mode).
-
 import (
 	"fmt"
 	"strings"
@@ -14,236 +7,174 @@ import (
 
 func (m Model) renderProviderDetailView(width int) string {
 	width = clampInt(width, 24, 1000)
-	header := sectionHeader("⚑", "Provider Detail")
-	hint := subtleStyle.Render("j/k scroll · g/G/home/end top/bottom · pgup/pgdown page · enter menu · esc/q back")
+	hint := "up/down move - enter actions - space actions - esc back"
 	if m.providers.modelPickerActive {
 		if m.providers.modelPickerManual {
-			hint = subtleStyle.Render("type model · enter confirm · esc cancel")
+			hint = "type model id - enter add - esc cancel"
 		} else {
-			hint = subtleStyle.Render("j/k scroll · g/G home/end · pgup/pgdown page · enter pick · m manual · esc cancel")
+			hint = "up/down move - enter add - space custom id - esc cancel"
 		}
+	} else if m.providers.modelSearchActive {
+		hint = "model search - type filter - enter keep - esc clear - ctrl+u clear"
 	} else if m.providers.profileEditMode {
-		hint = subtleStyle.Render("tab field · enter commit · esc cancel")
+		hint = "up/down or tab select - protocol cycles with enter/left/right/space - esc cancel"
 	}
-	lines := []string{header, hint, renderDivider(width - 2)}
+	lines := []string{
+		sectionHeader("P", "Provider Detail"),
+		subtleStyle.Render(hint),
+		renderDivider(width - 2),
+	}
 
 	if m.eng == nil || m.eng.Config == nil {
 		lines = append(lines, warnStyle.Render("engine unavailable"))
 		return strings.Join(lines, "\n")
 	}
-
-	prof, ok := m.eng.Config.Providers.Profiles[m.providers.detailProvider]
+	name := strings.TrimSpace(m.providers.detailProvider)
+	prof, ok := m.eng.Config.Providers.Profiles[name]
 	if !ok {
-		lines = append(lines, warnStyle.Render("provider not found: "+m.providers.detailProvider))
+		lines = append(lines, warnStyle.Render("provider not found: "+name))
 		return strings.Join(lines, "\n")
 	}
 
-	name := m.providers.detailProvider
-	status := "no-key"
-	if strings.EqualFold(name, "offline") {
-		status = "offline"
-	} else if strings.TrimSpace(prof.APIKey) != "" || strings.TrimSpace(prof.BaseURL) != "" {
-		status = "ready"
-	}
-
-	// Header badges
-	badges := []string{providerStatusStyle(status)}
-	badges = append(badges, apiKeySourceBadge(name, prof))
-	if m.eng != nil && strings.EqualFold(m.eng.Config.Providers.Primary, name) {
+	lines = append(lines, "", accentStyle.Render(name))
+	badges := []string{apiKeySourceBadge(name, prof)}
+	if strings.EqualFold(m.eng.Config.Providers.Primary, name) {
 		badges = append(badges, accentStyle.Render("[primary]"))
 	}
-	if m.eng != nil {
-		fbs := m.eng.FallbackProviders()
-		for fi, fb := range fbs {
-			if strings.EqualFold(fb, name) {
-				pos := fmt.Sprintf("%d", fi+1)
-				suffix := "th"
-				switch pos {
-				case "1":
-					suffix = "st"
-				case "2":
-					suffix = "nd"
-				case "3":
-					suffix = "rd"
-				}
-				badges = append(badges, subtleStyle.Render("[fallback: "+pos+suffix+"]"))
-				break
-			}
-		}
-	}
-	lines = append(lines, "")
-	lines = append(lines, accentStyle.Render(name))
-	badgeLine := "  " + strings.Join(badges, "  ")
-	if width > 0 {
-		badgeLine = truncateSingleLine(badgeLine, width-2)
-	}
-	lines = append(lines, badgeLine)
-	lines = append(lines, "")
-	lines = append(lines, sectionTitleStyle.Render("Profile"))
+	lines = append(lines, "  "+strings.Join(badges, "  "), "")
 
-	// Profile fields
-	protocol := nonEmpty(prof.Protocol, "(auto)")
-	baseURL := nonEmpty(prof.BaseURL, "(default)")
-	maxContext := fmt.Sprintf("%d", prof.MaxContext)
-	if prof.MaxContext == 0 {
-		maxContext = "(default)"
+	protocol := nonEmpty(providerDisplayLine(prof.Protocol), "(auto)")
+	baseURL := nonEmpty(providerDisplayLine(prof.BaseURL), "(default)")
+	apiKey := "(missing)"
+	if strings.TrimSpace(prof.APIKey) != "" {
+		apiKey = providerDisplayLine(maskAPIKey(prof.APIKey))
 	}
-	maxTokens := fmt.Sprintf("%d", prof.MaxTokens)
-	if prof.MaxTokens == 0 {
-		maxTokens = "(default)"
-	}
+
+	lines = append(lines, sectionTitleStyle.Render("Profile"))
 	if m.providers.profileEditMode {
 		fields := []struct {
 			label  string
 			value  string
 			active bool
 		}{
-			{"protocol", protocol, m.providers.profileEditField == 0},
-			{"base_url", baseURL, m.providers.profileEditField == 1},
-			{"max_context", maxContext, m.providers.profileEditField == 2},
-			{"max_tokens", maxTokens, m.providers.profileEditField == 3},
+			{"Provider name", providerDisplayLine(name) + "  (fixed)", false},
+			{"Compatible", protocol + "  (cycle)", m.providers.profileEditField == 0},
+			{"Endpoint", baseURL, m.providers.profileEditField == 1},
+			{"API key", apiKey, m.providers.profileEditField == 2},
 		}
 		for _, f := range fields {
 			prefix := "  "
-			var label string
-			val := f.value
+			labelText := padRight(f.label+":", 18)
+			label := subtleStyle.Render(labelText)
+			valueText := truncateSingleLine(f.value, max(width-22, 8))
+			val := subtleStyle.Render(valueText)
 			if f.active {
-				prefix = accentStyle.Render("▶ ")
-				label = accentStyle.Render(f.label)
-				if m.providers.profileEditDraft != "" {
-					val = accentStyle.Render(m.providers.profileEditDraft)
-				} else {
-					val = accentStyle.Render(val)
-				}
-			} else {
-				label = subtleStyle.Render(f.label)
-				val = subtleStyle.Render(val)
+				prefix = accentStyle.Render("> ")
+				label = accentStyle.Render(labelText)
+				val = accentStyle.Render(valueText)
 			}
-			lines = append(lines, prefix+label+"="+val)
+			lines = append(lines, prefix+label+val)
 		}
 	} else {
-		lines = append(lines, "  "+subtleStyle.Render("protocol:")+" "+protocol)
-		lines = append(lines, "  "+subtleStyle.Render("base_url:")+" "+baseURL)
-		lines = append(lines, "  "+subtleStyle.Render("max_context:")+" "+maxContext)
-		lines = append(lines, "  "+subtleStyle.Render("max_tokens:")+" "+maxTokens)
-	}
-
-	// Best-for tags from the provider row
-	for _, r := range m.providers.rows {
-		if strings.EqualFold(r.Name, m.providers.detailProvider) {
-			if len(r.BestFor) > 0 {
-				lines = append(lines, "")
-				lines = append(lines, "  "+subtleStyle.Render("best_for: ")+strings.Join(r.BestFor, ", "))
-			}
-			break
+		lines = append(lines,
+			"  "+subtleStyle.Render(padRight("Catalog ref:", 18))+nonEmpty(prof.CatalogID, "(custom)"),
+			"  "+subtleStyle.Render(padRight("Compatible:", 18))+protocol,
+			"  "+subtleStyle.Render(padRight("Endpoint:", 18))+baseURL,
+			"  "+subtleStyle.Render(padRight("API key:", 18))+apiKey,
+		)
+		if requestURL := providerOpenAIRequestURL(prof.Protocol, prof.BaseURL); requestURL != "" {
+			lines = append(lines, "  "+subtleStyle.Render("effective_post:")+" "+truncateSingleLine(requestURL, max(width-20, 16)))
 		}
 	}
+	if m.providers.textEditActive {
+		lines = append(lines, "", m.renderProviderTextEditBox(width))
+	}
 
-	// Models section with numbered list and scroll window
-	models := prof.AllModels()
-	lines = append(lines, "")
-	selectedIdx := m.providers.modelEditIdx
-	const modelWindow = 12
-	start := 0
-	if selectedIdx >= modelWindow {
-		start = selectedIdx - modelWindow + 1
+	allModels := m.detailProviderModels()
+	models := m.detailProviderVisibleModels()
+	modelTitle := fmt.Sprintf("Models (%d)", len(allModels))
+	if strings.TrimSpace(m.providers.modelQuery) != "" {
+		modelTitle = fmt.Sprintf("Models (%d/%d)", len(models), len(allModels))
 	}
-	end := start + modelWindow
-	if end > len(models) {
-		end = len(models)
+	lines = append(lines, "", sectionTitleStyle.Render(modelTitle))
+	if m.providers.modelSearchActive || strings.TrimSpace(m.providers.modelQuery) != "" {
+		query := nonEmpty(m.providers.modelQuery, "")
+		lines = append(lines, "  "+subtleStyle.Render("search: ")+accentStyle.Render(query))
 	}
-	var modelTitle string
-	if len(models) > modelWindow {
-		modelTitle = fmt.Sprintf("Models (%d-%d of %d)", start+1, end, len(models))
-	} else {
-		modelTitle = fmt.Sprintf("Models (%d)", len(models))
-	}
-	lines = append(lines, sectionTitleStyle.Render(modelTitle))
 	if len(models) == 0 {
-		lines = append(lines, "  "+warnStyle.Render("No models configured"))
-		lines = append(lines, "  "+subtleStyle.Render("Press Enter → Add Model to add one."))
-	} else {
-		if start > 0 {
-			lines = append(lines, "  "+subtleStyle.Render(fmt.Sprintf("... %d more above", start)))
+		if strings.TrimSpace(m.providers.modelQuery) != "" {
+			lines = append(lines, "  "+warnStyle.Render("No models match search"))
+		} else {
+			lines = append(lines, "  "+warnStyle.Render("No models configured"))
 		}
-		activeModel := strings.TrimSpace(prof.Model)
+	} else {
+		selectedIdx := clampScroll(m.providers.modelEditIdx, len(models))
+		start, end := scrollWindow(selectedIdx, len(models), 12)
 		for i := start; i < end; i++ {
 			model := models[i]
-			num := fmt.Sprintf("%2d.", i+1)
-			prefix := "  " + num + " "
+			prefix := "  "
 			label := model
-			isActive := strings.EqualFold(model, activeModel)
-			if i == m.providers.modelEditIdx {
-				prefix = accentStyle.Render("▶ ") + num + " "
-				label = accentStyle.Render(label)
-				if isActive {
-					label += okStyle.Render(" ← active")
+			if i == selectedIdx {
+				prefix = accentStyle.Render("> ")
+				label = accentStyle.Render(model)
+			}
+			if tag := m.modelTierTag(name, model); tag != "" {
+				label += tag
+			} else if strings.EqualFold(model, prof.Model) {
+				label += subtleStyle.Render(" profile primary")
+			} else if modelFallbackIndex(prof.FallbackModels, model) > 0 {
+				label += subtleStyle.Render(fmt.Sprintf(" fallback:%d", modelFallbackIndex(prof.FallbackModels, model)))
+			}
+			if meta, ok := catalogModelForRef(prof.CatalogID, model); ok {
+				var parts []string
+				if meta.Limit.Context > 0 {
+					parts = append(parts, fmt.Sprintf("ctx:%d", meta.Limit.Context))
 				}
-			} else if isActive {
-				label = label + okStyle.Render(" ← active")
+				if meta.Limit.Output > 0 {
+					parts = append(parts, fmt.Sprintf("out:%d", meta.Limit.Output))
+				}
+				if meta.ToolCall {
+					parts = append(parts, "tools")
+				}
+				if meta.Reasoning {
+					parts = append(parts, "reasoning")
+				}
+				if len(parts) > 0 {
+					label += subtleStyle.Render("  " + strings.Join(parts, " "))
+				}
 			}
 			lines = append(lines, prefix+label)
 		}
-		if end < len(models) {
-			lines = append(lines, "  "+subtleStyle.Render(fmt.Sprintf("... %d more below", len(models)-end)))
-		}
 	}
 
-	// Fallback models
 	if len(prof.FallbackModels) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, sectionTitleStyle.Render(fmt.Sprintf("Fallback Models (%d)", len(prof.FallbackModels))))
-		for i, model := range prof.FallbackModels {
-			lines = append(lines, fmt.Sprintf("  %2d. %s", i+1, model))
+		lines = append(lines, "", sectionTitleStyle.Render(fmt.Sprintf("Model Fallback Chain (%d)", len(prof.FallbackModels))))
+		for _, model := range prof.FallbackModels {
+			lines = append(lines, "  "+model)
 		}
 	}
 
-	// Model picker
 	if m.providers.modelPickerActive {
 		lines = append(lines, "", sectionTitleStyle.Render("Add Model"))
 		if m.providers.modelPickerManual {
-			lines = append(lines, "  "+accentStyle.Render("▶ ")+accentStyle.Render(m.providers.modelPickerDraft))
+			lines = append(lines, "  "+accentStyle.Render("> ")+accentStyle.Render(m.providers.modelPickerDraft))
+		} else if len(m.providers.modelPickerItems) == 0 {
+			lines = append(lines, "  "+subtleStyle.Render("No cached models. Press Space to type a custom model id."))
 		} else {
-			items := m.providers.modelPickerItems
-			if len(items) == 0 {
-				lines = append(lines, "  "+subtleStyle.Render("(no models in cache — press m for manual entry)"))
-			} else {
-				lines = append(lines, "  "+subtleStyle.Render(fmt.Sprintf("(%d models in cache)", len(items))))
-			}
-			const pickerWindow = 12
-			idx := m.providers.modelPickerIndex
-			start := 0
-			if idx >= pickerWindow {
-				start = idx - pickerWindow + 1
-			}
-			end := start + pickerWindow
-			if end > len(items) {
-				end = len(items)
-			}
-			if start > 0 {
-				lines = append(lines, "    "+subtleStyle.Render(fmt.Sprintf("... %d more above", start)))
-			}
+			idx := clampScroll(m.providers.modelPickerIndex, len(m.providers.modelPickerItems))
+			start, end := scrollWindow(idx, len(m.providers.modelPickerItems), 10)
 			for i := start; i < end; i++ {
-				prefix := "    "
-				label := items[i]
+				prefix := "  "
+				label := m.providers.modelPickerItems[i]
 				if i == idx {
-					prefix = accentStyle.Render("▶ ")
+					prefix = accentStyle.Render("> ")
 					label = accentStyle.Render(label)
 				}
 				lines = append(lines, prefix+label)
 			}
-			if end < len(items) {
-				lines = append(lines, "    "+subtleStyle.Render(fmt.Sprintf("... %d more below", len(items)-end)))
-			}
 		}
 	}
 
-	// Phase I item 2 — per-provider usage history strip. Only renders
-	// when something has actually completed against this provider; the
-	// renderer keeps the section silent on a fresh session so an empty
-	// "Recent" block doesn't clutter the detail view. Up to 5 most-recent
-	// completions, newest first, with relative time + model + token
-	// counts so the user can size next prompts off real numbers.
 	if hist := m.providerUsageStrip(name, 5); len(hist) > 0 {
 		lines = append(lines, "", sectionTitleStyle.Render("Recent completions"))
 		for _, line := range hist {
@@ -251,6 +182,48 @@ func (m Model) renderProviderDetailView(width int) string {
 		}
 	}
 
-	lines = append(lines, m.renderProvidersMenu(width-2)...)
 	return strings.Join(lines, "\n")
+}
+
+func modelFallbackIndex(models []string, model string) int {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return 0
+	}
+	for i, existing := range models {
+		if strings.EqualFold(strings.TrimSpace(existing), model) {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+func (m Model) modelTierTag(providerName, model string) string {
+	providerName = strings.TrimSpace(providerName)
+	model = strings.TrimSpace(model)
+	if providerName == "" || model == "" {
+		return ""
+	}
+	ref := providerName + ":" + model
+	for _, tier := range providerTierNames {
+		if modelRefEqual(m.tierSlotValue(tier, 0), ref) {
+			return okStyle.Render(" " + tier + " primary")
+		}
+		for slot := 1; slot <= 3; slot++ {
+			if modelRefEqual(m.tierSlotValue(tier, slot), ref) {
+				return subtleStyle.Render(fmt.Sprintf(" %s fallback:%d", tier, slot))
+			}
+		}
+	}
+	return ""
+}
+
+func modelRefEqual(left, right string) bool {
+	lp, lm, lok := strings.Cut(strings.TrimSpace(left), ":")
+	rp, rm, rok := strings.Cut(strings.TrimSpace(right), ":")
+	if !lok || !rok {
+		return strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right))
+	}
+	return strings.EqualFold(strings.TrimSpace(lp), strings.TrimSpace(rp)) &&
+		strings.EqualFold(strings.TrimSpace(lm), strings.TrimSpace(rm))
 }

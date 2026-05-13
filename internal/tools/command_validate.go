@@ -21,6 +21,17 @@ import (
 	"strings"
 )
 
+var scriptRunnerEvalFlags = map[string]string{
+	"node":    "-e",
+	"nodejs":  "-e",
+	"python":  "-c",
+	"python2": "-c",
+	"python3": "-c",
+	"ruby":    "-e",
+	"php":     "-r",
+	"perl":    "-e",
+}
+
 // ensureCommandAllowed gates execution against the default block list
 // plus any user-configured patterns. The checks are ordered from
 // cheapest/most-specific to most-permissive:
@@ -243,29 +254,41 @@ func isBlockedShellInterpreter(command string) bool {
 	}
 }
 
-// M2: detect script-runner binaries with inline-eval flags (node -e, python -c, etc.)
-// These are blocked because they allow arbitrary code execution via args.
-var scriptRunnerEvalFlags = map[string]string{
-	"node":       "-e",
-	"nodejs":     "-e",
-	"python":     "-c",
-	"python2":    "-c",
-	"python3":    "-c",
-	"perl":       "-e",
-	"ruby":       "-e",
-	"php":        "-r",
-	"pwsh":       "-c",
-	"powershell": "-c",
-}
-
+// hasScriptRunnerWithEvalFlag returns true when any arg element is a
+// script-interpreter eval flag (node -e, python -c, ruby -e, etc.) either
+// immediately after the binary or anywhere in the arg list.
+//
+// Fixes VULN-NEW-3: previously only detected adjacent (binary, flag) pairs.
+// Now also catches:
+//   - node --flag -e 'code'       (non-adjacent)
+//   - python -c 'code'            (flag as first arg after binary)
+//   - ruby -e 'code'
 func hasScriptRunnerWithEvalFlag(args []string) bool {
-	if len(args) < 2 {
+	if len(args) < 1 {
 		return false
 	}
+	// Scan every element independently for known eval flags.
+	for _, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			continue
+		}
+		for _, flag := range scriptRunnerEvalFlags {
+			if arg == flag {
+				return true
+			}
+		}
+	}
+	// Adjacent-and-beyond scan: binary at position i, eval flag at any
+	// position > i. This catches non-adjacent cases like "node --foo -e".
 	for i := 0; i < len(args)-1; i++ {
 		binary := strings.ToLower(filepath.Base(strings.TrimSpace(args[i])))
-		if flag, ok := scriptRunnerEvalFlags[binary]; ok && args[i+1] == flag {
-			return true
+		if flag, ok := scriptRunnerEvalFlags[binary]; ok {
+			for j := i + 1; j < len(args); j++ {
+				if args[j] == flag {
+					return true
+				}
+			}
 		}
 	}
 	return false

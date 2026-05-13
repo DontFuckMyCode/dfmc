@@ -28,6 +28,9 @@ func (t *WriteFileTool) Description() string {
 // SetEngine wires the per-path lock so concurrent writes serialize correctly.
 func (t *WriteFileTool) SetEngine(e *Engine) { t.engine = e }
 func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) {
+	if t.engine == nil {
+		return Result{}, fmt.Errorf("write_file: engine not initialised")
+	}
 	path := asString(req.Params, "path", "")
 	content := asString(req.Params, "content", "")
 	_, contentProvided := req.Params["content"]

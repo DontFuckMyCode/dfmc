@@ -11,7 +11,9 @@ import "strings"
 // and referenced by name from RoutingConfig rules.
 type ModelConfig struct {
 	APIKey          string   `yaml:"api_key,omitempty"`
+	APIKeyEncrypted string   `yaml:"api_key_enc,omitempty"`
 	BaseURL         string   `yaml:"base_url,omitempty"`
+	CatalogID       string   `yaml:"catalog_id,omitempty"`
 	Models          []string `yaml:"models,omitempty"`
 	FallbackModels  []string `yaml:"fallback_models,omitempty"`
 	Model           string   `yaml:"model,omitempty"`

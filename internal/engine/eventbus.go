@@ -2,6 +2,7 @@ package engine
 
 import (
 	"log"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -131,7 +132,13 @@ func (eb *EventBus) SubscribeFunc(eventType string, fn func(Event)) func() {
 	go func() {
 		for ev := range ch {
 			func() {
-				defer func() { _ = recover() }()
+				defer func() {
+					if p := recover(); p != nil {
+						buf := make([]byte, 4096)
+						n := runtime.Stack(buf, false)
+						log.Printf("[dfmc-eventbus-panic] source=SubscribeFunc fn=%T panic=%v stack=%s", fn, p, string(buf[:n]))
+					}
+				}()
 				fn(ev)
 			}()
 		}

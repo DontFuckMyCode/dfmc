@@ -78,7 +78,7 @@ func RenderStarterPrompts(width int, configured bool) []string {
 	lines = append(lines,
 		"",
 		SubtleStyle.Render("  Tips: "+AccentStyle.Render("ctrl+x")+" send · "+AccentStyle.Render("enter")+" newline · "+AccentStyle.Render("@")+" file mention · "+AccentStyle.Render("/")+" commands · "+AccentStyle.Render("ctrl+p")+" palette · "+AccentStyle.Render("f1-f12 / alt+i/y/w/t/o")+" tabs"),
-		SubtleStyle.Render("  Quick switch: "+AccentStyle.Render("alt+m")+" model · "+AccentStyle.Render("alt+P")+" provider · "+AccentStyle.Render("alt+p")+" provider list — saves persist to the winning config file"),
+		SubtleStyle.Render("  Runtime: "+CodeStyle.Render("/model")+" changes model · "+AccentStyle.Render("alt+p")+" opens the compact status panel"),
 	)
 	return lines
 }

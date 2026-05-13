@@ -14,7 +14,7 @@ import (
 func newTestEngineForPassthrough(t *testing.T) *Engine {
 	t.Helper()
 	cfg := config.DefaultConfig()
-	mgr := ctxmgr.New(codemap.New(ast.New()))
+	mgr := ctxmgr.New(codemap.New(ast.New(), nil))
 	return &Engine{
 		Config:      cfg,
 		Context:     mgr,
@@ -173,6 +173,81 @@ func TestSetProviderModel(t *testing.T) {
 	}
 	if e.modelOverride != "gpt-4o" {
 		t.Errorf("modelOverride: got %q", e.modelOverride)
+	}
+}
+
+func TestProviderModelUsesFrontierTierPrimary(t *testing.T) {
+	e := newTestEngineForPassthrough(t)
+	e.Config.Providers.Primary = "zai"
+	e.Config.Providers.Profiles = map[string]config.ModelConfig{
+		"zai": {
+			Model:    "first-catalog-model",
+			Models:   []string{"first-catalog-model", "glm-5.1"},
+			Protocol: "openai-compatible",
+			BaseURL:  "https://api.z.ai/api/coding/paas/v4",
+			APIKey:   "test-key",
+		},
+	}
+	e.Config.Routing.Tiers = map[string]config.TierRouting{
+		"frontier": {Primary: "zai:glm-5.1"},
+	}
+
+	if got := e.provider(); got != "zai" {
+		t.Fatalf("provider(): got %q", got)
+	}
+	if got := e.model(); got != "glm-5.1" {
+		t.Fatalf("model(): got %q", got)
+	}
+	status := e.Status()
+	if status.Provider != "zai" || status.Model != "glm-5.1" {
+		t.Fatalf("Status(): got %s:%s", status.Provider, status.Model)
+	}
+}
+
+func TestBuildNativeLoopRequestUsesFrontierTierPrimaryModel(t *testing.T) {
+	e := newTestEngineForPassthrough(t)
+	e.Config.Providers.Primary = "zai"
+	e.Config.Providers.Profiles = map[string]config.ModelConfig{
+		"zai": {
+			Model:    "first-catalog-model",
+			Models:   []string{"first-catalog-model", "glm-5.1"},
+			Protocol: "openai-compatible",
+			BaseURL:  "https://api.z.ai/api/coding/paas/v4",
+			APIKey:   "test-key",
+		},
+	}
+	e.Config.Routing.Tiers = map[string]config.TierRouting{
+		"frontier": {Primary: "zai:glm-5.1"},
+	}
+
+	req := e.buildNativeLoopRequest(&loopRunState{}, "auto")
+	if req.Provider != "zai" || req.Model != "glm-5.1" {
+		t.Fatalf("buildNativeLoopRequest(): got %s:%s", req.Provider, req.Model)
+	}
+}
+
+func TestProviderModelOverrideBeatsFrontierTierPrimary(t *testing.T) {
+	e := newTestEngineForPassthrough(t)
+	e.Config.Providers.Profiles = map[string]config.ModelConfig{
+		"zai": {
+			Model:    "first-catalog-model",
+			Models:   []string{"first-catalog-model", "glm-5.1", "glm-4.7"},
+			Protocol: "openai-compatible",
+			BaseURL:  "https://api.z.ai/api/coding/paas/v4",
+			APIKey:   "test-key",
+		},
+	}
+	e.Config.Routing.Tiers = map[string]config.TierRouting{
+		"frontier": {Primary: "zai:glm-5.1"},
+	}
+
+	e.SetProviderModel("zai", "glm-4.7")
+
+	if got := e.provider(); got != "zai" {
+		t.Fatalf("provider(): got %q", got)
+	}
+	if got := e.model(); got != "glm-4.7" {
+		t.Fatalf("model(): got %q", got)
 	}
 }
 

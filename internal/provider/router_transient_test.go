@@ -153,6 +153,31 @@ func TestModelChain_TransientErrorContinues(t *testing.T) {
 	}
 }
 
+func TestModelChain_RequestedModelTakesPriority(t *testing.T) {
+	stub := &multiModelStub{
+		name:        "primary",
+		models:      []string{"first", "second"},
+		perModelErr: map[string]error{},
+		supports:    true,
+	}
+	r := newRouterWith(stub)
+	r.primary = "primary"
+
+	resp, _, err := r.Complete(context.Background(), CompletionRequest{
+		Model:    "second",
+		Messages: []Message{{Role: "user", Content: "ping"}},
+	})
+	if err != nil {
+		t.Fatalf("expected requested model to succeed, got: %v", err)
+	}
+	if resp.Model != "second" {
+		t.Fatalf("expected requested model first, got %q", resp.Model)
+	}
+	if got := atomic.LoadInt32(&stub.calls); got != 1 {
+		t.Fatalf("expected only requested model attempt, got %d", got)
+	}
+}
+
 // TestModelChain_AuthErrorBreaks verifies the inverse: a 401 stops the
 // chain immediately so a misconfigured key doesn't burn through every
 // fallback model in the profile.

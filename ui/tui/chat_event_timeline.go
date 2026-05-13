@@ -45,9 +45,17 @@ func (m *Model) upsertStreamingChatEvent(ev chatEventLine) {
 	m.chat.scrollback = 0
 }
 
-// updateToolEventLine finds the last chatLine with the same tool Key in its EventLines
-// and merges the new event into it. If not found, appends a new chatLine.
+// updateToolEventLine finds the last chatLine with the same tool Key in its
+// EventLines and merges the new event into it. Tool rows are a live-status
+// surface, not durable chat history: calls appear while running, then
+// disappear when the result/error lands. The durable record lives in
+// ToolStatus.
 func (m *Model) updateToolEventLine(ev chatEventLine) {
+	if isTerminalToolEventStatus(ev.Status) {
+		m.removeToolEventLineByKey(ev.Key)
+		return
+	}
+
 	// Search backwards through transcript for a line with this tool's Key.
 	for i := len(m.chat.transcript) - 1; i >= 0; i-- {
 		line := &m.chat.transcript[i]
@@ -67,6 +75,7 @@ func (m *Model) updateToolEventLine(ev chatEventLine) {
 			line.Content = chatEventTranscriptText(line.EventLines[found])
 			line.Timestamp = ev.At
 			m.chat.scrollback = 0
+			m.pruneLiveToolEventLines(4)
 			return
 		}
 	}
@@ -76,6 +85,65 @@ func (m *Model) updateToolEventLine(ev chatEventLine) {
 	line.EventLines = []chatEventLine{ev}
 	m.chat.transcript = append(m.chat.transcript, line)
 	m.chat.scrollback = 0
+	m.pruneLiveToolEventLines(4)
+}
+
+func isTerminalToolEventStatus(status string) bool {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "ok", "done", "failed", "error", "denied", "timeout":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Model) removeToolEventLineByKey(key string) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	for i := len(m.chat.transcript) - 1; i >= 0; i-- {
+		line := m.chat.transcript[i]
+		if !line.Role.Eq(chatRoleTool) {
+			continue
+		}
+		for _, ev := range line.EventLines {
+			if ev.Key != key {
+				continue
+			}
+			m.chat.transcript = append(m.chat.transcript[:i], m.chat.transcript[i+1:]...)
+			if m.chat.streamIndex > i {
+				m.chat.streamIndex--
+			} else if m.chat.streamIndex == i {
+				m.chat.streamIndex = -1
+			}
+			m.chat.scrollback = 0
+			return
+		}
+	}
+}
+
+func (m *Model) pruneLiveToolEventLines(limit int) {
+	if limit <= 0 {
+		limit = 1
+	}
+	seen := 0
+	for i := len(m.chat.transcript) - 1; i >= 0; i-- {
+		line := m.chat.transcript[i]
+		if !line.Role.Eq(chatRoleTool) || len(line.EventLines) == 0 {
+			continue
+		}
+		seen++
+		if seen <= limit {
+			continue
+		}
+		m.chat.transcript = append(m.chat.transcript[:i], m.chat.transcript[i+1:]...)
+		if m.chat.streamIndex > i {
+			m.chat.streamIndex--
+		} else if m.chat.streamIndex == i {
+			m.chat.streamIndex = -1
+		}
+	}
 }
 
 func (m *Model) attachReasonToStreamingChatEvent(toolName, reason string) {

@@ -11,7 +11,7 @@
 //	    fmt.Println(c.Name, "—", c.Summary)
 //	}
 //
-// New commands are added in defaults.go. Register() guards against duplicates
+// New commands are added in defaults_catalog.go. Register() guards against duplicates
 // and alias collisions so a bad addition fails at startup instead of at the
 // first user's help request.
 package commands

@@ -23,7 +23,7 @@ func (m Model) handleStatusLoadedMsg(msg statusLoadedMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleWorkspaceLoadedMsg(msg workspaceLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.notice = "workspace: " + msg.err.Error()
+		m.notice = "workspace: " + truncateNotice(msg.err)
 		return m, nil
 	}
 	m.patchView.diff = msg.diff
@@ -56,7 +56,7 @@ func (m Model) handleLatestPatchLoadedMsg(msg latestPatchLoadedMsg) (tea.Model, 
 
 func (m Model) handleFilesLoadedMsg(msg filesLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.notice = "files: " + msg.err.Error()
+		m.notice = "files: " + truncateNotice(msg.err)
 		return m, nil
 	}
 	m.filesView.entries = msg.files
@@ -84,7 +84,7 @@ func (m Model) handleFilesLoadedMsg(msg filesLoadedMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleFilePreviewLoadedMsg(msg filePreviewLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.notice = "preview: " + msg.err.Error()
+		m.notice = "preview: " + truncateNotice(msg.err)
 		return m, nil
 	}
 	m.filesView.path = msg.path
@@ -157,7 +157,7 @@ func (m Model) handleConversationsLoadedMsg(msg conversationsLoadedMsg) (tea.Mod
 
 func (m Model) handleConversationPreviewMsg(msg conversationPreviewMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.notice = "conversations: " + msg.err.Error()
+		m.notice = "conversations: " + truncateNotice(msg.err)
 		return m, nil
 	}
 	m.conversations.previewID = msg.id
@@ -216,19 +216,22 @@ func (m Model) handleSecurityLoadedMsg(msg securityLoadedMsg) (tea.Model, tea.Cm
 func (m Model) handleSyncModelsDevMsg(msg syncModelsDevMsg) (tea.Model, tea.Cmd) {
 	m.providers.syncing = false
 	if msg.err != nil {
-		m.notice = "sync failed: " + msg.err.Error()
+		m.notice = "sync failed: " + truncateNotice(msg.err)
 		return m, nil
 	}
 	m.providers.lastSyncedAt = time.Now()
+	m.providers.catalogLoaded = false
+	m = m.loadProviderCatalogItems()
 	m = m.refreshProvidersRows()
 	m.status = m.eng.Status()
-	m.notice = fmt.Sprintf("synced %d changes → %s", len(msg.changes), msg.path)
+	m.notice = fmt.Sprintf("synced models.dev: %d providers, %d models, %d changes -> %s",
+		msg.providerCount, msg.modelCount, len(msg.changes), displayConfigPath(msg.path))
 	return m, nil
 }
 
 func (m Model) handlePatchApplyMsg(msg patchApplyMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.notice = "patch: " + msg.err.Error()
+		m.notice = "patch: " + truncateNotice(msg.err)
 		return m, nil
 	}
 	if msg.checkOnly {
@@ -286,7 +289,7 @@ func postApplyValidationHint(changed []string) string {
 
 func (m Model) handleConversationUndoMsg(msg conversationUndoMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.notice = "undo: " + msg.err.Error()
+		m.notice = "undo: " + truncateNotice(msg.err)
 		return m, nil
 	}
 	m.notice = fmt.Sprintf("Undone messages: %d", msg.removed)
@@ -295,7 +298,7 @@ func (m Model) handleConversationUndoMsg(msg conversationUndoMsg) (tea.Model, te
 
 func (m Model) handleToolRunMsg(msg toolRunMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.notice = "tool: " + msg.err.Error()
+		m.notice = "tool: " + truncateNotice(msg.err)
 		m.toolView.output = formatToolErrorForPanel(msg.name, msg.params, msg.result, msg.err)
 		if m.chat.toolPending && strings.EqualFold(strings.TrimSpace(msg.name), strings.TrimSpace(m.chat.toolName)) {
 			m = m.appendSystemMessage(formatToolResultForChat(msg.name, msg.params, msg.result, msg.err))

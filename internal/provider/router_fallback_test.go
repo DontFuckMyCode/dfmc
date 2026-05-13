@@ -380,3 +380,23 @@ func TestProviderFromProfile_ZAIAnthropicRemap(t *testing.T) {
 		t.Errorf("zai anthropic-style baseURL should be remapped to paas/v4, got %q", cp.baseURL)
 	}
 }
+
+func TestProviderFromProfile_UsesPrimaryAndFallbackModels(t *testing.T) {
+	p := providerFromProfile("openai", config.ModelConfig{
+		APIKey:         "sk-test",
+		Protocol:       "openai",
+		Model:          "gpt-primary",
+		Models:         []string{"gpt-primary", "gpt-extra"},
+		FallbackModels: []string{"gpt-fallback-1", "gpt-fallback-2"},
+	})
+	got := p.Models()
+	want := []string{"gpt-primary", "gpt-fallback-1", "gpt-fallback-2"}
+	if len(got) != len(want) {
+		t.Fatalf("models=%v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("models=%v want %v", got, want)
+		}
+	}
+}

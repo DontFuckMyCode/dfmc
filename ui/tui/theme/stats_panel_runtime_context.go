@@ -14,12 +14,73 @@ import (
 
 func contextRows(info StatsPanelInfo) []string {
 	rows := []string{RenderContextBarFrame(statsPanelContextUsed(info), info.MaxContext, 12, info.SpinnerFrame)}
+	provider := strings.TrimSpace(info.ContextProvider)
+	if provider == "" {
+		provider = strings.TrimSpace(info.Provider)
+	}
+	model := strings.TrimSpace(info.ContextModel)
+	if model == "" {
+		model = strings.TrimSpace(info.Model)
+	}
+	if provider != "" || model != "" {
+		identity := provider
+		if identity != "" && model != "" {
+			identity += " / " + model
+		} else if model != "" {
+			identity = model
+		}
+		rows = append(rows, InfoStyle.Render("next request: "+identity))
+	}
+	if source := strings.TrimSpace(info.ContextLimitSource); source != "" {
+		limit := ""
+		if info.MaxContext > 0 {
+			limit = " | window " + CompactTokens(info.MaxContext)
+		}
+		rows = append(rows, SubtleStyle.Render("limit "+source+limit))
+	}
+	if used, remaining := statsPanelWindowUsage(info); used > 0 {
+		if info.MaxContext > 0 {
+			line := fmt.Sprintf("input now %s/%s", CompactTokens(used), CompactTokens(info.MaxContext))
+			if remaining >= 0 {
+				line += " | free " + CompactTokens(remaining)
+			} else {
+				line += " | over " + CompactTokens(-remaining)
+			}
+			rows = append(rows, SubtleStyle.Render(line))
+		} else {
+			rows = append(rows, SubtleStyle.Render(fmt.Sprintf("input now %s", CompactTokens(used))))
+		}
+	}
+	if info.ContextSystemTokens > 0 || info.ContextHistoryTokens > 0 || info.ContextTokens > 0 {
+		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
+			"input: system %s | messages %s | evidence %s",
+			CompactTokens(info.ContextSystemTokens),
+			CompactTokens(info.ContextHistoryTokens),
+			CompactTokens(info.ContextTokens),
+		)))
+	}
+	if info.ContextResponseTokens > 0 || info.ContextToolTokens > 0 || info.ContextHistoryReserve > 0 {
+		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
+			"reserve: output %s | tools %s | history cap %s",
+			CompactTokens(info.ContextResponseTokens),
+			CompactTokens(info.ContextToolTokens),
+			CompactTokens(info.ContextHistoryReserve),
+		)))
+	}
+	if info.ContextMessageCount > 0 || info.ContextToolCallCount > 0 {
+		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
+			"messages %d | tool calls %d",
+			info.ContextMessageCount,
+			info.ContextToolCallCount,
+		)))
+		rows = append(rows, SubtleStyle.Render("/context messages | /context drop <id>"))
+	}
 	workspaceEvidenceOff := contextReasonContains(info.ContextReasons, "conversation history only")
 	if workspaceEvidenceOff {
 		rows = append(rows, InfoStyle.Render("conversation history only"))
 		histLine := "workspace evidence off"
 		if info.ContextHistoryTokens > 0 {
-			histLine += fmt.Sprintf(" | hist %s tok", CompactTokens(info.ContextHistoryTokens))
+			histLine += fmt.Sprintf(" | messages %s tok", CompactTokens(info.ContextHistoryTokens))
 		}
 		rows = append(rows, SubtleStyle.Render(histLine))
 		if info.ContextTokens > 0 {
@@ -55,33 +116,7 @@ func contextRows(info StatsPanelInfo) []string {
 		rows = append(rows, SubtleStyle.Render(strings.Join(dials, " | ")))
 	}
 	if info.ContextAvailableTokens > 0 {
-		rows = append(rows, SubtleStyle.Render(fmt.Sprintf("available %s tok", CompactTokens(info.ContextAvailableTokens))))
-	}
-	if used, remaining := statsPanelWindowUsage(info); used > 0 {
-		if info.MaxContext > 0 {
-			line := fmt.Sprintf("window %s/%s tok", CompactTokens(used), CompactTokens(info.MaxContext))
-			if remaining >= 0 {
-				line += " | left " + CompactTokens(remaining)
-			} else {
-				line += " | over " + CompactTokens(-remaining)
-			}
-			rows = append(rows, SubtleStyle.Render(line))
-		} else {
-			rows = append(rows, SubtleStyle.Render(fmt.Sprintf("window %s tok", CompactTokens(used))))
-		}
-	}
-	if info.ContextSystemTokens > 0 || info.ContextHistoryTokens > 0 || info.ContextResponseTokens > 0 || info.ContextToolTokens > 0 {
-		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
-			"window sys %s | hist %s",
-			CompactTokens(info.ContextSystemTokens),
-			CompactTokens(info.ContextHistoryTokens),
-		)))
-		rows = append(rows, SubtleStyle.Render(fmt.Sprintf(
-			"evidence %s | resp %s | tools %s",
-			CompactTokens(info.ContextTokens),
-			CompactTokens(info.ContextResponseTokens),
-			CompactTokens(info.ContextToolTokens),
-		)))
+		rows = append(rows, SubtleStyle.Render(fmt.Sprintf("evidence budget free %s tok", CompactTokens(info.ContextAvailableTokens))))
 	}
 	if len(info.ContextTopFiles) > 0 {
 		files := make([]string, 0, len(info.ContextTopFiles))

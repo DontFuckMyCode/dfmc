@@ -8,18 +8,38 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
 func runTool(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
 	if len(args) == 0 || args[0] == "list" {
-		tools := eng.ListTools()
+		allTools := eng.Tools.ListAll()
+		disabled := eng.ListDisabledTools()
+		disabledSet := map[string]bool{}
+		for _, d := range disabled {
+			disabledSet[d] = true
+		}
 		if jsonMode {
-			mustPrintJSON(map[string]any{"tools": tools})
+			type toolEntry struct {
+				Name      string `json:"name"`
+				Disabled  bool   `json:"disabled"`
+				Protected bool   `json:"protected"`
+			}
+			entries := make([]toolEntry, 0, len(allTools))
+			for _, t := range allTools {
+				entries = append(entries, toolEntry{
+					Name:      t,
+					Disabled:  disabledSet[t],
+					Protected: eng.ToolIsProtected(t),
+				})
+			}
+			mustPrintJSON(map[string]any{"tools": entries})
 			return 0
 		}
 		// Show one line per tool with a short summary pulled from its
@@ -28,19 +48,30 @@ func runTool(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 		var specs map[string]string
 		if eng.Tools != nil {
 			specs = map[string]string{}
-			for _, s := range eng.Tools.Specs() {
-				specs[s.Name] = strings.TrimSpace(s.Summary)
+			// Use Specs() which already filters disabled — but we also want
+			// specs for disabled tools so we can show their summaries.
+			// Access the full registry via Spec(name) for each tool.
+			for _, t := range allTools {
+				if spec, ok := eng.Tools.Spec(t); ok && spec.Summary != "" {
+					specs[t] = spec.Summary
+				}
 			}
 		}
-		for _, t := range tools {
-			summary := ""
-			if specs != nil {
-				summary = specs[t]
+		if specs == nil {
+			specs = map[string]string{}
+		}
+		for _, t := range allTools {
+			summary := specs[t]
+			suffix := ""
+			if disabledSet[t] {
+				suffix = " [DISABLED]"
+			} else if eng.ToolIsProtected(t) {
+				suffix = " [protected]"
 			}
 			if summary != "" {
-				fmt.Printf("%-18s %s\n", t, summary)
+				fmt.Printf("%-24s %s%s\n", t, summary, suffix)
 			} else {
-				fmt.Println(t)
+				fmt.Printf("%s%s\n", t, suffix)
 			}
 		}
 		return 0
@@ -73,8 +104,36 @@ func runTool(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 		return 0
 	}
 
+	// `dfmc tool enable/disable NAME` — toggle tool availability.
+	if args[0] == "enable" || args[0] == "disable" {
+		if len(args) < 2 {
+			fmt.Fprintf(os.Stderr, "usage: dfmc tool %s <name>\n", args[0])
+			return 2
+		}
+		name := strings.TrimSpace(args[1])
+		enabled := args[0] == "enable"
+		if err := eng.SetToolEnabled(name, enabled); err != nil {
+			if errors.Is(err, tools.ErrToolProtected) {
+				fmt.Fprintf(os.Stderr, "error: %q is a protected tool and cannot be disabled\n", name)
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if jsonMode {
+			mustPrintJSON(map[string]any{"name": name, "enabled": enabled})
+			return 0
+		}
+		if enabled {
+			fmt.Printf("tool %q enabled\n", name)
+		} else {
+			fmt.Printf("tool %q disabled\n", name)
+		}
+		return 0
+	}
+
 	if args[0] != "run" {
-		fmt.Fprintln(os.Stderr, "usage: dfmc tool [list|show <name>|run <name> [--key value ...]]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc tool [list|show <name>|enable <name>|disable <name>|run <name> [--key value ...]]")
 		return 2
 	}
 	if len(args) < 2 {

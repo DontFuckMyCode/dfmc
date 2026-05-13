@@ -159,8 +159,9 @@ func (e *Engine) promptRuntimeWithOverrides(overrides ctxmgr.PromptRuntime) ctxm
 
 func (e *Engine) promptRuntimeForProvider(providerName, modelOverride string) ctxmgr.PromptRuntime {
 	rt := ctxmgr.PromptRuntime{
-		Provider: strings.TrimSpace(providerName),
-		Model:    strings.TrimSpace(modelOverride),
+		LearnedPatterns: e.exportLearnedPatterns(),
+		Provider:        strings.TrimSpace(providerName),
+		Model:           strings.TrimSpace(modelOverride),
 	}
 	if e.Providers == nil {
 		return rt
@@ -177,7 +178,10 @@ func (e *Engine) promptRuntimeForProvider(providerName, modelOverride string) ct
 	rt.DefaultMode = strings.TrimSpace(hints.DefaultMode)
 	rt.Cache = hints.Cache
 	rt.LowLatency = hints.LowLatency
-	rt.MaxContext = hints.MaxContext
+	rt.MaxContext = e.configuredProviderMaxContext(rt.Provider, rt.Model)
+	if rt.MaxContext <= 0 {
+		rt.MaxContext = hints.MaxContext
+	}
 	if rt.MaxContext <= 0 {
 		rt.MaxContext = p.MaxContext()
 	}
@@ -265,4 +269,3 @@ func (e *Engine) buildSystemPrompt(question string, chunks []types.ContextChunk)
 	})
 	return text, blocks
 }
-

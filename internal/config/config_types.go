@@ -14,6 +14,7 @@ package config
 
 type Config struct {
 	Version     int                       `yaml:"version"`
+	ProjectRoot string                    `yaml:"project_root"` // set at load time via FindProjectRoot
 	Providers   ProvidersConfig           `yaml:"providers"`
 	Routing     RoutingConfig             `yaml:"routing"`
 	Pipelines   map[string]PipelineConfig `yaml:"pipelines"`
@@ -31,6 +32,7 @@ type Config struct {
 	Coach       CoachConfig               `yaml:"coach"`
 	Intent      IntentConfig              `yaml:"intent"`
 	AST         ASTConfig                 `yaml:"ast"`
+	Codemap     CodemapConfig             `yaml:"codemap"`
 	MCP         MCPConfig                 `yaml:"mcp"`
 	Telegram    TelegramConfig            `yaml:"telegram"`
 	DataDirPath string                    `yaml:"data_dir"`
@@ -48,6 +50,18 @@ type ASTConfig struct {
 	CacheSize int `yaml:"cache_size"`
 }
 
+// CodemapConfig controls how the codemap engine parses and indexes source files.
+type CodemapConfig struct {
+	// Parallel enables concurrent file parsing (uses runtime.NumCPU workers).
+	Parallel bool `yaml:"parallel"`
+	// WorkerCount overrides the number of parallel workers. 0 = runtime.NumCPU().
+	WorkerCount int `yaml:"worker_count"`
+	// MaxFileSizeMB skips files larger than this threshold.
+	MaxFileSizeMB int `yaml:"max_file_size_mb"`
+	// IgnorePatterns are glob patterns excluded from parsing.
+	IgnorePatterns []string `yaml:"ignore_patterns"`
+}
+
 type CoachConfig struct {
 	Enabled  bool `yaml:"enabled"`
 	MaxNotes int  `yaml:"max_notes"`
@@ -59,5 +73,13 @@ type IntentConfig struct {
 	Model            string `yaml:"model"`
 	TimeoutMs        int    `yaml:"timeout_ms"`
 	FailOpen         bool   `yaml:"fail_open"`
+	// FailClosed, when true, changes the error-reporting behavior of
+	// the intent layer. Instead of returning Fallback(raw)+nil (fail-open
+	// semantic), the router returns Fallback(raw)+err so callers can
+	// distinguish classifier errors from ordinary fallback routing and
+	// emit a structured intent:error event. The routing decision itself
+	// is still safe (Fallback); only the error channel changes. Default
+	// is false to preserve backward compatibility.
+	FailClosed       bool   `yaml:"fail_closed"`
 	MaxSnapshotChars int    `yaml:"max_snapshot_chars"`
 }
