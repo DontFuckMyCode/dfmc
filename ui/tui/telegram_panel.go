@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -131,6 +130,7 @@ func (m Model) openTelegramActionMenu() Model {
 
 type telegramPanelState struct {
 	messages          []telegramMessageItem
+	events            chan telegramMessageItem
 	scroll            int
 	setupSelected     int
 	inputActive       bool
@@ -158,6 +158,7 @@ type telegramMessageItem struct {
 func (m *Model) InitBotPanel() {
 	m.telegram = telegramPanelState{
 		messages:          []telegramMessageItem{},
+		events:            make(chan telegramMessageItem, 100),
 		scroll:            0,
 		setupSelected:     0,
 		inputActive:       false,
@@ -287,6 +288,73 @@ func (m *Model) addTelegramMessageDirect(msg telegramMessageItem) {
 	if m.telegram.scroll < 0 {
 		m.telegram.scroll = 0
 	}
+}
+
+func (m *Model) bindTelegramBotToPanel(tgBot *bot.TelegramBot) {
+	if m == nil || tgBot == nil {
+		return
+	}
+	m.ensureDiagnostics()
+	events := m.telegram.events
+	tgBot.SetLogger(func(format string, args ...any) {
+		enqueueTelegramPanelMessage(events, telegramMessageItem{
+			from:  "Log",
+			text:  formatTelegramLog(format, args...),
+			time:  time.Now().Format("15:04"),
+			isOut: false,
+		})
+	})
+	tgBot.SetOnMessage(func(userID int64, text string, replyFn func(string)) {
+		enqueueTelegramPanelMessage(events, telegramMessageItem{from: fmt.Sprintf("User %d", userID), text: text, time: time.Now().Format("15:04"), isOut: false})
+		go func() {
+			if m.eng == nil {
+				replyFn("DFMC engine not connected.")
+				return
+			}
+			resp, err := m.eng.Ask(context.Background(), text)
+			if err != nil {
+				errText := "Error: " + err.Error()
+				enqueueTelegramPanelMessage(events, telegramMessageItem{from: "DFMC", text: errText, time: time.Now().Format("15:04"), isOut: true})
+				replyFn("⚠️ " + errText)
+				return
+			}
+			if len(resp) > 4000 {
+				resp = resp[:3997] + "..."
+			}
+			enqueueTelegramPanelMessage(events, telegramMessageItem{from: "DFMC", text: resp, time: time.Now().Format("15:04"), isOut: true})
+			replyFn(resp)
+		}()
+	})
+}
+
+func enqueueTelegramPanelMessage(ch chan telegramMessageItem, msg telegramMessageItem) {
+	if ch == nil {
+		return
+	}
+	if msg.time == "" {
+		msg.time = time.Now().Format("15:04")
+	}
+	select {
+	case ch <- msg:
+	default:
+		select {
+		case <-ch:
+		default:
+		}
+		select {
+		case ch <- msg:
+		default:
+		}
+	}
+}
+
+func formatTelegramLog(format string, args ...any) string {
+	text := strings.TrimSpace(fmt.Sprintf(format, args...))
+	text = strings.TrimSpace(strings.TrimPrefix(text, "[telegram]"))
+	if text == "" {
+		return "telegram event"
+	}
+	return text
 }
 
 func (m *Model) sendTelegramTestMessage() (tea.Model, tea.Cmd) {
@@ -433,6 +501,7 @@ func (m *Model) saveTelegramSetup() *Model {
 		m.appendTelegramLog("Telegram", m.telegram.saveError, true)
 		return m
 	}
+	m.bindTelegramBotToPanel(tgBot)
 	tgBot.SetAllowedUsers(allowedIDs)
 	tgBot.SetOnMessage(func(userID int64, text string, replyFn func(string)) {
 		_ = m.addTelegramMessage(telegramMessageItem{from: fmt.Sprintf("User %d", userID), text: text, time: time.Now().Format("15:04"), isOut: false})
@@ -449,10 +518,11 @@ func (m *Model) saveTelegramSetup() *Model {
 			replyFn(resp)
 		}()
 	})
+	m.bindTelegramBotToPanel(tgBot)
 
 	go func() {
 		if err := tgBot.Start(); err != nil {
-			log.Printf("[telegram] bot start error: %v", err)
+			enqueueTelegramPanelMessage(m.telegram.events, telegramMessageItem{from: "Log", text: fmt.Sprintf("bot start error: %v", err), time: time.Now().Format("15:04")})
 		}
 	}()
 
@@ -494,6 +564,7 @@ func (m *Model) refreshExistingTelegramBot(previousToken, token string, allowedI
 	if existing == nil {
 		return false
 	}
+	m.bindTelegramBotToPanel(existing)
 	existing.SetAllowedUsers(allowedIDs)
 	m.telegram.telegramBot = existing
 	if m.eng != nil {
@@ -514,7 +585,7 @@ func (m *Model) telegramConfigPath() string {
 
 func (m *Model) handleTelegramMessageAdded(msg telegramMessageAddedMsg) (tea.Model, tea.Cmd) {
 	m.addTelegramMessageDirect(msg.msg)
-	return m, nil
+	return m, telegramMessageCmd(m.telegram.events)
 }
 
 func (m *Model) addTelegramMessage(msg telegramMessageItem) tea.Cmd {

@@ -128,6 +128,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleStreamClosedMsg(msg)
 	case approvalRequestedMsg:
 		return m.handleApprovalRequestedMsg(msg)
+	case telegramMessageAddedMsg:
+		return m.handleTelegramMessageAdded(msg)
 
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)

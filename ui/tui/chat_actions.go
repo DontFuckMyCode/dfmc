@@ -115,7 +115,7 @@ func isKnownChatCommandToken(token string) bool {
 func isImmediateChatSlashCommand(token string) bool {
 	token = strings.ToLower(strings.TrimSpace(token))
 	switch token {
-	case "", "help", "tools", "stats", "workflow", "todos", "subagents", "queue",
+	case "", "help", "clear", "tools", "stats", "workflow", "todos", "subagents", "queue",
 		"coach", "hints", "keylog", "mouse", "select", "status", "providers", "models",
 		"hooks", "approve", "doctor", "health", "map", "version", "magicdoc", "magic",
 		"conversation", "conv", "memory", "prompt", "skill":

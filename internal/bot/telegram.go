@@ -3,7 +3,6 @@ package bot
 import (
 	"context"
 	"fmt"
-	"log"
 	"regexp"
 	"strings"
 	"sync"
@@ -17,9 +16,11 @@ type TelegramBot struct {
 	api          *tgbotapi.BotAPI
 	token        string
 	allowedUsers map[int64]struct{} // whitelist of allowed user IDs
-	chatIDs      map[int64]int64     // userID → chatID
+	chatIDs      map[int64]int64    // userID → chatID
 	lastAction   map[int64]time.Time
+	logger       func(format string, args ...any)
 	mu           sync.RWMutex
+	loggerMu     sync.RWMutex
 
 	// onMessage is called when a message passes allowed-users check.
 	// args: userID, message text, replyFn.
@@ -59,8 +60,32 @@ func New(token string) (*TelegramBot, error) {
 		cancel:       cancel,
 	}
 
-	log.Printf("[telegram] bot initialized: @%s", api.Self.UserName)
+	bot.logf("[telegram] bot initialized: @%s", api.Self.UserName)
 	return bot, nil
+}
+
+// SetLogger routes Telegram diagnostics to the owner. A nil logger makes the
+// bot quiet, which is important for full-screen TUIs where stdout/stderr writes
+// corrupt the active screen.
+func (b *TelegramBot) SetLogger(fn func(format string, args ...any)) {
+	if b == nil {
+		return
+	}
+	b.loggerMu.Lock()
+	b.logger = fn
+	b.loggerMu.Unlock()
+}
+
+func (b *TelegramBot) logf(format string, args ...any) {
+	if b == nil {
+		return
+	}
+	b.loggerMu.RLock()
+	fn := b.logger
+	b.loggerMu.RUnlock()
+	if fn != nil {
+		fn(format, args...)
+	}
 }
 
 // SetAllowedUsers replaces the allowed-users whitelist.
@@ -75,7 +100,7 @@ func (b *TelegramBot) SetAllowedUsers(ids []int64) {
 			b.allowedUsers[id] = struct{}{}
 		}
 	}
-	log.Printf("[telegram] allowed users set: %d", len(ids))
+	b.logf("[telegram] allowed users set: %d", len(ids))
 }
 
 // isAllowed returns true if the user is in the allowed-users whitelist.
@@ -108,13 +133,13 @@ func (b *TelegramBot) Start() error {
 
 	updates := b.api.GetUpdatesChan(u)
 
-	log.Printf("[telegram] bot started listening")
+	b.logf("[telegram] bot started listening")
 
 	for {
 		select {
 		case <-b.ctx.Done():
 			b.api.StopReceivingUpdates()
-			log.Printf("[telegram] bot stopped")
+			b.logf("[telegram] bot stopped")
 			return nil
 		case update, ok := <-updates:
 			if !ok {
@@ -122,7 +147,7 @@ func (b *TelegramBot) Start() error {
 			}
 			if update.Message != nil && update.Message.From != nil {
 				if !b.allowUserAction(update.Message.From.ID) {
-					log.Printf("[telegram] user=%d rate limited", update.Message.From.ID)
+					b.logf("[telegram] user=%d rate limited", update.Message.From.ID)
 					continue
 				}
 				go b.handleIncomingMessage(update)
@@ -131,7 +156,7 @@ func (b *TelegramBot) Start() error {
 				if !b.allowUserAction(update.CallbackQuery.From.ID) {
 					cbResp := tgbotapi.NewCallback(update.CallbackQuery.ID, "Slow down and try again.")
 					_, _ = b.api.Request(cbResp)
-					log.Printf("[telegram] user=%d callback rate limited", update.CallbackQuery.From.ID)
+					b.logf("[telegram] user=%d callback rate limited", update.CallbackQuery.From.ID)
 					continue
 				}
 				go b.handleCallbackQuery(update)
@@ -186,7 +211,7 @@ func (b *TelegramBot) Broadcast(text string) error {
 		msg := tgbotapi.NewMessage(chatID, text)
 		msg.ParseMode = "Markdown"
 		if _, err := b.api.Send(msg); err != nil {
-			log.Printf("[telegram] broadcast to %d failed: %v", userID, err)
+			b.logf("[telegram] broadcast to %d failed: %v", userID, err)
 			lastErr = err
 		}
 	}
@@ -215,7 +240,7 @@ func (b *TelegramBot) handleIncomingMessage(update tgbotapi.Update) {
 	b.mu.Unlock()
 
 	// Log the message
-	log.Printf("[telegram] %s (%d): %s", msg.From.UserName, userID, redactForLog(msg.Text, 80))
+	b.logf("[telegram] %s (%d): %s", msg.From.UserName, userID, redactForLog(msg.Text, 80))
 
 	// Allow /help and /start even without explicit allowedUsers set
 	// (but only if allowedUsers is configured — empty = nobody allowed)
@@ -229,7 +254,7 @@ func (b *TelegramBot) handleIncomingMessage(update tgbotapi.Update) {
 
 	// Check allowed-users whitelist
 	if !b.isAllowed(userID) {
-		log.Printf("[telegram] unauthorized user=%d rejected", userID)
+		b.logf("[telegram] unauthorized user=%d rejected", userID)
 		b.reply(msg.Chat.ID, "⛔ Access denied. Contact the bot admin.")
 		return
 	}
@@ -277,7 +302,7 @@ func (b *TelegramBot) handleTextMessage(msg *tgbotapi.Message) {
 	if b.onMessage != nil {
 		replyFn := func(text string) {
 			if err := b.SendToUser(userID, text); err != nil {
-				log.Printf("[telegram] reply error: %v", err)
+				b.logf("[telegram] reply error: %v", err)
 			}
 		}
 		b.onMessage(userID, msg.Text, replyFn)
@@ -342,7 +367,7 @@ func (b *TelegramBot) cmdChat(msg *tgbotapi.Message) {
 	if b.onMessage != nil {
 		replyFn := func(response string) {
 			if err := b.SendToUser(userID, response); err != nil {
-				log.Printf("[telegram] chat reply error: %v", err)
+				b.logf("[telegram] chat reply error: %v", err)
 			}
 		}
 		// Acknowledge immediately
@@ -390,7 +415,7 @@ func (b *TelegramBot) reply(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = "Markdown"
 	if _, err := b.api.Send(msg); err != nil {
-		log.Printf("[telegram] reply error: %v", err)
+		b.logf("[telegram] reply error: %v", err)
 	}
 }
 
@@ -418,10 +443,10 @@ func (b *TelegramBot) Health() map[string]any {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return map[string]any{
-		"bot_username":   b.api.Self.UserName,
-		"registered":     len(b.chatIDs),
-		"allowed_users":  len(b.allowedUsers),
-		"token_set":      b.token != "",
+		"bot_username":  b.api.Self.UserName,
+		"registered":    len(b.chatIDs),
+		"allowed_users": len(b.allowedUsers),
+		"token_set":     b.token != "",
 	}
 }
 

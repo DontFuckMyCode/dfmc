@@ -99,6 +99,7 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 	if eng != nil {
 		m.status = eng.Status()
 		m = m.hydrateStatusProviderFromConfig()
+		m.bindTelegramBotToPanel(eng.TelegramBot)
 	}
 	// Surface a primary-conflict notice on startup so the user doesn't
 	// have to navigate to the Providers panel to discover that their
@@ -126,9 +127,11 @@ func (m *Model) ensureDiagnostics() {
 }
 
 func (m Model) Init() tea.Cmd {
+	m.ensureDiagnostics()
 	cmds := []tea.Cmd{
 		tea.EnableBracketedPaste,
 		loadStatusCmd(m.eng),
+		telegramMessageCmd(m.telegram.events),
 	}
 	if !m.eventRelayExternal {
 		cmds = append(cmds, subscribeEventsCmd(m.eng))

@@ -222,6 +222,12 @@ func (d *diagnosticPanelsState) applyDefaults() {
 	if d.security.ignored == nil {
 		d.security.ignored = map[string]bool{}
 	}
+	if d.telegram.events == nil {
+		d.telegram.events = make(chan telegramMessageItem, 100)
+	}
+	if d.telegram.messages == nil {
+		d.telegram.messages = []telegramMessageItem{}
+	}
 }
 
 // contextPanelState — diagnostic view over Engine.ContextBudgetPreview /

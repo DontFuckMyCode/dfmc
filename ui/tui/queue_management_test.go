@@ -30,6 +30,51 @@ func TestImmediateSlashDoesNotQueueWhileStreaming(t *testing.T) {
 	}
 }
 
+func TestTrimmedClearSlashExecutesInsteadOfSending(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.transcript = []chatLine{
+		newChatLine(chatRoleUser, "hello"),
+		newChatLine(chatRoleAssistant, "hi"),
+	}
+	m.setChatInput("  /clear  ")
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := next.(Model)
+	if mm.chat.sending {
+		t.Fatal("trimmed /clear should execute locally, not start a chat send")
+	}
+	if len(mm.chat.pendingQueue) != 0 {
+		t.Fatalf("trimmed /clear should not queue, got %#v", mm.chat.pendingQueue)
+	}
+	if strings.TrimSpace(mm.chat.input) != "" {
+		t.Fatalf("composer should clear after /clear, got %q", mm.chat.input)
+	}
+	if len(mm.chat.transcript) != 1 || mm.chat.transcript[0].Role != chatRoleSystem {
+		t.Fatalf("/clear should replace transcript with one system confirmation, got %#v", mm.chat.transcript)
+	}
+	if strings.Contains(mm.chat.transcript[0].Content, "/clear") {
+		t.Fatalf("/clear was echoed as message content: %#v", mm.chat.transcript)
+	}
+}
+
+func TestClearSlashDoesNotQueueWhileStreaming(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.sending = true
+	m.setChatInput("  /clear  ")
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := next.(Model)
+	if mm.chat.sending {
+		t.Fatal("/clear should cancel the active stream")
+	}
+	if len(mm.chat.pendingQueue) != 0 {
+		t.Fatalf("/clear should execute immediately while streaming, got queue %#v", mm.chat.pendingQueue)
+	}
+	if strings.TrimSpace(mm.chat.input) != "" {
+		t.Fatalf("composer should clear after streaming /clear, got %q", mm.chat.input)
+	}
+}
+
 func TestWorkSlashStillQueuesWhileStreaming(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.chat.sending = true

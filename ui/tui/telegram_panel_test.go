@@ -45,6 +45,43 @@ func modelValue(t *testing.T, got tea.Model) Model {
 	}
 }
 
+func TestTelegramMessageAddedOnlyUpdatesTelegramPanel(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.chat.transcript = []chatLine{newChatLine(chatRoleUser, "chat stays clean")}
+	m.activityLog = []string{"activity stays clean"}
+	m.notice = "keep notice"
+
+	next, cmd := m.Update(telegramMessageAddedMsg{
+		msg: telegramMessageItem{from: "User 42", text: "hello from telegram", time: "12:00"},
+	})
+	mm := modelValue(t, next)
+	if cmd == nil {
+		t.Fatal("telegram message handler should keep listening for the next panel event")
+	}
+	if len(mm.telegram.messages) != 1 {
+		t.Fatalf("telegram panel should receive message, got %#v", mm.telegram.messages)
+	}
+	if got := mm.telegram.messages[0].text; got != "hello from telegram" {
+		t.Fatalf("unexpected telegram panel text %q", got)
+	}
+	if len(mm.chat.transcript) != 1 || mm.chat.transcript[0].Content != "chat stays clean" {
+		t.Fatalf("telegram message leaked into chat transcript: %#v", mm.chat.transcript)
+	}
+	if len(mm.activityLog) != 1 || mm.activityLog[0] != "activity stays clean" {
+		t.Fatalf("telegram message leaked into activity log: %#v", mm.activityLog)
+	}
+	if mm.notice != "keep notice" {
+		t.Fatalf("telegram message should not overwrite notice, got %q", mm.notice)
+	}
+}
+
+func TestTelegramLogFormattingStripsPrefix(t *testing.T) {
+	got := formatTelegramLog("[telegram] user=%d rate limited", 42)
+	if got != "user=42 rate limited" {
+		t.Fatalf("unexpected telegram log text %q", got)
+	}
+}
+
 // Regression: pressing 'q' while in the Telegram token form must
 // NOT close the panel — it must be typed into the token field.
 // Bug: panel overlay q-handler at update_keypress.go:145 would intercept

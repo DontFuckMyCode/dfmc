@@ -109,3 +109,12 @@ const heartbeatInterval = 1 * time.Second
 func heartbeatTickCmd() tea.Cmd {
 	return tea.Tick(heartbeatInterval, func(time.Time) tea.Msg { return heartbeatTickMsg{} })
 }
+
+func telegramMessageCmd(ch <-chan telegramMessageItem) tea.Cmd {
+	if ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		return telegramMessageAddedMsg{msg: <-ch}
+	}
+}
