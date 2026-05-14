@@ -138,11 +138,10 @@ func (m Model) routeKeyByActiveTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// terminal heights and `...` truncation hid content the user
 	// couldn't reach.
 	if kind := m.ui.panelOverlayKind; kind != "" {
-		// `q` is the universal "close this overlay" key — the close hint
-		// in panel_overlay.go advertises "esc · q to close" so honour it
-		// here regardless of which overlay is open. Without this branch
-		// the hint was lying for every demoted panel; only esc worked.
-		if msg.String() == "q" {
+		// `q` closes every overlay *except* telegram — telegram needs 'q'
+		// in its token form so we must not intercept it there; the
+		// telegram-specific handler routes it correctly (to form or close).
+		if kind != "telegram" && msg.String() == "q" {
 			if nm, closed := m.closePanelOverlay(); closed {
 				return nm, nil
 			}

@@ -12,7 +12,7 @@ func (m *Model) handleTelegramOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.telegram.testMsgActive {
 		return m.handleTelegramTestMsgKey(msg)
 	}
-	if msg.String() == "q" || msg.Type == tea.KeyEsc {
+	if msg.Type == tea.KeyEsc {
 		m.ui.panelOverlayKind = ""
 		m.notice = "Telegram panel closed."
 		return m, nil

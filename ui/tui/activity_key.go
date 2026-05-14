@@ -132,8 +132,6 @@ func (m Model) handleActivityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openActivityActionMenu(), nil
 	}
 	total := len(m.filteredActivityEntries())
-	step := 1
-	pageStep := 10
 	switch msg.String() {
 	case "enter", "o":
 		return m.activityOpenSelection(false)
@@ -144,67 +142,40 @@ func (m Model) handleActivityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y":
 		return m.activityCopySelection()
 	case "j", "down":
-		if m.activity.scroll >= step {
-			m.activity.scroll -= step
-		} else {
-			m.activity.scroll = 0
-		}
+		m.activity.scroll = scrollIndexUp(m.activity.scroll, 1)
 		m.activity.follow = m.activity.scroll == 0
 	case "k", "up":
-		if m.activity.scroll+step < total {
-			m.activity.scroll += step
+		next := scrollIndexDown(m.activity.scroll, total, 1)
+		if next != m.activity.scroll {
+			m.activity.scroll = next
 			m.activity.follow = false
 		}
 	case "pgdown":
-		if m.activity.scroll >= pageStep {
-			m.activity.scroll -= pageStep
-		} else {
-			m.activity.scroll = 0
-		}
+		m.activity.scroll = scrollIndexUp(m.activity.scroll, 10)
 		m.activity.follow = m.activity.scroll == 0
 	case "pgup":
-		if m.activity.scroll+pageStep <= total {
-			m.activity.scroll += pageStep
-		} else if total > 0 {
-			m.activity.scroll = total - 1
-		}
+		m.activity.scroll = scrollIndexDown(m.activity.scroll, total, 10)
 		m.activity.follow = false
 	case "g", "home":
-		if total > 0 {
-			m.activity.scroll = total - 1
-		}
+		m.activity.scroll = lastScrollIndex(total)
 		m.activity.follow = false
 	case "G", "end":
 		m.activity.scroll = 0
 		m.activity.follow = true
 	case "1":
-		m.activity.mode = activityViewAll
-		m.activity.scroll = 0
-		m.activity.follow = true
+		m = m.setActivityMode(activityViewAll)
 	case "2":
-		m.activity.mode = activityViewTools
-		m.activity.scroll = 0
-		m.activity.follow = true
+		m = m.setActivityMode(activityViewTools)
 	case "3":
-		m.activity.mode = activityViewAgents
-		m.activity.scroll = 0
-		m.activity.follow = true
+		m = m.setActivityMode(activityViewAgents)
 	case "4":
-		m.activity.mode = activityViewErrors
-		m.activity.scroll = 0
-		m.activity.follow = true
+		m = m.setActivityMode(activityViewErrors)
 	case "5":
-		m.activity.mode = activityViewWorkflow
-		m.activity.scroll = 0
-		m.activity.follow = true
+		m = m.setActivityMode(activityViewWorkflow)
 	case "6":
-		m.activity.mode = activityViewContext
-		m.activity.scroll = 0
-		m.activity.follow = true
+		m = m.setActivityMode(activityViewContext)
 	case "v":
-		m.activity.mode = nextActivityMode(m.activity.mode)
-		m.activity.scroll = 0
-		m.activity.follow = true
+		m = m.setActivityMode(nextActivityMode(m.activity.mode))
 	case "/":
 		m.activity.searchActive = true
 	case "c":
@@ -227,6 +198,13 @@ func (m Model) handleActivityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) setActivityMode(mode activityViewMode) Model {
+	m.activity.mode = mode
+	m.activity.scroll = 0
+	m.activity.follow = true
+	return m
+}
+
 func (m Model) handleActivitySearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
@@ -237,14 +215,10 @@ func (m Model) handleActivitySearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEsc:
 		m.activity.searchActive = false
 		return m, nil
-	case tea.KeyBackspace:
-		if r := []rune(m.activity.query); len(r) > 0 {
-			m.activity.query = string(r[:len(r)-1])
+	default:
+		if query, ok := applyInlineSearchTextKey(m.activity.query, msg); ok {
+			m.activity.query = query
 		}
-		return m, nil
-	case tea.KeyRunes, tea.KeySpace:
-		m.activity.query += msg.String()
-		return m, nil
 	}
 	return m, nil
 }
