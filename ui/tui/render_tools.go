@@ -1,17 +1,3 @@
-// render_tools.go — F6 Tools panel, rebuilt with the same banner +
-// 3-pane card shell as F2/F3/F4/F5. The keyboard surface stays in
-// panel_keys.go's handleToolsKey; this file owns rendering only.
-//
-// Layout:
-//   ≥120 cols → 3 panes (28% list · 44% spec · 28% metadata)
-//   80-119    → 2 panes (35% list · 65% spec) + inline footer
-//   <80       → 1 pane stack
-//
-// Banner reports tool count + edit-mode chip ("EDITING" when the
-// param editor is active). Metadata cards expose the run-state +
-// keyboard surface so the user doesn't have to read source to learn
-// keys.
-
 package tui
 
 import (
@@ -39,8 +25,7 @@ func (m Model) renderToolsViewV2(width int) string {
 	var out string
 	if threePane {
 		metaBlock := m.renderToolsMetaPane(metaW, height, pal, tools)
-		body := lipgloss.JoinHorizontal(lipgloss.Top,
-			listBlock, "  ", specBlock, "  ", metaBlock)
+		body := lipgloss.JoinHorizontal(lipgloss.Top, listBlock, "  ", specBlock, "  ", metaBlock)
 		out = banner + "\n" + body
 	} else if twoPane {
 		footer := m.renderToolsMetaInline(width, tools)
@@ -70,10 +55,8 @@ func toolsPanelWidths(total int, threePane, twoPane bool) (listW, specW, metaW i
 	return total, total, 0
 }
 
-// --- BANNER ------------------------------------------------------------------
-
 func (m Model) toolsTopBanner(width, count int) string {
-	title := titleStyle.Bold(true).Render("⚒ TOOLS")
+	title := titleStyle.Bold(true).Render("TOOLS")
 	chip := okStyle
 	if count == 0 {
 		chip = warnStyle
@@ -88,20 +71,14 @@ func (m Model) toolsTopBanner(width, count int) string {
 	return line + "\n" + renderDivider(width-2)
 }
 
-// --- LIST PANE ---------------------------------------------------------------
-
 func (m Model) renderToolsListPane(width, height int, pal tabPaletteEntry, tools []string) string {
-	header := titleStyle.Bold(true).Render("≡ REGISTRY")
-	lines := []string{
-		header,
-		renderDivider(width - 2),
-		"",
-	}
+	header := titleStyle.Bold(true).Render("REGISTRY")
+	lines := []string{header, renderDivider(width - 2), ""}
 	if len(tools) == 0 {
 		lines = append(lines,
 			warnStyle.Render("No registered tools."),
 			"",
-			subtleStyle.Render("Tool engine isn't wired."),
+			subtleStyle.Render("Tool engine is not wired."),
 			subtleStyle.Render("Check .dfmc/config.yaml or"),
 			subtleStyle.Render("re-run dfmc init."),
 		)
@@ -111,9 +88,7 @@ func (m Model) renderToolsListPane(width, height int, pal tabPaletteEntry, tools
 		for i := scroll; i < scroll+rowBudget && i < len(tools); i++ {
 			lines = append(lines, m.renderToolsListRow(i, width, pal, tools))
 		}
-		lines = append(lines, "",
-			subtleStyle.Render(fmt.Sprintf("%d / %d tools",
-				m.toolView.index+1, len(tools))))
+		lines = append(lines, "", subtleStyle.Render(fmt.Sprintf("%d / %d tools", m.toolView.index+1, len(tools))))
 	}
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 }
@@ -123,7 +98,7 @@ func (m Model) renderToolsListRow(i, width int, pal tabPaletteEntry, tools []str
 	selected := i == m.toolView.index
 	cursor := "  "
 	if selected {
-		cursor = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render("▶ ")
+		cursor = lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render("> ")
 	}
 	chrome := lipgloss.Width(cursor) + 1
 	nameWidth := max(width-chrome, 8)
@@ -140,25 +115,20 @@ func (m Model) renderToolsListRow(i, width int, pal tabPaletteEntry, tools []str
 	return cursor + label + badge
 }
 
-// --- SPEC PANE ---------------------------------------------------------------
-
 func (m Model) renderToolsSpecPane(width, height int, _ tabPaletteEntry, tools []string) string {
-	header := titleStyle.Bold(true).Render("▸ SPEC")
-	lines := []string{
-		header,
-		renderDivider(width - 2),
-		"",
-	}
+	header := titleStyle.Bold(true).Render("SPEC")
+	lines := []string{header, renderDivider(width - 2), ""}
 	if len(tools) == 0 {
 		lines = append(lines, subtleStyle.Render("Tool engine unavailable."))
 		return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 	}
+
 	selected := tools[m.toolView.index]
 	if m.eng != nil && m.eng.IsToolDisabled(selected) {
 		lines = append(lines,
 			warnStyle.Render(fmt.Sprintf("%s is DISABLED", selected)),
 			"",
-			"Press → to open actions and enable, or use:",
+			"Press right to open actions and enable, or use:",
 			subtleStyle.Render("  dfmc tool enable "+selected),
 		)
 	} else if m.eng != nil && m.eng.Tools != nil {
@@ -176,6 +146,7 @@ func (m Model) renderToolsSpecPane(width, height int, _ tabPaletteEntry, tools [
 			fmt.Sprintf("Description: %s", truncateForPanel(m.toolDescription(selected), width)),
 		)
 	}
+
 	lines = append(lines,
 		"",
 		subtleStyle.Render("Effective params"),
@@ -198,111 +169,13 @@ func (m Model) renderToolsSpecPane(width, height int, _ tabPaletteEntry, tools [
 			"",
 		)
 	}
+
 	lines = append(lines, subtleStyle.Render("Last result"))
 	resultText := strings.TrimSpace(m.toolView.output)
 	if resultText == "" {
-		resultText = subtleStyle.Render("No tool run yet.\nThis panel is the manual harness for the same tool registry the agent uses (read_file, grep_codebase, edit_file, run_command, ...). Useful for sanity-checking arguments before letting the model loose.\nj/k pick a tool · e edits params · enter runs with current params · x resets to defaults.")
+		resultText = subtleStyle.Render("No tool run yet.\nThis panel is the manual harness for the same tool registry the agent uses (read_file, grep_codebase, edit_file, run_command, ...). Useful for sanity-checking arguments before letting the model run them.\nj/k pick a tool | e edits params | enter runs with current params | x resets to defaults.")
 	}
 	rowBudget := max(height-len(lines)-2, 4)
 	lines = append(lines, truncateForPanelSized(resultText, width, rowBudget))
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
-}
-
-// --- METADATA PANE -----------------------------------------------------------
-
-func (m Model) renderToolsMetaPane(width, height int, pal tabPaletteEntry, tools []string) string {
-	cards := m.toolsMetaCards(tools)
-	if len(cards) == 0 {
-		return lipgloss.NewStyle().Width(width).Render(
-			subtleStyle.Render("No tool selected."))
-	}
-	rendered := make([]string, 0, len(cards)*2)
-	for i, c := range cards {
-		if i > 0 {
-			rendered = append(rendered, "")
-		}
-		rendered = append(rendered, renderPanelCard(c, width-2, false, pal.Accent))
-	}
-	body := strings.Join(rendered, "\n")
-	rows := splitLines(body)
-	if len(rows) > height {
-		rows = rows[:height]
-	}
-	return strings.Join(rows, "\n")
-}
-
-func (m Model) toolsMetaCards(tools []string) []panelCard {
-	if len(tools) == 0 {
-		return nil
-	}
-	selected := tools[m.toolView.index]
-	var cards []panelCard
-
-	// CURRENT card.
-	chip := "READY"
-	chipStyle := okStyle
-	if m.toolView.editing {
-		chip = "EDITING"
-		chipStyle = warnStyle
-	}
-	rows := []panelCardRow{
-		{Key: "Name", Value: selected},
-		{Key: "Position", Value: fmt.Sprintf("%d / %d", m.toolView.index+1, len(tools))},
-	}
-	if m.eng != nil && m.eng.Tools != nil {
-		if spec, ok := m.eng.Tools.Spec(selected); ok {
-			rows = append(rows,
-				panelCardRow{Key: "Args", Value: fmt.Sprintf("%d", len(spec.Args))})
-		}
-	}
-	cards = append(cards, panelCard{
-		Icon:            "◉",
-		Title:           "Current",
-		StatusChip:      chip,
-		StatusChipStyle: &chipStyle,
-		Rows:            rows,
-	})
-
-	// ACTIONS card.
-	actionRows := []panelCardRow{
-		{Key: "↑ / ↓", Value: "navigate tools"},
-		{Key: "enter", Value: "run selected tool"},
-		{Key: "→", Value: "action menu (run/edit/enable/disable)"},
-	}
-	if m.eng != nil {
-		selected := tools[m.toolView.index]
-		if m.eng.IsToolDisabled(selected) {
-			actionRows = append(actionRows, panelCardRow{Key: "", Value: okStyle.Render("DISABLED - open action menu to enable")})
-		} else if m.eng.ToolIsProtected(selected) {
-			actionRows = append(actionRows, panelCardRow{Key: "", Value: subtleStyle.Render("core tool - cannot be disabled")})
-		}
-	}
-	cards = append(cards, panelCard{
-		Icon:        "⚒",
-		Title:       "Actions",
-		Rows:        actionRows,
-		FooterHint:  "ctrl+h keys",
-	})
-	return cards
-}
-
-func (m Model) renderToolsMetaInline(width int, tools []string) string {
-	_ = width
-	if len(tools) == 0 {
-		return subtleStyle.Render("No tools registered.")
-	}
-	selected := tools[m.toolView.index]
-	chip := "READY"
-	chipStyle := okStyle
-	if m.toolView.editing {
-		chip = "EDITING"
-		chipStyle = warnStyle
-	}
-	parts := []string{
-		chipStyle.Render(" " + chip + " "),
-		titleStyle.Render(selected),
-		subtleStyle.Render(fmt.Sprintf("%d / %d", m.toolView.index+1, len(tools))),
-		subtleStyle.Render("→ actions · enter run"),
-	}
-	return strings.Join(parts, "  ·  ")
 }

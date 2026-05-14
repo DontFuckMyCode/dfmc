@@ -24,15 +24,15 @@ import (
 func toolCallCardLine(toolName string) string {
 	switch strings.ToLower(strings.TrimSpace(toolName)) {
 	case "read_file":
-		return "READING file slice..."
+		return "card: READ"
 	case "list_dir":
-		return "LISTING directory entries..."
+		return "card: LIST"
 	case "glob":
-		return "SCANNING paths..."
+		return "card: GLOB"
 	case "grep_codebase", "semantic_search", "ast_query", "call_graph":
-		return "SEARCHING for matches..."
+		return "card: SEARCH"
 	case "run_command":
-		return "EXECUTING command..."
+		return "card: RUN"
 	default:
 		return ""
 	}
@@ -41,32 +41,32 @@ func toolCallCardLine(toolName string) string {
 func toolResultCardLine(toolName string, success bool) string {
 	state := "OK"
 	if !success {
-		state = "FAIL"
+		state = "FAILED"
 	}
 	switch strings.ToLower(strings.TrimSpace(toolName)) {
 	case "read_file":
-		return "READ " + state
+		return "card: READ " + state
 	case "list_dir":
-		return "LIST " + state
+		return "card: LIST " + state
 	case "glob":
-		return "GLOB " + state
+		return "card: GLOB " + state
 	case "grep_codebase", "semantic_search", "ast_query", "call_graph":
-		return "SEARCH " + state
+		return "card: SEARCH " + state
 	case "run_command":
-		return "RUN " + state
+		return "card: RUN " + state
 	default:
-		return state
+		return "card: " + state
 	}
 }
 
 func mutationCallCardLine(toolName string) string {
 	switch strings.ToLower(strings.TrimSpace(toolName)) {
 	case "write_file":
-		return "WRITING file..."
+		return "card: WRITE"
 	case "edit_file":
-		return "EDITING file..."
+		return "card: EDIT"
 	case "apply_patch":
-		return "PATCHING files..."
+		return "card: PATCH"
 	default:
 		return ""
 	}
@@ -75,17 +75,17 @@ func mutationCallCardLine(toolName string) string {
 func mutationResultCardLine(toolName string, success bool) string {
 	state := "OK"
 	if !success {
-		state = "FAIL"
+		state = "FAILED"
 	}
 	switch strings.ToLower(strings.TrimSpace(toolName)) {
 	case "write_file":
-		return "WRITE " + state
+		return "card: WRITE " + state
 	case "edit_file":
-		return "EDIT " + state
+		return "card: EDIT " + state
 	case "apply_patch":
-		return "PATCH " + state
+		return "card: PATCH " + state
 	default:
-		return state
+		return "card: " + state
 	}
 }
 

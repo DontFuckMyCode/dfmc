@@ -50,7 +50,9 @@ func RenderToolChip(chip ToolChip, width int) string {
 		tail = append(tail, fmt.Sprintf("out %s tok", FormatToolTokenCount(chip.OutputTokens)))
 	}
 
-	headLine := styleFor.Render(icon) + " " + ChipNameStyle(name, status).Render(headline)
+	headLine := styleFor.Render(icon) + " " +
+		SubtleStyle.Render("TOOL ") +
+		ChipNameStyle(name, status).Render(toolChipStatusLabel(status)+": "+headline)
 	if len(tail) > 0 {
 		headLine += " " + SubtleStyle.Render(strings.Join(tail, " \u00b7 "))
 	}
@@ -106,6 +108,26 @@ func appendToolChipInnerLines(out *strings.Builder, lines []string, innerWidth i
 		if ln != "" {
 			out.WriteString("\n    " + SubtleStyle.Render(TruncateSingleLine(ln, innerWidth-2)))
 		}
+	}
+}
+
+func toolChipStatusLabel(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "ok", "success", "done":
+		return "done"
+	case "failed", "error", "fail", "timeout", "denied":
+		return "failed"
+	case "running", "start", "pending", "subagent-running":
+		return "running"
+	case "subagent-ok":
+		return "done"
+	case "subagent-failed":
+		return "failed"
+	default:
+		if status = strings.TrimSpace(status); status != "" {
+			return status
+		}
+		return "tool"
 	}
 }
 

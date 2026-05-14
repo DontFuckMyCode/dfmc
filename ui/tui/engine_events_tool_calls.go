@@ -159,12 +159,20 @@ func (m Model) handleToolResultEvent(payload map[string]any) (Model, string) {
 	displayName := displayToolName(toolName, payload)
 	summary := buildToolResultSummary(toolName, preview, success, payload)
 	m = m.accumulateToolCompressionStats(summary)
+	resultDetail := toolResultChatDetail(payload, preview, success, summary.CompressionPct)
+	if summary.BatchCount > 0 {
+		resultDetail = batchResultSummaryDetail(payload, resultDetail)
+	}
+	chipPreview := summary.ChipPreview
+	if strings.TrimSpace(chipPreview) == "" {
+		chipPreview = resultDetail
+	}
 	finishedChip := toolChip{
 		Name:               toolName,
 		Status:             status,
 		Step:               step,
 		DurationMs:         duration,
-		Preview:            summary.ChipPreview,
+		Preview:            chipPreview,
 		OutputTokens:       payloadInt(payload, "output_tokens", 0),
 		Truncated:          payloadBool(payload, "truncated", false),
 		CompressedChars:    summary.PayloadChars,
@@ -176,10 +184,6 @@ func (m Model) handleToolResultEvent(payload map[string]any) (Model, string) {
 	}
 	m.finishToolChip(finishedChip)
 	m.finishStreamingMessageToolChip(finishedChip)
-	resultDetail := toolResultChatDetail(payload, preview, success, summary.CompressionPct)
-	if summary.BatchCount > 0 {
-		resultDetail = batchResultSummaryDetail(payload, resultDetail)
-	}
 	if strings.EqualFold(strings.TrimSpace(toolName), "tool_batch_call") && batchToolCallNameSummary(payload) == "" {
 		displayName = ""
 	}

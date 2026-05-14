@@ -52,7 +52,7 @@ func (m *Model) upsertStreamingChatEvent(ev chatEventLine) {
 // ToolStatus.
 func (m *Model) updateToolEventLine(ev chatEventLine) {
 	if isTerminalToolEventStatus(ev.Status) {
-		if isMetaToolName(ev.Title) && m.finishToolEventLineByKey(ev) {
+		if m.finishDurableToolEventLineByKey(ev) {
 			return
 		}
 		if m.removeToolEventLineByKey(ev.Key) || !m.chat.sending {
@@ -97,6 +97,63 @@ func (m *Model) updateToolEventLine(ev chatEventLine) {
 	m.chat.transcript = append(m.chat.transcript, line)
 	m.chat.scrollback = 0
 	m.pruneLiveToolEventLines(4)
+}
+
+func (m *Model) finishDurableToolEventLineByKey(ev chatEventLine) bool {
+	key := strings.TrimSpace(ev.Key)
+	if key == "" {
+		return false
+	}
+	for i := len(m.chat.transcript) - 1; i >= 0; i-- {
+		line := &m.chat.transcript[i]
+		if !line.Role.Eq(chatRoleTool) {
+			continue
+		}
+		for j, existing := range line.EventLines {
+			if existing.Key != key || !shouldPreserveFinishedToolEvent(existing, ev) {
+				continue
+			}
+			line.EventLines[j] = mergeChatEventLine(existing, ev)
+			line.Content = chatEventTranscriptText(line.EventLines[j])
+			line.Timestamp = ev.At
+			m.chat.scrollback = 0
+			return true
+		}
+	}
+	return false
+}
+
+func shouldPreserveFinishedToolEvent(existing, next chatEventLine) bool {
+	name := strings.TrimSpace(next.ToolName)
+	if name == "" {
+		name = strings.TrimSpace(next.Title)
+	}
+	if name == "" {
+		name = strings.TrimSpace(existing.ToolName)
+	}
+	if name == "" {
+		name = strings.TrimSpace(existing.Title)
+	}
+	return isMetaToolName(name) ||
+		isMutationTimelineTool(name) ||
+		strings.TrimSpace(existing.Reason) != "" ||
+		finishedToolEventHasRichDetail(next)
+}
+
+func finishedToolEventHasRichDetail(ev chatEventLine) bool {
+	cardLines := 0
+	for _, line := range ev.DetailLines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(line), "card:") {
+			cardLines++
+			continue
+		}
+		return true
+	}
+	return cardLines > 1
 }
 
 func (m *Model) finishToolEventLineByKey(ev chatEventLine) bool {

@@ -63,6 +63,18 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 		if strings.HasPrefix(lower, "state:") || strings.HasPrefix(lower, "card:") || strings.Contains(lower, "summarized") {
 			continue
 		}
+		if strings.HasPrefix(lower, "running:") && hasTimelineDetailAfter(allRows, row) {
+			continue
+		}
+		if item.Role.Eq(chatRoleSystem) && strings.HasPrefix(lower, "done:") {
+			if detail := nextTimelineDetailAfter(allRows, row); detail != "" {
+				row += " | " + detail
+			}
+		}
+		if reason := timelineToolEventReason(item); reason != "" && (strings.HasPrefix(lower, "done:") || strings.HasPrefix(lower, "failed:")) {
+			row += " | _reason: " + reason
+		}
+		displayRow := row
 
 		// Clean up labels
 		row = strings.Replace(row, "target: ", "· ", 1)
@@ -73,6 +85,7 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 		row = strings.Replace(row, "_reason: ", "💭 ", 1)
 		row = strings.Replace(row, "reason: ", "💭 ", 1)
 
+		row = strings.TrimSpace(displayRow)
 		wrapped := wrapBubbleLine(row, limit)
 		for _, r := range wrapped {
 			filteredRows = append(filteredRows, truncateSingleLine(r, limit))
@@ -97,6 +110,37 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 	row := filteredRows[0]
 	combined := headerLine + subtleStyle.Render(bodyIndent) + timelineEventRowStyle(row).Render(row)
 	return []string{combined}
+}
+
+func timelineToolEventReason(item chatLine) string {
+	if !item.Role.Eq(chatRoleTool) || len(item.EventLines) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(item.EventLines[0].Reason)
+}
+
+func hasTimelineDetailAfter(rows []string, current string) bool {
+	return nextTimelineDetailAfter(rows, current) != ""
+}
+
+func nextTimelineDetailAfter(rows []string, current string) string {
+	seenCurrent := false
+	for _, row := range rows {
+		row = strings.TrimSpace(row)
+		if !seenCurrent {
+			seenCurrent = row == current
+			continue
+		}
+		if row == "" {
+			continue
+		}
+		lower := strings.ToLower(row)
+		if strings.HasPrefix(lower, "state:") || strings.HasPrefix(lower, "card:") || strings.Contains(lower, "summarized") {
+			continue
+		}
+		return row
+	}
+	return ""
 }
 
 func wrapTimelineEventContent(content string, limit int) []string {
@@ -155,14 +199,28 @@ func timelineToolEventBadge(ev chatEventLine) string {
 	switch name {
 	case "read_file", "list_dir", "glob":
 		label = "READ"
+		if strings.EqualFold(strings.TrimSpace(ev.Status), "running") && name == "read_file" {
+			label = "CALL"
+		}
 	case "grep_codebase", "semantic_search", "ast_query", "call_graph":
 		label = "SEARCH"
 	case "run_command":
 		label = "RUN"
-	case "write_file", "edit_file", "apply_patch":
+	case "write_file":
+		label = "WRITE"
+	case "edit_file":
 		label = "EDIT"
+	case "apply_patch":
+		label = "PATCH"
 	case "tool_batch_call":
 		label = "BATCH"
+	}
+
+	switch strings.ToLower(strings.TrimSpace(ev.Status)) {
+	case "ok", "done":
+		label = "DONE"
+	case "failed", "error", "denied", "timeout":
+		label = "FAIL"
 	}
 
 	if ev.Step > 0 {
