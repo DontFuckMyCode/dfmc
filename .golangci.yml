@@ -10,6 +10,16 @@ linters:
     - govet
     - ineffassign
     - unused
+    # gocyclo is opt-in at a high threshold so it only flags the
+    # absolute-worst CC offenders (the ones surfaced in the forensic
+    # review). Lowering the threshold without first decomposing the
+    # known hotspots (drive.FailureClassify, context.BuildWithOptions,
+    # coach.Observe, find_symbol.Execute) would create noise rather
+    # than signal.
+    - gocyclo
+  settings:
+    gocyclo:
+      min-complexity: 50
 
 formatters:
   enable:

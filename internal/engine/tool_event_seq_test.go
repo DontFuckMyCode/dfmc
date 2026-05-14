@@ -58,7 +58,13 @@ func TestToolEventSeqContext_RoundTrips(t *testing.T) {
 		}
 	})
 	t.Run("nil ctx returns 0", func(t *testing.T) {
-		if got := toolEventSeqFromContext(nil); got != 0 {
+		// The helper must be defensive against a nil ctx — call sites
+		// during teardown / partial-init may not have a real ctx yet.
+		// staticcheck SA1012 (do not pass nil context) is the lint we're
+		// suppressing here on purpose: the test is verifying nil safety.
+		//nolint:staticcheck // SA1012: nil ctx is the case under test
+		var nilCtx context.Context
+		if got := toolEventSeqFromContext(nilCtx); got != 0 {
 			t.Fatalf("nil ctx should return 0, got %d", got)
 		}
 	})

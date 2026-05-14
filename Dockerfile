@@ -1,5 +1,9 @@
 # Build stage
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+# Pin to the same toolchain CI uses (.github/workflows/ci.yml: go-version 1.26.2).
+# `golang:1.25-alpine` previously gave us 1.25.x — different from the 1.26.2 the
+# tests are validated against, so any 1.26-only stdlib semantics shipped broken
+# in the container while passing in CI.
+FROM --platform=$BUILDPLATFORM golang:1.26.2-alpine AS builder
 
 # Install build dependencies for tree-sitter (CGO required)
 RUN apk add --no-cache \

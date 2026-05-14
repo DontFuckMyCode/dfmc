@@ -89,96 +89,107 @@ func (c FailureClass) String() string {
 // The classification is conservative: when in doubt, RetryTransient wins
 // to avoid silently dropping work.
 //
-// Classification uses sentinel errors (errors.Is) where possible for
-// robust matching. For wrapped or third-party errors, string matching
-// is used as fallback.
+// Three-phase cascade:
+//  1. classifyByContext: ctx.Canceled / ctx.DeadlineExceeded — handled
+//     first so a user Ctrl+C never falls through to the network heuristics.
+//  2. classifyBySentinel: typed sentinel errors (errors.Is) — the
+//     preferred shape; survives wrapping via fmt.Errorf("…: %w", err).
+//  3. classifyByMessage: lowercased substring match on err.Error() —
+//     last-resort for third-party errors that don't expose sentinels.
+//
+// Each phase returns (FailureClass, true) on a hit, (_, false) to
+// fall through. Unknown errors default to RetryTransient (retry once
+// before giving up) rather than Fatal (silently dropped work).
 func FailureClassify(err error) FailureClass {
 	if err == nil {
 		return Fatal // nil is not an error; should not reach here
 	}
-
-	// Context cancellations are user-initiated stops — never retry.
-	if errors.Is(err, context.Canceled) {
-		return Fatal
+	if class, ok := classifyByContext(err); ok {
+		return class
 	}
-	// DeadlineExceeded is ambiguous: it may be a timeout (transient)
-	// or a hard budget limit. Treat as transient — a retry with the same
-	// or shorter budget may still make progress.
-	if errors.Is(err, context.DeadlineExceeded) {
-		return RetryTransient
+	if class, ok := classifyBySentinel(err); ok {
+		return class
 	}
-
-	// Sentinel error matching (preferred) — handles wrapped errors.
-	// Denial errors — never retry.
-	if errors.Is(err, ErrDenied) || errors.Is(err, ErrUserDenied) || errors.Is(err, ErrApprovalDenied) {
-		return Fatal
+	if class, ok := classifyByMessage(err); ok {
+		return class
 	}
-	// Auth errors — never retry.
-	if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrAuth401) || errors.Is(err, ErrAuth403) {
-		return Fatal
-	}
-	// Rate limit / transient — retry immediately.
-	if errors.Is(err, ErrRateLimit) || errors.Is(err, ErrStatus429) || errors.Is(err, ErrTooManyReq) {
-		return RetryTransient
-	}
-	// Fallback-worthy — retry with different provider/model.
-	if errors.Is(err, ErrStatus500) || errors.Is(err, ErrStatus502) ||
-		errors.Is(err, ErrStatus503) || errors.Is(err, ErrStatus504) ||
-		errors.Is(err, ErrNoSuchHost) || errors.Is(err, ErrConnRefused) ||
-		errors.Is(err, ErrConnReset) || errors.Is(err, ErrNetUnreachable) {
-		return RetryWithFallback
-	}
-	// Timeout errors — retry with same or shorter budget.
-	if errors.Is(err, ErrTimeout) || errors.Is(err, ErrTimedOut) || errors.Is(err, ErrIOTimeout) {
-		return RetryTransient
-	}
-	// Model-level errors — fallback recommended.
-	if errors.Is(err, ErrModelError) || errors.Is(err, ErrOverloaded) || errors.Is(err, ErrServiceUnavailable) {
-		return RetryWithFallback
-	}
-	// Config errors — never retry.
-	if errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrX509) || errors.Is(err, ErrCertificate) {
-		return Fatal
-	}
-
-	// String-based fallback for wrapped/third-party errors.
-	msg := strings.ToLower(err.Error())
-
-	// Fatal: denial.
-	if strings.Contains(msg, "denied:") || strings.Contains(msg, "user denied") || strings.Contains(msg, "approval denied") {
-		return Fatal
-	}
-	// Fatal: auth.
-	if strings.Contains(msg, "unauthorized") || (strings.Contains(msg, "auth") && (strings.Contains(msg, "401") || strings.Contains(msg, "403"))) {
-		return Fatal
-	}
-	// Transient: rate limit.
-	if strings.Contains(msg, "rate limit") || strings.Contains(msg, "status code 429") || (strings.Contains(msg, "429") && strings.Contains(msg, "too many")) {
-		return RetryTransient
-	}
-	// Fallback: server/provider errors.
-	if strings.Contains(msg, "status code 500") || strings.Contains(msg, "status code 502") ||
-		strings.Contains(msg, "status code 503") || strings.Contains(msg, "status code 504") ||
-		strings.Contains(msg, "status code: 5") ||
-		strings.Contains(msg, "no such host") || strings.Contains(msg, "connection refused") ||
-		strings.Contains(msg, "connection reset") || (strings.Contains(msg, "network") && strings.Contains(msg, "unreachable")) {
-		return RetryWithFallback
-	}
-	// Transient: timeouts.
-	if strings.Contains(msg, "timeout") || strings.Contains(msg, "timed out") || strings.Contains(msg, "i/o timeout") {
-		return RetryTransient
-	}
-	// Fallback: model errors.
-	if strings.Contains(msg, "model error") || strings.Contains(msg, "overloaded") || strings.Contains(msg, "service unavailable") {
-		return RetryWithFallback
-	}
-	// Fatal: URL/cert.
-	if strings.Contains(msg, "invalid url") || strings.Contains(msg, "x509") || strings.Contains(msg, "certificate") {
-		return Fatal
-	}
-
 	// Default: unknown error — retry once as transient before giving up.
 	return RetryTransient
+}
+
+// classifyByContext handles the two stdlib context errors. Cancelled
+// is always user-initiated and must NOT be retried; DeadlineExceeded
+// is ambiguous (budget overrun vs. transient stall) and treated as
+// transient so a tighter retry can still make progress.
+func classifyByContext(err error) (FailureClass, bool) {
+	if errors.Is(err, context.Canceled) {
+		return Fatal, true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return RetryTransient, true
+	}
+	return 0, false
+}
+
+// classifyBySentinel is the preferred match path — typed sentinels
+// survive wrapping via fmt.Errorf("…: %w", err) and errors.Is(),
+// unlike string-matching on err.Error() which can silently break
+// when an upstream library reflows its message.
+func classifyBySentinel(err error) (FailureClass, bool) {
+	switch {
+	case errors.Is(err, ErrDenied), errors.Is(err, ErrUserDenied), errors.Is(err, ErrApprovalDenied):
+		return Fatal, true
+	case errors.Is(err, ErrUnauthorized), errors.Is(err, ErrAuth401), errors.Is(err, ErrAuth403):
+		return Fatal, true
+	case errors.Is(err, ErrRateLimit), errors.Is(err, ErrStatus429), errors.Is(err, ErrTooManyReq):
+		return RetryTransient, true
+	case errors.Is(err, ErrStatus500), errors.Is(err, ErrStatus502),
+		errors.Is(err, ErrStatus503), errors.Is(err, ErrStatus504),
+		errors.Is(err, ErrNoSuchHost), errors.Is(err, ErrConnRefused),
+		errors.Is(err, ErrConnReset), errors.Is(err, ErrNetUnreachable):
+		return RetryWithFallback, true
+	case errors.Is(err, ErrTimeout), errors.Is(err, ErrTimedOut), errors.Is(err, ErrIOTimeout):
+		return RetryTransient, true
+	case errors.Is(err, ErrModelError), errors.Is(err, ErrOverloaded), errors.Is(err, ErrServiceUnavailable):
+		return RetryWithFallback, true
+	case errors.Is(err, ErrInvalidURL), errors.Is(err, ErrX509), errors.Is(err, ErrCertificate):
+		return Fatal, true
+	}
+	return 0, false
+}
+
+// classifyByMessage is the last-resort fallback for wrapped /
+// third-party errors that don't expose a typed sentinel. Pattern
+// list mirrors classifyBySentinel's groups in the same order so a
+// future migration of an error from "string-only" to "has a
+// sentinel" doesn't change classification.
+func classifyByMessage(err error) (FailureClass, bool) {
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "denied:"), strings.Contains(msg, "user denied"), strings.Contains(msg, "approval denied"):
+		return Fatal, true
+	case strings.Contains(msg, "unauthorized"),
+		strings.Contains(msg, "auth") && (strings.Contains(msg, "401") || strings.Contains(msg, "403")):
+		return Fatal, true
+	case strings.Contains(msg, "rate limit"),
+		strings.Contains(msg, "status code 429"),
+		strings.Contains(msg, "429") && strings.Contains(msg, "too many"):
+		return RetryTransient, true
+	case strings.Contains(msg, "status code 500"), strings.Contains(msg, "status code 502"),
+		strings.Contains(msg, "status code 503"), strings.Contains(msg, "status code 504"),
+		strings.Contains(msg, "status code: 5"),
+		strings.Contains(msg, "no such host"), strings.Contains(msg, "connection refused"),
+		strings.Contains(msg, "connection reset"),
+		strings.Contains(msg, "network") && strings.Contains(msg, "unreachable"):
+		return RetryWithFallback, true
+	case strings.Contains(msg, "timeout"), strings.Contains(msg, "timed out"), strings.Contains(msg, "i/o timeout"):
+		return RetryTransient, true
+	case strings.Contains(msg, "model error"), strings.Contains(msg, "overloaded"), strings.Contains(msg, "service unavailable"):
+		return RetryWithFallback, true
+	case strings.Contains(msg, "invalid url"), strings.Contains(msg, "x509"), strings.Contains(msg, "certificate"):
+		return Fatal, true
+	}
+	return 0, false
 }
 
 // RetryDecision describes what applyOutcome should do with a failed TODO.
