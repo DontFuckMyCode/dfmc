@@ -9,7 +9,6 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
@@ -20,82 +19,7 @@ import (
 func (m Model) statsPanelInfo() statsPanelInfo {
 	now := time.Now()
 	head := m.chatHeaderInfo()
-	contextTask := ""
-	contextFileCount := 0
-	contextMaxFiles := 0
-	contextBudgetTokens := 0
-	contextAvailableTokens := 0
-	contextMaxTokensPerFile := 0
-	contextCompression := ""
-	contextReasons := []string{}
-	contextTopFiles := []string{}
-	contextSystemTokens := 0
-	contextHistoryTokens := 0
-	contextHistoryReserve := 0
-	contextResponseTokens := 0
-	contextToolTokens := 0
-	contextWindowTokens := head.ContextWindowTokens
-	contextProvider := strings.TrimSpace(head.Provider)
-	contextModel := strings.TrimSpace(head.Model)
-	if report := m.status.ContextIn; report != nil {
-		contextTask = strings.TrimSpace(report.Task)
-		contextFileCount = report.FileCount
-		contextMaxFiles = report.MaxFiles
-		contextBudgetTokens = report.MaxTokensTotal
-		contextAvailableTokens = report.ContextAvailable
-		contextMaxTokensPerFile = report.MaxTokensPerFile
-		contextCompression = strings.TrimSpace(report.Compression)
-		for _, reason := range report.Reasons {
-			reason = strings.TrimSpace(reason)
-			if reason == "" {
-				continue
-			}
-			contextReasons = append(contextReasons, reason)
-			if len(contextReasons) >= 2 {
-				break
-			}
-		}
-		for _, file := range report.Files {
-			path := strings.TrimSpace(file.Path)
-			if path == "" {
-				continue
-			}
-			contextTopFiles = append(contextTopFiles, path)
-			if len(contextTopFiles) >= 2 {
-				break
-			}
-		}
-	}
-	if live := m.liveContextSnapshot(); live.ok {
-		if live.codeTokens > 0 {
-			head.ContextTokens = live.codeTokens
-		}
-		if live.maxContext > 0 {
-			head.MaxContext = live.maxContext
-		}
-		contextWindowTokens = live.windowTokens
-		contextAvailableTokens = live.available
-		contextSystemTokens = live.systemTokens
-		contextHistoryTokens = live.historyTokens
-		contextHistoryReserve = live.historyReserve
-		contextResponseTokens = live.responseTokens
-		contextToolTokens = live.toolTokens
-		if live.provider != "" {
-			contextProvider = live.provider
-		}
-		if live.model != "" {
-			contextModel = live.model
-		}
-		if live.task != "" {
-			contextTask = live.task
-		}
-		if live.compression != "" {
-			contextCompression = live.compression
-		}
-		if len(live.topFiles) > 0 {
-			contextTopFiles = live.topFiles
-		}
-	}
+	context := m.statsContextSnapshot(head)
 	elapsed := time.Duration(0)
 	if !m.sessionStart.IsZero() {
 		elapsed = now.Sub(m.sessionStart)
@@ -110,203 +34,7 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 	}
 
 	todos := m.statsTodoSummary()
-
-	planSubtasks := 0
-	planParallel := false
-	planConfidence := 0.0
-	taskLines := []string{}
-	taskTreeLines := m.statsTaskTreeLines()
-	workflowStatus := ""
-	workflowMeter := ""
-	workflowExecution := ""
-	workflowRecent := []string{}
-	workflowTimeline := m.recentWorkflowTimeline(6)
-	lastWorkflowText, lastWorkflowAge := m.latestWorkflowActivity(now)
-
-	if m.plans.plan != nil {
-		planSubtasks = len(m.plans.plan.Subtasks)
-		planParallel = m.plans.plan.Parallel
-		planConfidence = m.plans.plan.Confidence
-		if planSubtasks > 0 {
-			mode := "serial"
-			if planParallel {
-				mode = "parallel"
-			}
-			taskLines = append(taskLines, fmt.Sprintf("plan %d tasks%s%s%s%.2f", planSubtasks, workflowSep, mode, workflowSep, planConfidence))
-			for i, sub := range m.plans.plan.Subtasks {
-				if i >= 6 {
-					taskLines = append(taskLines, fmt.Sprintf("... %d more", len(m.plans.plan.Subtasks)-i))
-					break
-				}
-				title := strings.TrimSpace(sub.Title)
-				if title == "" {
-					title = strings.TrimSpace(sub.Description)
-				}
-				if title == "" {
-					title = "(untitled)"
-				}
-				taskLines = append(taskLines, fmt.Sprintf("%d. %s", i+1, title))
-			}
-		}
-	}
-
-	if head.AgentActive || head.Parked || head.QueuedCount > 0 || head.PendingNotes > 0 {
-		phase := strings.TrimSpace(head.AgentPhase)
-		if phase == "" {
-			phase = "idle"
-		}
-		if head.AgentMax > 0 && head.AgentStep > 0 {
-			taskLines = append(taskLines, fmt.Sprintf("agent %s%s%d/%d", phase, workflowSep, head.AgentStep, head.AgentMax))
-		} else {
-			taskLines = append(taskLines, "agent "+phase)
-		}
-		if head.QueuedCount > 0 || head.PendingNotes > 0 {
-			taskLines = append(taskLines, fmt.Sprintf("queue %d%snotes %d", head.QueuedCount, workflowSep, head.PendingNotes))
-		}
-		// While the resume banner is up, the explicit "parked / /continue"
-		// task line just echoes it. Drop the line when BannerActive so the
-		// workflow column doesn't repeat what's already on screen.
-		if head.Parked && !head.BannerActive {
-			taskLines = append(taskLines, "parked"+workflowSep+"/continue")
-		}
-	}
-
-	if strings.TrimSpace(head.DriveRunID) != "" {
-		driveLine := fmt.Sprintf("drive %s%s%d/%d", head.DriveRunID, workflowSep, head.DriveDone, head.DriveTotal)
-		if head.DriveBlocked > 0 {
-			driveLine += fmt.Sprintf("%s%d blocked", workflowSep, head.DriveBlocked)
-		}
-		taskLines = append(taskLines, driveLine)
-	} else if len(taskLines) == 0 {
-		if summary := strings.TrimSpace(m.latestWorkflowPlanSummary()); summary != "" {
-			taskLines = append(taskLines, summary)
-		}
-	}
-
-	switch {
-	case head.AgentActive || head.Streaming:
-		phase := strings.TrimSpace(head.AgentPhase)
-		if head.Streaming && !head.AgentActive {
-			waitFor := ""
-			if !m.chat.streamStartedAt.IsZero() {
-				waitFor = formatSessionDuration(now.Sub(m.chat.streamStartedAt))
-			}
-			if strings.Contains(strings.ToLower(lastWorkflowText), "throttled") {
-				workflowStatus = fmt.Sprintf("%s waiting on provider retry", spinnerFrame(m.chat.spinnerFrame+3))
-			} else {
-				workflowStatus = fmt.Sprintf("%s waiting on model reply", spinnerFrame(m.chat.spinnerFrame+3))
-			}
-			if waitFor != "" {
-				workflowStatus += workflowSep + waitFor
-			}
-			if lastWorkflowAge >= 3*time.Second {
-				workflowStatus += fmt.Sprintf("%sidle %s", workflowSep, formatSessionDuration(lastWorkflowAge))
-			}
-			break
-		}
-		if phase == "" {
-			phase = "working"
-		}
-		workflowStatus = fmt.Sprintf("%s live now%s%s", spinnerFrame(m.chat.spinnerFrame+3), workflowSep, phase)
-		if tool := strings.TrimSpace(m.agentLoop.lastTool); tool != "" {
-			workflowStatus += workflowSep + tool
-		}
-		if lastWorkflowAge >= 3*time.Second {
-			workflowStatus += fmt.Sprintf("%sidle %s", workflowSep, formatSessionDuration(lastWorkflowAge))
-		}
-		if head.AgentMax > 0 {
-			step := head.AgentStep
-			if step <= 0 {
-				step = 1
-			}
-			workflowMeter = renderStepBar(step, head.AgentMax, 16, m.chat.spinnerFrame)
-		}
-	case strings.TrimSpace(head.DriveRunID) != "" && head.DriveTotal > 0:
-		workflowStatus = fmt.Sprintf("%s drive running%s%d/%d", spinnerFrame(m.chat.spinnerFrame+3), workflowSep, head.DriveDone, head.DriveTotal)
-		if head.DriveBlocked > 0 {
-			workflowStatus += fmt.Sprintf("%s%d blocked", workflowSep, head.DriveBlocked)
-		}
-		workflowMeter = renderStepBar(head.DriveDone, head.DriveTotal, 16, m.chat.spinnerFrame)
-	case todos.Doing > 0:
-		workflowStatus = fmt.Sprintf("%s workflow active%s%d doing", spinnerFrame(m.chat.spinnerFrame+3), workflowSep, todos.Doing)
-	case head.QueuedCount > 0:
-		workflowStatus = fmt.Sprintf("queued%s%d waiting", workflowSep, head.QueuedCount)
-	case head.Parked && !head.BannerActive:
-		workflowStatus = "parked" + workflowSep + "/continue"
-	case planSubtasks > 0:
-		workflowStatus = fmt.Sprintf("planned%s%d subtasks ready", workflowSep, planSubtasks)
-	}
-
-	lastWorkflowLower := strings.ToLower(strings.TrimSpace(lastWorkflowText))
-	if !head.AgentActive && !head.Streaming && (strings.Contains(lastWorkflowLower, "agent error -") || strings.Contains(lastWorkflowLower, "tool failed -") || strings.Contains(lastWorkflowLower, "tool error -")) {
-		workflowStatus = "stalled" + workflowSep + truncateSingleLine(lastWorkflowText, 72)
-		if lastWorkflowAge > 0 {
-			workflowStatus += fmt.Sprintf("%s%s ago", workflowSep, formatSessionDuration(lastWorkflowAge))
-		}
-		workflowMeter = ""
-	}
-
-	if strings.TrimSpace(todos.Active) != "" && todos.ActiveIndex > 0 && todos.Total > 0 {
-		workflowExecution = fmt.Sprintf("task %d/%d%s%s", todos.ActiveIndex, todos.Total, workflowSep, truncateSingleLine(todos.Active, 72))
-		if head.ActiveSubagents > 0 {
-			workflowExecution += fmt.Sprintf("%s%d subagents", workflowSep, head.ActiveSubagents)
-		}
-		if tool := strings.TrimSpace(m.agentLoop.lastTool); tool != "" {
-			workflowExecution += workflowSep + tool
-		}
-	} else if m.plans.plan != nil && len(m.plans.plan.Subtasks) > 0 {
-		taskIndex := head.AgentStep
-		if taskIndex <= 0 {
-			taskIndex = 1
-		}
-		if taskIndex > len(m.plans.plan.Subtasks) {
-			taskIndex = len(m.plans.plan.Subtasks)
-		}
-		title := strings.TrimSpace(m.plans.plan.Subtasks[taskIndex-1].Title)
-		if title == "" {
-			title = strings.TrimSpace(m.plans.plan.Subtasks[taskIndex-1].Description)
-		}
-		if title == "" {
-			title = "(untitled)"
-		}
-		workflowExecution = fmt.Sprintf("task %d/%d%s%s", taskIndex, len(m.plans.plan.Subtasks), workflowSep, truncateSingleLine(title, 72))
-		if head.ActiveSubagents > 0 {
-			workflowExecution += fmt.Sprintf("%s%d subagents", workflowSep, head.ActiveSubagents)
-		}
-		if tool := strings.TrimSpace(m.agentLoop.lastTool); tool != "" {
-			workflowExecution += workflowSep + tool
-		}
-	} else if head.ActiveSubagents > 0 {
-		workflowExecution = fmt.Sprintf("%d subagents active", head.ActiveSubagents)
-		if tool := strings.TrimSpace(m.agentLoop.lastTool); tool != "" {
-			workflowExecution += workflowSep + tool
-		}
-	} else if strings.TrimSpace(m.agentLoop.lastTool) != "" && (head.AgentActive || head.Streaming) {
-		workflowExecution = "active tool" + workflowSep + strings.TrimSpace(m.agentLoop.lastTool)
-	}
-
-	seenWorkflowRecent := map[string]struct{}{}
-	collectWorkflowRecent := func(prefix string, limit int) {
-		for _, line := range m.recentWorkflowActivity(prefix, limit) {
-			key := strings.ToLower(strings.TrimSpace(line))
-			if key == "" {
-				continue
-			}
-			if _, exists := seenWorkflowRecent[key]; exists {
-				continue
-			}
-			seenWorkflowRecent[key] = struct{}{}
-			workflowRecent = append(workflowRecent, line)
-			if len(workflowRecent) >= 4 {
-				return
-			}
-		}
-	}
-	collectWorkflowRecent("tool:", 2)
-	collectWorkflowRecent("drive:", 2)
-	collectWorkflowRecent("agent:autonomy:", 2)
-	collectWorkflowRecent("agent:loop:error", 1)
-	collectWorkflowRecent("provider:throttle:retry", 1)
+	workflow := m.statsWorkflowInfo(now, head, todos)
 
 	subagentLines := m.subagentTreeLines(now, 10)
 	if len(subagentLines) == 0 {
@@ -335,31 +63,6 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 	}
 	providerRows := m.providerStatusPanelRows()
 	providerSelected := clampScroll(m.providers.selectedIndex, len(providerRows))
-	contextMessageCount, contextToolCallCount, contextMessageTokens := m.contextConversationStats()
-	if contextHistoryTokens <= 0 {
-		contextHistoryTokens = contextMessageTokens
-	}
-	contextLimitSource := m.contextWindowLimitSource(contextProvider, contextModel, head.MaxContext)
-	contextPayload := theme.ContextPayloadSnapshot{
-		Provider:             contextProvider,
-		Model:                contextModel,
-		LimitSource:          contextLimitSource,
-		MaxContext:           head.MaxContext,
-		WindowTokens:         contextWindowTokens,
-		EvidenceTokens:       head.ContextTokens,
-		EvidenceBudgetTokens: contextBudgetTokens,
-		SystemTokens:         contextSystemTokens,
-		MessageTokens:        contextHistoryTokens,
-		ResponseReserve:      contextResponseTokens,
-		ToolReserve:          contextToolTokens,
-		HistoryReserve:       contextHistoryReserve,
-		MessageCount:         contextMessageCount,
-		ToolCallCount:        contextToolCallCount,
-		WorkspaceEvidenceOff: statsContextReasonContains(contextReasons, "conversation history only"),
-	}
-	if contextPayload.MaxContext > 0 && contextPayload.WindowTokens > 0 {
-		contextPayload.FreeTokens = contextPayload.MaxContext - contextPayload.WindowTokens
-	}
 
 	return statsPanelInfo{
 		Mode:                    theme.StatsPanelMode(mode),
@@ -367,29 +70,29 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		Model:                   head.Model,
 		Configured:              head.Configured,
 		CostPer1kTokens:         m.currentCostPer1kTokens(),
-		ContextTokens:           head.ContextTokens,
-		ContextWindowTokens:     contextWindowTokens,
-		MaxContext:              head.MaxContext,
-		ContextProvider:         contextProvider,
-		ContextModel:            contextModel,
-		ContextLimitSource:      contextLimitSource,
-		ContextTask:             contextTask,
-		ContextFileCount:        contextFileCount,
-		ContextMaxFiles:         contextMaxFiles,
-		ContextBudgetTokens:     contextBudgetTokens,
-		ContextAvailableTokens:  contextAvailableTokens,
-		ContextMaxTokensPerFile: contextMaxTokensPerFile,
-		ContextCompression:      contextCompression,
-		ContextReasons:          contextReasons,
-		ContextTopFiles:         contextTopFiles,
-		ContextSystemTokens:     contextSystemTokens,
-		ContextHistoryTokens:    contextHistoryTokens,
-		ContextHistoryReserve:   contextHistoryReserve,
-		ContextResponseTokens:   contextResponseTokens,
-		ContextToolTokens:       contextToolTokens,
-		ContextMessageCount:     contextMessageCount,
-		ContextToolCallCount:    contextToolCallCount,
-		ContextPayload:          contextPayload,
+		ContextTokens:           context.EvidenceTokens,
+		ContextWindowTokens:     context.WindowTokens,
+		MaxContext:              context.MaxContext,
+		ContextProvider:         context.Provider,
+		ContextModel:            context.Model,
+		ContextLimitSource:      context.LimitSource,
+		ContextTask:             context.Task,
+		ContextFileCount:        context.FileCount,
+		ContextMaxFiles:         context.MaxFiles,
+		ContextBudgetTokens:     context.BudgetTokens,
+		ContextAvailableTokens:  context.AvailableTokens,
+		ContextMaxTokensPerFile: context.MaxTokensPerFile,
+		ContextCompression:      context.Compression,
+		ContextReasons:          context.Reasons,
+		ContextTopFiles:         context.TopFiles,
+		ContextSystemTokens:     context.SystemTokens,
+		ContextHistoryTokens:    context.HistoryTokens,
+		ContextHistoryReserve:   context.HistoryReserve,
+		ContextResponseTokens:   context.ResponseTokens,
+		ContextToolTokens:       context.ToolTokens,
+		ContextMessageCount:     context.MessageCount,
+		ContextToolCallCount:    context.ToolCallCount,
+		ContextPayload:          context.Payload,
 		ComposerTokens:          composerTokens,
 		TranscriptInputTokens:   transcriptInputTokens,
 		TranscriptOutputTokens:  transcriptOutputTokens,
@@ -435,13 +138,13 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		TodoDone:                todos.Done,
 		TodoActive:              todos.Active,
 		TodoLines:               todos.Lines,
-		TaskLines:               taskLines,
-		TaskTreeLines:           taskTreeLines,
-		WorkflowStatus:          workflowStatus,
-		WorkflowMeter:           workflowMeter,
-		WorkflowExecution:       workflowExecution,
-		WorkflowTimeline:        workflowTimeline,
-		WorkflowRecent:          workflowRecent,
+		TaskLines:               workflow.TaskLines,
+		TaskTreeLines:           workflow.TaskTreeLines,
+		WorkflowStatus:          workflow.Status,
+		WorkflowMeter:           workflow.Meter,
+		WorkflowExecution:       workflow.Execution,
+		WorkflowTimeline:        workflow.Timeline,
+		WorkflowRecent:          workflow.Recent,
 		Boosted:                 boosted,
 		BoostSeconds:            boostSeconds,
 		FocusLocked:             m.ui.statsPanelFocusLocked,
@@ -452,24 +155,11 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		DriveDone:               head.DriveDone,
 		DriveTotal:              head.DriveTotal,
 		DriveBlocked:            head.DriveBlocked,
-		PlanSubtasks:            planSubtasks,
-		PlanParallel:            planParallel,
-		PlanConfidence:          planConfidence,
+		PlanSubtasks:            workflow.PlanSubtasks,
+		PlanParallel:            workflow.PlanParallel,
+		PlanConfidence:          workflow.PlanConfidence,
 		SpinnerFrame:            m.chat.spinnerFrame,
 		Providers:               providerRows,
 		ProvidersSelectedIndex:  providerSelected,
 	}
-}
-
-func statsContextReasonContains(reasons []string, needle string) bool {
-	needle = strings.ToLower(strings.TrimSpace(needle))
-	if needle == "" {
-		return false
-	}
-	for _, reason := range reasons {
-		if strings.Contains(strings.ToLower(reason), needle) {
-			return true
-		}
-	}
-	return false
 }
