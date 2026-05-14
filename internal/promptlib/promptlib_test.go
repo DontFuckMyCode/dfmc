@@ -270,7 +270,7 @@ func TestDefaultSystemPromptCarriesHardeningSections(t *testing.T) {
 		"autonomous_resume",
 		"Intent-routed",
 		"Approval gate",
-		"trajectory coach",
+		"Trajectory coach",
 		"Prompt-cache boundary",
 	} {
 		if !strings.Contains(goPrompt, needle) {

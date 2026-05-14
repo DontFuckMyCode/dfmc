@@ -111,7 +111,14 @@ func decodeYAMLTemplates(path string, data []byte) []Template {
 	// Shape C: bare single template (no wrapping, or only one entry).
 	single := Template{}
 	if err := yaml.Unmarshal(data, &single); err == nil && strings.TrimSpace(single.Body) != "" {
-		single.ID = fallbackTemplateID(path)
+		// Only stamp the filename-derived fallback ID when the file
+		// didn't declare its own. Previously this was unconditional,
+		// which silently dropped explicit `id:` fields in override
+		// yamls and broke `prompt diff` lookups that expected the
+		// declared ID to win.
+		if strings.TrimSpace(single.ID) == "" {
+			single.ID = fallbackTemplateID(path)
+		}
 	}
 	return []Template{single}
 }

@@ -110,10 +110,15 @@ func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	if max <= 2 {
+	// Result must fit inside max characters total. The ellipsis itself is
+	// three chars, so prefixes are sized at max-3. When max is too small
+	// to fit even one content char before the ellipsis (max < 4), just
+	// surface the ellipsis as the canonical truncation marker — better
+	// than silently returning a string longer than the caller's budget.
+	if max < 4 {
 		return "..."
 	}
-	return s[:max-2] + "..."
+	return s[:max-3] + "..."
 }
 
 // writeFileAtomic is duplicated from internal/storage/store.go to keep
@@ -150,11 +155,14 @@ func writeFileAtomic(path string, data []byte, pattern string) error {
 }
 
 func syncDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	err = f.Sync()
-	_ = f.Close()
-	return err
+	// Delegate to the platform-specific implementation. On Unix this
+	// is an os.Open + f.Sync (the POSIX directory-fsync that guarantees
+	// the rename in writeFileAtomic is durable). On Windows there is no
+	// equivalent API (FlushFileBuffers on a read-only directory handle
+	// returns "Access is denied" and the read-write handle requires
+	// FILE_FLAG_BACKUP_SEMANTICS plumbing the stdlib doesn't expose) —
+	// the Windows variant in logger_helpers_windows.go is a stat-only
+	// no-op, which is correct because NTFS's journaling guarantees the
+	// rename atomicity that the POSIX dir-fsync exists to enforce.
+	return syncDirPlatform(dir)
 }

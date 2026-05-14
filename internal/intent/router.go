@@ -143,11 +143,18 @@ func (r *Router) resolveProvider() (provider.Provider, bool) {
 func (r *Router) handleErr(raw string, err error, latency time.Duration) (Decision, error) {
 	dec := Fallback(raw)
 	dec.Latency = latency
-	if r.cfg.FailClosed {
+	if !r.cfg.FailOpen || r.cfg.FailClosed {
 		// Fail-closed: return the error so callers can distinguish a
 		// classifier error from ordinary fallback routing and emit a
 		// structured intent:error event. Routing decision is still safe
 		// (Fallback); only the error channel changes.
+		//
+		// Either signal triggers fail-closed: FailOpen=false (the
+		// canonical knob — default is true) OR FailClosed=true (the
+		// legacy alias that was the only one consulted before this
+		// alignment). The disjunction keeps both yaml shapes working
+		// while the test surface and production code converge on
+		// !FailOpen.
 		dec.Reasoning = fmt.Sprintf("intent layer failed closed: %v", err)
 		return dec, err
 	}

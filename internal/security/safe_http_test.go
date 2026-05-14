@@ -109,7 +109,7 @@ func TestIsBlockedDialTarget(t *testing.T) {
 		{"8.8.8.8", false},              // public
 		{"1.1.1.1", false},              // public
 		{"2606:4700:4700::1111", false}, // public v6 (Cloudflare)
-		{"100.64.0.1", false},           // CGNAT — borderline; passes today
+		{"100.64.0.1", true},            // CGNAT 100.64/10 — blocked since the Phase-2 SSRF widening
 	}
 	for _, c := range cases {
 		t.Run(c.ip, func(t *testing.T) {

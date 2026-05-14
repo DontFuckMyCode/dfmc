@@ -70,7 +70,10 @@ func TestTruncate(t *testing.T) {
 		{"toolong", "to...", 5},
 		{"abc", "...", 2},
 		{"", "", 5},
-		{"hello world", "...", 5},
+		// truncate caps total length at max; prefix is max-3 chars
+		// followed by the 3-char ellipsis. "hello world" at max=5
+		// yields the first two chars + "..." → "he...".
+		{"hello world", "he...", 5},
 	}
 	for _, c := range cases {
 		got := truncate(c.s, c.max)

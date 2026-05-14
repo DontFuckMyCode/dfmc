@@ -449,7 +449,18 @@ func TestLoadWithOptions_SandboxAllowCommandAliasDisablesRunCommand(t *testing.T
 		t.Fatalf("write global config: %v", err)
 	}
 
-	cfg, err := LoadWithOptions(LoadOptions{GlobalPath: globalPath, CWD: tmp})
+	// Pin ProjectPath to a non-existent file inside tmp so FindProjectRoot
+	// is not consulted. Without this pin, on a dev box where the user has
+	// ~/.dfmc/, FindProjectRoot walks up from t.TempDir() (which lives
+	// under C:\Users\ersin\AppData\Local\Temp on Windows) and matches the
+	// real user-home .dfmc as a project marker, then loads
+	// ~/.dfmc/config.yaml on top of the global config and overrides
+	// AllowShell back to whatever the live config says.
+	cfg, err := LoadWithOptions(LoadOptions{
+		GlobalPath:  globalPath,
+		ProjectPath: filepath.Join(tmp, "absent.yaml"),
+		CWD:         tmp,
+	})
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}

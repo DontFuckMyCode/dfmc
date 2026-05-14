@@ -1,6 +1,6 @@
 templates:
-    - id: system.general.base
     type: system
+    id: system.general.base
     task: general
     compose: replace
     priority: 20
@@ -47,8 +47,10 @@ templates:
 
       <<DFMC_CACHE_BREAK>>
 
-      # Baseline contract
-      When the system prompt ends here the next line is the user request. Everything above this line — including the policies, mode contracts, and profile directives — is stable across a conversation and eligible for prompt caching.
+      # User request
+      {{user_query}}
+      {{context_files}}
+      {{injected_context}}
 
       # Error-recovery section
       Tool error → one-shot recovery map. The DFMC engine emits highly structured failures. Pattern-matched responses are faster than re-reading.
@@ -58,11 +60,6 @@ templates:
         "Permission denied" → OS permission error → state: "Fix the file mode with chmod, or the directory with chmod +x."
         "context_files is required" → no files provided → state: "Run read_file on the relevant file before proposing edits. Do not guess."
       On any tool failure: do not retry the identical call. Read the error, fix the arg shape or narrow the tool, then try again.
-
-      User request:
-      {{user_query}}
-      {{context_files}}
-      {{injected_context}}
 
     type: system
     task: general
@@ -378,9 +375,9 @@ templates:
       Approval gate & hooks:
         (`run_command`), and git mutations may be gated by user
         approval depending on config. A denial is a deliberate signal,
-        not a transient error — don't retry with identical args. "approval
-        denied" appears when the user explicitly blocks a call. Treat it
-        as final.
+        not a transient error — don't retry with identical args.
+        "approval denied" appears when the user explicitly blocks a
+        call. Treat it as final.
         hook output appears in your next turn's context, treat it as
         additional evidence, not a contradiction of your own tool
         result.
@@ -485,7 +482,9 @@ templates:
     body: |
       TypeScript guidance (concrete pitfalls):
         type guard is the refactor. `as` casts are last-resort and must
-        be justified in a comment stating the invariant.
+        be justified in a comment stating the invariant. Reaching for
+        `any` is a regression; type the value or refine the union, do
+        not widen.
         returns `any` — validate with a schema (zod/valibot/manual
         guard) before widening the type downstream.
         never inline in call sites. That's the diff you'll want to
@@ -501,6 +500,7 @@ templates:
     priority: 62
     body: |
       Python guidance (concrete pitfalls):
+        Mutable default arguments share state across function
         calls. Use `None` + `xs = xs or []` inside the body.
         `KeyboardInterrupt` and `SystemExit` too. Prefer `except
         (TypeError, ValueError) as e:` with the names that can actually
@@ -519,9 +519,10 @@ templates:
     priority: 62
     body: |
       Rust guidance (concrete pitfalls):
+        Avoid `unwrap()` and `expect()` on `Result`/`Option` in
         production. Propagate with `?` and surface via a typed error
-        enum (`thiserror` is the convention). Reserve unwrap for test
-        code and `main()`.
+        enum (`thiserror` is the convention). Reserve `unwrap()` for
+        test code and `main()`.
         sometimes correct, often a signal you should restructure
         ownership. Before cloning a `String` / `Vec`, try `&str` /
         `&[T]` in the signature.

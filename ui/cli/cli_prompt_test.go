@@ -190,9 +190,13 @@ func TestRunPromptDiffIdenticalNoOverride(t *testing.T) {
 	eng := newCLITestEngine(t)
 	// No project override — lib should have embed default only.
 	// diff on a template with no override should report identical.
+	// The embedded yaml declares its default with the explicit id
+	// "system.general.base" (see internal/promptlib/defaults/system_prompts.yaml
+	// line 2); ask for that exact id, not the synthetic "system.general"
+	// which only exists as a user-override fixture in the test above.
 	code := runPrompt(context.Background(), eng, []string{
 		"diff",
-		"--id", "system.general",
+		"--id", "system.general.base",
 	}, false)
 	if code != 0 {
 		t.Fatalf("prompt diff exit=%d, expected 0 (identical template)", code)
