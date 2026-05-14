@@ -159,6 +159,7 @@ func FailureClassify(err error) FailureClass {
 	// Fallback: server/provider errors.
 	if strings.Contains(msg, "status code 500") || strings.Contains(msg, "status code 502") ||
 		strings.Contains(msg, "status code 503") || strings.Contains(msg, "status code 504") ||
+		strings.Contains(msg, "status code: 5") ||
 		strings.Contains(msg, "no such host") || strings.Contains(msg, "connection refused") ||
 		strings.Contains(msg, "connection reset") || (strings.Contains(msg, "network") && strings.Contains(msg, "unreachable")) {
 		return RetryWithFallback

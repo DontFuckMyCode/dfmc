@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -162,28 +161,10 @@ func (t *TestDiscoveryTool) Execute(_ context.Context, req Request) (Result, err
 // findTestFilesByPattern, and matchesLanguage live in
 // test_discovery_search.go.
 
-func extractTestFunctions(path, _, symbol string) []map[string]any {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	content := string(data)
-	lines := strings.Split(content, "\n")
-	symLower := strings.ToLower(symbol)
-
-	switch filepath.Ext(path) {
-	case ".go":
-		return extractGoTests(lines, symLower)
-	case ".py":
-		return extractPythonTests(lines, symLower)
-	case ".ts", ".tsx", ".js", ".jsx":
-		return extractJSTests(lines, symLower)
-	case ".java":
-		return extractJavaTests(lines, symLower)
-	case ".rs":
-		return extractRustTests(lines, symLower)
-	default:
-		return extractGenericTests(lines, symLower)
-	}
+// ExtractTestFunctions (capital E) lives in test_discovery_extractors.go.
+// This shim keeps callers that call extractTestFunctions working while we
+// migrate to the exported name.
+func extractTestFunctions(path, fileContents, symbol string) []map[string]any {
+	return ExtractTestFunctions(path, fileContents, symbol)
 }
 

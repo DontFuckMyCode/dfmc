@@ -130,6 +130,14 @@ func (t *ChangelogGenerateTool) generateChangelog(path, fromTag, toTag, since st
 	args := []string{"log", "--pretty=format:%H|%s|%an|%ad|%D"}
 	args = append(args, "--date=short")
 
+	// Validate tag inputs to prevent malformed git arguments
+	if fromTag != "" {
+		tagRegex := regexp.MustCompile(`^[a-zA-Z0-9._/-]+$`)
+		if !tagRegex.MatchString(fromTag) || !tagRegex.MatchString(toTag) {
+			return "", fmt.Errorf("invalid tag format (allowed: alphanumeric, ., _, -, /)")
+		}
+	}
+
 	if fromTag != "" {
 		args = append(args, fromTag+".."+toTag)
 	} else if since != "" {
