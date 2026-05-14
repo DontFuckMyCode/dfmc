@@ -175,6 +175,31 @@ func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequ
 		}
 		if runErr == nil {
 			dur := time.Since(start).Milliseconds()
+			// External-lifecycle parks (user Ctrl+C / engine shutting
+			// down) are NOT "subagent done" — the work was cut short
+			// by something outside the subagent's control. Reporting
+			// success here would let an orchestrator mark the TODO Done
+			// and discard whatever the user cancelled mid-flight. Surface
+			// as an error so delegate_task / drive treat it as failure
+			// and the user can resume from the parent context.
+			if isExternalLifecyclePark(completion.ParkedReason) {
+				e.publishAgentLoopEvent("agent:subagent:interrupted", map[string]any{
+					"duration_ms":         dur,
+					"tool_rounds":         len(completion.ToolTraces),
+					"reason":              string(completion.ParkedReason),
+					"role":                req.Role,
+					"provider":            completion.Provider,
+					"model":               completion.Model,
+					"attempts":            idx + 1,
+					"fallback_used":       idx > 0,
+					"fallback_from":       firstProvider,
+					"fallback_reasons":    append([]string(nil), fallbackReasons...),
+					"provider_candidates": append([]string(nil), profiles...),
+					"profiles_tried":      append([]string(nil), tried...),
+				})
+				return tools.SubagentResult{DurationMs: dur},
+					interruptedSubagentError(completion.ParkedReason, ctx)
+			}
 			e.publishAgentLoopEvent("agent:subagent:done", map[string]any{
 				"duration_ms":         dur,
 				"tool_rounds":         len(completion.ToolTraces),

@@ -11,6 +11,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -53,6 +54,32 @@ const (
 	// resume. Parking here costs nothing and preserves the work.
 	ParkReasonInterrupted ParkReason = "interrupted"
 )
+
+// isExternalLifecyclePark distinguishes parks caused by user action
+// or engine teardown (which should NOT be reported as subagent
+// success) from parks caused by hitting the subagent's own resource
+// budget (step cap / token budget) — those represent legitimate
+// "ran out of room mid-task" outcomes where the partial summary IS
+// the answer and the caller should still see it. Without this
+// distinction a Ctrl+C in the middle of a subagent shows up to
+// delegate_task / drive as a successful delegation, the orchestrator
+// marks the TODO Done, and the cancelled work disappears.
+func isExternalLifecyclePark(reason ParkReason) bool {
+	return reason == ParkReasonInterrupted || reason == ParkReasonShuttingDown
+}
+
+// interruptedSubagentError wraps the cancelling ctx.Err (preserving
+// errors.Is(ctx.Canceled) semantics for callers that want to detect
+// user-cancel specifically) when one is available; otherwise it
+// surfaces a plain error naming the park reason. Both shapes carry
+// the park reason in the message so the caller log says exactly why
+// the subagent stopped.
+func interruptedSubagentError(reason ParkReason, ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("subagent stopped (%s): %w", reason, err)
+	}
+	return fmt.Errorf("subagent stopped (%s)", reason)
+}
 
 // summarizeTraces walks the parked loop's tool traces and produces a
 // short, signal-dense "Did:" line plus an "Open:" hint based on the

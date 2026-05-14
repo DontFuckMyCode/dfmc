@@ -209,3 +209,62 @@ func TestNewSafeHTTPClient_AddrErrorWrap(t *testing.T) {
 		t.Fatalf("expected net.AddrError wrapping; got %T: %v", err, err)
 	}
 }
+
+// TestIsBlockedDialTarget_ExtendedRanges pins the post-Phase-2-#8
+// rejection set. Beyond the stdlib's IsPrivate / IsLoopback /
+// IsLinkLocal* / IsMulticast / IsUnspecified, the guard now also
+// rejects CGNAT (RFC6598), IETF protocol assignments (RFC6890),
+// benchmark (RFC2544), and the limited broadcast address — each of
+// which is reachable on corporate networks but never legitimate
+// for a tool-driven outbound HTTP call.
+func TestIsBlockedDialTarget_ExtendedRanges(t *testing.T) {
+	cases := []struct {
+		label   string
+		ip      string
+		blocked bool
+	}{
+		// Stdlib baseline still works
+		{"loopback IPv4", "127.0.0.1", true},
+		{"loopback IPv6", "::1", true},
+		{"RFC1918 10/8", "10.0.0.5", true},
+		{"RFC1918 192.168/16", "192.168.1.1", true},
+		{"RFC1918 172.16/12", "172.20.0.5", true},
+		{"link-local IPv4", "169.254.169.254", true},
+		{"link-local IPv6", "fe80::1", true},
+		{"unspecified IPv4", "0.0.0.0", true},
+		{"unspecified IPv6", "::", true},
+		{"multicast", "224.0.0.1", true},
+		// Extended ranges added in Phase 2 #8
+		{"CGNAT low boundary", "100.64.0.1", true},
+		{"CGNAT mid", "100.100.50.50", true},
+		{"CGNAT high boundary", "100.127.255.254", true},
+		{"benchmark RFC2544 low", "198.18.0.1", true},
+		{"benchmark RFC2544 high", "198.19.255.254", true},
+		{"IETF protocol assignment", "192.0.0.1", true},
+		{"limited broadcast", "255.255.255.255", true},
+		// Sanity: legitimate public addresses still allowed
+		{"public Cloudflare DNS", "1.1.1.1", false},
+		{"public Google DNS", "8.8.8.8", false},
+		{"public IPv6", "2606:4700:4700::1111", false},
+		// CGNAT-adjacent that should NOT trip the range check
+		{"just below CGNAT", "100.63.255.254", false},
+		{"just above CGNAT", "100.128.0.1", false},
+		// Benchmark-adjacent
+		{"just below benchmark", "198.17.255.254", false},
+		{"just above benchmark", "198.20.0.1", false},
+		// Just outside IETF protocol assignment 192.0.0/24
+		{"just above IETF block", "192.0.1.1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			ip := net.ParseIP(tc.ip)
+			if ip == nil {
+				t.Fatalf("invalid test IP %q", tc.ip)
+			}
+			got := IsBlockedDialTarget(ip)
+			if got != tc.blocked {
+				t.Fatalf("IsBlockedDialTarget(%s) = %v, want %v", tc.ip, got, tc.blocked)
+			}
+		})
+	}
+}

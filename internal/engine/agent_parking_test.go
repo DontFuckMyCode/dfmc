@@ -1,11 +1,74 @@
 package engine
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 )
+
+// TestIsExternalLifecyclePark pins which park reasons signal an
+// externally-imposed termination (and therefore must NOT be reported
+// as subagent success). Budget/step-cap parks remain "natural ran
+// out of room" outcomes whose partial summary IS the answer.
+func TestIsExternalLifecyclePark(t *testing.T) {
+	cases := []struct {
+		reason ParkReason
+		want   bool
+	}{
+		{ParkReasonInterrupted, true},
+		{ParkReasonShuttingDown, true},
+		{ParkReasonStepCap, false},
+		{ParkReasonBudgetExhausted, false},
+		{ParkReason(""), false},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.reason), func(t *testing.T) {
+			if got := isExternalLifecyclePark(tc.reason); got != tc.want {
+				t.Fatalf("isExternalLifecyclePark(%q) = %v, want %v", tc.reason, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestInterruptedSubagentError covers both shapes the helper emits:
+//   - cancelled ctx → error wraps ctx.Err so errors.Is(ctx.Canceled)
+//     still works for callers that want to detect user-cancel.
+//   - non-cancelled ctx (e.g. ParkReasonShuttingDown without a ctx
+//     cancel) → plain error naming the park reason.
+//
+// Both shapes carry the park reason in the message so logs are
+// debuggable.
+func TestInterruptedSubagentError(t *testing.T) {
+	t.Run("cancelled ctx wraps Canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := interruptedSubagentError(ParkReasonInterrupted, ctx)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error should wrap context.Canceled; got %v", err)
+		}
+		if !strings.Contains(err.Error(), "interrupted") {
+			t.Fatalf("error should name reason; got %v", err)
+		}
+	})
+	t.Run("live ctx falls back to plain error", func(t *testing.T) {
+		err := interruptedSubagentError(ParkReasonShuttingDown, context.Background())
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if errors.Is(err, context.Canceled) {
+			t.Fatalf("error should NOT wrap context.Canceled when ctx is live; got %v", err)
+		}
+		if !strings.Contains(err.Error(), "shutting_down") {
+			t.Fatalf("error should name reason; got %v", err)
+		}
+	})
+}
 
 // trace builds a minimal nativeToolTrace for these tests. Most fields
 // are zero — the parked notice helpers only read .Call.Name.

@@ -156,23 +156,54 @@ func wrapDialWithSSRFGuard(inner func(ctx context.Context, network, addr string)
 	}
 }
 
+// IsBlockedDialTarget is the canonical SSRF rejection set used by
+// every outbound HTTP dial in DFMC (provider router, web_fetch /
+// web_search, models.dev / GitHub release fetchers). Beyond the
+// stdlib's IsLoopback / IsPrivate / IsLinkLocal* / IsMulticast /
+// IsUnspecified it also rejects:
+//
+//   - CGNAT 100.64.0.0/10 (RFC6598) — common on corporate networks,
+//     not flagged by IsPrivate so an internal DFMC could otherwise
+//     reach CGNAT-addressed services.
+//   - IETF protocol assignments 192.0.0.0/24 (RFC6890) — reserved
+//     and never a valid public target.
+//   - Benchmark 198.18.0.0/15 (RFC2544) — sometimes wired to
+//     internal services for performance testing.
+//   - Limited broadcast 255.255.255.255.
+//
+// IPv6 ULA (fc00::/7) is already covered by IsPrivate.
+func IsBlockedDialTarget(ip net.IP) bool {
+	return isBlockedDialTarget(ip)
+}
+
 func isBlockedDialTarget(ip net.IP) bool {
 	if ip == nil {
 		return true
 	}
-	switch {
-	case ip.IsLoopback():
+	if ip.IsLoopback() || ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() || ip.IsMulticast() ||
+		ip.IsInterfaceLocalMulticast() {
 		return true
-	case ip.IsPrivate():
-		return true
-	case ip.IsLinkLocalUnicast():
-		return true
-	case ip.IsLinkLocalMulticast():
-		return true
-	case ip.IsUnspecified():
-		return true
-	case ip.IsMulticast():
-		return true
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		// CGNAT 100.64.0.0/10
+		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+			return true
+		}
+		// IETF protocol assignments 192.0.0.0/24
+		if ip4[0] == 192 && ip4[1] == 0 && ip4[2] == 0 {
+			return true
+		}
+		// Benchmark 198.18.0.0/15
+		if ip4[0] == 198 && (ip4[1] == 18 || ip4[1] == 19) {
+			return true
+		}
+		// Limited broadcast 255.255.255.255 (IsMulticast covers 224/4
+		// but not the all-ones address).
+		if ip4[0] == 255 && ip4[1] == 255 && ip4[2] == 255 && ip4[3] == 255 {
+			return true
+		}
 	}
 	return false
 }

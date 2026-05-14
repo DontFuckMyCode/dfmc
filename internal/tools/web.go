@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/security"
 )
 
 // userAgent identifies DFMC when fetching URLs. Real UA string so servers
@@ -29,7 +31,7 @@ var safeTransport = &http.Transport{
 			return nil, fmt.Errorf("invalid address %q: %w", addr, err)
 		}
 		if ip := net.ParseIP(host); ip != nil {
-			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			if security.IsBlockedDialTarget(ip) {
 				return nil, fmt.Errorf("SSRF guard: refusing dial to blocked IP %q", ip)
 			}
 			// addr is already an IP — no DNS lookup needed, no rebinding window.
@@ -41,7 +43,7 @@ var safeTransport = &http.Transport{
 			return nil, fmt.Errorf("resolve %q: %w", resolverHost, err)
 		}
 		for _, ip := range ips {
-			if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() || ip.IP.IsLinkLocalMulticast() {
+			if security.IsBlockedDialTarget(ip.IP) {
 				return nil, fmt.Errorf("SSRF guard: %q resolves to blocked IP %s", resolverHost, ip.IP)
 			}
 		}
@@ -79,7 +81,9 @@ var httpClient = &http.Client{
 // isBlockedHost is a best-effort resolver used only for filtering search
 // results before they are shown to the model. Unlike web_fetch, this is not
 // a security boundary by itself — the actual SSRF guard lives in
-// safeTransport.DialContext at connect time.
+// safeTransport.DialContext at connect time. Delegates to
+// security.IsBlockedDialTarget so the rejection set stays consistent
+// with the provider router's dial guard.
 func isBlockedHost(host string) bool {
 	h := host
 	if strings.Contains(h, ":") {
@@ -91,7 +95,7 @@ func isBlockedHost(host string) bool {
 		return true
 	}
 	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
+		if security.IsBlockedDialTarget(ip) {
 			return true
 		}
 	}
