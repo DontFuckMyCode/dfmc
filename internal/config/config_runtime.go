@@ -153,6 +153,24 @@ type WebConfig struct {
 	TrustedProxies []string `yaml:"trusted_proxies"`
 }
 
+// WebFetchConfig governs the outbound web_fetch / web_search tools.
+// Separate from WebConfig (which is the embedded HTTP server config)
+// because egress and ingress have unrelated trust models.
+//
+// AllowedHosts is the defense-in-depth egress allowlist. When non-
+// empty, web_fetch rejects any URL whose hostname doesn't match the
+// list — even if the SSRF transport guard would have permitted the
+// dial. Empty list disables the check (default — preserves existing
+// behavior; users opt in for hardening). Entries may be exact host
+// names ("docs.python.org") or wildcards with a leading "*." for
+// suffix matching ("*.github.com" → matches "api.github.com" and
+// "raw.githubusercontent.com.github.com" but NOT "github.com"
+// itself; add the bare host as a separate entry to allow that).
+// Comparison is case-insensitive on the host part.
+type WebFetchConfig struct {
+	AllowedHosts []string `yaml:"allowed_hosts"`
+}
+
 type RemoteConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	GRPCPort int    `yaml:"grpc_port"`

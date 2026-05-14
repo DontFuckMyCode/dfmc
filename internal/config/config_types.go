@@ -27,6 +27,7 @@ type Config struct {
 	Plugins     PluginsConfig             `yaml:"plugins"`
 	TUI         TUIConfig                 `yaml:"tui"`
 	Web         WebConfig                 `yaml:"web"`
+	WebFetch    WebFetchConfig            `yaml:"web_fetch"`
 	Remote      RemoteConfig              `yaml:"remote"`
 	Project     ProjectConfig             `yaml:"project"`
 	Coach       CoachConfig               `yaml:"coach"`

@@ -9,6 +9,10 @@ func TestIsDestructive_KnownDestructiveTools(t *testing.T) {
 		"apply_patch",
 		"run_command",
 		"delegate_task",
+		// web_fetch is destructive from the security POV (data
+		// exfiltration via tainted URL) — operators wanting auto-yes
+		// must set DFMC_APPROVE_DESTRUCTIVE=yes.
+		"web_fetch",
 	} {
 		if !IsDestructive(name) {
 			t.Errorf("IsDestructive(%q) = false, want true", name)
