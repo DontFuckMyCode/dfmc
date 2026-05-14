@@ -51,6 +51,11 @@ func (m *Model) handleTelegramOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.telegram.testMsgActive = true
 		m.telegram.testMsgInput = ""
 		return m, nil
+	case "c":
+		m.telegram.messages = nil
+		m.telegram.scroll = 0
+		m.notice = "Telegram panel history cleared"
+		return m, nil
 	}
 	if msg.Type == tea.KeyEnter || msg.String() == "a" {
 		next := m.openTelegramActionMenu()

@@ -152,6 +152,52 @@ func TestTelegramConnectedUsersShortcutOpensUsersEditor(t *testing.T) {
 	}
 }
 
+func TestTelegramPanelClearShortcutClearsHistory(t *testing.T) {
+	m := telegramConnectedModel()
+	m.appendTelegramLog("Telegram", "one", false)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	m = modelValue(t, next)
+	if len(m.telegram.messages) != 0 {
+		t.Fatalf("c should clear telegram panel history, got %#v", m.telegram.messages)
+	}
+	if !strings.Contains(strings.ToLower(m.notice), "cleared") {
+		t.Fatalf("expected clear notice, got %q", m.notice)
+	}
+}
+
+func TestTelegramDisconnectClearsConfigAndRuntimeState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	m := telegramConnectedModel()
+	m.disconnectTelegramBot()
+	if m.eng.Config.Telegram.Enabled {
+		t.Fatal("disconnect should disable telegram config")
+	}
+	if m.eng.Config.Telegram.Token != "" {
+		t.Fatalf("disconnect should clear token, got %q", m.eng.Config.Telegram.Token)
+	}
+	if m.eng.TelegramBot != nil || m.telegram.telegramBot != nil {
+		t.Fatal("disconnect should clear bot runtime pointers")
+	}
+}
+
+func TestTelegramTestMessageWithoutUserDoesNotPanic(t *testing.T) {
+	m := telegramConnectedModel()
+	m.telegram.testMsgActive = true
+	m.telegram.testMsgInput = "ping"
+
+	next, _ := m.sendTelegramTestMessage()
+	m = modelValue(t, next)
+	if len(m.telegram.messages) != 1 {
+		t.Fatalf("expected local outgoing history row, got %#v", m.telegram.messages)
+	}
+	if !strings.Contains(m.telegram.messages[0].text, "bot not connected") {
+		t.Fatalf("expected bot-not-connected warning, got %q", m.telegram.messages[0].text)
+	}
+}
+
 func TestTelegramFormTabSwitchesFields(t *testing.T) {
 	m := telegramConnectedModel()
 	m = m.openTelegramForm()

@@ -50,9 +50,12 @@ func (m *Model) renderTelegramPanel() string {
 	}
 
 	b.WriteString(okStyle.Render("● Connected") + "  ")
-	b.WriteString(subtleStyle.Render(fmt.Sprintf("Users: %d | Registered: %d",
+	registered := m.telegramRegisteredCount()
+	username := blankFallback(m.telegram.botUsername, "bot")
+	b.WriteString(subtleStyle.Render(fmt.Sprintf("@%s | Users: %d | Registered: %d",
+		username,
 		len(m.eng.Config.Telegram.AllowedUsers),
-		m.telegram.registeredCount,
+		registered,
 	)))
 	b.WriteString("\n\n")
 
@@ -63,7 +66,7 @@ func (m *Model) renderTelegramPanel() string {
 		b.WriteString(m.renderTelegramMessageHistory(width, height-12))
 	}
 
-	b.WriteString("\n" + subtleStyle.Render("up/down scroll | e config | u users | enter/a actions | esc close"))
+	b.WriteString("\n" + subtleStyle.Render("up/down scroll | e config | u users | c clear | enter/a actions | esc close"))
 	if m.actionMenu.open && m.actionMenu.owner == "Telegram" {
 		b.WriteString("\n\n" + m.renderActionMenu(width))
 	}
@@ -109,19 +112,16 @@ func (m Model) openTelegramActionMenu() Model {
 			c.telegram.testMsgInput = ""
 			return c, nil
 		}},
+		{Label: "Clear panel history", Accel: "c", Handler: func(m Model) (Model, tea.Cmd) {
+			c := m
+			c.telegram.messages = nil
+			c.telegram.scroll = 0
+			c.notice = "Telegram panel history cleared"
+			return c, nil
+		}},
 		{Label: "Disconnect bot", Accel: "d", Handler: func(m Model) (Model, tea.Cmd) {
 			c := m
-			if c.eng != nil && c.eng.Config != nil {
-				c.eng.Config.Telegram.Enabled = false
-				c.eng.Config.Telegram.Token = ""
-				_ = c.eng.Config.Save(filepath.Join(config.UserConfigDir(), "config.yaml"))
-			}
-			c.telegram.messages = nil
-			c.telegram.botUsername = ""
-			c.telegram.registeredCount = 0
-			c.telegram.inputActive = false
-			c.telegram.formActive = false
-			c.notice = "Telegram bot disconnected"
+			c.disconnectTelegramBot()
 			return c, nil
 		}},
 	}
@@ -296,6 +296,7 @@ func (m *Model) bindTelegramBotToPanel(tgBot *bot.TelegramBot) {
 	}
 	m.ensureDiagnostics()
 	events := m.telegram.events
+	eng := m.eng
 	tgBot.SetLogger(func(format string, args ...any) {
 		enqueueTelegramPanelMessage(events, telegramMessageItem{
 			from:  "Log",
@@ -307,11 +308,11 @@ func (m *Model) bindTelegramBotToPanel(tgBot *bot.TelegramBot) {
 	tgBot.SetOnMessage(func(userID int64, text string, replyFn func(string)) {
 		enqueueTelegramPanelMessage(events, telegramMessageItem{from: fmt.Sprintf("User %d", userID), text: text, time: time.Now().Format("15:04"), isOut: false})
 		go func() {
-			if m.eng == nil {
+			if eng == nil {
 				replyFn("DFMC engine not connected.")
 				return
 			}
-			resp, err := m.eng.Ask(context.Background(), text)
+			resp, err := eng.Ask(context.Background(), text)
 			if err != nil {
 				errText := "Error: " + err.Error()
 				enqueueTelegramPanelMessage(events, telegramMessageItem{from: "DFMC", text: errText, time: time.Now().Format("15:04"), isOut: true})
@@ -380,7 +381,9 @@ func (m *Model) sendTelegramTestMessage() (tea.Model, tea.Cmd) {
 			}
 		}
 		if targetUserID > 0 {
-			sendErr = m.telegram.telegramBot.SendToUser(targetUserID, msg).Error()
+			if err := m.telegram.telegramBot.SendToUser(targetUserID, msg); err != nil {
+				sendErr = err.Error()
+			}
 		} else {
 			sendErr = "(no registered user to send to)"
 		}
@@ -428,7 +431,7 @@ func (m *Model) renderTelegramForm(width int) string {
 		usersDisp = truncateSingleLine(usersDisp, max(width-35, 16))
 	}
 	b.WriteString(fmt.Sprintf("  %s %s\n", boldStyle.Render(usersLabel+":"), usersDisp))
-	b.WriteString(subtleStyle.Render("  Get your ID from @userinfobot on Telegram\n\n"))
+	b.WriteString(subtleStyle.Render("  Send /id to this bot or use @userinfobot to get your numeric ID\n\n"))
 
 	if m.telegram.saveSuccess {
 		b.WriteString(okStyle.Render("  ✓ Saved! Bot connecting…\n\n"))
@@ -544,12 +547,18 @@ func (m *Model) saveTelegramSetup() *Model {
 }
 
 func (m *Model) stopExistingTelegramBot() {
-	if m.telegram.telegramBot != nil {
-		m.telegram.telegramBot.Stop()
+	tgBot := m.currentTelegramBot()
+	if tgBot == nil {
 		return
 	}
-	if m.eng != nil && m.eng.TelegramBot != nil {
-		m.eng.TelegramBot.Stop()
+	tgBot.SetOnMessage(nil)
+	tgBot.SetLogger(nil)
+	tgBot.Stop()
+	if m.telegram.telegramBot == tgBot {
+		m.telegram.telegramBot = nil
+	}
+	if m.eng != nil && m.eng.TelegramBot == tgBot {
+		m.eng.TelegramBot = nil
 	}
 }
 
@@ -581,6 +590,64 @@ func (m *Model) telegramConfigPath() string {
 		return path
 	}
 	return filepath.Join(config.UserConfigDir(), "config.yaml")
+}
+
+func (m *Model) currentTelegramBot() *bot.TelegramBot {
+	if m == nil {
+		return nil
+	}
+	if m.telegram.telegramBot != nil {
+		return m.telegram.telegramBot
+	}
+	if m.eng != nil {
+		return m.eng.TelegramBot
+	}
+	return nil
+}
+
+func (m *Model) telegramRegisteredCount() int {
+	tgBot := m.currentTelegramBot()
+	if tgBot == nil {
+		return m.telegram.registeredCount
+	}
+	count := tgBot.RegisteredUsers()
+	m.telegram.registeredCount = count
+	if m.telegram.botUsername == "" {
+		if health := tgBot.Health(); health != nil {
+			if username, ok := health["bot_username"].(string); ok {
+				m.telegram.botUsername = username
+			}
+		}
+	}
+	return count
+}
+
+func (m *Model) disconnectTelegramBot() {
+	tgBot := m.currentTelegramBot()
+	if tgBot != nil {
+		tgBot.SetOnMessage(nil)
+		tgBot.SetLogger(nil)
+		tgBot.Stop()
+	}
+	if m.eng != nil {
+		if m.eng.Config != nil {
+			m.eng.Config.Telegram.Enabled = false
+			m.eng.Config.Telegram.Token = ""
+			m.eng.Config.Telegram.AllowedUsers = nil
+			savePath := m.telegramConfigPath()
+			_ = os.MkdirAll(filepath.Dir(savePath), 0o700)
+			_ = m.eng.Config.Save(savePath)
+		}
+		m.eng.TelegramBot = nil
+		m.eng.TelegramAllowedUsers = nil
+	}
+	m.telegram.messages = nil
+	m.telegram.botUsername = ""
+	m.telegram.registeredCount = 0
+	m.telegram.telegramBot = nil
+	m.telegram.inputActive = false
+	m.telegram.formActive = false
+	m.notice = "Telegram bot disconnected"
 }
 
 func (m *Model) handleTelegramMessageAdded(msg telegramMessageAddedMsg) (tea.Model, tea.Cmd) {

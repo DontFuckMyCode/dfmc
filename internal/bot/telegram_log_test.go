@@ -29,3 +29,24 @@ func TestRedactForLogMasksSecretsBeforeTruncation(t *testing.T) {
 		t.Fatalf("expected redaction marker, got %q", got)
 	}
 }
+
+func TestTelegramUserIDTextIncludesAllowListHint(t *testing.T) {
+	got := telegramUserIDText(4242, "ersin")
+	for _, want := range []string{"4242", "@ersin", "allowed users"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in id response, got %q", want, got)
+		}
+	}
+}
+
+func TestTelegramMessageHandlerCanBeCleared(t *testing.T) {
+	b := &TelegramBot{}
+	b.SetOnMessage(func(int64, string, func(string)) {})
+	if b.messageHandler() == nil {
+		t.Fatal("expected message handler after SetOnMessage")
+	}
+	b.SetOnMessage(nil)
+	if b.messageHandler() != nil {
+		t.Fatal("expected nil handler after clearing SetOnMessage")
+	}
+}

@@ -21,6 +21,7 @@ type TelegramBot struct {
 	logger       func(format string, args ...any)
 	mu           sync.RWMutex
 	loggerMu     sync.RWMutex
+	onMessageMu  sync.RWMutex
 
 	// onMessage is called when a message passes allowed-users check.
 	// args: userID, message text, replyFn.
@@ -146,10 +147,6 @@ func (b *TelegramBot) Start() error {
 				return fmt.Errorf("updates channel closed")
 			}
 			if update.Message != nil && update.Message.From != nil {
-				if !b.allowUserAction(update.Message.From.ID) {
-					b.logf("[telegram] user=%d rate limited", update.Message.From.ID)
-					continue
-				}
 				go b.handleIncomingMessage(update)
 			}
 			if update.CallbackQuery != nil && update.CallbackQuery.From != nil {
@@ -173,7 +170,22 @@ func (b *TelegramBot) Stop() {
 // SetOnMessage registers the callback for incoming messages that pass
 // the allowed-users check. replyFn is SendToUser.
 func (b *TelegramBot) SetOnMessage(fn func(userID int64, text string, replyFn func(string))) {
+	if b == nil {
+		return
+	}
+	b.onMessageMu.Lock()
 	b.onMessage = fn
+	b.onMessageMu.Unlock()
+}
+
+func (b *TelegramBot) messageHandler() func(userID int64, text string, replyFn func(string)) {
+	if b == nil {
+		return nil
+	}
+	b.onMessageMu.RLock()
+	fn := b.onMessage
+	b.onMessageMu.RUnlock()
+	return fn
 }
 
 // SendToUser sends a message to a specific user.
@@ -246,7 +258,7 @@ func (b *TelegramBot) handleIncomingMessage(update tgbotapi.Update) {
 	// (but only if allowedUsers is configured — empty = nobody allowed)
 	if msg.IsCommand() {
 		cmd := msg.Command()
-		if cmd == "help" || cmd == "start" {
+		if cmd == "help" || cmd == "start" || cmd == "id" || cmd == "whoami" {
 			b.handleCommand(msg)
 			return
 		}
@@ -284,6 +296,8 @@ func (b *TelegramBot) handleCommand(msg *tgbotapi.Message) {
 		b.cmdHelp(msg)
 	case "status":
 		b.cmdStatus(msg)
+	case "id", "whoami":
+		b.cmdID(msg)
 	case "chat":
 		b.cmdChat(msg)
 	case "subscribe":
@@ -299,13 +313,14 @@ func (b *TelegramBot) handleCommand(msg *tgbotapi.Message) {
 func (b *TelegramBot) handleTextMessage(msg *tgbotapi.Message) {
 	userID := msg.From.ID
 
-	if b.onMessage != nil {
+	onMessage := b.messageHandler()
+	if onMessage != nil {
 		replyFn := func(text string) {
 			if err := b.SendToUser(userID, text); err != nil {
 				b.logf("[telegram] reply error: %v", err)
 			}
 		}
-		b.onMessage(userID, msg.Text, replyFn)
+		onMessage(userID, msg.Text, replyFn)
 	} else {
 		b.reply(msg.Chat.ID, "🤖 DFMC engine not connected. Use /help.")
 	}
@@ -355,6 +370,23 @@ func (b *TelegramBot) cmdStatus(msg *tgbotapi.Message) {
 }
 
 // cmdChat is the /chat command — forward to engine via callback.
+func (b *TelegramBot) cmdID(msg *tgbotapi.Message) {
+	if msg == nil || msg.From == nil {
+		return
+	}
+	b.reply(msg.Chat.ID, telegramUserIDText(msg.From.ID, msg.From.UserName))
+}
+
+func telegramUserIDText(userID int64, username string) string {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		username = "(no username)"
+	} else {
+		username = "@" + username
+	}
+	return fmt.Sprintf("Your Telegram user ID is `%d`.\nUsername: %s\nAdd this ID in DFMC Telegram allowed users.", userID, username)
+}
+
 func (b *TelegramBot) cmdChat(msg *tgbotapi.Message) {
 	text := msg.CommandArguments()
 	if text == "" {
@@ -364,7 +396,8 @@ func (b *TelegramBot) cmdChat(msg *tgbotapi.Message) {
 
 	userID := msg.From.ID
 
-	if b.onMessage != nil {
+	onMessage := b.messageHandler()
+	if onMessage != nil {
 		replyFn := func(response string) {
 			if err := b.SendToUser(userID, response); err != nil {
 				b.logf("[telegram] chat reply error: %v", err)
@@ -372,7 +405,7 @@ func (b *TelegramBot) cmdChat(msg *tgbotapi.Message) {
 		}
 		// Acknowledge immediately
 		b.reply(msg.Chat.ID, "⏳ Processing your request...")
-		b.onMessage(userID, text, replyFn)
+		onMessage(userID, text, replyFn)
 	} else {
 		b.reply(msg.Chat.ID, "🤖 Engine not connected yet.")
 	}
