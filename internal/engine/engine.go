@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/applog"
@@ -155,6 +156,16 @@ type Engine struct {
 
 	modifiedFiles map[string]time.Time // path -> timestamp, cleared after staleWindow
 	seenFiles     map[string]struct{}  // absolute paths already read via read_file in this session
+
+	// toolEventSeq is the monotonically-incrementing source of
+	// per-tool-call sequence numbers. Allocated once at the start of
+	// each tool execution (callToolFromSource for user-initiated paths,
+	// per-call in executeToolCallsParallel for agent-loop paths) and
+	// stamped on every Event the lifecycle emits for that execution so
+	// subscribers can dedupe (tool:error + tool:timeout + tool:result
+	// from one timeout-failure) on (Type, Seq) tuples instead of a
+	// time-window heuristic. Atomic so allocation is lock-free.
+	toolEventSeq atomic.Uint64
 
 	lastContextIn ContextInStatus
 	// lastContextDebug holds the exact content chunks from the most recent

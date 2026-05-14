@@ -59,13 +59,22 @@ func (e *Engine) executeAndAppendToolBatch(
 	freshStart := len(s.traces)
 
 	stepTraces := make([]nativeToolTrace, len(resp.ToolCalls))
+	seqs := make([]uint64, len(resp.ToolCalls))
 	for i, call := range resp.ToolCalls {
+		// Allocate the per-call sequence number BEFORE publishing the
+		// tool:call event so every Event in the call's lifecycle —
+		// start, denied/timeout/panic, and the final tool:result —
+		// shares one Seq. Without pre-allocation tool:call would land
+		// with Seq=0 and a subscriber rendering a chip wouldn't be
+		// able to associate the start with the eventual outcome.
+		seqs[i] = e.allocToolEventSeq()
 		stepTraces[i] = nativeToolTrace{
 			Call:       call,
 			Provider:   s.lastProvider,
 			Model:      s.lastModel,
 			Step:       s.step,
 			OccurredAt: time.Now(),
+			Seq:        seqs[i],
 		}
 		e.publishNativeToolCall(stepTraces[i])
 	}
@@ -74,7 +83,7 @@ func (e *Engine) executeAndAppendToolBatch(
 	if allParallelSafe(resp.ToolCalls) {
 		batchSize = e.parallelBatchSize()
 	}
-	results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize, s.seed.ToolSource, cache, s.cacheMu, rangeIndex)
+	results := e.executeToolCallsParallel(ctx, resp.ToolCalls, batchSize, s.seed.ToolSource, cache, s.cacheMu, rangeIndex, seqs)
 
 	// File cache invalidation. After a batch that includes successful
 	// edit_file/write_file/apply_patch calls, drop any cached read_file/
@@ -116,6 +125,11 @@ func (e *Engine) executeAndAppendToolBatch(
 	for i, call := range resp.ToolCalls {
 		r := results[i]
 		trace := stepTraces[i]
+		// Copy the per-call sequence number stamped by the dispatcher
+		// onto the trace so the tool:result publisher carries the
+		// same Seq as the matching tool:error / tool:timeout (which
+		// fired from executeToolWithLifecycle with this Seq on ctx).
+		trace.Seq = r.Seq
 		if r.Err != nil {
 			trace.Err = r.Err.Error()
 			if e.LearnedPatterns != nil {

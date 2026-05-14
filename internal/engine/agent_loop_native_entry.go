@@ -27,6 +27,15 @@ type nativeToolTrace struct {
 	Model      string
 	Step       int
 	OccurredAt time.Time
+	// Seq carries the per-call event-sequence value allocated by the
+	// dispatcher so publishNativeToolCall and
+	// publishNativeToolResultWithPayloadAndStats can stamp it on the
+	// emitted tool:call / tool:result events. Same Seq also appears on
+	// every tool:error / tool:timeout / tool:denied / tool:panicked
+	// fired from the corresponding executeToolWithLifecycle call, so a
+	// subscriber rendering activity chips dedupes the triplet on
+	// (Type, Seq) tuples instead of a time-window heuristic.
+	Seq uint64
 }
 
 type nativeToolCompletion struct {

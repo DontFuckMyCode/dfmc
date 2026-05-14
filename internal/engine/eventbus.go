@@ -11,8 +11,20 @@ import (
 )
 
 type Event struct {
-	Type      string    `json:"type"`
-	Source    string    `json:"source,omitempty"`
+	Type   string `json:"type"`
+	Source string `json:"source,omitempty"`
+	// Seq is a per-tool-execution sequence number stamped by the
+	// engine on every event fired from a single tool-call lifecycle
+	// (tool:call → tool:result, plus tool:error / tool:timeout /
+	// tool:denied / tool:panicked / tool:complete from the same
+	// call). Subscribers counting failures or rendering activity
+	// chips MUST dedupe on (Type, Seq) tuples rather than time-
+	// windowing — a real timeout fires three events with the same
+	// Seq within microseconds and a naive subscriber would otherwise
+	// triple-count one failure. Zero means "not part of a tool-call
+	// lifecycle" (engine lifecycle events, intent badges, etc.) and
+	// should not be deduped on Seq.
+	Seq       uint64    `json:"seq,omitempty"`
 	Payload   any       `json:"payload,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }

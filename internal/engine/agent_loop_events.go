@@ -155,6 +155,7 @@ func (e *Engine) publishNativeToolCall(trace nativeToolTrace) {
 	e.EventBus.Publish(Event{
 		Type:    "tool:call",
 		Source:  "engine",
+		Seq:     trace.Seq,
 		Payload: payload,
 	})
 }
@@ -232,6 +233,7 @@ func (e *Engine) publishNativeToolResultWithPayloadAndStats(trace nativeToolTrac
 	e.EventBus.Publish(Event{
 		Type:    "tool:result",
 		Source:  "engine",
+		Seq:     trace.Seq,
 		Payload: payload,
 	})
 }

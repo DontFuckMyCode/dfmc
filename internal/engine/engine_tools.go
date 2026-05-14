@@ -203,11 +203,20 @@ func (e *Engine) callToolFromSource(ctx context.Context, name string, params map
 	if err := e.requireReady("tool call"); err != nil {
 		return tools.Result{}, err
 	}
+	// Allocate a per-call Seq up front so every Event the lifecycle
+	// emits for THIS execution (tool:denied, tool:timeout, tool:error,
+	// tool:complete, tool:panicked) carries the same value. Stash on
+	// ctx so the deeper layers (executeToolWithLifecycle,
+	// executeToolWithPanicGuard) can pick it up without a wider
+	// parameter list.
+	seq := e.allocToolEventSeq()
+	ctx = withToolEventSeq(ctx, seq)
 	res, err := e.executeToolWithLifecycle(ctx, name, params, source)
 	if err != nil {
 		e.EventBus.Publish(Event{
 			Type:    "tool:error",
 			Source:  "engine",
+			Seq:     seq,
 			Payload: err.Error(),
 		})
 		return res, err
@@ -215,6 +224,7 @@ func (e *Engine) callToolFromSource(ctx context.Context, name string, params map
 	e.EventBus.Publish(Event{
 		Type:   "tool:complete",
 		Source: "engine",
+		Seq:    seq,
 		Payload: map[string]any{
 			"name":       name,
 			"durationMs": res.DurationMs,

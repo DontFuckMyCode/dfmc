@@ -17,6 +17,42 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
+// toolEventSeqCtxKey carries a per-tool-call sequence number across
+// the lifecycle so every Event emitted for the same call (tool:call,
+// tool:result, tool:error, tool:timeout, tool:denied, tool:panicked,
+// tool:complete) can be stamped with one shared Seq. Subscribers
+// dedupe on (Type, Seq) instead of the previous (tool_name, ~50ms)
+// time-window heuristic.
+type toolEventSeqCtxKey struct{}
+
+// withToolEventSeq returns ctx annotated with seq. Zero values are
+// preserved so the unset state stays detectable downstream.
+func withToolEventSeq(ctx context.Context, seq uint64) context.Context {
+	return context.WithValue(ctx, toolEventSeqCtxKey{}, seq)
+}
+
+// toolEventSeqFromContext returns the seq stamped on ctx, or 0 when
+// no allocation happened (test fixtures that build events outside the
+// lifecycle, engine-level events that aren't tied to a single tool
+// call, etc.). The publisher writes 0 → omitempty drops the field
+// from JSON so the wire format stays unchanged for non-tool events.
+func toolEventSeqFromContext(ctx context.Context) uint64 {
+	if ctx == nil {
+		return 0
+	}
+	v, _ := ctx.Value(toolEventSeqCtxKey{}).(uint64)
+	return v
+}
+
+// allocToolEventSeq returns the next seq value. Lock-free; safe to
+// call from the parallel dispatcher's worker goroutines.
+func (e *Engine) allocToolEventSeq() uint64 {
+	if e == nil {
+		return 0
+	}
+	return e.toolEventSeq.Add(1)
+}
+
 // executeToolWithPanicGuard converts any panic raised inside a tool's
 // Execute into a regular error. Without this guard, a nil-pointer or
 // out-of-bounds inside any tool implementation kills the entire DFMC
@@ -48,6 +84,7 @@ func (e *Engine) executeToolWithPanicGuard(ctx context.Context, name string, par
 			e.EventBus.Publish(Event{
 				Type:   "tool:panicked",
 				Source: "engine",
+				Seq:    toolEventSeqFromContext(ctx),
 				Payload: map[string]any{
 					"name":  name,
 					"panic": fmt.Sprintf("%v", r),
@@ -102,11 +139,13 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 	sourceStr := string(source)
 	// Sub-agent allowlist gate — fires before approval so unlisted tools
 	// are refused without prompting even when the approver is permissive.
+	seq := toolEventSeqFromContext(ctx)
 	if denial := checkSubagentAllowlist(ctx, name, metaInnerNames(name, params)); denial != "" {
 		e.recordDenial(name, source, denial)
 		e.EventBus.Publish(Event{
 			Type:   "tool:denied",
 			Source: "engine",
+			Seq:    seq,
 			Payload: map[string]any{
 				"name":   name,
 				"reason": denial,
@@ -123,6 +162,7 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 		e.EventBus.Publish(Event{
 			Type:   "tool:denied",
 			Source: "engine",
+			Seq:    seq,
 			Payload: map[string]any{
 				"name":   name,
 				"reason": denial,
@@ -143,6 +183,7 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 		e.EventBus.Publish(Event{
 			Type:   "tool:denied",
 			Source: "engine",
+			Seq:    seq,
 			Payload: map[string]any{
 				"name":   name,
 				"reason": denial,
@@ -166,6 +207,7 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 			e.EventBus.Publish(Event{
 				Type:   "tool:denied",
 				Source: "engine",
+				Seq:    seq,
 				Payload: map[string]any{
 					"name":   name,
 					"reason": reason,
@@ -243,12 +285,12 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 		// bus — tool:error (model-facing message), tool:timeout
 		// (structural fact, this one), and the underlying tool's
 		// tool:result with success=false from the executeToolCallsParallel
-		// path. Subscribers counting failures must NOT add these
-		// together; the canonical signal-of-record is tool:result. Use
-		// tool:timeout for "the gate fired" telemetry and tool:error
-		// for "the model needs to see why". Both fire within the same
-		// handler tick so a (tool_name, ms-window of ~50ms) tuple is
-		// a safe dedupe key for downstream metrics aggregators.
+		// path. All three carry the SAME Event.Seq stamped at the start
+		// of the call so subscribers dedupe deterministically on
+		// (Type, Seq) tuples instead of the older (tool_name, ~50ms)
+		// time-window heuristic. The canonical signal-of-record is
+		// tool:result; tool:timeout is cause-attribution telemetry and
+		// tool:error is the model-visible payload.
 		var tte *tools.ToolTimeoutError
 		if errors.As(err, &tte) {
 			if e.AppLog != nil {
@@ -257,6 +299,7 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 			e.EventBus.Publish(Event{
 				Type:   "tool:timeout",
 				Source: "engine",
+				Seq:    seq,
 				Payload: map[string]any{
 					"name":     tte.Name,
 					"limit_ms": tte.Limit.Milliseconds(),

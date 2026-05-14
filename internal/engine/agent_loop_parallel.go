@@ -77,6 +77,13 @@ type parallelToolResult struct {
 	Index  int
 	Result tools.Result
 	Err    error
+	// Seq is the per-call event-sequence value allocated by the
+	// dispatcher BEFORE invoking executeToolWithLifecycle. The agent
+	// loop copies it onto the trace so the eventual tool:result fired
+	// from publishNativeToolResultWithPayload carries the same Seq as
+	// the matching tool:call / tool:error / tool:timeout from the
+	// same execution.
+	Seq uint64
 }
 
 // executeToolCallsParallel fans out a batch of parallel-safe tool calls
@@ -92,7 +99,7 @@ type parallelToolResult struct {
 // network) and stored on miss. Cache writes are guarded by cacheMu so
 // the parallel branch is safe under fan-out. Cache lookups are O(1)
 // and can save tens of seconds per repeated read in long loops.
-func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.ToolCall, batchSize int, source Source, cache map[string]string, cacheMu *sync.Mutex, rangeIndex map[string][]readRangeEntry) []parallelToolResult {
+func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.ToolCall, batchSize int, source Source, cache map[string]string, cacheMu *sync.Mutex, rangeIndex map[string][]readRangeEntry, seqs []uint64) []parallelToolResult {
 	if len(calls) == 0 {
 		return nil
 	}
@@ -105,16 +112,35 @@ func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.
 
 	out := make([]parallelToolResult, len(calls))
 
+	// seqFor returns the pre-allocated sequence for index idx; falls
+	// back to an inline allocation when the caller passed a shorter
+	// slice (defensive — keeps the dispatcher usable from older
+	// call sites during incremental refactors).
+	seqFor := func(idx int) uint64 {
+		if idx < len(seqs) && seqs[idx] != 0 {
+			return seqs[idx]
+		}
+		return e.allocToolEventSeq()
+	}
+
 	dispatch := func(idx int, c provider.ToolCall) {
+		seq := seqFor(idx)
 		if hit, ok := lookupToolCache(c, cache, cacheMu, rangeIndex); ok {
-			out[idx] = parallelToolResult{Index: idx, Result: hit}
+			// Cache hits don't go through the lifecycle, so no
+			// tool:* lifecycle events fire — but the matching
+			// tool:call has ALREADY been published by the batch
+			// loop with this Seq, so we carry it forward to the
+			// eventual tool:result emit. Subscribers that dedupe on
+			// Seq still see a coherent (call, result) pair.
+			out[idx] = parallelToolResult{Index: idx, Result: hit, Seq: seq}
 			e.publishAgentLoopEvent("agent:tool:cache_hit", map[string]any{
 				"name": c.Name,
 			})
 			return
 		}
-		res, err := e.executeToolWithLifecycle(ctx, c.Name, c.Input, source)
-		out[idx] = parallelToolResult{Index: idx, Result: res, Err: err}
+		callCtx := withToolEventSeq(ctx, seq)
+		res, err := e.executeToolWithLifecycle(callCtx, c.Name, c.Input, source)
+		out[idx] = parallelToolResult{Index: idx, Result: res, Err: err, Seq: seq}
 		if err == nil {
 			storeToolCache(c, res, cache, cacheMu, rangeIndex, e.maxRangeEntriesPerPath())
 		}
