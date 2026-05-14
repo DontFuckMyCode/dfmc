@@ -142,7 +142,9 @@ func (m Model) renderWorkflowRunsPane(width, height int, pal tabPaletteEntry) st
 	}
 	if len(m.workflow.runs) == 0 {
 		lines = append(lines,
-			"  "+subtleStyle.Render("No drive runs yet."))
+			"  "+subtleStyle.Render("No drive runs yet."),
+			"  "+subtleStyle.Render("Start one from chat with /drive <task>."),
+			"  "+subtleStyle.Render("CLI: dfmc drive <task>."))
 	} else {
 		rowBudget := max(height-6, 6)
 		cursor := m.workflow.selectedIndex
@@ -190,7 +192,7 @@ func (m Model) renderWorkflowRunRow(i, width int, pal tabPaletteEntry, cursorIdx
 	chrome := lipgloss.Width(cursor) + lipgloss.Width(statusChip) + 3
 	idWidth := lipgloss.Width(idLabel)
 	taskWidth := width - chrome - idWidth - 2
-	
+
 	var row string
 	if taskWidth < 12 {
 		taskWidth = max(width-chrome, 12)
@@ -272,4 +274,3 @@ func (m Model) workflowTreeHeader(width int) string {
 	task := truncateForLine(run.Task, width-lipgloss.Width(title)-6)
 	return title + "  " + subtleStyle.Render(task)
 }
-

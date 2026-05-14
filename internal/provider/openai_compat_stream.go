@@ -90,44 +90,16 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 		usage := Usage{}
 		usageSet := false
 		stopReason := StopUnknown
-		var toolCalls []ToolCall
 		var currentCalls map[int]*ToolCall
 		var currentArgs map[int]*strings.Builder
 
 		emitStart := func() {
-			if startAnnounced {
-				return
-			}
-			startAnnounced = true
-			select {
-			case <-ctx.Done():
-				return
-			case ch <- StreamEvent{Type: StreamStart, Provider: providerName, Model: resolvedModel}:
-			}
+			emitStreamStartOnce(ctx, ch, &startAnnounced, providerName, resolvedModel)
 		}
 
 		finish := func() {
 			emitStart()
-			// Finalize any in-flight tool calls
-			for i, tc := range currentCalls {
-				if args, ok := currentArgs[i]; ok {
-					_ = json.Unmarshal([]byte(args.String()), &tc.Input)
-				}
-				toolCalls = append(toolCalls, *tc)
-			}
-			done := StreamEvent{
-				Type:       StreamDone,
-				Provider:   providerName,
-				Model:      resolvedModel,
-				StopReason: stopReason,
-				ToolCalls:  toolCalls,
-			}
-			if usageSet {
-				u := usage
-				u.TotalTokens = u.InputTokens + u.OutputTokens
-				done.Usage = &u
-			}
-			ch <- done
+			ch <- streamDoneEvent(providerName, resolvedModel, stopReason, finalizeOpenAIStreamToolCalls(currentCalls, currentArgs), usage, usageSet)
 		}
 
 		for sc.Scan() {
@@ -200,7 +172,7 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, req CompletionReq
 			if fr := strings.TrimSpace(evt.Choices[0].FinishReason); fr != "" {
 				stopReason = openaiStopReason(fr)
 			}
-			
+
 			// Process Tool Calls
 			for _, tcDelta := range evt.Choices[0].Delta.ToolCalls {
 				if currentCalls == nil {

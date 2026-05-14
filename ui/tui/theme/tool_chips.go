@@ -1,13 +1,11 @@
 package theme
 
-// tool_chips.go — per-chip rendering for the tool activity strip:
+// tool_chips.go - per-chip rendering for the tool activity strip:
 // RenderToolChip (one chip's head + meta + verb/preview/inner lines),
-// appendInnerLines (the indented sub-lines), FormatToolTokenCount
-// (the "1.3k" suffix), isSubagentToolChip (the SUBAGENT classifier),
-// and chipIconStyle / chipNameStyle (status → icon + colour and tool
-// → colour). Sibling tool_chips_inline.go owns the multi-chip list
-// views (RenderInlineToolChips and the collapsed
-// RenderInlineToolChipsSummary used when /tools collapses the strip).
+// FormatToolTokenCount (the "1.3k" suffix), isSubagentToolChip (the
+// SUBAGENT classifier), and chipIconStyle / chipNameStyle (status -> icon +
+// color and tool -> color). Sibling tool_chips_inline.go owns the multi-chip
+// list views.
 
 import (
 	"fmt"
@@ -23,21 +21,18 @@ func RenderToolChip(chip ToolChip, width int) string {
 		name = "tool"
 	}
 	status := strings.TrimSpace(chip.Status)
-	
-	// Compact Name: Use SUB prefix for subagents
+
 	displayName := name
 	if isSubagentToolChip(chip) {
 		displayName = "SUB " + name
 	}
-	
-	// Narrative headline: Use Reason if available, else Tool Name
+
 	headline := displayName
 	reason := strings.TrimSpace(chip.Reason)
 	if reason != "" {
 		headline = reason
 	}
-	
-	// Technical Tail: [Icon] [Name if reason used] [Duration] [Tokens]
+
 	var tail []string
 	if reason != "" {
 		tail = append(tail, displayName)
@@ -45,40 +40,73 @@ func RenderToolChip(chip ToolChip, width int) string {
 	if chip.DurationMs > 0 {
 		tail = append(tail, FormatDurationShort(chip.DurationMs))
 	}
+	if chip.Step > 0 {
+		tail = append(tail, fmt.Sprintf("step %d", chip.Step))
+	}
 	if chip.SavedChars > 0 && chip.CompressionPct > 0 {
-		tail = append(tail, fmt.Sprintf("rtk −%d (%d%%)", chip.SavedChars, chip.CompressionPct))
+		tail = append(tail, fmt.Sprintf("rtk \u2212%d (%d%%)", chip.SavedChars, chip.CompressionPct))
 	}
 	if chip.OutputTokens > 0 {
-		tail = append(tail, FormatToolTokenCount(chip.OutputTokens)+"t")
+		tail = append(tail, fmt.Sprintf("out %s tok", FormatToolTokenCount(chip.OutputTokens)))
 	}
 
 	headLine := styleFor.Render(icon) + " " + ChipNameStyle(name, status).Render(headline)
 	if len(tail) > 0 {
-		headLine += " " + SubtleStyle.Render(strings.Join(tail, " · "))
+		headLine += " " + SubtleStyle.Render(strings.Join(tail, " \u00b7 "))
 	}
 
 	preview := strings.TrimSpace(chip.Preview)
+	verb := strings.TrimSpace(chip.Verb)
 	innerWidth := max(width-4, 16)
 	out := strings.Builder{}
 	out.WriteString(TruncateSingleLine(headLine, width))
 
-	// Collapsible logic: only show details if expanded
+	if shouldRenderToolChipVerbInline(verb, preview, width, headLine) {
+		out.WriteString(" " + SubtleStyle.Render(TruncateSingleLine(verb, remainingToolChipLineWidth(width, headLine))))
+	} else if verb != "" {
+		out.WriteString("\n  " + SubtleStyle.Render(TruncateSingleLine(verb, innerWidth)))
+	}
+
+	if shouldRenderToolChipPreviewInline(preview, status, width, headLine, verb) {
+		out.WriteString(" " + SubtleStyle.Render(TruncateSingleLine(preview, remainingToolChipLineWidth(width, headLine))))
+	} else if preview != "" && status != "running" {
+		out.WriteString("\n  " + SubtleStyle.Render(TruncateSingleLine("\u2192 "+preview, innerWidth)))
+	}
+
 	if chip.Expanded {
-		// Only show preview if it's helpful and not in running state
-		if preview != "" && status != "running" {
-			out.WriteString("\n  " + SubtleStyle.Render(TruncateSingleLine("→ "+preview, innerWidth)))
-		}
-		
-		// Keep inner lines (e.g. command output) but keep them very subtle
-		for _, ln := range chip.InnerLines {
-			ln = strings.TrimSpace(ln)
-			if ln != "" {
-				out.WriteString("\n    " + SubtleStyle.Render(TruncateSingleLine(ln, innerWidth-2)))
-			}
-		}
+		appendToolChipInnerLines(&out, chip.InnerLines, innerWidth)
 	}
 
 	return out.String()
+}
+
+func shouldRenderToolChipVerbInline(verb, preview string, width int, headLine string) bool {
+	if verb == "" || preview != "" {
+		return false
+	}
+	remaining := remainingToolChipLineWidth(width, headLine)
+	return remaining >= 12 && lipgloss.Width(verb) <= remaining
+}
+
+func shouldRenderToolChipPreviewInline(preview, status string, width int, headLine string, verb string) bool {
+	if preview == "" || status == "running" || verb != "" {
+		return false
+	}
+	remaining := remainingToolChipLineWidth(width, headLine)
+	return remaining >= 8 && lipgloss.Width(preview) <= remaining
+}
+
+func remainingToolChipLineWidth(width int, headLine string) int {
+	return max(width-lipgloss.Width(headLine)-1, 1)
+}
+
+func appendToolChipInnerLines(out *strings.Builder, lines []string, innerWidth int) {
+	for _, ln := range lines {
+		ln = strings.TrimSpace(ln)
+		if ln != "" {
+			out.WriteString("\n    " + SubtleStyle.Render(TruncateSingleLine(ln, innerWidth-2)))
+		}
+	}
 }
 
 func FormatDurationShort(ms int) string {
@@ -109,25 +137,25 @@ func isSubagentToolChip(chip ToolChip) bool {
 func ChipIconStyle(status string) (string, lipgloss.Style) {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "ok", "success", "done":
-		return "·", OkStyle
+		return "\u00b7", OkStyle
 	case "failed", "error", "fail":
-		return "×", FailStyle
+		return "\u00d7", FailStyle
 	case "running", "start", "pending":
-		return "◌", InfoStyle
+		return "\u25cc", InfoStyle
 	case "compact", "compacted":
-		return "↕", AccentStyle
+		return "\u2195", AccentStyle
 	case "budget", "budget_exhausted":
 		return "!", WarnStyle
 	case "handoff":
-		return "→", AccentStyle
+		return "\u2192", AccentStyle
 	case "subagent-running":
-		return "◈", AccentStyle
+		return "\u25c8", AccentStyle
 	case "subagent-ok":
-		return "◈", OkStyle
+		return "\u25c8", OkStyle
 	case "subagent-failed":
-		return "◈", FailStyle
+		return "\u25c8", FailStyle
 	default:
-		return "·", SubtleStyle
+		return "\u00b7", SubtleStyle
 	}
 }
 

@@ -98,15 +98,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 		var currentInput strings.Builder
 
 		emitStart := func() {
-			if startAnnounced {
-				return
-			}
-			startAnnounced = true
-			select {
-			case <-ctx.Done():
-				return
-			case ch <- StreamEvent{Type: StreamStart, Provider: "anthropic", Model: resolvedModel}:
-			}
+			emitStreamStartOnce(ctx, ch, &startAnnounced, "anthropic", resolvedModel)
 		}
 
 		for sc.Scan() {
@@ -130,10 +122,10 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 				Type  string `json:"type"`
 				Index int    `json:"index"`
 				Delta struct {
-					Type         string `json:"type"`
-					Text         string `json:"text"`
-					PartialJSON  string `json:"partial_json"`
-					StopReason   string `json:"stop_reason"`
+					Type        string `json:"type"`
+					Text        string `json:"text"`
+					PartialJSON string `json:"partial_json"`
+					StopReason  string `json:"stop_reason"`
 				} `json:"delta"`
 				ContentBlock struct {
 					Type string `json:"type"`
@@ -208,19 +200,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 				}
 			case "message_stop":
 				emitStart()
-				done := StreamEvent{
-					Type:       StreamDone,
-					Provider:   "anthropic",
-					Model:      resolvedModel,
-					StopReason: stopReason,
-					ToolCalls:  toolCalls,
-				}
-				if usageSet {
-					u := usage
-					u.TotalTokens = u.InputTokens + u.OutputTokens
-					done.Usage = &u
-				}
-				ch <- done
+				ch <- streamDoneEvent("anthropic", resolvedModel, stopReason, toolCalls, usage, usageSet)
 				return
 			case "error":
 				msg := strings.TrimSpace(evt.Error.Message)
@@ -236,19 +216,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 			return
 		}
 		emitStart()
-		done := StreamEvent{
-			Type:       StreamDone,
-			Provider:   "anthropic",
-			Model:      resolvedModel,
-			StopReason: stopReason,
-			ToolCalls:  toolCalls,
-		}
-		if usageSet {
-			u := usage
-			u.TotalTokens = u.InputTokens + u.OutputTokens
-			done.Usage = &u
-		}
-		ch <- done
+		ch <- streamDoneEvent("anthropic", resolvedModel, stopReason, toolCalls, usage, usageSet)
 	}()
 
 	return ch, nil

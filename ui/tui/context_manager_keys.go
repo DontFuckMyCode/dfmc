@@ -28,32 +28,22 @@ func (m Model) handleContextManagerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 
 	switch msg.String() {
 	case "esc":
-		if mgr.confirmDelete {
-			mgr.confirmDelete = false
-			mgr.statusMsg = "delete cancelled"
-			return m, nil, true
-		}
-		m = m.deactivateContextManager()
-		return m, nil, true
+		return m.handleContextManagerEscape(), nil, true
 
 	case "up", "k":
-		if mgr.cursor > 0 {
-			mgr.cursor--
-		}
+		mgr.moveCursor(-1)
 		return m, nil, true
 
 	case "down", "j":
-		if mgr.cursor < rowCount-1 {
-			mgr.cursor++
-		}
+		mgr.moveCursor(1)
 		return m, nil, true
 
 	case "pgup":
-		mgr.cursor = maxInt(0, mgr.cursor-10)
+		mgr.pageCursor(-10)
 		return m, nil, true
 
 	case "pgdown":
-		mgr.cursor = minInt(rowCount-1, mgr.cursor+10)
+		mgr.pageCursor(10)
 		return m, nil, true
 
 	case "home", "g":
@@ -67,129 +57,31 @@ func (m Model) handleContextManagerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 		return m, nil, true
 
 	case " ":
-		// Toggle mark on current row
-		if rowCount > 0 {
-			mgr.marked[mgr.cursor] = !mgr.marked[mgr.cursor]
-			if !mgr.marked[mgr.cursor] {
-				delete(mgr.marked, mgr.cursor)
-			}
-			// Auto-advance
-			if mgr.cursor < rowCount-1 {
-				mgr.cursor++
-			}
-		}
+		mgr.toggleCurrentMark(true)
 		return m, nil, true
 
 	case "p":
-		if rowCount > 0 && mgr.cursor >= 0 && mgr.cursor < rowCount {
-			row := mgr.rows[mgr.cursor]
-			id := strings.TrimSpace(row.id)
-			if id != "" && id != "(unset)" {
-				if mgr.pinned == nil {
-					mgr.pinned = make(map[string]bool)
-				}
-				mgr.pinned[id] = !mgr.pinned[id]
-				if !mgr.pinned[id] {
-					delete(mgr.pinned, id)
-				}
-				delete(mgr.marked, mgr.cursor)
-				m = m.refreshContextManager()
-				m.contextPanel.manager.statusMsg = "pin toggled for " + id
-			}
-		}
-		return m, nil, true
+		return m.toggleContextManagerPin(), nil, true
 
 	case "K":
-		if rowCount > 0 && mgr.cursor >= 0 && mgr.cursor < rowCount {
-			row := mgr.rows[mgr.cursor]
-			id := strings.TrimSpace(row.id)
-			if id != "" && id != "(unset)" {
-				if mgr.kept == nil {
-					mgr.kept = make(map[string]bool)
-				}
-				mgr.kept[id] = !mgr.kept[id]
-				if !mgr.kept[id] {
-					delete(mgr.kept, id)
-				}
-				delete(mgr.marked, mgr.cursor)
-				m = m.refreshContextManager()
-				m.contextPanel.manager.statusMsg = "keep toggled for " + id
-			}
-		}
-		return m, nil, true
+		return m.toggleContextManagerKeep(), nil, true
 
 	case "C":
-		count := 0
-		for i, row := range mgr.rows {
-			if row.action == "compact" || row.action == "drop" {
-				if mgr.pinned[row.id] || mgr.kept[row.id] {
-					continue
-				}
-				mgr.marked[i] = true
-				count++
-			}
-		}
-		mgr.statusMsg = fmt.Sprintf("%d compact/drop candidate(s) marked", count)
+		mgr.markCompactDropCandidates()
 		return m, nil, true
 
 	case "a":
-		// Toggle all: if all marked, unmark all; else mark all
-		allMarked := len(mgr.marked) == rowCount && rowCount > 0
-		if allMarked {
-			mgr.marked = make(map[int]bool)
-			mgr.statusMsg = "all unmarked"
-		} else {
-			for i := 0; i < rowCount; i++ {
-				mgr.marked[i] = true
-			}
-			mgr.statusMsg = fmt.Sprintf("all %d marked", rowCount)
-		}
+		mgr.toggleAllMarks()
 		return m, nil, true
 
 	case "x", "d":
-		// Initiate delete for marked (or cursor) messages
-		ids := m.collectDeleteIDs()
-		if len(ids) == 0 {
-			mgr.statusMsg = "nothing selected \u2014 use space to mark messages"
-			return m, nil, true
-		}
-		mgr.confirmDelete = true
-		mgr.statusMsg = fmt.Sprintf("press Enter to delete %d message(s), Esc to cancel", len(ids))
-		return m, nil, true
+		return m.beginContextManagerDelete(), nil, true
 
 	case "D":
-		// Quick-delete: delete the single message under cursor
-		if rowCount == 0 || mgr.cursor < 0 || mgr.cursor >= rowCount {
-			return m, nil, true
-		}
-		row := mgr.rows[mgr.cursor]
-		id := strings.TrimSpace(row.id)
-		if id == "" || id == "(unset)" {
-			mgr.statusMsg = "message has no ID \u2014 cannot delete"
-			return m, nil, true
-		}
-		if m.eng == nil || m.eng.Conversation == nil {
-			mgr.statusMsg = "engine not available"
-			return m, nil, true
-		}
-		dropped := m.eng.Conversation.RemoveMessagesByID([]string{id})
-		mgr.statusMsg = fmt.Sprintf("deleted message #%d (id=%s, dropped=%d)", row.index, id, dropped)
-		m = m.refreshContextManager()
-		return m, nil, true
+		return m.deleteContextManagerCursor(), nil, true
 
 	case "enter":
-		if mgr.confirmDelete {
-			m = m.deleteContextManagerSelected()
-			return m, nil, true
-		}
-		// If not confirming, treat enter as toggle mark
-		if rowCount > 0 {
-			mgr.marked[mgr.cursor] = !mgr.marked[mgr.cursor]
-			if !mgr.marked[mgr.cursor] {
-				delete(mgr.marked, mgr.cursor)
-			}
-		}
-		return m, nil, true
+		return m.handleContextManagerEnter(), nil, true
 	}
 
 	return m, nil, false

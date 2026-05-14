@@ -157,81 +157,27 @@ func (m Model) handleToolResultEvent(payload map[string]any) (Model, string) {
 	m.agentLoop.provider = payloadString(payload, "provider", m.agentLoop.provider)
 	m.agentLoop.model = payloadString(payload, "model", m.agentLoop.model)
 	displayName := displayToolName(toolName, payload)
-	chipPreview := preview
-	if chipPreview == "" && !success {
-		chipPreview = payloadString(payload, "error", "")
-	}
-	var batchInner []string
-	batchCount := payloadInt(payload, "batch_count", 0)
-	if batchCount > 0 {
-		batchParallel := payloadInt(payload, "batch_parallel", 0)
-		batchOK := payloadInt(payload, "batch_ok", 0)
-		batchFail := payloadInt(payload, "batch_fail", 0)
-		parts := []string{fmt.Sprintf("%d calls", batchCount)}
-		if batchParallel > 0 {
-			parts = append(parts, fmt.Sprintf("%d parallel", batchParallel))
-		}
-		parts = append(parts, fmt.Sprintf("%d ok", batchOK))
-		if batchFail > 0 {
-			parts = append(parts, fmt.Sprintf("%d fail", batchFail))
-		}
-		chipPreview = strings.Join(parts, " · ")
-		// Per-call breakdown emitted by batchFanoutSummary so the
-		// user sees WHAT each batched call did, not just the count.
-		batchInner = payloadStringSlice(payload, "batch_inner")
-	}
-	savedChars := payloadInt(payload, "compression_saved_chars", 0)
-	rawChars := payloadInt(payload, "output_chars", 0)
-	payloadChars := payloadInt(payload, "payload_chars", 0)
-	compressionPct := 0
-	if ratio, ok := payload["compression_ratio"].(float64); ok && ratio >= 0 && ratio <= 1 {
-		compressionPct = int((1 - ratio) * 100)
-	} else if rawChars > 0 && savedChars > 0 {
-		compressionPct = int((int64(savedChars) * 100) / int64(rawChars))
-	}
-	if savedChars > 0 && rawChars > 0 {
-		m.telemetry.compressionSavedChars += savedChars
-		m.telemetry.compressionRawChars += rawChars
-	}
-	hardTruncated := payloadBool(payload, "hard_truncated", false)
-	hardTruncRunes := payloadInt(payload, "hard_truncated_output_runes", 0) +
-		payloadInt(payload, "hard_truncated_data_runes", 0)
-	// read_file's default 200-line cap is invisible from the chip
-	// otherwise — the model often gets a partial slice and the user
-	// can't tell unless they read the activity feed. Surface the
-	// line accounting as a chip preview prefix so a turn full of
-	// "looked but didn't see the rest" reads are obvious.
-	if strings.EqualFold(strings.TrimSpace(toolName), "read_file") {
-		totalLines := payloadInt(payload, "read_total_lines", 0)
-		returnedLines := payloadInt(payload, "read_returned_lines", 0)
-		if totalLines > 0 && returnedLines > 0 && returnedLines < totalLines {
-			suffix := fmt.Sprintf("%d/%d lines · %d omitted", returnedLines, totalLines, totalLines-returnedLines)
-			if strings.TrimSpace(chipPreview) == "" {
-				chipPreview = suffix
-			} else {
-				chipPreview = suffix + " · " + chipPreview
-			}
-		}
-	}
+	summary := buildToolResultSummary(toolName, preview, success, payload)
+	m = m.accumulateToolCompressionStats(summary)
 	finishedChip := toolChip{
 		Name:               toolName,
 		Status:             status,
 		Step:               step,
 		DurationMs:         duration,
-		Preview:            chipPreview,
+		Preview:            summary.ChipPreview,
 		OutputTokens:       payloadInt(payload, "output_tokens", 0),
 		Truncated:          payloadBool(payload, "truncated", false),
-		CompressedChars:    payloadChars,
-		SavedChars:         savedChars,
-		CompressionPct:     compressionPct,
-		HardTruncated:      hardTruncated,
-		HardTruncatedRunes: hardTruncRunes,
-		InnerLines:         batchInner,
+		CompressedChars:    summary.PayloadChars,
+		SavedChars:         summary.SavedChars,
+		CompressionPct:     summary.CompressionPct,
+		HardTruncated:      summary.HardTruncated,
+		HardTruncatedRunes: summary.HardTruncatedRunes,
+		InnerLines:         summary.BatchInner,
 	}
 	m.finishToolChip(finishedChip)
 	m.finishStreamingMessageToolChip(finishedChip)
-	resultDetail := toolResultChatDetail(payload, preview, success, compressionPct)
-	if batchCount > 0 {
+	resultDetail := toolResultChatDetail(payload, preview, success, summary.CompressionPct)
+	if summary.BatchCount > 0 {
 		resultDetail = batchResultSummaryDetail(payload, resultDetail)
 	}
 	if strings.EqualFold(strings.TrimSpace(toolName), "tool_batch_call") && batchToolCallNameSummary(payload) == "" {
@@ -250,22 +196,22 @@ func (m Model) handleToolResultEvent(payload map[string]any) (Model, string) {
 		ToolName:    displayName,
 		Reason:      payloadString(payload, "reason", ""),
 		Step:        step,
-		RunningLog:  batchInner,
-		DetailLines: toolResultTimelineLines(toolName, payload, preview, success, compressionPct),
+		RunningLog:  summary.BatchInner,
+		DetailLines: toolResultTimelineLines(toolName, payload, preview, success, summary.CompressionPct),
 	})
 	m.finalizeToolCallLogEntry(toolName, step, func(e *toolCallLogEntry) {
 		e.Status = status
 		e.FinishedAt = time.Now()
 		e.DurationMs = duration
-		e.Result = chipPreview
+		e.Result = summary.ChipPreview
 		e.Tokens = payloadInt(payload, "output_tokens", 0)
 		e.OutputChars = payloadInt(payload, "output_chars", 0)
 		if !success {
 			e.Error = payloadString(payload, "error", "")
 		}
-		if batchCount > 0 {
+		if summary.BatchCount > 0 {
 			e.IsBatch = true
-			e.BatchTotal = batchCount
+			e.BatchTotal = summary.BatchCount
 			e.BatchOK = payloadInt(payload, "batch_ok", 0)
 			e.BatchFail = payloadInt(payload, "batch_fail", 0)
 		}

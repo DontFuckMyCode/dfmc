@@ -31,6 +31,12 @@ func renderRuntimeStrip(vm runtimeViewModel, width int, slim bool) []string {
 		if runtime := runtimeStripUnifiedRuntimeParts(vm); len(runtime) > 0 {
 			rows = append(rows, truncateSingleLine(infoStyle.Render("runtime: ")+strings.Join(runtime, subtleStyle.Render("  |  ")), width))
 		}
+		if tasks := runtimeStripTaskParts(vm); len(tasks) > 0 {
+			rows = append(rows, truncateSingleLine(infoStyle.Render("tasks: ")+strings.Join(tasks, subtleStyle.Render("  |  ")), width))
+		}
+		if orchestration := runtimeStripOrchestrationParts(vm); len(orchestration) > 0 {
+			rows = append(rows, truncateSingleLine(subtleStyle.Render("map: ")+strings.Join(orchestration, subtleStyle.Render("  |  ")), width))
+		}
 		if tools := runtimeStripToolParts(vm); len(tools) > 0 {
 			rows = append(rows, truncateSingleLine(subtleStyle.Render("tools: ")+strings.Join(tools, subtleStyle.Render("  |  ")), width))
 		}

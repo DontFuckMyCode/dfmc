@@ -80,7 +80,13 @@ func sectionHeader(icon, label string) string { return theme.SectionHeader(icon,
 func renderMarkdownBlocks(text string, width int) []string {
 	return theme.RenderMarkdownBlocks(text, width)
 }
-func renderToolChip(chip toolChip, width int) string    { return theme.RenderToolChip(chip, width) }
+func renderToolChip(chip toolChip, width int) string { return theme.RenderToolChip(chip, width) }
+func renderInlineToolChips(chips []toolChip, width int) string {
+	return theme.RenderInlineToolChips(chips, width)
+}
+func renderInlineToolChipsSummary(chips []toolChip, width int) string {
+	return theme.RenderInlineToolChipsSummary(chips, width)
+}
 func spinnerFrame(frame int) string                     { return theme.SpinnerFrame(frame) }
 func roleBadge(role string) string                      { return theme.RoleBadge(role) }
 func renderMessageHeader(info messageHeaderInfo) string { return theme.RenderMessageHeader(info) }

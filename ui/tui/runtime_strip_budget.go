@@ -30,12 +30,24 @@ func runtimeStripBudgetParts(vm runtimeViewModel) []string {
 		}
 		parts = append(parts, label)
 	}
-	if payload.EvidenceBudgetTokens > 0 {
-		parts = append(parts, fmt.Sprintf("evidence %s/%s", compactMetric(payload.EvidenceTokens), compactMetric(payload.EvidenceBudgetTokens)))
+	evidenceTokens := payload.EvidenceTokens
+	evidenceBudget := payload.EvidenceBudgetTokens
+	if evidenceTokens <= 0 {
+		evidenceTokens = vm.ContextTokens
+	}
+	if evidenceBudget <= 0 {
+		evidenceBudget = vm.ContextBudgetTokens
+	}
+	if evidenceBudget > 0 {
+		parts = append(parts, fmt.Sprintf("evidence %s/%s", compactMetric(evidenceTokens), compactMetric(evidenceBudget)))
 	}
 	if used, remaining := runtimeWindowUsage(vm); used > 0 {
-		if payload.MaxContext > 0 {
-			parts = append(parts, fmt.Sprintf("window %s/%s", compactMetric(used), compactMetric(payload.MaxContext)))
+		maxContext := payload.MaxContext
+		if maxContext <= 0 {
+			maxContext = vm.MaxContext
+		}
+		if maxContext > 0 {
+			parts = append(parts, fmt.Sprintf("window %s/%s", compactMetric(used), compactMetric(maxContext)))
 			if remaining >= 0 {
 				parts = append(parts, "left "+compactMetric(remaining))
 			} else {

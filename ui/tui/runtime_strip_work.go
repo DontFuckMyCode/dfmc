@@ -38,7 +38,11 @@ func runtimeStripUnifiedRuntimeParts(vm runtimeViewModel) []string {
 		parts = append(parts, runtimeDriveSummary(vm))
 	}
 	if vm.ActiveSubagents > 0 {
-		parts = append(parts, runtimeSubagentSummary(vm))
+		label := runtimeSubagentSummary(vm)
+		if line := firstUsefulSubagentLine(vm.SubagentLines); line != "" {
+			label += " - " + line
+		}
+		parts = append(parts, label)
 	}
 	if len(parts) == 0 && len(vm.WorkflowRecent) > 0 {
 		parts = append(parts, "recent: "+humanizeWorkflowText(vm.WorkflowRecent[0]))

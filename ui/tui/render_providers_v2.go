@@ -114,9 +114,9 @@ func (m Model) renderProviderSetupCachePane(width, height int) string {
 		"  " + subtleStyle.Render(truncateSingleLine(detail, max(width-4, 8))),
 		"",
 		sectionTitleStyle.Render("My Providers"),
-		"  " + warnStyle.Render("No keyed providers yet."),
-		"  " + subtleStyle.Render("Default providers are hidden here on purpose."),
-		"  " + subtleStyle.Render("Only your own saved keys appear in this list."),
+		"  " + warnStyle.Render("No providers registered."),
+		"  " + subtleStyle.Render("Add a custom provider or sync models.dev, then paste a key."),
+		"  " + subtleStyle.Render("Saved keyed providers appear here; env-only defaults remain usable from chat."),
 		"",
 		sectionTitleStyle.Render("Storage"),
 		"  " + subtleStyle.Render("config: ~/.dfmc/config.yaml"),
@@ -180,7 +180,7 @@ func (m Model) renderProvidersListPane(width, height int, pal tabPaletteEntry, r
 			lines = append(lines,
 				warnStyle.Render("No providers registered"),
 				"",
-				subtleStyle.Render("Open actions with Enter, sync models.dev, then add a provider from that catalog."),
+				subtleStyle.Render("Open actions with Enter, sync models.dev, then add a custom provider from that catalog."),
 				subtleStyle.Render("Only providers with saved keys show here; keys are stored under ~/.dfmc."),
 			)
 		}

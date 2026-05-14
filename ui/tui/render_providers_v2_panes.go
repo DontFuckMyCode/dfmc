@@ -29,6 +29,7 @@ func (m Model) renderProvidersDetailPane(width, height int, _ tabPaletteEntry, r
 		{"Model", nonEmpty(row.Model, "(none)")},
 		{"Models", fmt.Sprintf("%d configured", len(row.Models))},
 		{"Protocol", nonEmpty(row.Protocol, "(auto)")},
+		{"Max context", providerMaxContextValue(row.MaxContext)},
 		{"Tool support", boolWord(row.SupportsTools)},
 		{"Tool style", nonEmpty(row.ToolStyle, "(auto)")},
 	}
@@ -79,6 +80,13 @@ func boolWord(b bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+func providerMaxContextValue(maxContext int) string {
+	if maxContext <= 0 {
+		return "(unknown)"
+	}
+	return fmt.Sprintf("%d tokens", maxContext)
 }
 
 func (m Model) renderProvidersMetaPane(width, height int, pal tabPaletteEntry, rows []providerRow) string {

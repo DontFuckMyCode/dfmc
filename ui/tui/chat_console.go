@@ -130,6 +130,11 @@ func (m Model) renderTimelineMessage(item chatLine, width int, streaming bool, d
 	// want a full bubble if it's part of a multi-step sequence.
 	// But for now, we'll keep the bubble and just ensure it's positioned correctly.
 	out := []string{renderMessageBubble(string(item.Role), chatBubbleContent(item, streaming), header, width)}
+	if item.Role.Eq(chatRoleAssistant) {
+		if chips := m.renderMessageToolChips(item.ToolChips, width, streaming); chips != "" {
+			out = append(out, chips)
+		}
+	}
 
 	if !streaming && copyIdx > 0 && item.Role.Eq(chatRoleAssistant) && strings.TrimSpace(item.Content) != "" {
 		if chip := m.renderAssistantTurnChips(copyIdx, width); chip != "" {
@@ -137,6 +142,16 @@ func (m Model) renderTimelineMessage(item chatLine, width int, streaming bool, d
 		}
 	}
 	return out
+}
+
+func (m Model) renderMessageToolChips(chips []toolChip, width int, streaming bool) string {
+	if len(chips) == 0 {
+		return ""
+	}
+	if streaming || m.ui.toolStripExpanded {
+		return renderInlineToolChips(chips, width)
+	}
+	return renderInlineToolChipsSummary(chips, width)
 }
 
 func humanizeWorkflowText(text string) string {

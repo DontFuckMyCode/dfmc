@@ -133,7 +133,12 @@ func filteredProviderRows(rows []providerRow, query string) []providerRow {
 }
 
 func (m Model) visibleProviderRows() []providerRow {
-	return m.filterMyProviderRows(filteredProviderRows(m.providers.rows, m.providers.query))
+	rows := filteredProviderRows(m.providers.rows, m.providers.query)
+	mine := m.filterMyProviderRows(rows)
+	if len(mine) > 0 || len(rows) == 0 {
+		return mine
+	}
+	return rows
 }
 
 func (m Model) filterMyProviderRows(rows []providerRow) []providerRow {

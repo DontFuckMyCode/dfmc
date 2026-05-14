@@ -52,7 +52,18 @@ func (m *Model) upsertStreamingChatEvent(ev chatEventLine) {
 // ToolStatus.
 func (m *Model) updateToolEventLine(ev chatEventLine) {
 	if isTerminalToolEventStatus(ev.Status) {
-		m.removeToolEventLineByKey(ev.Key)
+		if isMetaToolName(ev.Title) && m.finishToolEventLineByKey(ev) {
+			return
+		}
+		if m.removeToolEventLineByKey(ev.Key) || !m.chat.sending {
+			return
+		}
+		line := newChatLine(chatRoleTool, chatEventTranscriptText(ev))
+		line.Timestamp = ev.At
+		line.EventLines = []chatEventLine{ev}
+		m.chat.transcript = append(m.chat.transcript, line)
+		m.chat.scrollback = 0
+		m.pruneLiveToolEventLines(4)
 		return
 	}
 
@@ -88,6 +99,30 @@ func (m *Model) updateToolEventLine(ev chatEventLine) {
 	m.pruneLiveToolEventLines(4)
 }
 
+func (m *Model) finishToolEventLineByKey(ev chatEventLine) bool {
+	key := strings.TrimSpace(ev.Key)
+	if key == "" {
+		return false
+	}
+	for i := len(m.chat.transcript) - 1; i >= 0; i-- {
+		line := &m.chat.transcript[i]
+		if !line.Role.Eq(chatRoleTool) {
+			continue
+		}
+		for j, existing := range line.EventLines {
+			if existing.Key != key {
+				continue
+			}
+			line.EventLines[j] = mergeChatEventLine(existing, ev)
+			line.Content = chatEventTranscriptText(line.EventLines[j])
+			line.Timestamp = ev.At
+			m.chat.scrollback = 0
+			return true
+		}
+	}
+	return false
+}
+
 func isTerminalToolEventStatus(status string) bool {
 	switch strings.TrimSpace(strings.ToLower(status)) {
 	case "ok", "done", "failed", "error", "denied", "timeout":
@@ -97,10 +132,10 @@ func isTerminalToolEventStatus(status string) bool {
 	}
 }
 
-func (m *Model) removeToolEventLineByKey(key string) {
+func (m *Model) removeToolEventLineByKey(key string) bool {
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return
+		return false
 	}
 	for i := len(m.chat.transcript) - 1; i >= 0; i-- {
 		line := m.chat.transcript[i]
@@ -118,9 +153,10 @@ func (m *Model) removeToolEventLineByKey(key string) {
 				m.chat.streamIndex = -1
 			}
 			m.chat.scrollback = 0
-			return
+			return true
 		}
 	}
+	return false
 }
 
 func (m *Model) pruneLiveToolEventLines(limit int) {
