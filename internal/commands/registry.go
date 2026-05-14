@@ -277,4 +277,3 @@ func orderedCommandCategories(byCategory map[Category][]*Command) []Category {
 	sort.Slice(extras, func(i, j int) bool { return extras[i] < extras[j] })
 	return append(out, extras...)
 }
-

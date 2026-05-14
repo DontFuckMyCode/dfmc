@@ -138,7 +138,7 @@ func (m Model) handleChatNewlineInsert() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleChatEnterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Alt+Enter or Shift+Enter (delivered as KeyEnter with modifiers) 
+	// Alt+Enter or Shift+Enter (delivered as KeyEnter with modifiers)
 	// inserts a newline rather than submitting.
 	if msg.Alt {
 		m.exitInputHistoryNavigation()
@@ -180,7 +180,7 @@ func (m Model) handleChatEnterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.notice = pasteCollectingNotice
 		return m, nil
 	}
-	
+
 	// Default: Enter SUBMITS the composer.
 	return m.submitChatComposer(suggestions)
 }

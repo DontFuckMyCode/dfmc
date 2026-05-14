@@ -28,18 +28,18 @@ import (
 // Record is the JSONL log entry shape. Keep field names stable —
 // downstream viewers and external tooling parse this directly.
 type Record struct {
-	TS              string `json:"ts"`
-	Provider        string `json:"provider"`
-	Model           string `json:"model"`
-	InputTokens     int    `json:"input_tokens,omitempty"`
-	OutputTokens    int    `json:"output_tokens,omitempty"`
-	TotalTokens     int    `json:"total_tokens,omitempty"`
-	UserPreview     string `json:"user_preview,omitempty"`
-	AssistantText   string `json:"assistant_text,omitempty"`
+	TS               string `json:"ts"`
+	Provider         string `json:"provider"`
+	Model            string `json:"model"`
+	InputTokens      int    `json:"input_tokens,omitempty"`
+	OutputTokens     int    `json:"output_tokens,omitempty"`
+	TotalTokens      int    `json:"total_tokens,omitempty"`
+	UserPreview      string `json:"user_preview,omitempty"`
+	AssistantText    string `json:"assistant_text,omitempty"`
 	AssistantPreview string `json:"assistant_preview,omitempty"`
-	Source          string `json:"source,omitempty"`     // "ask" / "agent_loop" / "stream"
-	DurationMs      int    `json:"duration_ms,omitempty"`
-	Error           string `json:"error,omitempty"`
+	Source           string `json:"source,omitempty"` // "ask" / "agent_loop" / "stream"
+	DurationMs       int    `json:"duration_ms,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 // Logger records provider:complete events to a daily JSONL file.

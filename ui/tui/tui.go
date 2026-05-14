@@ -128,9 +128,9 @@ type Model struct {
 	// Native tool-loop telemetry surfaced by the chat header chips, the
 	// stats panel, and the per-step toolTimeline strip. See agentLoopState
 	// in panel_states.go — engine events are the only writers.
-	agentLoop    agentLoopState
-	toolCallLog  toolCallLogState
-	toolStatus   toolStatusPanelState
+	agentLoop   agentLoopState
+	toolCallLog toolCallLogState
+	toolStatus  toolStatusPanelState
 
 	// Running counters surfaced by the chat header chips and the stats
 	// panel — RTK-style compression aggregates plus in-flight fan-out

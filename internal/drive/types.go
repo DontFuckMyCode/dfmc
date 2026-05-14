@@ -158,15 +158,15 @@ type Run struct {
 }
 
 type ExecutionPlanSnapshot struct {
-	Layers          [][]string     `json:"layers,omitempty"`
-	Roots           []string       `json:"roots,omitempty"`
-	Leaves          []string       `json:"leaves,omitempty"`
-	WorkerCounts    map[string]int `json:"worker_counts,omitempty"`
-	LaneCaps        map[string]int `json:"lane_caps,omitempty"`
-	LaneOrder       []string       `json:"lane_order,omitempty"`
-	SurveyID        string         `json:"survey_id,omitempty"`
-	VerificationID  string         `json:"verification_id,omitempty"`
-	MaxParallel     int            `json:"max_parallel,omitempty"`
+	Layers         [][]string     `json:"layers,omitempty"`
+	Roots          []string       `json:"roots,omitempty"`
+	Leaves         []string       `json:"leaves,omitempty"`
+	WorkerCounts   map[string]int `json:"worker_counts,omitempty"`
+	LaneCaps       map[string]int `json:"lane_caps,omitempty"`
+	LaneOrder      []string       `json:"lane_order,omitempty"`
+	SurveyID       string         `json:"survey_id,omitempty"`
+	VerificationID string         `json:"verification_id,omitempty"`
+	MaxParallel    int            `json:"max_parallel,omitempty"`
 }
 
 // Counts returns done/blocked/skipped tallies. Convenience for the

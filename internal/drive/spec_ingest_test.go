@@ -100,7 +100,7 @@ func TestTodosFromSpec_NilAndEmptyInput(t *testing.T) {
 
 func TestAsMapHelpers_ToleratesWrongTypes(t *testing.T) {
 	m := map[string]any{
-		"str_as_int": 42,
+		"str_as_int":  42,
 		"bool_as_str": "true",
 	}
 	if got := asMapString(m, "str_as_int"); got != "" {

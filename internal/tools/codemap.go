@@ -252,4 +252,3 @@ func (t *CodemapTool) Execute(ctx context.Context, req Request) (Result, error) 
 		Truncated: truncated,
 	}, nil
 }
-

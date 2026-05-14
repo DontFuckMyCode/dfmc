@@ -86,7 +86,7 @@ func TestReport_FilterToAddedLines_KeepsOnlyAddedFindings(t *testing.T) {
 		Secrets: []SecretFinding{
 			{File: "internal/auth/token.go", Line: 11, Match: "sk-ant-...", Severity: "critical", Pattern: "Anthropic API Key"},
 			{File: "internal/auth/token.go", Line: 5, Match: "stale", Severity: "low", Pattern: "Generic API Key"}, // pre-existing, NOT added
-			{File: "unrelated.go", Line: 1, Match: "x", Severity: "high", Pattern: "Stripe Key"},                  // not in diff
+			{File: "unrelated.go", Line: 1, Match: "x", Severity: "high", Pattern: "Stripe Key"},                   // not in diff
 		},
 		Vulnerabilities: []VulnerabilityFinding{
 			{File: "internal/auth/token.go", Line: 53, Kind: "command_injection", Severity: "critical"},

@@ -13,11 +13,11 @@ type StatusFlags uint32
 // Status flag constants — powers of 2 for OR-ability.
 const (
 	FlagPending   StatusFlags = 1 << iota // waiting on dependencies
-	FlagRunning                            // currently executing
-	FlagTerminal                           // done, blocked, skipped — no further scheduling
-	FlagWaiting                            // external wait (review, approval, etc.)
-	FlagExternal                           // external process (external_review)
-	FlagVerifying                          // verification in progress
+	FlagRunning                           // currently executing
+	FlagTerminal                          // done, blocked, skipped — no further scheduling
+	FlagWaiting                           // external wait (review, approval, etc.)
+	FlagExternal                          // external process (external_review)
+	FlagVerifying                         // verification in progress
 )
 
 // HasFlag reports whether s has the given flag set.
@@ -33,8 +33,8 @@ func (s StatusFlags) IsTerminal() bool {
 // StatusInfo pairs a legacy string status with its flag representation.
 // This enables gradual migration from string-based to flag-based status.
 type StatusInfo struct {
-	Legacy  string      // Original string status for JSON compatibility
-	Flags   StatusFlags // Flag-based status representation
+	Legacy string      // Original string status for JSON compatibility
+	Flags  StatusFlags // Flag-based status representation
 }
 
 // BuildStatusInfo creates a StatusInfo from a legacy string status.

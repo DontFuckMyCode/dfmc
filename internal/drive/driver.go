@@ -38,14 +38,14 @@ type Publisher func(eventType string, payload map[string]any)
 // NewDriver. All fields are required — nil runner panics on Run, nil
 // store skips persistence (useful in tests).
 type Driver struct {
-	runner              Runner
-	store               *Store
-	publisher           Publisher
-	cfg                 Config
-	reportDir           string
-	plannerBreaker      *CircuitBreaker
-	executorBreaker     *CircuitBreaker
-	verifierBreaker     *CircuitBreaker
+	runner          Runner
+	store           *Store
+	publisher       Publisher
+	cfg             Config
+	reportDir       string
+	plannerBreaker  *CircuitBreaker
+	executorBreaker *CircuitBreaker
+	verifierBreaker *CircuitBreaker
 }
 
 // SetReportDir configures the directory where finalize() writes a
@@ -66,13 +66,13 @@ const emptyTaskError = "drive task is empty; pass a non-empty task description"
 func NewDriver(runner Runner, store *Store, publisher Publisher, cfg Config) *Driver {
 	cfg = cfg.Apply()
 	d := &Driver{
-		runner:              runner,
-		store:               store,
-		publisher:           publisher,
-		cfg:                 cfg,
-		plannerBreaker:      NewCircuitBreaker(cfg.PlannerCircuitBreaker),
-		executorBreaker:    NewCircuitBreaker(cfg.ExecutorCircuitBreaker),
-		verifierBreaker:     NewCircuitBreaker(cfg.VerifierCircuitBreaker),
+		runner:          runner,
+		store:           store,
+		publisher:       publisher,
+		cfg:             cfg,
+		plannerBreaker:  NewCircuitBreaker(cfg.PlannerCircuitBreaker),
+		executorBreaker: NewCircuitBreaker(cfg.ExecutorCircuitBreaker),
+		verifierBreaker: NewCircuitBreaker(cfg.VerifierCircuitBreaker),
 	}
 	return d
 }

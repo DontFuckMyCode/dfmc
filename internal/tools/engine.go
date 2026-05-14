@@ -197,7 +197,6 @@ func (e *Engine) TodoSnapshot() []TodoItem {
 	return tw.Snapshot()
 }
 
-
 func (e *Engine) Execute(ctx context.Context, name string, req Request) (Result, error) {
 	e.lifecycleMu.RLock()
 	if e.closed {

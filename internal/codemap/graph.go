@@ -281,4 +281,3 @@ func (g *Graph) Clear() {
 	g.inIdx = map[string][]int{}
 	g.edgeIdx = map[edgeSlotKey]int{}
 }
-

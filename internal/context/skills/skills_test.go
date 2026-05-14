@@ -9,7 +9,7 @@ import (
 
 func TestResolveByTask(t *testing.T) {
 	tests := []struct {
-		task    string
+		task     string
 		expected string
 	}{
 		{"security", "security_auditor"},
@@ -38,7 +38,7 @@ func TestResolveByTask(t *testing.T) {
 
 func TestResolveByQueryKeyword(t *testing.T) {
 	tests := []struct {
-		query   string
+		query    string
 		expected string
 	}{
 		{"fix this memory leak in the cache", "debugger"},
@@ -62,9 +62,9 @@ func TestResolveByQueryKeyword(t *testing.T) {
 
 func TestResolveProfile(t *testing.T) {
 	tests := []struct {
-		name    string
-		query   string
-		task    string
+		name     string
+		query    string
+		task     string
 		expected string
 	}{
 		{"deep skill", "detailed analysis of the codebase", "", "deep"},
@@ -151,7 +151,7 @@ func TestGetTools(t *testing.T) {
 
 func TestCaseInsensitive(t *testing.T) {
 	tests := []struct {
-		query   string
+		query    string
 		expected string
 	}{
 		{"SECURITY AUDIT", "security_auditor"},

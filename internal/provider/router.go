@@ -247,4 +247,3 @@ func (r *Router) ResolveOrder(requested string) []string {
 func normalizeProviderName(name string) string {
 	return strings.TrimSpace(strings.ToLower(name))
 }
-

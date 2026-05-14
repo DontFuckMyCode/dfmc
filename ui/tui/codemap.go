@@ -205,7 +205,7 @@ func (m Model) handleCodemapKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Total for scroll clamping depends on active view.
 	total := codemapViewRowCount(m.codemap.view, m.codemap.snap)
-	
+
 	if m.codemap.view == codemapViewVisual {
 		switch msg.String() {
 		case "j", "down":
@@ -291,7 +291,7 @@ func (m Model) findVisualNodeAtCursor() string {
 	lineIdx := 0
 	var foundID string
 	seen := make(map[string]bool)
-	
+
 	var walk func(nodeID string, depth int) bool
 	walk = func(nodeID string, depth int) bool {
 		if depth > 8 || seen[nodeID] {

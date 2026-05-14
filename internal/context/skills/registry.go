@@ -77,16 +77,16 @@ func List() []Skill {
 // LoadFromFile loads skill definitions from a YAML file.
 // The file format:
 //
-//   skills:
-//     - name: custom_skill
-//       role: custom_role
-//       profile: deep
-//       keywords:
-//         - keyword1
-//         - keyword2
-//       tools:
-//         - tool1
-//         - tool2
+//	skills:
+//	  - name: custom_skill
+//	    role: custom_role
+//	    profile: deep
+//	    keywords:
+//	      - keyword1
+//	      - keyword2
+//	    tools:
+//	      - tool1
+//	      - tool2
 //
 // Environment variables in the file are expanded.
 func LoadFromFile(path string) error {

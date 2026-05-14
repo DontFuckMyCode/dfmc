@@ -77,4 +77,3 @@ When NOT to use:
 		CostHint:   "io-bound",
 	}
 }
-

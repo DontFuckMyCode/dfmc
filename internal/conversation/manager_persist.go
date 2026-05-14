@@ -233,4 +233,3 @@ func (m *Manager) loadFromStore(id string) (*Conversation, error) {
 		Metadata: map[string]string{},
 	}), nil
 }
-

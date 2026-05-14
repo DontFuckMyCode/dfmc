@@ -148,7 +148,6 @@ func readProvidersPrimary(path string) string {
 	return strings.TrimSpace(primary)
 }
 
-
 // displayConfigPath shortens an absolute config path for user-facing
 // notices — replaces the user's home dir with `~` so the line stays
 // readable in narrow terminals.

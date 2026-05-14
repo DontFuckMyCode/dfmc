@@ -198,4 +198,3 @@ func (t *WebFetchTool) Execute(ctx context.Context, req Request) (Result, error)
 
 // HTML-to-text stripping (htmlToText, dropTags, blockTags,
 // finalizeStrippedText, isSSRFFetchError) lives in web_html.go.
-

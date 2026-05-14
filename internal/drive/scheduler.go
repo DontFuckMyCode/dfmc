@@ -277,4 +277,3 @@ func orderedCandidateIndices(todos []Todo, policy SchedulerPolicy) []int {
 	out = append(out, unknown...)
 	return out
 }
-

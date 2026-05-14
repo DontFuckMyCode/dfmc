@@ -12,9 +12,13 @@ type Config struct {
 	DataDir string
 }
 
+type writer struct {
+	mu   sync.Mutex
+	path string
+}
+
 type Logger struct {
-	mu        sync.Mutex
-	path      string
+	w         *writer
 	component string
 	operation string
 }
@@ -28,25 +32,21 @@ func New(cfg Config) (*Logger, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	return &Logger{path: filepath.Join(dir, time.Now().Format("2006-01-02")+".jsonl")}, nil
+	return &Logger{w: &writer{path: filepath.Join(dir, time.Now().Format("2006-01-02")+".jsonl")}}, nil
 }
 
 func (l *Logger) WithComponent(component string) *Logger {
 	if l == nil {
 		return nil
 	}
-	cp := *l
-	cp.component = component
-	return &cp
+	return &Logger{w: l.w, component: component, operation: l.operation}
 }
 
 func (l *Logger) WithOperation(operation string) *Logger {
 	if l == nil {
 		return nil
 	}
-	cp := *l
-	cp.operation = operation
-	return &cp
+	return &Logger{w: l.w, component: l.component, operation: operation}
 }
 
 func (l *Logger) Info(message string) {
@@ -66,7 +66,7 @@ func (l *Logger) Close() error {
 }
 
 func (l *Logger) write(level, message string, err error, fields map[string]any) {
-	if l == nil || l.path == "" {
+	if l == nil || l.w == nil || l.w.path == "" {
 		return
 	}
 	record := map[string]any{
@@ -92,9 +92,9 @@ func (l *Logger) write(level, message string, err error, fields map[string]any) 
 	}
 	data = append(data, '\n')
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	f, openErr := os.OpenFile(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	l.w.mu.Lock()
+	defer l.w.mu.Unlock()
+	f, openErr := os.OpenFile(l.w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if openErr != nil {
 		return
 	}

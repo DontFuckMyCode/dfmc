@@ -17,7 +17,6 @@ import (
 	"time"
 )
 
-
 func resolvePRAction(action string, params map[string]any) string {
 	if action != "" {
 		return action

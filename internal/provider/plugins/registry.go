@@ -32,15 +32,15 @@ import (
 
 // Config holds provider configuration extracted from ModelConfig.
 type Config struct {
-	Name       string
-	Model      string
-	Models     []string
-	APIKey     string
-	BaseURL    string
-	MaxTokens  int
-	MaxContext int
+	Name        string
+	Model       string
+	Models      []string
+	APIKey      string
+	BaseURL     string
+	MaxTokens   int
+	MaxContext  int
 	HTTPTimeout int
-	Protocol   string
+	Protocol    string
 }
 
 // BestModel returns the primary model, falling back to the first in Models.
@@ -74,7 +74,7 @@ type Factory struct {
 
 // globalRegistry is the package-level factory registry.
 var globalRegistry = struct {
-	mu       sync.RWMutex
+	mu        sync.RWMutex
 	factories map[string]*Factory // protocol -> Factory
 }{
 	factories: make(map[string]*Factory),

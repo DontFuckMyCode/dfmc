@@ -79,7 +79,7 @@ func (m Model) footerSegments() []string {
 			label += fmt.Sprintf(" · %d running", running)
 		}
 		if waiting > 0 {
-			label += accentStyle.Render(" · "+fmt.Sprintf("%d needs input", waiting))
+			label += accentStyle.Render(" · " + fmt.Sprintf("%d needs input", waiting))
 		}
 		out = append(out, label)
 	}

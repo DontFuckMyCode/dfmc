@@ -226,5 +226,3 @@ func (c *Client) Stderr() string {
 	defer c.stderrMu.Unlock()
 	return string(c.stderrBuf)
 }
-
-

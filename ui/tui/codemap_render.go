@@ -159,22 +159,22 @@ func (m Model) renderVisualCallGraph(snap codemapSnapshot, scroll, width int) []
 
 	var rows []string
 	seen := make(map[string]bool)
-	
+
 	// Track current line to handle cursor highlighting
 	lineIdx := 0
-	
+
 	// Start from the top 10 hotspots for a rich entry point
 	for i := 0; i < 10 && i < len(snap.Hotspots); i++ {
 		h := snap.Hotspots[i]
 		if h.Kind != "function" && h.Kind != "method" {
 			continue
 		}
-		
+
 		rows = m.walkVisualTree(rows, &lineIdx, snap, h.ID, "", true, 0, seen)
 		rows = append(rows, "") // Spacer between roots
 		lineIdx++
 	}
-	
+
 	if len(rows) == 0 {
 		return []string{subtleStyle.Render("  No function hotspots found.")}
 	}
@@ -186,12 +186,12 @@ func (m Model) walkVisualTree(rows []string, lineIdx *int, snap codemapSnapshot,
 	if depth > 8 { // Safety limit to prevent extreme UI depth
 		return rows
 	}
-	
+
 	n, ok := snap.AllNodes[nodeID]
 	if !ok {
 		return rows
 	}
-	
+
 	if seen[nodeID] {
 		return append(rows, indent+subtleStyle.Render("↺ "+n.Name+" (recursion)"))
 	}
@@ -200,7 +200,7 @@ func (m Model) walkVisualTree(rows []string, lineIdx *int, snap codemapSnapshot,
 
 	expanded := m.codemap.visualExpanded[nodeID]
 	selected := *lineIdx == m.codemap.visualCursor
-	
+
 	line := indent
 	if indent != "" {
 		if isLast {
@@ -209,7 +209,7 @@ func (m Model) walkVisualTree(rows []string, lineIdx *int, snap codemapSnapshot,
 			line += "├─ "
 		}
 	}
-	
+
 	// Prefix with expand/collapse hint
 	expandIcon := " "
 	if len(m.getCallees(snap, nodeID)) > 0 {
@@ -219,7 +219,7 @@ func (m Model) walkVisualTree(rows []string, lineIdx *int, snap codemapSnapshot,
 			expandIcon = "▶"
 		}
 	}
-	
+
 	rowText := line + subtleStyle.Render(expandIcon+" ") + formatCodemapNodeRow(n)
 	if selected {
 		rowText = lipgloss.NewStyle().
@@ -230,10 +230,10 @@ func (m Model) walkVisualTree(rows []string, lineIdx *int, snap codemapSnapshot,
 	}
 	rows = append(rows, rowText)
 	*lineIdx++
-	
+
 	if expanded {
 		callees := m.getCallees(snap, nodeID)
-		
+
 		newIndent := indent
 		if indent != "" {
 			if isLast {
@@ -244,13 +244,13 @@ func (m Model) walkVisualTree(rows []string, lineIdx *int, snap codemapSnapshot,
 		} else {
 			newIndent = " "
 		}
-		
+
 		for i, calleeID := range callees {
 			childLast := i == len(callees)-1
 			rows = m.walkVisualTree(rows, lineIdx, snap, calleeID, newIndent, childLast, depth+1, seen)
 		}
 	}
-	
+
 	return rows
 }
 

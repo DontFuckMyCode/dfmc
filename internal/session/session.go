@@ -50,10 +50,10 @@ type Session struct {
 // New creates a new multi-agent session. It starts with a single root agent (Agent 1).
 func New() *Session {
 	s := &Session{
-		agents:   make(map[AgentID]*Agent),
+		agents:    make(map[AgentID]*Agent),
 		attention: NewSharedAttention(),
-		nextID:   1,
-		depthCap: 5,
+		nextID:    1,
+		depthCap:  5,
 	}
 
 	// Create the root agent (Agent 1) — user-facing.

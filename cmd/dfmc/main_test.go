@@ -224,5 +224,3 @@ func TestExtractDataDir_LastPosition(t *testing.T) {
 		t.Errorf("extractDataDir at last position = %q, want %q", got, "/data")
 	}
 }
-
-

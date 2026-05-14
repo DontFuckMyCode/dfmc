@@ -68,11 +68,11 @@ type CoachConfig struct {
 }
 
 type IntentConfig struct {
-	Enabled          bool   `yaml:"enabled"`
-	Provider         string `yaml:"provider"`
-	Model            string `yaml:"model"`
-	TimeoutMs        int    `yaml:"timeout_ms"`
-	FailOpen         bool   `yaml:"fail_open"`
+	Enabled   bool   `yaml:"enabled"`
+	Provider  string `yaml:"provider"`
+	Model     string `yaml:"model"`
+	TimeoutMs int    `yaml:"timeout_ms"`
+	FailOpen  bool   `yaml:"fail_open"`
 	// FailClosed, when true, changes the error-reporting behavior of
 	// the intent layer. Instead of returning Fallback(raw)+nil (fail-open
 	// semantic), the router returns Fallback(raw)+err so callers can
@@ -80,6 +80,6 @@ type IntentConfig struct {
 	// emit a structured intent:error event. The routing decision itself
 	// is still safe (Fallback); only the error channel changes. Default
 	// is false to preserve backward compatibility.
-	FailClosed       bool   `yaml:"fail_closed"`
-	MaxSnapshotChars int    `yaml:"max_snapshot_chars"`
+	FailClosed       bool `yaml:"fail_closed"`
+	MaxSnapshotChars int  `yaml:"max_snapshot_chars"`
 }

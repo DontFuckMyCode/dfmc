@@ -4,7 +4,10 @@ package drive
 
 // TopProviders returns the top N providers by total error count.
 func (c *ErrorCategorizer) TopProviders(n int) []string {
-	type kv struct{ k string; v int }
+	type kv struct {
+		k string
+		v int
+	}
 	var sorted []kv
 	for k, v := range c.ByProvider {
 		sorted = append(sorted, kv{k, v.Total})

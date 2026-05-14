@@ -18,8 +18,8 @@ var (
 
 	// Auth errors — never retry.
 	ErrUnauthorized = errors.New("unauthorized")
-	ErrAuth401       = errors.New("auth 401")
-	ErrAuth403       = errors.New("auth 403")
+	ErrAuth401      = errors.New("auth 401")
+	ErrAuth403      = errors.New("auth 403")
 
 	// Rate limit / transient errors — retry immediately.
 	ErrRateLimit  = errors.New("rate limit")
@@ -47,8 +47,8 @@ var (
 	ErrServiceUnavailable = errors.New("service unavailable")
 
 	// URL/cert errors — config problem, never retry.
-	ErrInvalidURL   = errors.New("invalid url")
-	ErrX509         = errors.New("x509")
+	ErrInvalidURL  = errors.New("invalid url")
+	ErrX509        = errors.New("x509")
 	ErrCertificate = errors.New("certificate")
 )
 
@@ -292,7 +292,7 @@ func (s *ErrorStats) FatalRate() float64 {
 type ErrorCategorizer struct {
 	Stats       *ErrorStats
 	ByProvider  map[string]*ErrorStats // per-provider breakdown
-	ByTool      map[string]*ErrorStats  // per-tool breakdown
+	ByTool      map[string]*ErrorStats // per-tool breakdown
 	TotalErrors int
 }
 
@@ -328,7 +328,10 @@ func (c *ErrorCategorizer) RecordError(err error, provider, tool string) {
 
 // TopProviders returns the top N providers by total error count.
 func (c *ErrorCategorizer) TopProviders(n int) []string {
-	type kv struct{ k string; v int }
+	type kv struct {
+		k string
+		v int
+	}
 	var sorted []kv
 	for k, v := range c.ByProvider {
 		sorted = append(sorted, kv{k, v.Total})
@@ -370,7 +373,7 @@ type MetricsExport struct {
 	ByProvider map[string]ErrorStats `json:"by_provider"`
 	ByTool     map[string]ErrorStats `json:"by_tool"`
 	RetryRate  float64               `json:"retry_rate"`
-	FatalRate  float64              `json:"fatal_rate"`
+	FatalRate  float64               `json:"fatal_rate"`
 	Timestamp  time.Time             `json:"timestamp"`
 }
 

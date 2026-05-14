@@ -16,8 +16,7 @@ import (
 // appendFallbackReason live in subagent_profiles_helpers.go.
 
 func (e *Engine) runSubagentProfiles(ctx context.Context, req tools.SubagentRequest, profiles []string) (tools.SubagentResult, error) {
-	
-	
+
 	profiles, err := e.normalizeSubagentProfiles(profiles, req.Model)
 	if err != nil {
 		return tools.SubagentResult{}, err

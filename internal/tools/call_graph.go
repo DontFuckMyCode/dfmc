@@ -14,7 +14,7 @@ type CallGraphTool struct {
 }
 
 func NewCallGraphTool() *CallGraphTool { return &CallGraphTool{} }
-func (t *CallGraphTool) Name() string   { return "call_graph" }
+func (t *CallGraphTool) Name() string  { return "call_graph" }
 
 func (t *CallGraphTool) SetCodemap(cm *codemap.Engine) {
 	t.codemap = cm

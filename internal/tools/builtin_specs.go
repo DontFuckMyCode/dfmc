@@ -284,4 +284,3 @@ Rules:
 		CostHint: "io-bound",
 	}
 }
-

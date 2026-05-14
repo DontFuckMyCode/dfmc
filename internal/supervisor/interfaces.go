@@ -21,4 +21,3 @@ type Statuser interface {
 type Budgeter interface {
 	Remaining() int
 }
-

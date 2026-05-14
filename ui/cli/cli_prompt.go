@@ -192,13 +192,13 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 		if jsonMode {
 			mustPrintJSON(map[string]any{
-				"id":                  *id,
-				"status":             "overridden",
-				"embed_priority":      embedT.Priority,
-				"override_priority":   t.Priority,
-				"embed_body":          embedT.Body,
-				"override_body":       t.Body,
-				"embed_description":   embedT.Description,
+				"id":                   *id,
+				"status":               "overridden",
+				"embed_priority":       embedT.Priority,
+				"override_priority":    t.Priority,
+				"embed_body":           embedT.Body,
+				"override_body":        t.Body,
+				"embed_description":    embedT.Description,
 				"override_description": t.Description,
 			})
 		} else {

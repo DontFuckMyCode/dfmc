@@ -167,4 +167,3 @@ func (t *TestDiscoveryTool) Execute(_ context.Context, req Request) (Result, err
 func extractTestFunctions(path, fileContents, symbol string) []map[string]any {
 	return ExtractTestFunctions(path, fileContents, symbol)
 }
-

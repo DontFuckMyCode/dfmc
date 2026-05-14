@@ -212,6 +212,7 @@ func fallbackTemplateID(path string) string {
 	}
 	return base
 }
+
 // collectYamlEntries scans YAML data for blocks starting with "    type:".
 func collectYamlEntries(data []byte) [][]byte {
 	var result [][]byte
@@ -239,6 +240,7 @@ func collectYamlEntries(data []byte) [][]byte {
 	}
 	return result
 }
+
 // decodeYamlEntry parses a block beginning with "    type:" into a Template.
 func decodeYamlEntry(block []byte) (Template, bool) {
 	var t Template

@@ -301,4 +301,3 @@ func (t *GHPullRequestTool) statusPR(ctx context.Context, repo, projectRoot stri
 		},
 	}, nil
 }
-

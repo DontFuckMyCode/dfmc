@@ -20,8 +20,8 @@ import (
 )
 
 var (
-	ErrToolDisabled   = errors.New("tool is disabled")
-	ErrToolProtected  = errors.New("tool is protected and cannot be disabled")
+	ErrToolDisabled  = errors.New("tool is disabled")
+	ErrToolProtected = errors.New("tool is protected and cannot be disabled")
 )
 
 // protectedTools cannot be disabled. The 4 meta tools + critical backend

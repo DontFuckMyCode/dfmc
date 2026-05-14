@@ -47,9 +47,9 @@ func TestDebugTemplateContent(t *testing.T) {
 			"tools_overview":   "",
 			"tool_call_policy": "",
 			"response_policy":  "",
-			"language":          "generic",
-			"profile":           "compact",
-			"role":              "",
+			"language":         "generic",
+			"profile":          "compact",
+			"role":             "",
 		},
 	})
 	t.Logf("Render len=%d markerInOut=%v", len(out), strings.Contains(out, CacheBreakMarker))

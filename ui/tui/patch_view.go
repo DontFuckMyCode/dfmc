@@ -181,4 +181,3 @@ func (m Model) patchReviewHints() []string {
 	}
 	return hints
 }
-

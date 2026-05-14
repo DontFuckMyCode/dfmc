@@ -104,7 +104,7 @@ func (m Model) contextsParkedSection(width int) []string {
 		{"step", fmt.Sprintf("%d (cumulative %d)", d.Step, d.CumulativeSteps)},
 		{"tokens", fmt.Sprintf("%s (cumulative %s)", compactMetric(d.TotalTokens), compactMetric(d.CumulativeTokens))},
 		{"context", compactMetric(d.ContextTokens)},
-		{"provider/model", strings.TrimSpace(d.LastProvider+" / "+d.LastModel)},
+		{"provider/model", strings.TrimSpace(d.LastProvider + " / " + d.LastModel)},
 	}
 	if d.LastToolName != "" {
 		rows = append(rows, [2]string{"last tool", d.LastToolName})

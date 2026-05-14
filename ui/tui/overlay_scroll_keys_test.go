@@ -25,10 +25,10 @@ func TestAdjustScrollOnlyOffset_StepsAndClamps(t *testing.T) {
 		{"j", 0, 1},
 		{"down", 5, 6},
 		{"k", 3, 2},
-		{"up", 0, 0},  // already at top, must not go negative
-		{"k", -2, 0},  // never returns negative
+		{"up", 0, 0}, // already at top, must not go negative
+		{"k", -2, 0}, // never returns negative
 		{"pgdown", 0, 10},
-		{"pgup", 5, 0},  // less than a page from top — snap to 0
+		{"pgup", 5, 0}, // less than a page from top — snap to 0
 		{"pgup", 25, 15},
 		{"g", 999, 0},
 		{"home", 42, 0},

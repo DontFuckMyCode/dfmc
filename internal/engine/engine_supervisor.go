@@ -55,8 +55,6 @@ func (e *Engine) NewSupervisor(run *supervisor.Run, plan *supervisor.ExecutionPl
 	return sup
 }
 
-
-
 // SetSupervisor registers the active supervisor for budget accounting.
 // Sub-agent budget halving uses the supervisor pool when non-nil.
 // Called by the supervisor start path; cleared when the supervisor finishes.

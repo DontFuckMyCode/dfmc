@@ -10,19 +10,19 @@ import (
 
 // LogEntry is the JSONL record shape for LLM calls.
 type LogEntry struct {
-	Timestamp   string         `json:"ts"`
-	Provider    string         `json:"provider"`
-	Model       string         `json:"model"`
-	Type        string         `json:"type"` // "request" or "response"
-	DurationMs  int            `json:"duration_ms,omitempty"`
-	InputTokens int            `json:"input_tokens,omitempty"`
-	OutputTokens int           `json:"output_tokens,omitempty"`
-	TotalTokens int            `json:"total_tokens,omitempty"`
-	Success     bool           `json:"success"`
-	Error       string         `json:"error,omitempty"`
-	Messages    int            `json:"messages,omitempty"`
-	FinishReason string        `json:"finish_reason,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	Timestamp    string         `json:"ts"`
+	Provider     string         `json:"provider"`
+	Model        string         `json:"model"`
+	Type         string         `json:"type"` // "request" or "response"
+	DurationMs   int            `json:"duration_ms,omitempty"`
+	InputTokens  int            `json:"input_tokens,omitempty"`
+	OutputTokens int            `json:"output_tokens,omitempty"`
+	TotalTokens  int            `json:"total_tokens,omitempty"`
+	Success      bool           `json:"success"`
+	Error        string         `json:"error,omitempty"`
+	Messages     int            `json:"messages,omitempty"`
+	FinishReason string         `json:"finish_reason,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
 }
 
 // Logger writes LLM call records to a daily JSONL file.
@@ -61,17 +61,17 @@ func NewLogger(artifactsDir string) (*Logger, error) {
 // once with req=true (input metadata), once with req=false (output + error).
 func (l *Logger) WriteLog(provider, model, logType string, durationMs, inTok, outTok, totalTok int, success bool, errMsg string, meta map[string]any) {
 	entry := LogEntry{
-		Timestamp:   time.Now().UTC().Format(time.RFC3339),
-		Provider:    provider,
-		Model:       model,
-		Type:        logType,
-		DurationMs:  durationMs,
-		InputTokens: inTok,
+		Timestamp:    time.Now().UTC().Format(time.RFC3339),
+		Provider:     provider,
+		Model:        model,
+		Type:         logType,
+		DurationMs:   durationMs,
+		InputTokens:  inTok,
 		OutputTokens: outTok,
-		TotalTokens: totalTok,
-		Success:     success,
-		Error:       errMsg,
-		Metadata:    meta,
+		TotalTokens:  totalTok,
+		Success:      success,
+		Error:        errMsg,
+		Metadata:     meta,
 	}
 	l.push(entry)
 }

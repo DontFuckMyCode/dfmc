@@ -163,7 +163,7 @@ func (m Model) filesListHeader(width int, filteredCount int) string {
 	title := titleStyle.Bold(true).Render(" ◎ FILES")
 	if activeFilter {
 		title = titleStyle.Bold(true).Render(" ◎ FILES")
-		title += subtleStyle.Render(" [filter: "+m.filesView.query+"]")
+		title += subtleStyle.Render(" [filter: " + m.filesView.query + "]")
 	}
 	chipRendered := chip.Render(chipText)
 	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipRendered)-2, 1)

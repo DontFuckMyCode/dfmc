@@ -6,12 +6,12 @@ import (
 
 func TestBuildStatusInfo(t *testing.T) {
 	tests := []struct {
-		input          string
-		wantTerminal   bool
-		wantPending    bool
-		wantVerifying  bool
-		wantWaiting    bool
-		wantExternal   bool
+		input         string
+		wantTerminal  bool
+		wantPending   bool
+		wantVerifying bool
+		wantWaiting   bool
+		wantExternal  bool
 	}{
 		{"pending", false, true, false, false, false},
 		{"running", false, false, false, false, false},

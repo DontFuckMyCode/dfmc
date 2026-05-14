@@ -12,8 +12,8 @@ type DiagnoseErrorTool struct {
 	engine *Engine
 }
 
-func NewDiagnoseErrorTool() *DiagnoseErrorTool { return &DiagnoseErrorTool{} }
-func (t *DiagnoseErrorTool) Name() string       { return "diagnose_error" }
+func NewDiagnoseErrorTool() *DiagnoseErrorTool   { return &DiagnoseErrorTool{} }
+func (t *DiagnoseErrorTool) Name() string        { return "diagnose_error" }
 func (t *DiagnoseErrorTool) SetEngine(e *Engine) { t.engine = e }
 
 func (t *DiagnoseErrorTool) Description() string {
@@ -60,7 +60,7 @@ func (t *DiagnoseErrorTool) Execute(ctx context.Context, req Request) (Result, e
 
 		if _, err := os.Stat(absPath); os.IsNotExist(err) {
 			suggestions = append(suggestions, fmt.Sprintf("The file %q does not exist. Use list_dir or glob to find the correct path.", path))
-			
+
 			// Try to find similar files
 			base := filepath.Base(path)
 			similar := t.findSimilarFiles(req.ProjectRoot, base)

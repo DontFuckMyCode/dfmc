@@ -257,22 +257,25 @@ const (
 
 // String implements fmt.Stringer.
 func (s CircuitState) String() string {
-	 switch s {
-	 case CircuitClosed:  return "closed"
-	 case CircuitOpen:     return "open"
-	 case CircuitHalfOpen: return "half_open"
-	 }
-	 return "unknown"
+	switch s {
+	case CircuitClosed:
+		return "closed"
+	case CircuitOpen:
+		return "open"
+	case CircuitHalfOpen:
+		return "half_open"
+	}
+	return "unknown"
 }
 
 // CircuitBreaker implements the circuit breaker pattern for a named stage
 // (e.g. "planner", "executor"). It is safe to use concurrently.
 type CircuitBreaker struct {
-	cfg        CircuitBreakerConfig
-	state      CircuitState
-	mu         sync.Mutex
-	failures   int
-	lastFailure time.Time
+	cfg           CircuitBreakerConfig
+	state         CircuitState
+	mu            sync.Mutex
+	failures      int
+	lastFailure   time.Time
 	halfOpenTried int // how many probe calls have fired in half-open
 }
 
@@ -382,5 +385,3 @@ var DefaultRetryBackoff RetryBackoffFunc = func(attempt int) time.Duration {
 	}
 	return delay
 }
-
-

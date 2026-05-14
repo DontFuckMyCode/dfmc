@@ -181,5 +181,3 @@ func (m Model) toolGrepPattern() string {
 	}
 	return regexp.QuoteMeta(base)
 }
-
-

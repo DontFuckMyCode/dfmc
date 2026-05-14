@@ -171,7 +171,7 @@ func (m Model) renderPatchFileRow(i, width int, pal tabPaletteEntry) string {
 	chrome := lipgloss.Width(cursor) + lipgloss.Width(statRendered) + lipgloss.Width(hunkBadge) + 2
 	nameWidth := max(width-chrome, 12)
 	name := truncatePathHead(section.Path, nameWidth)
-	
+
 	row := cursor + name + statRendered + hunkBadge
 	if selected {
 		row = lipgloss.NewStyle().

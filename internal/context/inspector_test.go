@@ -274,11 +274,11 @@ func TestInspectionResultFileDetail(t *testing.T) {
 
 func TestInspectionResultTextNoSources(t *testing.T) {
 	r := InspectionResult{
-		TotalFiles:  1, TotalTokens: 10, TotalLines: 1,
-		BySource:    map[string]SourceStats{},
+		TotalFiles: 1, TotalTokens: 10, TotalLines: 1,
+		BySource:   map[string]SourceStats{},
 		ByLanguage: map[string]LanguageStats{"go": {Count: 1, Tokens: 10}},
-		Files:       []FileDetail{{Path: "/proj/main.go", RelPath: "main.go", Language: "go", Lines: "1-1", Tokens: 10, Source: "file"}},
-		Budget:      BudgetStatus{Total: 16000, Used: 10, Remaining: 15990, UsedPct: 0.0625, AvgPerFile: 10},
+		Files:      []FileDetail{{Path: "/proj/main.go", RelPath: "main.go", Language: "go", Lines: "1-1", Tokens: 10, Source: "file"}},
+		Budget:     BudgetStatus{Total: 16000, Used: 10, Remaining: 15990, UsedPct: 0.0625, AvgPerFile: 10},
 	}
 	text := r.Text()
 	if strings.Contains(text, "Sources:") {
@@ -317,8 +317,6 @@ func TestInspectionResultTextFilesTruncation(t *testing.T) {
 		t.Error("expected truncation text for >15 files")
 	}
 }
-
-
 
 func TestInspectionResultTextFirstLineNoNewline(t *testing.T) {
 	chunks := []types.ContextChunk{

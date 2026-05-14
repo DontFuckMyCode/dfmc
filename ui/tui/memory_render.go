@@ -115,7 +115,6 @@ func memoryDetailWrap(s string, width int) []string {
 	return out
 }
 
-
 func (m Model) renderMemoryView(width int) string {
 	width = clampInt(width, 24, 1000)
 	tier := m.memory.tier
@@ -164,7 +163,7 @@ func (m Model) renderMemoryView(width int) string {
 		selected := e.ID != "" && e.ID == m.memory.expandedID
 		row := formatMemoryRow(e, width-4, selected)
 		lines = append(lines, row)
-		
+
 		if selected {
 			body := strings.TrimSpace(e.Value)
 			if body != "" {
@@ -193,7 +192,7 @@ func (m Model) renderMemoryView(width int) string {
 			}
 		}
 	}
-	
+
 	lines = append(lines, "", "  "+subtleStyle.Render(fmt.Sprintf(
 		"%d shown · %d loaded · tier=%s",
 		len(filtered), len(m.memory.entries), tier,

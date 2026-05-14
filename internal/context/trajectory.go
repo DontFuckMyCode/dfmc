@@ -1,13 +1,13 @@
 // Package context — trajectory.go is the rule engine for the trajectory
 // coach. Companion siblings:
 //
-//   trajectory_format.go  — public types (TraceEntry / TrajectoryOutput)
-//                           and FormatTrajectoryHints renderer.
-//   trajectory_detect.go  — repeated-call/failure/unvalidated-edit
-//                           detectors and string canonicalizers.
-//   trajectory_helpers.go — round summary + confidence + path
-//                           abbrev + shell→tool mapping + small
-//                           string utilities every rule reaches for.
+//	trajectory_format.go  — public types (TraceEntry / TrajectoryOutput)
+//	                        and FormatTrajectoryHints renderer.
+//	trajectory_detect.go  — repeated-call/failure/unvalidated-edit
+//	                        detectors and string canonicalizers.
+//	trajectory_helpers.go — round summary + confidence + path
+//	                        abbrev + shell→tool mapping + small
+//	                        string utilities every rule reaches for.
 //
 // Design notes:
 //   - Hints are *micro-touches* — 1-2 short sentences per hint, max 2

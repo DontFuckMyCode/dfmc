@@ -104,13 +104,13 @@ func TestParseSpecMarkdown_IncludeTasksFalseSkipsTaskList(t *testing.T) {
 
 func TestParseSpecMarkdown_LineRanges(t *testing.T) {
 	body := strings.Join([]string{
-		"# Title",        // line 1
-		"",               // 2
-		"prose",          // 3
-		"## Sub",         // 4
-		"more",           // 5
-		"## Sub2",        // 6
-		"trailer",        // 7
+		"# Title", // line 1
+		"",        // 2
+		"prose",   // 3
+		"## Sub",  // 4
+		"more",    // 5
+		"## Sub2", // 6
+		"trailer", // 7
 	}, "\n")
 	sections, _ := parseSpecMarkdown(body, true)
 	if len(sections) != 3 {
