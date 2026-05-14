@@ -146,6 +146,21 @@ func (l *Library) List() []Template {
 	return out
 }
 
+func (l *Library) Get(id string) (Template, bool) {
+	id = strings.TrimSpace(id)
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	for _, t := range l.templates {
+		if strings.EqualFold(strings.TrimSpace(t.ID), id) {
+			return t, true
+		}
+	}
+	return Template{}, false
+}
+
+// RawEmbedFS exposes the embedded defaults FS for diff comparison.
+func (l *Library) RawEmbedFS() embed.FS { return defaultTemplatesFS }
+
 func (l *Library) upsert(t Template) {
 	t = normalizeTemplate(t)
 	if strings.TrimSpace(t.Body) == "" {

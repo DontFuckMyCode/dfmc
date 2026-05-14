@@ -116,8 +116,8 @@ func TestRenderBundle_UsesMarkerFromTemplate(t *testing.T) {
 	if !bundle.HasCacheable() {
 		t.Fatalf("expected cacheable prefix when template carries marker, got bundle=%+v", bundle)
 	}
-	if !strings.Contains(bundle.CacheableText(), "Baseline contract") {
-		t.Fatalf("stable prefix should include baseline contract: %q", bundle.CacheableText())
+	if !strings.Contains(bundle.CacheableText(), "Tight diffs, verifiable claims") {
+		t.Fatalf("stable prefix should include baseline contract: %q", bundle.CacheableText()[:200])
 	}
 	if !strings.Contains(bundle.DynamicText(), "hello world") {
 		t.Fatalf("dynamic section should include user_query: %q", bundle.DynamicText())

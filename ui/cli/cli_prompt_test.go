@@ -153,3 +153,48 @@ body: |
 		t.Fatalf("expected prompt stats to pass when var is allowed, got exit=%d", code)
 	}
 }
+
+func TestRunPromptDiffWithOverride(t *testing.T) {
+	eng := newCLITestEngine(t)
+	project := t.TempDir()
+	eng.ProjectRoot = project
+
+	dir := filepath.Join(project, ".dfmc", "prompts")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir prompts dir: %v", err)
+	}
+	// Override system.general with a custom body
+	override := `
+id: system.general
+type: system
+task: general
+priority: 900
+description: Custom general system prompt
+body: |
+  CUSTOM OVERRIDE BODY
+`
+	if err := os.WriteFile(filepath.Join(dir, "override.yaml"), []byte(override), 0o644); err != nil {
+		t.Fatalf("write override: %v", err)
+	}
+
+	code := runPrompt(context.Background(), eng, []string{
+		"diff",
+		"--id", "system.general",
+	}, false)
+	if code != 0 {
+		t.Fatalf("prompt diff exit=%d, expected 0", code)
+	}
+}
+
+func TestRunPromptDiffIdenticalNoOverride(t *testing.T) {
+	eng := newCLITestEngine(t)
+	// No project override — lib should have embed default only.
+	// diff on a template with no override should report identical.
+	code := runPrompt(context.Background(), eng, []string{
+		"diff",
+		"--id", "system.general",
+	}, false)
+	if code != 0 {
+		t.Fatalf("prompt diff exit=%d, expected 0 (identical template)", code)
+	}
+}

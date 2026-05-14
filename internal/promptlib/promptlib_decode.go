@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -81,15 +82,35 @@ func decodeYAMLTemplates(path string, data []byte) []Template {
 	if len(data) == 0 {
 		return nil
 	}
+
+	// Strategy 1: document-level templates array (the correct shipped format).
+	// yaml.Unmarshal fails if the top-level is a list but the struct field is []Template
+	// AND the YAML has extra map fields below — so we try both the array and map shapes.
+
+	// Shape A: `templates: [...]`
 	doc := templateDoc{}
 	if err := yaml.Unmarshal(data, &doc); err == nil && len(doc.Templates) > 0 {
 		return doc.Templates
 	}
-	single := Template{}
-	if err := yaml.Unmarshal(data, &single); err != nil {
-		return nil
+
+	// Shape B: top-level map with per-entry structure.
+	// The YAML looks like `templates:` followed by flat map entries (type, task, body...).
+	// We scan for blocks starting with `type:` and collect them sequentially.
+	if entries := collectYamlEntries(data); len(entries) > 0 {
+		result := make([]Template, 0, len(entries))
+		for _, entry := range entries {
+			if t, ok := decodeYamlEntry(entry); ok {
+				result = append(result, t)
+			}
+		}
+		if len(result) > 0 {
+			return result
+		}
 	}
-	if strings.TrimSpace(single.ID) == "" {
+
+	// Shape C: bare single template (no wrapping, or only one entry).
+	single := Template{}
+	if err := yaml.Unmarshal(data, &single); err == nil && strings.TrimSpace(single.Body) != "" {
 		single.ID = fallbackTemplateID(path)
 	}
 	return []Template{single}
@@ -190,4 +211,81 @@ func fallbackTemplateID(path string) string {
 		return "template"
 	}
 	return base
+}
+// collectYamlEntries scans YAML data for blocks starting with "    type:".
+func collectYamlEntries(data []byte) [][]byte {
+	var result [][]byte
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	i := 0
+	for i < len(lines) {
+		line := lines[i]
+		if strings.HasPrefix(line, "    type:") || strings.HasPrefix(line, "    - type:") {
+			bs := i
+			i++
+			for i < len(lines) {
+				n := lines[i]
+				if strings.HasPrefix(n, "    ") && strings.TrimSpace(n) != "" {
+					t := strings.TrimLeft(n, " ")
+					if strings.HasPrefix(t, "type:") {
+						break
+					}
+				}
+				i++
+			}
+			result = append(result, []byte(strings.Join(lines[bs:i], "\n")))
+		} else {
+			i++
+		}
+	}
+	return result
+}
+// decodeYamlEntry parses a block beginning with "    type:" into a Template.
+func decodeYamlEntry(block []byte) (Template, bool) {
+	var t Template
+	lines := strings.Split(strings.ReplaceAll(string(block), "\r\n", "\n"), "\n")
+	inBody := false
+	bodyMarkerIndent := 0
+	bodyLines := []string{}
+	for _, line := range lines {
+		if inBody {
+			if strings.TrimSpace(line) == "" {
+				bodyLines = append(bodyLines, line)
+				continue
+			}
+			indent := len(line) - len(strings.TrimLeft(line, " "))
+			if indent < bodyMarkerIndent {
+				inBody = false
+			} else {
+				bodyLines = append(bodyLines, line)
+				continue
+			}
+		}
+		if strings.HasPrefix(line, "    type:") {
+			t.Type = strings.TrimSpace(strings.TrimPrefix(line, "    type:"))
+		} else if strings.HasPrefix(line, "    id:") {
+			t.ID = strings.TrimSpace(strings.TrimPrefix(line, "    id:"))
+		} else if strings.HasPrefix(line, "    task:") {
+			t.Task = strings.TrimSpace(strings.TrimPrefix(line, "    task:"))
+		} else if strings.HasPrefix(line, "    language:") {
+			t.Language = strings.TrimSpace(strings.TrimPrefix(line, "    language:"))
+		} else if strings.HasPrefix(line, "    profile:") {
+			t.Profile = strings.TrimSpace(strings.TrimPrefix(line, "    profile:"))
+		} else if strings.HasPrefix(line, "    role:") {
+			t.Role = strings.TrimSpace(strings.TrimPrefix(line, "    role:"))
+		} else if strings.HasPrefix(line, "    compose:") {
+			t.Compose = strings.TrimSpace(strings.TrimPrefix(line, "    compose:"))
+		} else if strings.HasPrefix(line, "    priority:") {
+			if v, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "    priority:"))); err == nil {
+				t.Priority = v
+			}
+		} else if strings.TrimSpace(line) == "body: |" || strings.TrimSpace(line) == "body:|" {
+			inBody = true
+			bodyMarkerIndent = 6
+			bodyLines = bodyLines[:0]
+		}
+	}
+	if len(bodyLines) > 0 {
+		t.Body = strings.TrimRight(strings.Join(bodyLines, "\n"), "\n")
+	}
+	return t, t.Type != "" || t.Body != ""
 }

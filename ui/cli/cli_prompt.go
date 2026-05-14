@@ -1,4 +1,4 @@
-// Prompt library CLI: `dfmc prompt [list|render|inspect|stats|recommend]`
+// Prompt library CLI: `dfmc prompt [list|render|inspect|diff|stats|recommend]`
 // surfaces the prompt registry for inspection and rendering. Extracted
 // from cli_analysis.go so the analysis file stays focused on analyze/
 // map/tool flows.
@@ -153,8 +153,67 @@ func runPrompt(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 		}
 		return 0
 
+	case "diff":
+		fs := flag.NewFlagSet("prompt diff", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		id := fs.String("id", "", "template ID to diff against its embedded default")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if strings.TrimSpace(*id) == "" && len(fs.Args()) > 0 {
+			*id = strings.TrimSpace(fs.Args()[0])
+		}
+		if strings.TrimSpace(*id) == "" {
+			fmt.Fprintln(os.Stderr, "error: --id <template-id> is required")
+			return 2
+		}
+		// Find the template in the merged library
+		t, found := lib.Get(*id)
+		if !found {
+			fmt.Fprintf(os.Stderr, "error: template %q not found in library\n", *id)
+			return 1
+		}
+		// Load embed defaults into a fresh library (no overrides)
+		embedLib := promptlib.New()
+		embedT, embedFound := embedLib.Get(*id)
+		if !embedFound {
+			fmt.Printf("note: %q has no embedded default (user-created override)\n", *id)
+			if jsonMode {
+				mustPrintJSON(map[string]any{"id": *id, "status": "user_override_only", "body": t.Body})
+			} else {
+				fmt.Println("=== User Override ===")
+				fmt.Println(t.Body)
+			}
+			return 0
+		}
+		if t.Body == embedT.Body {
+			fmt.Printf("note: %q is identical to its embedded default — no override active\n", *id)
+			return 0
+		}
+		if jsonMode {
+			mustPrintJSON(map[string]any{
+				"id":                  *id,
+				"status":             "overridden",
+				"embed_priority":      embedT.Priority,
+				"override_priority":   t.Priority,
+				"embed_body":          embedT.Body,
+				"override_body":       t.Body,
+				"embed_description":   embedT.Description,
+				"override_description": t.Description,
+			})
+		} else {
+			fmt.Printf("=== %s | embedded (priority %d) vs override (priority %d) ===\n", *id, embedT.Priority, t.Priority)
+			fmt.Println()
+			fmt.Println("--- Embed Default ---")
+			fmt.Println(embedT.Body)
+			fmt.Println()
+			fmt.Println("--- User Override ---")
+			fmt.Println(t.Body)
+		}
+		return 0
+
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[inspect --query \"...\" --full]|[stats --max-template-tokens 450]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]")
+		fmt.Fprintln(os.Stderr, "usage: dfmc prompt [list|render --task auto --language auto --query \"...\" --runtime-tool-style ... --runtime-max-context ...]|[inspect --query \"...\" --full]|[diff --id <id>]|[stats --max-template-tokens 450]|[recommend --query \"...\" --runtime-tool-style ... --runtime-max-context ...]")
 		return 2
 	}
 }
