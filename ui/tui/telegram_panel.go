@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -60,29 +61,13 @@ func (m *Model) renderTelegramPanel() string {
 		b.WriteString(subtleStyle.Render("  No messages yet.\n"))
 		b.WriteString(subtleStyle.Render("  Send a message from Telegram or use /chat\n"))
 	} else {
-		lines := m.telegram.messages
-		if m.telegram.scroll > 0 && m.telegram.scroll < len(lines) {
-			lines = lines[m.telegram.scroll:]
-		}
-		show := lines
-		if len(show) > height-12 {
-			show = show[len(show)-(height-12):]
-		}
-		for _, msg := range show {
-			prefix := "📥"
-			if msg.isOut {
-				prefix = "📤"
-			}
-			text := msg.text
-			if len(text) > width-10 {
-				text = text[:width-13] + "…"
-			}
-			b.WriteString(fmt.Sprintf("  %s %s %s\n", prefix, boldStyle.Render(msg.from), subtleStyle.Render(msg.time)))
-			b.WriteString(fmt.Sprintf("    %s\n", text))
-		}
+		b.WriteString(m.renderTelegramMessageHistory(width, height-12))
 	}
 
-	b.WriteString("\n" + subtleStyle.Render("↑↓ scroll · enter/a actions · esc close"))
+	b.WriteString("\n" + subtleStyle.Render("up/down scroll | e config | u users | enter/a actions | esc close"))
+	if m.actionMenu.open && m.actionMenu.owner == "Telegram" {
+		b.WriteString("\n\n" + m.renderActionMenu(width))
+	}
 	return b.String()
 }
 
@@ -115,6 +100,9 @@ func (m Model) openTelegramActionMenu() Model {
 	actions := []panelAction{
 		{Label: "Edit Config", Accel: "e", Handler: func(m Model) (Model, tea.Cmd) {
 			return m.openTelegramForm(), nil
+		}},
+		{Label: "Edit allowed users", Accel: "u", Handler: func(m Model) (Model, tea.Cmd) {
+			return m.openTelegramUsersForm(), nil
 		}},
 		{Label: "Test Message…", Accel: "t", Handler: func(m Model) (Model, tea.Cmd) {
 			c := m
@@ -187,10 +175,18 @@ func (m *Model) InitBotPanel() {
 }
 
 func (m Model) openTelegramForm() Model {
+	return m.openTelegramFormField(false)
+}
+
+func (m Model) openTelegramUsersForm() Model {
+	return m.openTelegramFormField(true)
+}
+
+func (m Model) openTelegramFormField(editUsers bool) Model {
 	m.telegram.formActive = true
 	m.telegram.inputActive = true
-	m.telegram.editingToken = true
-	m.telegram.editingUsers = false
+	m.telegram.editingToken = !editUsers
+	m.telegram.editingUsers = editUsers
 	m.telegram.tokenInput = ""
 	m.telegram.allowedUsersInput = ""
 	m.telegram.saveSuccess = false
@@ -218,6 +214,79 @@ func (m Model) closeTelegramForm() Model {
 	m.telegram.testMsgActive = false
 	m.telegram.testMsgInput = ""
 	return m
+}
+
+func (m *Model) renderTelegramMessageHistory(width, maxRows int) string {
+	if maxRows <= 0 {
+		maxRows = 6
+	}
+	innerWidth := max(width-8, 24)
+	items := m.telegram.messages
+	if m.telegram.scroll > 0 && m.telegram.scroll < len(items) {
+		items = items[m.telegram.scroll:]
+	}
+	rows := make([]string, 0, maxRows)
+	for _, msg := range items {
+		rows = append(rows, renderTelegramMessageRows(msg, innerWidth)...)
+		if len(rows) > maxRows {
+			rows = rows[len(rows)-maxRows:]
+		}
+	}
+	return strings.Join(rows, "\n") + "\n"
+}
+
+func renderTelegramMessageRows(msg telegramMessageItem, width int) []string {
+	width = max(width, 24)
+	prefix := "IN "
+	if msg.isOut {
+		prefix = "OUT"
+	}
+	header := fmt.Sprintf("  %s  %s  %s", prefix, truncateSingleLine(msg.from, 24), msg.time)
+	rows := []string{truncateSingleLine(header, width)}
+	bodyWidth := max(width-4, 16)
+	text := strings.TrimSpace(msg.text)
+	if text == "" {
+		text = "(empty)"
+	}
+	for _, part := range strings.Split(text, "\n") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		for _, row := range wrapBubbleLine(part, bodyWidth) {
+			rows = append(rows, "    "+truncateSingleLine(row, bodyWidth))
+		}
+	}
+	if len(rows) == 1 {
+		rows = append(rows, "    "+subtleStyle.Render("(empty)"))
+	}
+	return rows
+}
+
+func (m *Model) appendTelegramLog(from, text string, isOut bool) {
+	m.addTelegramMessageDirect(telegramMessageItem{
+		from:  strings.TrimSpace(from),
+		text:  strings.TrimSpace(text),
+		time:  time.Now().Format("15:04"),
+		isOut: isOut,
+	})
+}
+
+func (m *Model) addTelegramMessageDirect(msg telegramMessageItem) {
+	if strings.TrimSpace(msg.from) == "" {
+		msg.from = "Telegram"
+	}
+	if strings.TrimSpace(msg.time) == "" {
+		msg.time = time.Now().Format("15:04")
+	}
+	if len(m.telegram.messages) >= 100 {
+		m.telegram.messages = m.telegram.messages[1:]
+	}
+	m.telegram.messages = append(m.telegram.messages, msg)
+	m.telegram.scroll = len(m.telegram.messages) - 1
+	if m.telegram.scroll < 0 {
+		m.telegram.scroll = 0
+	}
 }
 
 func (m *Model) sendTelegramTestMessage() (tea.Model, tea.Cmd) {
@@ -256,11 +325,7 @@ func (m *Model) sendTelegramTestMessage() (tea.Model, tea.Cmd) {
 		displayText = msg + " ⚠ " + sendErr
 	}
 	outMsg := telegramMessageItem{from: "DFMC", text: displayText, time: time.Now().Format("15:04"), isOut: true}
-	if len(m.telegram.messages) >= 100 {
-		m.telegram.messages = m.telegram.messages[1:]
-	}
-	m.telegram.messages = append(m.telegram.messages, outMsg)
-	m.telegram.scroll = len(m.telegram.messages) - 1
+	m.addTelegramMessageDirect(outMsg)
 	m.telegram.testMsgActive = false
 	m.telegram.testMsgInput = ""
 	return m, nil
@@ -278,6 +343,8 @@ func (m *Model) renderTelegramForm(width int) string {
 	disp := m.telegram.tokenInput
 	if disp == "" {
 		disp = subtleStyle.Render("(paste your BotFather token here)")
+	} else {
+		disp = truncateSingleLine(disp, max(width-24, 16))
 	}
 	b.WriteString(fmt.Sprintf("  %s %s\n", boldStyle.Render(tokenLabel+":"), disp))
 	b.WriteString(subtleStyle.Render("  Get token from @BotFather on Telegram\n\n"))
@@ -290,7 +357,7 @@ func (m *Model) renderTelegramForm(width int) string {
 	if usersDisp == "" {
 		usersDisp = "(optional — comma-separated numeric IDs)"
 	} else {
-		usersDisp = truncateSingleLine(usersDisp, width-35)
+		usersDisp = truncateSingleLine(usersDisp, max(width-35, 16))
 	}
 	b.WriteString(fmt.Sprintf("  %s %s\n", boldStyle.Render(usersLabel+":"), usersDisp))
 	b.WriteString(subtleStyle.Render("  Get your ID from @userinfobot on Telegram\n\n"))
@@ -336,18 +403,34 @@ func (m *Model) saveTelegramSetup() *Model {
 		}
 	}
 
+	previousToken := strings.TrimSpace(m.eng.Config.Telegram.Token)
 	m.eng.Config.Telegram.Token = token
 	m.eng.Config.Telegram.Enabled = true
 	m.eng.Config.Telegram.AllowedUsers = allowedIDs
 
-	if err := m.eng.Config.Save(filepath.Join(config.UserConfigDir(), "config.yaml")); err != nil {
+	savePath := m.telegramConfigPath()
+	if err := os.MkdirAll(filepath.Dir(savePath), 0o700); err != nil {
 		m.telegram.saveError = fmt.Sprintf("Save failed: %v", err)
+		m.appendTelegramLog("Config", m.telegram.saveError, true)
+		return m
+	}
+	if err := m.eng.Config.Save(savePath); err != nil {
+		m.telegram.saveError = fmt.Sprintf("Save failed: %v", err)
+		m.appendTelegramLog("Config", m.telegram.saveError, true)
+		return m
+	}
+
+	if m.refreshExistingTelegramBot(previousToken, token, allowedIDs, savePath) {
+		m.telegram.saveSuccess = true
+		m.telegram.formActive = false
+		m.telegram.inputActive = false
 		return m
 	}
 
 	tgBot, err := bot.New(token)
 	if err != nil {
 		m.telegram.saveError = fmt.Sprintf("Invalid token: %v", err)
+		m.appendTelegramLog("Telegram", m.telegram.saveError, true)
 		return m
 	}
 	tgBot.SetAllowedUsers(allowedIDs)
@@ -378,22 +461,59 @@ func (m *Model) saveTelegramSetup() *Model {
 			m.telegram.botUsername = username
 		}
 	}
+	m.stopExistingTelegramBot()
 	m.telegram.telegramBot = tgBot
+	m.eng.TelegramBot = tgBot
+	m.eng.TelegramAllowedUsers = allowedIDs
 	m.telegram.saveSuccess = true
 	m.telegram.formActive = false
 	m.telegram.inputActive = false
+	m.appendTelegramLog("Config", fmt.Sprintf("Saved Telegram config to %s", savePath), true)
+	m.appendTelegramLog("Telegram", fmt.Sprintf("Connected @%s with %d allowed user(s).", blankFallback(m.telegram.botUsername, "bot"), len(allowedIDs)), true)
 	return m
 }
 
+func (m *Model) stopExistingTelegramBot() {
+	if m.telegram.telegramBot != nil {
+		m.telegram.telegramBot.Stop()
+		return
+	}
+	if m.eng != nil && m.eng.TelegramBot != nil {
+		m.eng.TelegramBot.Stop()
+	}
+}
+
+func (m *Model) refreshExistingTelegramBot(previousToken, token string, allowedIDs []int64, savePath string) bool {
+	if strings.TrimSpace(previousToken) != strings.TrimSpace(token) {
+		return false
+	}
+	existing := m.telegram.telegramBot
+	if existing == nil && m.eng != nil {
+		existing = m.eng.TelegramBot
+	}
+	if existing == nil {
+		return false
+	}
+	existing.SetAllowedUsers(allowedIDs)
+	m.telegram.telegramBot = existing
+	if m.eng != nil {
+		m.eng.TelegramBot = existing
+		m.eng.TelegramAllowedUsers = allowedIDs
+	}
+	m.appendTelegramLog("Config", fmt.Sprintf("Saved Telegram config to %s", savePath), true)
+	m.appendTelegramLog("Telegram", fmt.Sprintf("Allowed users updated: %d user(s).", len(allowedIDs)), true)
+	return true
+}
+
+func (m *Model) telegramConfigPath() string {
+	if path, err := m.userConfigPath(); err == nil && strings.TrimSpace(path) != "" {
+		return path
+	}
+	return filepath.Join(config.UserConfigDir(), "config.yaml")
+}
+
 func (m *Model) handleTelegramMessageAdded(msg telegramMessageAddedMsg) (tea.Model, tea.Cmd) {
-	if len(m.telegram.messages) >= 100 {
-		m.telegram.messages = m.telegram.messages[1:]
-	}
-	m.telegram.messages = append(m.telegram.messages, msg.msg)
-	m.telegram.scroll = len(m.telegram.messages) - 1
-	if m.telegram.scroll < 0 {
-		m.telegram.scroll = 0
-	}
+	m.addTelegramMessageDirect(msg.msg)
 	return m, nil
 }
 

@@ -38,6 +38,20 @@ func (m *Model) handleTelegramOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	switch msg.String() {
+	case "e":
+		next := m.openTelegramForm()
+		*m = next
+		return m, nil
+	case "u":
+		next := m.openTelegramUsersForm()
+		*m = next
+		return m, nil
+	case "t":
+		m.telegram.testMsgActive = true
+		m.telegram.testMsgInput = ""
+		return m, nil
+	}
 	if msg.Type == tea.KeyEnter || msg.String() == "a" {
 		next := m.openTelegramActionMenu()
 		return next, nil
@@ -86,6 +100,17 @@ func (m *Model) handleTelegramFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if !m.telegram.formActive {
 		return m, nil
 	}
+	switch msg.String() {
+	case "tab", "shift+tab":
+		m.toggleTelegramFormField()
+		return m, nil
+	case "up":
+		m.setTelegramFormField(false)
+		return m, nil
+	case "down":
+		m.setTelegramFormField(true)
+		return m, nil
+	}
 	if msg.Type == tea.KeyEnter {
 		m = m.saveTelegramSetup()
 		return m, nil
@@ -129,6 +154,15 @@ func (m *Model) handleTelegramFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *Model) toggleTelegramFormField() {
+	m.setTelegramFormField(m.telegram.editingToken)
+}
+
+func (m *Model) setTelegramFormField(editUsers bool) {
+	m.telegram.editingToken = !editUsers
+	m.telegram.editingUsers = editUsers
 }
 
 func telegramAllowedUsersRune(r rune) bool {
