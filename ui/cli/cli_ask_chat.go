@@ -191,26 +191,7 @@ func runChat(ctx context.Context, eng *engine.Engine, args []string, jsonMode bo
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			continue
 		}
-		printed := false
-		endsWithNL := true
-		for ev := range stream {
-			switch ev.Type {
-			case "delta":
-				fmt.Print(ev.Delta)
-				printed = true
-				endsWithNL = strings.HasSuffix(ev.Delta, "\n")
-			case "error":
-				if printed && !endsWithNL {
-					fmt.Println()
-				}
-				fmt.Fprintf(os.Stderr, "error: %v\n", ev.Err)
-				printed = false
-			case "done":
-			}
-		}
-		if printed && !endsWithNL {
-			fmt.Println()
-		}
+		printProviderStream(stream)
 	}
 }
 

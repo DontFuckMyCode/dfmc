@@ -12,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dontfuckmycode/dfmc/internal/supervisor"
-	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
 )
 
@@ -102,18 +100,7 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 	if !m.sessionStart.IsZero() {
 		elapsed = now.Sub(m.sessionStart)
 	}
-	liveInputTokens := 0
-	liveOutputTokens := 0
-	if m.chat.sending {
-		liveInputTokens = m.chat.streamInputTokens
-		if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) {
-			line := m.chat.transcript[m.chat.streamIndex]
-			liveOutputTokens = line.TokenCount
-			if liveOutputTokens <= 0 && strings.TrimSpace(line.Content) != "" {
-				liveOutputTokens = estimatedChatTokens(line.Content)
-			}
-		}
-	}
+	liveInputTokens, liveOutputTokens := m.liveStreamTokenCounts()
 	transcriptInputTokens, transcriptOutputTokens := transcriptTokenTotals(m.chat.transcript)
 	composerTokens := estimatedChatTokens(m.composeInput())
 
@@ -122,38 +109,13 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		toolCount = len(m.availableTools())
 	}
 
-	todoTotal, todoPending, todoDoing, todoDone := 0, 0, 0, 0
-	todoActive := ""
-	activeTodoIndex := 0
-	todoLines := []string{}
-	if m.eng != nil && m.eng.Tools != nil {
-		todos := m.eng.Tools.TodoSnapshot()
-		for idx, it := range todos {
-			todoTotal++
-			switch strings.ToLower(strings.TrimSpace(it.Status)) {
-			case "completed", "done":
-				todoDone++
-			case "in_progress", "active", "doing":
-				todoDoing++
-				if todoActive == "" {
-					todoActive = strings.TrimSpace(it.ActiveForm)
-					if todoActive == "" {
-						todoActive = strings.TrimSpace(it.Content)
-					}
-					activeTodoIndex = idx + 1
-				}
-			case "pending", "blocked", "skipped", "waiting", "verifying", "external_review":
-				todoPending++
-			}
-		}
-		todoLines = formatWorkflowTodoLines(todos, 8)
-	}
+	todos := m.statsTodoSummary()
 
 	planSubtasks := 0
 	planParallel := false
 	planConfidence := 0.0
 	taskLines := []string{}
-	taskTreeLines := []string{}
+	taskTreeLines := m.statsTaskTreeLines()
 	workflowStatus := ""
 	workflowMeter := ""
 	workflowExecution := ""
@@ -184,46 +146,6 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 					title = "(untitled)"
 				}
 				taskLines = append(taskLines, fmt.Sprintf("%d. %s", i+1, title))
-			}
-		}
-	}
-
-	// Build hierarchical task tree from the task store.
-	if m.eng != nil && m.eng.Tools != nil && m.eng.Tools.TaskStore() != nil {
-		storeTasks, _ := m.eng.Tools.TaskStore().ListTasks(taskstore.ListOptions{})
-		if len(storeTasks) > 0 {
-			children := make(map[string][]*supervisor.Task)
-			var roots []*supervisor.Task
-			for _, t := range storeTasks {
-				if t.ParentID == "" {
-					roots = append(roots, t)
-				} else {
-					children[t.ParentID] = append(children[t.ParentID], t)
-				}
-			}
-			var buildTree func(t *supervisor.Task, indent int, isLast bool)
-			buildTree = func(t *supervisor.Task, indent int, isLast bool) {
-				prefix := ""
-				if indent > 0 {
-					treeChar := "+-"
-					if isLast {
-						treeChar = "`-"
-					}
-					prefix = strings.Repeat("  ", indent-1) + treeChar + " "
-				}
-				title := t.Title
-				if title == "" {
-					title = t.Detail
-				}
-				line := fmt.Sprintf("%s[%s] %s  %s", prefix, t.State, t.ID, title)
-				taskTreeLines = append(taskTreeLines, line)
-				kids := children[t.ID]
-				for i, child := range kids {
-					buildTree(child, indent+1, i == len(kids)-1)
-				}
-			}
-			for i, root := range roots {
-				buildTree(root, 0, i == len(roots)-1)
 			}
 		}
 	}
@@ -305,8 +227,8 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 			workflowStatus += fmt.Sprintf("%s%d blocked", workflowSep, head.DriveBlocked)
 		}
 		workflowMeter = renderStepBar(head.DriveDone, head.DriveTotal, 16, m.chat.spinnerFrame)
-	case todoDoing > 0:
-		workflowStatus = fmt.Sprintf("%s workflow active%s%d doing", spinnerFrame(m.chat.spinnerFrame+3), workflowSep, todoDoing)
+	case todos.Doing > 0:
+		workflowStatus = fmt.Sprintf("%s workflow active%s%d doing", spinnerFrame(m.chat.spinnerFrame+3), workflowSep, todos.Doing)
 	case head.QueuedCount > 0:
 		workflowStatus = fmt.Sprintf("queued%s%d waiting", workflowSep, head.QueuedCount)
 	case head.Parked && !head.BannerActive:
@@ -324,8 +246,8 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		workflowMeter = ""
 	}
 
-	if strings.TrimSpace(todoActive) != "" && activeTodoIndex > 0 && todoTotal > 0 {
-		workflowExecution = fmt.Sprintf("task %d/%d%s%s", activeTodoIndex, todoTotal, workflowSep, truncateSingleLine(todoActive, 72))
+	if strings.TrimSpace(todos.Active) != "" && todos.ActiveIndex > 0 && todos.Total > 0 {
+		workflowExecution = fmt.Sprintf("task %d/%d%s%s", todos.ActiveIndex, todos.Total, workflowSep, truncateSingleLine(todos.Active, 72))
 		if head.ActiveSubagents > 0 {
 			workflowExecution += fmt.Sprintf("%s%d subagents", workflowSep, head.ActiveSubagents)
 		}
@@ -507,12 +429,12 @@ func (m Model) statsPanelInfo() statsPanelInfo {
 		Pinned:                  head.Pinned,
 		CompressionSavedChars:   m.telemetry.compressionSavedChars,
 		CompressionRawChars:     m.telemetry.compressionRawChars,
-		TodoTotal:               todoTotal,
-		TodoPending:             todoPending,
-		TodoDoing:               todoDoing,
-		TodoDone:                todoDone,
-		TodoActive:              todoActive,
-		TodoLines:               todoLines,
+		TodoTotal:               todos.Total,
+		TodoPending:             todos.Pending,
+		TodoDoing:               todos.Doing,
+		TodoDone:                todos.Done,
+		TodoActive:              todos.Active,
+		TodoLines:               todos.Lines,
 		TaskLines:               taskLines,
 		TaskTreeLines:           taskTreeLines,
 		WorkflowStatus:          workflowStatus,

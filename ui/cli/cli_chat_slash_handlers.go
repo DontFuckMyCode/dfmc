@@ -348,24 +348,6 @@ func runAgentTemplate(ctx context.Context, eng *engine.Engine, args []string, sk
 		fmt.Fprintf(os.Stderr, "/%s error: %v\n", skill, err)
 		return false, true
 	}
-	printed := false
-	endsWithNL := true
-	for ev := range stream {
-		if ev.Type == "delta" {
-			fmt.Print(ev.Delta)
-			printed = true
-			endsWithNL = strings.HasSuffix(ev.Delta, "\n")
-		}
-		if ev.Type == "error" {
-			if printed && !endsWithNL {
-				fmt.Println()
-			}
-			fmt.Fprintf(os.Stderr, "error: %v\n", ev.Err)
-			printed = false
-		}
-	}
-	if printed && !endsWithNL {
-		fmt.Println()
-	}
+	printProviderStream(stream)
 	return false, true
 }

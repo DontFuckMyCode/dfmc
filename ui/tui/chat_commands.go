@@ -20,8 +20,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/dontfuckmycode/dfmc/internal/planning"
 )
 
 func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
@@ -196,7 +194,7 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 	case "approve", "approvals", "permissions",
 		"hooks", "stats", "tokens", "cost",
 		"workflow", "todos", "todo",
-		"tasks", "subagents", "workers", "queue",
+		"tasks", "subagents", "workers", "queue", "toolstatus",
 		"keylog", "coach", "hints", "intent",
 		"copy", "yank", "mouse", "select",
 		"status", "log", "calls", "reload",
@@ -219,49 +217,17 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 	case "key", "apikey", "apikeys":
 		return m.runKeyCommand(args)
 	case "ask":
-		m.chat.input = ""
-		payload := strings.TrimSpace(strings.Join(args, " "))
-		if payload == "" {
-			m.notice = "/ask needs a question."
-			return m.appendSystemMessage("Usage: /ask <question>\nExample: /ask why is the build slow on Windows?"), nil, true
-		}
-		next, cmdOut := m.submitChatQuestion(payload, nil)
-		return next, cmdOut, true
+		return m.handleAskSlash(args)
 	case "chat":
 		m.chat.input = ""
 		m.notice = "Already in chat. Just type your message."
 		return m.appendSystemMessage("You're already in the chat tab — type your message and press enter."), nil, true
 	case "continue", "resume":
-		m.chat.input = ""
-		if m.eng == nil || !m.eng.HasParkedAgent() {
-			m.notice = "Nothing to resume — no parked agent loop."
-			return m.appendSystemMessage("Nothing to resume — the agent isn't paused. /continue only works after a turn pauses at its step or token budget."), nil, true
-		}
-		note := strings.TrimSpace(strings.Join(args, " "))
-		next, cmdOut := m.startChatResume(note)
-		return next, cmdOut, true
+		return m.handleContinueSlash(args)
 	case "split":
-		m.chat.input = ""
-		query := strings.TrimSpace(strings.Join(args, " "))
-		if query == "" {
-			m.notice = "/split needs a task to decompose."
-			return m.appendSystemMessage("Usage: /split <task> — runs the deterministic splitter and shows the subtasks it detects so you can dispatch them individually."), nil, true
-		}
-		return m.appendSystemMessage(renderSplitPlan(planning.SplitTask(query))), nil, true
+		return m.handleSplitSlash(args)
 	case "btw":
-		m.chat.input = ""
-		note := strings.TrimSpace(strings.Join(args, " "))
-		if note == "" {
-			m.notice = "/btw needs a note."
-			return m.appendSystemMessage("Usage: /btw <note> — queued text lands as a user message at the next tool-loop step boundary."), nil, true
-		}
-		if m.eng == nil {
-			m.notice = "/btw: engine unavailable."
-			return m.appendSystemMessage("/btw: engine is not initialized."), nil, true
-		}
-		m.eng.QueueAgentNote(note)
-		m.chat.pendingNoteCount++
-		return m.appendSystemMessage("/btw queued: " + note + "\nIt will land as a user note before the next tool-loop step."), nil, true
+		return m.handleBtwSlash(args)
 	case "review", "explain", "refactor", "test", "doc":
 		return m.runTemplateSlash(cmd, args, raw)
 	case "analyze":
@@ -333,4 +299,3 @@ func (m Model) executeChatCommand(raw string) (tea.Model, tea.Cmd, bool) {
 		return m.appendSystemMessage("Unknown chat command: " + raw + "\nRun /help for the catalog."), nil, true
 	}
 }
-
