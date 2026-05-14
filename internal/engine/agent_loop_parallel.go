@@ -164,7 +164,20 @@ func (e *Engine) executeToolCallsParallel(ctx context.Context, calls []provider.
 			out[i] = parallelToolResult{Index: i, Err: ctx.Err()}
 			continue
 		}
-		sem <- struct{}{}
+		// Acquire-or-cancel: bare `sem <- struct{}{}` would block
+		// the dispatch loop until an in-flight worker freed a slot,
+		// even after ctx was cancelled. With cancellation-aware
+		// acquire, the loop drains immediately when the caller
+		// gives up — important on Ctrl+C with one slow tool still
+		// running (its goroutine sees ctx.Err() via its own select
+		// and returns), so the user doesn't wait for the slow tool
+		// to finish just to get their prompt back.
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			out[i] = parallelToolResult{Index: i, Err: ctx.Err()}
+			continue
+		}
 		wg.Add(1)
 		go func(idx int, c provider.ToolCall) {
 			defer func() {

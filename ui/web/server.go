@@ -28,6 +28,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -43,6 +44,13 @@ type Server struct {
 	allowedHosts   []string
 	trustedProxies []string
 	wsConnLimiter  *wsConnLimiter
+	// limiter is the per-IP rate limiter shared across every handler
+	// invocation. Created lazily on first Handler() call so test
+	// fixtures that never invoke Handler() pay zero cost; cached so
+	// repeated Handler() calls (or callers wrapping it in additional
+	// middleware layers) reuse the same goroutine. Close() stops it.
+	limiter   *perIPLimiter
+	limiterMu sync.Mutex
 }
 
 func New(eng *engine.Engine, host string, port int) *Server {
@@ -204,12 +212,41 @@ func (s *Server) Handler() http.Handler {
 	handler = hostAllowlistMiddleware(handler, s.allowedHosts)
 	handler = securityHeaders(handler)
 	// Rate-limit all endpoints: 30 requests/sec per IP with burst of 60.
-	limiter := newPerIPLimiter(30, 60)
-	handler = rateLimitMiddleware(s, limiter)(handler)
+	// Cache the limiter on the Server so repeated Handler() calls (each
+	// httptest.NewServer in the test suite invokes Handler() at least
+	// once) reuse the same goroutine. The previous implementation
+	// allocated a fresh limiter — and a fresh background gc goroutine
+	// that was never stopped — on every call.
+	handler = rateLimitMiddleware(s, s.acquireLimiter())(handler)
 	if strings.EqualFold(strings.TrimSpace(s.auth), "token") {
 		handler = bearerTokenMiddleware(handler, s.token)
 	}
 	return handler
+}
+
+// acquireLimiter returns the Server's rate limiter, lazily creating
+// it on first use. Concurrent callers see one limiter instance.
+func (s *Server) acquireLimiter() *perIPLimiter {
+	s.limiterMu.Lock()
+	defer s.limiterMu.Unlock()
+	if s.limiter == nil {
+		s.limiter = newPerIPLimiter(30, 60)
+	}
+	return s.limiter
+}
+
+// Close releases server-owned background resources. Currently stops
+// the rate-limiter gc goroutine; cheap to extend if future background
+// tasks land on the Server. Safe to call multiple times (Stop is
+// idempotent) and safe to call without ever having invoked Handler()
+// — acquireLimiter is lazy so an unused Server allocates nothing to
+// release.
+func (s *Server) Close() error {
+	s.limiterMu.Lock()
+	limiter := s.limiter
+	s.limiterMu.Unlock()
+	limiter.Stop()
+	return nil
 }
 
 const (

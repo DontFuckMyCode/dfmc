@@ -126,6 +126,14 @@ type perIPLimiter struct {
 	lastSeen map[string]time.Time
 	rate     rate.Limit
 	burst    int
+	// stop signals the gc goroutine to exit. Closed by Stop() at most
+	// once (stopOnce). The previous implementation pinned the gc
+	// goroutine for the life of the process — fine in production
+	// where there's exactly one Server, but tests that construct N
+	// throwaway Servers via httptest.NewServer leaked N gc
+	// goroutines.
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 func newPerIPLimiter(r rate.Limit, burst int) *perIPLimiter {
@@ -134,6 +142,7 @@ func newPerIPLimiter(r rate.Limit, burst int) *perIPLimiter {
 		lastSeen: make(map[string]time.Time),
 		rate:     r,
 		burst:    burst,
+		stop:     make(chan struct{}),
 	}
 	go l.gc() // background cleanup of stale entries
 	return l
@@ -155,20 +164,38 @@ func (l *perIPLimiter) Allow(ip string) bool {
 	return l.get(ip).Allow()
 }
 
+// Stop signals the gc goroutine to exit. Idempotent (safe to call
+// multiple times) and nil-safe. The companion call site is
+// Server.Close — operators stopping a serve session, and tests that
+// pair httptest.NewServer with t.Cleanup(srv.Close).
+func (l *perIPLimiter) Stop() {
+	if l == nil {
+		return
+	}
+	l.stopOnce.Do(func() { close(l.stop) })
+}
+
 // gc periodically removes IPs with no activity in 10 minutes.
+// Exits promptly when Stop() closes l.stop so a torn-down Server
+// doesn't leak its background timer for the rest of the process.
 func (l *perIPLimiter) gc() {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		l.mu.Lock()
-		cutoff := time.Now().Add(-10 * time.Minute)
-		for ip, last := range l.lastSeen {
-			if last.Before(cutoff) {
-				delete(l.buckets, ip)
-				delete(l.lastSeen, ip)
+	for {
+		select {
+		case <-ticker.C:
+			l.mu.Lock()
+			cutoff := time.Now().Add(-10 * time.Minute)
+			for ip, last := range l.lastSeen {
+				if last.Before(cutoff) {
+					delete(l.buckets, ip)
+					delete(l.lastSeen, ip)
+				}
 			}
+			l.mu.Unlock()
+		case <-l.stop:
+			return
 		}
-		l.mu.Unlock()
 	}
 }
 

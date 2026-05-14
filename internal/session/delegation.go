@@ -70,15 +70,30 @@ func ValidateDelegation(sp sessionProvider, from, to AgentID) error {
 
 // setupBlockingDelegation creates the result channel and timeout goroutine for
 // a blocking delegation. Called by Session.Delegate.
+//
+// The cleanup goroutine uses a stoppable NewTimer (not the unstoppable
+// time.After channel) and a select on parent.runCtx.Done so it returns
+// promptly when the agent shuts down. Previously a bare
+// `<-time.After(5*time.Minute)` pinned a goroutine and a runtime timer
+// for the full window even when the parent had already consumed the
+// result and exited — at sub-agent fan-out scale (dozens of
+// delegations per task) the cumulative timer pressure showed up as
+// excess goroutines and a growing timer wheel. The deferred Stop
+// + idempotent delete keep the cleanup correct on all three exit
+// paths (timer fire, ctx cancel, already-deleted by consumer).
 func setupBlockingDelegation(parent *Agent, taskID uuid.UUID) {
 	ch := make(chan DelegationResult, 1)
 	parent.pendingMu.Lock()
 	parent.pendingResults[taskID] = ch
 	parent.pendingMu.Unlock()
 
-	// Timeout: clean up pendingResults after 5 minutes.
 	go func() {
-		<-time.After(5 * time.Minute)
+		t := time.NewTimer(5 * time.Minute)
+		defer t.Stop()
+		select {
+		case <-t.C:
+		case <-parent.runCtx.Done():
+		}
 		parent.pendingMu.Lock()
 		delete(parent.pendingResults, taskID)
 		parent.pendingMu.Unlock()

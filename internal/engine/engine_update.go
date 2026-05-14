@@ -80,13 +80,22 @@ func (e *Engine) CheckForUpdates(ctx context.Context, currentVersion string) (Up
 }
 
 // StartUpdateChecker kicks off a background goroutine that checks for updates
-// periodically (default every 6 hours).
-func (e *Engine) StartUpdateChecker(ctx context.Context, currentVersion string) {
+// periodically (default every 6 hours). The goroutine is registered with
+// the engine's background-task waitgroup so Shutdown blocks on its exit
+// — without this registration, a teardown mid-CheckForUpdates could race
+// the storage Close and panic on a half-freed EventBus / mu lock.
+//
+// The supplied ctx is ignored in favor of the engine's own background
+// context (BackgroundContext()) so the lifetime matches Shutdown rather
+// than the caller's request-scoped context. Callers historically passed
+// context.Background() expecting "forever until process exit"; using
+// the engine's ctx aligns with that intent while making the goroutine
+// observable by Shutdown.
+func (e *Engine) StartUpdateChecker(_ context.Context, currentVersion string) {
 	if currentVersion == "" || currentVersion == "dev" {
 		return
 	}
-
-	go func() {
+	e.StartBackgroundTask("update-checker", func(ctx context.Context) {
 		// Initial check
 		_, _ = e.CheckForUpdates(ctx, currentVersion)
 
@@ -101,7 +110,7 @@ func (e *Engine) StartUpdateChecker(ctx context.Context, currentVersion string) 
 				_, _ = e.CheckForUpdates(ctx, currentVersion)
 			}
 		}
-	}()
+	})
 }
 
 // LatestUpdate returns the last known update info.

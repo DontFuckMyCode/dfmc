@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -100,29 +101,29 @@ func (l *Logger) flush() {
 	date := time.Now().UTC().Format("2006-01-02")
 	path := filepath.Join(l.dir, date+".jsonl")
 
-	var lines []string
+	// O_APPEND write: matches the toolhistory logger's switch away
+	// from "read all + atomic rename" which was O(filesize) per
+	// flush. For a journal that grows monotonically through a long
+	// session, the previous pattern's per-flush cost climbed from kB
+	// to tens of MB. Mode 0o600 (was 0o644): prompts and responses
+	// carried in these logs are session-sensitive and should not be
+	// world-readable on multi-user hosts. A crash mid-write loses one
+	// in-flight record at worst — not the whole log.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	var buf bytes.Buffer
 	for _, r := range recs {
-		if b, err := json.Marshal(r); err == nil {
-			lines = append(lines, string(b))
+		b, err := json.Marshal(r)
+		if err != nil {
+			continue
 		}
+		buf.Write(b)
+		buf.WriteByte('\n')
 	}
-
-	var existing []byte
-	if raw, err := os.ReadFile(path); err == nil {
-		existing = raw
-	}
-
-	full := existing
-	for _, ln := range lines {
-		full = append(full, ln...)
-		full = append(full, '\n')
-	}
-
-	// Atomic write: write to temp then rename
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, full, 0o644); err == nil {
-		os.Rename(tmp, path) // atomic on POSIX; best-effort on Windows
-	}
+	_, _ = f.Write(buf.Bytes())
 }
 
 func (l *Logger) periodicFlush() {

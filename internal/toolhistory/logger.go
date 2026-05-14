@@ -1,6 +1,7 @@
 package toolhistory
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -156,22 +157,30 @@ func (l *Logger) flush() {
 
 	date := time.Now().UTC().Format("2006-01-02")
 	path := filepath.Join(l.dir, date+".jsonl")
-	var lines []string
+	// O_APPEND write: previous implementation read the entire file,
+	// re-marshalled existing + new, and atomic-renamed — O(filesize)
+	// per flush. Over a long session the per-flush cost climbed from
+	// kB to tens of MB as the log grew, since each periodic flush
+	// rewrote everything ever logged. Append is the canonical journal
+	// pattern: O(new bytes) per flush, durable enough for a tool
+	// history log (a crash mid-write loses one in-flight record, not
+	// the whole journal — and the existing periodic flush already
+	// tolerates that loss window).
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	var buf bytes.Buffer
 	for _, r := range recs {
-		if b, err := json.Marshal(r); err == nil {
-			lines = append(lines, string(b))
+		b, err := json.Marshal(r)
+		if err != nil {
+			continue
 		}
+		buf.Write(b)
+		buf.WriteByte('\n')
 	}
-	var existing []byte
-	if raw, err := os.ReadFile(path); err == nil {
-		existing = raw
-	}
-	full := existing
-	for _, ln := range lines {
-		full = append(full, ln...)
-		full = append(full, '\n')
-	}
-	_ = writeFileAtomic(path, full, "toolhistory")
+	_, _ = f.Write(buf.Bytes())
 }
 
 func (l *Logger) periodicFlush() {

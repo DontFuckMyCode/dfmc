@@ -209,7 +209,7 @@ func (d *Driver) RunPrepared(ctx context.Context, run *Run) (retRun *Run, retErr
 //
 // Returns ErrRunFinished if the run is already in a terminal state —
 // callers should distinguish that from a real load failure.
-func (d *Driver) Resume(ctx context.Context, runID string) (*Run, error) {
+func (d *Driver) Resume(ctx context.Context, runID string) (retRun *Run, retErr error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("drive.Driver: context must not be nil")
 	}
@@ -241,6 +241,35 @@ func (d *Driver) Resume(ctx context.Context, runID string) (*Run, error) {
 	run.EndedAt = time.Time{}
 	run.Reason = ""
 	d.persist(run)
+	retRun = run
+	// Mirror RunPrepared's panic recover: any crash inside the
+	// executor loop (slice bounds in applyOutcome, nil ptr from a
+	// stale plan, etc.) would otherwise leak the registry entry,
+	// hold BeginAutoApprove permanently for follow-up turns, and
+	// leave the run in RunRunning forever on disk. The defer below
+	// finalizes the run as RunFailed, releases the registry, and
+	// surfaces the panic to the caller as a typed error so HTTP
+	// /drive/resume callers see a 500 instead of an opaque hang.
+	defer func() {
+		if r := recover(); r != nil {
+			run.Status = RunFailed
+			run.Reason = fmt.Sprintf("resume panic: %v", r)
+			run.EndedAt = time.Now()
+			d.persist(run)
+			d.publish(EventRunFailed, map[string]any{
+				"run_id": run.ID,
+				"reason": run.Reason,
+			})
+			switch v := r.(type) {
+			case error:
+				retErr = fmt.Errorf("drive resume panic: %w", v)
+			default:
+				retErr = fmt.Errorf("drive resume panic: %v", v)
+			}
+			retRun = run
+			unregister(run.ID) // clean up registry even on panic
+		}
+	}()
 	// Same registry hook as Run(). Use the original run ID so
 	// `dfmc drive stop <id>` works on a resumed run too.
 	cancelCtx, cancel := context.WithCancel(ctx)
