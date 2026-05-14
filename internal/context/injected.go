@@ -11,7 +11,9 @@
 //   - extractQueryCodeBlocks: pulls fenced code blocks out of the raw
 //     query text, trims to maxLines, and returns pre-formatted fences.
 //   - resolvePathWithinRoot: makes sure a [[file:...]] reference can't
-//     escape the project root via `..` traversal.
+//     escape the project root via `..` traversal OR a symlink that
+//     points out of the tree (delegates to internal/pathsafe so the
+//     prompt-injection resolver and the tool surface share one gate).
 //   - safeSub: bounded index into a regex capture slice.
 //
 // Extracted from manager.go.
@@ -26,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dontfuckmycode/dfmc/internal/pathsafe"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -166,27 +169,16 @@ func extractQueryCodeBlocks(query string, maxBlocks, maxLines int) []string {
 	return out
 }
 
+// resolvePathWithinRoot rejects absolute [[file:...]] markers outright
+// (a relative marker is the only form the syntax is meant to take) and
+// then delegates containment + symlink-traversal checks to pathsafe.
+// Pre-fix the lexical-only check here let `project/evil -> /etc/passwd`
+// pass through, since `filepath.Rel(root, root/evil)` is just `evil`.
 func resolvePathWithinRoot(root, rel string) (string, error) {
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("[[file:]] marker must use a relative path")
 	}
-	target := rel
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(absRoot, rel)
-	}
-	absTarget, err := filepath.Abs(target)
-	if err != nil {
-		return "", err
-	}
-	relPath, err := filepath.Rel(absRoot, absTarget)
-	if err != nil {
-		return "", err
-	}
-	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path escapes project root")
-	}
-	return absTarget, nil
+	return pathsafe.EnsureWithinRoot(root, rel)
 }
 
 func safeSub(parts []string, idx int) string {

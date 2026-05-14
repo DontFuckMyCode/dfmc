@@ -220,6 +220,18 @@ func (e *Engine) executeToolWithLifecycle(ctx context.Context, name string, para
 		// likely vulnerability or leaked credential. Best-effort,
 		// non-blocking — see security_audit.go for the heuristic.
 		e.maybeAuditSensitiveWrite(name, params)
+		// Meta wrappers (tool_call / tool_batch_call) dispatch backend
+		// tools through tools.Engine.Execute directly, so the two
+		// callbacks above only see the meta name. Fan them out to each
+		// successful inner backend call so an `edit_file` routed through
+		// `tool_batch_call` still invalidates its file's context cache
+		// and triggers the sensitive-path audit. Allowlist / skill /
+		// path-scope gates already pre-walk inner names at the top of
+		// this funnel, so no gate is duplicated here.
+		for _, c := range metaSuccessfulInnerCalls(name, res, params) {
+			e.invalidateContextForTool(c.Name, c.Args)
+			e.maybeAuditSensitiveWrite(c.Name, c.Args)
+		}
 	} else {
 		// Distinct event when the per-tool deadline killed Execute.
 		// Operators care because the gate firing means either (a) the

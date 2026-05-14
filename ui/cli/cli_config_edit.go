@@ -59,8 +59,19 @@ func runConfigEdit(eng *engine.Engine, args []string) int {
 		fmt.Fprintln(os.Stderr, "config edit error: no editor configured")
 		return 1
 	}
+	for _, part := range editorParts {
+		if strings.ContainsAny(part, "\x00\r\n") {
+			fmt.Fprintln(os.Stderr, "config edit error: editor contains illegal control characters")
+			return 1
+		}
+	}
+	editorBin, err := exec.LookPath(editorParts[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config edit error: editor %q not found on PATH: %v\n", editorParts[0], err)
+		return 1
+	}
 	cmdArgs := append(editorParts[1:], targetPath)
-	cmd := exec.Command(editorParts[0], cmdArgs...)
+	cmd := exec.Command(editorBin, cmdArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

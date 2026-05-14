@@ -7,11 +7,16 @@ package tools
 // workspace. PathRelativeToRoot turns absolute paths into
 // project-relative ones for surfacing to the model — keeps the host's
 // filesystem prefix out of conversation logs and episodic memory.
+//
+// The containment logic itself lives in internal/pathsafe so the
+// [[file:...]] prompt-injection resolver in internal/context can use
+// the same primitive without creating an import cycle.
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/dontfuckmycode/dfmc/internal/pathsafe"
 )
 
 // PathRelativeToRoot turns an absolute path into a project-root-relative
@@ -39,99 +44,17 @@ func PathRelativeToRoot(root, abs string) string {
 }
 
 // EnsureWithinRoot resolves `path` relative to `root` and refuses
-// anything that escapes. Resistance comes from two layers:
-//
-//  1. Syntactic: filepath.Abs + filepath.Rel; any `..` prefix means
-//     the path walks out of the root tree.
-//  2. Symbolic: once the lexical check passes, resolve symlinks on
-//     both `root` and `absPath` (via filepath.EvalSymlinks) and
-//     re-check. This stops a committed symlink like
-//     `project/evil -> /etc/passwd` from being reachable through the
-//     tool API. If the target doesn't exist yet (e.g. write_file
-//     creating a new file), we resolve the nearest existing ancestor
-//     instead and re-run the containment check on that, so new-file
-//     writes under a sanitary tree still work.
+// anything that escapes (lexical `..` walks AND symlink-out-of-tree).
+// Thin wrapper over pathsafe.EnsureWithinRoot so the same primitive
+// guards the tool surface and the [[file:...]] prompt-injection
+// resolver in internal/context — see the package comment in
+// internal/pathsafe for the layered defense rationale.
 func EnsureWithinRoot(root, path string) (string, error) {
-	if strings.TrimSpace(path) == "" {
-		return "", fmt.Errorf("path is required")
-	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-	absPath := path
-	if !filepath.IsAbs(path) {
-		absPath = filepath.Join(absRoot, path)
-	}
-	absPath, err = filepath.Abs(absPath)
-	if err != nil {
-		return "", err
-	}
-	if !isPathWithin(absRoot, absPath) {
-		return "", fmt.Errorf("path escapes project root: %s", path)
-	}
-	// Symlink check. Evaluate both sides so a root that is itself
-	// /var/task (symlinked from /opt) still matches a path resolved
-	// through the same symlink.
-	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
-	if err != nil {
-		return "", fmt.Errorf("resolve project root symlinks: %w", err)
-	}
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		// Target doesn't exist yet (write_file creating new file) or
-		// a dangling symlink. Walk up until we find an existing
-		// ancestor and resolve that — any escape through a symlink
-		// in the existing ancestor chain still gets caught.
-		resolvedPath, err = resolveExistingAncestor(absPath)
-		if err != nil {
-			return "", fmt.Errorf("cannot resolve symlink ancestry for %q: %w", path, err)
-		}
-	}
-	if !isPathWithin(resolvedRoot, resolvedPath) {
-		return "", fmt.Errorf("path escapes project root via symlink: %s", path)
-	}
-	return absPath, nil
+	return pathsafe.EnsureWithinRoot(root, path)
 }
 
-// isPathWithin reports whether target is at or under root using Rel —
-// so it handles trailing-slash and case-insensitive-FS oddities via
-// the same primitive the old check used.
+// isPathWithin is retained for callers inside this package that need
+// the lexical-only containment primitive (no symlink resolution).
 func isPathWithin(root, target string) bool {
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return false
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false
-	}
-	return true
-}
-
-// resolveExistingAncestor walks upward from `absPath` until it finds
-// a directory that exists, then returns its symlink-resolved form.
-// This is the fallback used when the target of a write_file call
-// doesn't exist yet — we still want to catch an attempt to write
-// through `projectRoot/symlink-to-etc/newfile`.
-func resolveExistingAncestor(absPath string) (string, error) {
-	current := absPath
-	for {
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", fmt.Errorf("no existing ancestor")
-		}
-		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
-			// Resolved the existing ancestor. Check if the full target
-			// path under the resolved ancestor is within the project root.
-			// We reconstruct the path by appending the remaining relative
-			// components so symlink-to-absolute-path escapes are caught.
-			rel, err := filepath.Rel(parent, absPath)
-			if err != nil {
-				return "", fmt.Errorf("cannot compute relative path: %w", err)
-			}
-			reconstructed := filepath.Join(resolved, rel)
-			return reconstructed, nil
-		}
-		current = parent
-	}
+	return pathsafe.IsPathWithin(root, target)
 }

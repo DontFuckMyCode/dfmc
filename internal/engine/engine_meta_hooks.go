@@ -22,6 +22,69 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
+// metaSuccessfulInnerCalls returns the (name, args) pairs that were
+// actually dispatched AND succeeded inside a meta wrapper, so the
+// engine's success-side side effects (context invalidation, sensitive-
+// write audit) can fan out to inner backend tools instead of stopping
+// at the outer "tool_call" / "tool_batch_call" name.
+//
+// Contract per meta tool:
+//   - tool_call: outer success ⟺ inner success (the meta tool returns
+//     whatever the inner returned). So we just resolve the inner via
+//     metaInnerToolCalls.
+//   - tool_batch_call: outer success means "the batch dispatcher
+//     didn't crash"; individual inner outcomes live in
+//     res.Data["results"][i]["success"]. We zip those with the inner
+//     calls extracted from params and return only the successful ones.
+//
+// Returns nil when the outer name is not a meta wrapper, OR when the
+// meta result shape isn't recognisable (best-effort: a stale shape
+// just means side effects don't fan out, not that they fire wrongly).
+func metaSuccessfulInnerCalls(name string, res tools.Result, params map[string]any) []metaInnerToolCall {
+	switch strings.TrimSpace(name) {
+	case "tool_call":
+		// Outer success implies inner success — return the resolved
+		// inner call directly. metaInnerToolCalls peels redundant
+		// tool_call(tool_call(...)) layers.
+		return metaInnerToolCalls(name, params)
+	case "tool_batch_call":
+		inner := metaInnerToolCalls(name, params)
+		if len(inner) == 0 || res.Data == nil {
+			return nil
+		}
+		rawResults, ok := res.Data["results"].([]map[string]any)
+		if !ok {
+			return nil
+		}
+		out := make([]metaInnerToolCall, 0, len(inner))
+		// Per meta_batch.go the results slice is the same length and
+		// in the same order as the parsed calls — but we defensively
+		// match on name AND require success=true.
+		for i, entry := range rawResults {
+			if i >= len(inner) {
+				break
+			}
+			succ, _ := entry["success"].(bool)
+			if !succ {
+				continue
+			}
+			nm, _ := entry["name"].(string)
+			if nm != "" && nm != inner[i].Name {
+				// Shape drift between meta_batch and metaInnerToolCalls
+				// — skip rather than fan side effects to a mismatched
+				// (name, args) pair.
+				continue
+			}
+			out = append(out, inner[i])
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	return nil
+}
+
 // metaInnerNames returns the inner backend tool names when `name` is a
 // meta wrapper, or nil for regular tools / malformed params. The unwrap
 // logic mirrors meta.go's ToolCallTool.Execute: it accepts arg-key

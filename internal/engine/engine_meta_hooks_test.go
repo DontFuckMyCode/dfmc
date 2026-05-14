@@ -3,7 +3,118 @@ package engine
 import (
 	"reflect"
 	"testing"
+
+	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
+
+// TestMetaSuccessfulInnerCalls pins the success-side fanout helper.
+// executeToolWithLifecycle uses it to dispatch invalidateContextForTool
+// and maybeAuditSensitiveWrite to inner backend calls when the outer
+// name is a meta wrapper. Bugs here surface as silent context staleness
+// (an edit_file routed via tool_batch_call doesn't invalidate the
+// file's cache) or missed sensitive-write audits.
+func TestMetaSuccessfulInnerCalls(t *testing.T) {
+	editArgs := map[string]any{"path": "a.go", "old_string": "x", "new_string": "y"}
+	writeArgs := map[string]any{"path": "b.go", "content": "z"}
+	readArgs := map[string]any{"path": "c.go"}
+
+	cases := []struct {
+		label  string
+		name   string
+		params map[string]any
+		res    tools.Result
+		want   []metaInnerToolCall
+	}{
+		{
+			label:  "non-meta returns nil",
+			name:   "read_file",
+			params: readArgs,
+			res:    tools.Result{},
+			want:   nil,
+		},
+		{
+			label: "tool_call propagates outer success to the single inner",
+			name:  "tool_call",
+			params: map[string]any{
+				"name": "edit_file",
+				"args": editArgs,
+			},
+			res:  tools.Result{},
+			want: []metaInnerToolCall{{Name: "edit_file", Args: editArgs}},
+		},
+		{
+			label: "tool_batch_call returns only success=true entries",
+			name:  "tool_batch_call",
+			params: map[string]any{
+				"calls": []any{
+					map[string]any{"name": "edit_file", "args": editArgs},
+					map[string]any{"name": "write_file", "args": writeArgs},
+					map[string]any{"name": "read_file", "args": readArgs},
+				},
+			},
+			res: tools.Result{Data: map[string]any{
+				"results": []map[string]any{
+					{"name": "edit_file", "success": true},
+					{"name": "write_file", "success": false, "error": "perm denied"},
+					{"name": "read_file", "success": true},
+				},
+			}},
+			want: []metaInnerToolCall{
+				{Name: "edit_file", Args: editArgs},
+				{Name: "read_file", Args: readArgs},
+			},
+		},
+		{
+			label: "tool_batch_call rejects entries whose name drifted",
+			name:  "tool_batch_call",
+			params: map[string]any{
+				"calls": []any{
+					map[string]any{"name": "edit_file", "args": editArgs},
+				},
+			},
+			res: tools.Result{Data: map[string]any{
+				"results": []map[string]any{
+					{"name": "write_file", "success": true},
+				},
+			}},
+			want: nil,
+		},
+		{
+			label: "tool_batch_call with no results data returns nil",
+			name:  "tool_batch_call",
+			params: map[string]any{
+				"calls": []any{
+					map[string]any{"name": "edit_file", "args": editArgs},
+				},
+			},
+			res:  tools.Result{},
+			want: nil,
+		},
+		{
+			label: "tool_batch_call with all failures returns nil",
+			name:  "tool_batch_call",
+			params: map[string]any{
+				"calls": []any{
+					map[string]any{"name": "edit_file", "args": editArgs},
+				},
+			},
+			res: tools.Result{Data: map[string]any{
+				"results": []map[string]any{
+					{"name": "edit_file", "success": false},
+				},
+			}},
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			got := metaSuccessfulInnerCalls(tc.name, tc.res, tc.params)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("metaSuccessfulInnerCalls(%q) = %#v, want %#v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
 
 // TestMetaInnerNames pins the extraction logic that lets
 // executeToolWithLifecycle fan pre/post_tool hooks out to each inner
