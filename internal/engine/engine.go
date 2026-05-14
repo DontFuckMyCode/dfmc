@@ -50,7 +50,6 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/providerlog"
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/internal/storage"
-	"github.com/dontfuckmycode/dfmc/internal/supervisor"
 	"github.com/dontfuckmycode/dfmc/internal/toolhistory"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
@@ -135,11 +134,6 @@ type Engine struct {
 	// every consumer (a nil router falls back to the raw input). See
 	// internal/intent for the routing semantics.
 	Intent *intent.Router
-
-	// activeSupervisor holds a supervisor instance during a drive run.
-	// Sub-agent budget halving uses the pool when non-nil. Set by
-	// SetSupervisor and cleared by ClearSupervisor.
-	activeSupervisor supervisor.TokenAllocator
 
 	providerOverride string
 	modelOverride    string

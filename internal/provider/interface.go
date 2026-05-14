@@ -264,6 +264,17 @@ type ProviderHints struct {
 	SupportsTools bool `json:"supports_tools,omitempty"`
 }
 
+// Provider is the union of every behaviour the engine asks of an
+// upstream LLM. It is deliberately a single fat interface rather than
+// the split Completer / Streamer / TokenCounter / Describer the
+// Go style guide nudges toward, because every concrete implementation
+// (anthropic, openai-compat, google, offline, placeholder, ...) needs
+// all of these methods and every caller (router, doctor, agent loop,
+// engine status) consumes the union. Splitting prematurely would force
+// every call site through interface assertions for zero current
+// benefit. Defer the split until a real caller appears that wants to
+// depend on a narrower contract — e.g. a mock satisfying only
+// TokenCounter, or a provider that genuinely cannot stream.
 type Provider interface {
 	Name() string
 	Model() string

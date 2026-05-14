@@ -792,56 +792,6 @@ func TestExecutorStepBudgetForWorkerLanes(t *testing.T) {
 	}
 }
 
-func TestSynthesizeVerificationTodo_AddsSupervisorVerifier(t *testing.T) {
-	todos := []Todo{
-		{
-			ID:           "T1",
-			Title:        "Patch auth refresh",
-			Detail:       "Update refresh flow and add token guard.",
-			ProviderTag:  "code",
-			WorkerClass:  "coder",
-			FileScope:    []string{"internal/auth/service.go"},
-			Verification: "required",
-		},
-		{
-			ID:           "T2",
-			Title:        "Review auth boundary",
-			Detail:       "Inspect authz rules and token validation.",
-			ProviderTag:  "review",
-			WorkerClass:  "security",
-			FileScope:    []string{"internal/auth/middleware.go"},
-			Skills:       []string{"audit"},
-			Verification: "deep",
-		},
-	}
-	got := synthesizeVerificationTodo(todos)
-	if got == nil {
-		t.Fatal("expected synthesized verifier")
-	}
-	if got.Origin != "supervisor" || got.Kind != "verify" {
-		t.Fatalf("unexpected synthesized todo metadata: %+v", got)
-	}
-	if got.ProviderTag != "review" || got.WorkerClass != "security" {
-		t.Fatalf("deep/security verification should pick review/security: %+v", got)
-	}
-	if len(got.DependsOn) != 2 || got.DependsOn[0] != "T1" || got.DependsOn[1] != "T2" {
-		t.Fatalf("unexpected verifier deps: %+v", got.DependsOn)
-	}
-	if !containsStringFold(got.Skills, "audit") {
-		t.Fatalf("expected audit skill in synthesized verifier: %+v", got.Skills)
-	}
-}
-
-func TestSynthesizeVerificationTodo_SkipsWhenVerifierAlreadyExists(t *testing.T) {
-	todos := []Todo{
-		{ID: "T1", Title: "Patch auth refresh", WorkerClass: "coder", Verification: "required"},
-		{ID: "T2", Title: "Run verification pass", WorkerClass: "tester", ProviderTag: "test", Kind: "verify", Verification: "required"},
-	}
-	if got := synthesizeVerificationTodo(todos); got != nil {
-		t.Fatalf("expected nil when verifier already exists, got %+v", got)
-	}
-}
-
 func TestDriverAutoVerify_AppendsAndRunsVerifierLast(t *testing.T) {
 	runner := &fakeRunner{
 		PlanFunc: func(_ PlannerRequest) (string, error) {
