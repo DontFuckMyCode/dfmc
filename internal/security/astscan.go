@@ -143,13 +143,17 @@ func (s *Scanner) ScanASTRules(path string, content []byte) []VulnerabilityFindi
 		}
 
 		// Apply scope transitions BEFORE observe + rules. A line that
-		// ends a function (lone `}`) must pop BEFORE we observe so the
-		// taint state on the line lives in the outer scope. A line
-		// that starts a function (`func foo() {`) pushes AFTER we
-		// observe so the declaration itself reads as part of the
-		// outer scope (function name / params don't get tainted in
-		// the new inner scope).
-		scope.preObserve(trimmed, taint)
+		// ends a function (lone `}` for brace languages, indent drop
+		// for Python) must pop BEFORE we observe so the taint state
+		// on the line lives in the outer scope. A line that starts a
+		// function pushes AFTER we observe so the declaration itself
+		// reads as part of the outer scope (function name / params
+		// don't get tainted in the new inner scope).
+		//
+		// Both `line` (raw) and `trimmed` are passed: brace
+		// languages key off `trimmed`, the Python path measures
+		// leading whitespace on `line` for indent tracking.
+		scope.preObserve(line, trimmed, taint)
 
 		// Update the tracker BEFORE running rules so a rule that
 		// queries taintedness on its OWN line sees only prior-line
@@ -160,7 +164,7 @@ func (s *Scanner) ScanASTRules(path string, content []byte) []VulnerabilityFindi
 		// Post-observe scope entry. A function-declaration line
 		// observed in the outer scope, then a new scope opens for
 		// the body to flow into.
-		scope.postObserve(trimmed, taint)
+		scope.postObserve(line, trimmed, taint)
 
 		ctx := &scanLineCtx{
 			Lang:       lang,

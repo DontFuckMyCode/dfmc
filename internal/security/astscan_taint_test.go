@@ -356,6 +356,79 @@ func TestSmartScan_Python_SubprocessLiteralStaysSafe(t *testing.T) {
 	mustNotContainKind(t, findings, "tainted input")
 }
 
+// TestSmartScan_Python_NameReuseAcrossFunctionsIsolated pins the
+// Python counterpart of the Go / JS scope-isolation win: a `user`
+// pulled from sys.argv in one function must NOT be visible to a
+// sink call in a separate function where `user` is a literal.
+// Pre-R8 slice 4 this was a false positive (the file-scoped Python
+// tracker kept `user` tainted globally).
+func TestSmartScan_Python_NameReuseAcrossFunctionsIsolated(t *testing.T) {
+	src := "import sys\n" +
+		"import subprocess\n" +
+		"def handler():\n" +
+		"    user = sys.argv[1]\n" +
+		"    print(user)\n" +
+		"def safe_run():\n" +
+		"    user = \"ls\"\n" +
+		"    " + fxPySubpRun + "(user)\n"
+	findings := scanHelper(t, "sample.py", src)
+	mustNotContainKind(t, findings, "tainted input")
+}
+
+// TestSmartScan_Python_TaintInOneFunctionFiresInSameFunction pins
+// the flip side: scope isolation does NOT mask within-function
+// flow. The handler() has both source and sink and must still flag.
+func TestSmartScan_Python_TaintInOneFunctionFiresInSameFunction(t *testing.T) {
+	src := "import sys\n" +
+		"import subprocess\n" +
+		"def handler():\n" +
+		"    user = sys.argv[1]\n" +
+		"    " + fxPySubpRun + "(user)\n" +
+		"def unrelated():\n" +
+		"    x = 1\n" +
+		"    return x\n"
+	findings := scanHelper(t, "sample.py", src)
+	mustContainKind(t, findings, "tainted input")
+}
+
+// TestSmartScan_Python_NestedFunctionsRestoreOuterScope pins the
+// indent-stack mechanics: a `def` nested inside another `def`
+// opens an inner scope, and when indent drops back to the outer
+// function's body level, the inner scope is popped without
+// disturbing the outer.
+func TestSmartScan_Python_NestedFunctionsRestoreOuterScope(t *testing.T) {
+	src := "import sys\n" +
+		"import subprocess\n" +
+		"def outer():\n" +
+		"    user = sys.argv[1]\n" +
+		"    def inner():\n" +
+		"        local = \"safe\"\n" +
+		"        return local\n" +
+		"    " + fxPySubpRun + "(user)\n"
+	findings := scanHelper(t, "sample.py", src)
+	mustContainKind(t, findings, "tainted input")
+}
+
+// TestSmartScan_Python_ClassMethodScopeIsolated pins the class
+// shape: a method inside a class body declares `user` tainted, but
+// a top-level function that follows the class must NOT see it.
+// The class itself isn't scoped (the slice ignores `class`), but
+// the inner `def __init__` is, and indent-drop after the class
+// pops everything correctly.
+func TestSmartScan_Python_ClassMethodScopeIsolated(t *testing.T) {
+	src := "import sys\n" +
+		"import subprocess\n" +
+		"class Handler:\n" +
+		"    def __init__(self):\n" +
+		"        self.user = sys.argv[1]\n" +
+		"        user = sys.argv[2]\n" +
+		"def standalone():\n" +
+		"    user = \"safe\"\n" +
+		"    " + fxPySubpRun + "(user)\n"
+	findings := scanHelper(t, "sample.py", src)
+	mustNotContainKind(t, findings, "tainted input")
+}
+
 // TestSmartScan_Python_SubprocessPropagationThroughStr ensures taint
 // propagates through one level of wrapping (str(x)) and the rule
 // still fires when the wrapped value lands in a sink.

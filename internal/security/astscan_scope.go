@@ -45,14 +45,23 @@ import (
 // scan loop. It is nil-safe (every method returns the zero value
 // on a nil receiver) so callers can construct one unconditionally.
 //
-// State carried: only `pushCount`, the number of currently-open
-// function scopes we've pushed onto the taint tracker. We don't
-// need a stack of-anything because Push / Pop on the taint tracker
-// is already stack-shaped; we just need to keep our pushes and
-// pops balanced.
+// State carried:
+//
+//   - pushCount: brace-language counter (Go / JS / TS). Tracks the
+//     number of currently-open function scopes we've pushed. We
+//     don't need a stack of anything here because Push / Pop on
+//     the taint tracker is itself stack-shaped; we just keep our
+//     pushes and pops balanced.
+//
+//   - pythonFuncIndents: Python indent stack. Each entry is the
+//     leading-whitespace count of a `def` line that we pushed a
+//     scope for. When a later line's indent drops to or below the
+//     top entry, we know the function ended (Python has no closing
+//     brace; scope-end is implicit from indent drop).
 type scopeBalancer struct {
-	lang      string
-	pushCount int
+	lang              string
+	pushCount         int
+	pythonFuncIndents []int
 }
 
 func newScopeBalancer(lang string) *scopeBalancer {
@@ -60,21 +69,41 @@ func newScopeBalancer(lang string) *scopeBalancer {
 }
 
 // preObserve runs BEFORE the taint tracker's observeLine on the
-// current source line. The only transition that fires here is
-// function exit: a lone `}` line pops the topmost function scope
-// so any assignments on the SAME line (rare in practice) live in
-// the outer scope. Same brace shape works for every brace-language
-// the balancer knows about (Go / JS / TS).
-func (b *scopeBalancer) preObserve(trimmed string, taint *taintTracker) {
+// current source line. Two function-exit transitions can fire:
+//
+//   - Brace languages (Go / JS / TS): a lone `}` line pops the
+//     topmost function scope.
+//
+//   - Python: any line whose indent has dropped to or below the
+//     topmost open function's entry indent pops that function (and
+//     keeps popping while the next-outer function also fits the
+//     condition, since the indent can drop by multiple levels at
+//     once -- e.g. a top-level statement after a method inside a
+//     class).
+//
+// `line` carries the original (un-trimmed) source line so the
+// Python path can measure leading whitespace; `trimmed` carries
+// the cheap-comparison form for brace-language exit detection.
+func (b *scopeBalancer) preObserve(line, trimmed string, taint *taintTracker) {
 	if b == nil {
 		return
 	}
 	if !b.handlesLang() {
 		return
 	}
-	if isBraceLanguageFunctionExit(trimmed) && b.pushCount > 0 {
-		taint.PopScope()
-		b.pushCount--
+	switch b.lang {
+	case "go", "javascript", "typescript":
+		if isBraceLanguageFunctionExit(trimmed) && b.pushCount > 0 {
+			taint.PopScope()
+			b.pushCount--
+		}
+	case "python":
+		indent := countLeadingWS(line)
+		for len(b.pythonFuncIndents) > 0 &&
+			b.pythonFuncIndents[len(b.pythonFuncIndents)-1] >= indent {
+			taint.PopScope()
+			b.pythonFuncIndents = b.pythonFuncIndents[:len(b.pythonFuncIndents)-1]
+		}
 	}
 }
 
@@ -82,25 +111,37 @@ func (b *scopeBalancer) preObserve(trimmed string, taint *taintTracker) {
 // function-entry transition fires here so the declaration itself
 // is observed in the OUTER scope (the function name and parameters
 // don't get tainted into the new inner scope just because of where
-// the declaration sits). One-liner functions both push and pop,
-// leaving the count unchanged but giving any assignments on the
-// line their own scope in case a future rule cares.
-func (b *scopeBalancer) postObserve(trimmed string, taint *taintTracker) {
+// the declaration sits). One-liner brace-language functions both
+// push and pop, leaving the count unchanged but giving any
+// assignments on the line their own scope in case a future rule
+// cares. Python has no one-liner shape (PEP 8 requires the body to
+// start on a new line) so the same-line balance issue doesn't
+// arise.
+func (b *scopeBalancer) postObserve(line, trimmed string, taint *taintTracker) {
 	if b == nil {
 		return
 	}
 	if !b.handlesLang() {
 		return
 	}
-	entry, oneLiner := b.detectFunctionEntry(trimmed)
-	if !entry {
-		return
-	}
-	taint.PushScope()
-	b.pushCount++
-	if oneLiner {
-		taint.PopScope()
-		b.pushCount--
+	switch b.lang {
+	case "go", "javascript", "typescript":
+		entry, oneLiner := b.detectFunctionEntry(trimmed)
+		if !entry {
+			return
+		}
+		taint.PushScope()
+		b.pushCount++
+		if oneLiner {
+			taint.PopScope()
+			b.pushCount--
+		}
+	case "python":
+		if !isPythonFunctionEntry(trimmed) {
+			return
+		}
+		taint.PushScope()
+		b.pythonFuncIndents = append(b.pythonFuncIndents, countLeadingWS(line))
 	}
 }
 
@@ -111,7 +152,7 @@ func (b *scopeBalancer) postObserve(trimmed string, taint *taintTracker) {
 // original flat-map implementation.
 func (b *scopeBalancer) handlesLang() bool {
 	switch b.lang {
-	case "go", "javascript", "typescript":
+	case "go", "javascript", "typescript", "python":
 		return true
 	}
 	return false
@@ -212,4 +253,42 @@ func isJSOneLinerFunction(trimmed string) bool {
 		return false
 	}
 	return jsFunctionEntryRE.MatchString(trimmed)
+}
+
+// isPythonFunctionEntry reports whether `trimmed` is a Python
+// function-definition line: starts with `def ` or `async def ` and
+// ends with `:`. The `:` terminator is required so we don't match
+// type-annotation shapes like `def_count: int = 0` (which doesn't
+// actually appear because the prefix-match `def ` includes a space,
+// but the explicit `:` requirement keeps the predicate robust).
+//
+// Decorators are NOT detected as function entries -- the `@decorator`
+// line is at the same indent as the `def` it decorates and falls
+// through to no-op, then the actual `def` line triggers the push.
+// Multi-line function signatures spanning several lines via
+// continuation are not handled in this slice (rare in real code).
+func isPythonFunctionEntry(trimmed string) bool {
+	if !strings.HasSuffix(trimmed, ":") {
+		return false
+	}
+	return strings.HasPrefix(trimmed, "def ") ||
+		strings.HasPrefix(trimmed, "async def ")
+}
+
+// countLeadingWS counts leading whitespace bytes (spaces and tabs)
+// on a raw source line. Tab and space both count as one byte; mixed
+// indentation files will see indent-comparison errors at the
+// boundaries where a tab and four spaces happen to look "equal"
+// numerically when they're not visually -- but PEP 8 forbids mixed
+// indentation, and consistent files (all tabs or all spaces) work
+// reliably under this counter.
+func countLeadingWS(line string) int {
+	n := 0
+	for i := 0; i < len(line); i++ {
+		if line[i] != ' ' && line[i] != '\t' {
+			break
+		}
+		n++
+	}
+	return n
 }
