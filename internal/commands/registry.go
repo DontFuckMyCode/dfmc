@@ -156,22 +156,6 @@ func (r *Registry) Register(cmd Command) error {
 	return nil
 }
 
-// MustRegister is the error-wrapping variant of Register: it returns the
-// canonical name on success and a *RegistrationError (with the offending
-// command name attached) on failure. Despite the "Must" prefix it does NOT
-// panic — the name is historical and the (string, error) signature is what
-// callers actually rely on. Use it in package init or tests where you want
-// the typed wrapper for diagnostics; otherwise plain Register is fine.
-func (r *Registry) MustRegister(cmd Command) (string, error) {
-	if err := r.Register(cmd); err != nil {
-		return "", &RegistrationError{
-			CommandName: strings.ToLower(strings.TrimSpace(cmd.Name)),
-			Err:         err,
-		}
-	}
-	return strings.ToLower(strings.TrimSpace(cmd.Name)), nil
-}
-
 // Lookup resolves a name (or alias) to its canonical command record. The
 // boolean is false when no match is found so callers can emit a "did you
 // mean?" helper without a nil check.

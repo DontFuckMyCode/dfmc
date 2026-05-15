@@ -1,22 +1,17 @@
 package commands
 
 // registry_types.go — pure data carriers used by the commands
-// registry: the Surface bitset (which UI layers expose a command),
-// the Subcommand / Command / CategoryGroup record shapes that the
-// help renderers consume, and the RegistrationError typed wrapper
-// returned by MustRegister so a recovering caller can surface the
-// offending command name through errors.As.
+// registry: the Surface bitset (which UI layers expose a command)
+// and the Subcommand / Command / CategoryGroup record shapes that
+// the help renderers consume.
 //
 // Sibling of registry.go which keeps the Category constants +
 // canonical category ordering, CategoryLabels, the Registry struct
-// + NewRegistry / Register / MustRegister mutation surface, and the
-// Lookup / All / ForSurface / ListByCategory / orderedCommandCategories
+// + NewRegistry / Register mutation surface, and the Lookup / All /
+// ForSurface / ListByCategory / orderedCommandCategories
 // query/iteration surface.
 
-import (
-	"fmt"
-	"strings"
-)
+import "strings"
 
 // Surface is a bitset of UI layers that expose a given command. Commands are
 // typically available on all three, but a few (e.g. `tui`) only make sense
@@ -90,26 +85,3 @@ type CategoryGroup struct {
 	Commands []*Command `json:"commands"`
 }
 
-// RegistrationError wraps the underlying Register error with the
-// command name that triggered it so a recovering caller (e.g. a test
-// that intentionally probes duplicate registration) can surface a
-// readable diagnostic instead of a bare string. Implements `Unwrap` so
-// errors.Is / errors.As work transparently.
-type RegistrationError struct {
-	CommandName string
-	Err         error
-}
-
-func (e *RegistrationError) Error() string {
-	if e == nil {
-		return ""
-	}
-	return fmt.Sprintf("commands: failed to register %q: %v", e.CommandName, e.Err)
-}
-
-func (e *RegistrationError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
-	return e.Err
-}
