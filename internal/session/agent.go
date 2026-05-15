@@ -86,12 +86,6 @@ func (cr *conversationRef) messagesCopy() []Message {
 	return out
 }
 
-func (cr *conversationRef) clear() {
-	cr.mu.Lock()
-	defer cr.mu.Unlock()
-	cr.messages = nil
-}
-
 // ModelConfig holds the current model/provider for an agent.
 type ModelConfig struct {
 	Provider string `json:"provider"` // "anthropic", "openai", etc.
@@ -134,11 +128,6 @@ func (a *Agent) Status() AgentStatus {
 	return a.status
 }
 
-// statusHook is called after setStatus whenever the status changes.
-// Set by Session when the agent is registered, so the TUI can react to
-// waiting_user_input and other status transitions. nil if not set.
-var statusHook func(id AgentID, old, new AgentStatus)
-
 // StatusEvent is a status transition event emitted on the global channel.
 type StatusEvent struct {
 	ID  AgentID
@@ -151,12 +140,6 @@ type StatusEvent struct {
 
 // StatusHookChannel is a global event channel for status transitions.
 var StatusHookChannel chan StatusEvent
-
-// SetStatusHook registers a global hook for all agent status changes.
-// Called by the TUI before creating any session.
-func SetStatusHook(fn func(id AgentID, old, new AgentStatus)) {
-	statusHook = fn
-}
 
 // PublishStatusEvent sends a status transition to the global channel
 // if one is registered. task is set when New==StatusWaitingUserInput.
@@ -175,9 +158,6 @@ func (a *Agent) setStatus(s AgentStatus) {
 	a.status = s
 	a.statusMu.Unlock()
 	if old != s {
-		if statusHook != nil {
-			statusHook(a.id, old, s)
-		}
 		PublishStatusEvent(a.id, old, s, "")
 		if a.session != nil {
 			a.session.writeEvent("agent:status", map[string]any{
@@ -197,9 +177,6 @@ func (a *Agent) setStatusAndTask(s AgentStatus, task string) {
 	a.status = s
 	a.statusMu.Unlock()
 	if old != s {
-		if statusHook != nil {
-			statusHook(a.id, old, s)
-		}
 		PublishStatusEvent(a.id, old, s, task)
 	}
 }

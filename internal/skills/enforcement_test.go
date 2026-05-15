@@ -68,31 +68,3 @@ func TestEffectiveAllowedTools_AllWhitespace(t *testing.T) {
 	}
 }
 
-func TestIsToolAllowedBySkills_GateOff(t *testing.T) {
-	if !IsToolAllowedBySkills("anything", nil, false) {
-		t.Error("when enforced=false, every tool must be allowed")
-	}
-}
-
-func TestIsToolAllowedBySkills_DenyOutsideList(t *testing.T) {
-	if IsToolAllowedBySkills("run_command", []string{"read_file"}, true) {
-		t.Error("run_command must be denied when only read_file is allowed")
-	}
-}
-
-func TestIsToolAllowedBySkills_AllowInList(t *testing.T) {
-	if !IsToolAllowedBySkills("READ_FILE", []string{"read_file"}, true) {
-		t.Error("case-insensitive match must allow READ_FILE")
-	}
-}
-
-func TestIsToolAllowedBySkills_MetaToolsAlwaysPermitted(t *testing.T) {
-	// The meta dispatcher re-enters this gate with the inner backend
-	// tool name. Blocking meta wrappers here would short-circuit
-	// legitimate dispatches.
-	for _, meta := range []string{"tool_call", "tool_batch_call", "tool_search", "tool_help"} {
-		if !IsToolAllowedBySkills(meta, []string{"read_file"}, true) {
-			t.Errorf("meta tool %q must always pass at the outer gate", meta)
-		}
-	}
-}

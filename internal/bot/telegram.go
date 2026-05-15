@@ -519,14 +519,3 @@ type Message struct {
 	IsOutgoing bool // true = sent by bot, false = received
 }
 
-// NewMessage creates a new Message.
-func NewMessage(fromID int64, fromName, text string, isOutgoing bool) *Message {
-	return &Message{
-		ID:         time.Now().UnixNano(),
-		FromID:     fromID,
-		FromName:   fromName,
-		Text:       text,
-		Timestamp:  time.Now(),
-		IsOutgoing: isOutgoing,
-	}
-}

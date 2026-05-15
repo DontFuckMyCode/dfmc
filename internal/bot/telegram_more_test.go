@@ -142,24 +142,6 @@ func TestStopCancelsContext(t *testing.T) {
 	}
 }
 
-func TestNewMessageDefaults(t *testing.T) {
-	t.Parallel()
-	before := time.Now().Add(-time.Second)
-	m := NewMessage(42, "ersin", "hello", true)
-	if m == nil {
-		t.Fatal("NewMessage returned nil")
-	}
-	if m.FromID != 42 || m.FromName != "ersin" || m.Text != "hello" || !m.IsOutgoing {
-		t.Fatalf("Message fields wrong: %#v", m)
-	}
-	if m.ID == 0 {
-		t.Error("expected non-zero ID from time.Now().UnixNano()")
-	}
-	if m.Timestamp.Before(before) {
-		t.Errorf("timestamp pre-dates call: %v", m.Timestamp)
-	}
-}
-
 func TestTelegramUserIDTextEdgeCases(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

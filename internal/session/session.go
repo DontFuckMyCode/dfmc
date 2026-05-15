@@ -65,10 +65,10 @@ func New() *Session {
 	s.activeAgent = RootAgentID
 	s.nextID = 2 // next agent will be Agent 2
 
-	// Set up per-session status hook so the TUI can be notified of agent
-	// status changes (e.g. waiting_user_input). The TUI calls SetStatusHook
-	// before creating any session. The package-level statusHook is shared
-	// across all agents, so no per-agent wiring is needed here.
+	// TUI status notifications flow through session.StatusHookChannel
+	// (set in ui/tui/tui_lifecycle.go). The agent's setStatus publishes
+	// on this channel via PublishStatusEvent, so no per-agent wiring is
+	// needed here.
 
 	return s
 }

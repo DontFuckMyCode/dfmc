@@ -161,28 +161,3 @@ func PublishToolResult(sa *SharedAttention, from AgentID, toolName, output strin
 	})
 }
 
-// PublishError publishes an error event.
-func PublishError(sa *SharedAttention, from AgentID, errMsg string) {
-	if sa == nil {
-		return
-	}
-	payload, _ := json.Marshal(map[string]string{"error": errMsg})
-	sa.Publish(AttentionEvent{
-		From:    from,
-		Type:    AttentionError,
-		Payload: payload,
-	})
-}
-
-// PublishFileCreated publishes a file creation event.
-func PublishFileCreated(sa *SharedAttention, from AgentID, path string) {
-	if sa == nil {
-		return
-	}
-	payload, _ := json.Marshal(map[string]string{"path": path})
-	sa.Publish(AttentionEvent{
-		From:    from,
-		Type:    AttentionFileCreated,
-		Payload: payload,
-	})
-}

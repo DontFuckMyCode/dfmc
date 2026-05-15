@@ -180,18 +180,3 @@ func (a *Agent) EvaluateChildStatus(child *Agent) CoordinatorDecision {
 	}
 }
 
-// ParseChildQuestion decodes an AttentionQuestion payload from a child agent.
-func ParseChildQuestion(payload json.RawMessage) (childID AgentID, task string, usedSteps, maxSteps int, err error) {
-	var p struct {
-		Agent      AgentID `json:"agent"`
-		Task       string  `json:"task"`
-		UsedSteps  int     `json:"used_steps"`
-		MaxSteps   int     `json:"max_steps"`
-		UsedTokens int     `json:"used_tokens"`
-		MaxTokens  int     `json:"max_tokens"`
-	}
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return 0, "", 0, 0, err
-	}
-	return p.Agent, p.Task, p.UsedSteps, p.MaxSteps, nil
-}
