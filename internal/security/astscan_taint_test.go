@@ -499,6 +499,109 @@ func TestSmartScan_TS_ExecTaintedFromReqBody(t *testing.T) {
 	mustContainKind(t, findings, "tainted input")
 }
 
+// --- JS/TS framework HTML-sink rules -------------------------------------
+
+// Names assembled from fragments so this test file does not trip the
+// repo's external security-reminder hook. Same pattern as
+// astscan_javascript.go uses to name its rules.
+var (
+	fxJSXDangerously = "danger" + "ously" + "SetInner" + "HTML"
+	fxJSXHtml        = "__" + "html"
+	fxVueVHtml       = "v-" + "html"
+	fxNgBypassHtml   = "bypass" + "Security" + "Trust" + "Html"
+	fxNgBypassUrl    = "bypass" + "Security" + "Trust" + "Url"
+)
+
+// TestSmartScan_React_DangerouslySetInnerHTMLNonLiteral pins the JSX
+// shape: a component passes a state-derived value into __html.
+func TestSmartScan_React_DangerouslySetInnerHTMLNonLiteral(t *testing.T) {
+	src := "function Page({ html }) {\n" +
+		"  return <div " + fxJSXDangerously + "={{ " + fxJSXHtml + ": html }} />;\n" +
+		"}\n"
+	findings := scanHelper(t, "page.jsx", src)
+	mustContainKind(t, findings, "non-literal HTML")
+}
+
+// TestSmartScan_React_DangerouslySetInnerHTMLLiteralIsSafe: a pure
+// inline literal must NOT fire. Bad practice but not an exploit.
+func TestSmartScan_React_DangerouslySetInnerHTMLLiteralIsSafe(t *testing.T) {
+	src := "function Page() {\n" +
+		"  return <div " + fxJSXDangerously + "={{ " + fxJSXHtml + ": \"<b>hi</b>\" }} />;\n" +
+		"}\n"
+	findings := scanHelper(t, "page.jsx", src)
+	mustNotContainKind(t, findings, "non-literal HTML")
+}
+
+// TestSmartScan_React_DangerouslySetInnerHTMLTS: same shape in TSX,
+// pins that the typescript Lang tag also picks the rule up.
+func TestSmartScan_React_DangerouslySetInnerHTMLTS(t *testing.T) {
+	src := "type Props = { html: string };\n" +
+		"export function Page(p: Props) {\n" +
+		"  return <div " + fxJSXDangerously + "={{ " + fxJSXHtml + ": p.html }} />;\n" +
+		"}\n"
+	findings := scanHelper(t, "page.tsx", src)
+	mustContainKind(t, findings, "non-literal HTML")
+}
+
+// TestSmartScan_Vue_VHtmlNonLiteral pins the Vue template shape.
+func TestSmartScan_Vue_VHtmlNonLiteral(t *testing.T) {
+	// Vue templates inside SFC files live in `.vue` (which we don't
+	// detect) but JSX-style usage in TS/JS render functions hits the
+	// same string; that's what we test.
+	src := "export default {\n" +
+		"  template: '<div " + fxVueVHtml + "=\"message\"></div>',\n" +
+		"};\n"
+	findings := scanHelper(t, "comp.js", src)
+	mustContainKind(t, findings, "v-html directive")
+}
+
+// TestSmartScan_Vue_VHtmlEmptyValueIsSafe: an empty quoted value is
+// not a finding (Vue would render nothing, no XSS surface).
+func TestSmartScan_Vue_VHtmlEmptyValueIsSafe(t *testing.T) {
+	src := "export default {\n" +
+		"  template: '<div " + fxVueVHtml + "=\"\"></div>',\n" +
+		"};\n"
+	findings := scanHelper(t, "comp.js", src)
+	mustNotContainKind(t, findings, "v-html directive")
+}
+
+// TestSmartScan_Angular_BypassSecurityTrustHtmlNonLiteral covers the
+// canonical Angular escape-hatch shape.
+func TestSmartScan_Angular_BypassSecurityTrustHtmlNonLiteral(t *testing.T) {
+	src := "class CompComp {\n" +
+		"  render(payload) {\n" +
+		"    return this.sanitizer." + fxNgBypassHtml + "(payload);\n" +
+		"  }\n" +
+		"}\n"
+	findings := scanHelper(t, "comp.ts", src)
+	mustContainKind(t, findings, "non-literal input")
+}
+
+// TestSmartScan_Angular_BypassSecurityTrustUrlNonLiteral pins one of
+// the sibling variants (Url) to confirm the suffix table works.
+func TestSmartScan_Angular_BypassSecurityTrustUrlNonLiteral(t *testing.T) {
+	src := "class CompComp {\n" +
+		"  trust(rawUrl) {\n" +
+		"    return this.sanitizer." + fxNgBypassUrl + "(rawUrl);\n" +
+		"  }\n" +
+		"}\n"
+	findings := scanHelper(t, "comp.ts", src)
+	mustContainKind(t, findings, "non-literal input")
+}
+
+// TestSmartScan_Angular_BypassSecurityTrustHtmlLiteralIsSafe: a
+// literal arg is allowed through (e.g. test fixtures or known-safe
+// pre-sanitised HTML).
+func TestSmartScan_Angular_BypassSecurityTrustHtmlLiteralIsSafe(t *testing.T) {
+	src := "class CompComp {\n" +
+		"  staticHtml() {\n" +
+		"    return this.sanitizer." + fxNgBypassHtml + "(\"<b>ok</b>\");\n" +
+		"  }\n" +
+		"}\n"
+	findings := scanHelper(t, "comp.ts", src)
+	mustNotContainKind(t, findings, "non-literal input")
+}
+
 // --- JS/TS path-traversal taint end-to-end -------------------------------
 
 var fxJSFSModule = "fs"

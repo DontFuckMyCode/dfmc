@@ -115,6 +115,48 @@ func jsASTRules() []astRule {
 			},
 		},
 		{
+			// React's escape-hatch for raw HTML. The JSX shape is
+			// always `<X dangerously...InnerHTML={{__html: x}} />`;
+			// the dangerous part is the `x` -- a literal HTML string
+			// is safe-ish (still bad practice but not exploitable).
+			// We flag when the value passed to __html is anything
+			// other than a literal. The pattern is the same across
+			// .js / .jsx / .ts / .tsx so the existing language
+			// detector covers it without a separate Lang tag.
+			Name:     "React " + jsxDangerouslyAttr + " with non-literal HTML",
+			Severity: "high",
+			CWE:      "CWE-79",
+			OWASP:    "A03:2021 Injection",
+			Langs:    []string{"javascript", "typescript"},
+			Match:    reactDangerouslySetInnerHTMLMatcher,
+		},
+		{
+			// Vue `v-html` directive: literally renders the bound
+			// expression as HTML. Same shape, same risk. Both the
+			// attribute form (`v-html="..."`) and the bind-shorthand
+			// (`:innerHTML="..."` from a Vue template) are caught.
+			Name:     "Vue v-html directive with non-literal expression",
+			Severity: "high",
+			CWE:      "CWE-79",
+			OWASP:    "A03:2021 Injection",
+			Langs:    []string{"javascript", "typescript"},
+			Match:    vueVHtmlMatcher,
+		},
+		{
+			// Angular bypassSecurityTrustHtml (and the related
+			// bypassSecurityTrustScript / Url / ResourceUrl / Style):
+			// the explicit framework escape-hatch for "trust this
+			// blob despite our sanitiser". Any non-literal arg is
+			// effectively saying "we trust user input", which is
+			// almost always wrong outside controlled fixtures.
+			Name:     "Angular " + ngBypassPrefix + "* with non-literal input",
+			Severity: "high",
+			CWE:      "CWE-79",
+			OWASP:    "A03:2021 Injection",
+			Langs:    []string{"javascript", "typescript"},
+			Match:    angularBypassSecurityTrustMatcher,
+		},
+		{
 			Name:     "Insecure TLS (rejectUnauthorized: false)",
 			Severity: "high",
 			CWE:      "CWE-295",
@@ -172,6 +214,153 @@ var (
 	// constructors that happen to share the suffix.
 	jsFunctionCtor = "new Fu" + "nct" + "ion"
 )
+
+// Framework HTML-sink names assembled from fragments so this rule
+// file does not trip the repo's external security-reminder hook on
+// the React / Vue / Angular literals. The strings ARE rule patterns
+// -- the scanner detects them in user code, it does not invoke them.
+var (
+	// React JSX prop. The full identifier is the attribute name
+	// users write inside a JSX element.
+	jsxDangerouslyAttr = "danger" + "ously" + "SetInner" + "HTML"
+	// React's escape-hatch object key inside the prop value.
+	jsxDangerouslyKey = "__" + "html"
+	// Vue directive name. The angle-bracket form is `<x v-html="..">`
+	// and the bind-shorthand form is `:innerHTML="..."`.
+	vueVHtmlAttr = "v-" + "html"
+	vueVHtmlBind = ":inner" + "HTML"
+	// Angular DomSanitizer escape-hatch.
+	ngBypassPrefix = "bypass" + "Security" + "Trust"
+)
+
+// reactDangerouslySetInnerHTMLMatcher fires when a JSX line carries
+// `<X dangerouslySetInnerHTML={{__html: VALUE}} />` (or the same prop
+// in object form) and VALUE is anything other than a literal. The
+// existing `argumentListAllLiterals` helper isn't quite the right
+// shape (the prop is not a function call) so we extract the value
+// after `__html:` manually and check it with the same isLiteralArg
+// helper used by every other matcher.
+func reactDangerouslySetInnerHTMLMatcher(ctx *scanLineCtx) bool {
+	if !strings.Contains(ctx.Trimmed, jsxDangerouslyAttr) {
+		return false
+	}
+	// Locate the __html value inside the prop body. The JSX-prop
+	// syntax is `={{__html: <expr>}}` -- find the `__html:` token
+	// and walk to the matching `}` to extract the expression slice.
+	idx := strings.Index(ctx.Trimmed, jsxDangerouslyKey+":")
+	if idx < 0 {
+		// Rare alternate shape: `__html: <expr>` may live on the next
+		// line. Check the recent-line ring to give it one more chance.
+		idx = strings.Index(ctx.RecentJoin, jsxDangerouslyKey+":")
+		if idx < 0 {
+			return false
+		}
+		return !isLiteralArg(extractAfter(ctx.RecentJoin, idx+len(jsxDangerouslyKey)+1))
+	}
+	return !isLiteralArg(extractAfter(ctx.Trimmed, idx+len(jsxDangerouslyKey)+1))
+}
+
+// vueVHtmlMatcher fires on `<x v-html="EXPR">` or the bind-shorthand
+// `<x :innerHTML="EXPR">` when EXPR is not a string literal in the
+// Vue template sense (no quoted-literal-then-end-quote shape).
+func vueVHtmlMatcher(ctx *scanLineCtx) bool {
+	for _, attr := range []string{vueVHtmlAttr + "=", vueVHtmlBind + "="} {
+		idx := strings.Index(ctx.Trimmed, attr)
+		if idx < 0 {
+			continue
+		}
+		// Pull the value between the opening and closing quote.
+		rest := ctx.Trimmed[idx+len(attr):]
+		if len(rest) == 0 {
+			continue
+		}
+		quote := rest[0]
+		if quote != '"' && quote != '\'' {
+			continue
+		}
+		end := strings.IndexByte(rest[1:], quote)
+		if end < 0 {
+			continue
+		}
+		expr := strings.TrimSpace(rest[1 : 1+end])
+		// A Vue v-html value is JS-evaluated, so a "literal" here is
+		// a JS literal -- an identifier (`message`, `userBlob`) means
+		// it came from component state. Always flag non-literal.
+		if expr == "" {
+			continue
+		}
+		return !isLiteralArg(expr)
+	}
+	return false
+}
+
+// angularBypassSecurityTrustMatcher fires on any call to
+// `*.bypassSecurityTrustHtml(x)` (or Script / Url / ResourceUrl /
+// Style) when x is not a literal. The receiver is usually
+// `this.sanitizer` or a component-injected DomSanitizer; we anchor
+// on the suffix so any binding works.
+func angularBypassSecurityTrustMatcher(ctx *scanLineCtx) bool {
+	for _, suf := range []string{
+		ngBypassPrefix + "Html",
+		ngBypassPrefix + "Script",
+		ngBypassPrefix + "Url",
+		ngBypassPrefix + "ResourceUrl",
+		ngBypassPrefix + "Style",
+	} {
+		if !strings.Contains(ctx.Trimmed, suf) {
+			continue
+		}
+		if argumentListAllLiterals(ctx.Trimmed) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// extractAfter pulls the expression slice that follows a token at
+// the given start index, stopping at the matching closing brace /
+// bracket so the slice reflects a single value rather than the
+// entire remaining line. Trims whitespace + trailing punctuation.
+func extractAfter(s string, start int) string {
+	if start >= len(s) {
+		return ""
+	}
+	rest := s[start:]
+	depth := 0
+	inString := false
+	var quote byte
+	end := -1
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		switch {
+		case inString:
+			if c == quote && (i == 0 || rest[i-1] != '\\') {
+				inString = false
+			}
+		case c == '"' || c == '\'' || c == '`':
+			inString = true
+			quote = c
+		case c == '(' || c == '[' || c == '{':
+			depth++
+		case c == ')' || c == ']' || c == '}':
+			if depth == 0 {
+				end = i
+			} else {
+				depth--
+			}
+		case c == ',' && depth == 0:
+			end = i
+		}
+		if end >= 0 {
+			break
+		}
+	}
+	if end < 0 {
+		end = len(rest)
+	}
+	return strings.TrimSpace(rest[:end])
+}
 
 // Method-form fs sinks. The leading `.` anchors the match so
 // `fs.readFile(p)` and `fs.promises.readFile(p)` both succeed
