@@ -45,7 +45,6 @@ type Driver struct {
 	reportDir       string
 	plannerBreaker  *CircuitBreaker
 	executorBreaker *CircuitBreaker
-	verifierBreaker *CircuitBreaker
 }
 
 // SetReportDir configures the directory where finalize() writes a
@@ -72,7 +71,6 @@ func NewDriver(runner Runner, store *Store, publisher Publisher, cfg Config) *Dr
 		cfg:             cfg,
 		plannerBreaker:  NewCircuitBreaker(cfg.PlannerCircuitBreaker),
 		executorBreaker: NewCircuitBreaker(cfg.ExecutorCircuitBreaker),
-		verifierBreaker: NewCircuitBreaker(cfg.VerifierCircuitBreaker),
 	}
 	return d
 }

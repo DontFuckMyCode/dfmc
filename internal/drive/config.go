@@ -152,8 +152,6 @@ type Config struct {
 	PlannerCircuitBreaker CircuitBreakerConfig
 	// ExecutorCircuitBreaker tunes the executor stage circuit breaker.
 	ExecutorCircuitBreaker CircuitBreakerConfig
-	// VerifierCircuitBreaker tunes the verifier stage circuit breaker.
-	VerifierCircuitBreaker CircuitBreakerConfig
 }
 
 // PlannerContextProvider is implemented by callers that want to
