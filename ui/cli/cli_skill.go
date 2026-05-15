@@ -136,18 +136,6 @@ func runNamedSkill(ctx context.Context, eng *engine.Engine, name, input string, 
 	return 0
 }
 
-func buildSkillPrompt(skill skillInfo, input string) string {
-	p := strings.TrimSpace(skill.Prompt)
-	if p == "" {
-		p = input
-	} else if strings.Contains(p, "{input}") {
-		p = strings.ReplaceAll(p, "{input}", input)
-	} else if strings.TrimSpace(input) != "" {
-		p = p + "\n\nUser request:\n" + input
-	}
-	return p
-}
-
 func discoverSkills(projectRoot string) []skillInfo {
 	raw := skills.Discover(projectRoot)
 	out := make([]skillInfo, 0, len(raw))

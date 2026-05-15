@@ -32,7 +32,12 @@ func runMCP(ctx context.Context, eng *engine.Engine, args []string, version stri
 		return 1
 	}
 
-	bridge := &engineMCPBridge{eng: eng, drive: &driveMCPHandler{eng: eng}, task: &taskMCPHandler{eng: eng}}
+	bridge := &engineMCPBridge{
+		eng:   eng,
+		drive: &driveMCPHandler{eng: eng},
+		task:  &taskMCPHandler{eng: eng},
+		skill: &skillMCPHandler{eng: eng},
+	}
 	srv := mcp.NewServer(os.Stdin, os.Stdout, bridge, mcp.ServerInfo{
 		Name:    "dfmc",
 		Version: version,
@@ -77,6 +82,7 @@ type engineMCPBridge struct {
 	eng   *engine.Engine
 	drive *driveMCPHandler
 	task  *taskMCPHandler
+	skill *skillMCPHandler
 }
 
 func (b *engineMCPBridge) List() []mcp.ToolDescriptor {
@@ -106,6 +112,9 @@ func (b *engineMCPBridge) List() []mcp.ToolDescriptor {
 	if b.task != nil {
 		out = append(out, b.task.Tools()...)
 	}
+	if b.skill != nil {
+		out = append(out, b.skill.Tools()...)
+	}
 	return out
 }
 
@@ -121,6 +130,9 @@ func (b *engineMCPBridge) Call(ctx context.Context, name string, rawArgs []byte)
 	}
 	if b.task != nil && b.task.Handles(name) {
 		return b.task.Call(ctx, name, rawArgs)
+	}
+	if b.skill != nil && b.skill.Handles(name) {
+		return b.skill.Call(ctx, name, rawArgs)
 	}
 	params := map[string]any{}
 	if len(rawArgs) > 0 {
