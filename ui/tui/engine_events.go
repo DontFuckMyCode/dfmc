@@ -56,6 +56,14 @@ func (m Model) handleEngineEvent(event engine.Event) Model {
 		m.appendActivity(line)
 	}
 	if shouldMirrorEventToTranscript(eventType) && line != "" {
+		// provider:throttle:retry fires whenever the provider router
+		// hits a 429 — including from background health probes. Only
+		// mirror it into the transcript while the user is actively
+		// waiting on a response, otherwise the chat history gets
+		// polluted with provider retry noise the user never asked for.
+		if eventType == "provider:throttle:retry" && !m.chat.sending {
+			return m
+		}
 		m = m.appendToolEventMessage(line)
 	}
 

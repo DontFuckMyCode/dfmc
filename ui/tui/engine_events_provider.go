@@ -108,13 +108,19 @@ func handleProviderThrottleRetry(m Model, eventType string, event engine.Event, 
 	if waitMs > 0 {
 		waitText = fmt.Sprintf("in %s", (time.Duration(waitMs) * time.Millisecond).Round(100*time.Millisecond))
 	}
-	m.upsertStreamingChatEvent(chatEventLine{
-		Key:    fmt.Sprintf("provider:throttle:%s:%d", providerName, attempt),
-		Kind:   "provider",
-		Status: "warn",
-		Title:  "provider throttle",
-		Detail: fmt.Sprintf("%s %s retry #%d %s", providerName, label, attempt, waitText),
-	})
+	// Throttle events fire on the engine bus regardless of whether
+	// there is an active chat turn — only mirror into the transcript
+	// while the user is waiting on a response, otherwise we pollute
+	// the chat history with provider chatter the user never asked for.
+	if m.chat.sending {
+		m.upsertStreamingChatEvent(chatEventLine{
+			Key:    fmt.Sprintf("provider:throttle:%s:%d", providerName, attempt),
+			Kind:   "provider",
+			Status: "warn",
+			Title:  "provider throttle",
+			Detail: fmt.Sprintf("%s %s retry #%d %s", providerName, label, attempt, waitText),
+		})
+	}
 	line := fmt.Sprintf("Provider throttled: %s %s retry #%d %s.", providerName, label, attempt, waitText)
 	return m, line
 }

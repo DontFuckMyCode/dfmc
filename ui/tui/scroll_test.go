@@ -71,6 +71,12 @@ func TestScrollTranscriptClampsAndPages(t *testing.T) {
 func TestPageUpPageDownKeysScrollTranscript(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.chat.transcript = makeTranscript(30)
+	// The stats panel's global PgUp/PgDn shortcut (shortcut_global_groups.go)
+	// consumes those keys when statsPanelVisible reports true — which it
+	// does by default for any chat tab on a width >= the stats min. The
+	// test exercises the transcript-scroll path, so disable the stats
+	// panel so PgUp/PgDn fall through to handleChatKey.
+	m.ui.showStatsPanel = false
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 	mm, ok := next.(Model)

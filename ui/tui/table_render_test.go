@@ -70,26 +70,46 @@ func TestRenderMarkdownBlocks_AlignsTableColumns(t *testing.T) {
 	}, "\n")
 
 	blocks := renderMarkdownBlocks(src, 80)
-	if len(blocks) < 4 {
-		t.Fatalf("expected at least 4 output lines (header + underline + 2 rows), got %d:\n%v", len(blocks), blocks)
+	// Layout (top-down): top border ┌─┬─┐, header row, divider ├─┼─┤,
+	// body row(s), bottom border └─┴─┘. We want at least 5 lines so
+	// the body row is reachable; the borders carry no labels so we
+	// scan past them for the labelled rows.
+	if len(blocks) < 5 {
+		t.Fatalf("expected at least 5 output lines (top + header + rule + body + bottom), got %d:\n%v", len(blocks), blocks)
 	}
-	// Header row must still contain the column names, underline row
-	// must be all dash / box glyphs, and body rows must no longer
-	// start with a raw `|`.
-	header := stripANSI(blocks[0])
-	if !strings.Contains(header, "Dosya") || !strings.Contains(header, "Sorumluluk") {
-		t.Fatalf("header row should retain column labels, got: %q", header)
+	plain := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		plain = append(plain, stripANSI(b))
 	}
-	under := stripANSI(blocks[1])
-	if !strings.Contains(under, "─") {
-		t.Fatalf("second line should be a dash-rule separator, got: %q", under)
+	// Header row must still contain the column names (somewhere past
+	// the top border). Underline row must be a dash / box rule. Body
+	// rows must no longer start with a raw `|`.
+	var header, under, body string
+	for _, line := range plain {
+		if header == "" && strings.Contains(line, "Dosya") {
+			header = line
+			continue
+		}
+		if header != "" && under == "" && strings.Contains(line, "─") && !strings.Contains(line, "Dosya") {
+			under = line
+			continue
+		}
+		if under != "" && body == "" && strings.Contains(line, "engine.go") {
+			body = line
+			break
+		}
 	}
-	body := stripANSI(blocks[2])
+	if header == "" {
+		t.Fatalf("header row should retain column labels, got blocks:\n%v", plain)
+	}
+	if under == "" {
+		t.Fatalf("expected a dash-rule separator after header, got:\n%v", plain)
+	}
+	if body == "" {
+		t.Fatalf("body row should keep cell contents, got blocks:\n%v", plain)
+	}
 	if strings.Contains(body, " | ") && strings.HasPrefix(strings.TrimSpace(body), "|") {
 		t.Fatalf("body row should be aligned, not raw pipes, got: %q", body)
-	}
-	if !strings.Contains(body, "engine.go") {
-		t.Fatalf("body row should keep cell contents, got: %q", body)
 	}
 }
 
@@ -165,20 +185,24 @@ func TestRenderMarkdownBlocks_AlignsBoxDrawingTable(t *testing.T) {
 	for _, b := range blocks {
 		plain = append(plain, stripANSI(b))
 	}
-	anchors := pipePositions(plain[0])
-	if len(anchors) < 2 {
-		t.Fatalf("header must contain at least 2 delimiters, got %q", plain[0])
+	rows := pipeRows(plain)
+	if len(rows) < 2 {
+		t.Fatalf("expected header + body rows in output, got %d │-rows:\n%v", len(rows), plain)
 	}
-	for i, row := range plain[2:] { // skip header + underline
+	anchors := pipePositions(rows[0])
+	if len(anchors) < 2 {
+		t.Fatalf("header must contain at least 2 delimiters, got %q", rows[0])
+	}
+	for i, row := range rows[1:] {
 		got := pipePositions(row)
 		if len(got) != len(anchors) {
 			t.Fatalf("body row %d delimiter count = %d, want %d\nrow: %q\nheader: %q",
-				i, len(got), len(anchors), row, plain[0])
+				i, len(got), len(anchors), row, rows[0])
 		}
 		for j := range got {
 			if got[j] != anchors[j] {
 				t.Fatalf("body row %d delim %d at col %d, want %d\nrow:    %q\nheader: %q",
-					i, j, got[j], anchors[j], row, plain[0])
+					i, j, got[j], anchors[j], row, rows[0])
 			}
 		}
 	}
@@ -195,6 +219,21 @@ func pipePositions(line string) []int {
 			out = append(out, col)
 		}
 		col++
+	}
+	return out
+}
+
+// pipeRows filters a rendered-table block down to only the rows that
+// carry │ delimiters (i.e. the header + body cells). Top/bottom
+// borders (┌─┐, └─┘) and dash rules (├─┤) are skipped so the test can
+// treat row 0 as "header" and row 1+ as "body" regardless of the
+// surrounding chrome.
+func pipeRows(plain []string) []string {
+	out := make([]string, 0, len(plain))
+	for _, line := range plain {
+		if strings.ContainsRune(line, '│') {
+			out = append(out, line)
+		}
 	}
 	return out
 }
@@ -222,20 +261,24 @@ func TestRenderMarkdownBlocks_AlignsTableWithBacktickedBody(t *testing.T) {
 	for _, b := range blocks {
 		plain = append(plain, stripANSI(b))
 	}
-	header := pipePositions(plain[0])
-	if len(header) < 2 {
-		t.Fatalf("header row should have at least 2 delimiters, got %q", plain[0])
+	rows := pipeRows(plain)
+	if len(rows) < 2 {
+		t.Fatalf("expected header + body rows, got %d │-rows:\n%v", len(rows), plain)
 	}
-	for i, row := range plain[2:] {
+	header := pipePositions(rows[0])
+	if len(header) < 2 {
+		t.Fatalf("header row should have at least 2 delimiters, got %q", rows[0])
+	}
+	for i, row := range rows[1:] {
 		got := pipePositions(row)
 		if len(got) != len(header) {
 			t.Fatalf("body row %d delim count = %d, want %d\nrow: %q\nheader: %q",
-				i, len(got), len(header), row, plain[0])
+				i, len(got), len(header), row, rows[0])
 		}
 		for j := range got {
 			if got[j] != header[j] {
 				t.Fatalf("body row %d delim %d at col %d, want %d\nrow:    %q\nheader: %q",
-					i, j, got[j], header[j], row, plain[0])
+					i, j, got[j], header[j], row, rows[0])
 			}
 		}
 	}
@@ -258,13 +301,17 @@ func TestRenderMarkdownBlocks_AlignsTableWithBoldBody(t *testing.T) {
 	for _, b := range blocks {
 		plain = append(plain, stripANSI(b))
 	}
-	header := pipePositions(plain[0])
-	for i, row := range plain[2:] {
+	rows := pipeRows(plain)
+	if len(rows) < 2 {
+		t.Fatalf("expected header + body rows, got %d │-rows:\n%v", len(rows), plain)
+	}
+	header := pipePositions(rows[0])
+	for i, row := range rows[1:] {
 		got := pipePositions(row)
 		for j := range got {
 			if got[j] != header[j] {
 				t.Fatalf("body row %d delim %d at col %d, want %d\nrow:    %q\nheader: %q",
-					i, j, got[j], header[j], row, plain[0])
+					i, j, got[j], header[j], row, rows[0])
 			}
 		}
 	}

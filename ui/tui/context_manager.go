@@ -1,6 +1,6 @@
 package tui
 
-// context_manager.go â€” the interactive Context Manager sub-view inside
+// context_manager.go — the interactive Context Manager sub-view inside
 // the Context panel. Activated with 'm' when the Context panel is
 // showing active context. Lets the user browse conversation messages,
 // multi-select them with space, and delete selected messages to free
@@ -404,5 +404,5 @@ func truncateStr(s string, maxLen int) string {
 	if len(runes) <= maxLen {
 		return s
 	}
-	return string(runes[:maxLen-1]) + "â€¦"
+	return string(runes[:maxLen-1]) + "…"
 }

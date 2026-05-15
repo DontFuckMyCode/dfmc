@@ -133,8 +133,16 @@ func TestRenderContextViewEmptyState(t *testing.T) {
 	if !strings.Contains(out, "press e to enter a query") {
 		t.Fatalf("empty query hint missing: %s", out)
 	}
-	if !strings.Contains(out, "offline against current config") {
-		t.Fatalf("body copy missing: %s", out)
+	// Empty state shows the payload-section labels with zero counts so
+	// the user sees what would populate once a request is built. The
+	// previous assertion for "offline against current config" was stale
+	// — that copy was removed from the rendering, the test was not
+	// updated, and it has been failing on main for that reason.
+	if !strings.Contains(out, "window: unknown") {
+		t.Fatalf("expected empty-state window indicator: %s", out)
+	}
+	if !strings.Contains(out, "system prompt + runtime directives") {
+		t.Fatalf("expected payload sections in empty state: %s", out)
 	}
 }
 

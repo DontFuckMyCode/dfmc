@@ -173,7 +173,8 @@ func (m Model) renderSecurityViewInner(width int) string {
 	activeVulns := totalVulns - ignoredVulns
 
 	if activeSecrets == 0 && activeVulns == 0 && totalSecrets == 0 && totalVulns == 0 {
-		lines = append(lines, "", okStyle.Render("✓ no secrets detected — commit with confidence."))
+		summary := fmt.Sprintf("scanned %d files · 0 secrets · 0 vulns", m.security.report.FilesScanned)
+		lines = append(lines, "", subtleStyle.Render(summary), okStyle.Render("✓ No secrets detected — commit with confidence."))
 		return strings.Join(lines, "\n")
 	}
 

@@ -51,6 +51,13 @@ func TestRunAsk_NoQuestion(t *testing.T) {
 
 func TestRunAsk_TextQuestion(t *testing.T) {
 	eng := newCLITestEngine(t)
+	// Pin to offline so the test exercises the ask wiring without
+	// needing live API keys. Without this pin, DefaultConfig's
+	// minimax→openai→deepseek cascade exhausts (all unconfigured)
+	// and the router's tool-capable filter strips offline as
+	// designed (silent-fallback prevention), leaving a wall of
+	// joined "api key missing" errors instead of a useful answer.
+	eng.SetProviderModel("offline", "")
 	out := captureStdout(t, func() {
 		code := runAsk(context.Background(), eng, []string{"what is 2+2"}, false)
 		if code != 0 {
@@ -64,6 +71,7 @@ func TestRunAsk_TextQuestion(t *testing.T) {
 
 func TestRunAsk_MultipleArgs(t *testing.T) {
 	eng := newCLITestEngine(t)
+	eng.SetProviderModel("offline", "")
 	out := captureStdout(t, func() {
 		code := runAsk(context.Background(), eng, []string{"what", "is", "the", "time"}, false)
 		if code != 0 {
@@ -77,6 +85,7 @@ func TestRunAsk_MultipleArgs(t *testing.T) {
 
 func TestRunAsk_JSONMode(t *testing.T) {
 	eng := newCLITestEngine(t)
+	eng.SetProviderModel("offline", "")
 	out := captureStdout(t, func() {
 		code := runAsk(context.Background(), eng, []string{"hello"}, true)
 		if code != 0 {

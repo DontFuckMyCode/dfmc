@@ -53,9 +53,15 @@ func RenderMarkdownBlocks(text string, width int) []string {
 		}
 		if IsTableHeader(line) && i+1 < len(rawLines) && IsTableSeparator(rawLines[i+1]) {
 			consumed, rendered := RenderMarkdownTable(rawLines[i:], width)
-			out = append(out, rendered...)
-			i += consumed - 1
-			continue
+			// consumed=0 means the table renderer refused (e.g. fewer
+			// than 2 delimited rows, or a separator built of non-delim
+			// glyphs). Fall through to the plain-line render below
+			// instead of looping forever on the same index.
+			if consumed > 0 {
+				out = append(out, rendered...)
+				i += consumed - 1
+				continue
+			}
 		}
 		if h := HeaderLevel(trimmed); h > 0 {
 			label := strings.TrimSpace(trimmed[h:])

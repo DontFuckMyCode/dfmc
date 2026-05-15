@@ -97,9 +97,25 @@ func RenderMarkdownTable(lines []string, width int) (int, []string) {
 		return 0, nil
 	}
 
+	// Walk header + body rows, skipping the separator line. Pipe-style
+	// tables capture their separator with the same | delim, but box-
+	// drawing tables use ─/┼/┤ glyphs for the separator so we cannot
+	// rely on the delimiter prefix to find it — treat any line that
+	// IsTableSeparator(...) accepts as a non-row pass-through.
 	rawRows := make([][]string, 0, 8)
 	consumed := 0
+	headerSeen := false
+	sawSeparator := false
 	for i, line := range lines {
+		if IsTableSeparator(line) {
+			if !headerSeen {
+				// Separator before any header is suspicious — bail.
+				break
+			}
+			sawSeparator = true
+			consumed = i + 1
+			continue
+		}
 		if !strings.HasPrefix(strings.TrimSpace(line), string(delim)) {
 			break
 		}
@@ -108,9 +124,10 @@ func RenderMarkdownTable(lines []string, width int) (int, []string) {
 			break
 		}
 		rawRows = append(rawRows, cells)
+		headerSeen = true
 		consumed = i + 1
 	}
-	if len(rawRows) < 2 || !IsTableSeparator(lines[1]) {
+	if !sawSeparator || len(rawRows) < 1 {
 		return 0, nil
 	}
 
@@ -118,9 +135,8 @@ func RenderMarkdownTable(lines []string, width int) (int, []string) {
 	if numCols == 0 {
 		return 0, nil
 	}
-	rows := make([][]string, 0, max(1, len(rawRows)-1))
-	rows = append(rows, normalizeTableRow(rawRows[0], numCols))
-	for _, row := range rawRows[2:] {
+	rows := make([][]string, 0, len(rawRows))
+	for _, row := range rawRows {
 		rows = append(rows, normalizeTableRow(row, numCols))
 	}
 

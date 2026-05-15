@@ -1,6 +1,6 @@
 package tui
 
-// context_panel.go â€” the Context panel exposes the budgeting decisions
+// context_panel.go — the Context panel exposes the budgeting decisions
 // internal/context.Manager would make for a given query, before an Ask
 // is ever sent. It surfaces the "every token is justified" principle:
 // the user sees the provider cap, the reserve breakdown, the file/
@@ -8,8 +8,8 @@ package tui
 // ContextRecommendations layer surfaces.
 //
 // Shape: query string, cached ContextBudgetInfo + hints list, an
-// edit-mode flag. Computation is offline â€” ContextBudgetPreview is a
-// pure function over the engine's current config â€” so we recompute on
+// edit-mode flag. Computation is offline — ContextBudgetPreview is a
+// pure function over the engine's current config — so we recompute on
 // every enter without a tea.Cmd round-trip.
 //
 // Named context_panel.go (not context.go) to avoid colliding with the
@@ -35,7 +35,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
-// contextTopBanner â€” title + state chip. EMPTY (no preview), TYPING,
+// contextTopBanner — title + state chip. EMPTY (no preview), TYPING,
 // READY (preview computed), ERROR.
 func (m Model) contextTopBanner(width int) string {
 	title := titleStyle.Bold(true).Render("âš– CONTEXT")
@@ -72,23 +72,23 @@ func (m Model) renderContextView(width int) string {
 func (m Model) renderContextViewInner(width int) string {
 	width = clampInt(width, 24, 1000)
 	banner := m.contextTopBanner(width)
-	hint := subtleStyle.Render("â†‘â†“ scroll Â· â†’ action menu Â· enter preview Â· e edit Â· m manager Â· esc cancel")
+	hint := subtleStyle.Render("↑↓ scroll · → action menu · enter preview · e edit · m manager · esc cancel")
 
 	queryLine := subtleStyle.Render("query ")
 	if strings.TrimSpace(m.contextPanel.query) != "" {
 		queryLine += boldStyle.Render(m.contextPanel.query)
 	} else {
-		queryLine += subtleStyle.Render("(none â€” press e to enter a query)")
+		queryLine += subtleStyle.Render("(none — press e to enter a query)")
 	}
 	if m.contextPanel.inputActive {
-		queryLine += subtleStyle.Render("  Â· typing, enter to preview")
+		queryLine += subtleStyle.Render("  · typing, enter to preview")
 	}
 
 	lines := []string{banner, queryLine, hint, renderDivider(width - 2)}
 	lines = append(lines, m.renderContextCockpitBlock(width)...)
 
 	if m.contextPanel.err != "" {
-		lines = append(lines, "", warnStyle.Render("error Â· "+m.contextPanel.err))
+		lines = append(lines, "", warnStyle.Render("error · "+m.contextPanel.err))
 		return strings.Join(lines, "\n")
 	}
 
@@ -110,7 +110,7 @@ func (m Model) renderContextViewInner(width int) string {
 			lines = append(lines, formatContextHintRow(h, width-2))
 		}
 	} else {
-		lines = append(lines, "", subtleStyle.Render("hints: none â€” current config looks healthy for this query."))
+		lines = append(lines, "", subtleStyle.Render("hints: none — current config looks healthy for this query."))
 	}
 
 	return strings.Join(lines, "\n")
@@ -194,7 +194,7 @@ func (m Model) renderContextViewSized(width, height int) string {
 }
 
 // runContextPreview recomputes the budget info, hints, and real-time
-// context breakdown for the current query. Pure (no goroutines) â€”
+// context breakdown for the current query. Pure (no goroutines) —
 // all called functions read only config/state, so no tea.Cmd needed.
 func (m Model) runContextPreview() Model {
 	q := strings.TrimSpace(m.contextPanel.query)
@@ -209,7 +209,7 @@ func (m Model) runContextPreview() Model {
 		m.contextPanel.preview = nil
 		m.contextPanel.breakdown = nil
 		m.contextPanel.hints = nil
-		m.contextPanel.err = "engine not ready â€” another dfmc process may hold the store lock (try `dfmc doctor`)"
+		m.contextPanel.err = "engine not ready — another dfmc process may hold the store lock (try `dfmc doctor`)"
 		return m
 	}
 	m.contextPanel.err = ""
@@ -243,7 +243,7 @@ func (m Model) loadActiveContextDebug() Model {
 	return m
 }
 
-// openContextActionMenu â€” arrow-driven discovery for the Context tab.
+// openContextActionMenu — arrow-driven discovery for the Context tab.
 func (m Model) openContextActionMenu() Model {
 	actions := []panelAction{
 		{Label: "Edit query (opens text input)", Accel: "e",

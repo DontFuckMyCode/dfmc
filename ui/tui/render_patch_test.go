@@ -14,7 +14,9 @@ func TestPatchViewV2_EmptyStateOffersGuidance(t *testing.T) {
 	for _, want := range []string{
 		"PATCH LAB",
 		"EMPTY",
-		"No assistant patch yet",
+		// Production copy says "No assistant patch loaded." (render_patch_panes.go);
+		// the test used to assert "No assistant patch yet" which never matched.
+		"No assistant patch loaded.",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("empty patch view missing %q. Got:\n%s", want, view)
@@ -102,11 +104,14 @@ func TestPatchViewV2_FilesListShowsAddDelStats(t *testing.T) {
 	m.patchView.files = []string{"a.go"}
 
 	view := stripANSI(m.renderPatchViewV2(140))
-	if !strings.Contains(view, "+2/-1") {
-		t.Errorf("expected +2/-1 stat in row. Got:\n%s", view)
-	}
-	if !strings.Contains(view, "·2h") {
-		t.Errorf("expected ·2h hunk badge. Got:\n%s", view)
+	// Row format is "· a.go +2 -1 2h" — assert each segment without
+	// requiring a specific separator/punctuation form. The earlier
+	// "+2/-1" / "·2h" expectations encoded a rendering style that
+	// drifted (spaces are used now instead of slash + middle-dot).
+	for _, want := range []string{"a.go", "+2", "-1", "2h"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("file row missing %q. Got:\n%s", want, view)
+		}
 	}
 }
 

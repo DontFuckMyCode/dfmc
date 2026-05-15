@@ -66,6 +66,19 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.activeTab == 0 && isAtMentionOpenKey(msg) {
 		return m.handleChatKey(msg)
 	}
+	// Providers input modes (catalog form, profile editor, new-provider,
+	// pipeline draft, modelPickerManual) treat alt+<rune> as paste-like
+	// noise — they need to set the "press Enter on a field before typing
+	// or pasting" notice rather than letting the global panel switcher
+	// fire (alt+8 → Providers panel was already active, alt+6 → Memory
+	// would steal focus, etc.). Shield only when in input mode AND the
+	// active tab is Providers — outside that scope the global shortcuts
+	// remain intact.
+	if m.activeTab < len(m.tabs) && m.tabs[m.activeTab] == "Providers" &&
+		isProvidersInputMode(m) &&
+		msg.Alt && msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
+		return m.handleProvidersKey(msg)
+	}
 	if nm, cmd, handled := m.handleGlobalShortcuts(msg); handled {
 		return nm, cmd
 	}

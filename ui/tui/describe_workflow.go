@@ -142,7 +142,7 @@ func (m Model) latestWorkflowPlanSummary() string {
 		if m.plans.plan.Parallel {
 			mode = "parallel"
 		}
-		return fmt.Sprintf("%d subtasks Â· %s Â· confidence %.2f", len(m.plans.plan.Subtasks), mode, m.plans.plan.Confidence)
+		return fmt.Sprintf("%d subtasks · %s · confidence %.2f", len(m.plans.plan.Subtasks), mode, m.plans.plan.Confidence)
 	}
 	for i := len(m.activity.entries) - 1; i >= 0; i-- {
 		entry := m.activity.entries[i]

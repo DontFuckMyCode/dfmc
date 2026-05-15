@@ -72,10 +72,13 @@ func TestRenderContextBarThresholds(t *testing.T) {
 
 	// The filled/empty cells together should equal the requested width.
 	// Count runes rather than raw bytes so we don't trip over ANSI styling.
-	if strings.Count(low, "█")+strings.Count(low, "░") != 10 {
+	// theme.RenderContextBar uses ━ (heavy horizontal) for filled cells and
+	// ─ (light horizontal) for empties — the older █/░ block chars were
+	// replaced when the bar moved into the theme package.
+	if strings.Count(low, "━")+strings.Count(low, "─") != 10 {
 		t.Errorf("expected 10 bar cells in low bar, got %q", low)
 	}
-	if strings.Count(hot, "█")+strings.Count(hot, "░") != 10 {
+	if strings.Count(hot, "━")+strings.Count(hot, "─") != 10 {
 		t.Errorf("expected 10 bar cells in hot bar, got %q", hot)
 	}
 }
@@ -83,7 +86,7 @@ func TestRenderContextBarThresholds(t *testing.T) {
 func TestRenderContextBarMinimumCells(t *testing.T) {
 	// Sub-minimum widths get clamped to 4 cells so the bar always has shape.
 	out := renderContextBar(500, 1000, 2)
-	if cells := strings.Count(out, "█") + strings.Count(out, "░"); cells != 4 {
+	if cells := strings.Count(out, "━") + strings.Count(out, "─"); cells != 4 {
 		t.Errorf("expected 4 bar cells when cells<4, got %d in %q", cells, out)
 	}
 }

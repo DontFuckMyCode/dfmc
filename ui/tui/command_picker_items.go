@@ -78,7 +78,23 @@ func (m Model) filteredCommandPickerItems() []commandPickerItem {
 }
 
 func (m Model) providerPickerItems() []commandPickerItem {
-	names := m.availableProviders()
+	// Enumerate ALL known provider profiles, not just the
+	// availableProviders() subset that filters by API-key presence.
+	// The picker already surfaces an "unconfigured" meta tag so the
+	// user can pick a provider, learn it needs a key, and run /key.
+	// Hiding unconfigured ones makes the surface feel broken on a
+	// freshly installed binary where only "generic" / "offline" have
+	// keys (or in test environments where keys aren't set).
+	names := []string{}
+	if m.eng != nil && m.eng.Config != nil {
+		for name := range m.eng.Config.Providers.Profiles {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+	}
+	if len(names) == 0 {
+		names = m.availableProviders()
+	}
 	if len(names) == 0 {
 		return nil
 	}

@@ -59,7 +59,7 @@ func (m Model) describeWorkflow() string {
 	}
 
 	if runID := strings.TrimSpace(m.telemetry.driveRunID); runID != "" {
-		lines = append(lines, fmt.Sprintf("  drive:      %s Â· %d/%d done Â· %d blocked", runID, m.telemetry.driveDone, m.telemetry.driveTotal, m.telemetry.driveBlocked))
+		lines = append(lines, fmt.Sprintf("  drive:      %s · %d/%d done · %d blocked", runID, m.telemetry.driveDone, m.telemetry.driveTotal, m.telemetry.driveBlocked))
 	} else {
 		lines = append(lines, "  drive:      idle")
 	}
@@ -75,7 +75,7 @@ func (m Model) describeWorkflow() string {
 		"Shortcuts:",
 		"  /todos shows the shared todo list",
 		"  /subagents shows recent subagent fan-out",
-		"  ctrl+y jumps to Plans Â· ctrl+g jumps to Activity",
+		"  ctrl+y jumps to Plans · ctrl+g jumps to Activity",
 	)
 	return strings.Join(lines, "\n")
 }
@@ -104,7 +104,7 @@ func (m Model) describeTodos() string {
 		)
 		return strings.Join(lines, "\n")
 	}
-	lines = append(lines, fmt.Sprintf("  total:      %d Â· %d pending Â· %d doing Â· %d done", total, pending, doing, done))
+	lines = append(lines, fmt.Sprintf("  total:      %d · %d pending · %d doing · %d done", total, pending, doing, done))
 	for i, line := range formatWorkflowTodoLines(todos, 12) {
 		lines = append(lines, fmt.Sprintf("  %2d. %s", i+1, line))
 	}

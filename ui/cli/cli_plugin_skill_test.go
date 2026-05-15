@@ -175,6 +175,10 @@ func TestRunSkill_Run(t *testing.T) {
 
 func TestRunSkill_RunJSON(t *testing.T) {
 	eng := newCLITestEngine(t)
+	// Pin to offline so the skill-run wiring exercises end-to-end
+	// without needing live API keys; the default minimax cascade
+	// has no key and the tool-capable filter strips offline.
+	eng.SetProviderModel("offline", "")
 	out := captureStdout(t, func() {
 		code := runSkill(context.Background(), eng, []string{"run", "review", "--input", "test.go"}, true)
 		if code != 0 {

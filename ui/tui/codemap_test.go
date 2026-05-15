@@ -37,10 +37,18 @@ func sampleCodemapSnap() codemapSnapshot {
 }
 
 func TestNextCodemapViewCycles(t *testing.T) {
+	// The production cycle is 7-stage: overview → hotspots → orphans →
+	// cycles → callers → callees → visual → overview. The test was
+	// originally written against an older 4-stage cycle; updated here
+	// to match the current set so each new view added gets pinned by
+	// this regression guard.
 	want := []string{
 		codemapViewHotspots,
 		codemapViewOrphans,
 		codemapViewCycles,
+		codemapViewCallers,
+		codemapViewCallees,
+		codemapViewVisual,
 		codemapViewOverview,
 	}
 	got := make([]string, 0, len(want))

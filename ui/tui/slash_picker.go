@@ -53,7 +53,15 @@ func (m Model) activeSlashArgSuggestions() []string {
 	trailingSpace := hasTrailingWhitespace(raw)
 	switch cmd {
 	case "provider":
-		providers := m.availableProviders()
+		// Tab-completion surface lists ALL known providers, configured
+		// or not. The user typing /provider <name> is asking to switch
+		// targets — the API-key filter that availableProviders() uses
+		// for active routing should not gate the suggestion list, or
+		// they cannot tab to a profile that's missing a key.
+		providers := m.allKnownProviders()
+		if len(providers) == 0 {
+			providers = m.availableProviders()
+		}
 		if len(providers) == 0 {
 			return nil
 		}

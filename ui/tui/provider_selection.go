@@ -392,6 +392,43 @@ func formatProviderSwitchNotice(p engine.ProviderProfileStatus) string {
 	return strings.Join(parts, " · ")
 }
 
+// providerProfileExists reports whether the named provider has an
+// entry in the engine's Providers.Profiles map. This is broader than
+// availableProviders() — it accepts unconfigured profiles too, so a
+// user typing /provider <name> can flip to a known provider even
+// before they've wired up an API key.
+// allKnownProviders returns every provider name in Config.Providers.Profiles,
+// configured or not, sorted alphabetically. Use this for surfaces
+// (tab-completion, picker) where the user is asking to SEE the
+// catalog; use availableProviders() when filtering for active routing.
+func (m Model) allKnownProviders() []string {
+	if m.eng == nil || m.eng.Config == nil {
+		return nil
+	}
+	names := make([]string, 0, len(m.eng.Config.Providers.Profiles))
+	for name := range m.eng.Config.Providers.Profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (m Model) providerProfileExists(name string) bool {
+	if m.eng == nil || m.eng.Config == nil {
+		return false
+	}
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return false
+	}
+	for known := range m.eng.Config.Providers.Profiles {
+		if strings.EqualFold(known, trimmed) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m Model) providerProfile(name string) engine.ProviderProfileStatus {
 	if m.eng == nil || m.eng.Config == nil {
 		return engine.ProviderProfileStatus{Name: strings.TrimSpace(name)}

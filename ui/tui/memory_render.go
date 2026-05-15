@@ -146,7 +146,9 @@ func (m Model) renderMemoryView(width int) string {
 			)
 		} else {
 			lines = append(lines,
-				"  "+warnStyle.Render(fmt.Sprintf("No matches for %q", m.memory.query)))
+				"  "+warnStyle.Render(fmt.Sprintf("No matches for %q", m.memory.query)),
+				"  "+subtleStyle.Render("Press c to clear the query."),
+			)
 		}
 		return strings.Join(lines, "\n")
 	}

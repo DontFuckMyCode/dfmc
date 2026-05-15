@@ -23,6 +23,16 @@ func keyTestModel(t *testing.T) (Model, string) {
 	t.Setenv("HOME", homeDir)
 	t.Setenv("USERPROFILE", homeDir)
 	projectRoot := t.TempDir()
+	// Plant a `.dfmc/` directory marker inside the test projectRoot so
+	// config.FindProjectRoot stops here instead of walking UP through
+	// %USERPROFILE%/AppData/Local/Temp/<test>/ and finding the real
+	// dev-box ~/.dfmc/ as a project marker — that walk would then
+	// load the user's actual ~/.dfmc/config.yaml over the test fixture
+	// on every reloadEngineConfig() call and clobber whatever the test
+	// set in memory.
+	if err := os.MkdirAll(filepath.Join(projectRoot, ".dfmc"), 0o755); err != nil {
+		t.Fatalf("plant project marker: %v", err)
+	}
 	cfg := config.DefaultConfig()
 	eng := &engine.Engine{
 		Config:      cfg,

@@ -30,7 +30,14 @@ func (m Model) runProviderCommand(cmd string, args []string) (tea.Model, tea.Cmd
 		}
 		name := strings.TrimSpace(parts[0])
 		model := strings.TrimSpace(strings.Join(parts[1:], " "))
-		if !containsStringFold(m.availableProviders(), name) {
+		// Accept any provider that exists in the profile map, not just
+		// the availableProviders() subset (which filters by API-key
+		// presence). The user spelling the name out is a clear intent
+		// signal; if the provider needs a key, the engine surface
+		// (PlaceholderProvider) handles the degraded path and /key
+		// can wire one up. Hiding known profiles behind the picker
+		// here forced an extra round trip for every fresh install.
+		if !m.providerProfileExists(name) {
 			m = m.startCommandPicker("provider", name, persist)
 			return m, nil, true
 		}

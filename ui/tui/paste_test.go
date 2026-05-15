@@ -175,14 +175,25 @@ func TestPasteBurstAppendSuppressesRenderUntilLineCountChanges(t *testing.T) {
 func TestContextStripCountsStoredPasteContentNotPlaceholder(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
-	content := strings.Repeat("z", 57)
+	// Use multi-line content so the paste creates a stored pasteBlock
+	// instead of auto-submitting through the single-line paste path.
+	// composeInput() splices the placeholder out and replaces it with
+	// the stored content so the strip's char count reflects the real
+	// payload, not the "[Pasted #1 ...]" tag.
+	content := strings.Repeat("z", 57) + "\nfinal line"
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(content), Paste: true})
 	m = next.(Model)
 
 	strip := m.renderContextStrip(120)
-	if !strings.Contains(strip, "chars:") || !strings.Contains(strip, "57") {
-		t.Fatalf("context strip should count stored paste content, got %q", strip)
+	if !strings.Contains(strip, "chars:") {
+		t.Fatalf("context strip should expose chars counter, got %q", strip)
+	}
+	// 57 + 1 newline + 10 ("final line") = 68 chars in the spliced
+	// composeInput. The strip should be counting that, not the
+	// short "[Pasted #1 2 lines]" placeholder text.
+	if !strings.Contains(strip, "68") {
+		t.Fatalf("context strip should count stored paste content (68 chars), got %q", strip)
 	}
 	if strings.Contains(strip, "19") {
 		t.Fatalf("context strip appears to count placeholder text instead of paste content: %q", strip)
