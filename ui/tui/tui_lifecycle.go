@@ -34,7 +34,7 @@ func init() {
 		session.AttachSessionToEngine(s, e)
 	}
 	// Register the bridge function with the engine so AttachSession calls it.
-	engine.SetAttachProvider(func(e, s interface{}) {
+	engine.SetAttachProvider(func(e, s any) {
 		if e != nil && s != nil {
 			attachSessionBridge(e.(*engine.Engine), s.(*session.Session))
 		}

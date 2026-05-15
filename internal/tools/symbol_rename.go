@@ -59,7 +59,7 @@ Scope detection:
 			{Name: "dry_run", Type: ArgBoolean, Default: true, Description: `Preview impact without writing. Default true.`},
 			{Name: "skip_tests", Type: ArgBoolean, Default: false, Description: `Skip test files (*_test.go). Default false.`},
 		},
-		Returns:    "Structured JSON: {impact: {files, locations}, changes: [{path, old, new, line}], dry_run: bool}",
+		Returns:    "Structured JSON: {impact: {files, locations, failed?}, changes: [{path, old, new, line}], dry_run: bool, failed?: [path...]}. When impact.failed > 0 the listed files could not be written (read-only FS, permission denied, AV lock); they are excluded from changes[].",
 		Idempotent: false,
 		CostHint:   "cpu-bound",
 	}

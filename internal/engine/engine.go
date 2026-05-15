@@ -258,11 +258,11 @@ func (e *Engine) AttachSession(provider any) {
 }
 
 // attachSessionProvider is set by the session package via SetAttachProvider.
-var attachSessionProvider func(interface{}, interface{})
+var attachSessionProvider func(any, any)
 
 // SetAttachProvider registers the session attachment function.
 // Called by the session package to wire the bridge from its init().
-func SetAttachProvider(fn func(interface{}, interface{})) {
+func SetAttachProvider(fn func(any, any)) {
 	attachSessionProvider = fn
 }
 

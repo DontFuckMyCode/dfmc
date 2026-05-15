@@ -313,7 +313,7 @@ func (t *GitReviewTool) formatOutput(summary ReviewSummary, includeStats bool) s
 	return sb.String()
 }
 
-func mustMarshal(v interface{}) string {
+func mustMarshal(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }

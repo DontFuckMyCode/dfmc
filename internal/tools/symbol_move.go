@@ -62,7 +62,7 @@ func (t *SymbolMoveTool) Spec() ToolSpec {
 			{Name: "dry_run", Type: ArgBoolean, Default: true, Description: `Preview without writing. Default true.`},
 			{Name: "skip_tests", Type: ArgBoolean, Default: false, Description: `Skip test files when updating references. Default false.`},
 		},
-		Returns:    "Structured JSON: {impact: {files, locations}, changes: [{path, old, new, line}], dry_run: bool}",
+		Returns:    "Structured JSON: {impact: {files, locations, moved, updated, failed?}, changes: [{path, old, new, line}], dry_run: bool, failed?: [path...]}. When impact.failed > 0 the listed reference files could not be written (read-only FS, permission denied, AV lock); they are excluded from changes[]. Source/destination write failures still surface as hard errors so the declaration move is atomic.",
 		Idempotent: false,
 		CostHint:   "cpu-bound",
 	}

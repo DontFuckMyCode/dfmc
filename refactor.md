@@ -7,9 +7,9 @@
 
 ## Status
 
-- ✅ **Sprint 1 — Latent bugs** (§1) — applied. Two bug fixes + two regression tests + one documented exception in CLAUDE.md. See §1 entries for the closing commit summary.
+- ✅ **Sprint 1 — Latent bugs** (§1) — applied. Two bug fixes + two regression tests + one documented exception in CLAUDE.md + `internal/repolint` tripwire to keep the `_ = err` pattern out forever. See §1 entries for the closing commit summary.
 - ⏳ Sprint 2 — Decisions (§4.1, §2.1) — awaiting product call.
-- ⏳ Sprint 3 — Cleanup carving — not started.
+- 🟡 Sprint 3 — Cleanup carving — partially started. `interface{} → any` cleanup done (§6.1); `chat_commands_*` collapse and `tui_test.go` split still pending.
 - ⏳ Sprint 4 — God-object decomposition — not started.
 
 ---
@@ -167,8 +167,8 @@ Production-vs-test LOC ratio is **108750:21397**, which is healthy for a project
 
 ## 6. Cross-Cutting Observations (low-priority)
 
-### 6.1 `interface{}` vs `any`
-Only 9 `interface{}` literals remain in `internal/*` non-test code. Replace with `any` for consistency (purely cosmetic).
+### 6.1 `interface{}` vs `any` — ✅ DONE
+Production-code `interface{}` type literals are now zero. Three spots changed: [`internal/engine/engine.go`](internal/engine/engine.go) (`attachSessionProvider` var + `SetAttachProvider` signature), [`internal/tools/git_review.go`](internal/tools/git_review.go) (`mustMarshal` param), [`ui/tui/tui_lifecycle.go`](ui/tui/tui_lifecycle.go) (function literal at `engine.SetAttachProvider`). One legitimate occurrence kept: [`internal/tools/auto_tool.go:295`](internal/tools/auto_tool.go#L295) emits the literal string `"interface{}"` as part of code generation output — that is the *value*, not the type. Remaining `interface{}` matches in the tree are inside `// ...` comments and were left alone (cosmetic only).
 
 ### 6.2 `pkg/jsonutil.MustMarshal` is the only production panic
 [`pkg/jsonutil/jsonutil.go:14`](pkg/jsonutil/jsonutil.go#L14) is the only `panic()` in non-test production code. It's a `Must*` helper, properly documented. **No issue** — the codebase has clean panic discipline.
@@ -183,6 +183,8 @@ git ls-files | grep node_modules | head
 ```
 If hits appear, untrack them with `git rm -r --cached`.
 
+**Bonus observation:** `go test ./...` currently walks INTO those `node_modules` paths because the `flatted` npm package happens to ship a Go subdirectory ([`ui/web/{app,frontend}/node_modules/flatted/golang/pkg/flatted/flatted.go`](ui/web/frontend/node_modules/flatted/golang/pkg/flatted/flatted.go)). The Go test runner picks them up as packages (logged as `[no test files]` in CI). Adding a `go.work` exclude or a `package main` build tag at the Makefile level would shave that off and prevent any future `flatted` Go upgrade from accidentally landing in the test surface.
+
 ### 6.5 `Makefile` is Windows-only
 CLAUDE.md already calls this out (uses `NUL`, `rmdir /s /q`). A POSIX-compatible alternative (or a `Taskfile.yml` if mage/just/task is preferred) would lower the friction for any future contributor on Linux/macOS. Low priority.
 
@@ -195,7 +197,7 @@ Concrete sequencing if these items are tackled:
 **Sprint 1 — Latent bugs (½ day): ✅ DONE**
 1. ✅ Fix `symbol_rename`/`symbol_move` error swallowing (§1.1, §1.2).
 2. ✅ `engine_drive_spec.go` lifecycle question resolved — documented as exception (§1.3).
-3. ⏳ Add a CI/lint rule that greps the tree for `_ = err` in non-test code, fails on regression. **Still pending.**
+3. ✅ Added `internal/repolint` package — `TestNoSilentErrSwallow` walks all production .go files and fails on any `_ = err`; `TestNoSilentErrSwallow_MatcherSelfCheck` keeps the matcher honest. The rule supports an inline opt-out (`// repolint:allow _=err — <reason>`) for documented exceptions.
 
 **Sprint 2 — Decisions (1 meeting):**
 4. Decide on `internal/session`: finish Phase 4 or delete (§4.1).
@@ -205,7 +207,9 @@ Concrete sequencing if these items are tackled:
 6. Collapse `chat_commands_*` into ~4 files (§3.1).
 7. Consolidate `provider_panel_*` key-picker files (§3.1).
 8. Split `ui/tui/tui_test.go` per-panel (§5).
-9. Replace remaining `interface{}` with `any` (§6.1).
+9. ✅ Replace remaining `interface{}` with `any` (§6.1).
+10. ✅ `_ = err` regression tripwire ([`internal/repolint/repolint_test.go`](internal/repolint/repolint_test.go)).
+11. Exclude `node_modules/**/flatted/golang` from `go test ./...` (§6.4).
 
 **Sprint 4 — God-object decomposition (incremental, 2-3 days if approved):**
 10. Introduce capability interfaces, switch UIs over package by package (§2.1, §2.2).
