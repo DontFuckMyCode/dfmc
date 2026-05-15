@@ -126,6 +126,20 @@ func jsASTRules() []astRule {
 			},
 		},
 		{
+			// CWE-22 in JS / TS: a tainted identifier reaches the path
+			// slot of an fs.* file-open / read / write / delete sink.
+			// Matches both method-call forms (`fs.readFile(p)`,
+			// `fs.promises.readFile(p)`) and destructured bare-call
+			// forms (`readFile(p)` after `const { readFile } = require("fs")`)
+			// since Node tutorials use both shapes interchangeably.
+			Name:     "Path traversal via file-open call with tainted input",
+			Severity: "high",
+			CWE:      "CWE-22",
+			OWASP:    "A01:2021 Broken Access Control",
+			Langs:    []string{"javascript", "typescript"},
+			Match:    jsFileOpenTaintedArgMatcher,
+		},
+		{
 			// Catches the multi-step JS / TS shape the concat rule misses.
 			// The classic Express pattern destructures fields out of req
 			// on one line and feeds them to a host-shell or dynamic-code
@@ -158,6 +172,73 @@ var (
 	// constructors that happen to share the suffix.
 	jsFunctionCtor = "new Fu" + "nct" + "ion"
 )
+
+// Method-form fs sinks. The leading `.` anchors the match so
+// `fs.readFile(p)` and `fs.promises.readFile(p)` both succeed
+// without enumerating receiver aliases. Path slot is arg 0 for every
+// entry; rename / copy pairs (src, dst) are intentionally checked at
+// slot 0 -- attackers reading attacker-controlled sources is the
+// more common attack shape.
+// Method names like .open / .stat / .access / .lstat are intentionally
+// NOT in this list: many non-fs libraries use those method names
+// (socket.open, db.open, perf.stat, ...) and a tainted arg flowing
+// into them isn't necessarily a path-traversal flaw. The names below
+// are specific enough that false positives are rare in practice;
+// .readdir is kept because customer-named .readdir() methods are
+// uncommon outside fs.
+var jsFileOpenMethodCalls = []taintedCallSlot{
+	{".readFile", 0}, {".readFileSync", 0},
+	{".writeFile", 0}, {".writeFileSync", 0},
+	{".appendFile", 0}, {".appendFileSync", 0},
+	{".createReadStream", 0}, {".createWriteStream", 0},
+	{".unlink", 0}, {".unlinkSync", 0},
+	{".rmdir", 0}, {".rmdirSync", 0},
+	{".rm", 0}, {".rmSync", 0},
+	{".rename", 0}, {".renameSync", 0},
+	{".mkdir", 0}, {".mkdirSync", 0},
+	{".copyFile", 0}, {".copyFileSync", 0},
+	{".readdir", 0}, {".readdirSync", 0},
+}
+
+// Bare-form fs sinks: the same names without the leading dot, for
+// destructured imports like
+// `const { readFile, writeFile } = require("fs/promises");`. Used
+// with the anchored bareCallNthArgIsTainted helper so identifier-
+// suffix and receiver-prefixed forms do not false-fire.
+var jsFileOpenBareCalls = []string{
+	"readFile", "readFileSync",
+	"writeFile", "writeFileSync",
+	"appendFile", "appendFileSync",
+	"createReadStream", "createWriteStream",
+	"unlink", "unlinkSync",
+	"rmdir", "rmdirSync",
+	"rm", "rmSync",
+	"rename", "renameSync",
+	"mkdir", "mkdirSync",
+	"copyFile", "copyFileSync",
+	"readdir", "readdirSync",
+}
+
+// jsFileOpenTaintedArgMatcher fires when an fs.* sink (method form
+// or destructured bare form) receives a tainted path argument.
+// Mirrors the Go / Python path-traversal matchers; the only
+// JS-specific bit is checking both call shapes.
+func jsFileOpenTaintedArgMatcher(ctx *scanLineCtx) bool {
+	if ctx == nil || ctx.Taint == nil {
+		return false
+	}
+	for _, call := range jsFileOpenMethodCalls {
+		if callNthArgIsTainted(ctx.Trimmed, call.Name, call.ArgSlot, ctx.Taint) {
+			return true
+		}
+	}
+	for _, name := range jsFileOpenBareCalls {
+		if bareCallNthArgIsTainted(ctx.Trimmed, name, 0, ctx.Taint) {
+			return true
+		}
+	}
+	return false
+}
 
 // jsShellTaintedArgMatcher fires when a child-process / dynamic-code /
 // eval call passes an identifier that the taint tracker has marked as

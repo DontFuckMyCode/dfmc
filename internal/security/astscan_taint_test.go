@@ -499,6 +499,103 @@ func TestSmartScan_TS_ExecTaintedFromReqBody(t *testing.T) {
 	mustContainKind(t, findings, "tainted input")
 }
 
+// --- JS/TS path-traversal taint end-to-end -------------------------------
+
+var fxJSFSModule = "fs"
+
+// TestSmartScan_JS_FSReadFileTaintedFromQuery pins the canonical
+// Express CWE-22 shape: a query param feeds straight into fs.readFile.
+func TestSmartScan_JS_FSReadFileTaintedFromQuery(t *testing.T) {
+	src := "const " + fxJSFSModule + " = require(\"" + fxJSFSModule + "\");\n" +
+		"function handler(req, res) {\n" +
+		"  const name = req.query.file;\n" +
+		"  fs.readFile(name, (err, data) => res.send(data));\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.js", src)
+	mustContainKind(t, findings, "Path traversal via file-open call with tainted input")
+}
+
+// TestSmartScan_JS_FSPromisesReadFileTainted covers the
+// fs.promises.readFile shape (modern Node).
+func TestSmartScan_JS_FSPromisesReadFileTainted(t *testing.T) {
+	src := "const fs = require(\"" + fxJSFSModule + "\");\n" +
+		"async function handler(req, res) {\n" +
+		"  const name = req.params.path;\n" +
+		"  const data = await fs.promises.readFile(name);\n" +
+		"  res.send(data);\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.js", src)
+	mustContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_JS_BareReadFileFromDestructure pins the destructured
+// import + destructured req shape: both source and sink come out of
+// `const { ... } = ...` lines. The bare-call anchor must let this
+// through.
+func TestSmartScan_JS_BareReadFileFromDestructure(t *testing.T) {
+	src := "const { readFile } = require(\"" + fxJSFSModule + "/promises\");\n" +
+		"async function handler(req, res) {\n" +
+		"  const { body } = req;\n" +
+		"  const data = await readFile(body);\n" +
+		"  res.send(data);\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.js", src)
+	mustContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_JS_FSWriteFileTaintedFromHeader covers the write-side
+// upload-rename flaw with a header-derived destination.
+func TestSmartScan_JS_FSWriteFileTaintedFromHeader(t *testing.T) {
+	src := "const fs = require(\"" + fxJSFSModule + "\");\n" +
+		"function handler(req, res, body) {\n" +
+		"  const name = req.headers[\"x-upload-name\"];\n" +
+		"  fs.writeFileSync(name, body);\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.js", src)
+	mustContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_JS_FSUnlinkTaintedFromBody covers the delete-anything
+// flaw.
+func TestSmartScan_JS_FSUnlinkTaintedFromBody(t *testing.T) {
+	src := "const fs = require(\"" + fxJSFSModule + "\");\n" +
+		"function handler(req, res) {\n" +
+		"  const target = req.body.path;\n" +
+		"  fs.unlinkSync(target);\n" +
+		"  res.end();\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.js", src)
+	mustContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_JS_FSReadFileLiteralIsSafe: hard-coded path must not
+// fire.
+func TestSmartScan_JS_FSReadFileLiteralIsSafe(t *testing.T) {
+	src := "const fs = require(\"" + fxJSFSModule + "\");\n" +
+		"function run() {\n" +
+		"  fs.readFileSync(\"/etc/app.conf\");\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.js", src)
+	mustNotContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_JS_BareReadFileFromShadowingIsSafe pins the anchor:
+// a tainted arg flowing into a NON-fs function that happens to share
+// a name with an fs sink (e.g. an inner helper that takes a path)
+// only fires when the function name is at a word boundary -- which
+// it is here, but the receiver-prefixed form `myFs.readFile(x)` from
+// a custom fs-like object would also trip the method-form rule. The
+// negative case worth pinning is identifier-suffix shadowing, e.g.
+// `myreadFile(taintedArg)` must NOT fire.
+func TestSmartScan_JS_BareReadFileFromShadowingIsSafe(t *testing.T) {
+	src := "function handler(req, res) {\n" +
+		"  const body = req.body;\n" +
+		"  myreadFile(body);\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.js", src)
+	mustNotContainKind(t, findings, "Path traversal")
+}
+
 // --- Go SQL taint end-to-end --------------------------------------------
 
 // TestSmartScan_Go_SQLExecTaintedFromForm pins the canonical
