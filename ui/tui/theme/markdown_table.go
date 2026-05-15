@@ -259,14 +259,6 @@ func normalizeTableRow(row []string, numCols int) []string {
 	return out
 }
 
-func tableRenderedWidth(colW []int) int {
-	total := 1
-	for _, w := range colW {
-		total += w + 3
-	}
-	return total
-}
-
 func tableBorder(colW []int, left, mid, right string) string {
 	var b strings.Builder
 	b.WriteString(SubtleStyle.Render(left))
