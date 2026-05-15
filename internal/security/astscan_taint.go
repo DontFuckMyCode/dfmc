@@ -666,20 +666,46 @@ func callHasTaintedArg(line, callName string, t *taintTracker) bool {
 	}
 	args := findCallArgs(line, callName)
 	for _, raw := range args {
-		arg := strings.TrimSpace(raw)
-		if arg == "" || isLiteralArg(arg) {
-			continue
-		}
-		// Strip a leading `*` / trailing `...` / outer parens so the
-		// bare ident is recognised even when wrapped.
-		bare := strings.TrimSuffix(strings.TrimPrefix(arg, "*"), "...")
-		bare = strings.Trim(bare, "() ")
-		if t.IsTainted(bare) {
-			return true
-		}
-		if argReferencesTainted(arg, t) {
+		if argIsTainted(raw, t) {
 			return true
 		}
 	}
 	return false
+}
+
+// callNthArgIsTainted is the SQL-shaped variant of callHasTaintedArg:
+// it considers ONLY arg #n. Parameterised SQL idioms like
+// `db.Query("SELECT * FROM t WHERE id=$1", taintedID)` are safe even
+// when later args are tainted -- the placeholder binding sanitises.
+// The injection path is "the query string itself was built from user
+// input", which lives in a specific positional slot. Used by the SQL
+// taint matcher to inspect arg 0 for `.Query` / `.Exec` and arg 1 for
+// `.QueryContext` / `.ExecContext` (the `*Context` family takes
+// ctx first, the SQL string second).
+func callNthArgIsTainted(line, callName string, n int, t *taintTracker) bool {
+	if t == nil || n < 0 {
+		return false
+	}
+	args := findCallArgs(line, callName)
+	if n >= len(args) {
+		return false
+	}
+	return argIsTainted(args[n], t)
+}
+
+// argIsTainted is the shared per-arg classifier used by both the
+// any-arg and first-arg call matchers. Literals fall through; an arg
+// that is a bare tainted ident, or contains a tainted ident as a
+// sub-token of a wrapper expression, returns true.
+func argIsTainted(raw string, t *taintTracker) bool {
+	arg := strings.TrimSpace(raw)
+	if arg == "" || isLiteralArg(arg) {
+		return false
+	}
+	bare := strings.TrimSuffix(strings.TrimPrefix(arg, "*"), "...")
+	bare = strings.Trim(bare, "() ")
+	if t.IsTainted(bare) {
+		return true
+	}
+	return argReferencesTainted(arg, t)
 }

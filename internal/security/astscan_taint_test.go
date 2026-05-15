@@ -498,3 +498,94 @@ func TestSmartScan_TS_ExecTaintedFromReqBody(t *testing.T) {
 	findings := scanHelper(t, "sample.ts", src)
 	mustContainKind(t, findings, "tainted input")
 }
+
+// --- Go SQL taint end-to-end --------------------------------------------
+
+// TestSmartScan_Go_SQLExecTaintedFromForm pins the canonical
+// concat-built-on-a-prior-line shape that the existing concat rule
+// misses: the query string is assembled with concat AND a SQL literal
+// on one line, then passed to db.Exec on another.
+func TestSmartScan_Go_SQLExecTaintedFromForm(t *testing.T) {
+	src := "package main\n" +
+		"import \"database/sql\"\n" +
+		"func h(r *http.Request, db *sql.DB) {\n" +
+		"	id := r.URL.Query().Get(\"id\")\n" +
+		"	q := \"DELETE FROM users WHERE id=\" + id\n" +
+		"	db.Exec(q)\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustContainKind(t, findings, "SQL injection via query call with tainted input")
+}
+
+// TestSmartScan_Go_SQLQueryTaintedFromBody covers .Query (most common
+// read path) and the io.ReadAll(r.Body) source.
+func TestSmartScan_Go_SQLQueryTaintedFromBody(t *testing.T) {
+	src := "package main\n" +
+		"import \"database/sql\"\n" +
+		"func h(r *http.Request, db *sql.DB) {\n" +
+		"	body, _ := io.ReadAll(r.Body)\n" +
+		"	sql := \"SELECT * FROM t WHERE name='\" + string(body) + \"'\"\n" +
+		"	db.Query(sql)\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustContainKind(t, findings, "tainted input")
+}
+
+// TestSmartScan_Go_SQLContextVariantTainted covers the *Context family
+// (QueryContext / ExecContext / etc.) which is the modern idiom.
+func TestSmartScan_Go_SQLContextVariantTainted(t *testing.T) {
+	src := "package main\n" +
+		"import \"database/sql\"\n" +
+		"func h(ctx context.Context, r *http.Request, db *sql.DB) {\n" +
+		"	name := r.FormValue(\"name\")\n" +
+		"	q := \"SELECT * FROM u WHERE name='\" + name + \"'\"\n" +
+		"	db.QueryContext(ctx, q)\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustContainKind(t, findings, "tainted input")
+}
+
+// TestSmartScan_Go_SQLParameterisedWithTaintedBindIsSafe pins the
+// safety promise: when the FIRST arg is a literal and tainted data is
+// passed only via placeholder bindings, the taint rule must NOT fire.
+// This is the idiom the rule exists to leave alone. Distinct from the
+// `TestSmartScan_Go_SQLParameterisedIsSafe` in astscan_test.go, which
+// pins the same property for the concat rule.
+func TestSmartScan_Go_SQLParameterisedWithTaintedBindIsSafe(t *testing.T) {
+	src := "package main\n" +
+		"import \"database/sql\"\n" +
+		"func h(r *http.Request, db *sql.DB) {\n" +
+		"	id := r.URL.Query().Get(\"id\")\n" +
+		"	db.Query(\"SELECT * FROM users WHERE id=$1\", id)\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustNotContainKind(t, findings, "tainted input")
+}
+
+// TestSmartScan_Go_SQLLiteralQueryStaysSafe: an all-literal query
+// without any source flow must not fire either of the SQL rules.
+func TestSmartScan_Go_SQLLiteralQueryStaysSafe(t *testing.T) {
+	src := "package main\n" +
+		"import \"database/sql\"\n" +
+		"func h(db *sql.DB) {\n" +
+		"	db.Query(\"SELECT 1\")\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustNotContainKind(t, findings, "SQL injection")
+}
+
+// TestSmartScan_Go_SQLPreparedStatementTainted covers .Prepare which
+// the existing concat rule was already prone to over-flag; the taint
+// rule keeps the same precision: only fires when the first arg is a
+// tainted identifier, not when it's a literal with placeholders.
+func TestSmartScan_Go_SQLPreparedStatementTainted(t *testing.T) {
+	src := "package main\n" +
+		"import \"database/sql\"\n" +
+		"func h(r *http.Request, db *sql.DB) {\n" +
+		"	col := r.URL.Query().Get(\"col\")\n" +
+		"	stmt := \"UPDATE t SET \" + col + \" = 1\"\n" +
+		"	db.Prepare(stmt)\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustContainKind(t, findings, "tainted input")
+}

@@ -106,6 +106,28 @@ func goASTRules() []astRule {
 			},
 		},
 		{
+			// Catches the multi-step SQL shape the concat rule misses:
+			//   q := r.URL.Query().Get("id")
+			//   sql := "DELETE FROM t WHERE id=" + q
+			//   db.Exec(sql)
+			// The concat-only rule fires on the middle line only when a
+			// SQL-shaped literal is also present, AND on the last line
+			// only when concat appears. Once the assembled query lives
+			// in a named variable, neither single line satisfies both
+			// guards. Taint propagates source -> q -> sql, and this
+			// rule checks the first arg of every query call against the
+			// tracker. Parameterised idioms
+			// (`db.Query("SELECT ... WHERE id=$1", taintedID)`) stay
+			// safe because the first arg is a literal, not a tainted
+			// identifier -- callFirstArgIsTainted only inspects arg #0.
+			Name:     "SQL injection via query call with tainted input",
+			Severity: "high",
+			CWE:      "CWE-89",
+			OWASP:    "A03:2021 Injection",
+			Langs:    []string{"go"},
+			Match:    sqlQueryTaintedArgMatcher,
+		},
+		{
 			Name:     "Hardcoded cryptographic material",
 			Severity: "medium",
 			CWE:      "CWE-798",
@@ -182,4 +204,49 @@ func execCommandTaintedArgMatcher(ctx *scanLineCtx) bool {
 	}
 	return callHasTaintedArg(ctx.Trimmed, "exec.Command", ctx.Taint) ||
 		callHasTaintedArg(ctx.Trimmed, "exec.CommandContext", ctx.Taint)
+}
+
+// sqlQueryCall describes one database/sql-style call shape: the
+// method-name suffix (anchored on `.` so receivers are abstracted
+// away) and the positional slot that holds the SQL string. The plain
+// methods take SQL at arg 0; the `*Context` family takes ctx at
+// arg 0 and SQL at arg 1.
+//
+// Stored without the trailing `(` because findCallArgs locates the
+// name with strings.Index and then walks to the next `(` itself --
+// including the paren in the name double-consumes it.
+type sqlQueryCall struct {
+	Name   string
+	SQLArg int
+}
+
+var sqlQueryCalls = []sqlQueryCall{
+	{".Exec", 0}, {".ExecContext", 1},
+	{".Query", 0}, {".QueryContext", 1},
+	{".QueryRow", 0}, {".QueryRowContext", 1},
+	{".Prepare", 0}, {".PrepareContext", 1},
+}
+
+// sqlQueryTaintedArgMatcher fires when a database/sql call (or its
+// `*Context` variant) passes a tainted identifier in the slot that
+// holds the SQL string. The positional check is what keeps the
+// parameterised idiom safe: `.Query("SELECT ... $1", id)` with a
+// tainted `id` does not trip the rule because the SQL slot is a
+// literal, not a tainted identifier.
+//
+// The plain methods (`.Query`, `.Exec`, `.Prepare`, `.QueryRow`) put
+// SQL at arg 0. The `*Context` siblings put ctx at arg 0 and SQL at
+// arg 1. Mixing those up would mean `.QueryContext(ctx, "SELECT ...",
+// taintedID)` falsely fires because ctx (arg 0) might happen to be
+// tainted in some unrelated way; pinning the slot eliminates that.
+func sqlQueryTaintedArgMatcher(ctx *scanLineCtx) bool {
+	if ctx == nil || ctx.Taint == nil {
+		return false
+	}
+	for _, call := range sqlQueryCalls {
+		if callNthArgIsTainted(ctx.Trimmed, call.Name, call.SQLArg, ctx.Taint) {
+			return true
+		}
+	}
+	return false
 }
