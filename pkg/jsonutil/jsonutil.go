@@ -5,11 +5,7 @@
 // For non-panicking variants, use json.Marshal / json.Unmarshal directly.
 package jsonutil
 
-import (
-	"encoding/json"
-	"io"
-	"os"
-)
+import "encoding/json"
 
 // MustMarshal serializes v to JSON bytes. Panics on error.
 func MustMarshal(v any) []byte {
@@ -18,40 +14,4 @@ func MustMarshal(v any) []byte {
 		panic(err)
 	}
 	return b
-}
-
-// MustMarshalIndent serializes v to pretty-printed JSON with given prefix and indent.
-// Panics on error.
-func MustMarshalIndent(v any, prefix, indent string) string {
-	b, err := json.MarshalIndent(v, prefix, indent)
-	if err != nil {
-		panic(err)
-	}
-	return string(b)
-}
-
-// MustMarshalToWriter marshals v and writes to w. Panics on error.
-func MustMarshalToWriter(w io.Writer, v any) {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
-		panic(err)
-	}
-}
-
-// MustUnmarshal deserializes data into v. Panics on error.
-// v must be a pointer.
-func MustUnmarshal(data []byte, v any) {
-	if err := json.Unmarshal(data, v); err != nil {
-		panic(err)
-	}
-}
-
-// MustReadFile reads and unmarshals a JSON file into v. Panics on error.
-func MustReadFile(path string, v any) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		panic(err)
-	}
-	MustUnmarshal(data, v)
 }
