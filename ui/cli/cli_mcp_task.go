@@ -186,7 +186,7 @@ func (h *taskMCPHandler) callUpdate(rawArgs []byte) (mcp.CallToolResult, error) 
 		err = store.UpdateTask(id, mutator)
 	}
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, taskstore.ErrTaskNotFound) {
 			return errResult("task " + id + " not found")
 		}
 		return errResult("update: " + err.Error())

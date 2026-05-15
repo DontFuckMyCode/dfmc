@@ -1,4 +1,8 @@
-// Package toolhistory provides tool call logging and learned pattern tracking.
+// Package toolhistory persists learned coding patterns the assistant
+// can replay across sessions. The tool-call JSONL logger that lived
+// here historically (Logger + bus reflection bridge + atomic writer)
+// was removed as unwired dead code; provider-level call logging
+// lives in internal/providerlog.
 package toolhistory
 
 import (

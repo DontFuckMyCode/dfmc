@@ -21,6 +21,12 @@ const taskBucket = "tasks"
 // update against the new state.
 var ErrTaskVersionConflict = errors.New("taskstore: task version conflict")
 
+// ErrTaskNotFound is returned by UpdateTask / UpdateTaskCAS when the
+// id has no stored task. HTTP/MCP layers detect this with errors.Is
+// to convert to a 404 / "not found" structured response without
+// resorting to string matching on the error message.
+var ErrTaskNotFound = errors.New("taskstore: task not found")
+
 type Store struct {
 	db *bbolt.DB
 	mu sync.Mutex // serializes concurrent UpdateTask calls on the same task ID
@@ -131,7 +137,7 @@ func (s *Store) updateTaskInternal(id string, expectedVersion int, fn func(*supe
 		}
 		raw := b.Get([]byte(id))
 		if raw == nil {
-			return fmt.Errorf("task not found: %s", id)
+			return fmt.Errorf("%w: %s", ErrTaskNotFound, id)
 		}
 		var t supervisor.Task
 		if err := json.Unmarshal(raw, &t); err != nil {

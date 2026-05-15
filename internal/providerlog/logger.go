@@ -6,11 +6,9 @@
 // session that crashes, gets compacted, or rolls past the visible
 // transcript still leaves a durable audit trail.
 //
-// Sibling of internal/toolhistory: same shape (bus → buffered append →
-// daily JSONL), different event channel. The two are intentionally
-// separate files so a tool-call burst doesn't crowd out the
-// conversation-level rollup, and so a future viewer can correlate them
-// by timestamp without parsing through unrelated entries.
+// Bus → buffered append → daily JSONL. internal/toolhistory once
+// carried a sibling Logger for tool-call records; it was removed as
+// unwired, so providerlog is now the sole user-turn audit trail.
 //
 // Persistence target: ~/.dfmc/data/provider_calls/{YYYY-MM-DD}.jsonl
 // when the engine is wired with a config DataDir; daily rotation keeps
@@ -126,7 +124,8 @@ func (l *Logger) write(rec Record) {
 	_ = f.Close()
 }
 
-// Close is a no-op kept for API symmetry with toolhistory. The
+// Close is a no-op kept to satisfy io.Closer expectations from
+// callers that defer Close() on every logger they hold. The bus
 // subscription is owned by the engine (which calls Record directly),
 // so there's nothing for the logger itself to release.
 func (l *Logger) Close() error { return nil }

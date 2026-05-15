@@ -20,6 +20,12 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 )
 
+// errTaskValidation is wrapped around mutator-side validation errors
+// (unknown state, self-reparent, descendant cycle) so the outer
+// handler can route them to 400 via errors.Is instead of grepping
+// the error message it just raised.
+var errTaskValidation = errors.New("task validation")
+
 // handleTaskUpdate applies a partial update to an existing task.
 func (s *Server) handleTaskUpdate(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
@@ -72,7 +78,7 @@ func (s *Server) handleTaskUpdate(w http.ResponseWriter, r *http.Request) {
 				supervisor.TaskExternalReview:
 				t.State = supervisor.TaskState(s)
 			default:
-				return fmt.Errorf("unknown state %q; valid values: pending, running, done, blocked, skipped, verifying, waiting, external_review", s)
+				return fmt.Errorf("%w: unknown state %q; valid values: pending, running, done, blocked, skipped, verifying, waiting, external_review", errTaskValidation, s)
 			}
 		}
 		if v, ok := patch["summary"]; ok {
@@ -98,10 +104,10 @@ func (s *Server) handleTaskUpdate(w http.ResponseWriter, r *http.Request) {
 		// VULN-032: detect self-reparent and descendant cycles.
 		if t.ParentID != "" {
 			if t.ParentID == t.ID {
-				return fmt.Errorf("cannot set parent_id to own task id (self-reparent)")
+				return fmt.Errorf("%w: cannot set parent_id to own task id (self-reparent)", errTaskValidation)
 			}
 			if ancestor, found := findTaskAncestor(store, t.ID, t.ParentID); found {
-				return fmt.Errorf("cannot set parent_id=%q: would create a cycle (found ancestor %q)", t.ParentID, ancestor)
+				return fmt.Errorf("%w: cannot set parent_id=%q: would create a cycle (found ancestor %q)", errTaskValidation, t.ParentID, ancestor)
 			}
 		}
 		return nil
@@ -120,20 +126,18 @@ func (s *Server) handleTaskUpdate(w http.ResponseWriter, r *http.Request) {
 		err = store.UpdateTask(id, mutator)
 	}
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, taskstore.ErrTaskNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "task " + id + " not found"})
 			return
 		}
 		// VULN-032: validation errors (unknown state, self-reparent, cycles)
-		// are client mistakes → 400, not 500.
-		errStr := err.Error()
-		if strings.Contains(errStr, "unknown state") ||
-			strings.Contains(errStr, "self-reparent") ||
-			strings.Contains(errStr, "would create a cycle") {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": errStr})
+		// are client mistakes → 400, not 500. Detected via the
+		// errTaskValidation sentinel the mutator wraps onto its return.
+		if errors.Is(err, errTaskValidation) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": errStr})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 	updated, _ := store.LoadTask(id)
