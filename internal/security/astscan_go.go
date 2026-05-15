@@ -174,99 +174,12 @@ func goASTRules() []astRule {
 // exec.CommandContext call passes an identifier that the taint tracker
 // has marked as tainted on a prior line (or via propagation through
 // `s := string(body)`-style copies). Literals and unknown identifiers
-// pass through. See astscan_taint.go for the source patterns.
+// pass through. See astscan_taint.go for the source patterns and the
+// shared callHasTaintedArg helper.
 func execCommandTaintedArgMatcher(ctx *scanLineCtx) bool {
 	if ctx == nil || ctx.Taint == nil {
 		return false
 	}
-	// Quick reject: line must contain a command-exec call.
-	const (
-		execCall  = "exec.Command"
-		execCtxFn = "exec.CommandContext"
-	)
-	idx := strings.Index(ctx.Trimmed, execCall)
-	if idx < 0 {
-		idx = strings.Index(ctx.Trimmed, execCtxFn)
-		if idx < 0 {
-			return false
-		}
-	}
-	// Walk to the opening paren after the call name.
-	open := strings.Index(ctx.Trimmed[idx:], "(")
-	if open < 0 {
-		return false
-	}
-	open += idx
-	// Find the matching close paren so we don't include args of nested
-	// calls that come after on the same line. splitArgs respects nested
-	// parens but we still need the right slice.
-	depth := 0
-	close := -1
-	for i := open; i < len(ctx.Trimmed); i++ {
-		switch ctx.Trimmed[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				close = i
-				break
-			}
-		}
-		if close >= 0 {
-			break
-		}
-	}
-	if close < 0 {
-		return false
-	}
-	args := splitArgs(ctx.Trimmed[open+1 : close])
-	for _, raw := range args {
-		arg := strings.TrimSpace(raw)
-		if arg == "" || isLiteralArg(arg) {
-			continue
-		}
-		// Strip a leading `*` (deref), trailing `...` (spread), and
-		// surrounding parens so the comparison hits the underlying
-		// identifier. Conservative: anything more elaborate (e.g.
-		// `string(body)`) is queried whole AND broken into tokens so
-		// the tracker's referencesTaintedIdent-style walk catches the
-		// inner identifier.
-		bare := strings.TrimSuffix(strings.TrimPrefix(arg, "*"), "...")
-		bare = strings.Trim(bare, "() ")
-		if ctx.Taint.IsTainted(bare) {
-			return true
-		}
-		// Fall back to a token walk for compound expressions like
-		// `string(body)` or `strings.ToLower(body)`. Any token in the
-		// arg that matches the tainted set fires the rule.
-		if argReferencesTainted(arg, ctx.Taint) {
-			return true
-		}
-	}
-	return false
-}
-
-// argReferencesTainted walks the byte stream of an arg looking for a
-// whole-word identifier that the tracker has marked as tainted. Same
-// logic as taintTracker.referencesTaintedIdent but exposed here so the
-// rule can use it without reaching into private state.
-func argReferencesTainted(arg string, t *taintTracker) bool {
-	i := 0
-	for i < len(arg) {
-		c := arg[i]
-		if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
-			i++
-			continue
-		}
-		j := i + 1
-		for j < len(arg) && isIdentChar(arg[j]) {
-			j++
-		}
-		if t.IsTainted(arg[i:j]) {
-			return true
-		}
-		i = j
-	}
-	return false
+	return callHasTaintedArg(ctx.Trimmed, "exec.Command", ctx.Taint) ||
+		callHasTaintedArg(ctx.Trimmed, "exec.CommandContext", ctx.Taint)
 }

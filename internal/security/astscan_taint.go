@@ -66,6 +66,7 @@ func buildHTTPRequestMarkers(fields ...string) []string {
 }
 
 var taintSources = []taintSource{
+	// --- Go --------------------------------------------------------
 	// http.Request.Body / Form / PostForm / MultipartForm / URL.* /
 	// Header.Get -- the conventional `r` or `req` receiver covers the
 	// overwhelming majority of real handler code.
@@ -81,6 +82,35 @@ var taintSources = []taintSource{
 		"flag.Arg", "flag.Args", "flag.String", "flag.Int",
 		"flag.Bool", "flag.Float64", "flag.Duration",
 	}},
+
+	// --- Python ---------------------------------------------------
+	// Process args + stdin equivalents. sys.argv[N] is the typical
+	// access pattern; the substring "sys.argv" catches both
+	// `sys.argv` and `sys.argv[1]`.
+	{Lang: "python", Name: "sys_argv", Markers: []string{"sys.argv"}},
+	{Lang: "python", Name: "sys_stdin", Markers: []string{"sys.stdin"}},
+	// input() returns user input; the parens distinguish it from
+	// other identifiers named "input".
+	{Lang: "python", Name: "input_call", Markers: []string{"input("}},
+	// Flask request namespace. Catches request.args, request.form,
+	// request.values, request.json, request.data, request.get_json(),
+	// request.files, and request.cookies. We anchor on `request.`
+	// rather than the more specific names so the marker stays robust
+	// across attribute and method access shapes.
+	{Lang: "python", Name: "flask_request", Markers: []string{
+		"request.args", "request.form", "request.values",
+		"request.json", "request.data", "request.get_json",
+		"request.files", "request.cookies", "request.headers",
+	}},
+	// Django request namespace.
+	{Lang: "python", Name: "django_request", Markers: []string{
+		"request.GET", "request.POST", "request.FILES",
+		"request.COOKIES", "request.META", "request.body",
+	}},
+	// os.environ is technically operator-controlled, but treating
+	// it as tainted catches real CVEs where env vars flow into
+	// shell calls without sanitization.
+	{Lang: "python", Name: "os_environ", Markers: []string{"os.environ"}},
 }
 
 // goAssignRE captures the LHS list and RHS of a Go assignment line:
@@ -103,9 +133,58 @@ func parseGoAssign(line string) ([]string, string, bool) {
 	if m == nil {
 		return nil, "", false
 	}
-	rawLHS := m[1]
 	rhs := strings.TrimSpace(m[2])
-	parts := strings.Split(rawLHS, ",")
+	if rhs == "" {
+		return nil, "", false
+	}
+	lhs := splitLHS(m[1])
+	if len(lhs) == 0 {
+		return nil, "", false
+	}
+	return lhs, rhs, true
+}
+
+// pyAssignRE captures Python assignment shapes:
+//
+//	x = expr              -> LHS=[x],     RHS=expr
+//	x, y = a, b           -> LHS=[x, y],  RHS="a, b"
+//	x: str = expr         -> LHS=[x],     RHS=expr   (type annotation)
+//	x: List[int] = [...]  -> LHS=[x],     RHS=[...]  (parameterised annotation)
+//
+// The trailing `(.+)` deliberately captures everything from after the
+// `=` so a post-match check can reject `==` / `<=` / etc. by looking
+// at the first non-space byte of the captured RHS.
+var pyAssignRE = regexp.MustCompile(`^\s*((?:\w+\s*,\s*)*\w+)(?:\s*:\s*[^=]+)?\s*=(.+)$`)
+
+// parsePythonAssign returns (lhsIdents, rhs, ok). Rejects comparison
+// shapes (`x == y`) by checking that the captured RHS does NOT begin
+// with `=` after whitespace -- if it did, the match was actually the
+// first `=` of a `==` operator.
+func parsePythonAssign(line string) ([]string, string, bool) {
+	m := pyAssignRE.FindStringSubmatch(line)
+	if m == nil {
+		return nil, "", false
+	}
+	rhs := strings.TrimLeft(m[2], " \t")
+	if strings.HasPrefix(rhs, "=") {
+		// `x == y` matched as `x = (= y)` -- not a real assignment.
+		return nil, "", false
+	}
+	rhs = strings.TrimSpace(rhs)
+	if rhs == "" {
+		return nil, "", false
+	}
+	lhs := splitLHS(m[1])
+	if len(lhs) == 0 {
+		return nil, "", false
+	}
+	return lhs, rhs, true
+}
+
+// splitLHS turns a comma-separated identifier list into a clean slice.
+// Underscores and empty tokens are filtered out.
+func splitLHS(raw string) []string {
+	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
 		ident := strings.TrimSpace(p)
@@ -114,10 +193,7 @@ func parseGoAssign(line string) ([]string, string, bool) {
 		}
 		out = append(out, ident)
 	}
-	if len(out) == 0 {
-		return nil, "", false
-	}
-	return out, rhs, true
+	return out
 }
 
 // taintTracker is per-file state. Created once per ScanASTRules call,
@@ -148,12 +224,20 @@ func (t *taintTracker) observeLine(line string) {
 	if t == nil {
 		return
 	}
-	if t.lang != "go" {
-		// Other languages (python/js) plug in later. Today's contract is
-		// Go-only; documented limitation in astscan_taint.go header.
+	var (
+		lhs []string
+		rhs string
+		ok  bool
+	)
+	switch t.lang {
+	case "go":
+		lhs, rhs, ok = parseGoAssign(line)
+	case "python":
+		lhs, rhs, ok = parsePythonAssign(line)
+	default:
+		// JS/TS not yet wired; documented limitation in package header.
 		return
 	}
-	lhs, rhs, ok := parseGoAssign(line)
 	if !ok {
 		return
 	}
@@ -201,9 +285,11 @@ func (t *taintTracker) IsTainted(name string) bool {
 
 // referencesTaintedIdent walks the RHS expression looking for a
 // whole-word identifier match against the tainted set. Used only by
-// the propagation pass. Conservative: matches on the outermost
-// identifiers only; nested-call RHS like `f(g(body))` still works
-// because `body` appears as a bare token.
+// the propagation pass. Conservative: matches on every bare
+// identifier in the RHS; nested-call RHS like `f(g(body))` and
+// attribute access like `s.strip()` both reveal their leading
+// identifier because `.` and `(` are treated as separators (see
+// isPlainIdentChar).
 func (t *taintTracker) referencesTaintedIdent(rhs string) bool {
 	// Walk byte-by-byte, pulling identifiers, and check each against
 	// the tainted set. Cheap, no allocation per non-identifier byte.
@@ -215,7 +301,7 @@ func (t *taintTracker) referencesTaintedIdent(rhs string) bool {
 			continue
 		}
 		j := i + 1
-		for j < len(rhs) && isIdentChar(rhs[j]) {
+		for j < len(rhs) && isPlainIdentChar(rhs[j]) {
 			j++
 		}
 		tok := rhs[i:j]
@@ -229,4 +315,127 @@ func (t *taintTracker) referencesTaintedIdent(rhs string) bool {
 
 func isIdentStart(c byte) bool {
 	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// isPlainIdentChar is the stricter cousin of isIdentChar in
+// astscan_helpers.go: it excludes `.` and `$` so attribute access
+// like `s.strip()` is parsed as the two tokens `s` and `strip` rather
+// than a single `s.strip` token. The helper-package version groups
+// `.`-separated segments together because that's useful for rule
+// matching at the call-name level (`request.args` is one "thing"),
+// but for taint propagation we want each bare identifier to be its
+// own checkable token.
+func isPlainIdentChar(c byte) bool {
+	return c == '_' ||
+		(c >= 'a' && c <= 'z') ||
+		(c >= 'A' && c <= 'Z') ||
+		(c >= '0' && c <= '9')
+}
+
+// argReferencesTainted is the rule-side companion to
+// referencesTaintedIdent: walks an arg-expression and returns true if
+// any whole-word identifier inside has been observed as tainted. Used
+// by sink-match rules that want to detect `string(body)` or
+// `strings.ToLower(body)`-style compound args without enumerating
+// wrapper signatures. Nil-tracker safe.
+func argReferencesTainted(arg string, t *taintTracker) bool {
+	if t == nil {
+		return false
+	}
+	i := 0
+	for i < len(arg) {
+		c := arg[i]
+		if !isIdentStart(c) {
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(arg) && isPlainIdentChar(arg[j]) {
+			j++
+		}
+		if t.IsTainted(arg[i:j]) {
+			return true
+		}
+		i = j
+	}
+	return false
+}
+
+// findCallArgs locates a named call inside `line`, walks to its
+// opening paren, finds the matching close paren (respecting nested
+// parens), and returns the comma-split arg list. Returns nil when the
+// call name is not in the line or parens don't balance.
+//
+// Used by taint-aware sink matchers across languages so each language
+// file doesn't re-implement the paren walk.
+func findCallArgs(line, callName string) []string {
+	idx := strings.Index(line, callName)
+	if idx < 0 {
+		return nil
+	}
+	rest := line[idx+len(callName):]
+	open := strings.Index(rest, "(")
+	if open < 0 {
+		return nil
+	}
+	rest = rest[open+1:]
+	depth := 1
+	end := -1
+	inString := false
+	var quote byte
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		switch {
+		case inString:
+			if c == quote && (i == 0 || rest[i-1] != '\\') {
+				inString = false
+			}
+		case c == '"' || c == '\'' || c == '`':
+			inString = true
+			quote = c
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+			if depth == 0 {
+				end = i
+			}
+		}
+		if end >= 0 {
+			break
+		}
+	}
+	if end < 0 {
+		return nil
+	}
+	return splitArgs(rest[:end])
+}
+
+// callHasTaintedArg reports whether any non-literal argument to the
+// named call on this line resolves to a tainted identifier (either
+// directly or as a sub-token of a wrapper expression like
+// `string(body)`). Returns false when the tracker is nil so the
+// helper is safe to call unconditionally.
+func callHasTaintedArg(line, callName string, t *taintTracker) bool {
+	if t == nil {
+		return false
+	}
+	args := findCallArgs(line, callName)
+	for _, raw := range args {
+		arg := strings.TrimSpace(raw)
+		if arg == "" || isLiteralArg(arg) {
+			continue
+		}
+		// Strip a leading `*` / trailing `...` / outer parens so the
+		// bare ident is recognised even when wrapped.
+		bare := strings.TrimSuffix(strings.TrimPrefix(arg, "*"), "...")
+		bare = strings.Trim(bare, "() ")
+		if t.IsTainted(bare) {
+			return true
+		}
+		if argReferencesTainted(arg, t) {
+			return true
+		}
+	}
+	return false
 }
