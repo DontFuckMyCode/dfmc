@@ -156,30 +156,6 @@ func finishedToolEventHasRichDetail(ev chatEventLine) bool {
 	return cardLines > 1
 }
 
-func (m *Model) finishToolEventLineByKey(ev chatEventLine) bool {
-	key := strings.TrimSpace(ev.Key)
-	if key == "" {
-		return false
-	}
-	for i := len(m.chat.transcript) - 1; i >= 0; i-- {
-		line := &m.chat.transcript[i]
-		if !line.Role.Eq(chatRoleTool) {
-			continue
-		}
-		for j, existing := range line.EventLines {
-			if existing.Key != key {
-				continue
-			}
-			line.EventLines[j] = mergeChatEventLine(existing, ev)
-			line.Content = chatEventTranscriptText(line.EventLines[j])
-			line.Timestamp = ev.At
-			m.chat.scrollback = 0
-			return true
-		}
-	}
-	return false
-}
-
 func isTerminalToolEventStatus(status string) bool {
 	switch strings.TrimSpace(strings.ToLower(status)) {
 	case "ok", "done", "failed", "error", "denied", "timeout":

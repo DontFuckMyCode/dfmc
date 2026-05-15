@@ -87,47 +87,6 @@ func runtimeSubagentSummary(vm runtimeViewModel) string {
 	return label
 }
 
-func runtimeStripWorkParts(vm runtimeViewModel) []string {
-	parts := []string{}
-	if execution := strings.TrimSpace(vm.WorkflowExecution); execution != "" {
-		parts = append(parts, "work: "+humanizeWorkflowText(execution))
-	}
-	if vm.TodoTotal > 0 {
-		label := fmt.Sprintf("todos %d/%d done, %d doing", vm.TodoDone, vm.TodoTotal, vm.TodoDoing)
-		if active := strings.TrimSpace(vm.TodoActive); active != "" {
-			label += " - " + active
-		}
-		parts = append(parts, label)
-	}
-	if vm.ActiveSubagents > 0 {
-		label := fmt.Sprintf("agents %d", vm.ActiveSubagents)
-		if vm.SubagentLimit > 0 {
-			label = fmt.Sprintf("agents %d/%d", vm.ActiveSubagents, vm.SubagentLimit)
-		}
-		if summary := strings.TrimSpace(vm.SubagentSummary); summary != "" {
-			label += " " + summary
-		}
-		parts = append(parts, label)
-		if line := firstUsefulSubagentLine(vm.SubagentLines); line != "" {
-			parts = append(parts, "agent: "+line)
-		}
-	}
-	if strings.TrimSpace(vm.DriveRunID) != "" || vm.DriveTotal > 0 {
-		label := fmt.Sprintf("drive %d/%d", vm.DriveDone, vm.DriveTotal)
-		if vm.DriveRunID != "" {
-			label = "drive " + vm.DriveRunID + " " + fmt.Sprintf("%d/%d", vm.DriveDone, vm.DriveTotal)
-		}
-		if vm.DriveBlocked > 0 {
-			label += fmt.Sprintf(", %d blocked", vm.DriveBlocked)
-		}
-		parts = append(parts, label)
-	}
-	if len(parts) == 0 && len(vm.WorkflowRecent) > 0 {
-		parts = append(parts, "recent: "+humanizeWorkflowText(vm.WorkflowRecent[0]))
-	}
-	return parts
-}
-
 func runtimeStripTaskParts(vm runtimeViewModel) []string {
 	parts := []string{}
 	if vm.PlanSubtasks > 0 {

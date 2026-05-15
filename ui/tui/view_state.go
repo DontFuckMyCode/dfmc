@@ -38,14 +38,13 @@ type patchViewState struct {
 // re-loads, and `path/preview/size` the currently shown file.
 // `query`/`searchActive` implement the Ctrl+S filter mode.
 type filesViewState struct {
-	entries      []string
-	index        int
-	pinned       string
-	preview      string
-	path         string
-	size         int
-	query        string
-	searchActive bool
+	entries []string
+	index   int
+	pinned  string
+	preview string
+	path    string
+	size    int
+	query   string
 }
 
 // toolViewState — Tools tab cursor position, scroll offset for the
