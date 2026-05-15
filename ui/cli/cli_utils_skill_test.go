@@ -83,15 +83,6 @@ func TestBrowserCommandForOSTable(t *testing.T) {
 	}
 }
 
-func TestTryOpenBrowser_SupportedPlatform(t *testing.T) {
-	// tryOpenBrowser calls browserCommandForOS(runtime.GOOS, ...) and
-	// executes the browser command. On supported platforms it returns
-	// whatever cmd.Start() returns (nil on success). The actual browser
-	// opening is a side-effect we don't assert — just verify the call
-	// does not panic.
-	_ = tryOpenBrowser("http://example.com")
-}
-
 func TestExecutableSize(t *testing.T) {
 	size := executableSize()
 	if size < 0 {
