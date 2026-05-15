@@ -812,6 +812,71 @@ func TestSmartScan_JS_BareReadFileFromShadowingIsSafe(t *testing.T) {
 	mustNotContainKind(t, findings, "Path traversal")
 }
 
+// --- Go function-scope isolation (R8 slice 2) ----------------------------
+
+// TestSmartScan_Go_NameReuseAcrossFunctionsIsolated pins the headline
+// R8 precision win: a name tainted inside function A is NOT visible
+// to a sink call in function B even when both share the same source
+// file. Before R8 slice 2, the file-scoped tracker would have wrongly
+// flagged the exec.Command(name) in safeRun as injection.
+func TestSmartScan_Go_NameReuseAcrossFunctionsIsolated(t *testing.T) {
+	src := "package main\n" +
+		"import \"os/exec\"\n" +
+		"func handler(r *http.Request) {\n" +
+		"	name := r.URL.Query().Get(\"name\")\n" +
+		"	_ = name\n" +
+		"}\n" +
+		"func safeRun() {\n" +
+		"	name := \"git\"\n" +
+		"	cmd := " + fxExecCmd + "(name)\n" +
+		"	_ = cmd\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustNotContainKind(t, findings, "tainted input")
+}
+
+// TestSmartScan_Go_TaintInOneFunctionFiresInSameFunction pins the
+// flip side: scope isolation does NOT mask flow inside the same
+// function. handler() builds and uses a tainted command in one
+// function -- the rule must still fire on that line.
+func TestSmartScan_Go_TaintInOneFunctionFiresInSameFunction(t *testing.T) {
+	src := "package main\n" +
+		"import \"os/exec\"\n" +
+		"func handler(r *http.Request) {\n" +
+		"	name := r.URL.Query().Get(\"name\")\n" +
+		"	cmd := " + fxExecCmd + "(name)\n" +
+		"	_ = cmd\n" +
+		"}\n" +
+		"func unrelated() {\n" +
+		"	x := 1\n" +
+		"	_ = x\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustContainKind(t, findings, "tainted input")
+}
+
+// TestSmartScan_Go_TaintInSecondFunctionDoesNotLeakToFirst pins the
+// reverse direction: a sink call in function A that runs BEFORE the
+// source assignment in function B must not see B's taint. This is
+// the harder case to mishandle -- the file-scoped tracker walked
+// observeLine sequentially, so taint set in B (lexically later) was
+// never visible to A. Scope isolation should give the same answer
+// but via the correct mechanism (per-function scopes).
+func TestSmartScan_Go_TaintInSecondFunctionDoesNotLeakToFirst(t *testing.T) {
+	src := "package main\n" +
+		"import \"os/exec\"\n" +
+		"func safe() {\n" +
+		"	cmd := " + fxExecCmd + "(\"git\", \"status\")\n" +
+		"	_ = cmd\n" +
+		"}\n" +
+		"func dangerous(r *http.Request) {\n" +
+		"	name := r.URL.Query().Get(\"name\")\n" +
+		"	_ = name\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustNotContainKind(t, findings, "tainted input")
+}
+
 // --- Go SQL taint end-to-end --------------------------------------------
 
 // TestSmartScan_Go_SQLExecTaintedFromForm pins the canonical

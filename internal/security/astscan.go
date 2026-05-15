@@ -108,6 +108,22 @@ func (s *Scanner) ScanASTRules(path string, content []byte) []VulnerabilityFindi
 	// query identifier taintedness at sink call sites. See astscan_taint.go.
 	taint := newTaintTracker(lang)
 
+	// Function-scope tracker (dfmc_report_ast.md §R8 slice 2). For
+	// languages where we can recognise function boundaries cheaply
+	// (Go for now; Python / JS / TS in follow-up slices), the
+	// scanner pushes a fresh tracker scope on function entry and
+	// pops it on function exit. The result is that idents tainted
+	// in function A are NOT visible to a sink call in function B
+	// even when both share the same source file -- a real precision
+	// improvement that eliminates the "name reuse across functions"
+	// false-positive class the package header used to call out.
+	//
+	// Languages we don't yet handle (Python, JS / TS, Ruby, Java)
+	// keep the file-scoped behaviour: the balancer never pushes or
+	// pops, so the tracker stays at scope depth 1 -- identical to
+	// the pre-R8 single-map implementation.
+	scope := newScopeBalancer(lang)
+
 	scanner := bufio.NewScanner(bytes.NewReader(content))
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	lineNo := 0
@@ -126,11 +142,25 @@ func (s *Scanner) ScanASTRules(path string, content []byte) []VulnerabilityFindi
 			continue
 		}
 
+		// Apply scope transitions BEFORE observe + rules. A line that
+		// ends a function (lone `}`) must pop BEFORE we observe so the
+		// taint state on the line lives in the outer scope. A line
+		// that starts a function (`func foo() {`) pushes AFTER we
+		// observe so the declaration itself reads as part of the
+		// outer scope (function name / params don't get tainted in
+		// the new inner scope).
+		scope.preObserve(trimmed, taint)
+
 		// Update the tracker BEFORE running rules so a rule that
 		// queries taintedness on its OWN line sees only prior-line
 		// state. Otherwise `x := r.Body` would also count itself as a
 		// tainted-arg use on the same line.
 		taint.observeLine(trimmed)
+
+		// Post-observe scope entry. A function-declaration line
+		// observed in the outer scope, then a new scope opens for
+		// the body to flow into.
+		scope.postObserve(trimmed, taint)
 
 		ctx := &scanLineCtx{
 			Lang:       lang,
