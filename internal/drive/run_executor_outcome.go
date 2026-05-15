@@ -148,12 +148,7 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 
 	if res.Err != nil {
 		class := FailureClassify(res.Err)
-		backoff := d.cfg.RetryBackoff
-		if backoff == nil {
-			backoff = DefaultRetryBackoff
-		}
-		// If max retries are exhausted, transition to Blocked immediately
-		// (no backoff needed — no more attempts allowed).
+		// If max retries are exhausted, transition to Blocked.
 		if t.Attempts > d.cfg.Retries {
 			t.Status = TodoBlocked
 			t.BlockedReason = BlockReasonRetriesExhausted
@@ -172,18 +167,20 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 			return
 		}
 		t.Status = TodoRetrying
-		// Use zero time as the sentinel for "retries remaining, ready NOW".
-		// readyBatch checks for time.IsZero() to make zero-time Retrying
-		// TODOs immediately pickable (no artificial delay).
+		// Retries fire immediately. The scheduler picks zero-time Retrying
+		// TODOs on the next pass via the !time.Now().Before check; the
+		// executor loop has no sleep-until-due gate, so a non-zero
+		// RetryScheduledAt with no other in-flight workers would trip the
+		// "scheduler deadlock" path. Configurable backoff remains a future
+		// feature.
 		t.RetryScheduledAt = time.Time{}
 		d.publish(EventTodoRetry, map[string]any{
-			"run_id":          run.ID,
-			"todo_id":         t.ID,
-			"attempt":         t.Attempts,
-			"last_error":      res.Err.Error(),
-			"class":           class.String(),
-			"retry_at":        t.RetryScheduledAt.Format(time.RFC3339),
-			"backoff_seconds": t.RetryScheduledAt.Sub(time.Now()).Seconds(),
+			"run_id":     run.ID,
+			"todo_id":    t.ID,
+			"attempt":    t.Attempts,
+			"last_error": res.Err.Error(),
+			"class":      class.String(),
+			"retry_at":   t.RetryScheduledAt.Format(time.RFC3339),
 		})
 		d.persist(run)
 		return

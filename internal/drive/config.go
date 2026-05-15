@@ -135,18 +135,6 @@ type Config struct {
 	// count. Nil = static lane-based defaults (default behavior).
 	AdaptiveStepBudget StepBudgetProvider
 
-	// RetryBackoff computes how long to wait before retrying a transient-
-	// failed TODO. Nil = no delay (immediate retry). Non-nil = the function
-	// is called with the current attempt number and returns the wait duration.
-	// DefaultRetryBackoff (2s * 2^attempt, capped at 5 min) is used when this
-	// field is nil AND Retries > 0. Setting Retries=0 disables retry entirely.
-	//
-	// Common configs:
-	//   - nil         → immediate retry (existing behavior)
-	//   - nil, Retries=1 → DefaultRetryBackoff: 2s, 4s
-	//   - custom func → inject jitter, fixed delays, or rate-limit-aware backoff
-	RetryBackoff RetryBackoffFunc
-
 	// PlannerCircuitBreaker tunes the planner stage circuit breaker.
 	// Zero fields default to FailureThreshold=5, RecoveryTimeout=2min.
 	PlannerCircuitBreaker CircuitBreakerConfig
@@ -363,23 +351,4 @@ type StepBudgetProvider interface {
 	// BudgetFor returns the max steps to allow for this TODO. Returning 0
 	// falls back to the static executor step budget from Config.
 	BudgetFor(todo Todo, run *Run) int
-}
-
-// RetryBackoffFunc computes the backoff delay for a given retry attempt.
-// Implementations must be safe to call concurrently.
-type RetryBackoffFunc func(attempt int) time.Duration
-
-// DefaultRetryBackoff implements exponential backoff with a 2s base, capped
-// at 5 minutes.  attempt=0 → 2s, attempt=1 → 4s, attempt=2 → 8s, ...
-var DefaultRetryBackoff RetryBackoffFunc = func(attempt int) time.Duration {
-	const base = 2 * time.Second
-	const maxDelay = 5 * time.Minute
-	delay := base * time.Duration(1<<attempt)
-	if delay > maxDelay {
-		delay = maxDelay
-	}
-	if delay < base {
-		delay = base
-	}
-	return delay
 }
