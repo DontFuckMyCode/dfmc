@@ -12,23 +12,20 @@
             └── {session-id-3}.jsonl              ← Session C
 ```
 
-**Path Builder** — `pkg/session/path_utils.go`:
+**Path Builder** — *was* `pkg/session/path_utils.go` (removed; the package
+held three skeleton helpers that nothing else ever wired). If/when
+session log persistence is implemented, build path helpers off
+`config.UserConfigDir()` directly:
 
 ```go
-func UserHomeDir() string {
-    home, err := os.UserHomeDir()
-    if err != nil || home == "" {
-        return ".dfmc"  // Fallback: mevcut dizin
-    }
-    return filepath.Join(home, ".dfmc")
+// Sketch — pkg/session was deleted; reintroduce when the rest of the
+// system below actually consumes a log path.
+func sessionLogDir(project string) string {
+    return filepath.Join(config.UserConfigDir(), "userhome", project, "logs")
 }
 
-func GetLogDir(project string) string {
-    return filepath.Join(UserHomeDir(), "userhome", project, "logs")
-}
-
-func GetLogPath(project, sessionID string) string {
-    return filepath.Join(GetLogDir(project), sessionID+".jsonl")
+func sessionLogPath(project, sessionID string) string {
+    return filepath.Join(sessionLogDir(project), sessionID+".jsonl")
 }
 ```
 
@@ -45,7 +42,7 @@ sessionID  = "sess-abc-123"
 
 | Bileşen | Dosya | Durum |
 |---------|-------|-------|
-| Path utils | `pkg/session/path_utils.go` | ✅ Hazır |
+| Path utils | *deleted* (`pkg/session/`) | ❌ removed — never wired |
 | Storage dizini | `~/.dfmc/userhome/{project}/logs/` | ✅ Hazır |
 | Session struct | `internal/session/session.go` | ✅ Var |
 | Agent tree | `internal/session/agent.go` | ✅ Var |

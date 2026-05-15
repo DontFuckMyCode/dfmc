@@ -461,11 +461,8 @@ Drive is a persistent autonomous plan/execute loop. It uses an LLM planner to ge
 
 | Component | File | Details |
 |-----------|------|---------|
-| Coordinator | `coordinator.go` | Task orchestration with policy-based routing |
 | Executor | `executor.go` | Executes tasks with normalization and synthesis |
-| Bridge | `bridge/` | Policy mapping between Drive and Supervisor layers |
-| Persistence | `persistence.go` | Supervisor-level run state |
-| E2E tests | `e2e_test.go`, `executor_e2e_test.go` | Full integration tests |
+| Bridge | `bridge/` | drive.Run/Todo → supervisor.Run/Task conversion for the executor |
 
 ### Quality Assessment
 

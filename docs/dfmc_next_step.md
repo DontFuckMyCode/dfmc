@@ -113,8 +113,6 @@ drive/planner.go → DriveTODOs + Dependencies
     ↓
 supervisor/BuildExecutionPlan → ExecutionPlan
     ↓
-supervisor/Coordinator.Run() → worker dispatch
-    ↓
 supervisor/executor.go → ExecuteTaskFunc
     ↓
 drive/driver.go → DriveAgent execution

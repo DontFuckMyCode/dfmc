@@ -33,8 +33,8 @@ DFMC's skill system provides an extensible, trigger-based mechanism for activati
 | `/skill show <name>` shows version/triggers/requires/etc. | ✅ NEW | `ui/tui/slash_skills.go` |
 | `POST /api/v1/skills/validate` web endpoint | ✅ NEW | `ui/web/server_tools_skills.go` |
 | `compatibility:` engine-version check (semver) | ⚠ partial | parsed + stored on `Skill.Compatibility`; runtime gate (`compatibility.go`) was a separate WIP that disappeared from disk between sessions |
-| Skill scaffolding (`RenderSkillTemplate`) | ✅ NEW | `scaffold.go` |
-| `dfmc skill new <name> [--simple] [--global] [--force]` | ✅ NEW | `ui/cli/cli_skill.go` |
+| Skill scaffolding (`RenderSkillTemplate`) | ❌ removed | `scaffold.go` was unwired — never reached a `dfmc skill new` subcommand |
+| `dfmc skill new <name> [--simple] [--global] [--force]` | ❌ not implemented | never reached the CLI subcommand switch |
 | `[auto]` badge in `/skill list` and `dfmc skill list` for trigger-armed skills | ✅ NEW | `ui/tui/slash_skills.go`, `ui/cli/cli_skill.go` |
 | MCP exposure (`dfmc_skill_list/show/validate/run/explain`) | ✅ NEW | `ui/cli/cli_mcp_skill.go` |
 | Activation preview / dry-run (`skills.Explain`) | ✅ NEW | `explain.go` |
