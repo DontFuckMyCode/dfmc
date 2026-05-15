@@ -34,10 +34,6 @@ type sessionUI struct {
 	// activeAgent is the AgentID currently shown in the TUI.
 	activeAgent session.AgentID
 
-	// agentScreens holds per-agent chat state. Keyed by AgentID.
-	// The root agent (ID=1) always exists. Child agents are added on spawn.
-	agentScreens map[session.AgentID]*agentScreenState
-
 	// overlayOpen is true when the agent switcher modal is shown.
 	overlayOpen bool
 
@@ -72,31 +68,17 @@ func (s *sessionUI) AgentTree() []session.AgentTreeNode {
 	return s.s.AgentTree()
 }
 
-// agentScreenState holds the per-agent view state.
-// This is keyed by AgentID so the TUI can switch between agent views.
-type agentScreenState struct {
-	// chatState is the per-agent conversation transcript.
-	// Currently the TUI has one global chatState in Model.
-	// Phase 3: this will be the per-agent view when that agent is active.
-	chatState chatState // embedded; zero-value is fine for inactive agents
-
-	// modelConfig is the current model for this agent.
-	model string
-}
-
 // waitingInputState holds context for an agent that is waiting for user input.
 type waitingInputState struct {
 	agentID   session.AgentID
 	agentName string
 	task      string
-	prompt    string // what the agent asked
 }
 
 // newSessionUI creates the session UI state.
 func newSessionUI() *sessionUI {
 	return &sessionUI{
 		activeAgent:  session.RootAgentID,
-		agentScreens: make(map[session.AgentID]*agentScreenState),
 		waitingInput: make(map[session.AgentID]*waitingInputState),
 	}
 }

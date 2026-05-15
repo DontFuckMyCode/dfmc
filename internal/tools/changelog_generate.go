@@ -79,7 +79,6 @@ var (
 	// Conventional commit patterns
 	breakingPattern = regexp.MustCompile(`(?i)(BREAKING[- ]CHANGE|breaking change)`)
 	typePattern     = regexp.MustCompile(`^(\w+)(?:\(([^)]+)\))?(!)?:\s*(.+)`)
-	mergePattern    = regexp.MustCompile(`Merge (?:pull request|branch) '#?(\d+)'`)
 	prPattern       = regexp.MustCompile(`#(\d+)`)
 )
 

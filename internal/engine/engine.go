@@ -266,12 +266,6 @@ func SetAttachProvider(fn func(interface{}, interface{})) {
 	attachSessionProvider = fn
 }
 
-// sessionBridgeInit is called by the session package in session's init().
-// The session package calls this to register its bridge function with the
-// engine before AttachSession is ever called. Declared here to avoid
-// importing session in engine.go.
-var sessionBridgeInit func(fn func(interface{}, interface{}))
-
 // Init lives in engine_init.go — it wires storage / AST / codemap /
 // context / tools / memory / conversation / providers / intent / hooks
 // and kicks off the initial codebase indexer.

@@ -128,7 +128,6 @@ var (
 	reFuncSig   = regexp.MustCompile(`^func\s+(?:\([^)]+\)\s+)?([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:\(([^)]*)\))?`)
 	reInterface = regexp.MustCompile(`^type\s+([A-Za-z_]\w*)\s+interface\s*\{`)
 	reStruct    = regexp.MustCompile(`^type\s+([A-Za-z_]\w*)\s+struct\s*\{`)
-	reField     = regexp.MustCompile(`^\s+([A-Za-z_]\w*)\s+(?:\w+|\*?\w+(?:\[\])?)`)
 	reMethod    = regexp.MustCompile(`^\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:\(([^)]*)\))?`)
 )
 

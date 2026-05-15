@@ -98,9 +98,7 @@ type providersPanelState struct {
 	textEditSecret    bool
 	// tier matrix state. Tiers have one primary slot and three fallback slots.
 	tierCursor       int
-	tierSlot         int
 	modelCursor      int
-	sessionModel     bool
 	skillCursor      int
 	skillModelCursor int
 	// action menu state — replaces single-key shortcuts with Enter-activated menus

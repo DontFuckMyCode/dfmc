@@ -24,8 +24,6 @@ type parseTask struct {
 type buildResult struct {
 	nodes           []Node
 	edges           []Edge
-	processed       int
-	skipped         int
 	parseErrors     int
 	languageCounts  map[string]int64
 	directoryCounts map[string]int64

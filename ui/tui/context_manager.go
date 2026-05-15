@@ -38,7 +38,6 @@ type contextManagerRow struct {
 	tokenEst  int    // rough token count
 	toolCalls int    // number of tool calls in this message
 	preview   string // truncated content preview
-	isMarked  bool   // user selected this for deletion
 	pinned    bool   // user pinned this row in the manager
 	kept      bool   // user marked this row as keep
 	action    string // keep/drop/pin/compact suggestion
