@@ -1,5 +1,12 @@
 package bridge
 
+// mapping.go — drive.Run/Todo → supervisor.Run/Task conversion used by
+// cli_drive_render.go's `supervisor.BuildExecutionPlan` call so the
+// CLI can render Drive runs through the same executor that powers the
+// real engine. The reverse direction (supervisor → drive) and helper
+// pieces lived here historically; they were removed when the
+// orchestrator coordinator was deleted as dead code.
+
 import (
 	"strings"
 
@@ -7,6 +14,9 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/supervisor"
 )
 
+// TaskFromDriveTodo converts a drive.Todo into the supervisor.Task
+// shape the executor consumes. Normalizes worker class + verification
+// state strings so unknown values fall back to safe defaults.
 func TaskFromDriveTodo(todo drive.Todo) supervisor.Task {
 	return supervisor.Task{
 		ID:            todo.ID,
@@ -34,33 +44,8 @@ func TaskFromDriveTodo(todo drive.Todo) supervisor.Task {
 	}
 }
 
-func TaskToDriveTodo(task supervisor.Task) drive.Todo {
-	return drive.Todo{
-		ID:            strings.TrimSpace(task.ID),
-		ParentID:      strings.TrimSpace(task.ParentID),
-		Origin:        strings.TrimSpace(task.Origin),
-		Title:         strings.TrimSpace(task.Title),
-		Detail:        strings.TrimSpace(task.Detail),
-		DependsOn:     append([]string(nil), task.DependsOn...),
-		FileScope:     append([]string(nil), task.FileScope...),
-		ReadOnly:      task.ReadOnly,
-		ProviderTag:   strings.TrimSpace(task.ProviderTag),
-		WorkerClass:   normalizeWorkerClass(string(task.WorkerClass)),
-		Skills:        append([]string(nil), task.Skills...),
-		AllowedTools:  append([]string(nil), task.AllowedTools...),
-		Labels:        append([]string(nil), task.Labels...),
-		Verification:  normalizeVerification(string(task.Verification)),
-		Confidence:    clampConfidence(task.Confidence),
-		Status:        drive.TodoStatus(task.State),
-		Brief:         task.Summary,
-		Error:         task.Error,
-		BlockedReason: drive.BlockReason(strings.TrimSpace(task.BlockedReason)),
-		Attempts:      task.Attempts,
-		StartedAt:     task.StartedAt,
-		EndedAt:       task.EndedAt,
-	}
-}
-
+// RunFromDrive lifts a drive.Run into the supervisor.Run shape so the
+// executor can plan/dispatch its todos. Nil-safe.
 func RunFromDrive(run *drive.Run) supervisor.Run {
 	if run == nil {
 		return supervisor.Run{}
@@ -76,22 +61,6 @@ func RunFromDrive(run *drive.Run) supervisor.Run {
 	}
 	for _, todo := range run.Todos {
 		out.Tasks = append(out.Tasks, TaskFromDriveTodo(todo))
-	}
-	return out
-}
-
-func RunToDrive(run supervisor.Run) *drive.Run {
-	out := &drive.Run{
-		ID:        run.ID,
-		Task:      run.Task,
-		Status:    drive.RunStatus(run.Status),
-		Reason:    run.Reason,
-		CreatedAt: run.CreatedAt,
-		EndedAt:   run.EndedAt,
-		Todos:     make([]drive.Todo, 0, len(run.Tasks)),
-	}
-	for _, task := range run.Tasks {
-		out.Todos = append(out.Todos, TaskToDriveTodo(task))
 	}
 	return out
 }
@@ -128,14 +97,4 @@ func normalizeVerification(raw string) string {
 	default:
 		return string(supervisor.VerifyRequired)
 	}
-}
-
-func clampConfidence(v float64) float64 {
-	if v < 0 {
-		return 0
-	}
-	if v > 1 {
-		return 1
-	}
-	return v
 }
