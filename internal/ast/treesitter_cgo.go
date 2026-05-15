@@ -205,12 +205,13 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
-					Name:     name,
-					Kind:     "function",
-					Path:     path,
-					Language: "go",
-					Line:     int(n.StartPoint().Row) + 1,
-					Column:   int(n.StartPoint().Column) + 1,
+					Name:      name,
+					Kind:      "function",
+					Path:      path,
+					Language:  "go",
+					Line:      int(n.StartPoint().Row) + 1,
+					Column:    int(n.StartPoint().Column) + 1,
+					Signature: goFunctionSignature(n, content),
 				})
 			}
 		case "method_declaration":
@@ -228,13 +229,14 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 			}
 			if name != "" {
 				symbols = append(symbols, types.Symbol{
-					Name:     name,
-					Kind:     "method",
-					Path:     path,
-					Language: "go",
-					Line:     int(n.StartPoint().Row) + 1,
-					Column:   int(n.StartPoint().Column) + 1,
-					Metadata: map[string]string{"receiver": receiver},
+					Name:      name,
+					Kind:      "method",
+					Path:      path,
+					Language:  "go",
+					Line:      int(n.StartPoint().Row) + 1,
+					Column:    int(n.StartPoint().Column) + 1,
+					Signature: goFunctionSignature(n, content),
+					Metadata:  map[string]string{"receiver": receiver},
 				})
 			}
 		case "type_declaration":
@@ -486,4 +488,24 @@ func textForNode(n *tree_sitter.Node, content []byte) string {
 		return ""
 	}
 	return string(content[start:end])
+}
+
+// goFunctionSignature returns the function or method declaration line(s)
+// up to (but not including) the body block, matching what the regex
+// extractor in go_extract.go puts in Symbol.Signature. For bodyless
+// declarations (interface methods, externally-linked stubs) it falls
+// back to the first line of the node's text.
+func goFunctionSignature(n *tree_sitter.Node, content []byte) string {
+	body := n.ChildByFieldName("body")
+	if body != nil {
+		start, end := n.StartByte(), body.StartByte()
+		if end > start && int(end) <= len(content) {
+			return strings.TrimSpace(string(content[start:end]))
+		}
+	}
+	raw := textForNode(n, content)
+	if idx := strings.IndexByte(raw, '\n'); idx >= 0 {
+		raw = raw[:idx]
+	}
+	return strings.TrimSpace(raw)
 }
