@@ -254,17 +254,6 @@ func getAuditDetectors(categories string) []func(*token.FileSet, ast.Node, strin
 	return out
 }
 
-func extractLine(fset *token.FileSet, n ast.Node, lineCount int) string {
-	if n == nil {
-		return ""
-	}
-	pos := fset.Position(n.Pos())
-	if pos.Line <= 0 || pos.Line > lineCount {
-		return ""
-	}
-	return fmt.Sprintf("... at line %d", pos.Line)
-}
-
 func auditNodeString(fset *token.FileSet, n ast.Node) string {
 	if n == nil {
 		return ""

@@ -316,7 +316,7 @@ Tool engine owns the backend tool registry. Backend tools remain hidden from pro
 |----------|:-----:|-------|
 | Code editing | 5 | `apply_patch`, `edit_file`, `write_file`, `insert_text`, `delete_text` |
 | Code reading | 4 | `read_file`, `grep_codebase`, `glob`, `find_symbol` |
-| Code analysis | 6 | `ast_query`, `dead_code`, `dependency_graph`, `diagnose_error`, `changelog_generate`, `codemap` |
+| Code analysis | 5 | `ast_query`, `dead_code`, `dependency_graph`, `changelog_generate`, `codemap` |
 | Audit & benchmark | 5 | `audit`, `dependency_audit`, `benchmark`, `benchmark_regression`, `auto_test` |
 | Skills & coach | 4 | Skill activation via tool engine |
 | Intent & routing | 2 | Intent routing tools |
@@ -333,7 +333,6 @@ Tool engine owns the backend tool registry. Backend tools remain hidden from pro
 | `auto_test` | `auto_tool.go` | Test generation from source analysis |
 | `dead_code` | `dead_code.go` | Unused export detection |
 | `dependency_graph` | `dependency_graph.go` | Import graph traversal |
-| `diagnose_error` | `diagnose_error.go` | Error classification and fix suggestions |
 
 ### Quality Assessment
 

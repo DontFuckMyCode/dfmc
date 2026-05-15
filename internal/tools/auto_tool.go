@@ -274,24 +274,6 @@ func collectImports(imps []*ast.ImportSpec) []string {
 	return result
 }
 
-func signatureString(fset *token.FileSet, t *ast.FuncType) string {
-	var params []string
-	for _, p := range t.Params.List {
-		params = append(params, typeString(p.Type))
-	}
-	var results []string
-	if t.Results != nil {
-		for _, r := range t.Results.List {
-			results = append(results, typeString(r.Type))
-		}
-	}
-	sig := strings.Join(params, ", ")
-	if len(results) > 0 {
-		sig += " (" + strings.Join(results, ", ") + ")"
-	}
-	return sig
-}
-
 func typeString(n ast.Node) string {
 	switch t := n.(type) {
 	case *ast.Ident:

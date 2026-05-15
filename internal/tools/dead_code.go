@@ -304,26 +304,3 @@ func relPath(p string) string {
 	return filepath.Base(p)
 }
 
-// Quick pattern scan fallback when codemap unavailable.
-func patternBasedScan(path string, kindFilter string) []deadCodeResult {
-	src, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-
-	var results []deadCodeResult
-
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
-	if err != nil {
-		return nil
-	}
-
-	// Check if any identifier is referenced elsewhere (basic heuristic)
-	// For a real implementation, we'd use AST traversal
-	_ = fset
-	_ = f
-	_ = results
-
-	return results // placeholder
-}

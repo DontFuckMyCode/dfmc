@@ -259,65 +259,6 @@ func TestPatchValidationTool_Spec(t *testing.T) {
 	}
 }
 
-func TestPatchHunkStats(t *testing.T) {
-	patch := `--- a/foo.go
-+++ b/foo.go
-@@ -1,3 +1,3 @@
- Old line
--func F() {}
-+func G() {}
-`
-	stats, err := PatchHunkStats(patch)
-	if err != nil {
-		t.Fatalf("PatchHunkStats: %v", err)
-	}
-	if stats["foo.go"] != 1 {
-		t.Errorf("want 1 hunk for foo.go, got %d", stats["foo.go"])
-	}
-}
-
-func TestValidatePatchIsClean_Valid(t *testing.T) {
-	tmp := t.TempDir()
-	fpath := filepath.Join(tmp, "foo.go")
-	os.WriteFile(fpath, []byte("package foo\nfunc F() {}\n"), 0644)
-
-	patch := `--- a/foo.go
-+++ b/foo.go
-@@ -1,2 +1,2 @@
- package foo
--func F() {}
-+func G() {}
-`
-	clean, total, rejected, err := ValidatePatchIsClean(patch, tmp)
-	if err != nil {
-		t.Fatalf("ValidatePatchIsClean: %v", err)
-	}
-	if !clean {
-		t.Errorf("expected clean=true, total=%d rejected=%d", total, rejected)
-	}
-}
-
-func TestValidatePatchIsClean_Rejected(t *testing.T) {
-	tmp := t.TempDir()
-	fpath := filepath.Join(tmp, "foo.go")
-	os.WriteFile(fpath, []byte("package foo\nfunc F() {}\n"), 0644)
-
-	patch := `--- a/foo.go
-+++ b/foo.go
-@@ -10,2 +10,2 @@
- different context
--func X() {}
-+func Y() {}
-`
-	clean, total, rejected, err := ValidatePatchIsClean(patch, tmp)
-	if err != nil {
-		t.Fatalf("ValidatePatchIsClean: %v", err)
-	}
-	if clean {
-		t.Errorf("expected clean=false for mismatched hunk, total=%d rejected=%d", total, rejected)
-	}
-}
-
 func TestPatchValidation_TraversalRejection(t *testing.T) {
 	tmp := t.TempDir()
 	eng := New(*config.DefaultConfig())

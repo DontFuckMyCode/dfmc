@@ -1,59 +1,10 @@
 package types
 
 import (
-	"errors"
-	"fmt"
 	"log"
 	"runtime/debug"
 	"sync/atomic"
 )
-
-type ErrorKind int
-
-const (
-	ErrConfig ErrorKind = iota
-	ErrRateLimit
-	ErrTimeout
-)
-
-type DFMCError struct {
-	Kind    ErrorKind
-	Message string
-	Cause   error
-	Context map[string]any
-}
-
-func (e *DFMCError) Error() string {
-	if e == nil {
-		return ""
-	}
-	if e.Cause != nil {
-		return fmt.Sprintf("%s: %v", e.Message, e.Cause)
-	}
-	return e.Message
-}
-
-func (e *DFMCError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
-	return e.Cause
-}
-
-func IsRateLimit(err error) bool {
-	var de *DFMCError
-	return errors.As(err, &de) && de.Kind == ErrRateLimit
-}
-
-func IsTimeout(err error) bool {
-	var de *DFMCError
-	return errors.As(err, &de) && de.Kind == ErrTimeout
-}
-
-func IsConfig(err error) bool {
-	var de *DFMCError
-	return errors.As(err, &de) && de.Kind == ErrConfig
-}
 
 // SafeGoPanicObserver is the callback shape installed by the higher-
 // level runtime (engine) to surface panics caught by SafeGo. The

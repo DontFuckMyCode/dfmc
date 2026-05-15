@@ -53,8 +53,3 @@ func EnsureWithinRoot(root, path string) (string, error) {
 	return pathsafe.EnsureWithinRoot(root, path)
 }
 
-// isPathWithin is retained for callers inside this package that need
-// the lexical-only containment primitive (no symlink resolution).
-func isPathWithin(root, target string) bool {
-	return pathsafe.IsPathWithin(root, target)
-}
