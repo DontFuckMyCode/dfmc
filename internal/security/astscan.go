@@ -51,6 +51,12 @@ type scanLineCtx struct {
 	Line       string // current source line
 	Trimmed    string // strings.TrimSpace(Line)
 	RecentJoin string // last ~3 source lines joined on space, for multi-line patterns
+	// Taint is the per-file taint tracker, populated by observeLine on
+	// every prior line in the same file. Rules check IsTainted(name) at
+	// sink call sites to detect the multi-step `body := r.Body; sink(body)`
+	// flow that the concat-only rules can't see. nil-safe: rules that
+	// don't need it can ignore the field. See astscan_taint.go.
+	Taint *taintTracker
 }
 
 // detectLanguageFromPath is a minimal extension-to-language map; the
@@ -87,6 +93,10 @@ func (s *Scanner) ScanASTRules(path string, content []byte) []VulnerabilityFindi
 	// practice; patterns that span more are rare and usually dead.
 	ring := newLineRing(3)
 
+	// Per-file taint tracker. Sees every non-comment line so rules can
+	// query identifier taintedness at sink call sites. See astscan_taint.go.
+	taint := newTaintTracker(lang)
+
 	scanner := bufio.NewScanner(bytes.NewReader(content))
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	lineNo := 0
@@ -105,12 +115,19 @@ func (s *Scanner) ScanASTRules(path string, content []byte) []VulnerabilityFindi
 			continue
 		}
 
+		// Update the tracker BEFORE running rules so a rule that
+		// queries taintedness on its OWN line sees only prior-line
+		// state. Otherwise `x := r.Body` would also count itself as a
+		// tainted-arg use on the same line.
+		taint.observeLine(trimmed)
+
 		ctx := &scanLineCtx{
 			Lang:       lang,
 			LineNo:     lineNo,
 			Line:       line,
 			Trimmed:    trimmed,
 			RecentJoin: ring.joined(),
+			Taint:      taint,
 		}
 		for _, rule := range astRulesForLang(lang) {
 			if !rule.Match(ctx) {
