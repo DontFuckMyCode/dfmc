@@ -22,10 +22,19 @@ type ParseResult struct {
 	Language string         `json:"language"`
 	Symbols  []types.Symbol `json:"symbols"`
 	Imports  []string       `json:"imports"`
-	Errors   []ParseError   `json:"errors,omitempty"`
-	Hash     uint64         `json:"hash"`
-	ParsedAt time.Time      `json:"parsed_at"`
-	Duration time.Duration  `json:"duration"`
+	// ImportAliases is the per-binding alias table: every entry pairs
+	// the source module + imported symbol with the local identifier
+	// the surrounding code uses to reach it. Imports is a flat list of
+	// just the module paths (deduped); ImportAliases keeps the
+	// (Module, Symbol, Local) link so callers can resolve
+	// `p.join(...)` back to `os.path.join` when the source said
+	// `from os import path as p`. Nil for languages without alias
+	// extraction; see internal/ast/imports_aliases.go.
+	ImportAliases []ImportAlias `json:"import_aliases,omitempty"`
+	Errors        []ParseError  `json:"errors,omitempty"`
+	Hash          uint64        `json:"hash"`
+	ParsedAt      time.Time     `json:"parsed_at"`
+	Duration      time.Duration `json:"duration"`
 	// Backend records which extractor produced the symbols: "tree-sitter"
 	// when the CGO bindings parsed the file cleanly, or "regex" when we
 	// fell back (CGO disabled, parse failed, or language stub). Callers
@@ -118,15 +127,16 @@ func (e *Engine) ParseContent(ctx context.Context, path string, content []byte) 
 	}
 
 	res := &ParseResult{
-		Path:     path,
-		Language: lang,
-		Symbols:  symbols,
-		Imports:  imports,
-		Errors:   parseErrors,
-		Hash:     hash,
-		ParsedAt: time.Now(),
-		Duration: time.Since(start),
-		Backend:  backend,
+		Path:          path,
+		Language:      lang,
+		Symbols:       symbols,
+		Imports:       imports,
+		ImportAliases: extractImportAliases(lang, content),
+		Errors:        parseErrors,
+		Hash:          hash,
+		ParsedAt:      time.Now(),
+		Duration:      time.Since(start),
+		Backend:       backend,
 	}
 
 	e.cache.Set(path, res)
