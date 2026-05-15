@@ -184,6 +184,7 @@ func allASTRules() []astRule {
 	out = append(out, jsASTRules()...)
 	out = append(out, pythonASTRules()...)
 	out = append(out, rubyASTRules()...)
+	out = append(out, javaASTRules()...)
 	return out
 }
 
