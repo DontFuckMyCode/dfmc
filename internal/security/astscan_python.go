@@ -167,6 +167,21 @@ func pythonASTRules() []astRule {
 			Langs:    []string{"python"},
 			Match:    pythonShellTaintedArgMatcher,
 		},
+		{
+			// Catches CWE-22 in Python: a tainted path lands in a
+			// file-open / read / write / delete sink. The pure-Python
+			// equivalent of the Go path-traversal rule -- same risks
+			// (attacker-controlled filename pivots into arbitrary
+			// directory trees), same defence (only fires when the
+			// tracker has actually observed taint flow into the path
+			// slot; literals and unknown identifiers pass through).
+			Name:     "Path traversal via file-open call with tainted input",
+			Severity: "high",
+			CWE:      "CWE-22",
+			OWASP:    "A01:2021 Broken Access Control",
+			Langs:    []string{"python"},
+			Match:    pythonFileOpenTaintedArgMatcher,
+		},
 	}
 }
 
@@ -199,6 +214,51 @@ func pythonShellTaintedArgMatcher(ctx *scanLineCtx) bool {
 	}
 	for _, name := range candidates {
 		if callHasTaintedArg(ctx.Trimmed, name, ctx.Taint) {
+			return true
+		}
+	}
+	return false
+}
+
+// Module-prefixed file-open / move / delete sinks. The path is at
+// arg 0 for every entry; shutil.copy / .move / .copy2 take src at 0
+// and dst at 1, both potentially tainted, so we check arg 0 (the
+// more common attack vector -- attackers usually want to READ a
+// specific path, not write into one they control).
+var pythonFileOpenCalls = []taintedCallSlot{
+	{"pathlib.Path", 0},
+	{"os.remove", 0},
+	{"os.unlink", 0},
+	{"os.rmdir", 0},
+	{"os.makedirs", 0},
+	{"os.rename", 0},
+	{"shutil.copy", 0},
+	{"shutil.copy2", 0},
+	{"shutil.copyfile", 0},
+	{"shutil.move", 0},
+	{"shutil.rmtree", 0},
+}
+
+// pythonFileOpenTaintedArgMatcher fires when a Python file-open /
+// move / delete sink receives a tainted path. Covers:
+//
+//   * `open(path)` -- the built-in. Matched via the bare-call helper
+//     so receiver-prefixed forms (`obj.open(x)`) and identifier
+//     suffix matches (`reopen(x)`) don't false-fire.
+//   * pathlib.Path / os.remove / os.unlink / os.rmdir / os.makedirs /
+//     os.rename / shutil.copy / shutil.copy2 / shutil.copyfile /
+//     shutil.move / shutil.rmtree -- module-prefixed; the dot
+//     prefix already provides anchoring so findCallArgs is enough.
+func pythonFileOpenTaintedArgMatcher(ctx *scanLineCtx) bool {
+	if ctx == nil || ctx.Taint == nil {
+		return false
+	}
+	// Bare `open(...)` first.
+	if bareCallNthArgIsTainted(ctx.Trimmed, "open", 0, ctx.Taint) {
+		return true
+	}
+	for _, call := range pythonFileOpenCalls {
+		if callNthArgIsTainted(ctx.Trimmed, call.Name, call.ArgSlot, ctx.Taint) {
 			return true
 		}
 	}

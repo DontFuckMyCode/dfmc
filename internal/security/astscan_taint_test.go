@@ -574,6 +574,107 @@ func TestSmartScan_Go_SQLLiteralQueryStaysSafe(t *testing.T) {
 	mustNotContainKind(t, findings, "SQL injection")
 }
 
+// --- Python path-traversal taint end-to-end ------------------------------
+
+// TestSmartScan_Python_OpenTaintedFromArgv pins the canonical CWE-22
+// shape in Python: a command-line param is fed straight into the
+// built-in open().
+func TestSmartScan_Python_OpenTaintedFromArgv(t *testing.T) {
+	src := "import sys\n" +
+		"def main():\n" +
+		"    name = sys.argv[1]\n" +
+		"    f = open(name)\n" +
+		"    print(f.read())\n"
+	findings := scanHelper(t, "sample.py", src)
+	mustContainKind(t, findings, "Path traversal via file-open call with tainted input")
+}
+
+// TestSmartScan_Python_OpenTaintedFromFlask covers the Flask source.
+func TestSmartScan_Python_OpenTaintedFromFlask(t *testing.T) {
+	src := "from flask import request\n" +
+		"def handler():\n" +
+		"    name = request.args.get(\"file\")\n" +
+		"    return open(name).read()\n"
+	findings := scanHelper(t, "sample.py", src)
+	mustContainKind(t, findings, "tainted input")
+}
+
+// TestSmartScan_Python_PathlibTainted covers pathlib.Path -- a
+// frequent secondary read sink that still grants directory pivot.
+func TestSmartScan_Python_PathlibTainted(t *testing.T) {
+	src := "import sys\n" +
+		"import pathlib\n" +
+		"def main():\n" +
+		"    name = sys.argv[1]\n" +
+		"    p = pathlib.Path(name)\n" +
+		"    _ = p\n"
+	findings := scanHelper(t, "sample.py", src)
+	mustContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_Python_ShutilCopyTaintedSource covers the write side.
+func TestSmartScan_Python_ShutilCopyTaintedSource(t *testing.T) {
+	src := "import sys\n" +
+		"import shutil\n" +
+		"def main():\n" +
+		"    src = sys.argv[1]\n" +
+		"    shutil.copy(src, \"/tmp/backup\")\n"
+	findings := scanHelper(t, "sample.py", src)
+	mustContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_Python_OsRemoveTaintedFromForm pins os.remove with a
+// header-derived path: the canonical "attacker deletes whatever they
+// want" flaw.
+func TestSmartScan_Python_OsRemoveTaintedFromForm(t *testing.T) {
+	src := "from flask import request\n" +
+		"import os\n" +
+		"def handler():\n" +
+		"    name = request.form[\"name\"]\n" +
+		"    os.remove(name)\n"
+	findings := scanHelper(t, "sample.py", src)
+	mustContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_Python_OpenLiteralIsSafe: hard-coded literal path
+// must not fire.
+func TestSmartScan_Python_OpenLiteralIsSafe(t *testing.T) {
+	src := "def main():\n" +
+		"    f = open(\"/etc/hosts\")\n" +
+		"    print(f.read())\n"
+	findings := scanHelper(t, "sample.py", src)
+	mustNotContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_Python_ReopenIdentifierIsNotOpen pins the bare-call
+// anchor: `reopen(x)` must NOT match the bare-form `open(` sink even
+// when x is tainted. The substring check would otherwise false-fire.
+func TestSmartScan_Python_ReopenIdentifierIsNotOpen(t *testing.T) {
+	src := "import sys\n" +
+		"def reopen(p):\n" +
+		"    return p\n" +
+		"def main():\n" +
+		"    name = sys.argv[1]\n" +
+		"    p = reopen(name)\n" +
+		"    _ = p\n"
+	findings := scanHelper(t, "sample.py", src)
+	mustNotContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_Python_MethodOpenIsNotBareOpen pins the dotted-prefix
+// anchor: `obj.open(x)` must NOT match the bare-form `open(` sink.
+// Many Python types define their own .open() method; reading from a
+// custom file-like object is not the same as Python's built-in.
+func TestSmartScan_Python_MethodOpenIsNotBareOpen(t *testing.T) {
+	src := "import sys\n" +
+		"def main():\n" +
+		"    name = sys.argv[1]\n" +
+		"    obj = SomeThing()\n" +
+		"    obj.open(name)\n"
+	findings := scanHelper(t, "sample.py", src)
+	mustNotContainKind(t, findings, "Path traversal")
+}
+
 // --- Go path-traversal taint end-to-end ----------------------------------
 
 // TestSmartScan_Go_OSOpenTaintedFromQuery pins the canonical CWE-22

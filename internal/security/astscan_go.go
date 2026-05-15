@@ -227,19 +227,7 @@ func execCommandTaintedArgMatcher(ctx *scanLineCtx) bool {
 		callHasTaintedArg(ctx.Trimmed, "exec.CommandContext", ctx.Taint)
 }
 
-// taintedCallSlot describes one call-shape rule: the method-name
-// substring (anchored on `.` for method-call forms so the receiver
-// alias is abstracted away) and the positional slot whose taintedness
-// matters. Used by both the SQL-injection table (slot = SQL string)
-// and the path-traversal table below (slot = file path).
-//
-// Stored without the trailing `(` because findCallArgs locates the
-// name with strings.Index and then walks to the next `(` itself --
-// including the paren in the name double-consumes it.
-type taintedCallSlot struct {
-	Name    string
-	ArgSlot int
-}
+// taintedCallSlot lives in astscan_taint.go (shared across languages).
 
 var sqlQueryCalls = []taintedCallSlot{
 	{".Exec", 0}, {".ExecContext", 1},

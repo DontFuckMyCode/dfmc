@@ -655,6 +655,70 @@ func findCallArgs(line, callName string) []string {
 	return splitArgs(rest[:end])
 }
 
+// taintedCallSlot describes one call-shape rule: the function-name
+// substring (anchored on `.` for method-call forms so the receiver
+// alias is abstracted away) and the positional slot whose taintedness
+// matters. Used by the SQL-injection table (slot = SQL string), the
+// file-open / path-traversal table (slot = file path), and any
+// future taint-aware sink that pins an arg position.
+//
+// Stored without the trailing `(` because findCallArgs locates the
+// name with strings.Index and then walks to the next `(` itself --
+// including the paren in the name double-consumes it.
+type taintedCallSlot struct {
+	Name    string
+	ArgSlot int
+}
+
+// findBareCallArgs is the word-boundary-anchored sibling of
+// findCallArgs. Returns the arg list for `name(...)` only when the
+// match site is NOT preceded by an identifier-extending char -- so
+// `open(x)` matches but `reopen(x)` doesn't, and `obj.open(x)` doesn't
+// either (the `.` in front fails the anchor too). Used for bare-form
+// sinks like Python's built-in `open`, where receiver-prefixed and
+// shadowed forms must be left alone.
+func findBareCallArgs(line, name string) []string {
+	idx := 0
+	for idx <= len(line)-len(name) {
+		hit := strings.Index(line[idx:], name)
+		if hit < 0 {
+			return nil
+		}
+		abs := idx + hit
+		if abs > 0 && isIdentChar(line[abs-1]) {
+			// Preceded by ident char or `.` -- not a bare call.
+			idx = abs + 1
+			continue
+		}
+		// Anchored match. The char immediately after the name must be
+		// `(` -- otherwise it's a reference or a definition, not a call.
+		after := abs + len(name)
+		if after >= len(line) || line[after] != '(' {
+			idx = abs + 1
+			continue
+		}
+		// Reuse the paren walk from findCallArgs by calling it with a
+		// fully-qualified "name(" -- duplicates a few lines vs adding a
+		// param, but keeps the public surface minimal.
+		return findCallArgs(line[abs:], name)
+	}
+	return nil
+}
+
+// bareCallNthArgIsTainted is the anchored counterpart to
+// callNthArgIsTainted. Used for bare-form sinks where a substring
+// match in the middle of an identifier would false-fire.
+func bareCallNthArgIsTainted(line, name string, n int, t *taintTracker) bool {
+	if t == nil || n < 0 {
+		return false
+	}
+	args := findBareCallArgs(line, name)
+	if n >= len(args) {
+		return false
+	}
+	return argIsTainted(args[n], t)
+}
+
 // callHasTaintedArg reports whether any non-literal argument to the
 // named call on this line resolves to a tainted identifier (either
 // directly or as a sub-token of a wrapper expression like
