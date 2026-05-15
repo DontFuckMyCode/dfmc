@@ -209,7 +209,7 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Kind:     "function",
 					Path:     path,
 					Language: "go",
-					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+					Line:     int(n.StartPoint().Row) + 1,
 				})
 			}
 		case "method_declaration":
@@ -231,7 +231,7 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Kind:     "method",
 					Path:     path,
 					Language: "go",
-					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+					Line:     int(n.StartPoint().Row) + 1,
 					Metadata: map[string]string{"receiver": receiver},
 				})
 			}
@@ -253,7 +253,7 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Kind:     "type",
 					Path:     path,
 					Language: "go",
-					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+					Line:     int(n.StartPoint().Row) + 1,
 				})
 			}
 		case "call_expression":
@@ -266,7 +266,7 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 						Kind:     "call",
 						Path:     path,
 						Language: "go",
-						Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+						Line:     int(n.StartPoint().Row) + 1,
 					})
 				}
 			}
@@ -341,7 +341,7 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Kind:     "function",
 					Path:     path,
 					Language: lang,
-					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+					Line:     int(n.StartPoint().Row) + 1,
 				})
 			}
 		case "method_definition":
@@ -352,7 +352,7 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Kind:     "method",
 					Path:     path,
 					Language: lang,
-					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+					Line:     int(n.StartPoint().Row) + 1,
 				})
 			}
 		case "class_declaration":
@@ -364,7 +364,7 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Kind:     "class",
 					Path:     path,
 					Language: lang,
-					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+					Line:     int(n.StartPoint().Row) + 1,
 				})
 			}
 		case "import_statement":
@@ -381,7 +381,7 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 						Kind:     "call",
 						Path:     path,
 						Language: lang,
-						Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+						Line:     int(n.StartPoint().Row) + 1,
 					})
 				}
 			}
@@ -411,7 +411,7 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 					Kind:     "function",
 					Path:     path,
 					Language: lang,
-					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+					Line:     int(n.StartPoint().Row) + 1,
 				})
 			}
 		case "class_definition":
@@ -423,7 +423,7 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 					Kind:     "class",
 					Path:     path,
 					Language: lang,
-					Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+					Line:     int(n.StartPoint().Row) + 1,
 				})
 			}
 		case "import_statement", "import_from_statement":
@@ -443,7 +443,7 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 						Kind:     "call",
 						Path:     path,
 						Language: lang,
-						Location: types.Location{Line: int(n.StartPoint().Row) + 1},
+						Line:     int(n.StartPoint().Row) + 1,
 					})
 				}
 			}
