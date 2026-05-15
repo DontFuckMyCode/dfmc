@@ -74,6 +74,17 @@ func detectLanguageFromPath(path string) string {
 		return "typescript"
 	case ".py", ".pyw":
 		return "python"
+	case ".rb", ".rake":
+		return "ruby"
+	case ".java":
+		return "java"
+	}
+	// Filename-based detection: a handful of Ruby files have no
+	// extension by convention.
+	base := filepath.Base(path)
+	switch base {
+	case "Gemfile", "Rakefile":
+		return "ruby"
 	}
 	return ""
 }
@@ -172,6 +183,7 @@ func allASTRules() []astRule {
 	out = append(out, goASTRules()...)
 	out = append(out, jsASTRules()...)
 	out = append(out, pythonASTRules()...)
+	out = append(out, rubyASTRules()...)
 	return out
 }
 

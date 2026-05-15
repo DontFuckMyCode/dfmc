@@ -189,6 +189,22 @@ func containsConcatOrFormat(text, lang string) bool {
 			// Template literal with ${...} interpolation.
 			return strings.Contains(text, "${")
 		}
+	case "ruby":
+		// Ruby string interpolation: `"foo #{bar}"`. The `#{` token
+		// uniquely identifies it (Ruby has no shorthand). format()
+		// is rarely used in Ruby; sprintf-style is, but those usually
+		// land in the existing `+` concat check above.
+		if strings.Contains(text, "#{") {
+			return true
+		}
+	case "java":
+		// Java string concatenation is plain `+` (already caught at
+		// the top of this function). String.format / printf-style
+		// land in code via `%s` / `%d`; flag those when paired with
+		// a string literal context.
+		if strings.Contains(text, "String.format") || strings.Contains(text, ".printf(") {
+			return true
+		}
 	}
 	return false
 }
@@ -234,9 +250,9 @@ func isIdentChar(c byte) bool {
 // against sql injection" — not itself a finding.
 func isCommentLine(trimmed, lang string) bool {
 	switch lang {
-	case "go", "javascript", "typescript":
+	case "go", "javascript", "typescript", "java":
 		return strings.HasPrefix(trimmed, "//")
-	case "python":
+	case "python", "ruby":
 		return strings.HasPrefix(trimmed, "#")
 	}
 	return false
