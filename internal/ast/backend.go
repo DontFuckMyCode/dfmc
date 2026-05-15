@@ -26,7 +26,10 @@ func (e *Engine) ParseMetrics() ParseMetrics {
 }
 
 func buildBackendLanguageStatuses(active, reason string) []BackendLanguageStatus {
-	languages := []string{
+	// tree-sitter-backed languages: Active follows the `active`
+	// parameter so callers see "tree-sitter" in cgo builds and
+	// "regex" in !cgo builds.
+	tsLanguages := []string{
 		"go",
 		"javascript",
 		"jsx",
@@ -34,13 +37,30 @@ func buildBackendLanguageStatuses(active, reason string) []BackendLanguageStatus
 		"tsx",
 		"python",
 	}
-	out := make([]BackendLanguageStatus, 0, len(languages))
-	for _, lang := range languages {
+	// Regex-only languages: tree-sitter bindings are not wired (no
+	// CGO grammar imported), so Active is always "regex" regardless
+	// of build mode. Preferred is also "regex" -- there's nothing
+	// better to fall back to and we don't want callers to interpret
+	// these as "downgraded".
+	regexOnly := []string{
+		"rust",
+		"ruby",
+		"java",
+	}
+	out := make([]BackendLanguageStatus, 0, len(tsLanguages)+len(regexOnly))
+	for _, lang := range tsLanguages {
 		out = append(out, BackendLanguageStatus{
 			Language:  lang,
 			Preferred: "tree-sitter",
 			Active:    active,
 			Reason:    reason,
+		})
+	}
+	for _, lang := range regexOnly {
+		out = append(out, BackendLanguageStatus{
+			Language:  lang,
+			Preferred: "regex",
+			Active:    "regex",
 		})
 	}
 	return out

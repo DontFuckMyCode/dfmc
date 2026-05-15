@@ -279,7 +279,13 @@ func TestBackendStatus_LanguageMatrix(t *testing.T) {
 		t.Fatal("expected language matrix to be populated")
 	}
 
-	expected := map[string]bool{
+	// tree-sitter-backed languages must report tree-sitter as their
+	// preferred backend. The regex-only languages (rust, ruby, java)
+	// report "regex" as Preferred because we have no tree-sitter
+	// grammar wired in for them; they're listed in the status matrix
+	// so callers see the full coverage picture, but they're scored
+	// separately.
+	treeSitterLangs := map[string]bool{
 		"go":         false,
 		"javascript": false,
 		"jsx":        false,
@@ -287,20 +293,38 @@ func TestBackendStatus_LanguageMatrix(t *testing.T) {
 		"tsx":        false,
 		"python":     false,
 	}
+	regexOnlyLangs := map[string]bool{
+		"rust":  false,
+		"ruby":  false,
+		"java":  false,
+	}
 	for _, item := range status.Languages {
-		if _, ok := expected[item.Language]; ok {
-			expected[item.Language] = true
-		}
-		if item.Preferred != "tree-sitter" {
-			t.Fatalf("expected %q preferred backend to be tree-sitter, got %q", item.Language, item.Preferred)
+		if _, ok := treeSitterLangs[item.Language]; ok {
+			treeSitterLangs[item.Language] = true
+			if item.Preferred != "tree-sitter" {
+				t.Fatalf("expected %q preferred backend to be tree-sitter, got %q", item.Language, item.Preferred)
+			}
+		} else if _, ok := regexOnlyLangs[item.Language]; ok {
+			regexOnlyLangs[item.Language] = true
+			if item.Preferred != "regex" {
+				t.Fatalf("expected %q preferred backend to be regex, got %q", item.Language, item.Preferred)
+			}
+			if item.Active != "regex" {
+				t.Fatalf("expected %q active backend to be regex (no fallback to tree-sitter), got %q", item.Language, item.Active)
+			}
 		}
 		if item.Active == "" {
 			t.Fatalf("expected %q active backend to be populated", item.Language)
 		}
 	}
-	for lang, seen := range expected {
+	for lang, seen := range treeSitterLangs {
 		if !seen {
-			t.Fatalf("expected %q in backend language matrix: %#v", lang, status.Languages)
+			t.Fatalf("expected tree-sitter language %q in backend matrix: %#v", lang, status.Languages)
+		}
+	}
+	for lang, seen := range regexOnlyLangs {
+		if !seen {
+			t.Fatalf("expected regex-only language %q in backend matrix: %#v", lang, status.Languages)
 		}
 	}
 }

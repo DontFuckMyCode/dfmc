@@ -19,9 +19,24 @@ func TestBackendStatus_ReportsCorrectActiveBackend(t *testing.T) {
 	if len(status.Languages) == 0 {
 		t.Fatal("Languages list must not be empty")
 	}
+	// Regex-only languages (rust, ruby, java) report Preferred=regex
+	// because we don't ship tree-sitter grammars for them, and their
+	// Active is always "regex" regardless of the overall hybrid /
+	// regex mode. tree-sitter-backed languages must report
+	// Preferred=tree-sitter and inherit the overall Active value.
+	regexOnly := map[string]bool{"rust": true, "ruby": true, "java": true}
 	for _, lang := range status.Languages {
 		if lang.Language == "" {
 			t.Fatal("Language entry must have a name")
+		}
+		if regexOnly[lang.Language] {
+			if lang.Preferred != "regex" {
+				t.Fatalf("Preferred for %s must be regex, got %q", lang.Language, lang.Preferred)
+			}
+			if lang.Active != "regex" {
+				t.Fatalf("Active for regex-only %s must be regex, got %q", lang.Language, lang.Active)
+			}
+			continue
 		}
 		if lang.Preferred != "tree-sitter" {
 			t.Fatalf("Preferred for %s must be tree-sitter, got %q", lang.Language, lang.Preferred)
@@ -91,7 +106,11 @@ func TestBackendStatus_OverallReasonSet(t *testing.T) {
 	if status.Reason == "" {
 		t.Log("note: reason may be empty when tree-sitter is fully available")
 	}
-	if len(status.Languages) != 6 {
-		t.Fatalf("expected 6 languages (go, js, jsx, ts, tsx, python), got %d", len(status.Languages))
+	// tree-sitter-backed: go, javascript, jsx, typescript, tsx, python (6)
+	// regex-only: rust, ruby, java (3)
+	const wantLanguages = 9
+	if len(status.Languages) != wantLanguages {
+		t.Fatalf("expected %d languages in backend matrix, got %d (%#v)",
+			wantLanguages, len(status.Languages), status.Languages)
 	}
 }

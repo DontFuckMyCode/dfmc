@@ -91,6 +91,55 @@ func extractSymbols(path, lang string, content []byte) []types.Symbol {
 				add(types.SymbolInterface, m[1], i+1, strings.TrimSpace(line))
 			}
 		}
+	case "ruby":
+		// Ruby symbol extraction: classes, modules, and methods (def).
+		// `def self.foo` (class method) and `def foo` (instance method)
+		// both surface as SymbolFunction; callers can disambiguate via
+		// the captured Signature if they need to. We don't bother with
+		// attr_accessor / attr_reader / attr_writer here -- those are
+		// member declarations rather than top-level symbols and the
+		// extra noise dilutes hotspot ranking.
+		for i, line := range lines {
+			switch {
+			case reRubyClass.MatchString(line):
+				m := reRubyClass.FindStringSubmatch(line)
+				add(types.SymbolClass, m[1], i+1, strings.TrimSpace(line))
+			case reRubyModule.MatchString(line):
+				m := reRubyModule.FindStringSubmatch(line)
+				// Ruby modules behave more like namespaces than classes;
+				// surface as SymbolClass so codemap groups them next to
+				// classes (the natural place for a reader to expect them).
+				add(types.SymbolClass, m[1], i+1, strings.TrimSpace(line))
+			case reRubyDef.MatchString(line):
+				m := reRubyDef.FindStringSubmatch(line)
+				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
+			}
+		}
+	case "java":
+		// Java symbol extraction: classes, interfaces, enums, methods.
+		// Method-order matters: class/interface/enum must run BEFORE
+		// the method matcher because `public static void main(...)`
+		// AND `public class Main { ... }` both share the modifier
+		// prefix, and the method regex would happily match a class
+		// declaration if class wasn't tried first. The switch's
+		// fall-through-by-default semantics here are intentional:
+		// each case continues to the next line after a match.
+		for i, line := range lines {
+			switch {
+			case reJavaClass.MatchString(line):
+				m := reJavaClass.FindStringSubmatch(line)
+				add(types.SymbolClass, m[1], i+1, strings.TrimSpace(line))
+			case reJavaInterface.MatchString(line):
+				m := reJavaInterface.FindStringSubmatch(line)
+				add(types.SymbolInterface, m[1], i+1, strings.TrimSpace(line))
+			case reJavaEnum.MatchString(line):
+				m := reJavaEnum.FindStringSubmatch(line)
+				add(types.SymbolEnum, m[1], i+1, strings.TrimSpace(line))
+			case reJavaMethod.MatchString(line):
+				m := reJavaMethod.FindStringSubmatch(line)
+				add(types.SymbolFunction, m[1], i+1, strings.TrimSpace(line))
+			}
+		}
 	}
 
 	return symbols
@@ -138,6 +187,25 @@ func extractImports(lang string, content []byte) []string {
 	case "rust":
 		for _, line := range lines {
 			if m := reRustUseDep.FindStringSubmatch(line); len(m) > 1 {
+				add(m[1])
+			}
+		}
+	case "ruby":
+		for _, line := range lines {
+			if m := reRubyRequire.FindStringSubmatch(line); len(m) > 1 {
+				add(m[1])
+			}
+		}
+	case "java":
+		// Java imports are clearly delimited (`import x.y.z;`). We
+		// include the package statement too -- callers want to see the
+		// file's own namespace alongside its dependencies so the
+		// codemap can group siblings sensibly.
+		for _, line := range lines {
+			if m := reJavaImport.FindStringSubmatch(line); len(m) > 1 {
+				add(m[1])
+			}
+			if m := reJavaPackage.FindStringSubmatch(line); len(m) > 1 {
 				add(m[1])
 			}
 		}
