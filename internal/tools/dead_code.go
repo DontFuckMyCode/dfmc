@@ -58,6 +58,7 @@ type deadCodeResult struct {
 func (t *DeadCodeFinder) Execute(ctx context.Context, req Request) (Result, error) {
 	targetPath := asString(req.Params, "path", ".")
 	kindFilter := strings.ToLower(asString(req.Params, "kind", "all"))
+	displayRoot := req.ProjectRoot
 
 	// Load codemap if available
 	var callers map[string]map[string]bool // symbolName -> set of callers
@@ -117,7 +118,7 @@ func (t *DeadCodeFinder) Execute(ctx context.Context, req Request) (Result, erro
 		sb.WriteString("|------|------|--------|------|------|--------|\n")
 		for _, f := range allFindings {
 			fmt.Fprintf(&sb, "| %s | %d | `%s` | %s | %s | %d |\n",
-				relPath(f.Path), f.Line, f.Name, f.Kind, f.Type, f.Users)
+				relPath(displayRoot, f.Path), f.Line, f.Name, f.Kind, f.Type, f.Users)
 		}
 		sb.WriteString("\n**Recommendation:** Review each symbol. If no external usage exists, remove or unexport (use lowercase).\n")
 	}
@@ -296,11 +297,16 @@ func typeStringFunc(fn *ast.FuncType) string {
 	return "(" + strings.Join(parts, ", ") + ")"
 }
 
-func relPath(p string) string {
-	const root = "D:/Codebox/PROJECTS/DFMC/"
-	if strings.HasPrefix(p, root) {
-		return p[len(root):]
+// relPath returns p relative to root using forward slashes for stable
+// markdown output. Falls back to filepath.Base(p) if Rel fails.
+func relPath(root, p string) string {
+	if root == "" {
+		return filepath.Base(p)
 	}
-	return filepath.Base(p)
+	rel, err := filepath.Rel(root, p)
+	if err != nil {
+		return filepath.Base(p)
+	}
+	return filepath.ToSlash(rel)
 }
 
