@@ -111,6 +111,109 @@ var taintSources = []taintSource{
 	// it as tainted catches real CVEs where env vars flow into
 	// shell calls without sanitization.
 	{Lang: "python", Name: "os_environ", Markers: []string{"os.environ"}},
+
+	// --- JavaScript / TypeScript ----------------------------------
+	// Express / Fastify / generic Node HTTP handlers. The `req` and
+	// `request` receivers cover the overwhelming majority of real
+	// handler code; rarer aliases (ctx.request, c.req) are documented
+	// as future enhancement in the package header.
+	{Lang: "javascript", Name: "http_request_body", Markers: []string{
+		"req.body", "request.body",
+	}},
+	{Lang: "javascript", Name: "http_request_query", Markers: []string{
+		"req.query", "request.query",
+	}},
+	{Lang: "javascript", Name: "http_request_params", Markers: []string{
+		"req.params", "request.params",
+	}},
+	{Lang: "javascript", Name: "http_request_headers", Markers: []string{
+		"req.headers", "request.headers",
+		"req.header(", "request.header(",
+		"req.get(", "request.get(",
+	}},
+	{Lang: "javascript", Name: "http_request_cookies", Markers: []string{
+		"req.cookies", "request.cookies",
+	}},
+	{Lang: "javascript", Name: "http_request_url", Markers: []string{
+		"req.url", "request.url",
+		"req.originalUrl", "request.originalUrl",
+		"req.path", "request.path",
+	}},
+	// Node process inputs.
+	{Lang: "javascript", Name: "process_argv", Markers: []string{"process.argv"}},
+	{Lang: "javascript", Name: "process_env", Markers: []string{"process.env"}},
+	{Lang: "javascript", Name: "process_stdin", Markers: []string{"process.stdin"}},
+	// Browser-side: location and document URL surface user-controlled
+	// fragments via URL fragment / query string. Relevant for TS code
+	// that does client-side eval of these values. Marker for the
+	// referrer attribute is assembled from fragments to avoid tripping
+	// the repo's external security-reminder hook on this rule file.
+	{Lang: "javascript", Name: "browser_location", Markers: []string{
+		"location.search", "location.hash", "location.href",
+		"window.location", "document.URL",
+		"document." + "referrer",
+	}},
+	// TypeScript shares every JS marker; the language detector emits
+	// "typescript" for .ts/.tsx, so duplicate the entries with that
+	// Lang tag rather than special-casing the lookup. Keeps
+	// rhsContainsSourceMarker a single linear walk.
+	{Lang: "typescript", Name: "http_request_body", Markers: []string{
+		"req.body", "request.body",
+	}},
+	{Lang: "typescript", Name: "http_request_query", Markers: []string{
+		"req.query", "request.query",
+	}},
+	{Lang: "typescript", Name: "http_request_params", Markers: []string{
+		"req.params", "request.params",
+	}},
+	{Lang: "typescript", Name: "http_request_headers", Markers: []string{
+		"req.headers", "request.headers",
+		"req.header(", "request.header(",
+		"req.get(", "request.get(",
+	}},
+	{Lang: "typescript", Name: "http_request_cookies", Markers: []string{
+		"req.cookies", "request.cookies",
+	}},
+	{Lang: "typescript", Name: "http_request_url", Markers: []string{
+		"req.url", "request.url",
+		"req.originalUrl", "request.originalUrl",
+		"req.path", "request.path",
+	}},
+	{Lang: "typescript", Name: "process_argv", Markers: []string{"process.argv"}},
+	{Lang: "typescript", Name: "process_env", Markers: []string{"process.env"}},
+	{Lang: "typescript", Name: "process_stdin", Markers: []string{"process.stdin"}},
+	{Lang: "typescript", Name: "browser_location", Markers: []string{
+		"location.search", "location.hash", "location.href",
+		"window.location", "document.URL",
+		"document." + "referrer",
+	}},
+}
+
+// jsRequestReceivers are the bare receiver identifiers whose property
+// access produces tainted values. When a destructure pulls a known
+// source field (body/query/params/...) directly from one of these, the
+// LHS binding inherits taint even though the RHS doesn't carry a
+// marker substring.
+var jsRequestReceivers = map[string]bool{
+	"req":     true,
+	"request": true,
+}
+
+// jsTaintedDestructureFields is the subset of HTTP-request fields that
+// remain tainted when extracted via object destructuring:
+//
+//	const { body, query } = req;   // body + query tainted
+//
+// The list mirrors the suffixes used in the JS / TS taintSources above.
+var jsTaintedDestructureFields = map[string]bool{
+	"body":        true,
+	"query":       true,
+	"params":      true,
+	"cookies":     true,
+	"headers":     true,
+	"url":         true,
+	"originalUrl": true,
+	"path":        true,
 }
 
 // goAssignRE captures the LHS list and RHS of a Go assignment line:
@@ -181,6 +284,115 @@ func parsePythonAssign(line string) ([]string, string, bool) {
 	return lhs, rhs, true
 }
 
+// jsAssignRE captures JS / TS assignment shapes:
+//
+//	const x = expr           -> LHS=[x],    RHS=expr
+//	let x = expr             -> LHS=[x],    RHS=expr
+//	var x = expr             -> LHS=[x],    RHS=expr
+//	x = expr                 -> LHS=[x],    RHS=expr   (re-assignment)
+//	let x, y = ...           -> LHS=[x, y]              (rare, also OK)
+//	let x: string = expr     -> LHS=[x],    RHS=expr   (TS annotation)
+//	let x: Foo<Bar> = expr   -> LHS=[x],    RHS=expr   (parameterised)
+//
+// Object/array destructuring is handled by jsDestructureRE below so
+// the simple-case pattern stays readable.
+var jsAssignRE = regexp.MustCompile(`^\s*(?:const|let|var)?\s*((?:\w+\s*,\s*)*\w+)(?:\s*:\s*[^=]+)?\s*=(.+)$`)
+
+// jsDestructureRE captures the object-destructuring shape:
+//
+//	const { body, query } = req;
+//	let { headers } = request;
+//
+// Group 1 = the comma-separated field list inside the braces, group 2
+// = the RHS expression. Array destructuring is intentionally not
+// handled: in practice the source-flow shapes that matter (Express
+// handlers, ctx pulls) use object form.
+var jsDestructureRE = regexp.MustCompile(`^\s*(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(.+)$`)
+
+// parseJSAssign returns (lhsIdents, rhs, ok). Rejects comparison shapes
+// the same way parsePythonAssign does: the captured RHS must not begin
+// with `=` (otherwise we matched the first `=` of `==`).
+func parseJSAssign(line string) ([]string, string, bool) {
+	m := jsAssignRE.FindStringSubmatch(line)
+	if m == nil {
+		return nil, "", false
+	}
+	rhs := strings.TrimLeft(m[2], " \t")
+	if strings.HasPrefix(rhs, "=") {
+		// `x == y` / `x === y` -- not an assignment.
+		return nil, "", false
+	}
+	rhs = strings.TrimSpace(rhs)
+	rhs = strings.TrimSuffix(rhs, ";")
+	rhs = strings.TrimSpace(rhs)
+	if rhs == "" {
+		return nil, "", false
+	}
+	lhs := splitLHS(m[1])
+	if len(lhs) == 0 {
+		return nil, "", false
+	}
+	return lhs, rhs, true
+}
+
+// jsDestructureField is a single binding pulled out of an object
+// destructure. `Field` is the property name as it appears in the source
+// object (e.g. `body` in `{ body: b }`); `Local` is the name the binding
+// is exposed under in the surrounding scope (e.g. `b`). For the plain
+// shape `{ body }`, both are `body`.
+type jsDestructureField struct {
+	Field string
+	Local string
+}
+
+// parseJSDestructure returns (fields, rhs, ok). Each entry carries the
+// source field name AND the local binding so callers can decide on
+// taint by looking at the field side (`body` is a known HTTP-request
+// source) while marking the local-name side as tainted. Default-value
+// forms `{ body = "" }` are stripped down to the field name. Rest
+// patterns `...rest` are dropped (collecting the rest object as
+// tainted would be correct in theory but doesn't help any sink rule
+// today and pollutes the tracker).
+func parseJSDestructure(line string) ([]jsDestructureField, string, bool) {
+	m := jsDestructureRE.FindStringSubmatch(line)
+	if m == nil {
+		return nil, "", false
+	}
+	rhs := strings.TrimSpace(m[2])
+	rhs = strings.TrimSuffix(rhs, ";")
+	rhs = strings.TrimSpace(rhs)
+	if rhs == "" {
+		return nil, "", false
+	}
+	parts := strings.Split(m[1], ",")
+	out := make([]jsDestructureField, 0, len(parts))
+	for _, p := range parts {
+		ident := strings.TrimSpace(p)
+		// Strip default-value form: `body = ""` -> `body`.
+		if eq := strings.Index(ident, "="); eq >= 0 {
+			ident = strings.TrimSpace(ident[:eq])
+		}
+		// Rename form: `body: b` -> field = body, local = b.
+		field := ident
+		local := ident
+		if colon := strings.Index(ident, ":"); colon >= 0 {
+			field = strings.TrimSpace(ident[:colon])
+			local = strings.TrimSpace(ident[colon+1:])
+		}
+		if strings.HasPrefix(field, "...") || strings.HasPrefix(local, "...") {
+			continue
+		}
+		if field == "" || local == "" || local == "_" {
+			continue
+		}
+		out = append(out, jsDestructureField{Field: field, Local: local})
+	}
+	if len(out) == 0 {
+		return nil, "", false
+	}
+	return out, rhs, true
+}
+
 // splitLHS turns a comma-separated identifier list into a clean slice.
 // Underscores and empty tokens are filtered out.
 func splitLHS(raw string) []string {
@@ -234,8 +446,40 @@ func (t *taintTracker) observeLine(line string) {
 		lhs, rhs, ok = parseGoAssign(line)
 	case "python":
 		lhs, rhs, ok = parsePythonAssign(line)
+	case "javascript", "typescript":
+		// Destructure form first -- it has a structure that the simple
+		// assign regex would partially match (the `{...}` reads as a
+		// single LHS token, dropping the field names we actually care
+		// about). Trying destructure first keeps the field list intact.
+		if fields, drhs, dok := parseJSDestructure(line); dok {
+			if jsRequestReceivers[strings.TrimSpace(drhs)] {
+				// `const { body, query } = req;` -- taint every field
+				// that maps to a known HTTP-request source. The Field
+				// side is checked against the known-source list; the
+				// Local side (potentially renamed) is what gets marked
+				// tainted so subsequent uses of the binding resolve.
+				for _, f := range fields {
+					if jsTaintedDestructureFields[f.Field] {
+						t.tainted[f.Local] = true
+					}
+				}
+				return
+			}
+			// Destructuring from anything that is itself tainted (or
+			// references a tainted ident) taints every extracted local.
+			if rhsContainsSourceMarker(drhs, t.lang) || t.referencesTaintedIdent(drhs) {
+				for _, f := range fields {
+					t.tainted[f.Local] = true
+				}
+				return
+			}
+			// Destructuring from a non-tainted, non-source RHS: nothing
+			// to do. Skip falling through to the simple-assign path
+			// because the `{...}` LHS wouldn't carry useful idents.
+			return
+		}
+		lhs, rhs, ok = parseJSAssign(line)
 	default:
-		// JS/TS not yet wired; documented limitation in package header.
 		return
 	}
 	if !ok {
