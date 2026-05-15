@@ -2127,7 +2127,9 @@ func TestToolTimelineRendersDebugLinesWithReason(t *testing.T) {
 	}
 
 	view := m.renderChatView(120)
-	for _, want := range []string{"TOOL", "DONE", "FAIL", "done: read_file", "_reason: checking"} {
+	// "Clean up labels" replaces "_reason: " with "💭 " on the rendered
+	// timeline row, so the assertion checks the replaced form.
+	for _, want := range []string{"TOOL", "DONE", "FAIL", "done: read_file", "💭 checking"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected rendered chat view to contain %q, got:\n%s", want, view)
 		}
@@ -2544,7 +2546,9 @@ func TestToolTimelineUsesToolFamilyBadges(t *testing.T) {
 	})
 
 	view := m.renderChatView(140)
-	for _, want := range []string{"WRITE", "RUN", "target: demo.go", "command: go test"} {
+	// "Clean up labels" replaces "target: " → "· " and "command: " → "$ "
+	// on the rendered timeline row.
+	for _, want := range []string{"WRITE", "RUN", "· demo.go", "$ go test"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("tool timeline should show family badge/detail %q, got:\n%s", want, view)
 		}

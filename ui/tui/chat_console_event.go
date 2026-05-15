@@ -74,9 +74,8 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 		if reason := timelineToolEventReason(item); reason != "" && (strings.HasPrefix(lower, "done:") || strings.HasPrefix(lower, "failed:")) {
 			row += " | _reason: " + reason
 		}
-		displayRow := row
 
-		// Clean up labels
+		// Clean up labels for one-line render.
 		row = strings.Replace(row, "target: ", "· ", 1)
 		row = strings.Replace(row, "returned: ", "» ", 1)
 		row = strings.Replace(row, "result: ", "» ", 1)
@@ -84,8 +83,7 @@ func renderTimelineEventMessage(item chatLine, header string, width int) []strin
 		row = strings.Replace(row, "error: ", "× ", 1)
 		row = strings.Replace(row, "_reason: ", "💭 ", 1)
 		row = strings.Replace(row, "reason: ", "💭 ", 1)
-
-		row = strings.TrimSpace(displayRow)
+		row = strings.TrimSpace(row)
 		wrapped := wrapBubbleLine(row, limit)
 		for _, r := range wrapped {
 			filteredRows = append(filteredRows, truncateSingleLine(r, limit))
