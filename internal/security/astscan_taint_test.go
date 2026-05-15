@@ -600,6 +600,41 @@ func TestSmartScan_JS_PropagationThroughStringWrapper(t *testing.T) {
 	mustContainKind(t, findings, "tainted input")
 }
 
+// TestSmartScan_JS_NameReuseAcrossFunctionsIsolated pins the
+// JS / TS counterpart of the Go scope-isolation win: a `body`
+// pulled out of req in one handler must NOT be visible from a
+// sink call in a separate handler.
+func TestSmartScan_JS_NameReuseAcrossFunctionsIsolated(t *testing.T) {
+	src := "const cp = require(\"" + fxJSCPModule + "\");\n" +
+		"function handler(req, res) {\n" +
+		"  const body = req.body;\n" +
+		"  res.send(body);\n" +
+		"}\n" +
+		"function safeRun() {\n" +
+		"  const body = \"ls\";\n" +
+		"  cp." + fxJSExec + "(body);\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.js", src)
+	mustNotContainKind(t, findings, "tainted input")
+}
+
+// TestSmartScan_JS_TaintInOneFunctionFiresInSameFunction pins the
+// flip side: scope isolation must NOT mask flow inside the
+// function where the source AND sink coexist.
+func TestSmartScan_JS_TaintInOneFunctionFiresInSameFunction(t *testing.T) {
+	src := "const cp = require(\"" + fxJSCPModule + "\");\n" +
+		"function handler(req, res) {\n" +
+		"  const body = req.body;\n" +
+		"  cp." + fxJSExec + "(body);\n" +
+		"}\n" +
+		"function unrelated() {\n" +
+		"  const x = 1;\n" +
+		"  return x;\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.js", src)
+	mustContainKind(t, findings, "tainted input")
+}
+
 // TestSmartScan_TS_ExecTaintedFromReqBody pins the same shape under
 // the typescript Lang tag.
 func TestSmartScan_TS_ExecTaintedFromReqBody(t *testing.T) {

@@ -36,7 +36,10 @@
 
 package security
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // scopeBalancer tracks function-scope state across the per-line
 // scan loop. It is nil-safe (every method returns the zero value
@@ -60,12 +63,16 @@ func newScopeBalancer(lang string) *scopeBalancer {
 // current source line. The only transition that fires here is
 // function exit: a lone `}` line pops the topmost function scope
 // so any assignments on the SAME line (rare in practice) live in
-// the outer scope.
+// the outer scope. Same brace shape works for every brace-language
+// the balancer knows about (Go / JS / TS).
 func (b *scopeBalancer) preObserve(trimmed string, taint *taintTracker) {
-	if b == nil || b.lang != "go" {
+	if b == nil {
 		return
 	}
-	if isGoFunctionExit(trimmed) && b.pushCount > 0 {
+	if !b.handlesLang() {
+		return
+	}
+	if isBraceLanguageFunctionExit(trimmed) && b.pushCount > 0 {
 		taint.PopScope()
 		b.pushCount--
 	}
@@ -75,25 +82,66 @@ func (b *scopeBalancer) preObserve(trimmed string, taint *taintTracker) {
 // function-entry transition fires here so the declaration itself
 // is observed in the OUTER scope (the function name and parameters
 // don't get tainted into the new inner scope just because of where
-// the declaration sits). One-liner functions (`func foo() { return
-// 1 }`) both push and pop, leaving the count unchanged but giving
-// any assignments on the line their own scope in case a future
-// rule cares.
+// the declaration sits). One-liner functions both push and pop,
+// leaving the count unchanged but giving any assignments on the
+// line their own scope in case a future rule cares.
 func (b *scopeBalancer) postObserve(trimmed string, taint *taintTracker) {
-	if b == nil || b.lang != "go" {
+	if b == nil {
 		return
 	}
-	if !isGoFunctionEntry(trimmed) {
+	if !b.handlesLang() {
+		return
+	}
+	entry, oneLiner := b.detectFunctionEntry(trimmed)
+	if !entry {
 		return
 	}
 	taint.PushScope()
 	b.pushCount++
-	if isGoOneLinerFunction(trimmed) {
-		// Same-line close: balance the push immediately so the
-		// next line's state is outer scope again.
+	if oneLiner {
 		taint.PopScope()
 		b.pushCount--
 	}
+}
+
+// handlesLang reports whether the balancer recognises the current
+// file's language. Languages outside this set keep the file-scoped
+// pre-R8 behaviour: the balancer skips both Pre and PostObserve,
+// the tracker stays at scope depth 1, and behaviour matches the
+// original flat-map implementation.
+func (b *scopeBalancer) handlesLang() bool {
+	switch b.lang {
+	case "go", "javascript", "typescript":
+		return true
+	}
+	return false
+}
+
+// detectFunctionEntry returns (entry, oneLiner) for the current
+// trimmed line. entry is true when the line opens a function body;
+// oneLiner is true when the body also CLOSES on the same line.
+func (b *scopeBalancer) detectFunctionEntry(trimmed string) (bool, bool) {
+	switch b.lang {
+	case "go":
+		if !isGoFunctionEntry(trimmed) {
+			return false, false
+		}
+		return true, isGoOneLinerFunction(trimmed)
+	case "javascript", "typescript":
+		if !isJSFunctionEntry(trimmed) {
+			return false, false
+		}
+		return true, isJSOneLinerFunction(trimmed)
+	}
+	return false, false
+}
+
+// isBraceLanguageFunctionExit reports whether `trimmed` is a lone
+// closing brace -- the conventional formatting for "this function
+// ends" in Go and JS / TS alike. Shared between the languages
+// because the textual shape is identical.
+func isBraceLanguageFunctionExit(trimmed string) bool {
+	return trimmed == "}"
 }
 
 // isGoFunctionEntry reports whether `trimmed` is the opening line
@@ -111,14 +159,6 @@ func isGoFunctionEntry(trimmed string) bool {
 	return strings.Contains(trimmed, "{")
 }
 
-// isGoFunctionExit reports whether `trimmed` is a lone closing
-// brace -- the conventional Go formatting for "this function
-// ends". Lines like `}, {` (struct-literal continuation) or
-// `} else if x {` don't match and are correctly left alone.
-func isGoFunctionExit(trimmed string) bool {
-	return trimmed == "}"
-}
-
 // isGoOneLinerFunction reports whether `trimmed` is a function
 // declaration whose body fits on the same line: starts with
 // `func `, ends with `}`, and contains at least one `{`. Rare in
@@ -132,4 +172,44 @@ func isGoOneLinerFunction(trimmed string) bool {
 		return false
 	}
 	return strings.Contains(trimmed, "{")
+}
+
+// jsFunctionEntryRE matches named-function declarations in JS / TS
+// at a word boundary. Catches the common shapes:
+//
+//   function foo(...)            -- plain
+//   async function foo(...)      -- async
+//   export function foo(...)     -- ESM
+//   export async function foo(...)
+//   export default function foo(...)
+//
+// Anonymous functions (`function() {`) and arrow functions
+// (`const foo = () => {`) are NOT matched in this slice; they're
+// queued for a future iteration. Class-method shorthand
+// (`methodName() {` inside a class body) is also intentionally
+// skipped because detecting it correctly requires class-body
+// context tracking which would complicate the line-by-line model.
+var jsFunctionEntryRE = regexp.MustCompile(`(?:^|\s)function\s+[A-Za-z_$][\w$]*`)
+
+// isJSFunctionEntry reports whether `trimmed` opens a function
+// declaration AND the body brace is on the same line.
+func isJSFunctionEntry(trimmed string) bool {
+	if !strings.Contains(trimmed, "{") {
+		return false
+	}
+	return jsFunctionEntryRE.MatchString(trimmed)
+}
+
+// isJSOneLinerFunction reports whether `trimmed` is a function
+// declaration whose body fits on the same line. Same shape as the
+// Go helper: starts with a function-declaration prefix, ends with
+// `}`, contains `{`.
+func isJSOneLinerFunction(trimmed string) bool {
+	if !strings.HasSuffix(trimmed, "}") {
+		return false
+	}
+	if !strings.Contains(trimmed, "{") {
+		return false
+	}
+	return jsFunctionEntryRE.MatchString(trimmed)
 }
