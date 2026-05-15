@@ -211,7 +211,7 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Language:  "go",
 					Line:      int(n.StartPoint().Row) + 1,
 					Column:    int(n.StartPoint().Column) + 1,
-					Signature: goFunctionSignature(n, content),
+					Signature: signatureBeforeBody(n, content),
 				})
 			}
 		case "method_declaration":
@@ -235,7 +235,7 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Language:  "go",
 					Line:      int(n.StartPoint().Row) + 1,
 					Column:    int(n.StartPoint().Column) + 1,
-					Signature: goFunctionSignature(n, content),
+					Signature: signatureBeforeBody(n, content),
 					Metadata:  map[string]string{"receiver": receiver},
 				})
 			}
@@ -343,24 +343,26 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
-					Name:     name,
-					Kind:     "function",
-					Path:     path,
-					Language: lang,
-					Line:     int(n.StartPoint().Row) + 1,
-					Column:   int(n.StartPoint().Column) + 1,
+					Name:      name,
+					Kind:      "function",
+					Path:      path,
+					Language:  lang,
+					Line:      int(n.StartPoint().Row) + 1,
+					Column:    int(n.StartPoint().Column) + 1,
+					Signature: signatureBeforeBody(n, content),
 				})
 			}
 		case "method_definition":
 			name := childText(n, "property_identifier", content)
 			if name != "" {
 				symbols = append(symbols, types.Symbol{
-					Name:     name,
-					Kind:     "method",
-					Path:     path,
-					Language: lang,
-					Line:     int(n.StartPoint().Row) + 1,
-					Column:   int(n.StartPoint().Column) + 1,
+					Name:      name,
+					Kind:      "method",
+					Path:      path,
+					Language:  lang,
+					Line:      int(n.StartPoint().Row) + 1,
+					Column:    int(n.StartPoint().Column) + 1,
+					Signature: signatureBeforeBody(n, content),
 				})
 			}
 		case "class_declaration":
@@ -368,12 +370,13 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
-					Name:     name,
-					Kind:     "class",
-					Path:     path,
-					Language: lang,
-					Line:     int(n.StartPoint().Row) + 1,
-					Column:   int(n.StartPoint().Column) + 1,
+					Name:      name,
+					Kind:      "class",
+					Path:      path,
+					Language:  lang,
+					Line:      int(n.StartPoint().Row) + 1,
+					Column:    int(n.StartPoint().Column) + 1,
+					Signature: signatureBeforeBody(n, content),
 				})
 			}
 		case "import_statement":
@@ -417,12 +420,13 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
-					Name:     name,
-					Kind:     "function",
-					Path:     path,
-					Language: lang,
-					Line:     int(n.StartPoint().Row) + 1,
-					Column:   int(n.StartPoint().Column) + 1,
+					Name:      name,
+					Kind:      "function",
+					Path:      path,
+					Language:  lang,
+					Line:      int(n.StartPoint().Row) + 1,
+					Column:    int(n.StartPoint().Column) + 1,
+					Signature: signatureBeforeBody(n, content),
 				})
 			}
 		case "class_definition":
@@ -430,12 +434,13 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
-					Name:     name,
-					Kind:     "class",
-					Path:     path,
-					Language: lang,
-					Line:     int(n.StartPoint().Row) + 1,
-					Column:   int(n.StartPoint().Column) + 1,
+					Name:      name,
+					Kind:      "class",
+					Path:      path,
+					Language:  lang,
+					Line:      int(n.StartPoint().Row) + 1,
+					Column:    int(n.StartPoint().Column) + 1,
+					Signature: signatureBeforeBody(n, content),
 				})
 			}
 		case "import_statement", "import_from_statement":
@@ -490,12 +495,15 @@ func textForNode(n *tree_sitter.Node, content []byte) string {
 	return string(content[start:end])
 }
 
-// goFunctionSignature returns the function or method declaration line(s)
-// up to (but not including) the body block, matching what the regex
-// extractor in go_extract.go puts in Symbol.Signature. For bodyless
-// declarations (interface methods, externally-linked stubs) it falls
-// back to the first line of the node's text.
-func goFunctionSignature(n *tree_sitter.Node, content []byte) string {
+// signatureBeforeBody returns the declaration text up to (but not
+// including) the node's body block, matching what the regex extractors
+// put in Symbol.Signature. Works for any tree-sitter grammar that uses
+// "body" as the field name for the inner block (Go function /
+// method_declaration, JS function / method / class_declaration, Python
+// function / class_definition). For bodyless declarations (interface
+// methods, externally-linked stubs) it falls back to the first line of
+// the node's text.
+func signatureBeforeBody(n *tree_sitter.Node, content []byte) string {
 	body := n.ChildByFieldName("body")
 	if body != nil {
 		start, end := n.StartByte(), body.StartByte()
