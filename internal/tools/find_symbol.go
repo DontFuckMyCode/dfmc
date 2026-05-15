@@ -46,24 +46,21 @@ const maxFindSymbolFileSize = 10 << 20
 // the type name with leading `*` stripped.
 var goReceiverRE = regexp.MustCompile(`^\s*func\s*\(\s*(?:[A-Za-z_]\w*\s+)?\*?([A-Za-z_]\w*)`)
 
-// FindSymbolTool implements the locate-by-name tool. Holds a lazily-init
-// ast.Engine; the parse cache lets repeat lookups against the same files
-// (model exploring a tree) avoid re-parsing.
+// FindSymbolTool implements the locate-by-name tool. Uses the process-wide
+// shared ast.Engine (see ast_shared.go) so repeat lookups across tools
+// (model exploring a tree) reuse the parse cache instead of re-parsing.
 type FindSymbolTool struct {
 	engine *ast.Engine
 }
 
-func NewFindSymbolTool() *FindSymbolTool { return &FindSymbolTool{engine: ast.New()} }
+func NewFindSymbolTool() *FindSymbolTool { return &FindSymbolTool{engine: astSharedEngine()} }
 func (t *FindSymbolTool) Name() string   { return "find_symbol" }
 func (t *FindSymbolTool) Description() string {
 	return "Locate a named symbol (function, class, HTML id, ...) and return its full scope."
 }
-func (t *FindSymbolTool) Close() error {
-	if t == nil || t.engine == nil {
-		return nil
-	}
-	return t.engine.Close()
-}
+
+// Close is a no-op. See ast_shared.go for the rationale.
+func (t *FindSymbolTool) Close() error { return nil }
 
 func (t *FindSymbolTool) getEngine() *ast.Engine { return t.engine }
 

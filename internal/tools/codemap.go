@@ -45,25 +45,22 @@ import (
 )
 
 // CodemapTool exposes the project-overview surface to the agent loop.
-// Holds a lazy ast.Engine so repeat calls within one session reuse the
-// parse cache; first call pays the cost, subsequent calls are cheap.
+// Uses the process-wide shared ast.Engine (see ast_shared.go) so repeat
+// calls within one session — and parse hits flowing across ast_query /
+// find_symbol on the same files — reuse the parse cache.
 type CodemapTool struct {
 	engine *ast.Engine
 }
 
-func NewCodemapTool() *CodemapTool { return &CodemapTool{engine: ast.New()} }
+func NewCodemapTool() *CodemapTool { return &CodemapTool{engine: astSharedEngine()} }
 
 func (t *CodemapTool) Name() string { return "codemap" }
 func (t *CodemapTool) Description() string {
 	return "High-level project overview — every file, every symbol, every signature, no bodies."
 }
 
-func (t *CodemapTool) Close() error {
-	if t == nil || t.engine == nil {
-		return nil
-	}
-	return t.engine.Close()
-}
+// Close is a no-op. See ast_shared.go for the rationale.
+func (t *CodemapTool) Close() error { return nil }
 
 func (t *CodemapTool) getEngine() *ast.Engine { return t.engine }
 
