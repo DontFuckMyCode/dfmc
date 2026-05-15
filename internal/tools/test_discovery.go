@@ -117,7 +117,11 @@ func (t *TestDiscoveryTool) Execute(_ context.Context, req Request) (Result, err
 
 	var results []map[string]any
 	for _, fp := range testFiles {
-		functions := extractTestFunctions(fp, language, symbol)
+		// ExtractTestFunctions takes (path, fileContents, symbol) — passing
+		// "" for fileContents lets it read the file itself. The language
+		// arg is metadata used elsewhere; the extractor dispatches by
+		// filepath extension, so it does not need the language here.
+		functions := extractTestFunctions(fp, "", symbol)
 		if len(functions) == 0 {
 			continue
 		}
