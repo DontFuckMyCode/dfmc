@@ -124,7 +124,7 @@ func (t *SymbolMoveTool) Execute(ctx context.Context, req Request) (Result, erro
 	// Locate the symbol across the project.
 	loc, err := findSymbolLocation(projectRoot, from, kind)
 	if err != nil {
-		return Result{}, fmt.Errorf("symbol_move: %v", err)
+		return Result{}, fmt.Errorf("symbol_move: %w", err)
 	}
 	if loc == nil {
 		return Result{
