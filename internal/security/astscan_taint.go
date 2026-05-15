@@ -1,4 +1,4 @@
-// Taint analysis for the AST-aware scanner (dfmc_report_ast.md §R1).
+// Taint analysis for the AST-aware scanner (dfmc_report_ast.md §R1 / §R8).
 //
 // The line-based scanner in astscan.go is precise for single-line sinks
 // but blind to the multi-step case that motivates real taint analysis:
@@ -13,18 +13,36 @@
 // taintTracker plugs into the scanner's existing per-line loop. Before
 // rules run on a line, the tracker observes assignments and remembers
 // any identifier whose RHS contains a known source pattern. Rules then
-// query IsTainted(argName) at sink call sites. Line-local in scope (no
-// cross-function tracking), which is a deliberate tradeoff against full
-// AST-visitor complexity -- the scanner still operates on a stream of
-// lines, not a parsed AST.
+// query IsTainted(argName) at sink call sites. The scanner still
+// operates on a stream of lines, not a parsed AST -- a deliberate
+// tradeoff against full AST-visitor complexity, kept tractable by the
+// scope model below.
 //
-// Scope: per-file tracker, lifetime = one ScanASTRules call. Variable
-// names are global within the file (no function-scope distinction) so
-// `body` reused in two functions can produce a stale taint. False
-// positives from name reuse are accepted as the price of zero-AST-parse
-// cost; the alternative is parsing the file with internal/ast.Engine
-// here too, which would couple security to ast and slow line-rate
-// scanning by ~30% on large files.
+// Scope model (R8):
+//
+//   * The tracker carries a stack of scopes. PushScope opens a fresh
+//     inner scope; PopScope discards the innermost and restores the
+//     suspended outer. IsTainted walks innermost-out so an outer-scope
+//     ident is visible from an inner scope, but inner writes are
+//     invisible after Pop.
+//
+//   * astscan.go's scope balancer drives Push / Pop on function
+//     boundaries for the three primary languages: Go and JS / TS via
+//     brace tracking, Python via leading-whitespace indent tracking.
+//     Ruby and Java keep the file-scoped behaviour (the balancer is a
+//     no-op for them) since their security-rule surface doesn't yet
+//     carry taint sources.
+//
+//   * Result: idents tainted in function A are not visible to a sink
+//     call in function B even when both share the same source file,
+//     eliminating the cross-function name-reuse false-positive class.
+//
+//   * Within a function the tracker still has no block-scope
+//     distinction -- a `body := ...` inside an `if` is visible after
+//     the `if` ends. This is acceptable for security-rule purposes
+//     because the post-`if` code can legitimately use the value.
+//     If we ever need block-scope precision, the same Push / Pop
+//     primitives extend cleanly.
 
 package security
 
