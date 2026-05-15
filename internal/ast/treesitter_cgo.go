@@ -210,6 +210,7 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Path:     path,
 					Language: "go",
 					Line:     int(n.StartPoint().Row) + 1,
+					Column:   int(n.StartPoint().Column) + 1,
 				})
 			}
 		case "method_declaration":
@@ -232,6 +233,7 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Path:     path,
 					Language: "go",
 					Line:     int(n.StartPoint().Row) + 1,
+					Column:   int(n.StartPoint().Column) + 1,
 					Metadata: map[string]string{"receiver": receiver},
 				})
 			}
@@ -254,6 +256,7 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Path:     path,
 					Language: "go",
 					Line:     int(n.StartPoint().Row) + 1,
+					Column:   int(n.StartPoint().Column) + 1,
 				})
 			}
 		case "call_expression":
@@ -267,6 +270,7 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 						Path:     path,
 						Language: "go",
 						Line:     int(n.StartPoint().Row) + 1,
+						Column:   int(n.StartPoint().Column) + 1,
 					})
 				}
 			}
@@ -342,6 +346,7 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Path:     path,
 					Language: lang,
 					Line:     int(n.StartPoint().Row) + 1,
+					Column:   int(n.StartPoint().Column) + 1,
 				})
 			}
 		case "method_definition":
@@ -353,6 +358,7 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Path:     path,
 					Language: lang,
 					Line:     int(n.StartPoint().Row) + 1,
+					Column:   int(n.StartPoint().Column) + 1,
 				})
 			}
 		case "class_declaration":
@@ -365,6 +371,7 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Path:     path,
 					Language: lang,
 					Line:     int(n.StartPoint().Row) + 1,
+					Column:   int(n.StartPoint().Column) + 1,
 				})
 			}
 		case "import_statement":
@@ -382,6 +389,7 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 						Path:     path,
 						Language: lang,
 						Line:     int(n.StartPoint().Row) + 1,
+						Column:   int(n.StartPoint().Column) + 1,
 					})
 				}
 			}
@@ -412,6 +420,7 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 					Path:     path,
 					Language: lang,
 					Line:     int(n.StartPoint().Row) + 1,
+					Column:   int(n.StartPoint().Column) + 1,
 				})
 			}
 		case "class_definition":
@@ -424,6 +433,7 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 					Path:     path,
 					Language: lang,
 					Line:     int(n.StartPoint().Row) + 1,
+					Column:   int(n.StartPoint().Column) + 1,
 				})
 			}
 		case "import_statement", "import_from_statement":
@@ -444,6 +454,7 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 						Path:     path,
 						Language: lang,
 						Line:     int(n.StartPoint().Row) + 1,
+						Column:   int(n.StartPoint().Column) + 1,
 					})
 				}
 			}
