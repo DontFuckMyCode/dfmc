@@ -33,15 +33,11 @@ func (m Model) renderContextCockpitBlock(width int) []string {
 	lines = append(lines, "")
 
 	lines = append(lines, subtleStyle.Render("payload sections"))
-	for _, row := range m.contextCockpitPayloadRows(payload, vm) {
-		lines = append(lines, row)
-	}
+	lines = append(lines, m.contextCockpitPayloadRows(payload, vm)...)
 
 	lines = append(lines, "")
 	lines = append(lines, subtleStyle.Render("reserves / headroom"))
-	for _, row := range contextCockpitReserveRows(payload) {
-		lines = append(lines, row)
-	}
+	lines = append(lines, contextCockpitReserveRows(payload)...)
 
 	if len(vm.ContextTopFiles) > 0 || len(vm.ContextReasons) > 0 {
 		lines = append(lines, "")

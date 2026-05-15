@@ -136,7 +136,7 @@ func (t *HuntTool) Execute(ctx context.Context, req Request) (Result, error) {
 	})
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Bug Hunt Report\n"))
+	sb.WriteString("## Bug Hunt Report\n")
 	sb.WriteString(fmt.Sprintf("**Files scanned:** %d  **Issues found:** %d\n\n", len(goFiles), len(findings)))
 
 	if len(findings) == 0 {
@@ -245,20 +245,38 @@ func compareHuntSeverity(a, b BugSeverity) int {
 }
 
 func getHuntDetectors(categories string) []func(*token.FileSet, ast.Node, string, *[]BugFinding) {
-	all := []func(*token.FileSet, ast.Node, string, *[]BugFinding){
-		detectUncheckedError, detectNilDereference, detectConcurrentMap,
-		detectSQLInjection, detectHardcodedSecrets, detectInsecureRand,
+	type huntDetector struct {
+		category string
+		fn       func(*token.FileSet, ast.Node, string, *[]BugFinding)
+	}
+	// Category names mirror the Spec.Args description for `categories`.
+	all := []huntDetector{
+		{"unchecked-error", detectUncheckedError},
+		{"nil-dereference", detectNilDereference},
+		{"concurrent-map", detectConcurrentMap},
+		{"sql-injection", detectSQLInjection},
+		{"secrets", detectHardcodedSecrets},
+		{"insecure-rand", detectInsecureRand},
 	}
 	if categories == "" {
-		return all
+		out := make([]func(*token.FileSet, ast.Node, string, *[]BugFinding), 0, len(all))
+		for _, d := range all {
+			out = append(out, d.fn)
+		}
+		return out
 	}
 	enabled := make(map[string]bool)
 	for _, c := range strings.Split(categories, ",") {
-		enabled[strings.TrimSpace(strings.ToLower(c))] = true
+		key := strings.TrimSpace(strings.ToLower(c))
+		if key != "" {
+			enabled[key] = true
+		}
 	}
-	var out []func(*token.FileSet, ast.Node, string, *[]BugFinding)
+	out := make([]func(*token.FileSet, ast.Node, string, *[]BugFinding), 0, len(all))
 	for _, d := range all {
-		out = append(out, d)
+		if enabled[d.category] {
+			out = append(out, d.fn)
+		}
 	}
 	return out
 }

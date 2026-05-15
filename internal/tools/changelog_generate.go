@@ -82,6 +82,20 @@ var (
 	prPattern       = regexp.MustCompile(`#(\d+)`)
 )
 
+// asciiTitle capitalises the first byte of an ASCII commit-type token
+// (feat, fix, ...) when typeTitles has no override. Conventional-commit
+// types are lowercase ASCII identifiers, so the dropped Unicode-aware
+// strings.Title (deprecated since Go 1.18) was overkill for the fallback.
+func asciiTitle(s string) string {
+	if s == "" {
+		return s
+	}
+	if s[0] >= 'a' && s[0] <= 'z' {
+		return string(s[0]-32) + s[1:]
+	}
+	return s
+}
+
 var typeTitles = map[string]string{
 	"feat":     "Features",
 	"fix":      "Bug Fixes",
@@ -244,14 +258,13 @@ func (t *ChangelogGenerateTool) parseCommits(output string) []CommitEntry {
 func (t *ChangelogGenerateTool) formatChangelog(commits []CommitEntry, version string) string {
 	var sb strings.Builder
 
-	// Group by type
+	// Group by type. Breaking commits get re-typed to "breaking" so
+	// they surface under the BREAKING CHANGES heading instead of their
+	// original feat/fix/etc bucket.
 	sections := make(map[string][]CommitEntry)
-	var breaking []CommitEntry
-
 	for _, c := range commits {
 		if c.Breaking {
 			c.Type = "breaking"
-			breaking = append(breaking, c)
 		}
 		sections[c.Type] = append(sections[c.Type], c)
 	}
@@ -267,7 +280,7 @@ func (t *ChangelogGenerateTool) formatChangelog(commits []CommitEntry, version s
 
 		title := typeTitles[typeName]
 		if title == "" {
-			title = strings.Title(typeName)
+			title = asciiTitle(typeName)
 		}
 
 		sb.WriteString(fmt.Sprintf("### %s\n\n", title))

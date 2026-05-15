@@ -142,7 +142,7 @@ func (t *AuditTool) Execute(ctx context.Context, req Request) (Result, error) {
 	})
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Security Audit Report\n"))
+	sb.WriteString("## Security Audit Report\n")
 	sb.WriteString(fmt.Sprintf("**Files scanned:** %d  **Issues found:** %d\n\n", len(goFiles), len(findings)))
 
 	if len(findings) == 0 {
@@ -235,21 +235,44 @@ func compareAuditSeverity(a, b AuditSeverity) int {
 }
 
 func getAuditDetectors(categories string) []func(*token.FileSet, ast.Node, string, int, *[]AuditFinding) {
-	all := []func(*token.FileSet, ast.Node, string, int, *[]AuditFinding){
-		detectAuditHardcodedSecrets, detectAuditSQLInjection, detectCommandInjection,
-		detectPathTraversal, detectAuditInsecureRand, detectXSS,
-		detectUnsafeRedirect, detectXXE, detectWeakCrypto,
+	type auditDetector struct {
+		category string
+		fn       func(*token.FileSet, ast.Node, string, int, *[]AuditFinding)
+	}
+	// Category names mirror the Spec.Args description for the `categories`
+	// argument. detectAuditInsecureRand + detectWeakCrypto both file under
+	// "insecure-crypto" so users can request the crypto-hygiene bundle
+	// with one keyword.
+	all := []auditDetector{
+		{"secrets", detectAuditHardcodedSecrets},
+		{"sql-injection", detectAuditSQLInjection},
+		{"cmd-injection", detectCommandInjection},
+		{"path-traversal", detectPathTraversal},
+		{"insecure-crypto", detectAuditInsecureRand},
+		{"insecure-crypto", detectWeakCrypto},
+		{"xss", detectXSS},
+		{"unsafe-redirect", detectUnsafeRedirect},
+		{"xxe", detectXXE},
 	}
 	if categories == "" {
-		return all
+		out := make([]func(*token.FileSet, ast.Node, string, int, *[]AuditFinding), 0, len(all))
+		for _, d := range all {
+			out = append(out, d.fn)
+		}
+		return out
 	}
 	enabled := make(map[string]bool)
 	for _, c := range strings.Split(categories, ",") {
-		enabled[strings.TrimSpace(strings.ToLower(c))] = true
+		key := strings.TrimSpace(strings.ToLower(c))
+		if key != "" {
+			enabled[key] = true
+		}
 	}
-	var out []func(*token.FileSet, ast.Node, string, int, *[]AuditFinding)
+	out := make([]func(*token.FileSet, ast.Node, string, int, *[]AuditFinding), 0, len(all))
 	for _, d := range all {
-		out = append(out, d)
+		if enabled[d.category] {
+			out = append(out, d.fn)
+		}
 	}
 	return out
 }
