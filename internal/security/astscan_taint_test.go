@@ -574,6 +574,111 @@ func TestSmartScan_Go_SQLLiteralQueryStaysSafe(t *testing.T) {
 	mustNotContainKind(t, findings, "SQL injection")
 }
 
+// --- Go path-traversal taint end-to-end ----------------------------------
+
+// TestSmartScan_Go_OSOpenTaintedFromQuery pins the canonical CWE-22
+// shape: a query-string param is fed straight into os.Open.
+func TestSmartScan_Go_OSOpenTaintedFromQuery(t *testing.T) {
+	src := "package main\n" +
+		"import \"os\"\n" +
+		"func h(r *http.Request) {\n" +
+		"	name := r.URL.Query().Get(\"file\")\n" +
+		"	f, _ := os.Open(name)\n" +
+		"	_ = f\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustContainKind(t, findings, "Path traversal via file-open call with tainted input")
+}
+
+// TestSmartScan_Go_OSReadFileTaintedViaFilepathJoin pins that
+// filepath.Join propagates taint -- joining a tainted segment onto a
+// "safe" root does not actually sanitise it. The rule fires on
+// os.ReadFile when its arg is the joined value.
+func TestSmartScan_Go_OSReadFileTaintedViaFilepathJoin(t *testing.T) {
+	src := "package main\n" +
+		"import \"os\"\n" +
+		"import \"path/filepath\"\n" +
+		"func h(r *http.Request) {\n" +
+		"	name := r.FormValue(\"name\")\n" +
+		"	p := filepath.Join(\"/srv\", name)\n" +
+		"	data, _ := os.ReadFile(p)\n" +
+		"	_ = data\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustContainKind(t, findings, "tainted input")
+}
+
+// TestSmartScan_Go_IoutilReadFileTainted covers the deprecated-but-
+// still-common ioutil family.
+func TestSmartScan_Go_IoutilReadFileTainted(t *testing.T) {
+	src := "package main\n" +
+		"import \"io/ioutil\"\n" +
+		"func h(r *http.Request) {\n" +
+		"	name := r.URL.Query().Get(\"name\")\n" +
+		"	data, _ := ioutil.ReadFile(name)\n" +
+		"	_ = data\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_Go_OSCreateTaintedFromHeader pins write-side sinks:
+// os.Create + a header-derived path is the classic upload-handler
+// flaw where attacker headers control the on-disk filename.
+func TestSmartScan_Go_OSCreateTaintedFromHeader(t *testing.T) {
+	src := "package main\n" +
+		"import \"os\"\n" +
+		"func h(r *http.Request) {\n" +
+		"	name := r.Header.Get(\"X-Upload-Name\")\n" +
+		"	f, _ := os.Create(name)\n" +
+		"	_ = f\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_Go_FilepathWalkTaintedRoot pins the directory-walk
+// shape: walking a tainted root lets an attacker pivot into arbitrary
+// directory trees, even though Walk itself doesn't open anything.
+func TestSmartScan_Go_FilepathWalkTaintedRoot(t *testing.T) {
+	src := "package main\n" +
+		"import \"path/filepath\"\n" +
+		"func h(r *http.Request) {\n" +
+		"	root := r.URL.Query().Get(\"root\")\n" +
+		"	filepath.Walk(root, nil)\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_Go_OSOpenLiteralPathIsSafe: a hard-coded literal must
+// not fire the taint-aware path rule.
+func TestSmartScan_Go_OSOpenLiteralPathIsSafe(t *testing.T) {
+	src := "package main\n" +
+		"import \"os\"\n" +
+		"func h() {\n" +
+		"	f, _ := os.Open(\"/etc/hosts\")\n" +
+		"	_ = f\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustNotContainKind(t, findings, "Path traversal")
+}
+
+// TestSmartScan_Go_OSOpenUnknownIdentIsSafe: an identifier that the
+// tracker never observed must not be treated as tainted -- that's the
+// rule's main precision guarantee.
+func TestSmartScan_Go_OSOpenUnknownIdentIsSafe(t *testing.T) {
+	src := "package main\n" +
+		"import \"os\"\n" +
+		"func h() {\n" +
+		"	configPath := \"/etc/app.conf\"\n" +
+		"	f, _ := os.Open(configPath)\n" +
+		"	_ = f\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustNotContainKind(t, findings, "Path traversal")
+}
+
 // TestSmartScan_Go_SQLPreparedStatementTainted covers .Prepare which
 // the existing concat rule was already prone to over-flag; the taint
 // rule keeps the same precision: only fires when the first arg is a

@@ -128,6 +128,27 @@ func goASTRules() []astRule {
 			Match:    sqlQueryTaintedArgMatcher,
 		},
 		{
+			// Catches path-traversal flows:
+			//   name := r.URL.Query().Get("file")
+			//   f, _ := os.Open(name)
+			// or with one wrapper step:
+			//   p := filepath.Join("/srv", name)
+			//   data, _ := os.ReadFile(p)
+			// The wrapper case is intentional: filepath.Join does not
+			// sanitise, so any tainted segment continues to flow into
+			// the open call. The matcher checks the path-arg slot of
+			// every file-open call against the tracker. Allow-listed
+			// callers (config readers, embed sinks) won't trip the
+			// rule unless the path actually came from a tainted
+			// source -- there's no "looks like a path string" heuristic.
+			Name:     "Path traversal via file-open call with tainted input",
+			Severity: "high",
+			CWE:      "CWE-22",
+			OWASP:    "A01:2021 Broken Access Control",
+			Langs:    []string{"go"},
+			Match:    fileOpenTaintedArgMatcher,
+		},
+		{
 			Name:     "Hardcoded cryptographic material",
 			Severity: "medium",
 			CWE:      "CWE-798",
@@ -206,25 +227,70 @@ func execCommandTaintedArgMatcher(ctx *scanLineCtx) bool {
 		callHasTaintedArg(ctx.Trimmed, "exec.CommandContext", ctx.Taint)
 }
 
-// sqlQueryCall describes one database/sql-style call shape: the
-// method-name suffix (anchored on `.` so receivers are abstracted
-// away) and the positional slot that holds the SQL string. The plain
-// methods take SQL at arg 0; the `*Context` family takes ctx at
-// arg 0 and SQL at arg 1.
+// taintedCallSlot describes one call-shape rule: the method-name
+// substring (anchored on `.` for method-call forms so the receiver
+// alias is abstracted away) and the positional slot whose taintedness
+// matters. Used by both the SQL-injection table (slot = SQL string)
+// and the path-traversal table below (slot = file path).
 //
 // Stored without the trailing `(` because findCallArgs locates the
 // name with strings.Index and then walks to the next `(` itself --
 // including the paren in the name double-consumes it.
-type sqlQueryCall struct {
-	Name   string
-	SQLArg int
+type taintedCallSlot struct {
+	Name    string
+	ArgSlot int
 }
 
-var sqlQueryCalls = []sqlQueryCall{
+var sqlQueryCalls = []taintedCallSlot{
 	{".Exec", 0}, {".ExecContext", 1},
 	{".Query", 0}, {".QueryContext", 1},
 	{".QueryRow", 0}, {".QueryRowContext", 1},
 	{".Prepare", 0}, {".PrepareContext", 1},
+}
+
+// fileOpenCalls are the Go file-open / read / write call shapes whose
+// path argument lives in a known positional slot. Tainted data
+// reaching that slot opens a path-traversal CWE-22 hole, regardless
+// of whether the rest of the file content is then sanitised.
+//
+// Stored without the trailing `(` -- findCallArgs adds the paren walk
+// itself (same convention as the SQL table).
+var fileOpenCalls = []taintedCallSlot{
+	// os.* family.
+	{"os.Open", 0},
+	{"os.OpenFile", 0},
+	{"os.Create", 0},
+	{"os.ReadFile", 0},
+	{"os.WriteFile", 0},
+	{"os.Remove", 0},
+	{"os.RemoveAll", 0},
+	{"os.Mkdir", 0},
+	{"os.MkdirAll", 0},
+	{"os.Rename", 0}, // old path; new path also tainted is also bad but arg 0 is enough to flag.
+	// ioutil family (deprecated but still common in the wild).
+	{"ioutil.ReadFile", 0},
+	{"ioutil.WriteFile", 0},
+	{"ioutil.ReadDir", 0},
+	// filepath.Walk: walking a tainted root lets an attacker pivot
+	// into arbitrary directory trees.
+	{"filepath.Walk", 0},
+	{"filepath.WalkDir", 0},
+}
+
+// fileOpenTaintedArgMatcher fires when any of the file-open call
+// shapes above passes a tainted identifier in its path slot. Mirrors
+// the SQL matcher; the only structural difference is the table of
+// call names. Literal paths and unknown identifiers pass through.
+func fileOpenTaintedArgMatcher(ctx *scanLineCtx) bool {
+	if ctx == nil || ctx.Taint == nil {
+		return false
+	}
+	for _, call := range fileOpenCalls {
+		if callNthArgIsTainted(ctx.Trimmed, call.Name, call.ArgSlot, ctx.Taint) {
+			return true
+		}
+	}
+	return false
 }
 
 // sqlQueryTaintedArgMatcher fires when a database/sql call (or its
@@ -244,7 +310,7 @@ func sqlQueryTaintedArgMatcher(ctx *scanLineCtx) bool {
 		return false
 	}
 	for _, call := range sqlQueryCalls {
-		if callNthArgIsTainted(ctx.Trimmed, call.Name, call.SQLArg, ctx.Taint) {
+		if callNthArgIsTainted(ctx.Trimmed, call.Name, call.ArgSlot, ctx.Taint) {
 			return true
 		}
 	}
