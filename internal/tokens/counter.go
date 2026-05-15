@@ -30,27 +30,6 @@ func Estimate(text string) int {
 	return loadDefault().Count(text)
 }
 
-// EstimateMessages returns the default counter's framing-aware estimate.
-func EstimateMessages(msgs []Message) int {
-	return loadDefault().CountMessages(msgs)
-}
-
-// Default returns the process-wide default Counter.
-func Default() Counter {
-	return loadDefault()
-}
-
-// SetDefault swaps the default counter. Intended for tests or for wiring a
-// provider-aware counter (e.g. Anthropic count_tokens, tiktoken).
-func SetDefault(c Counter) {
-	if c == nil {
-		return
-	}
-	defaultMu.Lock()
-	defaultCounter = c
-	defaultMu.Unlock()
-}
-
 // loadDefault is the internal RLock-guarded read for defaultCounter. The
 // pointer-load itself is two words (interface header), so a concurrent
 // SetDefault racing a bare read could surface a torn interface value

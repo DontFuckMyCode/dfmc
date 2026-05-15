@@ -23,9 +23,9 @@
 //     caps (context files, tool list, injected blocks/lines/tokens,
 //     project brief) scaled by profile, task, latency preference, and
 //     provider context window.
-//   - BuildInjectedContext / BuildInjectedContextWithBudget: pull
-//     [[file:...]] markers and fenced code from the query, extract,
-//     and trim to the injected-token budget.
+//   - BuildInjectedContextWithBudget: pull [[file:...]] markers and
+//     fenced code from the query, extract, and trim to the
+//     injected-token budget.
 //   - PromptTokenBudget / TrimPromptToBudget: outer ceiling on the
 //     whole rendered prompt.
 //   - containsAnyFold: small fold helper shared by the resolvers.
@@ -197,15 +197,6 @@ func ResolvePromptRenderBudget(task, profile string, runtime PromptRuntime) Prom
 		b.ProjectBriefTokens = max(80, int(float64(b.ProjectBriefTokens)*scale))
 	}
 	return b
-}
-
-func BuildInjectedContext(projectRoot, query, task, profile string, runtime PromptRuntime) string {
-	resolvedProfile := strings.TrimSpace(profile)
-	if resolvedProfile == "" {
-		resolvedProfile = ResolvePromptProfile(query, task, runtime)
-	}
-	limits := ResolvePromptRenderBudget(task, resolvedProfile, runtime)
-	return BuildInjectedContextWithBudget(projectRoot, query, limits)
 }
 
 func BuildInjectedContextWithBudget(projectRoot, query string, limits PromptRenderBudget) string {

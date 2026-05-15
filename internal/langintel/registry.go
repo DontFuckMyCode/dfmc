@@ -118,9 +118,6 @@ func (r *Registry) ForKinds(kinds []string) *Registry {
 	return out
 }
 
-// NormalizeLang is exported so callers can normalize language names.
-func NormalizeLang(l string) string { return normalizeLang(l) }
-
 // anySliceContains returns true if any element of a is in b.
 func anySliceContains(a, b []string) bool {
 	for _, x := range a {

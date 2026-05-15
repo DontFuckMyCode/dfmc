@@ -139,62 +139,6 @@ func TestTrimToBudget_SuffixOmittedWhenNoRoom(t *testing.T) {
 	}
 }
 
-// EstimateMessages delegates to default counter
-func TestEstimateMessages(t *testing.T) {
-	msgs := []Message{
-		{Role: "user", Content: "hello"},
-		{Role: "assistant", Content: "hi there"},
-	}
-	got := EstimateMessages(msgs)
-	if got <= 0 {
-		t.Fatalf("EstimateMessages returned %d, want positive", got)
-	}
-}
-
-func TestEstimateMessages_Empty(t *testing.T) {
-	got := EstimateMessages(nil)
-	if got != 0 {
-		t.Fatalf("EstimateMessages(nil) = %d, want 0", got)
-	}
-	got = EstimateMessages([]Message{})
-	if got != 0 {
-		t.Fatalf("EstimateMessages([]) = %d, want 0", got)
-	}
-}
-
-// Default returns the process-wide default Counter
-func TestDefault(t *testing.T) {
-	c := Default()
-	if c == nil {
-		t.Fatal("Default() returned nil")
-	}
-	// Should be functional
-	n := c.Count("hello world")
-	if n <= 0 {
-		t.Fatalf("Default().Count returned %d, want positive", n)
-	}
-}
-
-// SetDefault swaps the default counter
-func TestSetDefault_Normal(t *testing.T) {
-	prev := Default()
-	custom := &HeuristicCounter{PerMessageOverhead: 99}
-	SetDefault(custom)
-	got := Default()
-	if got != custom {
-		t.Fatalf("Default() did not return the custom counter after SetDefault")
-	}
-	SetDefault(prev) // restore
-}
-
-func TestSetDefault_NilIgnored(t *testing.T) {
-	prev := Default()
-	SetDefault(nil)
-	if Default() != prev {
-		t.Fatal("SetDefault(nil) should not change the default counter")
-	}
-}
-
 // Count edge cases
 
 func TestCount_EmptyAfterTrim(t *testing.T) {

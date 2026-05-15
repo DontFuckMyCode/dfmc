@@ -220,7 +220,7 @@ Preflight subtasks:
 
 ## 7. Injected Context
 
-`BuildInjectedContext` pulls from the user's query:
+`BuildInjectedContextWithBudget` pulls from the user's query:
 - `[[file:path]]` markers → extract that path's contents
 - fenced code blocks (` ```lang`) → include as-is
 

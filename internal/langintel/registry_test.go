@@ -53,9 +53,9 @@ func TestNormalizeLang(t *testing.T) {
 		{"ts", "typescript"}, {"python", "python"}, {"rust", "rust"},
 	}
 	for _, c := range cases {
-		got := NormalizeLang(c.in)
+		got := normalizeLang(c.in)
 		if got != c.want {
-			t.Errorf("NormalizeLang(%q) = %q, want %q", c.in, got, c.want)
+			t.Errorf("normalizeLang(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
