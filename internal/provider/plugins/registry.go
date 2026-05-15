@@ -54,11 +54,6 @@ func (c Config) BestModel() string {
 	return ""
 }
 
-// HasCredentials returns true if the provider has API key or base URL.
-func (c Config) HasCredentials() bool {
-	return c.APIKey != "" || c.BaseURL != ""
-}
-
 // Factory is a registered provider constructor helper.
 // It extracts config from ModelConfig; actual provider construction
 // happens in router_profile.go to avoid import cycles.
@@ -99,18 +94,6 @@ func Get(protocol string) *Factory {
 	return globalRegistry.factories[protocol]
 }
 
-// Protocols returns all registered protocol names.
-func Protocols() []string {
-	globalRegistry.mu.RLock()
-	defer globalRegistry.mu.RUnlock()
-
-	result := make([]string, 0, len(globalRegistry.factories))
-	for p := range globalRegistry.factories {
-		result = append(result, p)
-	}
-	return result
-}
-
 // NormalizedProtocol maps provider name to protocol.
 func NormalizedProtocol(name, protocol string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
@@ -128,26 +111,6 @@ func NormalizedProtocol(name, protocol string) string {
 		return ProtocolOpenAICompatible
 	default:
 		return ""
-	}
-}
-
-// NormalizeProviderName maps known provider aliases to canonical names.
-func NormalizeProviderName(name string) string {
-	name = strings.ToLower(strings.TrimSpace(name))
-	switch name {
-	case "minimax":
-		return "anthropic"
-	default:
-		return name
-	}
-}
-
-// PlaceholderConfig returns a Config for placeholder provider.
-func PlaceholderConfig(name, model string, configured bool, maxContext int) Config {
-	return Config{
-		Name:       name,
-		Model:      model,
-		MaxContext: maxContext,
 	}
 }
 
