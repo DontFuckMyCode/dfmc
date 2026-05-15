@@ -411,13 +411,82 @@ func splitLHS(raw string) []string {
 // taintTracker is per-file state. Created once per ScanASTRules call,
 // updated by observeLine on every non-comment line BEFORE rules run on
 // that line, and queried by taint-aware rules through ctx.Taint.
+//
+// Scope model (dfmc_report_ast.md §R8): the tracker carries a stack
+// of scopes; the topmost (`tainted` field) is the "current" innermost
+// scope and the `outer` slice holds the suspended outer scopes in
+// stack-order. observeLine and the helpers always write to the
+// current scope; IsTainted walks outward through outer until it
+// either finds the identifier or runs out of scopes.
+//
+// PushScope / PopScope are exposed for the scanner to manage scope
+// boundaries (per-function for now; per-block possible later). When
+// the scanner never calls Push/Pop, the stack stays at depth 1 and
+// behaviour is identical to the original flat-map tracker -- which
+// is the property that lets the refactor land without changing any
+// existing taint-rule assertions.
 type taintTracker struct {
-	lang    string
+	lang string
+	// tainted is the innermost (current) scope's tainted-identifier
+	// set. Kept as a top-level field both for fast access on the hot
+	// path AND so existing diagnostic prints like `%v ... tr.tainted`
+	// in tests still render something useful when scopes are flat.
 	tainted map[string]bool
+	// outer holds suspended outer scopes pushed by PushScope, in
+	// stack order. outer[0] is the file/module scope; the topmost
+	// non-suspended scope lives in `tainted`. Nil until at least
+	// one PushScope happens.
+	outer []map[string]bool
 }
 
 func newTaintTracker(lang string) *taintTracker {
 	return &taintTracker{lang: lang, tainted: map[string]bool{}}
+}
+
+// PushScope suspends the current scope and enters a fresh, empty
+// inner scope. Subsequent observeLine writes land in the new scope;
+// IsTainted lookups still find idents from the suspended outer
+// scope (and any further outwards) via the walk in IsTainted.
+//
+// Idempotent on a nil receiver. Each Push must be balanced by a
+// Pop or the scanner leaks memory; in practice the scanner pairs
+// them via function-boundary detection in astscan.go.
+func (t *taintTracker) PushScope() {
+	if t == nil {
+		return
+	}
+	t.outer = append(t.outer, t.tainted)
+	t.tainted = map[string]bool{}
+}
+
+// PopScope discards the current innermost scope and restores the
+// most-recently-suspended one. PopScope on the root scope is a
+// no-op so an over-eager scanner can't drop the file/module scope
+// out from under itself.
+func (t *taintTracker) PopScope() {
+	if t == nil {
+		return
+	}
+	if len(t.outer) == 0 {
+		// Root scope -- nothing to pop. Keep the empty current
+		// scope rather than nilling it; downstream writers
+		// shouldn't have to nil-check.
+		return
+	}
+	last := len(t.outer) - 1
+	t.tainted = t.outer[last]
+	t.outer = t.outer[:last]
+}
+
+// ScopeDepth reports how many scopes are stacked, with 1 meaning
+// "just the file/module scope". Used by tests and by callers that
+// want to assert scope balance after a parse pass; the scanner
+// itself just calls Push/Pop in matched pairs.
+func (t *taintTracker) ScopeDepth() int {
+	if t == nil {
+		return 0
+	}
+	return 1 + len(t.outer)
 }
 
 // observeLine inspects a single source line for taint-introducing
@@ -517,14 +586,31 @@ func rhsContainsSourceMarker(rhs, lang string) bool {
 	return false
 }
 
-// IsTainted reports whether the given identifier has been observed as
-// the LHS of a tainted assignment. Whitespace-trimmed before lookup so
+// IsTainted reports whether the given identifier has been observed
+// as the LHS of a tainted assignment in the current scope OR any of
+// the enclosing outer scopes. Whitespace-trimmed before lookup so
 // callers don't have to.
+//
+// The walk goes innermost-out, but that ordering is only
+// observable when an outer scope and an inner scope shadow the same
+// name -- which doesn't happen with the current scanner because
+// every Push starts an empty scope. The ordering is the principled
+// one for future block-scope work though, where a redeclaration
+// inside a nested block legitimately overrides a name from above.
 func (t *taintTracker) IsTainted(name string) bool {
 	if t == nil {
 		return false
 	}
-	return t.tainted[strings.TrimSpace(name)]
+	name = strings.TrimSpace(name)
+	if t.tainted[name] {
+		return true
+	}
+	for i := len(t.outer) - 1; i >= 0; i-- {
+		if t.outer[i][name] {
+			return true
+		}
+	}
+	return false
 }
 
 // referencesTaintedIdent walks the RHS expression looking for a
@@ -549,7 +635,12 @@ func (t *taintTracker) referencesTaintedIdent(rhs string) bool {
 			j++
 		}
 		tok := rhs[i:j]
-		if t.tainted[tok] {
+		// Use IsTainted (not t.tainted directly) so propagation
+		// through wrappers like `string(body)` resolves names from
+		// any enclosing scope -- the body / req-derived idents may
+		// have been tainted in the module scope before a function
+		// pushed an inner scope.
+		if t.IsTainted(tok) {
 			return true
 		}
 		i = j

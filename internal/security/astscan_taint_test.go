@@ -74,6 +74,119 @@ func TestTaintTracker_NilSafeIsTainted(t *testing.T) {
 	}
 }
 
+// --- Scope stack -----------------------------------------------------
+
+// TestTaintTracker_ScopeIsolatesInnerWrites pins the core scope-stack
+// contract: idents tainted inside an inner scope are NOT visible from
+// outside that scope after Pop.
+func TestTaintTracker_ScopeIsolatesInnerWrites(t *testing.T) {
+	tr := newTaintTracker("go")
+	if got := tr.ScopeDepth(); got != 1 {
+		t.Fatalf("fresh tracker depth = %d, want 1 (module scope)", got)
+	}
+	tr.PushScope()
+	if got := tr.ScopeDepth(); got != 2 {
+		t.Fatalf("after Push depth = %d, want 2", got)
+	}
+	tr.observeLine("body, _ := io.ReadAll(r.Body)") // inner scope
+	if !tr.IsTainted("body") {
+		t.Fatal("body must be tainted inside inner scope")
+	}
+	tr.PopScope()
+	if got := tr.ScopeDepth(); got != 1 {
+		t.Fatalf("after Pop depth = %d, want 1", got)
+	}
+	if tr.IsTainted("body") {
+		t.Fatal("body must NOT be tainted after the inner scope was popped")
+	}
+}
+
+// TestTaintTracker_OuterScopeVisibleFromInner pins lexical-scope
+// semantics: an ident tainted in the outer scope IS visible from
+// an inner scope (we walk outward when looking up).
+func TestTaintTracker_OuterScopeVisibleFromInner(t *testing.T) {
+	tr := newTaintTracker("go")
+	tr.observeLine("body := r.Body") // module scope
+	tr.PushScope()
+	if !tr.IsTainted("body") {
+		t.Fatal("body tainted in outer scope must be visible from inner scope")
+	}
+	tr.PopScope()
+}
+
+// TestTaintTracker_PopRootIsNoop pins that PopScope on the root
+// (file/module) scope is a no-op -- an over-eager scanner can't
+// drop the file scope out from under itself.
+func TestTaintTracker_PopRootIsNoop(t *testing.T) {
+	tr := newTaintTracker("go")
+	tr.observeLine("body := r.Body")
+	tr.PopScope() // no-op
+	if got := tr.ScopeDepth(); got != 1 {
+		t.Fatalf("Pop on root must keep depth at 1, got %d", got)
+	}
+	if !tr.IsTainted("body") {
+		t.Fatal("root-scope taint must survive a no-op Pop")
+	}
+}
+
+// TestTaintTracker_NestedScopesRestoreCorrectly pins that
+// Push/Pop pairs nest correctly: depth tracks the stack and
+// state restores to whatever was suspended.
+func TestTaintTracker_NestedScopesRestoreCorrectly(t *testing.T) {
+	tr := newTaintTracker("go")
+	tr.observeLine("a := r.Body") // depth 1: a tainted
+	tr.PushScope()
+	tr.observeLine("b := r.URL.Query()") // depth 2: b tainted
+	tr.PushScope()
+	tr.observeLine("c := os.Args") // depth 3: c tainted
+	if !tr.IsTainted("a") || !tr.IsTainted("b") || !tr.IsTainted("c") {
+		t.Fatal("all three should be visible at deepest scope")
+	}
+	tr.PopScope() // back to depth 2
+	if tr.IsTainted("c") {
+		t.Fatal("c must NOT be visible after popping its scope")
+	}
+	if !tr.IsTainted("a") || !tr.IsTainted("b") {
+		t.Fatal("a and b must still be visible at depth 2")
+	}
+	tr.PopScope() // back to depth 1
+	if tr.IsTainted("b") {
+		t.Fatal("b must NOT be visible after popping its scope")
+	}
+	if !tr.IsTainted("a") {
+		t.Fatal("a must still be visible at root scope")
+	}
+}
+
+// TestTaintTracker_NilSafePushPop pins that nil-receiver Push/Pop
+// don't panic. Mirrors the rest of the tracker's nil-safe surface.
+func TestTaintTracker_NilSafePushPop(t *testing.T) {
+	var tr *taintTracker
+	tr.PushScope()
+	tr.PopScope()
+	if got := tr.ScopeDepth(); got != 0 {
+		t.Fatalf("nil tracker depth = %d, want 0", got)
+	}
+}
+
+// TestTaintTracker_PropagationCrossesScopes pins that propagation
+// through wrappers (`s := string(body)`) finds `body` even when
+// it was tainted in an outer scope -- IsTainted is the lookup
+// helper, and it walks the stack.
+func TestTaintTracker_PropagationCrossesScopes(t *testing.T) {
+	tr := newTaintTracker("go")
+	tr.observeLine("body := r.Body") // outer
+	tr.PushScope()
+	tr.observeLine("s := string(body)") // inner, via propagation
+	if !tr.IsTainted("s") {
+		t.Fatal("s should inherit taint through propagation across scopes")
+	}
+	tr.PopScope()
+	if tr.IsTainted("s") {
+		t.Fatal("s must NOT be visible after its scope was popped")
+	}
+}
+
 // --- End-to-end rule integration -----------------------------------------
 
 // TestSmartScan_Go_ExecCommandTaintedBody pins the new R1 capability:
