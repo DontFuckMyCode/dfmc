@@ -117,9 +117,5 @@ func (m Model) closePanelOverlay() (Model, bool) {
 		m.ui.panelOverlayKind = ""
 		return m, true
 	}
-	if m.session != nil && m.session.waitingDismissed {
-		m.session.waitingDismissed = false
-		return m, true
-	}
 	return m, false
 }

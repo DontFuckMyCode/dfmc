@@ -1,14 +1,10 @@
 package tui
 
 import (
-	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/dontfuckmycode/dfmc/internal/session"
 )
 
 func (m Model) handleChatControlShortcut(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
@@ -176,33 +172,3 @@ func (m Model) handlePickerShortcut(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	return m, nil, false
 }
 
-func (m Model) handleAgentSessionShortcut(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
-	switch msg.String() {
-	case "ctrl+alt+1", "ctrl+alt+2", "ctrl+alt+3", "ctrl+alt+4", "ctrl+alt+5":
-		if m.session != nil {
-			target, err := strconv.Atoi(msg.String()[len(msg.String())-1:])
-			if err == nil && target >= 1 && target <= 5 {
-				tree := m.session.AgentTree()
-				seen := 0
-				for _, n := range tree {
-					if n.ID == session.RootAgentID {
-						continue
-					}
-					seen++
-					if seen == target {
-						m.session.SwitchToAgent(n.ID)
-						m.notice = fmt.Sprintf("Agent %d", n.ID)
-						break
-					}
-				}
-			}
-		}
-		return m, nil, true
-	case "ctrl+alt+a":
-		if m.session != nil {
-			m.session.overlayOpen = !m.session.overlayOpen
-		}
-		return m, nil, true
-	}
-	return m, nil, false
-}

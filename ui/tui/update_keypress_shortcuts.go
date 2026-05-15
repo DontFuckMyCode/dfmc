@@ -34,7 +34,6 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 		m.handleChatControlShortcut,
 		m.handleStatsPanelShortcut,
 		m.handlePickerShortcut,
-		m.handleAgentSessionShortcut,
 	} {
 		if nm, cmd, handled := handler(msg); handled {
 			return nm, cmd, true

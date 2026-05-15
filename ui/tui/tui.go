@@ -168,9 +168,6 @@ type Model struct {
 	pendingApproval *pendingApproval
 
 	viewCache *viewCacheState
-
-	// session holds the multi-agent session state. nil when session feature is disabled.
-	session *sessionUI
 }
 
 // Update (the bubbletea reducer / message dispatcher) lives in update.go.

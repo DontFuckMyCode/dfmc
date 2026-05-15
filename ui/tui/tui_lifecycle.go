@@ -23,23 +23,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
-	"github.com/dontfuckmycode/dfmc/internal/session"
 )
-
-// attachSessionBridge wires engine → session when a real Engine is available.
-var attachSessionBridge func(*engine.Engine, *session.Session)
-
-func init() {
-	attachSessionBridge = func(e *engine.Engine, s *session.Session) {
-		session.AttachSessionToEngine(s, e)
-	}
-	// Register the bridge function with the engine so AttachSession calls it.
-	engine.SetAttachProvider(func(e, s any) {
-		if e != nil && s != nil {
-			attachSessionBridge(e.(*engine.Engine), s.(*session.Session))
-		}
-	})
-}
 
 const brandHeader = " DON'T FUCK MY CODE (DFMC) · dfmc.dev "
 
@@ -72,25 +56,6 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 			toolStripExpanded: false, // collapsed by default; full details in Ctrl+Shift+T panel
 		},
 		viewCache: &viewCacheState{},
-		session:   newSessionUI(),
-	}
-	// Wire session to engine if engine is available. The session holds the
-	// multi-agent agents; the engine provides the tool execution and LLM
-	// completion bridge via EngineProvider interface.
-	if eng != nil && m.session != nil {
-		sess := session.New()
-		m.session.s = sess
-		eng.AttachSession(sess)
-
-		// Subscribe to agent status change events so the TUI can surface
-		// waiting_input modals. We use a buffered channel so the session
-		// goroutine never blocks on a stalled subscriber.
-		statusCh := make(chan session.StatusEvent, 10)
-		session.StatusHookChannel = statusCh
-		go m.watchStatusEvents(m.ctx, statusCh)
-
-		// Start the session so the root agent begins processing.
-		_ = sess.Start()
 	}
 	// Seed status synchronously so the chat header renders with real
 	// provider info on the first paint, before the async loadStatusCmd

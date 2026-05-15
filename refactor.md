@@ -8,7 +8,7 @@
 ## Status
 
 - ✅ **Sprint 1 — Latent bugs** (§1) — applied. Two bug fixes + two regression tests + one documented exception in CLAUDE.md + `internal/repolint` tripwire to keep the `_ = err` pattern out forever. See §1 entries for the closing commit summary.
-- ⏳ Sprint 2 — Decisions (§4.1, §2.1) — awaiting product call.
+- 🟡 Sprint 2 — Decisions: §4.1 (`internal/session` delete) ✅ shipped (see [refactor-session-decision.md](refactor-session-decision.md)); §2.1 (capability interfaces) still awaiting product call.
 - 🟡 Sprint 3 — Cleanup carving — partially started. `interface{} → any` cleanup done (§6.1); `chat_commands_*` collapse and `tui_test.go` split still pending.
 - ⏳ Sprint 4 — God-object decomposition — not started.
 
@@ -123,7 +123,13 @@ Less clear-cut. The split tracks distinct loop concerns (phases, parallel, nativ
 
 ## 4. Dead / Half-Wired Code
 
-### 4.1 `internal/session` — 1857 LOC of Phase-4 scaffolding
+### 4.1 `internal/session` — ✅ DELETED (see [refactor-session-decision.md](refactor-session-decision.md))
+
+The package and its TUI consumers have been removed. The decision note explains why — TL;DR: the live multi-agent path (`delegate_task` / `orchestrate` + `engine.RunSubagent`) made the session-based design vestigial, and half-wired was a worse position than either finish-or-delete. Net delta: ~2,140 LOC removed, the misleading `Ctrl+Alt+A` overlay gone, the `interface{}`-cast engine bridge gone.
+
+**Original analysis kept below for context / posterity:**
+
+### 4.1 (historical) `internal/session` — 1857 LOC of Phase-4 scaffolding
 
 [`internal/session/engine_bridge.go:19`](internal/session/engine_bridge.go#L19):
 ```go

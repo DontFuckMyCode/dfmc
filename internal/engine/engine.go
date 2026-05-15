@@ -244,28 +244,6 @@ func (e *Engine) SetTelegramBot(tgBot *bot.TelegramBot, sessionName string, allo
 	e.TelegramAllowedUsers = allowedUsers
 }
 
-// AttachSession wires a multi-agent session into the engine. The session
-// holds agents and calls back into the engine via an EngineProvider interface.
-// The provider is expected to be a *session.Session cast as any to avoid
-// importing session in engine.go. Call this after engine.Init completes.
-func (e *Engine) AttachSession(provider any) {
-	if e == nil || provider == nil {
-		return
-	}
-	if attachSessionProvider != nil {
-		attachSessionProvider(e, provider)
-	}
-}
-
-// attachSessionProvider is set by the session package via SetAttachProvider.
-var attachSessionProvider func(any, any)
-
-// SetAttachProvider registers the session attachment function.
-// Called by the session package to wire the bridge from its init().
-func SetAttachProvider(fn func(any, any)) {
-	attachSessionProvider = fn
-}
-
 // Init lives in engine_init.go — it wires storage / AST / codemap /
 // context / tools / memory / conversation / providers / intent / hooks
 // and kicks off the initial codebase indexer.

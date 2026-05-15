@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/dontfuckmycode/dfmc/internal/session"
 )
 
 func (m Model) renderStatusView(width int) string {
@@ -62,28 +60,6 @@ func (m Model) footerSegments() []string {
 	if runtime := strings.TrimSpace(m.footerRuntimeSegment()); runtime != "" {
 		out = append(out, runtime)
 	}
-	// Session agents segment — shows when there are multiple agents.
-	if m.session != nil && m.session.AgentCount() > 1 {
-		tree := m.session.AgentTree()
-		running := 0
-		waiting := 0
-		for _, n := range tree {
-			if n.Status == session.StatusRunning {
-				running++
-			} else if n.Status == session.StatusWaitingUserInput {
-				waiting++
-			}
-		}
-		label := fmt.Sprintf("agents:%d", m.session.AgentCount())
-		if running > 0 {
-			label += fmt.Sprintf(" · %d running", running)
-		}
-		if waiting > 0 {
-			label += accentStyle.Render(" · " + fmt.Sprintf("%d needs input", waiting))
-		}
-		out = append(out, label)
-	}
-
 	info := m.gitInfo
 	if strings.TrimSpace(info.Branch) != "" {
 		label := info.Branch

@@ -31,24 +31,6 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 	if innerHeight < 1 {
 		innerHeight = 1
 	}
-	// Agent switcher overlay — shown when ctrl+alt+a is pressed.
-	if m.session != nil && m.session.overlayOpen {
-		body := m.session.RenderAgentSwitcher(width)
-		frame := lipgloss.NewStyle().
-			Background(colorPanelBg).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(pal.Border)
-		return frame.Width(width).Height(height).Render(body)
-	}
-	// Waiting-input overlay — shown when an agent needs user input.
-	if m.session != nil && m.session.HasWaitingAgents() {
-		body := m.renderWaitingInputOverlay(contentWidth, innerHeight)
-		frame := lipgloss.NewStyle().
-			Background(colorPanelBg).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(pal.Border)
-		return frame.Width(width).Height(height).Render(body)
-	}
 	// Help overlay covers the active body on EVERY tab except Chat.
 	// On Chat the overlay renders as a small section inside the chat
 	// console (Phase K: lets the composer double as a live filter). On
