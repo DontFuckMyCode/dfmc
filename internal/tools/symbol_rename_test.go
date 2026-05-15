@@ -480,3 +480,76 @@ func TestSymbolRename_RejectsTraversalFile(t *testing.T) {
 		}
 	}
 }
+
+// TestSymbolRename_WriteErrorSurfaces guards the regression where a
+// failed os.WriteFile during rename was silently swallowed (`_ = err`),
+// reporting success to the caller while the file on disk was never
+// updated. The fix surfaces the failure path through impact.Failed
+// and a data["failed"] string slice. A read-only target file is the
+// reliable cross-platform way to force WriteFile to fail (Windows
+// honours the read-only attribute, POSIX honours the missing write
+// bit).
+func TestSymbolRename_WriteErrorSurfaces(t *testing.T) {
+	tmp := t.TempDir()
+	good := filepath.Join(tmp, "good.go")
+	locked := filepath.Join(tmp, "locked.go")
+	if err := os.WriteFile(good, []byte("package main\nfunc Target() {}\n"), 0644); err != nil {
+		t.Fatalf("write good.go: %v", err)
+	}
+	if err := os.WriteFile(locked, []byte("package main\nfunc Target() {}\n"), 0644); err != nil {
+		t.Fatalf("write locked.go: %v", err)
+	}
+	if err := os.Chmod(locked, 0o444); err != nil {
+		t.Fatalf("chmod locked.go: %v", err)
+	}
+	t.Cleanup(func() {
+		// Restore write bit so TempDir cleanup can remove it on Windows.
+		_ = os.Chmod(locked, 0o644)
+	})
+
+	eng := New(*config.DefaultConfig())
+	eng.SetCodemap(nil)
+	// Pre-populate read snapshots so the strict read-before-mutation
+	// gate doesn't short-circuit before WriteFile is reached. Hash
+	// matches the on-disk content (chmod doesn't alter file content).
+	for _, p := range []string{good, locked} {
+		h, err := fileContentHash(p)
+		if err != nil {
+			t.Fatalf("fileContentHash(%s): %v", p, err)
+		}
+		eng.readMu.Lock()
+		eng.readSnapshots[p] = h
+		eng.readMu.Unlock()
+	}
+
+	res, err := eng.Execute(context.Background(), "symbol_rename", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"from":    "Target",
+			"to":      "Renamed",
+			"dry_run": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	impact := res.Data["impact"].(renameImpact)
+	if impact.Failed == 0 {
+		t.Fatalf("expected impact.Failed > 0 when a target is read-only, got 0 (output=%q)", res.Output)
+	}
+	failed, ok := res.Data["failed"].([]string)
+	if !ok || len(failed) == 0 {
+		t.Fatalf("expected data['failed'] to list at least one path, got %v", res.Data["failed"])
+	}
+	if !strings.Contains(res.Output, "failed to write") {
+		t.Errorf("output should mention failed writes, got %q", res.Output)
+	}
+	// The unwritable file must NOT show up in changes[] — that was the
+	// silent-success bug.
+	changes := res.Data["changes"].([]renameChange)
+	for _, c := range changes {
+		if c.Path == locked {
+			t.Errorf("locked file appeared in changes despite write failure: %+v", c)
+		}
+	}
+}

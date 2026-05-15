@@ -70,6 +70,7 @@ type renameImpact struct {
 	Locations  int `json:"locations"`
 	Skipped    int `json:"skipped"`
 	ReadDenied int `json:"read_denied"`
+	Failed     int `json:"failed,omitempty"`
 }
 
 type renameChange struct {
@@ -164,6 +165,7 @@ func (t *SymbolRenameTool) Execute(ctx context.Context, req Request) (Result, er
 
 	// Phase 2: dry run or apply.
 	var changes []renameChange
+	var failedPaths []string
 	readDenied := 0
 
 	for fpath, matches := range allMatches {
@@ -189,9 +191,13 @@ func (t *SymbolRenameTool) Execute(ctx context.Context, req Request) (Result, er
 			continue
 		}
 
-		// Actual mutation.
+		// Actual mutation. Read/write errors are surfaced via the
+		// `failed` slot — silently dropping them would make a successful
+		// return after a denied write (read-only FS, AV lock, full disk)
+		// indistinguishable from a real success.
 		data, err := os.ReadFile(fpath)
 		if err != nil {
+			failedPaths = append(failedPaths, fpath)
 			continue
 		}
 		lines := strings.Split(string(data), "\n")
@@ -201,7 +207,8 @@ func (t *SymbolRenameTool) Execute(ctx context.Context, req Request) (Result, er
 			}
 		}
 		if err := os.WriteFile(fpath, []byte(strings.Join(lines, "\n")), 0644); err != nil {
-			_ = err
+			failedPaths = append(failedPaths, fpath)
+			continue
 		}
 		for _, m := range matches {
 			changes = append(changes, renameChange{
@@ -218,22 +225,29 @@ func (t *SymbolRenameTool) Execute(ctx context.Context, req Request) (Result, er
 		action = "Renamed"
 	}
 
-	return Result{
-		Output: fmt.Sprintf("%s %d occurrences across %d files (impact: %d locations in %d files)",
-			action, totalMatches, len(allMatches), totalMatches, len(allMatches)),
-		Data: map[string]any{
-			"from": from,
-			"to":   to,
-			"impact": renameImpact{
-				Files:      len(allMatches),
-				Locations:  totalMatches,
-				Skipped:    0,
-				ReadDenied: readDenied,
-			},
-			"dry_run": dryRun,
-			"changes": changes,
+	output := fmt.Sprintf("%s %d occurrences across %d files (impact: %d locations in %d files)",
+		action, totalMatches, len(allMatches), totalMatches, len(allMatches))
+	if len(failedPaths) > 0 {
+		output += fmt.Sprintf(" — %d file(s) failed to write", len(failedPaths))
+	}
+
+	data := map[string]any{
+		"from": from,
+		"to":   to,
+		"impact": renameImpact{
+			Files:      len(allMatches),
+			Locations:  totalMatches,
+			Skipped:    0,
+			ReadDenied: readDenied,
+			Failed:     len(failedPaths),
 		},
-	}, nil
+		"dry_run": dryRun,
+		"changes": changes,
+	}
+	if len(failedPaths) > 0 {
+		data["failed"] = failedPaths
+	}
+	return Result{Output: output, Data: data}, nil
 }
 
 // Helpers (isTestFile, collectGoFiles, findRenameMatches, matchSymbolKind,

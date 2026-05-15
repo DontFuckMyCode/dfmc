@@ -74,6 +74,7 @@ type moveImpact struct {
 	Moved     int `json:"moved"`
 	Updated   int `json:"updated"`
 	Skipped   int `json:"skipped"`
+	Failed    int `json:"failed,omitempty"`
 }
 
 type moveChange struct {
@@ -200,6 +201,7 @@ func (t *SymbolMoveTool) Execute(ctx context.Context, req Request) (Result, erro
 	// --- Phase 2: collect all references to the symbol (excluding source file) ---
 	allFiles := collectGoFiles(projectRoot, skipTests)
 	var changes []moveChange
+	var failedPaths []string
 	totalUpdated := 0
 	totalFiles := 0
 
@@ -216,34 +218,47 @@ func (t *SymbolMoveTool) Execute(ctx context.Context, req Request) (Result, erro
 			continue
 		}
 		totalFiles++
-		for _, m := range matches {
-			if dryRun {
+
+		if dryRun {
+			for _, m := range matches {
 				changes = append(changes, moveChange{
 					Path: fpath,
 					Old:  m.fullLine,
 					New:  applyRenameInLine(m.fullLine, from, toName),
 					Line: m.lineNum,
 				})
-			} else {
-				// Actually update the reference.
-				fc, err := os.ReadFile(fpath)
-				if err != nil {
-					continue
-				}
-				lines := strings.Split(string(fc), "\n")
-				if m.lineNum >= 1 && m.lineNum <= len(lines) {
-					lines[m.lineNum-1] = applyRenameInLine(lines[m.lineNum-1], from, toName)
-				}
-				if err := os.WriteFile(fpath, []byte(strings.Join(lines, "\n")), 0644); err != nil {
-					_ = err
-				}
-				changes = append(changes, moveChange{
-					Path: fpath,
-					Old:  m.fullLine,
-					New:  applyRenameInLine(m.fullLine, from, toName),
-					Line: m.lineNum,
-				})
+				totalUpdated++
 			}
+			continue
+		}
+
+		// Apply all matches for this file with a single read/write.
+		// Read/write errors are surfaced through `failed` rather than
+		// silently swallowed — earlier versions of this tool dropped
+		// the write error and reported success, which made antivirus /
+		// read-only-FS failures look like successful refactors.
+		fc, err := os.ReadFile(fpath)
+		if err != nil {
+			failedPaths = append(failedPaths, fpath)
+			continue
+		}
+		lines := strings.Split(string(fc), "\n")
+		for _, m := range matches {
+			if m.lineNum >= 1 && m.lineNum <= len(lines) {
+				lines[m.lineNum-1] = applyRenameInLine(lines[m.lineNum-1], from, toName)
+			}
+		}
+		if err := os.WriteFile(fpath, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+			failedPaths = append(failedPaths, fpath)
+			continue
+		}
+		for _, m := range matches {
+			changes = append(changes, moveChange{
+				Path: fpath,
+				Old:  m.fullLine,
+				New:  applyRenameInLine(m.fullLine, from, toName),
+				Line: m.lineNum,
+			})
 			totalUpdated++
 		}
 	}
@@ -290,25 +305,31 @@ func (t *SymbolMoveTool) Execute(ctx context.Context, req Request) (Result, erro
 		action = "Moved"
 	}
 	totalLocations := totalUpdated + 1 // +1 for the declaration itself
-	return Result{
-		Output: fmt.Sprintf("%s %q (%d locations in %d files, declaration in %s → %s)",
-			action, from, totalLocations, totalFiles+1, loc.filePath, toFile),
-		Data: map[string]any{
-			"from":   from,
-			"to":     toName,
-			"source": loc.filePath,
-			"dest":   toFile,
-			"impact": moveImpact{
-				Files:     totalFiles + 1,
-				Locations: totalLocations,
-				Moved:     1,
-				Updated:   totalUpdated,
-				Skipped:   0,
-			},
-			"dry_run": dryRun,
-			"changes": changes,
+	output := fmt.Sprintf("%s %q (%d locations in %d files, declaration in %s → %s)",
+		action, from, totalLocations, totalFiles+1, loc.filePath, toFile)
+	if len(failedPaths) > 0 {
+		output += fmt.Sprintf(" — %d file(s) failed to write", len(failedPaths))
+	}
+	data := map[string]any{
+		"from":   from,
+		"to":     toName,
+		"source": loc.filePath,
+		"dest":   toFile,
+		"impact": moveImpact{
+			Files:     totalFiles + 1,
+			Locations: totalLocations,
+			Moved:     1,
+			Updated:   totalUpdated,
+			Skipped:   0,
+			Failed:    len(failedPaths),
 		},
-	}, nil
+		"dry_run": dryRun,
+		"changes": changes,
+	}
+	if len(failedPaths) > 0 {
+		data["failed"] = failedPaths
+	}
+	return Result{Output: output, Data: data}, nil
 }
 
 // applyRenameInLine is borrowed from symbol_rename (word-boundary replace).

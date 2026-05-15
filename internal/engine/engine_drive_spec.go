@@ -27,6 +27,17 @@ import (
 // `specPath` is interpreted relative to e.ProjectRoot; absolute
 // paths must still resolve under the project root (spec_to_todo
 // runs the same EnsureWithinRoot guard as every other read tool).
+//
+// Lifecycle bypass: this helper constructs and calls SpecToTodoTool
+// directly instead of routing through CallToolFromSource/
+// executeToolWithLifecycle. That bypass is deliberate and documented
+// in CLAUDE.md as one of the two allowed exceptions — TodosFromSpecFile
+// is invoked from contexts where the engine may not yet be in
+// StateReady (CLI init paths, partial-engine tests building Engine{}
+// without Init), and spec_to_todo is a pure read-only markdown parser
+// with its own EnsureWithinRoot guard, so the hook/approval surface
+// adds no safety value. Any future bypass needs a comparable
+// justification.
 func (e *Engine) TodosFromSpecFile(ctx context.Context, specPath, section string, includeDone bool) ([]drive.Todo, int, error) {
 	if e == nil {
 		return nil, 0, ErrEngineNil

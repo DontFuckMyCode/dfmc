@@ -325,3 +325,66 @@ func TestSymbolMove_RejectsAbsoluteToFile(t *testing.T) {
 		t.Fatalf("absolute out-of-root to_file %q must be rejected", abs)
 	}
 }
+
+// TestSymbolMove_WriteErrorSurfaces guards the regression where a
+// failed os.WriteFile while updating a reference was silently
+// swallowed (`_ = err`), reporting success to the caller while the
+// reference on disk was never updated. The fix surfaces the failure
+// through impact.Failed and a data["failed"] string slice. The
+// declaration's own source/dest writes still return hard errors —
+// only per-reference writes use the failed[] surface so partial
+// success is reported accurately.
+func TestSymbolMove_WriteErrorSurfaces(t *testing.T) {
+	tmp := t.TempDir()
+	// Declaration in a.go; b.go and locked.go both reference Foo.
+	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package main\nfunc Foo() {}\nfunc main() { Foo() }\n"), 0644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "b.go"), []byte("package main\nfunc bar() { Foo() }\n"), 0644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	locked := filepath.Join(tmp, "locked.go")
+	if err := os.WriteFile(locked, []byte("package main\nfunc baz() { Foo() }\n"), 0644); err != nil {
+		t.Fatalf("write locked.go: %v", err)
+	}
+	if err := os.Chmod(locked, 0o444); err != nil {
+		t.Fatalf("chmod locked.go: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(locked, 0o644)
+	})
+
+	eng := New(*config.DefaultConfig())
+	eng.SetCodemap(nil)
+
+	res, err := eng.Execute(context.Background(), "symbol_move", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"from":    "Foo",
+			"to_file": "c.go",
+			"dry_run": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	impact := res.Data["impact"].(moveImpact)
+	if impact.Failed == 0 {
+		t.Fatalf("expected impact.Failed > 0 when a reference target is read-only, got 0 (output=%q)", res.Output)
+	}
+	failed, ok := res.Data["failed"].([]string)
+	if !ok || len(failed) == 0 {
+		t.Fatalf("expected data['failed'] to list at least one path, got %v", res.Data["failed"])
+	}
+	if !strings.Contains(res.Output, "failed to write") {
+		t.Errorf("output should mention failed writes, got %q", res.Output)
+	}
+	// The locked file must NOT show up in changes[] — that was the
+	// silent-success bug.
+	changes := res.Data["changes"].([]moveChange)
+	for _, c := range changes {
+		if c.Path == locked {
+			t.Errorf("locked file appeared in changes despite write failure: %+v", c)
+		}
+	}
+}
