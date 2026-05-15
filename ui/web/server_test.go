@@ -42,6 +42,19 @@ func newTestEngine(t *testing.T) *engine.Engine {
 	return eng
 }
 
+// pinOfflineProvider switches the active provider to "offline" so
+// tests that drive Ask/Chat don't hit the filterToolCapable cascade
+// (which strips offline whenever req.Tools is non-empty, leaving only
+// the key-less real providers in the order — every endpoint test
+// would otherwise return 502 with "api key missing"). Mirrors the cli
+// test pattern. Call this only in tests that NEED a working
+// completion path; status/provider-config tests should leave the
+// default routing alone.
+func pinOfflineProvider(t *testing.T, eng *engine.Engine) {
+	t.Helper()
+	eng.SetProviderModel("offline", "")
+}
+
 func TestStatusEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
@@ -398,6 +411,7 @@ func TestWebSocketEventStreamShape(t *testing.T) {
 
 func TestChatSSEEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
+	pinOfflineProvider(t, eng)
 	srv := New(eng, "127.0.0.1", 0)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -785,6 +799,7 @@ func TestFileContentAndToolExecEndpoints(t *testing.T) {
 
 func TestSkillExecEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
+	pinOfflineProvider(t, eng)
 	srv := New(eng, "127.0.0.1", 0)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()

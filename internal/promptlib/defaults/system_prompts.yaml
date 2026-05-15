@@ -36,14 +36,14 @@ templates:
       Project brief:
       {{project_brief}}
 
-      Tool catalog:
-      {{tools_overview}}
-
       Tool-call policy:
       {{tool_call_policy}}
 
       Response policy:
       {{response_policy}}
+
+      Tool catalog:
+      {{tools_overview}}
 
       <<DFMC_CACHE_BREAK>>
 

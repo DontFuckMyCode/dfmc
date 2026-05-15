@@ -85,6 +85,34 @@ func (s *Server) handleContextRecommend(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// handleContextGC is the single endpoint for the context-GC dominance
+// pass. GET returns the preview (what would be dropped) without
+// mutating the active branch; POST actually prunes and reports the
+// drop count. Both paths return the same drop_ids + reasons shape so
+// the workbench UI can render a unified summary.
+func (s *Server) handleContextGC(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		decision := s.engine.PreviewContextGC()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"drop_ids": decision.DropIDs,
+			"reasons":  decision.Reasons,
+			"count":    len(decision.DropIDs),
+		})
+	case http.MethodPost:
+		decision, dropped := s.engine.RunContextGC()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"drop_ids": decision.DropIDs,
+			"reasons":  decision.Reasons,
+			"count":    len(decision.DropIDs),
+			"dropped":  dropped,
+		})
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+	}
+}
+
 func (s *Server) handleContextBrief(w http.ResponseWriter, r *http.Request) {
 	root := strings.TrimSpace(s.engine.Status().ProjectRoot)
 	if root == "" {

@@ -134,6 +134,8 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/context/budget", s.handleContextBudget)
 	s.mux.HandleFunc("GET /api/v1/context/recommend", s.handleContextRecommend)
 	s.mux.HandleFunc("GET /api/v1/context/brief", s.handleContextBrief)
+	s.mux.HandleFunc("GET /api/v1/context/gc", s.handleContextGC)
+	s.mux.HandleFunc("POST /api/v1/context/gc", s.handleContextGC)
 	s.mux.HandleFunc("GET /api/v1/providers", s.handleProviders)
 	s.mux.HandleFunc("GET /api/v1/langintel", s.handleLangIntel)
 	s.mux.HandleFunc("GET /api/v1/skills", s.handleSkills)

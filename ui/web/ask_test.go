@@ -14,6 +14,7 @@ import (
 // provider (always registered) so the test has no upstream dependency.
 func TestAskEndpointNonRace(t *testing.T) {
 	eng := newTestEngine(t)
+	pinOfflineProvider(t, eng)
 	srv := New(eng, "127.0.0.1", 0)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
