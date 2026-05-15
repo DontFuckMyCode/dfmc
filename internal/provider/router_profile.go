@@ -147,12 +147,6 @@ func withProfileModelChain(p Provider, profile config.ModelConfig) Provider {
 	return p
 }
 
-// normalizedProtocol delegates to plugins.NormalizedProtocol for backward
-// compatibility with tests and external callers.
-func normalizedProtocol(name, protocol string) string {
-	return plugins.NormalizedProtocol(name, protocol)
-}
-
 // httpTimeout converts an HTTPTimeout field value (seconds) to a time.Duration.
 func httpTimeout(seconds int) time.Duration {
 	if seconds <= 0 {

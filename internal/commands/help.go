@@ -7,7 +7,6 @@ package commands
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -107,13 +106,3 @@ func subcommandColumnWidth(subs []Subcommand) int {
 	return width
 }
 
-// Names returns the sorted list of canonical command names registered for
-// surface — useful for completion scripts and the web discovery endpoint.
-func (r *Registry) Names(surface Surface) []string {
-	out := make([]string, 0)
-	for _, cmd := range r.ForSurface(surface) {
-		out = append(out, cmd.Name)
-	}
-	sort.Strings(out)
-	return out
-}

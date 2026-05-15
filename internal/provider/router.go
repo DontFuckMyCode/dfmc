@@ -109,8 +109,7 @@ func NewRouter(cfg config.ProvidersConfig) (*Router, error) {
 	return r, nil
 }
 
-// providerFromProfile + httpTimeout + normalizedProtocol live in
-// router_profile.go.
+// providerFromProfile + httpTimeout live in router_profile.go.
 
 func (r *Router) Register(p Provider) {
 	r.mu.Lock()

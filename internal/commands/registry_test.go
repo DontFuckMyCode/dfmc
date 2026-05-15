@@ -319,15 +319,6 @@ func TestRenderCommandHelp_Details(t *testing.T) {
 	}
 }
 
-func TestNames_Sorted(t *testing.T) {
-	names := DefaultRegistry().Names(SurfaceCLI)
-	for i := 1; i < len(names); i++ {
-		if names[i] < names[i-1] {
-			t.Fatalf("Names() output not sorted: %v", names)
-		}
-	}
-}
-
 func TestCommand_SerializesToJSON(t *testing.T) {
 	// The web endpoint will JSON-encode the whole registry. Ensure the shape
 	// is stable and includes surfaces as a human-friendly list.

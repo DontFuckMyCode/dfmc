@@ -26,10 +26,6 @@ type LoadOptions struct {
 	DataDirPath string
 }
 
-func Load() (*Config, error) {
-	return LoadWithOptions(LoadOptions{})
-}
-
 func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	cfg := DefaultConfig()
 

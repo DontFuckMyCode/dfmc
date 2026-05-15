@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/internal/provider/plugins"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -65,14 +66,14 @@ func TestAlibabaNewProvider_EmptyBaseURLUsesDefault(t *testing.T) {
 // --- Router integration: protocol resolution ---
 
 func TestAlibabaNormalizedProtocol(t *testing.T) {
-	got := normalizedProtocol("alibaba", "")
+	got := plugins.NormalizedProtocol("alibaba", "")
 	if got != "openai-compatible" {
-		t.Fatalf("normalizedProtocol(alibaba, empty) = %q; want openai-compatible", got)
+		t.Fatalf("plugins.NormalizedProtocol(alibaba, empty) = %q; want openai-compatible", got)
 	}
 	// Explicit protocol should win
-	got = normalizedProtocol("alibaba", "anthropic")
+	got = plugins.NormalizedProtocol("alibaba", "anthropic")
 	if got != "anthropic" {
-		t.Fatalf("normalizedProtocol(alibaba, anthropic) = %q; want anthropic", got)
+		t.Fatalf("plugins.NormalizedProtocol(alibaba, anthropic) = %q; want anthropic", got)
 	}
 }
 
