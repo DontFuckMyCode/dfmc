@@ -145,7 +145,7 @@ func runInit(jsonMode bool, projectOverride string) int {
 // helper so CLI text output and the JSON payload stay aligned.
 func initNextSteps() []string {
 	return []string{
-		"Set a provider API key (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY) in your shell or a project-root .env — DFMC auto-loads .env at startup.",
+		"Set a provider API key: inside `dfmc tui` run `/key set <provider> <api_key>`, or from the shell `dfmc config set --global providers.profiles.<provider>.api_key <value>`. Both write to ~/.dfmc/config.yaml (mode 0o600). Process env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...) and a project-root .env are still honoured for legacy setups but are no longer the recommended path.",
 		"Run `dfmc config sync-models` to refresh provider profiles from models.dev (preserves any API keys you already set).",
 		"Try `dfmc ask \"summarise this project\"` for a one-shot answer, or `dfmc tui` for the interactive workbench.",
 		"For autonomous multi-step work, `dfmc drive \"<task>\"` plans + executes a DAG of TODOs end-to-end.",
