@@ -434,4 +434,4 @@ go vet ./...
 
 ## License
 
-Apache 2.0 (intended project license).
+MIT - see [LICENSE](LICENSE).

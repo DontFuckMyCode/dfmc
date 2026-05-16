@@ -141,9 +141,6 @@ freezes a known-good snapshot for distribution.
   `dfmc ask --provider offline "..."`.
 - Security and dead-code findings are heuristic; intended for
   triage, not gating.
-- License file is not yet committed. The `.goreleaser.yaml` Homebrew
-  formula declares MIT; this will be settled with a `LICENSE` file
-  before broader distribution.
 
 [Unreleased]: https://github.com/dontfuckmycode/dfmc/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/dontfuckmycode/dfmc/releases/tag/v0.1.0
