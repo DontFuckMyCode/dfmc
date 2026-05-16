@@ -1,324 +1,169 @@
-# Don't Fuck My Code (DFMC)
+# DFMC — Don't Fuck My Code
 
 <p align="center">
   <img src="assets/dfmc_banner.png" alt="DFMC Banner" width="100%">
 </p>
 
-Your Code Deserves Better.
+DFMC is a single-binary code intelligence assistant written in Go. It
+combines local code analysis (tree-sitter AST, dependency graph,
+security taint pass) with a multi-provider LLM router behind one tool
+loop, exposed through five surfaces: CLI, TUI, HTTP/SSE, remote
+client, and MCP server. Alpha-stage software; pre-1.0 minor bumps may
+include breaking changes.
 
-DFMC is an alpha-stage code intelligence assistant written in Go. It combines local code analysis, a provider router, a guarded local tool engine, persistent project state, and multiple user surfaces: CLI, TUI, HTTP/SSE, remote client, and MCP.
+## Install
 
-## What Is Implemented
-
-- CLI dispatcher with help, completion, man-page output, diagnostics, config, provider/model shortcuts, and skill shortcuts.
-- Config loading from built-in defaults, `~/.dfmc/config.yaml`, project `.dfmc/config.yaml`, project `.env`, process env, and CLI flags.
-- Provider profiles seeded from models.dev plus a local `generic` OpenAI-compatible profile.
-- Provider router with configured fallback and offline fallback behavior.
-- AST and CodeMap analysis with tree-sitter when CGO is available and regex fallback when it is not.
-- Static analysis for codemap, security findings, complexity, dead-code candidates, duplication, TODO markers, dependencies, and MagicDoc generation.
-- Native tool loop with approval gates, tool history, hooks, sub-agents, delegation, orchestration, and Drive.
-- Persistent storage for conversations, memory, tasks, Drive runs, provider logs, and learned tool patterns.
-- TUI workbench with Chat, Files, Patch, Workflow, Activity, Memory, Conversations, Providers, and diagnostic overlays.
-- HTTP/SSE server plus remote client commands.
-- MCP server exposing the internal tool surface.
-- Plugin and skill management.
-- Optional Telegram bot integration.
-
-## Requirements
-
-- Go `1.25.0` or newer. The repo currently declares `toolchain go1.26.2`.
-- Windows, Linux, or macOS.
-- A C toolchain if you want full tree-sitter AST support through CGO.
-
-Without CGO the binary still builds, but AST/codemap fidelity falls back to regex behavior.
-
-## Build
+Build from source (Go `1.25.0`+):
 
 ```bash
-make build
-make build-cgo
+go build -o bin/dfmc ./cmd/dfmc            # regex AST, works everywhere
+CGO_ENABLED=1 go build -o bin/dfmc ./cmd/dfmc   # tree-sitter AST (Go/JS/TS/Python)
 ```
 
-Equivalent direct commands:
+Without CGO the binary still runs but the AST layer falls back to
+regex extraction. `dfmc doctor` reports the active backend.
+
+Released versions ship as cross-platform archives, a GHCR Docker
+image, and a Homebrew tap — see [CHANGELOG.md](CHANGELOG.md) and
+the [Releases](https://github.com/dontfuckmycode/dfmc/releases) page.
+
+## First run
 
 ```bash
-go build -o bin/dfmc ./cmd/dfmc
-CGO_ENABLED=1 go build -o bin/dfmc ./cmd/dfmc
-```
-
-On Windows PowerShell:
-
-```powershell
-go build -o dfmc.exe .\cmd\dfmc\
-```
-
-## First Run
-
-```bash
-dfmc init
-dfmc doctor
-dfmc status
+dfmc init           # creates .dfmc/ with config.yaml + scaffolding
+dfmc doctor         # diagnostics: providers, keys, AST backend, store
+dfmc status         # one-line summary
 dfmc ask "explain this project"
 ```
 
-`dfmc init` creates project-local state under `.dfmc/`, including `config.yaml`, `knowledge.json`, and `conventions.json`. Startup also auto-initializes missing project state for normal commands when possible.
+`dfmc init` is optional — most commands auto-create missing project
+state at startup.
 
-## Provider Configuration
+## Provider keys
 
-Default config currently uses:
+Two supported ways to set provider API keys. **Process env still
+works** but it is no longer the recommended path.
 
-- primary provider: `minimax`
-- fallback providers: `openai`, `deepseek`
-- profiles from `ModelsDevSeedProfiles()`
-- local `generic` profile pointing at `http://localhost:11434/v1`
+**Inside TUI (`dfmc tui`)** — interactive, masked input, persisted:
 
-Provider API keys are loaded from process env first. Project-root `.env` fills only missing keys and does not override process env.
-
-Code-backed provider key env vars:
-
-| Provider profile | Env var |
-| --- | --- |
-| `anthropic` | `ANTHROPIC_API_KEY` |
-| `openai` | `OPENAI_API_KEY` |
-| `google` | `GOOGLE_AI_API_KEY` |
-| `deepseek` | `DEEPSEEK_API_KEY` |
-| `kimi` | `KIMI_API_KEY` or `MOONSHOT_API_KEY` |
-| `minimax` | `MINIMAX_API_KEY` |
-| `zai` | `ZAI_API_KEY` |
-| `alibaba` | `ALIBABA_API_KEY` |
-
-Useful operational env vars:
-
-- `DFMC_WEB_TOKEN`: bearer token used by `dfmc serve --auth token`
-- `DFMC_REMOTE_TOKEN`: bearer token used by `dfmc remote start --auth token` and remote clients
-- `DFMC_TELEGRAM_TOKEN`, `DFMC_TELEGRAM_ALLOWED_USERS`, `DFMC_TELEGRAM_SESSION_NAME`: Telegram integration
-- `DFMC_APPROVE=yes|no`: non-interactive approval behavior for gated tools
-- `DFMC_APPROVE_DESTRUCTIVE=yes`: second knob required to auto-approve write/shell tools
-- `DFMC_NO_COLOR` or `NO_COLOR`: disable TUI/CLI color
-- `DFMC_UNSAFE_HOOKS=1`: override writable-config hook safety refusal
-- `DFMC_PROFILE`: prompt/context profile override
-- `VISUAL` or `EDITOR`: editor used by `dfmc config edit`
-
-Persist provider defaults with config paths that exist in code:
-
-```bash
-dfmc config set providers.primary minimax
-dfmc config set providers.profiles.minimax.model MiniMax-M2.7
+```
+/key list                            # status of every provider + source
+/key set anthropic sk-ant-…          # writes ~/.dfmc/config.yaml (0600)
+/key clear anthropic
+/key migrate                         # imports existing .env keys
 ```
 
-Top-level shortcuts are session-only for that invocation:
+**From the CLI**:
 
 ```bash
-dfmc providers
-dfmc provider minimax
-dfmc model MiniMax-M2.7
+dfmc config set --global providers.profiles.anthropic.api_key sk-ant-…
 ```
 
-## Core CLI
+`--global` writes to `~/.dfmc/config.yaml`; without it, writes to
+project `.dfmc/config.yaml`. Config merge order:
+**defaults → `~/.dfmc/config.yaml` → project `.dfmc/config.yaml` →
+process env → CLI flags** (later wins). The persisted files are the
+recommended path because they survive shell restarts and the TUI
+unmasks them on `/key list`.
 
-Query and chat:
+Project-root `.env` is read at startup only to fill *missing*
+process env slots — it never overrides anything already set. Treat
+it as legacy compatibility, not a fresh-setup path.
 
-```bash
-dfmc ask "how does the engine initialize?"
-dfmc ask --race --race-providers minimax,openai "compare provider output"
-dfmc chat
-dfmc tui
-```
+Known provider env-var aliases (recognised when present):
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_AI_API_KEY`,
+`DEEPSEEK_API_KEY`, `KIMI_API_KEY` (or `MOONSHOT_API_KEY`),
+`MINIMAX_API_KEY`, `ZAI_API_KEY`, `ALIBABA_API_KEY`.
 
-Analysis:
+## CLI
 
-```bash
-dfmc analyze
-dfmc analyze --security --dead-code --complexity --duplication --todos
-dfmc analyze --full --deps --magicdoc
-dfmc scan
-dfmc map --format ascii
-dfmc map --format dot
-dfmc map --format svg
-```
+Run `dfmc help` for the live command index. Selected entries:
 
-Tools:
+| Group | Commands |
+|---|---|
+| Query | `ask`, `chat`, `tui`, `review`, `explain`, `refactor`, `debug`, `test`, `doc`, `audit`, `onboard` |
+| Analysis | `analyze`, `scan`, `map`, `context`, `magicdoc` |
+| Tools | `tool list`, `tool show <name>`, `tool run <name> [--param k=v]` |
+| Config | `config list\|get\|set\|sync-models\|edit` |
+| State | `memory`, `conversation`, `agents`, `drive`, `prompt`, `skill`, `plugin` |
+| Serve | `serve`, `remote`, `mcp` |
+| Ops | `doctor`, `hooks`, `approvals`, `status`, `version`, `update`, `completion`, `man` |
 
-```bash
-dfmc tool list
-dfmc tool show read_file
-dfmc tool run read_file --path README.md --line_start 1 --line_end 40
-dfmc tool run grep_codebase --pattern "func runServe" --max_results 10
-dfmc tool run run_command --command go --args "version"
-dfmc tool disable web_search
-dfmc tool enable web_search
-```
-
-Config and context:
+Global flags must precede the subcommand:
 
 ```bash
-dfmc config list
-dfmc config get providers.primary
-dfmc config set context.include_tests true
-dfmc config sync-models
-dfmc config edit
-
-dfmc context budget --query "security audit auth middleware"
-dfmc context recommend --query "debug [[file:internal/auth/service.go]]"
-dfmc context recent
-dfmc context brief --max-words 240
-```
-
-Memory and conversations:
-
-```bash
-dfmc memory working
-dfmc memory list --tier episodic --limit 20
-dfmc memory search --query auth --tier semantic
-dfmc memory add --tier episodic --key note --value "important detail"
-dfmc memory clear --tier semantic
-
-dfmc conversation list
-dfmc conversation search middleware
-dfmc conversation active
-dfmc conversation new
-dfmc conversation save
-dfmc conversation undo
-dfmc conversation load <conversation-id>
-dfmc conversation branch list
-dfmc conversation branch create experiment
-dfmc conversation branch switch experiment
-dfmc conversation branch compare main experiment
-```
-
-Drive:
-
-```bash
-dfmc drive "add input validation to the API layer"
-dfmc drive "refactor agent_loop" --max-parallel 4 --route plan=minimax --route code=openai
-dfmc drive list
-dfmc drive active
-dfmc drive show <run-id>
-dfmc drive resume <run-id>
-dfmc drive stop <run-id>
-dfmc drive delete <run-id>
-```
-
-Skills and plugins:
-
-```bash
-dfmc skill list
-dfmc skill info review
-dfmc review "find risks in recent changes"
-
-dfmc plugin list
-dfmc plugin install --name my-plugin --enable ./path/to/plugin.py
-dfmc plugin enable my-plugin
-dfmc plugin disable my-plugin
-dfmc plugin remove my-plugin
-```
-
-Diagnostics and generated references:
-
-```bash
-dfmc doctor
-dfmc doctor --network --timeout 3s
-dfmc doctor --providers-only
-dfmc doctor --fix
-dfmc update
-dfmc completion powershell
-dfmc man --format markdown
-```
-
-Global flags must come before the command:
-
-```bash
+dfmc --provider offline ask "summarise local context"
 dfmc --json status
-dfmc --provider offline ask "summarize local context"
 dfmc --data-dir .dfmc-alt doctor
+```
+
+Race two providers for the same prompt:
+
+```bash
+dfmc ask --race --race-providers anthropic,openai "compare reasoning"
 ```
 
 ## TUI
 
 ```bash
 dfmc tui
-dfmc tui --no-alt-screen
 ```
 
-Main panels:
+| Key | Panel |
+|---|---|
+| `F1` | Chat (composer + transcript) |
+| `F2` | Files |
+| `F3` | Patch |
+| `F4` | Workflow |
+| `F5` | Activity |
+| `F6` | Memory |
+| `F7` | Conversations |
+| `F8` | Providers |
+| `F9` | Status |
+| `F10` | CodeMap |
+| `F11` | Tools |
+| `F12` | Security |
+| `Shift+F1..F8` | Prompts, Plans, Context, Orchestrate, Shortcuts, Contexts, ProviderLog, Telegram |
+| `Ctrl+Shift+T` / `Alt+O` | ToolStatus |
+| `Ctrl+B` | Fuzzy panel switcher |
+| `Ctrl+P` | Slash-command palette |
+| `Alt+1..8` | Mirror `F1..F8` (for terminals that swallow F-keys) |
 
-- `F1` Chat
-- `F2` Files
-- `F3` Patch
-- `F4` Workflow
-- `F5` Activity
-- `F6` Memory
-- `F7` Conversations
-- `F8` Providers
+Type `/help` inside Chat for the live slash-command list.
 
-Diagnostic panels:
-
-- `F9` Status
-- `F10` CodeMap
-- `F11` Tools
-- `F12` Security
-- `Shift+F1` Prompts
-- `Shift+F2` Plans
-- `Shift+F3` Context
-- `Shift+F4` Orchestrate
-- `Shift+F5` Shortcuts
-- `Shift+F6` Contexts
-- `Shift+F7` ProviderLog
-- `Shift+F8` Telegram
-- `Ctrl+Shift+T` / `Alt+O` ToolStatus
-
-Use `Ctrl+B` for the fuzzy panel switcher. Use `Ctrl+G` to jump to Activity. Use `/help` inside Chat for the live slash-command list.
-
-## HTTP And Remote
-
-Serve local HTTP/SSE:
+## HTTP, remote, MCP
 
 ```bash
 dfmc serve --host 127.0.0.1 --port 7777
-DFMC_WEB_TOKEN=change-me dfmc serve --host 127.0.0.1 --port 7777 --auth token
+DFMC_WEB_TOKEN=secret dfmc serve --auth token
+
+DFMC_REMOTE_TOKEN=secret dfmc remote start --auth token --ws-port 7779
+dfmc remote ask --url http://127.0.0.1:7779 --token secret --message "…"
+
+dfmc mcp           # MCP server on stdio for IDE hosts
 ```
 
-Remote server and client:
+`serve` and `remote start` share the same HTTP+WebSocket API.
+Non-loopback hosts refuse `--auth=none` unless `--insecure` is
+passed. MCP exposes the regular tool registry plus six synthetic
+Drive control tools.
 
-```bash
-DFMC_REMOTE_TOKEN=change-me dfmc remote start --auth token --ws-port 7779
-dfmc remote status --live --url http://127.0.0.1:7779 --token change-me
-dfmc remote ask --url http://127.0.0.1:7779 --token change-me --message "explain the router"
-dfmc remote tool read_file --url http://127.0.0.1:7779 --token change-me --param path=README.md
+## Context injection in queries
+
+Both work in `ask`, `chat`, `review`, the TUI composer, and the web
+`/api/v1/chat` SSE:
+
 ```
-
-`remote start` serves the same HTTP/WebSocket API as `serve` on the `--ws-port`. The `--grpc-port` flag is currently reserved and reported as `not_started`.
-
-Main HTTP route groups are registered in `ui/web/server.go`: health, status, commands, ask/chat, codemap, context, providers, tools, skills, agents, analysis, memory, conversation, prompts, MagicDoc, workspace diff/patch, files, scan, doctor, hooks, config, Drive, tasks, `/ws`, and `/api/v1/ws`.
-
-Non-loopback `--auth=none` is refused unless `--insecure` is passed.
-
-## Prompt Library And MagicDoc
-
-```bash
-dfmc prompt list
-dfmc prompt render --query "security audit auth middleware"
-dfmc prompt recommend --query "debug [[file:internal/auth/service.go]]"
-dfmc prompt stats
-
-dfmc magicdoc update
-dfmc magicdoc show
-```
-
-Prompt templates are loaded from built-ins, `~/.dfmc/prompts`, and `.dfmc/prompts`. Supported formats are YAML, JSON, and Markdown with optional frontmatter.
-
-Inline context markers supported by prompt/context code:
-
-```text
 [[file:internal/auth/middleware.go]]
 [[file:internal/auth/middleware.go#L10-L80]]
 ```
 
-Fenced code blocks inside the query are also treated as explicit injected context.
+Triple-backtick fenced blocks inside the query are also pulled in as
+explicit context.
 
-## Config Defaults Worth Knowing
+## Defaults worth knowing
 
-Current context defaults in `internal/config/defaults.go`:
+From [internal/config/defaults.go](internal/config/defaults.go):
 
 ```yaml
 context:
@@ -327,111 +172,84 @@ context:
   max_tokens_per_file: 2000
   max_history_tokens: 24000
   max_history_messages: 120
-  compression: standard
-  auto_include_files: false
-  include_tests: false
-  include_docs: true
-  symbol_aware: true
-  graph_depth: 2
-```
 
-Current agent/tool-loop defaults include:
-
-```yaml
 agent:
   max_tool_steps: 60
   max_tool_tokens: 250000
   max_tool_result_chars: 3200
   parallel_batch_size: 4
   autonomous_resume: auto
-  autonomous_planning: auto
   auto_continue: auto
 ```
 
-## Hooks And Safety
+Operational env vars (still honoured): `DFMC_WEB_TOKEN`,
+`DFMC_REMOTE_TOKEN`, `DFMC_TELEGRAM_TOKEN`,
+`DFMC_TELEGRAM_ALLOWED_USERS`, `DFMC_APPROVE`,
+`DFMC_APPROVE_DESTRUCTIVE`, `DFMC_NO_COLOR`, `NO_COLOR`,
+`DFMC_PROFILE`, `VISUAL`, `EDITOR`.
 
-- Project-local hooks are disabled by default. Enable them only for trusted repos with `hooks.allow_project: true`.
-- Hooks receive structured `DFMC_*` payload env vars such as `DFMC_EVENT`, `DFMC_TOOL_NAME`, and `DFMC_TOOL_ARGS`.
-- Secret-shaped parent env vars are scrubbed before hook/plugin child processes unless explicitly allowlisted.
-- For shell-free hooks, prefer `command` plus `args`.
-- Agent-initiated write/shell/network-sensitive operations go through the approval gate.
-- Web/remote/MCP surfaces are stricter by default because they cannot always ask interactively.
+## Hooks and safety
 
-Example hook:
+Lifecycle shell hooks (`user_prompt_submit`, `pre_tool`, `post_tool`,
+`session_start`, `session_end`) fire best-effort and never block a
+tool call. Project-local hooks are **disabled** by default; enable
+per-repo with `hooks.allow_project: true` only after auditing the
+hook list.
 
-```yaml
-hooks:
-  pre_tool:
-    - name: audit
-      command: go
-      args: ["env", "GOOS"]
-      shell: false
-```
+Agent-initiated write / shell / network-sensitive tools route through
+the approval gate. CLI prompts on stdin; TUI surfaces a modal; web
+and MCP surfaces require pre-authorised allowlists (they can't ask
+interactively).
 
-## Project Structure
+Secret-shaped parent env vars are scrubbed before hook and plugin
+child processes. Override with `DFMC_UNSAFE_HOOKS=1` only when the
+hook genuinely needs writable config access.
 
-```text
-cmd/dfmc                 binary entrypoint
-internal/applog          app logging helpers
-internal/ast             tree-sitter and regex AST extraction
-internal/bot             Telegram bot integration
-internal/coach           agent coaching and trajectory hints
-internal/codemap         symbol/dependency graph
-internal/commands        command registry metadata
-internal/config          config types, defaults, env hydration, validation
-internal/context         context selection, prompt budgeting, MagicDoc slices
-internal/conversation    JSONL conversations and branches
-internal/drive           autonomous plan/execute runner
-internal/engine          provider orchestration, agent loop, lifecycle
-internal/hooks           lifecycle hooks
-internal/intent          intent router
-internal/langintel       language knowledge helpers
-internal/mcp             MCP server and client bridge
-internal/memory          working, episodic, and semantic memory
-internal/planning        task split/planning helpers
-internal/pluginexec      plugin execution runtime
-internal/promptlib       prompt catalog and overlays
-internal/provider        provider implementations and router
-internal/providerlog     provider-call logging
-internal/security        scanners, redaction, env scrubbing
-internal/sessionutil     session support helpers
-internal/skills          skill registry
-internal/storage         bbolt store and backups
-internal/supervisor      shared execution/task types
-internal/taskstore       task persistence
-internal/tokens          token helpers
-internal/toolhistory     tool-call history
-internal/tools           tool registry and built-in tools
-ui/cli                   CLI commands
-ui/tui                   Bubble Tea TUI
-ui/web                   HTTP/SSE/WebSocket server
-pkg/types                shared public types
-```
-
-## Development
-
-```bash
-make test
-make test-race
-make lint
-make vuln
-make security
-```
-
-Direct commands:
+## Build, test, lint
 
 ```bash
 go test -count=1 ./...
-CGO_ENABLED=1 go test -race -count=1 ./...
+CGO_ENABLED=1 go test -race -count=1 ./...      # requires gcc on PATH
 go vet ./...
+staticcheck ./...
+gofmt -l $(git ls-files '*.go')
 ```
 
-## Notes
+CI gates on `go vet` + `staticcheck`. The bundled `Makefile` is
+Windows-oriented (`NUL`, `rmdir /s /q`); direct `go` invocations are
+the portable path.
 
-- Security and dead-code findings are heuristic and intended for triage.
-- Only one process can open the project bbolt store at a time.
-- The docs should describe code-backed behavior. If behavior changes, update this README from the relevant source files instead of copying old command output.
+## Project layout (selected)
+
+```
+cmd/dfmc              binary entrypoint
+internal/ast          tree-sitter + regex AST extraction
+internal/codemap      symbol / dependency graph
+internal/config       config loading, defaults, env hydration
+internal/conversation JSONL conversations + branches
+internal/context      ranked snippet selection, prompt budgeting
+internal/drive        autonomous plan / execute runner
+internal/engine       orchestration, agent loop, lifecycle
+internal/hooks        lifecycle shell hooks
+internal/intent       state-aware turn classifier
+internal/memory       working / episodic / semantic tiers
+internal/mcp          MCP server + bridge
+internal/provider     provider implementations + router
+internal/security     scanner (regex + AST taint)
+internal/skills       skill registry
+internal/storage      bbolt store
+internal/tools        tool registry + meta-tool layer
+ui/cli                CLI surface
+ui/tui                Bubble Tea TUI
+ui/web                HTTP / SSE / WebSocket server
+pkg/types             shared public types
+```
+
+Other supporting packages live under `internal/` (applog, bot, coach,
+commands, langintel, pathsafe, planning, pluginexec, promptlib,
+providerlog, repolint, sessionutil, supervisor, taskstore, tokens).
+For a deeper architecture map see [CLAUDE.md](CLAUDE.md).
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
