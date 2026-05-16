@@ -394,7 +394,6 @@ internal/promptlib       prompt catalog and overlays
 internal/provider        provider implementations and router
 internal/providerlog     provider-call logging
 internal/security        scanners, redaction, env scrubbing
-internal/session         session agents
 internal/sessionutil     session support helpers
 internal/skills          skill registry
 internal/storage         bbolt store and backups
