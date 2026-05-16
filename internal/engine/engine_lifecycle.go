@@ -32,6 +32,19 @@ func (e *Engine) StartServing() {
 }
 
 func (e *Engine) Shutdown() error {
+	// Idempotency guard: main.go registers two cleanup defers that
+	// both call Shutdown (the first for panic-out-of-cli.Run safety,
+	// the second to also cancel the signal context + stop the
+	// Telegram bot). LIFO ordering means the second defer runs first
+	// and closes Storage; the first defer then re-entered Shutdown
+	// and Memory.Persist hit bbolt's "database not open" error
+	// (the nil-check there passes -- bbolt keeps the handle non-nil
+	// after Close). Short-circuiting on already-terminal state keeps
+	// both defers safe without changing main.go's panic-safety shape.
+	switch e.State() {
+	case StateShuttingDown, StateStopped:
+		return nil
+	}
 	e.setState(StateShuttingDown)
 	e.EventBus.Publish(Event{Type: "engine:shutdown", Source: "engine"})
 
