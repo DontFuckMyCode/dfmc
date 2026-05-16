@@ -102,9 +102,19 @@ func runInit(jsonMode bool, projectOverride string) int {
 		return 1
 	}
 
-	// Prepare local knowledge placeholders.
-	_ = os.WriteFile(filepath.Join(dfmcDir, "knowledge.json"), []byte("{}\n"), 0o644)
-	_ = os.WriteFile(filepath.Join(dfmcDir, "conventions.json"), []byte("{}\n"), 0o644)
+	// Prepare local knowledge placeholders. Mode 0o600 because the
+	// files live next to the project config (which holds API keys
+	// after /key set) — world-readable would be a regression even
+	// though the placeholders themselves are empty today. Surface
+	// any write failure rather than silently claiming "Initialized
+	// DFMC project at ..." with broken scaffolding.
+	for _, name := range []string{"knowledge.json", "conventions.json"} {
+		fpath := filepath.Join(dfmcDir, name)
+		if err := os.WriteFile(fpath, []byte("{}\n"), 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "cannot write %s: %v\n", name, err)
+			return 1
+		}
+	}
 
 	if jsonMode {
 		_ = printJSON(map[string]any{

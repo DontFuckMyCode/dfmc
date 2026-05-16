@@ -167,10 +167,12 @@ func run() int {
 	var tgStopFunc func()
 	if tgBot != nil {
 		eng.SetTelegramBot(tgBot, cfg.Telegram.SessionName, cfg.Telegram.AllowedUsers)
-		// Forward Telegram messages to the engine's agent loop
+		// Forward Telegram messages to the engine's agent loop.
+		// Capture the outer signal-aware ctx so SIGINT / SIGTERM
+		// cancels any in-flight Telegram-triggered Ask too;
+		// context.Background() here used to leak goroutines past
+		// the shutdown defer.
 		tgBot.SetOnMessage(func(userID int64, text string, replyFn func(string)) {
-			// Forward Telegram message to DFMC engine
-			ctx := context.Background()
 			go func() {
 				resp, err := eng.Ask(ctx, text)
 				if err != nil {

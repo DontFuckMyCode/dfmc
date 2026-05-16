@@ -141,13 +141,22 @@ func (t *TestDiscoveryTool) Execute(_ context.Context, req Request) (Result, err
 		}, nil
 	}
 
+	// The only producer of `results` above sets "path" (string from
+	// filepath.Rel) and "count" (int from len(functions)), so today
+	// these assertions can't fail. The checked form keeps that safety
+	// in place if a future contributor adds a second append path with
+	// different keys.
 	sort.Slice(results, func(i, j int) bool {
-		return results[i]["path"].(string) < results[j]["path"].(string)
+		pi, _ := results[i]["path"].(string)
+		pj, _ := results[j]["path"].(string)
+		return pi < pj
 	})
 
 	totalFuncs := 0
 	for _, r := range results {
-		totalFuncs += r["count"].(int)
+		if n, ok := r["count"].(int); ok {
+			totalFuncs += n
+		}
 	}
 
 	summary := fmt.Sprintf("%d test file(s), %d test function(s)", len(results), totalFuncs)
