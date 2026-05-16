@@ -285,3 +285,25 @@ type Provider interface {
 	MaxContext() int
 	Hints() ProviderHints
 }
+
+// CtxTokenCounter is an optional capability for providers that can do
+// ctx-aware token counting via an upstream API call (today: Google's
+// :countTokens endpoint). Callers that want a precise count should
+// type-assert and fall back to Provider.CountTokens on the negative
+// branch:
+//
+//	if c, ok := p.(CtxTokenCounter); ok {
+//	    n, err := c.CountTokensCtx(ctx, text)
+//	    if err == nil {
+//	        return n
+//	    }
+//	}
+//	return p.CountTokens(text)
+//
+// The split keeps the fat Provider interface stable -- every
+// implementation already satisfies CountTokens(text) int, so adopting
+// this optional surface is opt-in per provider without breaking
+// existing call sites or test mocks.
+type CtxTokenCounter interface {
+	CountTokensCtx(ctx context.Context, text string) (int, error)
+}

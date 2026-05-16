@@ -290,3 +290,48 @@ func TestGoogleHintsAdvertiseTools(t *testing.T) {
 		t.Fatalf("hints=%+v", h)
 	}
 }
+
+// CountTokensCtx routes through the upstream :countTokens endpoint
+// using the provider's default model. Lets callers that don't want to
+// pin a model still get ctx-aware counting via CtxTokenCounter.
+func TestGoogleCountTokensCtxHitsUpstream(t *testing.T) {
+	srv, cap := newGoogleTestServer(t, 200, `{"totalTokens": 42}`)
+	p := NewGoogleProvider("gemini-test", "test-key", srv.URL, 0, 0, 0)
+
+	got, err := p.CountTokensCtx(context.Background(), "hello world")
+	if err != nil {
+		t.Fatalf("CountTokensCtx: %v", err)
+	}
+	if got != 42 {
+		t.Fatalf("count=%d want 42", got)
+	}
+	if !strings.Contains(cap.path, "/models/gemini-test:countTokens") {
+		t.Fatalf("path=%q", cap.path)
+	}
+	if cap.headers.Get("x-goog-api-key") != "test-key" {
+		t.Fatalf("missing api key header")
+	}
+}
+
+// Empty text short-circuits to (0, nil) so callers can probe cheaply
+// without burning a network round-trip.
+func TestGoogleCountTokensCtxEmptyShortCircuits(t *testing.T) {
+	p := NewGoogleProvider("gemini-test", "test-key", "http://invalid.example.invalid", 0, 0, 0)
+	got, err := p.CountTokensCtx(context.Background(), "   ")
+	if err != nil {
+		t.Fatalf("err=%v want nil for empty input", err)
+	}
+	if got != 0 {
+		t.Fatalf("count=%d want 0", got)
+	}
+}
+
+// Google must satisfy the CtxTokenCounter optional capability at
+// runtime; the compile-time assertion in google.go guards the
+// interface but a runtime probe matches how real callers discover it.
+func TestGoogleSatisfiesCtxTokenCounterAtRuntime(t *testing.T) {
+	var p Provider = NewGoogleProvider("gemini-test", "key", "", 0, 0, 0)
+	if _, ok := p.(CtxTokenCounter); !ok {
+		t.Fatalf("GoogleProvider does not satisfy CtxTokenCounter via Provider interface")
+	}
+}

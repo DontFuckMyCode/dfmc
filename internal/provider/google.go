@@ -25,6 +25,15 @@ import (
 
 const defaultGoogleBaseURL = "https://generativelanguage.googleapis.com/v1beta"
 
+// Compile-time assertions: GoogleProvider satisfies both the fat
+// Provider interface and the optional CtxTokenCounter capability.
+// Removing CountTokensCtx without also dropping this assertion is a
+// build error -- a hard signal not to break the capability silently.
+var (
+	_ Provider        = (*GoogleProvider)(nil)
+	_ CtxTokenCounter = (*GoogleProvider)(nil)
+)
+
 // GoogleProvider implements Provider against the Gemini REST API.
 type GoogleProvider struct {
 	name       string
@@ -190,14 +199,24 @@ func (p *GoogleProvider) CountTokens(text string) int {
 	if strings.TrimSpace(text) == "" {
 		return 0
 	}
-	// Fallback to heuristic if we can't make a network call (CountTokens
-	// interface doesn't take context, which is a design limitation of the
-	// process-wide token budgeter).
-	// TODO: Update Provider interface to allow context-aware counting.
+	// Heuristic fallback for the ctx-less Provider.CountTokens path.
+	// Callers that need a precise count should type-assert
+	// provider.CtxTokenCounter and use CountTokensCtx — that hits the
+	// upstream :countTokens API via PreciseCountTokens below.
 	return len(strings.Fields(text))
 }
 
+// CountTokensCtx satisfies provider.CtxTokenCounter. Routes to the
+// upstream :countTokens API with the provider's current model; falls
+// back to (0, err) on transport / status failures so the caller can
+// either retry or degrade to the heuristic CountTokens path.
+func (p *GoogleProvider) CountTokensCtx(ctx context.Context, text string) (int, error) {
+	return p.PreciseCountTokens(ctx, p.model, text)
+}
+
 // PreciseCountTokens is a Google-specific extension that uses the API.
+// Exposed in addition to CountTokensCtx so callers that already know
+// they want a non-default model can pin one explicitly.
 func (p *GoogleProvider) PreciseCountTokens(ctx context.Context, model, text string) (int, error) {
 	if strings.TrimSpace(text) == "" {
 		return 0, nil
