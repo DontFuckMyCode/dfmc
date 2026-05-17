@@ -174,6 +174,8 @@ func (m Model) routeKeyByActiveTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.handlePlansKey(msg)
 		case "context":
 			return m.handleContextKey(msg)
+		case "contexts":
+			return m.handleContextsOverlayKey(msg)
 		case "orchestrate":
 			return m.handleOrchestrateKey(msg)
 		case "shortcuts":

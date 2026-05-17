@@ -145,11 +145,34 @@ func TestRenderConversationsViewWithEntries(t *testing.T) {
 	m := newConversationsTestModel()
 	m.conversations.entries = sampleConversationSummaries()
 	out := m.renderConversationsView(120)
-	if !strings.Contains(out, "3 shown · 3 loaded") {
+	if !strings.Contains(out, "1 / 3 shown") || !strings.Contains(out, "3 loaded") {
 		t.Fatalf("footer count wrong:\n%s", out)
 	}
 	if !strings.Contains(out, "2026-04-16-auth-flow") {
 		t.Fatalf("row missing:\n%s", out)
+	}
+}
+
+func TestRenderConversationsViewSizedWindowsAroundSelectedRow(t *testing.T) {
+	m := newConversationsTestModel()
+	m.conversations.entries = []conversation.Summary{}
+	start := time.Date(2026, 4, 16, 9, 30, 0, 0, time.UTC)
+	for i := 0; i < 20; i++ {
+		suffix := string(rune('a' + i))
+		m.conversations.entries = append(m.conversations.entries, conversation.Summary{
+			ID:        "conversation-row-" + suffix,
+			StartedAt: start.Add(time.Duration(-i) * time.Hour),
+			MessageN:  1,
+		})
+	}
+	m.conversations.scroll = 15
+
+	out := stripANSI(m.renderConversationsViewSized(120, 12))
+	if !strings.Contains(out, "conversation-row-p") {
+		t.Fatalf("selected conversation row should stay visible, got:\n%s", out)
+	}
+	if strings.Contains(out, "conversation-row-a") {
+		t.Fatalf("conversation view should not render from top after scroll, got:\n%s", out)
 	}
 }
 

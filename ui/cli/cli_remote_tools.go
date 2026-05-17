@@ -25,7 +25,7 @@ func remoteTool(eng *engine.Engine, args []string, jsonMode bool) int {
 	name := strings.TrimSpace(args[0])
 	fs := flag.NewFlagSet("remote tool", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
@@ -39,9 +39,11 @@ func remoteTool(eng *engine.Engine, args []string, jsonMode bool) int {
 		fmt.Fprintf(os.Stderr, "remote tool param error: %v\n", err)
 		return 2
 	}
-	payload, _, err := remoteJSONRequest(
+	payload, _, err := remoteJSONEndpoint(
 		http.MethodPost,
-		strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/tools/"+url.PathEscape(name),
+		*baseURL,
+		"/api/v1/tools/"+url.PathEscape(name),
+		nil,
 		*token,
 		map[string]any{"params": params},
 		*timeout,
@@ -70,7 +72,7 @@ func remoteSkill(eng *engine.Engine, args []string, jsonMode bool) int {
 	name := strings.TrimSpace(args[0])
 	fs := flag.NewFlagSet("remote skill", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 60*time.Second, "request timeout")
@@ -81,9 +83,11 @@ func remoteSkill(eng *engine.Engine, args []string, jsonMode bool) int {
 	if strings.TrimSpace(*input) == "" && len(fs.Args()) > 0 {
 		*input = strings.TrimSpace(strings.Join(fs.Args(), " "))
 	}
-	payload, _, err := remoteJSONRequest(
+	payload, _, err := remoteJSONEndpoint(
 		http.MethodPost,
-		strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/skills/"+url.PathEscape(name),
+		*baseURL,
+		"/api/v1/skills/"+url.PathEscape(name),
+		nil,
 		*token,
 		map[string]any{"input": *input},
 		*timeout,
@@ -107,15 +111,14 @@ func remoteSkill(eng *engine.Engine, args []string, jsonMode bool) int {
 func remoteTools(eng *engine.Engine, args []string, jsonMode bool) int {
 	fs := flag.NewFlagSet("remote tools", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/tools"
-	payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+	payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/tools", nil, *token, nil, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote tools error: %v\n", err)
 		return 1
@@ -128,15 +131,14 @@ func remoteTools(eng *engine.Engine, args []string, jsonMode bool) int {
 func remoteSkills(eng *engine.Engine, args []string, jsonMode bool) int {
 	fs := flag.NewFlagSet("remote skills", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/skills"
-	payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+	payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/skills", nil, *token, nil, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote skills error: %v\n", err)
 		return 1
@@ -149,15 +151,14 @@ func remoteSkills(eng *engine.Engine, args []string, jsonMode bool) int {
 func remoteAgents(eng *engine.Engine, args []string, jsonMode bool) int {
 	fs := flag.NewFlagSet("remote agents", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/agents"
-	payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+	payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/agents", nil, *token, nil, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote agents error: %v\n", err)
 		return 1

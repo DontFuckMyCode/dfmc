@@ -29,7 +29,7 @@ func remotePrompt(eng *engine.Engine, args []string, jsonMode bool) int {
 	}
 	fs := flag.NewFlagSet("remote prompt", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
@@ -57,8 +57,7 @@ func remotePrompt(eng *engine.Engine, args []string, jsonMode bool) int {
 
 	switch action {
 	case "list":
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/prompts"
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/prompts", nil, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote prompt list error: %v\n", err)
 			return 1
@@ -71,9 +70,11 @@ func remotePrompt(eng *engine.Engine, args []string, jsonMode bool) int {
 			fmt.Fprintf(os.Stderr, "remote prompt var parse error: %v\n", err)
 			return 2
 		}
-		payload, _, err := remoteJSONRequest(
+		payload, _, err := remoteJSONEndpoint(
 			http.MethodPost,
-			strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/prompts/render",
+			*baseURL,
+			"/api/v1/prompts/render",
+			nil,
 			*token,
 			map[string]any{
 				"type":                *typ,
@@ -102,23 +103,8 @@ func remotePrompt(eng *engine.Engine, args []string, jsonMode bool) int {
 		if p := strings.TrimSpace(*query); p != "" {
 			v.Set("q", p)
 		}
-		if p := strings.TrimSpace(*runtimeProvider); p != "" {
-			v.Set("runtime_provider", p)
-		}
-		if m := strings.TrimSpace(*runtimeModel); m != "" {
-			v.Set("runtime_model", m)
-		}
-		if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
-			v.Set("runtime_tool_style", ts)
-		}
-		if *runtimeMaxContext > 0 {
-			v.Set("runtime_max_context", strconv.Itoa(*runtimeMaxContext))
-		}
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/prompts/recommend"
-		if encoded := v.Encode(); encoded != "" {
-			endpoint += "?" + encoded
-		}
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		addRemoteRuntimeQuery(v, *runtimeProvider, *runtimeModel, *runtimeToolStyle, *runtimeMaxContext)
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/prompts/recommend", v, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote prompt recommend error: %v\n", err)
 			return 1
@@ -135,11 +121,7 @@ func remotePrompt(eng *engine.Engine, args []string, jsonMode bool) int {
 				v.Add("allow_var", p)
 			}
 		}
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/prompts/stats"
-		if encoded := v.Encode(); encoded != "" {
-			endpoint += "?" + encoded
-		}
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/prompts/stats", v, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote prompt stats error: %v\n", err)
 			return 1

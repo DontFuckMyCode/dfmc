@@ -36,7 +36,7 @@ func (m Model) renderPatchDiffPane(width, height int, pal tabPaletteEntry) strin
 			lines = append(lines,
 				subtleStyle.Render("(no assistant patch — showing worktree diff)"),
 				"",
-				renderDiffSideBySide(wt, width, max(height-8, 8)))
+				renderDiffSideBySide(wt, width, max(height-8, 1)))
 			return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 		}
 		lines = append(lines,
@@ -46,7 +46,7 @@ func (m Model) renderPatchDiffPane(width, height int, pal tabPaletteEntry) strin
 			subtleStyle.Render("Ask the agent to make a change (in /chat), then return here. /patch reload pulls the latest from the engine; /patch check dry-runs apply."))
 		return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 	}
-	rowBudget := max(height-8, 8)
+	rowBudget := max(height-8, 1)
 	lines = append(lines, renderDiffSideBySide(body, width, rowBudget))
 	// Phase F item 3 — inline review hints. The metadata pane already
 	// has a REVIEW card with hints surfaced from `patchReviewHints()`,

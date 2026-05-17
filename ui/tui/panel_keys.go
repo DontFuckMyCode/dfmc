@@ -15,21 +15,24 @@ func (m Model) handleFilesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
 		return nm, cmd
 	}
+	visible := m.visibleFilesEntries()
 	switch msg.String() {
 	case "r", "alt+r":
 		return m, loadFilesCmd(m.eng)
 	case "down", "j", "alt+j":
-		if len(m.filesView.entries) == 0 {
+		if len(visible) == 0 {
 			return m, nil
 		}
-		if m.filesView.index < len(m.filesView.entries)-1 {
+		m.filesView.index = clampScroll(m.filesView.index, len(visible))
+		if m.filesView.index < len(visible)-1 {
 			m.filesView.index++
 		}
 		return m, loadFilePreviewCmd(m.eng, m.selectedFile())
 	case "up", "k", "alt+k":
-		if len(m.filesView.entries) == 0 {
+		if len(visible) == 0 {
 			return m, nil
 		}
+		m.filesView.index = clampScroll(m.filesView.index, len(visible))
 		if m.filesView.index > 0 {
 			m.filesView.index--
 		}

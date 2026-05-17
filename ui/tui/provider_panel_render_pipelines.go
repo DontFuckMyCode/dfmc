@@ -10,7 +10,12 @@ import (
 )
 
 func (m Model) renderPipelinesView(width int) string {
+	return m.renderPipelinesViewSized(width, 24)
+}
+
+func (m Model) renderPipelinesViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = max(height, 1)
 	header := sectionHeader("⚑", "Pipelines")
 
 	if m.providers.pipelineEditMode {
@@ -32,8 +37,12 @@ func (m Model) renderPipelinesView(width int) string {
 
 	lines = append(lines, subtleStyle.Render(fmt.Sprintf("%d pipelines configured", len(names))), "")
 
-	for i, name := range names {
-		selected := i == m.providers.pipelineScroll
+	cursor := clampScroll(m.providers.pipelineScroll, len(names))
+	rowBudget := max(height-len(lines)-1, 1)
+	start, end := scrollWindow(cursor, len(names), rowBudget)
+	for i := start; i < end; i++ {
+		name := names[i]
+		selected := i == cursor
 		prefix := "  "
 		num := fmt.Sprintf("%d.", i+1)
 		label := name

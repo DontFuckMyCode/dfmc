@@ -21,7 +21,7 @@ import (
 func remoteAnalyze(eng *engine.Engine, args []string, jsonMode bool) int {
 	fs := flag.NewFlagSet("remote analyze", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 60*time.Second, "request timeout")
@@ -39,9 +39,11 @@ func remoteAnalyze(eng *engine.Engine, args []string, jsonMode bool) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	payload, _, err := remoteJSONRequest(
+	payload, _, err := remoteJSONEndpoint(
 		http.MethodPost,
-		strings.TrimRight(strings.TrimSpace(*baseURL), "/")+"/api/v1/analyze",
+		*baseURL,
+		"/api/v1/analyze",
+		nil,
 		*token,
 		map[string]any{
 			"path":              *path,
@@ -75,7 +77,7 @@ func remoteFiles(eng *engine.Engine, args []string, jsonMode bool) int {
 	action := strings.ToLower(strings.TrimSpace(args[0]))
 	fs := flag.NewFlagSet("remote files", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
@@ -86,8 +88,9 @@ func remoteFiles(eng *engine.Engine, args []string, jsonMode bool) int {
 
 	switch action {
 	case "list":
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/files?limit=" + strconv.Itoa(*limit)
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		v := url.Values{}
+		v.Set("limit", strconv.Itoa(*limit))
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/files", v, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote files list error: %v\n", err)
 			return 1
@@ -114,8 +117,7 @@ func remoteFiles(eng *engine.Engine, args []string, jsonMode bool) int {
 			fmt.Fprintln(os.Stderr, "usage: dfmc remote files get <path> [--url ...] [--token ...]")
 			return 2
 		}
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/files/" + remotePathEscape(rel)
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/files/"+remotePathEscape(rel), nil, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote files get error: %v\n", err)
 			return 1
@@ -145,7 +147,7 @@ func remoteMemory(eng *engine.Engine, args []string, jsonMode bool) int {
 	}
 	fs := flag.NewFlagSet("remote memory", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
@@ -157,8 +159,9 @@ func remoteMemory(eng *engine.Engine, args []string, jsonMode bool) int {
 
 	switch action {
 	case "working":
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/memory?tier=working"
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		v := url.Values{}
+		v.Set("tier", "working")
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/memory", v, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote memory working error: %v\n", err)
 			return 1
@@ -168,8 +171,7 @@ func remoteMemory(eng *engine.Engine, args []string, jsonMode bool) int {
 	case "list":
 		v := url.Values{}
 		v.Set("tier", strings.ToLower(strings.TrimSpace(*tier)))
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/memory?" + v.Encode()
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/memory", v, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote memory list error: %v\n", err)
 			return 1
@@ -185,7 +187,7 @@ func remoteMemory(eng *engine.Engine, args []string, jsonMode bool) int {
 func remoteCodemap(eng *engine.Engine, args []string, jsonMode bool) int {
 	fs := flag.NewFlagSet("remote codemap", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
@@ -193,8 +195,7 @@ func remoteCodemap(eng *engine.Engine, args []string, jsonMode bool) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/codemap"
-	payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+	payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/codemap", nil, *token, nil, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote codemap error: %v\n", err)
 		return 1

@@ -95,6 +95,38 @@ func TestFilesViewV2_PinnedFileShowsBadge(t *testing.T) {
 	}
 }
 
+func TestFilesSelectionUsesFilteredRows(t *testing.T) {
+	m := newCoverageModel(t)
+	m.filesView = filesViewState{
+		entries: []string{"alpha.go", "cmd/main.go", "docs/readme.md"},
+		query:   "cmd",
+		index:   0,
+	}
+
+	if got := m.selectedFile(); got != "cmd/main.go" {
+		t.Fatalf("selectedFile should use filtered rows, got %q", got)
+	}
+	nm, _ := m.togglePinnedFile()
+	next := nm.(Model)
+	if next.filesView.pinned != "cmd/main.go" {
+		t.Fatalf("pin should target visible filtered row, got %q", next.filesView.pinned)
+	}
+}
+
+func TestFilteredFilesEntriesDoesNotRewriteBackingList(t *testing.T) {
+	entries := []string{"alpha.go", "cmd/main.go", "docs/readme.md"}
+	filtered := filteredFilesEntries(entries, "cmd")
+	if len(filtered) != 1 || filtered[0] != "cmd/main.go" {
+		t.Fatalf("unexpected filtered entries: %#v", filtered)
+	}
+	want := []string{"alpha.go", "cmd/main.go", "docs/readme.md"}
+	for i := range want {
+		if entries[i] != want[i] {
+			t.Fatalf("filter should not mutate source entries, got %#v", entries)
+		}
+	}
+}
+
 func TestHumanFileSize(t *testing.T) {
 	cases := []struct {
 		in   int

@@ -9,17 +9,23 @@
 package cli
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/commands"
 )
 
 // knownCLICommands is the master list used both for typo suggestions and
-// the "does this look like a verb" heuristic. Keep in sync with the
-// switch in Run(); `internal/commands` registry is the authoritative
-// source but the switch adds a few TUI-originated aliases too.
+// the "does this look like a verb" heuristic. It merges dispatcher names
+// with command-registry names and aliases, avoiding local hard-coded drift.
 func knownCLICommands() []string {
 	seen := map[string]struct{}{}
+	for _, name := range commandNames() {
+		if n := strings.TrimSpace(strings.ToLower(name)); n != "" {
+			seen[n] = struct{}{}
+		}
+	}
+
 	reg := commands.DefaultRegistry()
 	for _, c := range reg.All() {
 		if name := strings.TrimSpace(strings.ToLower(c.Name)); name != "" {
@@ -31,14 +37,11 @@ func knownCLICommands() []string {
 			}
 		}
 	}
-	// CLI-side synonyms that don't live in the shared registry.
-	for _, extra := range []string{"conv", "providers", "model", "provider"} {
-		seen[extra] = struct{}{}
-	}
 	out := make([]string, 0, len(seen))
 	for n := range seen {
 		out = append(out, n)
 	}
+	sort.Strings(out)
 	return out
 }
 

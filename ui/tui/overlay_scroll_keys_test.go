@@ -61,6 +61,14 @@ func TestHandleShortcutsKey_AdjustsScroll(t *testing.T) {
 	}
 }
 
+func TestHandleContextsOverlayKey_AdjustsScroll(t *testing.T) {
+	m := Model{diagnosticPanelsState: newDiagnosticPanelsState()}
+	out, _ := m.handleContextsOverlayKey(tea.KeyMsg{Type: tea.KeyPgDown})
+	if got := out.(Model).contexts.scroll; got != scrollOnlyOverlayPageStep {
+		t.Fatalf("contexts scroll after pgdown: got %d, want %d", got, scrollOnlyOverlayPageStep)
+	}
+}
+
 func TestFitPanelContentScrollable_AddsHintsAtEdges(t *testing.T) {
 	body := "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10"
 	out, _ := fitPanelContentScrollable(body, 4, 3)

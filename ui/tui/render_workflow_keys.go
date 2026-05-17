@@ -185,6 +185,11 @@ func (m Model) handleWorkflowKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if total > 0 {
 				m.workflow.selectedIndex = total - 1
 			}
+		} else if run := m.selectedRunForWorkflow(); run != nil {
+			rows := m.renderWorkflowTreeRows(run, 80)
+			if len(rows) > 0 {
+				m.workflow.scrollY = len(rows) - 1
+			}
 		}
 	case "enter", "o":
 		if m.workflow.selectedRunID == "" {
@@ -253,6 +258,13 @@ func (m Model) handleWorkflowKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.notice = "Workflow: live-follow ON — cursor tracks the running TODO. space to release."
 		} else {
 			m.notice = "Workflow: live-follow off."
+		}
+	}
+	if m.workflow.selectedRunID != "" {
+		if run := m.selectedRunForWorkflow(); run != nil {
+			m.workflow.scrollY = clampScroll(m.workflow.scrollY, len(m.renderWorkflowTreeRows(run, 80)))
+		} else {
+			m.workflow.scrollY = 0
 		}
 	}
 	return m, nil

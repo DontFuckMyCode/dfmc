@@ -1,6 +1,10 @@
 package cli
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/dontfuckmycode/dfmc/internal/commands"
+)
 
 func TestCompletionGenerators(t *testing.T) {
 	cmds := commandNames()
@@ -26,6 +30,31 @@ func TestCompletionGenerators(t *testing.T) {
 	pwsh := completionPowerShell(cmds)
 	if pwsh == "" || !containsAll(pwsh, []string{"Register-ArgumentCompleter", "version", "tui"}) {
 		t.Fatalf("unexpected powershell completion script: %s", pwsh)
+	}
+}
+
+func TestCommandDocsCoverCommandNames(t *testing.T) {
+	docs := map[string]string{}
+	for _, doc := range commandDocs() {
+		docs[doc.Name] = doc.Description
+	}
+	for _, name := range commandNames() {
+		desc, ok := docs[name]
+		if !ok {
+			t.Fatalf("commandDocs missing %q", name)
+		}
+		if desc == "" {
+			t.Fatalf("commandDocs has empty description for %q", name)
+		}
+	}
+}
+
+func TestCommandRegistryCoversCommandNames(t *testing.T) {
+	reg := commands.DefaultRegistry()
+	for _, name := range commandNames() {
+		if _, ok := reg.Lookup(name); !ok {
+			t.Fatalf("command registry missing CLI command %q", name)
+		}
 	}
 }
 

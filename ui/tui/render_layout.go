@@ -65,19 +65,25 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 	var content string
 	switch m.tabs[m.activeTab] {
 	case "Files":
-		content = fitPanelContentHeight(m.renderFilesViewSized(contentWidth, innerHeight), innerHeight)
+		panelHeight := panelContentHeightForActionMenu(innerHeight, m.actionMenu.open && m.actionMenu.owner == "Files")
+		content = fitPanelContentHeight(m.renderFilesViewSized(contentWidth, panelHeight), innerHeight)
 	case "Patch":
-		content = fitPanelContentHeight(m.renderPatchView(contentWidth), innerHeight)
+		panelHeight := panelContentHeightForActionMenu(innerHeight, m.actionMenu.open && m.actionMenu.owner == "Patch")
+		content = fitPanelContentHeight(m.renderPatchViewSized(contentWidth, panelHeight), innerHeight)
 	case "Workflow":
-		content = fitPanelContentHeight(m.renderWorkflowView(contentWidth), innerHeight)
+		panelHeight := panelContentHeightForActionMenu(innerHeight, m.actionMenu.open && m.actionMenu.owner == "Workflow")
+		content = fitPanelContentHeight(m.renderWorkflowViewSized(contentWidth, panelHeight), innerHeight)
 	case "Activity":
 		content = m.renderActivityViewSized(contentWidth, innerHeight)
 	case "Memory":
-		content = fitPanelContentHeight(m.renderMemoryView(contentWidth), innerHeight)
+		panelHeight := panelContentHeightForActionMenu(innerHeight, m.actionMenu.open && m.actionMenu.owner == "Memory")
+		content = fitPanelContentHeight(m.renderMemoryViewSized(contentWidth, panelHeight), innerHeight)
 	case "Conversations":
-		content = fitPanelContentHeight(m.renderConversationsView(contentWidth), innerHeight)
+		panelHeight := panelContentHeightForActionMenu(innerHeight, m.actionMenu.open && m.actionMenu.owner == "Conversations")
+		content = fitPanelContentHeight(m.renderConversationsViewSized(contentWidth, panelHeight), innerHeight)
 	case "Providers":
-		content = fitPanelContentHeight(m.renderProvidersView(contentWidth), innerHeight)
+		panelHeight := panelContentHeightForActionMenu(innerHeight, m.actionMenu.open && m.actionMenu.owner == "Providers")
+		content = fitPanelContentHeight(m.renderProvidersViewSized(contentWidth, panelHeight), innerHeight)
 	default:
 		panelVisible := m.statsPanelVisible(contentWidth)
 		boosted := m.statsPanelBoostActive(time.Now())
@@ -123,6 +129,13 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(pal.Border)
 	return frame.Width(width).Height(height).Render(content)
+}
+
+func panelContentHeightForActionMenu(height int, open bool) int {
+	if !open {
+		return height
+	}
+	return max(height-8, 4)
 }
 
 func reservedPanelLeftPad(reservedWidth, panelWidth int) string {

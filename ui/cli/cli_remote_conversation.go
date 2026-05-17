@@ -32,7 +32,7 @@ func remoteConversation(eng *engine.Engine, args []string, jsonMode bool) int {
 	}
 	fs := flag.NewFlagSet("remote conversation", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
@@ -49,8 +49,9 @@ func remoteConversation(eng *engine.Engine, args []string, jsonMode bool) int {
 
 	switch action {
 	case "list":
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversations?limit=" + strconv.Itoa(*limit)
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		v := url.Values{}
+		v.Set("limit", strconv.Itoa(*limit))
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/conversations", v, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote conversation list error: %v\n", err)
 			return 1
@@ -65,8 +66,7 @@ func remoteConversation(eng *engine.Engine, args []string, jsonMode bool) int {
 		v := url.Values{}
 		v.Set("q", q)
 		v.Set("limit", strconv.Itoa(*limit))
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversations/search?" + v.Encode()
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/conversations/search", v, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote conversation search error: %v\n", err)
 			return 1
@@ -74,8 +74,7 @@ func remoteConversation(eng *engine.Engine, args []string, jsonMode bool) int {
 		mustPrintJSON(payload)
 		return 0
 	case "active":
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation"
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/conversation", nil, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote conversation active error: %v\n", err)
 			return 1
@@ -83,8 +82,7 @@ func remoteConversation(eng *engine.Engine, args []string, jsonMode bool) int {
 		mustPrintJSON(payload)
 		return 0
 	case "new", "clear":
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/new"
-		payload, _, err := remoteJSONRequest(http.MethodPost, endpoint, *token, map[string]any{}, *timeout)
+		payload, _, err := remoteJSONEndpoint(http.MethodPost, *baseURL, "/api/v1/conversation/new", nil, *token, map[string]any{}, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote conversation new error: %v\n", err)
 			return 1
@@ -92,8 +90,7 @@ func remoteConversation(eng *engine.Engine, args []string, jsonMode bool) int {
 		mustPrintJSON(payload)
 		return 0
 	case "save":
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/save"
-		payload, _, err := remoteJSONRequest(http.MethodPost, endpoint, *token, map[string]any{}, *timeout)
+		payload, _, err := remoteJSONEndpoint(http.MethodPost, *baseURL, "/api/v1/conversation/save", nil, *token, map[string]any{}, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote conversation save error: %v\n", err)
 			return 1
@@ -109,8 +106,7 @@ func remoteConversation(eng *engine.Engine, args []string, jsonMode bool) int {
 			fmt.Fprintln(os.Stderr, "usage: dfmc remote conversation load --id <conversation-id>")
 			return 2
 		}
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/load"
-		payload, _, err := remoteJSONRequest(http.MethodPost, endpoint, *token, map[string]any{"id": convID}, *timeout)
+		payload, _, err := remoteJSONEndpoint(http.MethodPost, *baseURL, "/api/v1/conversation/load", nil, *token, map[string]any{"id": convID}, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote conversation load error: %v\n", err)
 			return 1
@@ -120,8 +116,7 @@ func remoteConversation(eng *engine.Engine, args []string, jsonMode bool) int {
 	case "branch":
 		switch branchAction {
 		case "list":
-			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/branches"
-			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/conversation/branches", nil, *token, nil, *timeout)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "remote conversation branch list error: %v\n", err)
 				return 1
@@ -137,8 +132,7 @@ func remoteConversation(eng *engine.Engine, args []string, jsonMode bool) int {
 				fmt.Fprintln(os.Stderr, "usage: dfmc remote conversation branch create --name <branch>")
 				return 2
 			}
-			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/branches/create"
-			payload, _, err := remoteJSONRequest(http.MethodPost, endpoint, *token, map[string]any{"name": branchName}, *timeout)
+			payload, _, err := remoteJSONEndpoint(http.MethodPost, *baseURL, "/api/v1/conversation/branches/create", nil, *token, map[string]any{"name": branchName}, *timeout)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "remote conversation branch create error: %v\n", err)
 				return 1
@@ -154,8 +148,7 @@ func remoteConversation(eng *engine.Engine, args []string, jsonMode bool) int {
 				fmt.Fprintln(os.Stderr, "usage: dfmc remote conversation branch switch --name <branch>")
 				return 2
 			}
-			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/branches/switch"
-			payload, _, err := remoteJSONRequest(http.MethodPost, endpoint, *token, map[string]any{"name": branchName}, *timeout)
+			payload, _, err := remoteJSONEndpoint(http.MethodPost, *baseURL, "/api/v1/conversation/branches/switch", nil, *token, map[string]any{"name": branchName}, *timeout)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "remote conversation branch switch error: %v\n", err)
 				return 1
@@ -178,8 +171,7 @@ func remoteConversation(eng *engine.Engine, args []string, jsonMode bool) int {
 			v := url.Values{}
 			v.Set("a", a)
 			v.Set("b", b)
-			endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/conversation/branches/compare?" + v.Encode()
-			payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+			payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/conversation/branches/compare", v, *token, nil, *timeout)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "remote conversation branch compare error: %v\n", err)
 				return 1

@@ -6,7 +6,12 @@ import (
 )
 
 func (m Model) renderProviderDetailView(width int) string {
+	return m.renderProviderDetailViewSized(width, 24)
+}
+
+func (m Model) renderProviderDetailViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = max(height, 1)
 	lines := []string{
 		sectionHeader("P", "Provider Detail"),
 		subtleStyle.Render(m.providerDetailHint()),
@@ -32,9 +37,15 @@ func (m Model) renderProviderDetailView(width int) string {
 		lines = append(lines, "", m.renderProviderTextEditBox(width))
 	}
 
-	lines = append(lines, m.renderProviderModelsSection(name, prof)...)
+	reservedRows := 6
+	if m.providers.modelPickerActive {
+		reservedRows += 4
+	}
+	modelRows := max(height-len(lines)-reservedRows, 1)
+	lines = append(lines, m.renderProviderModelsSectionSized(name, prof, modelRows)...)
 	lines = append(lines, m.renderProviderFallbackSection(prof)...)
-	lines = append(lines, m.renderProviderModelPickerSection()...)
+	pickerRows := max(height-len(lines)-4, 1)
+	lines = append(lines, m.renderProviderModelPickerSectionSized(pickerRows)...)
 	lines = append(lines, m.renderProviderUsageSection(name)...)
 
 	return strings.Join(lines, "\n")

@@ -17,7 +17,12 @@ import (
 )
 
 func (m Model) renderToolStatusView(width int) string {
+	return m.renderToolStatusViewSized(width, 24)
+}
+
+func (m Model) renderToolStatusViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = max(height, 6)
 	entries := m.toolCallLog.entries
 	if len(entries) == 0 {
 		return sectionHeader("T", "Tool Call History") + "\n" +
@@ -82,6 +87,10 @@ func (m Model) renderToolStatusView(width int) string {
 		} else {
 			visible = nil
 		}
+	}
+	rowBudget := max(height-5, 1)
+	if len(visible) > rowBudget {
+		visible = visible[:rowBudget]
 	}
 
 	footer := subtleStyle.Render("j/k scroll · G top · g bottom · esc close · ctrl+shift+t toggle")

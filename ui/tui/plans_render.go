@@ -110,7 +110,11 @@ func (m Model) plansTopBanner(width int) string {
 }
 
 func (m Model) renderPlansView(width int) string {
-	out := m.renderPlansViewInner(width)
+	return m.renderPlansViewSized(width, 24)
+}
+
+func (m Model) renderPlansViewSized(width, height int) string {
+	out := m.renderPlansViewInnerSized(width, height)
 	if m.actionMenu.open && m.actionMenu.owner == "Plans" {
 		out += "\n\n" + m.renderActionMenu(width)
 	}
@@ -118,7 +122,12 @@ func (m Model) renderPlansView(width int) string {
 }
 
 func (m Model) renderPlansViewInner(width int) string {
+	return m.renderPlansViewInnerSized(width, 24)
+}
+
+func (m Model) renderPlansViewInnerSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = max(height, 8)
 	banner := m.plansTopBanner(width)
 	hint := subtleStyle.Render("↑↓ scroll · → action menu · enter re-run · e edit · esc cancel")
 
@@ -173,16 +182,18 @@ func (m Model) renderPlansViewInner(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	scroll := clampScroll(m.plans.scroll, len(plan.Subtasks))
-	for i, s := range plan.Subtasks[scroll:] {
-		idx := scroll + i
-		selected := idx == m.plans.scroll
+	cursor := clampScroll(m.plans.scroll, len(plan.Subtasks))
+	rowBudget := max(height-len(lines)-8, 1)
+	start, end := scrollWindow(cursor, len(plan.Subtasks), rowBudget)
+	for idx := start; idx < end; idx++ {
+		s := plan.Subtasks[idx]
+		selected := idx == cursor
 		lines = append(lines, formatPlansSubtaskRow(idx, s, selected, width-2))
 	}
 
-	if m.plans.scroll >= 0 && m.plans.scroll < len(plan.Subtasks) {
-		lines = append(lines, "", subtleStyle.Render(fmt.Sprintf("subtask #%d", m.plans.scroll+1)))
-		lines = append(lines, formatPlansPreview(plan.Subtasks[m.plans.scroll], width-2)...)
+	if cursor >= 0 && cursor < len(plan.Subtasks) {
+		lines = append(lines, "", subtleStyle.Render(fmt.Sprintf("subtask #%d", cursor+1)))
+		lines = append(lines, formatPlansPreview(plan.Subtasks[cursor], width-2)...)
 	}
 
 	if !plan.Parallel && len(plan.Subtasks) > 1 {

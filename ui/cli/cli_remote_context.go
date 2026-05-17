@@ -29,7 +29,7 @@ func remoteContext(eng *engine.Engine, args []string, jsonMode bool) int {
 	}
 	fs := flag.NewFlagSet("remote context", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 20*time.Second, "request timeout")
@@ -55,23 +55,8 @@ func remoteContext(eng *engine.Engine, args []string, jsonMode bool) int {
 		if q != "" {
 			v.Set("q", q)
 		}
-		if p := strings.TrimSpace(*runtimeProvider); p != "" {
-			v.Set("runtime_provider", p)
-		}
-		if m := strings.TrimSpace(*runtimeModel); m != "" {
-			v.Set("runtime_model", m)
-		}
-		if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
-			v.Set("runtime_tool_style", ts)
-		}
-		if *runtimeMaxContext > 0 {
-			v.Set("runtime_max_context", strconv.Itoa(*runtimeMaxContext))
-		}
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/context/budget"
-		if encoded := v.Encode(); encoded != "" {
-			endpoint += "?" + encoded
-		}
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		addRemoteRuntimeQuery(v, *runtimeProvider, *runtimeModel, *runtimeToolStyle, *runtimeMaxContext)
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/context/budget", v, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote context budget error: %v\n", err)
 			return 1
@@ -87,23 +72,8 @@ func remoteContext(eng *engine.Engine, args []string, jsonMode bool) int {
 		if q != "" {
 			v.Set("q", q)
 		}
-		if p := strings.TrimSpace(*runtimeProvider); p != "" {
-			v.Set("runtime_provider", p)
-		}
-		if m := strings.TrimSpace(*runtimeModel); m != "" {
-			v.Set("runtime_model", m)
-		}
-		if ts := strings.TrimSpace(*runtimeToolStyle); ts != "" {
-			v.Set("runtime_tool_style", ts)
-		}
-		if *runtimeMaxContext > 0 {
-			v.Set("runtime_max_context", strconv.Itoa(*runtimeMaxContext))
-		}
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/context/recommend"
-		if encoded := v.Encode(); encoded != "" {
-			endpoint += "?" + encoded
-		}
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		addRemoteRuntimeQuery(v, *runtimeProvider, *runtimeModel, *runtimeToolStyle, *runtimeMaxContext)
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/context/recommend", v, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote context recommend error: %v\n", err)
 			return 1
@@ -118,11 +88,7 @@ func remoteContext(eng *engine.Engine, args []string, jsonMode bool) int {
 		if p := strings.TrimSpace(*briefPath); p != "" {
 			v.Set("path", p)
 		}
-		endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/context/brief"
-		if encoded := v.Encode(); encoded != "" {
-			endpoint += "?" + encoded
-		}
-		payload, _, err := remoteJSONRequest(http.MethodGet, endpoint, *token, nil, *timeout)
+		payload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/context/brief", v, *token, nil, *timeout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "remote context brief error: %v\n", err)
 			return 1

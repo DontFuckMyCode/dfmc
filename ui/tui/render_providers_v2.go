@@ -13,8 +13,12 @@ import (
 func providerEnvVarLookup(name string) string { return config.EnvVarForProvider(name) }
 
 func (m Model) renderProviderListViewV2(width int) string {
+	return m.renderProviderListViewV2Sized(width, 24)
+}
+
+func (m Model) renderProviderListViewV2Sized(width, height int) string {
 	width = clampInt(width, 24, 1000)
-	height := 24
+	height = max(height, 8)
 
 	pal := paletteForTab("Providers", false)
 	threePane := width >= 120
@@ -187,7 +191,7 @@ func (m Model) renderProvidersListPane(width, height int, pal tabPaletteEntry, r
 		return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 	}
 
-	rowBudget := max(height-6, 6)
+	rowBudget := max(height-6, 1)
 	scroll := clampScroll(m.providers.scroll, len(rows))
 	start, end := scrollWindow(scroll, len(rows), rowBudget)
 	for i := start; i < end; i++ {

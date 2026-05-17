@@ -31,8 +31,12 @@ import (
 
 // renderPatchViewV2 is the rebuilt F4 Patch panel.
 func (m Model) renderPatchViewV2(width int) string {
+	return m.renderPatchViewV2Sized(width, 24)
+}
+
+func (m Model) renderPatchViewV2Sized(width, height int) string {
 	width = max(width, 50)
-	height := 24 // legacy renderPatchView used 18-row sub-panes
+	height = max(height, 8)
 
 	pal := paletteForTab("Patch", false)
 
@@ -122,7 +126,7 @@ func (m Model) renderPatchFilesPane(width, height int, pal tabPaletteEntry) stri
 		lines = append(lines,
 			"  "+subtleStyle.Render("No active patch."))
 	} else {
-		rowBudget := max(height-6, 6)
+		rowBudget := max(height-6, 1)
 		start, end := scrollWindow(m.patchView.index, len(m.patchView.set), rowBudget)
 		for i := start; i < end; i++ {
 			lines = append(lines, m.renderPatchFileRow(i, width, pal))

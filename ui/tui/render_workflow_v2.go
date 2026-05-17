@@ -31,8 +31,12 @@ import (
 // renderWorkflowViewV2 is the rebuilt F5 Workflow panel. The original
 // renderWorkflowView in render_workflow.go now delegates here.
 func (m Model) renderWorkflowViewV2(width int) string {
+	return m.renderWorkflowViewV2Sized(width, 24)
+}
+
+func (m Model) renderWorkflowViewV2Sized(width, height int) string {
 	width = max(width, 50)
-	height := 24
+	height = max(height, 8)
 
 	pal := paletteForTab("Workflow", false)
 
@@ -146,7 +150,7 @@ func (m Model) renderWorkflowRunsPane(width, height int, pal tabPaletteEntry) st
 			"  "+subtleStyle.Render("Start one from chat with /drive <task>."),
 			"  "+subtleStyle.Render("CLI: dfmc drive <task>."))
 	} else {
-		rowBudget := max(height-6, 6)
+		rowBudget := max(height-6, 1)
 		cursor := m.workflow.selectedIndex
 		if m.workflow.selectedRunID != "" {
 			for i, r := range m.workflow.runs {
@@ -251,10 +255,15 @@ func (m Model) renderWorkflowTreePane(width, height int, pal tabPaletteEntry) st
 	}
 	lines = append(lines, "  "+strings.Join(stripParts, "  ·  "), "")
 
-	rowBudget := max(height-10, 8)
+	rowBudget := max(height-10, 1)
 	rows := m.renderWorkflowTreeRows(run, width)
-	if len(rows) > rowBudget {
-		rows = rows[:rowBudget]
+	if len(rows) > 0 {
+		cursor := clampScroll(m.workflow.scrollY, len(rows))
+		renderModel := m
+		renderModel.workflow.scrollY = cursor
+		rows = renderModel.renderWorkflowTreeRows(run, width)
+		start, end := scrollWindow(cursor, len(rows), rowBudget)
+		rows = rows[start:end]
 	}
 	lines = append(lines, rows...)
 

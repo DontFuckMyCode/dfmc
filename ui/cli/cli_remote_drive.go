@@ -32,40 +32,13 @@ import (
 // to tail drive:* events from the same process.
 func runRemoteDrive(eng *engine.Engine, args []string, jsonMode bool) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, `usage: dfmc remote drive ["<task>" | list | show <id> | resume <id> | delete <id>]`)
+		fmt.Fprintln(os.Stderr, remoteDriveUsage())
 		return 2
 	}
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 
-	switch args[0] {
-	case "list":
-		return remoteDriveList(defaultURL, args[1:], jsonMode)
-	case "show":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: dfmc remote drive show <id>")
-			return 2
-		}
-		return remoteDriveShow(defaultURL, args[1], args[2:], jsonMode)
-	case "resume":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: dfmc remote drive resume <id>")
-			return 2
-		}
-		return remoteDriveResume(defaultURL, args[1], args[2:], jsonMode)
-	case "delete":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: dfmc remote drive delete <id>")
-			return 2
-		}
-		return remoteDriveDelete(defaultURL, args[1], args[2:], jsonMode)
-	case "stop", "cancel":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: dfmc remote drive stop <id>")
-			return 2
-		}
-		return remoteDriveStop(defaultURL, args[1], args[2:], jsonMode)
-	case "active":
-		return remoteDriveActive(defaultURL, args[1:], jsonMode)
+	if code, ok := dispatchRemoteDriveCommand(defaultURL, args[0], args[1:], jsonMode); ok {
+		return code
 	}
 
 	// Default: treat the whole arg list as the task and start a run.
@@ -115,9 +88,7 @@ func remoteDriveStart(defaultURL string, args []string, jsonMode bool) int {
 		"routing":          routingStr,
 		"auto_approve":     parseAutoApproveFlag(*autoApprove),
 	}
-	payload, status, err := remoteJSONRequest(http.MethodPost,
-		strings.TrimRight(*baseURL, "/")+"/api/v1/drive",
-		*token, body, *timeout)
+	payload, status, err := remoteJSONEndpoint(http.MethodPost, *baseURL, "/api/v1/drive", nil, *token, body, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote drive start: %v\n", err)
 		return 1

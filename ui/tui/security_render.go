@@ -118,7 +118,11 @@ func (m Model) securityTopBanner(width int, viewLabel string) string {
 }
 
 func (m Model) renderSecurityView(width int) string {
-	out := m.renderSecurityViewInner(width)
+	return m.renderSecurityViewSized(width, 24)
+}
+
+func (m Model) renderSecurityViewSized(width, height int) string {
+	out := m.renderSecurityViewInnerSized(width, height)
 	if m.actionMenu.open && m.actionMenu.owner == "Security" {
 		out += "\n\n" + m.renderActionMenu(width)
 	}
@@ -126,7 +130,12 @@ func (m Model) renderSecurityView(width int) string {
 }
 
 func (m Model) renderSecurityViewInner(width int) string {
+	return m.renderSecurityViewInnerSized(width, 24)
+}
+
+func (m Model) renderSecurityViewInnerSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = max(height, 8)
 	viewLabel := "secrets"
 	if m.security.view == securityViewVulns {
 		viewLabel = "vulns"
@@ -212,8 +221,11 @@ func (m Model) renderSecurityViewInner(width int) string {
 			return strings.Join(lines, "\n")
 		}
 		scroll := clampScroll(m.security.scroll, len(filtered))
-		for i, v := range filtered[scroll:] {
-			selected := (scroll + i) == m.security.scroll
+		rowBudget := max(height-len(lines)-3, 1)
+		start, end := scrollWindow(scroll, len(filtered), rowBudget)
+		for i := start; i < end; i++ {
+			v := filtered[i]
+			selected := i == scroll
 			ignored := m.security.ignored[vulnFingerprint(v)]
 			lines = append(lines, formatVulnRow(v, selected, ignored, width-2))
 		}
@@ -232,8 +244,11 @@ func (m Model) renderSecurityViewInner(width int) string {
 		return strings.Join(lines, "\n")
 	}
 	scroll := clampScroll(m.security.scroll, len(filtered))
-	for i, s := range filtered[scroll:] {
-		selected := (scroll + i) == m.security.scroll
+	rowBudget := max(height-len(lines)-3, 1)
+	start, end := scrollWindow(scroll, len(filtered), rowBudget)
+	for i := start; i < end; i++ {
+		s := filtered[i]
+		selected := i == scroll
 		ignored := m.security.ignored[secretFingerprint(s)]
 		lines = append(lines, formatSecretRow(s, selected, ignored, width-2))
 	}

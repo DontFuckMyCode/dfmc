@@ -8,7 +8,12 @@ import (
 )
 
 func (m Model) renderProviderCatalogView(width int) string {
+	return m.renderProviderCatalogViewSized(width, 24)
+}
+
+func (m Model) renderProviderCatalogViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = max(height, 1)
 	if !m.providers.catalogLoaded {
 		m = m.loadProviderCatalogItems()
 	}
@@ -26,7 +31,8 @@ func (m Model) renderProviderCatalogView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 	cursor := clampScroll(m.providers.catalogScroll, len(m.providers.catalogItems))
-	start, end := scrollWindow(cursor, len(m.providers.catalogItems), 18)
+	rowBudget := max(height-len(lines)-3, 1)
+	start, end := scrollWindow(cursor, len(m.providers.catalogItems), rowBudget)
 	for i := start; i < end; i++ {
 		item := m.providers.catalogItems[i]
 		prefix := "  "
@@ -124,12 +130,17 @@ func (m Model) renderProviderTextEditBox(width int) string {
 }
 
 func (m Model) renderProviderTiersView(width int) string {
+	return m.renderProviderTiersViewSized(width, 24)
+}
+
+func (m Model) renderProviderTiersViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = max(height, 1)
 	refs := m.providerModelRefs()
 	leftW := max(width*45/100, 34)
 	rightW := max(width-leftW-2, 28)
 	left := m.renderTierMatrixPane(leftW)
-	right := m.renderTierModelPickerPane(rightW, refs)
+	right := m.renderTierModelPickerPaneSized(rightW, refs, max(height-5, 1))
 	return sectionHeader("T", "Tiers") + "\n" +
 		subtleStyle.Render("up/down slot - left/right model - enter assign - esc back") + "\n" +
 		renderDivider(width-2) + "\n" +
@@ -137,13 +148,19 @@ func (m Model) renderProviderTiersView(width int) string {
 }
 
 func (m Model) renderProviderSkillsView(width int) string {
+	return m.renderProviderSkillsViewSized(width, 24)
+}
+
+func (m Model) renderProviderSkillsViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = max(height, 1)
 	skills := collectSkills(m.projectRoot())
 	refs := append([]string{"frontier", "medium", "turbo", "weak"}, m.providerModelRefs()...)
 	leftW := max(width*42/100, 30)
 	rightW := max(width-leftW-2, 28)
-	left := m.renderSkillListPane(leftW, skills)
-	right := m.renderSkillRoutePickerPane(rightW, refs)
+	paneRows := max(height-5, 1)
+	left := m.renderSkillListPaneSized(leftW, skills, paneRows)
+	right := m.renderSkillRoutePickerPaneSized(rightW, refs, paneRows)
 	return sectionHeader("S", "Skill Model Routes") + "\n" +
 		subtleStyle.Render("up/down skill - left/right model/tier - enter assign - esc back") + "\n" +
 		renderDivider(width-2) + "\n" +
@@ -151,13 +168,17 @@ func (m Model) renderProviderSkillsView(width int) string {
 }
 
 func (m Model) renderSkillListPane(width int, skills []skillEntry) string {
+	return m.renderSkillListPaneSized(width, skills, 20)
+}
+
+func (m Model) renderSkillListPaneSized(width int, skills []skillEntry, rowBudget int) string {
 	lines := []string{sectionTitleStyle.Render("Skills")}
 	if len(skills) == 0 {
 		lines = append(lines, "", subtleStyle.Render("No skills discovered."))
 		return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 	}
 	cursor := clampScroll(m.providers.skillCursor, len(skills))
-	start, end := scrollWindow(cursor, len(skills), 20)
+	start, end := scrollWindow(cursor, len(skills), max(rowBudget, 1))
 	for i := start; i < end; i++ {
 		prefix := "  "
 		name := truncateSingleLine(skills[i].Name, max(width-22, 8))
@@ -172,13 +193,17 @@ func (m Model) renderSkillListPane(width int, skills []skillEntry) string {
 }
 
 func (m Model) renderSkillRoutePickerPane(width int, refs []string) string {
+	return m.renderSkillRoutePickerPaneSized(width, refs, 20)
+}
+
+func (m Model) renderSkillRoutePickerPaneSized(width int, refs []string, rowBudget int) string {
 	lines := []string{sectionTitleStyle.Render("Tier Or Model")}
 	if len(refs) == 0 {
 		lines = append(lines, "", warnStyle.Render("No model refs available."))
 		return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 	}
 	cursor := clampScroll(m.providers.skillModelCursor, len(refs))
-	start, end := scrollWindow(cursor, len(refs), 20)
+	start, end := scrollWindow(cursor, len(refs), max(rowBudget, 1))
 	for i := start; i < end; i++ {
 		prefix := "  "
 		label := truncateSingleLine(refs[i], max(width-4, 8))
@@ -218,13 +243,17 @@ func (m Model) renderTierMatrixPane(width int) string {
 }
 
 func (m Model) renderTierModelPickerPane(width int, refs []string) string {
+	return m.renderTierModelPickerPaneSized(width, refs, 20)
+}
+
+func (m Model) renderTierModelPickerPaneSized(width int, refs []string, rowBudget int) string {
 	lines := []string{sectionTitleStyle.Render("Keyed Models")}
 	if len(refs) == 0 {
 		lines = append(lines, "", warnStyle.Render("No keyed models yet."), subtleStyle.Render("Add a provider from the synced models.dev catalog first."))
 		return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 	}
 	cursor := clampScroll(m.providers.modelCursor, len(refs))
-	start, end := scrollWindow(cursor, len(refs), 20)
+	start, end := scrollWindow(cursor, len(refs), max(rowBudget, 1))
 	for i := start; i < end; i++ {
 		prefix := "  "
 		label := truncateSingleLine(refs[i], max(width-4, 8))

@@ -16,7 +16,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,9 +32,7 @@ func remoteDriveStop(defaultURL, id string, args []string, jsonMode bool) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	payload, status, err := remoteJSONRequest(http.MethodPost,
-		strings.TrimRight(*baseURL, "/")+"/api/v1/drive/"+url.PathEscape(id)+"/stop",
-		*token, nil, *timeout)
+	payload, status, err := remoteJSONEndpoint(http.MethodPost, *baseURL, "/api/v1/drive/"+url.PathEscape(id)+"/stop", nil, *token, nil, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote drive stop: %v\n", err)
 		return 1
@@ -58,14 +55,11 @@ func remoteDriveActive(defaultURL string, args []string, jsonMode bool) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	endpoint := strings.TrimRight(*baseURL, "/") + "/api/v1/drive/active"
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	endpoint := remoteEndpoint(*baseURL, "/api/v1/drive/active", nil)
+	req, err := remoteRequest(http.MethodGet, endpoint, *token, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote drive active: %v\n", err)
 		return 1
-	}
-	if tok := strings.TrimSpace(*token); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	client := &http.Client{Timeout: *timeout}
 	resp, err := client.Do(req)
@@ -74,7 +68,7 @@ func remoteDriveActive(defaultURL string, args []string, jsonMode bool) int {
 		return 1
 	}
 	defer resp.Body.Close()
-	rawBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	rawBody, _ := readRemoteResponseBody(resp, 1<<20)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		fmt.Fprintf(os.Stderr, "remote drive active failed (HTTP %d): %s\n", resp.StatusCode, strings.TrimSpace(string(rawBody)))
 		return 1
@@ -109,14 +103,11 @@ func remoteDriveList(defaultURL string, args []string, jsonMode bool) int {
 	}
 	// /api/v1/drive returns a JSON array, not an object — bypass
 	// remoteJSONRequest (which assumes objects) and decode raw.
-	endpoint := strings.TrimRight(*baseURL, "/") + "/api/v1/drive"
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	endpoint := remoteEndpoint(*baseURL, "/api/v1/drive", nil)
+	req, err := remoteRequest(http.MethodGet, endpoint, *token, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote drive list: %v\n", err)
 		return 1
-	}
-	if tok := strings.TrimSpace(*token); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	client := &http.Client{Timeout: *timeout}
 	resp, err := client.Do(req)
@@ -125,7 +116,7 @@ func remoteDriveList(defaultURL string, args []string, jsonMode bool) int {
 		return 1
 	}
 	defer resp.Body.Close()
-	rawBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	rawBody, _ := readRemoteResponseBody(resp, 2<<20)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		fmt.Fprintf(os.Stderr, "remote drive list failed (HTTP %d): %s\n", resp.StatusCode, strings.TrimSpace(string(rawBody)))
 		return 1
@@ -159,9 +150,7 @@ func remoteDriveShow(defaultURL, id string, args []string, jsonMode bool) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	payload, status, err := remoteJSONRequest(http.MethodGet,
-		strings.TrimRight(*baseURL, "/")+"/api/v1/drive/"+url.PathEscape(id),
-		*token, nil, *timeout)
+	payload, status, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/drive/"+url.PathEscape(id), nil, *token, nil, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote drive show: %v\n", err)
 		return 1
@@ -184,9 +173,7 @@ func remoteDriveResume(defaultURL, id string, args []string, jsonMode bool) int 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	payload, status, err := remoteJSONRequest(http.MethodPost,
-		strings.TrimRight(*baseURL, "/")+"/api/v1/drive/"+url.PathEscape(id)+"/resume",
-		*token, nil, *timeout)
+	payload, status, err := remoteJSONEndpoint(http.MethodPost, *baseURL, "/api/v1/drive/"+url.PathEscape(id)+"/resume", nil, *token, nil, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote drive resume: %v\n", err)
 		return 1
@@ -213,9 +200,7 @@ func remoteDriveDelete(defaultURL, id string, args []string, jsonMode bool) int 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	payload, _, err := remoteJSONRequest(http.MethodDelete,
-		strings.TrimRight(*baseURL, "/")+"/api/v1/drive/"+url.PathEscape(id),
-		*token, nil, *timeout)
+	payload, _, err := remoteJSONEndpoint(http.MethodDelete, *baseURL, "/api/v1/drive/"+url.PathEscape(id), nil, *token, nil, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote drive delete: %v\n", err)
 		return 1

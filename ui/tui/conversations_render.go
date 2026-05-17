@@ -102,7 +102,12 @@ func formatConversationPreview(msgs []types.Message, width int) []string {
 }
 
 func (m Model) renderConversationsView(width int) string {
+	return m.renderConversationsViewSized(width, 24)
+}
+
+func (m Model) renderConversationsViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = max(height, 8)
 	banner := m.conversationsTopBanner(width)
 	hint := subtleStyle.Render("j/k scroll · enter preview · L resume · / search · S deep-search · r refresh · c clear")
 	queryLine := subtleStyle.Render("query ")
@@ -149,23 +154,23 @@ func (m Model) renderConversationsView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	scroll := m.conversations.scroll
-	if scroll < 0 {
-		scroll = 0
+	cursor := clampScroll(m.conversations.scroll, len(filtered))
+	rowBudget := max(height-len(lines)-4, 1)
+	if m.conversations.previewID != "" {
+		rowBudget = max(rowBudget-6, 1)
 	}
-	if scroll >= len(filtered) {
-		scroll = len(filtered) - 1
-	}
+	start, end := scrollWindow(cursor, len(filtered), rowBudget)
 
-	for i, s := range filtered[scroll:] {
-		selected := (scroll + i) == m.conversations.scroll
+	for i := start; i < end; i++ {
+		s := filtered[i]
+		selected := i == cursor
 		lines = append(lines, formatConversationRow(s, selected, width-2))
 	}
 
 	// Preview pane (only when the highlighted entry's preview is loaded).
 	selectedID := ""
-	if m.conversations.scroll >= 0 && m.conversations.scroll < len(filtered) {
-		selectedID = filtered[m.conversations.scroll].ID
+	if cursor >= 0 && cursor < len(filtered) {
+		selectedID = filtered[cursor].ID
 	}
 	if selectedID != "" && selectedID == m.conversations.previewID {
 		// Preview is read-only — Manager.LoadReadOnly does NOT change the
@@ -196,8 +201,8 @@ func (m Model) renderConversationsView(width int) string {
 	}
 
 	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
-		"%d shown · %d loaded",
-		len(filtered), len(m.conversations.entries),
+		"%d / %d shown · %d loaded",
+		cursor+1, len(filtered), len(m.conversations.entries),
 	)))
 	out := strings.Join(lines, "\n")
 	if m.actionMenu.open && m.actionMenu.owner == "Conversations" {

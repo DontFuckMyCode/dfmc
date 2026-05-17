@@ -22,7 +22,11 @@ import (
 )
 
 func (m Model) renderWorkflowView(width int) string {
-	return m.renderWorkflowViewV2(width)
+	return m.renderWorkflowViewSized(width, 24)
+}
+
+func (m Model) renderWorkflowViewSized(width, height int) string {
+	return m.renderWorkflowViewV2Sized(width, height)
 }
 
 func (m Model) selectedRunForWorkflow() *drive.Run {
@@ -59,6 +63,7 @@ func (m Model) renderWorkflowTreeRows(run *drive.Run, width int) []string {
 	}
 
 	var rows []string
+	visible := 0
 	var walk func(t *drive.Todo, depth int)
 	walk = func(t *drive.Todo, depth int) {
 		prefix := strings.Repeat("  ", depth)
@@ -96,7 +101,13 @@ func (m Model) renderWorkflowTreeRows(run *drive.Run, width int) []string {
 		if tagStr != "" {
 			line += "  " + tagStr
 		}
+		if visible == m.workflow.scrollY {
+			line = accentStyle.Bold(true).Render("> ") + line
+		} else {
+			line = "  " + line
+		}
 		rows = append(rows, line)
+		visible++
 		if expanded {
 			for _, child := range kids[t.ID] {
 				walk(child, depth+1)

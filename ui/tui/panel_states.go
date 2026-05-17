@@ -159,6 +159,7 @@ type diagnosticPanelsState struct {
 	orchestrate   scrollOnlyPanelState
 	shortcuts     scrollOnlyPanelState
 	providerLog   scrollOnlyPanelState
+	contexts      scrollOnlyPanelState
 	// helpOverlay scroll is shared by the Ctrl+H overlay rendered on
 	// non-Chat tabs (the Chat-tab inline widget has its own scroll
 	// behaviour). j/k/pgup/pgdn/g/G adjust it via handleHelpOverlayKey.

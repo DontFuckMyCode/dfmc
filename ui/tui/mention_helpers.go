@@ -155,16 +155,17 @@ func truncateCommandBlock(text string, max int) string {
 }
 
 func (m Model) selectedFile() string {
-	if len(m.filesView.entries) == 0 {
+	entries := m.visibleFilesEntries()
+	if len(entries) == 0 {
 		return ""
 	}
 	if m.filesView.index < 0 {
-		return m.filesView.entries[0]
+		return entries[0]
 	}
-	if m.filesView.index >= len(m.filesView.entries) {
-		return m.filesView.entries[len(m.filesView.entries)-1]
+	if m.filesView.index >= len(entries) {
+		return entries[len(entries)-1]
 	}
-	return m.filesView.entries[m.filesView.index]
+	return entries[m.filesView.index]
 }
 
 // truncateSingleLine clips `text` to at most `width` visible terminal cells.

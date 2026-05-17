@@ -19,7 +19,7 @@ func (m Model) renderFilesViewSized(width, height int) string {
 }
 
 func (m Model) renderToolsView(width int) string {
-	return m.renderToolsViewV2(width)
+	return m.renderToolsViewSized(width, 24)
 }
 
 func (m Model) renderFooter(width int) string {

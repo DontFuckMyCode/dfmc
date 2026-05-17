@@ -174,6 +174,35 @@ func TestRenderCodemapViewWithSnapShowsSummary(t *testing.T) {
 	}
 }
 
+func TestRenderCodemapVisualKeepsCursorVisible(t *testing.T) {
+	m := newCodemapTestModel()
+	nodes := map[string]codemap.Node{}
+	edges := []codemap.Edge{}
+	hotspots := []codemap.Node{}
+	for i := 0; i < 12; i++ {
+		id := "sym:fn" + string(rune('a'+i))
+		node := codemap.Node{ID: id, Name: "fn" + string(rune('a'+i)), Kind: "function", Language: "go"}
+		nodes[id] = node
+		hotspots = append(hotspots, node)
+	}
+	m.codemap.snap = codemapSnapshot{
+		Nodes:    len(nodes),
+		Hotspots: hotspots,
+		AllNodes: nodes,
+		AllEdges: edges,
+	}
+	m.codemap.view = codemapViewVisual
+	m.codemap.visualCursor = 18
+
+	out := stripANSI(m.renderCodemapViewSized(100, 10))
+	if !strings.Contains(out, "fnj") {
+		t.Fatalf("visual cursor row should stay visible, got:\n%s", out)
+	}
+	if strings.Contains(out, "fna") {
+		t.Fatalf("visual tree should not render from the top after cursor moves, got:\n%s", out)
+	}
+}
+
 func TestHandleCodemapKeyCyclesViewAndResetsScroll(t *testing.T) {
 	m := newCodemapTestModel()
 	m.codemap.snap = sampleCodemapSnap()

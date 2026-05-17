@@ -79,6 +79,34 @@ func TestWorkflowViewV2_SelectedRunRendersMetaCards(t *testing.T) {
 	}
 }
 
+func TestWorkflowTreePaneScrollsToSelectedTodoWindow(t *testing.T) {
+	m := newCoverageModel(t)
+	todos := make([]drive.Todo, 24)
+	for i := range todos {
+		todos[i] = drive.Todo{
+			ID:     "todo-" + string(rune('a'+i)),
+			Title:  "task row " + string(rune('a'+i)),
+			Status: drive.TodoPending,
+		}
+	}
+	m.workflow.runs = []*drive.Run{{
+		ID:     "drv-scroll",
+		Task:   "Long tree",
+		Status: drive.RunRunning,
+		Todos:  todos,
+	}}
+	m.workflow.selectedRunID = "drv-scroll"
+	m.workflow.scrollY = 18
+
+	view := stripANSI(m.renderWorkflowTreePane(88, 14, paletteForTab("Workflow", false)))
+	if !strings.Contains(view, "task row s") {
+		t.Fatalf("selected TODO row should be visible after scrolling, got:\n%s", view)
+	}
+	if strings.Contains(view, "task row a") {
+		t.Fatalf("tree pane should not keep rendering from the top after scroll, got:\n%s", view)
+	}
+}
+
 // TestWorkflowPanelWidths_BreakpointsBehave pins the 3/2/1-pane split.
 func TestWorkflowPanelWidths_BreakpointsBehave(t *testing.T) {
 	t.Run("three-pane", func(t *testing.T) {

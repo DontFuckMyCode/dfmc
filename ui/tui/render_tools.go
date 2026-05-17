@@ -8,8 +8,12 @@ import (
 )
 
 func (m Model) renderToolsViewV2(width int) string {
+	return m.renderToolsViewSized(width, 24)
+}
+
+func (m Model) renderToolsViewSized(width, height int) string {
 	width = max(width, 50)
-	height := 24
+	height = max(height, 8)
 
 	pal := paletteForTab("Tools", false)
 	tools := m.availableTools()
@@ -83,9 +87,9 @@ func (m Model) renderToolsListPane(width, height int, pal tabPaletteEntry, tools
 			subtleStyle.Render("re-run dfmc init."),
 		)
 	} else {
-		rowBudget := max(height-6, 6)
-		scroll := m.toolView.scroll
-		for i := scroll; i < scroll+rowBudget && i < len(tools); i++ {
+		rowBudget := max(height-6, 1)
+		start, end := scrollWindow(m.toolView.index, len(tools), rowBudget)
+		for i := start; i < end; i++ {
 			lines = append(lines, m.renderToolsListRow(i, width, pal, tools))
 		}
 		lines = append(lines, "", subtleStyle.Render(fmt.Sprintf("%d / %d tools", m.toolView.index+1, len(tools))))

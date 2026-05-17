@@ -1,7 +1,7 @@
 // Shell completion scripts and man page generation: `dfmc completion`
-// (bash/zsh/fish/powershell) and `dfmc man` (man/markdown). Extracted
-// from cli_admin.go. The command catalog (commandNames / commandDocs)
-// is the shared source of truth and lives here with its consumers.
+// (bash/zsh/fish/powershell) and `dfmc man` (man/markdown). Completion
+// command names are derived from the top-level dispatcher so new CLI
+// commands do not need a second hand-maintained completion list.
 
 package cli
 
@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/dontfuckmycode/dfmc/internal/commands"
 )
 
 func runCompletion(args []string, jsonMode bool) int {
@@ -59,37 +61,37 @@ type commandDoc struct {
 }
 
 func commandDocs() []commandDoc {
-	return []commandDoc{
-		{Name: "status", Description: "Runtime status snapshot"},
-		{Name: "init", Description: "Initialize DFMC in project"},
-		{Name: "chat", Description: "Interactive chat session"},
-		{Name: "tui", Description: "Terminal workbench (chat/status/patch)"},
-		{Name: "ask", Description: "One-shot question"},
-		{Name: "analyze", Description: "Analyze codebase"},
-		{Name: "scan", Description: "Quick security scan"},
-		{Name: "map", Description: "Generate/display codemap"},
-		{Name: "tool", Description: "Tool engine (list/run)"},
-		{Name: "conversation", Description: "Conversation management (list/search/load/save/undo/branch)"},
-		{Name: "memory", Description: "Memory management"},
-		{Name: "config", Description: "Configuration management"},
-		{Name: "context", Description: "Context budget and recent files"},
-		{Name: "prompt", Description: "Prompt library management"},
-		{Name: "magicdoc", Description: "Build/show concise project magic doc"},
-		{Name: "plugin", Description: "Plugin management"},
-		{Name: "skill", Description: "Skill management"},
-		{Name: "serve", Description: "Start Web API server"},
-		{Name: "remote", Description: "Remote control server"},
-		{Name: "doctor", Description: "Environment and config health checks"},
-		{Name: "completion", Description: "Generate shell completion scripts"},
-		{Name: "man", Description: "Generate command manual page"},
-		{Name: "review", Description: "Code review shortcut"},
-		{Name: "explain", Description: "Explain code shortcut"},
-		{Name: "refactor", Description: "Refactor code shortcut"},
-		{Name: "test", Description: "Test generation shortcut"},
-		{Name: "doc", Description: "Documentation shortcut"},
-		{Name: "version", Description: "Version info"},
-		{Name: "help", Description: "Show help"},
+	reg := commands.DefaultRegistry()
+	docs := make([]commandDoc, 0, len(commandNames()))
+	seen := map[string]struct{}{}
+	for _, name := range commandNames() {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		docs = append(docs, commandDocForName(reg, name))
 	}
+	return docs
+}
+
+func commandDocForName(reg *commands.Registry, name string) commandDoc {
+	if cmd, ok := reg.Lookup(name); ok {
+		if cmd.Name != name {
+			return commandDoc{Name: name, Description: fmt.Sprintf("Alias for `%s`: %s", cmd.Name, commandSummary(cmd))}
+		}
+		return commandDoc{Name: name, Description: commandSummary(cmd)}
+	}
+	return commandDoc{Name: name, Description: "CLI command."}
+}
+
+func commandSummary(cmd *commands.Command) string {
+	if summary := strings.TrimSpace(cmd.Summary); summary != "" {
+		return summary
+	}
+	if desc := strings.TrimSpace(cmd.Description); desc != "" {
+		return desc
+	}
+	return "CLI command."
 }
 
 func runMan(args []string, jsonMode bool) int {
@@ -166,37 +168,7 @@ func renderManRoff(docs []commandDoc) string {
 }
 
 func commandNames() []string {
-	return []string{
-		"status",
-		"init",
-		"chat",
-		"tui",
-		"ask",
-		"analyze",
-		"scan",
-		"map",
-		"tool",
-		"conversation",
-		"memory",
-		"config",
-		"context",
-		"prompt",
-		"magicdoc",
-		"plugin",
-		"skill",
-		"serve",
-		"remote",
-		"doctor",
-		"completion",
-		"man",
-		"review",
-		"explain",
-		"refactor",
-		"test",
-		"doc",
-		"version",
-		"help",
-	}
+	return cliDispatchCommandNames()
 }
 
 func completionBash(commands []string) string {

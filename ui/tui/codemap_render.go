@@ -41,7 +41,12 @@ func truncateCyclePath(path []string, limit int) []string {
 }
 
 func (m Model) renderCodemapView(width int) string {
+	return m.renderCodemapViewSized(width, 24)
+}
+
+func (m Model) renderCodemapViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = max(height, 8)
 	view := m.codemap.view
 	if view == "" {
 		view = codemapViewOverview
@@ -69,7 +74,15 @@ func (m Model) renderCodemapView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	body := m.renderCodemapBody(view, snap, m.codemap.scroll, width-2)
+	scroll := m.codemap.scroll
+	if view == codemapViewVisual {
+		scroll = m.codemap.visualCursor
+	}
+	body := m.renderCodemapBody(view, snap, scroll, width-2)
+	rowBudget := max(height-len(lines)-3, 1)
+	if len(body) > rowBudget {
+		body = body[:rowBudget]
+	}
 	lines = append(lines, body...)
 	summaryParts := []string{
 		accentStyle.Render(fmt.Sprintf("%d nodes", snap.Nodes)),

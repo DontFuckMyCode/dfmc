@@ -116,7 +116,12 @@ func memoryDetailWrap(s string, width int) []string {
 }
 
 func (m Model) renderMemoryView(width int) string {
+	return m.renderMemoryViewSized(width, 24)
+}
+
+func (m Model) renderMemoryViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = max(height, 8)
 	tier := m.memory.tier
 	if tier == "" {
 		tier = memoryTierAll
@@ -153,20 +158,17 @@ func (m Model) renderMemoryView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	// Scroll window: clamp offset into range, then show up to the rest.
-	scroll := m.memory.scroll
-	if scroll < 0 {
-		scroll = 0
-	}
-	if scroll >= len(filtered) {
-		scroll = len(filtered) - 1
-	}
-	for _, e := range filtered[scroll:] {
-		selected := e.ID != "" && e.ID == m.memory.expandedID
-		row := formatMemoryRow(e, width-4, selected)
+	cursor := clampScroll(m.memory.scroll, len(filtered))
+	rowBudget := max(height-len(lines)-3, 1)
+	start, end := scrollWindow(cursor, len(filtered), rowBudget)
+	for i := start; i < end; i++ {
+		e := filtered[i]
+		expanded := e.ID != "" && e.ID == m.memory.expandedID
+		highlighted := i == cursor
+		row := formatMemoryRow(e, width-4, highlighted || expanded)
 		lines = append(lines, row)
 
-		if selected {
+		if expanded {
 			body := strings.TrimSpace(e.Value)
 			if body != "" {
 				for _, raw := range strings.Split(body, "\n") {
@@ -196,8 +198,8 @@ func (m Model) renderMemoryView(width int) string {
 	}
 
 	lines = append(lines, "", "  "+subtleStyle.Render(fmt.Sprintf(
-		"%d shown · %d loaded · tier=%s",
-		len(filtered), len(m.memory.entries), tier,
+		"%d / %d shown · %d loaded · tier=%s",
+		cursor+1, len(filtered), len(m.memory.entries), tier,
 	)))
 	body := strings.Join(lines, "\n")
 	if m.actionMenu.open && m.actionMenu.owner == "Memory" {

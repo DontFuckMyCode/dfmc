@@ -52,6 +52,11 @@ func humanizeEngineState(s engine.EngineState) string {
 // implementation lived in render_panels.go and has been deleted in
 // favour of this rebuilt version.
 func (m Model) renderStatusViewV2(width int) string {
+	return m.renderStatusViewSized(width, 24)
+}
+
+func (m Model) renderStatusViewSized(width, height int) string {
+	_ = height
 	cards, jumpTargets := m.statusCards()
 	// Update cardCount so the key handler knows the bounds. Done
 	// inside the View call (not Update) because the card list
@@ -89,7 +94,11 @@ func (m Model) renderStatusViewV2(width int) string {
 	if note := strings.TrimSpace(m.notice); note != "" {
 		parts = append(parts, "", subtleStyle.Render(note))
 	}
-	return strings.Join(parts, "\n")
+	out := strings.Join(parts, "\n")
+	if m.actionMenu.open && m.actionMenu.owner == "Status" {
+		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
 }
 
 // statusTopBanner renders a one-line "where are you / how are we"

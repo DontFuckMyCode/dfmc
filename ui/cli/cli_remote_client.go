@@ -51,15 +51,12 @@ func probeRemoteEndpoint(client *http.Client, baseURL, endpoint, token string) r
 	start := time.Now()
 	res := remoteProbeResult{Endpoint: endpoint}
 
-	url := strings.TrimRight(strings.TrimSpace(baseURL), "/") + endpoint
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	endpointURL := remoteEndpoint(baseURL, endpoint, nil)
+	req, err := remoteRequest(http.MethodGet, endpointURL, token, nil)
 	if err != nil {
 		res.Error = err.Error()
 		res.DurationMs = time.Since(start).Milliseconds()
 		return res
-	}
-	if tok := strings.TrimSpace(token); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 
 	resp, err := client.Do(req)
@@ -70,7 +67,7 @@ func probeRemoteEndpoint(client *http.Client, baseURL, endpoint, token string) r
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	body, _ := readRemoteResponseBody(resp, 2048)
 	res.StatusCode = resp.StatusCode
 	res.Body = strings.TrimSpace(string(body))
 	res.OK = resp.StatusCode >= 200 && resp.StatusCode < 300
@@ -128,6 +125,60 @@ func parsePromptVars(items []string) (map[string]string, error) {
 	return out, nil
 }
 
+func remoteRequest(method, endpoint, token string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(method, endpoint, body)
+	if err != nil {
+		return nil, err
+	}
+	addRemoteBearerAuth(req, token)
+	return req, nil
+}
+
+func addRemoteBearerAuth(req *http.Request, token string) {
+	if tok := strings.TrimSpace(token); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+}
+
+func readRemoteResponseBody(resp *http.Response, limit int64) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(resp.Body, limit))
+}
+
+func remoteEndpoint(baseURL, path string, query url.Values) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	endpoint := base + path
+	if encoded := query.Encode(); encoded != "" {
+		endpoint += "?" + encoded
+	}
+	return endpoint
+}
+
+func addRemoteRuntimeQuery(v url.Values, provider, model, toolStyle string, maxContext int) {
+	if p := strings.TrimSpace(provider); p != "" {
+		v.Set("runtime_provider", p)
+	}
+	if m := strings.TrimSpace(model); m != "" {
+		v.Set("runtime_model", m)
+	}
+	if ts := strings.TrimSpace(toolStyle); ts != "" {
+		v.Set("runtime_tool_style", ts)
+	}
+	if maxContext > 0 {
+		v.Set("runtime_max_context", fmt.Sprint(maxContext))
+	}
+}
+
+func remoteJSONEndpoint(method, baseURL, path string, query url.Values, token string, payload any, timeout time.Duration) (map[string]any, int, error) {
+	return remoteJSONRequest(method, remoteEndpoint(baseURL, path, query), token, payload, timeout)
+}
+
 func remoteJSONRequest(method, endpoint, token string, payload any, timeout time.Duration) (map[string]any, int, error) {
 	var body io.Reader
 	if payload != nil {
@@ -137,15 +188,12 @@ func remoteJSONRequest(method, endpoint, token string, payload any, timeout time
 		}
 		body = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequest(method, endpoint, body)
+	req, err := remoteRequest(method, endpoint, token, body)
 	if err != nil {
 		return nil, 0, err
 	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
-	}
-	if tok := strings.TrimSpace(token); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
@@ -153,7 +201,7 @@ func remoteJSONRequest(method, endpoint, token string, payload any, timeout time
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	rawBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	rawBody, _ := readRemoteResponseBody(resp, 2<<20)
 	out := map[string]any{}
 	if len(strings.TrimSpace(string(rawBody))) > 0 {
 		if err := json.Unmarshal(rawBody, &out); err != nil {

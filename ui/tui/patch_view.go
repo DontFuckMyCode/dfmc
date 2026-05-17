@@ -34,7 +34,11 @@ func (m Model) patchCommandSummary() string {
 // render_patch.go. The legacy stack-rendering implementation lives in
 // git history; the V2 renderer is the active F4 panel.
 func (m Model) renderPatchView(width int) string {
-	out := m.renderPatchViewV2(width)
+	return m.renderPatchViewSized(width, 24)
+}
+
+func (m Model) renderPatchViewSized(width, height int) string {
+	out := m.renderPatchViewV2Sized(width, height)
 	if m.actionMenu.open && m.actionMenu.owner == "Patch" {
 		out += "\n\n" + m.renderActionMenu(width)
 	}

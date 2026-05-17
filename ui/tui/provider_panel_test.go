@@ -1130,6 +1130,88 @@ func TestRenderProviderDetailShowsModelSearchQuery(t *testing.T) {
 	}
 }
 
+func TestRenderProviderDetailSizedWindowsAroundSelectedModel(t *testing.T) {
+	m := newProvidersTestModel()
+	m.providers.viewMode = "detail"
+	m.providers.detailProvider = "anthropic"
+	m.providers.modelEditIdx = 18
+	models := make([]string, 0, 24)
+	for i := 0; i < 24; i++ {
+		models = append(models, "model-"+string(rune('a'+i)))
+	}
+	cfg := config.DefaultConfig()
+	cfg.Providers.Profiles["anthropic"] = config.ModelConfig{
+		Model:  "model-a",
+		Models: models,
+	}
+	m.eng.Config = cfg
+
+	view := m.renderProviderDetailViewSized(100, 16)
+	if !strings.Contains(view, "model-s") {
+		t.Fatalf("selected model should stay visible in short detail view:\n%s", view)
+	}
+	if strings.Contains(view, "model-b") {
+		t.Fatalf("short detail view should window model rows instead of starting at top:\n%s", view)
+	}
+}
+
+func TestRenderProviderCatalogSizedWindowsAroundCursor(t *testing.T) {
+	m := newProvidersTestModel()
+	m.providers.catalogLoaded = true
+	m.providers.catalogScroll = 18
+	for i := 0; i < 24; i++ {
+		suffix := string(rune('a' + i))
+		m.providers.catalogItems = append(m.providers.catalogItems, catalogProviderItem{
+			ID:         "provider-" + suffix,
+			Name:       "Provider " + suffix,
+			Endpoint:   "https://example.test/" + suffix,
+			Compatible: "openai-compatible",
+			ModelCount: 2,
+		})
+	}
+
+	view := m.renderProviderCatalogViewSized(100, 9)
+	if !strings.Contains(view, "Provider s") {
+		t.Fatalf("selected catalog provider should stay visible in short catalog view:\n%s", view)
+	}
+	if strings.Contains(view, "Provider a") {
+		t.Fatalf("short catalog view should window provider rows instead of starting at top:\n%s", view)
+	}
+}
+
+func TestRenderProviderModelPickerSizedWindowsAroundCursor(t *testing.T) {
+	m := newProvidersTestModel()
+	m.providers.modelPickerActive = true
+	m.providers.modelPickerIndex = 18
+	for i := 0; i < 24; i++ {
+		m.providers.modelPickerItems = append(m.providers.modelPickerItems, "pick-"+string(rune('a'+i)))
+	}
+
+	view := strings.Join(m.renderProviderModelPickerSectionSized(3), "\n")
+	if !strings.Contains(view, "pick-s") {
+		t.Fatalf("selected picker item should stay visible in short picker:\n%s", view)
+	}
+	if strings.Contains(view, "pick-a") {
+		t.Fatalf("short picker should window rows instead of starting at top:\n%s", view)
+	}
+}
+
+func TestRenderPipelinesSizedWindowsAroundCursor(t *testing.T) {
+	m := newProvidersTestModel()
+	for i := 0; i < 24; i++ {
+		m.providers.pipelineNames = append(m.providers.pipelineNames, "pipe-"+string(rune('a'+i)))
+	}
+	m.providers.pipelineScroll = 18
+
+	view := m.renderPipelinesViewSized(100, 8)
+	if !strings.Contains(view, "pipe-s") {
+		t.Fatalf("selected pipeline should stay visible in short pipeline view:\n%s", view)
+	}
+	if strings.Contains(view, "pipe-a") {
+		t.Fatalf("short pipeline view should window rows instead of starting at top:\n%s", view)
+	}
+}
+
 func TestHandleProvidersPipelineKey_Esc(t *testing.T) {
 	m := newProvidersTestModel()
 	m.providers.viewMode = "pipelines"

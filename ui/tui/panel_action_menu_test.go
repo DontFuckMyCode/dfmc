@@ -94,3 +94,16 @@ func TestActionMenu_RendersActionLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestActiveViewLeavesRoomForActionMenu(t *testing.T) {
+	m := newCoverageModel(t)
+	m.filesView = filesViewState{entries: []string{"main.go"}, index: 0}
+	got, _ := m.handleFilesKey(tea.KeyMsg{Type: tea.KeyEnter})
+	gm := got.(Model)
+	gm.activeTab = indexOfString(gm.tabs, "Files")
+
+	view := stripANSI(gm.renderActiveView(140, 22, paletteForTab("Files", false)))
+	if !strings.Contains(view, "Open preview") {
+		t.Fatalf("active view should leave visible space for action menu, got:\n%s", view)
+	}
+}

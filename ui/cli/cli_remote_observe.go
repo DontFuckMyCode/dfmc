@@ -21,7 +21,7 @@ import (
 func remoteStatus(eng *engine.Engine, args []string, jsonMode bool) int {
 	fs := flag.NewFlagSet("remote status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	live := fs.Bool("live", false, "query remote server status instead of local config")
 	baseURL := fs.String("url", defaultURL, "remote base URL (for --live)")
 	token := addRemoteTokenFlag(fs)
@@ -50,14 +50,12 @@ func remoteStatus(eng *engine.Engine, args []string, jsonMode bool) int {
 		return 0
 	}
 
-	statusURL := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/status"
-	providersURL := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/api/v1/providers"
-	statusPayload, _, err := remoteJSONRequest(http.MethodGet, statusURL, *token, nil, *timeout)
+	statusPayload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/status", nil, *token, nil, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote status error: %v\n", err)
 		return 1
 	}
-	providersPayload, _, err := remoteJSONRequest(http.MethodGet, providersURL, *token, nil, *timeout)
+	providersPayload, _, err := remoteJSONEndpoint(http.MethodGet, *baseURL, "/api/v1/providers", nil, *token, nil, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote providers error: %v\n", err)
 		return 1
@@ -75,7 +73,7 @@ func remoteStatus(eng *engine.Engine, args []string, jsonMode bool) int {
 func remoteProbe(eng *engine.Engine, args []string, jsonMode bool) int {
 	fs := flag.NewFlagSet("remote probe", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 3*time.Second, "request timeout")
@@ -133,7 +131,7 @@ func remoteProbe(eng *engine.Engine, args []string, jsonMode bool) int {
 func remoteEvents(eng *engine.Engine, args []string, jsonMode bool) int {
 	fs := flag.NewFlagSet("remote events", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	eventType := fs.String("type", "*", "event type filter")
@@ -143,10 +141,11 @@ func remoteEvents(eng *engine.Engine, args []string, jsonMode bool) int {
 		return 2
 	}
 
-	endpoint := strings.TrimRight(strings.TrimSpace(*baseURL), "/") + "/ws"
+	v := url.Values{}
 	if t := strings.TrimSpace(*eventType); t != "" {
-		endpoint = endpoint + "?type=" + url.QueryEscape(t)
+		v.Set("type", t)
 	}
+	endpoint := remoteEndpoint(*baseURL, "/ws", v)
 	events, err := remoteCollectEvents(endpoint, *token, *timeout, *maxEvents)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "remote events error: %v\n", err)
@@ -179,7 +178,7 @@ func remoteEvents(eng *engine.Engine, args []string, jsonMode bool) int {
 func remoteAskCmd(eng *engine.Engine, args []string, jsonMode bool) int {
 	fs := flag.NewFlagSet("remote ask", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	defaultURL := fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
+	defaultURL := remoteDefaultURL(eng)
 	baseURL := fs.String("url", defaultURL, "remote base URL")
 	token := addRemoteTokenFlag(fs)
 	timeout := fs.Duration("timeout", 60*time.Second, "request timeout")

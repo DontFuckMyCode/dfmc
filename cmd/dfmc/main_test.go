@@ -224,3 +224,33 @@ func TestExtractDataDir_LastPosition(t *testing.T) {
 		t.Errorf("extractDataDir at last position = %q, want %q", got, "/data")
 	}
 }
+
+func TestParseStartupArgs_AllBootFlags(t *testing.T) {
+	got := parseStartupArgs([]string{
+		"--verbose",
+		"--data-dir=/data",
+		"--telegram-token", "tok_123",
+		"--session-name=work",
+		"ask",
+		"hello",
+	})
+	if got.dataDir != "/data" {
+		t.Errorf("dataDir = %q, want %q", got.dataDir, "/data")
+	}
+	if got.telegramToken != "tok_123" {
+		t.Errorf("telegramToken = %q, want %q", got.telegramToken, "tok_123")
+	}
+	if got.sessionName != "work" {
+		t.Errorf("sessionName = %q, want %q", got.sessionName, "work")
+	}
+}
+
+func TestExtractTelegramTokenAndSessionName(t *testing.T) {
+	args := []string{"--telegram-token=tok_eq", "--session-name", "home"}
+	if got := extractTelegramToken(args); got != "tok_eq" {
+		t.Errorf("extractTelegramToken = %q, want %q", got, "tok_eq")
+	}
+	if got := extractSessionName(args); got != "home" {
+		t.Errorf("extractSessionName = %q, want %q", got, "home")
+	}
+}

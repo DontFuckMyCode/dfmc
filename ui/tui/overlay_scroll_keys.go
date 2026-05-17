@@ -38,6 +38,11 @@ func (m Model) handleProviderLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleContextsOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.contexts.scroll = adjustScrollOnlyOffset(msg.String(), m.contexts.scroll)
+	return m, nil
+}
+
 // adjustScrollOnlyOffset implements the j/k/pgup/pgdn/g/G grammar used
 // by both read-only overlays. Returns the new offset; the renderer
 // (fitPanelContentScrollable) clamps to the actual content size, so

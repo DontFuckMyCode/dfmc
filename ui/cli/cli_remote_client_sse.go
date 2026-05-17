@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -34,15 +33,12 @@ func remoteAsk(baseURL, token, message string, timeout time.Duration, streamOutp
 	if err != nil {
 		return nil, "", err
 	}
-	endpoint := strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/api/v1/chat"
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+	endpoint := remoteEndpoint(baseURL, "/api/v1/chat", nil)
+	req, err := remoteRequest(http.MethodPost, endpoint, token, bytes.NewReader(payload))
 	if err != nil {
 		return nil, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if tok := strings.TrimSpace(token); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
 
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
@@ -51,7 +47,7 @@ func remoteAsk(baseURL, token, message string, timeout time.Duration, streamOutp
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		raw, _ := readRemoteResponseBody(resp, 4096)
 		return nil, "", fmt.Errorf("remote returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
 
@@ -126,12 +122,9 @@ func remoteCollectEvents(endpoint, token string, timeout time.Duration, maxEvent
 	if maxEvents <= 0 {
 		maxEvents = 100
 	}
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	req, err := remoteRequest(http.MethodGet, endpoint, token, nil)
 	if err != nil {
 		return nil, err
-	}
-	if tok := strings.TrimSpace(token); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
@@ -140,7 +133,7 @@ func remoteCollectEvents(endpoint, token string, timeout time.Duration, maxEvent
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		raw, _ := readRemoteResponseBody(resp, 4096)
 		return nil, fmt.Errorf("remote returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
 

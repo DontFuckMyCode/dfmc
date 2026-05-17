@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -315,6 +316,77 @@ func TestRemoteJSONRequest(t *testing.T) {
 	}
 	if ok, _ := out["ok"].(bool); !ok {
 		t.Fatalf("unexpected response: %#v", out)
+	}
+}
+
+func TestRemoteRequestAddsBearerAuth(t *testing.T) {
+	req, err := remoteRequest(http.MethodGet, "http://example.test/api", " secret-token ", nil)
+	if err != nil {
+		t.Fatalf("remoteRequest error: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "Bearer secret-token" {
+		t.Fatalf("Authorization header = %q, want bearer token", got)
+	}
+
+	req, err = remoteRequest(http.MethodGet, "http://example.test/api", "   ", nil)
+	if err != nil {
+		t.Fatalf("remoteRequest without token error: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Fatalf("blank token should not set Authorization, got %q", got)
+	}
+}
+
+func TestRemoteEndpointBuildsNormalizedURL(t *testing.T) {
+	query := url.Values{}
+	query.Set("q", "hello world")
+	got := remoteEndpoint(" http://127.0.0.1:7779/ ", "api/v1/status", query)
+	want := "http://127.0.0.1:7779/api/v1/status?q=hello+world"
+	if got != want {
+		t.Fatalf("remoteEndpoint = %q, want %q", got, want)
+	}
+
+	if got := remoteEndpoint("http://x/", "/ws", nil); got != "http://x/ws" {
+		t.Fatalf("remoteEndpoint without query = %q", got)
+	}
+}
+
+func TestRemoteJSONEndpointUsesNormalizedURL(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/status" || r.URL.Query().Get("q") != "hello world" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"bad endpoint"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	query := url.Values{}
+	query.Set("q", "hello world")
+	payload, status, err := remoteJSONEndpoint(http.MethodGet, ts.URL+"/", "api/v1/status", query, "", nil, 2*time.Second)
+	if err != nil {
+		t.Fatalf("remoteJSONEndpoint error: %v", err)
+	}
+	if status != http.StatusOK || payload["ok"] != true {
+		t.Fatalf("unexpected response status=%d payload=%#v", status, payload)
+	}
+}
+
+func TestAddRemoteRuntimeQuery(t *testing.T) {
+	query := url.Values{}
+	addRemoteRuntimeQuery(query, " zai ", " glm-5.1 ", " function-calling ", 1000)
+	if got := query.Get("runtime_provider"); got != "zai" {
+		t.Fatalf("runtime_provider = %q", got)
+	}
+	if got := query.Get("runtime_model"); got != "glm-5.1" {
+		t.Fatalf("runtime_model = %q", got)
+	}
+	if got := query.Get("runtime_tool_style"); got != "function-calling" {
+		t.Fatalf("runtime_tool_style = %q", got)
+	}
+	if got := query.Get("runtime_max_context"); got != "1000" {
+		t.Fatalf("runtime_max_context = %q", got)
 	}
 }
 
@@ -806,5 +878,77 @@ func TestRunRemoteStart_RefusesNoAuthOffLoopback(t *testing.T) {
 	}
 	if !strings.Contains(msg, "refusing") || !strings.Contains(msg, "--insecure") {
 		t.Fatalf("stderr missing clear guidance, got: %q", msg)
+	}
+}
+
+func TestRemoteCommandNamesDerivedFromRegistry(t *testing.T) {
+	names := map[string]struct{}{}
+	for _, name := range remoteCommandNames() {
+		names[name] = struct{}{}
+	}
+	for name := range remoteCommandRegistry() {
+		if _, ok := names[name]; !ok {
+			t.Fatalf("remoteCommandNames missing registry command %q", name)
+		}
+	}
+	for _, want := range []string{"status", "ask", "tool", "tools", "conversation", "drive", "start"} {
+		if _, ok := names[want]; !ok {
+			t.Fatalf("remoteCommandNames missing expected command %q", want)
+		}
+	}
+}
+
+func TestRunRemoteUnknownUsesGeneratedUsage(t *testing.T) {
+	stub := &engine.Engine{Config: config.DefaultConfig()}
+	out := captureStderr(t, func() {
+		if code := runRemote(context.Background(), stub, []string{"definitely-not-remote"}, true); code != 2 {
+			t.Fatalf("unknown remote command exit=%d, want 2", code)
+		}
+	})
+	if !strings.Contains(out, "usage: dfmc remote") || !strings.Contains(out, "drive") || !strings.Contains(out, "start") {
+		t.Fatalf("generated remote usage missing expected commands: %q", out)
+	}
+}
+
+func TestRemoteDriveCommandNamesDerivedFromRegistry(t *testing.T) {
+	names := map[string]struct{}{}
+	for _, name := range remoteDriveCommandNames() {
+		names[name] = struct{}{}
+	}
+	for name := range remoteDriveCommandRegistry() {
+		if _, ok := names[name]; !ok {
+			t.Fatalf("remoteDriveCommandNames missing registry command %q", name)
+		}
+	}
+	for _, want := range []string{"list", "show", "resume", "delete", "stop", "cancel", "active"} {
+		if _, ok := names[want]; !ok {
+			t.Fatalf("remoteDriveCommandNames missing expected command %q", want)
+		}
+	}
+}
+
+func TestRunRemoteDriveUsageIncludesControlCommands(t *testing.T) {
+	stub := &engine.Engine{Config: config.DefaultConfig()}
+	out := captureStderr(t, func() {
+		if code := runRemoteDrive(stub, nil, true); code != 2 {
+			t.Fatalf("empty remote drive exit=%d, want 2", code)
+		}
+	})
+	for _, want := range []string{"dfmc remote drive", "active", "stop", "cancel"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("remote drive usage missing %q: %q", want, out)
+		}
+	}
+}
+
+func TestRunRemoteDriveIDCommandRequiresID(t *testing.T) {
+	stub := &engine.Engine{Config: config.DefaultConfig()}
+	out := captureStderr(t, func() {
+		if code := runRemoteDrive(stub, []string{"show"}, true); code != 2 {
+			t.Fatalf("remote drive show without id exit=%d, want 2", code)
+		}
+	})
+	if !strings.Contains(out, "usage: dfmc remote drive show <id>") {
+		t.Fatalf("remote drive id usage missing: %q", out)
 	}
 }

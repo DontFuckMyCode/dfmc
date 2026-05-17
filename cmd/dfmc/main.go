@@ -2,77 +2,23 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/dontfuckmycode/dfmc/internal/bot"
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
-	"github.com/dontfuckmycode/dfmc/internal/hooks"
-	"github.com/dontfuckmycode/dfmc/internal/storage"
 	"github.com/dontfuckmycode/dfmc/ui/cli"
 )
-
-// extractDataDir scans args for --data-dir before flag parsing and
-// returns the value so LoadOptions can be populated before config.Load.
-// This lets the user point multiple DFMC instances at different data
-// dirs without file-lock contention on dfmc.db.
-func extractDataDir(args []string) string {
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--data-dir" && i+1 < len(args) {
-			return args[i+1]
-		}
-		if strings.HasPrefix(arg, "--data-dir=") {
-			return strings.TrimPrefix(arg, "--data-dir=")
-		}
-	}
-	return ""
-}
-
-// extractTelegramToken scans args for --telegram-token before flag parsing.
-func extractTelegramToken(args []string) string {
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--telegram-token" && i+1 < len(args) {
-			return args[i+1]
-		}
-		if strings.HasPrefix(arg, "--telegram-token=") {
-			return strings.TrimPrefix(arg, "--telegram-token=")
-		}
-	}
-	return ""
-}
-
-// extractSessionName returns the --session-name value.
-func extractSessionName(args []string) string {
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--session-name" && i+1 < len(args) {
-			return args[i+1]
-		}
-		if strings.HasPrefix(arg, "--session-name=") {
-			return strings.TrimPrefix(arg, "--session-name=")
-		}
-	}
-	return ""
-}
 
 var version = "dev"
 
 func main() {
-	// Single os.Exit at the very top of the call stack so every defer
-	// inside run() (signal-handler cancel, engine shutdown) actually
-	// fires. The previous shape called os.Exit from three different
-	// branches and skipped eng.Shutdown() on the degraded-startup
-	// path and on any panic out of cli.Run — leaking the bbolt store
-	// lock and any background goroutines the engine owned.
+	// Single os.Exit at the top of the call stack so every defer inside
+	// run() fires, including signal cancellation and engine shutdown.
 	os.Exit(run())
 }
 
@@ -80,12 +26,10 @@ func run() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	dataDir := extractDataDir(os.Args[1:])
-	telegramToken := extractTelegramToken(os.Args[1:])
-	sessionName := extractSessionName(os.Args[1:])
+	startup := parseStartupArgs(os.Args[1:])
 	loadOpts := config.LoadOptions{}
-	if dataDir != "" {
-		loadOpts.DataDirPath = dataDir
+	if startup.dataDir != "" {
+		loadOpts.DataDirPath = startup.dataDir
 	}
 
 	cfg, err := config.LoadWithOptions(loadOpts)
@@ -94,63 +38,23 @@ func run() int {
 		return 1
 	}
 
-	if telegramToken != "" {
-		cfg.Telegram.Token = telegramToken
+	if startup.telegramToken != "" {
+		cfg.Telegram.Token = startup.telegramToken
 	}
-	if sessionName != "" {
-		cfg.Telegram.SessionName = sessionName
-	}
-
-	// Initialize Telegram bot if token is configured
-	var tgBot *bot.TelegramBot
-	if cfg.Telegram.Enabled && cfg.Telegram.Token != "" {
-		tgBot, err = bot.New(cfg.Telegram.Token)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "telegram init error: %v\n", err)
-			return 1
-		}
-		log.Printf("[telegram] bot started (session: %s)", cfg.Telegram.SessionName)
+	if startup.sessionName != "" {
+		cfg.Telegram.SessionName = startup.sessionName
 	}
 
-	// VULN-036: warn if config files are group/world-writable — a hostile
-	// co-tenant on a shared host could inject hook commands.
-	globalPath, projectPath := config.ConfigPaths("")
-	for _, path := range []string{globalPath, projectPath} {
-		if msg := hooks.CheckConfigPermissions(path); msg != "" {
-			if !unsafeHooksOverrideEnabled() {
-				fmt.Fprintf(os.Stderr, "[DFMC] ERROR: %s\n", msg)
-				fmt.Fprintln(os.Stderr, "[DFMC] Refusing to run hooks from writable config. Fix file permissions or set DFMC_UNSAFE_HOOKS=1 to override.")
-				return 1
-			}
-			fmt.Fprintf(os.Stderr, "[DFMC] WARNING: %s (DFMC_UNSAFE_HOOKS=1 override active)\n", msg)
-		}
+	tgBot, err := startTelegramBot(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "telegram init error: %v\n", err)
+		return 1
 	}
 
-	// Auto-init: if no storage exists at DataDir, run the init sequence
-	// so `dfmc ask` just works in a new project without an explicit
-	// `dfmc init` call first. Mirrors runInit but keeps the process alive.
-	dd := cfg.DataDir()
-	dbPath := filepath.Join(dd, "dfmc.db")
-	if _, statErr := os.Stat(dbPath); os.IsNotExist(statErr) {
-		projectRoot := config.FindProjectRoot("")
-		if projectRoot == "" {
-			if cwd, err := os.Getwd(); err == nil {
-				projectRoot = cwd
-			}
-		}
-		if projectRoot != "" {
-			dfmcDir := filepath.Join(projectRoot, ".dfmc")
-			if mkdirErr := os.MkdirAll(dfmcDir, 0o755); mkdirErr == nil {
-				localCfg := config.DefaultConfig()
-				localCfg.DataDirPath = dd
-				if cfgPathErr := localCfg.Save(filepath.Join(dfmcDir, "config.yaml")); cfgPathErr == nil {
-					_ = os.WriteFile(filepath.Join(dfmcDir, "knowledge.json"), []byte("{}\n"), 0o600)
-					_ = os.WriteFile(filepath.Join(dfmcDir, "conventions.json"), []byte("{}\n"), 0o600)
-					fmt.Fprintf(os.Stderr, "[DFMC] initialized project at %s\n", projectRoot)
-				}
-			}
-		}
+	if !checkHookConfigPermissions() {
+		return 1
 	}
+	autoInitProjectState(cfg)
 
 	eng, err := engine.NewWithVersion(cfg, version)
 	if err != nil {
@@ -158,39 +62,7 @@ func run() int {
 		return 1
 	}
 
-	// Cover every exit path including init-failure-with-degraded-allow
-	// and panic-out-of-cli.Run. Engine.Shutdown is safe to call after
-	// a partial Init (it no-ops on subsystems that never started).
-	defer func() { _ = eng.Shutdown() }()
-
-	// Wire Telegram bot into engine if enabled
 	var tgStopFunc func()
-	if tgBot != nil {
-		eng.SetTelegramBot(tgBot, cfg.Telegram.SessionName, cfg.Telegram.AllowedUsers)
-		// Forward Telegram messages to the engine's agent loop.
-		// Capture the outer signal-aware ctx so SIGINT / SIGTERM
-		// cancels any in-flight Telegram-triggered Ask too;
-		// context.Background() here used to leak goroutines past
-		// the shutdown defer.
-		tgBot.SetOnMessage(func(userID int64, text string, replyFn func(string)) {
-			go func() {
-				resp, err := eng.Ask(ctx, text)
-				if err != nil {
-					log.Printf("[telegram] ask error: %v", err)
-					replyFn("⚠️ DFMC error: " + err.Error())
-					return
-				}
-				// Truncate long responses for Telegram
-				if len(resp) > 4000 {
-					resp = resp[:3997] + "..."
-				}
-				replyFn(resp)
-			}()
-		})
-		go tgBot.Start()
-		tgStopFunc = func() { tgBot.Stop() }
-	}
-
 	defer func() {
 		_ = eng.Shutdown()
 		cancel()
@@ -198,6 +70,10 @@ func run() int {
 			tgStopFunc()
 		}
 	}()
+
+	if tgBot != nil {
+		tgStopFunc = wireTelegramBot(ctx, eng, tgBot, cfg)
+	}
 
 	if err := eng.Init(ctx); err != nil {
 		if !allowsDegradedStartup(os.Args[1:]) {
@@ -211,61 +87,34 @@ func run() int {
 	return cli.Run(ctx, eng, os.Args[1:], version)
 }
 
-// suppressInitWarning silences the "init warning: storage is locked"
-// banner for pure meta commands that never touch the store. doctor and
-// update legitimately want the lock context as diagnostic signal, but
-// help/version/completion/man are read-only catalogs — leading them with
-// a scary warning header trains users to ignore the line entirely.
-func suppressInitWarning(args []string) bool {
-	for _, arg := range args {
-		trimmed := strings.TrimSpace(arg)
-		if trimmed == "" || strings.HasPrefix(trimmed, "-") {
-			continue
-		}
-		switch trimmed {
-		case "help", "version", "completion", "man":
-			return true
-		default:
-			return false
-		}
+func startTelegramBot(cfg *config.Config) (*bot.TelegramBot, error) {
+	if cfg == nil || !cfg.Telegram.Enabled || cfg.Telegram.Token == "" {
+		return nil, nil
 	}
-	return true
+	tgBot, err := bot.New(cfg.Telegram.Token)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("[telegram] bot started (session: %s)", cfg.Telegram.SessionName)
+	return tgBot, nil
 }
 
-func allowsDegradedStartup(args []string) bool {
-	for _, arg := range args {
-		trimmed := strings.TrimSpace(arg)
-		if trimmed == "" {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "-") {
-			continue
-		}
-		switch trimmed {
-		case "help", "-h", "--help", "version", "doctor", "completion", "man", "update":
-			return true
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func unsafeHooksOverrideEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("DFMC_UNSAFE_HOOKS"))) {
-	case "1", "true", "yes", "y", "on":
-		return true
-	default:
-		return false
-	}
-}
-
-func formatInitError(err error) string {
-	if err == nil {
-		return ""
-	}
-	if errors.Is(err, storage.ErrStoreLocked) {
-		return err.Error() + " Use `dfmc doctor` after closing the other session if you want a deeper diagnosis."
-	}
-	return err.Error()
+func wireTelegramBot(ctx context.Context, eng *engine.Engine, tgBot *bot.TelegramBot, cfg *config.Config) func() {
+	eng.SetTelegramBot(tgBot, cfg.Telegram.SessionName, cfg.Telegram.AllowedUsers)
+	tgBot.SetOnMessage(func(userID int64, text string, replyFn func(string)) {
+		go func() {
+			resp, err := eng.Ask(ctx, text)
+			if err != nil {
+				log.Printf("[telegram] ask error: %v", err)
+				replyFn("DFMC error: " + err.Error())
+				return
+			}
+			if len(resp) > 4000 {
+				resp = resp[:3997] + "..."
+			}
+			replyFn(resp)
+		}()
+	})
+	go tgBot.Start()
+	return func() { tgBot.Stop() }
 }

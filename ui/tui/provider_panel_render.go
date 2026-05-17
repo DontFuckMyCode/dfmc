@@ -8,7 +8,11 @@ import (
 )
 
 func (m Model) renderProvidersView(width int) string {
-	out := m.renderProvidersViewInner(width)
+	return m.renderProvidersViewSized(width, 24)
+}
+
+func (m Model) renderProvidersViewSized(width, height int) string {
+	out := m.renderProvidersViewInnerSized(width, height)
 	if m.actionMenu.open && m.actionMenu.owner == "Providers" {
 		out += "\n\n" + m.renderActionMenu(width)
 	}
@@ -16,26 +20,30 @@ func (m Model) renderProvidersView(width int) string {
 }
 
 func (m Model) renderProvidersViewInner(width int) string {
+	return m.renderProvidersViewInnerSized(width, 24)
+}
+
+func (m Model) renderProvidersViewInnerSized(width, height int) string {
 	if m.providers.confirmAction != "" {
 		return m.renderProvidersConfirm(width)
 	}
 	switch m.providers.viewMode {
 	case "detail":
-		return m.renderProviderDetailView(width)
+		return m.renderProviderDetailViewSized(width, height)
 	case providerViewCatalog:
-		return m.renderProviderCatalogView(width)
+		return m.renderProviderCatalogViewSized(width, height)
 	case providerViewCatalogForm:
 		return m.renderProviderCatalogFormView(width)
 	case providerViewTiers:
-		return m.renderProviderTiersView(width)
+		return m.renderProviderTiersViewSized(width, height)
 	case providerViewSkills:
-		return m.renderProviderSkillsView(width)
+		return m.renderProviderSkillsViewSized(width, height)
 	case "pipelines":
-		return m.renderPipelinesView(width)
+		return m.renderPipelinesViewSized(width, height)
 	case "new_provider":
 		return m.renderNewProviderView(width)
 	default:
-		return m.renderProviderListView(width)
+		return m.renderProviderListViewSized(width, height)
 	}
 }
 
@@ -71,7 +79,11 @@ func (m Model) providersTopBanner(width int) string {
 }
 
 func (m Model) renderProviderListView(width int) string {
-	return m.renderProviderListViewV2(width)
+	return m.renderProviderListViewSized(width, 24)
+}
+
+func (m Model) renderProviderListViewSized(width, height int) string {
+	return m.renderProviderListViewV2Sized(width, height)
 }
 
 func (m Model) renderNewProviderView(width int) string {

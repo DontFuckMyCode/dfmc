@@ -107,7 +107,7 @@ func filesPanelWidths(total int, threePane, twoPane bool) (listW, previewW, meta
 // --- LIST PANE ---------------------------------------------------------------
 
 func (m Model) renderFilesListPane(width, height int, pal tabPaletteEntry) string {
-	filtered := filteredFilesEntries(m.filesView.entries, m.filesView.query)
+	filtered := m.visibleFilesEntries()
 	filteredCount := len(filtered)
 
 	header := m.filesListHeader(width, filteredCount)
@@ -132,14 +132,15 @@ func (m Model) renderFilesListPane(width, height int, pal tabPaletteEntry) strin
 		}
 	} else {
 		rowBudget := max(height-6, 6)
-		start, end := scrollWindow(m.filesView.index, filteredCount, rowBudget)
+		cursor := clampScroll(m.filesView.index, filteredCount)
+		start, end := scrollWindow(cursor, filteredCount, rowBudget)
 		for i := start; i < end; i++ {
-			row := m.renderFilesListRow(i, filtered, width, pal)
+			row := m.renderFilesListRow(i, cursor, filtered, width, pal)
 			lines = append(lines, row)
 		}
-		sb := renderScrollbar(m.filesView.index, filteredCount, 3)
+		sb := renderScrollbar(cursor, filteredCount, 3)
 		lines = append(lines, "",
-			"  "+subtleStyle.Render(fmt.Sprintf("%d / %d files", m.filesView.index+1, filteredCount))+"   "+sb)
+			"  "+subtleStyle.Render(fmt.Sprintf("%d / %d files", cursor+1, filteredCount))+"   "+sb)
 		if pinned := strings.TrimSpace(m.filesView.pinned); pinned != "" {
 			lines = append(lines,
 				"  "+infoStyle.Render("📌 ")+subtleStyle.Render(truncateForLine(pinned, width-6)))
@@ -170,13 +171,13 @@ func (m Model) filesListHeader(width int, filteredCount int) string {
 	return title + strings.Repeat(" ", gap) + chipRendered
 }
 
-func (m Model) renderFilesListRow(i int, entries []string, width int, pal tabPaletteEntry) string {
+func (m Model) renderFilesListRow(i, selectedIdx int, entries []string, width int, pal tabPaletteEntry) string {
 	if i < 0 || i >= len(entries) {
 		return ""
 	}
 	path := entries[i]
 	pinned := path == strings.TrimSpace(m.filesView.pinned)
-	selected := i == m.filesView.index
+	selected := i == selectedIdx
 
 	cursor := "  "
 	if selected {

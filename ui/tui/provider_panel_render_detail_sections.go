@@ -82,6 +82,10 @@ func (m Model) renderProviderEditableProfileFields(name, protocol, baseURL, apiK
 }
 
 func (m Model) renderProviderModelsSection(name string, prof config.ModelConfig) []string {
+	return m.renderProviderModelsSectionSized(name, prof, 12)
+}
+
+func (m Model) renderProviderModelsSectionSized(name string, prof config.ModelConfig, rowBudget int) []string {
 	allModels := m.detailProviderModels()
 	models := m.detailProviderVisibleModels()
 	modelTitle := fmt.Sprintf("Models (%d)", len(allModels))
@@ -97,7 +101,7 @@ func (m Model) renderProviderModelsSection(name string, prof config.ModelConfig)
 		return append(lines, providerEmptyModelsLine(m.providers.modelQuery))
 	}
 	selectedIdx := clampScroll(m.providers.modelEditIdx, len(models))
-	start, end := scrollWindow(selectedIdx, len(models), 12)
+	start, end := scrollWindow(selectedIdx, len(models), max(rowBudget, 1))
 	for i := start; i < end; i++ {
 		lines = append(lines, m.providerModelRow(name, prof, models[i], i == selectedIdx))
 	}
@@ -164,6 +168,10 @@ func (m Model) renderProviderFallbackSection(prof config.ModelConfig) []string {
 }
 
 func (m Model) renderProviderModelPickerSection() []string {
+	return m.renderProviderModelPickerSectionSized(10)
+}
+
+func (m Model) renderProviderModelPickerSectionSized(rowBudget int) []string {
 	if !m.providers.modelPickerActive {
 		return nil
 	}
@@ -175,7 +183,7 @@ func (m Model) renderProviderModelPickerSection() []string {
 		return append(lines, "  "+subtleStyle.Render("No cached models. Press Space to type a custom model id."))
 	}
 	idx := clampScroll(m.providers.modelPickerIndex, len(m.providers.modelPickerItems))
-	start, end := scrollWindow(idx, len(m.providers.modelPickerItems), 10)
+	start, end := scrollWindow(idx, len(m.providers.modelPickerItems), max(rowBudget, 1))
 	for i := start; i < end; i++ {
 		prefix := "  "
 		label := m.providers.modelPickerItems[i]

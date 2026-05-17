@@ -22,19 +22,20 @@ import (
 // default sourced from the DFMC_REMOTE_TOKEN env var. Used by every
 // `dfmc remote *` client subcommand. addServeTokenFlag does the same
 // for `dfmc serve` but reads DFMC_WEB_TOKEN instead so an operator can
-// run a serve and a client side-by-side with separate creds without
-// either subcommand stomping on the other's env.
+// run a serve and a client side-by-side with separate credentials.
 //
-// Centralising the flag declaration kills the H1 review finding —
-// the line was duplicated 18 times across this file, so a future
-// rename of the env var or the flag description had to be repeated
-// 18 times or it would silently drift.
+// Centralising the flag declaration keeps remote clients from drifting when
+// the env var or flag description changes.
 func addRemoteTokenFlag(fs *flag.FlagSet) *string {
 	return fs.String("token", strings.TrimSpace(os.Getenv("DFMC_REMOTE_TOKEN")), "remote token")
 }
 
 func addServeTokenFlag(fs *flag.FlagSet) *string {
 	return fs.String("token", strings.TrimSpace(os.Getenv("DFMC_WEB_TOKEN")), "api token (for auth=token)")
+}
+
+func remoteDefaultURL(eng *engine.Engine) string {
+	return fmt.Sprintf("http://%s:%d", eng.Config.Web.Host, eng.Config.Remote.WSPort)
 }
 
 func runServe(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
@@ -45,11 +46,9 @@ func runServe(ctx context.Context, eng *engine.Engine, args []string, jsonMode b
 	auth := fs.String("auth", eng.Config.Web.Auth, "none|token")
 	token := addServeTokenFlag(fs)
 	openBrowser := fs.Bool("open-browser", eng.Config.Web.OpenBrowser, "open default browser")
-	// --insecure is the explicit opt-out for the non-loopback-without-
-	// auth guard below. Without it, we refuse to start a server that
-	// exposes tool/file endpoints unauthenticated on a LAN or public
-	// interface — a common foot-gun where a user flips --host 0.0.0.0
-	// for sharing and forgets that --auth still defaults to "none".
+	// --insecure is the explicit opt-out for the non-loopback-without-auth
+	// guard below. Without it, a LAN bind with --auth=none exposes tool/file
+	// endpoints unauthenticated.
 	insecure := fs.Bool("insecure", false, "allow --auth=none on non-loopback hosts (exposes tools/files to the network)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -72,7 +71,7 @@ func runServe(ctx context.Context, eng *engine.Engine, args []string, jsonMode b
 	}
 	if mode == "none" && !isLoopbackBindHost(*host) && *insecure {
 		fmt.Fprintf(os.Stderr,
-			"WARNING: --auth=none on non-loopback host %q — all API endpoints (file read/write, tool invocation, shell) are reachable without authentication. Anyone on the network can drive this process.\n",
+			"WARNING: --auth=none on non-loopback host %q - all API endpoints (file read/write, tool invocation, shell) are reachable without authentication. Anyone on the network can drive this process.\n",
 			*host)
 	}
 
@@ -98,7 +97,6 @@ func runServe(ctx context.Context, eng *engine.Engine, args []string, jsonMode b
 	if *openBrowser {
 		target := "http://" + addr
 		go func() {
-			// Give server a small head-start before opening browser.
 			time.Sleep(120 * time.Millisecond)
 			_ = tryOpenBrowser(target)
 		}()
@@ -114,67 +112,9 @@ func runRemote(ctx context.Context, eng *engine.Engine, args []string, jsonMode 
 	if len(args) == 0 {
 		args = []string{"start"}
 	}
-
-	switch args[0] {
-	case "status":
-		return remoteStatus(eng, args[1:], jsonMode)
-
-	case "probe":
-		return remoteProbe(eng, args[1:], jsonMode)
-
-	case "events":
-		return remoteEvents(eng, args[1:], jsonMode)
-
-	case "ask":
-		return remoteAskCmd(eng, args[1:], jsonMode)
-
-	case "tool":
-		return remoteTool(eng, args[1:], jsonMode)
-
-	case "skill":
-		return remoteSkill(eng, args[1:], jsonMode)
-
-	case "analyze":
-		return remoteAnalyze(eng, args[1:], jsonMode)
-
-	case "context":
-		return remoteContext(eng, args[1:], jsonMode)
-
-	case "files":
-		return remoteFiles(eng, args[1:], jsonMode)
-
-	case "memory":
-		return remoteMemory(eng, args[1:], jsonMode)
-
-	case "conversation":
-		return remoteConversation(eng, args[1:], jsonMode)
-
-	case "codemap":
-		return remoteCodemap(eng, args[1:], jsonMode)
-
-	case "tools":
-		return remoteTools(eng, args[1:], jsonMode)
-
-	case "skills":
-		return remoteSkills(eng, args[1:], jsonMode)
-
-	case "agents":
-		return remoteAgents(eng, args[1:], jsonMode)
-
-	case "prompt":
-		return remotePrompt(eng, args[1:], jsonMode)
-
-	case "magicdoc":
-		return remoteMagicdoc(eng, args[1:], jsonMode)
-
-	case "start":
-		return remoteStart(ctx, eng, args[1:], jsonMode)
-
-	case "drive":
-		return runRemoteDrive(eng, args[1:], jsonMode)
-
-	default:
-		fmt.Fprintln(os.Stderr, "usage: dfmc remote [status|probe|events|ask|tool|tools|skill|skills|prompt|magicdoc|analyze|context|files|memory|conversation (list/search/active/new/save/load/branch)|codemap|drive (start/list/show/resume/delete)|start --host 127.0.0.1 --ws-port 7779 --auth none|token]")
-		return 2
+	if code, ok := dispatchRemoteCommand(ctx, eng, args[0], args[1:], jsonMode); ok {
+		return code
 	}
+	fmt.Fprintln(os.Stderr, remoteUsage())
+	return 2
 }

@@ -33,17 +33,23 @@ func (m Model) renderPanelOverlayBody(kind string, contentWidth, innerHeight int
 	var body string
 	switch kind {
 	case "status":
-		body = fitPanelContentHeight(m.renderStatusViewV2(contentWidth), bodyHeight)
+		panelHeight := panelContentHeightForActionMenu(bodyHeight, m.actionMenu.open && m.actionMenu.owner == "Status")
+		body = fitPanelContentHeight(m.renderStatusViewSized(contentWidth, panelHeight), bodyHeight)
 	case "tools":
-		body = fitPanelContentHeight(m.renderToolsView(contentWidth), bodyHeight)
+		panelHeight := panelContentHeightForActionMenu(bodyHeight, m.actionMenu.open && m.actionMenu.owner == "Tools")
+		body = fitPanelContentHeight(m.renderToolsViewSized(contentWidth, panelHeight), bodyHeight)
 	case "codemap":
-		body = fitPanelContentHeight(m.renderCodemapView(contentWidth), bodyHeight)
+		panelHeight := panelContentHeightForActionMenu(bodyHeight, m.actionMenu.open && m.actionMenu.owner == "CodeMap")
+		body = fitPanelContentHeight(m.renderCodemapViewSized(contentWidth, panelHeight), bodyHeight)
 	case "prompts":
-		body = fitPanelContentHeight(m.renderPromptsView(contentWidth), bodyHeight)
+		panelHeight := panelContentHeightForActionMenu(bodyHeight, m.actionMenu.open && m.actionMenu.owner == "Prompts")
+		body = fitPanelContentHeight(m.renderPromptsViewSized(contentWidth, panelHeight), bodyHeight)
 	case "security":
-		body = fitPanelContentHeight(m.renderSecurityView(contentWidth), bodyHeight)
+		panelHeight := panelContentHeightForActionMenu(bodyHeight, m.actionMenu.open && m.actionMenu.owner == "Security")
+		body = fitPanelContentHeight(m.renderSecurityViewSized(contentWidth, panelHeight), bodyHeight)
 	case "plans":
-		body = fitPanelContentHeight(m.renderPlansView(contentWidth), bodyHeight)
+		panelHeight := panelContentHeightForActionMenu(bodyHeight, m.actionMenu.open && m.actionMenu.owner == "Plans")
+		body = fitPanelContentHeight(m.renderPlansViewSized(contentWidth, panelHeight), bodyHeight)
 	case "context":
 		body = fitPanelContentHeight(m.renderContextViewSized(contentWidth, bodyHeight), bodyHeight)
 	case "orchestrate":
@@ -57,7 +63,7 @@ func (m Model) renderPanelOverlayBody(kind string, contentWidth, innerHeight int
 		// gets truncated below ~40 rows on stock terminals. Same fix.
 		body, _ = fitPanelContentScrollable(m.renderShortcutsView(contentWidth), bodyHeight, m.shortcuts.scroll)
 	case "contexts":
-		body = fitPanelContentHeight(m.renderContextsView(contentWidth), bodyHeight)
+		body, _ = fitPanelContentScrollable(m.renderContextsView(contentWidth), bodyHeight, m.contexts.scroll)
 	case "providerlog":
 		// Provider call archive — long read-only digest of every
 		// provider:complete event today. Scroll grammar matches
@@ -68,7 +74,7 @@ func (m Model) renderPanelOverlayBody(kind string, contentWidth, innerHeight int
 		// Requires `go build -tags telegram_bot_wip` and --telegram-token flag.
 		body = fitPanelContentHeight(m.renderTelegramPanel(), bodyHeight)
 	case "toolstatus":
-		body = fitPanelContentHeight(m.renderToolStatusView(contentWidth), bodyHeight)
+		body = fitPanelContentHeight(m.renderToolStatusViewSized(contentWidth, bodyHeight), bodyHeight)
 	default:
 		body = subtleStyle.Render("(unknown overlay: " + kind + ")")
 	}

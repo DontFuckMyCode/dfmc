@@ -148,7 +148,12 @@ func nonEmpty(a, fallback string) string {
 }
 
 func (m Model) renderPromptsView(width int) string {
+	return m.renderPromptsViewSized(width, 24)
+}
+
+func (m Model) renderPromptsViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
+	height = max(height, 8)
 	banner := m.promptsTopBanner(width)
 	hint := subtleStyle.Render("j/k scroll · enter preview · / search · r refresh · c clear")
 	queryLine := subtleStyle.Render("query ")
@@ -189,30 +194,30 @@ func (m Model) renderPromptsView(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	scroll := m.prompts.scroll
-	if scroll < 0 {
-		scroll = 0
+	cursor := clampScroll(m.prompts.scroll, len(filtered))
+	rowBudget := max(height-len(lines)-4, 1)
+	if m.prompts.previewID != "" {
+		rowBudget = max(rowBudget-6, 1)
 	}
-	if scroll >= len(filtered) {
-		scroll = len(filtered) - 1
-	}
+	start, end := scrollWindow(cursor, len(filtered), rowBudget)
 
-	for i, t := range filtered[scroll:] {
-		selected := (scroll + i) == m.prompts.scroll
+	for i := start; i < end; i++ {
+		t := filtered[i]
+		selected := i == cursor
 		lines = append(lines, formatPromptRow(t, selected, width-2))
 	}
 
 	// Preview pane for the selected row (only when explicitly loaded).
-	if m.prompts.previewID != "" && m.prompts.scroll >= 0 && m.prompts.scroll < len(filtered) {
-		if filtered[m.prompts.scroll].ID == m.prompts.previewID {
+	if m.prompts.previewID != "" && cursor >= 0 && cursor < len(filtered) {
+		if filtered[cursor].ID == m.prompts.previewID {
 			lines = append(lines, "", subtleStyle.Render("preview · "+m.prompts.previewID))
-			lines = append(lines, formatPromptPreview(filtered[m.prompts.scroll], width-2)...)
+			lines = append(lines, formatPromptPreview(filtered[cursor], width-2)...)
 		}
 	}
 
 	lines = append(lines, "", subtleStyle.Render(fmt.Sprintf(
-		"%d shown · %d loaded",
-		len(filtered), len(m.prompts.templates),
+		"%d / %d shown · %d loaded",
+		cursor+1, len(filtered), len(m.prompts.templates),
 	)))
 	out := strings.Join(lines, "\n")
 	if m.actionMenu.open && m.actionMenu.owner == "Prompts" {

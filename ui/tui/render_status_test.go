@@ -150,3 +150,16 @@ func TestStatusKey_EnterJumpsToDetailTab(t *testing.T) {
 			wantIdx, gm.activeTab)
 	}
 }
+
+func TestStatusActionMenuRenders(t *testing.T) {
+	m := newCoverageModel(t)
+	m.status = engine.Status{Provider: "anthropic", Model: "x", ASTBackend: "tree-sitter"}
+	_ = m.renderStatusViewV2(120)
+
+	got, _ := m.handleStatusKey(tea.KeyMsg{Type: tea.KeyRight})
+	gm := got.(Model)
+	view := stripANSI(gm.renderStatusViewSized(120, 20))
+	if !strings.Contains(view, "STATUS ACTIONS") || !strings.Contains(view, "Refresh status snapshot") {
+		t.Fatalf("status action menu should be visible after right, got:\n%s", view)
+	}
+}

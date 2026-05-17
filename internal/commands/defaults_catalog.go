@@ -239,6 +239,21 @@ func defaultCommands() []Command {
 				{Name: "run", Aliases: []string{"call"}, Summary: "Invoke a method on a plugin over JSON-RPC."},
 			},
 		},
+		{
+			Name:     "drive",
+			Summary:  "Run, resume, inspect, and stop autonomous plan/execute workflows.",
+			Category: CategoryTools,
+			Surfaces: SurfaceCLI,
+			Usage:    "drive TASK | drive SUBCOMMAND [args...]",
+			Subcommands: []Subcommand{
+				{Name: "list", Summary: "List past drive runs, newest first."},
+				{Name: "show", Summary: "Pretty-print one run's TODO graph."},
+				{Name: "resume", Summary: "Re-enter a stopped or in-progress run."},
+				{Name: "stop", Aliases: []string{"cancel"}, Summary: "Stop an active run."},
+				{Name: "active", Summary: "Show active runs."},
+				{Name: "delete", Summary: "Remove a saved run record."},
+			},
+		},
 
 		// ---------------- Config ----------------
 		{
@@ -258,15 +273,22 @@ func defaultCommands() []Command {
 			Name:     "provider",
 			Summary:  "Switch the active provider/model for this session.",
 			Category: CategoryConfig,
-			Surfaces: SurfaceTUI,
-			Usage:    "/provider NAME [MODEL] [--persist]",
+			Surfaces: SurfaceCLI | SurfaceTUI,
+			Usage:    "provider [NAME]",
 		},
 		{
 			Name:     "model",
 			Summary:  "Switch the active model within the current provider.",
 			Category: CategoryConfig,
-			Surfaces: SurfaceTUI,
-			Usage:    "/model NAME [--persist]",
+			Surfaces: SurfaceCLI | SurfaceTUI,
+			Usage:    "model [NAME]",
+		},
+		{
+			Name:     "providers",
+			Summary:  "List configured providers and mark the active one.",
+			Category: CategoryConfig,
+			Surfaces: SurfaceCLI,
+			Usage:    "providers",
 		},
 
 		// ---------------- Server ----------------

@@ -59,6 +59,10 @@ func (m Model) handleFilesLoadedMsg(msg filesLoadedMsg) (tea.Model, tea.Cmd) {
 		m.notice = "files: " + truncateNotice(msg.err)
 		return m, nil
 	}
+	selected := strings.TrimSpace(m.filesView.path)
+	if selected == "" {
+		selected = m.selectedFile()
+	}
 	m.filesView.entries = msg.files
 	if len(m.filesView.entries) == 0 {
 		m.filesView.index = 0
@@ -68,10 +72,9 @@ func (m Model) handleFilesLoadedMsg(msg filesLoadedMsg) (tea.Model, tea.Cmd) {
 		m.notice = "No project files found."
 		return m, nil
 	}
-	selected := m.selectedFile()
 	nextIndex := 0
 	if selected != "" {
-		for i, path := range m.filesView.entries {
+		for i, path := range m.visibleFilesEntries() {
 			if path == selected {
 				nextIndex = i
 				break

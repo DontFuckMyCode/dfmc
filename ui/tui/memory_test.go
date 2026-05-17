@@ -234,11 +234,33 @@ func TestRenderMemoryViewWithEntries(t *testing.T) {
 	m := newMemoryTestModel()
 	m.memory.entries = sampleMemoryEntries()
 	out := m.renderMemoryView(100)
-	if !strings.Contains(out, "3 shown · 3 loaded") {
+	if !strings.Contains(out, "1 / 3 shown") || !strings.Contains(out, "3 loaded") {
 		t.Fatalf("footer count wrong:\n%s", out)
 	}
 	if !strings.Contains(out, "bearer token") {
 		t.Fatalf("value row missing:\n%s", out)
+	}
+}
+
+func TestRenderMemoryViewSizedWindowsAroundSelectedEntry(t *testing.T) {
+	m := newMemoryTestModel()
+	m.memory.entries = []types.MemoryEntry{}
+	for i := 0; i < 20; i++ {
+		m.memory.entries = append(m.memory.entries, types.MemoryEntry{
+			ID:    string(rune('a' + i)),
+			Tier:  types.MemoryEpisodic,
+			Key:   "memory row " + string(rune('a'+i)),
+			Value: "value",
+		})
+	}
+	m.memory.scroll = 15
+
+	out := stripANSI(m.renderMemoryViewSized(100, 10))
+	if !strings.Contains(out, "memory row p") {
+		t.Fatalf("selected memory row should stay visible, got:\n%s", out)
+	}
+	if strings.Contains(out, "memory row a") {
+		t.Fatalf("memory view should not render from top after scroll, got:\n%s", out)
 	}
 }
 
