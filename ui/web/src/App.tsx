@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
+import { TabsList, TabsTrigger } from "./components/ui/tabs";
+import { Textarea } from "./components/ui/textarea";
 
 type AnyRecord = Record<string, any>;
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
@@ -542,7 +544,7 @@ export function App() {
             <pre className="codebox">{fileContent}</pre>
           </Panel>
           <Panel title="Workspace Patch" subtitle="Load, check, and apply the latest assistant diff." icon={<Code2 size={16} />} action={<Button variant="secondary" size="sm" onClick={loadDiff}><RefreshCw size={14} />Refresh</Button>}>
-            <textarea value={patch} onChange={(event) => setPatch(event.target.value)} placeholder="Paste unified diff or load latest assistant patch." />
+            <Textarea value={patch} onChange={(event) => setPatch(event.target.value)} placeholder="Paste unified diff or load latest assistant patch." />
             <div className="action-row">
               <Button variant="secondary" size="sm" onClick={loadLatestPatch}>Load latest</Button>
               <Button variant="secondary" size="sm" onClick={() => void applyPatch(true)}>Check</Button>
@@ -562,7 +564,7 @@ export function App() {
               </div>
             ))}
           </div>
-          <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={(event) => submitOnModEnter(event, sendChat)} placeholder="Ask DFMC..." />
+          <Textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={(event) => submitOnModEnter(event, sendChat)} placeholder="Ask DFMC..." />
           <div className="chat-controls">
             <Button onClick={() => void sendChat()}><Send size={14} />Send</Button>
             <span className="inline-note">{chatStatus}</span>
@@ -596,7 +598,7 @@ export function App() {
         </div>
 
         <Panel title="Drive Cockpit" subtitle="Autonomous plan/execute loop." icon={<Workflow size={16} />} className="wide" action={<span className="pulse">{driveStatus}</span>}>
-          <textarea value={driveTask} onChange={(event) => setDriveTask(event.target.value)} onKeyDown={(event) => submitOnModEnter(event, startDrive)} placeholder="Describe the autonomous task." />
+          <Textarea value={driveTask} onChange={(event) => setDriveTask(event.target.value)} onKeyDown={(event) => submitOnModEnter(event, startDrive)} placeholder="Describe the autonomous task." />
           <div className="drive-controls">
             <Button onClick={() => void startDrive()}><Play size={14} />Start drive</Button>
             <Button variant="secondary" size="sm" onClick={() => void refreshDrive()}><RefreshCw size={14} />Refresh</Button>
@@ -614,9 +616,11 @@ export function App() {
         <Panel title="Tasks" subtitle="Matches TUI /tasks list/tree/roots/show/clear." icon={<CheckCircle2 size={16} />} className="wide" action={<span className="pulse">{tasksStatus}</span>}>
           <div className="drive-controls">
             <Button variant="secondary" size="sm" onClick={loadTasks}><RefreshCw size={14} />Refresh</Button>
-            <Button variant={taskMode === "list" ? "default" : "secondary"} size="sm" disabled={taskMode === "list"} onClick={() => setTaskMode("list")}>List</Button>
-            <Button variant={taskMode === "tree" ? "default" : "secondary"} size="sm" disabled={taskMode === "tree"} onClick={() => setTaskMode("tree")}>Tree</Button>
-            <Button variant={taskMode === "roots" ? "default" : "secondary"} size="sm" disabled={taskMode === "roots"} onClick={() => setTaskMode("roots")}>Roots</Button>
+            <TabsList aria-label="Task view mode">
+              <TabsTrigger active={taskMode === "list"} onClick={() => setTaskMode("list")}>List</TabsTrigger>
+              <TabsTrigger active={taskMode === "tree"} onClick={() => setTaskMode("tree")}>Tree</TabsTrigger>
+              <TabsTrigger active={taskMode === "roots"} onClick={() => setTaskMode("roots")}>Roots</TabsTrigger>
+            </TabsList>
             <Button variant="secondary" size="sm" onClick={() => void clearTasks()}><Trash2 size={14} />Clear</Button>
             <span className="inline-note">{tasksSummary}</span>
           </div>

@@ -1,9 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DFMC Workbench</title>
+    <script>
+      (() => {
+        const theme = localStorage.getItem("dfmcTheme") || "dark";
+        document.documentElement.classList.toggle("dark", theme !== "light");
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
