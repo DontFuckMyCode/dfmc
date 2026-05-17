@@ -9,10 +9,6 @@ import (
 	"strings"
 )
 
-func (m Model) renderPipelinesView(width int) string {
-	return m.renderPipelinesViewSized(width, 24)
-}
-
 func (m Model) renderPipelinesViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	height = max(height, 1)

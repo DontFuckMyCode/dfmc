@@ -101,25 +101,11 @@ func (s *Server) SetBearerToken(token string) {
 	s.token = strings.TrimSpace(token)
 }
 
-func (s *Server) SetAllowedOrigins(origins []string) {
-	if s == nil {
-		return
-	}
-	s.allowedOrigins = origins
-}
-
 func (s *Server) SetAllowedHosts(hosts []string) {
 	if s == nil {
 		return
 	}
 	s.allowedHosts = hosts
-}
-
-func (s *Server) SetTrustedProxies(proxies []string) {
-	if s == nil {
-		return
-	}
-	s.trustedProxies = proxies
 }
 
 func (s *Server) setupRoutes() {
@@ -193,11 +179,6 @@ func (s *Server) setupRoutes() {
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
-}
-
-func (s *Server) Start() error {
-	fmt.Printf("DFMC Web API listening on http://%s\n", s.addr)
-	return NewHTTPServer(s.addr, s.Handler()).ListenAndServe()
 }
 
 // Handler returns the server's root http.Handler with every request

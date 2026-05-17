@@ -7,10 +7,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func (m Model) renderProviderCatalogView(width int) string {
-	return m.renderProviderCatalogViewSized(width, 24)
-}
-
 func (m Model) renderProviderCatalogViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	height = max(height, 1)
@@ -129,10 +125,6 @@ func (m Model) renderProviderTextEditBox(width int) string {
 	return lipgloss.PlaceHorizontal(width, lipgloss.Center, box)
 }
 
-func (m Model) renderProviderTiersView(width int) string {
-	return m.renderProviderTiersViewSized(width, 24)
-}
-
 func (m Model) renderProviderTiersViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	height = max(height, 1)
@@ -145,10 +137,6 @@ func (m Model) renderProviderTiersViewSized(width, height int) string {
 		subtleStyle.Render("up/down slot - left/right model - enter assign - esc back") + "\n" +
 		renderDivider(width-2) + "\n" +
 		lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
-}
-
-func (m Model) renderProviderSkillsView(width int) string {
-	return m.renderProviderSkillsViewSized(width, 24)
 }
 
 func (m Model) renderProviderSkillsViewSized(width, height int) string {
@@ -165,10 +153,6 @@ func (m Model) renderProviderSkillsViewSized(width, height int) string {
 		subtleStyle.Render("up/down skill - left/right model/tier - enter assign - esc back") + "\n" +
 		renderDivider(width-2) + "\n" +
 		lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
-}
-
-func (m Model) renderSkillListPane(width int, skills []skillEntry) string {
-	return m.renderSkillListPaneSized(width, skills, 20)
 }
 
 func (m Model) renderSkillListPaneSized(width int, skills []skillEntry, rowBudget int) string {
@@ -190,10 +174,6 @@ func (m Model) renderSkillListPaneSized(width int, skills []skillEntry, rowBudge
 		lines = append(lines, prefix+padRight(name, max(width-18, 10))+subtleStyle.Render(nonEmpty(route, "(default tier)")))
 	}
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
-}
-
-func (m Model) renderSkillRoutePickerPane(width int, refs []string) string {
-	return m.renderSkillRoutePickerPaneSized(width, refs, 20)
 }
 
 func (m Model) renderSkillRoutePickerPaneSized(width int, refs []string, rowBudget int) string {
@@ -240,10 +220,6 @@ func (m Model) renderTierMatrixPane(width int) string {
 		}
 	}
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
-}
-
-func (m Model) renderTierModelPickerPane(width int, refs []string) string {
-	return m.renderTierModelPickerPaneSized(width, refs, 20)
 }
 
 func (m Model) renderTierModelPickerPaneSized(width int, refs []string, rowBudget int) string {

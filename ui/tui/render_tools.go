@@ -7,10 +7,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func (m Model) renderToolsViewV2(width int) string {
-	return m.renderToolsViewSized(width, 24)
-}
-
 func (m Model) renderToolsViewSized(width, height int) string {
 	width = max(width, 50)
 	height = max(height, 8)

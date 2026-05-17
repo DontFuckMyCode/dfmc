@@ -53,7 +53,6 @@ type filesViewState struct {
 // parameters before re-running.
 type toolViewState struct {
 	index     int
-	scroll    int // vertical scroll offset in the registry list
 	output    string
 	editing   bool
 	draft     string

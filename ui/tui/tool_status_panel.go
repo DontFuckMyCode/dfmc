@@ -16,10 +16,6 @@ import (
 	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
 )
 
-func (m Model) renderToolStatusView(width int) string {
-	return m.renderToolStatusViewSized(width, 24)
-}
-
 func (m Model) renderToolStatusViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	height = max(height, 6)

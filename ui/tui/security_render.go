@@ -129,10 +129,6 @@ func (m Model) renderSecurityViewSized(width, height int) string {
 	return out
 }
 
-func (m Model) renderSecurityViewInner(width int) string {
-	return m.renderSecurityViewInnerSized(width, 24)
-}
-
 func (m Model) renderSecurityViewInnerSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	height = max(height, 8)

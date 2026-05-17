@@ -87,6 +87,7 @@ func runServe(ctx context.Context, eng *engine.Engine, args []string, jsonMode b
 	srv := web.New(eng, *host, *port)
 	srv.SetBearerToken(*token)
 	handler := srv.Handler()
+	defer func() { _ = srv.Close() }()
 	if mode == "token" {
 		handler = bearerTokenMiddleware(handler, *token)
 	}

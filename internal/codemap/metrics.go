@@ -76,12 +76,6 @@ func newBuildMetricsTracker(opts ...BuildOption) *buildMetricsTracker {
 
 type BuildOption func(*buildMetricsTracker)
 
-func WithMaxRecent(n int) BuildOption {
-	return func(m *buildMetricsTracker) {
-		m.maxRecent = n
-	}
-}
-
 func (m *buildMetricsTracker) SetMaxRecent(n int) {
 	if n <= 0 {
 		n = defaultMaxRecentBuildSamples

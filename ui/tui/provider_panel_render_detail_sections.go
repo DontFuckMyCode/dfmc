@@ -81,10 +81,6 @@ func (m Model) renderProviderEditableProfileFields(name, protocol, baseURL, apiK
 	return lines
 }
 
-func (m Model) renderProviderModelsSection(name string, prof config.ModelConfig) []string {
-	return m.renderProviderModelsSectionSized(name, prof, 12)
-}
-
 func (m Model) renderProviderModelsSectionSized(name string, prof config.ModelConfig, rowBudget int) []string {
 	allModels := m.detailProviderModels()
 	models := m.detailProviderVisibleModels()
@@ -165,10 +161,6 @@ func (m Model) renderProviderFallbackSection(prof config.ModelConfig) []string {
 		lines = append(lines, "  "+model)
 	}
 	return lines
-}
-
-func (m Model) renderProviderModelPickerSection() []string {
-	return m.renderProviderModelPickerSectionSized(10)
 }
 
 func (m Model) renderProviderModelPickerSectionSized(rowBudget int) []string {

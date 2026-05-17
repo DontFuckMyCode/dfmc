@@ -58,6 +58,7 @@ func remoteStart(ctx context.Context, eng *engine.Engine, args []string, jsonMod
 	base := web.New(eng, *host, *port)
 	base.SetBearerToken(*token)
 	handler := base.Handler()
+	defer func() { _ = base.Close() }()
 	if mode == "token" {
 		handler = bearerTokenMiddleware(handler, *token)
 	}

@@ -121,10 +121,6 @@ func (m Model) renderPlansViewSized(width, height int) string {
 	return out
 }
 
-func (m Model) renderPlansViewInner(width int) string {
-	return m.renderPlansViewInnerSized(width, 24)
-}
-
 func (m Model) renderPlansViewInnerSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	height = max(height, 8)

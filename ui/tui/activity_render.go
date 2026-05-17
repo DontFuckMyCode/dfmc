@@ -261,8 +261,6 @@ func (m Model) renderActivityView(width int) string {
 
 // renderActivityViewSized delegates to the V2 wrapper in
 // render_activity_v2.go which adds a banner + LIVE/PAUSED chip.
-// The legacy stack-shape stays here as legacyRenderActivityViewSized
-// (unused) for git-history reference.
 func (m Model) renderActivityViewSized(width, height int) string {
 	return m.renderActivityViewV2(width, height)
 }

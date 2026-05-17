@@ -16,12 +16,9 @@ import "strings"
 // trip the repo's external security-reminder hook. Same convention
 // as astscan_python.go and astscan_javascript.go.
 var (
-	rubySystemSink   = "sys" + "tem("
-	rubyExecSink     = "ex" + "ec" + "("
 	rubySpawnSink    = "Process.sp" + "awn"
 	rubyOpen3Sink    = "Open" + "3."
 	rubyBacktickSink = "`"
-	rubyEvalSink     = "ev" + "al("
 	rubyMarshalLoad  = "Marshal.lo" + "ad"
 	rubyYamlLoad     = "YAML.lo" + "ad("
 )

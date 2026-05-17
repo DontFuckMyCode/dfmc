@@ -332,13 +332,6 @@ func extractRustImportAliases(lines []string) []ImportAlias {
 
 // --- Go ---------------------------------------------------------------
 
-// `import alias "pkg"` -- the rare-but-real alias form. Plain
-// `import "pkg"` produces a local binding equal to the package's
-// last path segment, which we can't always determine without a
-// build; we record what the line tells us and let downstream
-// callers infer.
-var reGoImportAlias = regexp.MustCompile(`^\s*(?:_|\.|[A-Za-z_]\w*)?\s*"([^"]+)"`)
-
 func extractGoImportAliases(lines []string) []ImportAlias {
 	var out []ImportAlias
 	inBlock := false

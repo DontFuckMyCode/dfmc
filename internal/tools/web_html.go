@@ -26,7 +26,6 @@ package tools
 // runs to 2 — same final shape the old code produced.
 
 import (
-	"html"
 	"regexp"
 	"strings"
 
@@ -152,10 +151,3 @@ func finalizeStrippedText(s string) string {
 	s = reNL.ReplaceAllString(s, "\n\n")
 	return strings.TrimSpace(s)
 }
-
-// decodeHTMLEntities was the entity-decoder used by the regex stripper.
-// The tokenizer in htmlToText now decodes entities natively, so this
-// helper is unused — kept commented as a breadcrumb for anyone hunting
-// for the old surface.
-// func decodeHTMLEntities(s string) string { return html.UnescapeString(s) }
-var _ = html.UnescapeString // keep the html import live for future use

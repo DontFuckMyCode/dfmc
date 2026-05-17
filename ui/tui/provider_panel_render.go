@@ -7,20 +7,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func (m Model) renderProvidersView(width int) string {
-	return m.renderProvidersViewSized(width, 24)
-}
-
 func (m Model) renderProvidersViewSized(width, height int) string {
 	out := m.renderProvidersViewInnerSized(width, height)
 	if m.actionMenu.open && m.actionMenu.owner == "Providers" {
 		out += "\n\n" + m.renderActionMenu(width)
 	}
 	return out
-}
-
-func (m Model) renderProvidersViewInner(width int) string {
-	return m.renderProvidersViewInnerSized(width, 24)
 }
 
 func (m Model) renderProvidersViewInnerSized(width, height int) string {
@@ -76,10 +68,6 @@ func (m Model) providersTopBanner(width int) string {
 	chipStrip := strings.Join(chips, " ")
 	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
 	return title + strings.Repeat(" ", gap) + chipStrip
-}
-
-func (m Model) renderProviderListView(width int) string {
-	return m.renderProviderListViewSized(width, 24)
 }
 
 func (m Model) renderProviderListViewSized(width, height int) string {
