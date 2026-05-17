@@ -1,0 +1,579 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}
+
+:root {
+  color-scheme: light;
+  --radius: 0.5rem;
+  --background: oklch(0.985 0.012 96);
+  --foreground: oklch(0.205 0.028 255);
+  --card: oklch(1 0 0 / 0.88);
+  --card-foreground: var(--foreground);
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.55 0.19 28);
+  --primary-foreground: oklch(0.985 0.008 96);
+  --secondary: oklch(0.94 0.018 230);
+  --secondary-foreground: oklch(0.255 0.035 255);
+  --muted: oklch(0.94 0.018 230);
+  --muted-foreground: oklch(0.45 0.035 250);
+  --accent: oklch(0.72 0.15 174);
+  --accent-foreground: oklch(0.155 0.027 190);
+  --destructive: oklch(0.58 0.22 27);
+  --border: oklch(0.86 0.025 240);
+  --input: oklch(0.86 0.025 240);
+  --ring: oklch(0.62 0.17 205);
+  --surface: oklch(0.975 0.013 96 / 0.74);
+  --surface-strong: oklch(1 0 0 / 0.92);
+  --line-soft: oklch(0.62 0.05 240 / 0.22);
+  --mono-soft: oklch(0.32 0.035 255);
+  --ok: oklch(0.65 0.16 165);
+  --warn: oklch(0.76 0.16 82);
+  --info: oklch(0.66 0.16 238);
+  --shadow-panel: 0 24px 70px oklch(0.18 0.02 250 / 0.12);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.145 0.018 246);
+  --foreground: oklch(0.958 0.01 230);
+  --card: oklch(0.19 0.022 246 / 0.88);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.19 0.022 246);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.67 0.19 31);
+  --primary-foreground: oklch(0.15 0.02 250);
+  --secondary: oklch(0.25 0.026 245);
+  --secondary-foreground: oklch(0.94 0.01 230);
+  --muted: oklch(0.255 0.026 245);
+  --muted-foreground: oklch(0.73 0.03 240);
+  --accent: oklch(0.74 0.15 174);
+  --accent-foreground: oklch(0.125 0.02 190);
+  --destructive: oklch(0.66 0.2 28);
+  --border: oklch(0.98 0.004 230 / 0.12);
+  --input: oklch(0.98 0.004 230 / 0.14);
+  --ring: oklch(0.72 0.15 205);
+  --surface: oklch(0.18 0.024 246 / 0.72);
+  --surface-strong: oklch(0.22 0.027 246 / 0.92);
+  --line-soft: oklch(0.98 0.004 230 / 0.1);
+  --mono-soft: oklch(0.76 0.035 240);
+  --ok: oklch(0.74 0.15 165);
+  --warn: oklch(0.82 0.16 82);
+  --info: oklch(0.76 0.14 238);
+  --shadow-panel: 0 28px 80px oklch(0.06 0.015 250 / 0.5);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    @apply min-h-full;
+  }
+
+  body {
+    @apply m-0 bg-background text-foreground antialiased;
+    background:
+      radial-gradient(circle at 14% 8%, oklch(0.72 0.12 180 / 0.18), transparent 30rem),
+      radial-gradient(circle at 85% 0%, oklch(0.72 0.16 35 / 0.14), transparent 28rem),
+      linear-gradient(180deg, var(--background), color-mix(in oklab, var(--background) 82%, black));
+    font-family: var(--font-sans);
+  }
+
+  button,
+  textarea,
+  input {
+    font: inherit;
+  }
+
+  textarea {
+    @apply w-full resize-y rounded-md border border-input bg-background/70 px-3 py-3 text-sm text-foreground outline-none transition focus-visible:ring-2 focus-visible:ring-ring;
+    min-height: 118px;
+    line-height: 1.55;
+  }
+}
+
+@layer components {
+  .shell {
+    @apply mx-auto grid gap-4 p-4 sm:p-5;
+    max-width: 1500px;
+  }
+
+  .hero {
+    @apply grid gap-4;
+    grid-template-columns: minmax(0, 1.45fr) minmax(320px, 1fr);
+  }
+
+  .workspace {
+    @apply grid gap-4;
+    grid-template-columns: minmax(320px, 1.1fr) minmax(420px, 1.55fr) minmax(300px, 1fr);
+  }
+
+  .panel {
+    @apply rounded-lg border bg-card text-card-foreground backdrop-blur-xl;
+    box-shadow: var(--shadow-panel);
+  }
+
+  .wide {
+    grid-column: 1 / -1;
+  }
+
+  .hero-card {
+    @apply p-5 sm:p-6;
+  }
+
+  .hero-top {
+    @apply flex items-center justify-between gap-3;
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-bold uppercase text-accent;
+    background: color-mix(in oklab, var(--accent) 12%, transparent);
+    border-color: color-mix(in oklab, var(--accent) 34%, transparent);
+    font-family: var(--font-mono);
+  }
+
+  h1 {
+    @apply my-4 text-4xl font-semibold tracking-normal sm:text-5xl;
+    line-height: 0.98;
+    max-width: 12ch;
+  }
+
+  .lede {
+    @apply max-w-2xl text-sm leading-7 text-muted-foreground sm:text-[15px];
+  }
+
+  .chips,
+  .stats-grid,
+  .action-row,
+  .chat-controls,
+  .drive-controls {
+    @apply flex flex-wrap items-center gap-2.5;
+  }
+
+  .chips {
+    @apply mt-5;
+  }
+
+  .chip,
+  .metric,
+  .kv,
+  .graph-item {
+    @apply rounded-md border bg-secondary/45;
+    border-color: var(--line-soft);
+  }
+
+  .chip,
+  .metric {
+    @apply px-3 py-2.5;
+  }
+
+  .chip strong,
+  .metric strong,
+  .kv strong {
+    @apply block text-[10px] font-bold uppercase text-muted-foreground;
+    font-family: var(--font-mono);
+  }
+
+  .chip span,
+  .metric span,
+  .kv span {
+    @apply mt-1 block break-words text-[13px] font-semibold;
+    color: var(--mono-soft);
+    font-family: var(--font-mono);
+  }
+
+  .stats-grid {
+    @apply p-5 sm:p-6;
+  }
+
+  .pane-header {
+    @apply flex items-start justify-between gap-3 px-4 pt-4;
+  }
+
+  .pane-heading {
+    @apply flex min-w-0 items-start gap-3;
+  }
+
+  .pane-icon {
+    @apply mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border text-primary;
+    background: color-mix(in oklab, var(--primary) 12%, transparent);
+    border-color: color-mix(in oklab, var(--primary) 26%, transparent);
+  }
+
+  .pane-title {
+    @apply text-[12px] font-bold uppercase text-foreground;
+    font-family: var(--font-mono);
+  }
+
+  .pane-subtitle,
+  .inline-note {
+    @apply text-xs leading-5 text-muted-foreground;
+  }
+
+  .pane-body {
+    @apply px-4 pb-4 pt-3;
+  }
+
+  .stack {
+    @apply grid content-start gap-4;
+  }
+
+  .mini-grid {
+    @apply grid grid-cols-2 gap-2.5;
+  }
+
+  .kv {
+    @apply p-3;
+  }
+
+  .list,
+  .task-list {
+    @apply grid gap-2 overflow-auto;
+    max-height: 320px;
+  }
+
+  .list-item,
+  .task-row,
+  .drive-item {
+    @apply rounded-md border bg-secondary/35 px-3 py-2.5 text-left text-xs font-medium text-foreground transition;
+    border-color: var(--line-soft);
+    font-family: var(--font-mono);
+  }
+
+  button.list-item,
+  .task-row,
+  .drive-item {
+    @apply cursor-pointer;
+  }
+
+  .list-item:hover,
+  .list-item.active,
+  .task-row:hover,
+  .task-row.active,
+  .drive-item:hover,
+  .drive-item.active {
+    @apply bg-accent/10;
+    border-color: color-mix(in oklab, var(--ring) 42%, transparent);
+  }
+
+  .idle {
+    @apply cursor-default text-muted-foreground;
+  }
+
+  .codebox,
+  .activity-log,
+  .task-detail,
+  .drive-detail {
+    @apply mt-3 overflow-auto rounded-md border bg-background/70 p-3;
+    border-color: var(--line-soft);
+  }
+
+  .codebox {
+    @apply whitespace-pre-wrap text-xs;
+    max-height: 360px;
+    font: 500 12px/1.6 var(--font-mono);
+  }
+
+  .transcript {
+    @apply mb-3 grid gap-3 overflow-auto pr-1;
+    max-height: 630px;
+  }
+
+  .message {
+    @apply rounded-md border bg-secondary/30 p-3;
+    border-color: var(--line-soft);
+  }
+
+  .message.user {
+    background: color-mix(in oklab, var(--info) 10%, transparent);
+    border-color: color-mix(in oklab, var(--info) 30%, transparent);
+  }
+
+  .message.assistant {
+    background: color-mix(in oklab, var(--accent) 9%, transparent);
+    border-color: color-mix(in oklab, var(--accent) 28%, transparent);
+  }
+
+  .message.system {
+    background: color-mix(in oklab, var(--warn) 10%, transparent);
+    border-color: color-mix(in oklab, var(--warn) 28%, transparent);
+  }
+
+  .role {
+    @apply mb-2 text-[10px] font-bold uppercase text-muted-foreground;
+    font-family: var(--font-mono);
+  }
+
+  .message pre,
+  .task-detail pre {
+    @apply m-0 whitespace-pre-wrap break-words text-xs;
+    font: 500 12px/1.6 var(--font-mono);
+  }
+
+  .activity-log {
+    @apply grid gap-0.5 text-xs;
+    max-height: 320px;
+    font-family: var(--font-mono);
+  }
+
+  .activity-row {
+    @apply grid gap-1.5 rounded-sm px-1 py-0.5;
+    grid-template-columns: 82px 26px 1fr;
+  }
+
+  .activity-row.kind-error {
+    background: color-mix(in oklab, var(--destructive) 15%, transparent);
+  }
+
+  .kind-agent .kind {
+    color: var(--primary);
+  }
+
+  .kind-tool .kind {
+    color: var(--info);
+  }
+
+  .kind-ctx .kind {
+    color: var(--accent);
+  }
+
+  .activity-empty {
+    @apply px-1.5 py-1.5 text-muted-foreground;
+  }
+
+  .pulse {
+    @apply inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground;
+    font-family: var(--font-mono);
+  }
+
+  .pulse::before {
+    @apply h-2 w-2 rounded-full;
+    content: "";
+    background: var(--accent);
+    box-shadow: 0 0 0 5px color-mix(in oklab, var(--accent) 14%, transparent);
+  }
+
+  .graph-list {
+    @apply mt-3 grid gap-2;
+  }
+
+  .graph-item {
+    @apply p-2.5;
+  }
+
+  .graph-item strong {
+    @apply block text-[13px] font-semibold;
+    font-family: var(--font-mono);
+  }
+
+  .graph-item span {
+    @apply mt-1 block text-xs text-muted-foreground;
+  }
+
+  .drive-grid,
+  .task-grid {
+    @apply mt-3 grid gap-3.5;
+    grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.45fr);
+  }
+
+  .drive-side {
+    @apply grid content-start gap-3.5;
+  }
+
+  .drive-section-title {
+    @apply my-1 text-[11px] font-bold uppercase text-muted-foreground;
+    font-family: var(--font-mono);
+  }
+
+  .drive-item,
+  .task-row {
+    @apply grid gap-1;
+  }
+
+  .drive-item-id {
+    @apply text-xs font-semibold;
+    color: var(--info);
+    font-family: var(--font-mono);
+  }
+
+  .drive-item-task,
+  .task-title {
+    @apply overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  .drive-item-meta,
+  .task-meta {
+    @apply flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground;
+    font-family: var(--font-mono);
+  }
+
+  .pill {
+    @apply border px-2 py-0.5 text-[10px] font-bold uppercase;
+    font-family: var(--font-mono);
+  }
+
+  .pill.running,
+  .pill.planning {
+    color: var(--info);
+    background: color-mix(in oklab, var(--info) 13%, transparent);
+    border-color: color-mix(in oklab, var(--info) 30%, transparent);
+  }
+
+  .pill.done {
+    color: var(--ok);
+    background: color-mix(in oklab, var(--ok) 13%, transparent);
+    border-color: color-mix(in oklab, var(--ok) 30%, transparent);
+  }
+
+  .pill.failed,
+  .pill.blocked {
+    color: var(--destructive);
+    background: color-mix(in oklab, var(--destructive) 14%, transparent);
+    border-color: color-mix(in oklab, var(--destructive) 32%, transparent);
+  }
+
+  .pill.stopped,
+  .pill.waiting,
+  .pill.verifying,
+  .pill.external_review {
+    color: var(--warn);
+    background: color-mix(in oklab, var(--warn) 14%, transparent);
+    border-color: color-mix(in oklab, var(--warn) 32%, transparent);
+  }
+
+  .drive-detail,
+  .task-detail {
+    @apply mt-0 grid content-start gap-2.5;
+    min-height: 220px;
+  }
+
+  .drive-detail-empty,
+  .task-detail-empty {
+    @apply px-3 py-7 text-center text-sm text-muted-foreground;
+  }
+
+  .drive-todo {
+    @apply grid items-baseline gap-2.5 rounded-md border bg-secondary/30 px-2.5 py-2;
+    border-color: var(--line-soft);
+    grid-template-columns: 22px 1fr auto;
+  }
+
+  .drive-todo .marker {
+    @apply text-sm font-bold;
+    font-family: var(--font-mono);
+  }
+
+  .drive-todo.done .marker {
+    color: var(--ok);
+  }
+
+  .drive-todo.failed .marker,
+  .drive-todo.blocked .marker {
+    color: var(--destructive);
+  }
+
+  .drive-todo.running .marker {
+    color: var(--info);
+  }
+
+  .drive-todo .body {
+    @apply grid gap-1;
+  }
+
+  .drive-todo .title {
+    @apply text-[13px] font-semibold;
+    font-family: var(--font-mono);
+  }
+
+  .drive-todo .detail {
+    @apply text-xs text-muted-foreground;
+  }
+
+  .drive-todo .brief,
+  .drive-todo .err {
+    @apply rounded-md px-2 py-1.5 text-xs;
+    font: 500 12px/1.5 var(--font-mono);
+  }
+
+  .drive-todo .brief {
+    background: color-mix(in oklab, var(--accent) 10%, transparent);
+    color: color-mix(in oklab, var(--accent) 80%, var(--foreground));
+  }
+
+  .drive-todo .err {
+    background: color-mix(in oklab, var(--destructive) 14%, transparent);
+    color: color-mix(in oklab, var(--destructive) 78%, var(--foreground));
+  }
+
+  .micro {
+    @apply h-7 px-2 text-[10px];
+  }
+
+  .push {
+    @apply ml-auto;
+  }
+}
+
+@media (max-width: 1200px) {
+  .hero,
+  .workspace,
+  .drive-grid,
+  .task-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  h1 {
+    max-width: 100%;
+  }
+
+  .mini-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pane-header {
+    @apply flex-col;
+  }
+
+  .drive-todo {
+    grid-template-columns: 22px 1fr;
+  }
+
+  .drive-todo .pill {
+    grid-column: 2;
+    justify-self: start;
+  }
+}

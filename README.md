@@ -15,10 +15,10 @@ include breaking changes.
 
 DFMC is TUI-first. The Bubble Tea workbench is the reference operator
 surface for terminology, slash-command behavior, panels, and workflow
-shape. CLI and WebUI features should match the TUI whenever the medium
-allows it, preferably by sharing the same package, formatter, API, or
-store semantics. When a feature is genuinely interactive-only, the
-other surfaces should say so explicitly and point at the nearest
+shape. CLI and the React 19 WebUI should match the TUI whenever the
+medium allows it, preferably by sharing the same package, formatter,
+API, or store semantics. When a feature is genuinely interactive-only,
+the other surfaces should say so explicitly and point at the nearest
 equivalent command instead of silently drifting.
 
 ## Install
@@ -156,6 +156,20 @@ dfmc remote ask --url http://127.0.0.1:7779 --token secret --message "…"
 
 dfmc mcp           # MCP server on stdio for IDE hosts
 ```
+
+The embedded WebUI is built from the React 19/Vite app under
+`ui/web/src`. It uses Tailwind CSS v4, shadcn-style local primitives,
+lucide-react icons, and a responsive dark/light theme while keeping the
+same TUI-first surface contract:
+
+```bash
+cd ui/web
+npm install
+npm run check
+npm run build
+```
+
+`npm run build` writes the embedded assets to `ui/web/static/`.
 
 `serve` and `remote start` share the same HTTP+WebSocket API.
 Non-loopback hosts refuse `--auth=none` unless `--insecure` is

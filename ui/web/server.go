@@ -16,14 +16,14 @@
 //   - server_files.go        file listing / content + path-traversal guard
 //   - server_admin.go        scan / doctor / hooks / config — CLI parity
 //
-// The workbench UI lives in static/index.html and is pulled in via
-// //go:embed below; renderWorkbenchHTML simply surfaces it as a string.
+// The React workbench is built by Vite into static/ and embedded below.
 
 package web
 
 import (
-	_ "embed"
+	"embed"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"slices"
@@ -110,6 +110,7 @@ func (s *Server) SetAllowedHosts(hosts []string) {
 
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /", s.handleIndex)
+	s.mux.HandleFunc("GET /assets/{path...}", s.handleStaticAsset)
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /api/v1/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/v1/commands", s.handleCommands)
@@ -261,9 +262,22 @@ func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(renderWorkbenchHTML()))
 }
 
-//go:embed static/index.html
-var workbenchHTML string
+func (s *Server) handleStaticAsset(w http.ResponseWriter, r *http.Request) {
+	sub, err := fs.Sub(workbenchFS, "static")
+	if err != nil {
+		http.Error(w, "workbench assets unavailable", http.StatusInternalServerError)
+		return
+	}
+	http.FileServer(http.FS(sub)).ServeHTTP(w, r)
+}
+
+//go:embed static
+var workbenchFS embed.FS
 
 func renderWorkbenchHTML() string {
-	return workbenchHTML
+	data, err := workbenchFS.ReadFile("static/index.html")
+	if err != nil {
+		return "<!doctype html><title>DFMC Workbench</title><body>workbench asset missing</body>"
+	}
+	return string(data)
 }

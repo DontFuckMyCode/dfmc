@@ -14,6 +14,12 @@ breaking changes; pre-1.0 patch bumps stay backwards-compatible.
 - Documented the TUI-first surface contract: CLI and WebUI should match
   TUI terminology, slash behavior, and workflow shape through shared
   packages or shared engine/API semantics.
+- Migrated the embedded WebUI shell to a React 19/Vite app under
+  `ui/web/src`, with production assets emitted to `ui/web/static` for
+  Go embedding.
+- Modernized the React WebUI with Tailwind CSS v4, shadcn-style local
+  components, lucide-react icons, responsive layout, and dark/light
+  theme support.
 - Aligned task-store views across surfaces. CLI chat now supports
   `/tasks list`, `/tasks tree`, `/tasks roots`, `/tasks show <id>`, and
   `/tasks clear`; the WebUI includes a Tasks panel with matching

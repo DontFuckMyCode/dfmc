@@ -607,11 +607,11 @@ The engine's chat path can route multi-step prompts to Drive with a 60 minute wa
 
 DFMC follows a TUI-first surface contract. `ui/tui` is the canonical
 operator experience for labels, slash verbs, task/workflow views, and
-interactive state transitions. `ui/cli` and `ui/web` should match that
-contract through shared packages or shared engine/API semantics rather
-than copy-pasted output. If a TUI feature cannot be expressed in another
-medium, that surface should carry an explicit redirect/stub and a test
-so the gap is intentional.
+interactive state transitions. `ui/cli` and the React 19 app in
+`ui/web/src` should match that contract through shared packages or
+shared engine/API semantics rather than copy-pasted output. If a TUI
+feature cannot be expressed in another medium, that surface should carry
+an explicit redirect/stub and a test so the gap is intentional.
 
 ### CLI
 
@@ -670,6 +670,14 @@ flowchart LR
 ### HTTP/Web
 
 `ui/web.Server` hosts the embedded workbench and JSON/SSE/WebSocket API. `ui/web/server.go` wires routes and middleware; handlers are split by domain.
+
+The workbench source is a React 19/Vite application under `ui/web/src`.
+It uses Tailwind CSS v4, shadcn-style local UI primitives, lucide-react
+icons, and a responsive dark/light theme while preserving TUI-first
+behavioral parity. `npm run build` in `ui/web` emits
+`ui/web/static/index.html` plus `ui/web/static/assets/*`; Go embeds the
+`static/` directory and serves `/assets/*` from the same embedded
+filesystem.
 
 The embedded HTML is `ui/web/static/index.html`. A built artifact also exists under `ui/web/app/dist`, but the Go server embeds `static/index.html`.
 
