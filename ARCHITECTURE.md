@@ -605,6 +605,14 @@ The engine's chat path can route multi-step prompts to Drive with a 60 minute wa
 
 ## Protocol Surfaces
 
+DFMC follows a TUI-first surface contract. `ui/tui` is the canonical
+operator experience for labels, slash verbs, task/workflow views, and
+interactive state transitions. `ui/cli` and `ui/web` should match that
+contract through shared packages or shared engine/API semantics rather
+than copy-pasted output. If a TUI feature cannot be expressed in another
+medium, that surface should carry an explicit redirect/stub and a test
+so the gap is intentional.
+
 ### CLI
 
 `ui/cli.Run` parses global flags and dispatches commands. Global flags include provider/model/profile, verbose, JSON, no-color, project, and data-dir.
@@ -641,6 +649,10 @@ Primary tabs from code:
 8. Providers
 
 Other diagnostics are reachable through overlays, slash commands, and function keys. The model tracks chat stream lifecycle, pending queue, workspace metadata, patch state, file browser state, tool view state, activity stream, diagnostics, agent-loop telemetry, tasks panel, intent state, panel switcher, assistant next actions, approval modal, and render cache.
+
+The Tasks panel's inline list/tree/detail/clear behavior is shared
+through `internal/taskview` so TUI slash commands, CLI chat slash
+commands, and WebUI task-store views stay aligned.
 
 TUI event flow:
 

@@ -1,16 +1,38 @@
 package cli
 
 import (
-	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"go.etcd.io/bbolt"
+
+	"github.com/dontfuckmycode/dfmc/internal/config"
+	"github.com/dontfuckmycode/dfmc/internal/engine"
 	"github.com/dontfuckmycode/dfmc/internal/supervisor"
+	"github.com/dontfuckmycode/dfmc/internal/taskstore"
+	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
+func newCLITaskSlashTestEngine(t *testing.T) *engine.Engine {
+	t.Helper()
+	cfg := config.DefaultConfig()
+	db, err := bbolt.Open(filepath.Join(t.TempDir(), "tasks.db"), 0o600, nil)
+	if err != nil {
+		t.Fatalf("open task db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	toolEngine := tools.New(*cfg)
+	toolEngine.SetTaskStore(taskstore.NewStore(db))
+	return &engine.Engine{
+		Config: cfg,
+		Tools:  toolEngine,
+	}
+}
+
 func TestSlashTasksListAndShowMirrorTUIFormatter(t *testing.T) {
-	eng := newCLITestEngine(t)
+	eng := newCLITaskSlashTestEngine(t)
 	store := eng.Tools.TaskStore()
 	if store == nil {
 		t.Fatal("task store should be initialized")
@@ -29,10 +51,7 @@ func TestSlashTasksListAndShowMirrorTUIFormatter(t *testing.T) {
 	}
 
 	listOut := captureStdout(t, func() {
-		exit, handled := runChatSlash(context.Background(), eng, "/tasks list")
-		if exit || !handled {
-			t.Fatalf("/tasks list exit=%t handled=%t", exit, handled)
-		}
+		handleSlashTasks(eng, []string{"list"})
 	})
 	if !strings.Contains(listOut, "Patch CLI task parity") {
 		t.Fatalf("/tasks list should include task title, got:\n%s", listOut)
@@ -42,10 +61,7 @@ func TestSlashTasksListAndShowMirrorTUIFormatter(t *testing.T) {
 	}
 
 	showOut := captureStdout(t, func() {
-		exit, handled := runChatSlash(context.Background(), eng, "/tasks show task-cli-parity")
-		if exit || !handled {
-			t.Fatalf("/tasks show exit=%t handled=%t", exit, handled)
-		}
+		handleSlashTasks(eng, []string{"show", "task-cli-parity"})
 	})
 	for _, want := range []string{"Patch CLI task parity", "detail:", "worker:", "verify:"} {
 		if !strings.Contains(showOut, want) {
@@ -55,7 +71,7 @@ func TestSlashTasksListAndShowMirrorTUIFormatter(t *testing.T) {
 }
 
 func TestSlashTasksClearKeepsDriveOwnedTasks(t *testing.T) {
-	eng := newCLITestEngine(t)
+	eng := newCLITaskSlashTestEngine(t)
 	store := eng.Tools.TaskStore()
 	if store == nil {
 		t.Fatal("task store should be initialized")
@@ -68,10 +84,7 @@ func TestSlashTasksClearKeepsDriveOwnedTasks(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		exit, handled := runChatSlash(context.Background(), eng, "/tasks clear")
-		if exit || !handled {
-			t.Fatalf("/tasks clear exit=%t handled=%t", exit, handled)
-		}
+		handleSlashTasks(eng, []string{"clear"})
 	})
 	for _, want := range []string{"Cleared 1 task", "1 drive-owned task"} {
 		if !strings.Contains(out, want) {

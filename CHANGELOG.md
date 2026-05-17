@@ -9,6 +9,16 @@ breaking changes; pre-1.0 patch bumps stay backwards-compatible.
 
 ## [Unreleased]
 
+### Changed
+
+- Documented the TUI-first surface contract: CLI and WebUI should match
+  TUI terminology, slash behavior, and workflow shape through shared
+  packages or shared engine/API semantics.
+- Aligned task-store views across surfaces. CLI chat now supports
+  `/tasks list`, `/tasks tree`, `/tasks roots`, `/tasks show <id>`, and
+  `/tasks clear`; the WebUI includes a Tasks panel with matching
+  list/tree/roots/detail/clear behavior.
+
 ## [0.1.0] - 2026-05-16
 
 First tagged release. The binary has been in daily use; this version

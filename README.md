@@ -11,6 +11,16 @@ loop, exposed through five surfaces: CLI, TUI, HTTP/SSE, remote
 client, and MCP server. Alpha-stage software; pre-1.0 minor bumps may
 include breaking changes.
 
+## Surface model
+
+DFMC is TUI-first. The Bubble Tea workbench is the reference operator
+surface for terminology, slash-command behavior, panels, and workflow
+shape. CLI and WebUI features should match the TUI whenever the medium
+allows it, preferably by sharing the same package, formatter, API, or
+store semantics. When a feature is genuinely interactive-only, the
+other surfaces should say so explicitly and point at the nearest
+equivalent command instead of silently drifting.
+
 ## Install
 
 Build from source (Go `1.25.0`+):
@@ -130,6 +140,10 @@ dfmc tui
 | `Alt+1..8` | Mirror `F1..F8` (for terminals that swallow F-keys) |
 
 Type `/help` inside Chat for the live slash-command list.
+
+Task-store views are exposed as `/tasks list`, `/tasks tree`,
+`/tasks roots`, `/tasks show <id>`, and `/tasks clear`. The CLI chat
+slash layer and WebUI Tasks panel intentionally mirror those views.
 
 ## HTTP, remote, MCP
 
