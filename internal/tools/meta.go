@@ -117,6 +117,12 @@ func enterMetaBudget(ctx context.Context, calls int) (context.Context, func(), e
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	// Check depth first (nesting recursion), then cumulative call count
+	// (total work in the turn). Depth limit prevents meta-in-meta chains;
+	// budget limit prevents a single turn from issuing hundreds of
+	// backend calls through repeated batching. Both are checked under the
+	// same lock so the counter state stays consistent regardless of which
+	// check fires first.
 	state.depth++
 	depth := state.depth
 	if depth > state.depthLimit {

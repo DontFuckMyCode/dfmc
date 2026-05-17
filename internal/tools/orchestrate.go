@@ -138,7 +138,7 @@ func (t *OrchestrateTool) Execute(ctx context.Context, req Request) (Result, err
 	// optional and clamped.
 	_, hasStages := req.Params["stages"]
 	if task == "" && !hasStages {
-		return Result{}, missingParamError("orchestrate", "task` or `stages", req.Params,
+		return Result{}, missingParamError("orchestrate", "task or stages", req.Params,
 			`{"task":"Survey engine.go, audit router, document manager"} or {"stages":[{"id":"a","task":"..."},{"id":"b","task":"...","depends_on":["a"]}]}`,
 			`Pass "task" (string) for the auto-splitter, OR "stages" (array of {id,task,depends_on?}) for an explicit DAG. The two are mutually exclusive — stages wins when both are set.`)
 	}

@@ -128,7 +128,11 @@ func hasDangerousHookArg(args []string) bool {
 	for _, arg := range args {
 		if arg == "||" || arg == "&&" || arg == "|" || arg == ";" ||
 			strings.HasPrefix(arg, "$()") || strings.HasPrefix(arg, "${") ||
-			strings.HasPrefix(arg, "`") || strings.HasPrefix(arg, "<(") || strings.HasPrefix(arg, ">(") {
+			strings.HasPrefix(arg, "`") || strings.HasPrefix(arg, "<(") || strings.HasPrefix(arg, ">(") ||
+			// Single-var expansion (e.g. $USER) is dangerous in hook args
+			// since it lets an attacker inject content via env vars.
+			// $() and ${} are already caught above.
+			(strings.HasPrefix(arg, "$") && len(arg) > 1 && arg[1] != '(') {
 			return true
 		}
 	}

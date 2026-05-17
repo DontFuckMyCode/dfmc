@@ -61,6 +61,14 @@ func (r *Router) Enabled() bool {
 // a chance to surface the failure (e.g. for ops debugging) while still
 // having a safe routing decision in hand.
 //
+// SECURITY NOTE: because the layer is fail-open by design, a misconfigured
+// intent config (e.g. wrong provider/model, offline-only setup) does NOT
+// block the engine — the raw prompt flows to the main model. This is the
+// correct behavior for availability, but it means "fix it" / "continue" /
+// "resume" from a user under a broken intent config will be treated as
+// fresh prompts rather than park-resume signals. The intent layer is not
+// a security boundary; it is a routing optimisation.
+//
 // Provider call has a hard timeout from cfg.TimeoutMs to keep latency
 // bounded — a slow intent call must not stall the user-facing turn.
 func (r *Router) Evaluate(ctx context.Context, raw string, snap Snapshot) (Decision, error) {

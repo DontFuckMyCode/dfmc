@@ -55,10 +55,14 @@ type Server struct {
 
 func New(eng *engine.Engine, host string, port int) *Server {
 	authMode := "none"
-	allowedOrigins := []string{"http://127.0.0.1", "http://localhost"}
-	allowedHosts := []string{"127.0.0.1", "localhost"}
 	if eng != nil && eng.Config != nil {
 		authMode = strings.ToLower(strings.TrimSpace(eng.Config.Web.Auth))
+	}
+	token := strings.TrimSpace(os.Getenv("DFMC_WEB_TOKEN"))
+	allowedOrigins := []string{"http://127.0.0.1", "http://localhost"}
+	allowedHosts := []string{"127.0.0.1", "localhost"}
+	trustedProxies := []string{"127.0.0.1", "localhost", "::1"}
+	if eng != nil && eng.Config != nil {
 		if len(eng.Config.Web.AllowedOrigins) > 0 {
 			allowedOrigins = eng.Config.Web.AllowedOrigins
 			if slices.Contains(allowedOrigins, "*") {
@@ -68,11 +72,20 @@ func New(eng *engine.Engine, host string, port int) *Server {
 		if len(eng.Config.Web.AllowedHosts) > 0 {
 			allowedHosts = eng.Config.Web.AllowedHosts
 		}
+		if len(eng.Config.Web.TrustedProxies) > 0 {
+			trustedProxies = eng.Config.Web.TrustedProxies
+		}
 	}
-	// HIGH-002 fix: trust configured proxies; fall back to loopback-only.
-	trustedProxies := []string{"127.0.0.1", "localhost", "::1"}
-	if eng != nil && eng.Config != nil && len(eng.Config.Web.TrustedProxies) > 0 {
-		trustedProxies = eng.Config.Web.TrustedProxies
+	// auth=token requires a token — either from the DFMC_WEB_TOKEN env var
+	// (production path) or via SetBearerToken (test path). If the env var
+	// IS set, it must be non-empty (fail-fast on misconfiguration). If
+	// it is NOT set, we allow startup and let SetBearerToken provide the
+	// token — this keeps the test pattern (New then SetBearerToken then
+	// Handler) working without poisoning the process environment.
+	tokenFromEnv := os.Getenv("DFMC_WEB_TOKEN")
+	if authMode == "token" && tokenFromEnv != "" && strings.TrimSpace(tokenFromEnv) == "" {
+		fmt.Fprintf(os.Stderr, "[DFMC] ERROR: web.auth=token but DFMC_WEB_TOKEN is set but empty; refusing to start\n")
+		os.Exit(1)
 	}
 	host = normalizeBindHost(authMode, host)
 	s := &Server{
@@ -80,7 +93,7 @@ func New(eng *engine.Engine, host string, port int) *Server {
 		mux:            http.NewServeMux(),
 		addr:           fmt.Sprintf("%s:%d", host, port),
 		auth:           authMode,
-		token:          strings.TrimSpace(os.Getenv("DFMC_WEB_TOKEN")),
+		token:          token,
 		allowedOrigins: allowedOrigins,
 		allowedHosts:   allowedHosts,
 		trustedProxies: trustedProxies,

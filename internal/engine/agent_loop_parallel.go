@@ -28,11 +28,14 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
-// parallelSafeTools lists the tool names that are guaranteed to have no
+// parallelSafeTools maps tool names that are guaranteed to have no
 // observable side effects on the filesystem or process state. Keep this
 // tight: when in doubt, leave a tool out. A false positive here (tool
 // claimed safe but actually mutates) produces subtle race bugs that are
 // nearly impossible to reproduce.
+//
+// Access is protected by mu so the map can be extended at runtime if
+// needed (e.g. via plugin registration). Read-heavy paths use RLock.
 var parallelSafeTools = map[string]struct{}{
 	"read_file":     {},
 	"list_dir":      {},
@@ -46,12 +49,16 @@ var parallelSafeTools = map[string]struct{}{
 	"todo_write":    {}, // mutates engine state only, not fs
 }
 
+var parallelSafeToolsMu sync.RWMutex
+
 // isParallelSafeToolCall reports whether the named tool may run
 // concurrently with other tool calls in the same batch. The check is
 // case-folded since providers occasionally emit SHOUTY names.
 func isParallelSafeToolCall(name string) bool {
 	key := strings.ToLower(strings.TrimSpace(name))
+	parallelSafeToolsMu.RLock()
 	_, ok := parallelSafeTools[key]
+	parallelSafeToolsMu.RUnlock()
 	return ok
 }
 
