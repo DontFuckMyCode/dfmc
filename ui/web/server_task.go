@@ -75,6 +75,12 @@ func (s *Server) handleTaskList(w http.ResponseWriter, r *http.Request) {
 			opts.Offset = n
 		}
 	}
+	// Cap offset so a caller cannot enumerate the full task store via
+	// large offsets. limit is already capped at taskListLimitMax (500),
+	// so offset enumeration is bounded to at most limit*N iterations.
+	if opts.Offset > taskListLimitMax {
+		opts.Offset = taskListLimitMax
+	}
 	tasks, err := store.ListTasks(opts)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
