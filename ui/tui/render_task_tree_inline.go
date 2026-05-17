@@ -13,7 +13,6 @@ package tui
 import (
 	"strings"
 
-	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 	"github.com/dontfuckmycode/dfmc/internal/taskview"
 )
 
@@ -104,8 +103,4 @@ func (m Model) tasksSlash(args []string) (Model, string) {
 	default:
 		return m, taskview.UnknownSubcommandHelp
 	}
-}
-
-func renderTasksInlineTree(store *taskstore.Store, rootID string) string {
-	return taskview.Tree(store, rootID)
 }
