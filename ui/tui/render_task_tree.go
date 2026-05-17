@@ -3,17 +3,13 @@ package tui
 // render_task_tree.go — floating Tasks panel: builds the flat tree
 // rows from the task store, paints them with state chips and an
 // expand/collapse cursor, and hosts the keyboard router that drives
-// up/down/left/right/home/end navigation. The /tasks slash command +
-// inline tree/list/detail formatters live in
-// render_task_tree_inline.go. Companion sibling:
+// up/down/left/right/home/end navigation. The /tasks slash command lives
+// in render_task_tree_inline.go; shared inline task formatting lives in
+// internal/taskview so CLI and TUI stay byte-for-byte aligned. Companion
+// sibling:
 //
 //   - render_task_tree_inline.go  tasksSlash dispatcher +
-//                                 renderTasksInlineTree +
-//                                 renderTasksInlineList +
-//                                 renderTaskTreeNode/NodeDepth +
-//                                 taskStateIconInline +
-//                                 formatTaskDetailInline +
-//                                 addChildren
+//                                 renderTasksInlineTree compatibility shim
 
 import (
 	"fmt"

@@ -16,7 +16,7 @@
 //   - server_files.go        file listing / content + path-traversal guard
 //   - server_admin.go        scan / doctor / hooks / config — CLI parity
 //
-// The 925-line workbench UI lives in static/index.html and is pulled in via
+// The workbench UI lives in static/index.html and is pulled in via
 // //go:embed below; renderWorkbenchHTML simply surfaces it as a string.
 
 package web

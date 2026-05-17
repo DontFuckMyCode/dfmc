@@ -445,10 +445,76 @@ textarea {
 .drive-todo .err { background: rgba(242,95,92,0.10); color: #ffb8b6; }
 .drive-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .drive-controls textarea { min-height: 64px; }
+.task-grid {
+	display: grid;
+	grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.35fr);
+	gap: 14px;
+	margin-top: 12px;
+}
+.task-list {
+	display: grid;
+	gap: 8px;
+	max-height: 360px;
+	overflow: auto;
+}
+.task-row {
+	padding: 10px 12px;
+	border-radius: 12px;
+	background: rgba(255,255,255,0.03);
+	border: 1px solid rgba(255,255,255,0.08);
+	cursor: pointer;
+	display: grid;
+	gap: 4px;
+}
+.task-row:hover, .task-row.active {
+	border-color: rgba(102,179,255,0.32);
+	background: rgba(102,179,255,0.08);
+}
+.task-title {
+	font: 600 13px var(--font-mono);
+	color: var(--text);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.task-meta {
+	font: 500 11px var(--font-mono);
+	color: var(--muted);
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.task-detail {
+	padding: 14px;
+	border-radius: 14px;
+	background: rgba(5, 10, 18, 0.55);
+	border: 1px solid rgba(255,255,255,0.08);
+	display: grid;
+	gap: 10px;
+	min-height: 220px;
+}
+.task-detail-empty {
+	color: var(--muted);
+	font-size: 13px;
+	text-align: center;
+	padding: 28px 12px;
+}
+.task-detail pre {
+	margin: 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+	font: 500 12px/1.6 var(--font-mono);
+	color: var(--muted);
+}
+.drive-pill.verifying, .drive-pill.waiting, .drive-pill.external_review {
+	color: var(--warn);
+	background: rgba(255,203,107,0.14);
+	border-color: rgba(255,203,107,0.30);
+}
 
 @media (max-width: 1200px) {
 	.hero, .workspace { grid-template-columns: 1fr; }
-	.drive-grid { grid-template-columns: 1fr; }
+	.drive-grid, .task-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 720px) {
 	body { padding: 14px; }
@@ -652,6 +718,32 @@ textarea {
 					</div>
 					<div class="drive-detail" id="drive-detail">
 						<div class="drive-detail-empty">Select a run to inspect its TODO ladder, or start a new one.</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="panel" style="grid-column: 1 / -1;">
+			<div class="pane-header">
+				<div>
+					<div class="pane-title">Tasks</div>
+					<div class="pane-subtitle">The same task store surfaced by the TUI Tasks panel.</div>
+				</div>
+				<div class="pulse" id="tasks-status">idle</div>
+			</div>
+			<div class="pane-body">
+				<div class="drive-controls">
+					<button id="tasks-refresh" class="secondary" type="button">Refresh</button>
+					<button id="tasks-mode-list" class="secondary" type="button">List</button>
+					<button id="tasks-mode-tree" class="secondary" type="button">Tree</button>
+					<button id="tasks-mode-roots" class="secondary" type="button">Roots</button>
+					<button id="tasks-clear" class="secondary" type="button">Clear</button>
+					<span class="inline-note" id="tasks-summary">No tasks loaded.</span>
+				</div>
+				<div class="task-grid">
+					<div class="task-list" id="tasks-list"></div>
+					<div class="task-detail" id="tasks-detail">
+						<div class="task-detail-empty">Select a task to inspect worker, verification, labels, and context.</div>
 					</div>
 				</div>
 			</div>
@@ -1003,7 +1095,7 @@ async function sendChat() {
 
 async function boot() {
 	try {
-		await Promise.all([loadStatus(), loadProvidersAndSkills(), loadFiles(), loadCodeMap(), loadWorkspaceDiff(), refreshDrivePanels()]);
+		await Promise.all([loadStatus(), loadProvidersAndSkills(), loadFiles(), loadCodeMap(), loadWorkspaceDiff(), refreshDrivePanels(), loadTasks()]);
 	} catch (err) {
 		addMessage("system", "Workbench load error: " + (err && err.message ? err.message : String(err)));
 	}
@@ -1452,7 +1544,10 @@ function connectActivityStream() {
 						if (!data || data.type !== "event") continue;
 						pushActivityEntry(classifyActivityEvent(data));
 						const evType = String(data.event || "").toLowerCase();
-						if (evType.startsWith("drive:")) scheduleDriveRefresh();
+						if (evType.startsWith("drive:")) {
+							scheduleDriveRefresh();
+							scheduleTasksRefresh();
+						}
 					} catch (_) { /* swallow malformed frames */ }
 				}
 			}
@@ -1846,6 +1941,235 @@ function scheduleDriveRefresh() {
 	}, 250);
 }
 
+// Tasks panel — mirrors the TUI /tasks list/tree/roots/show/clear
+// workflow over /api/v1/tasks. Field access accepts both Go's exported
+// JSON names (ID, ParentID, ...) and snake_case aliases for forward
+// compatibility if the API grows explicit tags later.
+const taskState = {
+	tasks: [],
+	selectedID: "",
+	mode: "list",
+	refreshTimer: null,
+};
+
+function taskField(task, ...names) {
+	for (const name of names) {
+		if (task && task[name] !== undefined && task[name] !== null) return task[name];
+	}
+	return "";
+}
+
+function taskID(task) { return String(taskField(task, "ID", "id") || ""); }
+function taskParentID(task) { return String(taskField(task, "ParentID", "parent_id") || ""); }
+function taskRunID(task) { return String(taskField(task, "RunID", "run_id") || ""); }
+function taskTitle(task) { return String(taskField(task, "Title", "title") || "(untitled)"); }
+function taskStateName(task) { return String(taskField(task, "State", "state") || "pending").toLowerCase(); }
+
+function taskMarker(status) {
+	switch ((status || "").toLowerCase()) {
+		case "done": return "\u2713";
+		case "running": return "\u2026";
+		case "blocked": return "\u2717";
+		case "skipped": return "\u2933";
+		case "waiting": return "\u29d6";
+		case "external_review": return "\u26a0";
+		default: return "\u25cb";
+	}
+}
+
+function taskChildren(parentID) {
+	return taskState.tasks.filter(task => taskParentID(task) === parentID);
+}
+
+function renderTaskRows(tasks, depth) {
+	const list = document.getElementById("tasks-list");
+	for (const task of tasks) {
+		const id = taskID(task);
+		const status = taskStateName(task);
+		const row = document.createElement("div");
+		row.className = "task-row" + (id === taskState.selectedID ? " active" : "");
+		row.style.marginLeft = depth ? Math.min(depth * 18, 72) + "px" : "0";
+		const title = document.createElement("div");
+		title.className = "task-title";
+		title.textContent = taskMarker(status) + " " + taskTitle(task);
+		const meta = document.createElement("div");
+		meta.className = "task-meta";
+		const statePill = pillFor(status);
+		meta.appendChild(statePill);
+		const worker = taskField(task, "WorkerClass", "worker_class");
+		if (worker) {
+			const span = document.createElement("span");
+			span.textContent = "[" + worker + "]";
+			meta.appendChild(span);
+		}
+		const runID = taskRunID(task);
+		if (runID) {
+			const span = document.createElement("span");
+			span.textContent = "drive " + shortDriveID(runID);
+			meta.appendChild(span);
+		}
+		row.appendChild(title);
+		row.appendChild(meta);
+		row.addEventListener("click", () => selectTask(id));
+		list.appendChild(row);
+		if (taskState.mode === "tree") renderTaskRows(taskChildren(id), depth + 1);
+	}
+}
+
+function renderTasksList() {
+	const list = document.getElementById("tasks-list");
+	list.replaceChildren();
+	let rows = taskState.tasks.slice();
+	if (taskState.mode === "roots" || taskState.mode === "tree") {
+		rows = rows.filter(task => !taskParentID(task));
+	}
+	if (!rows.length) {
+		const empty = document.createElement("div");
+		empty.className = "list-item";
+		empty.style.cursor = "default";
+		empty.textContent = "(no tasks)";
+		list.appendChild(empty);
+		return;
+	}
+	renderTaskRows(rows, 0);
+}
+
+function formatTaskDetail(task) {
+	const lines = [];
+	const push = (label, value) => {
+		if (Array.isArray(value)) value = value.filter(Boolean).join(", ");
+		if (value !== undefined && value !== null && String(value).trim() !== "") {
+			lines.push(label.padEnd(10, " ") + String(value));
+		}
+	};
+	lines.push("\u25b8 " + taskTitle(task) + "  [" + taskStateName(task) + "]");
+	push("id:", taskID(task));
+	push("detail:", taskField(task, "Detail", "detail"));
+	push("parent:", taskParentID(task));
+	push("run:", taskRunID(task));
+	push("depends:", taskField(task, "DependsOn", "depends_on"));
+	push("blocked:", taskField(task, "BlockedReason", "blocked_reason"));
+	push("worker:", taskField(task, "WorkerClass", "worker_class"));
+	push("labels:", taskField(task, "Labels", "labels"));
+	push("verify:", taskField(task, "Verification", "verification"));
+	const confidence = Number(taskField(task, "Confidence", "confidence") || 0);
+	if (confidence > 0) push("conf:", Math.round(confidence * 100) + "%");
+	push("summary:", taskField(task, "Summary", "summary"));
+	push("error:", taskField(task, "Error", "error"));
+	push("started:", taskField(task, "StartedAt", "started_at"));
+	push("ended:", taskField(task, "EndedAt", "ended_at"));
+	return lines.join("\n");
+}
+
+function renderTaskDetail(task) {
+	const detail = document.getElementById("tasks-detail");
+	detail.replaceChildren();
+	if (!task) {
+		const empty = document.createElement("div");
+		empty.className = "task-detail-empty";
+		empty.textContent = "Select a task to inspect worker, verification, labels, and context.";
+		detail.appendChild(empty);
+		return;
+	}
+	const head = document.createElement("div");
+	head.className = "drive-item-meta";
+	head.appendChild(pillFor(taskStateName(task)));
+	const version = taskField(task, "Version", "version");
+	if (version !== "") {
+		const v = document.createElement("span");
+		v.textContent = "v" + version;
+		head.appendChild(v);
+	}
+	const del = document.createElement("button");
+	del.type = "button";
+	del.className = "secondary";
+	del.style.marginLeft = "auto";
+	del.textContent = "Delete";
+	del.addEventListener("click", () => deleteTask(taskID(task)));
+	head.appendChild(del);
+	const pre = document.createElement("pre");
+	pre.textContent = formatTaskDetail(task);
+	detail.appendChild(head);
+	detail.appendChild(pre);
+}
+
+function selectTask(id) {
+	taskState.selectedID = id;
+	renderTasksList();
+	renderTaskDetail(taskState.tasks.find(task => taskID(task) === id));
+}
+
+function setTasksMode(mode) {
+	taskState.mode = mode;
+	renderTasksList();
+	document.getElementById("tasks-mode-list").disabled = mode === "list";
+	document.getElementById("tasks-mode-tree").disabled = mode === "tree";
+	document.getElementById("tasks-mode-roots").disabled = mode === "roots";
+}
+
+async function loadTasks() {
+	try {
+		setText("tasks-status", "loading...");
+		const data = await fetchJSON("/api/v1/tasks?limit=200");
+		taskState.tasks = Array.isArray(data) ? data : [];
+		if (taskState.selectedID && !taskState.tasks.some(task => taskID(task) === taskState.selectedID)) {
+			taskState.selectedID = "";
+		}
+		renderTasksList();
+		renderTaskDetail(taskState.tasks.find(task => taskID(task) === taskState.selectedID));
+		const driveOwned = taskState.tasks.filter(task => taskRunID(task)).length;
+		setText("tasks-status", taskState.tasks.length ? (taskState.tasks.length + " task(s)") : "empty");
+		setText("tasks-summary", taskState.tasks.length + " task(s)" + (driveOwned ? " \u00b7 " + driveOwned + " drive-owned" : ""));
+	} catch (err) {
+		setText("tasks-status", "load error");
+		setText("tasks-summary", "Task load failed: " + (err.message || String(err)));
+	}
+}
+
+async function deleteTask(id) {
+	if (!id) return;
+	if (!window.confirm("Delete task " + id + "?")) return;
+	try {
+		const resp = await authedFetch("/api/v1/tasks/" + encodeURIComponent(id), { method: "DELETE" });
+		if (!resp.ok) throw new Error(await resp.text() || ("HTTP " + resp.status));
+		if (taskState.selectedID === id) taskState.selectedID = "";
+		await loadTasks();
+	} catch (err) {
+		setText("tasks-summary", "Delete failed: " + (err.message || String(err)));
+	}
+}
+
+async function clearTasks() {
+	const localTasks = taskState.tasks.filter(task => !taskRunID(task));
+	if (!localTasks.length) {
+		setText("tasks-summary", "/tasks clear: store is already empty or only drive-owned tasks remain.");
+		return;
+	}
+	if (!window.confirm("Clear " + localTasks.length + " non-drive task(s)?")) return;
+	let deleted = 0;
+	let firstError = "";
+	for (const task of localTasks) {
+		try {
+			const resp = await authedFetch("/api/v1/tasks/" + encodeURIComponent(taskID(task)), { method: "DELETE" });
+			if (!resp.ok) throw new Error(await resp.text() || ("HTTP " + resp.status));
+			deleted++;
+		} catch (err) {
+			if (!firstError) firstError = err.message || String(err);
+		}
+	}
+	await loadTasks();
+	const kept = taskState.tasks.filter(task => taskRunID(task)).length;
+	setText("tasks-summary", "Cleared " + deleted + " task(s)." + (kept ? " " + kept + " drive-owned task(s) kept." : "") + (firstError ? " First error: " + firstError : ""));
+}
+
+function scheduleTasksRefresh() {
+	if (taskState.refreshTimer) return;
+	taskState.refreshTimer = setTimeout(() => {
+		taskState.refreshTimer = null;
+		loadTasks();
+	}, 250);
+}
+
 document.getElementById("chat-send").addEventListener("click", sendChat);
 document.getElementById("chat-status-refresh").addEventListener("click", () => Promise.all([loadStatus(), loadProvidersAndSkills()]));
 document.getElementById("refresh-files").addEventListener("click", loadFiles);
@@ -1871,6 +2195,12 @@ document.getElementById("drive-task").addEventListener("keydown", event => {
 		startDrive();
 	}
 });
+document.getElementById("tasks-refresh").addEventListener("click", loadTasks);
+document.getElementById("tasks-mode-list").addEventListener("click", () => setTasksMode("list"));
+document.getElementById("tasks-mode-tree").addEventListener("click", () => setTasksMode("tree"));
+document.getElementById("tasks-mode-roots").addEventListener("click", () => setTasksMode("roots"));
+document.getElementById("tasks-clear").addEventListener("click", clearTasks);
+setTasksMode("list");
 boot();
 </script>
 </body>

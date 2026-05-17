@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
+	"github.com/dontfuckmycode/dfmc/internal/taskview"
 )
 
 func handleSlashTUIParity(eng *engine.Engine, cmd string, args []string) (exit bool, handled bool) {
@@ -51,7 +52,7 @@ func handleSlashTUIParity(eng *engine.Engine, cmd string, args []string) (exit b
 		fmt.Println("(todo list is a TUI feature - tracked in-memory during the session)")
 		fmt.Println("run 'dfmc tui' for the full todo tracking panel")
 	case "/tasks":
-		fmt.Println("(task store panel is TUI-only - run 'dfmc tui' for the task panel)")
+		handleSlashTasks(eng, args)
 	case "/subagents":
 		fmt.Println("(subagent fan-out is TUI-only - run 'dfmc tui' for delegation view)")
 	case "/toolstatus":
@@ -92,6 +93,45 @@ func handleSlashTUIParity(eng *engine.Engine, cmd string, args []string) (exit b
 		return false, false
 	}
 	return false, true
+}
+
+func handleSlashTasks(eng *engine.Engine, args []string) {
+	sub := ""
+	if len(args) > 0 {
+		sub = strings.ToLower(strings.TrimSpace(args[0]))
+	}
+	if sub == "" || sub == "open" || sub == "panel" || sub == "close" || sub == "hide" {
+		fmt.Println("(task store panel is TUI-only - run 'dfmc tui' for the task panel)")
+		fmt.Println("CLI supports: /tasks list | tree | roots | show <id> | clear")
+		return
+	}
+	if eng == nil || eng.Tools == nil {
+		fmt.Println("Engine unavailable.")
+		return
+	}
+	store := eng.Tools.TaskStore()
+	if store == nil {
+		fmt.Println("Task store not initialized.")
+		return
+	}
+	switch sub {
+	case "list":
+		fmt.Println(taskview.List(store))
+	case "tree":
+		fmt.Println(taskview.Tree(store, ""))
+	case "roots":
+		fmt.Println(taskview.Roots(store))
+	case "show":
+		if len(args) < 2 {
+			fmt.Println("Usage: /tasks show <id>")
+			return
+		}
+		fmt.Println(taskview.Detail(store, strings.TrimSpace(args[1])))
+	case "clear", "reset":
+		fmt.Println(taskview.ClearNonDrive(store))
+	default:
+		fmt.Println(taskview.UnknownSubcommandHelp)
+	}
 }
 
 func handleSlashLog(eng *engine.Engine) {
