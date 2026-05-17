@@ -408,6 +408,34 @@
     grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.45fr);
   }
 
+  .summary-grid {
+    @apply mt-3 grid gap-2.5;
+    grid-template-columns: minmax(180px, 1.6fr) repeat(4, minmax(110px, 1fr));
+  }
+
+  .summary-item,
+  .detail-progress {
+    @apply rounded-md border bg-secondary/30 p-3;
+    border-color: var(--line-soft);
+  }
+
+  .summary-item span,
+  .detail-progress span {
+    @apply block text-[10px] font-bold uppercase text-muted-foreground;
+    font-family: var(--font-mono);
+  }
+
+  .summary-item strong,
+  .detail-progress strong {
+    @apply mt-1 block text-lg font-semibold text-foreground;
+    font-family: var(--font-mono);
+  }
+
+  .summary-item [role="progressbar"],
+  .detail-progress [role="progressbar"] {
+    @apply mt-2;
+  }
+
   .drive-side {
     @apply grid content-start gap-3.5;
   }
@@ -562,6 +590,10 @@
 
   .mini-grid {
     grid-template-columns: 1fr;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr 1fr;
   }
 
   .pane-header {

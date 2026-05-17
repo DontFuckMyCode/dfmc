@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
+import { Progress } from "./components/ui/progress";
 import { TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Textarea } from "./components/ui/textarea";
 
@@ -91,6 +92,10 @@ function taskRunID(task: Task) {
 
 function taskTitle(task: Task) {
   return String(field(task, "Title", "title") || "(untitled)");
+}
+
+function percent(done: number, total: number) {
+  return total > 0 ? Math.round((done / total) * 100) : 0;
 }
 
 function marker(status: unknown) {
@@ -501,6 +506,13 @@ export function App() {
         .slice(0, 12),
     [driveRuns],
   );
+  const taskStats = useMemo(() => {
+    const done = tasks.filter((task) => stateClass(field(task, "State", "state")) === "done").length;
+    const running = tasks.filter((task) => stateClass(field(task, "State", "state")) === "running").length;
+    const blocked = tasks.filter((task) => ["blocked", "failed"].includes(stateClass(field(task, "State", "state")))).length;
+    const driveOwned = tasks.filter((task) => taskRunID(task)).length;
+    return { done, running, blocked, driveOwned, completion: percent(done, tasks.length) };
+  }, [tasks]);
 
   return (
     <div className="shell">
@@ -624,6 +636,17 @@ export function App() {
             <Button variant="secondary" size="sm" onClick={() => void clearTasks()}><Trash2 size={14} />Clear</Button>
             <span className="inline-note">{tasksSummary}</span>
           </div>
+          <div className="summary-grid">
+            <div className="summary-item">
+              <span>Completion</span>
+              <strong>{taskStats.completion}%</strong>
+              <Progress value={taskStats.completion} />
+            </div>
+            <div className="summary-item"><span>Done</span><strong>{taskStats.done}</strong></div>
+            <div className="summary-item"><span>Running</span><strong>{taskStats.running}</strong></div>
+            <div className="summary-item"><span>Blocked</span><strong>{taskStats.blocked}</strong></div>
+            <div className="summary-item"><span>Drive-owned</span><strong>{taskStats.driveOwned}</strong></div>
+          </div>
           <div className="task-grid">
             <div className="task-list">
               {taskRows.length ? taskRows.map((task) => (
@@ -684,9 +707,15 @@ function DriveDetail({ run }: { run: DriveRun | null }) {
   if (!run) return <div className="drive-detail"><div className="drive-detail-empty">Select a run to inspect its TODO ladder, or start a new one.</div></div>;
   const todos = Array.isArray(run.todos) ? run.todos : [];
   const done = todos.filter((todo: AnyRecord) => stateClass(todo.status) === "done").length;
+  const completion = percent(done, todos.length);
   return (
     <div className="drive-detail">
       <div className="drive-item-meta"><span className="drive-item-id">{run.id}</span><Pill status={run.status} /><span>{done}/{todos.length} done</span></div>
+      <div className="detail-progress">
+        <span>TODO completion</span>
+        <strong>{completion}%</strong>
+        <Progress value={completion} />
+      </div>
       <div>{run.task || "(no task)"}</div>
       {todos.length ? todos.map((todo: AnyRecord) => (
         <div className={`drive-todo ${stateClass(todo.status)}`} key={todo.id}>
