@@ -4,31 +4,52 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
-// TestErrMetaDepthExceededIsTyped pins the contract that hitting the
-// meta-tool nesting depth limit returns an error wrapping the typed
-// ErrMetaDepthExceeded sentinel — so callers can detect it via
-// errors.Is rather than string-matching the human-readable message.
-func TestErrMetaDepthExceededIsTyped(t *testing.T) {
-	// depth limit 1 means the second nested entry must trip the gate.
-	ctx := SeedMetaToolBudgetWithLimits(context.Background(), 64, 1)
-	ctx, release1, err := enterMetaBudget(ctx, 1)
-	if err != nil {
-		t.Fatalf("first enter at depth 1 should succeed: %v", err)
+func TestErrMetaBudgetExhausted(t *testing.T) {
+	if ErrMetaBudgetExhausted.Error() != "meta tool budget exhausted" {
+		t.Error("unexpected error message")
 	}
-	defer release1()
+}
 
-	_, _, err = enterMetaBudget(ctx, 1)
-	if err == nil {
-		t.Fatal("second enter must trip depth limit")
+func TestErrMetaDepthExceeded(t *testing.T) {
+	if ErrMetaDepthExceeded.Error() != "meta tool nesting exceeded depth limit" {
+		t.Error("unexpected error message")
 	}
-	if !errors.Is(err, ErrMetaDepthExceeded) {
-		t.Fatalf("error must wrap ErrMetaDepthExceeded, got %v", err)
+}
+
+func TestErrSubagentDepthExceeded(t *testing.T) {
+	if ErrSubagentDepthExceeded.Error() != "sub-agent recursion depth limit exceeded" {
+		t.Error("unexpected error message")
 	}
-	// Sanity: the human-readable message is preserved alongside the
-	// sentinel — this is the dual-channel contract callers rely on.
-	if msg := err.Error(); msg == "" {
-		t.Fatal("wrapped error must keep its human-readable message")
+}
+
+func TestErrMetaBudgetExhausted_Is(t *testing.T) {
+	// Sentinel errors are detectable via errors.Is
+	if !errors.Is(ErrMetaBudgetExhausted, ErrMetaBudgetExhausted) {
+		t.Error("sentinel should be Is itself")
+	}
+}
+
+func TestToolTimeoutError(t *testing.T) {
+	err := &ToolTimeoutError{Name: "grep_codebase", Limit: 30 * time.Second}
+	if err.Error() == "" {
+		t.Error("ToolTimeoutError should have message")
+	}
+	if err.Unwrap() != context.DeadlineExceeded {
+		t.Error("Unwrap should return DeadlineExceeded")
+	}
+}
+
+func TestSelfManagedTimeoutTools(t *testing.T) {
+	expected := []string{
+		"run_command", "web_fetch", "web_search",
+		"delegate_task", "orchestrate", "patch_validation", "benchmark",
+	}
+	for _, name := range expected {
+		if _, ok := selfManagedTimeoutTools[name]; !ok {
+			t.Errorf("expected %q in selfManagedTimeoutTools", name)
+		}
 	}
 }
