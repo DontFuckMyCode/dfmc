@@ -1,12 +1,13 @@
 package cli
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"go.etcd.io/bbolt"
+	_ "modernc.org/sqlite"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -18,9 +19,13 @@ import (
 func newCLITaskSlashTestEngine(t *testing.T) *engine.Engine {
 	t.Helper()
 	cfg := config.DefaultConfig()
-	db, err := bbolt.Open(filepath.Join(t.TempDir(), "tasks.db"), 0o600, nil)
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "tasks.db")+"?_pragma=journal_mode(WAL)")
 	if err != nil {
 		t.Fatalf("open task db: %v", err)
+	}
+	// Create the tasks table
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS "tasks" (key TEXT PRIMARY KEY, value BLOB)`); err != nil {
+		t.Fatalf("create table: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	toolEngine := tools.New(*cfg)

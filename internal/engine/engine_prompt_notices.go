@@ -15,7 +15,7 @@ package engine
 //   - hostOSSystemNotice             runtime.GOOS-aware reminder that
 //                                    run_command has no shell.
 //   - memoryDegradedSystemNotice     non-cacheable warning when the
-//                                    bbolt memory store failed to load.
+//                                    SQLite memory store failed to load.
 //
 // appendSystemNoticeText avoids the leading-blank-line footgun when
 // the existing prompt is empty; bundleToSystemBlocks splits a

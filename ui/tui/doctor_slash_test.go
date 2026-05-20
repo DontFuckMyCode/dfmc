@@ -11,7 +11,7 @@ import (
 )
 
 // newDoctorTestModel returns a Model over an unitialized engine so /doctor
-// can run without bbolt/providers/etc. describeHealth is a read-only
+// can run without SQLite/providers/etc. describeHealth is a read-only
 // snapshot so the shortcut is safe.
 func newDoctorTestModel(t *testing.T, mutate func(*engine.Engine)) Model {
 	t.Helper()

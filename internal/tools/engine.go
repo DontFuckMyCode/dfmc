@@ -95,7 +95,7 @@ type Engine struct {
 	// stripped silently. Atomic via the mu lock.
 	reasoningPublisher ReasoningPublisher
 
-	// taskStore is the bbolt-backed task persistence. Injected via
+	// taskStore is the SQLite-backed task persistence. Injected via
 	// SetTaskStore so the package stays free of an engine-cycle.
 	taskStore *taskstore.Store
 

@@ -1,6 +1,6 @@
-// Drive run persistence on bbolt.
+// Drive run persistence on SQLite.
 //
-// Each Run is a JSON blob stored under bucket "drive-runs", keyed by
+// Each Run is a JSON blob stored under table "drive-runs", keyed by
 // the run ID. The store is best-effort durable: every status change
 // (planning -> running -> done, plus per-TODO transitions) writes the
 // whole Run back so a crash mid-loop loses at most the in-flight
@@ -8,37 +8,35 @@
 // inspected by hand often enough that human-readable storage pays off,
 // and the volume is tiny (one record per `dfmc drive` invocation).
 //
-// The bucket lives in the same bbolt file as memory and conversations
-// (Engine.Storage), so a single file lock covers everything. That
-// matches the "only one dfmc process per project" rule already enforced
-// in cmd/dfmc/main.go via ErrStoreLocked.
+// The table lives in the same SQLite file as memory and conversations
+// (Engine.Storage), so a single database covers everything. With WAL
+// mode, multiple readers can coexist with one writer.
 
 package drive
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
-
-	"go.etcd.io/bbolt"
 )
 
 const driveBucket = "drive-runs"
 
-// Store is the bbolt-backed persistence layer for drive runs. Take a
-// *bbolt.DB from engine.Storage.DB() and pass it here; the bucket is
+// Store is the SQLite-backed persistence layer for drive runs. Take a
+// *sql.DB from engine.Storage.DB() and pass it here; the table is
 // created lazily on the first Save.
 type Store struct {
-	db *bbolt.DB
+	db *sql.DB
 }
 
-// NewStore wraps a bbolt handle. Returns an error only if db is nil
-// — bucket creation is deferred to the first write so an empty store
+// NewStore wraps a SQLite handle. Returns an error only if db is nil
+// — table creation is deferred to the first write so an empty store
 // is valid (List on an empty store returns nil, nil).
-func NewStore(db *bbolt.DB) (*Store, error) {
+func NewStore(db *sql.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("drive.NewStore: db is nil")
 	}
@@ -60,13 +58,12 @@ func (s *Store) Save(run *Run) error {
 	if err != nil {
 		return fmt.Errorf("marshal run: %w", err)
 	}
-	return s.db.Update(func(tx *bbolt.Tx) error {
-		b, err := tx.CreateBucketIfNotExists([]byte(driveBucket))
-		if err != nil {
-			return err
-		}
-		return b.Put([]byte(run.ID), data)
-	})
+	sqlStmt := fmt.Sprintf(`
+		INSERT INTO "%s" (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, driveBucket)
+	_, err = s.db.Exec(sqlStmt, run.ID, data)
+	return err
 }
 
 // Load fetches a run by ID. Returns (nil, nil) on miss so callers can
@@ -74,19 +71,12 @@ func (s *Store) Save(run *Run) error {
 // owned by the caller — modifications do not write back automatically.
 func (s *Store) Load(id string) (*Run, error) {
 	var data []byte
-	err := s.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(driveBucket))
-		if b == nil {
-			return nil
-		}
-		v := b.Get([]byte(id))
-		if v != nil {
-			data = make([]byte, len(v))
-			copy(data, v)
-		}
-		return nil
-	})
+	sqlStmt := fmt.Sprintf(`SELECT value FROM "%s" WHERE key = ?`, driveBucket)
+	err := s.db.QueryRow(sqlStmt, id).Scan(&data)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if data == nil {
@@ -101,24 +91,27 @@ func (s *Store) Load(id string) (*Run, error) {
 
 // List returns all runs ordered newest-first by CreatedAt. Used by the
 // CLI's `dfmc drive list` and the TUI history view. Cheap enough to
-// scan the whole bucket — drive runs accumulate slowly in practice.
+// scan the whole table — drive runs accumulate slowly in practice.
 func (s *Store) List() ([]*Run, error) {
 	var runs []*Run
-	err := s.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(driveBucket))
-		if b == nil {
-			return nil
-		}
-		return b.ForEach(func(_, v []byte) error {
-			var run Run
-			if err := json.Unmarshal(v, &run); err != nil {
-				return nil // skip corrupted entries instead of failing the whole list
-			}
-			runs = append(runs, &run)
-			return nil
-		})
-	})
+	sqlStmt := fmt.Sprintf(`SELECT value FROM "%s"`, driveBucket)
+	rows, err := s.db.Query(sqlStmt)
 	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var data []byte
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		var run Run
+		if err := json.Unmarshal(data, &run); err != nil {
+			continue // skip corrupted entries instead of failing the whole list
+		}
+		runs = append(runs, &run)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	sort.Slice(runs, func(i, j int) bool {
@@ -131,13 +124,9 @@ func (s *Store) List() ([]*Run, error) {
 // and for cleanup when a run is older than the configured retention.
 // Returns nil for non-existent IDs (idempotent).
 func (s *Store) Delete(id string) error {
-	return s.db.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(driveBucket))
-		if b == nil {
-			return nil
-		}
-		return b.Delete([]byte(id))
-	})
+	sqlStmt := fmt.Sprintf(`DELETE FROM "%s" WHERE key = ?`, driveBucket)
+	_, err := s.db.Exec(sqlStmt, id)
+	return err
 }
 
 // newRunID produces a short timestamp-prefixed random ID. The format

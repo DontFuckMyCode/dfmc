@@ -755,9 +755,9 @@ func TestHandleEngineEvent_ContextErrorAndShutdownAndResume(t *testing.T) {
 			evType: "engine:shutdown_error",
 			payload: map[string]any{
 				"stage": "storage",
-				"error": "bbolt: timeout closing handle",
+				"error": "SQLite: timeout closing handle",
 			},
-			wantInMsg: []string{"shutdown error", "storage", "bbolt"},
+			wantInMsg: []string{"shutdown error", "storage", "SQLite"},
 		},
 		{
 			name:   "agent:loop:resume",
@@ -941,9 +941,9 @@ func TestHandleEngineEvent_CriticalSafetyEvents_SurfaceNotices(t *testing.T) {
 			name:   "memory degraded",
 			evType: "memory:degraded",
 			payload: map[string]any{
-				"reason": "bbolt: timeout",
+				"reason": "SQLite: timeout",
 			},
-			wantInMsg: []string{"memory degraded", "bbolt: timeout"},
+			wantInMsg: []string{"memory degraded", "SQLite: timeout"},
 		},
 	}
 	for _, tc := range cases {

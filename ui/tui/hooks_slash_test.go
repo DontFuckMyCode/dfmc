@@ -12,7 +12,7 @@ import (
 
 // newHooksTestModel wires a Model to an engine that carries a specific
 // Hooks dispatcher, skipping the real Init path (which would also create
-// bbolt files, load providers, etc.). /hooks is a read-only view over
+// SQLite files, load providers, etc.). /hooks is a read-only view over
 // the dispatcher, so that shortcut is safe.
 func newHooksTestModel(t *testing.T, entries map[string][]config.HookEntry) Model {
 	t.Helper()

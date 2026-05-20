@@ -10,7 +10,7 @@ import (
 )
 
 // newApproveTestModel returns a Model pointed at a fresh (uninit) engine
-// so we can drive Config.Tools.RequireApproval without spinning up bbolt,
+// so we can drive Config.Tools.RequireApproval without spinning up SQLite,
 // providers, or anything else. The /approve slash is a pure view over
 // config + pendingApproval, so no Init is needed.
 func newApproveTestModel(t *testing.T, gated []string, pending *pendingApproval) Model {

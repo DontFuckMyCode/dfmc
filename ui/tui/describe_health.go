@@ -73,7 +73,7 @@ func (m Model) describeHealth() string {
 
 	// Memory store reachability. The degraded flag surfaces a failed
 	// Memory.Load() from Init so the operator doesn't silently run on
-	// an empty store when the bbolt file is corrupt or locked.
+	// an empty store when the SQLite file is corrupt or locked.
 	switch {
 	case m.eng.Memory == nil:
 		lines = append(lines, "  memory:   ⚠ store not initialized")
@@ -84,7 +84,7 @@ func (m Model) describeHealth() string {
 		}
 		lines = append(lines, "  memory:   ⚠ degraded — "+reason+" (running with empty store)")
 	default:
-		lines = append(lines, "  memory:   ✓ bbolt store open")
+		lines = append(lines, "  memory:   ✓ SQLite store open")
 	}
 
 	// Approval gate condensed to one line (/approve has the long form).

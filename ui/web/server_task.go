@@ -1,4 +1,4 @@
-// Task HTTP endpoints — CRUD for the bbolt-backed task store.
+// Task HTTP endpoints — CRUD for the SQLite-backed task store.
 // These expose the task store (independent of drive runs) so callers can
 // inspect, create, and update tasks without starting a full drive run.
 //

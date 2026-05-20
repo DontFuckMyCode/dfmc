@@ -43,7 +43,7 @@ const (
 	ParkReasonBudgetExhausted ParkReason = "budget_exhausted"
 	// ParkReasonShuttingDown fires when the loop detects the engine
 	// transitioned to StateShuttingDown (or beyond) between rounds.
-	// We park rather than racing teardown — bbolt close mid-write is a
+	// We park rather than racing teardown — SQLite close mid-write is a
 	// panic, and the user gets to /continue from a fresh boot.
 	// REPORT.md #9.
 	ParkReasonShuttingDown ParkReason = "shutting_down"

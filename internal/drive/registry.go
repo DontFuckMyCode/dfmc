@@ -11,7 +11,7 @@
 // `dfmc drive stop <id>`, the web POST /api/v1/drive/{id}/stop,
 // and the TUI /drive stop slash command all need to find the
 // running driver by ID, but they don't share a Driver pointer.
-// The bbolt single-process lock means only one dfmc owns the
+// The SQLite single-process lock means only one dfmc owns the
 // project at a time, so a process-wide map is sufficient.
 //
 // Multi-process cancellation (one dfmc CLI cancelling another

@@ -69,7 +69,7 @@ func (m *Manager) SaveActive() error {
 // caller. Failures are logged but never propagated — this is best-effort
 // durability for crash-before-shutdown scenarios. Uses saveMu to serialize
 // with the blocking SaveActive call so the two never race. saveWg lets
-// Close drain pending writes before the underlying bbolt store is shut
+// Close drain pending writes before the underlying SQLite store is shut
 // down — without it, a goroutine scheduled microseconds before Shutdown
 // could try to write to a closed handle.
 func (m *Manager) SaveActiveAsync() {
@@ -133,7 +133,7 @@ func (m *Manager) reportError(stage string, err error) {
 }
 
 // Close drains any in-flight SaveActiveAsync goroutines so callers can
-// shut the underlying bbolt store down without races. Call this before
+// shut the underlying SQLite store down without races. Call this before
 // closing the store; otherwise an async save scheduled microseconds
 // earlier may run on a closed handle and silently lose the turn.
 func (m *Manager) Close() {

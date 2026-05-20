@@ -119,7 +119,7 @@ func (e *Engine) runNativeToolLoop(ctx context.Context, seed *parkedAgentState, 
 		// Engine.Shutdown() transitions through StateShuttingDown before
 		// closing storage / conversation. Without this guard an in-flight
 		// loop can start a new tool round AFTER shutdown begins, racing
-		// with bbolt close (panic) and leaving the parked-state save with
+		// with SQLite close (panic) and leaving the parked-state save with
 		// nowhere to write. Park here so the user can /continue once a
 		// fresh engine boots, instead of erroring out mid-round.
 		// REPORT.md #9.

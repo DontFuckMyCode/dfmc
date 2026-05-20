@@ -52,7 +52,7 @@ func newE2EEngine(t *testing.T) (*Engine, string) {
 //  4. conversation: start, add messages, save, list
 //
 // If any of these subsystems was broken at construction (Init order,
-// shared bbolt handle, project-root resolution), this test catches
+// shared SQLite handle, project-root resolution), this test catches
 // it without needing a live LLM.
 func TestE2E_ToolWriteReadMemoryConversation(t *testing.T) {
 	eng, root := newE2EEngine(t)

@@ -563,7 +563,7 @@ func TestNativeToolLoop_AutonomousResumeDisabledLeavesParkForUser(t *testing.T) 
 
 // REPORT.md #9 regression: Engine.Shutdown() flips state to
 // StateShuttingDown before tearing storage down. An in-flight tool
-// loop that didn't notice would race bbolt close and either panic
+// loop that didn't notice would race SQLite close and either panic
 // or lose its parked state. The State() guard at the top of each
 // iteration must detect the transition and park with reason
 // "shutting_down".

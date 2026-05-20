@@ -103,7 +103,7 @@ type ErrorReporter func(stage string, err error)
 type Manager struct {
 	mu       sync.RWMutex
 	saveMu   sync.Mutex     // serializes saves so snapshots are never stale
-	saveWg   sync.WaitGroup // tracks in-flight SaveActiveAsync goroutines so Close drains before bbolt is shut down
+	saveWg   sync.WaitGroup // tracks in-flight SaveActiveAsync goroutines so Close drains before SQLite is shut down
 	store    *storage.Store
 	active   *Conversation
 	baseDir  string

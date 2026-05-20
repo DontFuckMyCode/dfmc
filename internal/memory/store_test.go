@@ -59,7 +59,7 @@ func TestMemoryAddListSearchClear(t *testing.T) {
 // TestMemoryDeleteUpdatePromote — Phase H item 1 mutation surface.
 // Walks the lifecycle: add an episodic entry → Update mutates fields →
 // Promote moves it to semantic → Delete removes it. Each transition is
-// verified by re-listing the relevant tier so we exercise the bbolt
+// verified by re-listing the relevant tier so we exercise the SQLite
 // round-trip rather than just the in-memory field assignment.
 func TestMemoryDeleteUpdatePromote(t *testing.T) {
 	dir := t.TempDir()
@@ -143,7 +143,7 @@ func TestMemoryDeleteUpdatePromote(t *testing.T) {
 
 // TestMemoryMutatorsRejectEmptyID — guards against accidental
 // `Delete("")` / `Update("")` from a buggy caller wiping/mutating the
-// wrong row. Strict ID validation keeps the bbolt-level surface safe.
+// wrong row. Strict ID validation keeps the SQLite-level surface safe.
 func TestMemoryMutatorsRejectEmptyID(t *testing.T) {
 	dir := t.TempDir()
 	st, err := storage.Open(filepath.Join(dir, "data"))

@@ -2,14 +2,29 @@ package tools
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
-	"go.etcd.io/bbolt"
+	_ "modernc.org/sqlite"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/supervisor"
 	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 )
+
+func tempDB(t *testing.T) *sql.DB {
+	tmp := t.TempDir() + "/todo_state.db"
+	db, err := sql.Open("sqlite", tmp+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	// Create the tasks table
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS "tasks" (key TEXT PRIMARY KEY, value BLOB)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
 
 // TestTodoStatusToTaskState pins the alias table so a new alias never
 // breaks the filter match silently. The mapping is the only thing
@@ -48,18 +63,13 @@ func TestTodoStatusToTaskState(t *testing.T) {
 // ListTasks(State:"running") to skip the entry — no /api/v1/task filter
 // would ever surface the model's in-flight work.
 func TestTodoWritePersistsCanonicalTaskState(t *testing.T) {
-	tmp := t.TempDir() + "/todo_state.db"
-	db, err := bbolt.Open(tmp, 0600, &bbolt.Options{})
-	if err != nil {
-		t.Fatalf("bbolt.Open: %v", err)
-	}
-	defer db.Close()
+	db := tempDB(t)
 	store := taskstore.NewStore(db)
 
 	eng := New(*config.DefaultConfig())
 	eng.SetTaskStore(store)
 
-	_, err = eng.Execute(context.Background(), "todo_write", Request{
+	_, err := eng.Execute(context.Background(), "todo_write", Request{
 		Params: map[string]any{
 			"action": "set",
 			"todos": []any{
@@ -104,18 +114,13 @@ func TestTodoWritePersistsCanonicalTaskState(t *testing.T) {
 // canonical supervisor states ("running"/"done"). Keeps the tool's
 // documented API stable even though internal storage is canonical.
 func TestTodoWriteRoundTripsLLMVocabulary(t *testing.T) {
-	tmp := t.TempDir() + "/todo_roundtrip.db"
-	db, err := bbolt.Open(tmp, 0600, &bbolt.Options{})
-	if err != nil {
-		t.Fatalf("bbolt.Open: %v", err)
-	}
-	defer db.Close()
+	db := tempDB(t)
 	store := taskstore.NewStore(db)
 
 	eng := New(*config.DefaultConfig())
 	eng.SetTaskStore(store)
 
-	_, err = eng.Execute(context.Background(), "todo_write", Request{
+	_, err := eng.Execute(context.Background(), "todo_write", Request{
 		Params: map[string]any{
 			"action": "set",
 			"todos": []any{

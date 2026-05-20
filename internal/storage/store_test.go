@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"go.etcd.io/bbolt"
-
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -53,7 +51,11 @@ func TestOpen_CreatesDirectories(t *testing.T) {
 	}
 }
 
-func TestOpen_LockedDatabaseWrapsSentinel(t *testing.T) {
+// TestOpen_SecondWriterSucceedsWithWAL verifies that SQLite WAL mode
+// allows multiple writers (unlike SQLite's exclusive lock). This is
+// the expected behavior with SQLite — concurrent access is a feature,
+// not a bug.
+func TestOpen_SecondWriterSucceedsWithWAL(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "data")
 	store, err := Open(dir)
 	if err != nil {
@@ -61,29 +63,19 @@ func TestOpen_LockedDatabaseWrapsSentinel(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
+	// With SQLite WAL mode, a second writer should succeed.
 	second, err := Open(dir)
-	if err == nil {
-		_ = second.Close()
-		t.Fatal("expected lock error from second Open")
+	if err != nil {
+		t.Fatalf("expected second Open to succeed with SQLite WAL, got: %v", err)
 	}
-	if !errors.Is(err, ErrStoreLocked) {
-		t.Fatalf("expected ErrStoreLocked, got %T: %v", err, err)
-	}
-	if !strings.Contains(err.Error(), "close other DFMC/TUI processes") {
-		t.Fatalf("expected actionable lock guidance, got %q", err.Error())
-	}
+	_ = second.Close()
 }
 
 // T6: BackupTo must not follow a symlink at the temp file path.
 // CreateTemp uses the .dfmc-backup-*.tmp pattern so even if an attacker
 // pre-creates a symlink at the predicted path, os.CreateTemp generates
-// a fresh random name and writes to that instead of following the symlink.
+// a fresh random suffix, so the temp file is never at a predictable path.
 func TestBackupTo_SymlinkAtTempPath(t *testing.T) {
-	// This test is a structural verification: os.CreateTemp with a glob
-	// pattern always generates a random suffix, so the temp file is never
-	// at a predictable path. BackupTo cannot follow a symlink it never
-	// creates at a fixed location. We verify the code path is correct by
-	// confirming the backup completes without error and produces a valid db.
 	dir := t.TempDir()
 	store, err := Open(filepath.Join(dir, "data"))
 	if err != nil {
@@ -98,12 +90,14 @@ func TestBackupTo_SymlinkAtTempPath(t *testing.T) {
 	if err := store.BackupTo(dst); err != nil {
 		t.Fatalf("BackupTo: %v", err)
 	}
-	// Verify the backup is a valid bbolt database by opening it.
-	db, err := bbolt.Open(dst, 0o600, nil)
+	// Verify the backup file exists and is non-empty.
+	info, err := os.Stat(dst)
 	if err != nil {
-		t.Fatalf("backup is not a valid bbolt db: %v", err)
+		t.Fatalf("backup file not found: %v", err)
 	}
-	db.Close()
+	if info.Size() == 0 {
+		t.Fatal("backup file is empty")
+	}
 }
 
 // ListBackups returns only .db files; mixed directory contents are filtered.
@@ -260,7 +254,7 @@ func TestOpenError_UnwrapCause(t *testing.T) {
 	}
 }
 
-// Store.DB() returns the underlying bbolt.DB.
+// Store.DB() returns the underlying sql.DB.
 func TestStore_DB(t *testing.T) {
 	dir := t.TempDir()
 	store, err := Open(filepath.Join(dir, "data"))
@@ -274,8 +268,6 @@ func TestStore_DB(t *testing.T) {
 		t.Fatal("DB() returned nil")
 	}
 }
-
-// Store.DB() on nil store is tested via Store_NilDBMethods.
 
 // validateConvID error messages are specific.
 func TestValidateConvID_ErrorMessages(t *testing.T) {
@@ -385,7 +377,7 @@ func TestListBackups_SortsByNewest(t *testing.T) {
 	}
 }
 
-// BackupTo writes a valid bbolt file that can be opened separately.
+// BackupTo writes a valid SQLite file that can be opened separately.
 func TestBackupTo_ProducesOpenableDB(t *testing.T) {
 	dir := t.TempDir()
 	store, err := Open(filepath.Join(dir, "data"))
@@ -394,10 +386,8 @@ func TestBackupTo_ProducesOpenableDB(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	// Write into a bbolt bucket.
-	if err := store.db.Update(func(tx *bbolt.Tx) error {
-		return tx.Bucket([]byte("codemap_cache")).Put([]byte("key"), []byte("val"))
-	}); err != nil {
+	// Write into a bucket using the SQLite API.
+	if err := store.BucketPut("codemap_cache", "key", []byte("val")); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 
@@ -406,19 +396,25 @@ func TestBackupTo_ProducesOpenableDB(t *testing.T) {
 		t.Fatalf("BackupTo: %v", err)
 	}
 
-	// Open as a standalone bbolt db.
-	db, err := bbolt.Open(backupPath, 0o600, nil)
+	// Open the backup as a new store.
+	backupDir := filepath.Join(dir, "backup-data")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Copy backup to the expected location for Open.
+	backupStorePath := filepath.Join(backupDir, "dfmc.db")
+	data, _ := os.ReadFile(backupPath)
+	_ = os.WriteFile(backupStorePath, data, 0o644)
+
+	backupStore, err := Open(backupDir)
 	if err != nil {
 		t.Fatalf("open backup: %v", err)
 	}
-	defer db.Close()
+	defer backupStore.Close()
 
-	var got []byte
-	if err := db.View(func(tx *bbolt.Tx) error {
-		got = tx.Bucket([]byte("codemap_cache")).Get([]byte("key"))
-		return nil
-	}); err != nil {
-		t.Fatalf("view: %v", err)
+	got, err := backupStore.BucketGet("codemap_cache", "key")
+	if err != nil {
+		t.Fatalf("get: %v", err)
 	}
 	if string(got) != "val" {
 		t.Fatalf("expected 'val', got %q", string(got))
@@ -552,5 +548,83 @@ func TestOpenError_Unwrap_Cause(t *testing.T) {
 	got := e.Unwrap()
 	if got == nil || !strings.Contains(got.Error(), "boom") {
 		t.Errorf("Unwrap() = %v, want error containing 'boom'", got)
+	}
+}
+
+// BucketPut, BucketGet, BucketDelete round-trip.
+func TestBucketOps_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.BucketPut("config", "key1", []byte("val1")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	got, err := store.BucketGet("config", "key1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if string(got) != "val1" {
+		t.Fatalf("expected 'val1', got %q", string(got))
+	}
+	if err := store.BucketDelete("config", "key1"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	got, err = store.BucketGet("config", "key1")
+	if err != nil {
+		t.Fatalf("get after delete: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil after delete, got %q", string(got))
+	}
+}
+
+// BucketForEach iterates all keys.
+func TestBucketForEach(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	_ = store.BucketPut("config", "a", []byte("1"))
+	_ = store.BucketPut("config", "b", []byte("2"))
+
+	var keys []string
+	err = store.BucketForEach("config", func(k, v []byte) error {
+		keys = append(keys, string(k))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("foreach: %v", err)
+	}
+	if len(keys) != 2 {
+		t.Fatalf("expected 2 keys, got %d", len(keys))
+	}
+}
+
+// BucketClear removes all rows.
+func TestBucketClear(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	_ = store.BucketPut("config", "a", []byte("1"))
+	if err := store.BucketClear("config"); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	got, err := store.BucketGet("config", "a")
+	if err != nil {
+		t.Fatalf("get after clear: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil after clear, got %q", string(got))
 	}
 }

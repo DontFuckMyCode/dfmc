@@ -37,8 +37,8 @@ func (e *Engine) Shutdown() error {
 	// the second to also cancel the signal context + stop the
 	// Telegram bot). LIFO ordering means the second defer runs first
 	// and closes Storage; the first defer then re-entered Shutdown
-	// and Memory.Persist hit bbolt's "database not open" error
-	// (the nil-check there passes -- bbolt keeps the handle non-nil
+	// and Memory.Persist hit SQLite's "database not open" error
+	// (the nil-check there passes -- SQLite keeps the handle non-nil
 	// after Close). Short-circuiting on already-terminal state keeps
 	// both defers safe without changing main.go's panic-safety shape.
 	switch e.State() {
@@ -90,7 +90,7 @@ func (e *Engine) Shutdown() error {
 	if e.Conversation != nil {
 		// Drain async saves first so a goroutine scheduled by the
 		// agent loop microseconds ago can't sneak past Storage.Close
-		// below and try to write to a closed bbolt handle.
+		// below and try to write to a closed SQLite handle.
 		e.Conversation.Close()
 		if err := e.Conversation.SaveActive(); err != nil {
 			errs = append(errs, fmt.Errorf("save_conversation: %w", err))

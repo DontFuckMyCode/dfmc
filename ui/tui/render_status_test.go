@@ -69,7 +69,7 @@ func TestStatusViewV2_MemoryCardOnlyWhenDegraded(t *testing.T) {
 	}
 
 	m.status.MemoryDegraded = true
-	m.status.MemoryLoadErr = "bbolt: locked"
+	m.status.MemoryLoadErr = "SQLite: locked"
 	view = stripANSI(m.renderStatusViewV2(120))
 	if !strings.Contains(view, "MEMORY") {
 		t.Errorf("Memory card missing under degraded state. Got:\n%s", view)
@@ -77,7 +77,7 @@ func TestStatusViewV2_MemoryCardOnlyWhenDegraded(t *testing.T) {
 	if !strings.Contains(view, "DEGRADED") {
 		t.Errorf("DEGRADED chip missing. Got:\n%s", view)
 	}
-	if !strings.Contains(view, "bbolt: locked") {
+	if !strings.Contains(view, "SQLite: locked") {
 		t.Errorf("reason missing. Got:\n%s", view)
 	}
 }

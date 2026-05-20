@@ -10,8 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"go.etcd.io/bbolt"
-
 	"github.com/dontfuckmycode/dfmc/internal/storage"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -51,32 +49,28 @@ func (s *Store) Load() error {
 	if s.storage == nil || s.storage.DB() == nil {
 		return nil
 	}
-	db := s.storage.DB()
-	return db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(bucketWorking))
-		if b == nil {
-			return nil // bucket not created yet; working memory stays at zero value
-		}
-		data := b.Get([]byte(bucketWorkingKey))
-		if data == nil {
-			return nil
-		}
-		var wm WorkingMemory
-		if err := json.Unmarshal(data, &wm); err != nil {
-			return nil // corrupt data; keep zero value, Persist will overwrite
-		}
-		s.mu.Lock()
-		s.working = wm
-		s.mu.Unlock()
-		return nil
-	})
+	data, err := s.storage.BucketGet(bucketWorking, bucketWorkingKey)
+	if err != nil {
+		return err
+	}
+	if data == nil {
+		return nil // no data yet; working memory stays at zero value
+	}
+	var wm WorkingMemory
+	if err := json.Unmarshal(data, &wm); err != nil {
+		return nil // corrupt data; keep zero value, Persist will overwrite
+	}
+	s.mu.Lock()
+	s.working = wm
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *Store) Persist() error {
 	if s.storage == nil || s.storage.DB() == nil {
 		return nil
 	}
-	// persistMu serializes the entire snapshot + marshal + bbolt write
+	// persistMu serializes the entire snapshot + marshal + SQLite write
 	// sequence so concurrent calls cannot silently lose each other's updates.
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
@@ -93,13 +87,7 @@ func (s *Store) Persist() error {
 	if err != nil {
 		return err
 	}
-	return s.storage.DB().Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(bucketWorking))
-		if b == nil {
-			return fmt.Errorf("bucket not found: %s", bucketWorking)
-		}
-		return b.Put([]byte(bucketWorkingKey), data)
-	})
+	return s.storage.BucketPut(bucketWorking, bucketWorkingKey, data)
 }
 
 func (s *Store) Working() WorkingMemory {
@@ -142,8 +130,8 @@ func (s *Store) Add(entry types.MemoryEntry) error {
 	if entry.ID == "" {
 		// Microsecond-resolution timestamps collide when two goroutines
 		// (e.g. parallel sub-agents writing memory) call Add within the
-		// same microsecond — bbolt Put would silently overwrite one
-		// entry. The 6-byte random suffix mirrors taskstore.NewTaskID
+		// same microsecond — SQLite INSERT would conflict on primary key.
+		// The 6-byte random suffix mirrors taskstore.NewTaskID
 		// and reduces the collision space to ~2^-48.
 		var rnd [6]byte
 		_, _ = rand.Read(rnd[:])
@@ -174,13 +162,7 @@ func (s *Store) Add(entry types.MemoryEntry) error {
 	if err != nil {
 		return err
 	}
-	return s.storage.DB().Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(bucket))
-		if b == nil {
-			return fmt.Errorf("bucket not found: %s", bucket)
-		}
-		return b.Put([]byte(entry.ID), data)
-	})
+	return s.storage.BucketPut(bucket, entry.ID, data)
 }
 
 func (s *Store) List(tier types.MemoryTier, limit int, project string) ([]types.MemoryEntry, error) {
@@ -192,22 +174,16 @@ func (s *Store) List(tier types.MemoryTier, limit int, project string) ([]types.
 		return nil, nil
 	}
 	var out []types.MemoryEntry
-	err := s.storage.DB().View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(bucket))
-		if b == nil {
+	err := s.storage.BucketForEach(bucket, func(_, v []byte) error {
+		var e types.MemoryEntry
+		if err := json.Unmarshal(v, &e); err != nil {
 			return nil
 		}
-		return b.ForEach(func(_, v []byte) error {
-			var e types.MemoryEntry
-			if err := json.Unmarshal(v, &e); err != nil {
-				return nil
-			}
-			if project != "" && e.Project != project {
-				return nil
-			}
-			out = append(out, e)
+		if project != "" && e.Project != project {
 			return nil
-		})
+		}
+		out = append(out, e)
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -256,23 +232,21 @@ func (s *Store) Delete(id string) error {
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("memory entry id is required")
 	}
-	return s.storage.DB().Update(func(tx *bbolt.Tx) error {
-		for _, bucket := range []string{bucketEpisodic, bucketSemantic} {
-			b := tx.Bucket([]byte(bucket))
-			if b == nil {
-				continue
-			}
-			if v := b.Get([]byte(id)); v != nil {
-				return b.Delete([]byte(id))
-			}
+	for _, bucket := range []string{bucketEpisodic, bucketSemantic} {
+		data, err := s.storage.BucketGet(bucket, id)
+		if err != nil {
+			return err
 		}
-		return nil
-	})
+		if data != nil {
+			return s.storage.BucketDelete(bucket, id)
+		}
+	}
+	return nil
 }
 
 // Update mutates the human-editable fields of an existing entry: Key,
 // Value, Category. Tier and Project are immutable through this path —
-// promote moves between tiers, and Project is the bbolt-level scope so
+// promote moves between tiers, and Project is the SQLite-level scope so
 // changing it would orphan the row from List filters. Returns an error
 // when the ID isn't found.
 func (s *Store) Update(id string, key, value, category string) error {
@@ -282,32 +256,29 @@ func (s *Store) Update(id string, key, value, category string) error {
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("memory entry id is required")
 	}
-	return s.storage.DB().Update(func(tx *bbolt.Tx) error {
-		for _, bucket := range []string{bucketEpisodic, bucketSemantic} {
-			b := tx.Bucket([]byte(bucket))
-			if b == nil {
-				continue
-			}
-			data := b.Get([]byte(id))
-			if data == nil {
-				continue
-			}
-			var entry types.MemoryEntry
-			if err := json.Unmarshal(data, &entry); err != nil {
-				return fmt.Errorf("decode entry %q: %w", id, err)
-			}
-			entry.Key = key
-			entry.Value = value
-			entry.Category = category
-			entry.UpdatedAt = time.Now()
-			out, err := json.Marshal(entry)
-			if err != nil {
-				return err
-			}
-			return b.Put([]byte(id), out)
+	for _, bucket := range []string{bucketEpisodic, bucketSemantic} {
+		data, err := s.storage.BucketGet(bucket, id)
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("memory entry %q not found", id)
-	})
+		if data == nil {
+			continue
+		}
+		var entry types.MemoryEntry
+		if err := json.Unmarshal(data, &entry); err != nil {
+			return fmt.Errorf("decode entry %q: %w", id, err)
+		}
+		entry.Key = key
+		entry.Value = value
+		entry.Category = category
+		entry.UpdatedAt = time.Now()
+		out, err := json.Marshal(entry)
+		if err != nil {
+			return err
+		}
+		return s.storage.BucketPut(bucket, id, out)
+	}
+	return fmt.Errorf("memory entry %q not found", id)
 }
 
 // Promote moves an entry from the episodic bucket into the semantic
@@ -321,36 +292,37 @@ func (s *Store) Promote(id string) error {
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("memory entry id is required")
 	}
-	return s.storage.DB().Update(func(tx *bbolt.Tx) error {
-		ep := tx.Bucket([]byte(bucketEpisodic))
-		sem := tx.Bucket([]byte(bucketSemantic))
-		if ep == nil || sem == nil {
-			return fmt.Errorf("memory buckets not initialized")
-		}
-		// Already semantic? Treat as a no-op so the TUI can call promote
-		// without first checking the current tier.
-		if sem.Get([]byte(id)) != nil {
-			return nil
-		}
-		data := ep.Get([]byte(id))
-		if data == nil {
-			return fmt.Errorf("memory entry %q not found in episodic tier", id)
-		}
-		var entry types.MemoryEntry
-		if err := json.Unmarshal(data, &entry); err != nil {
-			return fmt.Errorf("decode entry %q: %w", id, err)
-		}
-		entry.Tier = types.MemorySemantic
-		entry.UpdatedAt = time.Now()
-		out, err := json.Marshal(entry)
-		if err != nil {
-			return err
-		}
-		if err := sem.Put([]byte(id), out); err != nil {
-			return err
-		}
-		return ep.Delete([]byte(id))
-	})
+	// Already semantic? Treat as a no-op so the TUI can call promote
+	// without first checking the current tier.
+	data, err := s.storage.BucketGet(bucketSemantic, id)
+	if err != nil {
+		return err
+	}
+	if data != nil {
+		return nil
+	}
+
+	data, err = s.storage.BucketGet(bucketEpisodic, id)
+	if err != nil {
+		return err
+	}
+	if data == nil {
+		return fmt.Errorf("memory entry %q not found in episodic tier", id)
+	}
+	var entry types.MemoryEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return fmt.Errorf("decode entry %q: %w", id, err)
+	}
+	entry.Tier = types.MemorySemantic
+	entry.UpdatedAt = time.Now()
+	out, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+	if err := s.storage.BucketPut(bucketSemantic, id, out); err != nil {
+		return err
+	}
+	return s.storage.BucketDelete(bucketEpisodic, id)
 }
 
 func (s *Store) Clear(tier types.MemoryTier) error {
@@ -358,28 +330,7 @@ func (s *Store) Clear(tier types.MemoryTier) error {
 		return nil
 	}
 	bucket := bucketForTier(tier)
-	return s.storage.DB().Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(bucket))
-		if b == nil {
-			return nil
-		}
-		var keys [][]byte
-		err := b.ForEach(func(k, _ []byte) error {
-			cp := make([]byte, len(k))
-			copy(cp, k)
-			keys = append(keys, cp)
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		for _, k := range keys {
-			if err := b.Delete(k); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	return s.storage.BucketClear(bucket)
 }
 
 func (s *Store) AddEpisodicInteraction(project, question, answer string, confidence float64) error {

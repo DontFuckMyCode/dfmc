@@ -812,7 +812,7 @@ func TestRunRemoteMagicDocLifecycle(t *testing.T) {
 
 // runServe must refuse to start with --auth=none on a non-loopback
 // host, since the web API exposes tool/file/shell endpoints. We build
-// a minimal Engine (no Init — no bbolt, no providers) so the guard
+// a minimal Engine (no Init — no SQLite, no providers) so the guard
 // runs long before any listener touches the network, and we don't
 // race with other tests that may hold the engine's bolt lock.
 func TestRunServe_RefusesNoAuthOffLoopback(t *testing.T) {

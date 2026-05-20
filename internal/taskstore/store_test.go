@@ -1,20 +1,25 @@
 package taskstore
 
 import (
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
 
-	"go.etcd.io/bbolt"
+	_ "modernc.org/sqlite"
 
 	"github.com/dontfuckmycode/dfmc/internal/supervisor"
 )
 
-func tempDB(t *testing.T) *bbolt.DB {
+func tempDB(t *testing.T) *sql.DB {
 	tmp := t.TempDir() + "/taskstore_test.db"
-	db, err := bbolt.Open(tmp, 0600, &bbolt.Options{})
+	db, err := sql.Open("sqlite", tmp+"?_pragma=journal_mode(WAL)")
 	if err != nil {
-		t.Fatalf("bbolt.Open: %v", err)
+		t.Fatalf("sql.Open: %v", err)
+	}
+	// Create the tasks table
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS "tasks" (key TEXT PRIMARY KEY, value BLOB)`); err != nil {
+		t.Fatalf("create table: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
@@ -111,7 +116,7 @@ func TestUpdateTaskNotFound(t *testing.T) {
 // TestUpdateTaskFnErrorIsNotPersisted regresses the contract that a
 // mutator returning an error must NOT leave a partial write on disk.
 // With the old two-transaction implementation a slow mutator could be
-// preempted between LoadTask and SaveTask; the single-bbolt-Update
+// preempted between LoadTask and SaveTask; the single-SQLite-transaction
 // rewrite makes this trivially atomic.
 func TestUpdateTaskFnErrorIsNotPersisted(t *testing.T) {
 	db := tempDB(t)

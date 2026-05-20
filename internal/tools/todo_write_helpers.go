@@ -8,7 +8,7 @@ package tools
 //
 // renderStore / renderTasksAsResult / renderMem produce the same
 // `[ ]` / `[~]` / `[x]` markdown checklist regardless of backend so
-// the model sees a stable shape whether the bbolt task store is wired
+// the model sees a stable shape whether the SQLite task store is wired
 // or the in-memory fallback is in use. todoStatusToTaskState and its
 // inverse taskStateToTodoStatus translate the LLM-facing vocabulary
 // (`pending` | `in_progress` | `completed` + aliases) to and from

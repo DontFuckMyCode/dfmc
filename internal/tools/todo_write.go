@@ -2,7 +2,7 @@ package tools
 
 // todo_write.go — session todo-list tool that the model uses to plan
 // multi-step work, plus the small ThinkTool reasoning scratch-pad.
-// TodoWrite persists to the bbolt-backed task store when one is wired
+// TodoWrite persists to the SQLite-backed task store when one is wired
 // (see SetStore) and falls back to in-memory state otherwise. The
 // LLM-facing status vocabulary ("pending" / "in_progress" / "completed"
 // + aliases) is normalized onto canonical supervisor.TaskState values
@@ -51,7 +51,7 @@ func (t *ThinkTool) Execute(_ context.Context, req Request) (Result, error) {
 
 // TodoWriteTool maintains a per-engine, in-memory todo list. The LLM calls it
 // to plan multi-step work. When a task store is injected via SetStore, state
-// is persisted to bbolt so todos survive process restarts. Without a store the
+// is persisted to SQLite so todos survive process restarts. Without a store the
 // tool falls back to the original in-memory behaviour.
 type TodoWriteTool struct {
 	state *todoState

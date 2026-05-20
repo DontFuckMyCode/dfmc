@@ -17,7 +17,7 @@ func newExportTestModel(t *testing.T, lines []chatLine) Model {
 	tmp := t.TempDir()
 	// A bare engine pointing at the temp dir is enough — exportTranscript
 	// uses m.projectRoot() which reads eng.ProjectRoot. No engine Init
-	// is needed since export doesn't touch bbolt/providers/tools.
+	// is needed since export doesn't touch SQLite/providers/tools.
 	eng := &engine.Engine{ProjectRoot: tmp}
 	m := NewModel(context.Background(), eng)
 	m.chat.transcript = lines

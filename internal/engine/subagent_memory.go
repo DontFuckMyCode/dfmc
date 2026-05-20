@@ -23,8 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"go.etcd.io/bbolt"
-
 	"github.com/dontfuckmycode/dfmc/internal/security"
 )
 
@@ -71,22 +69,18 @@ func (e *Engine) loadSubagentJournal(role string) []subagentJournalEntry {
 		return nil
 	}
 	var out []subagentJournalEntry
-	_ = e.Storage.DB().View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(subagentJournalBucket))
-		if b == nil {
-			return nil
-		}
-		data := b.Get([]byte(key))
-		if data == nil {
-			return nil
-		}
-		// Corrupt JSON → silently fall back to no entries; a future
-		// append will overwrite the bad row. We deliberately don't
-		// log: the journal is best-effort and noise here would be
-		// worse than the missing context.
-		_ = json.Unmarshal(data, &out)
+	data, err := e.Storage.BucketGet(subagentJournalBucket, key)
+	if err != nil {
 		return nil
-	})
+	}
+	if data == nil {
+		return nil
+	}
+	// Corrupt JSON → silently fall back to no entries; a future
+	// append will overwrite the bad row. We deliberately don't
+	// log: the journal is best-effort and noise here would be
+	// worse than the missing context.
+	_ = json.Unmarshal(data, &out)
 	return out
 }
 
@@ -107,25 +101,20 @@ func (e *Engine) appendSubagentJournal(role string, entry subagentJournalEntry) 
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now().UTC()
 	}
-	_ = e.Storage.DB().Update(func(tx *bbolt.Tx) error {
-		b, err := tx.CreateBucketIfNotExists([]byte(subagentJournalBucket))
-		if err != nil {
-			return err
-		}
-		var existing []subagentJournalEntry
-		if data := b.Get([]byte(key)); data != nil {
-			_ = json.Unmarshal(data, &existing)
-		}
-		existing = append(existing, entry)
-		if len(existing) > subagentJournalCap {
-			existing = existing[len(existing)-subagentJournalCap:]
-		}
-		encoded, err := json.Marshal(existing)
-		if err != nil {
-			return err
-		}
-		return b.Put([]byte(key), encoded)
-	})
+
+	var existing []subagentJournalEntry
+	if data, _ := e.Storage.BucketGet(subagentJournalBucket, key); data != nil {
+		_ = json.Unmarshal(data, &existing)
+	}
+	existing = append(existing, entry)
+	if len(existing) > subagentJournalCap {
+		existing = existing[len(existing)-subagentJournalCap:]
+	}
+	encoded, err := json.Marshal(existing)
+	if err != nil {
+		return
+	}
+	_ = e.Storage.BucketPut(subagentJournalBucket, key, encoded)
 }
 
 // formatSubagentJournalSection renders prior entries as a single

@@ -1,20 +1,26 @@
 package drive
 
 import (
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"go.etcd.io/bbolt"
+	_ "modernc.org/sqlite"
 )
 
-func openTestDB(t *testing.T) *bbolt.DB {
+func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dir := t.TempDir()
-	db, err := bbolt.Open(filepath.Join(dir, "drive.db"), 0o600, nil)
+	db, err := sql.Open("sqlite", filepath.Join(dir, "drive.db")+"?_pragma=journal_mode(WAL)")
 	if err != nil {
-		t.Fatalf("open bbolt: %v", err)
+		t.Fatalf("open sqlite: %v", err)
+	}
+	// Create the drive-runs table
+	if _, err := db.Exec(fmt.Sprintf(`CREATE TABLE IF NOT EXISTS "%s" (key TEXT PRIMARY KEY, value BLOB)`, driveBucket)); err != nil {
+		t.Fatalf("create table: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
@@ -71,19 +77,12 @@ func TestStoreSaveUsesReadableJSONBlob(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	var raw []byte
-	if err := db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(driveBucket))
-		if b == nil {
-			t.Fatalf("missing %s bucket", driveBucket)
-		}
-		v := b.Get([]byte(run.ID))
-		if v == nil {
-			t.Fatalf("missing run blob")
-		}
-		raw = append([]byte(nil), v...)
-		return nil
-	}); err != nil {
+	err = db.QueryRow(fmt.Sprintf(`SELECT value FROM "%s" WHERE key = ?`, driveBucket), run.ID).Scan(&raw)
+	if err != nil {
 		t.Fatalf("read raw blob: %v", err)
+	}
+	if raw == nil {
+		t.Fatalf("missing run blob")
 	}
 	if !json.Valid(raw) {
 		t.Fatalf("drive persistence should remain human-readable JSON, got %q", string(raw))

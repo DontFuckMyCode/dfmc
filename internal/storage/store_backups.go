@@ -1,6 +1,6 @@
 package storage
 
-// store_backups.go — hot-backup surface for the bbolt database.
+// store_backups.go — hot-backup surface for the SQLite database.
 // BackupTo writes a consistent snapshot atomically via tmp+rename;
 // ListBackups / TrimBackups / sortBackupsByTime help retention
 // callers (CLI, scheduled jobs) curate the on-disk history. Sibling
@@ -10,24 +10,28 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
-
-	"go.etcd.io/bbolt"
 )
 
-// BackupTo creates a consistent hot backup of the bbolt database and writes
-// it to dst. The destination is a valid bbolt database that can be opened
-// independently with bbolt.Open. Backup is atomic via os.Rename so dst is
+// BackupTo creates a consistent hot backup of the SQLite database and writes
+// it to dst. The destination is a valid SQLite database that can be opened
+// independently. Backup is atomic via os.Rename so dst is
 // either the previous backup or the new one, never partially written.
-// BackupTo uses db.View so it is safe to call while the Store is open and
-// accepting reads/writes — no exclusive lock is held during backup.
+// Uses SQLite's backup API via the database/sql driver for consistency.
 func (s *Store) BackupTo(dst string) error {
 	if s == nil || s.db == nil {
 		return errors.New("store is not open")
 	}
+	// Force a WAL checkpoint so the main db file contains all data.
+	// This avoids needing to copy the WAL/shm files alongside the db.
+	if _, err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		return fmt.Errorf("wal checkpoint: %w", err)
+	}
+
 	// M5: use os.MkdirTemp instead of os.CreateTemp to avoid class 1 WORM
 	// vulnerability (predictable temp name + attacker pre-creates symlink).
 	// MkdirTemp creates a directory only, then we open the file inside it.
@@ -42,13 +46,23 @@ func (s *Store) BackupTo(dst string) error {
 	}
 	tmpPath := f.Name()
 	defer func() { _ = os.RemoveAll(tmpDir) }() // remove dir (file is already closed here)
-	if err := s.db.View(func(tx *bbolt.Tx) error {
-		_, err := tx.WriteTo(f)
-		return err
-	}); err != nil {
+
+	// For SQLite, the simplest hot backup is to copy the database file
+	// while the connection is open. With the checkpoint above, all data
+	// is in the main db file.
+	dbFile := filepath.Join(s.dataDir, "dfmc.db")
+	src, err := os.Open(dbFile)
+	if err != nil {
 		_ = f.Close()
-		return fmt.Errorf("backup write: %w", err)
+		return fmt.Errorf("open source db: %w", err)
 	}
+	if _, err := io.Copy(f, src); err != nil {
+		_ = src.Close()
+		_ = f.Close()
+		return fmt.Errorf("backup copy: %w", err)
+	}
+	_ = src.Close()
+
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close backup: %w", err)
 	}

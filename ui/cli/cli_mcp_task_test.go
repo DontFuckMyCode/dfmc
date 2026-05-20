@@ -17,7 +17,7 @@ import (
 
 // helperCreateTask sets up an engine + store + a single task and
 // returns (handler, taskID). Each test gets its own engine so the
-// in-process bbolt file is isolated.
+// in-process SQLite file is isolated.
 func helperCreateTask(t *testing.T, title string) (*taskMCPHandler, string) {
 	t.Helper()
 	eng := newCLITestEngine(t)

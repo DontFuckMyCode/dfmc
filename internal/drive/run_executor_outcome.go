@@ -32,7 +32,7 @@ func (d *Driver) dispatchTodo(ctx context.Context, run *Run, idx int, results ch
 	t.Attempts++
 	// Note: we do NOT persist here. On restart Running TODOs are reset
 	// to Pending anyway (Resume path), so the snapshot at dispatch time
-	// is redundant and would cost an extra bbolt write per TODO.
+	// is redundant and would cost an extra SQLite write per TODO.
 
 	// Snapshot fields the worker needs so the goroutine doesn't
 	// touch run.Todos. The brief is built from the *current* state

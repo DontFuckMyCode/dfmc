@@ -7,15 +7,17 @@ package drive
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"go.etcd.io/bbolt"
+	_ "modernc.org/sqlite"
 )
 
 // fakeRunner is the test double for drive.Runner. PlanFunc and
@@ -1125,9 +1127,13 @@ func safeIdx(s []string, i int) string {
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	dir := t.TempDir()
-	db, err := bbolt.Open(dir+"/drive.db", 0o600, nil)
+	db, err := sql.Open("sqlite", filepath.Join(dir, "drive.db")+"?_pragma=journal_mode(WAL)")
 	if err != nil {
-		t.Fatalf("open bbolt: %v", err)
+		t.Fatalf("open sqlite: %v", err)
+	}
+	// Create the drive-runs table
+	if _, err := db.Exec(fmt.Sprintf(`CREATE TABLE IF NOT EXISTS "%s" (key TEXT PRIMARY KEY, value BLOB)`, driveBucket)); err != nil {
+		t.Fatalf("create table: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	store, err := NewStore(db)

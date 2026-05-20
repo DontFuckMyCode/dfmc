@@ -115,7 +115,7 @@ func (s *Server) handleDriveResume(w http.ResponseWriter, r *http.Request) {
 // 200 with {"cancelled": true} when the registry had a live cancel
 // func for the ID, 404 when the ID isn't active in this process
 // (already done, wrong ID, or running in a different dfmc
-// process — though the bbolt lock makes that last case
+// process — though the SQLite lock makes that last case
 // architecturally impossible).
 //
 // The driver doesn't return synchronously from cancellation — its

@@ -84,7 +84,7 @@ const (
 //     supervisor / verifier workers can reason about which TODOs must be
 //     checked before a run is considered complete.
 //
-// All fields are persisted as part of the Run JSON in bbolt; the JSON
+// All fields are persisted as part of the Run JSON in SQLite; the JSON
 // keys match the lowercase field names so externally-edited resume
 // state stays compatible.
 type Todo struct {

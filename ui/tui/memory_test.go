@@ -310,7 +310,7 @@ func TestDeleteSelectedMemoryEntryWithoutSelection(t *testing.T) {
 // TestPromoteSelectedMemoryEntryNoOpsWhenAlreadySemantic — pressing 'p'
 // on a semantic entry shows a friendly notice and skips the engine
 // call. Prevents the user from getting an opaque "already semantic"
-// error from the bbolt walk for a perfectly valid action.
+// error from the SQLite walk for a perfectly valid action.
 func TestPromoteSelectedMemoryEntryNoOpsWhenAlreadySemantic(t *testing.T) {
 	m := newMemoryTestModel()
 	m.memory.entries = []types.MemoryEntry{

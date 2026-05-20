@@ -62,7 +62,7 @@ func (e *Engine) MemoryDelete(id string) error {
 
 // MemoryUpdate edits the human-editable fields (key/value/category) on
 // an existing entry. Tier and Project stay immutable through this path
-// — promote moves between tiers, and Project is the bbolt-level scope.
+// — promote moves between tiers, and Project is the SQLite-level scope.
 func (e *Engine) MemoryUpdate(id, key, value, category string) error {
 	if e.Memory == nil {
 		return fmt.Errorf("memory store is not initialized")

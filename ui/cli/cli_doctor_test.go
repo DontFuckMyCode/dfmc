@@ -59,7 +59,7 @@ func TestRunDoctorJSON(t *testing.T) {
 		t.Fatalf("expected provider profile check in doctor payload: %#v", payload.Checks)
 	}
 	// Memory-tier health surfaces a silent-killer class of issue
-	// (bbolt load failure → empty episodic/semantic recall). It must
+	// (SQLite load failure → empty episodic/semantic recall). It must
 	// always appear in the doctor payload so users can tell a degraded
 	// startup from a healthy one without reading TUI-only banners.
 	if !hasDoctorCheck(payload.Checks, "memory.tier") {

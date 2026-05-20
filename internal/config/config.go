@@ -22,7 +22,7 @@ type LoadOptions struct {
 	CWD         string
 	// DataDirPath, when non-empty, overrides the default ~/.dfmc/data path.
 	// Intended for multi-instance deployments where each project has its
-	// own bbolt store to avoid file-lock contention.
+	// own SQLite store to avoid file-lock contention.
 	DataDirPath string
 }
 

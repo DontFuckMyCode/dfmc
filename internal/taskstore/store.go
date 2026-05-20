@@ -1,14 +1,13 @@
 package taskstore
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"sort"
 	"sync"
-
-	"go.etcd.io/bbolt"
 
 	"github.com/dontfuckmycode/dfmc/internal/supervisor"
 )
@@ -28,11 +27,11 @@ var ErrTaskVersionConflict = errors.New("taskstore: task version conflict")
 var ErrTaskNotFound = errors.New("taskstore: task not found")
 
 type Store struct {
-	db *bbolt.DB
+	db *sql.DB
 	mu sync.Mutex // serializes concurrent UpdateTask calls on the same task ID
 }
 
-func NewStore(db *bbolt.DB) *Store {
+func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
@@ -47,13 +46,12 @@ func (s *Store) SaveTask(t *supervisor.Task) error {
 	if err != nil {
 		return fmt.Errorf("marshal task: %w", err)
 	}
-	return s.db.Update(func(tx *bbolt.Tx) error {
-		b, err := tx.CreateBucketIfNotExists([]byte(taskBucket))
-		if err != nil {
-			return err
-		}
-		return b.Put([]byte(t.ID), data)
-	})
+	sqlStmt := fmt.Sprintf(`
+		INSERT INTO "%s" (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, taskBucket)
+	_, err = s.db.Exec(sqlStmt, t.ID, data)
+	return err
 }
 
 func (s *Store) LoadTask(id string) (*supervisor.Task, error) {
@@ -61,18 +59,11 @@ func (s *Store) LoadTask(id string) (*supervisor.Task, error) {
 		return nil, fmt.Errorf("taskstore.LoadTask: id is empty")
 	}
 	var data []byte
-	err := s.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(taskBucket))
-		if b == nil {
-			return nil
-		}
-		v := b.Get([]byte(id))
-		if v != nil {
-			data = make([]byte, len(v))
-			copy(data, v)
-		}
-		return nil
-	})
+	sqlStmt := fmt.Sprintf(`SELECT value FROM "%s" WHERE key = ?`, taskBucket)
+	err := s.db.QueryRow(sqlStmt, id).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +78,7 @@ func (s *Store) LoadTask(id string) (*supervisor.Task, error) {
 }
 
 // UpdateTask reads, mutates, and writes a task atomically inside a single
-// bbolt.Update transaction. The whole-store mutex still serializes
+// SQLite transaction. The whole-store mutex still serializes
 // UpdateTask calls against each other (so concurrent readers see one
 // definite intermediate state, not torn writes), and the surrounding
 // txn closes the load-modify-save window where a concurrent SaveTask
@@ -130,48 +121,59 @@ func (s *Store) updateTaskInternal(id string, expectedVersion int, fn func(*supe
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.db.Update(func(tx *bbolt.Tx) error {
-		b, err := tx.CreateBucketIfNotExists([]byte(taskBucket))
-		if err != nil {
-			return err
-		}
-		raw := b.Get([]byte(id))
-		if raw == nil {
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	sqlStmt := fmt.Sprintf(`SELECT value FROM "%s" WHERE key = ?`, taskBucket)
+	var raw []byte
+	if err := tx.QueryRow(sqlStmt, id).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: %s", ErrTaskNotFound, id)
 		}
-		var t supervisor.Task
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return fmt.Errorf("unmarshal task %q: %w", id, err)
-		}
-		if expectedVersion >= 0 && t.Version != expectedVersion {
-			return fmt.Errorf("%w: expected v%d, got v%d for task %s", ErrTaskVersionConflict, expectedVersion, t.Version, id)
-		}
-		if err := fn(&t); err != nil {
-			return err
-		}
-		if t.ID == "" {
-			return fmt.Errorf("taskstore.UpdateTask: fn cleared task.ID")
-		}
-		t.Version++ // bump on every successful mutation
-		data, err := json.MarshalIndent(&t, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshal task: %w", err)
-		}
-		return b.Put([]byte(t.ID), data)
-	})
+		return err
+	}
+	if raw == nil {
+		return fmt.Errorf("%w: %s", ErrTaskNotFound, id)
+	}
+	var t supervisor.Task
+	if err := json.Unmarshal(raw, &t); err != nil {
+		return fmt.Errorf("unmarshal task %q: %w", id, err)
+	}
+	if expectedVersion >= 0 && t.Version != expectedVersion {
+		return fmt.Errorf("%w: expected v%d, got v%d for task %s", ErrTaskVersionConflict, expectedVersion, t.Version, id)
+	}
+	if err := fn(&t); err != nil {
+		return err
+	}
+	if t.ID == "" {
+		return fmt.Errorf("taskstore.UpdateTask: fn cleared task.ID")
+	}
+	t.Version++ // bump on every successful mutation
+	data, err := json.MarshalIndent(&t, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal task: %w", err)
+	}
+	upsert := fmt.Sprintf(`
+		INSERT INTO "%s" (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, taskBucket)
+	if _, err := tx.Exec(upsert, t.ID, data); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) DeleteTask(id string) error {
 	if id == "" {
 		return nil
 	}
-	return s.db.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(taskBucket))
-		if b == nil {
-			return nil
-		}
-		return b.Delete([]byte(id))
-	})
+	sqlStmt := fmt.Sprintf(`DELETE FROM "%s" WHERE key = ?`, taskBucket)
+	_, err := s.db.Exec(sqlStmt, id)
+	return err
 }
 
 type ListOptions struct {
@@ -185,46 +187,49 @@ type ListOptions struct {
 
 func (s *Store) ListTasks(opts ListOptions) ([]*supervisor.Task, error) {
 	var tasks []*supervisor.Task
-	err := s.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(taskBucket))
-		if b == nil {
-			return nil
-		}
-		return b.ForEach(func(k, v []byte) error {
-			var t supervisor.Task
-			if err := json.Unmarshal(v, &t); err != nil {
-				// Skip corrupt rows so the listing surface still works for
-				// every healthy entry, but log so the operator can spot a
-				// bad bucket instead of silently losing tasks from the UI.
-				log.Printf("taskstore: skipping corrupt task %q: %v", string(k), err)
-				return nil
-			}
-			if opts.ParentID != "" && t.ParentID != opts.ParentID {
-				return nil
-			}
-			if opts.RunID != "" && t.RunID != opts.RunID {
-				return nil
-			}
-			if opts.State != "" && string(t.State) != opts.State {
-				return nil
-			}
-			if opts.Label != "" {
-				found := false
-				for _, l := range t.Labels {
-					if l == opts.Label {
-						found = true
-						break
-					}
-				}
-				if !found {
-					return nil
-				}
-			}
-			tasks = append(tasks, &t)
-			return nil
-		})
-	})
+	sqlStmt := fmt.Sprintf(`SELECT value FROM "%s"`, taskBucket)
+	rows, err := s.db.Query(sqlStmt)
 	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var data []byte
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		var t supervisor.Task
+		if err := json.Unmarshal(data, &t); err != nil {
+			// Skip corrupt rows so the listing surface still works for
+			// every healthy entry, but log so the operator can spot a
+			// bad bucket instead of silently losing tasks from the UI.
+			log.Printf("taskstore: skipping corrupt task: %v", err)
+			continue
+		}
+		if opts.ParentID != "" && t.ParentID != opts.ParentID {
+			continue
+		}
+		if opts.RunID != "" && t.RunID != opts.RunID {
+			continue
+		}
+		if opts.State != "" && string(t.State) != opts.State {
+			continue
+		}
+		if opts.Label != "" {
+			found := false
+			for _, l := range t.Labels {
+				if l == opts.Label {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		tasks = append(tasks, &t)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	sort.Slice(tasks, func(i, j int) bool {

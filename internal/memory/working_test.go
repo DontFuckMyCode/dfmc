@@ -1,5 +1,5 @@
 // Pin tests for the in-memory working tier (recent files / symbols /
-// last Q+A). The bbolt-backed Add/List/Search/Clear path is covered
+// last Q+A). The SQLite-backed Add/List/Search/Clear path is covered
 // by store_test.go; this file targets the read/write surface that the
 // agent loop hits on every turn.
 
@@ -126,7 +126,7 @@ func TestWorkingMemory_ConcurrentWritesNoRace(t *testing.T) {
 }
 
 // Load and Persist are intentionally no-ops today (working memory is
-// in-process only; bbolt holds episodic/semantic). Pin that contract
+// in-process only; SQLite holds episodic/semantic). Pin that contract
 // so a future "I'll just persist working too" change is forced to
 // update this test and think about the implications.
 func TestWorkingMemory_LoadPersistAreNoOps(t *testing.T) {
@@ -208,7 +208,7 @@ func TestMemory_ConcurrentAccessNilStorage(t *testing.T) {
 }
 
 // TouchFile/TouchSymbol are working-memory operations — they are entirely
-// in-memory and must work even when bbolt storage is unavailable.
+// in-memory and must work even when SQLite storage is unavailable.
 func TestWorkingMemory_WorksWhenStorageIsNil(t *testing.T) {
 	m := New(nil)
 	m.TouchFile("a.go")

@@ -11,7 +11,7 @@ import (
 
 func newAgentsTestEngine(t *testing.T) *engine.Engine {
 	t.Helper()
-	// Redirect HOME/USERPROFILE to a temp dir so the engine's bbolt files
+	// Redirect HOME/USERPROFILE to a temp dir so the engine's SQLite files
 	// land under t.TempDir() instead of the developer's real ~/.dfmc data
 	// dir — otherwise parallel test runs collide on the storage lock.
 	home := t.TempDir()
