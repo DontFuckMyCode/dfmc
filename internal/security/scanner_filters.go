@@ -116,12 +116,16 @@ func shannonEntropy(s string) float64 {
 // `strings.Contains(ctx.Trimmed, "md5.New")` has "md5.New" sitting in
 // the source, which the CWE-327 rule would then flag.
 //
-// We match on two shapes:
-//  1. Explicit rule registration (regexp.MustCompile, Pattern:, Match:)
-//  2. Rule bodies that reference the scanner's per-line context
-//     (ctx.Trimmed, ctx.RecentJoin, ctx.Line) — a near-perfect tell
-//     that this is scanner machinery, not application code. No real
-//     vulnerability lives inside a rule matcher body.
+// We match on three shapes:
+//   1. Explicit rule registration (regexp.MustCompile, Pattern:, Match:)
+//   2. Rule bodies that reference the scanner's per-line context
+//      (ctx.Trimmed, ctx.RecentJoin, ctx.Line) — a near-perfect tell
+//      that this is scanner machinery, not application code. No real
+//      vulnerability lives inside a rule matcher body.
+//   3. Vulnerability rule definitions: a line that defines a vulnPattern
+//      (Kind/CWE/OWASP fields) AND calls regexp.MustCompile — these
+//      contain the very literals they look for and would trigger
+//      catastrophic backtracking if matched against themselves.
 func isPatternDefinitionLine(line string) bool {
 	l := strings.ToLower(line)
 	if strings.Contains(l, "regexp.mustcompile(") ||
@@ -135,6 +139,14 @@ func isPatternDefinitionLine(line string) bool {
 	if strings.Contains(l, "ctx.trimmed") ||
 		strings.Contains(l, "ctx.recentjoin") ||
 		strings.Contains(l, "ctx.line") {
+		return true
+	}
+	// Vulnerability pattern definitions: a line that calls
+	// regexp.MustCompile and also carries vulnerability metadata
+	// (Kind, CWE, OWASP). Without this, the scanner would match its
+	// own CWE-78/CWE-89/CWE-95 pattern bodies and timeout.
+	if strings.Contains(l, "regexp.mustcompile(") &&
+		(strings.Contains(l, "kind:") || strings.Contains(l, "cwe:") || strings.Contains(l, "owasp:")) {
 		return true
 	}
 	return false

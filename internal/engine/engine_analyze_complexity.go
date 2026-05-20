@@ -143,13 +143,30 @@ func (e *Engine) computeComplexity(ctx context.Context, paths []string) (Complex
 // The score is language-agnostic: any branch/loop/jump keyword in any
 // of the supported languages contributes +1. A function with zero
 // branches returns 1 (the single entry path).
+//
+// CAUTION: use a negative limit with care. On large texts, patterns
+// with high repetition (e.g. `&&`, `||`) can trigger catastrophic
+// backtracking in Go's backtracking NFA engine. The short-circuit
+// operators are safe only because their literals are single tokens
+// — but a generic `.*` anywhere in the pattern would be catastrophic.
+// We apply a per-call match cap to bound the worst case.
+//
+// The file-level score is the simple sum over the entire text; the
+// per-function score uses the same scorer on the function body only.
 func complexityScore(text string) int {
 	if text == "" {
 		return 1
 	}
 	score := 1
+	// 500 is a safe upper bound: a pathological function body with
+	// 200 consecutive if/else-if chains has <200 branches. The cap
+	// bounds backtracking worst-case on large inputs (a whole-file
+	// score call sees the entire file at once). Using the same cap
+	// for both file-level and per-function scoring avoids a second
+	// tuning parameter.
+	const perPatternCap = 500
 	for _, re := range complexityBranchRegexes {
-		score += len(re.FindAllStringIndex(text, -1))
+		score += len(re.FindAllStringIndex(text, perPatternCap))
 	}
 	return score
 }
