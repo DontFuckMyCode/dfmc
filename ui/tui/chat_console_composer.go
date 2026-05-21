@@ -49,12 +49,10 @@ func (m Model) renderTimelineComposer(width int) []string {
 	inputLine := renderChatInputLine(m.chat.input, m.chat.cursor, m.chat.cursorManual, m.chat.cursorInput, m.chat.sending)
 	lines = append(lines, sectionHeader("›", "Input"))
 	lines = append(lines, renderInputBox(inputLine, max(width-2, 20)))
-	// Persistent composer hint: send / newline first (the load-bearing
-	// pair people forget), then the discovery row — slash, mention,
-	// model command, compact status, palette, and tabs.
+	// Persistent composer hint: essential shortcuts only.
+	// Full help available via ctrl+h or /help.
 	hintRows := []string{
-		"  enter send · alt+enter newline · / commands · @ mention",
-		"  /model model · alt+p status · ctrl+p palette · f1-f12 tabs",
+		"  enter send · alt+enter newline · / commands · ctrl+h help",
 	}
 	// Phase E item 2 — live budget meter pinned at the composer footer
 	// so the user can read context pressure while typing without
@@ -150,13 +148,9 @@ func (m Model) renderTimelineCommandPicker(width int) []string {
 	case "grep":
 		title = "Grep Picker"
 	}
-	mode := "session"
-	if m.commandPicker.persist {
-		mode = "persist -> .dfmc/config.yaml"
-	}
 	lines := []string{
 		consoleWidgetTitle("PICK", title, width),
-		subtleStyle.Render("    up/down move | tab cycle | enter apply | ctrl+s " + mode + " | esc close"),
+		subtleStyle.Render("    ↑↓ move · tab cycle · enter apply · esc close"),
 	}
 	if query := strings.TrimSpace(m.commandPicker.query); query != "" {
 		lines = append(lines, subtleStyle.Render("    filter: "+truncateSingleLine(query, width-12)))
@@ -213,7 +207,7 @@ func (m Model) renderTimelineSuggestions(width int, suggestions chatSuggestionSt
 	}
 	if len(suggestions.quickActions) > 0 {
 		lines = append(lines, consoleWidgetTitle("QUICK", "Quick actions", width))
-		lines = append(lines, subtleStyle.Render("    up/down move | tab cycle | enter run"))
+		lines = append(lines, subtleStyle.Render("    ↑↓ move · tab cycle · enter run · esc close"))
 		selected := clampIndex(m.slashMenu.quickAction, len(suggestions.quickActions))
 		for i, action := range suggestions.quickActions {
 			render := subtleStyle.Render

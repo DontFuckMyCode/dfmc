@@ -201,7 +201,7 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 		)
 	}
 
-	footer := subtleStyle.Render("up/down move | tab/enter insert as [[file:...]] | esc cancel")
+	footer := subtleStyle.Render("↑↓ move · tab/enter insert · esc cancel")
 
 	parts := []string{title, countLine, ""}
 	parts = append(parts, bodyLines...)
