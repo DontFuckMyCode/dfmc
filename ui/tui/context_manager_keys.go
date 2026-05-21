@@ -172,7 +172,7 @@ func (m Model) openContextManagerActionMenu() Model {
 				}
 				return m, nil
 			}},
-		{Label: "Back to Context view", Accel: "esc",
+		{Label: "Back to Context view",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				return m.deactivateContextManager(), nil
 			}},

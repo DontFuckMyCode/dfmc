@@ -438,7 +438,7 @@ func TestHandleProvidersConfirmKey_NKey(t *testing.T) {
 	m.providers.confirmTarget = "anthropic"
 	m2, _ := m.handleProvidersConfirmKey(tea.KeyMsg{Type: tea.KeyEsc})
 	nm := m2.(Model)
-	if nm.notice != "cancelled" {
+	if nm.notice != "Cancelled." {
 		t.Errorf("notice: %s", nm.notice)
 	}
 	if nm.providers.confirmAction != "" {
