@@ -98,7 +98,6 @@ func helpOverlaySections(tab string) []helpOverlaySection {
 				"f9 status · f10 codemap · f11 tools · f12 security",
 				"shift+f1 prompts · shift+f2 plans · shift+f3 context · shift+f4 orchestrate · shift+f5 shortcuts",
 				"shift+f6 contexts · shift+f7 provider log · shift+f8 telegram · ctrl+shift+t tool status",
-				"legacy aliases still work: alt+i tools · ctrl+y plans · ctrl+w context · alt+r orchestrate",
 			},
 		},
 		{
@@ -131,89 +130,90 @@ func helpOverlayTabHints(tab string) []string {
 	switch strings.TrimSpace(strings.ToLower(tab)) {
 	case "chat":
 		return []string{
-			"enter send · alt+enter newline · ctrl+x send/queue · / commands · @ mention",
+			"enter send · alt+enter newline · / commands · @ mention",
 			"wheel · shift+↑/↓ · pgup/pgdn scroll transcript",
-			"/model changes model · alt+p opens compact runtime status",
-			"alt+a overview · alt+s todos · alt+d tasks · alt+f subagents · alt+p providers in the right stats panel",
+			"ctrl+h help · ctrl+p palette · ctrl+s stats",
 			"when parked: ctrl+x resumes · esc dismisses · type a note first to steer",
 		}
 	case "status":
 		return []string{
-			"← → / h l move between cards · ↑ ↓ / j k row jump · home/g end/G",
-			"enter jumps to detail tab · r refresh",
+			"←→ move between cards · ↑↓ row jump · home end top/bottom",
+			"enter jumps to detail tab · / search · esc back",
 		}
 	case "files":
 		return []string{
-			"↑↓ move · enter / → opens action menu · esc closes",
-			"menu: ↑↓ pick · enter run · letters in [brackets] are accelerators",
+			"↑↓ move · enter action menu · esc back",
+			"menu: ↑↓ pick · enter run",
 		}
 	case "patch":
 		return []string{
-			"↑↓ next/prev hunk · n/b next/prev file · enter / → action menu",
-			"menu: apply · check · undo · focus · reload — accelerators: a/c/u/f/d",
+			"↑↓ hunk · ←→ file · enter action menu · esc back",
+			"menu: apply · check · undo · focus · reload",
 		}
 	case "workflow":
 		return []string{
-			"↑↓ move · enter select run / expand TODO · → action menu · esc back",
-			"menu: stop · resume · copy ID into chat · open routing editor · refresh",
+			"↑↓ move · enter select · space follow · → menu · esc back",
+			"menu: stop · resume · copy ID · routing editor · refresh",
 		}
 	case "tools":
 		return []string{
-			"↑↓ select · enter runs current · → opens action menu",
-			"menu: run · edit params · reset · rerun — banner shows EDITING when active",
+			"↑↓ select · enter runs · → menu · esc back",
+			"menu: run · edit params · reset · rerun",
 		}
 	case "activity":
 		return []string{
-			"↑↓ scroll · pgup/pgdn page · g/G top/tail · → action menu",
-			"menu: pause/resume · cycle filter · 1-6 filters · search · clear · open / focus / copy",
+			"↑↓ scroll · pgup/pgdn page · enter open · → menu · esc back",
+			"menu: pause/resume · filter · search · clear · open/focus/copy",
 		}
 	case "memory":
 		return []string{
-			"↑↓ scroll · enter / → opens action menu (cycle tier · refresh · search · clear)",
-			"single-letter accelerators (t/r//c) still work for power users",
+			"↑↓ scroll · enter expand · → menu · esc back",
+			"menu: cycle tier · refresh · search · clear",
 		}
 	case "codemap":
 		return []string{
-			"↑↓ scroll · enter / → opens action menu (cycle view · refresh · top/bottom)",
-			"accelerators: v/r/g/G",
+			"↑↓ scroll · enter/→ menu · esc back",
+			"menu: cycle view · refresh · top/bottom",
 		}
 	case "conversations":
 		return []string{
-			"↑↓ scroll · enter previews · → opens action menu (refresh · search · clear)",
-			"accelerators: r/// c",
+			"↑↓ scroll · enter preview · → menu · esc back",
+			"menu: resume · search · clear",
 		}
 	case "prompts":
 		return []string{
-			"↑↓ scroll · enter previews · → opens action menu (refresh · search · clear)",
-			"accelerators: r/// c",
+			"↑↓ scroll · enter preview · → menu · esc back",
+			"menu: refresh · search · clear",
 		}
 	case "security":
 		return []string{
-			"↑↓ scroll · enter / → opens action menu (toggle view · rescan · search · clear)",
-			"accelerators: v/r/// c",
+			"↑↓ scroll · enter/→ menu · esc back",
+			"menu: toggle view · rescan · search · clear",
 		}
 	case "plans":
 		return []string{
-			"↑↓ scroll · enter re-runs split · → action menu (edit · run · clear)",
+			"↑↓ scroll · enter re-run · → menu · esc back",
+			"menu: edit · run · clear",
 		}
 	case "context":
 		return []string{
-			"↑↓ scroll · enter previews · → action menu (edit · preview · active · clear)",
+			"↑↓ scroll · enter preview · → menu · esc back",
+			"menu: edit · preview · active · clear",
 		}
 	case "providers":
 		return []string{
-			"↑↓ scroll · enter views detail · → action menu",
+			"↑↓ scroll · enter/→ menu · esc back",
 			"menu: detail · primary · fallback · cycle model · save · new · refresh · search",
 		}
 	case "orchestrate":
 		return []string{
-			"shift+f4 (or alt+r) jumps here · live hierarchy of agents/subagents/todos/drive/tokens",
-			"j/k/pgup/pgdn/g/G scroll · read-only panel — drive control from chat (/drive)",
+			"shift+f4 jumps here · live hierarchy of agents/subagents/todos/drive/tokens",
+			"↑↓ scroll · pgup/pgdn page · esc close · read-only panel",
 		}
 	case "shortcuts":
 		return []string{
-			"shift+f5 jumps here from any tab · /shortcuts and /keys open the help overlay",
-			"j/k/pgup/pgdn/g/G scroll · per-tab quick hints: ctrl+h overlay",
+			"shift+f5 jumps here · /shortcuts and /keys open help",
+			"↑↓ scroll · pgup/pgdn page · esc close",
 		}
 	case "contexts":
 		return []string{

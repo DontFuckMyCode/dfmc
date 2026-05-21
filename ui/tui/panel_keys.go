@@ -113,16 +113,16 @@ func (m Model) openToolsActionMenu() Model {
 	}
 	name := tools[m.toolView.index]
 	actions := []panelAction{
-		{Label: "Run with current params", Accel: "enter", Handler: func(m Model) (Model, tea.Cmd) {
+		{Label: "Run with current params", Handler: func(m Model) (Model, tea.Cmd) {
 			return m.runSelectedTool(name, false)
 		}},
-		{Label: "Edit params (opens param editor)", Accel: "enter", Handler: func(m Model) (Model, tea.Cmd) {
+		{Label: "Edit params (opens param editor)", Accel: "e", Handler: func(m Model) (Model, tea.Cmd) {
 			return m.startToolParamEdit(name)
 		}},
-		{Label: "Reset params to default", Accel: "enter", Handler: func(m Model) (Model, tea.Cmd) {
+		{Label: "Reset params to default", Accel: "x", Handler: func(m Model) (Model, tea.Cmd) {
 			return m.resetToolParams(name)
 		}},
-		{Label: "Re-run last invocation", Accel: "enter", Handler: func(m Model) (Model, tea.Cmd) {
+		{Label: "Re-run last invocation", Accel: "r", Handler: func(m Model) (Model, tea.Cmd) {
 			return m.runSelectedTool(name, true)
 		}},
 	}
@@ -130,11 +130,11 @@ func (m Model) openToolsActionMenu() Model {
 		isDisabled := m.eng.IsToolDisabled(name)
 		isProtected := m.eng.ToolIsProtected(name)
 		if isDisabled {
-			actions = append(actions, panelAction{Label: "Enable tool", Accel: "enter", Handler: func(m Model) (Model, tea.Cmd) {
+			actions = append(actions, panelAction{Label: "Enable tool", Accel: "d", Handler: func(m Model) (Model, tea.Cmd) {
 				return m.setToolEnabled(name, true)
 			}})
 		} else if !isProtected {
-			actions = append(actions, panelAction{Label: "Disable tool", Accel: "enter", Handler: func(m Model) (Model, tea.Cmd) {
+			actions = append(actions, panelAction{Label: "Disable tool", Accel: "d", Handler: func(m Model) (Model, tea.Cmd) {
 				return m.setToolEnabled(name, false)
 			}})
 		}

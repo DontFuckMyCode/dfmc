@@ -4209,7 +4209,7 @@ func TestHelpOverlayShowsTabKeysWhenToggled(t *testing.T) {
 	}
 	m.ui.showHelpOverlay = true
 	out := m.renderHelpOverlay(120)
-	if !strings.Contains(out, "ctrl+x send") || !strings.Contains(out, "ctrl+p palette") {
+	if !strings.Contains(out, "ctrl+x resumes") || !strings.Contains(out, "ctrl+p palette") {
 		t.Fatalf("expected chat hints in help overlay, got:\n%s", out)
 	}
 	if !strings.Contains(out, "ctrl+h") {
@@ -4233,15 +4233,15 @@ func TestHelpOverlayFiltersByChatInput(t *testing.T) {
 	if !strings.Contains(out, "@ mention") {
 		t.Fatalf("expected mention line to survive filter, got:\n%s", out)
 	}
-	// "ctrl+y plans" is in the demoted panels section and has no
+	// "shift+f2 plans" is in the demoted panels section and has no
 	// "mention" substring; it must drop out.
-	if strings.Contains(out, "ctrl+y plans") {
+	if strings.Contains(out, "shift+f2 plans") {
 		t.Fatalf("expected unrelated demoted-panels line to be filtered out, got:\n%s", out)
 	}
 	// Empty filter restores everything.
 	m.chat.input = ""
 	out = m.renderHelpOverlay(140)
-	if !strings.Contains(out, "ctrl+y plans") {
+	if !strings.Contains(out, "shift+f2 plans") {
 		t.Fatalf("clearing the filter should restore all sections, got:\n%s", out)
 	}
 }
