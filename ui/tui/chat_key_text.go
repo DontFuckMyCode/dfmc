@@ -29,7 +29,9 @@ func (m Model) handleChatRunesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// it or send it as-is. Takes precedence over starter prompts
 	// because next-actions are scoped to the live conversation
 	// and starter prompts only show on a fresh transcript.
-	if len(msg.Runes) == 1 && strings.TrimSpace(m.chat.input) == "" && !m.chat.sending && len(m.assistantNextActions.actions) > 0 {
+	// Guard against slash menu being open so the user can type
+	// numbered sentences (e.g. "1. foo") without interference.
+	if !m.slashMenuActive() && len(msg.Runes) == 1 && strings.TrimSpace(m.chat.input) == "" && !m.chat.sending && len(m.assistantNextActions.actions) > 0 {
 		r := msg.Runes[0]
 		if r >= '1' && r <= '9' {
 			idx := int(r - '1')
@@ -41,7 +43,7 @@ func (m Model) handleChatRunesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	if len(msg.Runes) == 1 && strings.TrimSpace(m.chat.input) == "" && len(m.chat.transcript) == 0 && !m.chat.sending {
+	if !m.slashMenuActive() && len(msg.Runes) == 1 && strings.TrimSpace(m.chat.input) == "" && len(m.chat.transcript) == 0 && !m.chat.sending {
 		if template, ok := starterTemplateForDigit(msg.Runes[0]); ok {
 			m.exitInputHistoryNavigation()
 			m.chat.input = template

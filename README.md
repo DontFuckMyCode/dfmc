@@ -247,6 +247,17 @@ CI gates on `go vet` + `staticcheck`. The bundled `Makefile` is
 Windows-oriented (`NUL`, `rmdir /s /q`); direct `go` invocations are
 the portable path.
 
+Additional tooling (optional):
+
+```bash
+golangci-lint run          # comprehensive linting (see .golangci.yml)
+govulncheck ./...          # dependency vulnerability scan
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow,
+branch naming, and PR process. See [SECURITY.md](SECURITY.md) for
+vulnerability reporting and security best practices.
+
 ## Project layout (selected)
 
 ```
@@ -274,9 +285,17 @@ pkg/types             shared public types
 ```
 
 Other supporting packages live under `internal/` (applog, bot, coach,
-commands, langintel, pathsafe, planning, pluginexec, promptlib,
+commands, errors, langintel, pathsafe, planning, pluginexec, promptlib,
 providerlog, repolint, sessionutil, supervisor, taskstore, tokens).
 For a deeper architecture map see [CLAUDE.md](CLAUDE.md).
+
+## Specification-Driven Development (SDD)
+
+The `sdd` skill (`internal/skills/sdd/`) provides autonomous
+specification-driven development: it clarifies vague requests through
+AI-guided questions, produces a `SPEC.md`, generates implementation
+tasks, and executes them in order until done — like Drive agent but
+full-cycle. Activate via the skill system or `/skill sdd` in the TUI.
 
 ## License
 
