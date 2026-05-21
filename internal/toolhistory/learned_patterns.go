@@ -10,23 +10,33 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// idSeq is a process-wide monotonic counter that disambiguates IDs
+// generated within the same nanosecond bucket. Different
+// LearnedPatternStore instances share it so a MergeFrom from a peer
+// store whose Add happened at the same wall-clock instant can't end
+// up with a colliding ID.
+var idSeq atomic.Uint64
 
 // LearnedPattern represents a pattern learned from tool interactions.
 type LearnedPattern struct {
 	ID          string `json:"id"`
 	Date        string `json:"date"`         // YYYY-MM-DD
-	Pattern     string `json:"pattern"`      // Kısa kalıp açıklaması
-	Situation   string `json:"situation"`    // Hangi durumda öğrenildi
-	OldApproach string `json:"old_approach"` // Önceki yaklaşım
-	NewApproach string `json:"new_approach"` // Daha iyi yaklaşım
-	Application string `json:"application"`  // Nasıl uygulanır
-	Success     bool   `json:"success"`      // Uygulama başarılı mı
-	LastUsed    string `json:"last_used"`    // Son kullanım tarihi
-	UseCount    int    `json:"use_count"`    // Kaç kez kullanıldı
+	Pattern     string `json:"pattern"`      // short pattern name
+	Situation   string `json:"situation"`    // where it was learned
+	OldApproach string `json:"old_approach"` // previous approach
+	NewApproach string `json:"new_approach"` // better approach
+	Application string `json:"application"`  // how to apply
+	Success     bool   `json:"success"`      // applied successfully
+	LastUsed    string `json:"last_used"`    // last-used timestamp (RFC3339)
+	UseCount    int    `json:"use_count"`    // times applied
 }
 
 // LearnedPatternStore manages learned patterns persistence.
@@ -82,18 +92,31 @@ func (s *LearnedPatternStore) load() {
 	}
 }
 
+// save acquires the write lock and persists; safe for callers that
+// do NOT already hold s.mu.
 func (s *LearnedPatternStore) save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.saveLocked()
+}
+
+// saveLocked assumes the caller already holds s.mu.Lock(). sync.Mutex
+// is non-reentrant, so paths like Close() that need to save while
+// holding the lock must call this variant — calling save() from
+// inside the critical section self-deadlocks.
+func (s *LearnedPatternStore) saveLocked() error {
 	f, err := os.Create(s.path())
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	for _, p := range s.patterns {
-		if b, err := json.Marshal(p); err == nil {
-			f.Write(b)
-			f.Write([]byte("\n"))
+		b, err := json.Marshal(p)
+		if err != nil {
+			continue
+		}
+		if _, err := f.Write(append(b, '\n')); err != nil {
+			return err
 		}
 	}
 	s.dirty = false
@@ -103,9 +126,11 @@ func (s *LearnedPatternStore) save() error {
 // Add adds a new learned pattern.
 func (s *LearnedPatternStore) Add(pattern, situation, oldApproach, newApproach, application string) *LearnedPattern {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	now := time.Now().UTC()
-	id := now.Format("20060102-150405")
+	// Include nanoseconds + a process-wide monotonic counter so neither
+	// rapid same-second Adds in one store nor MergeFrom from a peer
+	// store created in the same nanosecond bucket collide on ID.
+	id := now.Format("20060102-150405") + "-" + strconv.Itoa(now.Nanosecond()) + "-" + strconv.FormatUint(idSeq.Add(1), 10)
 	p := &LearnedPattern{
 		ID:          id,
 		Date:        now.Format("2006-01-02"),
@@ -120,6 +145,7 @@ func (s *LearnedPatternStore) Add(pattern, situation, oldApproach, newApproach, 
 	}
 	s.patterns[id] = p
 	s.dirty = true
+	s.mu.Unlock()
 	go s.save()
 	return p
 }
@@ -132,14 +158,9 @@ func (s *LearnedPatternStore) GetAll() []*LearnedPattern {
 	for _, p := range s.patterns {
 		result = append(result, p)
 	}
-	// Sort by date descending (bubble sort for simplicity)
-	for i := 0; i < len(result)-1; i++ {
-		for j := i + 1; j < len(result); j++ {
-			if result[j].Date > result[i].Date {
-				result[i], result[j] = result[j], result[i]
-			}
-		}
-	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Date > result[j].Date
+	})
 	return result
 }
 
@@ -148,7 +169,7 @@ func (s *LearnedPatternStore) GetRecent(days int) []*LearnedPattern {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
-	var result []*LearnedPattern
+	result := []*LearnedPattern{}
 	for _, p := range s.patterns {
 		if p.Date >= cutoff {
 			result = append(result, p)
@@ -160,44 +181,48 @@ func (s *LearnedPatternStore) GetRecent(days int) []*LearnedPattern {
 // MarkUsed increments the use count for a pattern.
 func (s *LearnedPatternStore) MarkUsed(id string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if p, ok := s.patterns[id]; ok {
+	p, ok := s.patterns[id]
+	if ok {
 		p.UseCount++
 		p.LastUsed = time.Now().UTC().Format(time.RFC3339)
 		s.dirty = true
+	}
+	s.mu.Unlock()
+	if ok {
 		go s.save()
 	}
 }
 
 // ExportForContext returns patterns formatted for context injection.
 func (s *LearnedPatternStore) ExportForContext() string {
-	patterns := s.GetRecent(30) // Son 30 günden kalıplar
+	patterns := s.GetRecent(30)
 	if len(patterns) == 0 {
 		return ""
 	}
-	var lines []string
-	lines = append(lines, "## Öğrenilen Kalıplar (Son 30 gün)")
-	lines = append(lines, "")
+	var b strings.Builder
+	b.WriteString("<!-- self-learn:patterns begin -->\n")
+	b.WriteString("## Learned Patterns (last 30 days)\n\n")
 	for _, p := range patterns {
-		lines = append(lines, "- **"+p.Pattern+"** ("+p.Date+"): "+p.Application)
+		b.WriteString("- **")
+		b.WriteString(p.Pattern)
+		b.WriteString("** (")
+		b.WriteString(p.Date)
+		b.WriteString("): ")
+		b.WriteString(p.Application)
+		b.WriteString("\n")
 	}
-	lines = append(lines, "")
-	lines = append(lines, "<!-- self-learn:patterns end -->")
-	result := "<!-- self-learn:patterns begin -->\n"
-	for _, l := range lines {
-		result += l + "\n"
-	}
-	return result
+	b.WriteString("\n<!-- self-learn:patterns end -->\n")
+	return b.String()
 }
 
 // Close flushes any pending writes.
 func (s *LearnedPatternStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.dirty {
-		return s.save()
+	if !s.dirty {
+		return nil
 	}
-	return nil
+	return s.saveLocked()
 }
 
 // MergeFrom merges patterns from another store into this one.
@@ -210,7 +235,6 @@ func (s *LearnedPatternStore) MergeFrom(other *LearnedPatternStore) {
 	other.mu.RLock()
 	defer other.mu.RUnlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for id, p := range other.patterns {
 		if _, exists := s.patterns[id]; !exists {
 			cp := *p // copy to avoid sharing the underlying pointer
@@ -218,7 +242,9 @@ func (s *LearnedPatternStore) MergeFrom(other *LearnedPatternStore) {
 			s.dirty = true
 		}
 	}
-	if s.dirty {
+	wasDirty := s.dirty
+	s.mu.Unlock()
+	if wasDirty {
 		go s.save()
 	}
 }

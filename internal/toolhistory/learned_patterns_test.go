@@ -255,15 +255,30 @@ func TestLearnedPatternStore_MergeFrom_duplicate(t *testing.T) {
 	store2, _ := InitLearnedPatterns(tmp2)
 	defer store2.Close()
 
-	// Add pattern with same ID to both
-	store1.Add("pattern-1", "sit1", "old1", "new1", "app1")
-	store2.Add("pattern-1", "sit2", "old2", "new2", "app2")
+	// MergeFrom dedupes on ID. Use Add for store1's entry, then inject
+	// a pattern with the SAME ID directly into store2 (Add always
+	// generates a fresh unique ID, so we can't force a collision
+	// through the public surface without bypassing the dedup).
+	first := store1.Add("pattern-1", "sit1", "old1", "new1", "app1")
+	store2.mu.Lock()
+	store2.patterns[first.ID] = &LearnedPattern{
+		ID:          first.ID,
+		Date:        first.Date,
+		Pattern:     "different name same id",
+		Application: "store2 wins on its own but loses on merge",
+		Success:     true,
+		UseCount:    1,
+	}
+	store2.mu.Unlock()
 
 	store1.MergeFrom(store2)
 
 	all := store1.GetAll()
 	if len(all) != 1 {
 		t.Errorf("MergeFrom with duplicate ID: got %d patterns, want 1", len(all))
+	}
+	if all[0].Pattern != "pattern-1" {
+		t.Errorf("local pattern should take precedence on dup ID, got Pattern=%q", all[0].Pattern)
 	}
 }
 
