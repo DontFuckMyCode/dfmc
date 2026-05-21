@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/drive"
+	"github.com/dontfuckmycode/dfmc/internal/intent"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 )
 
@@ -122,14 +123,14 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 	// unchanged. Resume + clarify paths short-circuit to dedicated
 	// handlers so the main model isn't called when it doesn't need to be.
 	decision := e.routeIntent(ctx, question)
-	if decision.Intent == "resume" && e.HasParkedAgent() {
+	if decision.Intent == intent.IntentResume && e.HasParkedAgent() {
 		completion, err := e.ResumeAgent(ctx, question)
 		if err != nil {
 			return "", err
 		}
 		return completion.Answer, nil
 	}
-	if decision.Intent == "clarify" && decision.FollowUpQuestion != "" {
+	if decision.Intent == intent.IntentClarify && decision.FollowUpQuestion != "" {
 		// Record the exchange so subsequent turns see what was asked.
 		// Provider/model are tagged "intent-layer" to make these turns
 		// distinguishable in conversation history (they didn't cost a

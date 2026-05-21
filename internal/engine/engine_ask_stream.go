@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/dontfuckmycode/dfmc/internal/hooks"
+	"github.com/dontfuckmycode/dfmc/internal/intent"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
 	"github.com/dontfuckmycode/dfmc/internal/tokens"
 )
@@ -58,7 +59,7 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 	// single chunk to keep the SSE protocol identical for callers).
 	// Clarify short-circuits to streaming the follow-up question text.
 	decision := e.routeIntent(ctx, question)
-	if decision.Intent == "resume" && e.HasParkedAgent() {
+	if decision.Intent == intent.IntentResume && e.HasParkedAgent() {
 		out := make(chan provider.StreamEvent, 32)
 		go func() {
 			defer close(out)
@@ -84,7 +85,7 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 		}()
 		return out, nil
 	}
-	if decision.Intent == "clarify" && decision.FollowUpQuestion != "" {
+	if decision.Intent == intent.IntentClarify && decision.FollowUpQuestion != "" {
 		e.recordInteraction(question, decision.FollowUpQuestion, "intent-layer", "clarify", 0, nil)
 		return streamAnswerText(ctx, decision.FollowUpQuestion), nil
 	}
