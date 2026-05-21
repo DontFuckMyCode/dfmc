@@ -36,7 +36,9 @@ func (t *GitCommitTool) Execute(ctx context.Context, req Request) (Result, error
 		}
 	}
 	if len(paths) == 0 {
-		return Result{}, fmt.Errorf("paths is required — git_commit refuses to stage everything; name the files explicitly")
+		return Result{}, missingParamError("git_commit", "paths", req.Params,
+			`{"paths":["file1.go","file2.go"],"message":"fix: ..."}`,
+			"git_commit refuses to stage everything; name the files explicitly (paths is a list, or use the path singular).")
 	}
 	for _, p := range paths {
 		if strings.TrimSpace(p) == "" || p == "-A" || p == "." || p == "*" {

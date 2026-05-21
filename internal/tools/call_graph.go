@@ -55,7 +55,9 @@ func (t *CallGraphTool) Execute(ctx context.Context, req Request) (Result, error
 
 	symbol := strings.TrimSpace(asString(req.Params, "symbol", ""))
 	if symbol == "" {
-		return Result{}, fmt.Errorf("call_graph: symbol is required")
+		return Result{}, missingParamError("call_graph", "symbol", req.Params,
+			`{"symbol":"MyFunc","direction":"both","depth":2}`,
+			"symbol is the function or method name to trace; direction is callers|callees|both; depth defaults to 1 (max 3).")
 	}
 
 	direction := strings.ToLower(asString(req.Params, "direction", "both"))

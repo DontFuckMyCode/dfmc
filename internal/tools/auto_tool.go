@@ -56,7 +56,7 @@ func (t *AutoTestTool) Execute(ctx context.Context, req Request) (Result, error)
 	case "run":
 		return t.handleRun(target)
 	case "generate":
-		return t.handleGenerate(target)
+		return t.handleGenerate(target, req.Params)
 	default:
 		return Result{}, fmt.Errorf("invalid mode %q", mode)
 	}
@@ -100,9 +100,11 @@ func (t *AutoTestTool) handleRun(target string) (Result, error) {
 	return Result{Output: fmt.Sprintf("Tests executed for %s. All green.", target)}, nil
 }
 
-func (t *AutoTestTool) handleGenerate(target string) (Result, error) {
+func (t *AutoTestTool) handleGenerate(target string, params map[string]any) (Result, error) {
 	if target == "" {
-		return Result{}, fmt.Errorf("handleGenerate: target is required")
+		return Result{}, missingParamError("auto_test", "target", params,
+			`{"mode":"generate","target":"path/to/file.go"}`,
+			"generate mode needs a Go source file path; without it there's nothing to derive test stubs from.")
 	}
 
 	src, err := os.ReadFile(target)

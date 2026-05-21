@@ -248,7 +248,7 @@ func TestGitCommit_RequiresExplicitPaths(t *testing.T) {
 		ProjectRoot: dir,
 		Params:      map[string]any{"message": "test"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "paths is required") {
+	if err == nil || !strings.Contains(err.Error(), "requires a `paths` field") {
 		t.Fatalf("expected missing-paths error, got %v", err)
 	}
 }
