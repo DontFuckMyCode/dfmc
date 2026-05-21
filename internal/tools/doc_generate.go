@@ -44,7 +44,9 @@ func (t *DocGenerateTool) Execute(ctx context.Context, req Request) (Result, err
 	format := asString(req.Params, "format", "godoc")
 
 	if target == "" {
-		return Result{}, fmt.Errorf("doc_generate requires target parameter")
+		return Result{}, missingParamError("doc_generate", "target", req.Params,
+			`{"mode":"package","target":"internal/foo"}`,
+			"target is a file path (for mode=func / mode=package) or directory (for mode=readme / mode=changelog).")
 	}
 
 	var generated string
@@ -60,7 +62,7 @@ func (t *DocGenerateTool) Execute(ctx context.Context, req Request) (Result, err
 	case "changelog":
 		generated, err = t.generateChangelog(target)
 	default:
-		return Result{}, fmt.Errorf("unknown mode: %s (valid: func, package, readme, changelog)", mode)
+		return Result{}, fmt.Errorf(`doc_generate: mode=%q is not valid. Allowed: "func" | "package" | "readme" | "changelog"`, mode)
 	}
 
 	if err != nil {

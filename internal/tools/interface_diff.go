@@ -22,8 +22,10 @@ type InterfaceDiffTool struct{}
 func NewInterfaceDiffTool() *InterfaceDiffTool { return &InterfaceDiffTool{} }
 func (t *InterfaceDiffTool) Name() string      { return "interface_diff" }
 func (t *InterfaceDiffTool) Description() string {
-	return "Analyze API/interface changes and their impact on callers. " +
-		"Supports: function signatures, interface contracts, struct fields."
+	return "Diff API/interface signatures between two file versions. " +
+		"Supports: function signatures, interface contracts, struct fields. " +
+		"NOTE: caller-impact analysis is not implemented here — use call_graph " +
+		"on changed symbols to enumerate affected callers."
 }
 func (t *InterfaceDiffTool) SetEngine(_ *Engine) {}
 func (t *InterfaceDiffTool) Risk() Risk          { return RiskRead }
@@ -71,27 +73,22 @@ func (t *InterfaceDiffTool) Execute(ctx context.Context, req Request) (Result, e
 	basePath := asString(req.Params, "base_path", "")
 	headPath := asString(req.Params, "head_path", "")
 	target := asString(req.Params, "target", "")
-	kind := asString(req.Params, "kind", "all")
-	projectRoot := req.ProjectRoot
 
 	if basePath == "" && headPath == "" {
 		return Result{}, fmt.Errorf("interface_diff requires base_path or head_path")
 	}
 
 	var changes []Change
-	var impacts []Impact
 
 	// Parse files
 	baseItems := parseInterfaceItems(basePath)
 	headItems := parseInterfaceItems(headPath)
 
-	// Compare
+	// Compare. `kind` and `project_root` are accepted in params for
+	// forward compatibility but currently unused — the caller-impact
+	// analysis path that used them was a stub returning empty results
+	// (see Description and the analyzeImpact removal note below).
 	changes = compareInterfaces(baseItems, headItems, target)
-
-	// Analyze impacts
-	if projectRoot != "" {
-		impacts = analyzeImpact(projectRoot, changes, kind)
-	}
 
 	result := InterfaceDiffResult{}
 	result.Summary.TotalChanges = len(changes)
@@ -106,7 +103,9 @@ func (t *InterfaceDiffTool) Execute(ctx context.Context, req Request) (Result, e
 		}
 	}
 	result.Changes = changes
-	result.Impacts = impacts
+	// Impacts field intentionally left nil — see Description(). Callers
+	// should run call_graph against each breaking-changed symbol to
+	// enumerate affected sites instead of relying on this field.
 
 	data, _ := json.MarshalIndent(result, "", "  ")
 	return Result{Output: string(data)}, nil
@@ -339,15 +338,10 @@ func diffSlices(a, b []string) []string {
 	return diff
 }
 
-func analyzeImpact(projectRoot string, changes []Change, kind string) []Impact {
-	var impacts []Impact
-
-	// This would use call_graph or ast_query to find actual callers
-	// For now, return empty list as placeholders
-	// Real implementation would:
-	// 1. Find all exported symbols that changed
-	// 2. Use call_graph to find references
-	// 3. Count and list callers
-
-	return impacts
-}
+// analyzeImpact was a stub that returned an empty []Impact, making
+// the result look like "no callers affected" regardless of how many
+// real callers were touched. Removed in favour of an honest empty
+// Impacts field + a Description note telling callers to use call_graph
+// directly. Re-introduce this function only when a real implementation
+// is ready — until then, lying about caller impact is worse than not
+// reporting it at all.
