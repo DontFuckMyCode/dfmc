@@ -46,6 +46,11 @@ type LearnedPatternStore struct {
 	patterns map[string]*LearnedPattern // key = pattern ID
 	dirty    bool
 	loadErr  error
+	// saves tracks in-flight fire-and-forget save() goroutines so
+	// Close can drain them before returning. Without this, tests using
+	// t.TempDir() race with the goroutine still writing patterns.jsonl
+	// and TempDir cleanup fails with "directory not empty".
+	saves sync.WaitGroup
 }
 
 // InitLearnedPatterns creates or loads the learned patterns store.
@@ -89,6 +94,9 @@ func (s *LearnedPatternStore) load() {
 			continue
 		}
 		s.patterns[p.ID] = &p
+	}
+	if err := scanner.Err(); err != nil {
+		s.loadErr = err
 	}
 }
 
@@ -146,7 +154,7 @@ func (s *LearnedPatternStore) Add(pattern, situation, oldApproach, newApproach, 
 	s.patterns[id] = p
 	s.dirty = true
 	s.mu.Unlock()
-	go s.save()
+	s.saves.Go(func() { s.save() })
 	return p
 }
 
@@ -189,7 +197,7 @@ func (s *LearnedPatternStore) MarkUsed(id string) {
 	}
 	s.mu.Unlock()
 	if ok {
-		go s.save()
+		s.saves.Go(func() { s.save() })
 	}
 }
 
@@ -215,8 +223,13 @@ func (s *LearnedPatternStore) ExportForContext() string {
 	return b.String()
 }
 
-// Close flushes any pending writes.
+// Close drains any in-flight async saves and then flushes anything
+// still marked dirty. Draining first matters for tests: t.TempDir()
+// runs RemoveAll on return and races a still-writing goroutine if
+// Close didn't wait. Drain happens BEFORE we take s.mu so the
+// goroutines (which need s.mu themselves) can finish.
 func (s *LearnedPatternStore) Close() error {
+	s.saves.Wait()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.dirty {
@@ -245,6 +258,6 @@ func (s *LearnedPatternStore) MergeFrom(other *LearnedPatternStore) {
 	wasDirty := s.dirty
 	s.mu.Unlock()
 	if wasDirty {
-		go s.save()
+		s.saves.Go(func() { s.save() })
 	}
 }
