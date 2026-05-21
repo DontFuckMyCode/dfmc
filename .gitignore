@@ -129,3 +129,13 @@ temp/
 
 # Local Docker overrides
 docker-compose.override.yml
+
+# WrongStack agent workspace
+.wrongstack/
+
+# Temporary reports
+DFMC_IMPROVEMENT_REPORT.md
+security-report/
+
+# External tools / subprojects
+shaslh/
