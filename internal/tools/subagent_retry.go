@@ -201,9 +201,11 @@ func runSubagentRetrying(ctx context.Context, runner SubagentRunner, req Subagen
 		// computed per-attempt so concurrent retries don't synchronize
 		// even within the same process.
 		wait := jitteredBackoff(baseBackoff, jitterFraction)
+		timer := time.NewTimer(wait)
 		select {
-		case <-time.After(wait):
+		case <-timer.C:
 		case <-ctx.Done():
+			timer.Stop()
 			return lastRes, ctx.Err()
 		}
 	}

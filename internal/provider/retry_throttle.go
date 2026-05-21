@@ -56,10 +56,12 @@ func throttleRetry[T any](
 		if wait <= 0 {
 			continue
 		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return zero, ctx.Err()
-		case <-time.After(wait):
+		case <-timer.C:
 		}
 	}
 	if lastErr != nil {
