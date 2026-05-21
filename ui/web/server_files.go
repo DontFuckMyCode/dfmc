@@ -113,6 +113,23 @@ func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refuse to serve oversized files. Without this, a GET against a
+	// 5 GB binary would load the whole thing into memory (os.ReadFile)
+	// and then again into the JSON encoder, easily exhausting the
+	// process. 8 MiB covers any source file or markdown brief the
+	// workbench would ever preview; over that, the response is a
+	// 413-style refusal that tells the client what the cap is.
+	if info.Size() > maxFileContentBytes {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{
+			"path":      filepath.ToSlash(rel),
+			"type":      "file",
+			"size":      info.Size(),
+			"max_bytes": maxFileContentBytes,
+			"error":     fmt.Sprintf("file is %d bytes; preview cap is %d. Open the file directly or page through it with a different tool.", info.Size(), maxFileContentBytes),
+		})
+		return
+	}
+
 	data, err := os.ReadFile(target)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -125,6 +142,12 @@ func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		"content": string(data),
 	})
 }
+
+// maxFileContentBytes caps the response size of GET /api/v1/files/{path}.
+// Anything above is refused with 413 rather than streamed — the
+// workbench is a preview surface, not a download path; serving a
+// multi-GB binary would OOM the server long before reaching the wire.
+const maxFileContentBytes int64 = 8 * 1024 * 1024
 
 func listFiles(root string, limit int) ([]string, error) {
 	out := make([]string, 0, limit)
