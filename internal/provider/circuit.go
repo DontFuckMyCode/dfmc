@@ -158,7 +158,13 @@ type CircuitEvent struct {
 // circuit state transition (open → closed). The Router holds no reference
 // to the hook after installation — callers can replace it by calling
 // SetCircuitObserver again with a different fn.
+//
+// Held under r.healthMu so it races neither against a concurrent
+// SetCircuitObserver nor against the recordProviderHealth read site
+// (which already holds r.healthMu around the dispatch).
 func (r *Router) SetCircuitObserver(fn func(CircuitEvent)) {
+	r.healthMu.Lock()
+	defer r.healthMu.Unlock()
 	r.circuitObserver = fn
 }
 

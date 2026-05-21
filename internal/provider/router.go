@@ -38,12 +38,13 @@ type Router struct {
 	providers        map[string]Provider
 	throttleObserver func(ThrottleNotice)
 
-	// Circuit breaker state. Separate mutex so a long-running call against
-	// one provider doesn't block health checks/updates for another.
+	// Circuit breaker + stream-recovery state. healthMu owns every
+	// field declared in this block. Kept separate from r.mu so a
+	// long-running call against one provider doesn't block circuit
+	// updates or observer rebinds for another.
 	healthMu        sync.Mutex
 	health          map[string]*providerHealth
 	circuitObserver func(CircuitEvent)
-
 	// streamRecoveredObserver fires when streamForwardWithRecovery
 	// successfully resumed a stream on a fallback provider. Optional;
 	// nil = no telemetry. Engine wires this to its EventBus so the
@@ -176,9 +177,15 @@ func (r *Router) emitFallback(from, to string, err error, attempt int) {
 	fn(FallbackEvent{From: from, To: to, Err: err, Attempt: attempt})
 }
 
+// SetStreamRecoveredObserver installs a callback fired when
+// streamForwardWithRecovery successfully resumes a stream on a
+// fallback provider. The read site lives in stream_recovery.go and
+// takes r.healthMu, so the writer must take the same lock — using
+// r.mu here was a data-race bug carried from a copy-paste of
+// SetThrottleObserver.
 func (r *Router) SetStreamRecoveredObserver(fn func(StreamRecoveredEvent)) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.healthMu.Lock()
+	defer r.healthMu.Unlock()
 	r.streamRecoveredObserver = fn
 }
 
