@@ -82,8 +82,10 @@ func New(eng *engine.Engine, host string, port int) *Server {
 	// it is NOT set, we allow startup and let SetBearerToken provide the
 	// token — this keeps the test pattern (New then SetBearerToken then
 	// Handler) working without poisoning the process environment.
-	tokenFromEnv := os.Getenv("DFMC_WEB_TOKEN")
-	if authMode == "token" && tokenFromEnv != "" && strings.TrimSpace(tokenFromEnv) == "" {
+	// Use LookupEnv so DFMC_WEB_TOKEN="" (set but empty) trips the check
+	// — os.Getenv collapses that case with unset and would silently start
+	// a token-auth server with no token.
+	if rawToken, present := os.LookupEnv("DFMC_WEB_TOKEN"); authMode == "token" && present && strings.TrimSpace(rawToken) == "" {
 		fmt.Fprintf(os.Stderr, "[DFMC] ERROR: web.auth=token but DFMC_WEB_TOKEN is set but empty; refusing to start\n")
 		os.Exit(1)
 	}
