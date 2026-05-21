@@ -173,7 +173,7 @@ func (m Model) renderToolsSpecPane(width, height int, _ tabPaletteEntry, tools [
 	lines = append(lines, subtleStyle.Render("Last result"))
 	resultText := strings.TrimSpace(m.toolView.output)
 	if resultText == "" {
-		resultText = subtleStyle.Render("No tool run yet.\nThis panel is the manual harness for the same tool registry the agent uses (read_file, grep_codebase, edit_file, run_command, ...). Useful for sanity-checking arguments before letting the model run them.\nj/k pick a tool | e edits params | enter runs with current params | x resets to defaults.")
+		resultText = subtleStyle.Render("No tool run yet.\nThis panel is the manual harness for the same tool registry the agent uses (read_file, grep_codebase, edit_file, run_command, ...). Useful for sanity-checking arguments before letting the model run them.\n↑↓ pick a tool · enter runs with current params · esc back")
 	}
 	rowBudget := max(height-len(lines)-2, 4)
 	lines = append(lines, truncateForPanelSized(resultText, width, rowBudget))

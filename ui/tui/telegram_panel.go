@@ -66,7 +66,7 @@ func (m *Model) renderTelegramPanel() string {
 		b.WriteString(m.renderTelegramMessageHistory(width, height-12))
 	}
 
-	b.WriteString("\n" + subtleStyle.Render("up/down scroll | e config | u users | c clear | enter/a actions | esc close"))
+	b.WriteString("\n" + subtleStyle.Render("↑↓ scroll · enter action menu · esc close"))
 	if m.actionMenu.open && m.actionMenu.owner == "Telegram" {
 		b.WriteString("\n\n" + m.renderActionMenu(width))
 	}

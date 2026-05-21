@@ -114,7 +114,7 @@ func (m Model) renderFilesMetaInline(width int) string {
 	if strings.TrimSpace(m.filesView.pinned) == path {
 		parts = append(parts, infoStyle.Render("PIN"))
 	}
-	parts = append(parts, subtleStyle.Render("i/e/v · p pin · r reload"))
+	parts = append(parts, subtleStyle.Render("enter action menu · p pin · r reload"))
 	return strings.Join(parts, "  ·  ")
 }
 

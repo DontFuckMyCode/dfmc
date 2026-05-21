@@ -79,12 +79,9 @@ func (m Model) renderStatusViewSized(width, height int) string {
 		m.diagnosticPanelsState.statusPanel.selectedCard, pal.Accent)
 	parts = append(parts, grid)
 
-	// Footer hints — explicit keyboard contract. Keep both arrow + vi
-	// shapes visible so muscle-memory from other panels (j/k, g/G)
-	// applies here too.
+	// Footer hints — explicit keyboard contract.
 	footer := []string{
-		subtleStyle.Render("←→/h/l move · ↑↓/j/k row · g/G first/last"),
-		subtleStyle.Render("enter detail · → action menu · r refresh"),
+		subtleStyle.Render("↑↓ move · ←→ row · enter detail · / search · esc back"),
 	}
 	if sel := m.diagnosticPanelsState.statusPanel.selectedCard; sel >= 0 && sel < len(jumpTargets) && jumpTargets[sel] != "" {
 		footer = append(footer,

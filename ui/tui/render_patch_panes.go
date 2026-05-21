@@ -63,7 +63,7 @@ func (m Model) renderPatchDiffPane(width, height int, pal tabPaletteEntry) strin
 	// Hunk strip at the bottom so the user sees position-in-section.
 	if section := m.currentPatchSection(); section != nil && len(section.Hunks) > 1 {
 		strip := subtleStyle.Render(fmt.Sprintf(
-			"hunk %d / %d  ·  j/k navigate hunks  ·  n/b navigate files",
+			"hunk %d / %d  ·  ↑↓ navigate hunks  ·  ←→ navigate files",
 			m.patchView.hunk+1, len(section.Hunks)))
 		lines = append(lines, "", strip)
 	}
@@ -74,7 +74,7 @@ func (m Model) patchDiffHeader(width int) string {
 	title := titleStyle.Bold(true).Render("◇ DIFF")
 	section := m.currentPatchSection()
 	if section == nil {
-		return title + "  " + subtleStyle.Render("(select a file with j/k or n)")
+		return title + "  " + subtleStyle.Render("(select a file with ↑↓ or ←→)")
 	}
 	header := strings.TrimSpace(m.patchHunkSummary())
 	pathLabel := subtleStyle.Render(truncatePathHead(section.Path, width/3))
@@ -156,11 +156,11 @@ func (m Model) patchMetaCards() []panelCard {
 		Icon:  "⚒",
 		Title: "Actions",
 		Rows: []panelCardRow{
-			{Key: "a", Value: "apply patch"},
+			{Key: "enter", Value: "apply patch"},
 			{Key: "c", Value: "check (dry-run apply)"},
 			{Key: "u", Value: "undo last conversation"},
-			{Key: "n / b", Value: "next / prev file"},
-			{Key: "j / k", Value: "next / prev hunk"},
+			{Key: "←→", Value: "next / prev file"},
+			{Key: "↑↓", Value: "next / prev hunk"},
 			{Key: "d", Value: "reload worktree diff"},
 			{Key: "l", Value: "reload latest patch"},
 		},
@@ -189,7 +189,7 @@ func (m Model) renderPatchMetaInline(width int) string {
 	if hints := m.patchReviewHints(); len(hints) > 0 {
 		parts = append(parts, subtleStyle.Render(strings.Join(hints, " · ")))
 	}
-	parts = append(parts, subtleStyle.Render("a apply · c check · u undo · n/b file · j/k hunk · f focus"))
+	parts = append(parts, subtleStyle.Render("enter apply · c check · u undo · ←→ file · ↑↓ hunk · f focus"))
 	_ = width
 	return strings.Join(parts, "  ·  ")
 }

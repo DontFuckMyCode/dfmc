@@ -41,7 +41,7 @@ func (m Model) renderProviderLogView(width int) string {
 			boldStyle.Render(fmt.Sprintf("%d call(s) today", len(recs))) +
 			subtleStyle.Render("  -  "+m.eng.ProviderLog.Dir()),
 		subtleStyle.Render("Each row: ts · provider/model · in/out/total tokens · source · preview"),
-		subtleStyle.Render("Live archive — survives crashes/compaction. j/k page · g/G jump · esc close"),
+		subtleStyle.Render("Live archive — survives crashes/compaction. ↑↓ page · esc close"),
 		"",
 	}
 	if len(recs) == 0 {

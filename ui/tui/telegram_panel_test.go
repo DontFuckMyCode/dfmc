@@ -118,7 +118,7 @@ func TestTelegramFormAcceptsQLetter(t *testing.T) {
 func TestTelegramConnectedScreenShowsActionsMenu(t *testing.T) {
 	m := telegramConnectedModel()
 	view := m.renderTelegramPanel()
-	for _, want := range []string{"Connected", "u users", "enter/a actions"} {
+	for _, want := range []string{"Connected", "enter action menu", "esc close"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("connected telegram panel should expose %q, got:\n%s", want, view)
 		}

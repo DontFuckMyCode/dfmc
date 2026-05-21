@@ -212,7 +212,7 @@ func (m Model) renderContextManagerView(width, height int) string {
 	}
 	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chip)-4, 1)
 	lines := []string{title + strings.Repeat(" ", gap) + chip}
-	lines = append(lines, subtleStyle.Render("up/down navigate · space mark drop · p pin · K keep · C compact candidates · x delete · Enter confirm · Esc back"))
+	lines = append(lines, subtleStyle.Render("↑↓ navigate · space mark · enter confirm · esc back"))
 	if mgr.statusMsg != "" {
 		lines = append(lines, accentStyle.Render("  > ")+mgr.statusMsg)
 	}

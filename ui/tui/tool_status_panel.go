@@ -89,7 +89,7 @@ func (m Model) renderToolStatusViewSized(width, height int) string {
 		visible = visible[:rowBudget]
 	}
 
-	footer := subtleStyle.Render("j/k scroll · G top · g bottom · esc close · ctrl+shift+t toggle")
+	footer := subtleStyle.Render("↑↓ scroll · pgup/pgdn page · esc close · ctrl+shift+t toggle")
 
 	return header + "\n" + strings.Join(visible, "\n") + "\n" + footer
 }
