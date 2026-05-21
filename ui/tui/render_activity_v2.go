@@ -36,7 +36,7 @@ func (m Model) renderActivityViewV2(width, height int) string {
 	banner := m.activityTopBanner(width, len(m.activity.entries), len(filtered))
 	statsLine := activityStatsLine(allCounts, len(m.activity.entries), len(filtered))
 
-	hint := "j/k older-newer · pgup/pgdn page · enter/o open · r refresh · f file · y copy · 1-6 filter · / search"
+	hint := "↑↓ move · pgup/pgdn page · enter open · / search · esc back"
 	if m.activity.searchActive {
 		hint = "typing search · enter commit · esc stop · backspace delete"
 	}
@@ -61,7 +61,7 @@ func (m Model) renderActivityViewV2(width, height int) string {
 			"",
 			subtleStyle.Render("No events yet."),
 			subtleStyle.Render("Activity is the live firehose — tool calls, subagent fan-out, drive progress, provider retries, and context lifecycle stream here as the engine runs."),
-			subtleStyle.Render("Send a message in /chat or kick off /drive to make events flow. → opens the actions menu; 1-6 / v cycle filters; / searches; enter on a row jumps to the relevant panel."),
+			subtleStyle.Render("Send a message in /chat or kick off /drive to make events flow. Enter opens the action menu; / searches; arrow keys move."),
 		)
 		return strings.Join(lines, "\n")
 	}
@@ -69,7 +69,7 @@ func (m Model) renderActivityViewV2(width, height int) string {
 		lines = append(lines,
 			"",
 			warnStyle.Render("No events match this filter/query."),
-			subtleStyle.Render("Press c to clear · v / 1-6 to change the view."),
+			subtleStyle.Render("Press c to clear, or / to search. Use the action menu (enter) to change view."),
 		)
 		return strings.Join(lines, "\n")
 	}

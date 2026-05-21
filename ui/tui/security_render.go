@@ -139,7 +139,7 @@ func (m Model) renderSecurityViewInnerSized(width, height int) string {
 	banner := m.securityTopBanner(width, viewLabel)
 
 	affordance := subtleStyle.Render(
-		"ctrl+f search  ·  ctrl+r rescan  ·  ctrl+i ignore  ·  ctrl+g/G top/bottom",
+		"ctrl+f search · ctrl+r rescan · enter action menu · ctrl+g/G top/bottom",
 	)
 
 	lines := []string{banner, affordance}
