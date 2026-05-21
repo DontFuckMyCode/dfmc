@@ -5,30 +5,7 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/supervisor"
-	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 )
-
-// mockStore implements a minimal task store for testing
-type mockStore struct {
-	tasks []*supervisor.Task
-}
-
-func (m *mockStore) ListTasks(opts taskstore.ListOptions) ([]*supervisor.Task, error) {
-	return m.tasks, nil
-}
-
-func (m *mockStore) LoadTask(id string) (*supervisor.Task, error) {
-	for _, t := range m.tasks {
-		if t.ID == id {
-			return t, nil
-		}
-	}
-	return nil, nil
-}
-
-func (m *mockStore) DeleteTask(id string) error {
-	return nil
-}
 
 func TestStateIcon(t *testing.T) {
 	tests := []struct {

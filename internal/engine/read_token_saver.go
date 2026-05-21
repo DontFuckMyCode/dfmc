@@ -113,13 +113,13 @@ func (s *ReadTokenSaver) ShouldResend(path, contentHash string, lineStart, lineE
 	// Allow 10% line difference tolerance to avoid spurious resends on
 	// near-identical range requests (e.g., 1-40 vs 1-41).
 	if rec.LineStart != lineStart {
-		threshold := max(1, rec.LineEnd-rec.LineStart+1/10)
+		threshold := max(1, (rec.LineEnd-rec.LineStart+1)/10)
 		if abs(rec.LineStart-lineStart) > threshold {
 			return true // different window requested
 		}
 	}
 	if rec.LineEnd != lineEnd {
-		threshold := max(1, rec.LineEnd-rec.LineStart+1/10)
+		threshold := max(1, (rec.LineEnd-rec.LineStart+1)/10)
 		if abs(rec.LineEnd-lineEnd) > threshold {
 			return true // different window requested
 		}
