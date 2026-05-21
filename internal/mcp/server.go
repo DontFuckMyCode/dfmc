@@ -42,10 +42,20 @@ type Server struct {
 	maxFrameBytes int
 
 	// CRIT-001 / VULN-060 fix: per-connection ID registry to catch duplicate
-	// and null IDs on non-notification requests.
+	// and null IDs on non-notification requests. Hard-capped at
+	// maxHandledIDs so a malicious peer can't grow the map by sending
+	// many unique IDs in one session — past the cap, new IDs are
+	// rejected with ErrInvalidRequest naming the cap.
 	handledMu sync.Mutex
 	handled   map[string]bool // dedup: already-written IDs get ErrInternalError ("already handled")
 }
+
+// maxHandledIDs caps how many unique non-notification request IDs a single
+// MCP connection can use. 100 000 is generous — a legitimate session
+// running a tool call per second for a full day uses ~86 400 — while
+// keeping the registry's memory footprint bounded (a few MB) and closing
+// off the previous unbounded-growth path on hostile peers.
+const maxHandledIDs = 100_000
 
 // NewServer builds a Server. `info` is advertised back to the client during
 // initialize (name + version of the DFMC build).
@@ -219,11 +229,16 @@ func (s *Server) validateRequestID(req *Request) *Response {
 	if idStr == "" || idStr == "null" {
 		return NewErrorResponse(req.ID, ErrInvalidRequest, "request id must be a non-null value", nil)
 	}
-	// Idempotency guard.
+	// Idempotency guard + registry cap.
 	s.handledMu.Lock()
 	defer s.handledMu.Unlock()
 	if s.handled[idStr] {
 		return NewErrorResponse(req.ID, ErrInternalError, "duplicate request id (already handled)", nil)
+	}
+	if len(s.handled) >= maxHandledIDs {
+		return NewErrorResponse(req.ID, ErrInvalidRequest,
+			fmt.Sprintf("per-connection request id registry full (%d entries); reconnect to reset", maxHandledIDs),
+			nil)
 	}
 	s.handled[idStr] = true
 	return nil
