@@ -246,16 +246,15 @@ func (b *TelegramBot) handleIncomingMessage(update tgbotapi.Update) {
 
 	userID := msg.From.ID
 
-	// Always track chat ID for reply capability
-	b.mu.Lock()
-	b.chatIDs[userID] = msg.Chat.ID
-	b.mu.Unlock()
-
 	// Log the message
 	b.logf("[telegram] %s (%d): %s", msg.From.UserName, userID, redactForLog(msg.Text, 80))
 
 	// Allow /help and /start even without explicit allowedUsers set
-	// (but only if allowedUsers is configured — empty = nobody allowed)
+	// (but only if allowedUsers is configured — empty = nobody allowed).
+	// These open-access commands need to reply, but we deliberately do
+	// NOT register the chatID before handling them — a public bot could
+	// otherwise be DOS'd by random Telegram users sending /help to grow
+	// the chatIDs map. handleCommand replies via msg.Chat.ID directly.
 	if msg.IsCommand() {
 		cmd := msg.Command()
 		if cmd == "help" || cmd == "start" || cmd == "id" || cmd == "whoami" {
@@ -264,12 +263,22 @@ func (b *TelegramBot) handleIncomingMessage(update tgbotapi.Update) {
 		}
 	}
 
-	// Check allowed-users whitelist
+	// Check allowed-users whitelist BEFORE recording the chat ID so
+	// unauthorized senders never enter the persistent maps.
 	if !b.isAllowed(userID) {
 		b.logf("[telegram] unauthorized user=%d rejected", userID)
 		b.reply(msg.Chat.ID, "⛔ Access denied. Contact the bot admin.")
 		return
 	}
+
+	// Authorized: track chat ID for reply capability, with a cap so a
+	// compromised admin token or label confusion can't grow the map
+	// unbounded either.
+	b.mu.Lock()
+	if _, known := b.chatIDs[userID]; known || len(b.chatIDs) < maxTrackedUsers {
+		b.chatIDs[userID] = msg.Chat.ID
+	}
+	b.mu.Unlock()
 
 	// Rate limit check
 	if !b.allowUserAction(userID) {
@@ -454,6 +463,14 @@ func (b *TelegramBot) reply(chatID int64, text string) {
 
 const telegramRateLimitWindow = 750 * time.Millisecond
 
+// maxTrackedUsers caps the chatIDs and lastAction maps so a bot exposed
+// to the public internet can't be DOS'd by random Telegram users
+// sending messages until process memory is exhausted. Past the cap, new
+// users are rate-limit-denied but not tracked further (existing
+// authorized users keep working). 10k entries covers any realistic
+// authorized userbase while keeping per-map memory under a few MB.
+const maxTrackedUsers = 10_000
+
 func (b *TelegramBot) allowUserAction(userID int64) bool {
 	if b == nil {
 		return false
@@ -465,6 +482,13 @@ func (b *TelegramBot) allowUserAction(userID int64) bool {
 		b.lastAction = make(map[int64]time.Time)
 	}
 	if last, ok := b.lastAction[userID]; ok && now.Sub(last) < telegramRateLimitWindow {
+		return false
+	}
+	// Cap to prevent the map growing unbounded under spam from random
+	// Telegram users. Drop the request rather than recording it; the
+	// caller treats false as rate-limited which is the right outcome
+	// for an unrecognised user past saturation.
+	if _, known := b.lastAction[userID]; !known && len(b.lastAction) >= maxTrackedUsers {
 		return false
 	}
 	b.lastAction[userID] = now
