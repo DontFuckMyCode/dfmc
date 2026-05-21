@@ -151,8 +151,8 @@ func (e *Engine) AskWithMetadata(ctx context.Context, question string) (string, 
 		return completion.Answer, nil
 	}
 
-	// Auto-decompose: prompt scoring ile çok adımlı mı tek adımlı mı
-	// karar ver. True ise Drive'a yönlendir (plan + adım adım exec).
+	// Auto-decompose: score the prompt to decide multi-step vs single-step.
+	// If multi-step, route through Drive (plan + step-by-step execution).
 	if e.shouldDecomposePrompt(prompt) {
 		result, err := e.runViaDrive(ctx, prompt)
 		if err != nil {
@@ -219,7 +219,7 @@ func truncatePreview(s string, max int) string {
 // StreamAsk lives in engine_ask_stream.go.
 
 // shouldDecomposePrompt returns true when the prompt looks multi-step
-// enough to benefit from Drive's TODO decomposition and adım-adım
+// enough to benefit from Drive's TODO decomposition and step-by-step
 // execution. Scoring is intentionally cheap (regex + heuristics) so
 // it runs on every Ask without adding noticeable latency.
 func (e *Engine) shouldDecomposePrompt(prompt string) bool {
@@ -311,9 +311,9 @@ func (e *Engine) runViaDrive(ctx context.Context, prompt string) (*drive.Run, er
 	}
 
 	dcfg := drive.DefaultConfig()
-	// 60 dakika max — uzun refactor/migration işleri için yeterli.
+	// 60-minute cap — enough for long refactor / migration runs.
 	dcfg.MaxWallTime = 60 * time.Minute
-	dcfg.MaxFailedTodos = 5 // 3 yerine 5 — karmaşık işlerde daha toleranslı
+	dcfg.MaxFailedTodos = 5 // bumped from 3 — more tolerant on complex work
 	dcfg.MaxParallel = 3
 	dcfg.AutoApprove = []string{
 		"read_file", "grep_codebase", "glob", "ast_query",
