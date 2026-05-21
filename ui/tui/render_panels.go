@@ -27,7 +27,7 @@ func (m Model) renderFooter(width int) string {
 
 	tab := m.tabs[m.activeTab]
 	segments := []string{titleStyle.Render(" " + tab + " ")}
-	segments = append(segments, m.footerSegments()...)
+	segments = append(segments, m.footerSegments(width)...)
 	if pinned := strings.TrimSpace(m.filesView.pinned); pinned != "" {
 		segments = append(segments, accentStyle.Render("◆ "+truncateSingleLine(pinned, 22)))
 	}
@@ -38,7 +38,7 @@ func (m Model) renderFooter(width int) string {
 	return truncateSingleLine(strings.Join(segments, sep), maxWidth)
 }
 
-func (m Model) footerSegments() []string {
+func (m Model) footerSegments(width int) []string {
 	out := []string{}
 	tokens, maxCtx := 0, 0
 	if m.status.ContextIn != nil {
@@ -60,25 +60,29 @@ func (m Model) footerSegments() []string {
 	if runtime := strings.TrimSpace(m.footerRuntimeSegment()); runtime != "" {
 		out = append(out, runtime)
 	}
-	info := m.gitInfo
-	if strings.TrimSpace(info.Branch) != "" {
-		label := info.Branch
-		if info.Detached {
-			label = "(" + label + ")"
+	// On narrow terminals, skip git info and session duration to keep
+	// the footer readable. The user can see these in the Status panel.
+	if width >= 100 {
+		info := m.gitInfo
+		if strings.TrimSpace(info.Branch) != "" {
+			label := info.Branch
+			if info.Detached {
+				label = "(" + label + ")"
+			}
+			chip := accentStyle.Render("⎇ ") + boldStyle.Render(label)
+			if info.Dirty {
+				chip += warnStyle.Render("*")
+			}
+			out = append(out, chip)
 		}
-		chip := accentStyle.Render("⎇ ") + boldStyle.Render(label)
-		if info.Dirty {
-			chip += warnStyle.Render("*")
+		if info.Inserted > 0 || info.Deleted > 0 {
+			churn := okStyle.Render(fmt.Sprintf("+%d", info.Inserted)) +
+				subtleStyle.Render(",") +
+				failStyle.Render(fmt.Sprintf("-%d", info.Deleted))
+			out = append(out, churn)
 		}
-		out = append(out, chip)
 	}
-	if info.Inserted > 0 || info.Deleted > 0 {
-		churn := okStyle.Render(fmt.Sprintf("+%d", info.Inserted)) +
-			subtleStyle.Render(",") +
-			failStyle.Render(fmt.Sprintf("-%d", info.Deleted))
-		out = append(out, churn)
-	}
-	if !m.sessionStart.IsZero() {
+	if width >= 120 && !m.sessionStart.IsZero() {
 		out = append(out, subtleStyle.Render("⏱ ")+boldStyle.Render(formatSessionDuration(time.Since(m.sessionStart))))
 	}
 	return out

@@ -114,7 +114,7 @@ func TestRenderFooterMetricsComposes(t *testing.T) {
 		Dirty:    true,
 	}
 
-	out := strings.Join(m.footerSegments(), "  ·  ")
+	out := strings.Join(m.footerSegments(160), "  ·  ")
 	for _, want := range []string{"ctx", "main", "+255", "-10", "42m"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("footer metrics missing %q, got:\n%s", want, out)
@@ -127,7 +127,7 @@ func TestRenderFooterMetricsOmitsEmptyGitSegments(t *testing.T) {
 	m.sessionStart = time.Now().Add(-5 * time.Second)
 	m.gitInfo = gitWorkspaceInfo{} // no branch, no churn
 
-	out := strings.Join(m.footerSegments(), "  ·  ")
+	out := strings.Join(m.footerSegments(160), "  ·  ")
 	if strings.Contains(out, "⎇") {
 		t.Errorf("expected no branch chip when git info is empty, got:\n%s", out)
 	}
@@ -136,5 +136,28 @@ func TestRenderFooterMetricsOmitsEmptyGitSegments(t *testing.T) {
 	}
 	if !strings.Contains(out, "ctx") || !strings.Contains(out, "5s") {
 		t.Errorf("expected ctx bar + session time even with empty git info, got:\n%s", out)
+	}
+}
+
+func TestRenderFooterMetricsNarrowOmitsGit(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	m.sessionStart = time.Now().Add(-42 * time.Minute)
+	m.gitInfo = gitWorkspaceInfo{
+		Branch:   "main",
+		Inserted: 255,
+		Deleted:  10,
+		Dirty:    true,
+	}
+
+	// Narrow terminal: git info should be hidden
+	out := strings.Join(m.footerSegments(80), "  ·  ")
+	if strings.Contains(out, "main") {
+		t.Errorf("narrow footer should omit git branch, got:\n%s", out)
+	}
+	if strings.Contains(out, "42m") {
+		t.Errorf("narrow footer should omit session time, got:\n%s", out)
+	}
+	if !strings.Contains(out, "ctx") {
+		t.Errorf("narrow footer should still show context bar, got:\n%s", out)
 	}
 }
