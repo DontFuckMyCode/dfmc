@@ -52,15 +52,32 @@ func (t *OrchestrateTool) runDAG(
 		var mu sync.Mutex
 		for _, idx := range layer {
 			stage := stages[idx]
-			// If any dep failed, short-circuit — the sub-agent would have
-			// no input worth running on.
+			// failed/summaries are maps the goroutines below mutate
+			// under mu. While the for loop iterates, earlier iterations'
+			// goroutines from THIS layer may already be running and
+			// writing into those maps — even though they write distinct
+			// keys (this layer's stage IDs) from what we read here
+			// (previous layers' dep IDs), Go's race detector flags ANY
+			// unsynchronized map read against a concurrent write. Take
+			// mu around the lookups for the duration of the snapshot.
 			var blocker string
+			priors := make([]string, 0, len(stage.DependsOn))
+			mu.Lock()
 			for _, dep := range stage.DependsOn {
 				if failed[dep] {
 					blocker = dep
 					break
 				}
 			}
+			if blocker == "" {
+				for _, dep := range stage.DependsOn {
+					if s, ok := summaries[dep]; ok && strings.TrimSpace(s) != "" {
+						priors = append(priors, fmt.Sprintf("[%s] %s", dep, s))
+					}
+				}
+			}
+			mu.Unlock()
+
 			if blocker != "" {
 				results[idx] = map[string]any{
 					"id":      stage.ID,
@@ -72,13 +89,6 @@ func (t *OrchestrateTool) runDAG(
 				failed[stage.ID] = true
 				mu.Unlock()
 				continue
-			}
-			// Gather prior summaries from direct deps in declaration order.
-			priors := make([]string, 0, len(stage.DependsOn))
-			for _, dep := range stage.DependsOn {
-				if s, ok := summaries[dep]; ok && strings.TrimSpace(s) != "" {
-					priors = append(priors, fmt.Sprintf("[%s] %s", dep, s))
-				}
 			}
 			wg.Add(1)
 			sem <- struct{}{}
