@@ -1291,9 +1291,9 @@ func TestActivityTargetForEntry(t *testing.T) {
 		target activityActionTarget
 	}{
 		{activityEntry{EventID: "provider:changed"}, activityTargetProviders},
-		{activityEntry{EventID: "drive:run:start"}, activityTargetPlans},
-		{activityEntry{EventID: "agent:autonomy:kickoff"}, activityTargetPlans},
-		{activityEntry{EventID: "agent:subagent:start"}, activityTargetPlans},
+		{activityEntry{EventID: "drive:run:start"}, activityTargetWorkflow},
+		{activityEntry{EventID: "agent:autonomy:kickoff"}, activityTargetWorkflow},
+		{activityEntry{EventID: "agent:subagent:start"}, activityTargetWorkflow},
 		{activityEntry{EventID: "security:scan"}, activityTargetSecurity},
 		{activityEntry{EventID: "tool:call", Tool: "edit_file", Path: "foo.go"}, activityTargetPatch},
 		{activityEntry{EventID: "tool:call", Path: "foo.go"}, activityTargetFiles},

@@ -382,7 +382,7 @@ func TestActivityOpenSelectionRoutesProviderEventsToProvidersTab(t *testing.T) {
 	}
 }
 
-func TestActivityOpenSelectionRoutesWorkflowEventsToPlansTab(t *testing.T) {
+func TestActivityOpenSelectionRoutesWorkflowEventsToWorkflowTab(t *testing.T) {
 	m := newActivityTestModel()
 	m.recordActivityEvent(engine.Event{
 		Type:    "drive:todo:blocked",
@@ -390,14 +390,8 @@ func TestActivityOpenSelectionRoutesWorkflowEventsToPlansTab(t *testing.T) {
 	})
 	nextModel, _ := m.handleActivityKey(tea.KeyMsg{Type: tea.KeyEnter})
 	next := nextModel.(Model)
-	if next.ui.panelOverlayKind != "plans" {
-		t.Fatalf("expected drive activity to open Plans overlay, got %q", next.ui.panelOverlayKind)
-	}
-	if !strings.Contains(next.plans.query, "investigate blocked provider flow") {
-		t.Fatalf("expected plan query to inherit activity context, got %q", next.plans.query)
-	}
-	if next.plans.plan == nil {
-		t.Fatal("expected activity-opened plans panel to compute a plan")
+	if next.activeTab != 3 {
+		t.Fatalf("expected drive activity to jump to Workflow tab, got %d", next.activeTab)
 	}
 }
 
@@ -621,6 +615,7 @@ func TestActivityTargetLabel(t *testing.T) {
 		{activityTargetPatch, "Patch"},
 		{activityTargetTools, "Tools"},
 		{activityTargetPlans, "Plans"},
+		{activityTargetWorkflow, "Workflow"},
 		{activityTargetContext, "Context"},
 		{activityTargetCodeMap, "CodeMap"},
 		{activityTargetSecurity, "Security"},

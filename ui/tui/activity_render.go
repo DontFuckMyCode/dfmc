@@ -113,7 +113,7 @@ func activityTargetForEntry(entry activityEntry) activityActionTarget {
 	case strings.HasPrefix(eventID, "drive:"),
 		strings.HasPrefix(eventID, "agent:autonomy:"),
 		strings.HasPrefix(eventID, "agent:subagent:"):
-		return activityTargetPlans
+		return activityTargetWorkflow
 	case strings.HasPrefix(eventID, "security:"),
 		strings.Contains(eventID, "secret"),
 		strings.Contains(eventID, "vuln"),
@@ -151,6 +151,8 @@ func activityTargetLabel(target activityActionTarget) string {
 		return "Tools"
 	case activityTargetPlans:
 		return "Plans"
+	case activityTargetWorkflow:
+		return "Workflow"
 	case activityTargetContext:
 		return "Context"
 	case activityTargetCodeMap:
@@ -169,6 +171,7 @@ func activityTargetSupportsRefresh(target activityActionTarget) bool {
 	case activityTargetStatus,
 		activityTargetPatch,
 		activityTargetPlans,
+		activityTargetWorkflow,
 		activityTargetContext,
 		activityTargetCodeMap,
 		activityTargetSecurity,

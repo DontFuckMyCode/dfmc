@@ -136,6 +136,10 @@ func (m Model) activityOpenSelection(refresh bool) (tea.Model, tea.Cmd) {
 		m = m.activatePlansPanel(activityPlanOrContextQuery(entry), refresh)
 		m.notice = "Opened Plans from Activity."
 		return m, nil
+	case activityTargetWorkflow:
+		m.activeTab = m.activityTabIndex("Workflow")
+		m.notice = "Opened Workflow from Activity."
+		return m, nil
 	case activityTargetContext:
 		m = m.activateContextPanel(activityPlanOrContextQuery(entry), refresh)
 		m.notice = "Opened Context from Activity."

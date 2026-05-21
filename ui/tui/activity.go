@@ -58,6 +58,7 @@ const (
 	activityTargetPatch     activityActionTarget = "patch"
 	activityTargetTools     activityActionTarget = "tools"
 	activityTargetPlans     activityActionTarget = "plans"
+	activityTargetWorkflow  activityActionTarget = "workflow"
 	activityTargetContext   activityActionTarget = "context"
 	activityTargetCodeMap   activityActionTarget = "codemap"
 	activityTargetSecurity  activityActionTarget = "security"
