@@ -109,7 +109,7 @@ func (m Model) renderConversationsViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	height = max(height, 8)
 	banner := m.conversationsTopBanner(width)
-	hint := subtleStyle.Render("j/k scroll · enter preview · L resume · / search · S deep-search · r refresh · c clear")
+	hint := subtleStyle.Render("↑↓ scroll · enter preview · / search · esc back")
 	queryLine := subtleStyle.Render("query ")
 	if strings.TrimSpace(m.conversations.query) != "" {
 		queryLine += boldStyle.Render(m.conversations.query)

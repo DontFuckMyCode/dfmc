@@ -190,8 +190,8 @@ func TestConversationsDeepSearchSurfacesActiveModeChip(t *testing.T) {
 	if !strings.Contains(out, "deep-search active") {
 		t.Fatalf("deep-search chip missing:\n%s", out)
 	}
-	if !strings.Contains(out, "S deep-search") {
-		t.Fatalf("hint should advertise S accelerator:\n%s", out)
+	if !strings.Contains(out, "deep-search active") {
+		t.Fatalf("deep-search chip should be visible:\n%s", out)
 	}
 }
 

@@ -133,7 +133,7 @@ func (m Model) renderWorkflowMetaInline(width int) string {
 			blockedStyle.Render(fmt.Sprintf("%d blocked", blocked)),
 		)
 	}
-	hint := "j/k move · enter select · space follow · → menu · r routing · esc back"
+	hint := "↑↓ move · enter select · space follow · esc back"
 	if m.workflow.followLive {
 		hint = "● LIVE · " + hint
 	}

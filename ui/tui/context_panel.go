@@ -72,7 +72,7 @@ func (m Model) renderContextView(width int) string {
 func (m Model) renderContextViewInner(width int) string {
 	width = clampInt(width, 24, 1000)
 	banner := m.contextTopBanner(width)
-	hint := subtleStyle.Render("↑↓ scroll · → action menu · enter preview · e edit · m manager · esc cancel")
+	hint := subtleStyle.Render("↑↓ scroll · enter preview · / search · esc back")
 
 	queryLine := subtleStyle.Render("query ")
 	if strings.TrimSpace(m.contextPanel.query) != "" {
@@ -161,7 +161,7 @@ func (m Model) renderContextViewSized(width, height int) string {
 	}
 
 	header := sectionHeader("CTX", "Context")
-	hint := subtleStyle.Render("active full context | e preview query | enter preview | c clear | up/down/pg scroll")
+	hint := subtleStyle.Render("↑↓ scroll · enter preview · / search · esc back")
 	queryLine := subtleStyle.Render("query: ")
 	if strings.TrimSpace(m.contextPanel.query) != "" {
 		queryLine += m.contextPanel.query

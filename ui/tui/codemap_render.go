@@ -52,7 +52,7 @@ func (m Model) renderCodemapViewSized(width, height int) string {
 		view = codemapViewOverview
 	}
 	banner := m.codemapTopBanner(width, view)
-	hint := subtleStyle.Render("j/k scroll · v cycle view · r refresh · g/G top/bottom")
+	hint := subtleStyle.Render("↑↓ scroll · enter action menu · / search · esc back")
 	lines := []string{banner, hint, renderDivider(width - 2)}
 
 	if m.codemap.err != "" {

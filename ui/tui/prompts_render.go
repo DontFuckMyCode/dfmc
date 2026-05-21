@@ -155,7 +155,7 @@ func (m Model) renderPromptsViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	height = max(height, 8)
 	banner := m.promptsTopBanner(width)
-	hint := subtleStyle.Render("j/k scroll · enter preview · / search · r refresh · c clear")
+	hint := subtleStyle.Render("↑↓ scroll · enter preview · / search · esc back")
 	queryLine := subtleStyle.Render("query ")
 	if strings.TrimSpace(m.prompts.query) != "" {
 		queryLine += boldStyle.Render(m.prompts.query)

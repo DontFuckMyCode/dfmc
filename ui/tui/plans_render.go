@@ -125,7 +125,7 @@ func (m Model) renderPlansViewInnerSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	height = max(height, 8)
 	banner := m.plansTopBanner(width)
-	hint := subtleStyle.Render("↑↓ scroll · → action menu · enter re-run · e edit · esc cancel")
+	hint := subtleStyle.Render("↑↓ scroll · enter re-run · / search · esc back")
 
 	queryLine := subtleStyle.Render("task ")
 	if strings.TrimSpace(m.plans.query) != "" {
