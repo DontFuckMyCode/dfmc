@@ -58,7 +58,7 @@ func (t *AutoTestTool) Execute(ctx context.Context, req Request) (Result, error)
 	case "generate":
 		return t.handleGenerate(target, req.Params)
 	default:
-		return Result{}, fmt.Errorf("invalid mode %q", mode)
+		return Result{}, fmt.Errorf(`auto_test: mode=%q is not valid. Allowed: "find" (scan for testable funcs), "run" (placeholder), "generate" (emit stub tests for a target file)`, mode)
 	}
 }
 

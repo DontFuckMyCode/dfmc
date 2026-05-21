@@ -130,8 +130,12 @@ func (t *DependencyGraphTool) Execute(ctx context.Context, req Request) (Result,
 	switch query {
 	case "importers", "callers", "imports", "fan_out", "fan_in", "path":
 		// valid
+	case "":
+		return Result{}, missingParamError("dependency_graph", "query", req.Params,
+			`{"query":"importers","module":"github.com/foo/bar"}`,
+			`query is one of: importers, callers, imports, fan_out, fan_in, path.`)
 	default:
-		return Result{}, fmt.Errorf(`query must be one of: "importers" | "callers" | "imports" | "fan_out" | "fan_in" | "path"`)
+		return Result{}, fmt.Errorf(`dependency_graph: query=%q is not valid. Allowed: "importers" | "callers" | "imports" | "fan_out" | "fan_in" | "path"`, query)
 	}
 
 	// Validate required params per query type.
