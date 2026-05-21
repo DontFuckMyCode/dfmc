@@ -70,7 +70,10 @@ func (e *Engine) BuildFromFilesParallel(ctx context.Context, paths []string, wor
 		directoryCounts: make(map[string]int64),
 	}
 
-	// Start worker pool
+	// Start worker pool. Workers exit when taskCh is closed AND drained,
+	// or when ctx is cancelled (the resultCh send is selectable so a
+	// caller that returned early on ctx.Done doesn't trap workers on a
+	// full resultCh send).
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Add(1)
@@ -78,7 +81,11 @@ func (e *Engine) BuildFromFilesParallel(ctx context.Context, paths []string, wor
 			defer wg.Done()
 			for path := range taskCh {
 				result, err := e.ast.ParseFile(ctx, path)
-				resultCh <- parseTask{path: path, result: result, parseErr: err}
+				select {
+				case resultCh <- parseTask{path: path, result: result, parseErr: err}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}()
 	}
@@ -90,8 +97,11 @@ func (e *Engine) BuildFromFilesParallel(ctx context.Context, paths []string, wor
 		close(doneCh)
 	}()
 
-	// Feed paths to workers
+	// Feed paths to workers. defer close(taskCh) guarantees workers
+	// exit their range loop even when ctx cancels mid-feed — otherwise
+	// the workers would block on an open-but-empty channel forever.
 	go func() {
+		defer close(taskCh)
 		for _, path := range validPaths {
 			select {
 			case <-ctx.Done():
@@ -99,7 +109,6 @@ func (e *Engine) BuildFromFilesParallel(ctx context.Context, paths []string, wor
 			case taskCh <- path:
 			}
 		}
-		close(taskCh)
 	}()
 
 	// Collect results and progress reporting
