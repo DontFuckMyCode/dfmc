@@ -186,7 +186,8 @@ func (t *HuntTool) Execute(ctx context.Context, req Request) (Result, error) {
 		}
 		sb.WriteString(fmt.Sprintf("**%d. %s [%s] %s**  \n", i+1, emoji, f.Severity, f.Category))
 		sb.WriteString(fmt.Sprintf("`%s:%d`\n\n", f.File, f.Line))
-		sb.WriteString(f.Message + "\n")
+		sb.WriteString(f.Message)
+		sb.WriteByte('\n')
 		if f.Code != "" {
 			sb.WriteString(fmt.Sprintf("```go\n%s\n```\n", f.Code))
 		}

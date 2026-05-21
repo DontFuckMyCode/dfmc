@@ -83,7 +83,9 @@ func (e *Engine) BuildMagicDoc(ctx context.Context, title string, hotspotLimit, 
 		b.WriteString("- (none)\n")
 	} else {
 		for _, n := range hotspots {
-			b.WriteString("- " + formatHotspot(e.ProjectRoot, n) + "\n")
+			b.WriteString("- ")
+			b.WriteString(formatHotspot(e.ProjectRoot, n))
+			b.WriteByte('\n')
 		}
 	}
 
@@ -103,7 +105,9 @@ func (e *Engine) BuildMagicDoc(ctx context.Context, title string, hotspotLimit, 
 		b.WriteString("  - (none)\n")
 	} else {
 		for _, item := range recentUser {
-			b.WriteString("  - " + item + "\n")
+			b.WriteString("  - ")
+			b.WriteString(item)
+			b.WriteByte('\n')
 		}
 	}
 	b.WriteString("- Recent assistant outcomes:\n")
@@ -111,7 +115,9 @@ func (e *Engine) BuildMagicDoc(ctx context.Context, title string, hotspotLimit, 
 		b.WriteString("  - (none)\n")
 	} else {
 		for _, item := range recentAssistant {
-			b.WriteString("  - " + item + "\n")
+			b.WriteString("  - ")
+			b.WriteString(item)
+			b.WriteByte('\n')
 		}
 	}
 
@@ -121,7 +127,9 @@ func (e *Engine) BuildMagicDoc(ctx context.Context, title string, hotspotLimit, 
 		b.WriteString("  - (none)\n")
 	} else {
 		for _, p := range recentFiles {
-			b.WriteString("  - `" + toProjectRelative(e.ProjectRoot, p) + "`\n")
+			b.WriteString("  - `")
+			b.WriteString(toProjectRelative(e.ProjectRoot, p))
+			b.WriteString("`\n")
 		}
 	}
 	b.WriteString("- Registered tools:\n")
@@ -129,7 +137,9 @@ func (e *Engine) BuildMagicDoc(ctx context.Context, title string, hotspotLimit, 
 		b.WriteString("  - (none)\n")
 	} else {
 		for _, name := range clipList(toolsList, 16) {
-			b.WriteString("  - `" + name + "`\n")
+			b.WriteString("  - `")
+			b.WriteString(name)
+			b.WriteString("`\n")
 		}
 	}
 	b.WriteString("- Available skills:\n")
@@ -137,7 +147,9 @@ func (e *Engine) BuildMagicDoc(ctx context.Context, title string, hotspotLimit, 
 		b.WriteString("  - (none)\n")
 	} else {
 		for _, name := range clipList(skillNames, 16) {
-			b.WriteString("  - `" + name + "`\n")
+			b.WriteString("  - `")
+			b.WriteString(name)
+			b.WriteString("`\n")
 		}
 	}
 
