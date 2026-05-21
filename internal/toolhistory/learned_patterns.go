@@ -112,12 +112,24 @@ func (s *LearnedPatternStore) save() error {
 // is non-reentrant, so paths like Close() that need to save while
 // holding the lock must call this variant — calling save() from
 // inside the critical section self-deadlocks.
-func (s *LearnedPatternStore) saveLocked() error {
+func (s *LearnedPatternStore) saveLocked() (retErr error) {
 	f, err := os.Create(s.path())
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		closeErr := f.Close()
+		// Only clear the dirty flag after the close succeeds AND the
+		// write loop didn't fail. Otherwise a disk-full error on
+		// Close would silently drop the dirty bit and the next save
+		// would skip writing the recovered state.
+		if retErr == nil && closeErr == nil {
+			s.dirty = false
+		}
+		if retErr == nil {
+			retErr = closeErr
+		}
+	}()
 	for _, p := range s.patterns {
 		b, err := json.Marshal(p)
 		if err != nil {
@@ -127,7 +139,6 @@ func (s *LearnedPatternStore) saveLocked() error {
 			return err
 		}
 	}
-	s.dirty = false
 	return nil
 }
 
