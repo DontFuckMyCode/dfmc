@@ -50,10 +50,10 @@ func NewModel(ctx context.Context, eng *engine.Engine) Model {
 		// park a duplicate banner in the footer notice slot (signal density).
 		sessionStart: time.Now(),
 		ui: uiToggles{
-			showStatsPanel:    true,
+			showStatsPanel:    eng == nil || eng.Config == nil || eng.Config.TUI.ShowStatsPanel,
 			statsPanelMode:    statsPanelModeOverview,
 			keyLogEnabled:     os.Getenv("DFMC_KEYLOG") == "1",
-			toolStripExpanded: false, // collapsed by default; full details in Ctrl+Shift+T panel
+			toolStripExpanded: eng != nil && eng.Config != nil && eng.Config.TUI.ToolStripExpanded,
 		},
 		viewCache: &viewCacheState{},
 	}

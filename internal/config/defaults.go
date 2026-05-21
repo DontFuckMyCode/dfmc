@@ -148,6 +148,7 @@ func DefaultConfig() *Config {
 			Theme:                 "dark",
 			VimKeys:               true,
 			ShowTokens:            true,
+			ShowStatsPanel:        true,
 			ToolStripExpanded:     true,
 			GitDiffTimeoutSeconds: 30,
 			MouseCapture:          true,

@@ -138,6 +138,7 @@ type TUIConfig struct {
 	Theme                 string `yaml:"theme"`
 	VimKeys               bool   `yaml:"vim_keys"`
 	ShowTokens            bool   `yaml:"show_tokens"`
+	ShowStatsPanel        bool   `yaml:"show_stats_panel"`
 	ToolStripExpanded     bool   `yaml:"tool_strip_expanded"`
 	GitDiffTimeoutSeconds int    `yaml:"git_diff_timeout_seconds"`
 	MouseCapture          bool   `yaml:"mouse_capture"`
