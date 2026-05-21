@@ -219,7 +219,17 @@ func (r *Router) List() []string {
 // compacting history before moving to the next provider — compacting and
 // moving to a different provider wouldn't help because the new provider
 // still sees the same conversation.
+//
+// Reads of r.primary / r.fallback happen under r.mu.RLock because
+// SetPrimary / SetFallback write the same fields under r.mu.Lock. Without
+// the read lock the dispatcher would race against a concurrent /key set
+// or admin reconfigure and torn-read a string header or slice header.
 func (r *Router) ResolveOrder(requested string) []string {
+	r.mu.RLock()
+	primary := r.primary
+	fallback := append([]string(nil), r.fallback...)
+	r.mu.RUnlock()
+
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 4)
 	add := func(name string) {
@@ -235,8 +245,8 @@ func (r *Router) ResolveOrder(requested string) []string {
 	}
 
 	add(requested)
-	add(r.primary)
-	for _, fb := range r.fallback {
+	add(primary)
+	for _, fb := range fallback {
 		add(fb)
 	}
 	add("offline")
