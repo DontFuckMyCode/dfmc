@@ -172,13 +172,26 @@ func (ci *ContextInspector) Inspect() InspectionResult {
 		})
 	}
 
-	// Budget status
+	// Budget status. Guard the divisions: maxTokens can legitimately be
+	// 0 when the caller wires NewInspectorWithBudget without a value,
+	// and dividing yields +Inf / NaN — which then fails encoding/json's
+	// MarshalFloat. r.TotalFiles is >=1 by construction here (we
+	// short-circuited the empty-chunks case above) but the guard is
+	// cheap insurance against a future change to that path.
+	usedPct := 0.0
+	if ci.maxTokens > 0 {
+		usedPct = float64(r.TotalTokens) / float64(ci.maxTokens) * 100
+	}
+	avgPerFile := 0.0
+	if r.TotalFiles > 0 {
+		avgPerFile = float64(r.TotalTokens) / float64(r.TotalFiles)
+	}
 	r.Budget = BudgetStatus{
 		Total:      ci.maxTokens,
 		Used:       r.TotalTokens,
 		Remaining:  ci.maxTokens - r.TotalTokens,
-		UsedPct:    float64(r.TotalTokens) / float64(ci.maxTokens) * 100,
-		AvgPerFile: float64(r.TotalTokens) / float64(r.TotalFiles),
+		UsedPct:    usedPct,
+		AvgPerFile: avgPerFile,
 	}
 
 	// Sort files by score descending
