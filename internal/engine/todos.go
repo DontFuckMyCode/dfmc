@@ -75,7 +75,14 @@ func collectTodoMarkers(paths []string) TodoReport {
 			continue
 		}
 		scanner := bufio.NewScanner(bytes.NewReader(content))
-		scanner.Buffer(make([]byte, 512*1024), 512*1024)
+		// Content is in memory already; size the buffer to fit the
+		// worst-case single line so a minified blob doesn't truncate
+		// the TODO scan partway and silently hide markers.
+		bufCap := len(content) + 1
+		if bufCap < 64*1024 {
+			bufCap = 64 * 1024
+		}
+		scanner.Buffer(make([]byte, 0, 64*1024), bufCap)
 		lineNo := 0
 		for scanner.Scan() {
 			lineNo++

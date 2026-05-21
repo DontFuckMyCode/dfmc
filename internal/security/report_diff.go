@@ -104,11 +104,15 @@ func (r Report) FilterToAddedLines(unifiedDiff string) Report {
 func IndexAddedLines(unifiedDiff string) AddedLineIndex {
 	idx := AddedLineIndex{}
 	scanner := bufio.NewScanner(strings.NewReader(unifiedDiff))
-	// Diff lines occasionally exceed the default 64KB token cap on
-	// generated patches (large vendored files). Bump the buffer
-	// modestly so a long line doesn't truncate the entire parse.
-	const maxLine = 1 << 20
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLine)
+	// Diff is already a string in memory, so size the buffer to fit
+	// the worst-case single line (the whole diff). Bufio.ErrTooLong
+	// otherwise truncates the parse mid-file and the security report
+	// silently skips findings in the un-parsed region.
+	bufCap := len(unifiedDiff) + 1
+	if bufCap < 64*1024 {
+		bufCap = 64 * 1024
+	}
+	scanner.Buffer(make([]byte, 0, 64*1024), bufCap)
 
 	currentFile := ""
 	newLine := 0

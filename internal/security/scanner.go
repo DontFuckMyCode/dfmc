@@ -89,7 +89,16 @@ func (s *Scanner) ScanContent(path string, content []byte) ([]SecretFinding, []V
 
 	lang := detectLanguageFromPath(path)
 	scanner := bufio.NewScanner(bytes.NewReader(content))
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	// Buffer must fit the longest line in content. Content is already
+	// in memory, so sizing to len(content)+1 cannot push us over what
+	// the caller already paid for — but it stops bufio.ErrTooLong from
+	// silently truncating the scan on files with a single very long
+	// line (minified JS, compiled blobs, base64 payloads).
+	bufCap := len(content) + 1
+	if bufCap < 64*1024 {
+		bufCap = 64 * 1024
+	}
+	scanner.Buffer(make([]byte, 0, 64*1024), bufCap)
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
@@ -147,6 +156,21 @@ func (s *Scanner) ScanContent(path string, content []byte) ([]SecretFinding, []V
 				Snippet:  snippet(trimmed, 180),
 			})
 		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		// Surface scan truncation as a vulnerability so the report
+		// caller (CLI / TUI / web) sees that this file was NOT fully
+		// scanned, rather than silently treating partial results as
+		// the full picture. Empty CWE/OWASP — this is a tool-level
+		// warning, not a security pattern hit.
+		vulns = append(vulns, VulnerabilityFinding{
+			Kind:     "SCAN_TRUNCATED",
+			File:     toSlash(path),
+			Line:     lineNo,
+			Severity: "low",
+			Snippet:  "security scan was truncated: " + err.Error(),
+		})
 	}
 
 	// AST-aware pass: higher precision, per-language rules. Findings

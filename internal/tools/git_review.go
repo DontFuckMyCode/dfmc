@@ -156,6 +156,9 @@ func (t *GitReviewTool) getCommits(target, since string, limit int) ([]CommitInf
 			})
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return commits, fmt.Errorf("git log scan truncated after %d commits: %w", len(commits), err)
+	}
 
 	return commits, nil
 }
@@ -204,6 +207,9 @@ func (t *GitReviewTool) getFileChanges(target, pattern string) ([]FileChange, er
 				Status:    status,
 			})
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return files, fmt.Errorf("git diff numstat scan truncated after %d files: %w", len(files), err)
 	}
 
 	return files, nil
