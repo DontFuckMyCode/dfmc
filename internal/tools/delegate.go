@@ -70,13 +70,13 @@ type SubagentRequest struct {
 	// the wrapper force-compacts and re-enters the loop transparently
 	// up to resume_max_multiplier. Engine-internal flag; not on the wire.
 	Autonomous bool `json:"-"`
-	// Depth is the recursive delegation depth. The first call has Depth=0.
-	// If Depth >= maxRecursiveDepth, RunSubagent returns
-	// ErrSubagentDepthExceeded. This prevents unbounded recursive
-	// delegation that could otherwise exhaust resources. Internal flag;
-	// not on the wire — delegate_task always calls with Depth=0.
-	Depth int `json:"-"`
 }
+
+// Recursive delegation bound: each nested sub-agent occupies a slot in
+// the engine's parallel-subagent counter, so a chain of N delegate_task
+// calls hits ErrSubagentConcurrencyLimit at depth=parallel_batch_size
+// rather than running forever. Recursion is bounded indirectly by the
+// concurrency cap, not by a separate depth field.
 
 // SubagentResult is what the engine reports back to the parent tool loop.
 type SubagentResult struct {

@@ -19,6 +19,4 @@ import "errors"
 var (
 	ErrMetaBudgetExhausted = errors.New("meta tool budget exhausted")
 	ErrMetaDepthExceeded   = errors.New("meta tool nesting exceeded depth limit")
-	// ErrSubagentDepthExceeded prevents unbounded recursive delegation
-	ErrSubagentDepthExceeded = errors.New("sub-agent recursion depth limit exceeded")
 )

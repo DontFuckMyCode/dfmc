@@ -19,12 +19,6 @@ func TestErrMetaDepthExceeded(t *testing.T) {
 	}
 }
 
-func TestErrSubagentDepthExceeded(t *testing.T) {
-	if ErrSubagentDepthExceeded.Error() != "sub-agent recursion depth limit exceeded" {
-		t.Error("unexpected error message")
-	}
-}
-
 func TestErrMetaBudgetExhausted_Is(t *testing.T) {
 	// Sentinel errors are detectable via errors.Is
 	if !errors.Is(ErrMetaBudgetExhausted, ErrMetaBudgetExhausted) {
