@@ -97,7 +97,16 @@ func (t *AutoTestTool) handleFind() (Result, error) {
 }
 
 func (t *AutoTestTool) handleRun(target string) (Result, error) {
-	return Result{Output: fmt.Sprintf("Tests executed for %s. All green.", target)}, nil
+	// `run` is a deliberate placeholder — auto_test does NOT actually
+	// invoke the test runner. Returning a fake "all green" message
+	// (the original behaviour) lies to the model and can cascade into
+	// wrong-conclusion answers downstream. Surface this explicitly so
+	// the model routes to run_command for the real thing.
+	hint := `go test ./...`
+	if target != "" && target != "." {
+		hint = `go test ` + target
+	}
+	return Result{}, fmt.Errorf(`auto_test mode=run is a placeholder and does NOT execute tests. Use run_command with %q (or your project's test runner) and inspect the output yourself`, hint)
 }
 
 func (t *AutoTestTool) handleGenerate(target string, params map[string]any) (Result, error) {
