@@ -55,7 +55,7 @@ func (m Model) openPlansActionMenu() Model {
 				m.plans.inputActive = true
 				return m, nil
 			}},
-		{Label: "Re-run split with current task", Accel: "enter",
+		{Label: "Re-run split with current task",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				if strings.TrimSpace(m.plans.query) != "" {
 					m = m.runPlansSplit()

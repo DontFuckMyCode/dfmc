@@ -90,7 +90,7 @@ func (m Model) openActivityActionMenu() Model {
 				m.activity.follow = true
 				return m, nil
 			}},
-		{Label: "Open selected entry detail", Accel: "enter",
+		{Label: "Open selected entry detail",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				nm, cmd := m.activityOpenSelection(false)
 				if mm, ok := nm.(Model); ok {

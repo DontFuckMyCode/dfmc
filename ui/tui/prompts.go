@@ -60,7 +60,7 @@ func loadPromptsCmd(eng *engine.Engine) tea.Cmd {
 // Enter still loads the preview; Right opens the menu.
 func (m Model) openPromptsActionMenu() Model {
 	actions := []panelAction{
-		{Label: "Load preview", Accel: "enter",
+		{Label: "Load preview",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				filtered := filteredPrompts(m.prompts.templates, m.prompts.query)
 				if len(filtered) == 0 || m.prompts.scroll < 0 || m.prompts.scroll >= len(filtered) {

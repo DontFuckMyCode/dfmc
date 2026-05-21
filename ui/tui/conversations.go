@@ -89,7 +89,7 @@ func loadConversationPreviewCmd(eng *engine.Engine, id string) tea.Cmd {
 
 func (m Model) openConversationsActionMenu() Model {
 	actions := []panelAction{
-		{Label: "Load preview", Accel: "enter", Handler: func(m Model) (Model, tea.Cmd) {
+		{Label: "Load preview", Handler: func(m Model) (Model, tea.Cmd) {
 			selected, ok := m.selectedConversationSummary()
 			if !ok {
 				return m, nil

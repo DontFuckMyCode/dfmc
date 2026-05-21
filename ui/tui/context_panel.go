@@ -251,7 +251,7 @@ func (m Model) openContextActionMenu() Model {
 				m.contextPanel.inputActive = true
 				return m, nil
 			}},
-		{Label: "Re-run preview with current query", Accel: "enter",
+		{Label: "Re-run preview with current query",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				if strings.TrimSpace(m.contextPanel.query) != "" {
 					m = m.runContextPreview()

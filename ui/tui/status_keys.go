@@ -15,7 +15,7 @@ import (
 // card-grid actions. Matches the pattern in activity_key.go etc.
 func (m Model) openStatusActionMenu() Model {
 	actions := []panelAction{
-		{Label: "Open the selected card's detail tab", Accel: "enter",
+		{Label: "Open the selected card's detail tab",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				return m.activateSelectedStatusCard(), nil
 			}},
