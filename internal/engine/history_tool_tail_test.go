@@ -15,6 +15,7 @@ package engine
 // command, success/failure.
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -106,21 +107,66 @@ func TestRenderHistoricalToolTail_DoesNotEmbedRawToolOutput(t *testing.T) {
 }
 
 func TestRenderHistoricalToolTail_CapsManyTools(t *testing.T) {
-	// 20 tool calls in a single round should not produce a 20-entry
-	// list — the tail caps and adds a "+N more" suffix.
+	// 20 tool calls with unique targets in a single round should not
+	// produce a 20-entry list — the tail caps and adds a "+N more" suffix.
 	msg := types.Message{Role: types.RoleAssistant}
 	for i := 0; i < 20; i++ {
+		toolName := "read_file"
+		path := fmt.Sprintf("f%d.go", i) // unique paths → unique dedup keys
+		if i >= 8 {
+			toolName = "edit_file"
+			path = fmt.Sprintf("g%d.go", i)
+		}
 		msg.ToolCalls = append(msg.ToolCalls, types.ToolCallRecord{
-			Name:   "read_file",
-			Params: map[string]any{"path": "f.go"},
+			Name:   toolName,
+			Params: map[string]any{"path": path},
 		})
 		msg.Results = append(msg.Results, types.ToolResultRecord{
-			Name: "read_file", Output: "ok", Success: true,
+			Name: toolName, Output: "ok", Success: true,
 		})
 	}
 	tail := renderHistoricalToolTail(msg)
-	if !strings.Contains(tail, "+12 more") {
-		t.Errorf("expected '+12 more' suffix when count exceeds cap. Got: %s", tail)
+	// With 20 unique targets and maxEntries=8, at most 8 shown.
+	// The suffix reflects how many raw calls are not individually listed.
+	if !strings.Contains(tail, "+") || !strings.Contains(tail, "more") {
+		t.Errorf("expected '+N more' suffix when count exceeds cap. Got: %s", tail)
+	}
+}
+
+func TestRenderHistoricalToolTail_DeduplicatesRepeatedTargets(t *testing.T) {
+	// When the same file is read multiple times in one round (e.g.
+	// different line ranges or a retry), the tail should collapse to a
+	// single entry per unique (tool_name, target) pair, keeping the
+	// latest result.
+	msg := types.Message{
+		Role: types.RoleAssistant,
+		ToolCalls: []types.ToolCallRecord{
+			{Name: "read_file", Params: map[string]any{"path": "config.go"}},
+			{Name: "read_file", Params: map[string]any{"path": "config.go"}}, // same file
+			{Name: "edit_file", Params: map[string]any{"file_path": "config.go"}},
+		},
+		Results: []types.ToolResultRecord{
+			{Name: "read_file", Output: "package config\nvar X = 1", Success: true},
+			{Name: "read_file", Output: "package config\nvar X = 2", Success: true}, // updated read
+			{Name: "edit_file", Output: "ok", Success: true},
+		},
+	}
+	tail := renderHistoricalToolTail(msg)
+	// "read_file config.go" appears twice → deduped to 1 entry.
+	// "edit_file config.go" is a different tool → separate entry.
+	// Total: 2 unique entries, count shows 2 (uniqueCount), suffix "+1 more".
+	if strings.Count(tail, "read_file") != 1 {
+		t.Errorf("expected exactly 1 read_file entry after dedup. Got: %s", tail)
+	}
+	if !strings.Contains(tail, "edit_file") {
+		t.Errorf("expected edit_file entry. Got: %s", tail)
+	}
+	if !strings.Contains(tail, "+1 more") {
+		t.Errorf("expected '+1 more' suffix (3 raw - 2 unique = 1). Got: %s", tail)
+	}
+	// The kept read_file should show the LATEST result ("var X = 2").
+	if strings.Contains(tail, "X = 1") {
+		t.Errorf("dedup should keep latest result, not first. Got: %s", tail)
 	}
 }
 

@@ -57,8 +57,16 @@ func renderHistoricalToolTail(msg types.Message) string {
 	if count == 0 {
 		return ""
 	}
+	// Deduplicate by (tool_name, target_hint) key — when the model
+	// calls read_file on the same file twice in one round (different
+	// line ranges, or a retry), only the latest result is kept. The
+	// dedup key is "name+hint" (e.g. "read_file config.go"). Saves
+	// ~10-20 tokens per repeated call with no signal loss since the
+	// model already knows it read that file.
+	seen := make(map[string]int, count) // key → index in entries
 	entries := make([]string, 0, count)
-	for i := 0; i < count && i < maxEntries; i++ {
+	deduped := 0
+	for i := 0; i < count && len(entries)+deduped < maxEntries+deduped; i++ {
 		var name, hint, status string
 		if i < len(calls) {
 			name = strings.TrimSpace(calls[i].Name)
@@ -68,12 +76,6 @@ func renderHistoricalToolTail(msg types.Message) string {
 			if name == "" {
 				name = strings.TrimSpace(results[i].Name)
 			}
-			// Compress the raw output first so ANSI escapes, progress
-			// bars, and repeated lines are stripped before the single-
-			// line hint extraction. Without this the hint carries noise
-			// that burns tokens for zero signal (e.g. "\x1b[32m ok"
-			// instead of "ok"). Mirrors what agent_loop_result.go does
-			// for the live tool loop's tool_result payloads.
 			cleanedOutput := compressToolResult(results[i].Output)
 			if results[i].Success {
 				status = compactToolResultHint(cleanedOutput)
@@ -91,16 +93,33 @@ func renderHistoricalToolTail(msg types.Message) string {
 		if status != "" {
 			entry += " → " + status
 		}
+		// Dedup key: tool name + target hint (the identifying param).
+		dedupKey := name
+		if hint != "" {
+			dedupKey = name + " " + hint
+		}
+		if prevIdx, exists := seen[dedupKey]; exists {
+			// Replace previous entry with latest result — keeps the
+			// freshest status (e.g. first read failed, retry ok).
+			entries[prevIdx] = entry
+			deduped++
+			continue
+		}
+		seen[dedupKey] = len(entries)
 		entries = append(entries, entry)
 	}
 	if len(entries) == 0 {
 		return ""
 	}
+	uniqueCount := len(entries)
 	suffix := ""
-	if count > maxEntries {
-		suffix = fmt.Sprintf(" (+%d more)", count-maxEntries)
+	// Show how many raw calls are NOT individually listed — includes
+	// both deduped (same target) and overflow (beyond display cap).
+	unlisted := count - uniqueCount
+	if unlisted > 0 {
+		suffix = fmt.Sprintf(" (+%d more)", unlisted)
 	}
-	return fmt.Sprintf("[prior tools (%d): %s%s]", count, strings.Join(entries, " · "), suffix)
+	return fmt.Sprintf("[prior tools (%d): %s%s]", uniqueCount, strings.Join(entries, " · "), suffix)
 }
 
 // compactToolParamHint pulls the most-recognisable identifier from a
