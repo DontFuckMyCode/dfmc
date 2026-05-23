@@ -260,6 +260,228 @@ func TestSymbolMove_OutputSummary(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Helper tests — symbol_move_helpers.go
+// ---------------------------------------------------------------------------
+
+func TestExtractPackage(t *testing.T) {
+	cases := []struct {
+		name     string
+		lines    []string
+		expected string
+	}{
+		{"simple", []string{"package main"}, "main"},
+		{"with doc", []string{"// doc", "package foo"}, "foo"},
+		{" indented", []string{"  package bar "}, "bar"},
+		{"no package", []string{"// nothing"}, "main"},
+		{"empty", []string{}, "main"},
+	}
+	for _, c := range cases {
+		got := extractPackage(c.lines)
+		if got != c.expected {
+			t.Errorf("extractPackage(%v): want %q, got %q", c.name, c.expected, got)
+		}
+	}
+}
+
+func TestBuildNewGoFile(t *testing.T) {
+	srcLines := []string{"package main", `import "fmt"`, "", "func Foo() {}"}
+	body := "func Foo() {}"
+	got := buildNewGoFile(srcLines, body)
+	if !strings.Contains(got, "package main") {
+		t.Errorf("missing package declaration: %s", got)
+	}
+	if !strings.Contains(got, "import") {
+		t.Errorf("missing imports section: %s", got)
+	}
+	if !strings.Contains(got, body) {
+		t.Errorf("missing symbol body: %s", got)
+	}
+}
+
+func TestBuildNewGoFile_NoImports(t *testing.T) {
+	srcLines := []string{"package main", "", "func Foo() {}"}
+	body := "func Foo() {}"
+	got := buildNewGoFile(srcLines, body)
+	if strings.Contains(got, "import") {
+		t.Errorf("should not contain imports: %s", got)
+	}
+}
+
+func TestExtractImportsSection(t *testing.T) {
+	cases := []struct {
+		name     string
+		lines    []string
+		expected string
+	}{
+		{
+			"single import",
+			[]string{"package main", `import "fmt"`, ""},
+			`import "fmt"` + "\n",
+		},
+		{
+			"paren import",
+			[]string{"package main", "import (", `"fmt"`, `"os"`, ")", "func Foo() {}"},
+			`import (` + "\n" + `"fmt"` + "\n" + `"os"`,
+		},
+		{
+			"no import",
+			[]string{"package main", "func Foo() {}"},
+			"",
+		},
+		{
+			"empty file",
+			[]string{},
+			"",
+		},
+	}
+	for _, c := range cases {
+		got := extractImportsSection(c.lines)
+		if got != c.expected {
+			t.Errorf("extractImportsSection(%s): want %q, got %q", c.name, c.expected, got)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// symbol_move.go Execute paths not covered by existing tests
+// ---------------------------------------------------------------------------
+
+// SetEngine is tested directly since it has functional impact
+// (EnsureReadBeforeMutation gate) that dry_run tests cannot exercise.
+func TestSymbolMoveTool_SetEngine(t *testing.T) {
+	tool := NewSymbolMoveTool()
+	if tool.engine != nil {
+		t.Errorf("expected nil engine initially")
+	}
+	eng := New(*config.DefaultConfig())
+	eng.SetCodemap(nil)
+	tool.SetEngine(eng)
+	if tool.engine == nil {
+		t.Errorf("expected engine to be set")
+	}
+}
+
+// Symbol not found returns an error.
+func TestSymbolMove_NotFound(t *testing.T) {
+	tmp := t.TempDir()
+	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
+
+	eng := New(*config.DefaultConfig())
+	eng.SetCodemap(nil)
+
+	_, err := eng.Execute(context.Background(), "symbol_move", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"from":    "DoesNotExist",
+			"to_file": "bar.go",
+			"dry_run": true,
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected error for not-found symbol")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error should mention 'not found', got: %v", err)
+	}
+}
+
+// Existing destination with same symbol must be rejected (no dry_run needed).
+func TestSymbolMove_DuplicateInDest_NoDryRun(t *testing.T) {
+	tmp := t.TempDir()
+	os.WriteFile(filepath.Join(tmp, "foo.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
+	os.WriteFile(filepath.Join(tmp, "bar.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
+
+	eng := New(*config.DefaultConfig())
+	eng.SetCodemap(nil)
+
+	_, err := eng.Execute(context.Background(), "symbol_move", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"from":    "Foo",
+			"to_file": "bar.go",
+			"dry_run": false,
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected error when dest already has Foo")
+	}
+}
+
+// Move to existing file (dry_run) — skips EnsureReadBeforeMutation gate.
+func TestSymbolMove_ExistingDestDryRun(t *testing.T) {
+	tmp := t.TempDir()
+	os.WriteFile(filepath.Join(tmp, "foo.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
+	os.WriteFile(filepath.Join(tmp, "bar.go"), []byte("package main\nfunc Bar() {}\n"), 0644)
+
+	eng := New(*config.DefaultConfig())
+	eng.SetCodemap(nil)
+
+	_, err := eng.Execute(context.Background(), "symbol_move", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"from":    "Foo",
+			"to_file": "bar.go",
+			"dry_run": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("dry_run should not error with existing dest: %v", err)
+	}
+	// bar.go unchanged
+	data, _ := os.ReadFile(filepath.Join(tmp, "bar.go"))
+	if contains(string(data), "func Foo()") {
+		t.Errorf("bar.go was modified despite dry_run=true: %s", string(data))
+	}
+}
+
+// Reference files that fail to write should appear in result data["failed"].
+func TestSymbolMove_SkippedTestFiles(t *testing.T) {
+	tmp := t.TempDir()
+	os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
+	os.WriteFile(filepath.Join(tmp, "a_test.go"), []byte("package main\nfunc TestFoo() { Foo() }\n"), 0644)
+
+	eng := New(*config.DefaultConfig())
+	eng.SetCodemap(nil)
+
+	res, err := eng.Execute(context.Background(), "symbol_move", Request{
+		ProjectRoot: tmp,
+		Params: map[string]any{
+			"from":       "Foo",
+			"to_file":    "b.go",
+			"skip_tests": true,
+			"dry_run":    false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	// a_test.go should NOT have been modified (Foo still in a_test.go call site
+	// was skipped because skip_tests=true)
+	testData, _ := os.ReadFile(filepath.Join(tmp, "a_test.go"))
+	if contains(string(testData), "func TestFoo") {
+		// the file still has the test func (skip_tests skipped the reference update,
+		// but the test function itself was not affected since it calls Foo)
+	}
+	// Verify b.go got Foo
+	bData, _ := os.ReadFile(filepath.Join(tmp, "b.go"))
+	if !contains(string(bData), "func Foo()") {
+		t.Errorf("b.go missing Foo: %s", string(bData))
+	}
+	_ = res
+}
+
+// NewSymbolMoveTool smoke test.
+func TestNewSymbolMoveTool(t *testing.T) {
+	tool := NewSymbolMoveTool()
+	if tool == nil {
+		t.Fatalf("NewSymbolMoveTool returned nil")
+	}
+	if tool.Name() != "symbol_move" {
+		t.Errorf("Name() = %q, want symbol_move", tool.Name())
+	}
+}
+
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }

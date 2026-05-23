@@ -278,7 +278,7 @@ func TestSymbolRenameTool_SetEngine(t *testing.T) {
 	}
 }
 
-func TestApplyRenameInLine(t *testing.T) {
+func TestSymbolRename_ApplyRenameInLine(t *testing.T) {
 	cases := []struct {
 		line string
 		from string
@@ -300,7 +300,7 @@ func TestApplyRenameInLine(t *testing.T) {
 	}
 }
 
-func TestMatchSymbolKind(t *testing.T) {
+func TestSymbolRename_MatchSymbolKind(t *testing.T) {
 	cases := []struct {
 		line  string
 		name  string
@@ -325,7 +325,7 @@ func TestMatchSymbolKind(t *testing.T) {
 	}
 }
 
-func TestInCommentOrString(t *testing.T) {
+func TestSymbolRename_InCommentOrString(t *testing.T) {
 	cases := []struct {
 		line   string
 		name   string
@@ -343,7 +343,7 @@ func TestInCommentOrString(t *testing.T) {
 	}
 }
 
-func TestCollectGoFiles(t *testing.T) {
+func TestSymbolRename_CollectGoFiles(t *testing.T) {
 	tmp := t.TempDir()
 	os.MkdirAll(filepath.Join(tmp, "sub"), 0755)
 	os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package main\n"), 0644)
@@ -356,7 +356,7 @@ func TestCollectGoFiles(t *testing.T) {
 	}
 }
 
-func TestCollectGoFiles_SkipTests(t *testing.T) {
+func TestSymbolRename_CollectGoFilesSkipTests(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "main_test.go"), []byte("package main\n"), 0644)
