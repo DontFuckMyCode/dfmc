@@ -87,26 +87,28 @@ func startChatResumeStream(ctx context.Context, eng *engine.Engine, note string)
 	go func() {
 		defer close(out)
 		if eng == nil {
-			out <- chatErrMsg{err: fmt.Errorf("engine is nil")}
+			sendChatStreamMsg(ctx, out, chatErrMsg{err: fmt.Errorf("engine is nil")})
 			return
 		}
 		completion, err := eng.ResumeAgent(ctx, note)
 		if err != nil {
 			if ctx != nil && ctx.Err() != nil {
-				out <- chatErrMsg{err: ctx.Err()}
+				sendChatStreamMsg(ctx, out, chatErrMsg{err: ctx.Err()})
 				return
 			}
-			out <- chatErrMsg{err: err}
+			sendChatStreamMsg(ctx, out, chatErrMsg{err: err})
 			return
 		}
 		if ctx != nil && ctx.Err() != nil {
-			out <- chatErrMsg{err: ctx.Err()}
+			sendChatStreamMsg(ctx, out, chatErrMsg{err: ctx.Err()})
 			return
 		}
 		if answer := strings.TrimSpace(completion.Answer); answer != "" {
-			out <- chatDeltaMsg{delta: answer}
+			if !sendChatStreamMsg(ctx, out, chatDeltaMsg{delta: answer}) {
+				return
+			}
 		}
-		out <- chatDoneMsg{}
+		sendChatStreamMsg(ctx, out, chatDoneMsg{})
 	}()
 	return out
 }

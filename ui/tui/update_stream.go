@@ -104,6 +104,9 @@ func (m Model) handleChatDoneMsg(msg chatDoneMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleChatErrMsg(msg chatErrMsg) (tea.Model, tea.Cmd) {
+	// Save the stream index before clearing so we can mark the partial
+	// assistant line as cancelled (for the ⊘ chip in the timeline).
+	cancelIdx := m.chat.streamIndex
 	m.dropEmptyStreamingAssistant()
 	m.chat.sending = false
 	m.chat.streamMessages = nil
@@ -125,8 +128,8 @@ func (m Model) handleChatErrMsg(msg chatErrMsg) (tea.Model, tea.Cmd) {
 		// Mark the partial assistant line so the header surfaces a
 		// ⊘ chip; without this the row is indistinguishable from a
 		// clean completion at a glance.
-		if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) {
-			m.chat.transcript[m.chat.streamIndex].Cancelled = true
+		if cancelIdx >= 0 && cancelIdx < len(m.chat.transcript) {
+			m.chat.transcript[cancelIdx].Cancelled = true
 		}
 		m.notice = "Turn cancelled (esc). Partial output kept in transcript; /retry reopens it."
 		m = m.appendSystemMessage("◦ Turn cancelled by user — partial assistant output above, if any, is what arrived before the cancel took effect.")
@@ -143,6 +146,12 @@ func (m Model) handleChatErrMsg(msg chatErrMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleStreamClosedMsg(_ streamClosedMsg) (tea.Model, tea.Cmd) {
+	// Guard: if sending is already false, handleChatDoneMsg or
+	// handleChatErrMsg already processed the terminal event — skip
+	// to avoid double-draining the pending queue.
+	if !m.chat.sending {
+		return m, nil
+	}
 	m.dropEmptyStreamingAssistant()
 	m.chat.sending = false
 	m.chat.streamMessages = nil
@@ -152,7 +161,7 @@ func (m Model) handleStreamClosedMsg(_ streamClosedMsg) (tea.Model, tea.Cmd) {
 	m.resetAgentRuntime()
 	m.chat.pendingNoteCount = 0
 	next, drainCmd := m.drainPendingQueue()
-	return next, drainCmd
+	return next, tea.Batch(loadStatusCmd(m.eng), loadLatestPatchCmd(m.eng), loadGitInfoCmd(m.projectRoot()), drainCmd)
 }
 
 func (m *Model) dropEmptyStreamingAssistant() bool {

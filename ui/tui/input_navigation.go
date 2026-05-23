@@ -198,7 +198,9 @@ func (m *Model) deleteInputWordBeforeCursor() {
 }
 
 // deleteInputToEndOfLine implements Ctrl+K: kill text from the cursor to
-// the end of the input. Idempotent when already at the end.
+// the end of the current logical line. Idempotent when already at the
+// end of the line. In a multi-line composition this only removes the
+// rest of the current line, not all subsequent lines.
 func (m *Model) deleteInputToEndOfLine() {
 	m.syncChatCursor()
 	runes := []rune(m.chat.input)
@@ -209,5 +211,6 @@ func (m *Model) deleteInputToEndOfLine() {
 	if cursor >= len(runes) {
 		return
 	}
-	m.deleteInputRange(cursor, len(runes))
+	end := chatInputLineEnd(runes, cursor)
+	m.deleteInputRange(cursor, end)
 }

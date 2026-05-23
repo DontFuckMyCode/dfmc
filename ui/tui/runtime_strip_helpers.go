@@ -192,6 +192,9 @@ func runtimeGitLabel(vm runtimeViewModel) string {
 	if vm.Dirty {
 		branch += "*"
 	}
+	if len(branch) > 24 {
+		branch = branch[:21] + "…"
+	}
 	return fmt.Sprintf("git %s +%d -%d", branch, vm.Inserted, vm.Deleted)
 }
 

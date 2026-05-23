@@ -32,8 +32,17 @@ const charwisePasteLineBaseWindow = 140 * time.Millisecond
 const charwisePasteLinePerRuneWindow = 12 * time.Millisecond
 const charwisePasteLineMaxWindow = 900 * time.Millisecond
 
+// maxPasteRuneCount caps single paste content to prevent unbounded
+// memory growth in the composer buffer. Content beyond this is
+// silently truncated with an ellipsis marker.
+const maxPasteRuneCount = 100_000
+
 func (m *Model) addPasteBlock(content string) pasteBlock {
 	content = normalizePastedText(content)
+	if len([]rune(content)) > maxPasteRuneCount {
+		runes := []rune(content)
+		content = string(runes[:maxPasteRuneCount]) + "\n… (truncated)"
+	}
 	block := pasteBlock{
 		content:   content,
 		blockNum:  len(m.chat.pasteBlocks) + 1,
@@ -134,7 +143,11 @@ func (m *Model) pasteCandidateText() (content string, start int, end int) {
 	start = m.chat.pasteCandidateStart
 	end = m.chat.pasteCandidateEnd
 	if start < 0 || end > len(runes) || start >= end {
-		return normalizePastedText(m.chat.input), 0, len(runes)
+		// Candidate range is stale (input was mutated by history recall
+		// or autocomplete). Clear the candidate instead of sweeping up
+		// the entire input buffer into a paste block.
+		m.clearPasteBurst()
+		return "", 0, 0
 	}
 	return normalizePastedText(string(runes[start:end])), start, end
 }
@@ -219,15 +232,25 @@ func (m *Model) appendPasteBurstText(text string, now time.Time) bool {
 		return false
 	}
 	text = normalizePastedText(text)
-	old := m.chat.pasteBlocks[idx].placeholder()
 	addedLines := strings.Count(text, "\n")
+	// Find the exact rune position of this block's placeholder
+	// so we replace the placeholder, not user-typed text.
+	oldPh := m.chat.pasteBlocks[idx].placeholder()
 	m.chat.pasteBlocks[idx].content += text
 	if addedLines > 0 {
 		m.chat.pasteBlocks[idx].lineCount += addedLines
 	}
-	next := m.chat.pasteBlocks[idx].placeholder()
-	if old != next {
-		m.chat.input = strings.Replace(m.chat.input, old, next, 1)
+	nextPh := m.chat.pasteBlocks[idx].placeholder()
+	if oldPh != nextPh {
+		byteStart := strings.Index(m.chat.input, oldPh)
+		if byteStart >= 0 {
+			runes := []rune(m.chat.input)
+			runeStart := len([]rune(m.chat.input[:byteStart]))
+			runeEnd := runeStart + len([]rune(oldPh))
+			newRunes := []rune(nextPh)
+			runes = append(runes[:runeStart], append(newRunes, runes[runeEnd:]...)...)
+			m.chat.input = string(runes)
+		}
 		m.syncChatCursor()
 	} else {
 		m.chat.suppressPasteRender = true
@@ -292,12 +315,27 @@ func (m *Model) renumberPastePlaceholders() {
 	if len(m.chat.pasteBlocks) == 0 {
 		return
 	}
+	// Find the exact rune positions of each placeholder via
+	// pastePlaceholderSpans (which uses byte-accurate matching then
+	// converts to rune offsets) so we never accidentally replace
+	// user-typed text that happens to look like a placeholder.
+	spans := m.pastePlaceholderSpans()
 	for i := range m.chat.pasteBlocks {
-		old := m.chat.pasteBlocks[i].placeholder()
 		m.chat.pasteBlocks[i].blockNum = i + 1
-		next := m.chat.pasteBlocks[i].placeholder()
-		if old != next {
-			m.chat.input = strings.Replace(m.chat.input, old, next, 1)
-		}
 	}
+	// Rebuild input from scratch using the new placeholder text.
+	// This is more robust than incremental strings.Replace calls.
+	runes := []rune(m.chat.input)
+	// Process spans in reverse to preserve earlier indices.
+	// Re-derive spans after renumbering to get new placeholder text.
+	for si := len(spans) - 1; si >= 0; si-- {
+		s := spans[si]
+		if s.blockIndex < 0 || s.blockIndex >= len(m.chat.pasteBlocks) {
+			continue
+		}
+		newPh := []rune(m.chat.pasteBlocks[s.blockIndex].placeholder())
+		// Replace runes[s.start:s.end] with newPh
+		runes = append(runes[:s.start], append(newPh, runes[s.end:]...)...)
+	}
+	m.chat.input = string(runes)
 }

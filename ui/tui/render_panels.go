@@ -69,11 +69,21 @@ func (m Model) footerSegments(width int) []string {
 			if info.Detached {
 				label = "(" + label + ")"
 			}
+			// Truncate long branch names so they don't push other
+			// footer segments (session duration, git churn) off-screen.
+			if len(label) > 28 {
+				label = label[:25] + "…"
+			}
 			chip := accentStyle.Render("⎇ ") + boldStyle.Render(label)
 			if info.Dirty {
 				chip += warnStyle.Render("*")
 			}
 			out = append(out, chip)
+		}
+		if info.Err != "" && info.Branch != "" {
+			// Churn fetch failed (e.g. timeout). Show a warning
+			// indicator so the user doesn't assume a clean tree.
+			out = append(out, warnStyle.Render("⚠ git-info stale"))
 		}
 		if info.Inserted > 0 || info.Deleted > 0 {
 			churn := okStyle.Render(fmt.Sprintf("+%d", info.Inserted)) +

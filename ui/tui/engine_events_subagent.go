@@ -16,6 +16,8 @@ func (m Model) handleSubagentEvent(eventType string, payload map[string]any) (Mo
 		return m.handleSubagentFallback(payload, now)
 	case "agent:subagent:done":
 		return m.handleSubagentDone(payload, now)
+	case "agent:subagent:interrupted":
+		return m.handleSubagentInterrupted(payload, now)
 	default:
 		return m, ""
 	}

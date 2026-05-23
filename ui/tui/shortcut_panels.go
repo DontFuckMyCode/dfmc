@@ -130,8 +130,10 @@ func (m Model) handlePanelNavigationShortcut(msg tea.KeyMsg) (tea.Model, tea.Cmd
 		m = m.activateDiagnosticTab("Status")
 		return m, nil, true
 	case "ctrl+y":
-		m = m.activatePlansPanel("", false)
-		return m, nil, true
+		if m.activeTab != 0 {
+			m = m.activatePlansPanel("", false)
+			return m, nil, true
+		}
 	case "ctrl+w":
 		if m.activeTab != 0 {
 			m = m.activateContextPanel("", false)

@@ -20,6 +20,7 @@ import (
 
 func (m Model) handleChatUpKey() (tea.Model, tea.Cmd) {
 	suggestions := m.buildChatSuggestionState()
+	// History navigation: when already browsing history, keep going.
 	if !m.chat.sending && m.inputHistory.index >= 0 && m.recallInputHistoryPrev() {
 		m.slashMenu.command = 0
 		m.slashMenu.commandArg = 0
@@ -27,6 +28,8 @@ func (m Model) handleChatUpKey() (tea.Model, tea.Cmd) {
 		m.notice = "History: previous input"
 		return m, nil
 	}
+	// When a picker (mention/slash/arg) is visible and the user is NOT
+	// in history mode, prioritize picker navigation.
 	if suggestions.slashMenuActive {
 		items := suggestions.slashCommands
 		if len(items) > 0 {
@@ -85,6 +88,7 @@ func (m Model) handleChatUpKey() (tea.Model, tea.Cmd) {
 
 func (m Model) handleChatDownKey() (tea.Model, tea.Cmd) {
 	suggestions := m.buildChatSuggestionState()
+	// History navigation: when already browsing history, keep going.
 	if !m.chat.sending && m.inputHistory.index >= 0 && m.recallInputHistoryNext() {
 		m.slashMenu.command = 0
 		m.slashMenu.commandArg = 0

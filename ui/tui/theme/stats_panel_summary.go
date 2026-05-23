@@ -144,9 +144,18 @@ func statsPanelDriveSummary(info StatsPanelInfo) string {
 	return InfoStyle.Render(label)
 }
 
-func statsPanelBudgetRows(info StatsPanelInfo) []string {
+func statsPanelBudgetRows(info StatsPanelInfo, innerWidth int) []string {
 	payload := ContextPayloadFromStats(info)
-	rows := []string{RenderContextBarFrame(payload.WindowTokens, payload.MaxContext, 12, info.SpinnerFrame)}
+	// Scale bar cells to fit within innerWidth. The bar format is
+	// "[<cells> chars] <label>" — we need cells + 3 (brackets+space) + label.
+	// A safe default is 12 cells; shrink when the panel is narrow.
+	barCells := 12
+	if innerWidth < 36 {
+		barCells = 8
+	} else if innerWidth < 30 {
+		barCells = 6
+	}
+	rows := []string{RenderContextBarFrame(payload.WindowTokens, payload.MaxContext, barCells, info.SpinnerFrame)}
 	// Provider/model identity already lives in the ACTIVE section above.
 	// BUDGET only carries the limit source kind + window, so the model name
 	// isn't echoed three times within one panel.

@@ -50,9 +50,10 @@ func (m Model) openStatusActionMenu() Model {
 			}},
 		{Label: "Last card", Accel: "G",
 			Handler: func(m Model) (Model, tea.Cmd) {
-				count := m.diagnosticPanelsState.statusPanel.cardCount
-				if count > 0 {
-					m.diagnosticPanelsState.statusPanel.selectedCard = count - 1
+				cards, _ := m.statusCards()
+				if len(cards) > 0 {
+					m.diagnosticPanelsState.statusPanel.selectedCard = len(cards) - 1
+					m.diagnosticPanelsState.statusPanel.cardCount = len(cards)
 				}
 				return m, nil
 			}},
@@ -89,9 +90,10 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diagnosticPanelsState.statusPanel.selectedCard = 0
 		return m, nil
 	case "end", "G":
-		count := m.diagnosticPanelsState.statusPanel.cardCount
-		if count > 0 {
-			m.diagnosticPanelsState.statusPanel.selectedCard = count - 1
+		cards, _ := m.statusCards()
+		if len(cards) > 0 {
+			m.diagnosticPanelsState.statusPanel.selectedCard = len(cards) - 1
+			m.diagnosticPanelsState.statusPanel.cardCount = len(cards)
 		}
 		return m, nil
 	case "enter":
@@ -101,7 +103,11 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) shiftStatusCard(delta int) Model {
-	count := m.diagnosticPanelsState.statusPanel.cardCount
+	// Compute card count directly from model state rather than
+	// relying on cardCount which is only set during View (on a
+	// value copy that never reaches the real model).
+	cards, _ := m.statusCards()
+	count := len(cards)
 	if count <= 0 {
 		return m
 	}
@@ -113,6 +119,8 @@ func (m Model) shiftStatusCard(delta int) Model {
 		idx = count - 1
 	}
 	m.diagnosticPanelsState.statusPanel.selectedCard = idx
+	// Sync cardCount so action menu "last card" (G) also works.
+	m.diagnosticPanelsState.statusPanel.cardCount = count
 	return m
 }
 

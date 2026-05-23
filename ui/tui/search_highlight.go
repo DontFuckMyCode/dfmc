@@ -34,27 +34,51 @@ func highlightSearchHits(body, query string) string {
 	if query == "" || body == "" {
 		return body
 	}
-	lowerBody := strings.ToLower(body)
-	lowerQ := strings.ToLower(query)
-	if !strings.Contains(lowerBody, lowerQ) {
+	// Work in runes to avoid byte-offset desync when
+	// strings.ToLower changes byte length (e.g. İ → i\u0307).
+	bodyRunes := []rune(body)
+	lowerBodyRunes := []rune(strings.ToLower(body))
+	lowerQRunes := []rune(strings.ToLower(query))
+	if len(lowerQRunes) == 0 {
 		return body
 	}
 	var out strings.Builder
 	cursor := 0
-	for cursor < len(body) {
-		idx := strings.Index(lowerBody[cursor:], lowerQ)
+	for cursor < len(bodyRunes) {
+		idx := runeIndex(lowerBodyRunes[cursor:], lowerQRunes)
 		if idx < 0 {
-			out.WriteString(body[cursor:])
+			out.WriteString(string(bodyRunes[cursor:]))
 			break
 		}
 		hit := cursor + idx
-		out.WriteString(body[cursor:hit])
-		end := hit + len(query)
-		if end > len(body) {
-			end = len(body)
+		out.WriteString(string(bodyRunes[cursor:hit]))
+		end := hit + len(lowerQRunes)
+		if end > len(bodyRunes) {
+			end = len(bodyRunes)
 		}
-		out.WriteString(searchHitStyle.Render(body[hit:end]))
+		out.WriteString(searchHitStyle.Render(string(bodyRunes[hit:end])))
 		cursor = end
 	}
 	return out.String()
+}
+
+// runeIndex finds the first occurrence of pattern in text, returning
+// the rune index or -1 if not found.
+func runeIndex(text, pattern []rune) int {
+	if len(pattern) == 0 || len(pattern) > len(text) {
+		return -1
+	}
+	for i := 0; i <= len(text)-len(pattern); i++ {
+		match := true
+		for j := range pattern {
+			if text[i+j] != pattern[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
 }

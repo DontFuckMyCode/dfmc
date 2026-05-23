@@ -5,6 +5,8 @@ package tui
 // rendering lives in memory_render.go.
 
 import (
+	"fmt"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/dontfuckmycode/dfmc/internal/engine"
@@ -25,7 +27,7 @@ type memoryLoadedMsg struct {
 func loadMemoryCmd(eng *engine.Engine, tier string) tea.Cmd {
 	return func() tea.Msg {
 		if eng == nil || eng.Memory == nil {
-			return memoryLoadedMsg{tier: tier}
+			return memoryLoadedMsg{tier: tier, err: fmt.Errorf("memory not available (engine not initialized)")}
 		}
 		var (
 			entries []types.MemoryEntry

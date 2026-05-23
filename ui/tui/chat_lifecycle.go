@@ -91,7 +91,7 @@ func (m Model) submitChatQuestion(question string, quickActions []quickActionSug
 	m.chat.sending = true
 	m.chat.streamStartedAt = time.Now()
 	m.chat.streamInputTokens = m.estimateLiveInputTokens(question)
-	m.notice = "Streaming answer... (esc cancels)"
+	m.notice = "Streaming answer... (ctrl+c to cancel)"
 	// Per-stream context so esc can cancel this turn without killing the
 	// whole TUI's ctx (which would kill timers and subscriptions too).
 	streamCtx, cancel := context.WithCancel(m.ctx)
@@ -161,6 +161,9 @@ func (m Model) drainPendingQueue() (Model, tea.Cmd) {
 // state and wires the result into the same streaming path that submitChatQuestion
 // uses, so the UI treats it identically.
 func (m Model) startChatResume(note string) (Model, tea.Cmd) {
+	if m.chat.sending {
+		return m, nil
+	}
 	m.resetAgentRuntime()
 	m.ui.resumePromptActive = false
 	m.agentLoop.toolTimeline = nil

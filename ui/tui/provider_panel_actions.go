@@ -321,12 +321,32 @@ func (m Model) deleteActiveModel() Model {
 		m.notice = "no models to delete"
 		return m
 	}
+	// modelEditIdx is an index into the filtered/visible model list,
+	// not the full model list. Resolve to the actual model name first.
+	visible := m.detailProviderVisibleModels()
 	idx := m.providers.modelEditIdx
-	if idx < 0 || idx >= len(models) {
+	if idx < 0 || idx >= len(visible) {
 		idx = 0
 	}
-	deleted := models[idx]
-	models = append(models[:idx], models[idx+1:]...)
+	if len(visible) == 0 {
+		m.notice = "no visible model to delete"
+		return m
+	}
+	target := visible[idx]
+	// Find target in the full (unfiltered) list.
+	fullIdx := -1
+	for i, m := range models {
+		if m == target {
+			fullIdx = i
+			break
+		}
+	}
+	if fullIdx < 0 {
+		m.notice = "model not found: " + target
+		return m
+	}
+	deleted := models[fullIdx]
+	models = append(models[:fullIdx], models[fullIdx+1:]...)
 	prof.Models = models
 	if len(models) > 0 {
 		prof.Model = models[0]

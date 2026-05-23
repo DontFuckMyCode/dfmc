@@ -18,6 +18,7 @@ package tui
 import (
 	"encoding/base64"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -55,8 +56,14 @@ func copyToClipboardCmd(data string) (tea.Cmd, clipboardResult) {
 		return nil, res
 	}
 	if len(data) > clipboardMaxBytes {
-		data = data[:clipboardMaxBytes]
-		res.Bytes = clipboardMaxBytes
+		// Walk back to the last valid UTF-8 rune boundary so we don't
+		// split a multi-byte character at the truncation point.
+		idx := clipboardMaxBytes
+		for idx > 0 && !utf8.RuneStart(data[idx]) {
+			idx--
+		}
+		data = data[:idx]
+		res.Bytes = len(data)
 		res.Truncated = true
 	}
 	encoded := base64.StdEncoding.EncodeToString([]byte(data))

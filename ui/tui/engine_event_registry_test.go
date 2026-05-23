@@ -18,20 +18,21 @@ import (
 // registered handler and the registry has no extra phantom entries.
 var expectedEngineEventTypes = []string{
 	// agent loop lifecycle
-	"agent:loop:start", "agent:loop:thinking", "agent:loop:final",
-	"agent:loop:max_steps", "agent:loop:error", "agent:loop:parked",
-	"agent:loop:budget_exhausted", "agent:loop:auto_resume",
-	"agent:loop:auto_resume_refused", "agent:loop:auto_recover",
-	"agent:loop:tools_force_stop", "agent:loop:interrupted",
-	"agent:loop:shutdown_parked", "agent:loop:resume",
-	"agent:loop:resume_refused", "agent:loop:safety_bound",
-	"agent:loop:empty_recovery", "agent:loop:empty_final",
-	"agent:loop:stuck_force_stop",
+	"agent:loop:start", "agent:loop:thinking", "agent:loop:narration",
+	"agent:loop:final", "agent:loop:max_steps", "agent:loop:error",
+	"agent:loop:parked", "agent:loop:budget_exhausted",
+	"agent:loop:auto_resume", "agent:loop:auto_resume_refused",
+	"agent:loop:auto_recover", "agent:loop:tools_force_stop",
+	"agent:loop:interrupted", "agent:loop:shutdown_parked",
+	"agent:loop:resume", "agent:loop:resume_refused",
+	"agent:loop:safety_bound", "agent:loop:empty_recovery",
+	"agent:loop:empty_final", "agent:loop:stuck_force_stop",
 	// tool dispatch
 	"tool:call", "tool:result", "tool:error",
 	"tool:reasoning", "tool:timeout", "tool:denied",
 	// subagent
 	"agent:subagent:start", "agent:subagent:fallback", "agent:subagent:done",
+	"agent:subagent:interrupted",
 	// drive
 	"drive:run:start", "drive:plan:done", "drive:plan:failed",
 	"drive:todo:start", "drive:todo:done", "drive:todo:blocked",

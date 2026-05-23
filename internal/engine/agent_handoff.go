@@ -174,6 +174,6 @@ func (e *Engine) saveActiveConversationWithWarning(surface string, payload map[s
 		}
 		payload["surface"] = strings.TrimSpace(surface)
 		payload["error"] = err.Error()
-		e.publishAgentLoopEvent("conversation:save_error", payload)
+		e.publishAgentLoopEvent("conversation:save:error", payload)
 	}
 }

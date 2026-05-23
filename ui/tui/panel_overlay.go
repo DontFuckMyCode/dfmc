@@ -72,7 +72,7 @@ func (m Model) renderPanelOverlayBody(kind string, contentWidth, innerHeight int
 	case "telegram":
 		// Telegram bot messages — shows connection status and incoming/outgoing messages.
 		// Requires `go build -tags telegram_bot_wip` and --telegram-token flag.
-		body = fitPanelContentHeight(m.renderTelegramPanel(), bodyHeight)
+		body = fitPanelContentHeight(m.renderTelegramPanelSized(contentWidth), bodyHeight)
 	case "toolstatus":
 		body = fitPanelContentHeight(m.renderToolStatusViewSized(contentWidth, bodyHeight), bodyHeight)
 	default:
@@ -108,6 +108,8 @@ func panelOverlayLabel(kind string) string {
 		return "CONTEXTS"
 	case "providerlog":
 		return "PROVIDER LOG"
+	case "telegram":
+		return "TELEGRAM"
 	case "toolstatus":
 		return "TOOL STATUS"
 	default:

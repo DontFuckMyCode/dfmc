@@ -140,10 +140,14 @@ func orderedActivityPayloadKeys(payload map[string]any) []string {
 
 func truncateActivityText(s string, n int) string {
 	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r", " "), "\n", " ")
-	if n <= 0 || len(s) <= n {
+	if n <= 0 {
 		return s
 	}
-	return s[:n] + "..."
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "..."
 }
 
 func payloadIntAny(data map[string]any, fallback int, keys ...string) int {

@@ -114,6 +114,7 @@ func (m Model) deactivateContextManager() Model {
 // Preserves the status message set by the caller (e.g. "deleted N/M messages").
 func (m Model) refreshContextManager() Model {
 	oldMarked := m.contextPanel.manager.marked
+	oldRows := m.contextPanel.manager.rows
 	oldCursor := m.contextPanel.manager.cursor
 	oldStatus := m.contextPanel.manager.statusMsg
 	m = m.activateContextManager()
@@ -122,12 +123,20 @@ func (m Model) refreshContextManager() Model {
 	if oldStatus != "" {
 		m.contextPanel.manager.statusMsg = oldStatus
 	}
-	// Restore marks for IDs that still exist
-	if len(oldMarked) > 0 {
-		newMarked := make(map[int]bool)
-		for idx := range oldMarked {
-			if idx < len(m.contextPanel.manager.rows) {
-				newMarked[idx] = true
+	// Restore marks for IDs that still exist.
+	// Old marks are by index; we resolve through the old rows' IDs
+	// to find the matching new index after deletion shifts them.
+	if len(oldMarked) > 0 && len(oldRows) > 0 {
+		newMarked := make(map[int]bool, len(oldMarked))
+		newByID := make(map[string]int, len(m.contextPanel.manager.rows))
+		for ni, row := range m.contextPanel.manager.rows {
+			newByID[row.id] = ni
+		}
+		for oldIdx := range oldMarked {
+			if oldIdx < len(oldRows) {
+				if newIdx, ok := newByID[oldRows[oldIdx].id]; ok {
+					newMarked[newIdx] = true
+				}
 			}
 		}
 		m.contextPanel.manager.marked = newMarked

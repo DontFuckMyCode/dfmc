@@ -87,7 +87,7 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 
 	b.section("ACTIVE", statsPanelActiveRows(info, mode, inner))
 	b.section("NEXT", nextRows(info, mode))
-	b.section("BUDGET", statsPanelBudgetRows(info))
+	b.section("BUDGET", statsPanelBudgetRows(info, inner))
 
 	footerRows := statsPanelFooterRows(mode)
 	if info.FocusLocked {

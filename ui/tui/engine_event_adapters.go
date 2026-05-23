@@ -17,15 +17,15 @@ func registerAgentLoopEventHandlers(r *engineEventRegistry) {
 		return m.handleAgentLoopEvent(eventType, payload)
 	}
 	r.registerMany([]string{
-		"agent:loop:start", "agent:loop:thinking", "agent:loop:final",
-		"agent:loop:max_steps", "agent:loop:error", "agent:loop:parked",
-		"agent:loop:budget_exhausted", "agent:loop:auto_resume",
-		"agent:loop:auto_resume_refused", "agent:loop:auto_recover",
-		"agent:loop:tools_force_stop", "agent:loop:interrupted",
-		"agent:loop:shutdown_parked", "agent:loop:resume",
-		"agent:loop:resume_refused", "agent:loop:safety_bound",
-		"agent:loop:empty_recovery", "agent:loop:empty_final",
-		"agent:loop:stuck_force_stop",
+		"agent:loop:start", "agent:loop:thinking", "agent:loop:narration",
+		"agent:loop:final", "agent:loop:max_steps", "agent:loop:error",
+		"agent:loop:parked", "agent:loop:budget_exhausted",
+		"agent:loop:auto_resume", "agent:loop:auto_resume_refused",
+		"agent:loop:auto_recover", "agent:loop:tools_force_stop",
+		"agent:loop:interrupted", "agent:loop:shutdown_parked",
+		"agent:loop:resume", "agent:loop:resume_refused",
+		"agent:loop:safety_bound", "agent:loop:empty_recovery",
+		"agent:loop:empty_final", "agent:loop:stuck_force_stop",
 	}, h)
 }
 
@@ -45,6 +45,7 @@ func registerSubagentEventHandlers(r *engineEventRegistry) {
 	}
 	r.registerMany([]string{
 		"agent:subagent:start", "agent:subagent:fallback", "agent:subagent:done",
+		"agent:subagent:interrupted",
 	}, h)
 }
 

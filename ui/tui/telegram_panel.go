@@ -22,7 +22,11 @@ var telegramPanelStyle = lipgloss.NewStyle().
 	Padding(1, 2)
 
 func (m *Model) renderTelegramPanel() string {
-	width := m.width
+	return m.renderTelegramPanelSized(m.width)
+}
+
+func (m *Model) renderTelegramPanelSized(contentWidth int) string {
+	width := contentWidth
 	if width < 40 {
 		width = 40
 	}

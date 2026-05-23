@@ -90,12 +90,12 @@ func (m Model) handleContextManagerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 // openContextManagerActionMenu \u2014 arrow-driven discovery for the Context
 // Manager sub-view.
 func (m Model) openContextManagerActionMenu() Model {
-	mgr := m.contextPanel.manager
 	actions := []panelAction{
 		{Label: "Toggle mark (space)", Accel: "space",
 			Handler: func(m Model) (Model, tea.Cmd) {
-				if len(mgr.rows) > 0 {
-					m.contextPanel.manager.marked[mgr.cursor] = !m.contextPanel.manager.marked[mgr.cursor]
+				if len(m.contextPanel.manager.rows) > 0 {
+					cursor := m.contextPanel.manager.cursor
+					m.contextPanel.manager.marked[cursor] = !m.contextPanel.manager.marked[cursor]
 				}
 				return m, nil
 			}},

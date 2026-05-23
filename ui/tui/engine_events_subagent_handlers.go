@@ -115,6 +115,35 @@ func (m Model) handleSubagentDone(payload map[string]any, now time.Time) (Model,
 	return m, subagentDoneLine(duration, rounds, parked, errText, providerLabel, attempts, fallbackUsed)
 }
 
+func (m Model) handleSubagentInterrupted(payload map[string]any, now time.Time) (Model, string) {
+	m.finishSubagentRuntime(payload, now)
+	if m.telemetry.activeSubagentCount > 0 {
+		m.telemetry.activeSubagentCount--
+	}
+
+	role := payloadString(payload, "role", "")
+	duration := payloadInt(payload, "duration_ms", 0)
+
+	status := "subagent-interrupted"
+	chip := toolChip{
+		Name:       subagentChipName(role),
+		Status:     status,
+		DurationMs: duration,
+		Preview:    "interrupted",
+	}
+	m.finishToolChip(chip)
+	m.finishStreamingMessageToolChip(chip)
+
+	line := "Subagent interrupted"
+	if role != "" {
+		line = fmt.Sprintf("Subagent (%s) interrupted", role)
+	}
+	if duration > 0 {
+		line += fmt.Sprintf(" after %dms", duration)
+	}
+	return m, line
+}
+
 func subagentChipName(role string) string {
 	if role == "" {
 		return "subagent"
