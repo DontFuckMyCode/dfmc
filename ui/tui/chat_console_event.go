@@ -24,6 +24,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/dontfuckmycode/dfmc/ui/tui/theme"
@@ -222,7 +223,15 @@ func timelineToolEventBadge(ev chatEventLine) string {
 	}
 
 	if ev.Step > 0 {
-		label += fmt.Sprintf(" #%d", ev.Step)
+		// Step is step-in-round; Round (when present) is the agent loop
+		// iteration. Showing them as `#step·round` keeps the chip width
+		// bounded but lets users spot a tool that fired twice in the
+		// same round (signal of stuck-on-rerun) vs. once per round.
+		if ev.Round > 0 && ev.Round != ev.Step {
+			label += fmt.Sprintf(" #%d·r%d", ev.Step, ev.Round)
+		} else {
+			label += fmt.Sprintf(" #%d", ev.Step)
+		}
 	}
 
 	return style.Render(icon + " " + label)
@@ -251,15 +260,19 @@ func timelineEventRowStyle(row string) lipgloss.Style {
 func renderTimelineEventHeader(item chatLine, streaming bool, durationMs, spinner int, streamTokens []string) string {
 	parts := []string{}
 	if !item.Timestamp.IsZero() {
-		parts = append(parts, item.Timestamp.Format("15:04:05"))
+		stamp := item.Timestamp.Format("15:04:05")
+		if rel := theme.FormatRelativeTime(item.Timestamp, time.Now()); rel != "" {
+			stamp += " " + rel
+		}
+		parts = append(parts, stamp)
 	}
 	if streaming && len(streamTokens) > 0 {
 		parts = append(parts, streamTokens...)
 	} else if item.TokenCount > 0 {
-		parts = append(parts, fmt.Sprintf("%d tok", item.TokenCount))
+		parts = append(parts, theme.CompactTokens(item.TokenCount)+" tok")
 	}
 	if !streaming && durationMs > 0 {
-		parts = append(parts, fmt.Sprintf("%dms", durationMs))
+		parts = append(parts, theme.FormatDurationChip(durationMs))
 	}
 	if item.ToolCalls > 0 || item.ToolFailures > 0 {
 		parts = append(parts, fmt.Sprintf("tools %d fail %d", item.ToolCalls, item.ToolFailures))
@@ -275,28 +288,43 @@ func renderChatHistoryMessageHeader(item chatLine, streaming bool, durationMs, c
 	if role == "" {
 		role = "MESSAGE"
 	}
-	parts := []string{roleBadge(role)}
-	if !item.Timestamp.IsZero() {
-		parts = append(parts, item.Timestamp.Format("15:04:05"))
-	}
-	if streaming && len(streamTokens) > 0 {
-		parts = append(parts, streamTokens...)
-	} else if item.TokenCount > 0 {
-		parts = append(parts, fmt.Sprintf("%d tok", item.TokenCount))
-	}
-	if !streaming && durationMs > 0 {
-		parts = append(parts, fmt.Sprintf("%dms", durationMs))
-	}
-	if item.ToolCalls > 0 || item.ToolFailures > 0 {
-		parts = append(parts, fmt.Sprintf("tools %d fail %d", item.ToolCalls, item.ToolFailures))
-	}
-	if copyIdx > 0 {
-		parts = append(parts, fmt.Sprintf("copy #%d", copyIdx))
+	// Use the shared RenderMessageHeader path so the badge styling and
+	// relative-time / model-badge / cancelled affordances stay in one
+	// place. Token count comes from streamTokens when streaming (in/out
+	// split) so we feed those in as a suffix instead of via TokenCount.
+	info := messageHeaderInfo{
+		Role:         role,
+		Timestamp:    item.Timestamp,
+		Now:          time.Now(),
+		DurationMs:   durationMs,
+		ToolCalls:    item.ToolCalls,
+		ToolFailures: item.ToolFailures,
+		Streaming:    streaming,
+		SpinnerFrame: spinner,
+		CopyIndex:    copyIdx,
+		Provider:     item.Provider,
+		Model:        item.Model,
+		Cancelled:    item.Cancelled,
+		// Done is "finalized assistant turn": not streaming, not
+		// cancelled, has body. Other roles never get the chip — a
+		// user prompt is sealed by definition; tool/system events
+		// already carry their own status badge.
+		Done: !streaming && !item.Cancelled && item.Role.Eq(chatRoleAssistant) && strings.TrimSpace(item.Content) != "",
 	}
 	if streaming {
-		parts = append(parts, spinnerFrame(spinner)+" streaming")
+		// During streaming we surface the live in/out token split via
+		// streamTokens, so don't let the static TokenCount duplicate it.
+		info.TokenCount = 0
+	} else {
+		info.TokenCount = item.TokenCount
 	}
-	return strings.Join(parts, "  |  ")
+	out := renderMessageHeader(info)
+	if streaming {
+		extra := append([]string{}, streamTokens...)
+		extra = append(extra, "streaming")
+		out += "  " + subtleStyle.Render(strings.Join(extra, " · "))
+	}
+	return out
 }
 
 func isTimelineEventMessage(item chatLine) bool {

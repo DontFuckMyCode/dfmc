@@ -1,6 +1,6 @@
 package tui
 
-// render_files_meta.go — metadata pane of the F3 Files panel: panelCard
+// render_files_meta.go — metadata pane of the F2 Files panel: panelCard
 // rendering for File / Status / Actions (wide-mode 3-pane), the inline
 // medium-mode metadata strip, and the small humanFileSize / languageFromPath
 // helpers shared with the list-row badge. Sibling to render_files.go which
@@ -94,7 +94,7 @@ func (m Model) filesMetaCards() []panelCard {
 			{Key: "e", Value: "open Chat with explain prompt"},
 			{Key: "v", Value: "open Chat with review prompt"},
 		},
-		FooterHint: "Ctrl+W context preview · F4 Patch for diffs",
+		FooterHint: "Ctrl+W context preview · F3 Patch for diffs",
 	})
 	return cards
 }

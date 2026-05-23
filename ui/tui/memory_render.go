@@ -128,10 +128,30 @@ func (m Model) renderMemoryViewSized(width, height int) string {
 	}
 	banner := m.memoryTopBanner(width, tier)
 	tierLine := subtleStyle.Render("tier ") + accentStyle.Render(tier)
-	if strings.TrimSpace(m.memory.query) != "" {
-		tierLine += subtleStyle.Render(" · query ") + boldStyle.Render(m.memory.query)
+	// Per-tier counts surface "how much of each kind do we hold"
+	// at a glance so the user judges whether to cycle the filter
+	// without scrolling. Counts walk the unfiltered list so the
+	// numbers stay stable as queries narrow the visible rows.
+	ep, sem := countMemoryEntriesByTier(m.memory.entries)
+	tierLine += subtleStyle.Render(fmt.Sprintf("  ·  episodic %d · semantic %d", ep, sem))
+	query := strings.TrimSpace(m.memory.query)
+	if query != "" {
+		tierLine += subtleStyle.Render(" · query ") + boldStyle.Render(query)
+		hits := len(filteredMemoryEntries(m.memory.entries, query))
+		tierLine += " " + memoryHitsChip(hits)
 	}
-	lines := []string{banner, tierLine, subtleStyle.Render(strings.Repeat("─", width-2))}
+	hint := subtleStyle.Render("↑↓ scroll · enter expand · / search · t tier · r reload · → action menu")
+	if m.memory.searchActive {
+		hint = searchTypingHint()
+	}
+	lines := []string{banner, tierLine}
+	if m.memory.searchActive {
+		// Live search input — shared with every other diagnostic panel
+		// via renderSearchInput so the affordance feels identical
+		// regardless of which panel the user is on.
+		lines = append(lines, renderSearchInput(query, "type to filter…"))
+	}
+	lines = append(lines, hint, subtleStyle.Render(strings.Repeat("─", width-2)))
 
 	if m.memory.err != "" {
 		lines = append(lines, "", "  "+warnStyle.Render("error · "+m.memory.err))
@@ -148,6 +168,8 @@ func (m Model) renderMemoryViewSized(width, height int) string {
 		if len(m.memory.entries) == 0 {
 			lines = append(lines,
 				"  "+subtleStyle.Render("No memory entries."),
+				"  "+subtleStyle.Render("Memory is the engine's working / episodic / semantic store — facts and decisions the assistant should carry across turns and sessions (bbolt-backed, project-local)."),
+				"  "+subtleStyle.Render("Memory fills as the agent runs and on /remember; press t to cycle tiers, r to reload, or /remember <text> to write an entry yourself."),
 			)
 		} else {
 			lines = append(lines,
@@ -207,6 +229,30 @@ func (m Model) renderMemoryViewSized(width, height int) string {
 	}
 	return body
 }
+
+// countMemoryEntriesByTier walks the unfiltered entries and returns
+// (episodic, semantic) counts. Other tiers (working / future kinds)
+// are silently bucketed under episodic — the panel only renders two
+// chips, and a more granular surface is out of scope for the polish
+// pass. The order matches the tier-cycle action menu so the number
+// next to "episodic" always lines up with the next tier filter
+// you'd reach by pressing `t`.
+func countMemoryEntriesByTier(entries []types.MemoryEntry) (episodic, semantic int) {
+	for _, e := range entries {
+		switch e.Tier {
+		case types.MemorySemantic:
+			semantic++
+		default:
+			episodic++
+		}
+	}
+	return
+}
+
+// memoryHitsChip is a thin alias over searchHitsChip; the shared
+// implementation in panel_search_input.go keeps every panel's chip
+// identical.
+func memoryHitsChip(n int) string { return searchHitsChip(n) }
 
 // memoryTopBanner draws the title + a status chip on the right.
 // Chip: HEALTHY (entries loaded), EMPTY, ERROR, LOADING.

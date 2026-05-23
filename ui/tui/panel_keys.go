@@ -12,6 +12,9 @@ import (
 )
 
 func (m Model) handleFilesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.filesView.searchActive {
+		return m.handleFilesSearchKey(msg)
+	}
 	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
 		return nm, cmd
 	}
@@ -43,6 +46,41 @@ func (m Model) handleFilesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.togglePinnedFile()
 	case "i", "e", "v":
 		return m.insertFileIntoComposer(msg.String())
+	case "/":
+		m.filesView.searchActive = true
+		return m, nil
+	case "c":
+		// Clear the active query so the next paint surfaces every
+		// indexed file again. No-op when nothing is buffered.
+		if strings.TrimSpace(m.filesView.query) != "" {
+			m.filesView.query = ""
+			m.filesView.index = 0
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// handleFilesSearchKey is the focused search-input handler — same
+// shape as handleCodemapSearchKey / handleMemorySearchKey. Enter
+// commits and drops out, Esc cancels and drops out, every other key
+// routes through applyInlineSearchTextKey so backspace + printable
+// runes mutate filesView.query inline. The query stays applied even
+// after commit (it's the filter) — commit just hands the keyboard
+// back to the regular Files navigator.
+func (m Model) handleFilesSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.filesView.searchActive = false
+		m.filesView.index = 0
+		return m, nil
+	case tea.KeyEsc:
+		m.filesView.searchActive = false
+		return m, nil
+	default:
+		if query, ok := applyInlineSearchTextKey(m.filesView.query, msg); ok {
+			m.filesView.query = query
+		}
 	}
 	return m, nil
 }
@@ -143,11 +181,30 @@ func (m Model) openToolsActionMenu() Model {
 }
 
 func (m Model) handleToolsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	tools := m.availableTools()
-	if len(tools) == 0 {
+	if m.toolView.searchActive {
+		return m.handleToolsSearchKey(msg)
+	}
+	// Search affordances must work even with an empty registry so the
+	// keys stay discoverable; the action menu / selection handlers
+	// require a non-empty list.
+	if !m.toolView.editing {
+		switch msg.String() {
+		case "/":
+			m.toolView.searchActive = true
+			return m, nil
+		case "c":
+			if strings.TrimSpace(m.toolView.query) != "" {
+				m.toolView.query = ""
+				m.toolView.index = 0
+				return m, nil
+			}
+		}
+	}
+	if len(m.availableTools()) == 0 {
 		m.notice = "No tools registered."
 		return m, nil
 	}
+	tools := m.visibleTools()
 	if !m.toolView.editing {
 		if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
 			return nm, cmd
@@ -156,9 +213,35 @@ func (m Model) handleToolsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openToolsActionMenu(), nil
 		}
 	}
+	if len(tools) == 0 {
+		// All tools filtered out — let the user clear without crashing
+		// the selection handlers that index into tools[].
+		return m, nil
+	}
 	m.toolView.index = clampIndex(m.toolView.index, len(tools))
 	if m.toolView.editing {
 		return m.handleToolEditKey(msg, tools)
 	}
 	return m.handleToolSelectionKey(msg, tools)
+}
+
+// handleToolsSearchKey is the focused search-input handler for the
+// Tools panel. Same shape as the Files / CodeMap / Memory equivalents:
+// Enter commits, Esc cancels, runes/backspace edit the buffer inline.
+// The query stays applied after commit — the filter is the point.
+func (m Model) handleToolsSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.toolView.searchActive = false
+		m.toolView.index = 0
+		return m, nil
+	case tea.KeyEsc:
+		m.toolView.searchActive = false
+		return m, nil
+	default:
+		if query, ok := applyInlineSearchTextKey(m.toolView.query, msg); ok {
+			m.toolView.query = query
+		}
+	}
+	return m, nil
 }

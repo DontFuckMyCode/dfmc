@@ -6,7 +6,11 @@ package tui
 // then falls through to text editing, cursor movement, history recall, and
 // transcript scroll.
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.commandPicker.active {
@@ -46,6 +50,15 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openMentionPickerFromKey()
 	case tea.KeyCtrlW:
 		return m.handleChatKillWordKey()
+	case tea.KeyCtrlY:
+		// Yank-mode tap: when the composer is empty (or whitespace
+		// only) copy the last assistant response to the clipboard.
+		// When the user is mid-typing we let the rune through to
+		// preserve the readline-style "yank insert" muscle memory.
+		if strings.TrimSpace(m.chat.input) == "" {
+			nm, cmd, _ := m.copyAssistantResponseAt(-1)
+			return nm, cmd
+		}
 	case tea.KeyCtrlK:
 		return m.handleChatKillLineKey()
 	case tea.KeyCtrlX:
@@ -56,6 +69,17 @@ func (m Model) handleChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyPgDown:
 		m.scrollTranscript(scrollPageStep)
+		return m, nil
+	case tea.KeyCtrlHome:
+		// Jump to the top of the transcript. Uses a sentinel-large
+		// negative delta so the clamp inside scrollTranscript pins
+		// us at maxBack (the "at top of history" notice fires).
+		m.scrollTranscript(-1 << 30)
+		return m, nil
+	case tea.KeyCtrlEnd:
+		// Jump to the latest message. Symmetric mirror of Ctrl+Home;
+		// the clamp pins scrollback to 0 and the notice updates.
+		m.scrollTranscript(1 << 30)
 		return m, nil
 	case tea.KeyEsc:
 		return m.handleChatEscapeKey()

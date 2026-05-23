@@ -20,6 +20,7 @@ package theme
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -33,7 +34,11 @@ func RenderMessageHeader(info MessageHeaderInfo) string {
 		parts = append(parts, InfoStyle.Bold(true).Render(SpinnerFrame(info.SpinnerFrame)))
 	}
 	if !info.Timestamp.IsZero() {
-		parts = append(parts, SubtleStyle.Render(info.Timestamp.Format("15:04:05")))
+		stamp := info.Timestamp.Format("15:04:05")
+		if rel := FormatRelativeTime(info.Timestamp, info.Now); rel != "" {
+			stamp = stamp + " " + rel
+		}
+		parts = append(parts, SubtleStyle.Render(stamp))
 	}
 	if info.DurationMs > 0 {
 		parts = append(parts, SubtleStyle.Render(FormatDurationChip(info.DurationMs)))
@@ -49,7 +54,69 @@ func RenderMessageHeader(info MessageHeaderInfo) string {
 			parts = append(parts, AccentStyle.Render(chip))
 		}
 	}
+	if badge := FormatModelBadge(info.Provider, info.Model); badge != "" {
+		parts = append(parts, SubtleStyle.Render(badge))
+	}
+	if info.Cancelled {
+		parts = append(parts, WarnStyle.Bold(true).Render("⊘ cancelled"))
+	} else if info.Done && !info.Streaming {
+		// Streaming wins over Done — the spinner is the user-visible
+		// signal in flight, and a static ✓ next to a spinning braille
+		// frame would read as a contradiction.
+		parts = append(parts, OkStyle.Render("✓"))
+	}
 	return strings.Join(parts, " ")
+}
+
+// FormatRelativeTime renders a "(2m ago)" / "(just now)" suffix for the
+// given timestamp against the reference now. Returns "" if either time
+// is zero or the gap is implausible (negative / >30 days), keeping the
+// header free of bogus chips when timestamps are missing.
+func FormatRelativeTime(ts, now time.Time) string {
+	if ts.IsZero() || now.IsZero() {
+		return ""
+	}
+	d := now.Sub(ts)
+	if d < 0 {
+		return ""
+	}
+	if d > 30*24*time.Hour {
+		return ""
+	}
+	switch {
+	case d < 30*time.Second:
+		return "(just now)"
+	case d < time.Minute:
+		return fmt.Sprintf("(%ds ago)", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("(%dm ago)", int(d.Minutes()))
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		mins := int(d.Minutes()) - h*60
+		if mins == 0 {
+			return fmt.Sprintf("(%dh ago)", h)
+		}
+		return fmt.Sprintf("(%dh%02dm ago)", h, mins)
+	default:
+		return fmt.Sprintf("(%dd ago)", int(d.Hours()/24))
+	}
+}
+
+// FormatModelBadge renders the provider/model chip shown in headers.
+// Returns "" when both fields are empty so the header degrades cleanly.
+// Model names are already unique enough (claude-opus-4-7, gpt-4o,
+// kimi-k2, etc.) that adding the provider in front mostly just doubles
+// the width — so when both are set we show only the model.
+func FormatModelBadge(provider, model string) string {
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if model != "" {
+		return "· " + model
+	}
+	if provider != "" {
+		return "· " + provider
+	}
+	return ""
 }
 
 func FormatDurationChip(ms int) string {

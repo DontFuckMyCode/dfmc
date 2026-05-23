@@ -285,6 +285,13 @@ type codemapPanelState struct {
 	loaded         bool
 	visualExpanded map[string]bool // nodeID -> expanded
 	visualCursor   int             // current line in the flattened visual tree
+	// query narrows the visible rows by case-insensitive node name +
+	// path substring. searchActive routes keystrokes to the search
+	// buffer so the live input box can render what the user is typing.
+	// Both fields are cleared by `c` (clear search) and any view
+	// switch — a hotspot search has no meaning under the cycles view.
+	query        string
+	searchActive bool
 }
 
 // memoryPanelState — read view over internal/memory. Tier is a string

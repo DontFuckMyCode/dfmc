@@ -80,9 +80,12 @@ func (m Model) submitChatQuestion(question string, quickActions []quickActionSug
 		m = m.startChatToolCommand(name, params)
 		return m, runToolCmd(m.ctx, m.eng, name, params)
 	}
+	asstLine := newChatLine(chatRoleAssistant, "")
+	asstLine.Provider = m.currentProvider()
+	asstLine.Model = m.currentModel()
 	m.chat.transcript = append(m.chat.transcript,
 		newChatLine(chatRoleUser, question),
-		newChatLine(chatRoleAssistant, ""),
+		asstLine,
 	)
 	m.chat.streamIndex = len(m.chat.transcript) - 1
 	m.chat.sending = true
@@ -167,7 +170,10 @@ func (m Model) startChatResume(note string) (Model, tea.Cmd) {
 		banner += " with note: " + note
 	}
 	m = m.appendSystemMessage(banner + "...")
-	m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleAssistant, ""))
+	resumeLine := newChatLine(chatRoleAssistant, "")
+	resumeLine.Provider = m.currentProvider()
+	resumeLine.Model = m.currentModel()
+	m.chat.transcript = append(m.chat.transcript, resumeLine)
 	m.chat.streamIndex = len(m.chat.transcript) - 1
 	m.chat.sending = true
 	m.chat.streamStartedAt = time.Now()

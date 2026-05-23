@@ -553,17 +553,19 @@ func TestRenderContextStrip_ShowsTokenEstimate(t *testing.T) {
 	}
 }
 
-// TestRenderContextStrip_TokenBudgetPercentWhenProviderKnown — when the
-// provider profile reports a MaxContext, the strip must translate the raw
-// token count into "% of budget" so users know how close they are to the
-// limit at a glance.
-func TestRenderContextStrip_TokenBudgetPercentWhenProviderKnown(t *testing.T) {
+// TestRenderContextStrip_DraftRowDoesNotEchoSessionWindow — Phase B
+// dedup: the CTX draft row is composer-only (chars/tokens of the unsent
+// input). Session window/% lives on the `ctx` bar one row above and the
+// right-panel BUDGET section; the strip must not restate it.
+func TestRenderContextStrip_DraftRowDoesNotEchoSessionWindow(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.chat.input = "short question"
 	m.status.ProviderProfile.MaxContext = 200000
 	got := m.renderContextStrip(200)
-	if !strings.Contains(got, "% of 200000") {
-		t.Fatalf("expected budget percent suffix, got %q", got)
+	for _, banned := range []string{"% of 200000", "window:", "left:"} {
+		if strings.Contains(got, banned) {
+			t.Fatalf("CTX draft row must not echo session-window metric %q, got %q", banned, got)
+		}
 	}
 }
 

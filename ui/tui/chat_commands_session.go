@@ -21,6 +21,9 @@ func (m Model) handleClearSlash() (tea.Model, tea.Cmd, bool) {
 	m.chat.input = ""
 	m.chat.transcript = nil
 	m.chat.scrollback = 0
+	m.chat.pinnedAssistantTurns = nil
+	m.chat.expandedAssistantTurns = nil
+	m.chat.lastSearchQuery = ""
 	m.cancelActiveStream()
 	m.chat.sending = false
 	m.chat.streamIndex = -1

@@ -44,18 +44,12 @@ func providerRows(info StatsPanelInfo) []string {
 
 func providerActiveRows(info StatsPanelInfo) []string {
 	rows := providerRows(info)
-	meta := []string{}
-	if info.MaxContext > 0 {
-		meta = append(meta, "window "+CompactTokens(info.MaxContext))
-	}
+	// Phase B dedup slice: window/used numbers used to ride here too,
+	// but the BUDGET section below carries the same digits as a bar plus
+	// an exact `input n/max | free m` row. The only ACTIVE-unique meta
+	// is the per-1k cost — keep that when set, drop the rest.
 	if info.CostPer1kTokens > 0 {
-		meta = append(meta, FormatUSDCost(info.CostPer1kTokens)+"/1k tok")
-	}
-	if info.ContextWindowTokens > 0 {
-		meta = append(meta, "used "+CompactTokens(info.ContextWindowTokens))
-	}
-	if len(meta) > 0 {
-		rows = append(rows, SubtleStyle.Render(strings.Join(meta, " | ")))
+		rows = append(rows, SubtleStyle.Render(FormatUSDCost(info.CostPer1kTokens)+"/1k tok"))
 	}
 	return rows
 }

@@ -448,6 +448,103 @@ func TestRenderMessageHeader_AllFields(t *testing.T) {
 	}
 }
 
+func TestFormatRelativeTime(t *testing.T) {
+	now := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		ts   time.Time
+		want string
+	}{
+		{now, "(just now)"},
+		{now.Add(-10 * time.Second), "(just now)"},
+		{now.Add(-45 * time.Second), "(45s ago)"},
+		{now.Add(-2 * time.Minute), "(2m ago)"},
+		{now.Add(-90 * time.Minute), "(1h30m ago)"},
+		{now.Add(-3 * time.Hour), "(3h ago)"},
+		{now.Add(-25 * time.Hour), "(1d ago)"},
+		{time.Time{}, ""},
+		{now.Add(time.Minute), ""},        // future → ignore
+		{now.Add(-365 * 24 * time.Hour), ""}, // older than 30d → ignore
+	}
+	for _, tc := range cases {
+		got := FormatRelativeTime(tc.ts, now)
+		if got != tc.want {
+			t.Errorf("FormatRelativeTime(%v) = %q, want %q", tc.ts, got, tc.want)
+		}
+	}
+}
+
+func TestFormatModelBadge(t *testing.T) {
+	cases := []struct {
+		provider, model, want string
+	}{
+		{"", "", ""},
+		{"anthropic", "", "· anthropic"},
+		{"", "gpt-4o", "· gpt-4o"},
+		{"anthropic", "claude-opus-4-7", "· claude-opus-4-7"},
+		{"openai", "gpt-4o", "· gpt-4o"},
+	}
+	for _, tc := range cases {
+		if got := FormatModelBadge(tc.provider, tc.model); got != tc.want {
+			t.Errorf("FormatModelBadge(%q,%q) = %q, want %q", tc.provider, tc.model, got, tc.want)
+		}
+	}
+}
+
+func TestRenderMessageHeader_RelativeTimeAndModelBadge(t *testing.T) {
+	now := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+	info := MessageHeaderInfo{
+		Role:      "assistant",
+		Timestamp: now.Add(-3 * time.Minute),
+		Now:       now,
+		Provider:  "anthropic",
+		Model:     "claude-opus-4-7",
+	}
+	out := RenderMessageHeader(info)
+	if !contains(out, "(3m ago)") {
+		t.Errorf("expected relative time chip, got %q", out)
+	}
+	if !contains(out, "claude-opus-4-7") {
+		t.Errorf("expected model badge, got %q", out)
+	}
+}
+
+func TestRenderMessageHeader_CancelledChip(t *testing.T) {
+	info := MessageHeaderInfo{Role: "assistant", Cancelled: true}
+	out := RenderMessageHeader(info)
+	if !contains(out, "cancelled") {
+		t.Errorf("expected cancelled chip, got %q", out)
+	}
+}
+
+func TestRenderMessageHeader_DoneChipForCompletedAssistant(t *testing.T) {
+	info := MessageHeaderInfo{Role: "assistant", Done: true}
+	out := RenderMessageHeader(info)
+	if !contains(out, "✓") {
+		t.Errorf("expected done check chip, got %q", out)
+	}
+}
+
+func TestRenderMessageHeader_DoneSuppressedWhenCancelled(t *testing.T) {
+	// Cancelled wins: ⊘ shows, ✓ does not (the turn isn't actually done).
+	info := MessageHeaderInfo{Role: "assistant", Done: true, Cancelled: true}
+	out := RenderMessageHeader(info)
+	if contains(out, "✓") {
+		t.Errorf("done chip should be suppressed when cancelled, got %q", out)
+	}
+	if !contains(out, "cancelled") {
+		t.Errorf("expected cancelled chip, got %q", out)
+	}
+}
+
+func TestRenderMessageHeader_DoneSuppressedWhileStreaming(t *testing.T) {
+	// Streaming spinner shows; the renderer should not also paint ✓.
+	info := MessageHeaderInfo{Role: "assistant", Done: true, Streaming: true}
+	out := RenderMessageHeader(info)
+	if contains(out, "✓") {
+		t.Errorf("done chip should be suppressed while streaming, got %q", out)
+	}
+}
+
 func TestRenderMessageBubble_Empty(t *testing.T) {
 	out := RenderMessageBubble("assistant", "", "header", 80)
 	if out == "" {
@@ -1132,12 +1229,14 @@ func TestRenderStatsPanelShowsProviderContextSourceAndControls(t *testing.T) {
 		ContextToolCallCount:  2,
 	}
 	out := RenderStatsPanelSized(info, 26, 58)
-	for _, want := range []string{"request: zai-coding-plan / glm-5.1", "limit models.dev zai/glm-5.1", "input 1.6k/131.1k", "free 129.5k", "reserve out 16.4k", "tools 512", "/context for full budget"} {
+	for _, want := range []string{"limit models.dev", "input 1.6k/131.1k", "free 129.5k", "reserve out 16.4k", "tools 512", "/context for full budget"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected provider budget row %q, got:\n%s", want, out)
 		}
 	}
-	for _, banned := range []string{"messages 4", "tool calls 2", "/context messages", "/context drop <id>"} {
+	// Provider/model identity belongs to the ACTIVE section; BUDGET must not
+	// restate it (request: line removed, limit suffix trimmed).
+	for _, banned := range []string{"request: zai-coding-plan / glm-5.1", "models.dev zai/glm-5.1", "messages 4", "tool calls 2", "/context messages", "/context drop <id>"} {
 		if strings.Contains(out, banned) {
 			t.Fatalf("stats panel should not show context manager detail %q, got:\n%s", banned, out)
 		}

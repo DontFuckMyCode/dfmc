@@ -69,8 +69,16 @@ func (m Model) appendAssistantNarration(text string) Model {
 		m.chat.transcript = append(m.chat.transcript, cl)
 	}
 
-	// Start a fresh streaming entry for the next round's text.
-	m.chat.transcript = append(m.chat.transcript, newChatLine(chatRoleAssistant, ""))
+	// Start a fresh streaming entry for the next round's text. Carry
+	// over provider/model from the snapshotted entry so the badge stays
+	// consistent across narration boundaries within a single turn.
+	next := newChatLine(chatRoleAssistant, "")
+	if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) {
+		prev := m.chat.transcript[m.chat.streamIndex]
+		next.Provider = prev.Provider
+		next.Model = prev.Model
+	}
+	m.chat.transcript = append(m.chat.transcript, next)
 	m.chat.streamIndex = len(m.chat.transcript) - 1
 	m.chat.scrollback = 0
 	return m

@@ -52,8 +52,24 @@ func (m Model) renderCodemapViewSized(width, height int) string {
 		view = codemapViewOverview
 	}
 	banner := m.codemapTopBanner(width, view)
-	hint := subtleStyle.Render("↑↓ scroll · enter action menu · / search · esc back")
-	lines := []string{banner, hint, renderDivider(width - 2)}
+	hint := panelIdleHint("action menu")
+	query := strings.TrimSpace(m.codemap.query)
+	queryLine := subtleStyle.Render("query ")
+	searchableView := view != codemapViewVisual && view != codemapViewOverview
+	if query != "" && searchableView {
+		queryLine += boldStyle.Render(query)
+		queryLine += " " + codemapHitsChip(countCodemapHits(view, m.codemap.snap, query))
+	} else if !searchableView {
+		queryLine += subtleStyle.Render("(search disabled in this view)")
+	} else {
+		queryLine += subtleStyle.Render("(none)")
+	}
+	lines := []string{banner, queryLine}
+	if m.codemap.searchActive && searchableView {
+		lines = append(lines, renderSearchInput(query, "type to filter by name / path…"))
+		hint = searchTypingHint()
+	}
+	lines = append(lines, hint, renderDivider(width-2))
 
 	if m.codemap.err != "" {
 		lines = append(lines, "", warnStyle.Render("error · "+m.codemap.err))
@@ -122,16 +138,23 @@ func (m Model) codemapTopBanner(width int, view string) string {
 // renderCodemapView so the scroll offset is applied uniformly and the
 // test suite can exercise one view in isolation.
 func (m Model) renderCodemapBody(view string, snap codemapSnapshot, scroll, width int) []string {
+	query := strings.ToLower(strings.TrimSpace(m.codemap.query))
 	switch view {
 	case codemapViewHotspots:
 		rows := make([]string, 0, len(snap.Hotspots))
 		for _, n := range snap.Hotspots {
+			if !nodeMatchesCodemapQuery(n, query) {
+				continue
+			}
 			rows = append(rows, truncateSingleLine(formatCodemapNodeRow(n), width))
 		}
 		return applyScroll(rows, scroll)
 	case codemapViewOrphans:
 		rows := make([]string, 0, len(snap.Orphans))
 		for _, n := range snap.Orphans {
+			if !nodeMatchesCodemapQuery(n, query) {
+				continue
+			}
 			rows = append(rows, truncateSingleLine(formatCodemapNodeRow(n), width))
 		}
 		return applyScroll(rows, scroll)
@@ -139,6 +162,9 @@ func (m Model) renderCodemapBody(view string, snap codemapSnapshot, scroll, widt
 		rows := make([]string, 0, len(snap.Cycles))
 		for i, c := range snap.Cycles {
 			label := fmt.Sprintf("%2d. %s", i+1, strings.Join(c, " → "))
+			if query != "" && !strings.Contains(strings.ToLower(label), query) {
+				continue
+			}
 			rows = append(rows, truncateSingleLine(label, width))
 		}
 		return applyScroll(rows, scroll)
@@ -146,6 +172,9 @@ func (m Model) renderCodemapBody(view string, snap codemapSnapshot, scroll, widt
 		rows := make([]string, 0, len(snap.CallEdges))
 		for _, e := range snap.CallEdges {
 			label := fmt.Sprintf("◀ %s", formatEdgeLabel(e, true))
+			if query != "" && !strings.Contains(strings.ToLower(label), query) {
+				continue
+			}
 			rows = append(rows, truncateSingleLine(label, width))
 		}
 		sort.Strings(rows)
@@ -154,6 +183,9 @@ func (m Model) renderCodemapBody(view string, snap codemapSnapshot, scroll, widt
 		rows := make([]string, 0, len(snap.CallEdges))
 		for _, e := range snap.CallEdges {
 			label := fmt.Sprintf("▶ %s", formatEdgeLabel(e, false))
+			if query != "" && !strings.Contains(strings.ToLower(label), query) {
+				continue
+			}
 			rows = append(rows, truncateSingleLine(label, width))
 		}
 		sort.Strings(rows)
@@ -163,6 +195,75 @@ func (m Model) renderCodemapBody(view string, snap codemapSnapshot, scroll, widt
 	default:
 		return renderCodemapOverview(snap, width)
 	}
+}
+
+// nodeMatchesCodemapQuery is the substring-matcher used by every name-
+// based view filter. `query` is expected to already be lowercase + trim
+// (caller normalises once per render). Empty query matches everything
+// so the call site can skip the conditional altogether — keeps the
+// hot loop branchless on the no-search common path.
+func nodeMatchesCodemapQuery(n codemap.Node, query string) bool {
+	if query == "" {
+		return true
+	}
+	if strings.Contains(strings.ToLower(n.Name), query) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(n.Path), query) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(n.ID), query) {
+		return true
+	}
+	return false
+}
+
+// codemapHitsChip is a thin alias over searchHitsChip kept for the
+// existing test surface; new render sites should call searchHitsChip
+// directly.
+func codemapHitsChip(n int) string { return searchHitsChip(n) }
+
+// countCodemapHits walks the current view and returns how many rows
+// survive the query filter. Cycles + Callers/Callees are matched on
+// the formatted label so the user sees the same row count rendered
+// as the count chip claims. Visual + Overview don't participate in
+// search (the visual call graph has its own cursor; overview is a
+// summary).
+func countCodemapHits(view string, snap codemapSnapshot, query string) int {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return 0
+	}
+	hit := 0
+	switch view {
+	case codemapViewHotspots:
+		for _, n := range snap.Hotspots {
+			if nodeMatchesCodemapQuery(n, query) {
+				hit++
+			}
+		}
+	case codemapViewOrphans:
+		for _, n := range snap.Orphans {
+			if nodeMatchesCodemapQuery(n, query) {
+				hit++
+			}
+		}
+	case codemapViewCycles:
+		for i, c := range snap.Cycles {
+			label := fmt.Sprintf("%2d. %s", i+1, strings.Join(c, " → "))
+			if strings.Contains(strings.ToLower(label), query) {
+				hit++
+			}
+		}
+	case codemapViewCallers, codemapViewCallees:
+		for _, e := range snap.CallEdges {
+			label := formatEdgeLabel(e, view == codemapViewCallers)
+			if strings.Contains(strings.ToLower(label), query) {
+				hit++
+			}
+		}
+	}
+	return hit
 }
 
 func (m Model) renderVisualCallGraph(snap codemapSnapshot, scroll, width int) []string {

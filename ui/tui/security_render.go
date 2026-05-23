@@ -117,6 +117,11 @@ func (m Model) securityTopBanner(width int, viewLabel string) string {
 	return title + strings.Repeat(" ", gap) + chip
 }
 
+// securityHitsChip is a thin alias over searchHitsChip; the shared
+// implementation in panel_search_input.go keeps every panel's chip
+// identical.
+func securityHitsChip(n int) string { return searchHitsChip(n) }
+
 func (m Model) renderSecurityView(width int) string {
 	return m.renderSecurityViewSized(width, 24)
 }
@@ -139,10 +144,23 @@ func (m Model) renderSecurityViewInnerSized(width, height int) string {
 	banner := m.securityTopBanner(width, viewLabel)
 
 	affordance := subtleStyle.Render(
-		"ctrl+f search · ctrl+r rescan · enter action menu · ctrl+g/G top/bottom",
+		"j/k scroll · g/G top/bottom · v toggle view · / search · c clear · r rescan · i ignore · f open in chat · enter action menu",
 	)
 
-	lines := []string{banner, affordance}
+	lines := []string{banner}
+	query := strings.TrimSpace(m.security.query)
+	hits := m.securityViewTotal()
+	switch {
+	case m.security.searchActive:
+		lines = append(lines,
+			renderSearchInput(query, "type to filter findings…"),
+			searchTypingHint()+subtleStyle.Render("  ·  ")+securityHitsChip(hits),
+		)
+	case query != "":
+		lines = append(lines, subtleStyle.Render("filter ")+boldStyle.Render(query)+"  "+
+			securityHitsChip(hits)+subtleStyle.Render("  (press c to clear, / to edit)"))
+	}
+	lines = append(lines, affordance)
 
 	if m.security.err != "" {
 		lines = append(lines, "", warnStyle.Render("✗ error · "+m.security.err))
@@ -156,7 +174,7 @@ func (m Model) renderSecurityViewInnerSized(width, height int) string {
 		lines = append(lines, "",
 			subtleStyle.Render("No security scan run yet."),
 			subtleStyle.Render("DFMC's heuristic scanner walks the project for hard-coded secrets (AWS keys, GitHub tokens, private keys, ...) and common vulnerability patterns (SQL string concat, command injection, weak crypto, ...)."),
-			subtleStyle.Render("Press ctrl+r to scan, or run `dfmc security` from the CLI."))
+			subtleStyle.Render("Press r to scan, or run `dfmc security` from the CLI."))
 		return strings.Join(lines, "\n")
 	}
 

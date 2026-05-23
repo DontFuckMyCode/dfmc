@@ -122,6 +122,12 @@ func (m Model) handleChatErrMsg(msg chatErrMsg) (tea.Model, tea.Cmd) {
 	wasCancelled := m.chat.userCancelledStream || errors.Is(msg.err, context.Canceled)
 	m.chat.userCancelledStream = false
 	if wasCancelled {
+		// Mark the partial assistant line so the header surfaces a
+		// ⊘ chip; without this the row is indistinguishable from a
+		// clean completion at a glance.
+		if m.chat.streamIndex >= 0 && m.chat.streamIndex < len(m.chat.transcript) {
+			m.chat.transcript[m.chat.streamIndex].Cancelled = true
+		}
 		m.notice = "Turn cancelled (esc). Partial output kept in transcript; /retry reopens it."
 		m = m.appendSystemMessage("◦ Turn cancelled by user — partial assistant output above, if any, is what arrived before the cancel took effect.")
 		if len(m.chat.pendingQueue) > 0 {

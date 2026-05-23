@@ -38,6 +38,9 @@ var (
 	colorInfo        = theme.ColorInfo
 	colorTabActiveBg = theme.ColorTabActiveBg
 	colorTabTelegram = theme.ColorTabTelegram
+
+	colorRowCursorBg       = theme.ColorRowCursorBg
+	colorRowMarkedDeleteBg = theme.ColorRowMarkedDeleteBg
 )
 
 var (
@@ -88,7 +91,6 @@ func renderInlineToolChipsSummary(chips []toolChip, width int) string {
 	return theme.RenderInlineToolChipsSummary(chips, width)
 }
 func spinnerFrame(frame int) string                     { return theme.SpinnerFrame(frame) }
-func roleBadge(role string) string                      { return theme.RoleBadge(role) }
 func renderMessageHeader(info messageHeaderInfo) string { return theme.RenderMessageHeader(info) }
 func renderMessageBubble(role, content, header string, width int) string {
 	return theme.RenderMessageBubble(role, content, header, width)

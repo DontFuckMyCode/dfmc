@@ -125,7 +125,11 @@ func (m Model) renderPlansViewInnerSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	height = max(height, 8)
 	banner := m.plansTopBanner(width)
-	hint := subtleStyle.Render("↑↓ scroll · enter re-run · / search · esc back")
+	// Plans uses `e` (edit task) instead of `/` (search) because the
+	// query here is a SplitTask input, not a row filter. panelIdleHint
+	// would mis-claim `/ search` so we hand-roll the hint to match
+	// what the key handler actually accepts.
+	hint := subtleStyle.Render("↑↓ scroll · e edit task · enter re-run · c clear · → action menu")
 
 	queryLine := subtleStyle.Render("task ")
 	if strings.TrimSpace(m.plans.query) != "" {

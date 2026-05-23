@@ -65,7 +65,7 @@ func activitySelectedIndex(total, scroll int) int {
 
 func formatActivityLine(entry activityEntry, width int, selected bool) string {
 	ts := entry.At.Format("15:04:05")
-	icon := kindIcon(entry.Kind)
+	icon := activityEntryIcon(entry)
 	count := ""
 	if entry.Count > 1 {
 		count = subtleStyle.Render(fmt.Sprintf(" ×%d", entry.Count))

@@ -126,6 +126,8 @@ func (m Model) shortcutsChatComposerSection() []string {
 			{"PgUp/PgDn", "scroll transcript 8 lines"},
 			{"Shift+PgUp/Dn", "scroll transcript 3 lines"},
 			{"Shift+↑ / ↓", "scroll transcript 3 lines"},
+			{"Ctrl+Home/End", "jump to top / latest of transcript"},
+			{"Wheel", "mouse-wheel scroll (Shift+wheel: page step)"},
 		}},
 		{"Pickers", [][2]string{
 			{"@ or Ctrl+T", "open file mention picker"},
@@ -133,6 +135,14 @@ func (m Model) shortcutsChatComposerSection() []string {
 			{"Tab", "autocomplete (mention/slash/quick action)"},
 			{"Ctrl+P", "open slash command menu"},
 			{"Ctrl+G", "jump to Activity tab"},
+		}},
+		{"Yank / find (composer empty)", [][2]string{
+			{"Ctrl+Y", "copy last assistant response (OSC 52)"},
+			{"/history search", "scan transcript for a substring"},
+			{"/next /prev", "step between matched rows"},
+			{"/jump N", "scroll to assistant turn #N"},
+			{"/expand N|all", "open a collapsed long assistant turn"},
+			{"/toolshow N", "dump full tool event detail inline"},
 		}},
 	}
 	for _, g := range groups {

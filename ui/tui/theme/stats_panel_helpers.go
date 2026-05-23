@@ -57,22 +57,19 @@ func statsPanelStateLine(info StatsPanelInfo, width int) string {
 		style = FailStyle
 	}
 	left := style.Bold(true).Render(state)
-	right := statsPanelContextLabel(statsPanelContextUsed(info), info.MaxContext)
+	// The ctx number used to ride alongside the state badge here, but the
+	// BUDGET section's progress bar + `input n/max | free` row already
+	// carry the same digits twice — three copies of "1.6k/204.8k" inside
+	// one 38-col panel was the worst offender. The state line is now
+	// just state + optional msg count.
+	right := ""
 	if info.MessageCount > 0 {
-		right += fmt.Sprintf(" | %d msgs", info.MessageCount)
+		right = fmt.Sprintf("%d msgs", info.MessageCount)
 	}
-	return TruncateSingleLine(left+"  "+SubtleStyle.Render(right), width)
-}
-
-func statsPanelContextLabel(tokens, maxTokens int) string {
-	if maxTokens <= 0 {
-		return "ctx " + CompactTokens(tokens)
+	if right != "" {
+		return TruncateSingleLine(left+"  "+SubtleStyle.Render(right), width)
 	}
-	pct := 0
-	if tokens > 0 {
-		pct = int((int64(tokens) * 100) / int64(maxTokens))
-	}
-	return fmt.Sprintf("ctx %s/%s %d%%", CompactTokens(tokens), CompactTokens(maxTokens), pct)
+	return TruncateSingleLine(left, width)
 }
 
 func contextReasonContains(reasons []string, needle string) bool {
@@ -128,13 +125,13 @@ func statsPanelModeActionHint(mode StatsPanelMode) string {
 	case StatsPanelModeTodos:
 		return "/todos | /split task | /drive task"
 	case StatsPanelModeTasks:
-		return "/tasks tree | ctrl+y Plans | F5 Workflow"
+		return "/tasks tree | ctrl+y Plans | F4 Workflow"
 	case StatsPanelModeSubagents:
-		return "/subagents | F7 Activity | /drive active"
+		return "/subagents | F5 Activity | /drive active"
 	case StatsPanelModeProviders:
 		return "/model | /reload"
 	default:
-		return "alt+a/s/d/f/p switch | F7 Activity"
+		return "alt+a/s/d/f/p switch | F5 Activity"
 	}
 }
 

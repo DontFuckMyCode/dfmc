@@ -52,6 +52,20 @@ var (
 	// Misc one-off colours that previously lived as inline literals.
 	ColorInputForeground = lipgloss.Color("#E5F2FF")
 	ColorDisabledFg      = lipgloss.Color("#5A6A82")
+
+	// Dim red / green backgrounds used by the Patch panel's intra-line
+	// word-diff highlighter. Pure ColorFail / ColorOk would fight the
+	// foreground; these are darkened so the cell text stays legible.
+	ColorWordDiffRemoveBg = lipgloss.Color("#3A1F1F")
+	ColorWordDiffAddBg    = lipgloss.Color("#1F3A28")
+
+	// Row-emphasis backgrounds used by the Context Manager's multi-row
+	// list view: cursor row (dim grey) and marked-for-delete row
+	// (dim red). 256-colour palette indices because the manager runs
+	// on the legacy column-aligned printer that benefits from
+	// terminal-native ANSI codes — the rest of the TUI is truecolor.
+	ColorRowCursorBg       = lipgloss.Color("236")
+	ColorRowMarkedDeleteBg = lipgloss.Color("52")
 )
 
 // --- styles ---------------------------------------------------------------

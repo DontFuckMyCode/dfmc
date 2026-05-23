@@ -133,7 +133,11 @@ func (m Model) renderActionMenu(width int) string {
 		title = "ACTIONS"
 	}
 	header := titleStyle.Bold(true).Render("◇ " + title)
-	hint := subtleStyle.Render("↑↓ pick · enter run · esc close")
+	// Hint surfaces the [accel] direct-fire feature — the menu renders
+	// `[t]` next to "Cycle tier" but users wouldn't know pressing the
+	// bracketed key fires the action without this hint. handleActionMenuKey
+	// supports it; the affordance had been invisible.
+	hint := subtleStyle.Render("↑↓ pick · enter run · [letter] direct · esc close")
 
 	rows := []string{header, hint, renderDivider(innerWidth - 2), ""}
 	if len(m.actionMenu.actions) == 0 {

@@ -1,4 +1,4 @@
-// render_files.go — the F3 Files panel, rebuilt as a 3-pane explorer
+// render_files.go — the F2 Files panel, rebuilt as a 3-pane explorer
 // (file list | preview | metadata cards). Replaces the old 2-pane
 // implementation in render_panels.go's renderFilesViewSized.
 //
@@ -114,20 +114,26 @@ func (m Model) renderFilesListPane(width, height int, pal tabPaletteEntry) strin
 	lines := []string{
 		header,
 		subtleStyle.Render(strings.Repeat("─", width-2)),
-		"",
 	}
+	if m.filesView.searchActive {
+		lines = append(lines,
+			renderSearchInput(m.filesView.query, "type to filter by path…"),
+			searchTypingHint(),
+		)
+	}
+	lines = append(lines, "")
 	if filteredCount == 0 {
 		if len(m.filesView.entries) == 0 {
 			lines = append(lines,
 				"  "+warnStyle.Render("No indexed project files."),
 				"",
-				"  "+subtleStyle.Render("Press Ctrl+R to refresh, or run /analyze"),
+				"  "+subtleStyle.Render("Press r to refresh, or run /analyze"),
 			)
 		} else {
 			lines = append(lines,
-				"  "+warnStyle.Render("No files match filter."),
+				"  "+warnStyle.Render(fmt.Sprintf("No matches for %q in %d files.", m.filesView.query, len(m.filesView.entries))),
 				"",
-				"  "+subtleStyle.Render("Ctrl+Shift+C to clear"),
+				"  "+subtleStyle.Render("press c to clear, or / to edit the query"),
 			)
 		}
 	} else {

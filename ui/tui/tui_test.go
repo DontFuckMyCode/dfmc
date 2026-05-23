@@ -3978,11 +3978,18 @@ func TestStatsPanelContextBarUsesWindowTokens(t *testing.T) {
 		ContextMaxFiles:     8,
 	}, 24))
 
-	if !strings.Contains(panel, "ctx 88.5k/200k 44%") {
-		t.Fatalf("stats header should show live window usage, got:\n%s", panel)
+	// Phase B dedup: the state-line `ctx n/max %` suffix is gone — the
+	// BUDGET section's progress bar + `input n/max | free` row already
+	// carries the same digits twice in the same panel. The bar is the
+	// canonical source; assert it is present and the state line is lean.
+	if !strings.Contains(panel, "88.5k/200k (44%)") {
+		t.Fatalf("stats panel should show window usage via the BUDGET bar, got:\n%s", panel)
 	}
 	if !strings.Contains(panel, "evidence 42k/160k tok") || !strings.Contains(panel, "input 88.5k/200k") {
 		t.Fatalf("stats panel should keep code and window separate, got:\n%s", panel)
+	}
+	if strings.Contains(panel, "ctx 88.5k/200k 44%") {
+		t.Fatalf("state line should not duplicate the BUDGET bar, got:\n%s", panel)
 	}
 }
 
@@ -4155,7 +4162,7 @@ func TestRuntimeStripShowsRecoveryActionsWhenWorkIsBlocked(t *testing.T) {
 	})
 
 	view := m.renderChatView(180)
-	for _, want := range []string{"next:", "F7 Activity errors for details", "/retry after fixing the cause"} {
+	for _, want := range []string{"next:", "F5 Activity errors for details", "/retry after fixing the cause"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("runtime strip should surface recovery action %q, got:\n%s", want, view)
 		}

@@ -77,7 +77,7 @@ func RenderStarterPrompts(width int, configured bool) []string {
 	}
 	lines = append(lines,
 		"",
-		SubtleStyle.Render("  Tips: "+AccentStyle.Render("ctrl+x")+" send · "+AccentStyle.Render("enter")+" newline · "+AccentStyle.Render("@")+" file mention · "+AccentStyle.Render("/")+" commands · "+AccentStyle.Render("ctrl+p")+" palette · "+AccentStyle.Render("f1-f12 / alt+i/y/w/t/o")+" tabs"),
+		SubtleStyle.Render("  Tips: "+AccentStyle.Render("enter")+" send · "+AccentStyle.Render("alt+enter")+" newline · "+AccentStyle.Render("@")+" file mention · "+AccentStyle.Render("/")+" commands · "+AccentStyle.Render("ctrl+p")+" palette · "+AccentStyle.Render("f1-f12")+" tabs"),
 		SubtleStyle.Render("  Runtime: "+CodeStyle.Render("/model")+" changes model · "+AccentStyle.Render("alt+p")+" opens the compact status panel"),
 	)
 	return lines
@@ -89,7 +89,13 @@ func RenderStreamingIndicator(phase string, frame int) string {
 		phase = "drafting reply"
 	}
 	glyph := SpinnerFrame(frame)
-	return InfoStyle.Bold(true).Render(glyph+" "+phase) + " " + SubtleStyle.Render("· esc cancels · tokens stream live")
+	// `esc cancels` was a lie — esc dismisses overlay states
+	// (resume prompt, mention picker, next-actions strip) but does
+	// NOT cancel the active stream. The cancel key is ctrl+c (and
+	// ctrl+q) per handleChatControlShortcut. The streaming hint
+	// must name the real key so users in a runaway response don't
+	// keep mashing esc and watching nothing happen.
+	return InfoStyle.Bold(true).Render(glyph+" "+phase) + " " + SubtleStyle.Render("· ctrl+c cancels · tokens stream live")
 }
 
 func RenderResumeBanner(step, maxSteps, width int) string {
@@ -103,7 +109,7 @@ func RenderResumeBanner(step, maxSteps, width int) string {
 	} else if step > 0 {
 		progress = SubtleStyle.Render(fmt.Sprintf(" at step %d", step))
 	}
-	hint := SubtleStyle.Render("  ctrl+x resumes") + SubtleStyle.Render(" · ") +
+	hint := SubtleStyle.Render("  enter resumes") + SubtleStyle.Render(" · ") +
 		SubtleStyle.Render("esc dismisses") + SubtleStyle.Render(" · ") +
 		SubtleStyle.Render("type a note first to steer /continue")
 	head := TruncateSingleLine(title+progress, width)

@@ -178,6 +178,33 @@ func kindIcon(kind activityKind) string {
 	}
 }
 
+// activityEntryIcon refines kindIcon with running/done state inferred
+// from the EventID. Tool rows distinguish three states:
+//
+//   tool:call  → ⟳ accent  (running, draws the eye to in-flight work)
+//   tool:done  → ✓ ok      (completed cleanly)
+//   tool:error → ✗ fail    (failed; redundant with Kind=error but kept
+//                           for tool-kind error rows that get classified
+//                           as Kind=tool because of how recordActivityEvent
+//                           orders the rules)
+//
+// Falls back to kindIcon for everything else (agent / stream / ctx /
+// index / generic info). Splitting the dispatcher means kindIcon stays
+// purely kind-based for callers that don't carry an entry — tests
+// and the legacy renderActivityLine path still work unchanged.
+func activityEntryIcon(entry activityEntry) string {
+	eid := strings.ToLower(strings.TrimSpace(entry.EventID))
+	switch {
+	case eid == "tool:call" || strings.HasPrefix(eid, "tool:call:"):
+		return accentStyle.Bold(true).Render("⟳")
+	case eid == "tool:done" || strings.HasPrefix(eid, "tool:done") || strings.HasPrefix(eid, "tool:complete"):
+		return okStyle.Render("✓")
+	case eid == "tool:error" || eid == "tool:fail" || eid == "tool:denied" || eid == "tool:timeout":
+		return failStyle.Render("✗")
+	}
+	return kindIcon(entry.Kind)
+}
+
 func activityModeLabel(mode activityViewMode) string {
 	switch mode {
 	case activityViewTools:

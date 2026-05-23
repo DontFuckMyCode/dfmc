@@ -79,7 +79,30 @@ type chatState struct {
 	// back to. Cleared on /chat new because anchors are scoped to the
 	// active conversation.
 	pinnedAssistantTurns map[int]bool
+	// expandedAssistantTurns lifts the long-message collapse for a
+	// specific 1-based assistant turn. The renderer collapses any
+	// assistant body taller than chatCollapseThreshold to a head
+	// preview + "[+N hidden]" footer; /expand N opts a single turn
+	// back into the full render. Toggled via /expand and /collapse,
+	// reset on /chat new alongside pinnedAssistantTurns.
+	expandedAssistantTurns map[int]bool
+	// lastSearchQuery is the most recent /history search query. While
+	// non-empty, the transcript renderer paints every case-insensitive
+	// substring match with an accent background. Cleared by /history
+	// search (empty query) or any /clear. Per-line search state stays
+	// out of chatLine — recomputed each render so the data shape stays
+	// flat and the search command remains stateless.
+	lastSearchQuery string
 }
+
+// chatCollapseThreshold is the line count above which assistant
+// messages collapse to a head preview. The cap is on the rendered
+// markdown lines, not the raw byte count, so wide-tabled answers
+// trip it at roughly the right visual weight.
+const (
+	chatCollapseThreshold = 60
+	chatCollapseHeadLines = 8
+)
 
 // pasteBlock represents one multi-line paste operation.
 type pasteBlock struct {

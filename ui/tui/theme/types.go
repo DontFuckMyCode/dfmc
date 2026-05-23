@@ -83,6 +83,22 @@ type MessageHeaderInfo struct {
 	Streaming    bool
 	SpinnerFrame int
 	CopyIndex    int
+	// Provider/Model render as a subtle badge so scrollback shows which
+	// model produced each assistant turn. Empty values are skipped.
+	Provider string
+	Model    string
+	// Cancelled adds a ⊘ marker for turns aborted mid-stream.
+	Cancelled bool
+	// Done emits a subtle ✓ chip for assistant turns that finished
+	// cleanly (non-streaming, non-cancelled, non-empty body). Lets the
+	// user spot "this turn is sealed" at a glance instead of inferring
+	// from the absence of a spinner. Other roles ignore the flag — a
+	// user message is "done" by definition.
+	Done bool
+	// Now is the reference time for the "X ago" relative chip. Zero
+	// disables relative rendering (callers that don't care can leave it
+	// unset). Pulled in instead of time.Now() so tests stay deterministic.
+	Now time.Time
 }
 
 // --- chat header --------------------------------------------------------

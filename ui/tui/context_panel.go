@@ -72,7 +72,10 @@ func (m Model) renderContextView(width int) string {
 func (m Model) renderContextViewInner(width int) string {
 	width = clampInt(width, 24, 1000)
 	banner := m.contextTopBanner(width)
-	hint := subtleStyle.Render("↑↓ scroll · enter preview · / search · esc back")
+	// Context panel uses `e` (edit query) instead of `/` (search) — the
+	// query is a context-preview input, not a row filter. panelIdleHint
+	// would mis-claim `/ search` so we hand-roll the hint.
+	hint := subtleStyle.Render("↑↓ scroll · e edit query · enter preview · m manager · c clear · → action menu")
 
 	queryLine := subtleStyle.Render("query ")
 	if strings.TrimSpace(m.contextPanel.query) != "" {
@@ -161,7 +164,10 @@ func (m Model) renderContextViewSized(width, height int) string {
 	}
 
 	header := sectionHeader("CTX", "Context")
-	hint := subtleStyle.Render("↑↓ scroll · enter preview · / search · esc back")
+	// Context panel uses `e` (edit query) instead of `/` (search) — the
+	// query is a context-preview input, not a row filter. panelIdleHint
+	// would mis-claim `/ search` so we hand-roll the hint.
+	hint := subtleStyle.Render("↑↓ scroll · e edit query · enter preview · m manager · c clear · → action menu")
 	queryLine := subtleStyle.Render("query: ")
 	if strings.TrimSpace(m.contextPanel.query) != "" {
 		queryLine += m.contextPanel.query

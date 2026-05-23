@@ -23,6 +23,29 @@ func (m Model) availableTools() []string {
 	return tools
 }
 
+// visibleTools returns availableTools filtered by m.toolView.query
+// (case-insensitive substring match on name + description). Empty
+// query returns the full list. Used by the Tools panel renderer and
+// the cursor key handler so the registry filter feels live.
+func (m Model) visibleTools() []string {
+	tools := m.availableTools()
+	q := strings.ToLower(strings.TrimSpace(m.toolView.query))
+	if q == "" {
+		return tools
+	}
+	out := tools[:0:0]
+	for _, t := range tools {
+		if strings.Contains(strings.ToLower(t), q) {
+			out = append(out, t)
+			continue
+		}
+		if desc := m.toolDescription(t); desc != "" && strings.Contains(strings.ToLower(desc), q) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func (m Model) toolDescription(name string) string {
 	if m.eng == nil || m.eng.Tools == nil {
 		return ""

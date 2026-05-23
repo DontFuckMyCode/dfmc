@@ -5,7 +5,7 @@ package tui
 // strip: context budget breakdown (budget row), per-turn and session
 // token/cost (tokens row), recent timeline excerpts (activity row),
 // and contextual hint chips like "/continue", "approve or deny", or
-// "F7 Activity errors for details" (next row). Companion siblings:
+// "F5 Activity errors for details" (next row). Companion siblings:
 //
 //   - runtime_strip.go       renderRuntimeStrip dispatcher + Top
 //                            and Now row builders
@@ -183,12 +183,12 @@ func runtimeStripActionParts(vm runtimeViewModel) []string {
 	case vm.QueuedCount > 0:
 		add("/queue to inspect pending prompts")
 	case strings.Contains(status, "stalled") || strings.Contains(status, "error") || strings.Contains(status, "failed"):
-		add("F7 Activity errors for details")
+		add("F5 Activity errors for details")
 		add("/retry after fixing the cause")
 	case strings.Contains(status, "throttled") || strings.Contains(status, "rate limit"):
 		add("wait for retry or switch provider")
 	case vm.DriveBlocked > 0:
-		add("F5 Workflow to unblock TODOs")
+		add("F4 Workflow to unblock TODOs")
 	case vm.Dirty || vm.Inserted > 0 || vm.Deleted > 0:
 		add("/diff to inspect workspace changes")
 	}

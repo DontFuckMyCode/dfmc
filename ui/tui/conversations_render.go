@@ -109,15 +109,15 @@ func (m Model) renderConversationsViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	height = max(height, 8)
 	banner := m.conversationsTopBanner(width)
-	hint := subtleStyle.Render("↑↓ scroll · enter preview · / search · esc back")
+	hint := panelIdleHint("preview")
+	query := strings.TrimSpace(m.conversations.query)
 	queryLine := subtleStyle.Render("query ")
-	if strings.TrimSpace(m.conversations.query) != "" {
-		queryLine += boldStyle.Render(m.conversations.query)
+	if query != "" {
+		queryLine += boldStyle.Render(query)
+		hits := len(filteredConversations(m.conversations.entries, query))
+		queryLine += " " + conversationsHitsChip(hits)
 	} else {
 		queryLine += subtleStyle.Render("(none)")
-	}
-	if m.conversations.searchActive {
-		queryLine += subtleStyle.Render("  · typing, enter to commit")
 	}
 	if m.conversations.deepSearchActive {
 		// Deep-search results are server-side hits across message
@@ -125,7 +125,16 @@ func (m Model) renderConversationsViewSized(width, height int) string {
 		// count reflects matches, not the full list.
 		queryLine += "  " + accentStyle.Render("· deep-search active — c to drop and reload list")
 	}
-	lines := []string{banner, queryLine, hint, renderDivider(width - 2)}
+	lines := []string{banner, queryLine}
+	if m.conversations.searchActive {
+		// Live input box — same pattern as every other diagnostic panel.
+		// The hint changes to make Enter / Esc roles obvious; the
+		// existing commit-hint inside queryLine is replaced because
+		// the live box itself signals "typing in progress".
+		lines = append(lines, renderSearchInput(query, "type to filter…"))
+		hint = searchTypingHint()
+	}
+	lines = append(lines, hint, renderDivider(width-2))
 
 	if m.conversations.err != "" {
 		lines = append(lines, "", warnStyle.Render("error · "+m.conversations.err))
@@ -179,23 +188,17 @@ func (m Model) renderConversationsViewSized(width, height int) string {
 		lines = append(lines, "",
 			subtleStyle.Render("preview · "+selectedID+" · read-only"),
 		)
-		// Phase G item 3 — branch tree visualization. The store holds
-		// branches as flat siblings (map[name][]Message) so the "tree"
-		// is a list with the active branch highlighted. Only renders
-		// when there's more than one branch — single-branch is the
-		// default and would just add chrome.
-		if len(m.conversations.previewBranches) > 0 {
-			active := m.conversations.previewActiveBranch
-			lines = append(lines, subtleStyle.Render("branches:"))
-			for _, br := range m.conversations.previewBranches {
-				marker := " "
-				bodyStyle := subtleStyle
-				if br.Name == active {
-					marker = accentStyle.Render("●")
-					bodyStyle = accentStyle
-				}
-				lines = append(lines, "  "+marker+" "+bodyStyle.Render(fmt.Sprintf("%s (%d msgs)", br.Name, br.Messages)))
-			}
+		// Branch tree visualization. The store holds branches as flat
+		// siblings (map[name][]Message); we render a one-level "tree"
+		// with ├─/└─ glyphs and the active branch foregrounded so the
+		// fork structure is glanceable rather than a wall of bullets.
+		// Only renders when there's more than one branch — a single
+		// "main" branch is the default and chrome here is noise.
+		if len(m.conversations.previewBranches) > 1 {
+			lines = append(lines, renderBranchTree(
+				m.conversations.previewBranches,
+				m.conversations.previewActiveBranch,
+			)...)
 		}
 		lines = append(lines, formatConversationPreview(m.conversations.preview, width-2)...)
 	}
@@ -207,6 +210,44 @@ func (m Model) renderConversationsViewSized(width, height int) string {
 	out := strings.Join(lines, "\n")
 	if m.actionMenu.open && m.actionMenu.owner == "Conversations" {
 		out += "\n\n" + m.renderActionMenu(width)
+	}
+	return out
+}
+
+// conversationsHitsChip is a thin alias over searchHitsChip; the
+// shared implementation in panel_search_input.go keeps every panel's
+// chip identical.
+func conversationsHitsChip(n int) string { return searchHitsChip(n) }
+
+// renderBranchTree paints a one-level tree of conversation branches
+// rooted under a "branches:" header. Tree glyphs:
+//
+//   ├─  ordinary branch (not last in the list)
+//   └─  last branch in the list
+//   ●   active marker prefix on the active branch (left of the glyph)
+//
+// Active branch row uses accentStyle so the eye finds it without
+// having to read every name; the inactive rows render in subtleStyle.
+// Caller is responsible for the guard "only render when len > 1" —
+// this helper renders whatever it receives.
+func renderBranchTree(branches []conversationBranchSummary, active string) []string {
+	if len(branches) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(branches)+1)
+	out = append(out, subtleStyle.Render("branches:"))
+	for i, br := range branches {
+		glyph := "├─"
+		if i == len(branches)-1 {
+			glyph = "└─"
+		}
+		body := fmt.Sprintf("%s (%d msgs)", br.Name, br.Messages)
+		if br.Name == active {
+			out = append(out, "  "+accentStyle.Bold(true).Render("●")+" "+
+				subtleStyle.Render(glyph)+" "+accentStyle.Bold(true).Render(body))
+			continue
+		}
+		out = append(out, "    "+subtleStyle.Render(glyph)+" "+subtleStyle.Render(body))
 	}
 	return out
 }

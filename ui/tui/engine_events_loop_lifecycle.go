@@ -99,5 +99,5 @@ func (m Model) handleAgentLoopParked(payload map[string]any) (Model, string) {
 	if payloadString(payload, "reason", "") == "budget_exhausted" {
 		return m, ""
 	}
-	return m, fmt.Sprintf("Agent loop parked at step %d/%d - press Ctrl+X to resume, Esc to dismiss.", step, maxSteps)
+	return m, fmt.Sprintf("Agent loop parked at step %d/%d - press Enter to resume, Esc to dismiss.", step, maxSteps)
 }

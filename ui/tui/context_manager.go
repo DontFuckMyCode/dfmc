@@ -279,9 +279,9 @@ func (m Model) renderContextManagerView(width, height int) string {
 		)
 		if i == mgr.cursor {
 			rowStr = accentStyle.Bold(true).Render("> ") + rowStr[2:]
-			rowStr = lipgloss.NewStyle().Background(lipgloss.Color("236")).Render(rowStr)
+			rowStr = lipgloss.NewStyle().Background(colorRowCursorBg).Render(rowStr)
 		} else if mgr.marked[i] {
-			rowStr = lipgloss.NewStyle().Background(lipgloss.Color("52")).Render(rowStr)
+			rowStr = lipgloss.NewStyle().Background(colorRowMarkedDeleteBg).Render(rowStr)
 		}
 		lines = append(lines, rowStr)
 	}

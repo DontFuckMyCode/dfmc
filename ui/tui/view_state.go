@@ -36,27 +36,35 @@ type patchViewState struct {
 // filesViewState — Files tab state. `entries` is the directory listing,
 // `index` the cursor row, `pinned` a sticky selection that survives
 // re-loads, and `path/preview/size` the currently shown file.
-// `query`/`searchActive` implement the Ctrl+S filter mode.
+// `query`/`searchActive` implement the `/` filter mode, mirroring the
+// pattern every other diagnostic panel uses: `/` opens a live input
+// box, runes mutate the query, Enter commits, Esc stops; `c` clears
+// the filter outside search mode.
 type filesViewState struct {
-	entries []string
-	index   int
-	pinned  string
-	preview string
-	path    string
-	size    int
-	query   string
+	entries      []string
+	index        int
+	pinned       string
+	preview      string
+	path         string
+	size         int
+	query        string
+	searchActive bool
 }
 
 // toolViewState — Tools tab cursor position, scroll offset for the
 // registry list, current output for the selected tool, and the in-place
 // editor (editing flag, draft buffer, per-key overrides) used to tweak
-// parameters before re-running.
+// parameters before re-running. `query`/`searchActive` implement the
+// `/` filter mode for the tool registry — same shape as Files / Memory
+// / CodeMap. `c` clears the filter outside search mode.
 type toolViewState struct {
-	index     int
-	output    string
-	editing   bool
-	draft     string
-	overrides map[string]string
+	index        int
+	output       string
+	editing      bool
+	draft        string
+	overrides    map[string]string
+	query        string
+	searchActive bool
 }
 
 // workflowPanelState — Drive TODO tree panel state for the Workflow tab.

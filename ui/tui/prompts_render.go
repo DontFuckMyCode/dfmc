@@ -155,17 +155,22 @@ func (m Model) renderPromptsViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	height = max(height, 8)
 	banner := m.promptsTopBanner(width)
-	hint := subtleStyle.Render("↑↓ scroll · enter preview · / search · esc back")
+	hint := panelIdleHint("preview")
+	query := strings.TrimSpace(m.prompts.query)
 	queryLine := subtleStyle.Render("query ")
-	if strings.TrimSpace(m.prompts.query) != "" {
-		queryLine += boldStyle.Render(m.prompts.query)
+	if query != "" {
+		queryLine += boldStyle.Render(query)
+		hits := len(filteredPrompts(m.prompts.templates, query))
+		queryLine += " " + promptsHitsChip(hits)
 	} else {
 		queryLine += subtleStyle.Render("(none)")
 	}
+	lines := []string{banner, queryLine}
 	if m.prompts.searchActive {
-		queryLine += subtleStyle.Render("  · typing, enter to commit")
+		lines = append(lines, renderSearchInput(query, "type to filter prompts…"))
+		hint = searchTypingHint()
 	}
-	lines := []string{banner, queryLine, hint, renderDivider(width - 2)}
+	lines = append(lines, hint, renderDivider(width-2))
 
 	if m.prompts.err != "" {
 		lines = append(lines, "", warnStyle.Render("error · "+m.prompts.err))
@@ -225,6 +230,11 @@ func (m Model) renderPromptsViewSized(width, height int) string {
 	}
 	return out
 }
+
+// promptsHitsChip is a thin alias over searchHitsChip; the shared
+// implementation in panel_search_input.go keeps every panel's chip
+// identical.
+func promptsHitsChip(n int) string { return searchHitsChip(n) }
 
 // promptsTopBanner — title + count chip + state chip.
 func (m Model) promptsTopBanner(width int) string {

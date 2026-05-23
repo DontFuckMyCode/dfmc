@@ -25,7 +25,14 @@ func renderRuntimeStrip(vm runtimeViewModel, width int, slim bool) []string {
 	}
 	rows := []string{
 		truncateSingleLine(strings.Join(runtimeStripTopParts(vm), subtleStyle.Render("  |  ")), width),
-		truncateSingleLine(strings.Join(runtimeStripNowParts(vm), subtleStyle.Render("  |  ")), width),
+	}
+	// Skip the `now:` row when its only content would be the idle
+	// "ready for input" fallback — the state badge on the Top row above
+	// already conveys the same idle state. The row reappears the moment
+	// there's anything substantive to say (workflow status, agent step,
+	// streaming, queued, errors, ...).
+	if nowParts := runtimeStripNowParts(vm); !runtimeStripNowIsIdleOnly(vm, nowParts) {
+		rows = append(rows, truncateSingleLine(strings.Join(nowParts, subtleStyle.Render("  |  ")), width))
 	}
 	if !slim {
 		if runtime := runtimeStripUnifiedRuntimeParts(vm); len(runtime) > 0 {
@@ -94,6 +101,22 @@ func runtimeStripTopParts(vm runtimeViewModel) []string {
 		parts = append(parts, subtleStyle.Render("pinned: "+fileMarker(pinned)))
 	}
 	return parts
+}
+
+// runtimeStripNowIsIdleOnly reports whether the `now:` parts collapse
+// to nothing but the static "ready for input" fallback. Used to skip
+// the row entirely on idle so the Top row's state badge isn't echoed.
+func runtimeStripNowIsIdleOnly(vm runtimeViewModel, parts []string) bool {
+	if len(parts) != 1 {
+		return false
+	}
+	if strings.TrimSpace(vm.WorkflowStatus) != "" {
+		return false
+	}
+	if vm.ApprovalPending || vm.Streaming || vm.AgentActive || vm.Parked {
+		return false
+	}
+	return true
 }
 
 func runtimeStripNowParts(vm runtimeViewModel) []string {

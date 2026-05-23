@@ -131,6 +131,15 @@ type chatLine struct {
 	Timestamp     time.Time
 	TokenCount    int
 	DurationMs    int
+	// Provider/Model are captured at the moment the line starts streaming
+	// so the header badge stays correct even after the user switches
+	// providers mid-session. Empty for non-assistant rows.
+	Provider string
+	Model    string
+	// Cancelled marks an assistant line whose stream was aborted by the
+	// user (Esc). The header renders a ⊘ marker so scrollback makes clear
+	// the turn is partial, not silently truncated.
+	Cancelled bool
 }
 
 type patchSection struct {

@@ -147,15 +147,14 @@ func statsPanelDriveSummary(info StatsPanelInfo) string {
 func statsPanelBudgetRows(info StatsPanelInfo) []string {
 	payload := ContextPayloadFromStats(info)
 	rows := []string{RenderContextBarFrame(payload.WindowTokens, payload.MaxContext, 12, info.SpinnerFrame)}
-	if identity := payload.Identity(); identity != "" {
-		rows = append(rows, InfoStyle.Render("request: "+identity))
-	}
-	if payload.LimitSource != "" {
-		limit := payload.LimitSource
-		if payload.MaxContext > 0 {
-			limit += " | window " + CompactTokens(payload.MaxContext)
-		}
-		rows = append(rows, SubtleStyle.Render("limit "+limit))
+	// Provider/model identity already lives in the ACTIVE section above.
+	// BUDGET only carries the limit source kind + window, so the model name
+	// isn't echoed three times within one panel.
+	// The MaxContext value is already shown by the bar (above) and the
+	// `input n/max | free` row (below); the limit row carries only the
+	// source attribution so the user can see where the cap came from.
+	if src := trimLimitSourceIdentity(payload.LimitSource, payload.Model); src != "" {
+		rows = append(rows, SubtleStyle.Render("limit "+src))
 	}
 	if payload.WindowTokens > 0 {
 		line := "input " + CompactTokens(payload.WindowTokens)
@@ -199,6 +198,28 @@ func statsPanelBudgetRows(info StatsPanelInfo) []string {
 	}
 	rows = append(rows, SubtleStyle.Render("/context for full budget"))
 	return firstNNonEmpty(rows, 8)
+}
+
+// trimLimitSourceIdentity strips a trailing `<catalog>/<model>` (or bare
+// `<model>`) token from a LimitSource string when it merely echoes the
+// model already named by the ACTIVE section. Multi-segment drift forms
+// like "runtime 200k; models.dev 128k" are kept verbatim — those carry
+// information the identity row cannot.
+func trimLimitSourceIdentity(src, model string) string {
+	src = strings.TrimSpace(src)
+	model = strings.TrimSpace(model)
+	if src == "" || model == "" {
+		return src
+	}
+	idx := strings.LastIndex(src, " ")
+	if idx < 0 {
+		return src
+	}
+	tail := src[idx+1:]
+	if tail == model || strings.HasSuffix(tail, "/"+model) {
+		return strings.TrimSpace(src[:idx])
+	}
+	return src
 }
 
 func statsPanelReserveSummary(payload ContextPayloadSnapshot) string {

@@ -1,4 +1,4 @@
-// status_keys.go — keyboard surface for the rebuilt F2 Status panel.
+// status_keys.go — keyboard surface for the rebuilt F9 Status panel.
 //
 // Arrow keys (and h/j/k/l) move the card selection. Enter activates
 // the selected card by jumping to the related detail tab. r refreshes

@@ -1,5 +1,5 @@
-// render_activity_v2.go — F7 Activity panel, wrapped in the same
-// banner-and-divider shell as F2-F6 so the tab reads visually
+// render_activity_v2.go — F5 Activity panel, wrapped in the same
+// banner-and-divider shell as the other panel-card tabs so the layout reads visually
 // consistent. The legacy renderActivityViewSized in activity_render.go
 // supplies the timeline + inspector blocks; this file adds:
 //
@@ -36,25 +36,35 @@ func (m Model) renderActivityViewV2(width, height int) string {
 	banner := m.activityTopBanner(width, len(m.activity.entries), len(filtered))
 	statsLine := activityStatsLine(allCounts, len(m.activity.entries), len(filtered))
 
-	hint := "↑↓ move · pgup/pgdn page · enter open · / search · esc back"
+	hint := subtleStyle.Render("↑↓ move · pgup/pgdown page · enter open · / search")
 	if m.activity.searchActive {
-		hint = "typing search · enter commit · esc stop · backspace delete"
+		hint = searchTypingHint()
 	}
 
 	queryLine := subtleStyle.Render("view ") +
 		accentStyle.Render(activityModeLabel(mode)) +
 		subtleStyle.Render(" ["+activityModeShortcut(mode)+"]")
 	if query != "" {
+		hits := countActivityQueryHits(m.activity.entries, query)
 		queryLine += subtleStyle.Render(" · query ") + boldStyle.Render(query)
+		queryLine += " " + activityHitsChip(hits)
 	}
 
 	lines := []string{
 		banner,
 		statsLine,
 		queryLine,
-		subtleStyle.Render(hint),
-		renderDivider(width - 2),
 	}
+	if m.activity.searchActive {
+		// Live search box: same affordance as every diagnostic panel.
+		// Without the visible buffer the search felt blind — the only
+		// confirmation was watching rows disappear after enter.
+		lines = append(lines, renderSearchInput(query, "type to filter…"))
+	}
+	lines = append(lines,
+		hint,
+		renderDivider(width-2),
+	)
 
 	if len(m.activity.entries) == 0 {
 		lines = append(lines,
@@ -132,6 +142,33 @@ func (m Model) activityTopBanner(width, total, shown int) string {
 	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipStrip)-4, 1)
 	return title + strings.Repeat(" ", gap) + chipStrip
 }
+
+// countActivityQueryHits is the live "N matches" surface for the
+// query line. We deliberately count from m.activity.entries (the
+// unfiltered list) rather than the mode-filtered subset so the user
+// sees the total reach of their substring across every event in
+// memory, then narrows further with the view filter. The filtered
+// list IS what the timeline shows — those two numbers may differ
+// when a mode filter is active, which is fine: shown/total in the
+// banner already covers the after-filter count.
+func countActivityQueryHits(entries []activityEntry, query string) int {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if activityMatchesQuery(e, query) {
+			n++
+		}
+	}
+	return n
+}
+
+// activityHitsChip is a thin alias over searchHitsChip; the shared
+// implementation in panel_search_input.go keeps every panel's chip
+// identical.
+func activityHitsChip(n int) string { return searchHitsChip(n) }
 
 // activityStatsLine — coloured count breakdown (tool/agent/err/ctx).
 func activityStatsLine(counts map[activityKind]int, total, shown int) string {

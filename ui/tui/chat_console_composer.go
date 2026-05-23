@@ -50,9 +50,15 @@ func (m Model) renderTimelineComposer(width int) []string {
 	lines = append(lines, sectionHeader("›", "Input"))
 	lines = append(lines, renderInputBox(inputLine, max(width-2, 20)))
 	// Persistent composer hint: essential shortcuts only.
-	// Full help available via ctrl+h or /help.
+	// Full help available via ctrl+h or /help. The help-overlay
+	// chat hint (render_panels_help.go) already mentioned `@ mention`
+	// but the persistent hint omitted it — adding it here so the
+	// affordance is reachable from the always-on surface. Dropped
+	// the `ctrl+h help` chip to keep the line under the narrow-width
+	// budget the scroll tests enforce (≤70 chars including indent);
+	// help is still reachable via /help or ctrl+h globally.
 	hintRows := []string{
-		"  enter send · alt+enter newline · / commands · ctrl+h help",
+		"  enter send · alt+enter newline · / commands · @ mention",
 	}
 	// Phase E item 2 — live budget meter pinned at the composer footer
 	// so the user can read context pressure while typing without
@@ -289,15 +295,13 @@ func composerBudgetSegment(m Model) string {
 	if tokens > 0 {
 		pct = (tokens * 100) / maxCtx
 	}
+	// renderContextBar already embeds `used/max (%)`; no second copy.
 	bar := renderContextBar(tokens, maxCtx, 12)
-	chip := fmt.Sprintf("%s %s/%s · %d%%",
-		bar,
-		compactMetric(tokens), compactMetric(maxCtx), pct)
 	if pct >= 90 {
-		return failStyle.Render("ctx ") + warnStyle.Render(chip) + failStyle.Render(" · pressure HIGH — /compact / /context drop")
+		return failStyle.Render("ctx ") + bar + failStyle.Render(" · pressure HIGH — /compact / /context drop")
 	}
 	if pct >= 70 {
-		return warnStyle.Render("ctx ") + chip + warnStyle.Render(" · /compact when ready")
+		return warnStyle.Render("ctx ") + bar + warnStyle.Render(" · /compact when ready")
 	}
-	return subtleStyle.Render("ctx ") + chip
+	return subtleStyle.Render("ctx ") + bar
 }

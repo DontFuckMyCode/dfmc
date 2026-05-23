@@ -162,15 +162,11 @@ func (m Model) View() string {
 	pal := paletteForTab(tabName, planMode)
 	strip := renderTopTabStrip(m.tabs, m.activeTab, planMode, width)
 
-	modelLabel := strings.TrimSpace(m.status.Model)
 	projLabel := ""
 	if root := m.projectRoot(); root != "" {
 		projLabel = filepath.Base(root)
 	}
 	parts := []string{"DFMC WORKBENCH · " + tabName}
-	if modelLabel != "" {
-		parts = append(parts, modelLabel)
-	}
 	if projLabel != "" {
 		parts = append(parts, projLabel)
 	}

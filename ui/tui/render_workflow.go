@@ -101,11 +101,28 @@ func (m Model) renderWorkflowTreeRows(run *drive.Run, width int) []string {
 		if tagStr != "" {
 			line += "  " + tagStr
 		}
-		if visible == m.workflow.scrollY {
-			line = accentStyle.Bold(true).Render("> ") + line
-		} else {
-			line = "  " + line
+		// Two orthogonal signals collide on each row: which TODO is
+		// running (LIVE chip + accent title) and which the cursor is
+		// on. The old "> "-vs-"  " prefix lost out to the LIVE chip
+		// when both fired at once, leaving the user unsure which
+		// row their next keystroke would land on. Marker rules:
+		//   ● running (highest priority — shows even when not selected)
+		//   ▶ selected non-running cursor
+		//   · selected AND running (cursor on the live row)
+		//     space  everyone else
+		// Markers carry their own colour so the LIVE chip and the
+		// selection cursor never wash each other out.
+		selected := visible == m.workflow.scrollY
+		marker := "  "
+		switch {
+		case selected && isRunning:
+			marker = accentStyle.Bold(true).Render("●·")
+		case isRunning:
+			marker = accentStyle.Bold(true).Render("● ")
+		case selected:
+			marker = accentStyle.Bold(true).Render("▶ ")
 		}
+		line = marker + line
 		rows = append(rows, line)
 		visible++
 		if expanded {

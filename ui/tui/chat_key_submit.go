@@ -54,7 +54,7 @@ func (m Model) submitChatComposer(suggestions chatSuggestionState) (tea.Model, t
 	}
 	if raw == "" {
 		if len(m.chat.input) > 0 {
-			m.notice = "input is whitespace-only - type a message or press Esc to clear"
+			m.notice = "input is whitespace-only - type a message, or ctrl+u to clear it"
 		}
 		return m, nil
 	}

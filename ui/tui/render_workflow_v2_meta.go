@@ -50,6 +50,11 @@ func (m Model) workflowMetaCards() []panelCard {
 			}
 		}
 		chipStyle := chipStyleForRun(run.Status)
+		total := len(run.Todos)
+		progressRow := panelCardRow{
+			Key:   "Progress",
+			Value: renderRunProgressChip(done, total),
+		}
 		cards = append(cards, panelCard{
 			Icon:            "⚡",
 			Title:           "Run",
@@ -57,7 +62,8 @@ func (m Model) workflowMetaCards() []panelCard {
 			StatusChipStyle: &chipStyle,
 			Rows: []panelCardRow{
 				{Key: "ID", Value: truncateForLine(run.ID, 24)},
-				{Key: "TODOs", Value: fmt.Sprintf("%d total", len(run.Todos))},
+				progressRow,
+				{Key: "TODOs", Value: fmt.Sprintf("%d total", total)},
 				{Key: "Done", Value: fmt.Sprintf("%d", done)},
 				{Key: "Running", Value: fmt.Sprintf("%d", running)},
 				{Key: "Pending", Value: fmt.Sprintf("%d", pending)},
@@ -113,6 +119,50 @@ func (m Model) workflowMetaCards() []panelCard {
 	return cards
 }
 
+// renderRunProgressChip is the glanceable "X/Y · Z% [bar]" surface
+// rendered in the RUN card's Progress row and inlined into the
+// narrow-mode footer strip. The bar is 10 cells wide so even at 80
+// columns it fits without truncation; we deliberately don't scale
+// with available width because a wider gauge would crowd the chip
+// with sibling card rows.
+//
+// Edge cases:
+//   total == 0           → "no todos" subtle (avoids div-by-zero AND
+//                          the meaningless "0/0 · 0%" surface)
+//   done == total > 0    → "X/X · 100% ✓" with a fully-filled bar so
+//                          completed runs read as Done at a glance
+func renderRunProgressChip(done, total int) string {
+	if total <= 0 {
+		return subtleStyle.Render("no todos")
+	}
+	pct := done * 100 / total
+	bar := renderProgressBar(done, total, 10)
+	suffix := ""
+	if done == total {
+		suffix = " " + okStyle.Render("✓")
+	}
+	return fmt.Sprintf("%d/%d · %s · %s%s", done, total, bar, accentStyle.Render(fmt.Sprintf("%d%%", pct)), suffix)
+}
+
+// renderProgressBar prints a `[████░░░░░░]` style horizontal gauge
+// where `cells` is the total slot count. Filled cells use okStyle
+// foreground; empty cells use subtle. Cap the fill at `cells` so a
+// runaway counter doesn't render past the bar's edge.
+func renderProgressBar(done, total, cells int) string {
+	if total <= 0 || cells <= 0 {
+		return ""
+	}
+	filled := done * cells / total
+	if filled > cells {
+		filled = cells
+	}
+	if filled < 0 {
+		filled = 0
+	}
+	return okStyle.Render(strings.Repeat("█", filled)) +
+		subtleStyle.Render(strings.Repeat("░", cells-filled))
+}
+
 func (m Model) renderWorkflowMetaInline(width int) string {
 	_ = width
 	run := m.selectedRunForWorkflow()
@@ -127,7 +177,7 @@ func (m Model) renderWorkflowMetaInline(width int) string {
 		}
 		parts = append(parts,
 			renderRunStatusChip(run.Status),
-			doneStyle.Render(fmt.Sprintf("%d done", done)),
+			renderRunProgressChip(done, len(run.Todos)),
 			runningStyle.Render(fmt.Sprintf("%d running", running)),
 			pendingStyle.Render(fmt.Sprintf("%d pending", pending)),
 			blockedStyle.Render(fmt.Sprintf("%d blocked", blocked)),

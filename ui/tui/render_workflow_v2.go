@@ -1,4 +1,4 @@
-// render_workflow_v2.go — F5 Workflow panel, rebuilt with the same
+// render_workflow_v2.go — F4 Workflow panel, rebuilt with the same
 // 3-pane card-driven shell as F2/F3/F4 (status banner + RUNS · TREE ·
 // METADATA columns). The keyboard surface, routing editor, and tree
 // walker stay in render_workflow.go; this file owns rendering only.
@@ -28,7 +28,7 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/drive"
 )
 
-// renderWorkflowViewV2 is the rebuilt F5 Workflow panel. The original
+// renderWorkflowViewV2 is the rebuilt F4 Workflow panel. The original
 // renderWorkflowView in render_workflow.go now delegates here.
 func (m Model) renderWorkflowViewV2(width int) string {
 	return m.renderWorkflowViewV2Sized(width, 24)

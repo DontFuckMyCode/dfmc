@@ -14,6 +14,7 @@ package tui
 
 import (
 	"sort"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -199,6 +200,9 @@ func (m Model) openCodemapActionMenu() Model {
 }
 
 func (m Model) handleCodemapKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.codemap.searchActive {
+		return m.handleCodemapSearchKey(msg)
+	}
 	if nm, cmd, handled := m.handleActionMenuKey(msg); handled {
 		return nm, cmd
 	}
@@ -272,12 +276,48 @@ func (m Model) handleCodemapKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.codemap.scroll = total - 1
 		}
 	case "v":
+		// Switching views clears the active query because most filter
+		// targets don't generalise across views (a "Server" hotspot
+		// search means nothing under the cycles view).
 		m.codemap.view = nextCodemapView(m.codemap.view)
 		m.codemap.scroll = 0
+		m.codemap.query = ""
 	case "r":
 		m.codemap.loading = true
 		m.codemap.err = ""
 		return m, loadCodemapCmd(m.eng)
+	case "/":
+		m.codemap.searchActive = true
+	case "c":
+		// Clear the active query so the next paint surfaces every row
+		// of the current view again. No-op when nothing is buffered.
+		if strings.TrimSpace(m.codemap.query) != "" {
+			m.codemap.query = ""
+			m.codemap.scroll = 0
+		}
+	}
+	return m, nil
+}
+
+// handleCodemapSearchKey is the focused search-input handler: enter
+// commits and drops out, esc cancels and drops out, every other key
+// routes through applyInlineSearchTextKey so backspace + printable
+// runes mutate m.codemap.query inline. The query stays applied even
+// after commit (it's the filter), so all enter does is hand control
+// back to the regular scroll handler.
+func (m Model) handleCodemapSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.codemap.searchActive = false
+		m.codemap.scroll = 0
+		return m, nil
+	case tea.KeyEsc:
+		m.codemap.searchActive = false
+		return m, nil
+	default:
+		if query, ok := applyInlineSearchTextKey(m.codemap.query, msg); ok {
+			m.codemap.query = query
+		}
 	}
 	return m, nil
 }

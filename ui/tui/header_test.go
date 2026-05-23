@@ -330,7 +330,7 @@ func TestRenderStreamingIndicatorAnimatesFrames(t *testing.T) {
 
 func TestRenderResumeBannerMentionsKeysAndProgress(t *testing.T) {
 	out := renderResumeBanner(25, 25, 80)
-	for _, want := range []string{"parked", "25/25", "ctrl+x resumes", "esc dismisses"} {
+	for _, want := range []string{"parked", "25/25", "enter resumes", "esc dismisses"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("resume banner missing %q, got %q", want, out)
 		}
@@ -357,7 +357,7 @@ func TestParkedEventSetsResumePromptAndSendKeyResumes(t *testing.T) {
 
 	// Banner must render in the tail above the input.
 	view := m.renderChatView(160)
-	if !strings.Contains(view, "parked") || !strings.Contains(view, "ctrl+x resumes") {
+	if !strings.Contains(view, "parked") || !strings.Contains(view, "enter resumes") {
 		t.Fatalf("banner should surface above input while parked, got:\n%s", view)
 	}
 }

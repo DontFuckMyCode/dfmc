@@ -102,7 +102,7 @@ func tabFKeyHint(tab string) string {
 
 // renderTopTabStrip paints the new header — a single bright bar with:
 //
-//	DFMC ▌ Files  ─────  ◀ F2 Status   ◆ F3 FILES ◆   F4 Patch ▶  ─────  tab/⇥ cycles
+//	DFMC ▌ Files  ─────  ◀ F1 Chat   ◆ F2 FILES ◆   F3 Patch ▶  ─────  tab/⇥ cycles
 //
 // The active tab badge is filled with the palette accent; previous
 // and next tab names are dimmer with their F-key hints. Width-aware:

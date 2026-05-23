@@ -34,32 +34,16 @@ func (m Model) renderContextStrip(width int) string {
 
 	lines := []string{}
 	if trimmed := strings.TrimSpace(statsInput); trimmed != "" {
+		// CTX conversation describes the COMPOSER DRAFT only. Session
+		// window/left/budget numbers live on the `ctx` bar one row above
+		// and the right-panel BUDGET section — duplicating them here would
+		// repeat the same numbers three times in one viewport.
 		chars := len([]rune(trimmed))
 		tok := tokens.Estimate(trimmed)
-		budget := m.status.ProviderProfile.MaxContext
-		if budget <= 0 && m.status.ContextIn != nil {
-			budget = m.status.ContextIn.ProviderMaxContext
-		}
-		tokenLabel := fmt.Sprintf("~%d", tok)
-		if budget > 0 {
-			pct := int(float64(tok) / float64(budget) * 100)
-			tokenLabel = fmt.Sprintf("~%d (%d%% of %d)", tok, pct, budget)
-		}
 		parts := []string{
-			accentStyle.Render("CTX conversation"),
+			accentStyle.Render("CTX draft"),
 			subtleStyle.Render("chars:") + " " + boldStyle.Render(fmt.Sprintf("%d", chars)),
-			subtleStyle.Render("tokens:") + " " + boldStyle.Render(tokenLabel),
-		}
-		if live := m.liveContextSnapshot(); live.ok {
-			if live.maxContext > 0 && live.windowTokens > 0 {
-				pct := int((int64(live.windowTokens) * 100) / int64(live.maxContext))
-				parts = append(parts, subtleStyle.Render("window:")+" "+boldStyle.Render(fmt.Sprintf("~%s/%s (%d%%)", compactMetric(live.windowTokens), compactMetric(live.maxContext), pct)))
-			} else if live.windowTokens > 0 {
-				parts = append(parts, subtleStyle.Render("window:")+" "+boldStyle.Render("~"+compactMetric(live.windowTokens)))
-			}
-			if live.available > 0 {
-				parts = append(parts, subtleStyle.Render("left:")+" "+boldStyle.Render(compactMetric(live.available)))
-			}
+			subtleStyle.Render("tokens:") + " " + boldStyle.Render(fmt.Sprintf("~%d", tok)),
 		}
 		lines = append(lines, "  "+truncateSingleLine(strings.Join(parts, subtleStyle.Render("  |  ")), width-2))
 	}
@@ -186,7 +170,7 @@ func renderMentionPickerModal(s chatSuggestionState, mentionIndex, totalFiles in
 	case totalFiles == 0:
 		bodyLines = append(bodyLines,
 			subtleStyle.Render("Indexing project files..."),
-			subtleStyle.Render("If this persists, open the Files tab (F3) and press r to reload,"),
+			subtleStyle.Render("If this persists, open the Files tab (F2) and press r to reload,"),
 			subtleStyle.Render("or confirm you launched dfmc from a project root."),
 		)
 	case s.MentionQuery() != "":

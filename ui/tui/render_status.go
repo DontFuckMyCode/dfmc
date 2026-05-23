@@ -1,4 +1,4 @@
-// render_status.go — the F2 Status panel, rebuilt around the panel
+// render_status.go — the F9 Status panel, rebuilt around the panel
 // card primitive (panel_cards.go). Replaces the older bullet-list
 // layout in render_panels.go's renderStatusView.
 //
@@ -48,7 +48,7 @@ func humanizeEngineState(s engine.EngineState) string {
 	}
 }
 
-// renderStatusView is the F2 Status panel entrypoint. The legacy
+// renderStatusView is the F9 Status panel entrypoint. The legacy
 // implementation lived in render_panels.go and has been deleted in
 // favour of this rebuilt version.
 func (m Model) renderStatusViewV2(width int) string {
@@ -81,7 +81,7 @@ func (m Model) renderStatusViewSized(width, height int) string {
 
 	// Footer hints — explicit keyboard contract.
 	footer := []string{
-		subtleStyle.Render("↑↓ move · ←→ row · enter detail · / search · esc back"),
+		subtleStyle.Render("hjkl/arrows move · enter jump to detail · r reload · → action menu"),
 	}
 	if sel := m.diagnosticPanelsState.statusPanel.selectedCard; sel >= 0 && sel < len(jumpTargets) && jumpTargets[sel] != "" {
 		footer = append(footer,
@@ -145,9 +145,9 @@ func (m Model) statusCards() ([]panelCard, []string) {
 			{Key: "Root", Value: blankFallback(m.status.ProjectRoot, "(none)")},
 			{Key: "State", Value: humanizeEngineState(m.status.State)},
 		},
-		FooterHint: "F3 Files · F4 Patch",
+		FooterHint: "F2 Files · F3 Patch",
 	})
-	jumps = append(jumps, "F3 Files for project tree")
+	jumps = append(jumps, "F2 Files for project tree")
 
 	// --- PROVIDER ----------------------------------------------------
 	provider := blankFallback(m.status.Provider, "-")
@@ -232,9 +232,9 @@ func (m Model) statusCards() ([]panelCard, []string) {
 				{Key: "Reason", Value: truncateSingleLine(reason, 80)},
 				{Key: "Tier", Value: "in-memory only · episodic + semantic disabled"},
 			},
-			FooterHint: "F8 Memory · check .dfmc/ ownership",
+			FooterHint: "F6 Memory · check .dfmc/ ownership",
 		})
-		jumps = append(jumps, "F8 Memory")
+		jumps = append(jumps, "F6 Memory")
 	}
 
 	// --- CONTEXT IN (only when populated) ---------------------------

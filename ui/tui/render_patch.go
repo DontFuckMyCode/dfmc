@@ -1,4 +1,4 @@
-// render_patch.go — F4 Patch Lab panel, rebuilt as a 3-pane review
+// render_patch.go — F3 Patch Lab panel, rebuilt as a 3-pane review
 // surface so a user can see "what files · which hunk · what changed"
 // at a glance without scrolling. The legacy stack-rendering view in
 // patch_view.go (renderPatchView) now delegates to renderPatchViewV2.
@@ -29,7 +29,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// renderPatchViewV2 is the rebuilt F4 Patch panel.
+// renderPatchViewV2 is the rebuilt F3 Patch panel.
 func (m Model) renderPatchViewV2(width int) string {
 	return m.renderPatchViewV2Sized(width, 24)
 }

@@ -1,4 +1,4 @@
-// render_patch_panes.go — DIFF + METADATA panes for the F4 Patch
+// render_patch_panes.go — DIFF + METADATA panes for the F3 Patch
 // Lab panel. Sibling of render_patch.go which keeps the dispatcher
 // (renderPatchViewV2 + patchPanelWidths), the top banner
 // (patchTopBanner + patchStatusChip), and the FILES pane

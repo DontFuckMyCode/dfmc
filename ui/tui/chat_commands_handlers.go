@@ -27,7 +27,7 @@ func (m Model) handleRetrySlash() (tea.Model, tea.Cmd, bool) {
 	m.chat.input = ""
 	if m.chat.sending {
 		m.notice = "Cannot /retry while a turn is already streaming."
-		return m.appendSystemMessage("A turn is already streaming — press esc to cancel it first, then /retry."), nil, true
+		return m.appendSystemMessage("A turn is already streaming — press ctrl+c to cancel it first, then /retry."), nil, true
 	}
 	lastUser := -1
 	for i := len(m.chat.transcript) - 1; i >= 0; i-- {
@@ -58,7 +58,7 @@ func (m Model) handleRetrySlash() (tea.Model, tea.Cmd, bool) {
 func (m Model) handleEditSlash() (tea.Model, tea.Cmd, bool) {
 	if m.chat.sending {
 		m.notice = "Cannot /edit while a turn is already streaming."
-		return m.appendSystemMessage("A turn is already streaming — press esc to cancel it first, then /edit."), nil, true
+		return m.appendSystemMessage("A turn is already streaming — press ctrl+c to cancel it first, then /edit."), nil, true
 	}
 	lastUserIdx := -1
 	for i := len(m.chat.transcript) - 1; i >= 0; i-- {
@@ -135,7 +135,7 @@ func (m Model) handleCompactSlash(args []string) (tea.Model, tea.Cmd, bool) {
 	m.chat.input = ""
 	if m.chat.sending {
 		m.notice = "Cannot /compact while a turn is streaming."
-		return m.appendSystemMessage("A turn is streaming — press esc to cancel it first, then /compact."), nil, true
+		return m.appendSystemMessage("A turn is streaming — press ctrl+c to cancel it first, then /compact."), nil, true
 	}
 	keep := 6
 	if len(args) > 0 {

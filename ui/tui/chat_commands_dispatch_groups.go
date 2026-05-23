@@ -36,6 +36,20 @@ func (m Model) executeSessionSlashCommand(cmd string, args []string) (tea.Model,
 		return m.handleDriveSlash(args)
 	case "compact":
 		return m.handleCompactSlash(args)
+	case "history", "transcript":
+		return m.handleHistorySlash(args)
+	case "jump", "goto":
+		return m.handleJumpSlash(args)
+	case "next", "n":
+		return m.handleNextHitSlash(args)
+	case "prev", "previous", "N":
+		return m.handlePrevHitSlash(args)
+	case "expand":
+		return m.handleExpandSlash(args)
+	case "collapse":
+		return m.handleCollapseSlash(args)
+	case "toolshow":
+		return m.handleToolShowSlash(args)
 	default:
 		return m, nil, false
 	}

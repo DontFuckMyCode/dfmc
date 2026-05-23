@@ -12,14 +12,15 @@ func (m Model) renderToolsViewSized(width, height int) string {
 	height = max(height, 8)
 
 	pal := paletteForTab("Tools", false)
-	tools := m.availableTools()
+	tools := m.visibleTools()
+	totalTools := len(m.availableTools())
 	m.toolView.index = clampIndex(m.toolView.index, len(tools))
 
 	threePane := width >= 120
 	twoPane := !threePane && width >= 80
 	listW, specW, metaW := toolsPanelWidths(width, threePane, twoPane)
 
-	banner := m.toolsTopBanner(width, len(tools))
+	banner := m.toolsTopBanner(width, len(tools), totalTools)
 	listBlock := m.renderToolsListPane(listW, height, pal, tools)
 	specBlock := m.renderToolsSpecPane(specW, height, pal, tools)
 	var out string
@@ -55,33 +56,54 @@ func toolsPanelWidths(total int, threePane, twoPane bool) (listW, specW, metaW i
 	return total, total, 0
 }
 
-func (m Model) toolsTopBanner(width, count int) string {
+func (m Model) toolsTopBanner(width, visibleCount, totalCount int) string {
 	title := titleStyle.Bold(true).Render("TOOLS")
 	chip := okStyle
-	if count == 0 {
+	if visibleCount == 0 {
 		chip = warnStyle
 	}
-	chipRendered := chip.Render(fmt.Sprintf(" %d ", count))
+	chipText := fmt.Sprintf(" %d ", visibleCount)
+	if visibleCount != totalCount {
+		chipText = fmt.Sprintf(" %d/%d ", visibleCount, totalCount)
+	}
+	chipRendered := chip.Render(chipText)
 	stateChip := ""
 	if m.toolView.editing {
 		stateChip = "  " + warnStyle.Render(" EDITING ")
 	}
 	gap := max(width-lipgloss.Width(title)-lipgloss.Width(chipRendered)-lipgloss.Width(stateChip)-4, 1)
 	line := title + strings.Repeat(" ", gap) + chipRendered + stateChip
-	return line + "\n" + renderDivider(width-2)
+	out := line + "\n"
+	query := strings.TrimSpace(m.toolView.query)
+	if m.toolView.searchActive {
+		out += renderSearchInput(query, "type to filter by name / description…") + "\n"
+		out += searchTypingHint() + "\n"
+	} else if query != "" {
+		out += subtleStyle.Render("filter ") + boldStyle.Render(query) + "  " +
+			subtleStyle.Render("(press c to clear, / to edit)") + "\n"
+	}
+	return out + renderDivider(width-2)
 }
 
 func (m Model) renderToolsListPane(width, height int, pal tabPaletteEntry, tools []string) string {
 	header := titleStyle.Bold(true).Render("REGISTRY")
 	lines := []string{header, renderDivider(width - 2), ""}
 	if len(tools) == 0 {
-		lines = append(lines,
-			warnStyle.Render("No registered tools."),
-			"",
-			subtleStyle.Render("Tool engine is not wired."),
-			subtleStyle.Render("Check .dfmc/config.yaml or"),
-			subtleStyle.Render("re-run dfmc init."),
-		)
+		if strings.TrimSpace(m.toolView.query) != "" {
+			lines = append(lines,
+				warnStyle.Render(fmt.Sprintf("No tool matches %q.", m.toolView.query)),
+				"",
+				subtleStyle.Render("press c to clear, / to edit"),
+			)
+		} else {
+			lines = append(lines,
+				warnStyle.Render("No registered tools."),
+				"",
+				subtleStyle.Render("Tool engine is not wired."),
+				subtleStyle.Render("Check .dfmc/config.yaml or"),
+				subtleStyle.Render("re-run dfmc init."),
+			)
+		}
 	} else {
 		rowBudget := max(height-6, 1)
 		start, end := scrollWindow(m.toolView.index, len(tools), rowBudget)

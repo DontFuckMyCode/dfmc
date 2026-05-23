@@ -41,7 +41,7 @@ func nextRows(info StatsPanelInfo, mode StatsPanelMode) []string {
 		}
 	case StatsPanelModeSubagents:
 		if info.ActiveSubagents > 0 {
-			rows = append(rows, AccentStyle.Render("watch live agents in F7 Activity"))
+			rows = append(rows, AccentStyle.Render("watch live agents in F5 Activity"))
 		} else {
 			rows = append(rows, "subagents appear when work fans out")
 		}
@@ -54,6 +54,10 @@ func nextRows(info StatsPanelInfo, mode StatsPanelMode) []string {
 			rows = append(rows, "configure .dfmc/config.yaml providers")
 		}
 	default:
+		// Idle fallback intentionally omitted: the runtime strip's `now:`
+		// line already prints "ready for input" on Chat. NEXT should only
+		// surface when there's actionable work (todos / graph / drive /
+		// subagents) or a blocker (handled in criticalNextRows above).
 		switch {
 		case info.TodoDoing > 0 && strings.TrimSpace(info.TodoActive) != "":
 			rows = append(rows, AccentStyle.Render("finish active todo: "+info.TodoActive))
@@ -62,9 +66,7 @@ func nextRows(info StatsPanelInfo, mode StatsPanelMode) []string {
 		case strings.TrimSpace(info.DriveRunID) != "" || info.DriveTotal > 0:
 			rows = append(rows, AccentStyle.Render("inspect drive: /drive active"))
 		case info.ActiveSubagents > 0:
-			rows = append(rows, AccentStyle.Render("watch live agents in F7 Activity"))
-		case strings.TrimSpace(info.Provider) != "" && info.Configured:
-			rows = append(rows, SubtleStyle.Render("ready for input"))
+			rows = append(rows, AccentStyle.Render("watch live agents in F5 Activity"))
 		}
 	}
 	return firstNNonEmpty(rows, 5)
