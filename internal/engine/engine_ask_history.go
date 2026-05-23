@@ -231,8 +231,17 @@ func (e *Engine) trimmedConversationMessages(budget int) ([]provider.Message, []
 		// it costs ~30-50 tokens per turn instead of the kilobytes a
 		// real tool result would.
 		if msg.Role == types.RoleAssistant {
+			// When the assistant's prose is just a short acknowledgment
+			// ("I'll check that.", "Let me look into this.") and the turn
+			// has tool work, the prose adds no signal — the tool tail
+			// already tells the model what it did. Stripping saves ~10-30
+			// tokens per tool-heavy turn, which adds up across a 20-turn
+			// session. Only strip when there IS a tail to carry the info;
+			// without tools the prose is the only content.
 			if tail := renderHistoricalToolTail(msg); tail != "" {
-				if content == "" {
+				if isFillerAcknowledgment(content) {
+					content = tail
+				} else if content == "" {
 					content = tail
 				} else {
 					content = content + "\n\n" + tail
@@ -330,4 +339,52 @@ func (e *Engine) historyBudgetForRequest(question string, chunks []types.Context
 
 func trimToTokenBudget(content string, maxTokens int) string {
 	return tokens.TrimToBudget(content, maxTokens, "")
+}
+
+// isFillerAcknowledgment detects short assistant prose that adds no
+// information when a tool tail is present. These are the "I'll do X now"
+// or "Let me check" acknowledgments LLMs emit before tool calls. The
+// tool tail already captures what was done, so the prose is pure waste.
+//
+// Conservative: only matches single-sentence content under 120 chars
+// that starts with a common filler pattern. Multi-sentence content or
+// content with code blocks/URLs is never stripped — it may carry real
+// reasoning.
+func isFillerAcknowledgment(content string) bool {
+	if content == "" {
+		return false
+	}
+	// Hard limit: filler is always short. Longer content might have
+	// partial reasoning or intermediate conclusions.
+	if len(content) > 120 {
+		return false
+	}
+	// Never strip content with code blocks, file paths in backticks,
+	// or URLs — these carry signal even when short.
+	if strings.Contains(content, "```") || strings.Contains(content, "`/") || strings.Contains(content, "http") {
+		return false
+	}
+	// Multi-sentence content is likely reasoning, not filler.
+	// Count sentence-ending punctuation.
+	sentenceEnds := strings.Count(content, ".") + strings.Count(content, "!") + strings.Count(content, "?")
+	if sentenceEnds > 1 {
+		return false
+	}
+	lower := strings.ToLower(content)
+	// Common filler patterns. These cover the vast majority of LLM
+	// pre-tool acknowledgments across Claude, GPT, and Gemini.
+	fillerPrefixes := []string{
+		"i'll ", "i will ", "let me ", "i'm going to ",
+		"sure", "of course", "certainly", "absolutely",
+		"i can ", "i would ", "i should ",
+		"now i ", "now let", "first, ",
+		"checking ", "looking at ", "reading ",
+		"running ", "searching ", "finding ",
+	}
+	for _, prefix := range fillerPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
 }

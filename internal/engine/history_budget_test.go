@@ -433,3 +433,52 @@ func TestAdaptiveHistoryDivisor_MonotonicallyDecreasing(t *testing.T) {
 		prevDiv = div
 	}
 }
+
+func TestIsFillerAcknowledgment(t *testing.T) {
+	// Should match: short single-sentence filler patterns.
+	fillers := []string{
+		"I'll check that now.",
+		"Let me look into this.",
+		"I'm going to read the file.",
+		"Sure, I can help with that.",
+		"Of course.",
+		"Checking the file now.",
+		"Looking at the config.",
+		"Reading the source code.",
+		"Running the tests.",
+		"Now let me investigate.",
+		"First, I'll read the file.",
+	}
+	for _, f := range fillers {
+		if !isFillerAcknowledgment(f) {
+			t.Errorf("expected %q to be detected as filler", f)
+		}
+	}
+
+	// Should NOT match: substantive content.
+	notFiller := []string{
+		"The issue is in the config parser. The regex on line 42 doesn't account for Unicode whitespace.",
+		"After analyzing the code, I found three bugs:",
+		"```go\nfunc main() {}\n```",
+		"The file is at `src/main.go`",
+		"See https://example.com/docs",
+		"I'll check that now. But first, I want to explain the architecture. The system uses a layered approach.",
+		"", // empty
+	}
+	for _, nf := range notFiller {
+		if isFillerAcknowledgment(nf) {
+			t.Errorf("expected %q to NOT be detected as filler", nf)
+		}
+	}
+}
+
+func TestIsFillerAcknowledgment_LengthLimit(t *testing.T) {
+	// Content over 120 chars is never filler even if it starts with "I'll ".
+	long := "I'll " + strings.Repeat("check this very carefully ", 10)
+	if len(long) <= 120 {
+		t.Fatalf("test setup: need content > 120 chars, got %d", len(long))
+	}
+	if isFillerAcknowledgment(long) {
+		t.Error("content over 120 chars should never be filler")
+	}
+}
