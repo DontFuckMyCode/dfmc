@@ -123,3 +123,58 @@ func TestRenderHistoricalToolTail_CapsManyTools(t *testing.T) {
 		t.Errorf("expected '+12 more' suffix when count exceeds cap. Got: %s", tail)
 	}
 }
+
+func TestRenderHistoricalToolTail_StripsANSIFromResults(t *testing.T) {
+	// Tool results stored in conversation history can contain ANSI escape
+	// sequences from the original execution (colors, cursor moves, etc).
+	// The history tail must strip these so the token budget isn't wasted
+	// on invisible formatting that the model can't render anyway.
+	msg := types.Message{
+		Role: types.RoleAssistant,
+		ToolCalls: []types.ToolCallRecord{
+			{Name: "run_command", Params: map[string]any{"command": "git push"}},
+		},
+		Results: []types.ToolResultRecord{
+			{
+				Name:    "run_command",
+				Output:  "\x1b[32mEnumerating objects: 42, done.\x1b[0m\n\x1b[33mProgress: resolved 100, reused 90\x1b[0m\nTo github.com:org/repo.git\n   abc123..def456  main -> main",
+				Success: true,
+			},
+		},
+	}
+	tail := renderHistoricalToolTail(msg)
+	if strings.Contains(tail, "\x1b[") {
+		t.Errorf("tail contains raw ANSI escape sequences: %q", tail)
+	}
+	// The hint should pick up a cleaned first line, not "Enumerating..."
+	// which is a noise line. After compressToolResult strips it, the
+	// first surviving line should be the push destination or similar.
+	if strings.Contains(tail, "Enumerating objects") {
+		t.Errorf("tail leaked git progress noise: %q", tail)
+	}
+}
+
+func TestRenderHistoricalToolTail_CollapsesRepeatsInResults(t *testing.T) {
+	// Repeated lines in tool output should be collapsed before the hint
+	// is extracted, so the tail doesn't carry redundant content.
+	repeated := strings.Repeat("warning: something\n", 10) + "done\n"
+	msg := types.Message{
+		Role: types.RoleAssistant,
+		ToolCalls: []types.ToolCallRecord{
+			{Name: "run_command", Params: map[string]any{"command": "go build"}},
+		},
+		Results: []types.ToolResultRecord{
+			{Name: "run_command", Output: repeated, Success: true},
+		},
+	}
+	tail := renderHistoricalToolTail(msg)
+	// After compressToolResult, the 10 repeated lines collapse to one
+	// with a count suffix. The hint picks the first line of that.
+	if !strings.Contains(tail, "warning: something") {
+		t.Errorf("expected hint to contain cleaned first line, got: %q", tail)
+	}
+	// The tail itself should be short (<200 chars) since hint caps at 80.
+	if len(tail) > 300 {
+		t.Errorf("tail too long after compression: %d chars, content: %q", len(tail), tail)
+	}
+}

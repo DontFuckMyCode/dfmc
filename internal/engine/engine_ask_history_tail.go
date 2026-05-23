@@ -68,10 +68,17 @@ func renderHistoricalToolTail(msg types.Message) string {
 			if name == "" {
 				name = strings.TrimSpace(results[i].Name)
 			}
+			// Compress the raw output first so ANSI escapes, progress
+			// bars, and repeated lines are stripped before the single-
+			// line hint extraction. Without this the hint carries noise
+			// that burns tokens for zero signal (e.g. "\x1b[32m ok"
+			// instead of "ok"). Mirrors what agent_loop_result.go does
+			// for the live tool loop's tool_result payloads.
+			cleanedOutput := compressToolResult(results[i].Output)
 			if results[i].Success {
-				status = compactToolResultHint(results[i].Output)
+				status = compactToolResultHint(cleanedOutput)
 			} else {
-				status = "✗ " + compactToolResultHint(results[i].Output)
+				status = "✗ " + compactToolResultHint(cleanedOutput)
 			}
 		}
 		if name == "" {
