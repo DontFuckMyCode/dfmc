@@ -20,8 +20,53 @@ import (
 
 const (
 	historySummaryBudgetDivisor = 6
-	historyBudgetDivisor        = 16
 )
+
+// adaptiveHistoryDivisor returns a divisor that scales with provider
+// context window size. The fixed /16 was sized for 8-32k windows and
+// became increasingly wasteful on 128k+ models — on a 200k window,
+// /16 allocates only 12.5k tokens to history (6.25%), leaving the
+// vast majority of context unused or over-allocated to system prompt
+// reserve. The adaptive divisor targets roughly 8-12% of the window
+// for history, scaling up the share as the window grows:
+//
+//	window   divisor   budget   ratio
+//	8k       16        500      6.25%
+//	32k      14        2.3k     7.1%
+//	128k     10        12.8k    10%
+//	200k     8         25k      12.5%
+//	512k     7         73k→33k  ~6.5% (capped)
+//	1M       6         167k→33k ~3.3% (capped)
+//
+// The maxHistoryBudgetTokens cap (32k) prevents runaway on huge
+// windows unless the user explicitly raises it via config.
+func adaptiveHistoryDivisor(providerLimit int) int {
+	// Legacy constant for small windows where /16 is safe.
+	const (
+		historyBudgetDivisorLegacy = 16
+		smallWindowThreshold       = 32_000
+		mediumWindowThreshold      = 128_000
+		largeWindowThreshold       = 256_000
+	)
+	if providerLimit <= 0 {
+		return historyBudgetDivisorLegacy
+	}
+	switch {
+	case providerLimit <= smallWindowThreshold:
+		return historyBudgetDivisorLegacy // 16 — conservative for tight windows
+	case providerLimit <= mediumWindowThreshold:
+		// Linear ramp from 16 → 10 across [32k, 128k]
+		// frac = (limit - 32k) / 96k  ∈ [0, 1]
+		frac := float64(providerLimit-smallWindowThreshold) / float64(mediumWindowThreshold-smallWindowThreshold)
+		return 16 - int(frac*6+0.5) // 16 → 10
+	case providerLimit <= largeWindowThreshold:
+		// Linear ramp from 10 → 8 across [128k, 256k]
+		frac := float64(providerLimit-mediumWindowThreshold) / float64(largeWindowThreshold-mediumWindowThreshold)
+		return 10 - int(frac*2+0.5) // 10 → 8
+	default:
+		return 6 // very large windows: let the cap do the limiting
+	}
+}
 
 // publishHistoryTrimmedEvent surfaces the history-trim decision so the
 // TUI / web can render a "we kept N turns and summarized M older ones"
@@ -76,7 +121,7 @@ func (e *Engine) conversationHistoryBudget() int {
 	if limit <= 0 {
 		limit = defaultProviderContextTokens
 	}
-	budget := limit / historyBudgetDivisor
+	budget := limit / adaptiveHistoryDivisor(limit)
 	if budget <= 0 {
 		budget = defaultHistoryBudgetTokens
 	}

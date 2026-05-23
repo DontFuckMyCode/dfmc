@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -381,5 +382,54 @@ func TestBuildHistorySummary_RespectsTokenLimit(t *testing.T) {
 	}
 	if got := len(strings.Fields(summary)); got > budget {
 		t.Fatalf("expected summary token count <= %d, got %d (%q)", budget, got, summary)
+	}
+}
+
+func TestAdaptiveHistoryDivisor_ScalesWithContextWindow(t *testing.T) {
+	cases := []struct {
+		window  int
+		wantDiv int // expected divisor
+		wantMin int // minimum budget (window/div)
+		wantMax int // maximum budget (window/div)
+	}{
+		{8_000, 16, 500, 500},           // small: /16 = 500
+		{16_000, 16, 1000, 1000},        // still small: /16 = 1000
+		{32_000, 16, 2000, 2000},        // boundary: /16 = 2000
+		{64_000, 13, 4000, 5200},          // mid ramp: ~13-14
+		{128_000, 10, 12000, 14000},       // medium: /10 = 12800
+		{200_000, 8, 20000, 26000},        // large: ~8-9
+		{256_000, 8, 32000, 32000},      // large boundary: /8 = 32000
+		{512_000, 6, 85000, 86000},      // very large: /6
+		{1_000_000, 6, 166000, 167000},  // huge: /6
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("window_%dk", tc.window/1000), func(t *testing.T) {
+			div := adaptiveHistoryDivisor(tc.window)
+			budget := tc.window / div
+			if budget < tc.wantMin || budget > tc.wantMax {
+				t.Errorf("window=%d: divisor=%d budget=%d, want budget in [%d,%d]",
+					tc.window, div, budget, tc.wantMin, tc.wantMax)
+			}
+		})
+	}
+	// For very small/zero window, should return legacy divisor (16).
+	if got := adaptiveHistoryDivisor(0); got != 16 {
+		t.Errorf("zero window: got divisor %d, want 16", got)
+	}
+	if got := adaptiveHistoryDivisor(-1); got != 16 {
+		t.Errorf("negative window: got divisor %d, want 16", got)
+	}
+}
+
+func TestAdaptiveHistoryDivisor_MonotonicallyDecreasing(t *testing.T) {
+	// As the context window grows, the divisor should never increase.
+	prevDiv := adaptiveHistoryDivisor(1)
+	for window := 4000; window <= 1_000_000; window += 4000 {
+		div := adaptiveHistoryDivisor(window)
+		if div > prevDiv {
+			t.Errorf("window=%d: divisor=%d increased from %d (should monotonically decrease or stay same)",
+				window, div, prevDiv)
+		}
+		prevDiv = div
 	}
 }
