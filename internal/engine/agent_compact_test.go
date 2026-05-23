@@ -633,3 +633,66 @@ func TestCompactPreservesUnresolvedToolUsesInKeepWindow(t *testing.T) {
 		t.Fatalf("rebuilt slice has unresolved tool_use IDs: %v", wanted)
 	}
 }
+
+func TestEstimateRequestTokens_AccountsForMessageOverhead(t *testing.T) {
+	// Build two message sets: one with a single plain text message,
+	// another with the same content plus a tool call and tool result.
+	// The estimate for the tool-enabled set must be strictly larger
+	// because of per-message overhead, role tokens, JSON overhead,
+	// and tool_call_id framing.
+	content := "read the file config.go and explain it"
+	plainMsgs := []provider.Message{
+		{Role: types.RoleUser, Content: content},
+	}
+	plainEstimate := estimateRequestTokens("", nil, plainMsgs)
+
+	toolMsgs := []provider.Message{
+		{Role: types.RoleAssistant, Content: "I'll read the file.",
+			ToolCalls: []provider.ToolCall{
+				{ID: "call_1", Name: "read_file", Input: map[string]any{"path": "config.go"}},
+			}},
+		{Role: types.RoleUser, Content: "package config\nvar X = 1",
+			ToolCallID: "call_1", ToolName: "read_file"},
+	}
+	toolEstimate := estimateRequestTokens("", nil, toolMsgs)
+
+	// The tool set has 2 messages (16 overhead), 2 roles, 1 tool call
+	// with JSON overhead, and 1 tool_call_id — must be strictly larger.
+	if toolEstimate <= plainEstimate {
+		t.Errorf("tool estimate %d should exceed plain estimate %d (overhead not counted)",
+			toolEstimate, plainEstimate)
+	}
+
+	// Sanity: overhead per message is at least 8 tokens. Two messages
+	// → at least 16 overhead. The gap should be meaningful.
+	gap := toolEstimate - plainEstimate
+	if gap < 16 {
+		t.Errorf("expected at least 16 tokens of overhead gap (2 msgs × 8), got %d", gap)
+	}
+}
+
+func TestEstimateRequestTokens_ToolCallJSONOverhead(t *testing.T) {
+	// Two messages with same content but one has a tool call with
+	// structured input. The tool-call version must account for JSON
+	// structural overhead (15% factor).
+	noToolMsgs := []provider.Message{
+		{Role: types.RoleAssistant, Content: "done"},
+	}
+	noToolEst := estimateRequestTokens("", nil, noToolMsgs)
+
+	withToolMsgs := []provider.Message{
+		{Role: types.RoleAssistant, Content: "done",
+			ToolCalls: []provider.ToolCall{
+				{ID: "call_1", Name: "read_file", Input: map[string]any{
+					"path": "config.go", "offset": 10, "limit": 50,
+				}},
+			}},
+	}
+	withToolEst := estimateRequestTokens("", nil, withToolMsgs)
+
+	// Must be strictly larger — the tool call adds name + input tokens + 15% JSON overhead.
+	if withToolEst <= noToolEst {
+		t.Errorf("with-tool estimate %d should exceed no-tool estimate %d",
+			withToolEst, noToolEst)
+	}
+}

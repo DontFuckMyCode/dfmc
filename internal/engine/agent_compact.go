@@ -280,15 +280,39 @@ func estimateRequestTokens(systemPrompt string, chunks []types.ContextChunk, msg
 	for _, ch := range chunks {
 		total += ch.TokenCount
 	}
+	// Per-message overhead: provider APIs add framing tokens for role
+	// labels, message boundaries, and tool_result wrappers. The
+	// HeuristicCounter uses 4 tokens/message but estimateRequestTokens
+	// is a standalone path that needs its own floor. Empirically,
+	// Anthropic's API costs ~6-8 framing tokens per message; OpenAI is
+	// similar. Using 8 gives a small safety margin that prevents the
+	// compaction threshold from firing too late.
+	const perMessageOverhead = 8
 	for _, m := range msgs {
+		total += perMessageOverhead
+		total += tokens.Estimate(string(m.Role))
 		total += tokens.Estimate(m.Content)
+		// Tool calls carry their name plus input as JSON. The previous
+		// code counted individual key/value pairs but missed JSON
+		// structural overhead (quotes, colons, commas, braces).
+		// Adding a 15% JSON overhead factor to the input token sum
+		// covers the framing without trying to marshal + re-count.
+		const jsonOverheadFactor = 1.15
 		for _, call := range m.ToolCalls {
 			if call.Name != "" {
 				total += tokens.Estimate(call.Name)
 			}
+			inputTokens := 0
 			for k, v := range call.Input {
-				total += tokens.Estimate(k) + tokens.Estimate(fmt.Sprint(v))
+				inputTokens += tokens.Estimate(k) + tokens.Estimate(fmt.Sprint(v))
 			}
+			total += int(float64(inputTokens)*jsonOverheadFactor + 0.5)
+		}
+		// Tool result messages carry a tool_call_id wrapper that adds
+		// a few framing tokens on top of the content. This is modest
+		// but adds up across a 20-round tool loop.
+		if m.ToolCallID != "" {
+			total += tokens.Estimate(m.ToolCallID) + 2 // wrapper overhead
 		}
 	}
 	return total
