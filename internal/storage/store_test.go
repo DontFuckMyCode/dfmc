@@ -582,6 +582,82 @@ func TestBucketOps_RoundTrip(t *testing.T) {
 	}
 }
 
+// ReadOnly on a nil store returns false (nil-safe).
+func TestStore_ReadOnly_NilReceiver(t *testing.T) {
+	var s *Store
+	if got := s.ReadOnly(); got {
+		t.Errorf("ReadOnly() on nil = true, want false")
+	}
+}
+
+// ReadOnly returns false for a store opened in read-write mode.
+func TestStore_ReadOnly_True(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if store.ReadOnly() {
+		t.Errorf("ReadOnly() = true, want false for default Open")
+	}
+}
+
+// ReadOnly returns true for a store opened in read-only mode.
+func TestStore_ReadOnly_ExplicitTrue(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	roStore, err := OpenWithOpts(filepath.Join(dir, "data"), Options{ReadOnly: true})
+	if err != nil {
+		t.Fatalf("open read-only store: %v", err)
+	}
+	defer roStore.Close()
+
+	if !roStore.ReadOnly() {
+		t.Errorf("ReadOnly() = false, want true for Options{ReadOnly: true}")
+	}
+}
+
+// ReadOnly returns false when opened with ReadOnly=false.
+func TestStore_ReadOnly_ExplicitFalse(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	rwStore, err := OpenWithOpts(filepath.Join(dir, "data"), Options{ReadOnly: false})
+	if err != nil {
+		t.Fatalf("open read-write store: %v", err)
+	}
+	defer rwStore.Close()
+
+	if rwStore.ReadOnly() {
+		t.Errorf("ReadOnly() = true, want false for Options{ReadOnly: false}")
+	}
+}
+
+// OpenWithOpts creates a writable store by default (Options{}).
+func TestOpenWithOpts_DefaultWritable(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenWithOpts(filepath.Join(dir, "data"), Options{})
+	if err != nil {
+		t.Fatalf("OpenWithOpts: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if store.ReadOnly() {
+		t.Errorf("default OpenWithOpts ReadOnly = true, want false")
+	}
+}
+
 // BucketForEach iterates all keys.
 func TestBucketForEach(t *testing.T) {
 	dir := t.TempDir()
@@ -626,5 +702,157 @@ func TestBucketClear(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("expected nil after clear, got %q", string(got))
+	}
+}
+
+// writeFileAtomic fails when the parent directory does not exist.
+func TestWriteFileAtomic_NonexistentDir(t *testing.T) {
+	badPath := filepath.Join(t.TempDir(), "does_not_exist", "nested", "file.txt")
+	err := writeFileAtomic(badPath, []byte("data"), "tmp-*")
+	if err == nil {
+		t.Fatal("expected error for nonexistent parent dir")
+	}
+}
+
+// syncDir with nonexistent dir returns the Open error.
+func TestSyncDir_OpenError(t *testing.T) {
+	badDir := filepath.Join(t.TempDir(), "does_not_exist", "nested")
+	err := syncDir(badDir)
+	if err == nil {
+		t.Fatal("expected error for nonexistent dir")
+	}
+}
+
+// LoadConversationLog with nonexistent ID returns error.
+func TestLoadConversationLog_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	_, err = store.LoadConversationLog("nonexistent-conversation-xyz")
+	if err == nil {
+		t.Fatal("expected error for nonexistent conversation")
+	}
+}
+
+// LoadConversationState with nonexistent ID returns error.
+func TestLoadConversationState_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	var dst map[string]string
+	err = store.LoadConversationState("nonexistent-conversation-xyz", &dst)
+	if err == nil {
+		t.Fatal("expected error for nonexistent conversation")
+	}
+}
+
+// LoadConversationState with nil dst returns error.
+func TestLoadConversationState_NilDst(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	err = store.LoadConversationState("any-conv", nil)
+	if err == nil {
+		t.Fatal("expected error for nil dst")
+	}
+}
+
+// LoadConversationLog with invalid conversation ID returns error.
+func TestLoadConversationLog_InvalidConvID(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	_, err = store.LoadConversationLog("")
+	if err == nil {
+		t.Fatal("expected error for empty convID")
+	}
+}
+
+// LoadConversationLog with corrupt file returns scan error.
+func TestLoadConversationLog_CorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	// Write a corrupt JSONL file directly.
+	convDir := filepath.Join(dir, "data", "artifacts", "conversations")
+	_ = os.MkdirAll(convDir, 0o755)
+	corruptPath := filepath.Join(convDir, "corrupt-conv.jsonl")
+	_ = os.WriteFile(corruptPath, []byte("{invalid json line}\n"), 0o644)
+
+	_, err = store.LoadConversationLog("corrupt-conv")
+	if err == nil {
+		t.Fatal("expected error for corrupt conversation log")
+	}
+}
+
+// writeFileAtomic: os.Rename fails when dst is read-only.
+func TestWriteFileAtomic_RenameReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "readonly.txt")
+	// Pre-create dst as read-only.
+	f, err := os.Create(dst)
+	if err != nil {
+		t.Fatalf("create dst: %v", err)
+	}
+	f.Close()
+	os.Chmod(dst, 0o444)
+
+	err = writeFileAtomic(dst, []byte("data"), "tmp-*")
+	if err == nil {
+		t.Fatal("expected error when rename target is read-only")
+	}
+}
+
+// BucketForEach with a nonexistent bucket returns a SQL error.
+func TestBucketForEach_BadBucket(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	err = store.BucketForEach("nonexistent_bucket_xyz", func(k, v []byte) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent bucket")
+	}
+}
+
+// SaveConversationState with marshal-encoding error (non-serializable state).
+func TestSaveConversationState_NonSerializable(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	// channels are not JSON-serializable.
+	bad := struct{ Ch chan int }{Ch: make(chan int)}
+	err = store.SaveConversationState("bad-state", bad)
+	if err == nil {
+		t.Fatal("expected error for non-serializable state")
 	}
 }

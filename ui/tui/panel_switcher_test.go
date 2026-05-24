@@ -46,15 +46,15 @@ func TestCtrlAltTOpensToolStatus(t *testing.T) {
 	}
 }
 
-func TestAltTOpensToolStatusEvenWithChatInput(t *testing.T) {
+func TestCtrlShiftTOpensToolStatusEvenWithChatInput(t *testing.T) {
 	m := NewModel(context.Background(), nil)
 	m.activeTab = 0
 	m.setChatInput("typing")
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}, Alt: true})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT, Alt: true})
 	mm := next.(Model)
 	if mm.ui.panelOverlayKind != "toolstatus" {
-		t.Fatalf("Alt+T should open ToolStatus even while typing, got %q", mm.ui.panelOverlayKind)
+		t.Fatalf("Ctrl+Shift+T should open ToolStatus even while typing, got %q", mm.ui.panelOverlayKind)
 	}
 }
 

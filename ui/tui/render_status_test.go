@@ -97,11 +97,11 @@ func TestStatusKey_ArrowNavigationMovesSelectedCard(t *testing.T) {
 			m.diagnosticPanelsState.statusPanel.cardCount)
 	}
 
-	// right/l moves forward
-	got, _ := m.handleStatusKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	// ctrl+l moves forward (l removed to avoid terminal clear-screen collision)
+	got, _ := m.handleStatusKey(tea.KeyMsg{Type: tea.KeyCtrlL})
 	gm := got.(Model)
 	if gm.diagnosticPanelsState.statusPanel.selectedCard != 1 {
-		t.Errorf("l: expected selectedCard=1, got %d",
+		t.Errorf("ctrl+l: expected selectedCard=1, got %d",
 			gm.diagnosticPanelsState.statusPanel.selectedCard)
 	}
 

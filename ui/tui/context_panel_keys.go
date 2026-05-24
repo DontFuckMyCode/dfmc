@@ -36,8 +36,9 @@ func (m Model) handleContextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openContextActionMenu(), nil
 	}
 	switch msg.String() {
-	case "m":
-		// Toggle Context Manager sub-view
+	case "ctrl+m":
+		// Ctrl+M toggles the Context Manager sub-view. Uses ctrl+m
+		// to avoid any collision with `m` in other panels.
 		if m.contextPanel.manager.active {
 			m = m.deactivateContextManager()
 		} else {

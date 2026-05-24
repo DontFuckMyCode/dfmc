@@ -355,3 +355,174 @@ func TestListTasksLimitOffset(t *testing.T) {
 		t.Fatalf("got %d, want 3", len(list2))
 	}
 }
+
+// --- SaveTask error paths ---
+
+func TestSaveTask_NilTask(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	err := s.SaveTask(nil)
+	if err == nil {
+		t.Fatal("expected error for nil task")
+	}
+}
+
+func TestSaveTask_EmptyID(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	err := s.SaveTask(&supervisor.Task{ID: "", Title: "no id"})
+	if err == nil {
+		t.Fatal("expected error for empty ID")
+	}
+}
+
+// --- LoadTask error paths ---
+
+func TestLoadTask_EmptyID(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	task, err := s.LoadTask("")
+	if err == nil {
+		t.Fatal("expected error for empty ID")
+	}
+	if task != nil {
+		t.Errorf("expected nil task, got %v", task)
+	}
+}
+
+func TestLoadTask_NotFound(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	task, err := s.LoadTask("does-not-exist")
+	if err != nil {
+		t.Fatalf("LoadTask not-found should not error: %v", err)
+	}
+	if task != nil {
+		t.Errorf("expected nil for missing task, got %v", task)
+	}
+}
+
+// --- UpdateTaskCAS error paths ---
+
+func TestUpdateTaskCAS_NegativeVersion(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-cas-neg", Title: "test"})
+	err := s.UpdateTaskCAS("tsk-cas-neg", -1, func(t *supervisor.Task) error {
+		t.Title = "updated"
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected error for negative expectedVersion")
+	}
+}
+
+func TestUpdateTaskCAS_VersionMismatch(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-cas-mismatch", Title: "test"})
+
+	// UpdateTask bumps version from 0 to 1
+	_ = s.UpdateTask("tsk-cas-mismatch", func(t *supervisor.Task) error {
+		t.State = supervisor.TaskRunning
+		return nil
+	})
+
+	// Caller observed v=0 (stale), try CAS with it
+	err := s.UpdateTaskCAS("tsk-cas-mismatch", 0, func(t *supervisor.Task) error {
+		t.Title = "stale-update"
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected ErrTaskVersionConflict for stale version")
+	}
+	if !errors.Is(err, ErrTaskVersionConflict) {
+		t.Errorf("expected ErrTaskVersionConflict, got %v", err)
+	}
+}
+
+func TestUpdateTaskCAS_FnReturnsError(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	wantErr := errors.New("refuse")
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-cas-fn-err", Title: "test"})
+	err := s.UpdateTaskCAS("tsk-cas-fn-err", 0, func(t *supervisor.Task) error {
+		return wantErr
+	})
+	if err == nil {
+		t.Fatal("expected error propagated from fn")
+	}
+}
+
+func TestUpdateTaskCAS_TaskNotFound(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	err := s.UpdateTaskCAS("does-not-exist", 0, func(t *supervisor.Task) error {
+		t.Title = "x"
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent task")
+	}
+}
+
+// --- ListTasks filter paths ---
+
+func TestListTasks_RunIDFilter(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-run-1", RunID: "run-a", Title: "a"})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-run-2", RunID: "run-b", Title: "b"})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-run-3", RunID: "run-a", Title: "c"})
+
+	list, err := s.ListTasks(ListOptions{RunID: "run-a"})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("got %d, want 2", len(list))
+	}
+}
+
+func TestListTasks_LabelFilter(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-lbl-1", Labels: []string{"auth", "security"}, Title: "a"})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-lbl-2", Labels: []string{"auth"}, Title: "b"})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-lbl-3", Labels: []string{"ui"}, Title: "c"})
+
+	list, err := s.ListTasks(ListOptions{Label: "auth"})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("got %d, want 2", len(list))
+	}
+}
+
+func TestListTasks_LabelNoMatch(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-lbl-4", Labels: []string{"auth"}, Title: "a"})
+	_ = s.SaveTask(&supervisor.Task{ID: "tsk-lbl-5", Labels: []string{"security"}, Title: "b"})
+
+	list, err := s.ListTasks(ListOptions{Label: "ui"})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("got %d, want 0", len(list))
+	}
+}
+
+func TestListTasks_Empty(t *testing.T) {
+	db := tempDB(t)
+	s := NewStore(db)
+	list, err := s.ListTasks(ListOptions{})
+	if err != nil {
+		t.Fatalf("ListTasks empty: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("got %d, want 0", len(list))
+	}
+}

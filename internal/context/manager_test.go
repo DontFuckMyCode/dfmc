@@ -523,6 +523,87 @@ func TestBuildWithOptions_ExcludesTestsAndDocsWhenDisabled(t *testing.T) {
 	}
 }
 
+// Invalidate on nil receiver is safe.
+func TestManager_Invalidate_NilReceiver(t *testing.T) {
+	var m *Manager
+	m.Invalidate("any/path.go") // must not panic
+}
+
+// Invalidate with empty path is a no-op.
+func TestManager_Invalidate_EmptyPath(t *testing.T) {
+	cm := codemap.New(ast.New(), nil)
+	m := New(cm)
+	m.Invalidate("") // empty path is a no-op
+}
+
+// Invalidate with valid path calls codemap.InvalidateFile.
+func TestManager_Invalidate_ValidPath(t *testing.T) {
+	cm := codemap.New(ast.New(), nil)
+	m := New(cm)
+	// Valid path with codemap - codemap.InvalidateFile is called.
+	// This is a no-op since the file doesn't exist in codemap.
+	m.Invalidate("nonexistent.go")
+}
+
+// firstProjectBriefLines returns nil for empty doc.
+func TestFirstProjectBriefLines_Empty(t *testing.T) {
+	got := firstProjectBriefLines("", 3)
+	if len(got) != 0 {
+		t.Errorf("empty doc: got %v, want nil", got)
+	}
+}
+
+// firstProjectBriefLines returns first N lines.
+func TestFirstProjectBriefLines_Basic(t *testing.T) {
+	doc := "Line one\nLine two\nLine three\nLine four"
+	got := firstProjectBriefLines(doc, 2)
+	want := []string{"Line one", "Line two"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("first 2 lines: got %v, want %v", got, want)
+	}
+}
+
+// firstProjectBriefLines returns all if fewer lines than N.
+func TestFirstProjectBriefLines_ShortDoc(t *testing.T) {
+	doc := "Line one\nLine two"
+	got := firstProjectBriefLines(doc, 10)
+	if len(got) != 2 {
+		t.Errorf("short doc: got %v, want full doc", got)
+	}
+}
+
+// projectBriefTaskTerms returns terms for known task names.
+func TestProjectBriefTaskTerms(t *testing.T) {
+	terms := projectBriefTaskTerms("security")
+	if len(terms) == 0 {
+		t.Fatal("expected task terms for security")
+	}
+}
+
+// projectBriefTaskTerms returns nil for unknown task names.
+func TestProjectBriefTaskTerms_Unknown(t *testing.T) {
+	terms := projectBriefTaskTerms("random unknown task xyz")
+	if terms != nil {
+		t.Errorf("unknown task should return nil, got %v", terms)
+	}
+}
+
+// ExtractQueryIdentifiers with short input returns nil.
+func TestExtractQueryIdentifiers_ShortInput(t *testing.T) {
+	got := ExtractQueryIdentifiers("ab") // less than 3 chars
+	if len(got) != 0 {
+		t.Errorf("short input: got %v, want nil", got)
+	}
+}
+
+// ExtractQueryIdentifiers with valid identifiers returns them.
+func TestExtractQueryIdentifiers_Valid(t *testing.T) {
+	got := ExtractQueryIdentifiers("verify auth token in middleware")
+	if len(got) == 0 {
+		t.Fatal("expected identifiers from valid query")
+	}
+}
+
 func TestSummarizeContextFiles_CompactsPathsAndShowsOverflow(t *testing.T) {
 	root := t.TempDir()
 	chunks := []types.ContextChunk{

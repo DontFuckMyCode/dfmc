@@ -168,7 +168,7 @@ func (m Model) renderMemoryViewSized(width, height int) string {
 		if len(m.memory.entries) == 0 {
 			lines = append(lines,
 				"  "+subtleStyle.Render("No memory entries."),
-				"  "+subtleStyle.Render("Memory is the engine's working / episodic / semantic store — facts and decisions the assistant should carry across turns and sessions (bbolt-backed, project-local)."),
+				"  "+subtleStyle.Render("Memory is the engine's working / episodic / semantic store — facts and decisions the assistant should carry across turns and sessions (sqlite-backed, project-local)."),
 				"  "+subtleStyle.Render("Memory fills as the agent runs and on /remember; press t to cycle tiers, r to reload, or /remember <text> to write an entry yourself."),
 			)
 		} else {

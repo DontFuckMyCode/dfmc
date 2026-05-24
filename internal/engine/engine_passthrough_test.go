@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -347,4 +348,184 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// Nil-Tools tool passthrough coverage: these functions all have nil-guards
+// that only execute when e.Tools is nil.
+
+func TestListTools_NilTools(t *testing.T) {
+	e := &Engine{}
+	if got := e.ListTools(); got != nil {
+		t.Errorf("nil Tools: got %v", got)
+	}
+}
+
+func TestSetToolEnabled_NilTools(t *testing.T) {
+	e := &Engine{}
+	if err := e.SetToolEnabled("mytool", false); err != nil {
+		t.Errorf("nil Tools: %v", err)
+	}
+}
+
+func TestIsToolDisabled_NilTools(t *testing.T) {
+	e := &Engine{}
+	if e.IsToolDisabled("mytool") {
+		t.Error("nil Tools: should not be disabled")
+	}
+}
+
+func TestListDisabledTools_NilTools(t *testing.T) {
+	e := &Engine{}
+	if got := e.ListDisabledTools(); got != nil {
+		t.Errorf("nil Tools: got %v", got)
+	}
+}
+
+func TestToolIsProtected(t *testing.T) {
+	e := newTestEngineForPassthrough(t)
+	// edit_file is protected by default
+	if !e.ToolIsProtected("edit_file") {
+		t.Error("edit_file should be protected")
+	}
+	// non-protected tool
+	if e.ToolIsProtected("nonexistent") {
+		t.Error("nonexistent tool should not be protected")
+	}
+}
+
+// ListAllTasks nil engine
+func TestListAllTasks_NilEngine(t *testing.T) {
+	var e *Engine
+	got, err := e.ListAllTasks()
+	if err != nil {
+		t.Errorf("nil engine: %v", err)
+	}
+	if got != nil {
+		t.Errorf("nil engine: got %v", got)
+	}
+}
+
+// Engine core function tests
+
+func TestNewWithVersion_NilConfig(t *testing.T) {
+	_, err := NewWithVersion(nil, "test")
+	if err == nil {
+		t.Error("nil config should return error")
+	}
+	if err.Error() != "config is nil" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestNewWithVersion_ValidConfig(t *testing.T) {
+	cfg := config.DefaultConfig()
+	e, err := NewWithVersion(cfg, "1.2.3")
+	if err != nil {
+		t.Fatalf("NewWithVersion: %v", err)
+	}
+	if e.Version != "1.2.3" {
+		t.Errorf("version: got %q", e.Version)
+	}
+	if e.state != StateCreated {
+		t.Errorf("state: got %v", e.state)
+	}
+	if e.EventBus == nil {
+		t.Error("EventBus should be created")
+	}
+}
+
+func TestNew_DefaultVersion(t *testing.T) {
+	cfg := config.DefaultConfig()
+	e, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if e.Version != "dev" {
+		t.Errorf("default version: got %q", e.Version)
+	}
+}
+
+func TestSetTelegramBot(t *testing.T) {
+	e := newTestEngineForPassthrough(t)
+	if e.TelegramBot != nil {
+		t.Error("bot should be nil initially")
+	}
+	// SetTelegramBot with nil is a no-op
+	e.SetTelegramBot(nil, "test", nil)
+	if e.TelegramBot != nil {
+		t.Error("nil bot should stay nil")
+	}
+}
+
+func TestEngineState_Transition(t *testing.T) {
+	e := newTestEngineForPassthrough(t)
+	if e.State() != StateCreated {
+		t.Fatalf("initial state: got %v", e.State())
+	}
+
+	e.setState(StateInitializing)
+	if e.State() != StateInitializing {
+		t.Errorf("State: got %v", e.State())
+	}
+
+	e.setState(StateReady)
+	if e.State() != StateReady {
+		t.Errorf("State: got %v", e.State())
+	}
+}
+
+func TestRequireReady_NilEngine(t *testing.T) {
+	var e *Engine
+	err := e.requireReady("test op")
+	if err != ErrEngineNil {
+		t.Errorf("nil engine: got %v", err)
+	}
+}
+
+func TestRequireReady_WrongState(t *testing.T) {
+	e := newTestEngineForPassthrough(t)
+	e.setState(StateCreated)
+	err := e.requireReady("test op")
+	if err == nil {
+		t.Error("StateCreated should fail requireReady")
+	}
+	if !strings.Contains(err.Error(), "not initialized") {
+		t.Errorf("error should mention not initialized: %v", err)
+	}
+}
+
+func TestRequireReady_CorrectStates(t *testing.T) {
+	e := newTestEngineForPassthrough(t)
+	for _, state := range []EngineState{StateReady, StateServing, StateShuttingDown} {
+		e.setState(state)
+		if err := e.requireReady("test"); err != nil {
+			t.Errorf("state %v should pass: %v", state, err)
+		}
+	}
+}
+
+func TestRequireReady_EmptyOpUsesDefault(t *testing.T) {
+	e := newTestEngineForPassthrough(t)
+	e.setState(StateCreated)
+	err := e.requireReady("")
+	if err == nil {
+		t.Error("empty op should still return an error")
+	}
+	if !strings.Contains(err.Error(), "operation") {
+		t.Errorf("empty op should default to 'operation': %v", err)
+	}
+}
+
+func TestBackgroundContext_NilBackgroundCtx(t *testing.T) {
+	e := &Engine{}
+	ctx := e.BackgroundContext()
+	if ctx == nil {
+		t.Error("BackgroundContext should return background context, not nil")
+	}
+}
+
+func TestStartBackgroundTask_NilFn(t *testing.T) {
+	e := newTestEngineForPassthrough(t)
+	// nil fn is a no-op — just verify no panic
+	e.StartBackgroundTask("test", nil)
 }

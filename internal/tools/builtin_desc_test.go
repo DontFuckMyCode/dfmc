@@ -144,3 +144,29 @@ func TestGitignoreMatcher_MatchDir(t *testing.T) {
 		t.Error("src should NOT match")
 	}
 }
+
+func TestMinInt(t *testing.T) {
+	cases := []struct{ a, b, want int }{
+		{0, 0, 0}, {1, 2, 1}, {2, 1, 1},
+		{-1, 1, -1}, {1, -1, -1}, {-5, -3, -5},
+	}
+	for _, c := range cases {
+		got := minInt(c.a, c.b)
+		if got != c.want {
+			t.Errorf("minInt(%d,%d) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestMaxInt(t *testing.T) {
+	cases := []struct{ a, b, want int }{
+		{0, 0, 0}, {1, 2, 2}, {2, 1, 2},
+		{-1, 1, 1}, {1, -1, 1}, {-5, -3, -3},
+	}
+	for _, c := range cases {
+		got := maxInt(c.a, c.b)
+		if got != c.want {
+			t.Errorf("maxInt(%d,%d) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}

@@ -10,6 +10,76 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/config"
 )
 
+func TestRejectFlagInjection(t *testing.T) {
+	tests := []struct {
+		arg  string
+		want bool
+	}{
+		{"", false},
+		{"-f", true},
+		{"--flag", true},
+		{"-", true},
+		{"--", true},
+		{"file.txt", false},
+		{"./file", false},
+		{"-o", true},
+		{"--output=foo", true},
+		{"-C../secret", true},
+	}
+	for _, tc := range tests {
+		got := rejectFlagInjection(tc.arg)
+		if got != tc.want {
+			t.Errorf("rejectFlagInjection(%q) = %v, want %v", tc.arg, got, tc.want)
+		}
+	}
+}
+
+func TestFirstChar(t *testing.T) {
+	tests := []struct {
+		s    string
+		want string
+	}{
+		{"", ""},
+		{"a", "a"},
+		{"ab", "a"},
+		{" hello", " "},
+		{"\n", "\n"},
+	}
+	for _, tc := range tests {
+		got := firstChar(tc.s)
+		if got != tc.want {
+			t.Errorf("firstChar(%q) = %q, want %q", tc.s, got, tc.want)
+		}
+	}
+}
+
+func TestIsGitBinary(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"git", true},
+		{"git.exe", true},
+		{"git.bat", true},
+		{"git.cmd", true},
+		{"GIT", true},
+		{"GIT.EXE", true},
+		{"hub", false},
+		{"gh", false},
+		{"git-remote-https", false},
+		{"bash", false},
+		{"python", false},
+		{"node.exe", false},
+		{"", false},
+	}
+	for _, tc := range tests {
+		got := isGitBinary(tc.path)
+		if got != tc.want {
+			t.Errorf("isGitBinary(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestPatchValidation_MissingPatch(t *testing.T) {
 	eng := New(*config.DefaultConfig())
 	eng.SetCodemap(nil)

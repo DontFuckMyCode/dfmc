@@ -187,10 +187,10 @@
 |-----|--------|
 | `j/k` or `↓/↑` | Move in run list (or scroll TODO tree when run is selected) |
 | `g/G` | Top / bottom of run list |
-| `Enter / o` | Select run / expand TODO at cursor |
+| `Enter / Space` | Select run / expand TODO at cursor |
 | `Space` | **Toggle live-follow** — cursor auto-tracks the running TODO; LIVE chip + accent-bold row mark whatever is spinning right now |
 | `r` | Open routing editor (provider tag → profile) — only when no run is selected |
-| `→ / l` | Open action menu (Stop · Resume · Copy ID · Routing · Refresh) |
+| `→` | Open action menu (Stop · Resume · Copy ID · Routing · Refresh) |
 | `Esc` | Deselect TODO → run → release live-follow (in that order) |
 
 ### Activity (`F5`)
@@ -200,16 +200,16 @@
 | `j/k` or `↓/↑` | List navigation |
 | `g/G` or `home/end` | Jump to first/last |
 | `PgUp/PgDn` | Page scroll |
-| `Enter / o` | Open selected entry |
+| `Enter` | Open selected entry |
 | `r` | Re-open selected entry |
 | `f` | Focus Files panel at selected entry's file |
-| `y` | Copy selected entry to chat composer |
+| `Ctrl+Y` | Copy selected entry to chat composer |
 | `p` | Pause/resume live follow |
 | `v` | Cycle view mode (all → tools → agents → errors → workflow → context) |
 | `1-6` | Filters: All, Tools, Agents, Errors, Workflow, Context |
 | `/` | Open search mode |
 | `c` | Clear search (clear all when empty) |
-| `→ / l` | Open action menu |
+| `→` | Open action menu |
 
 ### Context (`Shift+F3`)
 
@@ -220,8 +220,9 @@
 | `a / f` | Load active context with debug info |
 | `e` | Open inline query input |
 | `Enter` | Run query |
+| `Ctrl+M` | Toggle Context Manager sub-view |
 | `c` | Clear everything |
-| `→ / l` | Open action menu |
+| `→` | Open action menu |
 
 ### Files (`F2`)
 
@@ -233,7 +234,8 @@
 | `i` | Add to chat as `[[file:path]]` |
 | `e` | Explain file in chat |
 | `v` | Review file in chat |
-| `Enter / → / l` | Open action menu |
+| `c / Alt+C` | Clear active query (show all files) |
+| `Enter / →` | Open action menu |
 
 ### Providers (`F8`)
 
@@ -274,7 +276,7 @@
 
 | Key | Action |
 |-----|--------|
-| `h/j/k/l` or arrow keys | Card grid navigation |
+| `h/j/k` or arrow keys | Card grid navigation (left/up/down) |
 | `r` | Refresh status snapshot |
 | `Enter` | Jump to selected card's detail tab |
 | `1` | Jump to Files (Project card) |
@@ -283,7 +285,8 @@
 | `4` | Jump to Memory |
 | `5` | Jump to Orchestrate |
 | `g/G` | Jump to first/last card |
-| `→ / l` | Open action menu |
+| `Ctrl+L` | Move right in card grid |
+| `→` | Open action menu |
 
 ### CodeMap (`F10`)
 

@@ -29,7 +29,7 @@ func TestHostAllowed_EgressAllowlist(t *testing.T) {
 		host    string
 		allow   []string
 		want    bool
-		errSubs string // expected substring in the rejection reason (empty when want=true)
+		errSubs string
 	}{
 		{"empty list allows anything", "evil.example", nil, true, ""},
 		{"empty entries ignored", "evil.example", []string{"", "  "}, false, "not on the web_fetch allowlist"},
@@ -55,5 +55,124 @@ func TestHostAllowed_EgressAllowlist(t *testing.T) {
 				t.Fatalf("rejection reason %q does not contain %q", reason, tc.errSubs)
 			}
 		})
+	}
+}
+
+// isResultURLBlocked tests
+
+func TestIsResultURLBlocked_InvalidURL(t *testing.T) {
+	cases := []string{"", "   ", "hello world", "http:", "javascript:alert(1)", "data:text/html,<h1>"}
+	for _, href := range cases {
+		if got := isResultURLBlocked(href); !got {
+			t.Errorf("isResultURLBlocked(%q) = false, want true", href)
+		}
+	}
+}
+
+func TestIsResultURLBlocked_SchemeBlocked(t *testing.T) {
+	for _, href := range []string{"ftp://example.com", "javascript:alert(1)", "data:text/html,<h1>"} {
+		if got := isResultURLBlocked(href); !got {
+			t.Errorf("isResultURLBlocked(%q) = false, want true", href)
+		}
+	}
+}
+
+func TestIsResultURLBlocked_ValidHTTP(t *testing.T) {
+	if got := isResultURLBlocked("https://example.com/page"); got {
+		t.Error("https URL should not be blocked")
+	}
+	if got := isResultURLBlocked("http://example.com"); got {
+		t.Error("http URL should not be blocked")
+	}
+}
+
+// decodeDuckRedirect tests
+
+func TestDecodeDuckRedirect(t *testing.T) {
+	cases := []struct {
+		label string
+		href  string
+		want  string
+	}{
+		{"plain URL unchanged", "https://example.com/page", "https://example.com/page"},
+		{"uddg decodes target", "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage", "https://example.com/page"},
+		{"non-l path not decoded", "https://duckduckgo.com/v/?uddg=https://example.com", "https://duckduckgo.com/v/?uddg=https://example.com"},
+		{"empty uddg", "https://duckduckgo.com/l/?uddg=", "https://duckduckgo.com/l/?uddg="},
+		{"invalid escape falls through", "https://duckduckgo.com/l/?uddg=%ZZ", "https://duckduckgo.com/l/?uddg=%ZZ"},
+	}
+	for _, tc := range cases {
+		got := decodeDuckRedirect(tc.href)
+		if got != tc.want {
+			t.Errorf("decodeDuckRedirect(%q) = %q, want %q", tc.href, got, tc.want)
+		}
+	}
+}
+
+// stripTags tests
+
+func TestStripTags(t *testing.T) {
+	cases := []struct {
+		label string
+		input string
+		want  string
+	}{
+		{"plain text unchanged", "hello world", "hello world"},
+		{"simple tag removed", "hello <b>world</b>", "hello world"},
+		{"nested tags", "a <b><i>c</i></b> d", "a c d"},
+		{"script tag and content removed", "foo<script>alert(1)</script>bar", "foobar"},
+		{"amp entity decoded", "Tom &amp; Jerry", "Tom & Jerry"},
+		{"lt gt entities", "a &lt;b&gt; c", "a <b> c"},
+	}
+	for _, tc := range cases {
+		got := stripTags(tc.input)
+		if got != tc.want {
+			t.Errorf("stripTags(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+// isBlockedHost tests
+
+func TestIsBlockedHost_InvalidHost(t *testing.T) {
+	if !isBlockedHost("") {
+		t.Error("empty host should be blocked")
+	}
+	if !isBlockedHost("   ") {
+		t.Error("whitespace-only host should be blocked")
+	}
+}
+
+func TestIsBlockedHost_Loopback(t *testing.T) {
+	if !isBlockedHost("127.0.0.1") {
+		t.Error("127.0.0.1 should be blocked")
+	}
+	if !isBlockedHost("127.0.0.1:8080") {
+		t.Error("127.0.0.1:8080 should be blocked")
+	}
+}
+
+// WebFetchTool Execute error paths
+
+func TestWebFetchTool_Execute_InvalidURL(t *testing.T) {
+	tool := NewWebFetchTool()
+	_, err := tool.Execute(nil, Request{Params: map[string]any{"url": "not-a-url"}})
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+}
+
+func TestWebFetchTool_Execute_BlockedHost(t *testing.T) {
+	tool := NewWebFetchTool()
+	_, err := tool.Execute(nil, Request{Params: map[string]any{"url": "https://127.0.0.1:9999"}})
+	if err == nil {
+		t.Fatal("expected error for blocked host")
+	}
+}
+
+func TestWebFetchTool_Execute_MissingURL(t *testing.T) {
+	tool := NewWebFetchTool()
+	_, err := tool.Execute(nil, Request{Params: map[string]any{}})
+	if err == nil {
+		t.Fatal("expected error for missing URL")
 	}
 }

@@ -92,6 +92,23 @@ func TestNewErrorResponse_NilIDForParseErrors(t *testing.T) {
 	}
 }
 
+func TestNewErrorResponse_WithData(t *testing.T) {
+	// When r.Error.Data is non-nil, d = r.Error.Data branch executes.
+	id := json.RawMessage(`"42"`)
+	data := map[string]any{"field": "missing"}
+	res := NewErrorResponse(id, ErrInvalidParams, "missing param", data)
+	if res.Error == nil {
+		t.Fatal("Error = nil")
+	}
+	if res.Error.Data == nil {
+		t.Fatal("Error.Data = nil, want non-nil")
+	}
+	// Result must be nil for error responses.
+	if res.Result != nil {
+		t.Fatalf("Result = %+v, want nil", res.Result)
+	}
+}
+
 func TestTextContent(t *testing.T) {
 	block := TextContent("hello world")
 	if block.Type != "text" {

@@ -459,6 +459,30 @@ func TestServerPingWorksBeforeInit(t *testing.T) {
 	}
 }
 
+// TestServerToolsCallUnknownTool verifies that calling an unknown tool
+// returns an error response with IsError=true.
+func TestServerToolsCallUnknownTool(t *testing.T) {
+	bridge := &fakeBridge{callFn: func(ctx context.Context, name string, args []byte) (CallToolResult, error) {
+		return CallToolResult{}, errors.New("unknown tool: " + name)
+	}}
+	h := newHarness(t, bridge)
+	defer h.close()
+
+	h.send(Request{JSONRPC: "2.0", ID: rawID(1), Method: "initialize"})
+	_ = h.recv()
+	h.send(Request{JSONRPC: "2.0", ID: rawID(2), Method: "tools/call", Params: mustMarshal(t, CallToolParams{Name: "no-such-tool", Arguments: json.RawMessage(`{}`)})})
+
+	resp := h.recv()
+	if resp.Error != nil {
+		t.Fatalf("expected success response with IsError, got rpc error: %+v", resp.Error)
+	}
+	var cr CallToolResult
+	decodeResult(t, resp, &cr)
+	if !cr.IsError || !strings.Contains(cr.Content[0].Text, "unknown tool") {
+		t.Fatalf("expected unknown tool error, got IsError=%v text=%v", cr.IsError, cr.Content)
+	}
+}
+
 func mustMarshal(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	buf, err := json.Marshal(v)

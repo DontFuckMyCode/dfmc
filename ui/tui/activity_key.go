@@ -106,7 +106,7 @@ func (m Model) openActivityActionMenu() Model {
 				}
 				return m, cmd
 			}},
-		{Label: "Copy selected entry to chat composer", Accel: "y",
+		{Label: "Copy selected entry to chat composer",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				nm, cmd := m.activityCopySelection()
 				if mm, ok := nm.(Model); ok {
@@ -127,7 +127,7 @@ func (m Model) handleActivityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// Right opens the action menu — view filter, follow toggle,
 	// search, clear, copy entry — without making the user memorise
-	// 1-6 / p / / / c / y.
+	// 1-6 / p / / / c / ctrl+y.
 	if s := msg.String(); s == "right" || s == "l" {
 		return m.openActivityActionMenu(), nil
 	}
@@ -139,7 +139,7 @@ func (m Model) handleActivityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.activityOpenSelection(true)
 	case "f":
 		return m.activityFocusSelectionFile()
-	case "y":
+	case "ctrl+y":
 		return m.activityCopySelection()
 	case "j", "down":
 		m.activity.scroll = scrollIndexUp(m.activity.scroll, 1)

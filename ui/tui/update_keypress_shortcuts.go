@@ -45,7 +45,7 @@ func (m Model) handleGlobalShortcuts(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 func isToolStatusShortcut(msg tea.KeyMsg) bool {
 	key := strings.ToLower(strings.TrimSpace(msg.String()))
 	switch key {
-	case "ctrl+shift+t", "ctrl+alt+t", "alt+ctrl+t", "alt+t":
+	case "ctrl+shift+t":
 		return true
 	}
 	if msg.Alt && msg.Type == tea.KeyCtrlT {

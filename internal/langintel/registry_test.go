@@ -1,8 +1,6 @@
 package langintel
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestNewRegistry(t *testing.T) {
 	r := NewRegistry()
@@ -47,10 +45,50 @@ func TestBestPracticesFor(t *testing.T) {
 	}
 }
 
+func TestBugPatternsFor(t *testing.T) {
+	r := NewRegistry()
+	bp := r.BugPatternsFor([]string{"call_expression"})
+	if len(bp) == 0 {
+		t.Error("expected bug patterns for call_expression")
+	}
+}
+
+func TestSecurityRulesFor(t *testing.T) {
+	r := NewRegistry()
+	sr := r.SecurityRulesFor([]string{"call_expression"})
+	if len(sr) == 0 {
+		t.Error("expected security rules for call_expression")
+	}
+}
+
+func TestEmptyRegistry(t *testing.T) {
+	r := EmptyRegistry()
+	if r == nil {
+		t.Fatal("expected non-nil registry")
+	}
+	if len(r.Practices) != 0 {
+		t.Errorf("expected 0 practices, got %d", len(r.Practices))
+	}
+}
+
+func TestMarshalJSON(t *testing.T) {
+	r := EmptyRegistry()
+	data, err := r.MarshalJSON()
+	if err != nil {
+		t.Fatalf("MarshalJSON: %v", err)
+	}
+	if len(data) == 0 {
+		t.Error("expected non-empty JSON")
+	}
+}
+
 func TestNormalizeLang(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"go", "go"}, {"golang", "go"}, {"typescript", "typescript"},
 		{"ts", "typescript"}, {"python", "python"}, {"rust", "rust"},
+		{"js", "javascript"}, {"javascript", "javascript"}, {"java", "java"},
+		{"php", "php"}, {"csharp", "csharp"}, {"c#", "csharp"},
+		{"unknown", "unknown"}, {"", ""},
 	}
 	for _, c := range cases {
 		got := normalizeLang(c.in)

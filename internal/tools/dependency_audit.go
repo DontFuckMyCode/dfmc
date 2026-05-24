@@ -129,8 +129,7 @@ func (t *DependencyAuditTool) Execute(ctx context.Context, req Request) (Result,
 
 	// Resolve go.mod path
 	if !filepath.IsAbs(goModPath) {
-		cwd, _ := os.Getwd()
-		goModPath = filepath.Join(cwd, goModPath)
+		goModPath = filepath.Join(req.ProjectRoot, goModPath)
 	}
 
 	deps, err := parseGoMod(goModPath)
@@ -561,7 +560,7 @@ func licenseSeverity(lic string) string {
 	if strings.HasPrefix(upper, "GPL") || strings.HasPrefix(upper, "AGPL") {
 		return "high"
 	}
-	if strings.HasPrefix(upper, "LGPL") || strings.HasPrefix(upper, "MPL") {
+	if strings.HasPrefix(upper, "LGPL") || strings.HasPrefix(upper, "MPL") || strings.HasPrefix(upper, "EPL") {
 		return "medium"
 	}
 	return "low"
@@ -573,46 +572,44 @@ func detectLicense(data []byte) string {
 	if len(header) > 2000 {
 		header = header[:2000]
 	}
-	text := strings.ToUpper(string(header))
 
-	spdxPatterns := []string{
-		`SPDX-License-Identifier: ([\w\-\.]+)`,
-		`LICENSE:\s*([\w\-\.]+)`,
-		`GNU (GENERAL|LESSER|AFFERO) PUBLIC LICENSE`,
-	}
-
-	for _, pattern := range spdxPatterns {
-		re := regexp.MustCompile(pattern)
-		m := re.FindStringSubmatch(text)
-		if len(m) > 1 {
-			return m[1]
-		}
-	}
-
-	// Fallback: content-based detection
-	if bytes.Contains(data, []byte("GNU GENERAL PUBLIC LICENSE")) {
-		if bytes.Contains(data, []byte("version 3")) {
+	// Content-based detection (more reliable than regex for GNU licenses)
+	upper := bytes.ToUpper(data)
+	if bytes.Contains(upper, []byte("GNU GENERAL PUBLIC LICENSE")) {
+		if bytes.Contains(upper, []byte("VERSION 3")) {
 			return "GPL-3.0"
 		}
-		if bytes.Contains(data, []byte("version 2")) {
+		if bytes.Contains(upper, []byte("VERSION 2")) {
 			return "GPL-2.0"
 		}
 		return "GPL"
 	}
-	if bytes.Contains(data, []byte("GNU LESSER GENERAL PUBLIC LICENSE")) {
-		if bytes.Contains(data, []byte("version 3")) {
+	if bytes.Contains(upper, []byte("GNU LESSER GENERAL PUBLIC LICENSE")) {
+		if bytes.Contains(upper, []byte("VERSION 3")) {
 			return "LGPL-3.0"
 		}
 		return "LGPL-2.1"
 	}
-	if bytes.Contains(data, []byte("GNU AFFERO GENERAL PUBLIC LICENSE")) {
+	if bytes.Contains(upper, []byte("GNU AFFERO GENERAL PUBLIC LICENSE")) {
 		return "AGPL-3.0"
 	}
-	if bytes.Contains(data, []byte("Mozilla Public License")) {
-		if bytes.Contains(data, []byte("2.0")) {
+	if bytes.Contains(upper, []byte("MOZILLA PUBLIC LICENSE")) {
+		if bytes.Contains(upper, []byte("2.0")) {
 			return "MPL-2.0"
 		}
 		return "MPL"
+	}
+
+	spdxPatterns := []string{
+		`(?i)SPDX-License-Identifier:\s*([\w\-\.]+)`,
+		`(?i)License:\s*([\w\-\.]+)`,
+	}
+	for _, pattern := range spdxPatterns {
+		re := regexp.MustCompile(pattern)
+		m := re.FindStringSubmatch(string(header))
+		if len(m) > 1 {
+			return m[1]
+		}
 	}
 
 	return "unknown"

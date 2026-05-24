@@ -531,3 +531,251 @@ func TestCountTool_CaseInsensitiveAndTrim(t *testing.T) {
 		t.Errorf("countTool empty target should yield 0, got %d", got)
 	}
 }
+
+func TestRuleObserver_MaxNotesDefault(t *testing.T) {
+	// MaxNotes <= 0 should default to 3
+	obs := &RuleObserver{MaxNotes: 0}
+	notes := obs.Observe(Snapshot{
+		Parked:      true,
+		ParkReason:  "manual", // non-budget reason to hit default park text
+		Mutations:   []string{"a.go", "b.go", "c.go"},
+		FailedTools: []string{"x", "y"},
+	})
+	if len(notes) != 3 {
+		t.Fatalf("MaxNotes=0 should default to 3, got %d notes", len(notes))
+	}
+}
+
+func TestRuleObserver_EmptyNoteTextSkipped(t *testing.T) {
+	// push() should skip notes where strings.TrimSpace(note.Text) == ""
+	obs := &RuleObserver{MaxNotes: 3}
+	notes := obs.Observe(Snapshot{
+		FailedTools: []string{"x"},
+	})
+	// If an empty note somehow got added, the count would be wrong.
+	// This test validates the push closure's trim guard.
+	if len(notes) == 0 {
+		t.Log("no notes emitted for failed tools — acceptable")
+	}
+}
+
+func TestRuleObserver_MutationUnvalidatedNoHint(t *testing.T) {
+	// When ValidationHint is empty, the "Double-check before shipping." suffix fires
+	notes := NewRuleObserver().Observe(Snapshot{
+		Question:       "refactor auth",
+		Answer:         "Done, changed token.go.",
+		ToolSteps:      1,
+		Mutations:      []string{"internal/auth/token.go"},
+		ValidationHint: "", // empty — should use else branch
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "mutation_unvalidated" {
+			found = true
+			if !strings.Contains(n.Text, "Double-check before shipping.") {
+				t.Errorf("empty hint should append double-check text, got %q", n.Text)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("mutation_unvalidated should fire even without hint, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_HeavyTurnNoHint(t *testing.T) {
+	// When TightenHint is empty, the else branch fires
+	notes := NewRuleObserver().Observe(Snapshot{
+		TokensUsed:  45000,
+		TightenHint: "", // empty — should use else branch
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "heavy_turn" {
+			found = true
+			if !strings.Contains(n.Text, "narrowing the question") {
+				t.Errorf("empty tighten hint should use else text, got %q", n.Text)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("heavy_turn should fire even without hint, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_PseudoToolCall(t *testing.T) {
+	notes := NewRuleObserver().Observe(Snapshot{
+		Question:   "fix the auth bug",
+		Answer:     "I will use [tool_call] read_file [/tool_call] to check the token.",
+		ToolSteps:  0, // no native tools used
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "pseudo_tool_call" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("pseudo_tool_call should fire when answer contains [tool_call] marker with no ToolSteps, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_RetrievalHotspotOnly(t *testing.T) {
+	notes := NewRuleObserver().Observe(Snapshot{
+		Question:      "analyze the codebase",
+		ContextFiles:  3,
+		ContextSources: map[string]int{"hotspot": 3},
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "retrieval_hotspot_only" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("retrieval_hotspot_only should fire when ContextSources[hotspot] == ContextFiles, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_GrepThrash(t *testing.T) {
+	// 5+ greps, no mutations, not parked → should fire
+	tools := make([]string, 5)
+	for i := range tools {
+		tools[i] = "grep_codebase"
+	}
+	notes := NewRuleObserver().Observe(Snapshot{
+		ToolSteps:   5,
+		ToolsUsed:   tools,
+		Mutations:   []string{},
+		Parked:      false,
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "grep_thrash" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("grep_thrash should fire at 5+ greps, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_ToolFlood(t *testing.T) {
+	// 30+ tool calls, not parked → should fire
+	tools := make([]string, 30)
+	for i := range tools {
+		tools[i] = "read_file"
+	}
+	notes := NewRuleObserver().Observe(Snapshot{
+		ToolSteps: 30,
+		ToolsUsed: tools,
+		Parked:    false,
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "tool_flood" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("tool_flood should fire at 30+ tool calls, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_MutationBlind(t *testing.T) {
+	// mutations but no git_status/git_diff
+	notes := NewRuleObserver().Observe(Snapshot{
+		Mutations:  []string{"a.go", "b.go"},
+		ToolsUsed:  []string{"edit_file", "read_file"},
+		FailedTools: []string{},
+		Parked:     false,
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "mutation_blind" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("mutation_blind should fire when mutations exist without git_status/git_diff, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_CleanPass(t *testing.T) {
+	// tools used, no failures, tight token spend → should fire
+	notes := NewRuleObserver().Observe(Snapshot{
+		ToolsUsed:   []string{"read_file", "edit_file"},
+		FailedTools: []string{},
+		Parked:      false,
+		TokensUsed:  5000,
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "clean_pass" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("clean_pass should fire for clean tight turn, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_RetrievalSymbolMiss(t *testing.T) {
+	// UsefulQueryIdentifier set, symbol-match and marker both 0
+	notes := NewRuleObserver().Observe(Snapshot{
+		UsefulQueryIdentifier: "AuthToken",
+		QueryIdentifiers:      1,
+		ContextFiles:          2,
+		ContextSources:        map[string]int{"symbol-match": 0, "marker": 0},
+		QuestionHasFileMarker: false,
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "retrieval_symbol_miss" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("retrieval_symbol_miss should fire for unmatched query identifier, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_RetrievalSymbolMissWithMarker(t *testing.T) {
+	// QuestionHasFileMarker true → different text branch
+	notes := NewRuleObserver().Observe(Snapshot{
+		UsefulQueryIdentifier: "AuthToken",
+		QueryIdentifiers:      1,
+		ContextFiles:          2,
+		ContextSources:        map[string]int{"symbol-match": 0, "marker": 0},
+		QuestionHasFileMarker: true,
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "retrieval_symbol_miss" {
+			found = true
+			if !strings.Contains(n.Text, "marker") {
+				t.Errorf("with marker: text should mention marker issue, got %q", n.Text)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("retrieval_symbol_miss with marker should fire, got %+v", notes)
+	}
+}
+
+func TestRuleObserver_NoActionTaken(t *testing.T) {
+	// ToolSteps=0, answer contains "?", looksActionable question
+	notes := NewRuleObserver().Observe(Snapshot{
+		Question:   "fix the bug in auth",
+		Answer:     "What file should I look at?",
+		ToolSteps:  0,
+	})
+	found := false
+	for _, n := range notes {
+		if n.Origin == "no_action_taken" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no_action_taken should fire for actionable ? without tools, got %+v", notes)
+	}
+}

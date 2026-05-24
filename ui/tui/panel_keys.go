@@ -49,7 +49,7 @@ func (m Model) handleFilesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.filesView.searchActive = true
 		return m, nil
-	case "c":
+	case "c", "alt+c":
 		// Clear the active query so the next paint surfaces every
 		// indexed file again. No-op when nothing is buffered.
 		if strings.TrimSpace(m.filesView.query) != "" {

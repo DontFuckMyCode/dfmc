@@ -1,9 +1,11 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 	"time"
 )
@@ -395,6 +397,60 @@ func TestServer_ClientInfo_LoggedButNotActedOn(t *testing.T) {
 	if resp.Error != nil {
 		t.Fatalf("init with extra fields: %v", resp.Error)
 	}
+}
+
+// TestServer_DuplicateRequestID_ReturnsError tests that the idempotency guard
+// in validateRequestID catches a second request with the same numeric ID and
+// returns ErrInternalError so the client gets an explicit error rather than
+// an ambiguous timeout.
+func TestServer_DuplicateRequestID_ReturnsError(t *testing.T) {
+	bridge := &fakeBridgeForBatch{}
+	h := newConnectionHarness(t, bridge)
+	defer h.close()
+
+	// Send initialize to prime the server
+	h.sendRequest("initialize", "1", map[string]any{
+		"protocolVersion": "2024-11-05",
+		"clientInfo":      map[string]string{"name": "test", "version": "1.0"},
+	})
+	h.recvResponse()
+	h.sendRequest("initialized", nil, nil)
+
+	// First ping with ID "7" — should succeed
+	h.sendRequest("ping", "7", nil)
+	resp := h.recvResponse()
+	if resp.Error != nil {
+		t.Fatalf("first ping with id=7: unexpected error %v", resp.Error)
+	}
+
+	// Second ping with same ID "7" — idempotency guard must catch it
+	h.sendRequest("ping", "7", nil)
+	resp = h.recvResponse()
+	if resp.Error == nil {
+		t.Fatal("second ping with id=7: expected error, got nil")
+	}
+	if resp.Error.Code != ErrInternalError {
+		t.Fatalf("second ping error code: got %d, want %d (ErrInternalError)", resp.Error.Code, ErrInternalError)
+	}
+	if !strings.Contains(resp.Error.Message, "duplicate") {
+		t.Fatalf("error message: got %q, want duplicate message", resp.Error.Message)
+	}
+}
+
+// TestServer_NilResponse_NotWritten covers the writeResponse nil-guard so
+// a nil response (returned by dispatch for a notification) does not cause a
+// nil pointer dereference. The actual call site is req.IsNotification() in
+// handleRequest, but we can exercise writeResponse(nil) directly via a
+// test that forces the nil path — which we do by calling the method directly.
+func TestServer_WriteResponse_NilIsNoOp(t *testing.T) {
+	inR, inW := io.Pipe()
+	var buf bytes.Buffer
+	srv := NewServer(inR, &buf, &fakeBridgeForBatch{}, ServerInfo{Name: "test", Version: "0.0.0"})
+	srv.writeResponse(nil)
+	if buf.Len() != 0 {
+		t.Fatalf("writeResponse(nil) wrote %d bytes, want 0", buf.Len())
+	}
+	_ = inW.Close()
 }
 
 // TestServer_PingResponse_EmptyObject tests that ping returns an

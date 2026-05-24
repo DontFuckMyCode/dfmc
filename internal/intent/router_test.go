@@ -392,3 +392,25 @@ func TestInvalidJSONError_Unwrap(t *testing.T) {
 		t.Errorf("Unwrap() = %v, want %v", got, innerErr)
 	}
 }
+
+func TestInvalidJSONError_Error_TruncatesLongRaw(t *testing.T) {
+	longRaw := strings.Repeat("x", 250)
+	innerErr := errors.New("boom")
+	e := &invalidJSONError{raw: longRaw, err: innerErr}
+	msg := e.Error()
+	if !strings.Contains(msg, "...") {
+		t.Errorf("Error() should contain truncation ellipsis for raw > 200 chars, got %q", msg)
+	}
+	if strings.Contains(msg, strings.Repeat("x", 250)) {
+		t.Errorf("Error() should truncate long raw, full raw still present in %q", msg)
+	}
+}
+
+func TestInvalidJSONError_Error_ShortRawUnchanged(t *testing.T) {
+	innerErr := errors.New("boom")
+	e := &invalidJSONError{raw: "short", err: innerErr}
+	msg := e.Error()
+	if !strings.Contains(msg, `"short"`) {
+		t.Errorf("Error() should preserve short raw unchanged, got %q", msg)
+	}
+}

@@ -70,10 +70,10 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, loadStatusCmd(m.eng)
 	case "left", "h":
 		return m.shiftStatusCard(-1), nil
-	case "l":
-		// vim-style move right inside the 2D card grid. The action
-		// menu deliberately uses bare `right` so `l` keeps its move
-		// meaning (h/j/k/l form the Status panel's directional set).
+	case "ctrl+l":
+		// vim-style move right inside the 2D card grid. Uses ctrl+l
+		// to avoid terminal clear-screen collision with bare `l`.
+		// h/j/k/l form the Status panel's directional set.
 		return m.shiftStatusCard(1), nil
 	case "right":
 		// Right opens the action menu — arrow-driven discovery of

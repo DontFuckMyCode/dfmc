@@ -133,3 +133,58 @@ func TestNormalizeOpenAIBaseURL(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAICompatibleProviderCountTokens(t *testing.T) {
+	p := &OpenAICompatibleProvider{}
+	tests := []struct {
+		text string
+		want int
+	}{
+		{"hello world", 2},
+		{"one", 1},
+		{"", 0},
+		{"  multiple   spaces  ", 2},
+	}
+	for _, tt := range tests {
+		if got := p.CountTokens(tt.text); got != tt.want {
+			t.Errorf("CountTokens(%q) = %d, want %d", tt.text, got, tt.want)
+		}
+	}
+}
+
+func TestOpenAICompatibleProviderMaxContext_Custom(t *testing.T) {
+	p := &OpenAICompatibleProvider{maxContext: 64000}
+	if got := p.MaxContext(); got != 64000 {
+		t.Errorf("custom maxContext: got %d, want 64000", got)
+	}
+}
+
+func TestOpenAICompatibleProviderMaxContext_Default(t *testing.T) {
+	p := &OpenAICompatibleProvider{maxContext: 0}
+	if got := p.MaxContext(); got != 128000 {
+		t.Errorf("default maxContext: got %d, want 128000", got)
+	}
+}
+
+func TestOpenAICompatibleProviderHints(t *testing.T) {
+	p := &OpenAICompatibleProvider{maxContext: 64000}
+	hints := p.Hints()
+	if hints.ToolStyle != "function-calling" {
+		t.Errorf("ToolStyle: got %q", hints.ToolStyle)
+	}
+	if hints.Cache {
+		t.Error("Cache should be false")
+	}
+	if hints.LowLatency {
+		t.Error("LowLatency should be false")
+	}
+	if hints.MaxContext != 64000 {
+		t.Errorf("MaxContext: got %d, want 64000", hints.MaxContext)
+	}
+	if hints.DefaultMode != "balanced" {
+		t.Errorf("DefaultMode: got %q", hints.DefaultMode)
+	}
+	if !hints.SupportsTools {
+		t.Error("SupportsTools should be true")
+	}
+}

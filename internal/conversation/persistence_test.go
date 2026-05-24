@@ -274,6 +274,34 @@ func TestAddMessage_AutoStartsActive(t *testing.T) {
 	}
 }
 
+// SaveActive on nil store returns nil (no-op).
+func TestSaveActive_NilStore(t *testing.T) {
+	mgr := &Manager{}
+	if err := mgr.SaveActive(); err != nil {
+		t.Fatalf("SaveActive on nil store should be no-op, got: %v", err)
+	}
+}
+
+// Close on a manager with no active conversation is a safe no-op.
+func TestClose_SafeOnIdleManager(t *testing.T) {
+	mgr := New(openConvStore(t))
+	mgr.Close() // must not panic
+}
+
+// SaveActiveAsync with nil store does not panic.
+func TestSaveActiveAsync_NilStore(t *testing.T) {
+	mgr := &Manager{}
+	mgr.SaveActiveAsync() // must not panic
+	mgr.Close()            // drain
+}
+
+// SaveActiveAsync with nil active does not panic.
+func TestSaveActiveAsync_NilActive(t *testing.T) {
+	mgr := New(openConvStore(t))
+	mgr.SaveActiveAsync() // no active = early return, must not panic
+	mgr.Close()
+}
+
 func sortStrs(in []string) []string {
 	out := append([]string(nil), in...)
 	for i := 1; i < len(out); i++ {

@@ -86,9 +86,12 @@ func isLikelyEntryPoint(name string) bool {
 		strings.HasPrefix(lower, "test_") || strings.HasSuffix(lower, "_test")
 }
 
-// findImportCycles returns a set of module IDs that are part of import
+// findImportCycles returns the set of module IDs that are part of import
 // cycles using Tarjan's strongly connected components algorithm.
 func findImportCycles(graph *codemap.Graph) map[string]bool {
+	if graph == nil {
+		return nil
+	}
 	indices := make(map[string]int)
 	var stack []string
 	onStack := make(map[string]bool)

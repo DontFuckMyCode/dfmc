@@ -145,7 +145,7 @@ func (m Model) handleWorkflowKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Right arrow opens the action menu — covers stop / resume /
 	// copy ID / focus run / open routing editor without the user
 	// having to memorise letters or copy the ID elsewhere.
-	if s := msg.String(); s == "right" || s == "l" {
+	if s := msg.String(); s == "right" {
 		return m.openWorkflowActionMenu(), nil
 	}
 
@@ -191,7 +191,7 @@ func (m Model) handleWorkflowKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.workflow.scrollY = len(rows) - 1
 			}
 		}
-	case "enter", "o":
+	case "enter":
 		if m.workflow.selectedRunID == "" {
 			// select a run from the selector list
 			if m.workflow.selectedIndex >= 0 && m.workflow.selectedIndex < total {

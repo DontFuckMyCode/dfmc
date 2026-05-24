@@ -123,7 +123,7 @@ func (m Model) handlePanelNavigationShortcut(msg tea.KeyMsg) (tea.Model, tea.Cmd
 	case "alt+i":
 		m = m.activateDiagnosticTab("Tools")
 		return m, nil, true
-	case "ctrl+shift+t", "ctrl+alt+t", "alt+ctrl+t", "alt+t", "alt+o":
+	case "ctrl+shift+t":
 		m = m.activateDiagnosticTab("ToolStatus")
 		return m, nil, true
 	case "ctrl+i":
