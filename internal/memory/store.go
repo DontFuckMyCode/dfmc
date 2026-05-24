@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -343,6 +344,64 @@ func (s *Store) AddEpisodicInteraction(project, question, answer string, confide
 		Confidence: confidence,
 	}
 	return s.Add(entry)
+}
+
+// RequestLLMUpdate calls the LLM with a reflection prompt and adds any
+// suggested memory entries returned by the model. It is best-effort:
+// errors are logged but not propagated, and an empty/nil response from
+// the LLM produces zero added entries. The confidence value from the
+// response is used directly; entries with confidence below threshold are
+// discarded.
+func (s *Store) RequestLLMUpdate(ctx context.Context, question, answer string, llmUpdater LLMUpdater, threshold float64) error {
+	prompt := "You just answered this question in a coding session:\n\nQ: " + question + "\n\nA: " + answer + "\n\nShould any of this be remembered for future sessions? " +
+		"Respond ONLY with a JSON array of memory entries to add to persistent memory, or [] if nothing is worth remembering. " +
+		"Each entry must have: key (short question/topic phrase), value (concise answer or finding), category (one word: pattern|fact|todo|decision|context), confidence (0.0-1.0). " +
+		`Example: [{"key":"postgres jsonb performance","value":"Use GIN indexes for jsonb contains queries","category":"fact","confidence":0.85}]`
+
+	resp, err := llmUpdater.Call(ctx, "", "", prompt)
+	if err != nil {
+		// best-effort: log and continue
+		return nil
+	}
+	if resp == "" {
+		return nil
+	}
+
+	resp = strings.TrimSpace(resp)
+	if resp == "" || resp == "[]" {
+		return nil
+	}
+
+	// Strip markdown code fences if present
+	resp = strings.TrimPrefix(resp, "```json")
+	resp = strings.TrimPrefix(resp, "```")
+	resp = strings.TrimSuffix(resp, "```")
+	resp = strings.TrimSpace(resp)
+
+	var entries []struct {
+		Key       string  `json:"key"`
+		Value     string  `json:"value"`
+		Category  string  `json:"category"`
+		Confidence float64 `json:"confidence"`
+	}
+	if err := json.Unmarshal([]byte(resp), &entries); err != nil {
+		return nil // best-effort
+	}
+
+	for _, e := range entries {
+		if e.Confidence < threshold {
+			continue
+		}
+		entry := types.MemoryEntry{
+			Tier:       types.MemoryEpisodic,
+			Category:   e.Category,
+			Key:        e.Key,
+			Value:      e.Value,
+			Confidence: e.Confidence,
+		}
+		_ = s.Add(entry) // best-effort; errors are logged inside Add
+	}
+	return nil
 }
 
 func bucketForTier(tier types.MemoryTier) string {

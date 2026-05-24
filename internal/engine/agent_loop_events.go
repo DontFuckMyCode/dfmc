@@ -132,6 +132,7 @@ func (e *Engine) recordNativeAgentInteraction(question string, completion native
 			e.Memory.TouchFile(ch.Path)
 		}
 		_ = e.Memory.AddEpisodicInteraction(e.ProjectRoot, question, completion.Answer, 0.75)
+		e.memoryUpdateAfterTurn(question, completion.Answer)
 	}
 }
 

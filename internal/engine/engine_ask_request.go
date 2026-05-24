@@ -132,5 +132,6 @@ func (e *Engine) recordInteraction(question, answer, providerName, model string,
 			e.Memory.TouchFile(ch.Path)
 		}
 		_ = e.Memory.AddEpisodicInteraction(e.ProjectRoot, question, answer, 0.7)
+		e.memoryUpdateAfterTurn(question, answer)
 	}
 }
