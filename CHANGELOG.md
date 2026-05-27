@@ -38,7 +38,7 @@ freezes a known-good snapshot for distribution.
   `update`, `completion`, `man`, `version`.
 - **TUI workbench** (Bubble Tea) with 17 panels reachable via
   `F1`-`F12` + `Shift+F1`-`F5`; chat composer, paste blocks, tool-chip
-  collapse, TODO strip, sub-agent badges, Drive cockpit.
+  collapse, strip, sub-agent badges, Drive cockpit.
 - **HTTP/SSE server** (`dfmc serve`) and **remote client** (`dfmc remote`)
   sharing one HTTP+WebSocket API with optional bearer auth.
 - **MCP server** (`dfmc mcp`) exposing the tool registry plus six Drive
@@ -58,7 +58,7 @@ freezes a known-good snapshot for distribution.
   `tool_help`), parallel batches, approval gate, per-target
   read-before-mutation, panic guard, denial telemetry.
 - **Drive** — autonomous plan/execute runner. Planner LLM produces a
-  TODO DAG; scheduler walks ready batches through `RunSubagent` with
+  DAG; scheduler walks ready batches through `RunSubagent` with
   file-scope conflict avoidance, MaxParallel cap, MaxFailedTodos
   stop condition, per-tag provider routing.
 - **Intent layer** — state-aware sub-LLM normalises follow-up turns

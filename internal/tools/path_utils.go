@@ -52,4 +52,3 @@ func PathRelativeToRoot(root, abs string) string {
 func EnsureWithinRoot(root, path string) (string, error) {
 	return pathsafe.EnsureWithinRoot(root, path)
 }
-

@@ -7,36 +7,36 @@ import "os"
 // with encoding issues or when emoji/box-drawing characters render as
 // mojibake).
 type GlyphSet struct {
-	Bullet      string // list item marker
-	ArrowRight  string // direction / action indicator
-	ArrowDown   string // expanded / open
-	ArrowUp     string // collapsed / closed
-	Check       string // success / done
-	Cross       string // failure / error
-	Warning     string // warning / caution
-	Info        string // info / note
-	Star        string // favorite / important
-	Dot         string // bullet point
-	Ellipsis    string // truncated content
-	Pipe        string // vertical separator
-	Dash        string // horizontal separator
-	CornerTL    string // top-left box corner
-	CornerTR    string // top-right box corner
-	CornerBL    string // bottom-left box corner
-	CornerBR    string // bottom-right box corner
-	Horizontal  string // horizontal line
-	Vertical    string // vertical line
-	TeeRight    string // T-junction right
-	TeeLeft     string // T-junction left
-	TeeDown     string // T-junction down
-	TeeUp       string // T-junction up
-	CrossJunc   string // cross junction
-	Cursor      string // selection cursor
-	Pointer     string // mouse/pointer indicator
-	Play        string // running / active
-	Stop        string // stopped / inactive
-	Pause       string // paused
-	Spinner     string // loading / working
+	Bullet     string // list item marker
+	ArrowRight string // direction / action indicator
+	ArrowDown  string // expanded / open
+	ArrowUp    string // collapsed / closed
+	Check      string // success / done
+	Cross      string // failure / error
+	Warning    string // warning / caution
+	Info       string // info / note
+	Star       string // favorite / important
+	Dot        string // bullet point
+	Ellipsis   string // truncated content
+	Pipe       string // vertical separator
+	Dash       string // horizontal separator
+	CornerTL   string // top-left box corner
+	CornerTR   string // top-right box corner
+	CornerBL   string // bottom-left box corner
+	CornerBR   string // bottom-right box corner
+	Horizontal string // horizontal line
+	Vertical   string // vertical line
+	TeeRight   string // T-junction right
+	TeeLeft    string // T-junction left
+	TeeDown    string // T-junction down
+	TeeUp      string // T-junction up
+	CrossJunc  string // cross junction
+	Cursor     string // selection cursor
+	Pointer    string // mouse/pointer indicator
+	Play       string // running / active
+	Stop       string // stopped / inactive
+	Pause      string // paused
+	Spinner    string // loading / working
 }
 
 var (

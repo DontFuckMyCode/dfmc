@@ -247,4 +247,3 @@ func previewPatch(content string) string {
 	}
 	return preview
 }
-

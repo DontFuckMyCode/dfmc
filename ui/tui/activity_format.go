@@ -185,12 +185,12 @@ func kindIcon(kind activityKind) string {
 // activityEntryIcon refines kindIcon with running/done state inferred
 // from the EventID. Tool rows distinguish three states:
 //
-//   tool:call  → ⟳ accent  (running, draws the eye to in-flight work)
-//   tool:done  → ✓ ok      (completed cleanly)
-//   tool:error → ✗ fail    (failed; redundant with Kind=error but kept
-//                           for tool-kind error rows that get classified
-//                           as Kind=tool because of how recordActivityEvent
-//                           orders the rules)
+//	tool:call  → ⟳ accent  (running, draws the eye to in-flight work)
+//	tool:done  → ✓ ok      (completed cleanly)
+//	tool:error → ✗ fail    (failed; redundant with Kind=error but kept
+//	                        for tool-kind error rows that get classified
+//	                        as Kind=tool because of how recordActivityEvent
+//	                        orders the rules)
 //
 // Falls back to kindIcon for everything else (agent / stream / ctx /
 // index / generic info). Splitting the dispatcher means kindIcon stays

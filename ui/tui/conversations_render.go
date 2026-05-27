@@ -222,9 +222,9 @@ func conversationsHitsChip(n int) string { return searchHitsChip(n) }
 // renderBranchTree paints a one-level tree of conversation branches
 // rooted under a "branches:" header. Tree glyphs:
 //
-//   ├─  ordinary branch (not last in the list)
-//   └─  last branch in the list
-//   ●   active marker prefix on the active branch (left of the glyph)
+//	├─  ordinary branch (not last in the list)
+//	└─  last branch in the list
+//	●   active marker prefix on the active branch (left of the glyph)
 //
 // Active branch row uses accentStyle so the eye finds it without
 // having to read every name; the inactive rows render in subtleStyle.

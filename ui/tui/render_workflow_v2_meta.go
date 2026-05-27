@@ -127,10 +127,11 @@ func (m Model) workflowMetaCards() []panelCard {
 // with sibling card rows.
 //
 // Edge cases:
-//   total == 0           → "no todos" subtle (avoids div-by-zero AND
-//                          the meaningless "0/0 · 0%" surface)
-//   done == total > 0    → "X/X · 100% ✓" with a fully-filled bar so
-//                          completed runs read as Done at a glance
+//
+//	total == 0           → "no todos" subtle (avoids div-by-zero AND
+//	                       the meaningless "0/0 · 0%" surface)
+//	done == total > 0    → "X/X · 100% ✓" with a fully-filled bar so
+//	                       completed runs read as Done at a glance
 func renderRunProgressChip(done, total int) string {
 	if total <= 0 {
 		return subtleStyle.Render("no todos")

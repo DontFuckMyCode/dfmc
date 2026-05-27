@@ -78,4 +78,3 @@ func TestNextHitSlash_StaleQueryClears(t *testing.T) {
 		t.Fatalf("expected stale query to clear, got %q", mm.chat.lastSearchQuery)
 	}
 }
-

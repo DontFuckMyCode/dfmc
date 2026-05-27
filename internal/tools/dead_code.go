@@ -309,4 +309,3 @@ func relPath(root, p string) string {
 	}
 	return filepath.ToSlash(rel)
 }
-

@@ -135,8 +135,8 @@ func TestNoSilentErrSwallow_MatcherSelfCheck(t *testing.T) {
 		{"_ = err // repolint:allow _=err — legit reason", false},
 		{"_ = err  // repolint:allow _=err — also legit", false},
 		{"_ = foo", false},
-		{"x := _ = err", false},  // not a standalone statement
-		{"//   _ = err", false},  // comment-only line
+		{"x := _ = err", false}, // not a standalone statement
+		{"//   _ = err", false}, // comment-only line
 		{"err := f()", false},
 	}
 	for _, c := range cases {

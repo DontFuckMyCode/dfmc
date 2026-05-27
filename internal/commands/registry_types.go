@@ -84,4 +84,3 @@ type CategoryGroup struct {
 	Label    string     `json:"label"`
 	Commands []*Command `json:"commands"`
 }
-

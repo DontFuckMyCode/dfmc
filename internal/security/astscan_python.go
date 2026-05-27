@@ -242,10 +242,10 @@ var pythonFileOpenCalls = []taintedCallSlot{
 // pythonFileOpenTaintedArgMatcher fires when a Python file-open /
 // move / delete sink receives a tainted path. Covers:
 //
-//   * `open(path)` -- the built-in. Matched via the bare-call helper
+//   - `open(path)` -- the built-in. Matched via the bare-call helper
 //     so receiver-prefixed forms (`obj.open(x)`) and identifier
 //     suffix matches (`reopen(x)`) don't false-fire.
-//   * pathlib.Path / os.remove / os.unlink / os.rmdir / os.makedirs /
+//   - pathlib.Path / os.remove / os.unlink / os.rmdir / os.makedirs /
 //     os.rename / shutil.copy / shutil.copy2 / shutil.copyfile /
 //     shutil.move / shutil.rmtree -- module-prefixed; the dot
 //     prefix already provides anchoring so findCallArgs is enough.

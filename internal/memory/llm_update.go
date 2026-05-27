@@ -9,10 +9,10 @@ import (
 // SuggestedEntry is what the LLM proposes to remember from a turn.
 type SuggestedEntry struct {
 	Key        string  `json:"key"`
-	Value     string  `json:"value"`
-	Category  string  `json:"category"`
+	Value      string  `json:"value"`
+	Category   string  `json:"category"`
 	Confidence float64 `json:"confidence"`
-	Tier      string  `json:"tier"` // "episodic" or "semantic"
+	Tier       string  `json:"tier"` // "episodic" or "semantic"
 }
 
 // parseSuggestedEntries extracts a JSON array from the LLM's text response.

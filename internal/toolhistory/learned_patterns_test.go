@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-
-
 func TestInitLearnedPatterns(t *testing.T) {
 	tmp := t.TempDir()
 	store, err := InitLearnedPatterns(tmp)

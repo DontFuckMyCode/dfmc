@@ -542,4 +542,3 @@ type Message struct {
 	Timestamp  time.Time
 	IsOutgoing bool // true = sent by bot, false = received
 }
-

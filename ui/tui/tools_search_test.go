@@ -126,4 +126,3 @@ func TestRenderToolsView_NoMatchEmptyState(t *testing.T) {
 		t.Errorf("expected no-match warning, got:\n%s", view)
 	}
 }
-

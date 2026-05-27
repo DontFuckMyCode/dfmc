@@ -218,11 +218,11 @@ func isGoOneLinerFunction(trimmed string) bool {
 // jsFunctionEntryRE matches named-function declarations in JS / TS
 // at a word boundary. Catches the common shapes:
 //
-//   function foo(...)            -- plain
-//   async function foo(...)      -- async
-//   export function foo(...)     -- ESM
-//   export async function foo(...)
-//   export default function foo(...)
+//	function foo(...)            -- plain
+//	async function foo(...)      -- async
+//	export function foo(...)     -- ESM
+//	export async function foo(...)
+//	export default function foo(...)
 //
 // Anonymous functions (`function() {`) and arrow functions
 // (`const foo = () => {`) are NOT matched in this slice; they're

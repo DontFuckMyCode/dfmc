@@ -113,14 +113,14 @@ func (idx *SymbolIndex) Lookup(name string) []Definition {
 //
 // Tiebreakers:
 //
-//	1. A definition in callerFile wins over any other match. This
-//	   captures the common case where the caller calls its own
-//	   helper.
+//  1. A definition in callerFile wins over any other match. This
+//     captures the common case where the caller calls its own
+//     helper.
 //
-//	2. A single workspace-wide match resolves cleanly.
+//  2. A single workspace-wide match resolves cleanly.
 //
-//	3. Multiple matches with no same-file winner: return nil.
-//	   Ambiguity is reported as "unresolved" rather than guessed.
+//  3. Multiple matches with no same-file winner: return nil.
+//     Ambiguity is reported as "unresolved" rather than guessed.
 //
 // Returns nil for an empty / unknown name, or when ambiguity
 // cannot be resolved without additional type information.

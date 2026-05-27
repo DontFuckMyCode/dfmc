@@ -171,4 +171,3 @@ func (m Model) handlePickerShortcut(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	}
 	return m, nil, false
 }
-

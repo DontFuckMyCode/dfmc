@@ -20,7 +20,8 @@ func writeTodoFile(t *testing.T, dir, name, body string) string {
 func TestCollectTodoMarkers_CountsAllKinds(t *testing.T) {
 	tmp := t.TempDir()
 	src := `package demo
-// TODO: finish this
+
+// TODO: implement this
 // FIXME(ersin): handle edge case
 // HACK: works only on Windows
 // XXX remove before ship

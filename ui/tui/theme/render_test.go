@@ -462,7 +462,7 @@ func TestFormatRelativeTime(t *testing.T) {
 		{now.Add(-3 * time.Hour), "(3h ago)"},
 		{now.Add(-25 * time.Hour), "(1d ago)"},
 		{time.Time{}, ""},
-		{now.Add(time.Minute), ""},        // future → ignore
+		{now.Add(time.Minute), ""},           // future → ignore
 		{now.Add(-365 * 24 * time.Hour), ""}, // older than 30d → ignore
 	}
 	for _, tc := range cases {

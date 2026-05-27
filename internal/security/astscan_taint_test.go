@@ -294,9 +294,9 @@ func TestTaintTracker_PythonSources(t *testing.T) {
 
 func TestTaintTracker_PythonPropagation(t *testing.T) {
 	tr := newTaintTracker("python")
-	tr.observeLine("user = sys.argv[1]")     // user tainted
-	tr.observeLine("s = str(user)")          // s inherits
-	tr.observeLine("cleaned = s.strip()")    // cleaned inherits (through s)
+	tr.observeLine("user = sys.argv[1]")      // user tainted
+	tr.observeLine("s = str(user)")           // s inherits
+	tr.observeLine("cleaned = s.strip()")     // cleaned inherits (through s)
 	tr.observeLine("safe = \"static value\"") // safe must NOT be tainted
 
 	if !tr.IsTainted("user") {
@@ -568,10 +568,10 @@ func TestTaintTracker_JSDestructure(t *testing.T) {
 
 func TestTaintTracker_JSPropagation(t *testing.T) {
 	tr := newTaintTracker("javascript")
-	tr.observeLine("const body = req.body")     // body tainted
-	tr.observeLine("const s = String(body)")    // s inherits
-	tr.observeLine("const cmd = s.trim()")      // cmd inherits via s
-	tr.observeLine("const safe = \"static\"")   // safe must NOT be tainted
+	tr.observeLine("const body = req.body")   // body tainted
+	tr.observeLine("const s = String(body)")  // s inherits
+	tr.observeLine("const cmd = s.trim()")    // cmd inherits via s
+	tr.observeLine("const safe = \"static\"") // safe must NOT be tainted
 
 	if !tr.IsTainted("body") {
 		t.Error("body must be tainted (direct source)")

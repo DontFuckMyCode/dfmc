@@ -392,15 +392,15 @@ func TestAdaptiveHistoryDivisor_ScalesWithContextWindow(t *testing.T) {
 		wantMin int // minimum budget (window/div)
 		wantMax int // maximum budget (window/div)
 	}{
-		{8_000, 16, 500, 500},           // small: /16 = 500
-		{16_000, 16, 1000, 1000},        // still small: /16 = 1000
-		{32_000, 16, 2000, 2000},        // boundary: /16 = 2000
-		{64_000, 13, 4000, 5200},          // mid ramp: ~13-14
-		{128_000, 10, 12000, 14000},       // medium: /10 = 12800
-		{200_000, 8, 20000, 26000},        // large: ~8-9
-		{256_000, 8, 32000, 32000},      // large boundary: /8 = 32000
-		{512_000, 6, 85000, 86000},      // very large: /6
-		{1_000_000, 6, 166000, 167000},  // huge: /6
+		{8_000, 16, 500, 500},          // small: /16 = 500
+		{16_000, 16, 1000, 1000},       // still small: /16 = 1000
+		{32_000, 16, 2000, 2000},       // boundary: /16 = 2000
+		{64_000, 13, 4000, 5200},       // mid ramp: ~13-14
+		{128_000, 10, 12000, 14000},    // medium: /10 = 12800
+		{200_000, 8, 20000, 26000},     // large: ~8-9
+		{256_000, 8, 32000, 32000},     // large boundary: /8 = 32000
+		{512_000, 6, 85000, 86000},     // very large: /6
+		{1_000_000, 6, 166000, 167000}, // huge: /6
 	}
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("window_%dk", tc.window/1000), func(t *testing.T) {

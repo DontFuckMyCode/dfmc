@@ -105,4 +105,3 @@ func subcommandColumnWidth(subs []Subcommand) int {
 	}
 	return width
 }
-

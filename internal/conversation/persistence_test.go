@@ -292,7 +292,7 @@ func TestClose_SafeOnIdleManager(t *testing.T) {
 func TestSaveActiveAsync_NilStore(t *testing.T) {
 	mgr := &Manager{}
 	mgr.SaveActiveAsync() // must not panic
-	mgr.Close()            // drain
+	mgr.Close()           // drain
 }
 
 // SaveActiveAsync with nil active does not panic.

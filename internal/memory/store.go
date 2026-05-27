@@ -379,9 +379,9 @@ func (s *Store) RequestLLMUpdate(ctx context.Context, question, answer string, l
 	resp = strings.TrimSpace(resp)
 
 	var entries []struct {
-		Key       string  `json:"key"`
-		Value     string  `json:"value"`
-		Category  string  `json:"category"`
+		Key        string  `json:"key"`
+		Value      string  `json:"value"`
+		Category   string  `json:"category"`
 		Confidence float64 `json:"confidence"`
 	}
 	if err := json.Unmarshal([]byte(resp), &entries); err != nil {

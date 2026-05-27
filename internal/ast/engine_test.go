@@ -294,9 +294,9 @@ func TestBackendStatus_LanguageMatrix(t *testing.T) {
 		"python":     false,
 	}
 	regexOnlyLangs := map[string]bool{
-		"rust":  false,
-		"ruby":  false,
-		"java":  false,
+		"rust": false,
+		"ruby": false,
+		"java": false,
 	}
 	for _, item := range status.Languages {
 		if _, ok := treeSitterLangs[item.Language]; ok {

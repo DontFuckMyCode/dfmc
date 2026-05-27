@@ -45,17 +45,17 @@ func TestHelpOverlay_PanelSectionsNameNonObviousKeys(t *testing.T) {
 		section string
 		keys    []string
 	}{
-		{"MEMORY PANEL", []string{"t", "d", "p"}},                    // tier cycle, delete, promote
-		{"CONVERSATIONS PANEL", []string{"L", "S"}},                  // load full, deep search
-		{"CODEMAP PANEL", []string{"v"}},                             // view cycle
-		{"PLANS PANEL", []string{"e"}},                               // edit task
-		{"CONTEXT PANEL", []string{"e", "m", "a"}},                   // edit, manager, active
-		{"SECURITY PANEL", []string{"v", "i", "f"}},                  // view, ignore, fix
-		{"STATUS PANEL", []string{"h", "l"}},                         // hjkl nav
-		{"PROMPTS PANEL", []string{"r"}},                             // reload
-		{"TOOLS PANEL", []string{"e", "x"}},                          // edit params, reset
-		{"ACTIVITY PANEL", []string{"1-6", "p"}},                     // filter, follow
-		{"FILES PANEL", []string{"p", "i", "e", "v"}},                // pin, insert, explain, review
+		{"MEMORY PANEL", []string{"t", "d", "p"}},     // tier cycle, delete, promote
+		{"CONVERSATIONS PANEL", []string{"L", "S"}},   // load full, deep search
+		{"CODEMAP PANEL", []string{"v"}},              // view cycle
+		{"PLANS PANEL", []string{"e"}},                // edit task
+		{"CONTEXT PANEL", []string{"e", "m", "a"}},    // edit, manager, active
+		{"SECURITY PANEL", []string{"v", "i", "f"}},   // view, ignore, fix
+		{"STATUS PANEL", []string{"h", "l"}},          // hjkl nav
+		{"PROMPTS PANEL", []string{"r"}},              // reload
+		{"TOOLS PANEL", []string{"e", "x"}},           // edit params, reset
+		{"ACTIVITY PANEL", []string{"1-6", "p"}},      // filter, follow
+		{"FILES PANEL", []string{"p", "i", "e", "v"}}, // pin, insert, explain, review
 	}
 	for _, c := range cases {
 		idx := strings.Index(help, c.section)

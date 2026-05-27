@@ -126,11 +126,11 @@ func TestFormatDetail_withTimes(t *testing.T) {
 
 func TestFormatDetail_withDependsOn(t *testing.T) {
 	task := &supervisor.Task{
-		ID:        "test-1",
-		Title:     "Test Task",
-		State:     supervisor.TaskBlocked,
+		ID:            "test-1",
+		Title:         "Test Task",
+		State:         supervisor.TaskBlocked,
 		BlockedReason: "waiting",
-		DependsOn: []string{"dep-1", "dep-2"},
+		DependsOn:     []string{"dep-1", "dep-2"},
 	}
 	result := FormatDetail(task)
 	if result == "" {
@@ -140,9 +140,9 @@ func TestFormatDetail_withDependsOn(t *testing.T) {
 
 func TestFormatDetail_withVerification(t *testing.T) {
 	task := &supervisor.Task{
-		ID:          "test-1",
-		Title:       "Test Task",
-		State:       supervisor.TaskDone,
+		ID:           "test-1",
+		Title:        "Test Task",
+		State:        supervisor.TaskDone,
 		Verification: "passed",
 	}
 	result := FormatDetail(task)

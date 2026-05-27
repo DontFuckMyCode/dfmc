@@ -58,10 +58,10 @@ func (m Model) runHistorySearch(query string) Model {
 	// abandoned.
 	m.chat.lastSearchQuery = query
 	type hit struct {
-		idx      int
-		role     string
-		turn     int
-		snippet  string
+		idx     int
+		role    string
+		turn    int
+		snippet string
 	}
 	hits := make([]hit, 0, 16)
 	assistantSeen := 0

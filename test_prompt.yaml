@@ -1,8 +1,0 @@
-templates:
-    - id: test.template
-      type: system
-      task: general
-      compose: replace
-      priority: 20
-      body: |
-        TEST BODY

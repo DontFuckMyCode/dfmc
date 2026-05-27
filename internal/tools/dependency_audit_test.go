@@ -198,7 +198,10 @@ func TestCleanVersion(t *testing.T) {
 }
 
 func TestShouldInclude(t *testing.T) {
-	tests := []struct{ minSev, findSev string; want bool }{
+	tests := []struct {
+		minSev, findSev string
+		want            bool
+	}{
 		{"all", "low", true},
 		{"all", "critical", true},
 		{"low", "low", true},
@@ -217,7 +220,10 @@ func TestShouldInclude(t *testing.T) {
 }
 
 func TestCvssToSeverity(t *testing.T) {
-	tests := []struct{ score string; want string }{
+	tests := []struct {
+		score string
+		want  string
+	}{
 		{"9.5", "critical"},
 		{"9.0", "critical"},
 		{"8.9", "high"},

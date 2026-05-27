@@ -168,6 +168,8 @@ type stubTool struct {
 	name string
 }
 
-func (s *stubTool) Name() string                                                  { return s.name }
-func (s *stubTool) Description() string                                           { return "stub: " + s.name }
-func (s *stubTool) Execute(_ context.Context, _ Request) (Result, error)          { return Result{Output: "ok"}, nil }
+func (s *stubTool) Name() string        { return s.name }
+func (s *stubTool) Description() string { return "stub: " + s.name }
+func (s *stubTool) Execute(_ context.Context, _ Request) (Result, error) {
+	return Result{Output: "ok"}, nil
+}

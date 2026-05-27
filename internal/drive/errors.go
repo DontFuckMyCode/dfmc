@@ -189,4 +189,3 @@ func classifyByMessage(err error) (FailureClass, bool) {
 	}
 	return 0, false
 }
-

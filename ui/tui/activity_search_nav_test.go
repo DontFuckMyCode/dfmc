@@ -94,4 +94,3 @@ func TestActivitySearchView_RendersZeroHitsChip(t *testing.T) {
 		t.Fatalf("expected 0-hit chip when query has no matches, got:\n%s", view)
 	}
 }
-

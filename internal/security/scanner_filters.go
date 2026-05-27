@@ -117,15 +117,15 @@ func shannonEntropy(s string) float64 {
 // the source, which the CWE-327 rule would then flag.
 //
 // We match on three shapes:
-//   1. Explicit rule registration (regexp.MustCompile, Pattern:, Match:)
-//   2. Rule bodies that reference the scanner's per-line context
-//      (ctx.Trimmed, ctx.RecentJoin, ctx.Line) — a near-perfect tell
-//      that this is scanner machinery, not application code. No real
-//      vulnerability lives inside a rule matcher body.
-//   3. Vulnerability rule definitions: a line that defines a vulnPattern
-//      (Kind/CWE/OWASP fields) AND calls regexp.MustCompile — these
-//      contain the very literals they look for and would trigger
-//      catastrophic backtracking if matched against themselves.
+//  1. Explicit rule registration (regexp.MustCompile, Pattern:, Match:)
+//  2. Rule bodies that reference the scanner's per-line context
+//     (ctx.Trimmed, ctx.RecentJoin, ctx.Line) — a near-perfect tell
+//     that this is scanner machinery, not application code. No real
+//     vulnerability lives inside a rule matcher body.
+//  3. Vulnerability rule definitions: a line that defines a vulnPattern
+//     (Kind/CWE/OWASP fields) AND calls regexp.MustCompile — these
+//     contain the very literals they look for and would trigger
+//     catastrophic backtracking if matched against themselves.
 func isPatternDefinitionLine(line string) bool {
 	l := strings.ToLower(line)
 	if strings.Contains(l, "regexp.mustcompile(") ||

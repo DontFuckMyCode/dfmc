@@ -106,33 +106,33 @@ func TestNormalizeToolParams_listDir(t *testing.T) {
 		expected map[string]any
 	}{
 		{
-			name:  "canonical max_entries",
-			input: map[string]any{"path": "/foo", "max_entries": 100},
+			name:     "canonical max_entries",
+			input:    map[string]any{"path": "/foo", "max_entries": 100},
 			expected: map[string]any{"max_entries": 100},
 		},
 		{
-			name:  "alias limit promoted",
-			input: map[string]any{"path": "/foo", "limit": 50},
+			name:     "alias limit promoted",
+			input:    map[string]any{"path": "/foo", "limit": 50},
 			expected: map[string]any{"max_entries": 50},
 		},
 		{
-			name:  "zero max_entries defaults to 200",
-			input: map[string]any{"path": "/foo", "max_entries": 0},
+			name:     "zero max_entries defaults to 200",
+			input:    map[string]any{"path": "/foo", "max_entries": 0},
 			expected: map[string]any{"max_entries": 200},
 		},
 		{
-			name:  "negative max_entries defaults to 200",
-			input: map[string]any{"path": "/foo", "max_entries": -1},
+			name:     "negative max_entries defaults to 200",
+			input:    map[string]any{"path": "/foo", "max_entries": -1},
 			expected: map[string]any{"max_entries": 200},
 		},
 		{
-			name:  "max_entries over 500 capped",
-			input: map[string]any{"path": "/foo", "max_entries": 1000},
+			name:     "max_entries over 500 capped",
+			input:    map[string]any{"path": "/foo", "max_entries": 1000},
 			expected: map[string]any{"max_entries": 500},
 		},
 		{
-			name:  "alias recursive",
-			input: map[string]any{"path": "/foo", "recurse": true},
+			name:     "alias recursive",
+			input:    map[string]any{"path": "/foo", "recurse": true},
 			expected: map[string]any{"recursive": true},
 		},
 	}
@@ -196,8 +196,8 @@ func TestNormalizeToolParams_writeFile(t *testing.T) {
 
 func TestNormalizeToolParams_runCommand(t *testing.T) {
 	result := normalizeToolParams("run_command", map[string]any{
-		"cmd":   "go",
-		"argv":  []string{"build"},
+		"cmd":     "go",
+		"argv":    []string{"build"},
 		"timeout": 30000,
 	})
 	if result["command"] != "go" {

@@ -92,4 +92,3 @@ func loopRows(info StatsPanelInfo) []string {
 	}
 	return rows
 }
-

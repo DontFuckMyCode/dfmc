@@ -67,4 +67,3 @@ func TestEffectiveAllowedTools_AllWhitespace(t *testing.T) {
 		t.Error("expected gate OFF when all entries are blank")
 	}
 }
-
