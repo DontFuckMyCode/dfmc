@@ -604,9 +604,9 @@ func TestRuleObserver_HeavyTurnNoHint(t *testing.T) {
 
 func TestRuleObserver_PseudoToolCall(t *testing.T) {
 	notes := NewRuleObserver().Observe(Snapshot{
-		Question:   "fix the auth bug",
-		Answer:     "I will use [tool_call] read_file [/tool_call] to check the token.",
-		ToolSteps:  0, // no native tools used
+		Question:  "fix the auth bug",
+		Answer:    "I will use [tool_call] read_file [/tool_call] to check the token.",
+		ToolSteps: 0, // no native tools used
 	})
 	found := false
 	for _, n := range notes {
@@ -621,8 +621,8 @@ func TestRuleObserver_PseudoToolCall(t *testing.T) {
 
 func TestRuleObserver_RetrievalHotspotOnly(t *testing.T) {
 	notes := NewRuleObserver().Observe(Snapshot{
-		Question:      "analyze the codebase",
-		ContextFiles:  3,
+		Question:       "analyze the codebase",
+		ContextFiles:   3,
 		ContextSources: map[string]int{"hotspot": 3},
 	})
 	found := false
@@ -643,10 +643,10 @@ func TestRuleObserver_GrepThrash(t *testing.T) {
 		tools[i] = "grep_codebase"
 	}
 	notes := NewRuleObserver().Observe(Snapshot{
-		ToolSteps:   5,
-		ToolsUsed:   tools,
-		Mutations:   []string{},
-		Parked:      false,
+		ToolSteps: 5,
+		ToolsUsed: tools,
+		Mutations: []string{},
+		Parked:    false,
 	})
 	found := false
 	for _, n := range notes {
@@ -684,10 +684,10 @@ func TestRuleObserver_ToolFlood(t *testing.T) {
 func TestRuleObserver_MutationBlind(t *testing.T) {
 	// mutations but no git_status/git_diff
 	notes := NewRuleObserver().Observe(Snapshot{
-		Mutations:  []string{"a.go", "b.go"},
-		ToolsUsed:  []string{"edit_file", "read_file"},
+		Mutations:   []string{"a.go", "b.go"},
+		ToolsUsed:   []string{"edit_file", "read_file"},
 		FailedTools: []string{},
-		Parked:     false,
+		Parked:      false,
 	})
 	found := false
 	for _, n := range notes {
@@ -765,9 +765,9 @@ func TestRuleObserver_RetrievalSymbolMissWithMarker(t *testing.T) {
 func TestRuleObserver_NoActionTaken(t *testing.T) {
 	// ToolSteps=0, answer contains "?", looksActionable question
 	notes := NewRuleObserver().Observe(Snapshot{
-		Question:   "fix the bug in auth",
-		Answer:     "What file should I look at?",
-		ToolSteps:  0,
+		Question:  "fix the bug in auth",
+		Answer:    "What file should I look at?",
+		ToolSteps: 0,
 	})
 	found := false
 	for _, n := range notes {

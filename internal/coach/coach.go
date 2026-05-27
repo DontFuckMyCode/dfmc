@@ -75,188 +75,195 @@ func (r *RuleObserver) Observe(s Snapshot) []Note {
 		return len(out) >= max
 	}
 
-	if s.Parked {
-		switch s.ParkReason {
-		case "budget_exhausted":
-			if push(Note{
-				Text:     "Loop parked - token budget exhausted. The request was likely too broad for a single turn. Try /split to break it into focused subtasks, or /continue with a narrower follow-up.",
-				Severity: SeverityWarn,
-				Origin:   "parked_budget",
-			}) {
-				return out
-			}
-		default:
-			if push(Note{
-				Text:     "Loop parked - hit its step cap. Type /continue to resume, optionally with a note to focus the next pass.",
-				Severity: SeverityWarn,
-				Origin:   "parked_loop",
-			}) {
-				return out
-			}
-		}
+	if n := r.observeParked(s); n.Text != "" && push(n) {
+		return out
 	}
-
-	if len(s.Mutations) > 0 && !answerMentionsValidation(s.Answer) {
-		paths := strings.Join(trimPaths(s.Mutations, 3), ", ")
-		text := fmt.Sprintf("Files mutated (%s) but the answer didn't mention a test/build/vet run.", paths)
-		if hint := strings.TrimSpace(s.ValidationHint); hint != "" {
-			text += " Next step: " + hint + "."
-		} else {
-			text += " Double-check before shipping."
-		}
-		if push(Note{
-			Text:     text,
-			Severity: SeverityWarn,
-			Origin:   "mutation_unvalidated",
-			Action:   strings.TrimSpace(s.ValidationHint),
-		}) {
-			return out
-		}
+	if n := r.observeMutationUnvalidated(s); n.Text != "" && push(n) {
+		return out
 	}
-
-	if len(s.FailedTools) >= 2 {
-		if push(Note{
-			Text:     fmt.Sprintf("%d tool call(s) failed this turn. Worth reading the error messages directly before asking for another pass.", len(s.FailedTools)),
-			Severity: SeverityWarn,
-			Origin:   "repeated_failures",
-		}) {
-			return out
-		}
+	if n := r.observeRepeatedFailures(s); n.Text != "" && push(n) {
+		return out
 	}
-
-	if s.TokensUsed > 20000 {
-		text := fmt.Sprintf("Heavy turn (~%dk tokens).", s.TokensUsed/1000)
-		if hint := strings.TrimSpace(s.TightenHint); hint != "" {
-			text += " Tighter next pass: " + hint + "."
-		} else {
-			text += " If you want a tighter next pass, try adding --provider offline or narrowing the question with a [[file:path]] marker."
-		}
-		if push(Note{
-			Text:     text,
-			Severity: SeverityInfo,
-			Origin:   "heavy_turn",
-			Action:   strings.TrimSpace(s.TightenHint),
-		}) {
-			return out
-		}
+	if n := r.observeHeavyTurn(s); n.Text != "" && push(n) {
+		return out
 	}
-
-	if s.ToolSteps == 0 && containsPseudoToolCall(s.Answer) {
-		if push(Note{
-			Text:     "Model emitted a text-format tool call instead of using native tool-calling. Provider accepted the tools but this model didn't use them - try a different model on the same provider, or check the endpoint.",
-			Severity: SeverityWarn,
-			Origin:   "pseudo_tool_call",
-		}) {
-			return out
-		}
+	if n := r.observePseudoToolCall(s); n.Text != "" && push(n) {
+		return out
 	}
-
-	if s.ToolSteps == 0 && strings.Contains(s.Answer, "?") && looksActionable(s.Question) {
-		if push(Note{
-			Text:     "The model answered without using any tools. If you expected a code change, ask again with a more explicit action verb (edit, run, add).",
-			Severity: SeverityInfo,
-			Origin:   "no_action_taken",
-		}) {
-			return out
-		}
+	if n := r.observeNoAction(s); n.Text != "" && push(n) {
+		return out
 	}
-
-	if strings.TrimSpace(s.UsefulQueryIdentifier) != "" &&
-		s.QueryIdentifiers > 0 && s.ContextFiles > 0 && s.ContextSources != nil &&
-		s.ContextSources["symbol-match"] == 0 && s.ContextSources["marker"] == 0 {
-		text := "Retrieval didn't resolve any query identifier to a codemap symbol."
-		if s.QuestionHasFileMarker {
-			text = "Retrieval didn't resolve the requested symbol even with the current [[file:...]] marker."
-		}
-		if hint := strings.TrimSpace(s.RetrievalHint); hint != "" {
-			text += " Next step: " + hint + "."
-		} else {
-			text += " If a specific function/type is in scope, reference it with [[file:path]] or rename-exact so the graph can seed from it."
-		}
-		if push(Note{
-			Text:     text,
-			Severity: SeverityInfo,
-			Origin:   "retrieval_symbol_miss",
-			Action:   strings.TrimSpace(s.RetrievalHint),
-		}) {
-			return out
-		}
+	if n := r.observeRetrievalMiss(s); n.Text != "" && push(n) {
+		return out
 	}
-
-	if s.ContextFiles > 0 && s.ContextSources != nil && s.ContextSources["hotspot"] == s.ContextFiles {
-		if push(Note{
-			Text:     "Context came entirely from graph hotspots - the query didn't match any specific file. Add a [[file:path]] marker or a distinctive symbol name to focus the next pass.",
-			Severity: SeverityInfo,
-			Origin:   "retrieval_hotspot_only",
-		}) {
-			return out
-		}
+	if n := r.observeHotspotOnly(s); n.Text != "" && push(n) {
+		return out
 	}
-
-	// Grep-thrash: many grep_codebase calls without mutating or
-	// resolving any symbol. The model is searching for needles
-	// without using the cheaper layered tools the read-stack
-	// recommends. Common when the user asked "where is X" and the
-	// model didn't try find_symbol / codemap first.
-	//
-	// Threshold: 5+ grep calls. Tighter would catch every
-	// medium-complexity research turn; looser misses the actual
-	// thrashing case (10+ greps for one finding).
-	if greps := countTool(s.ToolsUsed, "grep_codebase"); greps >= 5 && len(s.Mutations) == 0 && !s.Parked {
-		if push(Note{
-			Text:     fmt.Sprintf("%d grep calls this turn with no edit. If you know the symbol name, find_symbol returns the body in one call. For a project outline, codemap is the cheaper survey.", greps),
-			Severity: SeverityInfo,
-			Origin:   "grep_thrash",
-		}) {
-			return out
-		}
+	if n := r.observeGrepThrash(s); n.Text != "" && push(n) {
+		return out
 	}
-
-	// Tool flood: 30+ tool calls in a single turn is almost always a
-	// planning failure — either the request was too broad or the
-	// model is iterating instead of thinking. Distinct from the
-	// "parked" rules above, which only fire when the loop hit a
-	// hard cap; this fires on completed turns that just went wide.
-	if s.ToolSteps >= 30 && !s.Parked {
-		if push(Note{
-			Text:     fmt.Sprintf("Wide turn: %d tool calls. If the same kind of work repeats, the next pass benefits from /split into focused subtasks (or a tighter [[file:...]] marker so retrieval seeds the right region).", s.ToolSteps),
-			Severity: SeverityInfo,
-			Origin:   "tool_flood",
-		}) {
-			return out
-		}
+	if n := r.observeToolFlood(s); n.Text != "" && push(n) {
+		return out
 	}
-
-	// Mutations without ever checking git state. The model edited
-	// files but never ran git_status / git_diff this turn, so the
-	// answer can't tell the user how this turn's changes compose
-	// with whatever was already in the working tree (e.g. a stash
-	// of unrelated WIP). Worth a heads-up so the user runs
-	// `git status` themselves before assuming the mutations stand
-	// alone.
-	if len(s.Mutations) > 0 &&
-		countTool(s.ToolsUsed, "git_status") == 0 &&
-		countTool(s.ToolsUsed, "git_diff") == 0 {
-		if push(Note{
-			Text:     "Mutations landed without a git_status / git_diff this turn. Worth running `git status` before treating the changes as standalone — pre-existing WIP in the tree can mix with this turn's edits.",
-			Severity: SeverityInfo,
-			Origin:   "mutation_blind",
-		}) {
-			return out
-		}
+	if n := r.observeMutationBlind(s); n.Text != "" && push(n) {
+		return out
 	}
-
-	if len(s.ToolsUsed) > 0 && len(s.FailedTools) == 0 && !s.Parked && s.TokensUsed > 0 && s.TokensUsed < 8000 {
-		if push(Note{
-			Text:     "Clean pass - tools used, no failures, tight token spend.",
-			Severity: SeverityCelebrate,
-			Origin:   "clean_pass",
-		}) {
-			return out
-		}
+	if n := r.observeCleanPass(s); n.Text != "" && push(n) {
+		return out
 	}
-
 	return out
+}
+
+func (r *RuleObserver) observeParked(s Snapshot) Note {
+	if !s.Parked {
+		return Note{}
+	}
+	text := "Loop parked - hit its step cap. Type /continue to resume, optionally with a note to focus the next pass."
+	origin := "parked_loop"
+	if s.ParkReason == "budget_exhausted" {
+		text = "Loop parked - token budget exhausted. The request was likely too broad for a single turn. Try /split to break it into focused subtasks, or /continue with a narrower follow-up."
+		origin = "parked_budget"
+	}
+	return Note{Text: text, Severity: SeverityWarn, Origin: origin}
+}
+
+func (r *RuleObserver) observeMutationUnvalidated(s Snapshot) Note {
+	if len(s.Mutations) == 0 || answerMentionsValidation(s.Answer) {
+		return Note{}
+	}
+	paths := strings.Join(trimPaths(s.Mutations, 3), ", ")
+	text := fmt.Sprintf("Files mutated (%s) but the answer didn't mention a test/build/vet run.", paths)
+	if hint := strings.TrimSpace(s.ValidationHint); hint != "" {
+		text += " Next step: " + hint + "."
+	} else {
+		text += " Double-check before shipping."
+	}
+	return Note{Text: text, Severity: SeverityWarn, Origin: "mutation_unvalidated", Action: strings.TrimSpace(s.ValidationHint)}
+}
+
+func (r *RuleObserver) observeRepeatedFailures(s Snapshot) Note {
+	if len(s.FailedTools) < 2 {
+		return Note{}
+	}
+	return Note{
+		Text:     fmt.Sprintf("%d tool call(s) failed this turn. Worth reading the error messages directly before asking for another pass.", len(s.FailedTools)),
+		Severity: SeverityWarn,
+		Origin:   "repeated_failures",
+	}
+}
+
+func (r *RuleObserver) observeHeavyTurn(s Snapshot) Note {
+	if s.TokensUsed <= 20000 {
+		return Note{}
+	}
+	text := fmt.Sprintf("Heavy turn (~%dk tokens).", s.TokensUsed/1000)
+	if hint := strings.TrimSpace(s.TightenHint); hint != "" {
+		text += " Tighter next pass: " + hint + "."
+	} else {
+		text += " If you want a tighter next pass, try adding --provider offline or narrowing the question with a [[file:path]] marker."
+	}
+	return Note{Text: text, Severity: SeverityInfo, Origin: "heavy_turn", Action: strings.TrimSpace(s.TightenHint)}
+}
+
+func (r *RuleObserver) observePseudoToolCall(s Snapshot) Note {
+	if s.ToolSteps != 0 || !containsPseudoToolCall(s.Answer) {
+		return Note{}
+	}
+	return Note{
+		Text:     "Model emitted a text-format tool call instead of using native tool-calling. Provider accepted the tools but this model didn't use them - try a different model on the same provider, or check the endpoint.",
+		Severity: SeverityWarn,
+		Origin:   "pseudo_tool_call",
+	}
+}
+
+func (r *RuleObserver) observeNoAction(s Snapshot) Note {
+	if s.ToolSteps != 0 || !strings.Contains(s.Answer, "?") || !looksActionable(s.Question) {
+		return Note{}
+	}
+	return Note{
+		Text:     "The model answered without using any tools. If you expected a code change, ask again with a more explicit action verb (edit, run, add).",
+		Severity: SeverityInfo,
+		Origin:   "no_action_taken",
+	}
+}
+
+func (r *RuleObserver) observeRetrievalMiss(s Snapshot) Note {
+	id := strings.TrimSpace(s.UsefulQueryIdentifier)
+	if id == "" || s.QueryIdentifiers == 0 || s.ContextFiles == 0 || s.ContextSources == nil {
+		return Note{}
+	}
+	if s.ContextSources["symbol-match"] != 0 || s.ContextSources["marker"] != 0 {
+		return Note{}
+	}
+	text := "Retrieval didn't resolve any query identifier to a codemap symbol."
+	if s.QuestionHasFileMarker {
+		text = "Retrieval didn't resolve the requested symbol even with the current [[file:...]] marker."
+	}
+	if hint := strings.TrimSpace(s.RetrievalHint); hint != "" {
+		text += " Next step: " + hint + "."
+	} else {
+		text += " If a specific function/type is in scope, reference it with [[file:path]] or rename-exact so the graph can seed from it."
+	}
+	return Note{Text: text, Severity: SeverityInfo, Origin: "retrieval_symbol_miss", Action: strings.TrimSpace(s.RetrievalHint)}
+}
+
+func (r *RuleObserver) observeHotspotOnly(s Snapshot) Note {
+	if s.ContextFiles == 0 || s.ContextSources == nil || s.ContextSources["hotspot"] != s.ContextFiles {
+		return Note{}
+	}
+	return Note{
+		Text:     "Context came entirely from graph hotspots - the query didn't match any specific file. Add a [[file:path]] marker or a distinctive symbol name to focus the next pass.",
+		Severity: SeverityInfo,
+		Origin:   "retrieval_hotspot_only",
+	}
+}
+
+func (r *RuleObserver) observeGrepThrash(s Snapshot) Note {
+	greps := countTool(s.ToolsUsed, "grep_codebase")
+	if greps < 5 || len(s.Mutations) > 0 || s.Parked {
+		return Note{}
+	}
+	return Note{
+		Text:     fmt.Sprintf("%d grep calls this turn with no edit. If you know the symbol name, find_symbol returns the body in one call. For a project outline, codemap is the cheaper survey.", greps),
+		Severity: SeverityInfo,
+		Origin:   "grep_thrash",
+	}
+}
+
+func (r *RuleObserver) observeToolFlood(s Snapshot) Note {
+	if s.ToolSteps < 30 || s.Parked {
+		return Note{}
+	}
+	return Note{
+		Text:     fmt.Sprintf("Wide turn: %d tool calls. If the same kind of work repeats, the next pass benefits from /split into focused subtasks (or a tighter [[file:...]] marker so retrieval seeds the right region).", s.ToolSteps),
+		Severity: SeverityInfo,
+		Origin:   "tool_flood",
+	}
+}
+
+func (r *RuleObserver) observeMutationBlind(s Snapshot) Note {
+	if len(s.Mutations) == 0 {
+		return Note{}
+	}
+	if countTool(s.ToolsUsed, "git_status") > 0 || countTool(s.ToolsUsed, "git_diff") > 0 {
+		return Note{}
+	}
+	return Note{
+		Text:     "Mutations landed without a git_status / git_diff this turn. Worth running `git status` before treating the changes as standalone — pre-existing WIP in the tree can mix with this turn's edits.",
+		Severity: SeverityInfo,
+		Origin:   "mutation_blind",
+	}
+}
+
+func (r *RuleObserver) observeCleanPass(s Snapshot) Note {
+	if len(s.ToolsUsed) == 0 || len(s.FailedTools) > 0 || s.Parked || s.TokensUsed == 0 || s.TokensUsed >= 8000 {
+		return Note{}
+	}
+	return Note{
+		Text:     "Clean pass - tools used, no failures, tight token spend.",
+		Severity: SeverityCelebrate,
+		Origin:   "clean_pass",
+	}
 }
 
 func answerMentionsValidation(answer string) bool {

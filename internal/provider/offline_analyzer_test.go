@@ -103,9 +103,9 @@ func TestOfflineProviderReviewFlagsGoIssues(t *testing.T) {
 	sample := `package foo
 
 func Bar() {
-	_, _ = someCall()      // error discarded
-	panic("boom")          // bare panic
-	// TODO: remove this hack
+	_, _ = someCall() // error discarded
+	// TODO: refactor to handle error properly
+	panic("boom") // bare panic
 }
 
 func someCall() (int, error) { return 0, nil }

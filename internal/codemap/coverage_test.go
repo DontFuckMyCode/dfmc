@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"testing"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
@@ -452,14 +451,4 @@ func TestGraph_OutgoingIncoming_AfterAddNodeWithEdges(t *testing.T) {
 	if len(in) != 1 {
 		t.Fatalf("expected 1 incoming, got %d", len(in))
 	}
-}
-
-// sortNodeNames sorts node names for deterministic assertions.
-func sortNodeNames(nodes []Node) []string {
-	names := make([]string, len(nodes))
-	for i, n := range nodes {
-		names[i] = n.Name
-	}
-	sort.Strings(names)
-	return names
 }
