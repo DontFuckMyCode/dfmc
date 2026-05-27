@@ -6,13 +6,13 @@ package context
 // the manager.go header.
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/codemap"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -35,6 +35,21 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	opts = m.normalizeBuildOpts(opts)
+	m.applyStrategyDefaults(&opts)
+
+	graph := m.codemap.Graph()
+	scores, sources := m.scoreQueryNodes(graph, query, opts)
+	m.scoreSymbolsAndGraph(graph, query, opts, scores, sources)
+	m.boostHotspots(graph, opts, scores, sources)
+
+	rankedPaths := m.rankPaths(scores)
+	chunks := m.collectChunks(rankedPaths, scores, sources, opts)
+	return chunks, nil
+}
+
+func (m *Manager) normalizeBuildOpts(opts BuildOptions) BuildOptions {
 	if opts.MaxFiles <= 0 {
 		opts.MaxFiles = 6
 	}
@@ -48,12 +63,10 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 		opts.MaxTokensTotal = 128
 	}
 	opts.Compression = normalizeCompression(opts.Compression)
+	return opts
+}
 
-	graph := m.codemap.Graph()
-	scores := map[string]float64{}
-	sources := map[string]string{}
-
-	// Apply task-type differentiation to retrieval strategy.
+func (m *Manager) applyStrategyDefaults(opts *BuildOptions) {
 	switch opts.Strategy {
 	case StrategySecurity:
 		opts.GraphDepth = max(opts.GraphDepth, 3)
@@ -63,30 +76,21 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 		opts.GraphDepth = min(opts.GraphDepth, 1)
 	case StrategyRefactor:
 		opts.GraphDepth = max(opts.GraphDepth, 2)
-		// Detect refactoring opportunities via codemap graph:
-		// - Orphan functions/methods/types that are never called or referenced
-		// - Symbols involved in import/call cycles
-		// Boost their files so they surface in context for the LLM to review.
-		refactorBoost(graph, scores, sources)
+		refactorBoost(m.codemap.Graph(), nil, nil)
 	}
+}
+
+func (m *Manager) scoreQueryNodes(graph *codemap.Graph, query string, opts BuildOptions) (map[string]float64, map[string]string) {
+	scores := map[string]float64{}
+	sources := map[string]string{}
 
 	terms := tokenizeQuery(query)
-	// Exclude recently modified files (write_file/edit_file/apply_patch).
-	// Files in the stale map are skipped so the LLM always reads the fresh
-	// version via read_file, not a stale context chunk. The map self-prunes
-	// entries older than staleWindow to avoid unbounded growth.
 	staleWindow := 2 * time.Minute
 	now := time.Now()
 	for path, t := range opts.ExcludeStaleFilters {
 		if now.Sub(t) > staleWindow {
 			delete(opts.ExcludeStaleFilters, path)
 		}
-	}
-	// Build a set of normalized seen-file paths for O(1) deduplication check.
-	seenSet := make(map[string]struct{}, len(opts.SeenFiles))
-	for f := range opts.SeenFiles {
-		abs, _ := filepath.Abs(f)
-		seenSet[abs] = struct{}{}
 	}
 
 	upgradeSource := func(path, candidate string) {
@@ -126,49 +130,56 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 			}
 		}
 	}
+	return scores, sources
+}
 
-	// Symbol-aware pass: resolve identifiers in the query against the
-	// codemap's symbol index, boost defining files, and walk outward
-	// through the import graph to surface sibling files (callers/peers
-	// that share module neighborhoods).
-	if opts.SymbolAware {
-		idents := extractIdentifiers(query)
-		seeds := resolveSymbolSeeds(graph, idents)
-		// Symbol hits outrank generic query-match bonuses because the
-		// resolution is semantic, not substring — we know the identifier
-		// *is* a defined symbol, not just a coincidental character run.
-		for path, strength := range seeds {
-			scores[path] += 4.0 + strength
-			upgradeSource(path, ChunkSourceSymbolMatch)
+func (m *Manager) scoreSymbolsAndGraph(graph *codemap.Graph, query string, opts BuildOptions, scores map[string]float64, sources map[string]string) {
+	if !opts.SymbolAware {
+		return
+	}
+	idents := extractIdentifiers(query)
+	seeds := resolveSymbolSeeds(graph, idents)
+	for path, strength := range seeds {
+		scores[path] += 4.0 + strength
+		sources[path] = ChunkSourceSymbolMatch
+	}
+	if len(seeds) > 0 && opts.GraphDepth > 0 {
+		seedList := make([]string, 0, len(seeds))
+		for path := range seeds {
+			seedList = append(seedList, path)
 		}
-		if len(seeds) > 0 && opts.GraphDepth > 0 {
-			seedList := make([]string, 0, len(seeds))
-			for path := range seeds {
-				seedList = append(seedList, path)
-			}
-			for path, hops := range expandViaGraph(graph, seedList, opts.GraphDepth) {
-				// Inverse-scale by hop distance so closer siblings win.
-				bonus := 1.5 / float64(hops)
-				scores[path] += bonus
-				upgradeSource(path, ChunkSourceGraphNeighborhood)
-			}
+		for path, hops := range expandViaGraph(graph, seedList, opts.GraphDepth) {
+			scores[path] += 1.5 / float64(hops)
+			sources[path] = ChunkSourceGraphNeighborhood
 		}
 	}
+}
 
+func (m *Manager) boostHotspots(graph *codemap.Graph, opts BuildOptions, scores map[string]float64, sources map[string]string) {
 	for _, hs := range graph.HotSpots(opts.MaxFiles * 3) {
-		if hs.Path != "" {
-			scores[hs.Path] += 1.0
-			upgradeSource(hs.Path, ChunkSourceHotspot)
+		if hs.Path == "" {
+			continue
+		}
+		scores[hs.Path] += 1.0
+		if current, ok := sources[hs.Path]; !ok || chunkSourceRank(ChunkSourceHotspot) > chunkSourceRank(current) {
+			sources[hs.Path] = ChunkSourceHotspot
 		}
 	}
+}
 
-	type ranked struct {
+func (m *Manager) rankPaths(scores map[string]float64) []struct {
+	Path  string
+	Score float64
+} {
+	rankedPaths := make([]struct {
 		Path  string
 		Score float64
-	}
-	rankedPaths := make([]ranked, 0, len(scores))
+	}, 0, len(scores))
 	for path, score := range scores {
-		rankedPaths = append(rankedPaths, ranked{Path: path, Score: score})
+		rankedPaths = append(rankedPaths, struct {
+			Path  string
+			Score float64
+		}{Path: path, Score: score})
 	}
 	sort.Slice(rankedPaths, func(i, j int) bool {
 		if rankedPaths[i].Score == rankedPaths[j].Score {
@@ -176,7 +187,13 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 		}
 		return rankedPaths[i].Score > rankedPaths[j].Score
 	})
+	return rankedPaths
+}
 
+func (m *Manager) collectChunks(rankedPaths []struct {
+	Path  string
+	Score float64
+}, scores map[string]float64, sources map[string]string, opts BuildOptions) []types.ContextChunk {
 	chunks := make([]types.ContextChunk, 0, opts.MaxFiles)
 	remaining := opts.MaxTokensTotal
 	for _, r := range rankedPaths {
@@ -186,36 +203,15 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 		if !shouldIncludePath(r.Path, opts.IncludeTests, opts.IncludeDocs) {
 			continue
 		}
-		// Skip recently modified files (stale filter) — the LLM must read
-		// the fresh version via read_file, not an outdated context chunk.
-		if len(opts.ExcludeStaleFilters) > 0 {
-			absPath, _ := filepath.Abs(r.Path)
-			if _, stale := opts.ExcludeStaleFilters[absPath]; stale {
-				continue
-			}
-		}
-		// Skip files already provided via read_file this session — sending
-		// the same content twice via different channels wastes tokens and
-		// confuses the model about which version is authoritative.
-		if len(seenSet) > 0 {
-			absPath, _ := filepath.Abs(r.Path)
-			if _, seen := seenSet[absPath]; seen {
-				continue
-			}
+		if m.isStalePath(r.Path, opts) || m.isSeenPath(r.Path, opts) {
+			continue
 		}
 
-		content, err := func() ([]byte, error) {
-			f, err := os.Open(r.Path)
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = f.Close() }()
-			return io.ReadAll(f)
-		}()
+		content, err := os.ReadFile(r.Path)
 		if err != nil {
 			continue
 		}
-		chunk := buildChunkForBudget(r.Path, string(content), terms, r.Score, opts.Compression, opts.MaxTokensPerFile)
+		chunk := buildChunkForBudget(r.Path, string(content), nil, r.Score, opts.Compression, opts.MaxTokensPerFile)
 		if chunk.TokenCount <= 0 || strings.TrimSpace(chunk.Content) == "" {
 			continue
 		}
@@ -233,6 +229,23 @@ func (m *Manager) BuildWithOptions(query string, opts BuildOptions) ([]types.Con
 		chunks = append(chunks, chunk)
 		remaining -= chunk.TokenCount
 	}
+	return chunks
+}
 
-	return chunks, nil
+func (m *Manager) isStalePath(path string, opts BuildOptions) bool {
+	if len(opts.ExcludeStaleFilters) == 0 {
+		return false
+	}
+	absPath, _ := filepath.Abs(path)
+	_, stale := opts.ExcludeStaleFilters[absPath]
+	return stale
+}
+
+func (m *Manager) isSeenPath(path string, opts BuildOptions) bool {
+	if len(opts.SeenFiles) == 0 {
+		return false
+	}
+	absPath, _ := filepath.Abs(path)
+	_, seen := opts.SeenFiles[absPath]
+	return seen
 }

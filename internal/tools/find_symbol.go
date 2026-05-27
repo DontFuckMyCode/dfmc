@@ -65,59 +65,95 @@ func (t *FindSymbolTool) Close() error { return nil }
 func (t *FindSymbolTool) getEngine() *ast.Engine { return t.engine }
 
 func (t *FindSymbolTool) Execute(ctx context.Context, req Request) (Result, error) {
-	name := strings.TrimSpace(asString(req.Params, "name", ""))
-	if name == "" {
-		return Result{}, missingParamError("find_symbol", "name", req.Params,
+	params, err := t.parseFindSymbolParams(req.Params, req.ProjectRoot)
+	if err != nil {
+		return Result{}, err
+	}
+
+	matches, walkErr := t.walkForSymbol(ctx, req.ProjectRoot, params)
+	if walkErr != nil && walkErr != fs.SkipAll {
+		return Result{}, walkErr
+	}
+
+	if len(matches) == 0 {
+		return t.buildNoMatchResult(params)
+	}
+
+	return t.buildSymbolResult(matches, params.IncludeBody), nil
+}
+
+type findSymbolParams struct {
+	Name         string
+	Base         string
+	Kind         string
+	WantLang     string
+	WantParent   string
+	MatchMode    string
+	MaxResults   int
+	BodyMaxLines int
+	IncludeBody  bool
+	HtmlOnly     bool
+}
+
+func (t *FindSymbolTool) parseFindSymbolParams(params map[string]any, projectRoot string) (findSymbolParams, error) {
+	p := findSymbolParams{}
+
+	p.Name = strings.TrimSpace(asString(params, "name", ""))
+	if p.Name == "" {
+		return p, missingParamError("find_symbol", "name", params,
 			`{"name":"aliveli"} or {"name":"render","kind":"method","max_results":20}`,
 			`name is the symbol to locate. Optional filters: kind (function|method|class|html_id|html_class|tag), language, path (subdir), match (exact|prefix|contains), max_results, body_max_lines.`)
 	}
 
-	root := strings.TrimSpace(asString(req.Params, "path", ""))
-	base := req.ProjectRoot
+	root := strings.TrimSpace(asString(params, "path", ""))
+	p.Base = projectRoot
 	if root != "" {
-		p, err := EnsureWithinRoot(req.ProjectRoot, root)
+		base, err := EnsureWithinRoot(projectRoot, root)
 		if err != nil {
-			return Result{}, err
+			return p, err
 		}
-		base = p
+		p.Base = base
 	}
 
-	kind := strings.ToLower(strings.TrimSpace(asString(req.Params, "kind", "")))
-	wantLang := strings.ToLower(strings.TrimSpace(asString(req.Params, "language", "")))
-	wantParent := strings.TrimSpace(asString(req.Params, "parent", ""))
-	matchMode := strings.ToLower(strings.TrimSpace(asString(req.Params, "match", "exact")))
-	switch matchMode {
+	p.Kind = strings.ToLower(strings.TrimSpace(asString(params, "kind", "")))
+	p.WantLang = strings.ToLower(strings.TrimSpace(asString(params, "language", "")))
+	p.WantParent = strings.TrimSpace(asString(params, "parent", ""))
+	p.MatchMode = strings.ToLower(strings.TrimSpace(asString(params, "match", "exact")))
+	switch p.MatchMode {
 	case "exact", "prefix", "contains":
 	case "":
-		matchMode = "exact"
+		p.MatchMode = "exact"
 	default:
-		return Result{}, fmt.Errorf("find_symbol: match must be exact|prefix|contains, got %q", matchMode)
+		return p, fmt.Errorf("find_symbol: match must be exact|prefix|contains, got %q", p.MatchMode)
 	}
 
-	maxResults := asInt(req.Params, "max_results", 5)
-	if maxResults <= 0 {
-		maxResults = 5
+	p.MaxResults = asInt(params, "max_results", 5)
+	if p.MaxResults <= 0 {
+		p.MaxResults = 5
 	}
-	if maxResults > 20 {
-		maxResults = 20
+	if p.MaxResults > 20 {
+		p.MaxResults = 20
 	}
-	bodyMaxLines := asInt(req.Params, "body_max_lines", 200)
-	if bodyMaxLines <= 0 {
-		bodyMaxLines = 200
-	}
-	if bodyMaxLines > 1000 {
-		bodyMaxLines = 1000
-	}
-	includeBody := asBool(req.Params, "include_body", true)
 
-	// HTML mode trips when kind is one of the html_* values OR when
-	// language is explicitly html/xml — tree-sitter doesn't expose HTML
-	// tags as symbols, so we bypass the AST entirely.
+	p.BodyMaxLines = asInt(params, "body_max_lines", 200)
+	if p.BodyMaxLines <= 0 {
+		p.BodyMaxLines = 200
+	}
+	if p.BodyMaxLines > 1000 {
+		p.BodyMaxLines = 1000
+	}
+
+	p.IncludeBody = asBool(params, "include_body", true)
+
 	htmlKinds := map[string]bool{"html_id": true, "html_class": true, "tag": true}
-	htmlOnly := htmlKinds[kind] || wantLang == "html" || wantLang == "xml"
+	p.HtmlOnly = htmlKinds[p.Kind] || p.WantLang == "html" || p.WantLang == "xml"
 
+	return p, nil
+}
+
+func (t *FindSymbolTool) walkForSymbol(ctx context.Context, projectRoot string, p findSymbolParams) ([]symbolMatch, error) {
 	matches := []symbolMatch{}
-	walkErr := filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(p.Base, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -130,43 +166,37 @@ func (t *FindSymbolTool) Execute(ctx context.Context, req Request) (Result, erro
 			}
 			return nil
 		}
-		if len(matches) >= maxResults {
+		if len(matches) >= p.MaxResults {
 			return fs.SkipAll
 		}
 		ext := strings.ToLower(filepath.Ext(path))
 		switch ext {
 		case ".html", ".htm", ".xml", ".vue", ".svelte":
-			// Always eligible for HTML mode.
 		default:
-			if htmlOnly {
+			if p.HtmlOnly {
 				return nil
 			}
 		}
 
-		// Try HTML-mode extraction for HTML-shaped files. We don't rule it
-		// out for non-HTML modes because templated files often hold IDs
-		// (e.g. .vue / .svelte) and the model may search for them.
 		if ext == ".html" || ext == ".htm" || ext == ".xml" || ext == ".vue" || ext == ".svelte" {
-			if hms := findInHTML(req.ProjectRoot, path, name, kind, matchMode, bodyMaxLines, includeBody); len(hms) > 0 {
-				matches = appendCapped(matches, hms, maxResults)
+			if hms := findInHTML(projectRoot, path, p.Name, p.Kind, p.MatchMode, p.BodyMaxLines, p.IncludeBody); len(hms) > 0 {
+				matches = appendCapped(matches, hms, p.MaxResults)
 				return nil
 			}
-			if htmlOnly {
+			if p.HtmlOnly {
 				return nil
 			}
 		}
 
-		// AST mode for everything else. Skip files whose language we can't
-		// detect (avoids parsing every binary or .lock file in the tree).
 		parsed, perr := t.getEngine().ParseFile(ctx, path)
 		if perr != nil || parsed == nil {
 			return nil
 		}
-		if wantLang != "" && parsed.Language != wantLang {
+		if p.WantLang != "" && parsed.Language != p.WantLang {
 			return nil
 		}
 
-		hits := filterSymbols(parsed.Symbols, name, kind, matchMode)
+		hits := filterSymbols(parsed.Symbols, p.Name, p.Kind, p.MatchMode)
 		if len(hits) == 0 {
 			return nil
 		}
@@ -182,51 +212,47 @@ func (t *FindSymbolTool) Execute(ctx context.Context, req Request) (Result, erro
 		lines := strings.Split(string(content), "\n")
 		fallback := parsed.Backend == "regex"
 		for _, sym := range hits {
-			m := buildScopeMatch(path, parsed.Language, sym, lines, bodyMaxLines, includeBody)
+			m := buildScopeMatch(path, parsed.Language, sym, lines, p.BodyMaxLines, p.IncludeBody)
 			m.Parent = detectParent(parsed.Language, sym, lines)
-			if wantParent != "" && !parentMatches(m.Parent, wantParent) {
+			if p.WantParent != "" && !parentMatches(m.Parent, p.WantParent) {
 				continue
 			}
 			m.Fallback = fallback
 			matches = append(matches, m)
-			if len(matches) >= maxResults {
+			if len(matches) >= p.MaxResults {
 				return fs.SkipAll
 			}
 		}
 		return nil
 	})
-	if walkErr != nil && walkErr != fs.SkipAll {
-		return Result{}, walkErr
-	}
+	return matches, walkErr
+}
 
-	if len(matches) == 0 {
-		// Be specific about what was searched so the model can broaden.
-		filters := []string{fmt.Sprintf("name=%q", name)}
-		if kind != "" {
-			filters = append(filters, "kind="+kind)
-		}
-		if wantParent != "" {
-			filters = append(filters, "parent="+wantParent)
-		}
-		if wantLang != "" {
-			filters = append(filters, "language="+wantLang)
-		}
-		if matchMode != "exact" {
-			filters = append(filters, "match="+matchMode)
-		}
-		if root != "" {
-			filters = append(filters, "path="+root)
-		}
-		return Result{
-			Output: fmt.Sprintf("(no symbols matched %s) — try match=contains, broaden language, or drop kind to widen the search.", strings.Join(filters, " ")),
-			Data: map[string]any{
-				"name":    name,
-				"count":   0,
-				"matches": []any{},
-			},
-		}, nil
+func (t *FindSymbolTool) buildNoMatchResult(p findSymbolParams) (Result, error) {
+	filters := []string{fmt.Sprintf("name=%q", p.Name)}
+	if p.Kind != "" {
+		filters = append(filters, "kind="+p.Kind)
 	}
+	if p.WantParent != "" {
+		filters = append(filters, "parent="+p.WantParent)
+	}
+	if p.WantLang != "" {
+		filters = append(filters, "language="+p.WantLang)
+	}
+	if p.MatchMode != "exact" {
+		filters = append(filters, "match="+p.MatchMode)
+	}
+	return Result{
+		Output: fmt.Sprintf("(no symbols matched %s) — try match=contains, broaden language, or drop kind to widen the search.", strings.Join(filters, " ")),
+		Data: map[string]any{
+			"name":    p.Name,
+			"count":   0,
+			"matches": []any{},
+		},
+	}, nil
+}
 
+func (t *FindSymbolTool) buildSymbolResult(matches []symbolMatch, includeBody bool) Result {
 	output := renderSymbolMatches(matches, includeBody)
 	dataMatches := make([]map[string]any, 0, len(matches))
 	for _, m := range matches {
@@ -256,11 +282,11 @@ func (t *FindSymbolTool) Execute(ctx context.Context, req Request) (Result, erro
 	return Result{
 		Output: output,
 		Data: map[string]any{
-			"name":    name,
+			"name":    matches[0].Name,
 			"count":   len(matches),
 			"matches": dataMatches,
 		},
-	}, nil
+	}
 }
 
 // symbolMatch is the per-result struct used internally before flattening
