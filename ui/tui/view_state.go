@@ -103,7 +103,14 @@ type activityPanelState struct {
 	searchActive bool
 }
 
-// toolStatusPanelState -- Ctrl+Shift+T Tool Status overlay scroll state.
+// toolStatusPanelState -- Ctrl+Shift+T Tool Status overlay state.
+//
+// expanded toggles between the default compact layout (each tool call
+// gets a head line + clipped reason/params/result/error first lines)
+// and a detail layout that renders every multi-line body in full so
+// the user can read the actual error message or full params payload.
+// Enter / 'x' flips the mode; scroll grammar stays the same.
 type toolStatusPanelState struct {
-	scroll int
+	scroll   int
+	expanded bool
 }

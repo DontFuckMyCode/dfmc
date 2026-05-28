@@ -84,7 +84,7 @@ func (m Model) shortcutsTabsSection() []string {
 		{"Contexts", "Shift+F6", "live agents — main · parked · subagents · drive run"},
 		{"ProviderLog", "Shift+F7", "provider call log · prompts/replies/tokens"},
 		{"Telegram", "Shift+F8", "telegram bot messages · connection status"},
-		{"ToolStatus", "Ctrl+Shift+T", "detailed tool call history"},
+		{"ToolStatus", "Ctrl+Shift+T", "tool call history · enter toggles expanded body (full params/result/error)"},
 	}
 	for _, r := range rows {
 		// Format: "  F1       Chat            main composer ..."

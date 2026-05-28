@@ -30,6 +30,7 @@ func (m Model) renderToolStatusViewSized(width, height int) string {
 	bodyLines := []string{}
 	totalOk, totalFail, totalRunning := 0, 0, 0
 	var totalMs int64
+	expanded := m.toolStatus.expanded
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
 		switch e.Status {
@@ -41,7 +42,11 @@ func (m Model) renderToolStatusViewSized(width, height int) string {
 			totalRunning++
 		}
 		totalMs += int64(e.DurationMs)
-		bodyLines = append(bodyLines, m.renderToolLogEntry(e, width-4)...)
+		if expanded {
+			bodyLines = append(bodyLines, m.renderToolLogEntryExpanded(e, width-4)...)
+		} else {
+			bodyLines = append(bodyLines, m.renderToolLogEntry(e, width-4)...)
+		}
 	}
 
 	// Header
@@ -89,9 +94,76 @@ func (m Model) renderToolStatusViewSized(width, height int) string {
 		visible = visible[:rowBudget]
 	}
 
-	footer := subtleStyle.Render("↑↓ scroll · pgup/pgdn page · esc close · ctrl+shift+t toggle")
+	mode := "compact"
+	if m.toolStatus.expanded {
+		mode = "expanded"
+	}
+	footer := subtleStyle.Render("↑↓ scroll · pgup/pgdn page · enter/x toggle · esc close · mode: " + mode)
 
 	return header + "\n" + strings.Join(visible, "\n") + "\n" + footer
+}
+
+// renderToolLogEntryExpanded renders one entry without the
+// truncateSingleLine clipping the compact view applies. Multi-line
+// params/result/error are split on \n and indented so the user can
+// read the actual content. Long single lines still wrap visually in
+// the terminal — this layout's contract is "show the full body", not
+// "fit each line in width".
+func (m Model) renderToolLogEntryExpanded(e toolCallLogEntry, width int) []string {
+	icon, statusStyle := theme.ChipIconStyle(e.Status)
+	name := e.ToolName
+	if name == "" {
+		name = "tool"
+	}
+	age := ""
+	if !e.StartedAt.IsZero() {
+		age = " " + subtleStyle.Render(timeAgo(e.StartedAt))
+	}
+	head := statusStyle.Render(icon+" "+name) + age
+	if e.DurationMs > 0 {
+		head += " " + subtleStyle.Render(theme.FormatDurationShort(e.DurationMs))
+	}
+	if e.Step > 0 {
+		head += " " + subtleStyle.Render(fmt.Sprintf("#%d", e.Step))
+	}
+	lines := []string{head}
+
+	if e.Reason != "" {
+		lines = append(lines, "  "+accentStyle.Italic(true).Render("💭 "+e.Reason))
+	}
+	if e.Params != "" {
+		lines = append(lines, "  "+subtleStyle.Render("params:"))
+		for ln := range strings.SplitSeq(e.Params, "\n") {
+			lines = append(lines, "    "+infoStyle.Render(ln))
+		}
+	}
+	if e.Status == "failed" || e.Status == "denied" || e.Status == "timeout" {
+		errText := e.Error
+		if errText == "" {
+			errText = e.Status
+		}
+		lines = append(lines, "  "+subtleStyle.Render("error:"))
+		for ln := range strings.SplitSeq(errText, "\n") {
+			lines = append(lines, "    "+failStyle.Render(ln))
+		}
+	} else if e.Result != "" {
+		lines = append(lines, "  "+subtleStyle.Render("result:"))
+		for ln := range strings.SplitSeq(e.Result, "\n") {
+			lines = append(lines, "    "+okStyle.Render(ln))
+		}
+	}
+	if e.IsBatch && e.BatchTotal > 0 {
+		batchLine := fmt.Sprintf("%d calls: %d ok", e.BatchTotal, e.BatchOK)
+		if e.BatchFail > 0 {
+			batchLine += fmt.Sprintf(", %d fail", e.BatchFail)
+		}
+		lines = append(lines, "  "+subtleStyle.Render(batchLine))
+	}
+	if e.Tokens > 0 {
+		lines = append(lines, "  "+subtleStyle.Render(fmt.Sprintf("%s tok", theme.FormatToolTokenCount(e.Tokens))))
+	}
+	lines = append(lines, subtleStyle.Render(strings.Repeat("─", min(width, 60))))
+	return lines
 }
 
 func (m Model) renderToolLogEntry(e toolCallLogEntry, width int) []string {
@@ -215,6 +287,13 @@ func (m Model) handleToolStatusKey(key string) (Model, bool) {
 		if m.toolStatus.scroll < 0 {
 			m.toolStatus.scroll = 0
 		}
+		return m, true
+	case "enter", "x":
+		// Toggle compact <-> expanded body. Snap scroll back to top so
+		// the user lands at the newest entry in the new layout instead
+		// of an offset that was computed against the old line count.
+		m.toolStatus.expanded = !m.toolStatus.expanded
+		m.toolStatus.scroll = 0
 		return m, true
 	}
 	return m, false
