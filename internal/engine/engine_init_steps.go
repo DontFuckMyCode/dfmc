@@ -189,11 +189,9 @@ func (e *Engine) initProjectRuntime(ctx context.Context) {
 		e.mu.Lock()
 		e.indexCancel = cancel
 		e.mu.Unlock()
-		e.indexWG.Add(1)
-		go func() {
-			defer e.indexWG.Done()
+		e.indexWG.Go(func() {
 			e.indexCodebase(indexCtx)
-		}()
+		})
 	}
 	for _, path := range []string{e.globalConfigPath(), e.projectConfigPath()} {
 		if path == "" {
