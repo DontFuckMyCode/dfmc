@@ -72,9 +72,9 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req CompletionRequest) (
 		defer func() { _ = resp.Body.Close() }()
 		raw, _ := io.ReadAll(resp.Body)
 		if isThrottleStatus(resp.StatusCode) {
-			return nil, newThrottledErrorFromResponse("anthropic", resp, string(raw))
+			return nil, newThrottledErrorFromResponse(p.Name(), resp, string(raw))
 		}
-		return nil, &StatusError{Provider: "anthropic", StatusCode: resp.StatusCode, Body: string(raw)}
+		return nil, &StatusError{Provider: p.Name(), StatusCode: resp.StatusCode, Body: string(raw)}
 	}
 
 	ch := make(chan StreamEvent, 32)

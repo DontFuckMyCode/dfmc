@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 )
 
 type AnthropicProvider struct {
@@ -115,9 +117,9 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 	}
 	if resp.StatusCode >= 400 {
 		if isThrottleStatus(resp.StatusCode) {
-			return nil, newThrottledErrorFromResponse("anthropic", resp, string(raw))
+			return nil, newThrottledErrorFromResponse(p.Name(), resp, string(raw))
 		}
-		return nil, &StatusError{Provider: "anthropic", StatusCode: resp.StatusCode, Body: string(raw)}
+		return nil, &StatusError{Provider: p.Name(), StatusCode: resp.StatusCode, Body: string(raw)}
 	}
 	if errMsg := parseCommonProviderError(raw); errMsg != "" {
 		return nil, fmt.Errorf("anthropic provider error: %s", errMsg)
@@ -218,8 +220,12 @@ func parseCommonProviderError(raw []byte) string {
 	return ""
 }
 
+// CountTokens delegates to the family-aware tokens estimator so Claude models
+// route through the chars/3 heuristic in tokens/registry.go. Mirrors Google's
+// pattern (google.go's CountTokens) — Anthropic has no public tiktoken so the
+// best simple approximation lives in one place.
 func (p *AnthropicProvider) CountTokens(text string) int {
-	return len(strings.Fields(text))
+	return tokens.EstimateForModel(p.model, text)
 }
 
 func (p *AnthropicProvider) MaxContext() int {

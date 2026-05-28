@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 )
 
 const defaultGoogleBaseURL = "https://generativelanguage.googleapis.com/v1beta"
@@ -106,7 +108,7 @@ func (p *GoogleProvider) Complete(ctx context.Context, req CompletionRequest) (*
 	}
 	if resp.StatusCode >= 400 {
 		if isThrottleStatus(resp.StatusCode) {
-			return nil, newThrottledErrorFromResponse("google", resp, string(raw))
+			return nil, newThrottledErrorFromResponse(p.Name(), resp, string(raw))
 		}
 		return nil, p.statusError(resp.StatusCode, raw)
 	}
@@ -192,18 +194,18 @@ func (p *GoogleProvider) statusError(code int, raw []byte) error {
 		strings.Contains(msg, "context window") {
 		return fmt.Errorf("%w: google status %d: %s", ErrContextOverflow, code, string(raw))
 	}
-	return &StatusError{Provider: "google", StatusCode: code, Body: string(raw)}
+	return &StatusError{Provider: p.Name(), StatusCode: code, Body: string(raw)}
 }
 
 func (p *GoogleProvider) CountTokens(text string) int {
 	if strings.TrimSpace(text) == "" {
 		return 0
 	}
-	// Heuristic fallback for the ctx-less Provider.CountTokens path.
+	// Heuristic based on model family detection.
 	// Callers that need a precise count should type-assert
 	// provider.CtxTokenCounter and use CountTokensCtx — that hits the
 	// upstream :countTokens API via PreciseCountTokens below.
-	return len(strings.Fields(text))
+	return tokens.EstimateForModel(p.model, text)
 }
 
 // CountTokensCtx satisfies provider.CtxTokenCounter. Routes to the

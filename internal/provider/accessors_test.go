@@ -40,10 +40,12 @@ func TestAnthropicProvider_Models(t *testing.T) {
 }
 
 func TestAnthropicProvider_CountTokens(t *testing.T) {
+	// CountTokens routes through tokens.EstimateForModel → heuristicForFamily.
+	// claude-opus-4-7 maps to Familyclaude → chars/3 + 1. 23/3 + 1 = 8.
 	p := NewAnthropicProvider("claude-opus-4-7", "test-key", "https://api.anthropic.com", 64000, 1000000)
 	got := p.CountTokens("one two three four five")
-	if got != 5 {
-		t.Errorf("CountTokens: got %d", got)
+	if got != 8 {
+		t.Errorf("CountTokens: got %d, want 8", got)
 	}
 }
 
