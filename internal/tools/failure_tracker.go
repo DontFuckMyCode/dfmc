@@ -43,6 +43,10 @@ func (e *Engine) trackFailure(key string) int {
 		target := cap / 2
 		for len(e.recentFailures) > target && len(e.recentFailOrder) > 0 {
 			oldest := e.recentFailOrder[0]
+			// Drop the string reference in the dropped slot before
+			// sliding the header. Without this the underlying array
+			// retains the popped name until the next geometric grow.
+			e.recentFailOrder[0] = ""
 			e.recentFailOrder = e.recentFailOrder[1:]
 			delete(e.recentFailures, oldest)
 			delete(e.failureOrderIdx, oldest)

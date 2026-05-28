@@ -128,6 +128,18 @@ func (m *Model) recordActivityEvent(ev engine.Event) {
 	m.activity.entries = append(m.activity.entries, entry)
 	if len(m.activity.entries) > maxActivityEntries {
 		drop := len(m.activity.entries) - maxActivityEntries
+		// Zero the dropped slots before resliding the header forward.
+		// Without this, the underlying array still holds the activityEntry
+		// structs at positions [0:drop] and their string fields (Text,
+		// Details, Path, Provider, Query, EventID, Source) stay reachable
+		// from the array head until the next geometric grow swaps the
+		// backing storage. Long-running TUI sessions accrete ~maxEntries
+		// worth of stale strings between doublings — small but observable
+		// in heap dumps. Explicit zeroing makes the dropped struct slots
+		// drop their string references immediately.
+		for i := range drop {
+			m.activity.entries[i] = activityEntry{}
+		}
 		m.activity.entries = m.activity.entries[drop:]
 	}
 	if m.activity.follow {

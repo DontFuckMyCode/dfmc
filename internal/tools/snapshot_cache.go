@@ -230,6 +230,10 @@ func (e *Engine) touchReadSnapshotLocked(abs string) {
 		}
 		for len(e.readSnapshots) > target && len(e.readSnapshotLRU) > 0 {
 			evict := e.readSnapshotLRU[0]
+			// Drop the path string reference in the dropped slot before
+			// sliding the header — same hygiene as the activity ring and
+			// recentFailOrder evictions.
+			e.readSnapshotLRU[0] = ""
 			e.readSnapshotLRU = e.readSnapshotLRU[1:]
 			delete(e.readSnapshots, evict)
 		}
