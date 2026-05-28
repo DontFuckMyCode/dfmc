@@ -126,10 +126,12 @@ func (m Model) renderKeyStatus() string {
 	}
 	var b strings.Builder
 	b.WriteString("API key status — phase out .env: keys live in ~/.dfmc/config.yaml.\n\n")
-	b.WriteString(fmt.Sprintf("  %-10s  %-20s  %-14s  %s\n", "PROVIDER", "ENV VAR", "SOURCE", "KEY"))
-	b.WriteString("  " + strings.Repeat("─", 60) + "\n")
+	fmt.Fprintf(&b, "  %-10s  %-20s  %-14s  %s\n", "PROVIDER", "ENV VAR", "SOURCE", "KEY")
+	b.WriteString("  ")
+	b.WriteString(strings.Repeat("─", 60))
+	b.WriteByte('\n')
 	for _, r := range rows {
-		b.WriteString(fmt.Sprintf("  %-10s  %-20s  %-14s  %s\n", r.Provider, blankFallback(r.EnvVar, "—"), r.Source, r.Masked))
+		fmt.Fprintf(&b, "  %-10s  %-20s  %-14s  %s\n", r.Provider, blankFallback(r.EnvVar, "—"), r.Source, r.Masked)
 	}
 	b.WriteString("\nNext: `/key set <provider> <api_key>` writes to ~/.dfmc/config.yaml.")
 	b.WriteString("\nMigrating from .env? Run `/key migrate`.")

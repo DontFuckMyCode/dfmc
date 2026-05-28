@@ -36,7 +36,8 @@ func (m *Model) renderTelegramPanelSized(contentWidth int) string {
 	}
 
 	b := &strings.Builder{}
-	b.WriteString(telegramPanelStyle.Render("Telegram Bot") + "\n")
+	b.WriteString(telegramPanelStyle.Render("Telegram Bot"))
+	b.WriteByte('\n')
 
 	tokenSet := false
 	if m.eng != nil && m.eng.Config != nil {
@@ -53,7 +54,8 @@ func (m *Model) renderTelegramPanelSized(contentWidth int) string {
 		return b.String()
 	}
 
-	b.WriteString(okStyle.Render("● Connected") + "  ")
+	b.WriteString(okStyle.Render("● Connected"))
+	b.WriteString("  ")
 	registered := m.telegramRegisteredCount()
 	username := blankFallback(m.telegram.botUsername, "bot")
 	b.WriteString(subtleStyle.Render(fmt.Sprintf("@%s | Users: %d | Registered: %d",
@@ -70,16 +72,19 @@ func (m *Model) renderTelegramPanelSized(contentWidth int) string {
 		b.WriteString(m.renderTelegramMessageHistory(width, height-12))
 	}
 
-	b.WriteString("\n" + subtleStyle.Render("↑↓ scroll · enter action menu · esc close"))
+	b.WriteByte('\n')
+	b.WriteString(subtleStyle.Render("↑↓ scroll · enter action menu · esc close"))
 	if m.actionMenu.open && m.actionMenu.owner == "Telegram" {
-		b.WriteString("\n\n" + m.renderActionMenu(width))
+		b.WriteString("\n\n")
+		b.WriteString(m.renderActionMenu(width))
 	}
 	return b.String()
 }
 
 func (m *Model) renderTelegramSetupPrompt(width int) string {
 	b := &strings.Builder{}
-	b.WriteString(warnStyle.Render("⚠ Telegram not configured") + "\n\n")
+	b.WriteString(warnStyle.Render("⚠ Telegram not configured"))
+	b.WriteString("\n\n")
 
 	selectedField := 0
 	if m.telegram.setupSelected == 1 {
@@ -409,7 +414,8 @@ func (m *Model) sendTelegramTestMessage() (tea.Model, tea.Cmd) {
 func (m *Model) renderTelegramForm(width int) string {
 	b := &strings.Builder{}
 	b.WriteString(titleStyle.Bold(true).Render("  Telegram Configuration\n"))
-	b.WriteString(renderDivider(width-2) + "\n")
+	b.WriteString(renderDivider(width - 2))
+	b.WriteByte('\n')
 
 	tokenLabel := "Bot Token"
 	if m.telegram.editingToken {
@@ -421,7 +427,7 @@ func (m *Model) renderTelegramForm(width int) string {
 	} else {
 		disp = truncateSingleLine(disp, max(width-24, 16))
 	}
-	b.WriteString(fmt.Sprintf("  %s %s\n", boldStyle.Render(tokenLabel+":"), disp))
+	fmt.Fprintf(b, "  %s %s\n", boldStyle.Render(tokenLabel+":"), disp)
 	b.WriteString(subtleStyle.Render("  Get token from @BotFather on Telegram\n\n"))
 
 	usersLabel := "Allowed User IDs"
@@ -434,13 +440,13 @@ func (m *Model) renderTelegramForm(width int) string {
 	} else {
 		usersDisp = truncateSingleLine(usersDisp, max(width-35, 16))
 	}
-	b.WriteString(fmt.Sprintf("  %s %s\n", boldStyle.Render(usersLabel+":"), usersDisp))
+	fmt.Fprintf(b, "  %s %s\n", boldStyle.Render(usersLabel+":"), usersDisp)
 	b.WriteString(subtleStyle.Render("  Send /id to this bot or use @userinfobot to get your numeric ID\n\n"))
 
 	if m.telegram.saveSuccess {
 		b.WriteString(okStyle.Render("  ✓ Saved! Bot connecting…\n\n"))
 	} else if m.telegram.saveError != "" {
-		b.WriteString(warnStyle.Render("  ✗ " + m.telegram.saveError + "\n\n"))
+		fmt.Fprintf(b, "%s\n\n", warnStyle.Render("  ✗ "+m.telegram.saveError))
 	}
 	b.WriteString(subtleStyle.Render("  Tab: switch field · Enter: save · Esc: cancel\n"))
 	b.WriteString(subtleStyle.Render("  Type or paste normally — no Alt keys needed.\n"))

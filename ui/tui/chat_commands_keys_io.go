@@ -152,11 +152,13 @@ func (m Model) migrateDotEnvKeysToUserConfig() string {
 		return "/key migrate: write failed: " + err.Error()
 	}
 	var b strings.Builder
-	b.WriteString("/key migrate: copied " + fmt.Sprintf("%d", len(migrated)) + " key(s) from .env → ")
+	fmt.Fprintf(&b, "/key migrate: copied %d key(s) from .env → ", len(migrated))
 	b.WriteString(displayConfigPath(path))
-	b.WriteString("\n  Migrated: " + strings.Join(migrated, ", "))
+	b.WriteString("\n  Migrated: ")
+	b.WriteString(strings.Join(migrated, ", "))
 	if len(skipped) > 0 {
-		b.WriteString("\n  Skipped (already in user-home): " + strings.Join(skipped, ", "))
+		b.WriteString("\n  Skipped (already in user-home): ")
+		b.WriteString(strings.Join(skipped, ", "))
 	}
 	b.WriteString("\n\nThe project .env is no longer needed for these providers. Remove it manually when you're sure (`rm .env`) — DFMC won't delete it for you.")
 	return b.String()

@@ -77,7 +77,9 @@ func (m Model) cleanProjectProvidersBlock() string {
 	b.WriteString(displayConfigPath(path))
 	b.WriteString(".\n")
 	if summary != "" {
-		b.WriteString("  Removed: " + summary + "\n")
+		b.WriteString("  Removed: ")
+		b.WriteString(summary)
+		b.WriteByte('\n')
 	}
 	b.WriteString("\nUser-home preferences (~/.dfmc/config.yaml) now win on load.")
 	b.WriteString(reloadHint)

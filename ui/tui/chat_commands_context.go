@@ -43,13 +43,15 @@ func (m Model) contextCommandMessagesTable() string {
 		totalTokens += contextMessageTokens(msg)
 		totalToolCalls += len(msg.ToolCalls)
 	}
-	b.WriteString(fmt.Sprintf(
+	fmt.Fprintf(&b,
 		"Active branch: %d messages · ~%d tokens (rough estimate) · %d tool call(s) total\n",
 		len(msgs), totalTokens, totalToolCalls,
-	))
-	b.WriteString(fmt.Sprintf("  %-3s  %-12s  %-9s  %-7s  %-5s  %s\n",
-		"#", "ID", "ROLE", "~TOKENS", "TOOLS", "PREVIEW"))
-	b.WriteString("  " + strings.Repeat("─", 96) + "\n")
+	)
+	fmt.Fprintf(&b, "  %-3s  %-12s  %-9s  %-7s  %-5s  %s\n",
+		"#", "ID", "ROLE", "~TOKENS", "TOOLS", "PREVIEW")
+	b.WriteString("  ")
+	b.WriteString(strings.Repeat("─", 96))
+	b.WriteByte('\n')
 	for i, msg := range msgs {
 		id := strings.TrimSpace(msg.ID)
 		if id == "" {
@@ -62,9 +64,9 @@ func (m Model) contextCommandMessagesTable() string {
 			toolsCell = fmt.Sprintf("×%d", n)
 		}
 		preview := contextMessagePreview(msg)
-		b.WriteString(fmt.Sprintf("  %-3d  %-12s  %-9s  %-7d  %-5s  %s\n",
+		fmt.Fprintf(&b, "  %-3d  %-12s  %-9s  %-7d  %-5s  %s\n",
 			i+1, id, role, tokenCount, toolsCell, preview,
-		))
+		)
 	}
 	b.WriteString("\n/context drop <id> [<id>…] removes messages by ID. The model's [cleanup:] tail does this automatically — use /context drop only when you want to override.")
 	return b.String()

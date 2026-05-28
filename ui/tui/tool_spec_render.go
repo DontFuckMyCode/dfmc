@@ -131,7 +131,8 @@ func formatToolSpec(spec tools.ToolSpec) string {
 	if c := strings.TrimSpace(spec.CostHint); c != "" {
 		riskLine += " · cost=" + c
 	}
-	b.WriteString(riskLine + "\n")
+	b.WriteString(riskLine)
+	b.WriteByte('\n')
 
 	if d := strings.TrimSpace(spec.Deprecated); d != "" {
 		fmt.Fprintf(&b, "  deprecated: %s\n", d)
