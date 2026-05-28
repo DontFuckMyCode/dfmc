@@ -4058,7 +4058,7 @@ func TestRuntimeStripShowsToolsAndActivityWhenPanelHidden(t *testing.T) {
 	cfg := config.DefaultConfig()
 	eng := &engine.Engine{
 		Config: cfg,
-		Tools:  toolruntime.New(*cfg),
+		Tools:  toolruntime.NewFromConfig(cfg),
 	}
 	m := NewModel(context.Background(), eng)
 	m.activeTab = 0
@@ -4865,7 +4865,7 @@ func TestStatsPanelInfoIncludesWorkflowState(t *testing.T) {
 	cfg := config.DefaultConfig()
 	eng := &engine.Engine{
 		Config: cfg,
-		Tools:  toolruntime.New(*cfg),
+		Tools:  toolruntime.NewFromConfig(cfg),
 	}
 	_, err := eng.Tools.Execute(context.Background(), "todo_write", toolruntime.Request{
 		ProjectRoot: t.TempDir(),

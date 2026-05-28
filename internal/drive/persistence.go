@@ -45,6 +45,8 @@ type Store struct {
 	db *sql.DB
 }
 
+var _ RunStore = (*Store)(nil) // compile-time check
+
 // NewStore wraps a SQLite handle. Returns an error only if db is nil
 // — table creation is deferred to the first write so an empty store
 // is valid (List on an empty store returns nil, nil).
