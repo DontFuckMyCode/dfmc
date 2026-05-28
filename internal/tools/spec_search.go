@@ -12,6 +12,7 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -26,32 +27,38 @@ func (s ToolSpec) ShortHelp() string {
 	if summary == "" {
 		summary = "(no description)"
 	}
-	return s.Name + " — " + summary + " [" + string(s.Risk) + "]"
+	return fmt.Sprintf("%s — %s [%s]", s.Name, summary, s.Risk)
 }
 
 // LongHelp renders a full tool_help response with args, returns, examples.
+// Concatenation runs through fmt.Fprintf and separate WriteString calls so
+// the builder doesn't pay for a temporary string allocation per "a " + b.
+// This path runs on every tool_help dispatch (one LongHelp per spec, often
+// several per round when the model fans tool_search → tool_help calls).
 func (s ToolSpec) LongHelp() string {
 	var b strings.Builder
 	b.WriteString(s.Name)
 	if s.Title != "" {
-		b.WriteString(" (" + s.Title + ")")
+		fmt.Fprintf(&b, " (%s)", s.Title)
 	}
-	b.WriteString("\nRisk: " + string(s.Risk))
+	b.WriteString("\nRisk: ")
+	b.WriteString(string(s.Risk))
 	if s.Idempotent {
 		b.WriteString(" (idempotent)")
 	}
 	if s.CostHint != "" {
-		b.WriteString("  Cost: " + s.CostHint)
+		b.WriteString("  Cost: ")
+		b.WriteString(s.CostHint)
 	}
-	b.WriteString("\n")
+	b.WriteByte('\n')
 	if s.Summary != "" {
-		b.WriteString("\nSummary: " + s.Summary + "\n")
+		fmt.Fprintf(&b, "\nSummary: %s\n", s.Summary)
 	}
 	if s.Purpose != "" {
-		b.WriteString("\nPurpose: " + s.Purpose + "\n")
+		fmt.Fprintf(&b, "\nPurpose: %s\n", s.Purpose)
 	}
-	if strings.TrimSpace(s.Prompt) != "" {
-		b.WriteString("\nGuide:\n" + strings.TrimSpace(s.Prompt) + "\n")
+	if trimmed := strings.TrimSpace(s.Prompt); trimmed != "" {
+		fmt.Fprintf(&b, "\nGuide:\n%s\n", trimmed)
 	}
 	if len(s.Args) > 0 {
 		b.WriteString("\nArgs:\n")
@@ -60,35 +67,42 @@ func (s ToolSpec) LongHelp() string {
 			if a.Required {
 				flag = " (required)"
 			}
-			b.WriteString("  - " + a.Name + " <" + string(a.Type) + ">" + flag)
+			fmt.Fprintf(&b, "  - %s <%s>%s", a.Name, a.Type, flag)
 			if a.Description != "" {
-				b.WriteString(": " + a.Description)
+				b.WriteString(": ")
+				b.WriteString(a.Description)
 			}
 			if a.Default != nil {
 				def, _ := json.Marshal(a.Default)
-				b.WriteString("  default=" + string(def))
+				b.WriteString("  default=")
+				b.Write(def)
 			}
 			if len(a.Enum) > 0 {
 				en, _ := json.Marshal(a.Enum)
-				b.WriteString("  enum=" + string(en))
+				b.WriteString("  enum=")
+				b.Write(en)
 			}
-			b.WriteString("\n")
+			b.WriteByte('\n')
 		}
 	}
 	if s.Returns != "" {
-		b.WriteString("\nReturns: " + s.Returns + "\n")
+		fmt.Fprintf(&b, "\nReturns: %s\n", s.Returns)
 	}
 	if len(s.Examples) > 0 {
 		b.WriteString("\nExamples:\n")
 		for _, ex := range s.Examples {
-			b.WriteString("  " + ex + "\n")
+			b.WriteString("  ")
+			b.WriteString(ex)
+			b.WriteByte('\n')
 		}
 	}
 	if len(s.Tags) > 0 {
-		b.WriteString("\nTags: " + strings.Join(s.Tags, ", ") + "\n")
+		b.WriteString("\nTags: ")
+		b.WriteString(strings.Join(s.Tags, ", "))
+		b.WriteByte('\n')
 	}
 	if s.Deprecated != "" {
-		b.WriteString("\nDEPRECATED: " + s.Deprecated + "\n")
+		fmt.Fprintf(&b, "\nDEPRECATED: %s\n", s.Deprecated)
 	}
 	return b.String()
 }
