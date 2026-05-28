@@ -195,3 +195,50 @@ func TestLoadClientsFromConfig_EmptyInput(t *testing.T) {
 		t.Error("LoadClientsFromConfig({}) = nil, want empty slice")
 	}
 }
+
+// TestMCPToolBridge_Close pins that bridge.Close stops every backing
+// client. The May 2026 regression left them running — engine.Shutdown
+// teared the engine down but MCP server subprocesses stayed orphaned,
+// and ReloadConfig spawned a fresh set on every config edit without
+// stopping the old one. We use cmd=nil clients so Stop short-circuits
+// to the closed-flag flip without needing a real subprocess.
+func TestMCPToolBridge_Close(t *testing.T) {
+	c1 := &Client{Name: "alpha", cmd: nil}
+	c2 := &Client{Name: "beta", cmd: nil}
+	b := NewMCPToolBridge([]*Client{c1, c2})
+
+	if err := b.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !c1.closed.Load() {
+		t.Error("client alpha not stopped")
+	}
+	if !c2.closed.Load() {
+		t.Error("client beta not stopped")
+	}
+}
+
+// TestMCPToolBridge_CloseIdempotent confirms Close can be called twice
+// safely. The double-defer pattern in cmd/dfmc/main.go means engine
+// Shutdown runs twice in the LIFO unwind, and via Tools.Close in the
+// reload swap. Both paths reach the bridge.
+func TestMCPToolBridge_CloseIdempotent(t *testing.T) {
+	c := &Client{Name: "alpha", cmd: nil}
+	b := NewMCPToolBridge([]*Client{c})
+	if err := b.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := b.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
+// TestMCPToolBridge_CloseNil keeps the nil receiver path covered so
+// the cleanup paths in engine.Shutdown / ReloadConfig don't need to
+// guard against a nil bridge themselves.
+func TestMCPToolBridge_CloseNil(t *testing.T) {
+	var b *MCPToolBridge
+	if err := b.Close(); err != nil {
+		t.Fatalf("nil bridge Close should be a no-op, got %v", err)
+	}
+}

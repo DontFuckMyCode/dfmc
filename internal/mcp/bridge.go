@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 
@@ -85,6 +86,43 @@ func (b *MCPToolBridge) List() []ToolDescriptor {
 		}
 	}
 	return out
+}
+
+// Close terminates every backing MCP client subprocess. Idempotent per
+// client (Client.Stop short-circuits on its own closed flag), so calling
+// Close twice on the bridge is safe. Errors from individual clients are
+// joined so the caller sees every failure without one masking the others.
+//
+// Without this, engine.Shutdown left MCP server subprocesses orphaned —
+// they kept reading from a closed stdin until the OS reaped them, which
+// on Windows manifested as zombie cmd.exe / node.exe processes that
+// outlived the parent. ReloadConfig made this worse: every config edit
+// spawned a fresh set of clients, but the old set was never stopped, so
+// long-running TUI sessions accumulated one stale subprocess tree per
+// reload.
+func (b *MCPToolBridge) Close() error {
+	if b == nil {
+		return nil
+	}
+	var errs []error
+	for _, c := range b.clients {
+		if c == nil {
+			continue
+		}
+		if err := c.Stop(); err != nil {
+			errs = append(errs, fmt.Errorf("mcp client %q stop: %w", c.Name, err))
+		}
+	}
+	// Drop references so the bridge can't accidentally route a Call to a
+	// stopped client after Close — Client.CallTool already guards via
+	// c.closed, but clearing here gives a clean error path (unknownToolError)
+	// rather than the "client closed" string match.
+	b.clients = nil
+	b.toolIndex = nil
+	if len(errs) == 0 {
+		return nil
+	}
+	return errors.Join(errs...)
 }
 
 // Call dispatches a tool by name to the owning client.

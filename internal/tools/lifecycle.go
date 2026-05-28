@@ -52,6 +52,18 @@ func (e *Engine) Close() error {
 			errs = append(errs, err)
 		}
 	}
+	// Stop MCP bridge subprocesses. The bridge isn't in the registry
+	// (mcpToolAdapter wrappers around it are), so the toolCloser sweep
+	// doesn't reach it. Optional via interface assertion so test bridges
+	// that don't own subprocesses (FakeBridge in engine_methods_test.go)
+	// don't need to implement Close.
+	if e.mcpBridge != nil {
+		if c, ok := e.mcpBridge.(interface{ Close() error }); ok {
+			if err := c.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
 	e.clearSessionState()
 	return errors.Join(errs...)
 }
