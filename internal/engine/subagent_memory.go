@@ -114,7 +114,20 @@ func (e *Engine) appendSubagentJournal(role string, entry subagentJournalEntry) 
 	if err != nil {
 		return
 	}
-	_ = e.Storage.BucketPut(subagentJournalBucket, key, encoded)
+	// Best-effort write: the journal is supplementary context, not a
+	// load-bearing record. But swallowing the error silently meant a
+	// disk-full / locked-DB / IO failure dropped every subsequent
+	// delegation summary with no signal at all. Surface it on AppLog
+	// at warn so the operator notices the journal stopped accruing.
+	if putErr := e.Storage.BucketPut(subagentJournalBucket, key, encoded); putErr != nil {
+		if e.AppLog != nil {
+			e.AppLog.Warn("subagent journal write failed", map[string]any{
+				"role":  key,
+				"bytes": len(encoded),
+				"error": putErr.Error(),
+			})
+		}
+	}
 }
 
 // formatSubagentJournalSection renders prior entries as a single
