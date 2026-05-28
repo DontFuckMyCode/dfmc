@@ -181,7 +181,7 @@ func (m Model) readProjectDotEnvKeys() map[string]string {
 	if err != nil {
 		return nil
 	}
-	for _, raw := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+	for raw := range strings.SplitSeq(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

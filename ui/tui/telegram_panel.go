@@ -44,7 +44,7 @@ func (m *Model) renderTelegramPanelSized(contentWidth int) string {
 	}
 
 	if !tokenSet {
-		b.WriteString(m.renderTelegramSetupPrompt(width))
+		b.WriteString(m.renderTelegramSetupPrompt())
 		return b.String()
 	}
 
@@ -75,7 +75,7 @@ func (m *Model) renderTelegramPanelSized(contentWidth int) string {
 	return b.String()
 }
 
-func (m *Model) renderTelegramSetupPrompt(width int) string {
+func (m *Model) renderTelegramSetupPrompt() string {
 	b := &strings.Builder{}
 	b.WriteString(warnStyle.Render("⚠ Telegram not configured"))
 	b.WriteString("\n\n")
@@ -252,7 +252,7 @@ func renderTelegramMessageRows(msg telegramMessageItem, width int) []string {
 	if text == "" {
 		text = "(empty)"
 	}
-	for _, part := range strings.Split(text, "\n") {
+	for part := range strings.SplitSeq(text, "\n") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -371,8 +371,8 @@ func (m *Model) sendTelegramTestMessage() (tea.Model, tea.Cmd) {
 		var targetUserID int64
 		for i := len(m.telegram.messages) - 1; i >= 0; i-- {
 			if !m.telegram.messages[i].isOut {
-				if strings.HasPrefix(m.telegram.messages[i].from, "User ") {
-					if id, err := strconv.ParseInt(strings.TrimPrefix(m.telegram.messages[i].from, "User "), 10, 64); err == nil {
+				if rest, ok := strings.CutPrefix(m.telegram.messages[i].from, "User "); ok {
+					if id, err := strconv.ParseInt(rest, 10, 64); err == nil {
 						targetUserID = id
 						break
 					}
@@ -461,7 +461,7 @@ func (m *Model) saveTelegramSetup() *Model {
 	var allowedIDs []int64
 	usersRaw := strings.TrimSpace(m.telegram.allowedUsersInput)
 	if usersRaw != "" {
-		for _, p := range strings.Split(usersRaw, ",") {
+		for p := range strings.SplitSeq(usersRaw, ",") {
 			p = strings.TrimSpace(p)
 			if p == "" {
 				continue

@@ -61,17 +61,14 @@ func renderFileInventory(chunks []types.ContextChunk) string {
 	}
 	var b strings.Builder
 	b.WriteString("**Files in scope:**\n")
-	limit := len(chunks)
-	if limit > 8 {
-		limit = 8
-	}
-	for i := 0; i < limit; i++ {
+	limit := min(len(chunks), 8)
+	for i := range limit {
 		ch := chunks[i]
-		b.WriteString(fmt.Sprintf("- `%s` · %s · L%d-L%d · score %.2f\n",
-			ch.Path, humanLang(ch.Language), ch.LineStart, ch.LineEnd, ch.Score))
+		fmt.Fprintf(&b, "- `%s` · %s · L%d-L%d · score %.2f\n",
+			ch.Path, humanLang(ch.Language), ch.LineStart, ch.LineEnd, ch.Score)
 	}
 	if len(chunks) > limit {
-		b.WriteString(fmt.Sprintf("- … +%d more\n", len(chunks)-limit))
+		fmt.Fprintf(&b, "- … +%d more\n", len(chunks)-limit)
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -149,8 +146,7 @@ func looksLikeFunctionStart(lang, line string) bool {
 func extractFunctionName(lang, line string) string {
 	switch strings.ToLower(lang) {
 	case "go":
-		if strings.HasPrefix(line, "func ") {
-			rest := strings.TrimPrefix(line, "func ")
+		if rest, ok := strings.CutPrefix(line, "func "); ok {
 			if i := strings.IndexAny(rest, "( "); i >= 0 {
 				return strings.TrimSpace(rest[:i])
 			}
@@ -158,13 +154,13 @@ func extractFunctionName(lang, line string) string {
 		}
 	case "python", "py":
 		rest := strings.TrimPrefix(strings.TrimPrefix(line, "async "), "def ")
-		if i := strings.Index(rest, "("); i >= 0 {
-			return strings.TrimSpace(rest[:i])
+		if name, _, ok := strings.Cut(rest, "("); ok {
+			return strings.TrimSpace(name)
 		}
 	case "rust", "rs":
 		rest := strings.TrimPrefix(strings.TrimPrefix(line, "pub "), "fn ")
-		if i := strings.Index(rest, "("); i >= 0 {
-			return strings.TrimSpace(rest[:i])
+		if name, _, ok := strings.Cut(rest, "("); ok {
+			return strings.TrimSpace(name)
 		}
 	}
 	return "<anon>"
@@ -172,7 +168,7 @@ func extractFunctionName(lang, line string) string {
 
 func extractTopSymbols(ch types.ContextChunk) []string {
 	var out []string
-	for _, line := range strings.Split(ch.Content, "\n") {
+	for line := range strings.SplitSeq(ch.Content, "\n") {
 		stripped := strings.TrimSpace(line)
 		if name := extractFunctionName(ch.Language, stripped); name != "<anon>" && name != "" && looksLikeFunctionStart(ch.Language, stripped) {
 			out = append(out, name)
