@@ -114,14 +114,14 @@ func TestMCPAdapter_Execute_ErrorResult(t *testing.T) {
 // Engine method tests
 
 func TestEngine_TaskStore_Nil(t *testing.T) {
-	e := New(*config.DefaultConfig())
+	e := NewFromConfig(config.DefaultConfig())
 	if e.TaskStore() != nil {
 		t.Error("TaskStore() on fresh engine should be nil")
 	}
 }
 
 func TestEngine_SetMCPBridge(t *testing.T) {
-	e := New(*config.DefaultConfig())
+	e := NewFromConfig(config.DefaultConfig())
 	bridge := &mockToolBridge{
 		list: []mcp.ToolDescriptor{{Name: "mcp-tool-a"}, {Name: "mcp-tool-b"}},
 	}
@@ -132,7 +132,7 @@ func TestEngine_SetMCPBridge(t *testing.T) {
 }
 
 func TestEngine_List(t *testing.T) {
-	e := New(*config.DefaultConfig())
+	e := NewFromConfig(config.DefaultConfig())
 	list := e.List()
 	if len(list) == 0 {
 		t.Error("List() on fresh engine should not be empty")
@@ -140,7 +140,7 @@ func TestEngine_List(t *testing.T) {
 }
 
 func TestEngine_List_Sorted(t *testing.T) {
-	e := New(*config.DefaultConfig())
+	e := NewFromConfig(config.DefaultConfig())
 	list := e.List()
 	for i := 1; i < len(list); i++ {
 		if list[i-1] > list[i] {
@@ -151,7 +151,7 @@ func TestEngine_List_Sorted(t *testing.T) {
 }
 
 func TestEngine_Get(t *testing.T) {
-	e := New(*config.DefaultConfig())
+	e := NewFromConfig(config.DefaultConfig())
 	tool, ok := e.Get("read_file")
 	if !ok {
 		t.Error("Get(read_file) should return true")
@@ -162,7 +162,7 @@ func TestEngine_Get(t *testing.T) {
 }
 
 func TestEngine_Get_NotFound(t *testing.T) {
-	e := New(*config.DefaultConfig())
+	e := NewFromConfig(config.DefaultConfig())
 	_, ok := e.Get("nonexistent-tool-xyz")
 	if ok {
 		t.Error("Get(nonexistent) should return false")

@@ -10,7 +10,7 @@ import (
 // TestGHPullRequest_NoGH verifies that when gh is not authenticated,
 // the tool returns a clear error rather than a panic or empty result.
 func TestGHPullRequest_NoGH(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "gh_pr", Request{
@@ -24,7 +24,7 @@ func TestGHPullRequest_NoGH(t *testing.T) {
 }
 
 func TestGHPullRequest_MissingAction(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "gh_pr", Request{
 		ProjectRoot: t.TempDir(),
 		Params:      map[string]any{},
@@ -36,7 +36,7 @@ func TestGHPullRequest_MissingAction(t *testing.T) {
 }
 
 func TestGHPullRequest_ViewRequiresNumber(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "gh_pr", Request{
 		ProjectRoot: t.TempDir(),
 		Params:      map[string]any{"action": "view"},
@@ -47,7 +47,7 @@ func TestGHPullRequest_ViewRequiresNumber(t *testing.T) {
 }
 
 func TestGHPullRequest_DiffRequiresNumber(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "gh_pr", Request{
 		ProjectRoot: t.TempDir(),
 		Params:      map[string]any{"action": "diff"},
@@ -58,7 +58,7 @@ func TestGHPullRequest_DiffRequiresNumber(t *testing.T) {
 }
 
 func TestGHPullRequest_ChecksRequiresNumber(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "gh_pr", Request{
 		ProjectRoot: t.TempDir(),
 		Params:      map[string]any{"action": "checks"},
@@ -69,7 +69,7 @@ func TestGHPullRequest_ChecksRequiresNumber(t *testing.T) {
 }
 
 func TestGHPullRequest_StatusRequiresNumber(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "gh_pr", Request{
 		ProjectRoot: t.TempDir(),
 		Params:      map[string]any{"action": "status"},
@@ -80,7 +80,7 @@ func TestGHPullRequest_StatusRequiresNumber(t *testing.T) {
 }
 
 func TestGHPullRequest_InvalidAction(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "gh_pr", Request{
 		ProjectRoot: t.TempDir(),
 		Params:      map[string]any{"action": "foobar"},

@@ -43,7 +43,7 @@ func (e *Engine) ReloadConfig(cwd string) error {
 		return err
 	}
 	e.attachProviderObservers(providers)
-	newTools := tools.New(*cfg)
+	newTools := tools.New(tools.ToToolsConfigSubset(cfg))
 	newTools.SetSubagentRunner(e)
 	if toolReasoningEnabledForConfig(cfg) {
 		newTools.SetReasoningPublisher(func(toolName, reason string) {

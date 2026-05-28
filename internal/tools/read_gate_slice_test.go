@@ -34,7 +34,7 @@ func TestWriteFileAfterSlicedRead(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	// bare read_file - normalize injects line_start=1, line_end=200.
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
@@ -75,7 +75,7 @@ func TestWriteFileAfterExplicitSlicedRead(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
@@ -108,7 +108,7 @@ func TestWriteFileStillRefusesOnActualDrift(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,

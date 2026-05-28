@@ -56,7 +56,7 @@ func newTestEngine(t *testing.T) (*Engine, string) {
 	if err := os.WriteFile(filepath.Join(tmp, "hello.go"), []byte("package main\n// marker TODO\nfunc main(){}\n"), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	return eng, tmp
 }
 
@@ -566,7 +566,7 @@ func TestToolBatchCallSequentialWhenLimitOne(t *testing.T) {
 	tmp := t.TempDir()
 	cfg := *config.DefaultConfig()
 	cfg.Agent.ParallelBatchSize = 1
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	_, _, names := registerSleepers(eng, 3, 20*time.Millisecond)
 
 	res, err := eng.Execute(context.Background(), "tool_batch_call", Request{
@@ -624,7 +624,7 @@ func (r *concurrentRunner) RunSubagent(ctx context.Context, req SubagentRequest)
 func TestToolBatchCallFansOutDelegateTask(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Agent.ParallelBatchSize = 4
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &concurrentRunner{sleep: 40 * time.Millisecond}
 	eng.SetSubagentRunner(runner)
 
@@ -706,7 +706,7 @@ func TestToolBatchCallFailureIsolation(t *testing.T) {
 // actually received and shows the canonical example so the next call
 // self-corrects in a single round.
 func TestToolCall_MissingNameReturnsActionableError(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	cases := []struct {
 		label  string
@@ -789,7 +789,7 @@ func TestPreviewBatchTarget_PicksMostIdentifyingArg(t *testing.T) {
 }
 
 func TestToolHelp_MissingNameReturnsActionableError(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "tool_help", Request{Params: map[string]any{}})
 	if err == nil {
 		t.Fatal("expected error when name is missing for tool_help")

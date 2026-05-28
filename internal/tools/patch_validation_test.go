@@ -81,7 +81,7 @@ func TestIsGitBinary(t *testing.T) {
 }
 
 func TestPatchValidation_MissingPatch(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "patch_validation", Request{
@@ -94,7 +94,7 @@ func TestPatchValidation_MissingPatch(t *testing.T) {
 }
 
 func TestPatchValidation_EmptyPatch(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "patch_validation", Request{
@@ -107,7 +107,7 @@ func TestPatchValidation_EmptyPatch(t *testing.T) {
 }
 
 func TestPatchValidation_NoFilesInPatch(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "patch_validation", Request{
@@ -121,7 +121,7 @@ func TestPatchValidation_NoFilesInPatch(t *testing.T) {
 
 func TestPatchValidation_NewFile(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	patch := `--- /dev/null
@@ -142,7 +142,7 @@ func TestPatchValidation_NewFile(t *testing.T) {
 
 func TestPatchValidation_DryRunValidHunk(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	// Write a file to patch
@@ -174,7 +174,7 @@ func TestPatchValidation_DryRunValidHunk(t *testing.T) {
 
 func TestPatchValidation_DryRunRejectedHunk(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	fpath := filepath.Join(tmp, "foo.go")
@@ -206,7 +206,7 @@ func TestPatchValidation_DryRunRejectedHunk(t *testing.T) {
 
 func TestPatchValidation_WithValidationCommand(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	fpath := filepath.Join(tmp, "main.go")
@@ -236,7 +236,7 @@ func TestPatchValidation_WithValidationCommand(t *testing.T) {
 
 func TestPatchValidation_CleanFlag(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	fpath := filepath.Join(tmp, "main.go")
@@ -268,7 +268,7 @@ func TestPatchValidation_CleanFlag(t *testing.T) {
 
 func TestPatchValidation_DeletedFile(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	// File must exist for delete diff to work
@@ -331,7 +331,7 @@ func TestPatchValidationTool_Spec(t *testing.T) {
 
 func TestPatchValidation_TraversalRejection(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	fpath := filepath.Join(tmp, "main.go")
@@ -360,7 +360,7 @@ func TestPatchValidation_TraversalRejection(t *testing.T) {
 
 func TestPatchValidation_ValidationCommandShellBlocked(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	fpath := filepath.Join(tmp, "main.go")
@@ -391,7 +391,7 @@ func TestPatchValidation_ValidationCommandShellBlocked(t *testing.T) {
 
 func TestPatchValidationTool_SetEngine(t *testing.T) {
 	tool := NewPatchValidationTool()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	tool.SetEngine(eng)
 	// No panic — engine is wired
 	if tool.Name() != "patch_validation" {

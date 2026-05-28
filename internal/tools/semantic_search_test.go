@@ -11,7 +11,7 @@ import (
 )
 
 func TestSemanticSearch_MissingQuery(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "semantic_search", Request{
@@ -28,7 +28,7 @@ func TestSemanticSearch_FileScope(t *testing.T) {
 	fpath := filepath.Join(tmp, "main.go")
 	os.WriteFile(fpath, []byte("package main\nfunc foo() {}\nfunc bar() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "semantic_search", Request{
@@ -55,7 +55,7 @@ func TestSemanticSearch_ProjectScope(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package main\nfunc alpha() {}\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "b.go"), []byte("package main\nfunc beta() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "semantic_search", Request{
@@ -79,7 +79,7 @@ func TestSemanticSearch_TypeDecl(t *testing.T) {
 	fpath := filepath.Join(tmp, "main.go")
 	os.WriteFile(fpath, []byte("package main\ntype Foo struct{}\ntype Bar int\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "semantic_search", Request{
@@ -102,7 +102,7 @@ func TestSemanticSearch_MaxResults(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc a() {}\nfunc b() {}\nfunc c() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "semantic_search", Request{
@@ -127,7 +127,7 @@ func TestSemanticSearch_LangFilter(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc foo() {}\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "util.ts"), []byte("export function bar() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "semantic_search", Request{
@@ -253,7 +253,7 @@ func TestSemanticSearch_NoFiles(t *testing.T) {
 	// Write a non-Go file
 	os.WriteFile(filepath.Join(tmp, "readme.md"), []byte("# readme\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "semantic_search", Request{
@@ -276,7 +276,7 @@ func TestSemanticSearch_TotalField(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc alpha() {}\nfunc beta() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "semantic_search", Request{
@@ -298,7 +298,7 @@ func TestSemanticSearch_TotalField(t *testing.T) {
 // parameter that escapes the project root must be refused — the
 // returned `Snippet` and `ContextLines` surface file content.
 func TestSemanticSearch_RejectsTraversalFile(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 	tmp := t.TempDir()
 

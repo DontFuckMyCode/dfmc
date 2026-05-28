@@ -11,7 +11,7 @@ import (
 func TestDependencyGraph_QueryRequiresQuery(t *testing.T) {
 	tmp := t.TempDir()
 	codemapEng := codemap.New(nil, nil)
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
 	_, err := eng.Execute(context.Background(), "dependency_graph", Request{
@@ -26,7 +26,7 @@ func TestDependencyGraph_QueryRequiresQuery(t *testing.T) {
 func TestDependencyGraph_InvalidQueryType(t *testing.T) {
 	tmp := t.TempDir()
 	codemapEng := codemap.New(nil, nil)
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
 	_, err := eng.Execute(context.Background(), "dependency_graph", Request{
@@ -41,7 +41,7 @@ func TestDependencyGraph_InvalidQueryType(t *testing.T) {
 func TestDependencyGraph_EmptyGraph(t *testing.T) {
 	tmp := t.TempDir()
 	codemapEng := codemap.New(nil, nil)
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
 	res, err := eng.Execute(context.Background(), "dependency_graph", Request{
@@ -66,7 +66,7 @@ func TestDependencyGraph_Importers(t *testing.T) {
 	g.AddEdge(codemap.Edge{From: "file:pkg/a.go", To: "module:foo/bar", Type: "imports"})
 	g.AddEdge(codemap.Edge{From: "file:pkg/b.go", To: "module:foo/bar", Type: "imports"})
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
 	res, err := eng.Execute(context.Background(), "dependency_graph", Request{
@@ -97,7 +97,7 @@ func TestDependencyGraph_Imports(t *testing.T) {
 	g.AddNode(codemap.Node{ID: "module:foo/bar", Name: "foo/bar", Kind: "module"})
 	g.AddEdge(codemap.Edge{From: "file:pkg/a.go", To: "module:foo/bar", Type: "imports"})
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
 	res, err := eng.Execute(context.Background(), "dependency_graph", Request{
@@ -128,7 +128,7 @@ func TestDependencyGraph_FanOut(t *testing.T) {
 	g.AddEdge(codemap.Edge{From: "file:main.go", To: "module:fmt", Type: "imports"})
 	g.AddEdge(codemap.Edge{From: "file:util.go", To: "module:fmt", Type: "imports"})
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
 	res, err := eng.Execute(context.Background(), "dependency_graph", Request{
@@ -158,7 +158,7 @@ func TestDependencyGraph_FanIn(t *testing.T) {
 	g.AddEdge(codemap.Edge{From: "file:main.go", To: "file:util.go", Type: "calls"})
 	g.AddEdge(codemap.Edge{From: "file:lib.go", To: "file:util.go", Type: "calls"})
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
 	res, err := eng.Execute(context.Background(), "dependency_graph", Request{
@@ -190,7 +190,7 @@ func TestDependencyGraph_MaxResults(t *testing.T) {
 		g.AddEdge(codemap.Edge{From: "file:" + fname, To: "module:foo", Type: "imports"})
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
 	res, err := eng.Execute(context.Background(), "dependency_graph", Request{
@@ -220,7 +220,7 @@ func TestDependencyGraph_PathNotFound(t *testing.T) {
 	g.AddNode(codemap.Node{ID: "file:a.go", Name: "a.go", Kind: "file", Path: "a.go"})
 	g.AddNode(codemap.Node{ID: "file:b.go", Name: "b.go", Kind: "file", Path: "b.go"})
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
 	res, err := eng.Execute(context.Background(), "dependency_graph", Request{
@@ -243,7 +243,7 @@ func TestDependencyGraph_EdgeTypeFilter(t *testing.T) {
 	g.AddNode(codemap.Node{ID: "file:b.go", Name: "b.go", Kind: "file", Path: "b.go"})
 	g.AddEdge(codemap.Edge{From: "file:a.go", To: "file:b.go", Type: "imports"})
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(codemapEng)
 
 	res, err := eng.Execute(context.Background(), "dependency_graph", Request{
@@ -268,7 +268,7 @@ func TestDependencyGraph_EdgeTypeFilter(t *testing.T) {
 
 func TestDependencyGraph_NoCodemapEngine(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "dependency_graph", Request{

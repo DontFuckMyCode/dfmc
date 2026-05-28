@@ -63,7 +63,7 @@ func TestDisabledState_CaseInsensitive(t *testing.T) {
 func TestEngine_DisabledFiltering(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Tools.Disabled = []string{"think", "hunt"}
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 
 	// think is disabled — should NOT appear in List, Specs, BackendSpecs
 	for _, name := range eng.List() {
@@ -111,7 +111,7 @@ func TestEngine_DisabledFiltering(t *testing.T) {
 
 func TestEngine_SetEnabled_Runtime(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 
 	// think is enabled by default
 	if eng.IsDisabled("think") {
@@ -155,7 +155,7 @@ func TestEngine_SetEnabled_Runtime(t *testing.T) {
 
 func TestEngine_SetEnabled_Protected(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 
 	for name := range protectedTools {
 		err := eng.SetEnabled(name, false)
@@ -168,7 +168,7 @@ func TestEngine_SetEnabled_Protected(t *testing.T) {
 func TestEngine_DisabledInSearch(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Tools.Disabled = []string{"think"}
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 
 	hits := eng.Search("think", 10)
 	for _, s := range hits {
@@ -181,7 +181,7 @@ func TestEngine_DisabledInSearch(t *testing.T) {
 func TestEngine_DisabledSnapshot(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Tools.Disabled = []string{"think", "hunt"}
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 
 	snap := eng.DisabledSnapshot()
 	if len(snap) != 2 {

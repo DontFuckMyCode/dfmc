@@ -36,7 +36,7 @@ func ExampleAdd() {
 		t.Fatalf("write calc_test.go: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, _ = eng.Execute(context.Background(), "read_file", Request{ProjectRoot: tmp, Params: map[string]any{"path": "calc.go"}})
 	res, err := eng.Execute(context.Background(), "test_discovery", Request{
 		ProjectRoot: tmp,
@@ -65,7 +65,7 @@ func TestBar(t *testing.T) {}
 func TestBaz(t *testing.T) {}
 `), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "test_discovery", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"pattern": "**/*_test.go"},
@@ -93,7 +93,7 @@ func TestSub(t *testing.T) {}
 func BenchmarkMul(b *testing.B) {}
 `), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "test_discovery", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"pattern": "**/*_test.go", "symbol": "add"},
@@ -121,7 +121,7 @@ class TestMath(unittest.TestCase):
 func TestSample(t *testing.T) {}
 `), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "test_discovery", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"pattern": "**/*_test.*", "language": "go"},
@@ -149,7 +149,7 @@ func TestX(t *testing.T) {}
 `), 0644)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "test_discovery", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"pattern": "**/*_test.go", "max_files": 3},
@@ -176,7 +176,7 @@ def test_sub():
     assert True
 `), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "test_discovery", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"target": "calc.py"},
@@ -194,7 +194,7 @@ func TestTestDiscovery_NoFilesFound(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte(`package main`), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "test_discovery", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"target": "main.go"},
@@ -209,7 +209,7 @@ func TestTestDiscovery_NoFilesFound(t *testing.T) {
 
 func TestTestDiscovery_MissingParams(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "test_discovery", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{},

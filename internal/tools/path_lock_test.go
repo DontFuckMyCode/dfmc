@@ -14,7 +14,7 @@ import (
 // serialisation by recording the entry/exit timestamps of two
 // goroutines holding the lock and asserting they don't overlap.
 func TestEngine_LockPath_SerialisesPerPath(t *testing.T) {
-	e := New(testConfig())
+	e := NewFromConfig(testConfig())
 	const path = "/tmp/vuln-025-target.txt"
 	const work = 50 * time.Millisecond
 
@@ -65,7 +65,7 @@ func TestEngine_LockPath_SerialisesPerPath(t *testing.T) {
 // engine-wide mutex. This is what makes the fix not regress
 // throughput when sub-agents touch unrelated files.
 func TestEngine_LockPath_AllowsParallelOnDifferentPaths(t *testing.T) {
-	e := New(testConfig())
+	e := NewFromConfig(testConfig())
 	const work = 80 * time.Millisecond
 
 	var wg sync.WaitGroup
@@ -97,7 +97,7 @@ func TestEngine_LockPath_AllowsParallelOnDifferentPaths(t *testing.T) {
 // (not held re-entrantly) this works as long as the per-iteration
 // release happens before the next acquire.
 func TestEngine_LockPath_ReleaseBetweenAcquires(t *testing.T) {
-	e := New(testConfig())
+	e := NewFromConfig(testConfig())
 	r1 := e.LockPath("/tmp/x")
 	r1()
 	r2 := e.LockPath("/tmp/y")
@@ -106,4 +106,4 @@ func TestEngine_LockPath_ReleaseBetweenAcquires(t *testing.T) {
 	r3()
 }
 
-func testConfig() config.Config { return *config.DefaultConfig() }
+func testConfig() *config.Config { return config.DefaultConfig() }

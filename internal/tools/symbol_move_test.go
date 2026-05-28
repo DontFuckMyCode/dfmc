@@ -11,7 +11,7 @@ import (
 )
 
 func TestSymbolMove_MissingFrom(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -24,7 +24,7 @@ func TestSymbolMove_MissingFrom(t *testing.T) {
 }
 
 func TestSymbolMove_MissingToFile(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -41,7 +41,7 @@ func TestSymbolMove_DryRunNoModification(t *testing.T) {
 	srcPath := filepath.Join(tmp, "foo.go")
 	os.WriteFile(srcPath, []byte("package main\nfunc Foo() {}\nfunc main() { Foo() }\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -67,7 +67,7 @@ func TestSymbolMove_DestFileCreated(t *testing.T) {
 	srcPath := filepath.Join(tmp, "foo.go")
 	os.WriteFile(srcPath, []byte("package main\nfunc Foo() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -103,7 +103,7 @@ func TestSymbolMove_ReferencesUpdated(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package main\nfunc Foo() {}\nfunc main() { Foo() }\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "b.go"), []byte("package main\nfunc bar() { Foo() }\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -135,7 +135,7 @@ func TestSymbolMove_RenameOnMove(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -195,7 +195,7 @@ func TestSymbolMove_DuplicateInDest(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, "foo.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "bar.go"), []byte("package main\nfunc Foo() {}\nfunc Bar() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -215,7 +215,7 @@ func TestSymbolMove_KindFilter(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package main\nfunc Foo() {}\ntype Foo int\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -241,7 +241,7 @@ func TestSymbolMove_OutputSummary(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -354,7 +354,7 @@ func TestSymbolMoveTool_SetEngine(t *testing.T) {
 	if tool.engine != nil {
 		t.Errorf("expected nil engine initially")
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 	tool.SetEngine(eng)
 	if tool.engine == nil {
@@ -367,7 +367,7 @@ func TestSymbolMove_NotFound(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -392,7 +392,7 @@ func TestSymbolMove_DuplicateInDest_NoDryRun(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, "foo.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "bar.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -414,7 +414,7 @@ func TestSymbolMove_ExistingDestDryRun(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, "foo.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "bar.go"), []byte("package main\nfunc Bar() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -441,7 +441,7 @@ func TestSymbolMove_SkippedTestFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "a_test.go"), []byte("package main\nfunc TestFoo() { Foo() }\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_move", Request{
@@ -494,7 +494,7 @@ func TestSymbolMove_RejectsTraversalToFile(t *testing.T) {
 	srcPath := filepath.Join(tmp, "main.go")
 	os.WriteFile(srcPath, []byte("package main\nfunc Foo() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	cases := []string{
@@ -525,7 +525,7 @@ func TestSymbolMove_RejectsAbsoluteToFile(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	// Use an absolute path well outside tmp. On Windows this gets a
@@ -576,7 +576,7 @@ func TestSymbolMove_WriteErrorSurfaces(t *testing.T) {
 		_ = os.Chmod(locked, 0o644)
 	})
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_move", Request{

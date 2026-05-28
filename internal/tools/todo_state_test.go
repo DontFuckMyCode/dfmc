@@ -66,7 +66,7 @@ func TestTodoWritePersistsCanonicalTaskState(t *testing.T) {
 	db := tempDB(t)
 	store := taskstore.NewStore(db)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetTaskStore(store)
 
 	_, err := eng.Execute(context.Background(), "todo_write", Request{
@@ -117,7 +117,7 @@ func TestTodoWriteRoundTripsLLMVocabulary(t *testing.T) {
 	db := tempDB(t)
 	store := taskstore.NewStore(db)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetTaskStore(store)
 
 	_, err := eng.Execute(context.Background(), "todo_write", Request{

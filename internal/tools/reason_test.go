@@ -131,7 +131,7 @@ func TestExtractReasonNilMap(t *testing.T) {
 // and the underlying tool sees a params map without the field.
 func TestEngineExecuteStripsReasonAndPublishes(t *testing.T) {
 	cfg := config.DefaultConfig()
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 
 	var mu sync.Mutex
 	var calls []struct{ name, reason string }
@@ -180,7 +180,7 @@ func TestEngineExecuteStripsReasonAndPublishes(t *testing.T) {
 // UI and waste cycles on the empty-string case.
 func TestEngineExecuteWithoutReasonNoPublish(t *testing.T) {
 	cfg := config.DefaultConfig()
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 	fired := 0
 	eng.SetReasoningPublisher(func(_, _ string) { fired++ })
 	eng.Register(&reasonProbeTool{})
@@ -198,7 +198,7 @@ func TestEngineExecuteWithoutReasonNoPublish(t *testing.T) {
 // contract clean even in embedded use without an event bus.
 func TestEngineExecuteNilPublisherStillStrips(t *testing.T) {
 	cfg := config.DefaultConfig()
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 	probe := &reasonProbeTool{}
 	eng.Register(probe)
 

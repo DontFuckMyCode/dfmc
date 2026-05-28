@@ -30,7 +30,11 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/config"
 )
 
-func New(cfg config.Config) *Engine {
+func NewFromConfig(cfg *config.Config) *Engine {
+	return New(ToToolsConfigSubset(cfg))
+}
+
+func New(cfg ToolsConfigSubset) *Engine {
 	readCap := cfg.Agent.ReadSnapshotCap
 	if readCap <= 0 {
 		readCap = maxReadSnapshots

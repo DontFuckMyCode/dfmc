@@ -21,7 +21,7 @@ func TestReadFileToolBoundary(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
@@ -59,7 +59,7 @@ func TestReadFileToolOutOfRangeLineStartDoesNotPanic(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
@@ -85,7 +85,7 @@ func TestReadFileTool_BinaryHeuristicMetadataAndLateNUL(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": "late-nul.txt"},
@@ -102,7 +102,7 @@ func TestReadFileTool_BinaryHeuristicMetadataAndLateNUL(t *testing.T) {
 }
 
 func TestTrackFailureEvictsOldestDeterministically(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	for i := 0; i < maxRecentFailures+1; i++ {
 		key := filepath.ToSlash(filepath.Join("tool", "k", strconv.Itoa(i)))
 		eng.trackFailure(key)
@@ -141,7 +141,7 @@ func testReadFileToolUTF16WithBOM(t *testing.T, order binary.ByteOrder, bom []by
 		t.Fatalf("write file: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": "utf16.txt"},
@@ -177,7 +177,7 @@ func TestGrepTool(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
@@ -200,7 +200,7 @@ func TestGrepTool_QueryAliasAccepted(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
@@ -226,7 +226,7 @@ func TestGrepCodebase_PerlRegexErrorIsActionable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "x.go"), []byte("package x\n"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	cases := []struct {
 		name        string
@@ -283,7 +283,7 @@ func TestToolOutputCompressionBySandboxLimit(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Security.Sandbox.MaxOutput = "400B"
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 
 	res, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
@@ -319,7 +319,7 @@ func TestToolOutputCompressionPreservesRelevantLines(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Security.Sandbox.MaxOutput = "1KB"
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 
 	res, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
@@ -350,7 +350,7 @@ func TestToolParamsNormalizeReadFileDefaultRange(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
@@ -381,7 +381,7 @@ func TestToolParamsNormalizeGrepMaxResultsClamp(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
@@ -490,7 +490,7 @@ func TestToolParamsNormalizeAliases(t *testing.T) {
 
 	for _, tc := range runCases {
 		t.Run(tc.name, func(t *testing.T) {
-			eng := New(*config.DefaultConfig())
+			eng := NewFromConfig(config.DefaultConfig())
 			res, err := eng.Execute(context.Background(), tc.tool, Request{
 				ProjectRoot: tmp,
 				Params:      tc.params,
@@ -505,7 +505,7 @@ func TestToolParamsNormalizeAliases(t *testing.T) {
 
 func TestToolFailureGuardAfterRepeatedErrors(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	args := Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
@@ -533,7 +533,7 @@ func TestWriteFileRequiresPriorReadForExistingFile(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "write_file", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
@@ -589,7 +589,7 @@ func TestWriteFileOverwriteReturnsPreviousHashMetadata(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": "a.txt"},
@@ -625,7 +625,7 @@ func TestWriteFileOverwriteReturnsPreviousHashMetadata(t *testing.T) {
 }
 
 func TestReadSnapshotsEvictLeastRecentlyRead(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.readMu.Lock()
 	for i := 0; i < maxReadSnapshots; i++ {
 		path := filepath.Join("root", fmt.Sprintf("f-%03d.txt", i))
@@ -650,7 +650,7 @@ func TestReadSnapshotsEvictLeastRecentlyRead(t *testing.T) {
 }
 
 func TestTouchReadSnapshotLockedBoundsCountWithStaleLRUEntries(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.readMu.Lock()
 	for i := 0; i < maxReadSnapshots; i++ {
 		path := filepath.Join("root", fmt.Sprintf("f-%03d.txt", i))
@@ -670,7 +670,7 @@ func TestTouchReadSnapshotLockedBoundsCountWithStaleLRUEntries(t *testing.T) {
 }
 
 func TestTouchReadSnapshotLockedEvictsToHalfCapacity(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.readMu.Lock()
 	for i := 0; i < maxReadSnapshots; i++ {
 		path := filepath.Join("root", fmt.Sprintf("f-%03d.txt", i))
@@ -697,7 +697,7 @@ func TestTouchReadSnapshotLockedEvictsToHalfCapacity(t *testing.T) {
 }
 
 func TestTouchReadSnapshotLockedStaleLRUCompactsToHalfCapacity(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.readMu.Lock()
 	for i := 0; i < maxReadSnapshots; i++ {
 		path := filepath.Join("root", fmt.Sprintf("f-%03d.txt", i))
@@ -736,7 +736,7 @@ func TestToolFailureKeyCanonicalizesNestedMaps(t *testing.T) {
 
 func TestWriteFileAllowsNewFileWithoutRead(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	target := filepath.Join(tmp, "new.txt")
 
 	if _, err := eng.Execute(context.Background(), "write_file", Request{
@@ -764,7 +764,7 @@ func TestWriteAndEditFileAcceptCommonAliases(t *testing.T) {
 		t.Fatalf("seed file: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
@@ -811,7 +811,7 @@ func TestEditFileRequiresReadAndUniqueness(t *testing.T) {
 	if err := os.WriteFile(file, []byte("var x = 1\nvar x = 2\n"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	_, err := eng.Execute(context.Background(), "edit_file", Request{
 		ProjectRoot: tmp,
@@ -884,7 +884,7 @@ func TestEditFileToleratesDriftWhenAnchorStillValid(t *testing.T) {
 	if err := os.WriteFile(file, []byte("alpha beta"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
@@ -924,7 +924,7 @@ func TestEditFileStillRefusesWithoutPriorRead(t *testing.T) {
 	if err := os.WriteFile(file, []byte("alpha"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "edit_file", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
@@ -950,7 +950,7 @@ func TestWriteFileStillRefusesOnDrift(t *testing.T) {
 	if err := os.WriteFile(file, []byte("alpha"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": "a.txt"},
@@ -977,7 +977,7 @@ func TestWriteFileStillRefusesOnDrift(t *testing.T) {
 
 func TestRunCommandToolRunsDirectCommand(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	res, err := eng.Execute(context.Background(), "run_command", Request{
 		ProjectRoot: tmp,
@@ -1011,7 +1011,7 @@ func TestRunCommandToolRunsDirectCommand(t *testing.T) {
 // offender and showing the correct command/args shape.
 func TestRunCommandToolRejectsShellSyntaxWithActionableError(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	cases := []struct {
 		name        string
@@ -1057,7 +1057,7 @@ func TestRunCommandToolRejectsShellSyntaxWithActionableError(t *testing.T) {
 
 func TestRunCommandRejectsShellSubstitutionInArgs(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	cases := []struct {
 		name  string
@@ -1098,7 +1098,7 @@ func TestRunCommandRejectsShellSubstitutionInArgs(t *testing.T) {
 // generic "use args" hint.
 func TestRunCommandShellSyntaxSuggestsDirRecovery(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	cases := []struct {
 		name     string
@@ -1150,7 +1150,7 @@ func TestRunCommandShellSyntaxSuggestsDirRecovery(t *testing.T) {
 // self-corrects in one step.
 func TestRunCommandRejectsBinaryArgsPacking(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	cases := []struct {
 		name        string
@@ -1194,7 +1194,7 @@ func TestRunCommandRejectsBinaryArgsPacking(t *testing.T) {
 // model. The point is to detect *only* the bin+args-in-one-string case.
 func TestRunCommandAllowsLegitimateSpacedPaths(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	// Quoted command — packing detector must skip it. Will fail later
 	// in execution because the binary doesn't exist, but NOT with the
@@ -1232,7 +1232,7 @@ func TestRunCommandAllowsLegitimateSpacedPaths(t *testing.T) {
 
 func TestRunCommandToolBlocksShellInterpreter(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	_, err := eng.Execute(context.Background(), "run_command", Request{
 		ProjectRoot: tmp,
@@ -1248,7 +1248,7 @@ func TestRunCommandToolBlocksShellInterpreter(t *testing.T) {
 
 func TestRunCommandToolBlocksShellInterpreterInArgs(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	_, err := eng.Execute(context.Background(), "run_command", Request{
 		ProjectRoot: tmp,
@@ -1266,7 +1266,7 @@ func TestRunCommandToolHonorsAllowShellFalse(t *testing.T) {
 	tmp := t.TempDir()
 	cfg := config.DefaultConfig()
 	cfg.Security.Sandbox.AllowShell = false
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 
 	_, err := eng.Execute(context.Background(), "run_command", Request{
 		ProjectRoot: tmp,

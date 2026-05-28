@@ -77,7 +77,7 @@ func TestApplyPatchTracksCumulativeOffsetAcrossHunks(t *testing.T) {
  l41
 `
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": "file.txt"},
@@ -164,7 +164,7 @@ func TestApplyPatchTracksCumulativeOffset_Deletions(t *testing.T) {
 	pb.WriteString("@@ -48,3 +28,3 @@\n")
 	pb.WriteString(" l48\n l49\n-l50\n+L50\n l51\n")
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": "file.txt"},

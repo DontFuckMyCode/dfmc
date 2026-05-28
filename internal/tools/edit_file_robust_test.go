@@ -24,7 +24,7 @@ func readThenEdit(t *testing.T, contents string, filename string) (*Engine, stri
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write seed file: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": filename},

@@ -26,9 +26,21 @@ import (
 
 const driveBucket = "drive-runs"
 
-// Store is the SQLite-backed persistence layer for drive runs. Take a
+// RunStore is the interface for drive run persistence. The concrete
+// *Store implements it; alternate implementations (in-memory for tests,
+// remote storage for distributed setups) can satisfy this interface
+// without touching the SQLite-based Store.
+type RunStore interface {
+	Save(run *Run) error
+	Load(id string) (*Run, error)
+	List() ([]*Run, error)
+	Delete(id string) error
+}
+
+// Store is the SQLite-backed implementation of RunStore. Take a
 // *sql.DB from engine.Storage.DB() and pass it here; the table is
-// created lazily on the first Save.
+// created lazily on the first Save so an empty store is valid
+// (List on an empty store returns nil, nil).
 type Store struct {
 	db *sql.DB
 }
@@ -36,7 +48,7 @@ type Store struct {
 // NewStore wraps a SQLite handle. Returns an error only if db is nil
 // — table creation is deferred to the first write so an empty store
 // is valid (List on an empty store returns nil, nil).
-func NewStore(db *sql.DB) (*Store, error) {
+func NewStore(db *sql.DB) (RunStore, error) {
 	if db == nil {
 		return nil, fmt.Errorf("drive.NewStore: db is nil")
 	}

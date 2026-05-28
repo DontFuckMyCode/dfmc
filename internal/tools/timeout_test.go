@@ -18,7 +18,7 @@ func TestExecuteHonorsToolTimeout(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agent.ToolTimeouts = map[string]int{"slow_tool": 1} // 1 second
 
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 	var inFlight, peak, order int32
 	tool := &sleepTool{nameStr: "slow_tool", sleep: 5 * time.Second, inFlight: &inFlight, peak: &peak, order: &order}
 	eng.Register(tool)
@@ -50,7 +50,7 @@ func TestSelfManagedToolsBypassEngineTimeout(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agent.ToolDefaultTimeoutSeconds = 1 // very tight default
 
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 	if got := eng.toolTimeout("run_command"); got != 0 {
 		t.Errorf("run_command must bypass engine timeout, got %v", got)
 	}
@@ -72,7 +72,7 @@ func TestZeroOverrideOptsOut(t *testing.T) {
 	cfg.Agent.ToolDefaultTimeoutSeconds = 30
 	cfg.Agent.ToolTimeouts = map[string]int{"my_tool": 0}
 
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 	if got := eng.toolTimeout("my_tool"); got != 0 {
 		t.Errorf("explicit 0 override must opt out, got %v", got)
 	}
@@ -89,7 +89,7 @@ func TestDefaultTimeoutDisabledWhenZero(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agent.ToolDefaultTimeoutSeconds = 0
 
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 	if got := eng.toolTimeout("read_file"); got != 0 {
 		t.Errorf("0 default must disable engine timeout, got %v", got)
 	}
@@ -119,7 +119,7 @@ func TestExecuteSucceedsWithinTimeout(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agent.ToolTimeouts = map[string]int{"quick_tool": 5}
 
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 	eng.Register(&quietSleepTool{name: "quick_tool", sleep: 50 * time.Millisecond})
 
 	res, err := eng.Execute(context.Background(), "quick_tool", Request{ProjectRoot: t.TempDir()})
@@ -141,7 +141,7 @@ func TestToolTimeoutErrorIsTyped(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agent.ToolTimeouts = map[string]int{"slow_typed": 1}
 
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 	var inFlight, peak, order int32
 	eng.Register(&sleepTool{nameStr: "slow_typed", sleep: 5 * time.Second, inFlight: &inFlight, peak: &peak, order: &order})
 

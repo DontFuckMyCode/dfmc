@@ -40,7 +40,6 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/codemap"
-	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/mcp"
 	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 )
@@ -68,7 +67,7 @@ type Engine struct {
 	lifecycleMu     sync.RWMutex
 	mu              sync.RWMutex
 	registry        map[string]Tool
-	cfg             config.Config
+	cfg             ToolsConfigSubset
 	closed          bool
 	failureMu       sync.Mutex
 	recentFailures  map[string]int

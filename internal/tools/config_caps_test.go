@@ -15,7 +15,7 @@ func TestConfigCapsOverride(t *testing.T) {
 	cfg.Agent.ReadSnapshotCap = 4
 	cfg.Agent.RecentFailureCap = 6
 
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 	if eng.readSnapshotCap != 4 {
 		t.Fatalf("readSnapshotCap override not applied: got %d, want 4", eng.readSnapshotCap)
 	}
@@ -32,7 +32,7 @@ func TestConfigCapsZeroFallsBackToConst(t *testing.T) {
 	cfg.Agent.ReadSnapshotCap = 0
 	cfg.Agent.RecentFailureCap = 0
 
-	eng := New(*cfg)
+	eng := NewFromConfig(cfg)
 	if eng.readSnapshotCap != maxReadSnapshots {
 		t.Fatalf("zero readSnapshotCap should fall back to %d, got %d", maxReadSnapshots, eng.readSnapshotCap)
 	}

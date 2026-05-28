@@ -24,6 +24,9 @@ package provider
 //      cascade — it's the single source of truth for provider order.
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -263,3 +266,66 @@ func (r *Router) ResolveOrder(requested string) []string {
 func normalizeProviderName(name string) string {
 	return strings.TrimSpace(strings.ToLower(name))
 }
+
+// CloseAll iterates every registered provider and, for those that
+// implement ProviderCloser, calls Close. Providers without the
+// interface are silently skipped. Idempotent — calling CloseAll on an
+// already-drained router is a no-op.
+func (r *Router) CloseAll() error {
+	r.mu.RLock()
+	var closers []ProviderCloser
+	for _, p := range r.providers {
+		if c, ok := p.(ProviderCloser); ok {
+			closers = append(closers, c)
+		}
+	}
+	r.mu.RUnlock()
+
+	var errs []error
+	for _, c := range closers {
+		if err := c.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", nameOf(c), err))
+		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func nameOf(p ProviderCloser) string {
+	// Provider.Name() is the cheapest way to get a label.
+	// We trust the Provider interface is implemented.
+	type namedProvider interface{ Name() string }
+	if n, ok := p.(namedProvider); ok {
+		return n.Name()
+	}
+	return "provider"
+}
+
+// ProviderRouter is the interface for provider routing. The concrete
+// *Router type implements this; tests and alternate routing strategies
+// can provide their own implementations without importing the router
+// package directly.
+//
+// The interface covers every method call sites use to interact with
+// the router, enabling pluggable routing without changing call-site
+// code.
+type ProviderRouter interface {
+	Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, string, error)
+	Stream(ctx context.Context, req CompletionRequest) (<-chan StreamEvent, string, error)
+	ResolveOrder(requested string) []string
+	Get(name string) (Provider, bool)
+	Primary() string
+	SetPrimary(name string)
+	Fallback() []string
+	SetFallback(names []string)
+	List() []string
+	SetFallbackObserver(fn func(FallbackEvent))
+	SetThrottleObserver(fn func(ThrottleNotice))
+	SetStreamRecoveredObserver(fn func(StreamRecoveredEvent))
+	CloseAll() error
+}
+
+// Compile-time check that *Router satisfies ProviderRouter.
+var _ ProviderRouter = (*Router)(nil)

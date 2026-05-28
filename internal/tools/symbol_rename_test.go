@@ -11,7 +11,7 @@ import (
 )
 
 func TestSymbolRename_MissingFrom(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -24,7 +24,7 @@ func TestSymbolRename_MissingFrom(t *testing.T) {
 }
 
 func TestSymbolRename_MissingTo(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -37,7 +37,7 @@ func TestSymbolRename_MissingTo(t *testing.T) {
 }
 
 func TestSymbolRename_IdenticalNames(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -53,7 +53,7 @@ func TestSymbolRename_NotFound(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc main() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -74,7 +74,7 @@ func TestSymbolRename_DryRunNoModification(t *testing.T) {
 	fpath := filepath.Join(tmp, "main.go")
 	os.WriteFile(fpath, []byte("package main\nfunc oldName() { oldName() }\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -104,7 +104,7 @@ func TestSymbolRename_DryRunImpact(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc Foo() {}\ntype Bar struct{}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -134,7 +134,7 @@ func TestSymbolRename_FullProject(t *testing.T) {
 		os.WriteFile(filepath.Join(tmp, fname), []byte("package main\nfunc Target() {}\n"), 0644)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -161,7 +161,7 @@ func TestSymbolRename_SkipTests(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc Target() {}\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "main_test.go"), []byte("package main\nfunc TestTarget() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -186,7 +186,7 @@ func TestSymbolRename_KindFilter(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc Foo() {}\ntype Foo struct {}\nvar Foo = 1\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -213,7 +213,7 @@ func TestSymbolRename_DoesNotMatchSubstring(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc FooBar() {}\nfunc Foo() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -271,7 +271,7 @@ func TestSymbolRenameTool_Description(t *testing.T) {
 
 func TestSymbolRenameTool_SetEngine(t *testing.T) {
 	tool := NewSymbolRenameTool()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	tool.SetEngine(eng)
 	if tool.Name() != "symbol_rename" {
 		t.Errorf("name mismatch")
@@ -371,7 +371,7 @@ func TestSymbolRename_MultiLine(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\n// Foo comment\nfunc Foo() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -397,7 +397,7 @@ func TestSymbolRename_OutputSummary(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -421,7 +421,7 @@ func TestSymbolRename_ChangesIncludeOldAndNew(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "symbol_rename", Request{
@@ -456,7 +456,7 @@ func TestSymbolRename_RejectsTraversalFile(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc Foo() {}\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	cases := []string{
@@ -507,7 +507,7 @@ func TestSymbolRename_WriteErrorSurfaces(t *testing.T) {
 		_ = os.Chmod(locked, 0o644)
 	})
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 	// Pre-populate read snapshots so the strict read-before-mutation
 	// gate doesn't short-circuit before WriteFile is reached. Hash

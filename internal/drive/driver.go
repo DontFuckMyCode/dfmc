@@ -39,7 +39,7 @@ type Publisher func(eventType string, payload map[string]any)
 // store skips persistence (useful in tests).
 type Driver struct {
 	runner          Runner
-	store           *Store
+	store           RunStore
 	publisher       Publisher
 	cfg             Config
 	reportDir       string
@@ -62,7 +62,7 @@ const emptyTaskError = "drive task is empty; pass a non-empty task description"
 // NewDriver wires the dependencies. cfg.Apply() runs internally so
 // callers can pass a zero Config and get the defaults. Publisher may
 // be nil; store may be nil for in-memory test runs.
-func NewDriver(runner Runner, store *Store, publisher Publisher, cfg Config) *Driver {
+func NewDriver(runner Runner, store RunStore, publisher Publisher, cfg Config) *Driver {
 	cfg = cfg.Apply()
 	d := &Driver{
 		runner:          runner,

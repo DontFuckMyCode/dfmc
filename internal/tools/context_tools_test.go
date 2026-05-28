@@ -40,7 +40,7 @@ func TestReadFile_NewMetadataFields(t *testing.T) {
 	}
 	cfg := *config.DefaultConfig()
 	cfg.Security.Sandbox.MaxOutput = "1MB"
-	eng := New(cfg)
+	eng := New(ToToolsConfigSubset(&cfg))
 
 	res, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
@@ -74,7 +74,7 @@ func TestReadFile_TruncatedFlagOnLargeFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "big.txt"), []byte(body), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 
 	res, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
@@ -109,7 +109,7 @@ func TestReadFile_TruncatedWhenSliceSmallerThanFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "big.txt"), []byte(body), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 
 	res, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
@@ -143,7 +143,7 @@ func (c *Client) Start() error { return nil }
 	if err := os.WriteFile(filepath.Join(tmp, "svc.go"), []byte(src), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 
 	// Without parent — both methods should match.
 	res, err := eng.Execute(context.Background(), "find_symbol", Request{
@@ -191,7 +191,7 @@ func TestGrepCodebase_ContextLines(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "x.go"), []byte(src), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 
 	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
 		ProjectRoot: tmp,
@@ -229,7 +229,7 @@ func TestGrepCodebase_IncludeExcludeGlobs(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "skip.md"), []byte("FINDME\n"), 0o644); err != nil {
 		t.Fatalf("seed md: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 
 	// include=*.go — only keep.go must show up.
 	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
@@ -275,7 +275,7 @@ func TestGrepCodebase_CaseInsensitive(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "x.txt"), []byte("Hello World\n"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 
 	// Case-sensitive (default) — lowercase pattern misses.
 	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
@@ -316,7 +316,7 @@ func TestGrepCodebase_RespectsGitignore(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, ".gitignore"), []byte("*.env\n"), 0o644); err != nil {
 		t.Fatalf("seed gitignore: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 
 	// Default — *.env hidden by .gitignore.
 	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
@@ -358,7 +358,7 @@ func TestGrepCodebase_SkipsSymlinkEscapeTargets(t *testing.T) {
 		t.Skipf("symlink unsupported in this environment: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"pattern": "SECRET-OUTSIDE"},
@@ -385,7 +385,7 @@ func TestGrepCodebase_SkipsOversizeFiles(t *testing.T) {
 		t.Fatalf("seed small: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"pattern": "MATCHME"},
@@ -412,7 +412,7 @@ func TestGrepCodebase_TruncatesOversizeOutput(t *testing.T) {
 		}
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 	res, err := eng.Execute(context.Background(), "grep_codebase", Request{
 		ProjectRoot: tmp,
 		Params: map[string]any{
@@ -459,7 +459,7 @@ func (w *Widget) Render() string {
 	if err := os.WriteFile(filepath.Join(tmp, "widget.go"), []byte(src), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 
 	res, err := eng.Execute(context.Background(), "codemap", Request{
 		ProjectRoot: tmp,
@@ -515,7 +515,7 @@ func ShouldNotLeak() {}
 		t.Fatalf("symlink: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 	res, err := eng.Execute(context.Background(), "codemap", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{},

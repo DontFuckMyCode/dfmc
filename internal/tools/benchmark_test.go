@@ -10,7 +10,7 @@ import (
 )
 
 func TestBenchmark_MissingTarget(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "benchmark", Request{
@@ -23,7 +23,7 @@ func TestBenchmark_MissingTarget(t *testing.T) {
 }
 
 func TestBenchmark_EmptyTarget(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "benchmark", Request{
@@ -71,7 +71,7 @@ func TestBenchmarkTool_Description(t *testing.T) {
 
 func TestBenchmarkTool_SetEngine(t *testing.T) {
 	tool := NewBenchmarkTool()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	tool.SetEngine(eng)
 	if tool.Name() != "benchmark" {
 		t.Errorf("name mismatch")
@@ -264,7 +264,7 @@ func BenchmarkFib15(b *testing.B) {
 }
 `), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "benchmark", Request{
@@ -295,7 +295,7 @@ func TestBenchmark_NonGoTarget(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "README.md"), []byte("# Readme\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	_, err := eng.Execute(context.Background(), "benchmark", Request{

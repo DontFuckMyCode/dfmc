@@ -10,7 +10,7 @@ import (
 )
 
 func TestProjectInfo_MissingSection(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "project_info", Request{
@@ -30,7 +30,7 @@ func TestProjectInfo_MissingSection(t *testing.T) {
 }
 
 func TestProjectInfo_SectionAll(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "project_info", Request{
@@ -52,7 +52,7 @@ func TestProjectInfo_SectionModule(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module github.com/example/foo\ngo 1.25\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "project_info", Request{
@@ -80,7 +80,7 @@ func TestProjectInfo_SectionFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, "util.go"), []byte("package main\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "main_test.go"), []byte("package main\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "project_info", Request{
@@ -100,7 +100,7 @@ func TestProjectInfo_SectionFiles(t *testing.T) {
 }
 
 func TestProjectInfo_ExcludeConfig(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "project_info", Request{
@@ -151,7 +151,7 @@ func TestProjectInfoTool_Description(t *testing.T) {
 
 func TestProjectInfoTool_SetEngine(t *testing.T) {
 	tool := NewProjectInfoTool()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	tool.SetEngine(eng)
 	if tool.Name() != "project_info" {
 		t.Errorf("name mismatch")
@@ -161,7 +161,7 @@ func TestProjectInfoTool_SetEngine(t *testing.T) {
 func TestProjectInfo_NoGoMod(t *testing.T) {
 	tmp := t.TempDir()
 	// No go.mod
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "project_info", Request{
@@ -178,7 +178,7 @@ func TestProjectInfo_NoGoMod(t *testing.T) {
 }
 
 func TestProjectInfo_SectionTools(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "project_info", Request{
@@ -194,7 +194,7 @@ func TestProjectInfo_SectionTools(t *testing.T) {
 }
 
 func TestProjectInfo_SectionProviders(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "project_info", Request{
@@ -214,7 +214,7 @@ func TestProjectInfo_GoVersionFromGoMod(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module foo\ngo 1.24\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "project_info", Request{
@@ -234,7 +234,7 @@ func TestProjectInfo_MultipleGoModLines(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module bar\n\nrequire github.com/pkg/errors v0.9.0\n\ngo 1.23\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "project_info", Request{
@@ -262,7 +262,7 @@ func TestFetchFileStats_LanguageMap(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, "e_test.go"), []byte("package a\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "f.proto"), []byte("syntax = 'proto3'\n"), 0644)
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	eng.SetCodemap(nil)
 
 	res, err := eng.Execute(context.Background(), "project_info", Request{

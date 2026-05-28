@@ -1032,8 +1032,10 @@ func TestDriverPersistFailurePublishesWarningEvent(t *testing.T) {
 		},
 	}
 	store := newTestStore(t)
-	if err := store.db.Close(); err != nil {
-		t.Fatalf("close store: %v", err)
+	if s, ok := store.(*Store); ok {
+		if err := s.db.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
 	}
 	var events []string
 	var mu sync.Mutex
@@ -1124,7 +1126,7 @@ func safeIdx(s []string, i int) string {
 	return s[i]
 }
 
-func newTestStore(t *testing.T) *Store {
+func newTestStore(t *testing.T) RunStore {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := sql.Open("sqlite", filepath.Join(dir, "drive.db")+"?_pragma=journal_mode(WAL)")
@@ -1140,5 +1142,5 @@ func newTestStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
-	return store
+	return store // *Store satisfies RunStore
 }

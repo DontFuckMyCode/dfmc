@@ -39,7 +39,7 @@ func tail() {}
 		t.Fatalf("setup: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "find_symbol", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"name": "aliveli"},
@@ -94,7 +94,7 @@ class Other:
 		t.Fatalf("setup: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "find_symbol", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"name": "Settings", "kind": "class"},
@@ -136,7 +136,7 @@ func TestFindSymbol_HTMLByID(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "find_symbol", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"name": "login", "kind": "html_id"},
@@ -167,7 +167,7 @@ func TestFindSymbol_NoMatchesGivesActionableHint(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "x.go"), []byte("package x\nfunc Foo() {}\n"), 0o644); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "find_symbol", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"name": "DoesNotExist", "kind": "function"},
@@ -200,7 +200,7 @@ func TestFindSymbol_BodyTruncationLeavesMarker(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "big.go"), []byte(b.String()), 0o644); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "find_symbol", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"name": "Big", "body_max_lines": 5},
@@ -220,7 +220,7 @@ func TestFindSymbol_BodyTruncationLeavesMarker(t *testing.T) {
 // project-wide missing-param shape (name + received keys + example +
 // hint) instead of a bare error.
 func TestFindSymbol_MissingNameIsActionable(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "find_symbol", Request{
 		ProjectRoot: t.TempDir(),
 		Params:      map[string]any{"kind": "function"},

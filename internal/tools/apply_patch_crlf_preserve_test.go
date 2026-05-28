@@ -36,7 +36,7 @@ func TestApplyPatchPreservesCRLFLineEndings(t *testing.T) {
  three
 `
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": "mixed.txt"},
@@ -79,7 +79,7 @@ func TestApplyPatchPreservesLFLineEndings(t *testing.T) {
 	// Patch body uses CRLF on the hunk lines.
 	patch := "--- a/mixed.txt\n+++ b/mixed.txt\n@@ -1,3 +1,3 @@\n one\r\n-two\r\n+TWO\r\n three\r\n"
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": "mixed.txt"},

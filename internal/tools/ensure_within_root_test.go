@@ -28,7 +28,7 @@ func TestWriteFileAtomic_EscapesViaSymlink(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	// write_file calls EnsureWithinRoot(root, "evil/newfile").
 	// resolveExistingAncestor walks up from root/evil/newfile (doesn't exist yet).
@@ -54,7 +54,7 @@ func TestWriteFileAtomic_EscapesViaSymlink(t *testing.T) {
 func TestEnsureWithinRoot_SymlinkFallbackFailure(t *testing.T) {
 	tmp := t.TempDir()
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	// Path that has an existing ancestor that resolves but ultimately
 	// the reconstructed path escapes root. On Windows, creating a chain
@@ -99,7 +99,7 @@ func TestEnsureWithinRoot_SymlinkedSubdirFalsePositive(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	// Access the file via its symlink path (tmp/symdir/safe.txt).
 	// resolveExistingAncestor resolves tmp/symdir -> tmp/real.

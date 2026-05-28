@@ -28,7 +28,7 @@ func TestGlobToolBasicAndDoublestar(t *testing.T) {
 	must("sub/c.txt", "txt")
 	must("docs/readme.md", "# docs")
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	// Plain pattern — should match basename against all files.
 	res, err := eng.Execute(context.Background(), "glob", Request{
@@ -75,7 +75,7 @@ func TestListDirSkipsIgnoredDirsAndClampsMaxEntries(t *testing.T) {
 	must("keep/b.txt", "b\n")
 	must("keep/c.txt", "c\n")
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	res, err := eng.Execute(context.Background(), "list_dir", Request{
 		ProjectRoot: tmp,
@@ -129,7 +129,7 @@ func TestListDirSkipsIgnoredDirsAndClampsMaxEntries(t *testing.T) {
 //     directory in `path` (the actual mistake from the screenshot)
 func TestGlobAndGrepMissingPatternErrorIsActionable(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	for _, tool := range []string{"glob", "grep_codebase"} {
 		_, err := eng.Execute(context.Background(), tool, Request{
@@ -179,7 +179,7 @@ func TestGlobAndGrepMissingPatternErrorIsActionable(t *testing.T) {
 // grep_codebase, glob, ast_query — same pattern lurked across the rest).
 func TestActionableMissingParamErrors(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	cases := []struct {
 		tool      string
@@ -224,7 +224,7 @@ func TestActionableMissingParamErrors(t *testing.T) {
 // unaffected — only USER-SUPPLIED values get the check.
 func TestGitToolsRejectFlagInjectionInUserValues(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	cases := []struct {
 		tool     string
@@ -294,7 +294,7 @@ func TestApplyPatchRefusesUnreadFile(t *testing.T) {
 	}
 	patch := "--- a/secret.go\n+++ b/secret.go\n@@ -1,2 +1,2 @@\n package x\n-// existing\n+// hijacked\n"
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "apply_patch", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"patch": patch},
@@ -338,7 +338,7 @@ func TestApplyPatchNewHeaderStillGuardsExistingFile(t *testing.T) {
 	}
 	patch := "--- /dev/null\n+++ b/existing.txt\n@@ -0,0 +1 @@\n+replaced\n"
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "apply_patch", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"patch": patch},
@@ -369,7 +369,7 @@ func TestFileToolsReturnRelativePathInData(t *testing.T) {
 	if err := os.WriteFile(target, []byte("hi\n"), 0o644); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	res, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
@@ -403,7 +403,7 @@ func TestFileToolsReturnRelativePathInData(t *testing.T) {
 // error when `path` itself was missing. Both are now self-teaching errors.
 func TestWriteFileRejectsMissingContent(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "write_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": "out.txt"}, // no content key at all
@@ -421,7 +421,7 @@ func TestWriteFileRejectsMissingContent(t *testing.T) {
 
 func TestWriteFileRejectsMissingPath(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "write_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"content": "body"},
@@ -439,7 +439,7 @@ func TestWriteFileRejectsDirectoryTarget(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(tmp, "subdir"), 0o755); err != nil {
 		t.Fatalf("setup mkdir: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "write_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": "subdir", "content": "x", "overwrite": true},
@@ -458,7 +458,7 @@ func TestWriteFileExistingFileRequiresExplicitOverwrite(t *testing.T) {
 	if err := os.WriteFile(target, []byte("old\n"), 0o644); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	_, err := eng.Execute(context.Background(), "write_file", Request{
 		ProjectRoot: tmp,
@@ -510,7 +510,7 @@ func TestActionableMissingParamErrors_SecondWave(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	// run_command needs allow_shell=true to even reach the param check.
 	cfg.Security.Sandbox.AllowShell = true
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 
 	cases := []struct {
 		tool      string
@@ -555,7 +555,7 @@ func TestActionableMissingParamErrors_SecondWave(t *testing.T) {
 // the error must still steer the model to the correct shape and point
 // at tool_call as the single-call alternative.
 func TestToolBatchCallEmptyCallsErrorIsActionable(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "tool_batch_call", Request{
 		ProjectRoot: t.TempDir(),
 		Params:      map[string]any{"calls": []any{}},
@@ -581,7 +581,7 @@ func TestASTQueryRejectsDirectoryWithToolHint(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmp, "internal", "tools"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "ast_query", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": "internal/tools"},
@@ -608,7 +608,7 @@ func TestASTQueryRejectsDirectoryWithToolHint(t *testing.T) {
 // both shapes so the model knows it has two ways to fix the call.
 func TestOrchestrateRejectsEmptyCallWithBothShapes(t *testing.T) {
 	tmp := t.TempDir()
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "orchestrate", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"max_parallel": 4},
@@ -625,7 +625,7 @@ func TestOrchestrateRejectsEmptyCallWithBothShapes(t *testing.T) {
 }
 
 func TestThinkToolRecordsThought(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	res, err := eng.Execute(context.Background(), "think", Request{
 		ProjectRoot: t.TempDir(),
 		Params:      map[string]any{"thought": "plan: first read, then patch"},
@@ -642,7 +642,7 @@ func TestThinkToolRecordsThought(t *testing.T) {
 }
 
 func TestTodoWriteToolSetListClear(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	set := func(items []map[string]any) string {
 		arr := make([]any, len(items))
 		for i, v := range items {
@@ -703,7 +703,7 @@ func TestWebFetchAgainstLocalServer(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "web_fetch", Request{
 		Params: map[string]any{"url": ts.URL},
 	})
@@ -729,7 +729,7 @@ func TestHTMLToTextStripsScriptsAndTags(t *testing.T) {
 }
 
 func TestWebFetchRejectsNonHTTP(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "web_fetch", Request{
 		Params: map[string]any{"url": "file:///etc/passwd"},
 	})
@@ -753,7 +753,7 @@ func TestApplyPatchAppliesAndRejects(t *testing.T) {
 +TWO
  three
 `
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	// 2026-04-18: apply_patch now flows through the per-target
 	// read-before-mutate gate (same guard that edit_file/write_file
 	// have always had). Read the target first so the snapshot map is
@@ -831,7 +831,7 @@ func TestApplyPatchHandlesCRLFSource(t *testing.T) {
 +TWO
  three
 `
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	// Read first to satisfy the per-target read-before-mutate guard
 	// (apply_patch joined edit_file/write_file under that gate on
 	// 2026-04-18 — see audit Top-7 #7).
@@ -871,7 +871,7 @@ func TestApplyPatchReportsFuzzyAnchorOffset(t *testing.T) {
 +X
  b
 `
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	if _, err := eng.Execute(context.Background(), "read_file", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"path": "hello.txt"},
@@ -906,7 +906,7 @@ func TestApplyPatchNewFile(t *testing.T) {
 +hello
 +world
 `
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	_, err := eng.Execute(context.Background(), "apply_patch", Request{
 		ProjectRoot: tmp,
 		Params:      map[string]any{"patch": patch},
@@ -957,7 +957,7 @@ func TestApplyPatch_NilEngine_ReturnsError(t *testing.T) {
 }
 
 func TestDelegateToolWithoutRunnerReturnsError(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	// Runner intentionally not set.
 	_, err := eng.Execute(context.Background(), "delegate_task", Request{
 		Params: map[string]any{"task": "anything"},
@@ -984,7 +984,7 @@ func (f *fakeRunner) RunSubagent(_ context.Context, req SubagentRequest) (Subage
 }
 
 func TestDelegateToolWithRunnerForwardsTask(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 	fr := &fakeRunner{}
 	eng.SetSubagentRunner(fr)
 
@@ -1023,7 +1023,7 @@ func TestDelegateToolWithRunnerForwardsTask(t *testing.T) {
 // isBlockedShellInterpreter (which blocks powershell before the
 // eval-flag check can be reached).
 func TestRunCommandBlocksScriptRunnerEvalFlags(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := NewFromConfig(config.DefaultConfig())
 
 	// Unit test: hasScriptRunnerWithEvalFlag directly
 	// args format must be [binary, flag, ...] for the function to work.

@@ -34,7 +34,7 @@ func (t *closingStubTool) Close() error {
 }
 
 func TestToolsEngineCloseInvokesRegisteredClosers(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 	stub := &closingStubTool{}
 	eng.Register(stub)
 
@@ -47,7 +47,7 @@ func TestToolsEngineCloseInvokesRegisteredClosers(t *testing.T) {
 }
 
 func TestToolsEngineCloseClearsSessionStateAndRejectsExecute(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 	eng.readMu.Lock()
 	eng.readSnapshots["a.go"] = "hash"
 	eng.readSnapshotLRU = []string{"a.go"}
@@ -93,7 +93,7 @@ func (t *blockingCloseTool) Execute(_ context.Context, _ Request) (Result, error
 }
 
 func TestToolsEngineCloseWaitsForInFlightExecute(t *testing.T) {
-	eng := New(*config.DefaultConfig())
+	eng := New(ToToolsConfigSubset(config.DefaultConfig()))
 	tool := &blockingCloseTool{started: make(chan struct{}), release: make(chan struct{})}
 	eng.Register(tool)
 

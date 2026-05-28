@@ -307,3 +307,13 @@ type Provider interface {
 type CtxTokenCounter interface {
 	CountTokensCtx(ctx context.Context, text string) (int, error)
 }
+
+// ProviderCloser is an optional lifecycle interface. Providers that
+// manage stateful resources (HTTP connection pools, auth state, file
+// handles) should implement Close so the router can drain them on
+// shutdown. Callers type-assert; the absence of this interface is
+// not an error — stateless providers (offline, placeholder) simply
+// don't implement it and the engine moves on.
+type ProviderCloser interface {
+	Close() error
+}

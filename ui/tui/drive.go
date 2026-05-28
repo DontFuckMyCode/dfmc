@@ -29,7 +29,7 @@ import (
 
 type tuiDriveResources struct {
 	driver  *drive.Driver
-	store   *drive.Store
+	store   drive.RunStore
 	routing map[string]string // routing config set by the user in the routing editor
 }
 

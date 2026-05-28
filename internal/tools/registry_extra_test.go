@@ -10,7 +10,7 @@ import (
 
 func TestEngine_Register_NilTool(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	before := len(eng.ListAll())
 	eng.Register(nil)
 	after := len(eng.ListAll())
@@ -21,7 +21,7 @@ func TestEngine_Register_NilTool(t *testing.T) {
 
 func TestEngine_Register_AfterClose(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	eng.Close()
 	// Register after close should be a no-op
 	before := len(eng.ListAll())
@@ -34,7 +34,7 @@ func TestEngine_Register_AfterClose(t *testing.T) {
 
 func TestEngine_Register_CustomTool(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	eng.Register(&stubTool{name: "custom_test_tool"})
 	all := eng.ListAll()
 	found := false
@@ -57,7 +57,7 @@ func TestEngine_Register_CustomTool(t *testing.T) {
 
 func TestEngine_ListDisabled_Empty(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	disabled := eng.ListDisabled()
 	if len(disabled) != 0 {
 		t.Errorf("expected no disabled tools, got %v", disabled)
@@ -66,7 +66,7 @@ func TestEngine_ListDisabled_Empty(t *testing.T) {
 
 func TestEngine_ListDisabled_AfterDisable(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	if err := eng.SetEnabled("think", false); err != nil {
 		t.Fatalf("disable think: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestEngine_ListDisabled_AfterDisable(t *testing.T) {
 func TestEngine_ListDisabled_Multiple(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Tools.Disabled = []string{"hunt", "audit"}
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	disabled := eng.ListDisabled()
 	if len(disabled) != 2 {
 		t.Fatalf("expected 2 disabled, got %d: %v", len(disabled), disabled)
@@ -92,7 +92,7 @@ func TestEngine_ListDisabled_Multiple(t *testing.T) {
 
 func TestEngine_SetEnabled_NonexistentTool(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	// Disabling a non-existent tool should succeed (it might be registered later)
 	err := eng.SetEnabled("future_tool", false)
 	if err != nil {
@@ -105,7 +105,7 @@ func TestEngine_SetEnabled_NonexistentTool(t *testing.T) {
 
 func TestEngine_SetEnabled_EmptyName(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	err := eng.SetEnabled("", false)
 	if err != nil {
 		t.Fatalf("empty name should be a no-op, got: %v", err)
@@ -114,7 +114,7 @@ func TestEngine_SetEnabled_EmptyName(t *testing.T) {
 
 func TestEngine_SetEnabled_CaseInsensitive(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	if err := eng.SetEnabled("Think", false); err != nil {
 		t.Fatalf("disable Think: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestEngine_SetEnabled_CaseInsensitive(t *testing.T) {
 func TestEngine_Register_DisabledToolStillInRegistry(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Tools.Disabled = []string{"custom_tool"}
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 
 	eng.Register(&stubTool{name: "custom_tool"})
 	all := eng.ListAll()
@@ -153,7 +153,7 @@ func TestEngine_Register_DisabledToolStillInRegistry(t *testing.T) {
 func TestEngine_Disabled_ExecuteBlocked(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Tools.Disabled = []string{"think"}
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	_, err := eng.Execute(context.Background(), "think", Request{
 		ProjectRoot: t.TempDir(),
 		Params:      map[string]any{},

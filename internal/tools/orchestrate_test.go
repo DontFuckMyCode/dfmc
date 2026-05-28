@@ -65,7 +65,7 @@ func (r *recordingRunner) RunSubagent(ctx context.Context, req SubagentRequest) 
 func TestOrchestrateParallelFansOutIndependentSubtasks(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Agent.ParallelBatchSize = 4
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &recordingRunner{sleep: 30 * time.Millisecond, failAtCall: -1}
 	eng.SetSubagentRunner(runner)
 
@@ -99,7 +99,7 @@ func TestOrchestrateParallelFansOutIndependentSubtasks(t *testing.T) {
 // summary into the next stage's prompt.
 func TestOrchestrateSequentialChainThreadsPriorSummaries(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &recordingRunner{
 		sleep:      5 * time.Millisecond,
 		failAtCall: -1,
@@ -141,7 +141,7 @@ func TestOrchestrateSequentialChainThreadsPriorSummaries(t *testing.T) {
 // to mode=single and fires exactly one sub-agent on the original task.
 func TestOrchestrateFallsBackForUnsplittableTask(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &recordingRunner{failAtCall: -1}
 	eng.SetSubagentRunner(runner)
 
@@ -167,7 +167,7 @@ func TestOrchestrateFallsBackForUnsplittableTask(t *testing.T) {
 // marks the subtasks parallel, force_sequential=true must serialise them.
 func TestOrchestrateForceSequentialDisablesFanOut(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &recordingRunner{sleep: 5 * time.Millisecond, failAtCall: -1}
 	eng.SetSubagentRunner(runner)
 
@@ -194,7 +194,7 @@ func TestOrchestrateForceSequentialDisablesFanOut(t *testing.T) {
 func TestOrchestrateParallelStageFailureDoesNotAbortSiblings(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Agent.ParallelBatchSize = 4
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &recordingRunner{sleep: 10 * time.Millisecond, failAtCall: 2}
 	eng.SetSubagentRunner(runner)
 
@@ -226,7 +226,7 @@ func TestOrchestrateParallelStageFailureDoesNotAbortSiblings(t *testing.T) {
 // returns a clear error rather than silently spinning.
 func TestOrchestrateRequiresRunner(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	// intentionally no SetSubagentRunner call.
 
 	_, err := eng.Execute(context.Background(), "orchestrate", Request{
@@ -243,7 +243,7 @@ func TestOrchestrateRequiresRunner(t *testing.T) {
 func TestOrchestrateRespectsMaxParallelCeiling(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Agent.ParallelBatchSize = 2
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &recordingRunner{sleep: 20 * time.Millisecond, failAtCall: -1}
 	eng.SetSubagentRunner(runner)
 
@@ -267,7 +267,7 @@ func TestOrchestrateRespectsMaxParallelCeiling(t *testing.T) {
 func TestOrchestrateAutoSplitCapsSubtaskFanOut(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Agent.ParallelBatchSize = 8
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &recordingRunner{failAtCall: -1}
 	eng.SetSubagentRunner(runner)
 

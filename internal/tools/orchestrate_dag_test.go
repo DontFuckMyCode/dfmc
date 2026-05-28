@@ -35,7 +35,7 @@ func depSlice(ids ...string) []any {
 func TestOrchestrateDAGDiamondRunsJoinAfterBranches(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Agent.ParallelBatchSize = 4
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &recordingRunner{
 		sleep:      15 * time.Millisecond,
 		failAtCall: -1,
@@ -101,7 +101,7 @@ func TestOrchestrateDAGDiamondRunsJoinAfterBranches(t *testing.T) {
 // error identifying the stuck ids.
 func TestOrchestrateDAGCycleRejected(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
 
 	_, err := eng.Execute(context.Background(), "orchestrate", Request{
@@ -124,7 +124,7 @@ func TestOrchestrateDAGCycleRejected(t *testing.T) {
 // not exist must fail fast with a descriptive error.
 func TestOrchestrateDAGUnknownDepRejected(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
 
 	_, err := eng.Execute(context.Background(), "orchestrate", Request{
@@ -147,7 +147,7 @@ func TestOrchestrateDAGUnknownDepRejected(t *testing.T) {
 // refused — the summaries map would silently overwrite otherwise.
 func TestOrchestrateDAGDuplicateIDRejected(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
 
 	_, err := eng.Execute(context.Background(), "orchestrate", Request{
@@ -165,7 +165,7 @@ func TestOrchestrateDAGDuplicateIDRejected(t *testing.T) {
 
 func TestOrchestrateDAGRejectsOversizedStageList(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
 
 	stages := make([]map[string]any, 0, maxOrchestrateDAGStages+1)
@@ -191,7 +191,7 @@ func TestOrchestrateDAGRejectsOversizedStageList(t *testing.T) {
 // offending dep — not run against empty input.
 func TestOrchestrateDAGFailedDepSkipsDependents(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	// fail the second call (which will be B in layer 1, see ordering below).
 	runner := &recordingRunner{failAtCall: 2}
 	eng.SetSubagentRunner(runner)
@@ -221,7 +221,7 @@ func TestOrchestrateDAGFailedDepSkipsDependents(t *testing.T) {
 func TestOrchestrateDAGParallelismClampedByCeiling(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Agent.ParallelBatchSize = 2
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &recordingRunner{sleep: 20 * time.Millisecond, failAtCall: -1}
 	eng.SetSubagentRunner(runner)
 
@@ -249,7 +249,7 @@ func TestOrchestrateDAGParallelismClampedByCeiling(t *testing.T) {
 func TestOrchestrateDAGForceSequentialSerializes(t *testing.T) {
 	cfg := *config.DefaultConfig()
 	cfg.Agent.ParallelBatchSize = 8
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &recordingRunner{sleep: 10 * time.Millisecond, failAtCall: -1}
 	eng.SetSubagentRunner(runner)
 
@@ -276,7 +276,7 @@ func TestOrchestrateDAGForceSequentialSerializes(t *testing.T) {
 // same logical behaviour as the text-split sequential mode.
 func TestOrchestrateDAGLinearChainBehavesLikeSequential(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	// Clean summaries so a transitive leak (A's content showing up inside
 	// C's prompt *via B's summary*) would fail the assertion cleanly.
 	// Default runner echoes the whole task, which bleeds earlier content
@@ -331,7 +331,7 @@ func TestOrchestrateDAGLinearChainBehavesLikeSequential(t *testing.T) {
 // short-circuit the splitter — the text path still needs a chance.
 func TestOrchestrateDAGEmptyStagesFallsBackToTextSplit(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &recordingRunner{failAtCall: -1}
 	eng.SetSubagentRunner(runner)
 
@@ -354,7 +354,7 @@ func TestOrchestrateDAGEmptyStagesFallsBackToTextSplit(t *testing.T) {
 // clear error the model can correct from.
 func TestOrchestrateDAGMalformedStagesRejected(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
 
 	cases := []struct {
@@ -385,7 +385,7 @@ func TestOrchestrateDAGMalformedStagesRejected(t *testing.T) {
 // record must also echo the model so callers can confirm routing.
 func TestOrchestrateDAGPerStageModelOverride(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &recordingRunner{failAtCall: -1}
 	eng.SetSubagentRunner(runner)
 
@@ -445,7 +445,7 @@ func TestOrchestrateDAGPerStageModelOverride(t *testing.T) {
 // race is decided.
 func TestOrchestrateDAGRaceReturnsWinner(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &perModelRunner{
 		delays: map[string]time.Duration{
 			"fast": 10 * time.Millisecond,
@@ -500,7 +500,7 @@ func TestOrchestrateDAGRaceReturnsWinner(t *testing.T) {
 // able to tell both failures happened (no silent partial success).
 func TestOrchestrateDAGRaceAllFailReturnsJoinedError(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	runner := &perModelRunner{
 		errs: map[string]string{
 			"a": "boom-a",
@@ -530,7 +530,7 @@ func TestOrchestrateDAGRaceAllFailReturnsJoinedError(t *testing.T) {
 // hints.
 func TestOrchestrateDAGRaceAndModelMutuallyExclusive(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
 
 	_, err := eng.Execute(context.Background(), "orchestrate", Request{
@@ -550,7 +550,7 @@ func TestOrchestrateDAGRaceAndModelMutuallyExclusive(t *testing.T) {
 // tool call.
 func TestOrchestrateDAGRaceCapEnforced(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
 
 	_, err := eng.Execute(context.Background(), "orchestrate", Request{
@@ -570,7 +570,7 @@ func TestOrchestrateDAGRaceCapEnforced(t *testing.T) {
 // the caller toward `model` instead of silently running a single sub-agent.
 func TestOrchestrateDAGRaceSingletonRejected(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
 
 	_, err := eng.Execute(context.Background(), "orchestrate", Request{
@@ -621,7 +621,7 @@ func (r *perModelRunner) RunSubagent(ctx context.Context, req SubagentRequest) (
 // an overridden stage from a default-routed one.
 func TestOrchestrateDAGEmptyStageModelNotRecorded(t *testing.T) {
 	cfg := *config.DefaultConfig()
-	eng := New(cfg)
+	eng := NewFromConfig(&cfg)
 	eng.SetSubagentRunner(&recordingRunner{failAtCall: -1})
 
 	res, err := eng.Execute(context.Background(), "orchestrate", Request{
