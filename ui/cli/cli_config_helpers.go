@@ -107,7 +107,7 @@ func saveConfigFileMap(path string, data map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, blob, 0o644)
+	return os.WriteFile(path, blob, 0o600)
 }
 
 func parseConfigValue(raw string) (any, error) {

@@ -26,6 +26,7 @@ func (m Model) handleClearSlash() (tea.Model, tea.Cmd, bool) {
 	m.chat.lastSearchQuery = ""
 	m.chat.pendingQueue = nil
 	m.chat.pendingNoteCount = 0
+	m.clearPasteBlocks()
 	m.cancelActiveStream()
 	m.chat.sending = false
 	m.chat.streamIndex = -1
