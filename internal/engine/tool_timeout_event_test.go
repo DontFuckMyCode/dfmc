@@ -29,7 +29,7 @@ func TestExecuteToolWithLifecycle_PublishesTimeoutEvent(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agent.ToolTimeouts = map[string]int{"engine_sleeper": 1}
 
-	te := tools.New(*cfg)
+	te := tools.NewFromConfig(cfg)
 	te.Register(sleeperTool{})
 
 	bus := NewEventBus()

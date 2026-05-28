@@ -52,7 +52,7 @@ func TestAutoContinue_ResumesUntilDone(t *testing.T) {
 		EventBus:     bus,
 		ProjectRoot:  tmp,
 		Providers:    router,
-		Tools:        tools.New(*cfg),
+		Tools:        tools.NewFromConfig(cfg),
 		Conversation: conversation.New(nil),
 	}
 	eng.setState(StateReady)
@@ -136,7 +136,7 @@ func TestAutoContinue_StopsOnDoneTrue(t *testing.T) {
 		EventBus:     bus,
 		ProjectRoot:  tmp,
 		Providers:    router,
-		Tools:        tools.New(*cfg),
+		Tools:        tools.NewFromConfig(cfg),
 		Conversation: conversation.New(nil),
 	}
 	eng.setState(StateReady)
@@ -173,7 +173,7 @@ func TestAutoContinue_SelfSelectsWhenNextMissing(t *testing.T) {
 	bus := NewEventBus()
 	evCh := bus.Subscribe("*")
 	defer bus.Unsubscribe("*", evCh)
-	eng := &Engine{Config: cfg, EventBus: bus, ProjectRoot: tmp, Providers: router, Tools: tools.New(*cfg), Conversation: conversation.New(nil)}
+	eng := &Engine{Config: cfg, EventBus: bus, ProjectRoot: tmp, Providers: router, Tools: tools.NewFromConfig(cfg), Conversation: conversation.New(nil)}
 	eng.setState(StateReady)
 	answer, err := eng.AskWithMetadata(context.Background(), "finish the task autonomously")
 	if err != nil {
@@ -220,7 +220,7 @@ func TestAutoContinue_DoneTrueChoiceGateStillContinues(t *testing.T) {
 		{Text: "Continued without waiting for a numbered choice.\n\n[next:\n- nothing pending]\n[cleanup: ]\n[done: true]"},
 	}}
 	router.Register(stub)
-	eng := &Engine{Config: cfg, EventBus: NewEventBus(), ProjectRoot: tmp, Providers: router, Tools: tools.New(*cfg), Conversation: conversation.New(nil)}
+	eng := &Engine{Config: cfg, EventBus: NewEventBus(), ProjectRoot: tmp, Providers: router, Tools: tools.NewFromConfig(cfg), Conversation: conversation.New(nil)}
 	eng.setState(StateReady)
 	answer, err := eng.AskWithMetadata(context.Background(), "finish without asking me")
 	if err != nil {
@@ -280,7 +280,7 @@ func TestAutoContinue_RespectsIterationCap(t *testing.T) {
 		EventBus:     bus,
 		ProjectRoot:  tmp,
 		Providers:    router,
-		Tools:        tools.New(*cfg),
+		Tools:        tools.NewFromConfig(cfg),
 		Conversation: conversation.New(nil),
 	}
 	eng.setState(StateReady)
@@ -339,7 +339,7 @@ func TestAutoContinue_DisabledByConfig(t *testing.T) {
 		EventBus:     NewEventBus(),
 		ProjectRoot:  tmp,
 		Providers:    router,
-		Tools:        tools.New(*cfg),
+		Tools:        tools.NewFromConfig(cfg),
 		Conversation: conversation.New(nil),
 	}
 	eng.setState(StateReady)

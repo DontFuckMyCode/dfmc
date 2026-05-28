@@ -69,7 +69,7 @@ func TestRunSubagent_ModelOverrideUsesSelectedProfile(t *testing.T) {
 		EventBus:    NewEventBus(),
 		ProjectRoot: t.TempDir(),
 		Providers:   router,
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 
 	res, err := eng.RunSubagent(context.Background(), tools.SubagentRequest{
@@ -125,7 +125,7 @@ func TestRunSubagentProfiles_FallbackPreservesSeedContext(t *testing.T) {
 		EventBus:    bus,
 		ProjectRoot: t.TempDir(),
 		Providers:   router,
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 
 	res, err := eng.runSubagentProfiles(context.Background(), tools.SubagentRequest{

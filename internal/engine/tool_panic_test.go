@@ -27,7 +27,7 @@ func (p panicTool) Execute(_ context.Context, _ tools.Request) (tools.Result, er
 
 func TestExecuteToolWithPanicGuard_RecoversStringPanic(t *testing.T) {
 	cfg := config.DefaultConfig()
-	te := tools.New(*cfg)
+	te := tools.NewFromConfig(cfg)
 	te.Register(panicTool{value: "kaboom"})
 	eng := &Engine{
 		Config:   cfg,
@@ -60,7 +60,7 @@ func TestExecuteToolWithPanicGuard_RecoversStringPanic(t *testing.T) {
 // preserve type identity through the recover boundary.
 func TestExecuteToolWithPanicGuard_RecoversTypedPanic(t *testing.T) {
 	cfg := config.DefaultConfig()
-	te := tools.New(*cfg)
+	te := tools.NewFromConfig(cfg)
 	te.Register(panicTool{value: struct{ Kind string }{Kind: "weird"}})
 	eng := &Engine{
 		Config:   cfg,
@@ -78,7 +78,7 @@ func TestExecuteToolWithPanicGuard_RecoversTypedPanic(t *testing.T) {
 // is invisible on the happy path.
 func TestExecuteToolWithPanicGuard_HappyPathPassesThrough(t *testing.T) {
 	cfg := config.DefaultConfig()
-	te := tools.New(*cfg)
+	te := tools.NewFromConfig(cfg)
 	// list_dir is a simple read-only tool that always exists.
 	eng := &Engine{
 		Config:   cfg,
@@ -105,7 +105,7 @@ func TestExecuteToolWithPanicGuard_HappyPathPassesThrough(t *testing.T) {
 // strategy.
 func TestExecuteToolWithPanicGuard_PublishesToolPanickedEvent(t *testing.T) {
 	cfg := config.DefaultConfig()
-	te := tools.New(*cfg)
+	te := tools.NewFromConfig(cfg)
 	te.Register(panicTool{value: "boom"})
 	bus := NewEventBus()
 	sub := bus.Subscribe("tool:panicked")

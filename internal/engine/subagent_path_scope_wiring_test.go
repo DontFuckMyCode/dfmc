@@ -72,7 +72,7 @@ func TestRunSubagent_AllowedPathsRefusedAtRuntime(t *testing.T) {
 		EventBus:     bus,
 		ProjectRoot:  tmp,
 		Providers:    router,
-		Tools:        tools.New(*cfg),
+		Tools:        tools.NewFromConfig(cfg),
 		Conversation: conversation.New(nil),
 	}
 	eng.setState(StateReady)

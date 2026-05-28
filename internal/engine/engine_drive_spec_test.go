@@ -32,7 +32,7 @@ func TestEngineTodosFromSpecFile_BasicIngest(t *testing.T) {
 	eng := &Engine{
 		Config:      cfg,
 		ProjectRoot: dir,
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 
 	todos, dropped, err := eng.TodosFromSpecFile(context.Background(), "PLAN.md", "", false)
@@ -69,7 +69,7 @@ func TestEngineTodosFromSpecFile_MissingFileSurfacesAsError(t *testing.T) {
 	eng := &Engine{
 		Config:      cfg,
 		ProjectRoot: t.TempDir(),
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 	_, _, err := eng.TodosFromSpecFile(context.Background(), "nope.md", "", false)
 	if err == nil {

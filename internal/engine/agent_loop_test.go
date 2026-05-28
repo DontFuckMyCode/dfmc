@@ -188,7 +188,7 @@ func TestAskWithMetadata_NativeToolLoop_DiscoverAndCall(t *testing.T) {
 		EventBus:     NewEventBus(),
 		ProjectRoot:  tmp,
 		Providers:    router,
-		Tools:        tools.New(*cfg),
+		Tools:        tools.NewFromConfig(cfg),
 		Conversation: conversation.New(nil),
 	}
 	eng.setState(StateReady)
@@ -284,7 +284,7 @@ func TestAskWithMetadata_NativeToolLoop_AutonomyPreflightSeedsTodos(t *testing.T
 		EventBus:     bus,
 		ProjectRoot:  tmp,
 		Providers:    router,
-		Tools:        tools.New(*cfg),
+		Tools:        tools.NewFromConfig(cfg),
 		Conversation: conversation.New(nil),
 	}
 	eng.setState(StateReady)
@@ -367,7 +367,7 @@ func TestRunSubagent_AutonomyPreflightInjected(t *testing.T) {
 		EventBus:     bus,
 		ProjectRoot:  tmp,
 		Providers:    router,
-		Tools:        tools.New(*cfg),
+		Tools:        tools.NewFromConfig(cfg),
 		Conversation: conversation.New(nil),
 	}
 	eng.setState(StateReady)
@@ -445,7 +445,7 @@ func TestMaybeAutoKickoffAutonomy_AggressiveParallelPlanSeedsOrchestrateRound(t 
 		Config:      cfg,
 		EventBus:    NewEventBus(),
 		ProjectRoot: t.TempDir(),
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 	eng.setState(StateReady)
 	eng.Tools.SetSubagentRunner(kickoffRunner{})
@@ -506,7 +506,7 @@ func TestMaybeAutoKickoffAutonomy_AggressiveSequentialPlanForcesSequentialOrches
 		Config:      cfg,
 		EventBus:    NewEventBus(),
 		ProjectRoot: t.TempDir(),
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 	eng.setState(StateReady)
 	eng.Tools.SetSubagentRunner(kickoffRunner{})
@@ -592,7 +592,7 @@ func TestAskWithMetadata_NativeToolLoop_PublishesLifecycleEvents(t *testing.T) {
 		EventBus:    NewEventBus(),
 		ProjectRoot: tmp,
 		Providers:   router,
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 	eng.setState(StateReady)
 	evCh := eng.EventBus.Subscribe("*")
@@ -672,7 +672,7 @@ func TestStreamAsk_NativeToolLoop_AvoidsProviderStream(t *testing.T) {
 		EventBus:    NewEventBus(),
 		ProjectRoot: tmp,
 		Providers:   router,
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 	eng.setState(StateReady)
 
@@ -746,7 +746,7 @@ func TestAskWithMetadata_NativeToolLoop_BatchCall(t *testing.T) {
 		EventBus:    NewEventBus(),
 		ProjectRoot: tmp,
 		Providers:   router,
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 	eng.setState(StateReady)
 
@@ -811,7 +811,7 @@ func TestAskWithMetadata_NativeToolLoop_RespectsConfiguredMaxSteps(t *testing.T)
 		EventBus:    NewEventBus(),
 		ProjectRoot: tmp,
 		Providers:   router,
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 	eng.setState(StateReady)
 	evCh := eng.EventBus.Subscribe("*")
@@ -915,7 +915,7 @@ func TestAskWithMetadata_NativeToolLoop_RespectsTokenBudget(t *testing.T) {
 		EventBus:    NewEventBus(),
 		ProjectRoot: tmp,
 		Providers:   router,
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 	eng.setState(StateReady)
 	evCh := eng.EventBus.Subscribe("*")

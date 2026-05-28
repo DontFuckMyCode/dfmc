@@ -95,7 +95,7 @@ func buildGuardTestEngine(t *testing.T, budget int, steps int, responses []scrip
 		EventBus:    NewEventBus(),
 		ProjectRoot: tmp,
 		Providers:   router,
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 	// requireReady gates Ask/CallTool/StreamAsk on StateReady or beyond.
 	// This helper builds the engine with bare struct construction (skipping

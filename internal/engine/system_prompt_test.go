@@ -21,7 +21,7 @@ func newTestEngine(t *testing.T) *Engine {
 		Config:      cfg,
 		Context:     mgr,
 		ProjectRoot: t.TempDir(),
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 }
 

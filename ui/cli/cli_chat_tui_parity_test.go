@@ -28,7 +28,7 @@ func newCLITaskSlashTestEngine(t *testing.T) *engine.Engine {
 		t.Fatalf("create table: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	toolEngine := tools.New(*cfg)
+	toolEngine := tools.NewFromConfig(cfg)
 	toolEngine.SetTaskStore(taskstore.NewStore(db))
 	return &engine.Engine{
 		Config: cfg,

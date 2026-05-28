@@ -285,7 +285,7 @@ func TestNativeToolLoop_DedupsIdenticalReadAcrossRounds(t *testing.T) {
 		EventBus:    NewEventBus(),
 		ProjectRoot: tmp,
 		Providers:   router,
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 	eng.setState(StateReady)
 

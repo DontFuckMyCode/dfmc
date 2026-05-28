@@ -159,7 +159,7 @@ func TestRunSubagentRejectsWhenConcurrencyLimitReached(t *testing.T) {
 		EventBus:    bus,
 		ProjectRoot: t.TempDir(),
 		Providers:   router,
-		Tools:       tools.New(*cfg),
+		Tools:       tools.NewFromConfig(cfg),
 	}
 
 	release, err := e.tryEnterSubagent(e.subagentConcurrencyLimit())
