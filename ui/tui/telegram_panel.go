@@ -26,14 +26,8 @@ func (m *Model) renderTelegramPanel() string {
 }
 
 func (m *Model) renderTelegramPanelSized(contentWidth int) string {
-	width := contentWidth
-	if width < 40 {
-		width = 40
-	}
-	height := m.height
-	if height < 15 {
-		height = 15
-	}
+	width := max(contentWidth, 40)
+	height := max(m.height, 15)
 
 	b := &strings.Builder{}
 	b.WriteString(telegramPanelStyle.Render("Telegram Bot"))
@@ -95,13 +89,13 @@ func (m *Model) renderTelegramSetupPrompt(width int) string {
 	if selectedField == 0 {
 		tokenPrefix = okStyle.Render(" ▶ ")
 	}
-	b.WriteString(fmt.Sprintf("%s%s %s\n", tokenPrefix, boldStyle.Render("Token:"), subtleStyle.Render("(not set — click to set)")))
+	fmt.Fprintf(b, "%s%s %s\n", tokenPrefix, boldStyle.Render("Token:"), subtleStyle.Render("(not set — click to set)"))
 
 	usersPrefix := "  "
 	if selectedField == 1 {
 		usersPrefix = okStyle.Render(" ▶ ")
 	}
-	b.WriteString(fmt.Sprintf("%s%s %s\n\n", usersPrefix, boldStyle.Render("Allowed Users:"), subtleStyle.Render("(none — click to add)")))
+	fmt.Fprintf(b, "%s%s %s\n\n", usersPrefix, boldStyle.Render("Allowed Users:"), subtleStyle.Render("(none — click to add)"))
 
 	b.WriteString(subtleStyle.Render("  ↑↓ navigate · Enter edit · Esc close"))
 	return b.String()
@@ -293,10 +287,7 @@ func (m *Model) addTelegramMessageDirect(msg telegramMessageItem) {
 		m.telegram.messages = m.telegram.messages[1:]
 	}
 	m.telegram.messages = append(m.telegram.messages, msg)
-	m.telegram.scroll = len(m.telegram.messages) - 1
-	if m.telegram.scroll < 0 {
-		m.telegram.scroll = 0
-	}
+	m.telegram.scroll = max(len(m.telegram.messages)-1, 0)
 }
 
 func (m *Model) bindTelegramBotToPanel(tgBot *bot.TelegramBot) {
