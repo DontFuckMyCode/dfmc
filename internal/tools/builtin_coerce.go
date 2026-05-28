@@ -183,7 +183,7 @@ func coerceStringSlice(raw any) []string {
 		return out
 	case string:
 		out := make([]string, 0, 4)
-		for _, part := range strings.Split(v, ",") {
+		for part := range strings.SplitSeq(v, ",") {
 			if s := strings.TrimSpace(part); s != "" {
 				out = append(out, s)
 			}

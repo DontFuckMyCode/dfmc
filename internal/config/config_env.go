@@ -150,7 +150,7 @@ func (c *Config) applyTelegramEnv() {
 		c.Telegram.Token = strings.TrimSpace(token)
 	}
 	if users := os.Getenv("DFMC_TELEGRAM_ALLOWED_USERS"); users != "" {
-		for _, id := range strings.Split(users, ",") {
+		for id := range strings.SplitSeq(users, ",") {
 			id = strings.TrimSpace(id)
 			if id == "" {
 				continue

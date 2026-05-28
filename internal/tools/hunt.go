@@ -267,7 +267,7 @@ func getHuntDetectors(categories string) []func(*token.FileSet, ast.Node, string
 		return out
 	}
 	enabled := make(map[string]bool)
-	for _, c := range strings.Split(categories, ",") {
+	for c := range strings.SplitSeq(categories, ",") {
 		key := strings.TrimSpace(strings.ToLower(c))
 		if key != "" {
 			enabled[key] = true

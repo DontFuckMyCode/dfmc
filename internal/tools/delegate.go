@@ -32,7 +32,7 @@ func parseStringListParam(params map[string]any, key string) []string {
 			}
 		}
 	case string:
-		for _, p := range strings.Split(vv, ",") {
+		for p := range strings.SplitSeq(vv, ",") {
 			if s := strings.TrimSpace(p); s != "" {
 				out = append(out, s)
 			}

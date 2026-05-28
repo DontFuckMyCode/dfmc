@@ -119,7 +119,7 @@ func (t *DependencyAuditTool) Execute(ctx context.Context, req Request) (Result,
 
 	ignorePrefixes := []string{}
 	if ignoreStr != "" {
-		for _, p := range strings.Split(ignoreStr, ",") {
+		for p := range strings.SplitSeq(ignoreStr, ",") {
 			p = strings.TrimSpace(p)
 			if p != "" {
 				ignorePrefixes = append(ignorePrefixes, p)

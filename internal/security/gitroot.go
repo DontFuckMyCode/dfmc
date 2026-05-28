@@ -56,7 +56,7 @@ func SanitizeGitRoot(raw string) (string, error) {
 	// practice this only matters for the basename since we pass via
 	// cmd.Dir, but a user-supplied root like "-fakeflag" would still
 	// be surprising if we ever changed the call site.
-	for _, part := range strings.Split(abs, string(os.PathSeparator)) {
+	for part := range strings.SplitSeq(abs, string(os.PathSeparator)) {
 		if strings.HasPrefix(part, "-") {
 			return "", fmt.Errorf("%w: path component starts with '-': %q", ErrInvalidGitRoot, part)
 		}

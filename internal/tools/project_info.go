@@ -103,7 +103,7 @@ func fetchModuleInfo(ctx context.Context, projectRoot string) map[string]any {
 	goModPath := filepath.Join(projectRoot, "go.mod")
 	if data, err := os.ReadFile(goModPath); err == nil {
 		info["has_go_mod"] = true
-		for _, line := range strings.Split(string(data), "\n") {
+		for line := range strings.SplitSeq(string(data), "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "module ") {
 				info["module_path"] = strings.TrimPrefix(line, "module ")

@@ -76,7 +76,7 @@ func ResolvePromptProfile(query, task string, runtime PromptRuntime) string {
 }
 
 func promptProfileOverride(query string) string {
-	for _, raw := range strings.Split(query, "\n") {
+	for raw := range strings.SplitSeq(query, "\n") {
 		line := strings.TrimSpace(strings.ToLower(raw))
 		if line == "" {
 			continue
