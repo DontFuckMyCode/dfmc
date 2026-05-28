@@ -64,20 +64,18 @@ func TestToToolsConfigSubset_WiringFidelity(t *testing.T) {
 	})
 }
 
-// TestToToolsConfigSubset_DoublePointerReturnsEmpty pins the exact failure
-// mode of the May 2026 bug: when the helper receives **config.Config (the
-// common typo when the caller's local is already a *Config and they reach
-// for & out of habit) the ConfigLike assertion fails and the default branch
-// returns a zero subset. This is the silent-failure shape we want a future
-// reader to see called out explicitly — if anyone changes the helper to
-// auto-dereference, this test should be updated, not deleted.
-func TestToToolsConfigSubset_DoublePointerReturnsEmpty(t *testing.T) {
-	cfg := config.DefaultConfig() // *config.Config
-	got := ToToolsConfigSubset(&cfg)
+// TestToToolsConfigSubset_NilReturnsEmpty pins the nil-receiver path.
+// The double-pointer regression that motivated this file is now caught
+// at compile time (ToToolsConfigSubset takes ConfigLike, not any), so
+// the only way to hit a zero subset is to pass an interface nil. Keep
+// the empty-return shape stable since callers downstream still rely on
+// the zero value being a safe default (no panic, all fields zero).
+func TestToToolsConfigSubset_NilReturnsEmpty(t *testing.T) {
+	got := ToToolsConfigSubset(nil)
 	if got.Security.Sandbox.AllowShell {
-		t.Fatal("double-pointer started returning a populated subset — re-evaluate the assertion path")
+		t.Fatal("nil ConfigLike should return zero subset (AllowShell=false)")
 	}
-	if len(got.Tools.Disabled) != 0 || len(got.Tools.RequireApproval) != 0 {
-		t.Fatal("double-pointer started returning a populated subset")
+	if got.Tools.Disabled != nil || got.Tools.RequireApproval != nil {
+		t.Fatal("nil ConfigLike should return zero subset (all slice fields nil)")
 	}
 }

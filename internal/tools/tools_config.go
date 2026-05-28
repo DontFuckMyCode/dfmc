@@ -102,68 +102,68 @@ type AgentRetrySection struct {
 	RetryWindowSize int
 }
 
-// ToToolsConfigSubset converts a full Config to the subset.
-// Use this when calling tools.New from engine.Init where the
-// full config is already available.
-func ToToolsConfigSubset(cfg any) ToolsConfigSubset {
+// ToToolsConfigSubset converts a full Config to the subset. The
+// ConfigLike parameter type makes the wiring explicit at compile time:
+// passing **config.Config (the May 2026 typo where the caller already
+// held a *Config and reached for & out of habit) no longer goes through
+// silently as "any" and lands in a zero-valued default branch.
+func ToToolsConfigSubset(cfg ConfigLike) ToolsConfigSubset {
 	return toToolsConfigSubsetFromConfig(cfg)
 }
 
-func toToolsConfigSubsetFromConfig(v any) ToolsConfigSubset {
-	switch c := v.(type) {
-	case ConfigLike:
-		profiles := map[string]ProviderProfile{}
-		for name, p := range c.ProvidersProfiles() {
-			profiles[name] = ProviderProfile{Model: p}
-		}
-		return ToolsConfigSubset{
-			Tools: ToolsSection{
-				Disabled:        c.ToolsDisabled(),
-				Enabled:         c.ToolsEnabled(),
-				Limits:          c.ToolsLimits(),
-				RequireApproval: c.ToolsRequireApproval(),
-				Layers:          c.ToolsLayers(),
-				Shell: ShellSection{
-					Timeout:         c.ToolsShellTimeout(),
-					BlockedCommands: c.ToolsShellBlockedCommands(),
-				},
-			},
-			Agent: AgentSection{
-				ReadSnapshotCap:           c.AgentReadSnapshotCap(),
-				RecentFailureCap:          c.AgentRecentFailureCap(),
-				OrchestrateAutoSubtasks:   c.AgentOrchestrateAutoSubtasks(),
-				ParallelBatchSize:         c.AgentParallelBatchSize(),
-				ToolTimeouts:              c.AgentToolTimeouts(),
-				ToolDefaultTimeoutSeconds: c.AgentToolDefaultTimeoutSeconds(),
-				MaxToolSteps:              c.AgentMaxToolSteps(),
-				MaxToolTokens:             c.AgentMaxToolTokens(),
-				MaxToolResultChars:        c.AgentMaxToolResultChars(),
-				MaxToolResultDataChars:    c.AgentMaxToolResultDataChars(),
-				AutonomousResume:          c.AgentAutonomousResume(),
-				AutonomousPlanning:        c.AgentAutonomousPlanning(),
-				ToolReasoning:             c.AgentToolReasoning(),
-			},
-			Security: SecuritySection{
-				Sandbox: SandboxSection{
-					AllowShell: c.SecuritySandboxAllowShell(),
-					Timeout:    c.SecuritySandboxTimeout(),
-					MaxOutput:  c.SecuritySandboxMaxOutput(),
-				},
-			},
-			WebFetch: WebFetchSection{
-				AllowedHosts: c.WebFetchAllowedHosts(),
-			},
-			Providers: ProviderSection{
-				Primary:  c.ProvidersPrimary(),
-				Fallback: c.ProvidersFallback(),
-				Profiles: profiles,
-			},
-			AgentRetry: AgentRetrySection{
-				RetryWindowSize: c.AgentRetryWindowSize(),
-			},
-		}
-	default:
+func toToolsConfigSubsetFromConfig(c ConfigLike) ToolsConfigSubset {
+	if c == nil {
 		return ToolsConfigSubset{}
+	}
+	profiles := map[string]ProviderProfile{}
+	for name, p := range c.ProvidersProfiles() {
+		profiles[name] = ProviderProfile{Model: p}
+	}
+	return ToolsConfigSubset{
+		Tools: ToolsSection{
+			Disabled:        c.ToolsDisabled(),
+			Enabled:         c.ToolsEnabled(),
+			Limits:          c.ToolsLimits(),
+			RequireApproval: c.ToolsRequireApproval(),
+			Layers:          c.ToolsLayers(),
+			Shell: ShellSection{
+				Timeout:         c.ToolsShellTimeout(),
+				BlockedCommands: c.ToolsShellBlockedCommands(),
+			},
+		},
+		Agent: AgentSection{
+			ReadSnapshotCap:           c.AgentReadSnapshotCap(),
+			RecentFailureCap:          c.AgentRecentFailureCap(),
+			OrchestrateAutoSubtasks:   c.AgentOrchestrateAutoSubtasks(),
+			ParallelBatchSize:         c.AgentParallelBatchSize(),
+			ToolTimeouts:              c.AgentToolTimeouts(),
+			ToolDefaultTimeoutSeconds: c.AgentToolDefaultTimeoutSeconds(),
+			MaxToolSteps:              c.AgentMaxToolSteps(),
+			MaxToolTokens:             c.AgentMaxToolTokens(),
+			MaxToolResultChars:        c.AgentMaxToolResultChars(),
+			MaxToolResultDataChars:    c.AgentMaxToolResultDataChars(),
+			AutonomousResume:          c.AgentAutonomousResume(),
+			AutonomousPlanning:        c.AgentAutonomousPlanning(),
+			ToolReasoning:             c.AgentToolReasoning(),
+		},
+		Security: SecuritySection{
+			Sandbox: SandboxSection{
+				AllowShell: c.SecuritySandboxAllowShell(),
+				Timeout:    c.SecuritySandboxTimeout(),
+				MaxOutput:  c.SecuritySandboxMaxOutput(),
+			},
+		},
+		WebFetch: WebFetchSection{
+			AllowedHosts: c.WebFetchAllowedHosts(),
+		},
+		Providers: ProviderSection{
+			Primary:  c.ProvidersPrimary(),
+			Fallback: c.ProvidersFallback(),
+			Profiles: profiles,
+		},
+		AgentRetry: AgentRetrySection{
+			RetryWindowSize: c.AgentRetryWindowSize(),
+		},
 	}
 }
 
