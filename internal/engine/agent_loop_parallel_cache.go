@@ -92,6 +92,14 @@ func storeToolCache(call provider.ToolCall, res tools.Result, cache map[string]s
 				cap = defaultMaxRangeEntriesPerPath
 			}
 			if len(bucket) >= cap {
+				// Zero the dropped entry's content field before sliding
+				// the header. content holds the file-range read output —
+				// potentially several KB per entry — and would otherwise
+				// stay reachable through the underlying array until the
+				// next geometric grow. With a tight per-path cap and a
+				// long-running loop that re-reads many windows, the
+				// accumulated dead content can outweigh the live cache.
+				bucket[0] = readRangeEntry{}
 				bucket = bucket[1:]
 			}
 			rangeIndex[bucketKey] = append(bucket, readRangeEntry{
