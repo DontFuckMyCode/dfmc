@@ -74,7 +74,7 @@ func (e *Engine) initToolingStack() error {
 	e.AST = ast.NewWithCacheSize(e.Config.AST.CacheSize)
 	e.CodeMap = codemap.New(e.AST, &e.Config.Codemap)
 	e.Context = ctxmgr.New(e.CodeMap)
-	e.Tools = tools.New(tools.ToToolsConfigSubset(&e.Config))
+	e.Tools = tools.New(tools.ToToolsConfigSubset(e.Config))
 	tools.ConfigureRetryWindow(e.Config.Agent.RetryWindowSize)
 	e.Tools.SetTaskStore(taskstore.NewStore(e.Storage.DB()))
 	e.Tools.SetSubagentRunner(e)
