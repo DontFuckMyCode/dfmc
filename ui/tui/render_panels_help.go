@@ -208,7 +208,8 @@ func helpOverlayTabHints(tab string) []string {
 	case "orchestrate":
 		return []string{
 			"shift+f4 jumps here · live hierarchy of agents/subagents/todos/drive/tokens",
-			"↑↓ scroll · pgup/pgdn page · esc close · read-only panel",
+			"↑↓ section cursor · → / enter action menu · j/k/pgup/pgdn page · esc close",
+			"menu per section: open activity/workflow/context/status/providerlog · stop active drive run",
 		}
 	case "shortcuts":
 		return []string{
@@ -218,8 +219,9 @@ func helpOverlayTabHints(tab string) []string {
 	case "contexts":
 		return []string{
 			"shift+f6 jumps here · live snapshot of every concurrently-active agent context",
-			"main · parked · sub-agents · drive run with their tokens / step / last tool",
-			"esc closes · /continue resumes parked · /drive stop kills the active run",
+			"↑↓ section cursor (main / parked / sub-agents / drive) · → / enter action menu",
+			"menu: continue or discard parked agent · stop active drive run · jump to detail tab",
+			"j/k/pgup/pgdn scroll · esc closes",
 		}
 	default:
 		return []string{"f1 chat · f2 files · f3 patch · f4 workflow · f5 activity · f6 memory · f7 conversations · f8 providers · f9 status · f10 codemap · f11 tools · f12 security · shift+f1..f5 prompts/plans/context/orchestrate/shortcuts · ctrl+h help · ctrl+q quit"}
