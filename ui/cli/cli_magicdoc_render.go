@@ -91,7 +91,9 @@ func buildMagicDocContent(ctx context.Context, eng *engine.Engine, projectRoot, 
 		b.WriteString("- (none)\n")
 	} else {
 		for _, n := range hotspots {
-			b.WriteString("- " + formatHotspot(projectRoot, n) + "\n")
+			b.WriteString("- ")
+			b.WriteString(formatHotspot(projectRoot, n))
+			b.WriteByte('\n')
 		}
 	}
 
@@ -111,7 +113,9 @@ func buildMagicDocContent(ctx context.Context, eng *engine.Engine, projectRoot, 
 		b.WriteString("  - (none)\n")
 	} else {
 		for _, item := range recentUser {
-			b.WriteString("  - " + item + "\n")
+			b.WriteString("  - ")
+			b.WriteString(item)
+			b.WriteByte('\n')
 		}
 	}
 	b.WriteString("- Recent assistant outcomes:\n")
@@ -119,7 +123,9 @@ func buildMagicDocContent(ctx context.Context, eng *engine.Engine, projectRoot, 
 		b.WriteString("  - (none)\n")
 	} else {
 		for _, item := range recentAssistant {
-			b.WriteString("  - " + item + "\n")
+			b.WriteString("  - ")
+			b.WriteString(item)
+			b.WriteByte('\n')
 		}
 	}
 
@@ -129,7 +135,7 @@ func buildMagicDocContent(ctx context.Context, eng *engine.Engine, projectRoot, 
 		b.WriteString("  - (none)\n")
 	} else {
 		for _, p := range recentFiles {
-			b.WriteString("  - `" + toProjectRelative(projectRoot, p) + "`\n")
+			fmt.Fprintf(&b, "  - `%s`\n", toProjectRelative(projectRoot, p))
 		}
 	}
 	b.WriteString("- Registered tools:\n")
@@ -137,7 +143,7 @@ func buildMagicDocContent(ctx context.Context, eng *engine.Engine, projectRoot, 
 		b.WriteString("  - (none)\n")
 	} else {
 		for _, name := range clipList(toolsList, 16) {
-			b.WriteString("  - `" + name + "`\n")
+			fmt.Fprintf(&b, "  - `%s`\n", name)
 		}
 	}
 	b.WriteString("- Available skills:\n")
@@ -145,7 +151,7 @@ func buildMagicDocContent(ctx context.Context, eng *engine.Engine, projectRoot, 
 		b.WriteString("  - (none)\n")
 	} else {
 		for _, name := range clipList(skillNames, 16) {
-			b.WriteString("  - `" + name + "`\n")
+			fmt.Fprintf(&b, "  - `%s`\n", name)
 		}
 	}
 
