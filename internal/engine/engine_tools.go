@@ -150,7 +150,7 @@ func (e *Engine) skillToolPolicy(toolName string) string {
 func extractPathsFromPatch(patch string) []string {
 	seen := map[string]struct{}{}
 	var results []string
-	for _, line := range strings.Split(patch, "\n") {
+	for line := range strings.SplitSeq(patch, "\n") {
 		m := diffPathRE.FindStringSubmatch(line)
 		if len(m) < 2 {
 			continue

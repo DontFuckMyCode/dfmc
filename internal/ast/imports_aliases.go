@@ -97,7 +97,7 @@ func extractPythonImportAliases(lines []string) []ImportAlias {
 			// don't follow continuations -- the regex only sees
 			// one line -- but the common case is single-line.
 			body := strings.Trim(m[2], "() ")
-			for _, raw := range strings.Split(body, ",") {
+			for raw := range strings.SplitSeq(body, ",") {
 				name, local := parseAsAlias(raw)
 				if name == "" {
 					continue
@@ -113,7 +113,7 @@ func extractPythonImportAliases(lines []string) []ImportAlias {
 		if m := rePyImportLine.FindStringSubmatch(line); m != nil {
 			// `import os` / `import os, sys` / `import os as o`.
 			body := strings.TrimSpace(m[1])
-			for _, raw := range strings.Split(body, ",") {
+			for raw := range strings.SplitSeq(body, ",") {
 				module, local := parseAsAlias(raw)
 				if module == "" {
 					continue
@@ -182,7 +182,7 @@ func parseJSImportBody(body, module string) []ImportAlias {
 		switch {
 		case strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}"):
 			inner := strings.TrimSpace(segment[1 : len(segment)-1])
-			for _, raw := range strings.Split(inner, ",") {
+			for raw := range strings.SplitSeq(inner, ",") {
 				name, local := parseAsAlias(raw)
 				if name == "" {
 					continue
@@ -250,7 +250,7 @@ func parseJSRequireBody(body, module string) []ImportAlias {
 	if strings.HasPrefix(body, "{") && strings.HasSuffix(body, "}") {
 		inner := strings.TrimSpace(body[1 : len(body)-1])
 		var out []ImportAlias
-		for _, raw := range strings.Split(inner, ",") {
+		for raw := range strings.SplitSeq(inner, ",") {
 			// Destructure rename uses `:` not `as` in JS.
 			raw = strings.TrimSpace(raw)
 			name, local := parseDestructureRename(raw)

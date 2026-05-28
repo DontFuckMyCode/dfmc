@@ -144,7 +144,7 @@ func (t *GitLogTool) Execute(ctx context.Context, req Request) (Result, error) {
 
 func parseGitLog(raw, sep, rec string) []map[string]string {
 	out := make([]map[string]string, 0, 16)
-	for _, entry := range strings.Split(raw, rec) {
+	for entry := range strings.SplitSeq(raw, rec) {
 		entry = strings.Trim(entry, "\n ")
 		if entry == "" {
 			continue

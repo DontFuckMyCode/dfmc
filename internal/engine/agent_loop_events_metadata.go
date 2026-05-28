@@ -196,7 +196,7 @@ func summarizeUnifiedDiffPatch(patch string) ([]string, int, int, int) {
 	files := make([]string, 0, 4)
 	seen := map[string]struct{}{}
 	added, removed, hunks := 0, 0, 0
-	for _, line := range strings.Split(patch, "\n") {
+	for line := range strings.SplitSeq(patch, "\n") {
 		switch {
 		case strings.HasPrefix(line, "+++ "):
 			path := strings.TrimSpace(strings.TrimPrefix(line, "+++ "))

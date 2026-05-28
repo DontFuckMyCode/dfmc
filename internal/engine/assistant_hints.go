@@ -93,7 +93,7 @@ func parseAssistantHintsFull(answer string) AssistantHints {
 				hints.CleanupIDs = append(hints.CleanupIDs, id)
 			}
 		case "next":
-			for _, line := range strings.Split(body, "\n") {
+			for line := range strings.SplitSeq(body, "\n") {
 				action := normalizeNextActionLine(line)
 				if action == "" {
 					continue

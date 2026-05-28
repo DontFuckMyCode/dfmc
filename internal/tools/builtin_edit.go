@@ -133,7 +133,7 @@ func editFileMissMessage(absPath, haystack, needle string, crlfMismatch bool) er
 	// Check whether the first non-trivial line of the needle appears
 	// anywhere — helps the agent anchor the retry.
 	firstLine := ""
-	for _, line := range strings.Split(needle, "\n") {
+	for line := range strings.SplitSeq(needle, "\n") {
 		if s := strings.TrimSpace(line); s != "" {
 			firstLine = line
 			break

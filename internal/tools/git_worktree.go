@@ -51,7 +51,7 @@ func (t *GitWorktreeListTool) Execute(ctx context.Context, req Request) (Result,
 func parseWorktreeList(raw string) []map[string]string {
 	var out []map[string]string
 	var current map[string]string
-	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			if current != nil {

@@ -178,7 +178,7 @@ func joinGitOutput(stdout, stderr string) string {
 
 func splitLines(raw string) []string {
 	out := []string{}
-	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			out = append(out, line)
@@ -188,7 +188,7 @@ func splitLines(raw string) []string {
 }
 
 func firstNonEmptyLine(raw string) string {
-	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
 		if t := strings.TrimSpace(line); t != "" {
 			return t
 		}

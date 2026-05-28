@@ -120,7 +120,7 @@ func parseGitBlamePorcelain(raw string) []map[string]any {
 		haveLineHeader bool
 	)
 
-	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
 		if line == "" {
 			continue
 		}

@@ -86,12 +86,12 @@ func parseGitStatus(raw string) (branch string, staged, modified, untracked []st
 	staged = []string{}
 	modified = []string{}
 	untracked = []string{}
-	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "## ") {
-			branch = strings.TrimSpace(strings.TrimPrefix(line, "## "))
+		if rest, ok := strings.CutPrefix(line, "## "); ok {
+			branch = strings.TrimSpace(rest)
 			continue
 		}
 		if len(line) < 3 {

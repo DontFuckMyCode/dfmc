@@ -199,7 +199,7 @@ func summariseToolResultExcerpt(result provider.Message) string {
 	if body == "" {
 		return ""
 	}
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
