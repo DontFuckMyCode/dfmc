@@ -57,6 +57,40 @@ func TestReloadConfig_RewiresToolReasoningPublisher(t *testing.T) {
 	}
 }
 
+// TestReloadConfig_RewiresTaskStore pins the May 2026 regression where
+// ReloadConfig rebuilt tools.Engine but only re-attached the subagent
+// runner (and the reasoning publisher). The task store was silently
+// dropped, so TodoWriteTool fell back to in-memory after every reload
+// and todos vanished on restart. The fix re-runs the SetTaskStore /
+// SetCodemap / loadMCPClients trio that initToolingStack does.
+func TestReloadConfig_RewiresTaskStore(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	cfg := config.DefaultConfig()
+	eng, err := New(cfg)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	if err := eng.Init(context.Background()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Shutdown() })
+
+	if eng.Tools.TaskStore() == nil {
+		t.Fatal("precondition: task store should be non-nil after Init")
+	}
+
+	if err := eng.ReloadConfig(home); err != nil {
+		t.Fatalf("ReloadConfig: %v", err)
+	}
+
+	if eng.Tools.TaskStore() == nil {
+		t.Fatal("task store dropped after reload — TodoWrite would silently fall back to in-memory")
+	}
+}
+
 func TestMaybeAutoReloadProjectConfig_ReloadsModifiedProjectConfig(t *testing.T) {
 	project := t.TempDir()
 	configDir := filepath.Join(project, ".dfmc")

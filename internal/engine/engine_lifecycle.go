@@ -109,6 +109,19 @@ func (e *Engine) Shutdown() error {
 			e.publishShutdownError("persist_memory", err)
 		}
 	}
+	// LearnedPatternStore.Close drains async saves AND flushes a dirty
+	// in-memory buffer. Without it, patterns observed in the final turn
+	// before shutdown disappear at next start. Run after Memory.Persist
+	// so failures are reported in the same stage block.
+	if e.LearnedPatterns != nil {
+		if err := e.LearnedPatterns.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close_learned_patterns: %w", err))
+			if e.AppLog != nil {
+				e.AppLog.Error("shutdown close_learned_patterns failed", err)
+			}
+			e.publishShutdownError("close_learned_patterns", err)
+		}
+	}
 	if e.Tools != nil {
 		if err := e.Tools.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close_tools: %w", err))

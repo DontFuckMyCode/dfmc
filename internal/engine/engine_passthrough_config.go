@@ -20,6 +20,7 @@ import (
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 	"github.com/dontfuckmycode/dfmc/internal/provider"
+	"github.com/dontfuckmycode/dfmc/internal/taskstore"
 	"github.com/dontfuckmycode/dfmc/internal/tools"
 )
 
@@ -45,6 +46,22 @@ func (e *Engine) ReloadConfig(cwd string) error {
 	e.attachProviderObservers(providers)
 	newTools := tools.New(tools.ToToolsConfigSubset(cfg))
 	newTools.SetSubagentRunner(e)
+	// Re-attach the rest of initToolingStack's wiring. Without these, a
+	// reload silently disables: TodoWrite persistence (falls back to in-
+	// memory; todos vanish on restart), codemap-backed tool lookups, and
+	// every MCP bridge tool. Storage may be nil under degraded startup —
+	// guard so reload doesn't panic on `dfmc help` etc.
+	if e.Storage != nil {
+		newTools.SetTaskStore(taskstore.NewStore(e.Storage.DB()))
+	}
+	if e.CodeMap != nil {
+		newTools.SetCodemap(e.CodeMap)
+	}
+	if mcpErr := loadMCPClients(cfg, newTools); mcpErr != nil {
+		if e.AppLog != nil {
+			e.AppLog.Warn("mcp clients reload failed", map[string]any{"error": mcpErr.Error()})
+		}
+	}
 	if toolReasoningEnabledForConfig(cfg) {
 		newTools.SetReasoningPublisher(func(toolName, reason string) {
 			e.EventBus.Publish(Event{
