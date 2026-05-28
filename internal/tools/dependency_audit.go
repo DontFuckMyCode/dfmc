@@ -213,8 +213,8 @@ func (t *DependencyAuditTool) Execute(ctx context.Context, req Request) (Result,
 
 	var output bytes.Buffer
 	output.WriteString("## Dependency Audit Results\n\n")
-	output.WriteString(fmt.Sprintf("**Total dependencies:** %d\n", result.TotalDeps))
-	output.WriteString(fmt.Sprintf("**Scanned:** %d | **Skipped:** %d\n\n", result.ScannedDeps, result.SkippedDeps))
+	fmt.Fprintf(&output, "**Total dependencies:** %d\n", result.TotalDeps)
+	fmt.Fprintf(&output, "**Scanned:** %d | **Skipped:** %d\n\n", result.ScannedDeps, result.SkippedDeps)
 
 	if len(result.Findings) == 0 && len(result.OutdatedPkgs) == 0 && len(result.LicenseIssues) == 0 {
 		output.WriteString("✅ **No issues found.**\n\n")
@@ -224,8 +224,8 @@ func (t *DependencyAuditTool) Execute(ctx context.Context, req Request) (Result,
 			output.WriteString("| Severity | Package | Version | CVE | Fixed In |\n")
 			output.WriteString("|----------|---------|---------|-----|----------|\n")
 			for _, f := range result.Findings {
-				output.WriteString(fmt.Sprintf("| %s | `%s` | %s | %s | %s |\n",
-					f.Severity, f.Package, f.Version, f.CVE, f.FixedIn))
+				fmt.Fprintf(&output, "| %s | `%s` | %s | %s | %s |\n",
+					f.Severity, f.Package, f.Version, f.CVE, f.FixedIn)
 			}
 			output.WriteString("\n")
 		}
@@ -234,7 +234,7 @@ func (t *DependencyAuditTool) Execute(ctx context.Context, req Request) (Result,
 			output.WriteString("| Package | Current | Latest |\n")
 			output.WriteString("|---------|---------|--------|\n")
 			for _, o := range result.OutdatedPkgs {
-				output.WriteString(fmt.Sprintf("| `%s` | %s | %s |\n", o.Package, o.Current, o.Latest))
+				fmt.Fprintf(&output, "| `%s` | %s | %s |\n", o.Package, o.Current, o.Latest)
 			}
 			output.WriteString("\n")
 		}
@@ -243,13 +243,13 @@ func (t *DependencyAuditTool) Execute(ctx context.Context, req Request) (Result,
 			output.WriteString("| Package | License | Severity |\n")
 			output.WriteString("|---------|---------|----------|\n")
 			for _, l := range result.LicenseIssues {
-				output.WriteString(fmt.Sprintf("| `%s` | %s | %s |\n", l.Package, l.License, l.Severity))
+				fmt.Fprintf(&output, "| `%s` | %s | %s |\n", l.Package, l.License, l.Severity)
 			}
 			output.WriteString("\n")
 		}
 	}
 
-	output.WriteString(fmt.Sprintf("> %s\n", summary))
+	fmt.Fprintf(&output, "> %s\n", summary)
 
 	return Result{
 		Output: output.String(),

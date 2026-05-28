@@ -143,7 +143,7 @@ func (t *AuditTool) Execute(ctx context.Context, req Request) (Result, error) {
 
 	var sb strings.Builder
 	sb.WriteString("## Security Audit Report\n")
-	sb.WriteString(fmt.Sprintf("**Files scanned:** %d  **Issues found:** %d\n\n", len(goFiles), len(findings)))
+	fmt.Fprintf(&sb, "**Files scanned:** %d  **Issues found:** %d\n\n", len(goFiles), len(findings))
 
 	if len(findings) == 0 {
 		sb.WriteString("No security issues detected.\n")
@@ -161,26 +161,26 @@ func (t *AuditTool) Execute(ctx context.Context, req Request) (Result, error) {
 	sb.WriteString("### Summary\n")
 	for _, sev := range []AuditSeverity{AuditCritical, AuditHigh, AuditMedium, AuditLow, AuditInfo} {
 		if count := severityCounts[sev]; count > 0 {
-			sb.WriteString(fmt.Sprintf("- **%s:** %d\n", sev, count))
+			fmt.Fprintf(&sb, "- **%s:** %d\n", sev, count)
 		}
 	}
 	sb.WriteString("\n### Findings\n\n")
 
 	for i, f := range findings {
-		sb.WriteString(fmt.Sprintf("#### %d. [%s] %s\n", i+1, f.Severity, f.Category))
-		sb.WriteString(fmt.Sprintf("**Location:** `%s:%d`\n", f.File, f.Line))
+		fmt.Fprintf(&sb, "#### %d. [%s] %s\n", i+1, f.Severity, f.Category)
+		fmt.Fprintf(&sb, "**Location:** `%s:%d`\n", f.File, f.Line)
 		if f.CWE != "" {
-			sb.WriteString(fmt.Sprintf("**CWE:** %s\n", f.CWE))
+			fmt.Fprintf(&sb, "**CWE:** %s\n", f.CWE)
 		}
-		sb.WriteString(fmt.Sprintf("**Finding:** %s\n", f.Message))
+		fmt.Fprintf(&sb, "**Finding:** %s\n", f.Message)
 		if f.Exploitable != "" {
-			sb.WriteString(fmt.Sprintf("**Exploitable:** %s\n", f.Exploitable))
+			fmt.Fprintf(&sb, "**Exploitable:** %s\n", f.Exploitable)
 		}
 		if f.Suggestion != "" {
-			sb.WriteString(fmt.Sprintf("**Fix:** %s\n", f.Suggestion))
+			fmt.Fprintf(&sb, "**Fix:** %s\n", f.Suggestion)
 		}
 		if f.Snippet != "" {
-			sb.WriteString(fmt.Sprintf("```go\n%s\n```\n", f.Snippet))
+			fmt.Fprintf(&sb, "```go\n%s\n```\n", f.Snippet)
 		}
 		sb.WriteString("\n")
 	}

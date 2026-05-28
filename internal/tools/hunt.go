@@ -137,7 +137,7 @@ func (t *HuntTool) Execute(ctx context.Context, req Request) (Result, error) {
 
 	var sb strings.Builder
 	sb.WriteString("## Bug Hunt Report\n")
-	sb.WriteString(fmt.Sprintf("**Files scanned:** %d  **Issues found:** %d\n\n", len(goFiles), len(findings)))
+	fmt.Fprintf(&sb, "**Files scanned:** %d  **Issues found:** %d\n\n", len(goFiles), len(findings))
 
 	if len(findings) == 0 {
 		sb.WriteString("No issues detected.\n")
@@ -158,7 +158,7 @@ func (t *HuntTool) Execute(ctx context.Context, req Request) (Result, error) {
 	sb.WriteString("### By Severity\n")
 	for _, s := range []BugSeverity{SevCritical, SevHigh, SevMedium, SevLow, SevInfo} {
 		if c := sevCounts[s]; c > 0 {
-			sb.WriteString(fmt.Sprintf("- **%s:** %d\n", s, c))
+			fmt.Fprintf(&sb, "- **%s:** %d\n", s, c)
 		}
 	}
 	sb.WriteString("\n### By Category\n")
@@ -172,7 +172,7 @@ func (t *HuntTool) Execute(ctx context.Context, req Request) (Result, error) {
 	}
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].n > pairs[j].n })
 	for _, p := range pairs {
-		sb.WriteString(fmt.Sprintf("- **%s:** %d\n", p.cat, p.n))
+		fmt.Fprintf(&sb, "- **%s:** %d\n", p.cat, p.n)
 	}
 	sb.WriteString("\n---\n\n### Findings\n")
 	for i, f := range findings {
@@ -184,15 +184,15 @@ func (t *HuntTool) Execute(ctx context.Context, req Request) (Result, error) {
 		} else if f.Severity == SevLow {
 			emoji = "💡"
 		}
-		sb.WriteString(fmt.Sprintf("**%d. %s [%s] %s**  \n", i+1, emoji, f.Severity, f.Category))
-		sb.WriteString(fmt.Sprintf("`%s:%d`\n\n", f.File, f.Line))
+		fmt.Fprintf(&sb, "**%d. %s [%s] %s**  \n", i+1, emoji, f.Severity, f.Category)
+		fmt.Fprintf(&sb, "`%s:%d`\n\n", f.File, f.Line)
 		sb.WriteString(f.Message)
 		sb.WriteByte('\n')
 		if f.Code != "" {
-			sb.WriteString(fmt.Sprintf("```go\n%s\n```\n", f.Code))
+			fmt.Fprintf(&sb, "```go\n%s\n```\n", f.Code)
 		}
 		if f.Suggestion != "" {
-			sb.WriteString(fmt.Sprintf("**Fix:** %s\n", f.Suggestion))
+			fmt.Fprintf(&sb, "**Fix:** %s\n", f.Suggestion)
 		}
 		sb.WriteString("\n")
 	}
