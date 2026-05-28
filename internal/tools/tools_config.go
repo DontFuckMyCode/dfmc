@@ -27,12 +27,12 @@ package tools
 // explicit and prevents indirect mutations of the full Config from
 // silently affecting tool behaviour.
 type ToolsConfigSubset struct {
-	Tools       ToolsSection
-	Agent       AgentSection
-	Security    SecuritySection
-	WebFetch    WebFetchSection
-	Providers   ProviderSection
-	AgentRetry  AgentRetrySection
+	Tools      ToolsSection
+	Agent      AgentSection
+	Security   SecuritySection
+	WebFetch   WebFetchSection
+	Providers  ProviderSection
+	AgentRetry AgentRetrySection
 }
 
 // ToolsSection covers the Tools config group.
@@ -41,6 +41,7 @@ type ToolsSection struct {
 	Enabled         []string
 	Limits          map[string]float64
 	RequireApproval []string
+	Layers          []string
 	Shell           ShellSection
 }
 
@@ -52,19 +53,19 @@ type ShellSection struct {
 
 // AgentSection is the Agent config group.
 type AgentSection struct {
-	ReadSnapshotCap            int
-	RecentFailureCap           int
-	OrchestrateAutoSubtasks    int
-	ParallelBatchSize          int
-	ToolTimeouts               map[string]int
-	ToolDefaultTimeoutSeconds  int
-	MaxToolSteps               int
-	MaxToolTokens              int
-	MaxToolResultChars         int
-	MaxToolResultDataChars     int
-	AutonomousResume           string
-	AutonomousPlanning         string
-	ToolReasoning              string
+	ReadSnapshotCap           int
+	RecentFailureCap          int
+	OrchestrateAutoSubtasks   int
+	ParallelBatchSize         int
+	ToolTimeouts              map[string]int
+	ToolDefaultTimeoutSeconds int
+	MaxToolSteps              int
+	MaxToolTokens             int
+	MaxToolResultChars        int
+	MaxToolResultDataChars    int
+	AutonomousResume          string
+	AutonomousPlanning        string
+	ToolReasoning             string
 }
 
 // SecuritySection mirrors config.SecurityConfig for the fields tools read.
@@ -86,9 +87,9 @@ type WebFetchSection struct {
 
 // ProviderSection mirrors the provider fields needed by project_info.
 type ProviderSection struct {
-	Primary   string
-	Fallback  []string
-	Profiles  map[string]ProviderProfile
+	Primary  string
+	Fallback []string
+	Profiles map[string]ProviderProfile
 }
 
 // ProviderProfile mirrors a single provider profile.
@@ -121,6 +122,7 @@ func toToolsConfigSubsetFromConfig(v any) ToolsConfigSubset {
 				Enabled:         c.ToolsEnabled(),
 				Limits:          c.ToolsLimits(),
 				RequireApproval: c.ToolsRequireApproval(),
+				Layers:          c.ToolsLayers(),
 				Shell: ShellSection{
 					Timeout:         c.ToolsShellTimeout(),
 					BlockedCommands: c.ToolsShellBlockedCommands(),
@@ -173,6 +175,7 @@ type ConfigLike interface {
 	ToolsEnabled() []string
 	ToolsLimits() map[string]float64
 	ToolsRequireApproval() []string
+	ToolsLayers() []string
 	ToolsShellTimeout() string
 	ToolsShellBlockedCommands() []string
 	AgentReadSnapshotCap() int

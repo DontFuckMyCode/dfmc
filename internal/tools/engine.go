@@ -69,6 +69,7 @@ type Engine struct {
 	registry        map[string]Tool
 	cfg             ToolsConfigSubset
 	closed          bool
+	activeLayers    []Layer // which non-meta layers are active; nil=all layers
 	failureMu       sync.Mutex
 	recentFailures  map[string]int
 	recentFailOrder []string

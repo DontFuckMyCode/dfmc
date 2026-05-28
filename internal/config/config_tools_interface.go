@@ -24,6 +24,11 @@ func (c *Config) ToolsLimits() map[string]float64 {
 	return c.Tools.Limits
 }
 
+// ToolsLayers returns the tools.layers list from config.
+func (c *Config) ToolsLayers() []string {
+	return c.Tools.Layers
+}
+
 // ToolsRequireApproval returns the tools.require_approval list from config.
 func (c *Config) ToolsRequireApproval() []string {
 	return c.Tools.RequireApproval

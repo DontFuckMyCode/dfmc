@@ -46,7 +46,7 @@ func (e *Engine) List() []string {
 	defer e.mu.RUnlock()
 	out := make([]string, 0, len(e.registry))
 	for name := range e.registry {
-		if e.disabled.IsDisabled(name) {
+		if !e.isToolVisible(name) {
 			continue
 		}
 		out = append(out, name)
@@ -64,7 +64,7 @@ func (e *Engine) Specs() []ToolSpec {
 	defer e.mu.RUnlock()
 	out := make([]ToolSpec, 0, len(e.registry))
 	for _, tool := range e.registry {
-		if e.disabled.IsDisabled(tool.Name()) {
+		if !e.isToolVisible(tool.Name()) {
 			continue
 		}
 		out = append(out, specForTool(tool))
@@ -177,6 +177,27 @@ func (e *Engine) ListAll() []string {
 // DisabledSnapshot returns the disabled set for config persistence.
 func (e *Engine) DisabledSnapshot() []string {
 	return e.disabled.Snapshot()
+}
+
+// isToolVisible reports whether a tool should appear in List/Specs/Search
+// results. A tool is visible when:
+//   - it is NOT in the disabled set, AND
+//   - its layer is active (nil activeLayers = all layers active)
+//
+// Protected tools are always visible regardless of layer.
+// Meta tools (tool_search, etc.) are always visible.
+func (e *Engine) isToolVisible(name string) bool {
+	if e.disabled.IsDisabled(name) {
+		return false
+	}
+	if IsToolProtected(name) {
+		return true
+	}
+	layer := ToolLayerOf(name)
+	if !isLayerEnabled(layer, e.activeLayers) {
+		return false
+	}
+	return true
 }
 
 func specForTool(tool Tool) ToolSpec {

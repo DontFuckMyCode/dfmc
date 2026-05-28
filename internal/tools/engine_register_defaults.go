@@ -30,6 +30,15 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/config"
 )
 
+// Compile-time guard: *config.Config must satisfy ConfigLike so
+// ToToolsConfigSubset's type assertion never silently falls through to
+// the empty default. This catches the regression class from May 2026
+// where engine_init_steps.go was passing **config.Config and the
+// assertion failed silently, zeroing AllowShell / Disabled / Layers /
+// BlockedCommands. If anyone adds a new field to ToolsConfigSubset and
+// forgets the matching ConfigLike method, this line breaks the build.
+var _ ConfigLike = (*config.Config)(nil)
+
 func NewFromConfig(cfg *config.Config) *Engine {
 	return New(ToToolsConfigSubset(cfg))
 }
@@ -46,6 +55,7 @@ func New(cfg ToolsConfigSubset) *Engine {
 	e := &Engine{
 		registry:         map[string]Tool{},
 		cfg:              cfg,
+		activeLayers:    activeLayersFromConfig(cfg.Tools.Layers),
 		recentFailures:   map[string]int{},
 		recentFailOrder:  []string{},
 		readSnapshots:    map[string]string{},

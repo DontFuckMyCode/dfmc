@@ -53,6 +53,7 @@ type ToolsConfig struct {
 	Limits                 map[string]float64 `yaml:"limits,omitempty"`
 	RequireApproval        []string           `yaml:"require_approval,omitempty"`
 	RequireApprovalNetwork []string           `yaml:"require_approval_network,omitempty"`
+	Layers                 []string           `yaml:"layers,omitempty"`
 }
 
 type ShellToolConfig struct {
