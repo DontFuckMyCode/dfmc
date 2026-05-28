@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // TestOrchestrateView_RendersAllSections — the orchestrate panel
@@ -217,6 +220,71 @@ func TestOrchestrateView_RecentActivityFeedShowsLast(t *testing.T) {
 	// Older events that fell off the 8-line window must NOT appear.
 	if strings.Contains(view, "older event 1") || strings.Contains(view, "older event 2") {
 		t.Errorf("oldest events should be clipped at 8-line window. Got:\n%s", view)
+	}
+}
+
+// TestOrchestrateOverlayKey_UpDownMovesSection pins the new
+// section-cursor navigation on the Orchestrate overlay (Alt+R).
+// Previously the handler was scroll-only — the panel was a static wall
+// of seven sections with no way to act on any of them.
+func TestOrchestrateOverlayKey_UpDownMovesSection(t *testing.T) {
+	m := NewModel(context.Background(), nil)
+	out, _ := m.handleOrchestrateKey(tea.KeyMsg{Type: tea.KeyDown})
+	if got := out.(Model).orchestrate.selectedSection; got != orchestrateSectionSubagents {
+		t.Fatalf("down: selectedSection got %d, want %d", got, orchestrateSectionSubagents)
+	}
+	// Clamp at last section.
+	m2 := NewModel(context.Background(), nil)
+	m2.orchestrate.selectedSection = orchestrateSectionRecent
+	out, _ = m2.handleOrchestrateKey(tea.KeyMsg{Type: tea.KeyDown})
+	if got := out.(Model).orchestrate.selectedSection; got != orchestrateSectionRecent {
+		t.Fatalf("down on last section should clamp: got %d, want %d", got, orchestrateSectionRecent)
+	}
+	// Clamp at first section.
+	m3 := NewModel(context.Background(), nil)
+	out, _ = m3.handleOrchestrateKey(tea.KeyMsg{Type: tea.KeyUp})
+	if got := out.(Model).orchestrate.selectedSection; got != orchestrateSectionMain {
+		t.Fatalf("up on first section should clamp: got %d, want %d", got, orchestrateSectionMain)
+	}
+}
+
+// TestOrchestrateOverlayKey_RightOpensActionMenu — right/enter must
+// open a context-aware action menu on every section. Empty menus
+// (the bug the action-menu audit was designed to catch) would surface
+// here as "len(actions) == 0 after opening".
+func TestOrchestrateOverlayKey_RightOpensActionMenu(t *testing.T) {
+	for sec := range orchestrateSectionCount {
+		m := NewModel(context.Background(), nil)
+		m.orchestrate.selectedSection = sec
+		out, _ := m.handleOrchestrateKey(tea.KeyMsg{Type: tea.KeyRight})
+		mm := out.(Model)
+		if !mm.actionMenu.open {
+			t.Errorf("section %d: right should open action menu", sec)
+			continue
+		}
+		if mm.actionMenu.owner != "Orchestrate" {
+			t.Errorf("section %d: owner got %q, want Orchestrate", sec, mm.actionMenu.owner)
+		}
+		if len(mm.actionMenu.actions) == 0 {
+			t.Errorf("section %d: action menu opened with 0 actions", sec)
+		}
+	}
+}
+
+// TestRenderOrchestrateView_HighlightsSelectedSection — the selected
+// section title must carry a ▶ cursor so the user can see which one
+// right/enter would act on.
+func TestRenderOrchestrateView_HighlightsSelectedSection(t *testing.T) {
+	m := newCoverageModel(t)
+	m.orchestrate.selectedSection = orchestrateSectionDrive
+	out := stripANSI(m.renderOrchestrateView(120))
+	driveIdx := strings.Index(out, "DRIVE RUN")
+	if driveIdx < 0 {
+		t.Fatal("DRIVE RUN section missing from render")
+	}
+	head := out[max(driveIdx-40, 0):driveIdx]
+	if !strings.Contains(head, "▶") {
+		t.Errorf("expected ▶ cursor on DRIVE RUN section title, head:\n%s", head)
 	}
 }
 

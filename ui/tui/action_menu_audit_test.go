@@ -87,6 +87,10 @@ func TestActionMenus_LabelsAndAccelsAreClean(t *testing.T) {
 			panel: "Contexts",
 			open:  func(m Model) Model { return m.openContextsActionMenu() },
 		},
+		{
+			panel: "Orchestrate",
+			open:  func(m Model) Model { return m.openOrchestrateActionMenu() },
+		},
 	}
 	for _, c := range cases {
 		m := NewModel(context.Background(), nil)
@@ -155,6 +159,7 @@ func TestActionMenus_OwnerNameMatchesPanelKey(t *testing.T) {
 		}, "Conversations"},
 		{"ContextPanel", func(m Model) Model { return m.openContextActionMenu() }, nil, "Context"},
 		{"Contexts", func(m Model) Model { return m.openContextsActionMenu() }, nil, "Contexts"},
+		{"Orchestrate", func(m Model) Model { return m.openOrchestrateActionMenu() }, nil, "Orchestrate"},
 	}
 	for _, c := range cases {
 		m := NewModel(context.Background(), nil)

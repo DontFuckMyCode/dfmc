@@ -156,7 +156,7 @@ type diagnosticPanelsState struct {
 	contextPanel  contextPanelState
 	providers     providersPanelState
 	statusPanel   statusPanelState
-	orchestrate   scrollOnlyPanelState
+	orchestrate   orchestratePanelState
 	shortcuts     scrollOnlyPanelState
 	providerLog   scrollOnlyPanelState
 	contexts      contextsPanelState
@@ -176,6 +176,17 @@ type diagnosticPanelsState struct {
 // cheap.
 type scrollOnlyPanelState struct {
 	scroll int
+}
+
+// orchestratePanelState — section-aware navigation for the Orchestrate
+// overlay (Alt+R / Shift+F4). Same shape as contextsPanelState: cursor
+// across the seven top-level sections, plus the shared scroll offset.
+// Up/down move the cursor, j/k/pgup/pgdn/g/G scroll the body, right/
+// enter opens a context-aware action menu (jump to Activity / Workflow,
+// stop the active drive run, etc.).
+type orchestratePanelState struct {
+	scroll          int
+	selectedSection int
 }
 
 // contextsPanelState — section-aware navigation for the "Active

@@ -18,10 +18,10 @@ import (
 
 // orchestrateTodosSection — the active TODO ladder with done/doing/
 // pending counts and the active form of the in-flight item.
-func (m Model) orchestrateTodosSection(width int) []string {
+func (m Model) orchestrateTodosSection(width int, selected bool) []string {
 	todos := m.workflowTodos()
 	total, pending, doing, done := summarizeWorkflowTodos(todos)
-	header := accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("TODOS")
+	header := orchestrateSectionMarker(selected) + accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("TODOS")
 	if total == 0 {
 		header += "  " + subtleStyle.Render("(none)")
 		return []string{
@@ -65,8 +65,8 @@ func (m Model) orchestrateTodosSection(width int) []string {
 // or delegate_task. Renders the hierarchical tree as already
 // formatted by statsPanelInfo so root → leaf indentation matches
 // the stats panel.
-func (m Model) orchestrateTaskStoreSection(width int) []string {
-	header := accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("TASK STORE")
+func (m Model) orchestrateTaskStoreSection(width int, selected bool) []string {
+	header := orchestrateSectionMarker(selected) + accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("TASK STORE")
 	info := m.statsPanelInfo()
 	lines := info.TaskTreeLines
 
@@ -109,8 +109,8 @@ func (m Model) orchestrateTaskStoreSection(width int) []string {
 // orchestrateDriveSection — the active drive run + its TODO ladder
 // with the routed provider tag per TODO so the user can see "which
 // model is doing T3 vs T4".
-func (m Model) orchestrateDriveSection(width int) []string {
-	header := accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("DRIVE RUN")
+func (m Model) orchestrateDriveSection(width int, selected bool) []string {
+	header := orchestrateSectionMarker(selected) + accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("DRIVE RUN")
 	run := m.selectedRunForWorkflow()
 	if run == nil || strings.TrimSpace(string(run.Status)) == "" {
 		return []string{

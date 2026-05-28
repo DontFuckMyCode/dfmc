@@ -26,6 +26,31 @@ import (
 	"strings"
 )
 
+// Section indices for the Orchestrate overlay's cursor. Keep contiguous
+// so up/down arithmetic stays simple; orchestrateSectionCount is the
+// clamp bound used by handleOrchestrateKey.
+const (
+	orchestrateSectionMain      = 0
+	orchestrateSectionSubagents = 1
+	orchestrateSectionTodos     = 2
+	orchestrateSectionTaskStore = 3
+	orchestrateSectionDrive     = 4
+	orchestrateSectionTokens    = 5
+	orchestrateSectionRecent    = 6
+	orchestrateSectionCount     = 7
+)
+
+// orchestrateSectionMarker mirrors contextsSectionMarker — the selected
+// section title gets a "▶ " accent, everything else is padded by two
+// spaces so widths line up. Lipgloss adds ANSI escapes around "▶" so
+// tests look for the literal glyph rather than a specific style.
+func orchestrateSectionMarker(selected bool) string {
+	if selected {
+		return accentStyle.Bold(true).Render("▶ ")
+	}
+	return "  "
+}
+
 func (m Model) renderOrchestrateView(width int) string {
 	inner := width
 	if inner > 110 {
@@ -34,27 +59,28 @@ func (m Model) renderOrchestrateView(width int) string {
 	if inner < 40 {
 		inner = 40
 	}
+	sel := m.orchestrate.selectedSection
 
 	parts := []string{
 		sectionHeader("◬", "Orchestrate"),
-		subtleStyle.Render("alt+r jumps here · live hierarchy of agents · todos · drive · tokens"),
+		subtleStyle.Render("↑↓ section · → / enter action menu · j/k/pgup/pgdn scroll · alt+r jumps here"),
 		renderDivider(inner),
 		"",
 	}
 
-	parts = append(parts, m.orchestrateMainAgentSection(inner)...)
+	parts = append(parts, m.orchestrateMainAgentSection(inner, sel == orchestrateSectionMain)...)
 	parts = append(parts, "")
-	parts = append(parts, m.orchestrateSubagentsSection(inner)...)
+	parts = append(parts, m.orchestrateSubagentsSection(inner, sel == orchestrateSectionSubagents)...)
 	parts = append(parts, "")
-	parts = append(parts, m.orchestrateTodosSection(inner)...)
+	parts = append(parts, m.orchestrateTodosSection(inner, sel == orchestrateSectionTodos)...)
 	parts = append(parts, "")
-	parts = append(parts, m.orchestrateTaskStoreSection(inner)...)
+	parts = append(parts, m.orchestrateTaskStoreSection(inner, sel == orchestrateSectionTaskStore)...)
 	parts = append(parts, "")
-	parts = append(parts, m.orchestrateDriveSection(inner)...)
+	parts = append(parts, m.orchestrateDriveSection(inner, sel == orchestrateSectionDrive)...)
 	parts = append(parts, "")
-	parts = append(parts, m.orchestrateTokensSection(inner)...)
+	parts = append(parts, m.orchestrateTokensSection(inner, sel == orchestrateSectionTokens)...)
 	parts = append(parts, "")
-	parts = append(parts, m.orchestrateRecentSection(inner)...)
+	parts = append(parts, m.orchestrateRecentSection(inner, sel == orchestrateSectionRecent)...)
 
 	return strings.Join(parts, "\n")
 }
@@ -64,8 +90,8 @@ func (m Model) renderOrchestrateView(width int) string {
 // happened" feed inside the panel. Uses the same activityLog that
 // feeds the bottom-of-chat notice line; capped at the last 8 lines
 // so the panel doesn't grow unbounded.
-func (m Model) orchestrateRecentSection(width int) []string {
-	header := accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("RECENT ACTIVITY")
+func (m Model) orchestrateRecentSection(width int, selected bool) []string {
+	header := orchestrateSectionMarker(selected) + accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("RECENT ACTIVITY")
 	log := m.activityLog
 	if len(log) == 0 {
 		return []string{
@@ -87,8 +113,8 @@ func (m Model) orchestrateRecentSection(width int) []string {
 // orchestrateTokensSection — context budget + session totals + the
 // per-turn pressure metrics. One block where the user can read the
 // whole "are we running close to the budget?" story.
-func (m Model) orchestrateTokensSection(_ int) []string {
-	out := []string{accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("TOKENS")}
+func (m Model) orchestrateTokensSection(_ int, selected bool) []string {
+	out := []string{orchestrateSectionMarker(selected) + accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("TOKENS")}
 
 	info := m.statsPanelInfo()
 	if info.MaxContext > 0 {

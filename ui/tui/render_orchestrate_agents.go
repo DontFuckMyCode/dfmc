@@ -17,8 +17,8 @@ import (
 // loop doing right now" card. Shows provider+model the user is
 // paying for, current phase, step counter, live loop tokens, and
 // the per-turn momentum badges.
-func (m Model) orchestrateMainAgentSection(width int) []string {
-	out := []string{accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("MAIN AGENT")}
+func (m Model) orchestrateMainAgentSection(width int, selected bool) []string {
+	out := []string{orchestrateSectionMarker(selected) + accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("MAIN AGENT")}
 	provider := strings.TrimSpace(m.agentLoop.provider)
 	model := strings.TrimSpace(m.agentLoop.model)
 	if provider == "" {
@@ -101,13 +101,13 @@ func (m Model) orchestrateMainAgentSection(width int) []string {
 // orchestrateSubagentsSection lists every active subagent with its
 // provider+model+task. The user explicitly wanted to see "which
 // model is doing which job" — this is the exact answer.
-func (m Model) orchestrateSubagentsSection(width int) []string {
+func (m Model) orchestrateSubagentsSection(width int, selected bool) []string {
 	count := m.telemetry.activeSubagentCount
 	limitHint := ""
 	if cfg := m.subagentLimitFromConfig(); cfg > 0 {
 		limitHint = fmt.Sprintf(" / %d limit", cfg)
 	}
-	header := accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("SUBAGENTS")
+	header := orchestrateSectionMarker(selected) + accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("SUBAGENTS")
 	header += "  " + subtleStyle.Render(fmt.Sprintf("(%d active%s)", count, limitHint))
 	out := []string{header}
 

@@ -23,10 +23,9 @@ import (
 // section structure scannable while paging.
 const scrollOnlyOverlayPageStep = 10
 
-func (m Model) handleOrchestrateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	m.orchestrate.scroll = adjustScrollOnlyOffset(msg.String(), m.orchestrate.scroll)
-	return m, nil
-}
+// handleOrchestrateKey lives in render_orchestrate_keys.go — it now
+// drives section-cursor navigation + an action menu on top of the
+// shared scroll grammar.
 
 func (m Model) handleShortcutsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.shortcuts.scroll = adjustScrollOnlyOffset(msg.String(), m.shortcuts.scroll)
