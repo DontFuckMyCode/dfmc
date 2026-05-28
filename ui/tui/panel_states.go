@@ -159,7 +159,7 @@ type diagnosticPanelsState struct {
 	orchestrate   scrollOnlyPanelState
 	shortcuts     scrollOnlyPanelState
 	providerLog   scrollOnlyPanelState
-	contexts      scrollOnlyPanelState
+	contexts      contextsPanelState
 	// helpOverlay scroll is shared by the Ctrl+H overlay rendered on
 	// non-Chat tabs (the Chat-tab inline widget has its own scroll
 	// behaviour). j/k/pgup/pgdn/g/G adjust it via handleHelpOverlayKey.
@@ -176,6 +176,17 @@ type diagnosticPanelsState struct {
 // cheap.
 type scrollOnlyPanelState struct {
 	scroll int
+}
+
+// contextsPanelState — section-aware navigation for the "Active
+// Contexts" overlay (Shift+F6). Sections are MAIN / PARKED / SUBAGENT /
+// DRIVE; up/down move the section cursor, j/k/pgup/pgdn/g/G scroll the
+// body, right/enter opens a context-aware action menu so the user can
+// resume/discard the parked agent or stop the active drive run instead
+// of switching to chat and typing the slash command.
+type contextsPanelState struct {
+	scroll          int
+	selectedSection int
 }
 
 // statusPanelState — arrow-key navigation state for the Status (F2)

@@ -27,28 +27,48 @@ import (
 	"github.com/dontfuckmycode/dfmc/internal/drive"
 )
 
+// Section indices used by the cursor + action menu. Keep contiguous so
+// up/down arithmetic stays simple.
+const (
+	contextsSectionMain     = 0
+	contextsSectionParked   = 1
+	contextsSectionSubagent = 2
+	contextsSectionDrive    = 3
+	contextsSectionCount    = 4
+)
+
 func (m Model) renderContextsView(width int) string {
 	if width < 40 {
 		width = 40
 	}
+	sel := m.contexts.selectedSection
 	parts := []string{
 		sectionHeader("◐", "Active Contexts"),
-		subtleStyle.Render("shift+f6 jumps here · esc closes · every concurrently-live agent surfaces below"),
+		subtleStyle.Render("↑↓ section · → / enter action menu · j/k/pgup/pgdn scroll · esc closes"),
 		renderDivider(min(width, 110)),
 		"",
 	}
-	parts = append(parts, m.contextsMainSection(width)...)
+	parts = append(parts, m.contextsMainSection(width, sel == contextsSectionMain)...)
 	parts = append(parts, "")
-	parts = append(parts, m.contextsParkedSection(width)...)
+	parts = append(parts, m.contextsParkedSection(width, sel == contextsSectionParked)...)
 	parts = append(parts, "")
-	parts = append(parts, m.contextsSubagentSection(width)...)
+	parts = append(parts, m.contextsSubagentSection(width, sel == contextsSectionSubagent)...)
 	parts = append(parts, "")
-	parts = append(parts, m.contextsDriveSection(width)...)
+	parts = append(parts, m.contextsDriveSection(width, sel == contextsSectionDrive)...)
 	return strings.Join(parts, "\n")
 }
 
-func (m Model) contextsMainSection(width int) []string {
-	out := []string{accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("MAIN AGENT")}
+// contextsSectionMarker returns the cursor prefix for a section title:
+// "▶ " when selected, two spaces otherwise so titles align across states.
+func contextsSectionMarker(selected bool) string {
+	if selected {
+		return accentStyle.Bold(true).Render("▶ ")
+	}
+	return "  "
+}
+
+func (m Model) contextsMainSection(width int, selected bool) []string {
+	out := []string{contextsSectionMarker(selected) + accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("MAIN AGENT")}
 	st := m.status
 	provider := blankFallback(st.Provider, "(none)")
 	model := blankFallback(st.Model, "-")
@@ -87,8 +107,8 @@ func (m Model) contextsMainSection(width int) []string {
 	return out
 }
 
-func (m Model) contextsParkedSection(width int) []string {
-	out := []string{accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("PARKED AGENT")}
+func (m Model) contextsParkedSection(width int, selected bool) []string {
+	out := []string{contextsSectionMarker(selected) + accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("PARKED AGENT")}
 	if m.eng == nil || !m.eng.HasParkedAgent() {
 		out = append(out, "  "+subtleStyle.Render("(no parked agent — /continue would have nothing to resume)"))
 		return out
@@ -117,9 +137,9 @@ func (m Model) contextsParkedSection(width int) []string {
 	return out
 }
 
-func (m Model) contextsSubagentSection(width int) []string {
+func (m Model) contextsSubagentSection(width int, selected bool) []string {
 	_ = width
-	out := []string{accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("SUB-AGENTS")}
+	out := []string{contextsSectionMarker(selected) + accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("SUB-AGENTS")}
 	if m.eng == nil {
 		out = append(out, "  "+subtleStyle.Render("(engine offline)"))
 		return out
@@ -136,9 +156,9 @@ func (m Model) contextsSubagentSection(width int) []string {
 	return out
 }
 
-func (m Model) contextsDriveSection(width int) []string {
+func (m Model) contextsDriveSection(width int, selected bool) []string {
 	_ = width
-	out := []string{accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("DRIVE")}
+	out := []string{contextsSectionMarker(selected) + accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("DRIVE")}
 	var active *drive.Run
 	for _, r := range m.workflow.runs {
 		if r == nil {
