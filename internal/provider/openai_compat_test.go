@@ -135,15 +135,20 @@ func TestNormalizeOpenAIBaseURL(t *testing.T) {
 }
 
 func TestOpenAICompatibleProviderCountTokens(t *testing.T) {
+	// Empty model falls back to defaultHeuristic (chars/4.2).
+	// "hello world" → 11 chars / 4.2 ≈ 3
+	// "one" → 3 chars / 4.2 < 1, floor=1 wordCount=1
+	// "" → 0
+	// "  multiple   spaces  " → 11 chars / 4.2 ≈ 3
 	p := &OpenAICompatibleProvider{}
 	tests := []struct {
 		text string
 		want int
 	}{
-		{"hello world", 2},
+		{"hello world", 3},
 		{"one", 1},
 		{"", 0},
-		{"  multiple   spaces  ", 2},
+		{"  multiple   spaces  ", 5},
 	}
 	for _, tt := range tests {
 		if got := p.CountTokens(tt.text); got != tt.want {

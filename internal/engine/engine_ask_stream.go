@@ -135,7 +135,7 @@ func (e *Engine) StreamAsk(ctx context.Context, question string) (<-chan provide
 		System:       systemPrompt,
 		SystemBlocks: systemBlocks,
 	}
-	requestInputTokens := estimateRequestTokens(systemPrompt, chunks, req.Messages)
+	requestInputTokens := estimateRequestTokens(req.Model, systemPrompt, chunks, req.Messages)
 	if e.EventBus != nil {
 		e.EventBus.Publish(Event{
 			Type:   "provider:stream:start",

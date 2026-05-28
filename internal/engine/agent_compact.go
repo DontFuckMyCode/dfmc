@@ -138,7 +138,7 @@ func (e *Engine) maybeCompactNativeLoopHistoryForBudget(
 		return msgs, nil
 	}
 
-	current := estimateRequestTokens(systemPrompt, chunks, msgs)
+	current := estimateRequestTokens(e.model(), systemPrompt, chunks, msgs)
 	if current < threshold {
 		return msgs, nil
 	}
@@ -181,7 +181,7 @@ func (e *Engine) proactiveCompactNativeLoopHistory(
 	if threshold <= 0 {
 		return msgs, nil
 	}
-	current := estimateRequestTokens(systemPrompt, chunks, msgs)
+	current := estimateRequestTokens(e.model(), systemPrompt, chunks, msgs)
 	if current < threshold {
 		return msgs, nil
 	}
@@ -201,7 +201,7 @@ func (e *Engine) forceCompactNativeLoopHistory(
 	if !lifecycle.Enabled {
 		return msgs, nil
 	}
-	current := estimateRequestTokens(systemPrompt, chunks, msgs)
+	current := estimateRequestTokens(e.model(), systemPrompt, chunks, msgs)
 	return e.compactNativeLoopHistory(msgs, systemPrompt, chunks, current, lifecycle)
 }
 
@@ -256,7 +256,7 @@ func (e *Engine) compactNativeLoopHistory(
 		rebuilt = append(rebuilt, r.Messages...)
 	}
 
-	after := estimateRequestTokens(systemPrompt, chunks, rebuilt)
+	after := estimateRequestTokens(e.model(), systemPrompt, chunks, rebuilt)
 	removed := len(msgs) - len(rebuilt)
 	if removed <= 0 || after >= current {
 		return msgs, nil
@@ -275,23 +275,21 @@ func (e *Engine) compactNativeLoopHistory(
 // estimateRequestTokens gives a consistent token estimate used both by the
 // compaction decision and the post-compaction delta so the report reflects a
 // real saving.
-func estimateRequestTokens(systemPrompt string, chunks []types.ContextChunk, msgs []provider.Message) int {
-	total := tokens.Estimate(systemPrompt)
+func estimateRequestTokens(model string, systemPrompt string, chunks []types.ContextChunk, msgs []provider.Message) int {
+	total := tokens.EstimateDefault(systemPrompt)
 	for _, ch := range chunks {
 		total += ch.TokenCount
 	}
 	// Per-message overhead: provider APIs add framing tokens for role
-	// labels, message boundaries, and tool_result wrappers. The
-	// HeuristicCounter uses 4 tokens/message but estimateRequestTokens
-	// is a standalone path that needs its own floor. Empirically,
+	// labels, message boundaries, and tool_result wrappers. Empirically,
 	// Anthropic's API costs ~6-8 framing tokens per message; OpenAI is
 	// similar. Using 8 gives a small safety margin that prevents the
 	// compaction threshold from firing too late.
 	const perMessageOverhead = 8
 	for _, m := range msgs {
 		total += perMessageOverhead
-		total += tokens.Estimate(string(m.Role))
-		total += tokens.Estimate(m.Content)
+		total += tokens.EstimateForModel(model, string(m.Role))
+		total += tokens.EstimateForModel(model, m.Content)
 		// Tool calls carry their name plus input as JSON. The previous
 		// code counted individual key/value pairs but missed JSON
 		// structural overhead (quotes, colons, commas, braces).
@@ -300,11 +298,11 @@ func estimateRequestTokens(systemPrompt string, chunks []types.ContextChunk, msg
 		const jsonOverheadFactor = 1.15
 		for _, call := range m.ToolCalls {
 			if call.Name != "" {
-				total += tokens.Estimate(call.Name)
+				total += tokens.EstimateForModel(model, call.Name)
 			}
 			inputTokens := 0
 			for k, v := range call.Input {
-				inputTokens += tokens.Estimate(k) + tokens.Estimate(fmt.Sprint(v))
+				inputTokens += tokens.EstimateForModel(model, k) + tokens.EstimateForModel(model, fmt.Sprint(v))
 			}
 			total += int(float64(inputTokens)*jsonOverheadFactor + 0.5)
 		}
@@ -312,7 +310,7 @@ func estimateRequestTokens(systemPrompt string, chunks []types.ContextChunk, msg
 		// a few framing tokens on top of the content. This is modest
 		// but adds up across a 20-round tool loop.
 		if m.ToolCallID != "" {
-			total += tokens.Estimate(m.ToolCallID) + 2 // wrapper overhead
+			total += tokens.EstimateForModel(model, m.ToolCallID) + 2 // wrapper overhead
 		}
 	}
 	return total

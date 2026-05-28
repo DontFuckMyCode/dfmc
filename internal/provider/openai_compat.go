@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
 
@@ -195,7 +196,7 @@ func (p *OpenAICompatibleProvider) Complete(ctx context.Context, req CompletionR
 // Stream lives in openai_compat_stream.go.
 
 func (p *OpenAICompatibleProvider) CountTokens(text string) int {
-	return len(strings.Fields(text))
+	return tokens.EstimateForModel(p.model, text)
 }
 
 func (p *OpenAICompatibleProvider) MaxContext() int {

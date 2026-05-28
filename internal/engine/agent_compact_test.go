@@ -644,7 +644,7 @@ func TestEstimateRequestTokens_AccountsForMessageOverhead(t *testing.T) {
 	plainMsgs := []provider.Message{
 		{Role: types.RoleUser, Content: content},
 	}
-	plainEstimate := estimateRequestTokens("", nil, plainMsgs)
+	plainEstimate := estimateRequestTokens("", "", nil, plainMsgs)
 
 	toolMsgs := []provider.Message{
 		{Role: types.RoleAssistant, Content: "I'll read the file.",
@@ -654,7 +654,7 @@ func TestEstimateRequestTokens_AccountsForMessageOverhead(t *testing.T) {
 		{Role: types.RoleUser, Content: "package config\nvar X = 1",
 			ToolCallID: "call_1", ToolName: "read_file"},
 	}
-	toolEstimate := estimateRequestTokens("", nil, toolMsgs)
+	toolEstimate := estimateRequestTokens("", "", nil, toolMsgs)
 
 	// The tool set has 2 messages (16 overhead), 2 roles, 1 tool call
 	// with JSON overhead, and 1 tool_call_id — must be strictly larger.
@@ -678,7 +678,7 @@ func TestEstimateRequestTokens_ToolCallJSONOverhead(t *testing.T) {
 	noToolMsgs := []provider.Message{
 		{Role: types.RoleAssistant, Content: "done"},
 	}
-	noToolEst := estimateRequestTokens("", nil, noToolMsgs)
+	noToolEst := estimateRequestTokens("", "", nil, noToolMsgs)
 
 	withToolMsgs := []provider.Message{
 		{Role: types.RoleAssistant, Content: "done",
@@ -688,7 +688,7 @@ func TestEstimateRequestTokens_ToolCallJSONOverhead(t *testing.T) {
 				}},
 			}},
 	}
-	withToolEst := estimateRequestTokens("", nil, withToolMsgs)
+	withToolEst := estimateRequestTokens("", "", nil, withToolMsgs)
 
 	// Must be strictly larger — the tool call adds name + input tokens + 15% JSON overhead.
 	if withToolEst <= noToolEst {

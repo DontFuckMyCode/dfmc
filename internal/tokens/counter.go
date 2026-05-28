@@ -1,12 +1,11 @@
 // Package tokens provides token count estimation for prompts, context chunks,
-// and tool results. The default heuristic counter is zero-dependency and
-// model-agnostic; provider-aware counters (Anthropic count_tokens API,
-// tiktoken, etc.) can be registered later via the Counter interface.
+// and tool results. The heuristic counter is zero-dependency and model-
+// agnostic; encoding-based counters (tiktoken) can be selected via
+// DetectFamily + NewCounter.
 package tokens
 
 import (
 	"strings"
-	"sync"
 	"unicode"
 	"unicode/utf8"
 )
@@ -24,28 +23,23 @@ type Message struct {
 	Content string
 }
 
-// Estimate returns the default counter's token estimate for text. This is the
-// drop-in replacement for the old word-count estimateTokens helpers.
+// EstimateDefault returns a token estimate for text using the default
+// heuristic counter. This is a drop-in for code that previously used the
+// global defaultCounter via loadDefault().
+func EstimateDefault(text string) int {
+	return NewHeuristic().Count(text)
+}
+
+// Estimate is a backward-compatible alias for EstimateDefault.
 func Estimate(text string) int {
-	return loadDefault().Count(text)
+	return EstimateDefault(text)
 }
 
-// loadDefault is the internal RLock-guarded read for defaultCounter. The
-// pointer-load itself is two words (interface header), so a concurrent
-// SetDefault racing a bare read could surface a torn interface value
-// under Go's memory model. Reads happen on every Ask; SetDefault is
-// rare (test setup or startup wiring) so the lock cost is negligible.
-func loadDefault() Counter {
-	defaultMu.RLock()
-	c := defaultCounter
-	defaultMu.RUnlock()
-	return c
+// EstimateForModel auto-detects the model family and returns the most
+// appropriate token counter's estimate for text.
+func EstimateForModel(model, text string) int {
+	return CountForModel(model, text)
 }
-
-var (
-	defaultMu      sync.RWMutex
-	defaultCounter Counter = NewHeuristic()
-)
 
 // HeuristicCounter estimates token counts using character-based math adjusted
 // by symbol density. Empirical alignment targets (cl100k_base / Claude tokenizer):
@@ -149,14 +143,14 @@ func TrimToBudget(content string, maxTokens int, suffix string) string {
 	if trimmed == "" {
 		return ""
 	}
-	if Estimate(trimmed) <= maxTokens {
+	if EstimateDefault(trimmed) <= maxTokens {
 		return trimmed
 	}
 
 	suffixTokens := 0
 	includeSuffix := suffix != ""
 	if includeSuffix {
-		suffixTokens = Estimate(suffix)
+		suffixTokens = EstimateDefault(suffix)
 	}
 	budget := maxTokens - suffixTokens
 	if budget <= 0 {
@@ -176,7 +170,7 @@ func TrimToBudget(content string, maxTokens int, suffix string) string {
 			lo = mid + 1
 			continue
 		}
-		if Estimate(strings.Join(words[:mid], " ")) <= budget {
+		if EstimateDefault(strings.Join(words[:mid], " ")) <= budget {
 			best = mid
 			lo = mid + 1
 		} else {

@@ -13,6 +13,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/muesli/cancelreader v0.2.2
 	github.com/muesli/termenv v0.16.0
+	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-go v0.25.0
 	github.com/tree-sitter/tree-sitter-javascript v0.25.0
@@ -32,6 +33,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/google/uuid v1.6.0 // indirect

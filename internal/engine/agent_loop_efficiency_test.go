@@ -80,7 +80,7 @@ func TestMaybeCompactNativeLoopHistoryForBudget_UsesTighterReference(t *testing.
 		)
 	}
 
-	estimatedTokens := estimateRequestTokens("", nil, msgs)
+	estimatedTokens := estimateRequestTokens("", "", nil, msgs)
 	if estimatedTokens < 14001 || estimatedTokens > 22399 {
 		t.Fatalf("test-setup sanity: payload must sit in (14000, 22400) to prove "+
 			"budget-vs-provider threshold divergence; got %d tokens — adjust filler size",
