@@ -135,7 +135,7 @@ func offlineSecurityReport(chunks []types.ContextChunk) string {
 func offlineExplainReport(chunks []types.ContextChunk, question string) string {
 	var b strings.Builder
 	if question != "" {
-		b.WriteString("**Question:** " + question + "\n\n")
+		fmt.Fprintf(&b, "**Question:** %s\n\n", question)
 	}
 	b.WriteString("**What the context shows:**\n")
 	for i, ch := range chunks {
@@ -143,9 +143,8 @@ func offlineExplainReport(chunks []types.ContextChunk, question string) string {
 			break
 		}
 		syms := extractTopSymbols(ch)
-		line := fmt.Sprintf("- `%s` (%s, L%d-L%d): %s",
+		fmt.Fprintf(&b, "- `%s` (%s, L%d-L%d): %s\n",
 			ch.Path, humanLang(ch.Language), ch.LineStart, ch.LineEnd, briefSymbols(syms))
-		b.WriteString(line + "\n")
 	}
 	b.WriteString("\n**Structure:** ")
 	b.WriteString(sketchStructure(chunks))
@@ -162,7 +161,7 @@ func offlineDebugReport(chunks []types.ContextChunk, question string) string {
 	findings = dedupeSortFindings(findings)
 	var b strings.Builder
 	if question != "" {
-		b.WriteString("**Reported symptom:** " + question + "\n\n")
+		fmt.Fprintf(&b, "**Reported symptom:** %s\n\n", question)
 	}
 	if len(findings) > 0 {
 		b.WriteString("**Likely suspects (offline heuristics):**\n")
@@ -192,7 +191,8 @@ func offlineTestReport(chunks []types.ContextChunk) string {
 		b.WriteString("_No non-test source files in context; nothing to recommend._\n")
 	} else {
 		for _, m := range missing {
-			b.WriteString(m + "\n")
+			b.WriteString(m)
+			b.WriteByte('\n')
 		}
 	}
 	b.WriteString("\n**Test-writing checklist:**\n")
@@ -207,14 +207,16 @@ func offlinePlanReport(chunks []types.ContextChunk, question string) string {
 	b.WriteString("**Planning scaffold (offline):**\n")
 	b.WriteString("_Configure an LLM provider for a real plan. Heuristic outline below._\n\n")
 	if question != "" {
-		b.WriteString("- Goal: " + question + "\n")
+		b.WriteString("- Goal: ")
+		b.WriteString(question)
+		b.WriteByte('\n')
 	}
 	b.WriteString("- Touch surface (by relevance):\n")
 	for i, ch := range chunks {
 		if i >= 6 {
 			break
 		}
-		b.WriteString(fmt.Sprintf("  - `%s:%d-%d` (%s)\n", ch.Path, ch.LineStart, ch.LineEnd, humanLang(ch.Language)))
+		fmt.Fprintf(&b, "  - `%s:%d-%d` (%s)\n", ch.Path, ch.LineStart, ch.LineEnd, humanLang(ch.Language))
 	}
 	b.WriteString("\n**Phases:**\n")
 	b.WriteString("1. Spike the smallest testable slice (one file / one API).\n")
@@ -226,7 +228,7 @@ func offlinePlanReport(chunks []types.ContextChunk, question string) string {
 func offlineGeneralReport(chunks []types.ContextChunk, question string) string {
 	var b strings.Builder
 	if question != "" {
-		b.WriteString("**You asked:** " + question + "\n\n")
+		fmt.Fprintf(&b, "**You asked:** %s\n\n", question)
 	}
 	b.WriteString("**Heuristic scan results:**\n")
 	findings := []offlineFinding{}
@@ -244,7 +246,8 @@ func offlineGeneralReport(chunks []types.ContextChunk, question string) string {
 		}
 		b.WriteString(renderFindings(findings))
 	}
-	b.WriteString("\n\n" + renderFileInventory(chunks))
+	b.WriteString("\n\n")
+	b.WriteString(renderFileInventory(chunks))
 	b.WriteString("\n\n_Offline assistant — configure an LLM provider for conversational answers._")
 	return b.String()
 }

@@ -42,13 +42,14 @@ func renderFindings(findings []offlineFinding) string {
 		if len(bucket) == 0 {
 			continue
 		}
-		b.WriteString(fmt.Sprintf("\n**%s** (%d)\n", strings.ToUpper(sev), len(bucket)))
+		fmt.Fprintf(&b, "\n**%s** (%d)\n", strings.ToUpper(sev), len(bucket))
 		for _, f := range bucket {
-			b.WriteString(fmt.Sprintf("- `%s:%d` · %s · %s", f.Path, f.Line, f.Category, f.Message))
+			fmt.Fprintf(&b, "- `%s:%d` · %s · %s", f.Path, f.Line, f.Category, f.Message)
 			if f.Evidence != "" {
-				b.WriteString("\n  > " + f.Evidence)
+				b.WriteString("\n  > ")
+				b.WriteString(f.Evidence)
 			}
-			b.WriteString("\n")
+			b.WriteByte('\n')
 		}
 	}
 	return strings.TrimSpace(b.String())
