@@ -129,6 +129,13 @@ func (t *GitReviewTool) getCommits(target, since string, limit int) ([]CommitInf
 	args = append(args, "-n", strconv.Itoa(limit), "--")
 
 	if target != "." {
+		// Defense-in-depth: target lands after the `--` separator (so git
+		// already treats it as a pathspec, not a flag), but we reject the
+		// `-` prefix anyway to keep parity with the rest of the git tools
+		// (CVE-2018-17456 class — see rejectGitFlagInjection).
+		if err := rejectGitFlagInjection("target", target); err != nil {
+			return nil, err
+		}
 		args = append(args, target)
 	}
 
@@ -164,9 +171,20 @@ func (t *GitReviewTool) getCommits(target, since string, limit int) ([]CommitInf
 }
 
 func (t *GitReviewTool) getFileChanges(target, pattern string) ([]FileChange, error) {
-	args := []string{"diff", "--numstat", "HEAD"}
+	args := []string{"diff", "--numstat"}
 	if target != "." {
-		args[len(args)-1] = target
+		// VF-01 fix: target is LLM-controlled and previously replaced "HEAD"
+		// with no `--` separator and no flag-injection guard — the only git
+		// tool in the package to skip the rejectGitFlagInjection standard.
+		// A target like "--output=<path>" would have git write to an
+		// arbitrary file. Reject the `-` prefix and place the ref before a
+		// `--` separator so it can never be parsed as an option.
+		if err := rejectGitFlagInjection("target", target); err != nil {
+			return nil, err
+		}
+		args = append(args, target, "--")
+	} else {
+		args = append(args, "HEAD")
 	}
 
 	cmd := exec.Command("git", args...)

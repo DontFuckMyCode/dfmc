@@ -143,11 +143,21 @@ func (t *ChangelogGenerateTool) generateChangelog(path, fromTag, toTag, since st
 	args := []string{"log", "--pretty=format:%H|%s|%an|%ad|%D"}
 	args = append(args, "--date=short")
 
-	// Validate tag inputs to prevent malformed git arguments
+	// Validate tag inputs to prevent malformed git arguments. The regex
+	// forbids a leading `-` so neither tag can be parsed as a git option
+	// (the resulting `fromTag..toTag` token also can't start with `-`),
+	// and rejectGitFlagInjection keeps this tool consistent with the rest
+	// of the package's CVE-2018-17456 defenses (VF-04).
 	if fromTag != "" {
-		tagRegex := regexp.MustCompile(`^[a-zA-Z0-9._/-]+$`)
+		tagRegex := regexp.MustCompile(`^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`)
 		if !tagRegex.MatchString(fromTag) || !tagRegex.MatchString(toTag) {
-			return "", fmt.Errorf("invalid tag format (allowed: alphanumeric, ., _, -, /)")
+			return "", fmt.Errorf("invalid tag format (allowed: alphanumeric, ., _, -, / and no leading '-')")
+		}
+		if err := rejectGitFlagInjection("from_tag", fromTag); err != nil {
+			return "", err
+		}
+		if err := rejectGitFlagInjection("to_tag", toTag); err != nil {
+			return "", err
 		}
 	}
 
