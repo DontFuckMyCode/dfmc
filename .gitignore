@@ -34,8 +34,6 @@ mem.prof
 trace.out
 /coverage/
 /cover/
-go.work
-go.work.sum
 
 # Node / frontend
 node_modules/
@@ -138,6 +136,7 @@ docker-compose.override.yml
 
 # Temporary reports
 DFMC_IMPROVEMENT_REPORT.md
+deadcode.md
 security-report/
 
 # External tools / subprojects
