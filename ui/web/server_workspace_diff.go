@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/conversation"
+	"github.com/dontfuckmycode/dfmc/internal/pathsafe"
 	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
@@ -178,7 +179,10 @@ func applyUnifiedDiffWeb(projectRoot, patch string, checkOnly bool) error {
 					if err != nil {
 						return fmt.Errorf("apply: failed to resolve path %s: %w", relPath, err)
 					}
-					if !strings.HasPrefix(absPath, root) {
+					// VF-03 fix: use the canonical containment primitive rather
+					// than strings.HasPrefix(absPath, root), which treats a
+					// sibling dir like "<root>-evil" as inside "<root>".
+					if !pathsafe.IsPathWithin(root, absPath) {
 						return fmt.Errorf("apply: path %s resolves outside project root (denied)", relPath)
 					}
 				}

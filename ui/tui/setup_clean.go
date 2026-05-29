@@ -59,7 +59,7 @@ func (m Model) cleanProjectProvidersBlock() string {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "/setup clean: mkdir failed: " + err.Error()
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := os.WriteFile(path, out, 0o600); err != nil {
 		return "/setup clean: write failed: " + err.Error()
 	}
 

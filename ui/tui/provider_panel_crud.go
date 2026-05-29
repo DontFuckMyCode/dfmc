@@ -163,7 +163,7 @@ func (m *Model) createProvider(name string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create project config dir: %w", err)
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := os.WriteFile(path, out, 0o600); err != nil {
 		return fmt.Errorf("write project config: %w", err)
 	}
 	return m.reloadEngineConfig()
@@ -209,7 +209,7 @@ func (m *Model) deleteProvider(name string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create project config dir: %w", err)
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := os.WriteFile(path, out, 0o600); err != nil {
 		return fmt.Errorf("write project config: %w", err)
 	}
 	if err := m.reloadEngineConfig(); err != nil {

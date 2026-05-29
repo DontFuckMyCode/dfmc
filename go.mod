@@ -19,8 +19,8 @@ require (
 	github.com/tree-sitter/tree-sitter-javascript v0.25.0
 	github.com/tree-sitter/tree-sitter-python v0.25.0
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
-	golang.org/x/net v0.53.0
-	golang.org/x/sys v0.43.0
+	golang.org/x/net v0.55.0
+	golang.org/x/sys v0.45.0
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.50.1
@@ -46,7 +46,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

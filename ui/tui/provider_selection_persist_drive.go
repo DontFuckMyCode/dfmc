@@ -82,7 +82,7 @@ func (m Model) persistDriveRoutingProjectConfig(routing map[string]string) (stri
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("create project config dir: %w", err)
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := os.WriteFile(path, out, 0o600); err != nil {
 		return "", fmt.Errorf("write project config: %w", err)
 	}
 	return path, nil
@@ -132,7 +132,7 @@ func (m Model) persistPipelinesProjectConfig(name string, steps []config.Pipelin
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("create project config dir: %w", err)
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := os.WriteFile(path, out, 0o600); err != nil {
 		return "", fmt.Errorf("write project config: %w", err)
 	}
 
