@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -155,7 +156,7 @@ func TestIsBlockedHost_Loopback(t *testing.T) {
 
 func TestWebFetchTool_Execute_InvalidURL(t *testing.T) {
 	tool := NewWebFetchTool()
-	_, err := tool.Execute(nil, Request{Params: map[string]any{"url": "not-a-url"}})
+	_, err := tool.Execute(context.TODO(), Request{Params: map[string]any{"url": "not-a-url"}})
 	if err == nil {
 		t.Fatal("expected error for invalid URL")
 	}
@@ -163,7 +164,7 @@ func TestWebFetchTool_Execute_InvalidURL(t *testing.T) {
 
 func TestWebFetchTool_Execute_BlockedHost(t *testing.T) {
 	tool := NewWebFetchTool()
-	_, err := tool.Execute(nil, Request{Params: map[string]any{"url": "https://127.0.0.1:9999"}})
+	_, err := tool.Execute(context.TODO(), Request{Params: map[string]any{"url": "https://127.0.0.1:9999"}})
 	if err == nil {
 		t.Fatal("expected error for blocked host")
 	}
@@ -171,7 +172,7 @@ func TestWebFetchTool_Execute_BlockedHost(t *testing.T) {
 
 func TestWebFetchTool_Execute_MissingURL(t *testing.T) {
 	tool := NewWebFetchTool()
-	_, err := tool.Execute(nil, Request{Params: map[string]any{}})
+	_, err := tool.Execute(context.TODO(), Request{Params: map[string]any{}})
 	if err == nil {
 		t.Fatal("expected error for missing URL")
 	}

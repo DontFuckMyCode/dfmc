@@ -194,10 +194,7 @@ func (e *Engine) isToolVisible(name string) bool {
 		return true
 	}
 	layer := ToolLayerOf(name)
-	if !isLayerEnabled(layer, e.activeLayers) {
-		return false
-	}
-	return true
+	return isLayerEnabled(layer, e.activeLayers)
 }
 
 func specForTool(tool Tool) ToolSpec {
