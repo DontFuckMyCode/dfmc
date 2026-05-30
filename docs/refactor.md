@@ -499,8 +499,8 @@ Phase 2 (Week 3-4): Medium refactoring
   [x] 2.6 EventBus.Close() ✅
   [x] 2.7 Type assertion ok-check ✅ (already safe)
   [x] 2.8 ID collision fix ✅
-  [ ] 2.1 Path helpers dedup
-  [ ] 2.3 Error wrapping normalization
+  [x] 2.1 Path helpers dedup (path_utils.go wraps pathsafe; no duplication) ✅
+  [x] 2.3 Error wrapping normalization (drive/errors.go already has sentinel system; RunPrepared resume are session-state errors, not classification errors) ✅
   [x] 2.5 MCP goroutine leak fix ✅
 
 Phase 3 (Ongoing): Technical debt
@@ -513,7 +513,7 @@ Phase 3 (Ongoing): Technical debt
 
 Phase 4 (Any time):
   [x] 4.1 output cap config (tools.shell.output_cap) ✅
-  [ ] 4.2 MCP rate limiter
+  [x] 4.2 MCP rate limiter N/A (MCP stdin/stdout tek connection; HTTP server multi-IP yapısı burada geçerli değil) ✅
   [x] 4.3 x/net bump (v0.55.0 latest available) ✅
 ```
 

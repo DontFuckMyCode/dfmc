@@ -1,0 +1,8 @@
+docs: update refactor.md checklist
+
+Mark Phase 3.4 (statusPriority map), Phase 3.6 (langintel tests),
+Phase 2.1 (path helpers dedup), Phase 2.3 (error wrapping),
+Phase 4.2 (MCP rate limiter N/A) as done.
+
+Note why each was resolved without code change to prevent
+future "why is this not done?" confusion.
