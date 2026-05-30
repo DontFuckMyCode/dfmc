@@ -1,4 +1,4 @@
-docs: update Phase 3.2 and 3.3 notes
+drive: fix drive report file permission from 0644 to 0600
 
-3.2 AgentLoop: 30 files already well-modularized by concern.
-3.3 drive.go: only 309 lines, no split needed.
+Drive reports written to disk (drive-<id>.md) should be owner-only
+since they may contain sensitive session details from the agent run.

@@ -354,7 +354,7 @@ func (d *Driver) writeRunReport(run *Run) {
 		return
 	}
 	path := filepath.Join(d.reportDir, "drive-"+run.ID+".md")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		d.publish(EventRunWarning, map[string]any{
 			"run_id": run.ID,
 			"status": string(run.Status),
