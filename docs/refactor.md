@@ -508,8 +508,8 @@ Phase 3 (Ongoing): Technical debt
   [x] 3.4 map-based dispatch (statusPriority function→map) ✅
   [x] 3.5 config split (config_runtime.go holds ContextConfig, AgentConfig, PluginsConfig; already separated from config_types.go) ✅
   [x] 3.3 split drive.go (drive.go is only 309 lines — no split needed) ✅
-[~] 3.2 AgentLoop struct (high effort — optional architectural refactor)
-[~] 3.1 EngineCore facade (highest effort — optional architectural refactor)
+[~] 3.2 AgentLoop struct (30 files well-modularized by concern; optional)
+[~] 3.1 EngineCore facade (optional architectural refactor)
 
 Phase 4 (Any time):
   [x] 4.1 output cap config (tools.shell.output_cap) ✅
