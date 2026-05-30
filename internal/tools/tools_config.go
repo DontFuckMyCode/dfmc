@@ -49,6 +49,7 @@ type ToolsSection struct {
 type ShellSection struct {
 	Timeout         string // unparsed duration string, parsed by tools.Engine at registration time
 	BlockedCommands []string
+	OutputCap       int64 // bytes; 0 means use package constant (4 MiB)
 }
 
 // AgentSection is the Agent config group.
@@ -128,6 +129,7 @@ func toToolsConfigSubsetFromConfig(c ConfigLike) ToolsConfigSubset {
 			Layers:          c.ToolsLayers(),
 			Shell: ShellSection{
 				Timeout:         c.ToolsShellTimeout(),
+				OutputCap:       c.ToolsShellOutputCap(),
 				BlockedCommands: c.ToolsShellBlockedCommands(),
 			},
 		},
@@ -176,7 +178,8 @@ type ConfigLike interface {
 	ToolsLimits() map[string]float64
 	ToolsRequireApproval() []string
 	ToolsLayers() []string
-	ToolsShellTimeout() string
+	ToolsShellTimeout()  string
+	ToolsShellOutputCap() int64
 	ToolsShellBlockedCommands() []string
 	AgentReadSnapshotCap() int
 	AgentRecentFailureCap() int

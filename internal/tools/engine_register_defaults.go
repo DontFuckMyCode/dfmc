@@ -165,6 +165,7 @@ func New(cfg ToolsConfigSubset) *Engine {
 		allowShell: cfg.Security.Sandbox.AllowShell,
 		timeout:    timeout,
 		blocked:    append([]string(nil), cfg.Tools.Shell.BlockedCommands...),
+		outputCap:  cfg.Tools.Shell.OutputCap,
 	}))
 	RegisterMetaTools(e)
 	// Register MCP bridge tools after native tools so the bridge can

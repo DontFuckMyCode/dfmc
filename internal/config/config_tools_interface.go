@@ -40,6 +40,12 @@ func (c *Config) ToolsShellTimeout() string {
 	return c.Tools.Shell.Timeout
 }
 
+// ToolsShellOutputCap returns the per-invocation output cap in bytes.
+// Zero means use the built-in default (4 MiB).
+func (c *Config) ToolsShellOutputCap() int64 {
+	return c.Tools.Shell.OutputCap
+}
+
 // ToolsShellBlockedCommands returns the list of blocked shell commands.
 func (c *Config) ToolsShellBlockedCommands() []string {
 	return c.Tools.Shell.BlockedCommands

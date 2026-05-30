@@ -486,35 +486,35 @@ var statusPriority = map[string]int{
 
 ```
 Phase 0 (Week 1): Critical bugs
-  [ ] 0.3 MCP env sanitization
+  [x] 0.3 MCP env sanitization ✅
 
 Phase 1 (Week 2): High priority
-  [ ] 1.2 Remove todo_write from parallelSafeTools
-  [ ] 1.3 Raise aggressive autonomy threshold
-  [ ] 1.4 Fix silent error discard in command.go
-  [ ] 1.5 Verify file permissions (search + fix if needed)
+  [x] 1.2 Remove todo_write from parallelSafeTools ✅
+  [x] 1.3 Raise aggressive autonomy threshold ✅
+  [x] 1.4 Fix silent error discard in command.go ✅
+  [x] 1.5 Verify file permissions (search + fix if needed) ✅
 
 Phase 2 (Week 3-4): Medium refactoring
-  [ ] 2.4 Telegram context injection
-  [ ] 2.6 EventBus.Close()
-  [ ] 2.7 Type assertion ok-check
-  [ ] 2.8 ID collision fix
+  [x] 2.4 Telegram context injection ✅
+  [x] 2.6 EventBus.Close() ✅
+  [x] 2.7 Type assertion ok-check ✅ (already safe)
+  [x] 2.8 ID collision fix ✅
   [ ] 2.1 Path helpers dedup
   [ ] 2.3 Error wrapping normalization
-  [ ] 2.5 MCP goroutine leak fix
+  [x] 2.5 MCP goroutine leak fix ✅
 
 Phase 3 (Ongoing): Technical debt
-  [ ] 3.6 langintel tests (lowest risk)
-  [ ] 3.4 map-based dispatch (low risk, high clarity)
+  [x] 3.6 langintel tests (registry_test.go already exists) ✅
+  [x] 3.4 map-based dispatch (statusPriority function→map) ✅
   [ ] 3.5 config split (additive)
   [ ] 3.3 split drive.go (high effort)
   [ ] 3.2 AgentLoop struct (high effort)
   [ ] 3.1 EngineCore facade (highest effort)
 
 Phase 4 (Any time):
-  [ ] 4.1 output cap config
+  [x] 4.1 output cap config (tools.shell.output_cap) ✅
   [ ] 4.2 MCP rate limiter
-  [ ] 4.3 x/net bump
+  [x] 4.3 x/net bump (v0.55.0 latest available) ✅
 ```
 
 ---

@@ -159,14 +159,18 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 
 	cmd := exec.CommandContext(runCtx, execPath, args...)
 	cmd.Dir = workDir
-	// Bounded capture: stdout + stderr each cap at runCommandOutputCap
-	// so an LLM-issued `cargo build --verbose` against a giant
-	// workspace, or `cat huge.log`, can't grow the parent heap to
-	// gigabytes. The agent already truncates downstream tool output,
-	// but that truncation runs AFTER everything is in memory — too
-	// late to save us if the producer is a firehose.
-	stdout := newBoundedBuffer(runCommandOutputCap)
-	stderr := newBoundedBuffer(runCommandOutputCap)
+	// Bounded capture: stdout + stderr each cap at the configured
+	// output cap (or the package default of 4 MiB). This prevents an
+	// LLM-issued `cargo build --verbose` or `cat huge.log` from
+	// growing the parent heap to gigabytes. The agent already
+	// truncates downstream tool output, but that runs AFTER
+	// everything is in memory — too late to save us from a firehose.
+	outputCap := int64(runCommandOutputCap)
+	if t.cfg.outputCap > 0 {
+		outputCap = t.cfg.outputCap
+	}
+	stdout := newBoundedBuffer(int(outputCap))
+	stderr := newBoundedBuffer(int(outputCap))
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	err = cmd.Run()
@@ -224,6 +228,7 @@ type runCommandConfig struct {
 	allowShell bool
 	timeout    time.Duration
 	blocked    []string
+	outputCap  int64 // bytes; 0 means use package constant
 }
 
 func joinCommandStderr(stderr string, hasStdout bool) string {

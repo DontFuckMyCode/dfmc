@@ -59,6 +59,7 @@ type ToolsConfig struct {
 type ShellToolConfig struct {
 	BlockedCommands []string `yaml:"blocked_commands"`
 	Timeout         string   `yaml:"timeout"`
+	OutputCap       int64    `yaml:"output_cap"` // bytes; 0 means default (4 MiB)
 }
 
 type AgentConfig struct {
