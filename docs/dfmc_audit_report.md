@@ -66,22 +66,15 @@ if msg := hooks.CheckConfigPermissions(path); msg != "" {
 
 **Dosya**: `cmd/dfmc/main.go:141-143`
 
-**Açıklama**:
-`dfmc init` veya auto-init sırasında oluşturulan dosyalar `0o644` izinleriyle yazılıyor. Bu, config dosyalarının (potansiyel olarak API anahtarları içerebilir) diğer kullanıcılar tarafından okunmasına izin verir.
+**Açıklama**: `dfmc init` veya auto-init sırasında oluşturulan dosyalar `0o644` izinleriyle yazılıyordu. Bu, config dosyalarının (potansiyel olarak API anahtarları içerebilir) diğer kullanıcılar tarafından okunmasına izin verirdi.
 
-```go
-// cmd/dfmc/main.go:141-143
-_ = os.WriteFile(filepath.Join(dfmcDir, "knowledge.json"), []byte("{}\n"), 0o644)
-_ = os.WriteFile(filepath.Join(dfmcDir, "conventions.json"), []byte("{}\n"), 0o644)
-```
+**Status:** ✅ FIXED
+- `cmd/dfmc/startup_state.go:59-60`: knowledge.json ve conventions.json → 0o600
+- `internal/drive/driver.go:357`: drive report markdown → 0o600
+- `internal/tools/symbol_move.go:251,271,291,297`: tüm dosya yazma → 0o600
+- `internal/tools/symbol_rename.go:209`: tüm dosya yazma → 0o600
 
-**Düzeltme**:
-```go
-// 0o600 = sadece sahip okuma/yazma
-_ = os.WriteFile(..., 0o600)
-```
-
-**Not**: Windows'ta bu sorun oluşmaz (NTFS ACL kullanılır), ancak POSIX sistemlerde kritik.
+Test dosyaları (0o644) değiştirilmedi — test ortamında world-readable dosyalar sorun değil.
 
 ---
 

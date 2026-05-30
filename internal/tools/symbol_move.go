@@ -248,7 +248,7 @@ func (t *SymbolMoveTool) Execute(ctx context.Context, req Request) (Result, erro
 				lines[m.lineNum-1] = applyRenameInLine(lines[m.lineNum-1], from, toName)
 			}
 		}
-		if err := os.WriteFile(fpath, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+		if err := os.WriteFile(fpath, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
 			failedPaths = append(failedPaths, fpath)
 			continue
 		}
@@ -268,7 +268,7 @@ func (t *SymbolMoveTool) Execute(ctx context.Context, req Request) (Result, erro
 		// Remove declaration from source.
 		newSrcLines := append([]string{}, srcLines[:loc.startLine-1]...)
 		newSrcLines = append(newSrcLines, srcLines[loc.endLine:]...)
-		if err := os.WriteFile(loc.filePath, []byte(strings.Join(newSrcLines, "\n")), 0644); err != nil {
+		if err := os.WriteFile(loc.filePath, []byte(strings.Join(newSrcLines, "\n")), 0o600); err != nil {
 			return Result{}, fmt.Errorf("symbol_move: write source file: %w", err)
 		}
 
@@ -288,13 +288,13 @@ func (t *SymbolMoveTool) Execute(ctx context.Context, req Request) (Result, erro
 				newDest += "\n"
 			}
 			newDest += symbolBody + "\n"
-			if err := os.WriteFile(destPath, []byte(newDest), 0644); err != nil {
+			if err := os.WriteFile(destPath, []byte(newDest), 0o600); err != nil {
 				return Result{}, fmt.Errorf("symbol_move: write destination file: %w", err)
 			}
 		} else {
 			// For new file, build properly.
 			newFileContent := buildNewGoFile(srcLines, symbolBody)
-			if err := os.WriteFile(destPath, []byte(newFileContent), 0644); err != nil {
+			if err := os.WriteFile(destPath, []byte(newFileContent), 0o600); err != nil {
 				return Result{}, fmt.Errorf("symbol_move: write new destination file: %w", err)
 			}
 		}

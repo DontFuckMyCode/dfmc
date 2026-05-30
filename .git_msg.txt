@@ -1,4 +1,0 @@
-drive: fix drive report file permission from 0644 to 0600
-
-Drive reports written to disk (drive-<id>.md) should be owner-only
-since they may contain sensitive session details from the agent run.

@@ -206,7 +206,7 @@ func (t *SymbolRenameTool) Execute(ctx context.Context, req Request) (Result, er
 				lines[m.lineNum-1] = applyRenameInLine(lines[m.lineNum-1], from, to)
 			}
 		}
-		if err := os.WriteFile(fpath, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+		if err := os.WriteFile(fpath, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
 			failedPaths = append(failedPaths, fpath)
 			continue
 		}
