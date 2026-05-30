@@ -45,7 +45,7 @@ func run() int {
 		cfg.Telegram.SessionName = startup.sessionName
 	}
 
-	tgBot, err := startTelegramBot(cfg)
+	tgBot, err := startTelegramBot(ctx, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "telegram init error: %v\n", err)
 		return 1
@@ -87,11 +87,11 @@ func run() int {
 	return cli.Run(ctx, eng, os.Args[1:], version)
 }
 
-func startTelegramBot(cfg *config.Config) (*bot.TelegramBot, error) {
+func startTelegramBot(ctx context.Context, cfg *config.Config) (*bot.TelegramBot, error) {
 	if cfg == nil || !cfg.Telegram.Enabled || cfg.Telegram.Token == "" {
 		return nil, nil
 	}
-	tgBot, err := bot.New(cfg.Telegram.Token)
+	tgBot, err := bot.New(ctx, cfg.Telegram.Token)
 	if err != nil {
 		return nil, err
 	}

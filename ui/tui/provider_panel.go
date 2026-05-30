@@ -59,17 +59,18 @@ func providerStatusTag(name string, supportsTools bool) (status string, isOfflin
 	return "no-key", false
 }
 
-func statusPriority(status string) int {
-	switch strings.ToLower(status) {
-	case "ready":
-		return 0
-	case "no-key":
-		return 1
-	case "offline":
-		return 2
-	default:
-		return 3
+var statusPriority = map[string]int{
+	"ready":   0,
+	"no-key":  1,
+	"offline": 2,
+	"":        3, // unknown/absent
+}
+
+func statusPriorityOf(status string) int {
+	if p, ok := statusPriority[strings.ToLower(status)]; ok {
+		return p
 	}
+	return 3
 }
 
 // collectProviderRows walks the registered providers and shapes them
@@ -105,7 +106,7 @@ func collectProviderRows(eng *engine.Engine) []providerRow {
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
-		pi, pj := statusPriority(rows[i].Status), statusPriority(rows[j].Status)
+		pi, pj := statusPriorityOf(rows[i].Status), statusPriorityOf(rows[j].Status)
 		if pi != pj {
 			return pi < pj
 		}

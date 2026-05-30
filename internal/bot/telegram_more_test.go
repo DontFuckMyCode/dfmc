@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,10 +14,11 @@ import (
 // the empty-token guard is the one we can cover without network.
 func TestNewRejectsEmptyToken(t *testing.T) {
 	t.Parallel()
-	if _, err := New(""); err == nil {
+	ctx := context.Background()
+	if _, err := New(ctx, ""); err == nil {
 		t.Fatal("expected error for empty token, got nil")
 	}
-	if _, err := New("   "); err == nil {
+	if _, err := New(ctx, "   "); err == nil {
 		t.Fatal("expected error for whitespace token, got nil")
 	}
 }

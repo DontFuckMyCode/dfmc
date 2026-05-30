@@ -1,0 +1,16 @@
+critical bug fixes + security hardening
+
+- engine: fix aggressive autonomy threshold (0.40→0.65, was below auto mode)
+- engine: add EventBus.Close() to prevent goroutine leaks on shutdown
+- engine: fix Shutdown() ordering — EventBus closed last so stopped event delivers
+- mcp/client: VULN-032 fix — validate env values for shell metacharacters
+- mcp/client: fix goroutine leak on ctx cancellation (stdinCloser)
+- bot/telegram: New(ctx, token) signature — ctx controls bot lifecycle
+- bot/telegram: test fixture updated for new signature
+- tools: remove todo_write from parallelSafeTools (re-entrant safety)
+- tools: file permissions 0644→0600 (apply_patch, builtin, builtin_edit)
+- conversation: rand.Read fallback now includes PID for uniqueness
+- tools/command: git errors surfaced in git_error field, not silently discarded
+- provider_panel: statusPriority function→map (compile-time lookup, not runtime switch)
+- CLAUDE.md: repolint tripwire note + new package dirs
+- docs/refactor.md: full findings documented

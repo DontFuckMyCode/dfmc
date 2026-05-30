@@ -123,6 +123,15 @@ func (eb *EventBus) Subscribe(eventType string) chan Event {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
+	// After Close() wipes the map, return a closed channel so any
+	// late Subscribers exit their range loops immediately instead of
+	// blocking on a nil map lookup.
+	if eb.subscribers == nil {
+		ch := make(chan Event)
+		close(ch)
+		return ch
+	}
+
 	ch := make(chan Event, eb.bufferSize)
 	eb.subscribers[eventType] = append(eb.subscribers[eventType], ch)
 	return ch
@@ -226,6 +235,31 @@ func (eb *EventBus) Unsubscribe(eventType string, ch chan Event) {
 		defer func() { _ = recover() }()
 		close(ch)
 	}
+}
+
+// Close shuts down the event bus by closing every subscriber channel.
+// This causes all SubscribeFunc goroutines (which range over their
+// channels) to exit cleanly, preventing goroutine leaks on shutdown.
+// After Close is called, Publish becomes a no-op and Subscribe returns
+// a closed channel. Safe to call multiple times.
+func (eb *EventBus) Close() {
+	if eb == nil {
+		return
+	}
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+
+	for _, ch := range eb.subscribers["*"] {
+		defer func(c chan Event) { _ = recover(); close(c) }(ch)
+	}
+	for _, chans := range eb.subscribers {
+		for _, ch := range chans {
+			defer func(c chan Event) { _ = recover(); close(c) }(ch)
+		}
+	}
+	// Wipe the map so subsequent Subscribe calls get a closed channel
+	// (nil receiver is already safe; this handles the non-nil case).
+	eb.subscribers = nil
 }
 
 func (eb *EventBus) publishToChannel(ch chan Event, event Event) {

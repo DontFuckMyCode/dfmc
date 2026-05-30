@@ -110,7 +110,7 @@ func (t *WriteFileTool) Execute(_ context.Context, req Request) (Result, error) 
 		release := t.engine.LockPath(absPath)
 		defer release()
 	}
-	if err := writeFileAtomic(absPath, []byte(content), 0o644); err != nil {
+	if err := writeFileAtomic(absPath, []byte(content), 0o600); err != nil {
 		return Result{}, err
 	}
 	return Result{

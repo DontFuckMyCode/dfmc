@@ -143,6 +143,11 @@ func (e *Engine) Shutdown() error {
 
 	e.setState(StateStopped)
 	e.EventBus.Publish(Event{Type: "engine:stopped", Source: "engine"})
+	// Close the EventBus last so the stopped event is delivered before
+	// subscriber goroutines exit. After this, the bus is sealed — Publish
+	// is still nil-safe so residual calls are harmless, and Subscribe
+	// returns closed channels so late joiners exit immediately.
+	e.EventBus.Close()
 	return errors.Join(errs...)
 }
 

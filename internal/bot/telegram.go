@@ -34,7 +34,11 @@ type TelegramBot struct {
 // New creates a new Telegram bot with the given token.
 // Token must be a valid BotFather token.
 // Call SetAllowedUsers to restrict access by Telegram user ID.
-func New(token string) (*TelegramBot, error) {
+//
+// The ctx parameter controls the bot's lifecycle: canceling ctx signals
+// the bot to shut down, and the bot's lifetime is bounded to ctx's
+// deadline if one is set.
+func New(ctx context.Context, token string) (*TelegramBot, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return nil, fmt.Errorf("telegram token cannot be empty")
@@ -49,7 +53,7 @@ func New(token string) (*TelegramBot, error) {
 		return nil, fmt.Errorf("telegram: invalid token or bot not found")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 
 	bot := &TelegramBot{
 		api:          api,

@@ -196,7 +196,7 @@ func (t *ApplyPatchTool) Execute(_ context.Context, req Request) (Result, error)
 				release()
 				return Result{}, err
 			}
-			if err := writeFileAtomic(abs, []byte(updated), 0o644); err != nil {
+			if err := writeFileAtomic(abs, []byte(updated), 0o600); err != nil {
 				release()
 				return Result{}, fmt.Errorf("write %s: %w", targetPath, err)
 			}

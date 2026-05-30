@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -49,10 +50,14 @@ func AssignMessageID(role types.MessageRole) string {
 	}
 	var buf [4]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		// Fallback to a timestamp-based ID — uniqueness is good enough
-		// because rand.Read essentially never fails on Linux/Windows,
-		// but a panic here would kill an interactive session.
-		return fmt.Sprintf("%s-%x", prefix, time.Now().UnixNano()&0xFFFFFFFF)
+		// Fallback to PID + bottom 32 bits of UnixNano + random suffix.
+		// rand.Read essentially never fails so this path is almost never
+		// hit, but it could theoretically happen inside a sandbox with
+		// blocked /dev/urandom. Including PID disambiguates processes on
+		// the same machine, and the random suffix prevents collisions
+		// when multiple conversations start in the same PID within the
+		// same 4.3-second nanotime window.
+		return fmt.Sprintf("%s-%x-%x", prefix, os.Getpid(), time.Now().UnixNano())
 	}
 	return prefix + "-" + hex.EncodeToString(buf[:])[:6]
 }

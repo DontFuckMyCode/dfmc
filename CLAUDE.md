@@ -30,6 +30,10 @@ go test ./internal/engine -run TestAgentLoop -v
 go vet ./...
 gofmt -w $(git ls-files '*.go')
 staticcheck ./...   # must be clean before merge — CI gates on it (see .github/workflows/ci.yml)
+
+# Full lint + security gates (Makefile, Windows-oriented but the tools are cross-platform)
+make lint       # go vet + staticcheck + golangci-lint
+make security   # govulncheck + gosec
 ```
 
 **CGO matters.** Tree-sitter bindings (`tree-sitter-go`, `-javascript`, `-typescript`, `-python`) require CGO. With `CGO_ENABLED=0` the build still succeeds but AST silently falls back to the regex extractor in `internal/ast/backend_stub.go`, and `dfmc status` / `dfmc doctor` will report `ast_backend: regex`. If AST behavior looks wrong, check the backend before blaming the code.
@@ -189,6 +193,7 @@ Drive is also exposed over MCP for IDE hosts (Claude Desktop, Cursor, VSCode). `
 
 - Forgetting `CGO_ENABLED=1` silently downgrades AST to regex — no error.
 - Putting global flags after the subcommand (`dfmc review --provider offline ...`) — they'll be passed to the command, not `parseGlobalFlags`.
+- `internal/repolint` tests walk the WHOLE tree and fail CI when a banned pattern reappears in production code (the tripwire for regressions `go vet`/`staticcheck` can't see). If a `repolint` test fails after your edit, you reintroduced a pattern that was deliberately removed — read the failing assertion's comment before "fixing" the test.
 - Two `dfmc` processes on the same project: second one hits `ErrStoreLocked`. `dfmc doctor` is whitelisted for degraded startup so it still runs.
 - When adding a new CLI command: add the case to the `switch cmd` block in [ui/cli/cli.go](ui/cli/cli.go), put the body in the matching `cli_<domain>.go` sibling, register the corresponding `/api/v1/*` handler in [ui/web/server.go](ui/web/server.go) `setupRoutes` with the body in `server_<domain>.go`, and add a `dfmc remote <cmd>` client in [cli_remote.go](ui/cli/cli_remote.go). The four layers are kept in sync by convention, not by codegen.
 - When modifying an Engine method: it lives in one of the `engine_*.go` siblings, not `engine.go` itself. Use Grep to find it.
@@ -217,10 +222,17 @@ internal/drive           # autonomous plan/execute loop (planner + scheduler)
 internal/intent          # state-aware sub-LLM request normalizer
 internal/hooks           # user-configured lifecycle shell hooks
 internal/coach           # trajectory-hint generator for agent loops
+internal/langintel       # per-language knowledge bases (tips/bug-patterns) for analyze
 internal/supervisor      # shared task/executor types for drive + taskstore
 internal/taskstore       # bbolt-backed task persistence (todo_write + HTTP/MCP)
+internal/taskview        # inline TODO-strip rendering for the TUI
+internal/toolhistory     # learned-pattern ledger across tool calls
 internal/mcp             # MCP server + bridge (tool registry + Drive surface)
+internal/bot             # Telegram bot bridge (TUI Telegram panel)
 internal/security        # security scanner
+internal/pathsafe        # path-traversal / workspace-root containment guards
+internal/applog          # structured app logger; internal/providerlog mirrors it for providers
+internal/repolint        # tree-wide grep assertions run as tests — CI tripwire (see below)
 internal/skills          # skill registry + shortcuts
 internal/planning        # planning helpers
 internal/pluginexec      # plugin execution runtime

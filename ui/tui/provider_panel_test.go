@@ -1470,8 +1470,8 @@ func TestProviderStatusTag_NoKeyNonOffline(t *testing.T) {
 }
 
 func TestStatusPriority_Default(t *testing.T) {
-	if statusPriority("something") != 3 {
-		t.Errorf("default priority: got %d", statusPriority("something"))
+	if statusPriorityOf("something") != 3 {
+		t.Errorf("default priority: got %d", statusPriorityOf("something"))
 	}
 }
 

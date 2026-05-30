@@ -499,7 +499,7 @@ func (m *Model) saveTelegramSetup() *Model {
 		return m
 	}
 
-	tgBot, err := bot.New(token)
+	tgBot, err := bot.New(m.eng.BackgroundContext(), token)
 	if err != nil {
 		m.telegram.saveError = fmt.Sprintf("Invalid token: %v", err)
 		m.appendTelegramLog("Telegram", m.telegram.saveError, true)

@@ -147,10 +147,16 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	beforeChanged, err := gitChangedFilesSnapshot(ctx, req.ProjectRoot)
-	if err != nil {
+	var gitErr string
+
+	beforeChanged, beforeErr := gitChangedFilesSnapshot(ctx, req.ProjectRoot)
+	if beforeErr != nil {
+		// Non-git directory or git error — surface it so workspace_changed
+		// is not misleading; we can't reliably detect changes without git.
 		beforeChanged = nil
+		gitErr = beforeErr.Error()
 	}
+
 	cmd := exec.CommandContext(runCtx, execPath, args...)
 	cmd.Dir = workDir
 	// Bounded capture: stdout + stderr each cap at runCommandOutputCap
@@ -164,23 +170,35 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	err = cmd.Run()
-	afterChanged, _ := gitChangedFilesSnapshot(ctx, req.ProjectRoot)
+
+	var afterErr error
+	var afterChanged []string
+	afterChanged, afterErr = gitChangedFilesSnapshot(ctx, req.ProjectRoot)
+	if afterErr != nil {
+		afterChanged = nil
+		if gitErr != "" {
+			gitErr = gitErr + "; after: " + afterErr.Error()
+		} else {
+			gitErr = afterErr.Error()
+		}
+	}
 
 	output := strings.TrimSpace(strings.TrimSpace(stdout.String()) + joinCommandStderr(stderr.String(), stdout.Len() > 0))
-	res := Result{
-		Output: output,
-		Data: map[string]any{
-			"command":           command,
-			"resolved_command":  execPath,
-			"args":              args,
-			"dir":               filepath.ToSlash(relPathOrAbsolute(req.ProjectRoot, workDir)),
-			"timeout_ms":        timeout.Milliseconds(),
-			"workspace_changed": !slices.Equal(beforeChanged, afterChanged),
-		},
+	data := map[string]any{
+		"command":           command,
+		"resolved_command":  execPath,
+		"args":              args,
+		"dir":               filepath.ToSlash(relPathOrAbsolute(req.ProjectRoot, workDir)),
+		"timeout_ms":        timeout.Milliseconds(),
+		"workspace_changed": !slices.Equal(beforeChanged, afterChanged),
+	}
+	if gitErr != "" {
+		data["git_error"] = gitErr
 	}
 	if !slices.Equal(beforeChanged, afterChanged) {
-		res.Data["changed_files"] = afterChanged
+		data["changed_files"] = afterChanged
 	}
+	res := Result{Output: output, Data: data}
 
 	if err == nil {
 		return res, nil
@@ -190,12 +208,13 @@ func (t *RunCommandTool) Execute(ctx context.Context, req Request) (Result, erro
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		res.Data["exit_code"] = exitErr.ExitCode()
+		data["exit_code"] = exitErr.ExitCode()
+		res = Result{Output: output, Data: data}
 		// Non-zero exit code is the command's own failure signal, not a system error.
-		// The exit code is already in res.Data["exit_code"] for callers to inspect.
+		// The exit code is already in data["exit_code"] for callers to inspect.
 		// Return Result (not error) so the engine marks this as success=true and
 		// the TUI renders the full output. If the caller cares about the exit code,
-		// they check res.Data["exit_code"] != 0.
+		// they check data["exit_code"] != 0.
 		return res, nil
 	}
 	return res, err

@@ -102,7 +102,7 @@ func (t *EditFileTool) Execute(_ context.Context, req Request) (Result, error) {
 		updated = restoreOriginalLineEndings(src, updatedNorm)
 	}
 
-	if err := writeFileAtomic(absPath, []byte(updated), 0o644); err != nil {
+	if err := writeFileAtomic(absPath, []byte(updated), 0o600); err != nil {
 		return Result{}, err
 	}
 	return Result{

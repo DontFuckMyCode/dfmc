@@ -46,7 +46,11 @@ var parallelSafeTools = map[string]struct{}{
 	"web_fetch":     {},
 	"web_search":    {},
 	"think":         {},
-	"todo_write":    {}, // mutates engine state only, not fs
+	// NOTE: todo_write is intentionally excluded. It can trigger nested
+	// CallTool invocations (e.g. through invalidateContextForTool) that
+	// mutate engine state from concurrent goroutines. While e.mu
+	// protects seenFiles/modifiedFiles, todo_write's own execution path
+	// is not re-entrant safe across parallel calls.
 }
 
 var parallelSafeToolsMu sync.RWMutex

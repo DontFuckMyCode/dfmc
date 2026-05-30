@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -25,6 +26,13 @@ type Client struct {
 	stdin  io.WriteCloser
 	stdout io.Reader
 	outBuf *bufio.Reader
+
+	// stdinCloser wraps stdin so that ctx cancellation in sendSync can
+	// unblock the reader goroutine by closing the connection from our
+	// side. Without this, a ctx cancel would leave the reader goroutine
+	// blocked on outBuf.ReadBytes('\n') forever if the server was slow
+	// or unresponsive.
+	stdinCloser io.Closer
 
 	mu     sync.RWMutex
 	tools  []ToolDescriptor
@@ -45,6 +53,10 @@ type Client struct {
 // and merged AFTER the scrub. The override `env` map passed to
 // NewClient is unconditionally forwarded — that's the operator's
 // explicit choice, not an inherited blob.
+//
+// VULN-032 fix: env values are validated for shell metacharacters
+// before being passed to the subprocess to prevent command injection
+// via malicious config (e.g. TERM=;rm -rf /).
 func NewClient(name string, command string, args []string, env map[string]string) (*Client, error) {
 	cmd := exec.Command(command, args...)
 	// Build the subprocess env from a scrubbed copy of the parent
@@ -55,6 +67,9 @@ func NewClient(name string, command string, args []string, env map[string]string
 	// once it exists.
 	envVars := security.ScrubEnv(os.Environ(), nil)
 	for k, v := range env {
+		if hasShellMeta(v) {
+			return nil, fmt.Errorf("env value for %q contains shell metacharacters", k)
+		}
 		envVars = append(envVars, k+"="+v)
 	}
 	cmd.Env = envVars
@@ -62,6 +77,15 @@ func NewClient(name string, command string, args []string, env map[string]string
 
 	c := &Client{Name: name, cmd: cmd}
 	return c, nil
+}
+
+// hasShellMeta reports whether s contains characters that have special
+// meaning in POSIX shells and could be used for injection if the value
+// is blindly passed to a shell subprocess. We deliberately exclude "="
+// and whitespace so that valid values like "TERM=xterm-256color" or
+// "PATH=/usr/local/bin:/usr/bin" are not flagged.
+func hasShellMeta(s string) bool {
+	return strings.ContainsAny(s, ";&|$`()<>\\|")
 }
 
 // Stop terminates the server process and releases resources.
@@ -115,7 +139,9 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 	return result, nil
 }
 
-// sendSync sends a request and waits for its response.
+// sendSync sends a request and waits for its response. If ctx is
+// cancelled, stdin is closed to unblock the reader goroutine, preventing
+// a goroutine leak when the caller abandons the request mid-flight.
 func (c *Client) sendSync(ctx context.Context, req *Request, resp *Response) error {
 	if c.stdin == nil || c.stdout == nil {
 		return errors.New("client not started")
@@ -138,6 +164,14 @@ func (c *Client) sendSync(ctx context.Context, req *Request, resp *Response) err
 	}()
 	select {
 	case <-ctx.Done():
+		// Closing stdin signals EOF to the server and causes the reader
+		// goroutine above to unblock (outBuf.ReadBytes returns an error
+		// when the underlying connection is closed), preventing the
+		// goroutine leak that occurred when ctx cancelled before the
+		// server could respond.
+		if c.stdinCloser != nil {
+			_ = c.stdinCloser.Close()
+		}
 		return ctx.Err()
 	case err := <-ch:
 		return err

@@ -23,7 +23,10 @@ const (
 	autoAutonomyKickoffConfidence         = 0.40
 	autoAutonomySequentialKickoffMinSteps = 3
 	autoAutonomyPreflightConfidence       = 0.55
-	aggressiveAutonomyPreflightConfidence = 0.40
+	// Aggressive mode acts without user confirmation, so it requires a
+	// HIGHER confidence threshold than "auto" mode. 0.65 means the planner
+	// must be substantially more confident before taking unconfirmed action.
+	aggressiveAutonomyPreflightConfidence = 0.65 // was 0.40 (below auto mode — backwards)
 )
 
 func (e *Engine) autonomousPlanningMode() string {
