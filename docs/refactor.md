@@ -507,7 +507,7 @@ Phase 3 (Ongoing): Technical debt
   [x] 3.6 langintel tests (registry_test.go already exists) ✅
   [x] 3.4 map-based dispatch (statusPriority function→map) ✅
   [x] 3.5 config split (config_runtime.go holds ContextConfig, AgentConfig, PluginsConfig; already separated from config_types.go) ✅
-  [~] 3.3 split drive.go (high effort — optional architectural refactor)
+  [x] 3.3 split drive.go (drive.go is only 309 lines — no split needed) ✅
 [~] 3.2 AgentLoop struct (high effort — optional architectural refactor)
 [~] 3.1 EngineCore facade (highest effort — optional architectural refactor)
 
@@ -537,9 +537,9 @@ Phase 4 (Any time):
 | 0 | 3 | 3 | 0 |
 | 1 | 5 | 5 | 0 |
 | 2 | 8 | 8 | 0 |
-| 3 | 6 | 3 | 3 (drive.go split, AgentLoop struct, EngineCore facade) |
+| 3 | 6 | 4 | 2 (AgentLoop struct, EngineCore facade) |
 | 4 | 3 | 3 | 0 |
-| **Total** | **25** | **20** | **3** |
+| **Total** | **25** | **21** | **2** |
 
 **Already resolved (no action needed):**
 - 0.1 Goroutine leak — correctly handled
