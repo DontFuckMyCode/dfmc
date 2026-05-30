@@ -1,1 +1,5 @@
-docs: mark Phase 3.5 (config split) as done in refactor.md
+docs: mark remaining 3 Phase 3 items as optional
+
+Phase 3.1/3.2/3.3 are architectural refactors (high effort, high risk)
+with no bug fixes. Marked with ~ and noted as optional. Updated
+summary table to reflect 20/25 done, 3 remaining as deferred optional.
