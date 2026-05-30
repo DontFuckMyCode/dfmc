@@ -506,7 +506,7 @@ Phase 2 (Week 3-4): Medium refactoring
 Phase 3 (Ongoing): Technical debt
   [x] 3.6 langintel tests (registry_test.go already exists) ✅
   [x] 3.4 map-based dispatch (statusPriority function→map) ✅
-  [ ] 3.5 config split (additive)
+  [x] 3.5 config split (config_runtime.go holds ContextConfig, AgentConfig, PluginsConfig; already separated from config_types.go) ✅
   [ ] 3.3 split drive.go (high effort)
   [ ] 3.2 AgentLoop struct (high effort)
   [ ] 3.1 EngineCore facade (highest effort)
