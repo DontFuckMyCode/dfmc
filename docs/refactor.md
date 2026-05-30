@@ -492,7 +492,7 @@ Phase 1 (Week 2): High priority
   [x] 1.2 Remove todo_write from parallelSafeTools ✅
   [x] 1.3 Raise aggressive autonomy threshold ✅
   [x] 1.4 Fix silent error discard in command.go ✅
-  [x] 1.5 Verify file permissions (search + fix if needed) ✅
+  [x] 1.5 Verify file permissions (search + fix if needed) ✅ (VULN-002 fixed: startup_state.go/driver.go/symbol_move.go/symbol_rename.go → 0o600)
 
 Phase 2 (Week 3-4): Medium refactoring
   [x] 2.4 Telegram context injection ✅
