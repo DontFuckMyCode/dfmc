@@ -20,14 +20,17 @@ func TestApplyProcessGroupIsolation_SetsSetpgid(t *testing.T) {
 }
 
 func TestApplyProcessGroupIsolation_preservesExistingSysProcAttr(t *testing.T) {
-	cmd := &exec.Cmd{
-		SysProcAttr: &syscall.SysProcAttr{
-			Setpgid: false,
-		},
-	}
+	attr := &syscall.SysProcAttr{Setpgid: false}
+	cmd := &exec.Cmd{SysProcAttr: attr}
 	applyProcessGroupIsolation(cmd)
-	if cmd.SysProcAttr.Setpgid {
-		t.Fatal("Setpgid must still be true")
+	// The existing SysProcAttr must be reused (its other fields kept), not
+	// replaced with a fresh struct...
+	if cmd.SysProcAttr != attr {
+		t.Fatal("existing SysProcAttr must be preserved, not replaced")
+	}
+	// ...and Setpgid must end up enabled.
+	if !cmd.SysProcAttr.Setpgid {
+		t.Fatal("Setpgid must be true after applyProcessGroupIsolation")
 	}
 }
 
