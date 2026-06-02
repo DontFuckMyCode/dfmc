@@ -21,6 +21,14 @@ func newCLITestEngine(t *testing.T) *engine.Engine {
 	t.Setenv("USERPROFILE", home)
 
 	cfg := config.DefaultConfig()
+	// Test engines run inside the dfmc repo, so without this the Init path
+	// would spawn a background indexer that parses the WHOLE source tree
+	// (a full CGO tree-sitter pass) and block Shutdown on it. Across the
+	// package's many engine-constructing tests under `-race` that warmup
+	// dominates the wall clock and blows the 10-minute CI budget (#31).
+	// ProjectRoot stays set, so the analyze tests that walk it still work;
+	// codemap tests build the map explicitly via BuildFromFiles.
+	cfg.Agent.SkipStartupIndex = true
 	eng, err := engine.New(cfg)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)

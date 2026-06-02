@@ -19,7 +19,7 @@ func TestRunScan_TextOutput(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		code := runScan(context.Background(), eng, []string{}, false)
+		code := runScan(context.Background(), eng, []string{tmp}, false)
 		if code != 0 {
 			t.Errorf("expected exit 0, got %d", code)
 		}
@@ -33,12 +33,19 @@ func TestRunScan_JSONMode(t *testing.T) {
 	eng := newCLITestEngine(t)
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "main.go")
-	if err := os.WriteFile(src, []byte("package main\n\nfunc main() {\n}\n"), 0o644); err != nil {
+	// Include a hardcoded credential so the security report actually has a
+	// finding — the JSON omits the secrets/vulnerabilities arrays when they
+	// are empty (omitempty), so an empty fixture would produce just
+	// {"files_scanned": N} and the key assertions below would not hold.
+	// The AKIA-prefixed literal is detected by both the tree-sitter and the
+	// regex credential scanner, so the fixture is backend-independent.
+	const fixture = "package main\n\nconst apiKey = \"AKIAIOSFODNN7EXAMPLE1234567890AB\"\n\nfunc main() {}\n"
+	if err := os.WriteFile(src, []byte(fixture), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
 
 	out := captureStdout(t, func() {
-		code := runScan(context.Background(), eng, []string{"--json"}, false)
+		code := runScan(context.Background(), eng, []string{"--json", tmp}, false)
 		if code != 0 {
 			t.Errorf("expected exit 0, got %d", code)
 		}
@@ -84,7 +91,7 @@ func TestRunAnalyze_SecurityFlag(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		code := runAnalyze(context.Background(), eng, []string{"--security"}, false)
+		code := runAnalyze(context.Background(), eng, []string{"--security", tmp}, false)
 		if code != 0 {
 			t.Errorf("expected exit 0, got %d", code)
 		}
@@ -103,7 +110,7 @@ func TestRunAnalyze_ComplexityFlag(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		code := runAnalyze(context.Background(), eng, []string{"--complexity"}, false)
+		code := runAnalyze(context.Background(), eng, []string{"--complexity", tmp}, false)
 		if code != 0 {
 			t.Errorf("expected exit 0, got %d", code)
 		}
@@ -122,7 +129,7 @@ func TestRunAnalyze_DeadCodeFlag(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		code := runAnalyze(context.Background(), eng, []string{"--dead-code"}, false)
+		code := runAnalyze(context.Background(), eng, []string{"--dead-code", tmp}, false)
 		if code != 0 {
 			t.Errorf("expected exit 0, got %d", code)
 		}
@@ -141,7 +148,7 @@ func TestRunAnalyze_DuplicationFlag(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		code := runAnalyze(context.Background(), eng, []string{"--duplication"}, false)
+		code := runAnalyze(context.Background(), eng, []string{"--duplication", tmp}, false)
 		if code != 0 {
 			t.Errorf("expected exit 0, got %d", code)
 		}
@@ -160,7 +167,7 @@ func TestRunAnalyze_TodosFlag(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		code := runAnalyze(context.Background(), eng, []string{"--todos"}, false)
+		code := runAnalyze(context.Background(), eng, []string{"--todos", tmp}, false)
 		if code != 0 {
 			t.Errorf("expected exit 0, got %d", code)
 		}
@@ -179,7 +186,7 @@ func TestRunAnalyze_DepsFlag(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		code := runAnalyze(context.Background(), eng, []string{"--deps"}, false)
+		code := runAnalyze(context.Background(), eng, []string{"--deps", tmp}, false)
 		if code != 0 {
 			t.Errorf("expected exit 0, got %d", code)
 		}
@@ -198,7 +205,7 @@ func TestRunAnalyze_JSONMode(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		code := runAnalyze(context.Background(), eng, []string{"--json"}, false)
+		code := runAnalyze(context.Background(), eng, []string{"--json", tmp}, false)
 		if code != 0 {
 			t.Errorf("expected exit 0, got %d", code)
 		}
@@ -217,7 +224,7 @@ func TestRunAnalyze_FullFlag(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		code := runAnalyze(context.Background(), eng, []string{"--full"}, false)
+		code := runAnalyze(context.Background(), eng, []string{"--full", tmp}, false)
 		if code != 0 {
 			t.Errorf("expected exit 0, got %d", code)
 		}
