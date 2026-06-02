@@ -23,6 +23,7 @@ import (
 func TestWebHandler_RejectsOversizedPostBody(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -62,6 +63,7 @@ func TestWebHandler_RejectsOversizedPostBody(t *testing.T) {
 func TestWebHandler_AcceptsNormalPostBody(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -157,6 +159,7 @@ func TestResolveMagicDocPath_HonoursRelativeInsideRoot(t *testing.T) {
 func TestHandleAnalyze_RejectsParentTraversal(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -186,6 +189,7 @@ func TestHandleAnalyze_RejectsParentTraversal(t *testing.T) {
 func TestHandleAnalyze_AcceptsEmptyPath(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

@@ -61,6 +61,7 @@ func TestWorkspaceApply_ApprovalGateDeniesNetwork(t *testing.T) {
 	eng.ProjectRoot = projectRoot
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	// Strip the default web approver and DON'T register one — the
 	// gate should implicit-deny without an approver.
 	eng.SetApprover(nil)
@@ -127,6 +128,7 @@ func TestWorkspaceApply_CheckOnlyBypassesGate(t *testing.T) {
 	eng.ProjectRoot = projectRoot
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	eng.SetApprover(nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()

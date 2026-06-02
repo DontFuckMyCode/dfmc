@@ -38,6 +38,7 @@ func dialTestWS(t *testing.T, ts *httptest.Server) (*websocket.Conn, *http.Respo
 func TestWS_OversizedFrameClosesConn(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	srv.SetAllowedHosts([]string{"*"})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -67,6 +68,7 @@ func TestWS_OversizedFrameClosesConn(t *testing.T) {
 func TestWS_RateLimitDoesNotKill(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	srv.SetAllowedHosts([]string{"*"})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -98,6 +100,7 @@ func TestWS_RateLimitDoesNotKill(t *testing.T) {
 func TestWS_PingPongHeartbeat(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	srv.SetAllowedHosts([]string{"*"})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -142,6 +145,7 @@ func TestWS_PingPongHeartbeat(t *testing.T) {
 func TestWS_ClientCloseUnwindsServer(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	srv.SetAllowedHosts([]string{"*"})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -211,6 +215,7 @@ func TestWSConnLimiter_GlobalCap(t *testing.T) {
 func TestWS_UpgradeRefusedAtCap(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	// Override cap to 1 so we don't have to open many real conns.
 	srv.wsConnLimiter = newWSConnLimiter(2, 1)
 

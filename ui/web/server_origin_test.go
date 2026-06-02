@@ -17,6 +17,7 @@ import (
 func TestHostAllowlist_RejectsForeignHost(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	srv.SetAllowedHosts([]string{"127.0.0.1:7777", "localhost:7777"})
 
 	ts := httptest.NewServer(srv.Handler())
@@ -42,6 +43,7 @@ func TestHostAllowlist_RejectsForeignHost(t *testing.T) {
 func TestHostAllowlist_AcceptsAllowedHost(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	// Use a precise host string and send the request with a matching
 	// Host header. httptest assigns its own port but we only need the
 	// allowlist match to succeed so the middleware passes.
@@ -70,6 +72,7 @@ func TestHostAllowlist_AcceptsAllowedHost(t *testing.T) {
 func TestHostAllowlist_WildcardDisablesCheck(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	srv.SetAllowedHosts([]string{"*"})
 
 	ts := httptest.NewServer(srv.Handler())

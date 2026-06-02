@@ -16,6 +16,7 @@ import (
 func TestContentTypeMiddleware_RejectsNonJSONPost(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -66,6 +67,7 @@ func TestContentTypeMiddleware_RejectsNonJSONPost(t *testing.T) {
 func TestContentTypeMiddleware_AcceptsJSONWithCharset(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -88,6 +90,7 @@ func TestContentTypeMiddleware_AcceptsJSONWithCharset(t *testing.T) {
 func TestContentTypeMiddleware_GETUnaffected(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -107,6 +110,7 @@ func TestContentTypeMiddleware_GETUnaffected(t *testing.T) {
 func TestContentTypeMiddleware_BodylessPOSTAllowed(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

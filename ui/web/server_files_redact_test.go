@@ -30,6 +30,7 @@ func TestHandleFileContent_RedactsSecretLeaves(t *testing.T) {
 	}
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -101,6 +102,7 @@ func TestHandleFileContent_RedactsAllKnownSecretShapes(t *testing.T) {
 	}
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

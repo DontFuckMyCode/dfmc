@@ -17,6 +17,7 @@ import (
 func TestTaskUpdate_NoIfMatch_BehavesAsBefore(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -44,6 +45,7 @@ func TestTaskUpdate_NoIfMatch_BehavesAsBefore(t *testing.T) {
 func TestTaskUpdate_IfMatch_StaleVersionGets412(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -81,6 +83,7 @@ func TestTaskUpdate_IfMatch_StaleVersionGets412(t *testing.T) {
 func TestTaskUpdate_IfMatch_FreshVersionSucceeds(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -121,6 +124,7 @@ func TestTaskUpdate_IfMatch_FreshVersionSucceeds(t *testing.T) {
 func TestTaskUpdate_IfMatch_GarbageRejected(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
