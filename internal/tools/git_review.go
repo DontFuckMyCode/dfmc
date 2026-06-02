@@ -193,38 +193,54 @@ func (t *GitReviewTool) getFileChanges(target, pattern string) ([]FileChange, er
 		return nil, fmt.Errorf("git diff failed: %w", err)
 	}
 
+	return parseNumstat(string(output), pattern)
+}
+
+// parseNumstat turns `git diff --numstat` output into FileChange records,
+// applying the optional file_pattern substring filter on the path. A change
+// line is `additions\tdeletions\tpath` (binary files report `-` for the
+// counts); a line without all three fields is skipped rather than indexed
+// out of range.
+func parseNumstat(output, pattern string) ([]FileChange, error) {
 	var files []FileChange
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
 			continue
 		}
 		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) >= 2 {
-			additions := 0
-			deletions := 0
-			if parts[0] != "-" && parts[0] != "" {
-				additions, _ = strconv.Atoi(parts[0])
-			}
-			if parts[1] != "-" && parts[1] != "" {
-				deletions, _ = strconv.Atoi(parts[1])
-			}
-
-			status := "modified"
-			if additions > 0 && deletions == 0 {
-				status = "added"
-			} else if additions == 0 && deletions > 0 {
-				status = "deleted"
-			}
-
-			files = append(files, FileChange{
-				Path:      parts[2],
-				Additions: additions,
-				Deletions: deletions,
-				Status:    status,
-			})
+		if len(parts) < 3 {
+			continue
 		}
+		// file_pattern is an advertised substring filter on the path
+		// (Spec: "Filter files by substring or pattern text"). It used to be
+		// accepted but never applied; honour it here.
+		if pattern != "" && !strings.Contains(parts[2], pattern) {
+			continue
+		}
+		additions := 0
+		deletions := 0
+		if parts[0] != "-" && parts[0] != "" {
+			additions, _ = strconv.Atoi(parts[0])
+		}
+		if parts[1] != "-" && parts[1] != "" {
+			deletions, _ = strconv.Atoi(parts[1])
+		}
+
+		status := "modified"
+		if additions > 0 && deletions == 0 {
+			status = "added"
+		} else if additions == 0 && deletions > 0 {
+			status = "deleted"
+		}
+
+		files = append(files, FileChange{
+			Path:      parts[2],
+			Additions: additions,
+			Deletions: deletions,
+			Status:    status,
+		})
 	}
 	if err := scanner.Err(); err != nil {
 		return files, fmt.Errorf("git diff numstat scan truncated after %d files: %w", len(files), err)
