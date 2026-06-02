@@ -70,13 +70,14 @@ changelog:
 #   ghcr.io/dontfuckmycode/dfmc:{{.Arch}}  (arch-specific, e.g. :amd64 on disk)
 # Users pull with: docker pull ghcr.io/dontfuckmycode/dfmc:latest
 dockers:
-  - image: ghcr.io/dontfuckmycode/dfmc
+  - image_templates:
+      - "ghcr.io/dontfuckmycode/dfmc:{{ .Version }}"
+      - "ghcr.io/dontfuckmycode/dfmc:latest"
     dockerfile: Dockerfile
     goos: linux
     goarch: amd64
-    build:
-      args:
-        VERSION: "{{.Version}}"
+    build_flag_templates:
+      - "--build-arg=VERSION={{ .Version }}"
     extra_files:
       - README.md
 
