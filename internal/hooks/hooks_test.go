@@ -532,3 +532,84 @@ func TestFire_DisabledUnsafeShellHookReportsWithoutExecuting(t *testing.T) {
 		t.Fatalf("expected disabled hook error, got %#v", reports[0].Err)
 	}
 }
+
+// TestParseHookTimeout pins the per-hook override parser: a valid Go
+// duration is honoured, while empty / malformed / non-positive values
+// fall back to 0 ("no override") rather than failing the config load.
+func TestParseHookTimeout(t *testing.T) {
+	cases := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"", 0},
+		{"   ", 0},
+		{"10s", 10 * time.Second},
+		{"500ms", 500 * time.Millisecond},
+		{"  2m  ", 2 * time.Minute},
+		{"nonsense", 0},
+		{"0s", 0},
+		{"-5s", 0},
+	}
+	for _, c := range cases {
+		if got := parseHookTimeout(c.in); got != c.want {
+			t.Errorf("parseHookTimeout(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// TestInventory_ReportsEffectiveTimeout guards against the budget shown
+// in `dfmc hooks` diverging from the budget actually enforced. A hook
+// with no override must report the live dispatcher default (not 0), an
+// explicit override must report its parsed value, and a malformed
+// override must fall back to the default.
+func TestInventory_ReportsEffectiveTimeout(t *testing.T) {
+	shellFalse := false
+	d := New(config.HooksConfig{Entries: map[string][]config.HookEntry{
+		"pre_tool": {
+			{Name: "default", Command: "echo a", Args: []string{"a"}, Shell: &shellFalse},
+			{Name: "override", Command: "echo b", Args: []string{"b"}, Shell: &shellFalse, Timeout: "250ms"},
+			{Name: "garbage", Command: "echo c", Args: []string{"c"}, Shell: &shellFalse, Timeout: "not-a-duration"},
+		},
+	}}, nil)
+
+	inv := d.Inventory()
+	entries := inv[EventPreTool]
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 inventory entries, got %d", len(entries))
+	}
+	byName := map[string]time.Duration{}
+	for _, e := range entries {
+		byName[e.Name] = e.Timeout
+	}
+	if got := byName["default"]; got != d.defaultTO {
+		t.Errorf("default hook should report the dispatcher default %v, got %v", d.defaultTO, got)
+	}
+	if got := byName["override"]; got != 250*time.Millisecond {
+		t.Errorf("override hook should report 250ms, got %v", got)
+	}
+	if got := byName["garbage"]; got != d.defaultTO {
+		t.Errorf("malformed override should fall back to default %v, got %v", d.defaultTO, got)
+	}
+}
+
+// TestHookPerHookTimeoutOverride_Enforced proves the override is not just
+// cosmetic: a hook with an explicit short timeout is killed within its
+// own budget even when the dispatcher default is long. Skipped on Windows
+// for the same signal-propagation reason as TestFire_TimeoutKillsRunawayHook.
+func TestHookPerHookTimeoutOverride_Enforced(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("cmd.exe doesn't propagate Kill to child processes reliably; covered on unix")
+	}
+	d := New(config.HooksConfig{Entries: map[string][]config.HookEntry{
+		"pre_tool": {{Name: "slow", Command: "sleep 5", Timeout: "200ms"}},
+	}}, nil)
+	// Leave the dispatcher default at its long value; only the per-hook
+	// override should bound this run.
+
+	start := time.Now()
+	d.Fire(context.Background(), EventPreTool, nil)
+	elapsed := time.Since(start)
+	if elapsed > 3*time.Second {
+		t.Fatalf("per-hook timeout override should have killed the hook within budget; elapsed=%v", elapsed)
+	}
+}
