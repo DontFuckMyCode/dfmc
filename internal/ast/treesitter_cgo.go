@@ -156,16 +156,18 @@ func treeSitterParserPool(lang string) *sync.Pool {
 	return treeSitterParsers.pool(lang)
 }
 
-func treeSitterLanguageFor(lang string) (tree_sitter.Language, bool, error) {
+func treeSitterLanguageFor(lang string) (*tree_sitter.Language, bool, error) {
 	switch lang {
 	case "go":
-		return tree_sitter_go.Language(), true, nil
+		return tree_sitter.NewLanguage(tree_sitter_go.Language()), true, nil
 	case "javascript", "jsx":
-		return tree_sitter_javascript.Language(), true, nil
-	case "typescript", "tsx":
-		return tree_sitter_typescript.Language(), true, nil
+		return tree_sitter.NewLanguage(tree_sitter_javascript.Language()), true, nil
+	case "typescript":
+		return tree_sitter.NewLanguage(tree_sitter_typescript.LanguageTypescript()), true, nil
+	case "tsx":
+		return tree_sitter.NewLanguage(tree_sitter_typescript.LanguageTSX()), true, nil
 	case "python":
-		return tree_sitter_python.Language(), true, nil
+		return tree_sitter.NewLanguage(tree_sitter_python.Language()), true, nil
 	default:
 		return nil, false, nil
 	}
@@ -176,14 +178,14 @@ func collectTreeSitterParseErrors(root *tree_sitter.Node) []ParseError {
 		errors := []ParseError{}
 		var walkErrors func(n *tree_sitter.Node)
 		walkErrors = func(n *tree_sitter.Node) {
-			if n.Type() == "ERROR" {
+			if n.Kind() == "ERROR" {
 				errors = append(errors, ParseError{
-					Line:    int(n.StartPoint().Row) + 1,
-					Column:  int(n.StartPoint().Column) + 1,
-					Message: n.String(),
+					Line:    int(n.StartPosition().Row) + 1,
+					Column:  int(n.StartPosition().Column) + 1,
+					Message: n.ToSexp(),
 				})
 			}
-			for i := 0; i < int(n.ChildCount()); i++ {
+			for i := uint(0); i < n.ChildCount(); i++ {
 				walkErrors(n.Child(i))
 			}
 		}
@@ -199,7 +201,7 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 
 	var walk func(n *tree_sitter.Node)
 	walk = func(n *tree_sitter.Node) {
-		switch n.Type() {
+		switch n.Kind() {
 		case "function_declaration":
 			name := childText(n, "identifier", content)
 			if name != "" && !seen[name] {
@@ -209,8 +211,8 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Kind:      "function",
 					Path:      path,
 					Language:  "go",
-					Line:      int(n.StartPoint().Row) + 1,
-					Column:    int(n.StartPoint().Column) + 1,
+					Line:      int(n.StartPosition().Row) + 1,
+					Column:    int(n.StartPosition().Column) + 1,
 					Signature: signatureBeforeBody(n, content),
 				})
 			}
@@ -220,9 +222,9 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 				name = childText(n, "field_identifier", content)
 			}
 			receiver := ""
-			for i := 0; i < int(n.ChildCount()); i++ {
+			for i := uint(0); i < n.ChildCount(); i++ {
 				child := n.Child(i)
-				if child.Type() == "parameter_list" {
+				if child.Kind() == "parameter_list" {
 					receiver = textForNode(child, content)
 					break
 				}
@@ -233,8 +235,8 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Kind:      "method",
 					Path:      path,
 					Language:  "go",
-					Line:      int(n.StartPoint().Row) + 1,
-					Column:    int(n.StartPoint().Column) + 1,
+					Line:      int(n.StartPosition().Row) + 1,
+					Column:    int(n.StartPosition().Column) + 1,
 					Signature: signatureBeforeBody(n, content),
 					Metadata:  map[string]string{"receiver": receiver},
 				})
@@ -242,9 +244,9 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 		case "type_declaration":
 			name := childText(n, "type_identifier", content)
 			if name == "" {
-				for i := 0; i < int(n.ChildCount()); i++ {
+				for i := uint(0); i < n.ChildCount(); i++ {
 					c := n.Child(i)
-					if c.Type() == "type_spec" {
+					if c.Kind() == "type_spec" {
 						name = childText(c, "name", content)
 						break
 					}
@@ -257,8 +259,8 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Kind:     "type",
 					Path:     path,
 					Language: "go",
-					Line:     int(n.StartPoint().Row) + 1,
-					Column:   int(n.StartPoint().Column) + 1,
+					Line:     int(n.StartPosition().Row) + 1,
+					Column:   int(n.StartPosition().Column) + 1,
 				})
 			}
 		case "call_expression":
@@ -271,13 +273,13 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 						Kind:     "call",
 						Path:     path,
 						Language: "go",
-						Line:     int(n.StartPoint().Row) + 1,
-						Column:   int(n.StartPoint().Column) + 1,
+						Line:     int(n.StartPosition().Row) + 1,
+						Column:   int(n.StartPosition().Column) + 1,
 					})
 				}
 			}
 		}
-		for i := 0; i < int(n.ChildCount()); i++ {
+		for i := uint(0); i < n.ChildCount(); i++ {
 			walk(n.Child(i))
 		}
 	}
@@ -289,12 +291,12 @@ func extractGoTreeSitterImports(root *tree_sitter.Node, content []byte) []string
 	imports := []string{}
 	var walk func(n *tree_sitter.Node)
 	walk = func(n *tree_sitter.Node) {
-		if n.Type() == "import_declaration" {
+		if n.Kind() == "import_declaration" {
 			if importPath := extractImportPath(n, content); importPath != "" {
 				imports = append(imports, importPath)
 			}
 		}
-		for i := 0; i < int(n.ChildCount()); i++ {
+		for i := uint(0); i < n.ChildCount(); i++ {
 			walk(n.Child(i))
 		}
 	}
@@ -320,12 +322,12 @@ func (f *StringVisitor) visit(n *tree_sitter.Node, content []byte) {
 	if f.done {
 		return
 	}
-	if n.Type() == "string" || n.Type() == "string_literal" || n.Type() == "string_content" {
+	if n.Kind() == "string" || n.Kind() == "string_literal" || n.Kind() == "string_content" {
 		f.result = textForNode(n, content)
 		f.done = true
 		return
 	}
-	for i := 0; i < int(n.ChildCount()); i++ {
+	for i := uint(0); i < n.ChildCount(); i++ {
 		f.visit(n.Child(i), content)
 	}
 }
@@ -337,7 +339,7 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 
 	var walk func(n *tree_sitter.Node)
 	walk = func(n *tree_sitter.Node) {
-		switch n.Type() {
+		switch n.Kind() {
 		case "function_declaration":
 			name := childText(n, "identifier", content)
 			if name != "" && !seen[name] {
@@ -347,8 +349,8 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Kind:      "function",
 					Path:      path,
 					Language:  lang,
-					Line:      int(n.StartPoint().Row) + 1,
-					Column:    int(n.StartPoint().Column) + 1,
+					Line:      int(n.StartPosition().Row) + 1,
+					Column:    int(n.StartPosition().Column) + 1,
 					Signature: signatureBeforeBody(n, content),
 				})
 			}
@@ -360,8 +362,8 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Kind:      "method",
 					Path:      path,
 					Language:  lang,
-					Line:      int(n.StartPoint().Row) + 1,
-					Column:    int(n.StartPoint().Column) + 1,
+					Line:      int(n.StartPosition().Row) + 1,
+					Column:    int(n.StartPosition().Column) + 1,
 					Signature: signatureBeforeBody(n, content),
 				})
 			}
@@ -374,8 +376,8 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Kind:      "class",
 					Path:      path,
 					Language:  lang,
-					Line:      int(n.StartPoint().Row) + 1,
-					Column:    int(n.StartPoint().Column) + 1,
+					Line:      int(n.StartPosition().Row) + 1,
+					Column:    int(n.StartPosition().Column) + 1,
 					Signature: signatureBeforeBody(n, content),
 				})
 			}
@@ -393,13 +395,13 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 						Kind:     "call",
 						Path:     path,
 						Language: lang,
-						Line:     int(n.StartPoint().Row) + 1,
-						Column:   int(n.StartPoint().Column) + 1,
+						Line:     int(n.StartPosition().Row) + 1,
+						Column:   int(n.StartPosition().Column) + 1,
 					})
 				}
 			}
 		}
-		for i := 0; i < int(n.ChildCount()); i++ {
+		for i := uint(0); i < n.ChildCount(); i++ {
 			walk(n.Child(i))
 		}
 	}
@@ -414,7 +416,7 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 
 	var walk func(n *tree_sitter.Node)
 	walk = func(n *tree_sitter.Node) {
-		switch n.Type() {
+		switch n.Kind() {
 		case "function_definition":
 			name := childText(n, "name", content)
 			if name != "" && !seen[name] {
@@ -424,8 +426,8 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 					Kind:      "function",
 					Path:      path,
 					Language:  lang,
-					Line:      int(n.StartPoint().Row) + 1,
-					Column:    int(n.StartPoint().Column) + 1,
+					Line:      int(n.StartPosition().Row) + 1,
+					Column:    int(n.StartPosition().Column) + 1,
 					Signature: signatureBeforeBody(n, content),
 				})
 			}
@@ -438,8 +440,8 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 					Kind:      "class",
 					Path:      path,
 					Language:  lang,
-					Line:      int(n.StartPoint().Row) + 1,
-					Column:    int(n.StartPoint().Column) + 1,
+					Line:      int(n.StartPosition().Row) + 1,
+					Column:    int(n.StartPosition().Column) + 1,
 					Signature: signatureBeforeBody(n, content),
 				})
 			}
@@ -460,13 +462,13 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 						Kind:     "call",
 						Path:     path,
 						Language: lang,
-						Line:     int(n.StartPoint().Row) + 1,
-						Column:   int(n.StartPoint().Column) + 1,
+						Line:     int(n.StartPosition().Row) + 1,
+						Column:   int(n.StartPosition().Column) + 1,
 					})
 				}
 			}
 		}
-		for i := 0; i < int(n.ChildCount()); i++ {
+		for i := uint(0); i < n.ChildCount(); i++ {
 			walk(n.Child(i))
 		}
 	}
@@ -475,9 +477,9 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 }
 
 func childText(n *tree_sitter.Node, childType string, content []byte) string {
-	for i := 0; i < int(n.ChildCount()); i++ {
+	for i := uint(0); i < n.ChildCount(); i++ {
 		child := n.Child(i)
-		if child.Type() == childType {
+		if child.Kind() == childType {
 			return textForNode(child, content)
 		}
 	}
@@ -487,7 +489,7 @@ func childText(n *tree_sitter.Node, childType string, content []byte) string {
 func textForNode(n *tree_sitter.Node, content []byte) string {
 	start, end := n.StartByte(), n.EndByte()
 	if int(end) > len(content) {
-		end = uint32(len(content))
+		end = uint(len(content))
 	}
 	if start > end {
 		return ""
