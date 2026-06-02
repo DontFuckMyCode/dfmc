@@ -27,7 +27,7 @@ func (t *DocGenerateTool) Cacheable() bool { return false }
 type DocRequest struct {
 	Target      string `json:"target"` // File or directory path
 	Mode        string `json:"mode"`   // func, package, readme, changelog
-	Format      string `json:"format"` // godoc, jsdoc, rustdoc
+	Format      string `json:"format"` // only "godoc" is implemented
 	ProjectRoot string `json:"project_root"`
 }
 
@@ -47,6 +47,17 @@ func (t *DocGenerateTool) Execute(ctx context.Context, req Request) (Result, err
 		return Result{}, missingParamError("doc_generate", "target", req.Params,
 			`{"mode":"package","target":"internal/foo"}`,
 			"target is a file path (for mode=func / mode=package) or directory (for mode=readme / mode=changelog).")
+	}
+
+	// Only godoc-style output is implemented: func mode emits empty bodies
+	// for non-godoc and package mode ignores format entirely. Reject other
+	// formats with a clear error rather than silently producing godoc (or
+	// broken) output (#54). An empty format defaults to godoc.
+	if format == "" {
+		format = "godoc"
+	}
+	if format != "godoc" {
+		return Result{}, fmt.Errorf(`doc_generate: format=%q is not supported; only "godoc" is available (jsdoc/rustdoc are not implemented)`, format)
 	}
 
 	var generated string
