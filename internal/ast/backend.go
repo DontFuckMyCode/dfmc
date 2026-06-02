@@ -27,8 +27,9 @@ func (e *Engine) ParseMetrics() ParseMetrics {
 
 func buildBackendLanguageStatuses(active, reason string) []BackendLanguageStatus {
 	// tree-sitter-backed languages: Active follows the `active`
-	// parameter so callers see "tree-sitter" in cgo builds and
-	// "regex" in !cgo builds.
+	// parameter, which callers pass as the overall BackendStatus.Active
+	// ("hybrid" in cgo builds, "regex" in !cgo builds) so a language's
+	// Active always equals the overall Active.
 	tsLanguages := []string{
 		"go",
 		"javascript",
