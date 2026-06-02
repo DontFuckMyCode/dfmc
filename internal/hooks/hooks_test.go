@@ -453,14 +453,17 @@ func TestSanitizeEnvValue_InjectionPayloads(t *testing.T) {
 				t.Errorf("sanitizeEnvValue(%q) = %q; windows value must be double-quoted", payload, got)
 			}
 		} else {
-			// On Unix, must be wrapped in single quotes with no unescaped injection chars
+			// On Unix, must be wrapped in single quotes. $(...) and backticks
+			// are inert INSIDE single quotes (no expansion), so their presence
+			// is expected and safe — that's the whole point of single-quoting.
+			// The only way to break out is a bare single quote, which
+			// sanitizeEnvValue escapes as '\'' ; verify none survives.
 			if !(strings.HasPrefix(got, "'") && strings.HasSuffix(got, "'")) {
 				t.Errorf("sanitizeEnvValue(%q) = %q; unix value must be single-quoted", payload, got)
 			}
-			// After stripping outer quotes, no unquoted $ or ` that could expand
 			inner := got[1 : len(got)-1]
-			if strings.Contains(inner, "$(") || strings.Contains(inner, "`") {
-				t.Errorf("sanitizeEnvValue(%q) = %q; inner string contains unquoted expansion chars", payload, got)
+			if strings.Contains(strings.ReplaceAll(inner, `'\''`, ""), "'") {
+				t.Errorf("sanitizeEnvValue(%q) = %q; unescaped single quote allows breakout", payload, got)
 			}
 		}
 	}
@@ -484,8 +487,11 @@ func TestHookEnv_ValuesAreSanitized(t *testing.T) {
 				if !(strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'")) {
 					t.Errorf("DFMC_ARGS value not quoted: %q", val)
 				}
-				if strings.Contains(val, "$(") {
-					t.Errorf("DFMC_ARGS value contains unquoted $(): %q", val)
+				// $(...) is inert inside single quotes; the only breakout
+				// vector is a bare single quote, escaped as '\'' by sanitize.
+				inner := val[1 : len(val)-1]
+				if strings.Contains(strings.ReplaceAll(inner, `'\''`, ""), "'") {
+					t.Errorf("DFMC_ARGS value allows quote breakout: %q", val)
 				}
 			}
 		}
