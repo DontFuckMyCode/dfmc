@@ -82,6 +82,24 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 	// back to default behaviour on platforms we don't special-case
 	// (current support: Linux/Darwin/Windows).
 	applyProcessGroupIsolation(cmd)
+	// exec.CommandContext's default cancel sends SIGKILL only to the shell
+	// LEADER. When `sh -c "sleep 5"` doesn't exec-optimize (the common case
+	// on the dash/bash hosts in CI), the shell forks `sleep` as a child;
+	// killing just the leader leaves `sleep` alive, still holding the
+	// inherited stdout/stderr pipe write-ends. cmd.Wait() then blocks on the
+	// output-copy goroutines until that orphan exits on its own — so a 200ms
+	// timeout fails to interrupt a 5s hook (the post-Run kill below would
+	// fire 5s too late). Cancel the whole process group instead, so the
+	// orphan dies the moment the timeout fires and the pipes close, letting
+	// Wait return promptly. WaitDelay is a backstop: if anything still holds
+	// a pipe, os/exec force-closes it after the delay rather than hanging.
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			killProcessGroup(cmd.Process.Pid)
+		}
+		return nil
+	}
+	cmd.WaitDelay = 2 * time.Second
 
 	stdoutBuf := newBoundedBuffer(hookOutputCap)
 	stderrBuf := newBoundedBuffer(hookOutputCap)
@@ -91,9 +109,9 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 	start := time.Now()
 	err := cmd.Run()
 	dur := time.Since(start)
-	// On context-cancel timeout, kill the whole process group so any
-	// child the hook spawned doesn't outlive the parent. No-op when
-	// the hook completed cleanly.
+	// Belt-and-suspenders hygiene: if the context expired, make sure the
+	// whole group is gone even on platforms/paths where Cancel didn't reach
+	// every descendant. No-op when the hook completed cleanly.
 	if runCtx.Err() != nil && cmd.Process != nil {
 		killProcessGroup(cmd.Process.Pid)
 	}
