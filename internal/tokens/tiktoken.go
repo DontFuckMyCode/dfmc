@@ -35,7 +35,13 @@ func (c *TiktokenCounter) init() error {
 	if c.tk != nil {
 		return nil
 	}
-	tk, err := tiktoken.EncodingForModel(c.encoding)
+	// c.encoding is a tiktoken ENCODING name ("cl100k_base", "o200k_base"),
+	// supplied via EncoderName/CounterForFamily — not a model name. Use
+	// GetEncoding, which keys on the encoding. EncodingForModel keys on a
+	// MODEL name ("gpt-4"), so passing an encoding name to it always failed
+	// ("no encoding for model cl100k_base"), which poison-pilled the family
+	// counter and silently degraded every OpenAI model to the heuristic.
+	tk, err := tiktoken.GetEncoding(c.encoding)
 	if err != nil {
 		return err
 	}
