@@ -146,16 +146,44 @@ func New(cfg config.HooksConfig, observer Observer) *Dispatcher {
 				command:   cmd,
 				args:      append([]string(nil), entry.Args...),
 				condition: strings.TrimSpace(entry.Condition),
-				// 0 == no per-hook override; runOne resolves the live
-				// d.defaultTO. HookEntry has no timeout field yet, so this is
-				// always 0 today — wire it here when per-hook timeouts land.
-				timeout:        0,
+				// 0 == no per-hook override; runOne and Inventory resolve the
+				// live d.defaultTO. A malformed duration is treated as "no
+				// override" rather than failing the load.
+				timeout:        parseHookTimeout(entry.Timeout),
 				useShell:       useShell,
 				disabledReason: disabledReason,
 			})
 		}
 	}
 	return d
+}
+
+// parseHookTimeout parses a per-hook timeout override. An empty or
+// malformed duration yields 0, meaning "no override — use the dispatcher
+// default". Negative/zero durations are rejected for the same reason: a
+// hook with no enforceable budget is never what the operator meant.
+func parseHookTimeout(raw string) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
+}
+
+// effectiveTimeout resolves the budget actually applied to a hook: its
+// per-hook override when set, otherwise the LIVE dispatcher default. This
+// is the single source of truth for both enforcement (runOne) and display
+// (Inventory) so a hook can never be shown one budget and run under
+// another.
+func (d *Dispatcher) effectiveTimeout(h compiledHook) time.Duration {
+	if h.timeout > 0 {
+		return h.timeout
+	}
+	return d.defaultTO
 }
 
 // Fire runs every handler for `event` sequentially. The Payload is
@@ -312,7 +340,7 @@ func (d *Dispatcher) Inventory() map[Event][]HookInventoryEntry {
 				Name:      h.name,
 				Command:   h.command,
 				Condition: h.condition,
-				Timeout:   h.timeout,
+				Timeout:   d.effectiveTimeout(h),
 			})
 		}
 		out[event] = entries

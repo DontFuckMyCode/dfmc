@@ -137,6 +137,11 @@ type HookEntry struct {
 	Command   string   `yaml:"command"`
 	Args      []string `yaml:"args,omitempty"`
 	Shell     *bool    `yaml:"shell,omitempty"`
+	// Timeout is an optional per-hook override of the dispatcher default
+	// (a Go duration string, e.g. "10s", "500ms"). Empty or unparseable
+	// falls back to the default — hooks are a convenience layer, not a
+	// correctness gate, so a typo here must not fail config load.
+	Timeout string `yaml:"timeout,omitempty"`
 }
 
 type PluginsConfig struct {

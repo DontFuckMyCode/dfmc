@@ -37,10 +37,7 @@ const hookOutputCap = 1 << 20 // 1 MiB
 // (the bit a human would actually read) and drop the rest with a
 // truncation marker so the report stays parseable.
 func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, payload Payload) Report {
-	to := h.timeout
-	if to <= 0 {
-		to = d.defaultTO
-	}
+	to := d.effectiveTimeout(h)
 	if h.disabledReason != "" {
 		return Report{
 			Event:    event,
