@@ -207,7 +207,11 @@ func (s *Scanner) scanCargoLock(path string) ([]DependencyFinding, error) {
 // package>=1.0
 // -e git+https://github.com/user/repo.git@abc123#egg=pkg
 // --index-url https://...
-var reqLineRE = regexp.MustCompile(`^([a-zA-Z0-9_\-\.]+)(==|>=|<=|~=|!=)`)
+// Capture the version spec after the operator (up to whitespace, an
+// environment marker `;`, or an inline `#` comment) so the finding records
+// the actual version, not just the operator. Previously the trailing
+// version group was missing, so Version came out as a bare "==" / ">=".
+var reqLineRE = regexp.MustCompile(`^([a-zA-Z0-9_\-\.]+)(==|>=|<=|~=|!=)([^\s;#]+)`)
 var reqGitRE = regexp.MustCompile(`^-e git\+https?://[^@]+@([0-9a-f]{7,})`)
 
 func (s *Scanner) scanRequirementsTxt(path string) ([]DependencyFinding, error) {
@@ -242,7 +246,7 @@ func (s *Scanner) scanRequirementsTxt(path string) ([]DependencyFinding, error) 
 			findings = append(findings, DependencyFinding{
 				File:      "requirements.txt",
 				Pkg:       m[1],
-				Version:   m[2], // operator retained so user sees >= etc.
+				Version:   m[2] + m[3], // operator + version, e.g. "==1.2.3"
 				Ecosystem: "pip",
 				Kind:      "versioned",
 			})

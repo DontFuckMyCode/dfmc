@@ -87,11 +87,82 @@ func TestScanRequirementsTxt(t *testing.T) {
 	if len(findings) != 4 {
 		t.Fatalf("expected 4 findings, got %d: %+v", len(findings), findings)
 	}
-	// Check git finding
+	// Version must carry the operator AND the actual version, not just the
+	// bare operator (regression guard: it used to record "==" / ">=").
+	byPkg := map[string]DependencyFinding{}
 	for _, f := range findings {
-		if f.Pkg == "git+https" && f.Kind != "git" {
-			t.Errorf("git dep should have kind=git, got %q", f.Kind)
+		byPkg[f.Pkg] = f
+	}
+	wantVersion := map[string]string{
+		"requests": "==2.31.0",
+		"numpy":    ">=1.24.0",
+		"flask":    "~=3.0.0",
+	}
+	for pkg, want := range wantVersion {
+		f, ok := byPkg[pkg]
+		if !ok {
+			t.Errorf("missing finding for %q", pkg)
+			continue
 		}
+		if f.Version != want {
+			t.Errorf("%s Version = %q, want %q", pkg, f.Version, want)
+		}
+		if f.Kind != "versioned" {
+			t.Errorf("%s Kind = %q, want versioned", pkg, f.Kind)
+		}
+	}
+	if git, ok := byPkg["git+https"]; !ok || git.Kind != "git" {
+		t.Errorf("git dep should have kind=git, got %+v", git)
+	} else if git.Version != "abc1234" {
+		t.Errorf("git dep Version = %q, want the 7-char short hash abc1234", git.Version)
+	}
+}
+
+// TestScanDependencyFiles_Subdir covers scanSubdir: lock files in an
+// immediate subdirectory of the root are scanned, while node_modules is
+// skipped.
+func TestScanDependencyFiles_Subdir(t *testing.T) {
+	sc := New()
+	root := t.TempDir()
+
+	// A go.sum with a pseudo-version under a subdir -> one "unknown" finding.
+	sub := filepath.Join(root, "service")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goSum := "example.com/x v0.0.0-20240101000000-abcdef123456 h1:abc=\n"
+	if err := os.WriteFile(filepath.Join(sub, "go.sum"), []byte(goSum), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A lock file under node_modules must be ignored.
+	nm := filepath.Join(root, "node_modules", "pkg")
+	if err := os.MkdirAll(nm, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nm, "go.sum"),
+		[]byte("evil.com/y v0.0.0-20240101000000-deadbeef0000 h1:y=\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	findings, err := sc.ScanDependencyFiles(root)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	var sawSub, sawNodeModules bool
+	for _, f := range findings {
+		if f.Pkg == "example.com/x" {
+			sawSub = true
+		}
+		if f.Pkg == "evil.com/y" {
+			sawNodeModules = true
+		}
+	}
+	if !sawSub {
+		t.Errorf("expected the subdir go.sum pseudo-version to be found; got %+v", findings)
+	}
+	if sawNodeModules {
+		t.Errorf("node_modules lock files must be skipped, but a finding leaked: %+v", findings)
 	}
 }
 
