@@ -91,7 +91,20 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The engine forwards the terminal Done event to this channel BEFORE it
+	// runs its post-stream bookkeeping (recordInteraction / conversation
+	// save) and only then closes the channel. If we returned the instant we
+	// saw Done, the handler — and, in tests, the engine Shutdown that
+	// follows — would race that still-running producer goroutine (#49).
+	// After the terminal event we stop writing but keep draining until the
+	// producer closes the channel, so its bookkeeping is guaranteed to have
+	// finished by the time we return. Nothing is emitted after Done, so this
+	// is just a wait for the close.
+	done := false
 	for ev := range stream {
+		if done {
+			continue
+		}
 		switch ev.Type {
 		case provider.StreamDelta:
 			if !writeSSEWithDeadline(w, flusher, map[string]any{
@@ -111,7 +124,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				"type": "done",
 				"ts":   time.Now().UTC().Format(time.RFC3339),
 			})
-			return
+			done = true
 		}
 	}
 }
