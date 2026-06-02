@@ -130,6 +130,17 @@ func (t *ChangelogGenerateTool) Execute(ctx context.Context, req Request) (Resul
 		result, err = t.generateAllTagsChangelog(path)
 	} else {
 		result, err = t.generateChangelog(path, fromTag, toTag, since)
+		// Range changelogs get a release heading. The all-tags path writes
+		// its own per-tag headings, so this only applies here (#54). Skip the
+		// empty "# Changelog ... No changes" sentinel. HEAD (the default
+		// to_tag) is labelled "Unreleased" per Keep-a-Changelog.
+		if err == nil && !strings.HasPrefix(result, "# Changelog") {
+			label := toTag
+			if label == "HEAD" {
+				label = "Unreleased"
+			}
+			result = fmt.Sprintf("## [%s] - %s\n\n", label, t.getTagDate(path, toTag)) + result
+		}
 	}
 
 	if err != nil {
@@ -181,7 +192,7 @@ func (t *ChangelogGenerateTool) generateChangelog(path, fromTag, toTag, since st
 		return "# Changelog\n\n*No changes found.*\n", nil
 	}
 
-	return t.formatChangelog(commits, fromTag), nil
+	return t.formatChangelog(commits), nil
 }
 
 func (t *ChangelogGenerateTool) generateAllTagsChangelog(path string) (string, error) {
@@ -265,7 +276,7 @@ func (t *ChangelogGenerateTool) parseCommits(output string) []CommitEntry {
 	return commits
 }
 
-func (t *ChangelogGenerateTool) formatChangelog(commits []CommitEntry, version string) string {
+func (t *ChangelogGenerateTool) formatChangelog(commits []CommitEntry) string {
 	var sb strings.Builder
 
 	// Group by type. Breaking commits get re-typed to "breaking" so
