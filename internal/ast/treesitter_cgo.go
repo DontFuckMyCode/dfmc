@@ -498,7 +498,7 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 	walk = func(n *tree_sitter.Node) {
 		switch n.Kind() {
 		case "function_definition":
-			name := childText(n, "name", content)
+			name := fieldText(n, "name", content)
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
@@ -512,7 +512,7 @@ func extractPythonTreeSitter(path, lang string, root *tree_sitter.Node, content 
 				})
 			}
 		case "class_definition":
-			name := childText(n, "name", content)
+			name := fieldText(n, "name", content)
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
@@ -562,6 +562,19 @@ func childText(n *tree_sitter.Node, childType string, content []byte) string {
 		if child.Kind() == childType {
 			return textForNode(child, content)
 		}
+	}
+	return ""
+}
+
+// fieldText returns the text of n's named-field child (grammar field,
+// e.g. "name"), or "" when the field is absent. Unlike childText this
+// matches the grammar FIELD rather than a node kind — required where the
+// name lives under a field whose value node kind is generic (Python
+// class/function names are `identifier` under the "name" field, so
+// childText(n, "name") would never match).
+func fieldText(n *tree_sitter.Node, field string, content []byte) string {
+	if c := n.ChildByFieldName(field); c != nil {
+		return textForNode(c, content)
 	}
 	return ""
 }
