@@ -82,6 +82,20 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 	// back to default behaviour on platforms we don't special-case
 	// (current support: Linux/Darwin/Windows).
 	applyProcessGroupIsolation(cmd)
+	// exec.CommandContext's default cancel only SIGKILLs the shell. A child
+	// the hook spawned survives — and crucially still holds the inherited
+	// stdout/stderr pipe write-ends, so cmd.Wait() blocks until that orphan
+	// exits on its own (the post-Run group kill below then fires far too
+	// late). Cancel the whole process group at timeout instead, so the
+	// orphan dies immediately and Wait returns promptly. WaitDelay is a
+	// backstop that force-closes the pipes if anything still holds them.
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			killProcessGroup(cmd.Process.Pid)
+		}
+		return nil
+	}
+	cmd.WaitDelay = 2 * time.Second
 
 	stdoutBuf := newBoundedBuffer(hookOutputCap)
 	stderrBuf := newBoundedBuffer(hookOutputCap)
