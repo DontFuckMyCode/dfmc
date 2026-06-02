@@ -189,8 +189,12 @@ func (e *Engine) initProjectRuntime(ctx context.Context) {
 		e.mu.Lock()
 		e.indexCancel = cancel
 		e.mu.Unlock()
+		// Capture the root for the background indexer so it never reads the
+		// mutable e.ProjectRoot field (which callers/tests may overwrite
+		// after Init returns).
+		root := e.ProjectRoot
 		e.indexWG.Go(func() {
-			e.indexCodebase(indexCtx)
+			e.indexCodebase(indexCtx, root)
 		})
 	}
 	for _, path := range []string{e.globalConfigPath(), e.projectConfigPath()} {

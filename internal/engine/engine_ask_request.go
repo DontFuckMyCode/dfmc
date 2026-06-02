@@ -60,10 +60,14 @@ func (e *Engine) buildRequestMessages(question string, chunks []types.ContextChu
 	return msgs
 }
 
-func (e *Engine) indexCodebase(ctx context.Context) {
+// indexCodebase runs in a background goroutine spawned during Init. It
+// takes the project root as a parameter (captured at spawn time) rather
+// than reading e.ProjectRoot, so a caller mutating e.ProjectRoot after
+// Init returns cannot data-race with this goroutine's read.
+func (e *Engine) indexCodebase(ctx context.Context, root string) {
 	start := time.Now()
-	e.EventBus.Publish(Event{Type: "index:start", Source: "engine", Payload: e.ProjectRoot})
-	paths, err := e.collectSourceFiles(e.ProjectRoot)
+	e.EventBus.Publish(Event{Type: "index:start", Source: "engine", Payload: root})
+	paths, err := e.collectSourceFiles(root)
 	if err != nil {
 		e.EventBus.Publish(Event{Type: "index:error", Source: "engine", Payload: err.Error()})
 		return
