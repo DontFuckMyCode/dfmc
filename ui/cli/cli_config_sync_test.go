@@ -406,6 +406,12 @@ func TestRunConfig_GetNoPath(t *testing.T) {
 }
 
 func TestRunConfig_EditUnknown(t *testing.T) {
+	// Force a deterministic "no real editor" path: a bogus editor makes
+	// exec.LookPath fail fast (exit 1) on every OS. Without this the handler
+	// falls back to the platform default (vi on Linux), which blocks waiting
+	// for input and times the whole suite out under CI.
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "dfmc-no-such-editor-deadbeef")
 	eng := newCLITestEngine(t)
 	code := runConfig(context.Background(), eng, []string{"edit", "--global"}, false)
 	// edit will try to open an editor - we just verify it doesn't panic
