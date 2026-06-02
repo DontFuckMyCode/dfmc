@@ -14,7 +14,7 @@ package tui
 // muted IGN chip and drop out of the unfiltered count.
 
 import (
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 
@@ -28,12 +28,12 @@ import (
 // on the same finding while letting the mark fall off if the code
 // reshuffles enough that the line/rule no longer match.
 func secretFingerprint(s security.SecretFinding) string {
-	h := sha1.Sum([]byte(fmt.Sprintf("secret|%s|%d|%s", s.File, s.Line, s.Pattern)))
+	h := sha256.Sum256([]byte(fmt.Sprintf("secret|%s|%d|%s", s.File, s.Line, s.Pattern)))
 	return hex.EncodeToString(h[:8])
 }
 
 func vulnFingerprint(v security.VulnerabilityFinding) string {
-	h := sha1.Sum([]byte(fmt.Sprintf("vuln|%s|%d|%s|%s", v.File, v.Line, v.Kind, v.CWE)))
+	h := sha256.Sum256([]byte(fmt.Sprintf("vuln|%s|%d|%s|%s", v.File, v.Line, v.Kind, v.CWE)))
 	return hex.EncodeToString(h[:8])
 }
 
