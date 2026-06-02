@@ -92,8 +92,13 @@ type Dispatcher struct {
 	defaultTO time.Duration
 }
 
-// compiledHook pairs a config entry with its pre-parsed timeout so the
-// dispatch path stays allocation-free on the hot loop.
+// compiledHook pairs a config entry with its pre-parsed per-hook timeout
+// override so the dispatch path stays allocation-free on the hot loop. A
+// zero timeout means "no per-hook override" — runOne then resolves the
+// LIVE dispatcher default (d.defaultTO) at call time. We deliberately do
+// NOT snapshot d.defaultTO here: doing so froze the timeout at New() time,
+// so a later change to d.defaultTO (the only timeout knob, and what tests
+// set) had no effect and every hook silently ran with the 30s default.
 type compiledHook struct {
 	name           string
 	command        string
@@ -137,11 +142,14 @@ func New(cfg config.HooksConfig, observer Observer) *Dispatcher {
 				}
 			}
 			d.entries[event] = append(d.entries[event], compiledHook{
-				name:           strings.TrimSpace(entry.Name),
-				command:        cmd,
-				args:           append([]string(nil), entry.Args...),
-				condition:      strings.TrimSpace(entry.Condition),
-				timeout:        d.defaultTO,
+				name:      strings.TrimSpace(entry.Name),
+				command:   cmd,
+				args:      append([]string(nil), entry.Args...),
+				condition: strings.TrimSpace(entry.Condition),
+				// 0 == no per-hook override; runOne resolves the live
+				// d.defaultTO. HookEntry has no timeout field yet, so this is
+				// always 0 today — wire it here when per-hook timeouts land.
+				timeout:        0,
 				useShell:       useShell,
 				disabledReason: disabledReason,
 			})
