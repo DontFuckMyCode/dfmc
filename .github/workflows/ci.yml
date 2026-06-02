@@ -163,3 +163,31 @@ jobs:
           name: coverage-profile
           path: coverage.out
           if-no-files-found: warn
+
+  goreleaser-check:
+    # Validates .goreleaser.yaml on every push/PR so a release-config
+    # mistake is caught here instead of at tag time (release.yml only runs on
+    # tags). The install step exercises goreleaser-action@v7 itself and pins
+    # the same `~> v2` goreleaser the release uses, so this also covers the
+    # action bump that release.yml can't verify on a PR.
+    name: GoReleaser config check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          install-only: true
+
+      - name: Validate release config
+        run: goreleaser check
