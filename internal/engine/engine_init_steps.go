@@ -184,7 +184,7 @@ func (e *Engine) initProjectRuntime(ctx context.Context) {
 	e.ProjectRoot = config.FindProjectRoot("")
 	e.Config.SetProjectRoot(e.ProjectRoot)
 	e.refreshProjectConfigSnapshot(e.projectConfigPath())
-	if e.ProjectRoot != "" {
+	if e.ProjectRoot != "" && !e.Config.Agent.SkipStartupIndex {
 		indexCtx, cancel := context.WithCancel(ctx)
 		e.mu.Lock()
 		e.indexCancel = cancel

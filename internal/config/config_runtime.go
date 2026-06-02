@@ -108,6 +108,14 @@ type AgentConfig struct {
 	// OrchestrateAutoSubtasks: max subtasks from deterministic split before
 	// truncation. Default 8. 0 falls back to the built-in default.
 	OrchestrateAutoSubtasks int `yaml:"orchestrate_auto_subtasks"`
+	// SkipStartupIndex disables the background codebase indexer that
+	// warms the CodeMap at Init time. ProjectRoot is still resolved and
+	// set, so on-demand analysis (`dfmc analyze`, explicit
+	// CodeMap.BuildFromFiles) works unchanged — only the eager warmup
+	// goroutine is skipped. Useful for very large repos where startup
+	// latency matters and for test engines that would otherwise spawn a
+	// full-repo CGO parse per Init. Default false (warm on startup).
+	SkipStartupIndex bool `yaml:"skip_startup_index"`
 }
 
 type ContextLifecycleConfig struct {
