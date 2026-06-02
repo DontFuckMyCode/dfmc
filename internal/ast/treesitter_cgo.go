@@ -242,25 +242,62 @@ func extractGoTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 				})
 			}
 		case "type_declaration":
-			name := childText(n, "type_identifier", content)
-			if name == "" {
-				for i := uint(0); i < n.ChildCount(); i++ {
-					c := n.Child(i)
-					if c.Kind() == "type_spec" {
-						name = childText(c, "name", content)
+			// type_declaration wraps one or more type_specs; the name is
+			// the spec's type_identifier child, and an interface_type child
+			// marks it as an interface rather than a plain type/struct.
+			for i := uint(0); i < n.ChildCount(); i++ {
+				spec := n.Child(i)
+				if spec.Kind() != "type_spec" {
+					continue
+				}
+				name := childText(spec, "type_identifier", content)
+				if name == "" || seen[name] {
+					continue
+				}
+				kind := types.SymbolType
+				for j := uint(0); j < spec.ChildCount(); j++ {
+					if spec.Child(j).Kind() == "interface_type" {
+						kind = types.SymbolInterface
 						break
 					}
 				}
-			}
-			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
 					Name:     name,
-					Kind:     "type",
+					Kind:     kind,
 					Path:     path,
 					Language: "go",
-					Line:     int(n.StartPosition().Row) + 1,
-					Column:   int(n.StartPosition().Column) + 1,
+					Line:     int(spec.StartPosition().Row) + 1,
+					Column:   int(spec.StartPosition().Column) + 1,
+				})
+			}
+		case "const_spec", "var_spec":
+			// Match the spec node directly (walk reaches it whether it's a
+			// direct child of the declaration or nested in a *_spec_list, as
+			// grouped `var (...)` blocks are). The spec's identifier children
+			// are the declared names; its type field is a type_identifier and
+			// is skipped.
+			declKind := types.SymbolConstant
+			if n.Kind() == "var_spec" {
+				declKind = types.SymbolVariable
+			}
+			for j := uint(0); j < n.ChildCount(); j++ {
+				id := n.Child(j)
+				if id.Kind() != "identifier" {
+					continue
+				}
+				name := textForNode(id, content)
+				if name == "" || seen[name] {
+					continue
+				}
+				seen[name] = true
+				symbols = append(symbols, types.Symbol{
+					Name:     name,
+					Kind:     declKind,
+					Path:     path,
+					Language: "go",
+					Line:     int(id.StartPosition().Row) + 1,
+					Column:   int(id.StartPosition().Column) + 1,
 				})
 			}
 		case "call_expression":
@@ -367,8 +404,12 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Signature: signatureBeforeBody(n, content),
 				})
 			}
-		case "class_declaration":
+		case "class_declaration", "abstract_class_declaration":
 			name := childText(n, "identifier", content)
+			if name == "" {
+				// TypeScript class names are type_identifier, not identifier.
+				name = childText(n, "type_identifier", content)
+			}
 			if name != "" && !seen[name] {
 				seen[name] = true
 				symbols = append(symbols, types.Symbol{
@@ -380,6 +421,45 @@ func extractJSTreeSitter(path, lang string, root *tree_sitter.Node, content []by
 					Column:    int(n.StartPosition().Column) + 1,
 					Signature: signatureBeforeBody(n, content),
 				})
+			}
+		case "enum_declaration":
+			name := childText(n, "identifier", content)
+			if name != "" && !seen[name] {
+				seen[name] = true
+				symbols = append(symbols, types.Symbol{
+					Name:      name,
+					Kind:      "enum",
+					Path:      path,
+					Language:  lang,
+					Line:      int(n.StartPosition().Row) + 1,
+					Column:    int(n.StartPosition().Column) + 1,
+					Signature: signatureBeforeBody(n, content),
+				})
+			}
+		case "variable_declarator":
+			// `const f = (…) => …` / `= function(){}` reads as a function
+			// symbol, matching how the regex extractor treats arrow/function
+			// values bound to a const/let name.
+			hasFn := false
+			for i := uint(0); i < n.ChildCount(); i++ {
+				switch n.Child(i).Kind() {
+				case "arrow_function", "function", "function_expression", "generator_function":
+					hasFn = true
+				}
+			}
+			if hasFn {
+				name := childText(n, "identifier", content)
+				if name != "" && !seen[name] {
+					seen[name] = true
+					symbols = append(symbols, types.Symbol{
+						Name:     name,
+						Kind:     "function",
+						Path:     path,
+						Language: lang,
+						Line:     int(n.StartPosition().Row) + 1,
+						Column:   int(n.StartPosition().Column) + 1,
+					})
+				}
 			}
 		case "import_statement":
 			if imp := extractImportPath(n, content); imp != "" {
