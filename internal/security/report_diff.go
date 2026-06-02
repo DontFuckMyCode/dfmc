@@ -20,7 +20,6 @@ package security
 
 import (
 	"bufio"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -199,7 +198,10 @@ func stripDiffPrefix(path string) string {
 	if path == "" || path == "/dev/null" {
 		return ""
 	}
-	path = filepath.ToSlash(path)
+	// Normalise separators platform-independently: filepath.ToSlash is a
+	// no-op on Linux (backslash isn't a separator there), so a Windows-style
+	// path would slip through unconverted on the CI runner.
+	path = strings.ReplaceAll(path, "\\", "/")
 	for _, p := range []string{"a/", "b/"} {
 		if rest, ok := strings.CutPrefix(path, p); ok {
 			path = rest
@@ -218,7 +220,7 @@ func normaliseDiffPath(p string) string {
 	if p == "" {
 		return ""
 	}
-	p = filepath.ToSlash(p)
+	p = strings.ReplaceAll(p, "\\", "/")
 	if rest, ok := strings.CutPrefix(p, "./"); ok {
 		p = rest
 	}

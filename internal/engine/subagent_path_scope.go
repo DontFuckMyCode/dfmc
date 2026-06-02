@@ -154,7 +154,10 @@ func normalisePathPrefix(p string) string {
 	if p == "" {
 		return ""
 	}
-	p = filepath.ToSlash(p)
+	// Normalise separators platform-independently: filepath.ToSlash is a
+	// no-op on Linux (backslash isn't a separator there), so a Windows-style
+	// allowed_path would not canonicalise on the CI runner.
+	p = strings.ReplaceAll(p, "\\", "/")
 	p = strings.TrimRight(p, "/")
 	if p == "" {
 		return ""
