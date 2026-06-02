@@ -55,7 +55,7 @@ func New(cfg ToolsConfigSubset) *Engine {
 	e := &Engine{
 		registry:         map[string]Tool{},
 		cfg:              cfg,
-		activeLayers:    activeLayersFromConfig(cfg.Tools.Layers),
+		activeLayers:     activeLayersFromConfig(cfg.Tools.Layers),
 		recentFailures:   map[string]int{},
 		recentFailOrder:  []string{},
 		readSnapshots:    map[string]string{},

@@ -23,7 +23,7 @@ const (
 )
 
 var (
-	familyMu   sync.RWMutex
+	familyMu    sync.RWMutex
 	familyCache = make(map[string]ModelFamily)
 )
 
@@ -100,7 +100,7 @@ func detectFamilyImpl(model string) ModelFamily {
 
 var encoderNameForFamily = map[ModelFamily]string{
 	Familycl100k: "cl100k_base",
-	Familyo200k: "o200k_base",
+	Familyo200k:  "o200k_base",
 }
 
 // EncoderName returns the tiktoken encoding name for a family, or "" if
@@ -181,4 +181,3 @@ func heuristicForFamily(f ModelFamily, text string) int {
 		return h.Count(text)
 	}
 }
-
