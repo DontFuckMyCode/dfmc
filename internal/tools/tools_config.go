@@ -178,7 +178,7 @@ type ConfigLike interface {
 	ToolsLimits() map[string]float64
 	ToolsRequireApproval() []string
 	ToolsLayers() []string
-	ToolsShellTimeout()  string
+	ToolsShellTimeout() string
 	ToolsShellOutputCap() int64
 	ToolsShellBlockedCommands() []string
 	AgentReadSnapshotCap() int
