@@ -25,6 +25,13 @@ func newTestEngine(t *testing.T) *engine.Engine {
 	tmp := t.TempDir()
 	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("HOME", tmp)
+	// Run from an empty temp dir so engine Init's FindProjectRoot("")
+	// resolves to "" instead of the real dfmc repo. Otherwise every web
+	// test spawns a background indexCodebase goroutine that parses the
+	// whole repo via CGO tree-sitter — slow, and a concurrent-parse
+	// SIGABRT on macOS arm64 (issue #36). No t.Parallel here, so the
+	// process-wide chdir is safe and auto-restored by t.Chdir.
+	t.Chdir(tmp)
 
 	cfg := config.DefaultConfig()
 	cfg.Web.Host = "127.0.0.1"
