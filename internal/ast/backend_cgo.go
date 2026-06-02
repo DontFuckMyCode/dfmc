@@ -8,6 +8,9 @@ func currentBackendStatus() BackendStatus {
 		Preferred: "tree-sitter",
 		Active:    "hybrid",
 		Reason:    reason,
-		Languages: buildBackendLanguageStatuses("tree-sitter", reason),
+		// Per-language Active inherits the overall mode ("hybrid") rather
+		// than the concrete backend, so a language's Active always equals
+		// BackendStatus.Active.
+		Languages: buildBackendLanguageStatuses("hybrid", reason),
 	}
 }
