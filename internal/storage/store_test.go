@@ -805,21 +805,21 @@ func TestLoadConversationLog_CorruptFile(t *testing.T) {
 	}
 }
 
-// writeFileAtomic: os.Rename fails when dst is read-only.
-func TestWriteFileAtomic_RenameReadOnly(t *testing.T) {
+// writeFileAtomic: the final os.Rename fails when the destination can't
+// be replaced. A read-only *file* does NOT block rename on Unix (rename
+// permission is governed by the parent directory, not the target's mode),
+// so the old read-only-file setup only errored on Windows. Renaming a file
+// onto an existing *directory* fails on every OS, exercising the same
+// rename-error branch cross-platform.
+func TestWriteFileAtomic_RenameTargetUnreplaceable(t *testing.T) {
 	dir := t.TempDir()
-	dst := filepath.Join(dir, "readonly.txt")
-	// Pre-create dst as read-only.
-	f, err := os.Create(dst)
-	if err != nil {
-		t.Fatalf("create dst: %v", err)
+	dst := filepath.Join(dir, "target")
+	if err := os.Mkdir(dst, 0o755); err != nil {
+		t.Fatalf("mkdir dst: %v", err)
 	}
-	f.Close()
-	os.Chmod(dst, 0o444)
 
-	err = writeFileAtomic(dst, []byte("data"), "tmp-*")
-	if err == nil {
-		t.Fatal("expected error when rename target is read-only")
+	if err := writeFileAtomic(dst, []byte("data"), "tmp-*"); err == nil {
+		t.Fatal("expected error when rename target cannot be replaced")
 	}
 }
 
