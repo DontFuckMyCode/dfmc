@@ -229,9 +229,15 @@ the approval gate. CLI prompts on stdin; TUI surfaces a modal; web
 and MCP surfaces require pre-authorised allowlists (they can't ask
 interactively).
 
-Secret-shaped parent env vars are scrubbed before hook and plugin
-child processes. Override with `DFMC_UNSAFE_HOOKS=1` only when the
-hook genuinely needs writable config access.
+Secret-shaped parent env vars (`*_API_KEY`, `*_TOKEN`, `AWS_*`, ...) are
+scrubbed before every hook and plugin child process so a hook can't
+exfiltrate provider keys. This scrubbing is unconditional — there is no
+env-passthrough escape hatch today.
+
+Separately, DFMC refuses to run hooks loaded from a group/world-writable
+config, since anyone who can edit it gains arbitrary command execution.
+Set `DFMC_UNSAFE_HOOKS=1` to override **that** refusal — only after you've
+audited the config and accept the risk. It does not affect env scrubbing.
 
 ## Build, test, lint
 
