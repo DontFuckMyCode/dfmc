@@ -128,7 +128,16 @@ func TestResolveMagicDocPath_RelativeEscapeFallsBack(t *testing.T) {
 func TestResolveMagicDocPath_HonoursRelativeInsideRoot(t *testing.T) {
 	root := t.TempDir()
 	got := resolveMagicDocPath(root, "docs/brief.md")
-	want := filepath.Join(root, "docs", "brief.md")
+	// resolveMagicDocPath canonicalises the root via filepath.EvalSymlinks,
+	// which on Windows also expands an 8.3 short name (e.g. a temp dir under
+	// C:\Users\RUNNER~1\...) to its long form, and on macOS resolves
+	// /var -> /private/var. Build want the same way so the comparison is
+	// apples-to-apples regardless of the runner's username/FS.
+	evalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(root): %v", err)
+	}
+	want := filepath.Join(evalRoot, "docs", "brief.md")
 	if got != want {
 		t.Fatalf("relative-inside-root resolution: got=%q want=%q", got, want)
 	}
