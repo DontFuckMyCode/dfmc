@@ -289,15 +289,18 @@ func (t *GitReviewTool) formatOutput(summary ReviewSummary, includeStats bool) s
 	var sb strings.Builder
 
 	sb.WriteString("## Git Code Review\n\n")
-	sb.WriteString(fmt.Sprintf("**%d commits** · **%d files** · **+%d/-%d lines**\n\n",
-		summary.TotalCommits, summary.TotalFiles,
-		summary.TotalAdditions, summary.TotalDeletions))
+	if includeStats {
+		sb.WriteString(fmt.Sprintf("**%d commits** · **%d files** · **+%d/-%d lines**\n\n",
+			summary.TotalCommits, summary.TotalFiles,
+			summary.TotalAdditions, summary.TotalDeletions))
+	}
 
 	// Top changed files
 	if len(summary.TopFiles) > 0 {
 		sb.WriteString("### Most Changed Files\n\n")
 		sb.WriteString("| File | + | - | Status |\n")
-		sb.WriteString("|------|---|---|-|-------|\n")
+		// 4 columns; the separator must have 4 cells (was 5: `|---|-|`).
+		sb.WriteString("|------|---|---|--------|\n")
 		for _, f := range summary.TopFiles {
 			sb.WriteString(fmt.Sprintf("| %s | %d | %d | %s |\n",
 				f.Path, f.Additions, f.Deletions, f.Status))
@@ -309,7 +312,7 @@ func (t *GitReviewTool) formatOutput(summary ReviewSummary, includeStats bool) s
 	if len(summary.Authors) > 0 {
 		sb.WriteString("### Top Contributors\n\n")
 		sb.WriteString("| Author | Commits | + | - |\n")
-		sb.WriteString("|--------|---------|---|---|")
+		sb.WriteString("|--------|---------|---|---|\n")
 		for _, a := range summary.Authors {
 			sb.WriteString(fmt.Sprintf("| %s | %d | %d | %d |\n",
 				a.Name, a.Commits, a.Additions, a.Deletions))
