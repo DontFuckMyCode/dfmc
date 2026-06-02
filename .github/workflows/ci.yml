@@ -190,4 +190,21 @@ jobs:
           install-only: true
 
       - name: Validate release config
-        run: goreleaser check
+        shell: bash
+        run: |
+          # `goreleaser check` exits 1 on an INVALID config (a real release
+          # breaker — e.g. a field the schema rejects) and 2 on a valid but
+          # DEPRECATED one. Gate on the former only; surface deprecations as
+          # a warning so a future goreleaser removal stays on the radar
+          # without blocking unrelated PRs.
+          set +e
+          output=$(goreleaser check 2>&1)
+          code=$?
+          echo "$output"
+          if [ "$code" -eq 1 ]; then
+            echo "::error::.goreleaser.yaml is invalid — the next release would fail to parse"
+            exit 1
+          fi
+          if [ "$code" -eq 2 ]; then
+            echo "::warning::.goreleaser.yaml uses deprecated properties (valid today; see log)"
+          fi
