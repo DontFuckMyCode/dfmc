@@ -106,6 +106,18 @@ func parseWithTreeSitter(ctx context.Context, path, lang string, content []byte)
 		},
 	})
 	if tree == nil {
+		// A nil tree means the parse was ABORTED mid-way: our
+		// ProgressCallback returns true once ctx is cancelled, which makes
+		// tree-sitter bail and return nil. An aborted parse leaves the
+		// parser's internal finished_tree unset, so reusing this same
+		// parser from the pool trips `ts_parser_parse: assertion
+		// finished_tree.ptr` and SIGABRTs the process on the NEXT parse
+		// (the intermittent CGO crash seen under -race / concurrent codemap
+		// builds). Mark it unhealthy so finalize Closes it instead of
+		// returning a poisoned parser to the pool. (A completed parse that
+		// we later discard on ctx.Err() below is fine — the parser finished
+		// cleanly there, so it stays healthy.)
+		healthy = false
 		if err := ctx.Err(); err != nil {
 			return nil, nil, nil, true, err
 		}
