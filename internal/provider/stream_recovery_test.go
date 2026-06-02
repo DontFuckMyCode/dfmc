@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -185,14 +186,19 @@ func TestStreamRecoveredObserver_FiresOnSuccessfulSwap(t *testing.T) {
 	r.fallback = []string{"fallback"}
 
 	var (
+		mu      sync.Mutex
 		gotFrom string
 		gotTo   string
 		fires   int
 	)
 	r.SetStreamRecoveredObserver(func(ev StreamRecoveredEvent) {
+		// The observer runs on the streaming goroutine; guard the shared
+		// state so the post-drain read below is data-race-free.
+		mu.Lock()
 		gotFrom = ev.From
 		gotTo = ev.To
 		fires++
+		mu.Unlock()
 	})
 
 	stream, _, err := r.Stream(context.Background(), CompletionRequest{
@@ -217,11 +223,14 @@ func TestStreamRecoveredObserver_FiresOnSuccessfulSwap(t *testing.T) {
 		}
 	}
 done:
-	if fires != 1 {
-		t.Fatalf("observer should fire exactly once, got %d", fires)
+	mu.Lock()
+	firesN, from, to := fires, gotFrom, gotTo
+	mu.Unlock()
+	if firesN != 1 {
+		t.Fatalf("observer should fire exactly once, got %d", firesN)
 	}
-	if gotFrom != "primary" || gotTo != "fallback" {
-		t.Errorf("expected From=primary To=fallback, got From=%q To=%q", gotFrom, gotTo)
+	if from != "primary" || to != "fallback" {
+		t.Errorf("expected From=primary To=fallback, got From=%q To=%q", from, to)
 	}
 }
 
@@ -241,9 +250,14 @@ func TestStreamRecoveredObserver_SkipsWhenContentAlreadyDelivered(t *testing.T) 
 	r.primary = "primary"
 	r.fallback = []string{"fallback"}
 
-	var fires int
+	var (
+		mu    sync.Mutex
+		fires int
+	)
 	r.SetStreamRecoveredObserver(func(ev StreamRecoveredEvent) {
+		mu.Lock()
 		fires++
+		mu.Unlock()
 	})
 
 	stream, _, err := r.Stream(context.Background(), CompletionRequest{
@@ -256,8 +270,11 @@ func TestStreamRecoveredObserver_SkipsWhenContentAlreadyDelivered(t *testing.T) 
 	for ev := range stream {
 		_ = ev
 	}
-	if fires != 0 {
-		t.Fatalf("observer must not fire when recovery is refused, got %d", fires)
+	mu.Lock()
+	firesN := fires
+	mu.Unlock()
+	if firesN != 0 {
+		t.Fatalf("observer must not fire when recovery is refused, got %d", firesN)
 	}
 }
 
