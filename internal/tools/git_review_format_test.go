@@ -88,3 +88,67 @@ func TestGitReview_IncludeStatsToggle(t *testing.T) {
 		t.Errorf("tables should still render when stats are disabled:\n%s", without)
 	}
 }
+
+// TestParseNumstat covers the numstat parser + the file_pattern substring
+// filter (which used to be accepted and ignored) and the 3-field guard
+// (a malformed 2-field line must be skipped, not indexed out of range).
+func TestParseNumstat(t *testing.T) {
+	const out = "30\t2\tinternal/a.go\n" +
+		"10\t3\tinternal/b.go\n" +
+		"0\t7\tdocs/old.md\n" +
+		"5\t0\tinternal/c.go\n" +
+		"-\t-\tbin/blob.png\n" + // binary file: counts are "-"
+		"bogus-2-field-line\twith-tab\n" + // malformed: only 2 fields -> skipped
+		"\n" // blank -> skipped
+
+	// No filter: every well-formed line is parsed (6 well-formed, 1 malformed
+	// skipped, 1 blank skipped).
+	all, err := parseNumstat(out, "")
+	if err != nil {
+		t.Fatalf("parseNumstat: %v", err)
+	}
+	if len(all) != 5 {
+		t.Fatalf("expected 5 parsed files, got %d: %+v", len(all), all)
+	}
+
+	// Status detection.
+	byPath := map[string]FileChange{}
+	for _, f := range all {
+		byPath[f.Path] = f
+	}
+	if f := byPath["internal/a.go"]; f.Status != "modified" || f.Additions != 30 || f.Deletions != 2 {
+		t.Errorf("a.go = %+v, want modified 30/2", f)
+	}
+	if f := byPath["docs/old.md"]; f.Status != "deleted" {
+		t.Errorf("old.md status = %q, want deleted", f.Status)
+	}
+	if f := byPath["internal/c.go"]; f.Status != "added" {
+		t.Errorf("c.go status = %q, want added", f.Status)
+	}
+	if f := byPath["bin/blob.png"]; f.Additions != 0 || f.Deletions != 0 {
+		t.Errorf("binary blob should parse as 0/0, got %+v", f)
+	}
+
+	// Substring filter: only paths containing "internal/" survive.
+	filtered, err := parseNumstat(out, "internal/")
+	if err != nil {
+		t.Fatalf("parseNumstat filtered: %v", err)
+	}
+	if len(filtered) != 3 {
+		t.Fatalf("expected 3 internal/ files, got %d: %+v", len(filtered), filtered)
+	}
+	for _, f := range filtered {
+		if !strings.Contains(f.Path, "internal/") {
+			t.Errorf("filter leaked a non-matching path: %q", f.Path)
+		}
+	}
+
+	// A pattern matching nothing yields an empty (non-nil-required) result.
+	none, err := parseNumstat(out, "no-such-path")
+	if err != nil {
+		t.Fatalf("parseNumstat none: %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("expected no matches, got %+v", none)
+	}
+}
