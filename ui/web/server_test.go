@@ -58,6 +58,7 @@ func pinOfflineProvider(t *testing.T, eng *engine.Engine) {
 func TestStatusEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -87,6 +88,7 @@ func TestStatusEndpointIncludesProviderAdvisories(t *testing.T) {
 		BaseURL:  "https://api.z.ai/api/anthropic",
 	}
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -123,6 +125,7 @@ func TestStatusEndpointIncludesProviderAdvisories(t *testing.T) {
 func TestStatusEndpointIncludesConversationMemory(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -162,6 +165,7 @@ func TestStatusEndpointIncludesApprovalGateAndHooks(t *testing.T) {
 	eng := newTestEngine(t)
 	eng.Config.Tools.RequireApproval = []string{"write_file", "run_command"}
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -204,6 +208,7 @@ func TestStatusEndpointIncludesApprovalGateAndHooks(t *testing.T) {
 func TestToolSpecEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -238,6 +243,7 @@ func TestToolSpecEndpoint(t *testing.T) {
 func TestToolSpecEndpoint_UnknownTool(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -254,6 +260,7 @@ func TestToolSpecEndpoint_UnknownTool(t *testing.T) {
 func TestHealthEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -277,6 +284,7 @@ func TestHealthEndpoint(t *testing.T) {
 func TestIndexWorkbench(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -352,6 +360,7 @@ func truncate(s string, max int) string {
 func TestWebSocketEventStreamShape(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -420,6 +429,7 @@ func TestChatSSEEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	pinOfflineProvider(t, eng)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -454,6 +464,7 @@ func TestChatSSEEndpoint(t *testing.T) {
 func TestProvidersEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -482,6 +493,7 @@ func TestProvidersEndpointIncludesProviderAdvisories(t *testing.T) {
 		BaseURL:  "https://api.z.ai/api/anthropic",
 	}
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -515,6 +527,7 @@ func TestProvidersEndpointIncludesProviderAdvisories(t *testing.T) {
 func TestSkillsEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -543,6 +556,7 @@ func TestSkillsEndpoint(t *testing.T) {
 func TestContextBudgetEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -584,6 +598,7 @@ func TestContextBudgetEndpoint(t *testing.T) {
 func TestContextRecommendEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -636,6 +651,7 @@ func TestContextBriefEndpoint(t *testing.T) {
 	}
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -676,6 +692,7 @@ func TestContextBriefEndpoint(t *testing.T) {
 func TestAnalyzeEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -711,6 +728,7 @@ func TestAnalyzeEndpointWithMagicDoc(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -755,6 +773,7 @@ func TestFileContentAndToolExecEndpoints(t *testing.T) {
 	}
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -808,6 +827,7 @@ func TestSkillExecEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	pinOfflineProvider(t, eng)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -839,6 +859,7 @@ func TestSkillExecEndpoint(t *testing.T) {
 func TestWSEventStreamEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -893,6 +914,7 @@ func TestConversationsEndpoints(t *testing.T) {
 	_ = eng.ConversationSave()
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -1029,6 +1051,7 @@ func TestWorkspaceEndpoints(t *testing.T) {
 	})
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -1157,6 +1180,7 @@ func TestPromptsEndpoints(t *testing.T) {
 	}
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -1276,6 +1300,7 @@ func TestMagicDocEndpoints(t *testing.T) {
 	}
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -1317,6 +1342,7 @@ func TestMagicDocEndpoints(t *testing.T) {
 func TestCommandsEndpoint(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

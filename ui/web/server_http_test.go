@@ -39,6 +39,7 @@ func TestHandlerAppliesBearerAuthWhenConfigured(t *testing.T) {
 		t.Fatalf("new engine: %v", err)
 	}
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	srv.SetBearerToken("secret-token")
 	handler := srv.Handler()
 
@@ -100,6 +101,7 @@ func TestNewClampsAuthNoneToLoopback(t *testing.T) {
 	eng := newTestEngine(t)
 	eng.Config.Web.Auth = "none"
 	srv := New(eng, "0.0.0.0", 7777)
+	defer srv.Close()
 	if got := srv.addr; got != "127.0.0.1:7777" {
 		t.Fatalf("expected auth=none bind to clamp to loopback, got %q", got)
 	}
@@ -125,6 +127,7 @@ func TestHandlerRejectsWSQueryTokenWhenBearerAuthEnabled(t *testing.T) {
 	eng := newTestEngine(t)
 	eng.Config.Web.Auth = "token"
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	srv.SetBearerToken("secret-token")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -143,6 +146,7 @@ func TestHandlerAllowsWSAuthorizationHeaderWhenConfigured(t *testing.T) {
 	eng := newTestEngine(t)
 	eng.Config.Web.Auth = "token"
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	srv.SetBearerToken("secret-token")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()

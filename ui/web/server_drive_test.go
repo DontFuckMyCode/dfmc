@@ -23,6 +23,7 @@ import (
 func TestDriveStartRejectsEmptyTask(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -51,6 +52,7 @@ func TestDriveStartRejectsEmptyTask(t *testing.T) {
 func TestDriveStartRejectsInvalidJSON(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -68,6 +70,7 @@ func TestDriveStartRejectsInvalidJSON(t *testing.T) {
 func TestDriveStartReturnsRunID(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -114,6 +117,7 @@ func toTestString(v any) string {
 func TestDriveListEmptyReturnsArrayNotNull(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -140,6 +144,7 @@ func TestDriveListEmptyReturnsArrayNotNull(t *testing.T) {
 func TestDriveShowMissingReturns404(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -176,6 +181,7 @@ func TestDriveShowReturnsExistingRun(t *testing.T) {
 	}
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -212,6 +218,7 @@ func TestDriveResumeRejectsTerminalRun(t *testing.T) {
 	})
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -232,6 +239,7 @@ func TestDriveResumeRejectsTerminalRun(t *testing.T) {
 func TestDriveStopMissingReturns404(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -259,6 +267,7 @@ func TestDriveStopMissingReturns404(t *testing.T) {
 func TestDriveActiveEmptyReturnsArrayNotNull(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -282,6 +291,7 @@ func TestDriveActiveEmptyReturnsArrayNotNull(t *testing.T) {
 func TestDriveDeleteIdempotent(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

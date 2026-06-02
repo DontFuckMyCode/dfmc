@@ -16,6 +16,7 @@ func TestAskEndpointNonRace(t *testing.T) {
 	eng := newTestEngine(t)
 	pinOfflineProvider(t, eng)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -51,6 +52,7 @@ func TestAskEndpointNonRace(t *testing.T) {
 func TestAskEndpointRaceMode(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -82,6 +84,7 @@ func TestAskEndpointRaceMode(t *testing.T) {
 func TestAskEndpointRejectsEmpty(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

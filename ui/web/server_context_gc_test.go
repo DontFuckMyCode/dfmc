@@ -16,6 +16,7 @@ import (
 func TestContextGC_PreviewListsDominatedTurns(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -68,6 +69,7 @@ func TestContextGC_PreviewListsDominatedTurns(t *testing.T) {
 func TestContextGC_RunPrunesDominated(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -118,6 +120,7 @@ func TestContextGC_RunPrunesDominated(t *testing.T) {
 func TestContextGC_EmptyConversationNoOp(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

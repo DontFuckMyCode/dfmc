@@ -21,6 +21,7 @@ import (
 func TestScanEndpoint_ShapeOnEmptyProject(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -48,6 +49,7 @@ func TestScanEndpoint_ShapeOnEmptyProject(t *testing.T) {
 func TestHooksEndpoint_EmptyShape(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -77,6 +79,7 @@ func TestHooksEndpoint_EmptyShape(t *testing.T) {
 func TestDoctorEndpoint_ShapeAndStatus(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -121,6 +124,7 @@ func TestDoctorEndpoint_ZAIAdvisory(t *testing.T) {
 	eng.Config.Providers.Profiles["zai"] = zai
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -168,6 +172,7 @@ func TestConfigEndpoint_RedactsSecrets(t *testing.T) {
 	eng.Config.Providers.Profiles["anthropic"] = prof
 
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -194,6 +199,7 @@ func TestConfigEndpoint_RedactsSecrets(t *testing.T) {
 func TestScanEndpoint_RejectsParentTraversal(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

@@ -27,6 +27,7 @@ func taskCreateBody(extra map[string]any) []byte {
 func TestTaskCreate_RejectsClientID(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -51,6 +52,7 @@ func TestTaskCreate_RejectsClientID(t *testing.T) {
 func TestTaskCreate_NoIDSucceeds(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -105,6 +107,7 @@ func createTaskHelper(t *testing.T, ts *httptest.Server, extra map[string]any) s
 func TestTaskUpdate_RejectsUnknownState(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -128,6 +131,7 @@ func TestTaskUpdate_RejectsUnknownState(t *testing.T) {
 func TestTaskUpdate_AcceptsKnownState(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -151,6 +155,7 @@ func TestTaskUpdate_AcceptsKnownState(t *testing.T) {
 func TestTaskUpdate_RejectsSelfReparent(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -174,6 +179,7 @@ func TestTaskUpdate_RejectsSelfReparent(t *testing.T) {
 func TestTaskUpdate_RejectsDescendantReparent(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -200,6 +206,7 @@ func TestTaskUpdate_RejectsDescendantReparent(t *testing.T) {
 func TestTaskList_LimitClampedToCap(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -231,6 +238,7 @@ func TestTaskList_LimitClampedToCap(t *testing.T) {
 func TestDriveStart_RejectsOversizedMaxParallel(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -250,6 +258,7 @@ func TestDriveStart_RejectsOversizedMaxParallel(t *testing.T) {
 func TestDriveStart_RejectsOversizedAutoApprove(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -273,6 +282,7 @@ func TestDriveStart_RejectsOversizedAutoApprove(t *testing.T) {
 func TestDriveStart_AcceptsReasonableValues(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

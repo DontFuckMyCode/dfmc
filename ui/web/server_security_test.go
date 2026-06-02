@@ -24,6 +24,7 @@ func TestBearerTokenMiddleware_WorkbenchRequiresAuth(t *testing.T) {
 		t.Fatalf("new engine: %v", err)
 	}
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	srv.SetBearerToken("secret-token")
 	handler := srv.Handler()
 	ts := httptest.NewServer(handler)
@@ -63,6 +64,7 @@ func TestBearerTokenMiddleware_NoTokenAllowsPublicGET(t *testing.T) {
 		t.Fatalf("new engine: %v", err)
 	}
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	handler := srv.Handler()
 	ts := httptest.NewServer(handler)
 	defer ts.Close()
@@ -176,6 +178,7 @@ func TestNormalizeBindHost_AuthNoneLoopbackNoNotice(t *testing.T) {
 func TestHandleFileContent_RedactsSecretFiles(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -200,6 +203,7 @@ func TestHandleFileContent_RedactsSecretFiles(t *testing.T) {
 func TestHandleFileContent_AllowsNormalFiles(t *testing.T) {
 	eng := newTestEngine(t)
 	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
