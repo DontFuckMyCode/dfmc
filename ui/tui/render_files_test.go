@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestFilesViewV2_RendersAllThreePanesOnWideTerminal pins the
@@ -197,5 +198,38 @@ func TestScrollWindow(t *testing.T) {
 					tc.cursor, tc.total, tc.budget, s, e, tc.wantStart, tc.wantEnd)
 			}
 		})
+	}
+}
+
+// TestTruncatePathHead_WideRunesNoPanic pins that truncatePathHead does not
+// panic on paths containing wide (CJK / emoji) characters. For such paths
+// lipgloss.Width(path) can exceed `max` while the RUNE count stays small, so
+// keep := max-1 could exceed len(runes) and runes[len(runes)-keep:] would
+// slice with a negative low bound. Reachable from the files-panel header,
+// which calls truncatePathHead(path, width-titleWidth-4) on real filenames.
+func TestTruncatePathHead_WideRunesNoPanic(t *testing.T) {
+	cases := []struct {
+		path string
+		max  int
+	}{
+		{"你你你", 5},     // 3 CJK runes, width 6 > max 5, keep 4 > 3 runes
+		{"日本語ファイル", 7}, // wider
+		{"🚀🚀🚀🚀", 6},    // emoji (width 2 each)
+		{"abc你", 4},    // mixed ASCII + wide
+		{"你", 4},       // single wide rune, narrow max
+		{strings.Repeat("世", 10), 5},
+	}
+	for _, tc := range cases {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("truncatePathHead(%q, %d) panicked: %v", tc.path, tc.max, r)
+				}
+			}()
+			got := truncatePathHead(tc.path, tc.max)
+			if !utf8.ValidString(got) {
+				t.Errorf("truncatePathHead(%q, %d) returned invalid UTF-8: %q", tc.path, tc.max, got)
+			}
+		}()
 	}
 }
