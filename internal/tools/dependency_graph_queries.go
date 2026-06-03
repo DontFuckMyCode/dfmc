@@ -36,7 +36,7 @@ func (t *DependencyGraphTool) queryImporters(g *codemap.Graph, module, edgeType 
 		}
 	}
 
-	if len(edges) > max {
+	if max > 0 && len(edges) > max {
 		edges = edges[:max]
 	}
 	return depResult{
@@ -64,7 +64,7 @@ func (t *DependencyGraphTool) queryCallers(g *codemap.Graph, symbol string, max 
 		}
 	}
 
-	if len(edges) > max {
+	if max > 0 && len(edges) > max {
 		edges = edges[:max]
 	}
 	return depResult{
@@ -96,7 +96,7 @@ func (t *DependencyGraphTool) queryImports(g *codemap.Graph, file, edgeType stri
 		}
 	}
 
-	if len(edges) > max {
+	if max > 0 && len(edges) > max {
 		edges = edges[:max]
 	}
 	return depResult{
