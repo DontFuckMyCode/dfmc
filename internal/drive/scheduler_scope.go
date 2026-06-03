@@ -93,6 +93,15 @@ func scopeConflicts(candidate Todo, held scopeSet) bool {
 	}
 	for _, f := range candidate.FileScope {
 		cf := normalizeScope(f)
+		if cf == scopeAny {
+			// An empty entry inside an otherwise-scoped FileScope is the
+			// scopeAny "owns everything" sentinel — the same meaning
+			// collectScopes/mergeScopes give it on the held side. held is
+			// non-empty here, so a candidate claiming everything conflicts
+			// with it. Without this, pathsOverlap("", path) is false and the
+			// candidate would wrongly run beside a TODO it could race with.
+			return true
+		}
 		for h := range held {
 			if h == scopeAny {
 				continue // handled above; never an overlap target
