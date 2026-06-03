@@ -147,44 +147,60 @@ func TrimToBudget(content string, maxTokens int, suffix string) string {
 		return trimmed
 	}
 
-	suffixTokens := 0
-	includeSuffix := suffix != ""
-	if includeSuffix {
-		suffixTokens = EstimateDefault(suffix)
-	}
-	budget := maxTokens - suffixTokens
-	if budget <= 0 {
-		budget = maxTokens
-		includeSuffix = false
-	}
-
 	words := strings.Fields(content)
 	if len(words) == 0 {
 		return ""
 	}
-	lo, hi := 0, len(words)
-	best := 0
-	for lo <= hi {
-		mid := (lo + hi) / 2
-		if mid == 0 {
-			lo = mid + 1
-			continue
+
+	// candidate builds the full output for the first n words, including the
+	// truncation marker when requested. The budget check estimates the WHOLE
+	// output (body + marker) against maxTokens rather than subtracting the
+	// marker's standalone estimate from the budget: the heuristic counter is
+	// density-sensitive and NON-additive, so a symbol-dense body concatenated
+	// with the prose marker can estimate higher than est(body)+est(marker).
+	// The old "budget = maxTokens - suffixTokens" math let that overflow leak
+	// through — a fuzzer found a 24-token budget returning 25 tokens.
+	candidate := func(n int, withSuffix bool) string {
+		body := strings.Join(words[:n], " ")
+		if withSuffix {
+			return body + "\n" + suffix
 		}
-		if EstimateDefault(strings.Join(words[:mid], " ")) <= budget {
-			best = mid
-			lo = mid + 1
-		} else {
-			hi = mid - 1
+		return body
+	}
+	// search returns the largest word-prefix whose full output fits. Word
+	// count is a non-strictly-monotonic proxy for tokens, so binary search
+	// may return fewer words than the true maximum — but it NEVER returns an
+	// n whose output exceeds maxTokens, which is the contract that matters.
+	search := func(withSuffix bool) int {
+		lo, hi, best := 0, len(words), 0
+		for lo <= hi {
+			mid := (lo + hi) / 2
+			if mid == 0 {
+				lo = mid + 1
+				continue
+			}
+			if EstimateDefault(candidate(mid, withSuffix)) <= maxTokens {
+				best = mid
+				lo = mid + 1
+			} else {
+				hi = mid - 1
+			}
 		}
+		return best
 	}
-	if best == 0 {
-		return ""
+
+	if suffix != "" {
+		if best := search(true); best > 0 {
+			return candidate(best, true)
+		}
+		// Even one word plus the marker overflows the budget — drop the
+		// marker rather than return nothing, so the caller still gets as much
+		// real content as fits.
 	}
-	out := strings.Join(words[:best], " ")
-	if includeSuffix {
-		return out + "\n" + suffix
+	if best := search(false); best > 0 {
+		return candidate(best, false)
 	}
-	return out
+	return ""
 }
 
 // CountMessages estimates tokens for a message sequence, including framing

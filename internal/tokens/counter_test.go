@@ -121,11 +121,20 @@ func TestTrimToBudget_AlreadyWithinBudget(t *testing.T) {
 
 // TrimToBudget appends suffix when there is room.
 func TestTrimToBudget_AppendsSuffixWithinBudget(t *testing.T) {
-	text := "one two three four five"
+	// A long body forces real truncation, and the budget leaves room for the
+	// marker alongside some content. The result must carry the suffix AND
+	// stay within budget — the previous fixture ("one two three four five",
+	// budget 4) asserted only the suffix and silently accepted a 5-token
+	// result, the exact over-budget bug a fuzzer later caught.
+	text := strings.Repeat("word ", 40)
 	suffix := "[truncated]"
-	got := TrimToBudget(text, 4, suffix)
+	const budget = 12
+	got := TrimToBudget(text, budget, suffix)
 	if !strings.HasSuffix(got, suffix) {
 		t.Fatalf("expected suffix in result, got %q", got)
+	}
+	if est := EstimateDefault(got); est > budget {
+		t.Fatalf("result is %d tokens, over budget %d: %q", est, budget, got)
 	}
 }
 
