@@ -240,6 +240,12 @@ func truncatePathHead(path string, max int) string {
 	}
 	runes := []rune(path)
 	keep := max - 1
+	// A path of wide runes (CJK / emoji) can have lipgloss.Width(path) > max
+	// while len(runes) < keep, so clamp the tail length to the rune count —
+	// otherwise runes[len(runes)-keep:] slices with a negative low bound and
+	// panics. (max is layout-derived in the files-panel header, so it can be
+	// smaller than the path's rune count for wide filenames.)
+	keep = min(keep, len(runes))
 	return "…" + string(runes[len(runes)-keep:])
 }
 
