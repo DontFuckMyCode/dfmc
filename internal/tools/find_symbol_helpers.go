@@ -111,6 +111,12 @@ func sliceBody(lines []string, start, end, maxLines int) (string, bool) {
 	if end > len(lines) {
 		end = len(lines)
 	}
+	// Clamp maxLines like start/end above: the elision branch computes
+	// keep := maxLines-1 and slices span[:keep], so a maxLines<=0 (out of the
+	// find_symbol caller's [1,1000] guard) would slice span[:-1] and panic.
+	if maxLines < 1 {
+		maxLines = 1
+	}
 	if end < start {
 		return "", false
 	}
