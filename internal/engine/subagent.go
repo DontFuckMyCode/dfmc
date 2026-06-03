@@ -145,10 +145,17 @@ func errString(err error) string {
 }
 
 func truncateString(s string, n int) string {
-	if len(s) <= n {
+	if n <= 0 {
+		return ""
+	}
+	// Slice by runes: the subagent-journal Task/Summary this clips are
+	// persisted and re-injected into LLM context, and routinely contain
+	// multibyte Turkish — a byte cut would split a rune into invalid UTF-8.
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return string(r[:n]) + "..."
 }
 
 // assert tools.SubagentRunner at compile time.
