@@ -148,10 +148,16 @@ func clampIndex(index, length int) int {
 
 func truncateCommandBlock(text string, max int) string {
 	trimmed := strings.TrimSpace(text)
-	if max <= 0 || len(trimmed) <= max {
+	if max <= 0 {
 		return trimmed
 	}
-	return trimmed[:max] + "\n... [truncated]"
+	// Slice by runes so a multibyte char (e.g. Turkish in a MAGIC_DOC or a
+	// rendered prompt body) isn't split into invalid UTF-8 at the cut.
+	r := []rune(trimmed)
+	if len(r) <= max {
+		return trimmed
+	}
+	return string(r[:max]) + "\n... [truncated]"
 }
 
 func (m Model) selectedFile() string {
