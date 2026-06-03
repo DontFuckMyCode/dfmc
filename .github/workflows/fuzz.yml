@@ -1,0 +1,83 @@
+name: Fuzz
+
+# Active fuzzing of the property/invariant targets. The targets also run
+# their seed corpus on every push as ordinary unit tests (in ci.yml); this
+# workflow goes further and actually fuzzes each one for a bounded time so
+# new edge cases surface continuously. It runs on a weekly schedule and on
+# manual dispatch ONLY — never on pull_request — so a fuzzer discovering a
+# novel input never red-lights an unrelated PR. A failure here means a real
+# invariant violation worth a ticket; the offending input is uploaded as an
+# artifact so it can be replayed locally and committed as a regression seed.
+on:
+  schedule:
+    - cron: "0 4 * * 0" # Sundays 04:00 UTC (offset from security.yml's Monday run)
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "Per-target fuzz duration (Go duration, e.g. 60s, 5m)"
+        default: "60s"
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.26.4"
+
+jobs:
+  fuzz:
+    name: Fuzz invariants
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run every fuzz target
+        shell: bash
+        env:
+          # All current fuzz targets are pure Go (no tree-sitter), so CGO is
+          # off for a faster, gcc-free run.
+          CGO_ENABLED: "0"
+          FUZZTIME: ${{ github.event.inputs.fuzztime || '60s' }}
+        run: |
+          set -uo pipefail
+          fail=0
+          # Discover every package that declares at least one Fuzz target,
+          # so new targets are picked up automatically without editing this
+          # file.
+          mapfile -t dirs < <(grep -rl --include='*_test.go' 'func Fuzz' . | xargs -r -n1 dirname | sort -u)
+          if [ "${#dirs[@]}" -eq 0 ]; then
+            echo "::warning::no fuzz targets found"
+            exit 0
+          fi
+          for d in "${dirs[@]}"; do
+            pkg="./$d"
+            targets=$(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true)
+            [ -z "$targets" ] && continue
+            while IFS= read -r fn; do
+              [ -z "$fn" ] && continue
+              echo "::group::$pkg :: $fn ($FUZZTIME)"
+              # -run '^$' disables the normal unit tests so only the fuzz
+              # engine runs; one target at a time is a Go fuzzing constraint.
+              if ! go test -run '^$' -fuzz "^${fn}$" -fuzztime "$FUZZTIME" "$pkg"; then
+                echo "::error::fuzz target $fn in $pkg found a failing input"
+                fail=1
+              fi
+              echo "::endgroup::"
+            done <<< "$targets"
+          done
+          exit $fail
+
+      - name: Upload failing corpus
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-failures
+          path: "**/testdata/fuzz/**"
+          if-no-files-found: ignore
