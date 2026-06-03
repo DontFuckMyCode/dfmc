@@ -56,6 +56,21 @@ type googleContent struct {
 func buildGoogleContents(req CompletionRequest) []googleContent {
 	contents := make([]googleContent, 0, len(req.Messages))
 	contextInjected := false
+	// appendContent coalesces consecutive same-role contents by merging
+	// their parts. Gemini requires multiturn contents to alternate
+	// user/model and expects N parallel function responses to live in a
+	// SINGLE user content with N functionResponse parts. The agent loop
+	// flushes N parallel tool results as N separate user messages, which
+	// would otherwise emit N consecutive user contents and trip a 400
+	// ("ensure that multiturn requests alternate between user and model").
+	// Mirrors buildAnthropicMessages' coalesce for the same reason.
+	appendContent := func(role string, parts []googlePart) {
+		if n := len(contents); n > 0 && contents[n-1].Role == role {
+			contents[n-1].Parts = append(contents[n-1].Parts, parts...)
+			return
+		}
+		contents = append(contents, googleContent{Role: role, Parts: parts})
+	}
 	for _, m := range req.Messages {
 		role := googleRole(string(m.Role))
 		switch {
@@ -69,10 +84,7 @@ func buildGoogleContents(req CompletionRequest) []googleContent {
 			} else {
 				resp["result"] = m.Content
 			}
-			contents = append(contents, googleContent{
-				Role:  "user",
-				Parts: []googlePart{{FunctionResponse: &googleFunctionResponse{Name: m.ToolName, Response: resp}}},
-			})
+			appendContent("user", []googlePart{{FunctionResponse: &googleFunctionResponse{Name: m.ToolName, Response: resp}}})
 		case len(m.ToolCalls) > 0:
 			// Assistant turn that requested tools.
 			parts := make([]googlePart, 0, 1+len(m.ToolCalls))
@@ -83,7 +95,7 @@ func buildGoogleContents(req CompletionRequest) []googleContent {
 				args, _ := json.Marshal(tc.Input)
 				parts = append(parts, googlePart{FunctionCall: &googleFunctionCall{Name: tc.Name, Args: args}})
 			}
-			contents = append(contents, googleContent{Role: "model", Parts: parts})
+			appendContent("model", parts)
 		default:
 			parts := make([]googlePart, 0, 1+len(m.Attachments))
 			text := m.Content
@@ -102,7 +114,7 @@ func buildGoogleContents(req CompletionRequest) []googleContent {
 					},
 				})
 			}
-			contents = append(contents, googleContent{Role: role, Parts: parts})
+			appendContent(role, parts)
 		}
 	}
 	return contents
