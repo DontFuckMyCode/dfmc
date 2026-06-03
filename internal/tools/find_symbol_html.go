@@ -12,6 +12,7 @@ package tools
 import (
 	"os"
 	"strings"
+	"unicode/utf8"
 )
 
 // findInHTML scans an HTML/XML/template file for the named id, class,
@@ -120,7 +121,14 @@ func attrValueMatches(line, attr, name, mode string) bool {
 	if pos < 0 {
 		return false
 	}
-	rest := line[pos+len(wantAttr):]
+	// pos is a byte offset in `low`, but we slice the ORIGINAL `line` to keep
+	// the attribute value's case. strings.ToLower is per-rune and can change
+	// byte length (Turkish 'İ' U+0130 shrinks 2->1; 'Ⱥ' U+023A grows 2->3), so
+	// the same rune sits at a different byte offset in line vs low. Map the
+	// low-offset back through rune count — otherwise a leading 'İ' misaligns
+	// the value (wrong/missed match) and a growing rune overshoots len(line)
+	// and panics with a slice-out-of-range.
+	rest := line[origByteOffset(line, low, pos+len(wantAttr)):]
 	if len(rest) == 0 {
 		return false
 	}
@@ -142,6 +150,27 @@ func attrValueMatches(line, attr, name, mode string) bool {
 		return false
 	}
 	return nameMatches(value, name, mode)
+}
+
+// origByteOffset maps a byte offset in low (== strings.ToLower(line)) to the
+// equivalent byte offset in the original line. ToLower preserves rune COUNT
+// (one rune in, one rune out) even when byte length differs, so the rune index
+// at lowOffset names the same logical position in line; we re-walk that many
+// runes through line to recover its byte offset.
+func origByteOffset(line, low string, lowOffset int) int {
+	if lowOffset <= 0 {
+		return 0
+	}
+	if lowOffset >= len(low) {
+		return len(line)
+	}
+	runeIdx := utf8.RuneCountInString(low[:lowOffset])
+	off := 0
+	for k := 0; k < runeIdx && off < len(line); k++ {
+		_, sz := utf8.DecodeRuneInString(line[off:])
+		off += sz
+	}
+	return off
 }
 
 // htmlOpeningTagName returns the tag name from the first `<TAG` opener
