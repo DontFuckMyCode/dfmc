@@ -134,6 +134,23 @@ func (r *Router) streamForwardWithRecovery(
 			excluded[name] = struct{}{}
 			continue
 		}
+		// The swap has happened: we opened a fresh stream on `name` and are
+		// about to forward it. Fire the observer NOW, BEFORE forwarding —
+		// not after. Firing after forward() races the consumer: forward
+		// pushes StreamDone to `out`, a consumer that finalizes on
+		// StreamDone (the engine, and TestStreamRecoveredObserver) then
+		// reads its state, and the observer may not have run yet — so the
+		// `provider:stream:recovered` telemetry arrives after the turn the
+		// consumer already considers finished (got fires=0 under -race).
+		// Firing at swap-time also matches the event's meaning: "↻ stream
+		// resumed on <fallback>" is true the moment the swap occurs, even
+		// if that fallback later dies mid-stream.
+		r.healthMu.Lock()
+		obs := r.streamRecoveredObserver
+		r.healthMu.Unlock()
+		if obs != nil {
+			obs(StreamRecoveredEvent{From: currentName, To: name, Err: terminalErr})
+		}
 		// Forward the recovered stream. Note: from the caller's
 		// perspective, the only visible signal of recovery is a fresh
 		// StreamStart event from the new provider (which has Provider /
@@ -148,16 +165,6 @@ func (r *Router) streamForwardWithRecovery(
 			// produce a clean answer. Bound at one recovery attempt.
 			emitErr(fmt.Errorf("stream recovery on %s also failed: %w", name, recoveredErr))
 			return
-		}
-		// Recovery succeeded — fire the observer so the engine can
-		// publish a `provider:stream:recovered` event. The observer is
-		// nil-safe; tests that build a Router without engine wiring see
-		// no telemetry but still get correct stream output.
-		r.healthMu.Lock()
-		obs := r.streamRecoveredObserver
-		r.healthMu.Unlock()
-		if obs != nil {
-			obs(StreamRecoveredEvent{From: currentName, To: name, Err: terminalErr})
 		}
 		return
 	}
