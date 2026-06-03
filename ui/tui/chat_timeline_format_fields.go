@@ -17,7 +17,10 @@ package tui
 // the model and the user see what's about to change without the
 // noise of the raw bytes.
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 func timelineEventField(text string) string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
@@ -104,7 +107,14 @@ func timelineEventKVValue(field, key string) string {
 	if idx < 0 {
 		return ""
 	}
-	value := strings.TrimSpace(field[idx+len(marker):])
+	// idx is a byte offset into `lower`; map it back to `field`. strings.ToLower
+	// preserves rune count but can change byte lengths (Turkish 'İ' U+0130 -> 'i'
+	// shrinks by one byte), so slicing `field` with a lower-cased offset would
+	// misalign — e.g. timelineEventKVValue("title=İş name=foo","name") returned
+	// "=foo". The marker is ASCII (lower-cased key + "="), so its byte length is
+	// the same in `field`.
+	fieldIdx := byteOffsetForRuneIndex(field, utf8.RuneCountInString(lower[:idx]))
+	value := strings.TrimSpace(field[fieldIdx+len(marker):])
 	if value == "" {
 		return ""
 	}
@@ -119,6 +129,22 @@ func timelineEventKVValue(field, key string) string {
 		return strings.Trim(fields[0], `"'`)
 	}
 	return strings.Trim(value, `"'`)
+}
+
+// byteOffsetForRuneIndex returns the byte offset of the runeIdx-th rune in s
+// (or len(s) if runeIdx runs past the end). Used to translate a rune position
+// derived from a case-folded copy back into the original string, whose byte
+// layout may differ even though the rune count is identical.
+func byteOffsetForRuneIndex(s string, runeIdx int) int {
+	off := 0
+	for range runeIdx {
+		if off >= len(s) {
+			return len(s)
+		}
+		_, sz := utf8.DecodeRuneInString(s[off:])
+		off += sz
+	}
+	return off
 }
 
 // --- payload helpers ------------------------------------------------------
