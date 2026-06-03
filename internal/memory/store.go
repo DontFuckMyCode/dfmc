@@ -199,6 +199,13 @@ func (s *Store) List(tier types.MemoryTier, limit int, project string) ([]types.
 }
 
 func (s *Store) Search(query string, tier types.MemoryTier, limit int, project string) ([]types.MemoryEntry, error) {
+	// Clamp non-positive limits the way List does. Without this, a negative
+	// limit (reachable straight from `dfmc memory search --limit -1`, a plain
+	// int flag) panicked at `make([]MemoryEntry, 0, limit)` with "makeslice:
+	// cap out of range" — and limit*5 below would wrap on overflow too.
+	if limit <= 0 {
+		limit = 100
+	}
 	query = strings.TrimSpace(strings.ToLower(query))
 	if query == "" {
 		return s.List(tier, limit, project)
