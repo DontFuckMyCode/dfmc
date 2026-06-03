@@ -43,10 +43,21 @@ func isContextOverflow(err error) bool {
 }
 
 // compactMessagesForRetry drops the oldest non-tail messages and preserves:
-//   - the final user turn (required for every provider),
+//   - the final *clean* user turn (required for every provider),
 //   - any trailing assistant/tool-result chain that follows that user turn,
 //   - a synthetic [context compacted] note so the model sees *why* older
 //     turns are missing instead of treating them as never having happened.
+//
+// "Clean" means the kept tail starts at a user message whose ToolCallID is
+// empty — a genuine user prompt, not a tool_result. The naive "last user
+// message" rule cut the history mid-tool-roundtrip: in the agent loop the
+// last user message is almost always a tool_result whose matching assistant
+// tool_use sits one message earlier, so keeping from there orphans the
+// tool_result. Both Anthropic ("tool_use_id not found") and OpenAI ("must be
+// a response to a preceding tool_calls message") reject that shape with a
+// 400 — which would make the compaction retry fail the very overflow it
+// exists to rescue. Cutting at the last clean user turn keeps every tool
+// roundtrip in the tail intact.
 //
 // Returns the compacted slice and the count of messages that were actually
 // dropped. When trimming would leave fewer than 2 messages, returns the
@@ -55,10 +66,12 @@ func compactMessagesForRetry(msgs []Message) ([]Message, int) {
 	if len(msgs) <= 2 {
 		return msgs, 0
 	}
-	// Find the last user index — that's the start of the tail we must keep.
+	// Find the last *clean* user index (a real prompt, ToolCallID empty) —
+	// that's the start of the tail we must keep without orphaning a
+	// tool_result whose tool_use lives in the dropped prefix.
 	lastUser := -1
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if string(msgs[i].Role) == "user" {
+		if string(msgs[i].Role) == "user" && strings.TrimSpace(msgs[i].ToolCallID) == "" {
 			lastUser = i
 			break
 		}
