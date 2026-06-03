@@ -148,10 +148,17 @@ func shortID(id string) string {
 func truncateForLine(s string, n int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.TrimSpace(s)
-	if n <= 0 || len(s) <= n {
+	if n <= 0 {
 		return s
 	}
-	return s[:n] + "…"
+	// Count and slice by RUNES, not bytes: this clips user prompts, Drive
+	// tasks, and clarify questions that are routinely Turkish, where a
+	// byte-based s[:n] cut would split a 2-byte rune and emit invalid UTF-8.
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 func subagentProviderLabel(providerName, modelName string) string {
