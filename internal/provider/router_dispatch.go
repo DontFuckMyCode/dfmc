@@ -130,7 +130,7 @@ func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 	}
 	var errs []error
 
-	for _, name := range order {
+	for i, name := range order {
 		// Same preflight as Complete: if the caller's ctx is already dead,
 		// every provider's Stream would just echo ctx.Err() back and the
 		// real cancel/deadline reason gets buried in errors.Join. Surface
@@ -146,11 +146,17 @@ func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 		// to the down primary on every fresh request.
 		if r.shouldSkipForCircuit(name) {
 			errs = append(errs, fmt.Errorf("%s: %w", name, ErrProviderUnavailable))
+			if next := nextProviderName(order, i+1); next != "" {
+				r.emitFallback(name, next, ErrProviderUnavailable, i)
+			}
 			continue
 		}
 		p, ok := r.Get(name)
 		if !ok {
 			errs = append(errs, fmt.Errorf("%w: %s", ErrProviderNotFound, name))
+			if next := nextProviderName(order, i+1); next != "" {
+				r.emitFallback(name, next, ErrProviderNotFound, i)
+			}
 			continue
 		}
 		stream, usedModel, err := r.streamWithProviderRetry(ctx, p, req)
@@ -170,6 +176,14 @@ func (r *Router) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 			return out, usedModel, nil
 		}
 		errs = append(errs, fmt.Errorf("%s: %w", p.Name(), err))
+		// Mirror Complete: a stream-open failure with a provider still left
+		// to try IS a fallback transition. Without this, streaming asks (the
+		// main chat path via StreamAsk) emitted no FallbackEvent at all, so
+		// the TUI fallback badge / telemetry stayed dark on streaming
+		// fallbacks while non-streaming Complete reported them.
+		if next := nextProviderName(order, i+1); next != "" {
+			r.emitFallback(p.Name(), next, err, i)
+		}
 	}
 
 	return nil, "", errors.Join(errs...)
