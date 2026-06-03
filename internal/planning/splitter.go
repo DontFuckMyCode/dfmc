@@ -145,9 +145,12 @@ func splitStages(q string) []Subtask {
 		return nil
 	}
 	// Split the query at each stage marker, keeping the markers as hints.
-	// We lower-case the text for matching but keep the original indices.
-	lower := strings.ToLower(q)
-	indexes := stageMarkerRE.FindAllStringIndex(lower, -1)
+	// stageMarkerRE is already case-insensitive ((?i)), so match on q
+	// directly. The old code matched on strings.ToLower(q) and then sliced q
+	// with those offsets — wrong whenever case-folding changes byte length
+	// (e.g. Turkish 'İ' U+0130 -> 'i' shrinks by one byte), which shifted
+	// every later offset and cut segments mid-word.
+	indexes := stageMarkerRE.FindAllStringIndex(q, -1)
 	if len(indexes) < 1 {
 		return nil
 	}
