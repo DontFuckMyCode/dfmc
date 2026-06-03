@@ -80,6 +80,14 @@ func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int
 			}
 		}
 		if len(want) == 0 && len(replace) == 0 {
+			// A hunk with no context, additions, or deletions carries no
+			// change and can only come from a malformed patch (a well-formed
+			// unified-diff hunk always has a body). Count it as rejected
+			// rather than silently skipping: otherwise applied+rejected fails
+			// to account for every hunk, and a patch made entirely of empty
+			// hunks reports "0 rejected" — a false success the agent loop
+			// would treat as "my edit landed" when nothing changed.
+			rejected++
 			continue
 		}
 
@@ -124,6 +132,18 @@ func applyHunks(original string, hunks []diffHunk, isNew bool) (string, int, int
 // preferring the hint anchor, then expanding outward.
 func findHunkAnchor(lines, want []string, hint int) (int, int) {
 	if len(want) == 0 {
+		// Pure insertion (only '+' lines): there is no anchor sequence to
+		// match, so the hint IS the insertion point. Clamp it into
+		// [0, len(lines)] — an out-of-range OldStart (e.g. a patch inserting
+		// past EOF on a short or empty file) would otherwise make the
+		// caller's lines[:idx] / lines[idx:] splice panic with a slice-bounds
+		// error.
+		if hint < 0 {
+			hint = 0
+		}
+		if hint > len(lines) {
+			hint = len(lines)
+		}
 		return hint, 0
 	}
 	// Normalize both sides: drop trailing CR+LF so CRLF-ended source
