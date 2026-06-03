@@ -180,8 +180,14 @@ func stripLineCommentPrefix(trimmed, lang string) string {
 }
 
 func todoSnippet(s string, max int) string {
-	if max <= 0 || len(s) <= max {
+	if max <= 0 {
 		return s
 	}
-	return s[:max] + "…"
+	// Slice by runes so a multibyte TODO (Turkish task text in the TUI strip)
+	// isn't split into invalid UTF-8 at the cut.
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
 }
