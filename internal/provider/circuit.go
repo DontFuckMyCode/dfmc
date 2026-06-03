@@ -117,7 +117,15 @@ func (r *Router) recordProviderHealth(name string, err error) {
 
 	case isTransient(err):
 		h.consecutiveFailures++
-		if h.consecutiveFailures >= breakerThreshold && h.openedAt.IsZero() {
+		// Trip on two paths: the first close→open transition (openedAt zero),
+		// AND a FAILED half-open probe — once the cooldown has elapsed the
+		// breaker is half-open and a fresh failure must re-open it with a
+		// grown cooldown. Without the half-open case, openedAt never advances
+		// after the first trip (it only clears on success), so a permanently-
+		// down provider gets retried on every request once the initial
+		// cooldown lapses and the exponential growth below is dead code.
+		halfOpenProbeFailed := !h.openedAt.IsZero() && time.Since(h.openedAt) >= h.cooldown
+		if h.consecutiveFailures >= breakerThreshold && (h.openedAt.IsZero() || halfOpenProbeFailed) {
 			h.openedAt = time.Now()
 			if h.cooldown == 0 {
 				h.cooldown = circuitInitialCooldown
