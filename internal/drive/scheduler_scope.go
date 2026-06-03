@@ -66,7 +66,14 @@ func mergeScopes(base scopeSet, todo Todo) scopeSet {
 // scopeConflicts reports whether candidate's file set intersects the
 // set in held. The rules:
 //   - Either side containing scopeAny is a conflict (unscoped owns all).
-//   - Otherwise, conflict iff any normalized path appears in both.
+//   - Otherwise, conflict iff any candidate path *overlaps* a held path,
+//     where overlap means equal OR one is a directory ancestor of the
+//     other (see pathsOverlap). Plain exact-equality missed the common
+//     planner shape of a directory scope ("internal/auth") declared
+//     alongside a file inside it ("internal/auth/service.go"): the two
+//     normalize to different strings, so the scheduler would dispatch
+//     both at once and race on service.go — the exact corruption
+//     readyBatch promises to prevent.
 func scopeConflicts(candidate Todo, held scopeSet) bool {
 	if len(held) == 0 {
 		return false
@@ -85,11 +92,34 @@ func scopeConflicts(candidate Todo, held scopeSet) bool {
 		return true
 	}
 	for _, f := range candidate.FileScope {
-		if _, ok := held[normalizeScope(f)]; ok {
-			return true
+		cf := normalizeScope(f)
+		for h := range held {
+			if h == scopeAny {
+				continue // handled above; never an overlap target
+			}
+			if pathsOverlap(cf, h) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// pathsOverlap reports whether two normalized scope paths touch the same
+// filesystem region: identical, the repo root ("." owns everything), or
+// one a directory ancestor of the other. Ancestry is matched on a path
+// SEGMENT boundary (via the trailing "/") so "internal/auth" contains
+// "internal/auth/service.go" but NOT "internal/authz/service.go" — a
+// plain strings.HasPrefix would wrongly serialize the latter pair.
+func pathsOverlap(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if a == "." || b == "." {
+		// Repo root scope subsumes every path in the tree.
+		return true
+	}
+	return strings.HasPrefix(b, a+"/") || strings.HasPrefix(a, b+"/")
 }
 
 func todoReadOnly(t Todo) bool {
