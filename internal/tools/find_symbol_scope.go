@@ -41,6 +41,13 @@ func extractScopeEnd(language string, lines []string, startLine int) int {
 // startLine; returns startLine when no `{` is found within a reasonable
 // look-ahead (3000 lines) so we don't run away on a malformed file.
 func extractByBraces(lines []string, startLine int) int {
+	// Guard the start index like extractByIndent / extractRubyScope do: the
+	// loop below reads lines[startLine-1], so a startLine <= 0 (a malformed or
+	// regex-fallback symbol line) would index lines[-1] and panic, and a
+	// startLine past EOF has nothing to walk.
+	if startLine < 1 || startLine > len(lines) {
+		return startLine
+	}
 	depth := 0
 	opened := false
 	const maxLookahead = 3000
