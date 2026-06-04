@@ -1,332 +1,200 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## Project
 
-**DFMC** ("Don't Fuck My Code") — a code intelligence assistant distributed as a single Go binary. It combines local code analysis (AST + codemap + security heuristics) with a multi-provider LLM router that falls back to an offline provider when API keys are missing or calls fail. Three UIs (CLI, bubbletea TUI, embedded Web API) all drive the same `engine.Engine`.
+**DFMC** ("Don't Fuck My Code") is a single-binary Go code intelligence assistant. It combines local analysis (AST, codemap, security heuristics) with a multi-provider LLM router and an offline fallback. CLI, Bubble Tea TUI, and embedded Web API all drive the same `internal/engine.Engine`.
 
-Module path: `github.com/dontfuckmycode/dfmc`. Go 1.25.
+Module: `github.com/dontfuckmycode/dfmc`. Go 1.25.
 
 ## Build, test, lint
 
-The `Makefile` is Windows-oriented (uses `NUL`, `rmdir /s /q`). Prefer invoking `go` directly in bash:
+The `Makefile` is Windows-oriented (`NUL`, `rmdir /s /q`), so prefer direct `go` commands when possible:
 
 ```bash
-# Build (CGO required for tree-sitter AST — see below)
 CGO_ENABLED=1 go build -o bin/dfmc.exe ./cmd/dfmc
-
-# Fast dev run (no binary)
-go run ./cmd/dfmc <command> [args]
-
-# Full test suite (what Makefile/CI use; requires gcc when -race is enabled)
 CGO_ENABLED=1 go test -race -count=1 ./...
-
-# Single package / single test
 go test ./internal/engine/...
 go test ./internal/engine -run TestAgentLoop -v
-
-# Lint / format
 go vet ./...
 gofmt -w $(git ls-files '*.go')
-staticcheck ./...   # must be clean before merge — CI gates on it (see .github/workflows/ci.yml)
-
-# Full lint + security gates (Makefile, Windows-oriented but the tools are cross-platform)
-make lint       # go vet + staticcheck + golangci-lint
+staticcheck ./...
+make lint       # vet + staticcheck + golangci-lint
 make security   # govulncheck + gosec
 ```
 
-**CGO matters.** Tree-sitter bindings (`tree-sitter-go`, `-javascript`, `-typescript`, `-python`) require CGO. With `CGO_ENABLED=0` the build still succeeds but AST silently falls back to the regex extractor in `internal/ast/backend_stub.go`, and `dfmc status` / `dfmc doctor` will report `ast_backend: regex`. If AST behavior looks wrong, check the backend before blaming the code.
-
-On Windows, `CGO_ENABLED=1` and `go test -race` require a C compiler on `PATH` (`gcc --version` should work). MSYS2 MinGW is the usual setup; without it, regular `go test ./...` and non-CGO builds still run, but race tests cannot start.
+**CGO matters.** Tree-sitter bindings require CGO. With `CGO_ENABLED=0`, the build can still pass but AST falls back to regex (`internal/ast/backend_stub.go`); `dfmc status` / `dfmc doctor` report `ast_backend: regex`. On Windows, `CGO_ENABLED=1` and `go test -race` require `gcc` on `PATH`.
 
 ## Architecture
 
 ### Engine is the hub
 
-`internal/engine.Engine` (constructed in [cmd/dfmc/main.go](cmd/dfmc/main.go)) owns every subsystem and is passed by pointer into all three UIs.
+`internal/engine.Engine` is constructed in `cmd/dfmc/main.go`, owns the main subsystems, and is shared by all UIs. `engine.go` handles construction/lifecycle/state; most methods live in `engine_<topic>.go` siblings. Grep `func (e *Engine)` before editing an Engine method.
 
-The Engine type itself is split by domain across ~40 sibling files;
-[engine.go](internal/engine/engine.go) keeps construction/lifecycle/state and the rest are
-named `engine_<topic>.go` — grep `func (e *Engine)` to find the file that owns a
-specific method. The load-bearing siblings most edits will touch:
+Load-bearing Engine files:
 
-- [engine_tools.go](internal/engine/engine_tools.go) — `CallTool` / `CallToolFromSource` outer wrapper that emits the `tool:error` / `tool:complete` events.
-- [engine_tools_lifecycle.go](internal/engine/engine_tools_lifecycle.go) — `executeToolWithLifecycle` is the safety funnel: subagent + skill + path-scope allowlist gates, approval gate, pre/post-hook fanout (including the meta-wrapper fanout via `metaInnerNames`), panic guard, `tool:denied` / `tool:timeout` / `tool:panicked` event emission, and the per-call `Event.Seq` stamp. **Every tool call routes through here** — user-initiated (`CallTool`) and agent-initiated (parallel dispatcher / subagent). Bypassing this helper silently disables hooks + approval + dedupe; the documented exception is the MCP Drive control surface in [cli_mcp_drive.go](ui/cli/cli_mcp_drive.go).
-- [engine_meta_hooks.go](internal/engine/engine_meta_hooks.go) — `metaInnerNames` / `metaInnerToolCalls` / `metaSuccessfulInnerCalls` unwrap `tool_call` / `tool_batch_call` so the lifecycle's hook fanout and success-side side effects (`invalidateContextForTool`, `maybeAuditSensitiveWrite`) reach inner backend tools too.
-- [engine_context.go](internal/engine/engine_context.go) — context budget/recommendations/tuning + chunk building + reserve breakdown.
-- [engine_prompt.go](internal/engine/engine_prompt.go) — `buildSystemPrompt`, `PromptRecommendation*`, `promptRuntime*`.
-- [engine_ask.go](internal/engine/engine_ask.go) — `Ask` / `AskRaced` / `AskWithMetadata`. Streaming + history-trim helpers are in `engine_ask_stream.go` / `engine_ask_history*.go`.
-- [engine_intent.go](internal/engine/engine_intent.go) — glue for the intent router: builds the Snapshot from engine state and runs `Intent.Evaluate` before each Ask.
-- [engine_passthrough.go](internal/engine/engine_passthrough.go) — `Status`, memory/conversation/provider passthrough surface.
-- [engine_analyze.go](internal/engine/engine_analyze.go) — `AnalyzeWithOptions`, dead-code/complexity passes, text strippers.
+- `engine_tools.go` — `CallTool` / `CallToolFromSource` outer wrapper and `tool:error` / `tool:complete` events.
+- `engine_tools_lifecycle.go` — `executeToolWithLifecycle`, the required safety funnel for tool calls: subagent/skill/path gates, approval, hooks, panic guard, timeout/denial/panic events, and shared `Event.Seq` stamping. New tool entry points must route through this or `CallTool` unless a documented exception applies.
+- `engine_meta_hooks.go` — unwraps `tool_call` / `tool_batch_call` so hooks and side effects reach inner backend tools.
+- `engine_context.go` — context budget, recommendations, chunking, reserve breakdown.
+- `engine_prompt.go` — system prompt and prompt runtime/recommendation logic.
+- `engine_ask.go`, `engine_ask_stream.go`, `engine_ask_history*.go` — Ask paths, streaming, history trimming.
+- `engine_intent.go` — builds intent `Snapshot` and calls `Intent.Evaluate` before Ask.
+- `engine_passthrough.go` — status, memory, conversation, provider passthroughs.
+- `engine_analyze.go` — analysis, dead-code/complexity passes, text strippers.
 
-Every Event the engine emits during a tool-call lifecycle carries a shared `Event.Seq` (monotonic, allocated by `Engine.allocToolEventSeq()` and stashed on ctx via `withToolEventSeq`). Subscribers dedupe failure telemetry on the `(Type, Seq)` tuple — see [eventbus.go](internal/engine/eventbus.go) for the Event shape.
+Tool lifecycle events share a monotonic `Event.Seq` from `Engine.allocToolEventSeq()`; subscribers dedupe failure telemetry on `(Type, Seq)`.
 
-Subsystems owned by the Engine:
+### Engine-owned subsystems
 
-- `AST` ([internal/ast](internal/ast/)) — tree-sitter when CGO is on, regex fallback otherwise. Parse metrics are tracked per-call.
-- `CodeMap` ([internal/codemap](internal/codemap/)) — symbol/dependency graph built on top of AST; supports cycles, hotspots, path traversal, DOT/SVG export.
-- `Context` ([internal/context/manager.go](internal/context/manager.go)) — ranks and compresses file snippets under a token budget before the LLM sees them. Core design principle: **every token sent is justified**.
-- `Providers` ([internal/provider/router.go](internal/provider/router.go)) — router with a primary + fallback list. The offline provider is always registered; missing API keys yield a `PlaceholderProvider` that degrades gracefully instead of erroring. Protocols: `anthropic`, `openai`, `openai-compatible` (covers deepseek/kimi/zai/alibaba/generic/ollama).
-- `Tools` ([internal/tools](internal/tools/)) — backend registry: file ops (`read_file`, `write_file`, `edit_file`, `apply_patch`, `list_dir`), search (`grep_codebase`, `glob`, `find_symbol`, `codemap`, `ast_query`), shell (`run_command`), git (`git_status`/`_diff`/`_log`/`_blame`/`_branch`/`_commit`/`_worktree_*`), web (`web_fetch`, `web_search`), planning (`task_split`, `orchestrate`, `delegate_task`), reasoning (`think`, `todo_write`). Tool-capable providers see the four meta tools (`tool_search`/`tool_help`/`tool_call`/`tool_batch_call`) and dispatch backend tools through them — this keeps the model's tool list short and the protocol stable across providers. Bounded loop in [internal/engine/agent_loop_native.go](internal/engine/agent_loop_native.go); park-and-resume in [agent_parking.go](internal/engine/agent_parking.go); per-tool execution + lifecycle in [engine_tools.go](internal/engine/engine_tools.go).
-  - **Context-gathering layer order** (cheapest → most precise): `grep_codebase` (text discovery) → `codemap` (project signatures-only outline) → `find_symbol` (semantic locate with full scope) → `read_file` (raw byte/line fetch). The `Context-gathering stack` template block in [system_prompts.yaml](internal/promptlib/defaults/system_prompts.yaml) teaches this ordering by default; tool-level prompts repeat it. Skipping straight to `read_file` on a guessed path costs more than starting with discovery.
-  - **`find_symbol`** ([internal/tools/find_symbol.go](internal/tools/find_symbol.go)) is the language-aware "locate this name with its full scope" tool. AST-driven for Go/JS/TS/Python/Java/Rust/C-family; brace-balanced (C-family) or indent-based (Python) scope walk; HTML mode for `id="X"` / `class="X"` / `<TAG>`. `parent` arg disambiguates receivers/classes (`(s *Server) Start` vs `(c *Client) Start` → `parent="Server"`). `fallback: true` in the response means tree-sitter couldn't parse and a regex extractor was used — results are best-effort, verify before acting.
-  - **`grep_codebase`** ([internal/tools/builtin.go](internal/tools/builtin.go)) supports `context`/`before`/`after` (capped at 50 per side, ripgrep-style `--`-separated blocks where `:` marks matches and `-` marks context), `include`/`exclude` glob filters (array or comma-string with doublestar), `case_sensitive` (false prefixes `(?i)`), and `respect_gitignore` (top-level `.gitignore` reader; negation patterns NOT honoured).
-  - **`codemap`** ([internal/tools/codemap.go](internal/tools/codemap.go)) renders a signatures-only project outline — use ONCE per session for orientation, never per-file. Output is markdown grouped by file with per-symbol line numbers; bodies are intentionally absent (those live behind `find_symbol`).
-  - **`read_file`** caps the default window at 200 lines and surfaces `total_lines`, `returned_lines`, `truncated`, and `language` so the model can decide whether to widen the range without a second probe round. The engine's `normalizeToolParams` injects the default range BEFORE Execute runs — `truncated` is set whenever `returned < total`, regardless of whether the caller passed a range.
-  - **Tool errors are self-teaching** — every "missing required field" reply uses `missingParamError` (in [internal/tools/builtin.go](internal/tools/builtin.go)) which lists the params keys actually sent + the canonical example + a tool-specific confusion hint. When adding a new tool, use this helper for required-param validation; bare `fmt.Errorf("X is required")` causes the model to loop on the same broken shape.
-  - **Param-name aliasing for known typo traps** ([internal/tools/engine.go](internal/tools/engine.go) `normalizeToolParams`): `edit_file` accepts `old`/`new` as aliases for `old_string`/`new_string`; `write_file` accepts `text`/`body`/`data` for `content`. These are the JS/Python edit-tool conventions weaker models reach for from training. The aliases are silently rewritten to canonical names BEFORE Execute runs so the call succeeds first try.
-  - **Meta-tool boundary** (single-call guard in [internal/tools/meta_call.go](internal/tools/meta_call.go), batch guard in [internal/tools/meta_batch.go](internal/tools/meta_batch.go); the 4 meta tools themselves are registered in [meta.go](internal/tools/meta.go)): `tool_call` and `tool_batch_call` refuse to dispatch other meta tools. The refusal message names the right action (e.g. "drop the wrapper, put backend tools directly in calls[]") via `metaInBatchHint` so the model recovers in one round. `tool_call` ALSO auto-unwraps a single layer of `{name:"tool_call", args:{name:"<backend>", args:{...}}}` for the same reason.
-  - **`apply_patch` runs through the same per-target read-before-mutate gate** as `edit_file`/`write_file` (see [internal/tools/snapshot_cache.go](internal/tools/snapshot_cache.go)'s `EnsureReadBeforeMutation` and the per-file check in [apply_patch.go](internal/tools/apply_patch.go)). New files in the diff are exempt; modifies and deletes require a prior `read_file` snapshot or the engine refuses the patch.
-  - **Read-gate modes** ([internal/tools/snapshot_cache.go](internal/tools/snapshot_cache.go) `readBeforeMutationMode`): `edit_file` uses `readGateLenient` (prior snapshot required, hash drift tolerated) because its own exact-string anchor check catches any unsafe edit — editors/formatters touching the file between read and edit no longer trip a refusal the model can't recover from. `write_file` and `apply_patch` use `readGateStrict` (prior snapshot + hash equality) since full overwrites and line-numbered hunks have no anchor safety net and would otherwise silently lose concurrent changes.
-  - **Git tools refuse `-`-prefix user values** ([internal/tools/git.go](internal/tools/git.go)'s `rejectGitFlagInjection`) on every `ref`/`revision`/`branch`/`path`/`paths` argument — git treats `--upload-pack=cmd` as a flag, not a ref (CVE-2018-17456 class). Static flags we add ourselves (`--no-color`, `--cached`, `--porcelain`) are unaffected.
-- `Memory` ([internal/memory/store.go](internal/memory/store.go)) — working + episodic + semantic tiers in bbolt.
-- `Conversation` ([internal/conversation/manager.go](internal/conversation/manager.go)) — JSONL-persisted conversations with branching.
-- `Storage` ([internal/storage/store.go](internal/storage/store.go)) — bbolt handle. Returns `ErrStoreLocked` when another DFMC process holds it; `cmd/dfmc/main.go` has a degraded-startup allow-list (`help`, `version`, `doctor`, `completion`, `man`) that runs without init.
-- `Hooks` ([internal/hooks/hooks.go](internal/hooks/hooks.go)) — dispatches user-configured shell commands on lifecycle events (`user_prompt_submit`, `pre_tool`, `post_tool`, `session_start`/`_end`). Best-effort: hook failures are logged to the EventBus but never block a tool call or user turn. Each hook gets a hard timeout (default 30s). `nil` Hooks is safe — `Fire` is a no-op. Fired from `executeToolWithLifecycle` and `engine_ask.go`.
-- `TaskStore` ([internal/taskstore/store.go](internal/taskstore/store.go)) — bbolt-backed independent task persistence wired into `Tools` via `SetTaskStore`. `TodoWriteTool` falls back to in-memory when the store is nil (e.g. tests that build `tools.Engine` directly without going through `engine.Init`). Tasks are `supervisor.Task` shapes; HTTP + MCP task APIs share this store.
-- `EventBus` — fan-out used by TUI, web `/ws` SSE stream, and remote control.
+- `internal/ast` — tree-sitter with CGO, regex fallback otherwise.
+- `internal/codemap` — symbol/dependency graph, cycles, hotspots, path traversal, DOT/SVG.
+- `internal/context` — ranks/compresses snippets under token budget; every token sent should be justified.
+- `internal/provider` — primary + fallback router. Offline provider is always registered; missing keys create graceful placeholders. Protocols: Anthropic, OpenAI, OpenAI-compatible.
+- `internal/tools` — backend registry plus four meta tools: `tool_search`, `tool_help`, `tool_call`, `tool_batch_call`. Tool loop lives around `agent_loop_native.go`; parking in `agent_parking.go`; lifecycle in `engine_tools_lifecycle.go`.
+- `internal/memory`, `internal/conversation`, `internal/storage` — bbolt-backed memory, JSONL conversations, store handle. A second DFMC process hits `ErrStoreLocked`; degraded commands like `doctor` still run.
+- `internal/hooks` — best-effort lifecycle shell hooks; failures log but do not block.
+- `internal/taskstore` — persisted `supervisor.Task` store for TODO, HTTP, and MCP APIs.
+- `EventBus` — shared fan-out for TUI, web SSE, remote control.
+
+### Tooling rules worth preserving
+
+Context gathering order is cheapest to most precise: `grep_codebase` → `codemap` → `find_symbol` → `read_file`.
+
+`find_symbol` is language-aware and returns full scope; `parent` disambiguates receivers/classes. `codemap` is a signatures-only outline and should generally be used once per session, not per file.
+
+`read_file` defaults to a 200-line window and reports `total_lines`, `returned_lines`, `truncated`, and `language`. `truncated` means returned lines are fewer than total lines, even if the caller intentionally requested a slice.
+
+Tool validation should use `missingParamError` for required params. `normalizeToolParams` handles common aliases (`edit_file` `old`/`new`; `write_file` `text`/`body`/`data`).
+
+`tool_call` and `tool_batch_call` refuse nested meta tools. `apply_patch`, `edit_file`, and `write_file` enforce read-before-mutate; edits are lenient because exact-string anchors protect them, writes/patches are strict. Git tools reject user values starting with `-` to avoid flag injection.
 
 ### Intent layer
 
-`internal/intent` runs a state-aware sub-LLM before every `Ask`. The layer receives the raw user turn and an engine `Snapshot`; it classifies the turn and returns a `Decision` that routes the turn to either the parked agent (resume), the main model (new), or back to the user for clarification.
+`internal/intent` classifies each user turn against an Engine `Snapshot` and routes to resume/new/clarify. It is fail-open: classifier errors fall back to `Fallback(raw)` and must not block the engine.
 
-The intent router is constructed in `engine.Init` from `Config.Intent` + `Providers`. It is **fail-open by default**: any classifier error falls back to `Fallback(raw)` so the layer can never block an otherwise-working engine. `Enabled()` short-circuits callers when the layer is off (common in tests).
-
-**Snapshot is the vocabulary.** Before calling `Intent.Evaluate`, build a `Snapshot` from engine state. Tests that assert "intent decided X" must call `Intent.Evaluate` directly — the engine path silently swallows classifier errors and returns the raw message, so the assertion would flake.
-
-**Intent decisions are logged to the EventBus** as `intent:decision` and surfaced in the TUI as a badge (`RESUME` / `NEW` / `CLARIFY`).
-
-### Adjacent packages (not directly owned by Engine)
-
-- [internal/coach](internal/coach/) — trajectory coach that turns recent tool-call traces into up to 2 short "you might be going in circles" hints for the next round. Provider-agnostic; [engine/agent_coach.go](internal/engine/agent_coach.go) adapts native tool traces into `ctxmgr.TraceEntry` and also unwraps the `tool_call`/`tool_batch_call` meta layer so hints match user-facing tool names.
-- [internal/supervisor](internal/supervisor/) — task/executor types used by the `Drive` runner, `TodoWriteTool`, and `taskstore`. Shared shape keeps HTTP/MCP/CLI task APIs identical.
-- [internal/mcp](internal/mcp/) — MCP server/bridge. `dfmc mcp` exposes the regular tool registry plus six synthetic Drive tools (see "Drive" below). Protocol shapes pinned in `protocol_test.go`.
-- [internal/security](internal/security/), [internal/skills](internal/skills/), [internal/planning](internal/planning/), [internal/pluginexec](internal/pluginexec/), [internal/commands](internal/commands/), [internal/tokens](internal/tokens/) — adjacent feature packages; grep for the specific symbol before assuming their shape.
+Tests that assert a specific intent decision should call `Intent.Evaluate` directly with a Snapshot. The normal engine path swallows classifier errors by design. Decisions emit `intent:decision` and the TUI shows `RESUME` / `NEW` / `CLARIFY` badges.
 
 ### UIs
 
-All three UI packages keep their entry/dispatch file lean and split feature code into sibling files. When adding a command/handler, find the right sibling rather than dropping it into the entry file.
+UI entry files stay lean; put bodies in sibling files.
 
-- [ui/cli/cli.go](ui/cli/cli.go) (~115 lines) — only `Run()` and `parseGlobalFlags`. **Global flags must come BEFORE the command** (`dfmc --provider offline review ...`), because `parseGlobalFlags` stops at the first non-flag token. Subcommand bodies live in [cli_admin.go](ui/cli/cli_admin.go), [cli_ask_chat.go](ui/cli/cli_ask_chat.go), [cli_analysis.go](ui/cli/cli_analysis.go), [cli_remote.go](ui/cli/cli_remote.go), [cli_plugin_skill.go](ui/cli/cli_plugin_skill.go), [cli_output.go](ui/cli/cli_output.go), [cli_utils.go](ui/cli/cli_utils.go).
-- [ui/tui/tui.go](ui/tui/tui.go) (~215 lines — the Model struct + a sibling index comment, NOT a god-file). The bubbletea Model/View root. The hot paths split out: [update.go](ui/tui/update.go) (reducer), [chat_key.go](ui/tui/chat_key.go) (chat composer keyboard router), [chat_commands.go](ui/tui/chat_commands.go) (slash dispatcher), [engine_events.go](ui/tui/engine_events.go) (engine event handler), [intent.go](ui/tui/intent.go) (intent-decision badge surface), [drive.go](ui/tui/drive.go) (Drive Cockpit panel). The ~375-file `ui/tui` package's heaviest individual files live in panel surfaces — `telegram_panel.go`, `provider_panel_catalog.go`, `provider_selection.go` — not in `tui.go` itself.
-  - **Panel state lives in `panel_states.go`**. The TUI Model does NOT carry flat `m.memoryScroll`, `m.codemapScroll`, etc. fields. Every panel owns a small state struct (`memoryPanelState`, `codemapPanelState`, etc.) grouped under `diagnosticPanelsState`. The chat tab's hot path lives in `chatState`, agent loop in `agentLoopState`, and so on. When adding new TUI state, follow this pattern — add a struct in `panel_states.go`, embed it into the appropriate grouping, and wire defaults in `applyDefaults()`.
-  - **Paste block system**: multi-line paste in the chat composer is captured as `pasteBlock` structs (original content stored, input field shows a placeholder like `[pasted text #1 +3 lines]`). `composeInput()` reconstructs the full submission by substituting placeholders with original content. Bracketed paste mode (`tea.EnableBracketedPaste` in `Init()`) delivers the entire paste as one `tea.KeyMsg{Paste: true}` — this path does NOT extend the paste window because the content is complete. Terminals without bracketed paste send chunks as rapid separate `KeyRunes` events; a 200ms paste window detects these and accumulates them into a single block. Enter inside an active paste window becomes a newline inside the block; Enter after the window closes submits the reconstructed message. See [paste_test.go](ui/tui/paste_test.go) for the full behavioural matrix.
-  - **Tool-strip collapse**: per-message tool chip block is collapsed by default (one-line `▸ tools · N calls · X ok · Y fail · ~T tok · Dms` summary plus a `read_file ×3, edit_file ×2 — /tools to expand` fingerprint). `/tools` toggles the global `m.ui.toolStripExpanded` flag; `/tools list` keeps the previous behaviour of printing the registered backend tool catalog. Tests that assert per-chip rendering must set `m.ui.toolStripExpanded = true` manually before calling `renderChatView`.
-  - **TODO strip**: when `engine.Tools.TodoSnapshot()` is non-empty, [theme.go](ui/tui/theme.go) `renderTodoStrip` prints a one-line `▸ TODOs · N done · M doing · K pending → <active form>` under the runtime card so the user can see plan progress between turns. Empty when there are no todos (no strip, no noise).
-  - **Sub-agent badge**: chips whose tool is `delegate_task`/`orchestrate` or whose status starts with `subagent-` render with an accent-color `SUBAGENT` prefix in front of the tool name (`isSubagentToolChip` in [theme.go](ui/tui/theme.go)). The collapsed summary also separates them out as `· N sub-agents` so fan-out is visible at a glance.
-  - **Debug keyboard input**: set `DFMC_KEYLOG=1` (or run `/keylog` in TUI chat) to dump every `tea.KeyMsg` into the footer notice. Essential when debugging paste behaviour or terminal-specific key delivery.
-- [ui/web/server.go](ui/web/server.go) (~300 lines) — `New`, `Handler`, lifecycle (`Close` releases the rate-limiter gc goroutine). HTTP+SSE on port 7777 (`dfmc serve`). Handlers split by domain: [server_status.go](ui/web/server_status.go), [server_chat.go](ui/web/server_chat.go), [server_context.go](ui/web/server_context.go), [server_tools_skills.go](ui/web/server_tools_skills.go), [server_conversation.go](ui/web/server_conversation.go), [server_workspace.go](ui/web/server_workspace.go), [server_files.go](ui/web/server_files.go), [server_drive.go](ui/web/server_drive.go) (Drive Cockpit), [server_task.go](ui/web/server_task.go) (task store CRUD), [server_admin.go](ui/web/server_admin.go) (scan/doctor/hooks/config). Workbench HTML lives in [ui/web/static/index.html](ui/web/static/index.html) and is loaded via `//go:embed`.
-- `dfmc remote` subcommands in [cli_remote.go](ui/cli/cli_remote.go) are clients against a running `dfmc serve` (or `dfmc remote start` which launches gRPC+WS on 7778/7779).
+- `ui/cli/cli.go` — `Run()` and `parseGlobalFlags`. Global flags must come **before** the command (`dfmc --provider offline review ...`). Command bodies live in `cli_<domain>.go` siblings; remote clients in `cli_remote.go`.
+- `ui/tui/tui.go` — Bubble Tea model/view root. Hot paths are split into `update.go`, `chat_key.go`, `chat_commands.go`, `engine_events.go`, `intent.go`, `drive.go`, etc. Panel state belongs in `panel_states.go`, not flat fields on `Model`.
+- TUI gotchas: paste blocks use placeholders and `composeInput()` reconstruction; `/tools` expands collapsed tool chips; tests asserting chips must set `m.ui.toolStripExpanded = true`; `DFMC_KEYLOG=1` or `/keylog` dumps key events.
+- `ui/web/server.go` — route setup and lifecycle for HTTP/SSE on 7777. Handler bodies live in `server_<domain>.go`; static workbench is embedded from `ui/web/static/index.html`.
 
-### Config hierarchy
+When adding a new CLI command, keep CLI/web/remote surfaces in sync by convention: add the CLI switch, command body, web route/handler, and `dfmc remote <cmd>` client.
 
-[internal/config/config.go](internal/config/config.go) merges: built-in defaults → `~/.dfmc/config.yaml` → `<project>/.dfmc/config.yaml` → env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`, `ZAI_API_KEY`, `ALIBABA_API_KEY`, `MINIMAX_API_KEY`, `GOOGLE_AI_API_KEY`) → CLI flags. Project-root `.env` is auto-loaded at startup (process env still wins). (`DFMC_KEYLOG` is a TUI debug toggle read directly in [ui/tui/tui_lifecycle.go](ui/tui/tui_lifecycle.go), not part of this config merge.)
+### Config and prompts
 
-`dfmc config sync-models` rewrites the `providers.profiles.*` block from https://models.dev/api.json, preserving API keys. Whenever the provider catalog looks stale, use sync-models rather than editing by hand.
+Config merge order: built-in defaults → `~/.dfmc/config.yaml` → `<project>/.dfmc/config.yaml` → env vars → CLI flags. Project `.env` is auto-loaded, but process env wins. `DFMC_KEYLOG` is read directly by TUI lifecycle code.
 
-The native tool loop has tunable knobs under `agent.*`:
+Use `dfmc config sync-models` to refresh `providers.profiles.*` from `https://models.dev/api.json` while preserving keys.
 
-- **Caps**: `max_tool_steps` (default 60), `max_tool_tokens` (default 250000 — this is a live footprint cap, NOT a cumulative per-round sum), `max_tool_result_chars` (base 3.2K, elastically scaled to `window/40` — ~32K on a 1.28M-token window), `max_tool_result_data_chars` (base 1.2K, scaled to `window/100` — ~12K on the same window; see `elastic_tool_*_ratio` and the scaling in [agent_loop_limits.go](internal/engine/agent_loop_limits.go)), `parallel_batch_size` (4), `meta_call_budget` (64 — cumulative backend calls per turn dispatched via `tool_call`/`tool_batch_call`), `meta_depth_limit` (4 — meta-inside-meta nesting ceiling), `read_snapshot_cap` (256 — read-before-mutation snapshot LRU; raise for sessions with very wide file fan-out), `recent_failure_cap` (256 — per-tool failure ledger that suppresses noisy retries on the same broken call).
-- **Round shaping**: `tool_round_soft_cap` (synthesis nudge), `tool_round_hard_cap` (force `tool_choice=none`), `budget_headroom_divisor` (preflight margin).
-- **Autonomous resume** (`autonomous_resume`, default `"auto"` → ON): when the loop hits `max_tool_tokens` mid-task, the autonomous wrapper force-compacts history, injects a continuation user message (original task + trace summary + "continue with tools, end with `[done: true]`") and re-enters the loop transparently — the user sees one continuous answer instead of having to type `/continue` between every park. Set `"off"` (or `"manual"`/`"false"`/`"no"`/`"0"`) to revert to the old "park and wait" behavior; useful for CI runs that must hard-stop after one budget. `resume_max_multiplier` (default 10) is the cumulative ceiling: total work across all auto-resumes for a single root ask is capped at `max_tool_steps × multiplier` and `max_tool_tokens × multiplier`. Hit the ceiling and the wrapper surfaces `agent:loop:auto_resume_refused` so the user knows the auto-progression bottomed out and a manual `/continue` (or scope refinement) is needed. The continuation prompt is generated by `buildAutonomousResumePrompt` in [agent_loop_autonomous.go](internal/engine/agent_loop_autonomous.go) and surfaced in the `agent:loop:auto_resume` event payload under `continuation_prompt`.
-- **Tool self-narration** (`tool_reasoning`, default `"auto"` → ON): every tool's JSON schema gets an optional virtual `_reason` field. The model is nudged in the system prompt to fill it with a one-sentence "why" ("checking how the SSE handler closes the stream"); [tools.Engine.Execute](internal/tools/engine.go) strips it before dispatch and republishes via the engine's [tool:reasoning](internal/engine/engine.go) event so the TUI chip and web activity feed render the WHY above the tool result. Set `"off"` to skip the system-prompt nudge and the publisher entirely. The strip itself always runs (so tools never see the field as input). Pinned by [reason_test.go](internal/tools/reason_test.go) and [tool_reasoning_test.go](internal/engine/tool_reasoning_test.go).
-- **Context lifecycle** (under `agent.context_lifecycle`): `enabled`, `auto_compact_threshold_ratio` (default 0.7 — proactive compact when used/budget crosses this), `auto_handoff_threshold_ratio` (0.9), `keep_recent_rounds` (3), `handoff_brief_max_tokens` (500).
-- **Intent layer** (under `intent.*`): `enabled`, `provider`/`model` (defaults to the engine's main provider/cheap model), `fail_open` (default true — any classifier error falls back to the raw prompt), `timeout_ms`. Off by default in tests; most production configs enable it to route follow-ups like "fix it" onto a parked agent instead of starting fresh. See `internal/intent` for the Snapshot shape and routing semantics.
+Important knobs live under `agent.*`: `max_tool_steps`, `max_tool_tokens`, result char caps, `parallel_batch_size`, `meta_call_budget`, `meta_depth_limit`, read snapshot/failure caps, round soft/hard caps, autonomous resume, tool reasoning, and context lifecycle thresholds. Zero values fall back to `internal/config/defaults.go`.
 
-All zero-defaults fall back to the values in [internal/config/defaults.go](internal/config/defaults.go); raise the caps for high-context models (1M-window Opus, etc.) instead of fighting the defaults. The TUI suppresses the "press Enter to resume" banner when `autonomous_pending: true` is on the parked event, so a budget exhaust under autonomous mode looks like a continuous response with a small `↻ auto-resuming after compact` chip in the timeline rather than a parked banner the user might race to dismiss.
+Prompt library load order: embedded `internal/promptlib/defaults/*.yaml`, global `~/.dfmc/prompts`, project `.dfmc/prompts`. Formats: YAML, JSON, Markdown with frontmatter. Composition supports `replace` / `append`.
 
-### Prompt library
+User queries can inject context with `[[file:path]]`, `[[file:path#L10-L80]]`, and fenced code blocks. This is used by ask/chat/review/explain/TUI/web chat.
 
-[internal/promptlib](internal/promptlib/) loads from:
-1. `internal/promptlib/defaults/*.yaml` (embedded)
-2. `~/.dfmc/prompts` (global overrides)
-3. `.dfmc/prompts` (project overrides)
+### Drive
 
-Formats: `.yaml`, `.json`, `.md` (YAML frontmatter + body). Composition via `compose: replace | append`. Task/role/language axes pick overlays. Rendered prompts are token-budgeted against the runtime provider's `max_context`.
+`dfmc drive "<task>"` and TUI `/drive <task>` run an autonomous plan/execute loop. The planner creates a TODO DAG; the scheduler executes ready TODOs through `engine.RunSubagent`, using fresh sub-conversations to bound context.
 
-### Context injection from the user query
+Key files: `internal/drive/planner.go`, `scheduler.go`, `driver.go`, `run_planner.go`, `run_executor.go`, `run_drainer.go`, `persistence.go`; engine adapter in `internal/engine/drive_adapter.go`.
 
-`[[file:path/to/file.go]]` and `[[file:path#L10-L80]]` markers in any user query are resolved, budgeted, and injected into the system prompt as compressed snippets. Triple-backtick fenced blocks in the query are treated as explicit injected context. Both are used by `ask`, `chat`, `review`, `explain`, TUI chat, and the web `/api/v1/chat` SSE.
+Provider routing maps planner tags (`plan|code|review|test|research`) through `Config.Routing`; unmapped tags fall back to the default provider. Drive emits `drive:*` events through the Engine bus and is surfaced in CLI, TUI, web, and MCP.
 
-### Drive: autonomous plan/execute loop
+MCP Drive tools (`dfmc_drive_start/status/active/list/stop/resume`) live in `ui/cli/cli_mcp_drive.go` and route through `driveMCPHandler`, not `engine.CallTool`, to avoid recursive LLM/tool approval paths. This is a documented lifecycle bypass.
 
-`dfmc drive "<task>"` (CLI) and `/drive <task>` (TUI) run a self-driving loop on top of the engine: a planner LLM call breaks the task into a DAG of TODOs, then a scheduler walks ready TODOs through the regular sub-agent surface (`engine.RunSubagent`) until everything reaches a terminal state. Each TODO is a fresh sub-conversation seeded with a brief of prior work — context stays bounded without losing the thread.
+### Adjacent packages
 
-Lives in [internal/drive](internal/drive/):
-
-- [planner.go](internal/drive/planner.go) — JSON DAG planner (cycle detection, code-fence stripping, dep validation). Planner LLM call goes through `Engine.NewDriveRunner().PlannerCall` → `Providers.Complete` directly (no tool loop, no intent layer, no history).
-- [scheduler.go](internal/drive/scheduler.go) — `readyBatch` returns up to N TODOs that have all deps Done AND don't conflict on `file_scope` with any Running TODO or each other. Empty `file_scope` means "owns everything" — runs alone.
-- [driver.go](internal/drive/driver.go) — `Run` / `RunPrepared` / `Resume` lifecycle setup + finalize/persist/publish. The phase work is split across siblings: [run_planner.go](internal/drive/run_planner.go) (plan-stage transition with EventPlanStart/Done/Failed + RunFailed publishing), [run_executor.go](internal/drive/run_executor.go) (parallel dispatch loop, worker goroutines capped by `MaxParallel` default 3, ready-batch + applyOutcome), [run_drainer.go](internal/drive/run_drainer.go) (terminal-status drain with bounded grace window).
-- [persistence.go](internal/drive/persistence.go) — bbolt `drive-runs` bucket, JSON-encoded per run. `Save` after every state transition; `dfmc drive resume <id>` re-enters from the persisted state.
-- [drive_adapter.go](internal/engine/drive_adapter.go) — engine-side `Engine.NewDriveRunner` that wires the `drive.Runner` interface to `Providers.Complete` (planner) and `RunSubagent` (executor); `Engine.PublishDriveEvent` mirrors driver events into the engine event bus.
-
-Per-tag provider routing (Phase 3): `Config.Routing` maps a TODO `provider_tag` (planner emits `plan|code|review|test|research`) to a provider profile name; the executor sends that as `Model` to RunSubagent. CLI: `--route plan=opus --route code=sonnet --route test=haiku`. Unmapped tags fall back to the engine default (no error). Lookup is case-insensitive on the tag side.
-
-Termination paths: `RunDone` (everything terminal, no Blocked-driven stop), `RunFailed` (`MaxFailedTodos` consecutive blocks, planner returned 0 TODOs, deadlock), `RunStopped` (ctx cancelled, `MaxWallTime` exceeded — both resumable). The driver's drain phase pulls already-queued worker results before stamping the final status; in-flight workers get a 2-second grace window via `drainGraceWindow`.
-
-Drive events (`drive:*`) flow through the same `engine.EventBus` as `agent:*` and `provider:*`:
-
-```
-drive:run:start          drive:plan:start | drive:plan:done | drive:plan:failed
-drive:todo:start         drive:todo:done | drive:todo:blocked | drive:todo:skipped | drive:todo:retry
-drive:run:warning        drive:run:done | drive:run:stopped | drive:run:failed
-```
-
-TUI subscribes via [engine_events.go](ui/tui/engine_events.go); CLI prints them to stderr inline and renders a final summary on stdout. The web workbench (`/` from `dfmc serve`) renders a Drive Cockpit panel that mirrors the same surface — start runs, watch the active list, drill into a run's TODO ladder; live updates piggyback on the existing `/ws` SSE stream by debouncing on any `drive:*` event.
-
-Drive is also exposed over MCP for IDE hosts (Claude Desktop, Cursor, VSCode). `dfmc mcp` advertises six synthetic tools alongside the regular registry: `dfmc_drive_start`, `dfmc_drive_status`, `dfmc_drive_active`, `dfmc_drive_list`, `dfmc_drive_stop`, `dfmc_drive_resume`. They live in [cli_mcp_drive.go](ui/cli/cli_mcp_drive.go) and route through `driveMCPHandler`, NOT `engine.CallTool` — that keeps the approval gate / hooks dispatch from special-casing them, and prevents an LLM step from recursively triggering another LLM step. Wire shapes match the HTTP `/api/v1/drive/*` payloads one-for-one.
+- `internal/coach` — trajectory hints from tool-call traces.
+- `internal/supervisor` — shared task/executor shapes for Drive, TODO, taskstore.
+- `internal/mcp` — MCP server/bridge and regular tool registry exposure.
+- `internal/security`, `internal/skills`, `internal/planning`, `internal/pluginexec`, `internal/commands`, `internal/tokens` — feature packages; grep symbols before assuming shape.
 
 ## Per-project state
 
-`.dfmc/` (gitignored) is **project state, not source** — do not commit changes to it as part of normal work:
+`.dfmc/` is gitignored project state, not source. Do not commit normal changes from it. It may contain config overrides, knowledge/conventions, `magic/MAGIC_DOC.md`, and bbolt stores.
 
-- `config.yaml` — project overrides (provider profiles, context budgets, tool allowlist, shell timeouts/blocked commands)
-- `knowledge.json`, `conventions.json` — populated by `dfmc init` and `dfmc analyze`
-- `magic/MAGIC_DOC.md` — low-token project brief auto-injected into system prompts when present (`dfmc magicdoc update|show`)
-- bbolt files (memory, conversations) — these are why only one `dfmc` process at a time can open the store; see `ErrStoreLocked` handling in main.go
-
-`.project/` holds design specs (`SPECIFICATION.md`, `IMPLEMENTATION.md`, `TASKS.md`, `BRANDING.md`) — also gitignored but useful reading for architectural intent.
-
-`docs/` (committed, unlike `.project/`) holds point-in-time design notes, refactor plans, and audit/analysis reports (`architecture.md`, `dfmc_tools_refactor.md`, `dfmc_audit_report.md`, …). Useful for *why* a subsystem looks the way it does, but they are snapshots — treat them as historical intent, not current spec, and verify against code before relying on a claim.
+`.project/` holds gitignored design specs. `docs/` is committed but historical; verify docs against code before relying on them.
 
 ## Things that bite
 
-- Forgetting `CGO_ENABLED=1` silently downgrades AST to regex — no error.
-- Putting global flags after the subcommand (`dfmc review --provider offline ...`) — they'll be passed to the command, not `parseGlobalFlags`.
-- `internal/repolint` tests walk the WHOLE tree and fail CI when a banned pattern reappears in production code (the tripwire for regressions `go vet`/`staticcheck` can't see). If a `repolint` test fails after your edit, you reintroduced a pattern that was deliberately removed — read the failing assertion's comment before "fixing" the test.
-- Two `dfmc` processes on the same project: second one hits `ErrStoreLocked`. `dfmc doctor` is whitelisted for degraded startup so it still runs.
-- When adding a new CLI command: add the case to the `switch cmd` block in [ui/cli/cli.go](ui/cli/cli.go), put the body in the matching `cli_<domain>.go` sibling, register the corresponding `/api/v1/*` handler in [ui/web/server.go](ui/web/server.go) `setupRoutes` with the body in `server_<domain>.go`, and add a `dfmc remote <cmd>` client in [cli_remote.go](ui/cli/cli_remote.go). The four layers are kept in sync by convention, not by codegen.
-- When modifying an Engine method: it lives in one of the `engine_*.go` siblings, not `engine.go` itself. Use Grep to find it.
-- Tests under `internal/engine` and `ui/cli` frequently construct a temp project with `.dfmc/` scaffolding; mirror the existing patterns rather than hand-rolling new fixtures. The typical pattern is: `tmp := t.TempDir()`, write a `config.yaml` and any fixture files into `tmp`, build a `config.DefaultConfig()`, point `cfg.ProjectRoot = tmp`, then pass that config into `engine.Init()`. For provider-dependent engine tests, register a `scriptedProvider` (see `agent_loop_test.go`) that returns pre-programmed `ToolCall` sequences so the loop runs deterministically without network calls.
-- `read_file`'s `truncated` flag means "the file extends past what you got" — it can't distinguish "caller asked for a slice" from "default 200-line cap kicked in" because `normalizeToolParams` injects the default range BEFORE Execute runs. Tests that pass a narrow `line_start`/`line_end` on a big file will see `truncated: true`; that's the contract, not a regression.
-- TUI tool-strip is collapsed by default. Tests asserting per-chip rendering MUST set `m.ui.toolStripExpanded = true` before `renderChatView`, otherwise they'll get the one-line summary and miss per-call fields like `+1.3k tok` or per-chip durations.
-- `tool_call`/`tool_batch_call` refuse to dispatch other meta tools — never put `tool_search`/`tool_help`/`tool_call`/`tool_batch_call` inside another meta tool's `name` or `calls[]`. The refusal hint names the right action, but adding new meta tools needs the same `metaInBatchHint` entry to keep self-teaching parity.
-- New tool-surface entry points MUST call `executeToolWithLifecycle` (or `CallTool`, which wraps it) rather than `tools.Engine.Execute` directly. The former is the only place approval gate + pre/post hooks + panic guard + denial-logging events fire. Bypassing it silently disables both hooks and user approval for that path. Two deliberate exceptions: (1) MCP Drive tools in [cli_mcp_drive.go](ui/cli/cli_mcp_drive.go) route through `driveMCPHandler` to avoid recursive LLM steps — see the Drive section. (2) `Engine.TodosFromSpecFile` in [engine_drive_spec.go](internal/engine/engine_drive_spec.go) constructs and calls a fresh `SpecToTodoTool` directly because the helper is invoked from contexts where the engine may not be in `StateReady` (init paths, partial-engine tests). `spec_to_todo` is a pure read-only markdown parser with its own `EnsureWithinRoot` guard, so the hook/approval surface adds no safety value here. Any new bypass needs a comparable justification documented in code.
-- The intent layer is fail-open by design — a broken classifier falls back to the raw prompt, so tests that assume "intent decided X" must build a Snapshot and call `Intent.Evaluate` directly rather than relying on the engine path, because the engine path will silently swallow classifier failures and return the raw message. Conversely, never add hard-fail paths inside `internal/intent/router.go`: the contract is "always returns a usable Decision."
-- A real tool timeout fires THREE events on the engine bus: `tool:error` (model-facing message), `tool:timeout` (structural fact, with `name`/`limit_ms`/`source`), and `tool:result` with `success=false` from the parallel dispatcher. Subscribers counting failures must NOT add these together. The canonical signal-of-record is `tool:result`; treat `tool:timeout` as cause-attribution telemetry and `tool:error` as the model-visible payload. All three fire within the same handler tick so a `(tool_name, ms-window of ~50ms)` tuple is a safe dedupe key for downstream metrics aggregators.
-- Engine and tools expose typed sentinel errors — detect via `errors.Is`, NOT `strings.Contains(err.Error(), …)`: `engine.ErrEngineNil` / `ErrEngineNotInitialized` (in [internal/engine/errors.go](internal/engine/errors.go)) / `ErrNoParkedAgent` / `ErrSubagentConcurrencyLimit`, and `tools.ErrEngineClosed` / `ErrMetaBudgetExhausted` / `ErrMetaDepthExceeded` (in [internal/tools/errors.go](internal/tools/errors.go)). Production sites wrap with `fmt.Errorf("%w …", ErrXxx, …)` so the human-readable message stays intact while the typed match keeps working. New tests must use `errors.Is(err, ErrXxx)`; new error sites should also wrap rather than copy the raw string.
+- Missing `CGO_ENABLED=1` silently downgrades AST to regex.
+- Global flags after the subcommand are not parsed as globals.
+- `internal/repolint` tests scan the whole tree for deliberately banned patterns; read the failing assertion before changing the test.
+- Two DFMC processes on one project cause `ErrStoreLocked`; degraded commands like `doctor` still work.
+- Engine methods usually live in `engine_*.go`, not `engine.go`.
+- Engine/UI tests often build temp `.dfmc/` fixtures; mirror existing patterns. Provider-dependent tests usually use `scriptedProvider` for deterministic tool calls.
+- Tool-strip chips are collapsed by default in TUI tests unless `m.ui.toolStripExpanded = true`.
+- New tool-surface entry points must use `executeToolWithLifecycle` or `CallTool`. Existing exceptions: MCP Drive tools and `Engine.TodosFromSpecFile` calling pure read-only `SpecToTodoTool` during partial init paths.
+- Intent is fail-open; do not introduce hard-fail paths in `internal/intent/router.go`.
+- A real tool timeout can emit `tool:error`, `tool:timeout`, and failed `tool:result`; treat `tool:result` as the canonical failure signal.
+- Use typed sentinel errors with `errors.Is`, not string matching: engine errors like `ErrEngineNil`, `ErrEngineNotInitialized`, `ErrNoParkedAgent`, `ErrSubagentConcurrencyLimit`; tool errors like `ErrEngineClosed`, `ErrMetaBudgetExhausted`, `ErrMetaDepthExceeded`.
 
 ## Project structure
 
-```
-cmd/dfmc                 # binary entrypoint
-internal/errors.go       # shared cross-package sentinel errors (ErrNotFound/ErrInvalidInput/…)
-internal/engine          # orchestration lifecycle, agent loop, tool-exec gate
-internal/config          # config loading/defaults/validation
-internal/storage         # bbolt handle + artifact store
-internal/ast             # tree-sitter (CGO) + regex fallback
-internal/codemap         # dependency/symbol graph, DOT/SVG export
-internal/context         # ranked context builder + budget/compression
-internal/provider        # router, protocols (anthropic/openai/google/offline)
-internal/tools           # tool registry + meta-tool layer + approval funnel
-internal/drive           # autonomous plan/execute loop (planner + scheduler)
-internal/intent          # state-aware sub-LLM request normalizer
-internal/hooks           # user-configured lifecycle shell hooks
-internal/coach           # trajectory-hint generator for agent loops
-internal/langintel       # per-language knowledge bases (tips/bug-patterns) for analyze
-internal/supervisor      # shared task/executor types for drive + taskstore
-internal/taskstore       # bbolt-backed task persistence (todo_write + HTTP/MCP)
-internal/taskview        # inline TODO-strip rendering for the TUI
-internal/toolhistory     # learned-pattern ledger across tool calls
-internal/mcp             # MCP server + bridge (tool registry + Drive surface)
-internal/bot             # Telegram bot bridge (TUI Telegram panel)
-internal/security        # security scanner
-internal/pathsafe        # path-traversal / workspace-root containment guards
-internal/applog          # structured app logger; internal/providerlog mirrors it for providers
-internal/repolint        # tree-wide grep assertions run as tests — CI tripwire (see below)
-internal/skills          # skill registry + shortcuts
-internal/planning        # planning helpers
-internal/pluginexec      # plugin execution runtime
-internal/commands        # runtime slash-command registry
-internal/promptlib       # task/language/role prompt library
-internal/conversation    # JSONL persistence, branches
-internal/memory          # working/episodic/semantic tiers
-internal/tokens          # tokenization helpers
-ui/cli                   # CLI entry, subcommands, remote client
-ui/tui                   # bubbletea Model/View workbench
-ui/web                   # HTTP/SSE server + Drive cockpit + task CRUD
-pkg/types                # shared types and errors
+```text
+cmd/dfmc              # binary entrypoint
+internal/engine       # orchestration, agent loop, lifecycle gate
+internal/config       # config loading/defaults/validation
+internal/storage      # bbolt store
+internal/ast          # tree-sitter + regex fallback
+internal/codemap      # dependency/symbol graph
+internal/context      # ranked context builder
+internal/provider     # provider router/protocols
+internal/tools        # registry, meta tools, approval/read gates
+internal/drive        # autonomous plan/execute loop
+internal/intent       # request normalizer/router
+internal/hooks        # lifecycle shell hooks
+internal/coach        # loop trajectory hints
+internal/taskstore    # persisted tasks/TODOs
+internal/mcp          # MCP server/bridge
+internal/security     # security scanner
+internal/repolint     # CI grep tripwires
+internal/promptlib    # prompt library
+internal/conversation # JSONL conversations
+internal/memory       # memory tiers
+ui/cli                # CLI and remote client
+ui/tui                # Bubble Tea workbench
+ui/web                # HTTP/SSE workbench
+pkg/types             # shared types/errors
 ```
 
 <!-- dfmt:v1 begin -->
 ## Context Discipline
 
-This project uses DFMT to keep tool output from flooding the context
-window and to preserve session state across compactions. When working
-in this project, follow these rules.
+Prefer DFMT MCP tools over native tools for outputs that may be large or reused:
 
-### Tool preferences
+| Native | DFMT replacement |
+| --- | --- |
+| `Bash` | `dfmt_exec` |
+| `Read` | `dfmt_read` |
+| `WebFetch` | `dfmt_fetch` |
+| `Glob` | `dfmt_glob` |
+| `Grep` | `dfmt_grep` |
+| `Edit` | `dfmt_edit` |
+| `Write` | `dfmt_write` |
 
-Prefer DFMT's MCP tools over native ones:
+Every `dfmt_*` read/fetch/search/exec call must include an `intent` phrase describing the needed output. On DFMT failure, report the failed call briefly, then fall back to native tools; record a `dfmt_remember` `gap` note when practical. Native `Bash` and `Read` are acceptable for known-small outputs (<2 KB) that will not be reused.
 
-| Native     | DFMT replacement | `intent` required? |
-|------------|------------------|--------------------|
-| `Bash`     | `dfmt_exec`      | yes                |
-| `Read`     | `dfmt_read`      | yes                |
-| `WebFetch` | `dfmt_fetch`     | yes                |
-| `Glob`     | `dfmt_glob`      | yes                |
-| `Grep`     | `dfmt_grep`      | yes                |
-| `Edit`     | `dfmt_edit`      | n/a                |
-| `Write`    | `dfmt_write`     | n/a                |
-
-Every `dfmt_*` call MUST pass an `intent` parameter — a short phrase
-describing what you need from the output (e.g. "failing tests",
-"error message", "imports"). Without `intent` the tool returns raw
-bytes and the token savings are lost.
-
-On DFMT failure, report it to the user (one short line — which call,
-what error) and then fall back to the native tool so the session is
-not blocked. The ban is on *silent* fallback — every switch must be
-announced. After a fallback, drop a brief `dfmt_remember` note tagged
-`gap` when practical, so the journal records that a call was bypassed.
-If the native tool is also denied (permission rule, sandbox refusal),
-stop and ask the user; do not retry blindly.
-
-### Session memory
-
-DFMT tracks tool calls automatically. After substantive decisions or
-findings, call `dfmt_remember` with descriptive tags (`decision`,
-`finding`, `summary`) so future sessions can recall the context after
-compaction.
-
-### When native tools are acceptable
-
-Native `Bash` and `Read` are acceptable for outputs you know are small
-(< 2 KB) and will not be referenced again. For everything else, DFMT
-tools are preferred.
+After substantive decisions or findings, call `dfmt_remember` with tags such as `decision`, `finding`, or `summary`.
 <!-- dfmt:v1 end -->
-
 
 <!-- self-learn:v1 begin -->
 ## Self-Learning Mode
 
-Keep the system prompt minimal. Apply this loop:
+Keep the system prompt minimal. When you spot an improvement opportunity, say:
 
-1. **When you spot an improvement opportunity:**
-   > `[PROMPT IMPROVEMENT] In this task we could have used this pattern more efficiently: ...`
+> `[PROMPT IMPROVEMENT] In this task we could have used this pattern more efficiently: ...`
 
-2. **Add the learned pattern to your notes** (below), not the system prompt.
-
-3. **In future sessions** — remember the same pattern from context.
-
-### Self-Learning Note Format
-
-```markdown
-### [YYYY-MM-DD] Learned Pattern
-**Situation:** ...
-**Previous approach:** ...
-**Better approach:** ...
-**Application:** ...
-```
-
-### Usage Example
-
-> `[PROMPT IMPROVEMENT] In tool calls, to avoid reading the same file repeatedly, I should carry the previous output — single read + carry instead of two separate reads.`
-<!-- self-learn:v1 end -->
+Then add the learned pattern to notes, not the system prompt.
 
 ### Saved Patterns
 
 - [2025-07-01] `shell/homebrew-tapFormula.rb` deletion: `git rm` gives `index.lock` error on Windows → delete file via OS, then `git add -u` to stage
-
+<!-- self-learn:v1 end -->
