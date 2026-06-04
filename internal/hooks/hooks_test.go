@@ -469,14 +469,15 @@ func TestSanitizeEnvValue_InjectionPayloads(t *testing.T) {
 	}
 }
 
-// TestHookEnv_ValuesAreSanitized — integration-style test: hookEnv must
-// produce env vars where values from payloads are quoted and cannot inject.
+// TestHookEnv_ValuesAreSanitized — integration-style test: for SHELL hooks
+// hookEnv must produce env vars where payload values are quoted and cannot
+// inject (the shell expands $DFMC_<KEY>).
 func TestHookEnv_ValuesAreSanitized(t *testing.T) {
 	env := hookEnv(EventPreTool, Payload{
 		"tool_name": "read_file",
 		"args":      "$(whoami)",
 		"path":      "/etc/passwd",
-	})
+	}, true) // useShell=true
 	found := false
 	for _, e := range env {
 		if strings.HasPrefix(e, "DFMC_ARGS=") {
@@ -498,6 +499,37 @@ func TestHookEnv_ValuesAreSanitized(t *testing.T) {
 	}
 	if !found {
 		t.Error("DFMC_ARGS not found in hookEnv output")
+	}
+}
+
+// TestHookEnv_ArgvHooksGetRawValues — argv hooks have no shell, so the
+// payload value must reach the child verbatim (no shell quotes baked in).
+// Quoting it (as the shell path does) would corrupt what os.Getenv returns.
+func TestHookEnv_ArgvHooksGetRawValues(t *testing.T) {
+	env := hookEnv(EventPreTool, Payload{
+		"args": "$(whoami)", // inert as plain env data — no shell to expand it
+		"path": "/etc/passwd",
+	}, false) // useShell=false (argv)
+	want := map[string]bool{
+		"DFMC_ARGS=$(whoami)":   false,
+		"DFMC_PATH=/etc/passwd": false,
+	}
+	for _, e := range env {
+		if _, ok := want[e]; ok {
+			want[e] = true
+		}
+		// No shell-quoting artifacts should appear on the argv path.
+		if strings.HasPrefix(e, "DFMC_ARGS=") {
+			val := strings.TrimPrefix(e, "DFMC_ARGS=")
+			if val != "$(whoami)" {
+				t.Errorf("argv hook DFMC_ARGS = %q, want raw %q (no shell quoting)", val, "$(whoami)")
+			}
+		}
+	}
+	for entry, seen := range want {
+		if !seen {
+			t.Errorf("expected raw env entry %q in argv hookEnv output", entry)
+		}
 	}
 }
 

@@ -354,6 +354,25 @@ func TestListTasksLimitOffset(t *testing.T) {
 	if len(list2) != 3 {
 		t.Fatalf("got %d, want 3", len(list2))
 	}
+
+	// Past-the-end offset must return an empty page, NOT the whole list.
+	// Regression: the old guard turned an out-of-range offset into a
+	// no-op, leaking every task as the "next" page.
+	beyond, err := s.ListTasks(ListOptions{Offset: 60})
+	if err != nil {
+		t.Fatalf("ListTasks past-end offset: %v", err)
+	}
+	if len(beyond) != 0 {
+		t.Fatalf("offset past the end must yield 0 tasks, got %d", len(beyond))
+	}
+	// Offset exactly at len is also past-the-end.
+	atEnd, err := s.ListTasks(ListOptions{Offset: 10})
+	if err != nil {
+		t.Fatalf("ListTasks offset==len: %v", err)
+	}
+	if len(atEnd) != 0 {
+		t.Fatalf("offset == len must yield 0 tasks, got %d", len(atEnd))
+	}
 }
 
 // --- SaveTask error paths ---

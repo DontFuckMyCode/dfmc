@@ -235,8 +235,16 @@ func (s *Store) ListTasks(opts ListOptions) ([]*supervisor.Task, error) {
 	sort.Slice(tasks, func(i, j int) bool {
 		return tasks[i].StartedAt.After(tasks[j].StartedAt)
 	})
-	if opts.Offset > 0 && opts.Offset < len(tasks) {
-		tasks = tasks[opts.Offset:]
+	if opts.Offset > 0 {
+		// Past-the-end offset must yield an empty page, not the full list.
+		// The old `&& opts.Offset < len(tasks)` guard turned an out-of-range
+		// offset into a no-op, so e.g. offset=60 on a 50-task store returned
+		// all 50 — wrong page contents leaking across pagination.
+		if opts.Offset >= len(tasks) {
+			tasks = nil
+		} else {
+			tasks = tasks[opts.Offset:]
+		}
 	}
 	if opts.Limit > 0 && opts.Limit < len(tasks) {
 		tasks = tasks[:opts.Limit]

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,12 @@ type Client struct {
 	// blocked on outBuf.ReadBytes('\n') forever if the server was slow
 	// or unresponsive.
 	stdinCloser io.Closer
+
+	// callMu serializes a full request→response round-trip on the shared
+	// stdio pipes. Without it, two concurrent CallTool invocations would
+	// interleave their writes and each grab whichever response line
+	// arrived first, mis-correlating responses to requests.
+	callMu sync.Mutex
 
 	mu     sync.RWMutex
 	tools  []ToolDescriptor
@@ -77,6 +84,113 @@ func NewClient(name string, command string, args []string, env map[string]string
 
 	c := &Client{Name: name, cmd: cmd}
 	return c, nil
+}
+
+// Start spawns the server process, wires the stdio pipes, runs the
+// JSON-RPC initialize handshake (+ the `notifications/initialized`
+// follow-up the spec requires before tool calls), and caches the tool
+// list. After Start returns nil, ListTools/CallTool work. On any failure
+// the process is torn down so a half-started client never lingers.
+func (c *Client) Start(ctx context.Context) error {
+	if c.closed.Load() {
+		return errors.New("client closed")
+	}
+	c.mu.Lock()
+	if c.stdin != nil {
+		c.mu.Unlock()
+		return nil // already started
+	}
+	stdin, err := c.cmd.StdinPipe()
+	if err != nil {
+		c.mu.Unlock()
+		return fmt.Errorf("mcp %s: stdin pipe: %w", c.Name, err)
+	}
+	stdout, err := c.cmd.StdoutPipe()
+	if err != nil {
+		c.mu.Unlock()
+		return fmt.Errorf("mcp %s: stdout pipe: %w", c.Name, err)
+	}
+	if err := c.cmd.Start(); err != nil {
+		c.mu.Unlock()
+		return fmt.Errorf("mcp %s: start process: %w", c.Name, err)
+	}
+	c.mu.Unlock()
+	return c.connectStreams(ctx, stdin, stdout)
+}
+
+// connectStreams wires an already-open transport and runs the handshake +
+// tools/list. Split out from Start so tests can drive the client over
+// in-memory pipes against an in-process Server without spawning a real
+// subprocess. On handshake failure it tears the client down.
+func (c *Client) connectStreams(ctx context.Context, stdin io.WriteCloser, stdout io.Reader) error {
+	c.mu.Lock()
+	c.stdin = stdin
+	c.stdout = stdout
+	c.stdinCloser = stdin
+	c.outBuf = bufio.NewReader(stdout)
+	c.mu.Unlock()
+
+	if err := c.handshake(ctx); err != nil {
+		_ = c.Stop()
+		return err
+	}
+	if err := c.refreshTools(ctx); err != nil {
+		_ = c.Stop()
+		return err
+	}
+	return nil
+}
+
+// handshake performs the MCP initialize exchange and sends the required
+// `notifications/initialized` follow-up.
+func (c *Client) handshake(ctx context.Context) error {
+	req := Request{
+		JSONRPC: "2.0",
+		ID:      newID(),
+		Method:  "initialize",
+		Params: jsonMarshal(InitializeParams{
+			ProtocolVersion: ProtocolVersion,
+			ClientInfo:      ClientInfo{Name: "dfmc", Version: ProtocolVersion},
+		}),
+	}
+	var resp Response
+	if err := c.sendSync(ctx, &req, &resp); err != nil {
+		return fmt.Errorf("mcp %s: initialize: %w", c.Name, err)
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("mcp %s: initialize error: %s", c.Name, resp.Error.Message)
+	}
+	// notifications/initialized — fire-and-forget; servers gate tools/* on it.
+	note := Request{JSONRPC: "2.0", Method: "notifications/initialized"}
+	c.callMu.Lock()
+	c.mu.RLock()
+	stdin := c.stdin
+	c.mu.RUnlock()
+	if stdin != nil {
+		_ = json.NewEncoder(stdin).Encode(&note)
+	}
+	c.callMu.Unlock()
+	return nil
+}
+
+// refreshTools issues tools/list and caches the result.
+func (c *Client) refreshTools(ctx context.Context) error {
+	req := Request{JSONRPC: "2.0", ID: newID(), Method: "tools/list"}
+	var resp Response
+	if err := c.sendSync(ctx, &req, &resp); err != nil {
+		return fmt.Errorf("mcp %s: tools/list: %w", c.Name, err)
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("mcp %s: tools/list error: %s", c.Name, resp.Error.Message)
+	}
+	var lt ListToolsResult
+	if err := jsonDecode(resp.Result, &lt); err != nil {
+		return fmt.Errorf("mcp %s: decode tools/list: %w", c.Name, err)
+	}
+	c.mu.Lock()
+	c.tools = lt.Tools
+	c.mu.Unlock()
+	return nil
 }
 
 // hasShellMeta reports whether s contains characters that have special
@@ -143,34 +257,53 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 // cancelled, stdin is closed to unblock the reader goroutine, preventing
 // a goroutine leak when the caller abandons the request mid-flight.
 func (c *Client) sendSync(ctx context.Context, req *Request, resp *Response) error {
-	if c.stdin == nil || c.stdout == nil {
+	// One round-trip at a time on the shared pipes (response correlation).
+	c.callMu.Lock()
+	defer c.callMu.Unlock()
+
+	c.mu.RLock()
+	stdin, outBuf, closer := c.stdin, c.outBuf, c.stdinCloser
+	c.mu.RUnlock()
+	if stdin == nil || outBuf == nil {
 		return errors.New("client not started")
 	}
-	if err := json.NewEncoder(c.stdin).Encode(req); err != nil {
+	if err := json.NewEncoder(stdin).Encode(req); err != nil {
 		return fmt.Errorf("send %s: %w", req.Method, err)
 	}
 	ch := make(chan error, 1)
 	go func() {
-		raw, err := c.outBuf.ReadBytes('\n')
-		if err != nil {
-			ch <- err
+		// Read lines until the response whose id matches our request.
+		// Skip notifications (no id) and unrelated lines (server log
+		// noise or a stray response) instead of mis-correlating them.
+		for {
+			raw, err := outBuf.ReadBytes('\n')
+			if err != nil {
+				ch <- err
+				return
+			}
+			var probe Response
+			if err := json.Unmarshal(raw, &probe); err != nil {
+				continue // not a JSON-RPC line — ignore
+			}
+			if len(probe.ID) == 0 || string(probe.ID) == "null" {
+				continue // notification — not our response
+			}
+			if len(req.ID) != 0 && !bytes.Equal(probe.ID, req.ID) {
+				continue // a different request's response
+			}
+			*resp = probe
+			ch <- nil
 			return
 		}
-		if err := json.Unmarshal(raw, resp); err != nil {
-			ch <- err
-			return
-		}
-		ch <- nil
 	}()
 	select {
 	case <-ctx.Done():
-		// Closing stdin signals EOF to the server and causes the reader
-		// goroutine above to unblock (outBuf.ReadBytes returns an error
-		// when the underlying connection is closed), preventing the
-		// goroutine leak that occurred when ctx cancelled before the
-		// server could respond.
-		if c.stdinCloser != nil {
-			_ = c.stdinCloser.Close()
+		// Closing stdin signals EOF to the server and unblocks the reader
+		// goroutine (ReadBytes returns an error once the pipe closes),
+		// preventing the goroutine leak that occurred when ctx cancelled
+		// before the server responded.
+		if closer != nil {
+			_ = closer.Close()
 		}
 		return ctx.Err()
 	case err := <-ch:

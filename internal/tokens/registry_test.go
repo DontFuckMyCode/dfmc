@@ -85,19 +85,19 @@ func TestEncoderName(t *testing.T) {
 }
 
 // TestHeuristicForFamily pins the per-family char/token ratios. claude and
-// sonnet use chars/3+1, gemini uses chars/4, and any other family defers
+// sonnet use chars/3+1, gemini uses chars/4+1, and any other family defers
 // to the calibrated HeuristicCounter (asserted only as positive here since
-// its exact value is covered by counter_test.go).
+// its exact value is covered by counter_test.go). chars counts RUNES.
 func TestHeuristicForFamily(t *testing.T) {
-	const text = "hello world" // 11 bytes
+	const text = "hello world" // 11 runes
 	if got := heuristicForFamily(Familyclaude, text); got != 11/3+1 {
 		t.Errorf("claude heuristic = %d, want %d", got, 11/3+1)
 	}
 	if got := heuristicForFamily(Familysonnet, text); got != 11/3+1 {
 		t.Errorf("sonnet heuristic = %d, want %d", got, 11/3+1)
 	}
-	if got := heuristicForFamily(Familygemini, text); got != 11/4 {
-		t.Errorf("gemini heuristic = %d, want %d", got, 11/4)
+	if got := heuristicForFamily(Familygemini, text); got != 11/4+1 {
+		t.Errorf("gemini heuristic = %d, want %d", got, 11/4+1)
 	}
 	if got := heuristicForFamily(Familydefault, text); got <= 0 {
 		t.Errorf("default heuristic = %d, want positive", got)
@@ -105,6 +105,25 @@ func TestHeuristicForFamily(t *testing.T) {
 	// Empty text is always zero tokens regardless of family.
 	if got := heuristicForFamily(Familyclaude, ""); got != 0 {
 		t.Errorf("empty text heuristic = %d, want 0", got)
+	}
+	// A short non-empty string must never estimate to zero tokens on any
+	// family (downstream chunk builders skip token counts <= 0, which
+	// would silently drop the content). The gemini branch previously had
+	// no +1 floor and returned 0 for 1-3 char strings.
+	for _, f := range []ModelFamily{Familyclaude, Familysonnet, Familygemini, Familydefault} {
+		if got := heuristicForFamily(f, "x"); got <= 0 {
+			t.Errorf("family %q on 1-char input = %d, want >= 1 (no silent zero-drop)", f, got)
+		}
+	}
+	// Multibyte (Turkish) regression: chars must count RUNES, not bytes.
+	// "çğıöşü" is 6 runes but 12 bytes. A byte count would roughly double
+	// the estimate, making the engine compact/trim history too early.
+	const tr = "çğıöşü" // 6 runes, 12 bytes
+	if got := heuristicForFamily(Familyclaude, tr); got != 6/3+1 {
+		t.Errorf("claude multibyte heuristic = %d, want %d (rune count, not byte)", got, 6/3+1)
+	}
+	if got := heuristicForFamily(Familygemini, tr); got != 6/4+1 {
+		t.Errorf("gemini multibyte heuristic = %d, want %d (rune count, not byte)", got, 6/4+1)
 	}
 }
 

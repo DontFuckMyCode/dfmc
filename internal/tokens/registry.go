@@ -7,6 +7,7 @@ package tokens
 import (
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // ModelFamily classifies a model by its tokenization family.
@@ -159,8 +160,15 @@ func CountForModel(model, text string) int {
 }
 
 // heuristicForFamily applies the best heuristic for a given family.
+//
+// chars counts RUNES, not bytes: a byte count roughly doubles the
+// estimate for multibyte (Turkish/CJK) content, which made the engine
+// believe history was larger than it was and compact/trim too early —
+// silently dropping real context. Each non-empty branch also floors at
+// +1 so a short-but-real string never estimates to zero (downstream
+// chunk builders skip token counts <= 0).
 func heuristicForFamily(f ModelFamily, text string) int {
-	chars := len(text)
+	chars := utf8.RuneCountInString(text)
 	if chars == 0 {
 		return 0
 	}
@@ -174,7 +182,7 @@ func heuristicForFamily(f ModelFamily, text string) int {
 		return chars/3 + 1
 	case Familygemini:
 		// Gemini uses SentencePiece — approx 4 chars/token for mixed content
-		return chars / 4
+		return chars/4 + 1
 	default:
 		// Unknown — use the calibrated HeuristicCounter
 		h := NewHeuristic()

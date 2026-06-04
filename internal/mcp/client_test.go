@@ -2,8 +2,10 @@ package mcp
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 )
@@ -27,21 +29,71 @@ func TestLoadClientsFromConfig_EmptySlice(t *testing.T) {
 	}
 }
 
-// LoadClientsFromConfig with one valid server spawns one client.
-func TestLoadClientsFromConfig_SingleServer(t *testing.T) {
+// LoadClientsFromConfig now spawns AND handshakes each server. A command
+// that isn't a real MCP server (here `echo`, which ignores stdin and exits)
+// fails the initialize handshake and must be skipped — best-effort, no error,
+// so one bad server never aborts engine startup or the other servers.
+func TestLoadClientsFromConfig_NonMCPServerIsSkipped(t *testing.T) {
 	cfg := []config.MCPServerConfig{
 		{Name: "test-echo", Command: "echo", Args: []string{"ok"}, Env: nil},
 	}
 	clients, err := LoadClientsFromConfig(cfg)
 	if err != nil {
-		t.Fatalf("LoadClientsFromConfig: %v", err)
+		t.Fatalf("LoadClientsFromConfig must not error on a bad server: %v", err)
 	}
-	if len(clients) != 1 {
-		t.Fatalf("got %d clients", len(clients))
+	if len(clients) != 0 {
+		t.Fatalf("a non-MCP command must be skipped, got %d clients", len(clients))
 	}
-	if clients[0].Name != "test-echo" {
-		t.Errorf("name: got %q", clients[0].Name)
+}
+
+// TestClient_HandshakeAndCall is the end-to-end proof that the client
+// integration actually works: connect it (over in-memory pipes) to an
+// in-process MCP Server, and verify the handshake populates the tool list
+// and CallTool round-trips to the server's bridge. Before Start()/handshake
+// existed, external MCP servers were silently dead (no tools, no process).
+func TestClient_HandshakeAndCall(t *testing.T) {
+	bridge := &fakeBridge{
+		tools: []ToolDescriptor{
+			{Name: "echo_tool", Description: "echoes", InputSchema: map[string]any{"type": "object"}},
+		},
+		callFn: func(_ context.Context, name string, args []byte) (CallToolResult, error) {
+			return CallToolResult{Content: []ContentBlock{TextContent("called " + name + " with " + string(args))}}, nil
+		},
 	}
+
+	// Wire: client.stdin -> server.in ; server.out -> client.stdout
+	srvIn, cliOut := io.Pipe() // server reads srvIn, client writes cliOut
+	cliIn, srvOut := io.Pipe() // client reads cliIn, server writes srvOut
+	srv := NewServer(srvIn, srvOut, bridge, ServerInfo{Name: "fake-mcp", Version: "0.0.0"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srvDone := make(chan struct{})
+	go func() { _ = srv.Serve(ctx); _ = srvOut.Close(); close(srvDone) }()
+
+	c := &Client{Name: "fake"}
+	hctx, hcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer hcancel()
+	if err := c.connectStreams(hctx, cliOut, cliIn); err != nil {
+		t.Fatalf("connectStreams/handshake failed: %v", err)
+	}
+
+	tools := c.ListTools()
+	if len(tools) != 1 || tools[0].Name != "echo_tool" {
+		t.Fatalf("tools/list not populated by handshake, got %+v", tools)
+	}
+
+	res, err := c.CallTool(context.Background(), "echo_tool", map[string]any{"x": 1})
+	if err != nil {
+		t.Fatalf("CallTool failed: %v", err)
+	}
+	if len(res.Content) == 0 || !strings.Contains(res.Content[0].Text, "called echo_tool") {
+		t.Fatalf("CallTool result did not round-trip: %+v", res)
+	}
+	if bridge.calls.Load() != 1 {
+		t.Fatalf("expected exactly 1 bridge call, got %d", bridge.calls.Load())
+	}
+
+	_ = c.Stop()
 }
 
 func TestClientName(t *testing.T) {

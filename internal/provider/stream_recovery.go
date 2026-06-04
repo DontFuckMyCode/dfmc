@@ -47,6 +47,19 @@ func (r *Router) streamForwardWithRecovery(
 	// StreamDelta with non-empty Delta was forwarded — at that point we
 	// lose the right to swap providers (splicing would corrupt output),
 	// so the caller surfaces the original error directly.
+	// drainAsync consumes the rest of an abandoned upstream stream in the
+	// background. The raw provider goroutines emit their terminal event
+	// with an UNGUARDED send (e.g. `ch <- StreamError{ctx.Err()}`); if we
+	// stop reading on ctx-cancel while their 32-slot buffer is full, that
+	// send blocks forever and the goroutine never reaches its
+	// `defer resp.Body.Close()` — leaking a goroutine and an HTTP
+	// connection. Draining lets it finish and close cleanly.
+	drainAsync := func(stream <-chan StreamEvent) {
+		go func() {
+			for range stream { //nolint:revive // intentional drain
+			}
+		}()
+	}
 	forward := func(stream <-chan StreamEvent) (terminalErr error, hasContent bool) {
 		for ev := range stream {
 			if ev.Type == StreamError {
@@ -58,6 +71,7 @@ func (r *Router) streamForwardWithRecovery(
 				select {
 				case out <- ev:
 				case <-ctx.Done():
+					drainAsync(stream)
 					return ctx.Err(), hasContent
 				}
 				return nil, hasContent
@@ -68,6 +82,7 @@ func (r *Router) streamForwardWithRecovery(
 			select {
 			case out <- ev:
 			case <-ctx.Done():
+				drainAsync(stream)
 				return ctx.Err(), hasContent
 			}
 		}
