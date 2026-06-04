@@ -87,10 +87,7 @@ func formatConversationPreview(msgs []types.Message, width int) []string {
 		if role == "" {
 			role = "???"
 		}
-		body := oneLine(msg.Content)
-		if len(body) > conversationsPreviewChars {
-			body = body[:conversationsPreviewChars-1] + "…"
-		}
+		body := truncateStr(oneLine(msg.Content), conversationsPreviewChars)
 		head := subtleStyle.Render("[" + role + "]")
 		line := "  " + head + " " + body
 		if width > 0 {

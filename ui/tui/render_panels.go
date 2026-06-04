@@ -71,9 +71,7 @@ func (m Model) footerSegments(width int) []string {
 			}
 			// Truncate long branch names so they don't push other
 			// footer segments (session duration, git churn) off-screen.
-			if len(label) > 28 {
-				label = label[:25] + "…"
-			}
+			label = truncateStr(label, 26)
 			chip := accentStyle.Render("⎇ ") + boldStyle.Render(label)
 			if info.Dirty {
 				chip += warnStyle.Render("*")

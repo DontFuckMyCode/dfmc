@@ -270,9 +270,5 @@ func truncateNotice(err error) string {
 	if err == nil {
 		return ""
 	}
-	s := err.Error()
-	if len(s) <= 120 {
-		return s
-	}
-	return s[:117] + "..."
+	return truncateRunes(err.Error(), 120, "...")
 }

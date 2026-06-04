@@ -94,9 +94,7 @@ func handleCoachStuck(m Model, eventType string, event engine.Event, payload map
 	preview := fmt.Sprintf("%s ×%d failures", tool, count)
 	truncatedErr := errClass
 	if errClass != "" {
-		if len(truncatedErr) > 28 {
-			truncatedErr = truncatedErr[:25] + "..."
-		}
+		truncatedErr = truncateRunes(truncatedErr, 28, "...")
 		preview = fmt.Sprintf("%s ×%d · %s", tool, count, truncatedErr)
 	}
 	m.pushToolChip(toolChip{

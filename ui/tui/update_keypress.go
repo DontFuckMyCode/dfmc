@@ -46,7 +46,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// deliver a plain letter keystroke with Alt=true during paste
 	// or fast typing (the same ESC-prefix quirk that ships '@' as
 	// alt+q). If we let that hit the global alt+<letter> switch
-	// below, typing "kelime" would trip alt+i → Status tab mid-
+	// below, typing "sefer" would trip alt+s → todos mode mid-
 	// word. Shield the Chat composer: when the tab is Chat and
 	// the user has active input, route alt+<letter> straight to
 	// the chat handler where it inserts as a rune. Empty Chat

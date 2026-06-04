@@ -182,7 +182,7 @@ func (m Model) renderContextViewSized(width, height int) string {
 	lines := []string{header, hint, queryLine, renderDivider(width - 2)}
 
 	if m.contextPanel.err != "" {
-		lines = append(lines, "", warnStyle.Render("error - "+m.contextPanel.err))
+		lines = append(lines, "", warnStyle.Render("error · "+m.contextPanel.err))
 		return renderContextPanelLines(lines, m.contextPanel.scroll, height)
 	}
 
