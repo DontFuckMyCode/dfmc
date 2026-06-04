@@ -43,8 +43,10 @@ const (
 // for — enough to see one full screen of history without being jarring.
 const scrollPageStep = 8
 
-// scrollFineStep is the finer scroll for Shift+PgUp/PgDown or Shift+Up/Down.
-// Matches the mouse wheel single-tick step so keyboard and wheel feel consistent.
+// scrollFineStep is the finer scroll for Shift+Up/Down (Ctrl+Up/Down too).
+// Note: bubbletea v1 has no KeyShiftPgUp/Down — Shift+PgUp arrives as plain
+// KeyPgUp, so it uses scrollPageStep, not this. Matches the mouse wheel
+// single-tick step so keyboard and wheel feel consistent.
 const scrollFineStep = 3
 
 type Model struct {
