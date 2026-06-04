@@ -218,7 +218,7 @@ func (m Model) renderSecurityViewInnerSized(width, height int) string {
 	} else {
 		summary := fmt.Sprintf("scanned %d files · %d secrets · %d vulns", m.security.report.FilesScanned, activeSecrets, activeVulns)
 		if ignoredSecrets+ignoredVulns > 0 {
-			summary += fmt.Sprintf(" · %d ignored (ctrl+i toggles)", ignoredSecrets+ignoredVulns)
+			summary += fmt.Sprintf(" · %d ignored (i toggles)", ignoredSecrets+ignoredVulns)
 		}
 		lines = append(lines, "", subtleStyle.Render(summary))
 	}

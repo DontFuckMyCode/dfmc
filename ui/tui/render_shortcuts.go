@@ -53,7 +53,7 @@ func (m Model) renderShortcutsView(width int) string {
 // user can scan every panel without scrolling.
 func (m Model) shortcutsTabsSection() []string {
 	out := []string{accentStyle.Bold(true).Render("▣") + " " + sectionTitleStyle.Render("PANELS")}
-	out = append(out, "  "+subtleStyle.Render("Use F1 to return Chat. Ctrl+B opens every panel. F1..F12 plus Shift+F1..F8 cover the direct map."))
+	out = append(out, "  "+subtleStyle.Render("Use F1 to return to Chat. Ctrl+B opens every panel. F1..F12 plus Shift+F1..F8 cover the direct map."))
 	out = append(out, "")
 	type row struct {
 		name, key, hint string

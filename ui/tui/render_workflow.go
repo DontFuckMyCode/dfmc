@@ -251,13 +251,12 @@ func (m Model) renderWorkflowTodoDetail(run *drive.Run, width int) []string {
 	}
 
 	// Live tool activity feed — when the TODO is running, show the
-	// last few tool events so the user can see exactly what the
-	// drive agent is doing without leaving the workflow panel. The
-	// user explicitly asked for this: "drive agentların o an ne bok
-	// yediğini her detayı ile bilmeliyim". Activity entries are
-	// global, but drive sub-agents run mostly-sequentially so the
-	// most recent N tool events almost always belong to the active
-	// TODO.
+	// last few tool events so the user can see exactly what the drive
+	// agent is doing moment to moment without leaving the workflow
+	// panel (an explicit user request for full per-agent visibility).
+	// Activity entries are global, but drive sub-agents run
+	// mostly-sequentially so the most recent N tool events almost
+	// always belong to the active TODO.
 	if todo.Status == drive.TodoRunning {
 		recent := m.recentToolActivityForTodo(todo, 6)
 		if len(recent) > 0 {

@@ -52,7 +52,7 @@ func (m *Model) renderTelegramPanelSized(contentWidth int) string {
 	b.WriteString("  ")
 	registered := m.telegramRegisteredCount()
 	username := blankFallback(m.telegram.botUsername, "bot")
-	b.WriteString(subtleStyle.Render(fmt.Sprintf("@%s | Users: %d | Registered: %d",
+	b.WriteString(subtleStyle.Render(fmt.Sprintf("@%s · Users: %d · Registered: %d",
 		username,
 		len(m.eng.Config.Telegram.AllowedUsers),
 		registered,

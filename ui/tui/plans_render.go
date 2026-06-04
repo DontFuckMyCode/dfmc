@@ -144,7 +144,8 @@ func (m Model) renderPlansViewInnerSized(width, height int) string {
 	lines := []string{banner, queryLine, hint, renderDivider(width - 2)}
 
 	if m.plans.err != "" {
-		lines = append(lines, "", warnStyle.Render("error · "+m.plans.err))
+		lines = append(lines, "", warnStyle.Render("error · "+m.plans.err),
+			subtleStyle.Render("Press e to edit the task and try again."))
 		return strings.Join(lines, "\n")
 	}
 

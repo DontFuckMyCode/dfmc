@@ -37,9 +37,9 @@ func (m Model) renderProviderLogView(width int) string {
 	recs := m.eng.ProviderLog.Tail(providerLogTailRows)
 	header := []string{
 		accentStyle.Bold(true).Render("◇ Provider Log") +
-			subtleStyle.Render("  -  ") +
+			subtleStyle.Render("  ·  ") +
 			boldStyle.Render(fmt.Sprintf("%d call(s) today", len(recs))) +
-			subtleStyle.Render("  -  "+m.eng.ProviderLog.Dir()),
+			subtleStyle.Render("  ·  "+m.eng.ProviderLog.Dir()),
 		subtleStyle.Render("Each row: ts · provider/model · in/out/total tokens · source · preview"),
 		subtleStyle.Render("Live archive — survives crashes/compaction. ↑↓ page · esc close"),
 		"",

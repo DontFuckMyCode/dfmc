@@ -124,7 +124,11 @@ func (m Model) renderPatchFilesPane(width, height int, pal tabPaletteEntry) stri
 	}
 	if len(m.patchView.set) == 0 {
 		lines = append(lines,
-			"  "+subtleStyle.Render("No active patch."))
+			"  "+subtleStyle.Render("No active patch."),
+			"",
+			"  "+subtleStyle.Render("Patches land here after the assistant proposes an edit"),
+			"  "+subtleStyle.Render("(edit_file / apply_patch). Ask in /chat, then review and"),
+			"  "+subtleStyle.Render("a apply · c check · u revert from this panel."))
 	} else {
 		rowBudget := max(height-6, 1)
 		start, end := scrollWindow(m.patchView.index, len(m.patchView.set), rowBudget)

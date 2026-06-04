@@ -76,7 +76,7 @@ func (m Model) renderCodemapViewSized(width, height int) string {
 		return strings.Join(lines, "\n")
 	}
 	if m.codemap.loading {
-		lines = append(lines, "", subtleStyle.Render("loading..."))
+		lines = append(lines, "", subtleStyle.Render("loading…"))
 		return strings.Join(lines, "\n")
 	}
 

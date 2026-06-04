@@ -177,7 +177,7 @@ func (m Model) renderPromptsViewSized(width, height int) string {
 		return strings.Join(lines, "\n")
 	}
 	if m.prompts.loading {
-		lines = append(lines, "", subtleStyle.Render("loading..."))
+		lines = append(lines, "", subtleStyle.Render("loading…"))
 		return strings.Join(lines, "\n")
 	}
 
