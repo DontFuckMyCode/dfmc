@@ -170,6 +170,63 @@ func TestNormalizeBindHost_AuthNoneLoopbackNoNotice(t *testing.T) {
 	}
 }
 
+// An allowed_hosts wildcard silently disables the Host-header
+// (DNS-rebinding) check the same way an allowed_origins wildcard
+// disables origin checking. New() must warn on both for parity so an
+// operator who copies a "*" example isn't left without protection and
+// no signal.
+func TestNew_AllowedHostsWildcardWarns(t *testing.T) {
+	eng := newTestEngine(t)
+	eng.Config.Web.AllowedHosts = []string{"*"}
+
+	rPipe, wPipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = wPipe
+	defer func() { os.Stderr = origStderr }()
+
+	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
+
+	wPipe.Close()
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(rPipe)
+	captured := buf.String()
+
+	if !strings.Contains(captured, "allowed_hosts") {
+		t.Fatalf("warning should mention allowed_hosts, got %q", captured)
+	}
+	if !strings.Contains(captured, "WARNING") {
+		t.Fatalf("expected a WARNING for allowed_hosts \"*\", got %q", captured)
+	}
+}
+
+// Parity sanity: explicit (non-wildcard) allowed_hosts must NOT warn.
+func TestNew_AllowedHostsExplicitNoWarn(t *testing.T) {
+	eng := newTestEngine(t)
+	eng.Config.Web.AllowedHosts = []string{"dfmc.internal", "localhost"}
+
+	rPipe, wPipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = wPipe
+	defer func() { os.Stderr = origStderr }()
+
+	srv := New(eng, "127.0.0.1", 0)
+	defer srv.Close()
+
+	wPipe.Close()
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(rPipe)
+	if got := buf.String(); strings.Contains(got, "allowed_hosts") {
+		t.Fatalf("explicit allowed_hosts must not warn, got %q", got)
+	}
+}
+
 // TestHandleFileContent_RedactsSecretFiles — VULN-013
 // GET /api/v1/files/{path...} must redact credential files (.env, id_rsa,
 // *.pem, etc.) with 200 + redacted=true instead of leaking content.

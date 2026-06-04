@@ -44,6 +44,16 @@ func (e *Engine) runNativeToolLoopAutonomous(ctx context.Context, seed *parkedAg
 	const safetyBound = 64 // belt-and-braces; cumulative ceiling is the real cap
 	for attempt := 0; attempt < safetyBound; attempt++ {
 		if ctx.Err() != nil {
+			// A seed reached via attemptAutoResume (attempt>0) has already
+			// been claimed out of the engine (takeParkedAgent) and carries
+			// accumulated, compacted work plus a continuation prompt — but
+			// it is no longer parked. If a cancellation lands in the narrow
+			// claim→re-enter window, returning here without re-parking would
+			// strand the user with ErrNoParkedAgent on /continue and lose the
+			// progress. Re-park it so the work survives the cancel.
+			if attempt > 0 && seed != nil {
+				e.saveParkedAgent(seed)
+			}
 			return nativeToolCompletion{}, ctx.Err()
 		}
 		completion, err := e.runNativeToolLoop(ctx, seed, lim, onDelta)

@@ -129,6 +129,36 @@ func runFinished(todos []Todo) bool {
 	return true
 }
 
+// earliestRetryDue returns the soonest future RetryScheduledAt among
+// TODOs currently in TodoRetrying state, and ok=false when none are
+// awaiting a future retry. A Retrying TODO whose scheduled time has
+// already passed is pickable by readyBatch and so is NOT reported here
+// (its zero/past time means "retry now", not "wait"). This lets the
+// executor distinguish "merely waiting on a backoff window" from a true
+// deadlock: the former should sleep-until-due and re-scan, the latter
+// has no path to progress. Today retries fire immediately (zero
+// RetryScheduledAt) so this returns ok=false, but it makes the
+// scheduler forward-safe for configurable backoff.
+func earliestRetryDue(todos []Todo) (time.Time, bool) {
+	var earliest time.Time
+	found := false
+	now := time.Now()
+	for _, t := range todos {
+		if t.Status != TodoRetrying {
+			continue
+		}
+		// Past/zero schedule = pickable now, not a wait.
+		if !now.Before(t.RetryScheduledAt) {
+			continue
+		}
+		if !found || t.RetryScheduledAt.Before(earliest) {
+			earliest = t.RetryScheduledAt
+			found = true
+		}
+	}
+	return earliest, found
+}
+
 // readyBatch returns up to `limit` TODOs that are ready to run RIGHT
 // NOW under the parallel scheduler. Two filters apply on top of
 // readyNext's "deps all Done" rule:

@@ -22,9 +22,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dontfuckmycode/dfmc/internal/security"
 	"github.com/dontfuckmycode/dfmc/internal/tokens"
 	"github.com/dontfuckmycode/dfmc/pkg/types"
 )
+
+// redactedFilePreviewNotice replaces the content preview of a
+// tool:result event when the call read a classified file. The model
+// still receives the real bytes (it asked to read the file); only the
+// event-stream preview — visible to every SSE/WS subscriber — is
+// withheld. (Name deliberately avoids the words gosec G101 flags as
+// "hardcoded credentials" — this is a redaction notice, not a secret.)
+const redactedFilePreviewNotice = "[REDACTED: classified file content withheld from the event stream]"
 
 func (e *Engine) recordNativeAgentInteraction(question string, completion nativeToolCompletion) {
 	now := time.Now()
@@ -212,6 +221,18 @@ func (e *Engine) publishNativeToolResultWithPayloadAndStats(trace nativeToolTrac
 	if trace.Err != "" {
 		payload["error"] = trace.Err
 	}
+	// File-name secret gate. The eventbus boundary already runs
+	// security.RedactSecretsInValue, but that is pattern-based — it only
+	// catches recognized KEY SHAPES (sk-ant-…, AKIA…, JWTs). A read of a
+	// secret-classified file (.env, credentials.json, *.pem) can carry
+	// custom-format values no pattern matches, so withhold the preview
+	// wholesale the way the web file API and TUI preview already do. The
+	// model's own copy (modelPayload) is untouched — only the event feed
+	// is redacted.
+	if nativeToolCallReadsSecretFile(trace.Call.Name, trace.Call.Input) {
+		payload["output_preview"] = redactedFilePreviewNotice
+		payload["redacted_secret_file"] = true
+	}
 	// Hard-truncation badge data — when stats is non-nil AND the
 	// formatter actually had to drop bytes to fit the per-call cap.
 	// Distinct from compression_* (which counts noise stripped from
@@ -237,4 +258,27 @@ func (e *Engine) publishNativeToolResultWithPayloadAndStats(trace nativeToolTrac
 		Seq:     trace.Seq,
 		Payload: payload,
 	})
+}
+
+// nativeToolCallReadsSecretFile reports whether a tool call read a path
+// the shared secret-file classifier (security.LooksLikeSecretFile)
+// would refuse to serve verbatim. Handles a direct read_file call as
+// well as the meta tool_call / tool_batch_call wrappers (any inner
+// read_file targeting a secret-classified path trips it — the batch
+// result preview is aggregate, so one secret member taints the whole
+// preview).
+func nativeToolCallReadsSecretFile(name string, input map[string]any) bool {
+	if name == "read_file" {
+		p, _ := input["path"].(string)
+		return p != "" && security.LooksLikeSecretFile(p)
+	}
+	for _, inner := range metaInnerToolCalls(name, input) {
+		if inner.Name != "read_file" {
+			continue
+		}
+		if p, _ := inner.Args["path"].(string); p != "" && security.LooksLikeSecretFile(p) {
+			return true
+		}
+	}
+	return false
 }

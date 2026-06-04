@@ -16,7 +16,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/ast"
 	"github.com/dontfuckmycode/dfmc/internal/config"
@@ -177,6 +179,172 @@ func TestResumeAgent_RefusesAfterCumulativeStepsCeiling(t *testing.T) {
 	// Snapshot must still be recoverable — the user's work isn't lost.
 	if !eng.HasParkedAgent() {
 		t.Fatal("refused resume must re-park the snapshot")
+	}
+}
+
+// TestAutonomousResume_CancelInClaimWindowRepArks guards the narrow
+// race where ctx is cancelled AFTER attemptAutoResume has claimed the
+// parked state out of the engine but BEFORE the loop re-enters
+// runNativeToolLoop. Previously the top-of-loop ctx guard returned
+// without re-parking the claimed seed, stranding the user with
+// ErrNoParkedAgent on /continue and losing all accumulated work. The
+// fix re-parks the claimed seed on that exit. We trigger the window
+// deterministically by cancelling ctx during the first (and only)
+// scripted round; with MaxSteps=1 the round parks for StepCap, the
+// autonomous wrapper claims it via attemptAutoResume, and the next
+// iteration's ctx check fires with a live, no-longer-parked seed.
+func TestAutonomousResume_CancelInClaimWindowReparks(t *testing.T) {
+	eng, stub, _ := buildGuardTestEngine(t, 0, 1, []scriptedResponse{
+		{ToolCalls: []provider.ToolCall{cancelProbeToolCall("c1")}},
+		{ToolCalls: []provider.ToolCall{loopingReadToolCall("c2")}}, // attempt 2 — must never be reached
+	})
+	// Autonomous resume must be ON (default) so the wrapper claims the
+	// StepCap park via attemptAutoResume instead of surfacing it.
+	eng.Config.Agent.AutonomousResume = "auto"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// A backend tool that cancels ctx *during* its own execution in the
+	// first round. The round still completes and parks for StepCap (its
+	// trace is recorded, so this is NOT the empty-traces interrupt path);
+	// the cancel only bites at the top of the SECOND loop attempt — after
+	// attemptAutoResume has claimed the parked seed out of the engine but
+	// before the loop re-enters. That is exactly the claim->re-enter
+	// window the fix protects.
+	eng.Tools.Register(&ctxCancelTool{cancel: cancel})
+
+	_, err := eng.AskWithMetadata(ctx, "cancel-window check")
+	if err == nil {
+		t.Fatal("expected a context-cancellation error from the interrupted run")
+	}
+	// The core invariant: accumulated work survives the cancel as a
+	// parked agent the user can /continue, rather than vanishing.
+	if !eng.HasParkedAgent() {
+		t.Fatal("seed claimed by attemptAutoResume must be re-parked when ctx is cancelled in the claim->re-enter window")
+	}
+	// The second scripted response must NOT have been consumed — the
+	// loop bailed before re-entering runNativeToolLoop.
+	stub.mu.Lock()
+	remaining := len(stub.responses)
+	stub.mu.Unlock()
+	if remaining != 1 {
+		t.Fatalf("expected the second round to be unreached (1 response left), got %d left", remaining)
+	}
+}
+
+// ctxCancelTool is a test backend tool that cancels a captured context
+// the first time it executes, then reports success. Used to drive a
+// deterministic mid-loop cancellation that lands in the autonomous
+// resume claim->re-enter window.
+type ctxCancelTool struct {
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	fired  bool
+}
+
+func (c *ctxCancelTool) Name() string        { return "cancel_probe" }
+func (c *ctxCancelTool) Description() string { return "test-only: cancels ctx on first execution" }
+func (c *ctxCancelTool) Execute(_ context.Context, _ tools.Request) (tools.Result, error) {
+	c.mu.Lock()
+	first := !c.fired
+	c.fired = true
+	c.mu.Unlock()
+	if first && c.cancel != nil {
+		c.cancel()
+	}
+	return tools.Result{Output: "cancel_probe ok"}, nil
+}
+
+func cancelProbeToolCall(id string) provider.ToolCall {
+	return provider.ToolCall{
+		ID:   id,
+		Name: "tool_call",
+		Input: toolCallInput(map[string]any{
+			"name": "cancel_probe",
+			"args": map[string]any{},
+		}),
+	}
+}
+
+// TestNativeToolCallReadsSecretFile pins the file-name secret gate that
+// backs the tool:result preview redaction (#M3). Pattern-based event
+// redaction only catches recognized key shapes; this gate keys off the
+// FILE NAME so custom-format secrets in a classified file are withheld.
+func TestNativeToolCallReadsSecretFile(t *testing.T) {
+	cases := []struct {
+		name     string
+		toolName string
+		input    map[string]any
+		want     bool
+	}{
+		{"direct read_file .env", "read_file", map[string]any{"path": ".env"}, true},
+		{"direct read_file normal", "read_file", map[string]any{"path": "main.go"}, false},
+		{"meta tool_call credentials", "tool_call", map[string]any{"name": "read_file", "args": map[string]any{"path": "config/credentials.json"}}, true},
+		{"meta tool_call normal", "tool_call", map[string]any{"name": "read_file", "args": map[string]any{"path": "README.md"}}, false},
+		{"batch one secret member", "tool_batch_call", map[string]any{"calls": []any{
+			map[string]any{"name": "read_file", "args": map[string]any{"path": "a.go"}},
+			map[string]any{"name": "read_file", "args": map[string]any{"path": "id_rsa"}},
+		}}, true},
+		{"non-read tool on secret path", "tool_call", map[string]any{"name": "grep_codebase", "args": map[string]any{"path": ".env"}}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := nativeToolCallReadsSecretFile(c.toolName, c.input); got != c.want {
+				t.Fatalf("nativeToolCallReadsSecretFile(%q, …) = %v, want %v", c.toolName, got, c.want)
+			}
+		})
+	}
+}
+
+// TestToolResultEvent_RedactsSecretFilePreview confirms the gate is
+// wired into the live tool:result publisher: a read of a .env carrying
+// a custom-shaped value (which no redaction PATTERN would catch) must
+// not leak that value into the event stream subscribers consume.
+func TestToolResultEvent_RedactsSecretFilePreview(t *testing.T) {
+	eng, _, evCh := buildGuardTestEngine(t, 0, 1, []scriptedResponse{
+		{ToolCalls: []provider.ToolCall{readFileToolCall("c1", ".env")}},
+	})
+	eng.Config.Agent.AutonomousResume = "off"
+	// A value whose shape matches none of the redaction patterns, so the
+	// only thing that can withhold it is the file-name gate.
+	const rawSecret = "INTERNAL_DB_PASSWORD=hunter2-custom-shape-no-pattern"
+	if err := os.WriteFile(filepath.Join(eng.ProjectRoot, ".env"), []byte(rawSecret+"\n"), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	if _, err := eng.AskWithMetadata(context.Background(), "read the env file"); err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+
+	events := collectRecentEvents(evCh, 128, 250*time.Millisecond)
+	ev, ok := findEventByType(events, "tool:result")
+	if !ok {
+		t.Fatal("expected a tool:result event")
+	}
+	payload, ok := ev.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("tool:result payload must be a map, got %T", ev.Payload)
+	}
+	preview, _ := payload["output_preview"].(string)
+	if !strings.Contains(preview, "REDACTED") {
+		t.Fatalf("secret-file preview must be redacted, got %q", preview)
+	}
+	if strings.Contains(preview, "hunter2") {
+		t.Fatalf("raw secret leaked into the event preview: %q", preview)
+	}
+	if payload["redacted_secret_file"] != true {
+		t.Fatalf("redacted_secret_file flag must be set, payload=%v", payload)
+	}
+}
+
+func readFileToolCall(id, path string) provider.ToolCall {
+	return provider.ToolCall{
+		ID:   id,
+		Name: "tool_call",
+		Input: toolCallInput(map[string]any{
+			"name": "read_file",
+			"args": map[string]any{"path": path},
+		}),
 	}
 }
 
