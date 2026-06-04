@@ -89,7 +89,7 @@ func helpOverlaySections(tab string) []helpOverlaySection {
 			Body: []string{
 				"f1/alt+1 chat · f2/alt+2 files · f3/alt+3 patch · f4/alt+4 workflow",
 				"f5/alt+5 activity · f6/alt+6 memory · f7/alt+7 conversations · f8/alt+8 providers",
-				"tab / shift+tab cycle next/prev · ctrl+o also opens providers (legacy)",
+				"tab / shift+tab cycle next/prev · ctrl+b opens the panel switcher",
 			},
 		},
 		{

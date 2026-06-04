@@ -6,7 +6,10 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
+
+func ansiStripForTest(s string) string { return ansi.Strip(s) }
 
 // TestTruncateRunes_RuneSafe pins the rune-safe truncation that replaced
 // the byte-slice (s[:n]) truncations scattered across the TUI render
@@ -176,6 +179,32 @@ func TestStatsPaging_PgDownWorksAndYieldsToOverlay(t *testing.T) {
 	}
 	if _, _, handled := m.handleStatsPanelShortcut(pgup); handled {
 		t.Error("with an overlay open, stats paging must yield PageUp to the overlay")
+	}
+}
+
+// TestNoStaleRemovedKeyHints guards against the panel switcher, Status
+// panel, and runtime hints re-introducing a key that the keymap cleanup
+// removed (ctrl+i dead, alt+i / ctrl+o / alt+9 / alt+0 hidden dupes, and
+// ctrl+l reassigned from ProviderLog to the Status grid). A hint that
+// points at a key which no longer does anything is exactly the wrong-
+// shortcut defect the cleanup set out to remove.
+func TestNoStaleRemovedKeyHints(t *testing.T) {
+	m := newCoverageModel(t)
+	surfaces := map[string]string{
+		"panel switcher": ansiStripForTest(m.renderPanelSwitcher(100)),
+		"status panel":   ansiStripForTest(m.renderStatusViewSized(120, 48)),
+		"global help":    ansiStripForTest(m.renderHelpOverlay(100)),
+	}
+	// Whole-word-ish checks for the dead/removed bindings. ctrl+l is
+	// allowed in the Status panel (its grid key), so it is not screened.
+	banned := []string{"ctrl+o", "alt+i", "ctrl+i", "alt+9", "alt+0"}
+	for name, body := range surfaces {
+		low := strings.ToLower(body)
+		for _, b := range banned {
+			if strings.Contains(low, b) {
+				t.Errorf("%s still references removed key %q", name, b)
+			}
+		}
 	}
 }
 

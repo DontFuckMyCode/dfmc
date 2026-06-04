@@ -122,7 +122,7 @@ func (m Model) handleMouseSlash() (tea.Model, tea.Cmd, bool) {
 func (m Model) handleProvidersPanelSlash() (tea.Model, tea.Cmd, bool) {
 	m.chat.input = ""
 	m = m.activateProvidersPanel("", false)
-	m.notice = "Providers panel — ctrl+o also opens it."
+	m.notice = "Providers panel — F8 also opens it."
 	return m, nil, true
 }
 
