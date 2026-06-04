@@ -182,12 +182,12 @@ func (m Model) openCodemapActionMenu() Model {
 				m.codemap.err = ""
 				return m, loadCodemapCmd(m.eng)
 			}},
-		{Label: "Jump to top", Accel: "g",
+		{Label: "Jump to top",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				m.codemap.scroll = 0
 				return m, nil
 			}},
-		{Label: "Jump to bottom", Accel: "G",
+		{Label: "Jump to bottom",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				total := codemapViewRowCount(m.codemap.view, m.codemap.snap)
 				if total > 0 {

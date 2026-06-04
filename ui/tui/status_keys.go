@@ -43,12 +43,12 @@ func (m Model) openStatusActionMenu() Model {
 			Handler: func(m Model) (Model, tea.Cmd) {
 				return m.activateDiagnosticTab("Orchestrate"), nil
 			}},
-		{Label: "First card", Accel: "g",
+		{Label: "First card",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				m.diagnosticPanelsState.statusPanel.selectedCard = 0
 				return m, nil
 			}},
-		{Label: "Last card", Accel: "G",
+		{Label: "Last card",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				cards, _ := m.statusCards()
 				if len(cards) > 0 {

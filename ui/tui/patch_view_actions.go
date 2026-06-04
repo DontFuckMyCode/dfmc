@@ -73,7 +73,7 @@ func (m Model) openPatchActionMenu() Model {
 				}
 				return m, cmd
 			}},
-		{Label: "Next hunk", Accel: "j",
+		{Label: "Next hunk",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				nm, cmd := m.shiftPatchHunk(1)
 				if mm, ok := nm.(Model); ok {
@@ -81,7 +81,7 @@ func (m Model) openPatchActionMenu() Model {
 				}
 				return m, cmd
 			}},
-		{Label: "Previous hunk", Accel: "k",
+		{Label: "Previous hunk",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				nm, cmd := m.shiftPatchHunk(-1)
 				if mm, ok := nm.(Model); ok {
