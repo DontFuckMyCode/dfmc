@@ -190,9 +190,9 @@ func (m Model) statusCards() ([]panelCard, []string) {
 			{Key: "Runtime", Value: connHint},
 			{Key: "Catalog", Value: formatModelsDevCacheSummaryTUI(m.status.ModelsDevCache)},
 		},
-		FooterHint: "Ctrl+O Providers panel",
+		FooterHint: "F8 Providers panel",
 	})
-	jumps = append(jumps, "Ctrl+O Providers")
+	jumps = append(jumps, "F8 Providers")
 
 	// --- AST ---------------------------------------------------------
 	astBackend := blankFallback(m.status.ASTBackend, "-")
