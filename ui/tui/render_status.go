@@ -102,8 +102,19 @@ func (m Model) renderStatusViewSized(width, height int) string {
 // strip above the card grid.
 func statusTopBanner(m Model, width int) string {
 	root := blankFallback(m.status.ProjectRoot, "(no project root)")
-	if len(root) > width-30 {
-		root = "…" + root[len(root)-(width-31):]
+	// Rune-safe tail truncation: a path's tail (the project dir) is the
+	// informative part, so keep the end and prefix with "…". Guard the
+	// width math — on a narrow terminal width-31 goes negative and the
+	// old byte-slice computed a start index past the end, panicking with
+	// reversed slice bounds. Byte slicing also split multibyte path runes.
+	if avail := width - 30; avail > 0 {
+		if r := []rune(root); len(r) > avail {
+			if avail == 1 {
+				root = "…"
+			} else {
+				root = "…" + string(r[len(r)-(avail-1):])
+			}
+		}
 	}
 	overallStyle := okStyle
 	overallText := "READY"

@@ -178,3 +178,71 @@ func TestStatsPaging_PgDownWorksAndYieldsToOverlay(t *testing.T) {
 		t.Error("with an overlay open, stats paging must yield PageUp to the overlay")
 	}
 }
+
+// TestRenderActiveView_NoPanicAcrossPanelsAndSizes drives the central
+// body dispatcher for every tab, every demoted overlay, the panel
+// switcher, and the help overlay across a grid of extreme widths and
+// heights (down to 1×1). A panic here is the crash class of "broken
+// visual" — a negative strings.Repeat / sub-slice from unguarded width
+// math. Output is intentionally not asserted; the guarantee is "renders
+// without crashing at any terminal size".
+func TestRenderActiveView_NoPanicAcrossPanelsAndSizes(t *testing.T) {
+	overlayKinds := []string{
+		"status", "tools", "codemap", "prompts", "security", "plans",
+		"context", "orchestrate", "shortcuts", "contexts", "providerlog",
+		"toolstatus", "telegram",
+	}
+	widths := []int{1, 5, 20, 40, 60, 80, 120, 200}
+	heights := []int{1, 3, 4, 8, 24, 60}
+	pal := paletteForTab("Chat", false)
+
+	safeRender := func(label string, m Model, w, h int) {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("panic rendering %s at %dx%d: %v", label, w, h, r)
+			}
+		}()
+		_ = m.renderActiveView(w, h, pal)
+	}
+
+	base := newCoverageModel(t)
+
+	for ti := range base.tabs {
+		for _, w := range widths {
+			for _, h := range heights {
+				m := base
+				m.activeTab = ti
+				m.ui.panelOverlayKind = ""
+				safeRender("tab:"+base.tabs[ti], m, w, h)
+			}
+		}
+	}
+
+	for _, kind := range overlayKinds {
+		for _, w := range widths {
+			for _, h := range heights {
+				m := base
+				m.ui.panelOverlayKind = kind
+				safeRender("overlay:"+kind, m, w, h)
+			}
+		}
+	}
+
+	for _, w := range widths {
+		for _, h := range heights {
+			ms := base
+			ms.ui.panelOverlayKind = ""
+			ms.panelSwitcher.active = true
+			safeRender("panelSwitcher", ms, w, h)
+
+			mh := base
+			mh.panelSwitcher.active = false
+			mh.ui.panelOverlayKind = ""
+			if len(mh.tabs) > 1 {
+				mh.activeTab = 1 // non-Chat so the help overlay takes the body
+			}
+			mh.ui.showHelpOverlay = true
+			safeRender("helpOverlay", mh, w, h)
+		}
+	}
+}
