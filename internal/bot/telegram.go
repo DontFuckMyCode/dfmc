@@ -443,6 +443,17 @@ func (b *TelegramBot) handleCallbackQuery(update tgbotapi.Update) {
 	if callback == nil || callback.Message == nil {
 		return
 	}
+	// Authorize the same way the message path does. The dispatcher only
+	// rate-limits callbacks; without this gate any Telegram user who can
+	// press an inline button reaches the handlers unauthenticated.
+	if callback.From == nil || !b.isAllowed(callback.From.ID) {
+		denied := tgbotapi.NewCallback(callback.ID, "Access denied.")
+		_, _ = b.api.Request(denied)
+		if callback.From != nil {
+			b.logf("[telegram] unauthorized callback user=%d rejected", callback.From.ID)
+		}
+		return
+	}
 	cbResp := tgbotapi.NewCallback(callback.ID, "")
 	_, _ = b.api.Request(cbResp)
 
@@ -513,10 +524,16 @@ func (b *TelegramBot) Health() map[string]any {
 
 // truncate shortens a string to maxLen characters.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	// Rune-safe: byte slicing would split a multibyte (Turkish/emoji)
+	// character mid-sequence and emit invalid UTF-8 into the log.
+	r := []rune(s)
+	if len(r) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	if maxLen < 0 {
+		maxLen = 0
+	}
+	return string(r[:maxLen]) + "..."
 }
 
 var telegramSecretPatterns = []*regexp.Regexp{

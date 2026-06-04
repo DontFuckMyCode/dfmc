@@ -205,11 +205,17 @@ func intVal(m map[string]any, k string) int {
 }
 
 func truncate(s string, max int) string {
-	if max <= 0 || len(s) <= max {
+	if max <= 0 {
+		return s
+	}
+	// Rune-safe: byte slicing would split a multibyte (Turkish/CJK/emoji)
+	// character mid-sequence, corrupting the last char in the JSONL row.
+	r := []rune(s)
+	if len(r) <= max {
 		return s
 	}
 	if max < 4 {
-		return s[:max]
+		return string(r[:max])
 	}
-	return s[:max-1] + "…"
+	return string(r[:max-1]) + "…"
 }

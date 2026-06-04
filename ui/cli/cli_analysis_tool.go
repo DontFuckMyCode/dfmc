@@ -19,6 +19,10 @@ import (
 
 func runTool(ctx context.Context, eng *engine.Engine, args []string, jsonMode bool) int {
 	if len(args) == 0 || args[0] == "list" {
+		if eng == nil || eng.Tools == nil {
+			fmt.Fprintln(os.Stderr, "tool engine not initialized")
+			return 1
+		}
 		allTools := eng.Tools.ListAll()
 		disabled := eng.ListDisabledTools()
 		disabledSet := map[string]bool{}
