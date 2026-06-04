@@ -95,12 +95,21 @@ func (m Model) handleStatsPanelShortcut(msg tea.KeyMsg) (tea.Model, tea.Cmd, boo
 		}
 		return m, nil, true
 	case "pgup":
-		if m.activeTab == 0 && m.statsPanelVisible(100) {
+		// Skip when a panel overlay is open: overlays (Security,
+		// Shortcuts, Context, Orchestrate…) own pgup/pgdn for their own
+		// scroll and routinely overflow the viewport. activeTab stays 0
+		// while an overlay covers the Chat tab, so without this guard the
+		// stats panel would steal paging and the overlay body would be
+		// unreachable.
+		if m.activeTab == 0 && m.ui.panelOverlayKind == "" && m.statsPanelVisible(100) {
 			m.ui.statsPanelScroll = max(0, m.ui.statsPanelScroll-3)
 			return m, nil, true
 		}
-	case "pgdn":
-		if m.activeTab == 0 && m.statsPanelVisible(100) {
+	case "pgdown":
+		// bubbletea emits "pgdown" (not "pgdn") for PageDown — the old
+		// "pgdn" label never matched, so stats-panel PageDown scroll was
+		// dead. Every other pgdown handler in the TUI uses "pgdown".
+		if m.activeTab == 0 && m.ui.panelOverlayKind == "" && m.statsPanelVisible(100) {
 			m.ui.statsPanelScroll++
 			return m, nil, true
 		}

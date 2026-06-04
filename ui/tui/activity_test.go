@@ -471,7 +471,7 @@ func TestActivityCopySelectionReturnsClipboardCommand(t *testing.T) {
 			"path":  "main.go",
 		},
 	})
-	nextModel, cmd := m.handleActivityKey(tea.KeyMsg{Type: tea.KeyCtrlY})
+	nextModel, cmd := m.handleActivityKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	next := nextModel.(Model)
 	if cmd == nil {
 		t.Fatal("expected y to return a clipboard command")
