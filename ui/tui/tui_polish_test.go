@@ -244,6 +244,40 @@ func TestActionMenuAccelsUnique(t *testing.T) {
 	}
 }
 
+// TestFullViewNoPanicAtNarrowWidths drives the WHOLE View() — global
+// header, tab strip, brand line, footer, AND the active body — at tiny
+// terminal sizes. The body-only smoke test (renderActiveView) does not
+// exercise the surrounding chrome, whose own width math (header padding,
+// tab-strip fitting, footer segments) is a separate panic risk on a
+// 1-column terminal.
+func TestFullViewNoPanicAtNarrowWidths(t *testing.T) {
+	overlays := []string{"", "status", "security", "shortcuts", "telegram"}
+	widths := []int{1, 2, 5, 10, 20, 40, 80}
+	heights := []int{1, 2, 5, 40}
+	base := newCoverageModel(t)
+	for ti := range base.tabs {
+		for _, k := range overlays {
+			for _, w := range widths {
+				for _, h := range heights {
+					func() {
+						defer func() {
+							if r := recover(); r != nil {
+								t.Errorf("panic View() tab=%d overlay=%q at %dx%d: %v", ti, k, w, h, r)
+							}
+						}()
+						m := base
+						m.activeTab = ti
+						m.ui.panelOverlayKind = k
+						m.width = w
+						m.height = h
+						_ = m.View()
+					}()
+				}
+			}
+		}
+	}
+}
+
 // TestNoStaleRemovedKeyHints guards against the panel switcher, Status
 // panel, and runtime hints re-introducing a key that the keymap cleanup
 // removed (ctrl+i dead, alt+i / ctrl+o / alt+9 / alt+0 hidden dupes, and
