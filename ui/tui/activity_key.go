@@ -106,7 +106,7 @@ func (m Model) openActivityActionMenu() Model {
 				}
 				return m, cmd
 			}},
-		{Label: "Copy selected entry to chat composer",
+		{Label: "Copy selected entry to chat composer", Accel: "y",
 			Handler: func(m Model) (Model, tea.Cmd) {
 				nm, cmd := m.activityCopySelection()
 				if mm, ok := nm.(Model); ok {
@@ -127,7 +127,7 @@ func (m Model) handleActivityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// Right opens the action menu — view filter, follow toggle,
 	// search, clear, copy entry — without making the user memorise
-	// 1-6 / p / / / c / ctrl+y.
+	// 1-6 / p / / / c / y.
 	if s := msg.String(); s == "right" || s == "l" {
 		return m.openActivityActionMenu(), nil
 	}
@@ -139,7 +139,11 @@ func (m Model) handleActivityKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.activityOpenSelection(true)
 	case "f":
 		return m.activityFocusSelectionFile()
-	case "ctrl+y":
+	case "y":
+		// Plain `y` (yank) — matches the "Copy selected entry" action-
+		// menu Accel. The old ctrl+y was dead on this tab: the global
+		// ctrl+y → Plans shortcut fires on every non-Chat tab and
+		// shadowed it before it could run.
 		return m.activityCopySelection()
 	case "j", "down":
 		m.activity.scroll = scrollIndexUp(m.activity.scroll, 1)

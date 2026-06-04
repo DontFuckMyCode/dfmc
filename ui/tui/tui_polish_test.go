@@ -121,3 +121,60 @@ func TestPanelNav_HiddenAliasesRemoved(t *testing.T) {
 		}
 	}
 }
+
+// TestContextPanel_ManagerToggleViaM pins the fix for the dead `ctrl+m`
+// binding: the Context Manager sub-view now toggles on plain `m` (the
+// key that bubbletea can actually deliver — Ctrl+M is indistinguishable
+// from Enter), matching the action-menu Accel, and the toggle works both
+// directions.
+func TestContextPanel_ManagerToggleViaM(t *testing.T) {
+	m := newCoverageModel(t)
+	m.contextPanel.inputActive = false
+	if m.contextPanel.manager.active {
+		t.Fatal("Context Manager should start inactive")
+	}
+
+	mKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}}
+
+	on, _ := m.handleContextKey(mKey)
+	m = on.(Model)
+	if !m.contextPanel.manager.active {
+		t.Fatal("`m` should activate the Context Manager")
+	}
+
+	off, _ := m.handleContextKey(mKey)
+	m = off.(Model)
+	if m.contextPanel.manager.active {
+		t.Fatal("`m` again should deactivate the Context Manager")
+	}
+}
+
+// TestStatsPaging_PgDownWorksAndYieldsToOverlay pins two fixes: (1) the
+// stats panel scrolls on PageDown (the old "pgdn" label never matched
+// bubbletea's "pgdown", so it was dead), and (2) when a panel overlay is
+// open over the Chat tab, stats paging yields so the overlay — which
+// keeps activeTab==0 — can scroll its own (often overflowing) body.
+func TestStatsPaging_PgDownWorksAndYieldsToOverlay(t *testing.T) {
+	m := newCoverageModel(t)
+	m.activeTab = 0
+	m.ui.showStatsPanel = true
+	m.ui.panelOverlayKind = ""
+
+	pgdn := tea.KeyMsg{Type: tea.KeyPgDown}
+	pgup := tea.KeyMsg{Type: tea.KeyPgUp}
+
+	if _, _, handled := m.handleStatsPanelShortcut(pgdn); !handled {
+		t.Fatal("PageDown should scroll the stats panel (pgdown label fix)")
+	}
+	if _, _, handled := m.handleStatsPanelShortcut(pgup); !handled {
+		t.Fatal("PageUp should scroll the stats panel")
+	}
+
+	m.ui.panelOverlayKind = "shortcuts"
+	if _, _, handled := m.handleStatsPanelShortcut(pgdn); handled {
+		t.Error("with an overlay open, stats paging must yield PageDown to the overlay")
+	}
+	if _, _, handled := m.handleStatsPanelShortcut(pgup); handled {
+		t.Error("with an overlay open, stats paging must yield PageUp to the overlay")
+	}
+}

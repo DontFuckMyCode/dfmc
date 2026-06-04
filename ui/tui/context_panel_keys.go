@@ -36,9 +36,12 @@ func (m Model) handleContextKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openContextActionMenu(), nil
 	}
 	switch msg.String() {
-	case "ctrl+m":
-		// Ctrl+M toggles the Context Manager sub-view. Uses ctrl+m
-		// to avoid any collision with `m` in other panels.
+	case "m":
+		// `m` toggles the Context Manager sub-view — matching the
+		// "Context Manager" action-menu Accel. (The old ctrl+m binding
+		// was dead: bubbletea reports Ctrl+M as "enter", so it could
+		// never fire; per-panel handlers are isolated, so plain `m`
+		// collides with nothing.)
 		if m.contextPanel.manager.active {
 			m = m.deactivateContextManager()
 		} else {
