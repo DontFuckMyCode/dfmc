@@ -213,6 +213,22 @@ func classifyActivity(ev engine.Event) (activityKind, string) {
 		// see timeouts as much as plain failures. The "timeout" text
 		// disambiguates from a regular tool:error in the feed.
 		kind = activityKindError
+	case "provider:complete":
+		// Without this the feed showed the raw "provider:complete" type
+		// even though the payload carries provider/model/token counts —
+		// the one signal a user scanning the firehose actually wants.
+		prov := payloadString(payload, "provider", "")
+		model := payloadString(payload, "model", "")
+		toks := payloadIntAny(payload, 0, "total_tokens", "tokens")
+		who := strings.TrimSpace(prov + " " + model)
+		if who == "" {
+			who = "llm"
+		}
+		if toks > 0 {
+			text = fmt.Sprintf("llm done - %s (%d tok)", who, toks)
+		} else {
+			text = "llm done - " + who
+		}
 	case "agent:loop:start":
 		prov := payloadString(payload, "provider", "")
 		model := payloadString(payload, "model", "")

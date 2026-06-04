@@ -7,6 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/dontfuckmycode/dfmc/internal/engine"
 )
 
 func ansiStripForTest(s string) string { return ansi.Strip(s) }
@@ -241,6 +243,32 @@ func TestActionMenuAccelsUnique(t *testing.T) {
 				seen[acc] = a.Label
 			}
 		}()
+	}
+}
+
+// TestActivityHumanizesProviderComplete pins the Activity-feed polish:
+// a provider:complete event must render a readable "llm done - <who>
+// (<n> tok)" line, not the raw "provider:complete" type — the payload
+// (provider/model/tokens) is the signal a user scanning the firehose
+// wants.
+func TestActivityHumanizesProviderComplete(t *testing.T) {
+	m := newCoverageModel(t)
+	m.recordActivityEvent(engine.Event{
+		Type:    "provider:complete",
+		Source:  "engine",
+		Payload: map[string]any{"provider": "anthropic", "model": "claude-opus", "total_tokens": 1840},
+	})
+	if len(m.activity.entries) == 0 {
+		t.Fatal("no activity entry recorded")
+	}
+	got := m.activity.entries[len(m.activity.entries)-1].Text
+	if strings.Contains(got, "provider:complete") {
+		t.Errorf("provider:complete should be humanized, got raw type: %q", got)
+	}
+	for _, want := range []string{"anthropic", "claude-opus", "1840"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("humanized activity text %q missing %q", got, want)
+		}
 	}
 }
 
