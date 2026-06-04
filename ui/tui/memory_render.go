@@ -104,9 +104,12 @@ func memoryDetailWrap(s string, width int) []string {
 		// Emergency split: a single token longer than width falls
 		// through as a hard chunk so the user still sees it rather
 		// than producing a truncated line.
-		if len(cur) > width {
-			out = append(out, cur[:width])
-			cur = cur[width:]
+		// Rune-safe hard chunk: byte-slicing cur[:width] would split a
+		// multibyte (Turkish/CJK/emoji) character mid-sequence and leave
+		// a corrupted glyph on the wrapped line.
+		if r := []rune(cur); len(r) > width {
+			out = append(out, string(r[:width]))
+			cur = string(r[width:])
 		}
 	}
 	if cur != "" {

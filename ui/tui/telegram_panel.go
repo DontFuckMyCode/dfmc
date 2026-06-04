@@ -319,9 +319,7 @@ func (m *Model) bindTelegramBotToPanel(tgBot *bot.TelegramBot) {
 				replyFn("⚠️ " + errText)
 				return
 			}
-			if len(resp) > 4000 {
-				resp = resp[:3997] + "..."
-			}
+			resp = truncateRunes(resp, 4000, "...")
 			enqueueTelegramPanelMessage(events, telegramMessageItem{from: "DFMC", text: resp, time: time.Now().Format("15:04"), isOut: true})
 			replyFn(resp)
 		}()
@@ -515,9 +513,7 @@ func (m *Model) saveTelegramSetup() *Model {
 				replyFn("⚠️ Error: " + err.Error())
 				return
 			}
-			if len(resp) > 4000 {
-				resp = resp[:3997] + "..."
-			}
+			resp = truncateRunes(resp, 4000, "...")
 			_ = m.addTelegramMessage(telegramMessageItem{from: "DFMC", text: resp, time: time.Now().Format("15:04"), isOut: true})
 			replyFn(resp)
 		}()

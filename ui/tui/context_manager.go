@@ -410,9 +410,26 @@ func managerFlagCell(row contextManagerRow) string {
 }
 
 func truncateStr(s string, maxLen int) string {
+	return truncateRunes(s, maxLen, "…")
+}
+
+// truncateRunes shortens s to at most maxLen runes, replacing the cut
+// tail with marker when it overflows. Rune-safe: it never splits a
+// multibyte character (Turkish/CJK/emoji) mid-sequence the way a byte
+// slice (s[:n]) would, which is the difference between a clean "…" and a
+// corrupted final glyph. The marker is counted against the budget so the
+// returned string — marker included — stays within maxLen runes.
+func truncateRunes(s string, maxLen int, marker string) string {
+	if maxLen <= 0 {
+		return ""
+	}
 	runes := []rune(s)
 	if len(runes) <= maxLen {
 		return s
 	}
-	return string(runes[:maxLen-1]) + "…"
+	mr := []rune(marker)
+	if len(mr) >= maxLen {
+		return string(mr[:maxLen])
+	}
+	return string(runes[:maxLen-len(mr)]) + marker
 }

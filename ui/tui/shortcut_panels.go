@@ -111,23 +111,18 @@ func (m Model) handlePanelNavigationShortcut(msg tea.KeyMsg) (tea.Model, tea.Cmd
 	case "shift+f6", "f18":
 		m = m.activateDiagnosticTab("Contexts")
 		return m, nil, true
-	case "shift+f7", "f19", "ctrl+l":
+	case "shift+f7", "f19":
+		// ctrl+l is deliberately NOT an alias here: it is the Status
+		// overlay's "move right in the card grid" key (status_keys.go),
+		// and a global alias would dead-shadow it. ProviderLog stays
+		// reachable via Shift+F7 / F19 / Ctrl+B.
 		m = m.activateDiagnosticTab("ProviderLog")
 		return m, nil, true
 	case "shift+f8", "f20":
 		m = m.activateDiagnosticTab("Telegram")
 		return m, nil, true
-	case "alt+9", "alt+0":
-		m.ui.showHelpOverlay = !m.ui.showHelpOverlay
-		return m, nil, true
-	case "alt+i":
-		m = m.activateDiagnosticTab("Tools")
-		return m, nil, true
 	case "ctrl+shift+t":
 		m = m.activateDiagnosticTab("ToolStatus")
-		return m, nil, true
-	case "ctrl+i":
-		m = m.activateDiagnosticTab("Status")
 		return m, nil, true
 	case "ctrl+y":
 		if m.activeTab != 0 {
@@ -139,9 +134,6 @@ func (m Model) handlePanelNavigationShortcut(msg tea.KeyMsg) (tea.Model, tea.Cmd
 			m = m.activateContextPanel("", false)
 			return m, nil, true
 		}
-	case "ctrl+o":
-		m = m.activateProvidersPanel("", false)
-		return m, nil, true
 	case "alt+r":
 		m = m.activateDiagnosticTab("Orchestrate")
 		return m, nil, true

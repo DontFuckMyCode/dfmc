@@ -96,10 +96,7 @@ func formatPromptPreview(t promptlib.Template, width int) []string {
 		out = append(out, "")
 	}
 	out = append(out, "  "+subtleStyle.Render("body"))
-	body := t.Body
-	if len(body) > promptsPreviewChars {
-		body = body[:promptsPreviewChars-1] + "…"
-	}
+	body := truncateStr(t.Body, promptsPreviewChars)
 	for _, line := range strings.Split(body, "\n") {
 		if width > 0 {
 			line = truncateSingleLine(line, width)

@@ -201,9 +201,9 @@ func (m Model) statusCards() ([]panelCard, []string) {
 			{Key: "Langs", Value: formatASTLanguageSummaryTUI(m.status.ASTLanguages)},
 			{Key: "Metrics", Value: formatASTMetricsSummaryTUI(m.status.ASTMetrics)},
 		},
-		FooterHint: "F9 CodeMap for symbol graph",
+		FooterHint: "F10 CodeMap for symbol graph",
 	})
-	jumps = append(jumps, "F9 CodeMap")
+	jumps = append(jumps, "F10 CodeMap")
 
 	// --- CODEMAP -----------------------------------------------------
 	cards = append(cards, panelCard{
@@ -212,9 +212,9 @@ func (m Model) statusCards() ([]panelCard, []string) {
 		Rows: []panelCardRow{
 			{Key: "Summary", Value: formatCodeMapMetricsSummaryTUI(m.status.CodeMap)},
 		},
-		FooterHint: "F9 to explore the graph",
+		FooterHint: "F10 to explore the graph",
 	})
-	jumps = append(jumps, "F9 CodeMap")
+	jumps = append(jumps, "F10 CodeMap")
 
 	// --- MEMORY (only when degraded — surfaces a real problem) ------
 	if m.status.MemoryDegraded {

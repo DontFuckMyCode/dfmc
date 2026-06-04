@@ -80,10 +80,7 @@ func formatPlansSubtaskRow(i int, s planning.Subtask, selected bool, width int) 
 // under the list so the user can see what the agent loop would actually
 // send if this subtask were fanned out.
 func formatPlansPreview(s planning.Subtask, width int) []string {
-	body := s.Description
-	if len(body) > plansDescriptionChars {
-		body = body[:plansDescriptionChars-1] + "…"
-	}
+	body := truncateStr(s.Description, plansDescriptionChars)
 	out := []string{"  " + subtleStyle.Render("description")}
 	for _, line := range wrapPromptLines(body, width) {
 		out = append(out, "    "+line)
