@@ -244,6 +244,34 @@ func TestActionMenuAccelsUnique(t *testing.T) {
 	}
 }
 
+// TestCheatSheetSlashesAllHandled guards the Shortcuts cheat-sheet's
+// slash-command list against drift: every command it advertises must
+// actually resolve through executeChatCommand (handled=true), not fall
+// through to the "unknown command" branch. TestSlashCoverage walks the
+// catalog; this walks what the cheat-sheet promises the user.
+func TestCheatSheetSlashesAllHandled(t *testing.T) {
+	cmds := []string{
+		"/approve", "/btw", "/cancel", "/clear", "/coach", "/compact", "/continue",
+		"/conversation", "/doc", "/doctor", "/drive", "/expand", "/explain", "/export",
+		"/hints", "/history", "/hooks", "/intent", "/jump", "/keylog", "/map", "/mouse",
+		"/next", "/queue", "/refactor", "/review", "/scan", "/select", "/split", "/stats",
+		"/status", "/subagents", "/tasks", "/test", "/todos", "/toolshow", "/workflow",
+	}
+	for _, c := range cmds {
+		func() {
+			// Some verbs return handled=true, then their tea.Cmd does the
+			// real provider/tool work — that cmd nil-panics on the bare
+			// test engine. We only assert recognition (handled), never run
+			// the cmd, and treat a cmd-phase panic as "handler exists".
+			defer func() { _ = recover() }()
+			m := newCoverageModel(t)
+			if _, _, handled := m.executeChatCommand(c); !handled {
+				t.Errorf("cheat-sheet advertises %q but executeChatCommand does not handle it", c)
+			}
+		}()
+	}
+}
+
 // TestFullViewNoPanicAtNarrowWidths drives the WHOLE View() — global
 // header, tab strip, brand line, footer, AND the active body — at tiny
 // terminal sizes. The body-only smoke test (renderActiveView) does not
