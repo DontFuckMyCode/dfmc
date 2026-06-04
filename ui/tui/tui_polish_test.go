@@ -182,6 +182,68 @@ func TestStatsPaging_PgDownWorksAndYieldsToOverlay(t *testing.T) {
 	}
 }
 
+// TestActionMenuAccelsUnique ensures no panel's action menu has two
+// entries sharing the same single-key accelerator — a duplicate makes
+// one of the actions silently unreachable by its advertised key (a
+// hidden/broken control). Each builder is also exercised for panics.
+func TestActionMenuAccelsUnique(t *testing.T) {
+	m := newCoverageModel(t)
+	builders := []struct {
+		name string
+		open func(Model) Model
+	}{
+		{"Activity", func(m Model) Model { return m.openActivityActionMenu() }},
+		{"Codemap", func(m Model) Model { return m.openCodemapActionMenu() }},
+		{"ContextManager", func(m Model) Model { return m.openContextManagerActionMenu() }},
+		{"Context", func(m Model) Model { return m.openContextActionMenu() }},
+		{"Conversations", func(m Model) Model { return m.openConversationsActionMenu() }},
+		{"Memory", func(m Model) Model { return m.openMemoryActionMenu() }},
+		{"Files", func(m Model) Model { return m.openFilesActionMenu() }},
+		{"Tools", func(m Model) Model { return m.openToolsActionMenu() }},
+		{"Patch", func(m Model) Model { return m.openPatchActionMenu() }},
+		{"Plans", func(m Model) Model { return m.openPlansActionMenu() }},
+		{"Prompts", func(m Model) Model { return m.openPromptsActionMenu() }},
+		{"ProviderDetail", func(m Model) Model { return m.openProviderDetailActionMenu() }},
+		{"Providers", func(m Model) Model { return m.openProvidersActionMenu() }},
+		{"ProvidersPipeline", func(m Model) Model { return m.openProvidersPipelineActionMenu() }},
+		{"Contexts", func(m Model) Model { return m.openContextsActionMenu() }},
+		{"Orchestrate", func(m Model) Model { return m.openOrchestrateActionMenu() }},
+		{"Workflow", func(m Model) Model { return m.openWorkflowActionMenu() }},
+		{"Security", func(m Model) Model { return m.openSecurityActionMenu() }},
+		{"Status", func(m Model) Model { return m.openStatusActionMenu() }},
+		{"Telegram", func(m Model) Model { return m.openTelegramActionMenu() }},
+	}
+	for _, b := range builders {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s action-menu builder panicked: %v", b.name, r)
+				}
+			}()
+			nm := b.open(m)
+			// Accels dispatch case-sensitively (msg.String() == a.Accel),
+			// so "g" and "G" are distinct. But the menu reserves these for
+			// its own navigation BEFORE the accel loop runs, so any entry
+			// using one as an accel is shadowed/dead.
+			reserved := map[string]bool{"j": true, "k": true, "g": true, "G": true, "h": true}
+			seen := map[string]string{}
+			for _, a := range nm.actionMenu.actions {
+				acc := strings.TrimSpace(a.Accel)
+				if acc == "" {
+					continue
+				}
+				if reserved[acc] {
+					t.Errorf("%s menu: accel %q on %q is shadowed by menu navigation", b.name, acc, a.Label)
+				}
+				if prev, ok := seen[acc]; ok {
+					t.Errorf("%s menu: duplicate accel %q on %q and %q", b.name, acc, prev, a.Label)
+				}
+				seen[acc] = a.Label
+			}
+		}()
+	}
+}
+
 // TestNoStaleRemovedKeyHints guards against the panel switcher, Status
 // panel, and runtime hints re-introducing a key that the keymap cleanup
 // removed (ctrl+i dead, alt+i / ctrl+o / alt+9 / alt+0 hidden dupes, and
