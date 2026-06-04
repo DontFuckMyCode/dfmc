@@ -71,6 +71,13 @@ func New(eng *engine.Engine, host string, port int) *Server {
 		}
 		if len(eng.Config.Web.AllowedHosts) > 0 {
 			allowedHosts = eng.Config.Web.AllowedHosts
+			// Mirror the allowed_origins "*" warning: matchAllowlist treats
+			// "*" as match-all, so an allowed_hosts wildcard silently
+			// disables the Host-header (DNS-rebinding) check. Operators who
+			// copy a "*" example should see the same footgun notice.
+			if slices.Contains(allowedHosts, "*") {
+				fmt.Fprintf(os.Stderr, "[DFMC] WARNING: allowed_hosts contains \"*\" which disables Host-header checking — this removes the DNS-rebinding protection. Pin explicit hostnames instead.\n")
+			}
 		}
 		if len(eng.Config.Web.TrustedProxies) > 0 {
 			trustedProxies = eng.Config.Web.TrustedProxies

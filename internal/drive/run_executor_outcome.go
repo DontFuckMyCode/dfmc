@@ -155,6 +155,12 @@ func (d *Driver) applyOutcome(run *Run, res todoOutcome, consecutiveBlocked *int
 			t.Error = res.Err.Error()
 			t.RetryScheduledAt = time.Time{}
 			*consecutiveBlocked++
+			// A retries-exhausted Blocked is a genuine executor-stage
+			// failure — feed it to the breaker so a persistently sick
+			// executor (across this run and future runs sharing this
+			// Driver) trips the circuit, mirroring the spawn-invalid
+			// path below and the planner stage.
+			d.executorBreaker.Record(false)
 			d.persist(run)
 			d.publish(EventTodoBlocked, map[string]any{
 				"run_id":         run.ID,

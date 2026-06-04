@@ -294,6 +294,120 @@ func TestDriverMaxFailedTodosFails(t *testing.T) {
 	}
 }
 
+// TestDriverExecutorCircuitBreakerTrips verifies the executor-stage
+// circuit breaker actually short-circuits dispatch once configured —
+// the breaker is wired into executeLoop's Check() gate and fed by
+// applyOutcome's Record(false) on genuine executor failures. With a
+// FailureThreshold below MaxFailedTodos, the breaker (not the
+// consecutive-blocks counter) is the cause of the RunFailed.
+func TestDriverExecutorCircuitBreakerTrips(t *testing.T) {
+	runner := &fakeRunner{
+		PlanFunc: func(_ PlannerRequest) (string, error) {
+			return `{"todos":[
+				{"id":"T1","title":"a","detail":"a"},
+				{"id":"T2","title":"b","detail":"b"},
+				{"id":"T3","title":"c","detail":"c"}
+			]}`, nil
+		},
+		ExecFunc: func(_ ExecuteTodoRequest) (ExecuteTodoResponse, error) {
+			return ExecuteTodoResponse{}, errors.New("always fail")
+		},
+	}
+	// Sequential dispatch so the trip point is deterministic. Breaker
+	// threshold (2) is well below MaxFailedTodos (10) so the breaker
+	// wins the race to fail the run.
+	d := NewDriver(runner, nil, nil, Config{
+		Retries:                0,
+		MaxParallel:            1,
+		MaxFailedTodos:         10,
+		ExecutorCircuitBreaker: CircuitBreakerConfig{FailureThreshold: 2},
+	})
+	run, _ := d.Run(context.Background(), "doomed task")
+	if run.Status != RunFailed {
+		t.Fatalf("expected RunFailed once the executor breaker trips, got %s (reason=%q)", run.Status, run.Reason)
+	}
+	if !strings.Contains(run.Reason, "circuit breaker") {
+		t.Fatalf("expected reason to cite the executor circuit breaker (not max_failed_todos), got %q", run.Reason)
+	}
+}
+
+// TestEarliestRetryDue pins the helper that lets the executor tell a
+// "waiting on a retry backoff window" state apart from a true deadlock.
+func TestEarliestRetryDue(t *testing.T) {
+	now := time.Now()
+	soon := now.Add(50 * time.Millisecond)
+	later := now.Add(500 * time.Millisecond)
+
+	// No retrying TODOs awaiting a future window.
+	if _, ok := earliestRetryDue([]Todo{
+		{Status: TodoPending},
+		{Status: TodoRunning},
+		{Status: TodoRetrying, RetryScheduledAt: time.Time{}},               // zero = due now, not a wait
+		{Status: TodoRetrying, RetryScheduledAt: now.Add(-1 * time.Second)}, // past = due now
+	}); ok {
+		t.Fatal("no future-scheduled retry should report a wait")
+	}
+
+	// Earliest of several future windows wins.
+	due, ok := earliestRetryDue([]Todo{
+		{Status: TodoRetrying, RetryScheduledAt: later},
+		{Status: TodoRetrying, RetryScheduledAt: soon},
+		{Status: TodoDone},
+	})
+	if !ok {
+		t.Fatal("expected a future retry window to be reported")
+	}
+	if !due.Equal(soon) {
+		t.Fatalf("expected the earliest window %v, got %v", soon, due)
+	}
+}
+
+// TestDriverWaitsForRetryBackoffInsteadOfDeadlock guards the latent
+// scheduler bug: when the only non-terminal work is a TODO awaiting a
+// FUTURE retry window, the executor must sleep until it is due and run
+// it — not immediately declare a "scheduler deadlock". Today retries
+// fire immediately so this path is latent; the test pins it via a
+// preset run whose sole TODO is pre-seeded into TodoRetrying with a
+// near-future RetryScheduledAt.
+func TestDriverWaitsForRetryBackoffInsteadOfDeadlock(t *testing.T) {
+	runner := &fakeRunner{
+		ExecFunc: func(_ ExecuteTodoRequest) (ExecuteTodoResponse, error) {
+			return ExecuteTodoResponse{Summary: "ok"}, nil
+		},
+	}
+	d := NewDriver(runner, nil, nil, Config{Retries: 1, MaxFailedTodos: 5, MaxParallel: 1})
+	run := &Run{
+		ID:   "retry-wait",
+		Task: "retry backoff wait",
+		Todos: []Todo{{
+			ID:               "T1",
+			Title:            "t1",
+			Detail:           "d1",
+			Status:           TodoRetrying,
+			RetryScheduledAt: time.Now().Add(150 * time.Millisecond),
+			Attempts:         1,
+		}},
+	}
+
+	start := time.Now()
+	out, err := d.RunPrepared(context.Background(), run)
+	if err != nil {
+		t.Fatalf("RunPrepared: %v", err)
+	}
+	if out.Status != RunDone {
+		t.Fatalf("expected RunDone after waiting for the retry window, got %s (reason=%q)", out.Status, out.Reason)
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Fatalf("executor should have waited for the retry window, but finished in %s (likely the deadlock path)", elapsed)
+	}
+	runner.mu.Lock()
+	calls := len(runner.Calls)
+	runner.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("expected the TODO to run once it became due, got %d executions", calls)
+	}
+}
+
 func TestDriverDependencyChainSkipsDescendants(t *testing.T) {
 	runner := &fakeRunner{
 		PlanFunc: func(_ PlannerRequest) (string, error) {

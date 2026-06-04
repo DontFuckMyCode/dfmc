@@ -50,6 +50,12 @@ func mergeSupervisorTodos(planned []Todo, existing map[string]Todo) []Todo {
 			todo.Attempts = prev.Attempts
 			todo.StartedAt = prev.StartedAt
 			todo.EndedAt = prev.EndedAt
+			// Execution-state fields the scheduler reads back. Dropping
+			// RetryScheduledAt here would discard a pending backoff window
+			// (a re-plan would make a Retrying TODO look due immediately);
+			// BlockedReason keeps the block cause attached across re-plan.
+			todo.RetryScheduledAt = prev.RetryScheduledAt
+			todo.BlockedReason = prev.BlockedReason
 		}
 		out = append(out, todo)
 	}

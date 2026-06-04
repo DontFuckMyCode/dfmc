@@ -67,6 +67,18 @@ func (d *Driver) executeLoop(ctx context.Context, run *Run) {
 				fmt.Sprintf("max_failed_todos exceeded: %d consecutive blocks", consecutiveBlocked))
 			return
 		}
+		// Executor-stage circuit breaker. Closed by default (no-op true);
+		// trips Open once ExecutorCircuitBreaker.FailureThreshold genuine
+		// executor failures accumulate (recorded in applyOutcome). Mirrors
+		// the planner-stage gate in run_planner.go so a configured executor
+		// breaker actually short-circuits dispatch instead of only counting
+		// failures. In-flight workers are drained first so their outcomes
+		// still land in the run record.
+		if !d.executorBreaker.Check() {
+			d.drainAndFinalize(ctx, run, results, inFlight, RunFailed,
+				"executor circuit breaker is open")
+			return
+		}
 
 		// Dispatch as many ready TODOs as fit under MaxParallel.
 		available := policy.MaxParallel - inFlight
@@ -104,6 +116,34 @@ func (d *Driver) executeLoop(ctx context.Context, run *Run) {
 			}
 			// If any TODO is pickable (Pending or retry-due), keep going.
 			if len(readyBatchWithPolicy(run.Todos, policy, 1)) > 0 {
+				continue
+			}
+			// Nothing pickable RIGHT NOW. Before declaring deadlock,
+			// distinguish "merely awaiting a retry backoff window" from
+			// "no path to progress". If TODOs are in Retrying with a
+			// future RetryScheduledAt, this is NOT a deadlock — sleep
+			// until the earliest due time (capped at the run deadline so
+			// the top-of-loop guards still fire) and re-scan. Today
+			// retries fire immediately so earliestRetryDue returns false
+			// and we fall straight through; this makes the runFinished
+			// comment true and is forward-safe for configurable backoff.
+			if due, ok := earliestRetryDue(run.Todos); ok {
+				wait := time.Until(due)
+				if untilDeadline := time.Until(deadline); untilDeadline < wait {
+					wait = untilDeadline
+				}
+				if wait < 0 {
+					wait = 0
+				}
+				timer := time.NewTimer(wait)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					d.drainAndFinalize(ctx, run, results, inFlight, RunStopped,
+						driveContextStopReason(ctx, d.cfg.MaxWallTime, ctx.Err()))
+					return
+				case <-timer.C:
+				}
 				continue
 			}
 			// Nothing pickable and nothing pending = deadlocked.
