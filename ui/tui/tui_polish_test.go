@@ -290,15 +290,19 @@ func TestNoStaleRemovedKeyHints(t *testing.T) {
 		"panel switcher": ansiStripForTest(m.renderPanelSwitcher(100)),
 		"status panel":   ansiStripForTest(m.renderStatusViewSized(120, 48)),
 		"global help":    ansiStripForTest(m.renderHelpOverlay(100)),
+		"shortcuts view": ansiStripForTest(m.renderShortcutsView(110)),
 	}
 	// Whole-word-ish checks for the dead/removed bindings. ctrl+l is
 	// allowed in the Status panel (its grid key), so it is not screened.
-	banned := []string{"ctrl+o", "alt+i", "ctrl+i", "alt+9", "alt+0"}
+	// shift+pgup/pgdown are screened too: bubbletea v1 has no
+	// KeyShiftPgUp, so Shift+PgUp is indistinguishable from PgUp — any
+	// doc advertising it as a distinct (3-line) scroll is lying.
+	banned := []string{"ctrl+o", "alt+i", "ctrl+i", "alt+9", "alt+0", "shift+pgup", "shift+pgdn", "shift+pgdown"}
 	for name, body := range surfaces {
 		low := strings.ToLower(body)
 		for _, b := range banned {
 			if strings.Contains(low, b) {
-				t.Errorf("%s still references removed key %q", name, b)
+				t.Errorf("%s still references removed/indistinguishable key %q", name, b)
 			}
 		}
 	}
