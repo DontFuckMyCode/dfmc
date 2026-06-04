@@ -85,11 +85,11 @@ func (e *Engine) publishHistoryTrimmedEvent(kept []provider.Message, omitted []t
 		keptCount++
 		keptTokens += tokens.Estimate(m.Content)
 	}
-	preview := summary
+	// Rune-safe truncation: the summary embeds user content (often
+	// Turkish/multibyte), so a byte slice could split a rune and emit
+	// invalid UTF-8 into the history:trimmed event preview.
 	const maxPreview = 240
-	if len(preview) > maxPreview {
-		preview = preview[:maxPreview] + "…"
-	}
+	preview := truncateRunesWithMarker(summary, maxPreview, "…")
 	e.EventBus.Publish(Event{
 		Type:   "history:trimmed",
 		Source: "engine",

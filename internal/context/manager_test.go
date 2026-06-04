@@ -429,6 +429,51 @@ func TestBuildWithOptions_RespectsTokenBudgets(t *testing.T) {
 	}
 }
 
+// TestBuildWithOptions_RefactorStrategyDoesNotPanic guards the regression
+// where StrategyRefactor called refactorBoost with nil score/source maps,
+// panicking ("assignment to entry in nil map") on any graph with an orphan
+// callable — i.e. essentially every real codemap — and discarding the boost
+// even when it didn't crash. The fix moves refactorBoost into scoreQueryNodes
+// where the live maps exist.
+func TestBuildWithOptions_RefactorStrategyDoesNotPanic(t *testing.T) {
+	tmp := t.TempDir()
+	// A callable that nothing references → an orphan node, the exact
+	// shape refactorBoost iterates and writes a score for.
+	f := filepath.Join(tmp, "orphan.go")
+	body := "package main\n\nfunc Orphan() {\n\tprintln(\"never called\")\n}\n\nfunc main() {}\n"
+	if err := os.WriteFile(f, []byte(body), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	ae := ast.New()
+	cm := codemap.New(ae, nil)
+	if err := cm.BuildFromFiles(context.Background(), []string{f}); err != nil {
+		t.Fatalf("build codemap: %v", err)
+	}
+	// Add the orphan callable node explicitly so the test is deterministic
+	// regardless of AST backend (the regex fallback under CGO_ENABLED=0
+	// may not emit a function node). A node with no incoming edges is an
+	// orphan; non-file/non-entrypoint with a Path is exactly what
+	// refactorBoost writes a score for — the line that panicked on a nil
+	// map pre-fix.
+	cm.Graph().AddNode(codemap.Node{
+		ID: "function:Orphan", Name: "Orphan", Kind: "function", Path: f,
+	})
+	mgr := New(cm)
+	// Before the fix this panicked. Now it must complete cleanly.
+	chunks, err := mgr.BuildWithOptions("refactor Orphan", BuildOptions{
+		Strategy:       StrategyRefactor,
+		MaxFiles:       5,
+		MaxTokensTotal: 500,
+		Compression:    "none",
+	})
+	if err != nil {
+		t.Fatalf("refactor-strategy build failed: %v", err)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("expected at least one chunk from the refactor-strategy build")
+	}
+}
+
 func TestBuildWithOptions_TrimsOversizedChunkToRemainingBudget(t *testing.T) {
 	tmp := t.TempDir()
 	first := filepath.Join(tmp, "first.go")

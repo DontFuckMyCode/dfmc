@@ -17,6 +17,7 @@ package engine
 
 import (
 	"math"
+	"time"
 
 	ctxmgr "github.com/dontfuckmycode/dfmc/internal/context"
 )
@@ -99,29 +100,37 @@ func (e *Engine) contextBuildOptionsWithRuntime(question string, runtime ctxmgr.
 	// next retrieval with deeper graph traversal and fewer but more thoroughly
 	// explored files. This triggers "uncertainty-aware retrieval": when
 	// confidence is low, the next round does expanded graph exploration.
+	// Read engine-owned state under e.mu and CLONE the file maps. These
+	// maps are written by invalidateContextForTool (under e.mu) on every
+	// read_file/edit_file/write_file/apply_patch, while this function runs
+	// concurrently from the web/TUI context-budget handlers AND the agent
+	// loop. Aliasing the live maps (the old behaviour, despite the comment
+	// claiming a copy) raced — `fatal error: concurrent map read and map
+	// write`, unrecoverable by the panic guard — and BuildWithOptions even
+	// deletes stale entries from ExcludeStaleFilters, mutating the engine's
+	// map. opts must own independent copies.
 	e.mu.RLock()
 	prevSnapshot := e.lastContextSnapshot
+	if len(e.modifiedFiles) > 0 {
+		cloned := make(map[string]time.Time, len(e.modifiedFiles))
+		for k, v := range e.modifiedFiles {
+			cloned[k] = v
+		}
+		opts.ExcludeStaleFilters = cloned
+	}
+	if len(e.seenFiles) > 0 {
+		cloned := make(map[string]struct{}, len(e.seenFiles))
+		for k := range e.seenFiles {
+			cloned[k] = struct{}{}
+		}
+		opts.SeenFiles = cloned
+	}
 	e.mu.RUnlock()
 	if prev := prevSnapshot; prev != nil && prev.Confidence < 0.5 {
 		opts.GraphDepth += 1
 		if opts.MaxFiles > 1 {
 			opts.MaxFiles = maxInt(1, opts.MaxFiles/2)
 		}
-	}
-
-	// Propagate recently modified files so BuildWithOptions excludes them
-	// from context retrieval. Files written/edited by tools in the last
-	// few minutes must be re-read via read_file, not served from a stale
-	// context chunk. The map is safely copied — ExcludeStaleFilters is
-	// read-only during the BuildOptions pass.
-	if len(e.modifiedFiles) > 0 {
-		opts.ExcludeStaleFilters = e.modifiedFiles
-	}
-	// Propagate files already read via read_file this session so they are
-	// excluded from context deduplication. The model already has the content
-	// via conversation, so sending it again via context is redundant.
-	if len(e.seenFiles) > 0 {
-		opts.SeenFiles = e.seenFiles
 	}
 
 	return opts

@@ -76,7 +76,10 @@ func (m *Manager) applyStrategyDefaults(opts *BuildOptions) {
 		opts.GraphDepth = min(opts.GraphDepth, 1)
 	case StrategyRefactor:
 		opts.GraphDepth = max(opts.GraphDepth, 2)
-		refactorBoost(m.codemap.Graph(), nil, nil)
+		// NB: refactorBoost needs the live scores/sources maps, which
+		// don't exist yet here (scoreQueryNodes creates them after this
+		// runs). It is applied there instead — calling it with nil maps
+		// would panic AND discard the boost.
 	}
 }
 
@@ -129,6 +132,11 @@ func (m *Manager) scoreQueryNodes(graph *codemap.Graph, query string, opts Build
 				}
 			}
 		}
+	}
+	// Refactor strategy: layer the orphan/cycle boost onto the live
+	// maps now that they exist (see applyStrategyDefaults).
+	if opts.Strategy == StrategyRefactor {
+		refactorBoost(graph, scores, sources)
 	}
 	return scores, sources
 }

@@ -6,9 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/dontfuckmycode/dfmc/internal/config"
 )
+
+// mcpStartTimeout bounds the initialize + tools/list handshake per server
+// so one slow/hung external MCP server can't stall engine startup.
+const mcpStartTimeout = 15 * time.Second
 
 // ToolBridge is the interface between the MCP server and whatever tool
 // registry it's hosting.
@@ -154,6 +159,18 @@ func LoadClientsFromConfig(servers []config.MCPServerConfig) ([]*Client, error) 
 		c, err := NewClient(s.Name, s.Command, s.Args, s.Env)
 		if err != nil {
 			return nil, fmt.Errorf("mcp server %q: %w", s.Name, err)
+		}
+		// Spawn the process and run the handshake. Best-effort: a server
+		// that fails to start (bad command, handshake error, timeout) is
+		// logged and skipped rather than aborting engine startup — the
+		// other servers and all native tools must still come up.
+		ctx, cancel := context.WithTimeout(context.Background(), mcpStartTimeout)
+		startErr := c.Start(ctx)
+		cancel()
+		if startErr != nil {
+			log.Printf("mcp: server %q failed to start, skipping: %v", s.Name, startErr)
+			_ = c.Stop()
+			continue
 		}
 		out = append(out, c)
 	}

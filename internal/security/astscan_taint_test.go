@@ -205,6 +205,27 @@ func TestSmartScan_Go_ExecCommandTaintedBody(t *testing.T) {
 	mustContainKind(t, findings, "Command injection via exec.Command with tainted input")
 }
 
+// TestSmartScan_Go_ExecCommandTaintSurvivesInnerBlock is the regression
+// for the scope-balancer false-negative: a lone `}` closing an INNER block
+// (an if/for/switch) used to pop the whole function's taint scope, so a
+// variable tainted before the block looked clean at a sink after it. This
+// is the very common "read body, do work in a block, then use it" shape —
+// the taint must survive the inner `}` and still flag the exec.Command sink.
+func TestSmartScan_Go_ExecCommandTaintSurvivesInnerBlock(t *testing.T) {
+	src := "package main\n" +
+		"import \"os/exec\"\n" +
+		"func run(r *http.Request) {\n" +
+		"	body, _ := io.ReadAll(r.Body)\n" +
+		"	for i := 0; i < 3; i++ {\n" +
+		"		_ = i\n" +
+		"	}\n" +
+		"	cmd := " + fxExecCmd + "(string(body))\n" +
+		"	_ = cmd\n" +
+		"}\n"
+	findings := scanHelper(t, "sample.go", src)
+	mustContainKind(t, findings, "Command injection via exec.Command with tainted input")
+}
+
 // TestSmartScan_Go_ExecCommandLiteralVarStaysSafe pins the negative
 // case: a variable assigned from a literal is NOT tainted, so feeding
 // it to exec.Command must not fire the taint-aware rule.

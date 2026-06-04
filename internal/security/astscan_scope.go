@@ -59,8 +59,16 @@ import (
 //     top entry, we know the function ended (Python has no closing
 //     brace; scope-end is implicit from indent drop).
 type scopeBalancer struct {
-	lang              string
-	pushCount         int
+	lang string
+	// braceFuncIndents is the brace-language (Go/JS/TS) analogue of
+	// pythonFuncIndents: each entry is the leading-whitespace count of a
+	// `func`/`function` declaration line we pushed a scope for. A function
+	// closes only when a lone `}` appears at the SAME indent — inner block
+	// closers (`if`/`for`/`switch`/closure `}`) sit at deeper indent and
+	// must NOT pop the function scope. The old pushCount-only guard popped
+	// on the FIRST inner `}`, dropping all taint introduced before that
+	// block for sinks after it (a security false-negative).
+	braceFuncIndents  []int
 	pythonFuncIndents []int
 }
 
@@ -93,9 +101,13 @@ func (b *scopeBalancer) preObserve(line, trimmed string, taint *taintTracker) {
 	}
 	switch b.lang {
 	case "go", "javascript", "typescript":
-		if isBraceLanguageFunctionExit(trimmed) && b.pushCount > 0 {
+		// Pop the function scope only when this lone `}` is at the same
+		// indent as the function declaration. Inner-block closers are at
+		// deeper indent and leave the function scope intact.
+		if isBraceLanguageFunctionExit(trimmed) && len(b.braceFuncIndents) > 0 &&
+			b.braceFuncIndents[len(b.braceFuncIndents)-1] == countLeadingWS(line) {
 			taint.PopScope()
-			b.pushCount--
+			b.braceFuncIndents = b.braceFuncIndents[:len(b.braceFuncIndents)-1]
 		}
 	case "python":
 		indent := countLeadingWS(line)
@@ -131,10 +143,11 @@ func (b *scopeBalancer) postObserve(line, trimmed string, taint *taintTracker) {
 			return
 		}
 		taint.PushScope()
-		b.pushCount++
+		b.braceFuncIndents = append(b.braceFuncIndents, countLeadingWS(line))
 		if oneLiner {
+			// Body opens and closes on the same line — net-zero scope.
 			taint.PopScope()
-			b.pushCount--
+			b.braceFuncIndents = b.braceFuncIndents[:len(b.braceFuncIndents)-1]
 		}
 	case "python":
 		if !isPythonFunctionEntry(trimmed) {

@@ -69,7 +69,7 @@ func (d *Dispatcher) runOne(ctx context.Context, event Event, h compiledHook, pa
 	// default with a deny-list of secret-shaped key suffixes; users who
 	// genuinely need a specific key in a hook can pass an allowlist via a
 	// future `env_passthrough` config (mirrors MCP's surface).
-	cmd.Env = append(security.ScrubEnv(os.Environ(), nil), hookEnv(event, payload)...)
+	cmd.Env = append(security.ScrubEnv(os.Environ(), nil), hookEnv(event, payload, h.useShell)...)
 	// Process-group isolation: when the hook spawns child processes
 	// (`sleep 60 &`, `npm install &`, an orphaned background daemon),
 	// exec.CommandContext's default SIGKILL on timeout only reaches the
@@ -188,17 +188,29 @@ func validateShellHookCommand(command string) error {
 }
 
 // hookEnv projects the Payload into DFMC_<KEY>=<value> env vars, always
-// including DFMC_EVENT. Keys are uppercased and sanitized (alphanumerics only);
-// values are quoted to prevent shell injection. This keeps arbitrary payload
-// keys and values from shell-injecting via env names or values.
-func hookEnv(event Event, payload Payload) []string {
+// including DFMC_EVENT. Keys are uppercased and sanitized (alphanumerics only).
+//
+// Value quoting is conditional on useShell. SHELL hooks (`sh -c`/`cmd /C`)
+// reference $DFMC_<KEY>, so values are shell-quoted to block expansion and
+// breakout. ARGV hooks (bare exec, no shell) read the value verbatim via
+// os.Getenv — shell-quoting there bakes literal quotes/escapes into the
+// value, corrupting the payload the hook receives. So argv hooks get the raw
+// value (with NUL stripped, which exec rejects anyway). There is no injection
+// risk for argv: env values are inert data, never re-parsed by a shell.
+func hookEnv(event Event, payload Payload, useShell bool) []string {
 	env := []string{"DFMC_EVENT=" + string(event)}
 	for k, v := range payload {
 		key := sanitizeEnvKey(k)
 		if key == "" {
 			continue
 		}
-		env = append(env, "DFMC_"+key+"="+sanitizeEnvValue(v))
+		val := v
+		if useShell {
+			val = sanitizeEnvValue(v)
+		} else {
+			val = strings.ReplaceAll(v, "\x00", "")
+		}
+		env = append(env, "DFMC_"+key+"="+val)
 	}
 	return env
 }
