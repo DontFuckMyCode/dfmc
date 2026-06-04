@@ -141,7 +141,7 @@ func (m Model) renderConversationsViewSized(width, height int) string {
 		return strings.Join(lines, "\n")
 	}
 	if m.conversations.loading {
-		lines = append(lines, "", subtleStyle.Render("loading..."))
+		lines = append(lines, "", subtleStyle.Render("loading…"))
 		return strings.Join(lines, "\n")
 	}
 
@@ -152,7 +152,7 @@ func (m Model) renderConversationsViewSized(width, height int) string {
 			lines = append(lines,
 				subtleStyle.Render("No conversations persisted yet."),
 				subtleStyle.Render("Every chat is auto-saved as JSONL under .dfmc/conversations/ — branches, parked turns, and tool calls all included."),
-				subtleStyle.Render("Send a message in /chat to start. Enter on a row resumes that conversation; / searches by title."),
+				subtleStyle.Render("Send a message in /chat to start. Enter on a row resumes that conversation; / filters by id, provider, or model."),
 			)
 		} else {
 			lines = append(lines,

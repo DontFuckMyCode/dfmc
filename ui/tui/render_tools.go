@@ -81,6 +81,8 @@ func (m Model) toolsTopBanner(width, visibleCount, totalCount int) string {
 	} else if query != "" {
 		out += subtleStyle.Render("filter ") + boldStyle.Render(query) + "  " +
 			subtleStyle.Render("(press c to clear, / to edit)") + "\n"
+	} else {
+		out += subtleStyle.Render("↑↓ pick · enter run · / search · → action menu") + "\n"
 	}
 	return out + renderDivider(width-2)
 }
@@ -99,9 +101,8 @@ func (m Model) renderToolsListPane(width, height int, pal tabPaletteEntry, tools
 			lines = append(lines,
 				warnStyle.Render("No registered tools."),
 				"",
-				subtleStyle.Render("Tool engine is not wired."),
-				subtleStyle.Render("Check .dfmc/config.yaml or"),
-				subtleStyle.Render("re-run dfmc init."),
+				subtleStyle.Render("The tool engine isn't wired — check"),
+				subtleStyle.Render(".dfmc/config.yaml or re-run dfmc init."),
 			)
 		}
 	} else {

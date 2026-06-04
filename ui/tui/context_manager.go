@@ -13,7 +13,7 @@ package tui
 //   - Single 'D' deletes the message under cursor without marking
 //   - 'a' selects all / deselects all (toggle)
 //   - Esc exits manager mode, returns to normal context view
-//   - Each row shows: [âœ“/ ] #N  role  ~tokens  toolsÃ—N  preview
+//   - Each row shows: [✓/ ] #N  role  ~tokens  tools×N  preview
 //
 // Companion siblings:
 //   - context_panel.go        parent view orchestration
@@ -214,7 +214,7 @@ func (m Model) renderContextManagerView(width, height int) string {
 	mgr := m.contextPanel.manager
 	width = clampInt(width, 40, 200)
 
-	title := titleStyle.Bold(true).Render("CONTEXT MANAGER - MESSAGES")
+	title := titleStyle.Bold(true).Render("CONTEXT MANAGER · MESSAGES")
 	chip := infoStyle.Render(" INTERACTIVE ")
 	if mgr.confirmDelete {
 		chip = warnStyle.Render(" CONFIRM ")
@@ -227,7 +227,9 @@ func (m Model) renderContextManagerView(width, height int) string {
 	}
 	lines = append(lines, renderDivider(width-2))
 	if len(mgr.rows) == 0 {
-		lines = append(lines, "", subtleStyle.Render("  No messages in active conversation."))
+		lines = append(lines, "",
+			subtleStyle.Render("  No messages in the active conversation yet."),
+			subtleStyle.Render("  Start a turn in /chat, then reopen the manager to prune context."))
 		return strings.Join(lines, "\n")
 	}
 
@@ -313,7 +315,7 @@ func (m Model) renderContextManagerViewSized(width, h int) string {
 	return renderContextPanelLines(strings.Split(full, "\n"), 0, h)
 }
 
-// â”€â”€ Helper functions â”€â”€
+// ── Helper functions ──
 
 func managerRoleLabel(role types.MessageRole) string {
 	switch role {
@@ -361,7 +363,7 @@ func managerToolCell(count int) string {
 	if count == 0 {
 		return "-"
 	}
-	return fmt.Sprintf("Ã—%d", count)
+	return fmt.Sprintf("×%d", count)
 }
 
 func managerActionSuggestion(msg types.Message, index, total, tokenEst int) string {

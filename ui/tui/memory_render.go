@@ -158,7 +158,7 @@ func (m Model) renderMemoryViewSized(width, height int) string {
 		return strings.Join(lines, "\n")
 	}
 	if m.memory.loading {
-		lines = append(lines, "", "  "+subtleStyle.Render("loading..."))
+		lines = append(lines, "", "  "+subtleStyle.Render("loading…"))
 		return strings.Join(lines, "\n")
 	}
 

@@ -98,7 +98,7 @@ func TestRenderFilesView_ZeroMatchesGuidesUser(t *testing.T) {
 	if !strings.Contains(view, "No matches") {
 		t.Errorf("expected no-match warning, got:\n%s", view)
 	}
-	if !strings.Contains(view, "press c to clear") {
+	if !strings.Contains(view, "Press c to clear") {
 		t.Errorf("expected clear hint, got:\n%s", view)
 	}
 }

@@ -127,13 +127,13 @@ func (m Model) renderFilesListPane(width, height int, pal tabPaletteEntry) strin
 			lines = append(lines,
 				"  "+warnStyle.Render("No indexed project files."),
 				"",
-				"  "+subtleStyle.Render("Press r to refresh, or run /analyze"),
+				"  "+subtleStyle.Render("Press r to refresh, or run /analyze."),
 			)
 		} else {
 			lines = append(lines,
 				"  "+warnStyle.Render(fmt.Sprintf("No matches for %q in %d files.", m.filesView.query, len(m.filesView.entries))),
 				"",
-				"  "+subtleStyle.Render("press c to clear, or / to edit the query"),
+				"  "+subtleStyle.Render("Press c to clear, or / to edit the query."),
 			)
 		}
 	} else {

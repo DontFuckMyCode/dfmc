@@ -63,7 +63,7 @@ func (m Model) renderOrchestrateView(width int) string {
 
 	parts := []string{
 		sectionHeader("◬", "Orchestrate"),
-		subtleStyle.Render("↑↓ section · → / enter action menu · j/k/pgup/pgdn scroll · alt+r jumps here"),
+		subtleStyle.Render("whole-system view · ↑↓ section · → / enter action menu · j/k/pgup/pgdn scroll · alt+r jumps here"),
 		renderDivider(inner),
 		"",
 	}

@@ -38,7 +38,7 @@ import (
 // contextTopBanner — title + state chip. EMPTY (no preview), TYPING,
 // READY (preview computed), ERROR.
 func (m Model) contextTopBanner(width int) string {
-	title := titleStyle.Bold(true).Render("âš– CONTEXT")
+	title := titleStyle.Bold(true).Render("⚖ CONTEXT")
 	chipText, chipStyle := " EMPTY ", subtleStyle
 	switch {
 	case m.contextPanel.err != "":
@@ -96,6 +96,11 @@ func (m Model) renderContextViewInner(width int) string {
 	}
 
 	if m.contextPanel.preview == nil {
+		lines = append(lines, "",
+			subtleStyle.Render("No context preview yet."),
+			subtleStyle.Render("This panel shows how the budgeter would rank and compress project files before an Ask — every token justified."),
+			subtleStyle.Render("Press e to type a query, then enter to preview; m opens the context manager."),
+		)
 		return strings.Join(lines, "\n")
 	}
 
@@ -144,7 +149,7 @@ func renderContextPanelLines(lines []string, scroll, maxLines int) string {
 	out := append([]string{}, lines[:fixed]...)
 	out = append(out, body[scroll:end]...)
 	if end < len(body) && len(out) > fixed {
-		out[len(out)-1] = subtleStyle.Render(fmt.Sprintf("... more (%d lines), use pgdn/down", len(body)-end))
+		out[len(out)-1] = subtleStyle.Render(fmt.Sprintf("… more (%d lines), use pgdn/down", len(body)-end))
 	}
 	return strings.Join(out, "\n")
 }

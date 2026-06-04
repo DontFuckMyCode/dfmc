@@ -52,7 +52,7 @@ func (m Model) providersTopBanner(width int) string {
 		}
 	}
 	offline := len(rows) - ready - noKey
-	chips := []string{okStyle.Render(fmt.Sprintf(" %d my providers ", len(rows)))}
+	chips := []string{okStyle.Render(fmt.Sprintf(" %d configured ", len(rows)))}
 	if ready > 0 {
 		chips = append(chips, okStyle.Render(fmt.Sprintf(" %d ready ", ready)))
 	}
@@ -77,7 +77,7 @@ func (m Model) renderProviderListViewSized(width, height int) string {
 func (m Model) renderNewProviderView(width int) string {
 	width = clampInt(width, 24, 1000)
 	header := sectionHeader("+", "New Provider")
-	hint := subtleStyle.Render("enter edit/create - esc cancel")
+	hint := subtleStyle.Render("enter create · esc cancel")
 	lines := []string{header, hint, renderDivider(width - 2), ""}
 	lines = append(lines, "  name: "+accentStyle.Render(m.providers.newProviderDraft))
 	if m.providers.textEditActive {
