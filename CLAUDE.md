@@ -10,11 +10,11 @@ Module: `github.com/dontfuckmycode/dfmc`. Go 1.25.
 
 ## Build, test, lint
 
-The `Makefile` is Windows-oriented (`NUL`, `rmdir /s /q`), so prefer direct `go` commands when possible:
+Only the `Makefile`'s `clean` (`rmdir /s /q`) and `VERSION` (`NUL`) recipes are Windows-bound; `make test`, `test-race`, `lint`, `vuln`, and `security` shell out to `go`/tooling and work anywhere. Prefer direct `go` commands for narrow loops:
 
 ```bash
 CGO_ENABLED=1 go build -o bin/dfmc.exe ./cmd/dfmc
-CGO_ENABLED=1 go test -race -count=1 ./...
+CGO_ENABLED=1 go test -race -count=1 ./...   # == make test-race
 go test ./internal/engine/...
 go test ./internal/engine -run TestAgentLoop -v
 go vet ./...
@@ -56,6 +56,8 @@ Tool lifecycle events share a monotonic `Event.Seq` from `Engine.allocToolEventS
 - `internal/memory`, `internal/conversation`, `internal/storage` — bbolt-backed memory, JSONL conversations, store handle. A second DFMC process hits `ErrStoreLocked`; degraded commands like `doctor` still run.
 - `internal/hooks` — best-effort lifecycle shell hooks; failures log but do not block.
 - `internal/taskstore` — persisted `supervisor.Task` store for TODO, HTTP, and MCP APIs.
+- `internal/langintel` — embedded per-language knowledge bases (Go/Java/C#/...) surfaced through engine init and `ui/web/server_langintel.go`.
+- `internal/bot` — Telegram bridge wired into the Engine; controlled from `cmd/dfmc/main.go`/`startup_args.go`, the TUI `telegram_panel.go`, and web/help surfaces.
 - `EventBus` — shared fan-out for TUI, web SSE, remote control.
 
 ### Tooling rules worth preserving
@@ -114,6 +116,9 @@ MCP Drive tools (`dfmc_drive_start/status/active/list/stop/resume`) live in `ui/
 - `internal/coach` — trajectory hints from tool-call traces.
 - `internal/supervisor` — shared task/executor shapes for Drive, TODO, taskstore.
 - `internal/mcp` — MCP server/bridge and regular tool registry exposure.
+- `internal/pathsafe` — single canonical "is this path contained in that root" check (symlink-aware). Leaf package with no `internal/*` deps so both the tools read/write/edit gate and the `[[file:...]]` resolver can import it without a cycle. Use it, don't reimplement path containment.
+- `internal/providerlog`, `internal/applog`, `internal/toolhistory` — durable JSONL audit/state under the data dir: `providerlog` records every `provider:complete` user→assistant turn; `applog` is the app event log; `toolhistory` persists learned coding patterns (its old tool-call logger was removed as dead code).
+- `internal/taskview` — renders inline `/tasks` views over `taskstore`/`supervisor`.
 - `internal/security`, `internal/skills`, `internal/planning`, `internal/pluginexec`, `internal/commands`, `internal/tokens` — feature packages; grep symbols before assuming shape.
 
 ## Per-project state
@@ -135,6 +140,7 @@ MCP Drive tools (`dfmc_drive_start/status/active/list/stop/resume`) live in `ui/
 - Intent is fail-open; do not introduce hard-fail paths in `internal/intent/router.go`.
 - A real tool timeout can emit `tool:error`, `tool:timeout`, and failed `tool:result`; treat `tool:result` as the canonical failure signal.
 - Use typed sentinel errors with `errors.Is`, not string matching: engine errors like `ErrEngineNil`, `ErrEngineNotInitialized`, `ErrNoParkedAgent`, `ErrSubagentConcurrencyLimit`; tool errors like `ErrEngineClosed`, `ErrMetaBudgetExhausted`, `ErrMetaDepthExceeded`.
+- Path containment goes through `internal/pathsafe`, never a hand-rolled `strings.HasPrefix` on cleaned paths; it is the shared boundary for the tool write gate and the `[[file:...]]` injector.
 
 ## Project structure
 
@@ -159,6 +165,13 @@ internal/repolint     # CI grep tripwires
 internal/promptlib    # prompt library
 internal/conversation # JSONL conversations
 internal/memory       # memory tiers
+internal/langintel    # per-language knowledge bases
+internal/bot          # Telegram bridge
+internal/pathsafe     # canonical path-containment check
+internal/providerlog  # provider-turn JSONL audit
+internal/applog       # app event log
+internal/toolhistory  # learned-pattern persistence
+internal/taskview     # inline /tasks rendering
 ui/cli                # CLI and remote client
 ui/tui                # Bubble Tea workbench
 ui/web                # HTTP/SSE workbench
