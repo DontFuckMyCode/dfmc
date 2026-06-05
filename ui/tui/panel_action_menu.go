@@ -11,6 +11,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -117,10 +118,19 @@ func (m Model) handleActionMenuKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	return m, nil, true // swallow stray keys while menu is open
 }
 
-// renderActionMenu draws the menu as a centered overlay block. Caller
-// composites it on top of the panel via the same overlay path the help
-// overlay uses.
+// renderActionMenu draws the menu as a bordered block at its natural height.
+// Kept for direct callers/tests; the on-screen path is overlayActionMenu,
+// which bounds the height so the menu can never run off the frame.
 func (m Model) renderActionMenu(width int) string {
+	return m.renderActionMenuBounded(width, 1<<20)
+}
+
+// renderActionMenuBounded draws the menu but never taller than maxHeight: when
+// the action list would overflow, it shows a scrolling window around the
+// selected row with ↑/↓ "more" markers. This is what keeps the menu fully on
+// screen on short terminals — the old unbounded block overran the panel frame
+// and the height clip left only the title or first row visible.
+func (m Model) renderActionMenuBounded(width, maxHeight int) string {
 	if !m.actionMenu.open {
 		return ""
 	}
@@ -132,31 +142,37 @@ func (m Model) renderActionMenu(width int) string {
 	if title == "" {
 		title = "ACTIONS"
 	}
-	header := titleStyle.Bold(true).Render("◇ " + title)
-	// Hint surfaces the [accel] direct-fire feature — the menu renders
-	// `[t]` next to "Cycle tier" but users wouldn't know pressing the
-	// bracketed key fires the action without this hint. handleActionMenuKey
-	// supports it; the affordance had been invisible.
-	hint := subtleStyle.Render("↑↓ pick · enter run · [letter] direct · esc close")
+	// Lines are truncated to the CONTENT width (innerWidth minus the 2 cells
+	// of horizontal padding), so each occupies exactly one row. Truncating to
+	// innerWidth instead let a near-full-width line (the hint) spill into the
+	// padding and wrap, silently inflating the menu past maxHeight and leaving
+	// a stray "…" row.
+	lineW := max(innerWidth-2, 1)
+	header := truncateSingleLine(titleStyle.Bold(true).Render("◇ "+title), lineW)
+	hint := truncateSingleLine(subtleStyle.Render("↑↓ pick · enter run · [letter] direct · esc close"), lineW)
 
-	rows := []string{header, hint, renderDivider(innerWidth - 2), ""}
-	if len(m.actionMenu.actions) == 0 {
-		rows = append(rows, subtleStyle.Render("(no actions)"))
-	} else {
-		for i, a := range m.actionMenu.actions {
-			cursor := "  "
-			label := a.Label
-			if i == m.actionMenu.selected {
-				cursor = accentStyle.Bold(true).Render("▶ ")
-				label = accentStyle.Bold(true).Render(label)
-			}
-			accel := ""
-			if a.Accel != "" {
-				accel = "  " + subtleStyle.Render("["+a.Accel+"]")
-			}
-			rows = append(rows, cursor+label+accel)
-		}
+	// contentBudget is the row count available inside the rounded border.
+	contentBudget := maxHeight - 2
+	if contentBudget < 1 {
+		contentBudget = 1
 	}
+
+	rows := []string{header}
+	// The hint + divider + blank chrome is only worth its 3 rows when the
+	// menu is roomy; on a cramped frame we drop it so the actual actions get
+	// the space (header + at least a couple of items).
+	if contentBudget >= len(m.actionMenu.actions)+4 || contentBudget >= 8 {
+		rows = append(rows, hint, renderDivider(lineW), "")
+	}
+	itemBudget := contentBudget - len(rows)
+	if itemBudget < 1 {
+		itemBudget = 1
+	}
+	rows = append(rows, m.actionMenuItemRows(itemBudget, lineW)...)
+	if len(rows) > contentBudget {
+		rows = rows[:contentBudget]
+	}
+
 	body := strings.Join(rows, "\n")
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -164,4 +180,96 @@ func (m Model) renderActionMenu(width int) string {
 		Padding(0, 1).
 		Width(innerWidth).
 		Render(body)
+}
+
+// actionMenuItemRows renders the action list into at most `budget` rows. When
+// the list is taller than the budget it shows a scrolling window centred on the
+// selection with ↑/↓ "N more" markers — but the markers never overwrite the
+// selected row, so the cursor is ALWAYS visible no matter how short the frame.
+func (m Model) actionMenuItemRows(budget, innerWidth int) []string {
+	actions := m.actionMenu.actions
+	n := len(actions)
+	if n == 0 {
+		return []string{subtleStyle.Render("(no actions)")}
+	}
+	render := func(i int) string {
+		cursor := "  "
+		label := actions[i].Label
+		if i == m.actionMenu.selected {
+			cursor = accentStyle.Bold(true).Render("▶ ")
+			label = accentStyle.Bold(true).Render(label)
+		}
+		accel := ""
+		if actions[i].Accel != "" {
+			accel = "  " + subtleStyle.Render("["+actions[i].Accel+"]")
+		}
+		return truncateSingleLine(cursor+label+accel, innerWidth)
+	}
+	if n <= budget {
+		out := make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			out = append(out, render(i))
+		}
+		return out
+	}
+	start, end := scrollWindow(m.actionMenu.selected, n, budget)
+	out := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		out = append(out, render(i))
+	}
+	// Overwrite the boundary rows with scroll markers, but only when that row
+	// is not the selected one (so the cursor never gets hidden behind a marker
+	// on a tiny one- or two-row window).
+	if start > 0 && start != m.actionMenu.selected && len(out) > 0 {
+		out[0] = subtleStyle.Render(fmt.Sprintf("  ↑ %d more", start))
+	}
+	if end < n && end-1 != m.actionMenu.selected && len(out) > 0 {
+		out[len(out)-1] = subtleStyle.Render(fmt.Sprintf("  ↓ %d more", n-end))
+	}
+	return out
+}
+
+// overlayActionMenu anchors the open action menu to the bottom of a panel
+// body, guaranteeing it stays fully on screen within `height` rows. The menu
+// is height-bounded; the body above it is clipped (with an "↑ more above"
+// marker) to make room. Returns body unchanged when no menu is open. This is
+// the single composite point — panels no longer append the menu themselves,
+// which previously pushed it past the frame's bottom where the clip ate it.
+func (m Model) overlayActionMenu(body string, width, height int) string {
+	if !m.actionMenu.open || height <= 0 {
+		return body
+	}
+	menu := m.renderActionMenuBounded(width, height-1)
+	if menu == "" {
+		return body
+	}
+	menuLines := strings.Split(menu, "\n")
+	if len(menuLines) > height {
+		menuLines = menuLines[:height]
+	}
+	avail := height - len(menuLines) - 1 // -1 for the blank separator row
+	if avail < 0 {
+		avail = 0
+	}
+	bodyLines := strings.Split(body, "\n")
+	if len(bodyLines) > avail {
+		if avail >= 1 {
+			clipped := append([]string{}, bodyLines[:avail-1]...)
+			clipped = append(clipped, subtleStyle.Render("  ↑ more above"))
+			bodyLines = clipped
+		} else {
+			bodyLines = nil
+		}
+	}
+	for len(bodyLines) < avail {
+		bodyLines = append(bodyLines, "")
+	}
+	rows := make([]string, 0, height)
+	rows = append(rows, bodyLines...)
+	rows = append(rows, "") // separator
+	rows = append(rows, menuLines...)
+	if len(rows) > height {
+		rows = rows[len(rows)-height:]
+	}
+	return strings.Join(rows, "\n")
 }

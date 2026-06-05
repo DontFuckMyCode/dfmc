@@ -51,11 +51,14 @@ func (m Model) renderWorkflowViewV2Sized(width, height int) string {
 	listW, treeW, metaW := workflowPanelWidths(width, threePane, twoPane)
 
 	banner := m.workflowTopBanner(width)
-	listBlock := m.renderWorkflowRunsPane(listW, height, pal)
-	treeBlock := m.renderWorkflowTreePane(treeW, height, pal)
+	// Hold each pane to its column width so the horizontal split stays exact
+	// — a run row or header running wider than its budget would shove the
+	// neighbouring pane right and clip it at the outer frame.
+	listBlock := clipBlock(m.renderWorkflowRunsPane(listW, height, pal), listW, 0)
+	treeBlock := clipBlock(m.renderWorkflowTreePane(treeW, height, pal), treeW, 0)
 	var out string
 	if threePane {
-		metaBlock := m.renderWorkflowMetaPane(metaW, height, pal)
+		metaBlock := clipBlock(m.renderWorkflowMetaPane(metaW, height, pal), metaW, 0)
 		body := lipgloss.JoinHorizontal(lipgloss.Top,
 			listBlock, "  ", treeBlock, "  ", metaBlock)
 		out = banner + "\n" + body
@@ -65,9 +68,6 @@ func (m Model) renderWorkflowViewV2Sized(width, height int) string {
 		out = banner + "\n" + body + "\n" + footer
 	} else {
 		out = banner + "\n" + listBlock + "\n" + treeBlock
-	}
-	if m.actionMenu.open && m.actionMenu.owner == "Workflow" {
-		out += "\n\n" + m.renderActionMenu(width)
 	}
 	return out
 }

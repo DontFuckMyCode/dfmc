@@ -60,6 +60,17 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 	if panelWidth < StatsPanelWidth {
 		panelWidth = StatsPanelWidth
 	}
+	// The rounded border steals one row top+bottom and one column each
+	// side; lipgloss .Width()/.Height() set the inner (content+padding)
+	// box and add the border ON TOP. So to occupy exactly panelWidth x
+	// height cells — the footprint the caller reserved next to the chat —
+	// the box must be sized to (panelWidth-2) x (height-2). Building the
+	// body to `contentHeight` rows keeps it from overflowing the border
+	// (which would otherwise clip the bottom border at the outer frame).
+	contentHeight := height - 2
+	if contentHeight < 4 {
+		contentHeight = 4
+	}
 	inner := panelWidth - 4
 	if inner < 16 {
 		inner = 16
@@ -95,14 +106,15 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 	} else if info.Boosted {
 		footerRows = []string{"alt+a/s/d/f/p again locks", "ctrl+s hide | ctrl+h | " + statsPanelModeActionHint(mode)}
 	}
-	b.footer(footerRows, height, info.StatsPanelScroll)
+	b.footer(footerRows, contentHeight, info.StatsPanelScroll)
 
-	body := strings.Join(b.lines, "\n")
-
-	// Show scroll indicator when content overflows the panel height.
-	if info.StatsPanelScroll > 0 || len(b.lines) > height {
+	// Show scroll indicator when content overflows the panel height. It
+	// REPLACES the last (padding/footer) row rather than appending a new
+	// line, so the body stays exactly contentHeight rows and the panel
+	// keeps its reserved footprint.
+	if info.StatsPanelScroll > 0 || len(b.lines) > contentHeight {
 		totalContent := len(b.lines)
-		visible := height - len(footerRows) - 1 // exclude divider + footer rows
+		visible := contentHeight - len(footerRows) - 1 // exclude divider + footer rows
 		if visible < 1 {
 			visible = 1
 		}
@@ -118,15 +130,22 @@ func RenderStatsPanelSized(info StatsPanelInfo, height int, panelWidth int) stri
 					pct = 100
 				}
 			}
-			body += "\n" + AccentStyle.Faint(true).Render(fmt.Sprintf(" ▲ %d%% ", pct))
+			indicator := AccentStyle.Faint(true).Render(fmt.Sprintf(" ▲ %d%% ", pct))
+			if len(b.lines) > 0 {
+				b.lines[len(b.lines)-1] = indicator
+			} else {
+				b.lines = append(b.lines, indicator)
+			}
 		}
 	}
+
+	body := strings.Join(b.lines, "\n")
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorPanelBorder).
 		Padding(0, 1).
-		Width(panelWidth).
-		Height(height)
+		Width(max(panelWidth-2, 0)).
+		Height(max(contentHeight, 0))
 	return box.Render(body)
 }
 

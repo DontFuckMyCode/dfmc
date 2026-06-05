@@ -100,6 +100,26 @@ func tabFKeyHint(tab string) string {
 	return ""
 }
 
+// overlayStripMeta maps a panelOverlayKind to the canonical panel name
+// (the tabPalette key, for accent + glyph) and its F-key hint. The F9+
+// panels demoted out of the 8-tab strip live here so the strip can still
+// announce them as the active panel when one is open over a tab.
+var overlayStripMeta = map[string]struct{ name, fkey string }{
+	"status":      {"Status", "F9"},
+	"codemap":     {"CodeMap", "F10"},
+	"tools":       {"Tools", "F11"},
+	"security":    {"Security", "F12"},
+	"prompts":     {"Prompts", "Shift+F1"},
+	"plans":       {"Plans", "Shift+F2"},
+	"context":     {"Context", "Shift+F3"},
+	"orchestrate": {"Orchestrate", "Shift+F4"},
+	"shortcuts":   {"Shortcuts", "Shift+F5"},
+	"contexts":    {"Contexts", "Shift+F6"},
+	"providerlog": {"ProviderLog", "Shift+F7"},
+	"telegram":    {"Telegram", "Shift+F8"},
+	"toolstatus":  {"ToolStatus", "Ctrl+Shift+T"},
+}
+
 // renderTopTabStrip paints the new header — a single bright bar with:
 //
 //	DFMC ▌ Files  ─────  ◀ F1 Chat   ◆ F2 FILES ◆   F3 Patch ▶  ─────  tab/⇥ cycles
@@ -108,7 +128,7 @@ func tabFKeyHint(tab string) string {
 // and next tab names are dimmer with their F-key hints. Width-aware:
 // when the terminal is narrow we drop the trailing hint, then the
 // dashes, and finally collapse to just `[ACTIVE]` if necessary.
-func renderTopTabStrip(tabs []string, activeIdx int, planMode bool, width int) string {
+func renderTopTabStrip(tabs []string, activeIdx int, planMode bool, width int, overlayKind string) string {
 	if width < 20 {
 		width = 20
 	}
@@ -123,22 +143,46 @@ func renderTopTabStrip(tabs []string, activeIdx int, planMode bool, width int) s
 	prevName := tabs[prevIdx]
 	nextName := tabs[nextIdx]
 
-	brand := bannerStyle.Render("DFMC ▌") + " " +
-		lipgloss.NewStyle().Foreground(pal.Accent).Bold(true).Render(active)
-
+	// Defaults: the normal 8-tab carousel (prev ◀ ACTIVE ▶ next).
+	brandName := active
+	badgeAccent := pal.Accent
+	badgeGlyph := pal.Glyph
+	badgeFKey := tabFKeyHint(active)
+	badgeLabel := strings.ToUpper(active)
 	prevSeg := subtleStyle.Render("◀ "+blankFallback(tabFKeyHint(prevName), "")+" ") +
 		subtleStyle.Render(prevName)
 	nextSeg := subtleStyle.Render(nextName) +
 		subtleStyle.Render(" "+blankFallback(tabFKeyHint(nextName), "")+" ▶")
+	hint := subtleStyle.Render("tab/⇥ cycles · ctrl+p palette")
+
+	// When an F9+ panel overlay is open it isn't in the carousel, so the
+	// active badge would otherwise keep showing the underlying tab. Swap the
+	// badge to the overlay panel (its own glyph + F-key + name) and turn the
+	// neighbour segments into the esc-return breadcrumb so the strip names
+	// what's actually on screen.
+	if overlayKind != "" {
+		meta := overlayStripMeta[overlayKind]
+		opal := paletteForTab(meta.name, false)
+		label := panelOverlayLabel(overlayKind)
+		brandName = label
+		badgeAccent = opal.Accent
+		badgeGlyph = opal.Glyph
+		badgeFKey = meta.fkey
+		badgeLabel = label
+		prevSeg = subtleStyle.Render("◀ esc " + active)
+		nextSeg = subtleStyle.Render("close esc")
+		hint = subtleStyle.Render("esc closes · tab/⇥ tabs")
+	}
+
+	brand := bannerStyle.Render("DFMC ▌") + " " +
+		lipgloss.NewStyle().Foreground(badgeAccent).Bold(true).Render(brandName)
 
 	activeBadge := lipgloss.NewStyle().
 		Foreground(colorTitleFg).
-		Background(pal.Accent).
+		Background(badgeAccent).
 		Bold(true).
 		Padding(0, 1).
-		Render(pal.Glyph + " " + blankFallback(tabFKeyHint(active), "") + " " + strings.ToUpper(active) + " " + pal.Glyph)
-
-	hint := subtleStyle.Render("tab/⇥ cycles · ctrl+p palette")
+		Render(badgeGlyph + " " + blankFallback(badgeFKey, "") + " " + badgeLabel + " " + badgeGlyph)
 
 	// Layout: brand | dashes | prev | activeBadge | next | dashes | hint
 	// Widths are computed from the visible width of each rendered chunk

@@ -103,7 +103,12 @@ func (m Model) renderProviderCatalogFormView(width int) string {
 }
 
 func (m Model) renderProviderTextEditBox(width int) string {
+	// The border adds 2 cells on top of Width(boxWidth); cap so the box never
+	// exceeds the available width on a narrow providers panel.
 	boxWidth := clampInt(width-12, 36, 88)
+	if boxWidth > width-2 {
+		boxWidth = max(width-2, 1)
+	}
 	title := providerDisplayLine(m.providers.textEditTitle)
 	value := providerDisplayLine(m.providers.textEditDraft)
 	if value == "" {

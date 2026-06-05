@@ -35,9 +35,6 @@ func (m Model) renderToolsViewSized(width, height int) string {
 	} else {
 		out = banner + "\n" + listBlock + "\n" + specBlock
 	}
-	if m.actionMenu.open && m.actionMenu.owner == "Tools" {
-		out += "\n\n" + m.renderActionMenu(width)
-	}
 	return out
 }
 

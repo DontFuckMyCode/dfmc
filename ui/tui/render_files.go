@@ -80,9 +80,6 @@ func (m Model) renderFilesViewV2(width, height int) string {
 	} else {
 		body = listBlock + "\n" + previewBlock
 	}
-	if m.actionMenu.open && m.actionMenu.owner == "Files" {
-		body += "\n\n" + m.renderActionMenu(width)
-	}
 	return body
 }
 

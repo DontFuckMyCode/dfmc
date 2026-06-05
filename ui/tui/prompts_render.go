@@ -222,9 +222,6 @@ func (m Model) renderPromptsViewSized(width, height int) string {
 		cursor+1, len(filtered), len(m.prompts.templates),
 	)))
 	out := strings.Join(lines, "\n")
-	if m.actionMenu.open && m.actionMenu.owner == "Prompts" {
-		out += "\n\n" + m.renderActionMenu(width)
-	}
 	return out
 }
 

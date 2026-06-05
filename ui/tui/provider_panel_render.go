@@ -9,9 +9,6 @@ import (
 
 func (m Model) renderProvidersViewSized(width, height int) string {
 	out := m.renderProvidersViewInnerSized(width, height)
-	if m.actionMenu.open && m.actionMenu.owner == "Providers" {
-		out += "\n\n" + m.renderActionMenu(width)
-	}
 	return out
 }
 

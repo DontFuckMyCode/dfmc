@@ -78,7 +78,13 @@ func (m Model) renderPanelOverlayBody(kind string, contentWidth, innerHeight int
 	default:
 		body = subtleStyle.Render("(unknown overlay: " + kind + ")")
 	}
-	hint := subtleStyle.Render("esc · q to close · " + panelOverlayLabel(kind))
+	// Anchor the action menu (if open for this overlay) to the bottom of the
+	// body, bounded to fit, so it never overflows the frame.
+	body = m.overlayActionMenu(body, contentWidth, bodyHeight)
+	// The panel name is already shown three times in the chrome (tab-strip
+	// badge, brand line, footer chip), so the in-body hint only carries the
+	// close affordance — no redundant label repeat (signal-density rule).
+	hint := subtleStyle.Render("esc · q to close")
 	return body + "\n" + hint
 }
 
@@ -115,6 +121,22 @@ func panelOverlayLabel(kind string) string {
 	default:
 		return strings.ToUpper(kind)
 	}
+}
+
+// activePanelName is the human label for whatever the body is currently
+// showing: a demoted-panel overlay (the F9+ panels) when one is open,
+// otherwise the active top-level tab. The title strip and footer use this so
+// they reflect the panel on screen — without it they kept showing the
+// underlying tab name and looked "stuck" on the last tab when an overlay
+// (Status, Tools, CodeMap, ...) was opened over it.
+func (m Model) activePanelName() string {
+	if kind := m.ui.panelOverlayKind; kind != "" {
+		return panelOverlayLabel(kind)
+	}
+	if m.activeTab >= 0 && m.activeTab < len(m.tabs) {
+		return m.tabs[m.activeTab]
+	}
+	return ""
 }
 
 // closePanelOverlay clears the overlay flag if one is active, returning

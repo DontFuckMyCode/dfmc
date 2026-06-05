@@ -182,15 +182,22 @@ func (m Model) renderTasksPanelOverlay(body string, contentWidth int, innerHeigh
 	if panelWidth > 80 {
 		panelWidth = 80
 	}
-	panelBody := m.renderTasksPanel(panelWidth, innerHeight)
+	// The rounded border + Padding(1,1) add 2 cells on each axis on top of the
+	// .Width()/.Height() values, so size the frame to panelWidth-2 × innerHeight-2
+	// to occupy exactly panelWidth × innerHeight — otherwise the panel overran
+	// its column and the outer clip ate its right + bottom border. The body is
+	// rendered (and clipped) to the inner content box: panelWidth-4 × innerHeight-4.
+	innerW := max(panelWidth-4, 1)
+	innerH := max(innerHeight-4, 1)
+	panelBody := clipBlock(m.renderTasksPanel(innerW, innerH), innerW, innerH)
 	frame := lipgloss.NewStyle().
-		Width(panelWidth).
-		Height(innerHeight).
+		Width(max(panelWidth-2, 0)).
+		Height(max(innerHeight-2, 0)).
 		Background(colorPanelBg).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
 		Padding(1, 1)
-	chatWidth := contentWidth - panelWidth - 2
-	chatBody := lipgloss.NewStyle().Width(chatWidth).Render(body)
+	chatWidth := max(contentWidth-panelWidth-2, 1)
+	chatBody := lipgloss.NewStyle().Width(chatWidth).Render(clipBlock(body, chatWidth, innerHeight))
 	return lipgloss.JoinHorizontal(lipgloss.Top, chatBody, "  ", frame.Render(panelBody))
 }

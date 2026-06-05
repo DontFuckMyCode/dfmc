@@ -128,9 +128,6 @@ func (m Model) renderSecurityView(width int) string {
 
 func (m Model) renderSecurityViewSized(width, height int) string {
 	out := m.renderSecurityViewInnerSized(width, height)
-	if m.actionMenu.open && m.actionMenu.owner == "Security" {
-		out += "\n\n" + m.renderActionMenu(width)
-	}
 	return out
 }
 

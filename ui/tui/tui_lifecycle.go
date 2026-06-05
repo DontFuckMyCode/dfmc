@@ -160,13 +160,13 @@ func (m Model) View() string {
 		tabName = m.tabs[m.activeTab]
 	}
 	pal := paletteForTab(tabName, planMode)
-	strip := renderTopTabStrip(m.tabs, m.activeTab, planMode, width)
+	strip := renderTopTabStrip(m.tabs, m.activeTab, planMode, width, m.ui.panelOverlayKind)
 
 	projLabel := ""
 	if root := m.projectRoot(); root != "" {
 		projLabel = filepath.Base(root)
 	}
-	parts := []string{"DFMC WORKBENCH · " + tabName}
+	parts := []string{"DFMC WORKBENCH · " + m.activePanelName()}
 	if projLabel != "" {
 		parts = append(parts, projLabel)
 	}
@@ -183,6 +183,12 @@ func (m Model) View() string {
 	body := m.renderActiveView(bodyWidth, bodyHeight, pal)
 
 	out := lipgloss.JoinVertical(lipgloss.Left, headerLine, tabArea, body, footer)
+	// Final invariant pass: no line may exceed the terminal width (else it
+	// wraps and the whole frame drifts), and the output must be exactly
+	// `height` rows (else the terminal scrolls). Per-frame clipping already
+	// holds this for the body; this guards the global chrome and any
+	// pathological size the per-frame math cannot physically satisfy.
+	out = normalizeScreen(out, width, height)
 	if m.viewCache != nil {
 		m.viewCache.width = width
 		m.viewCache.height = height

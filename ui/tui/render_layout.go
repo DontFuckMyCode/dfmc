@@ -17,11 +17,13 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 	// Must be checked before any tab-specific content so it covers everything.
 	if m.panelSwitcher.active {
 		body := m.renderPanelSwitcher(width)
+		// Border-only frame (no padding): inner box is width-2 x height-2.
+		body = clipBlock(body, width-2, height-2)
 		frame := lipgloss.NewStyle().
 			Background(colorPanelBg).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(pal.Border)
-		return frame.Width(width).Height(height).Render(body)
+		return frame.Width(max(width-2, 0)).Height(max(height-2, 0)).Render(body)
 	}
 	contentWidth := width - 6
 	if contentWidth < 20 {
@@ -42,25 +44,25 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 	if m.ui.showHelpOverlay && m.tabs[m.activeTab] != "Chat" {
 		body, _ := fitPanelContentScrollable(m.renderHelpOverlay(contentWidth), innerHeight-1, m.helpOverlay.scroll)
 		hint := subtleStyle.Render("esc · ctrl+h to close · type into chat composer to filter (chat tab only)")
-		content := body + "\n" + hint
+		content := clipBlock(body+"\n"+hint, contentWidth, innerHeight)
 		frame := lipgloss.NewStyle().
 			Padding(1, 2).
 			Background(colorPanelBg).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(pal.Border)
-		return frame.Width(width).Height(height).Render(content)
+		return frame.Width(max(width-2, 0)).Height(max(height-2, 0)).Render(content)
 	}
 	// Demoted-panel overlay covers the active tab body whenever
 	// panelOverlayKind is set. Falls through to the regular per-tab
 	// switch when empty.
 	if kind := m.ui.panelOverlayKind; kind != "" {
-		content := m.renderPanelOverlayBody(kind, contentWidth, innerHeight)
+		content := clipBlock(m.renderPanelOverlayBody(kind, contentWidth, innerHeight), contentWidth, innerHeight)
 		frame := lipgloss.NewStyle().
 			Padding(1, 2).
 			Background(colorPanelBg).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(pal.Border)
-		return frame.Width(width).Height(height).Render(content)
+		return frame.Width(max(width-2, 0)).Height(max(height-2, 0)).Render(content)
 	}
 	var content string
 	switch m.tabs[m.activeTab] {
@@ -104,6 +106,11 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 			scrollClip = headLineCount
 		}
 		body := fitChatBodyWithScrollbar(parts.Head, parts.Tail, innerHeight, scrollClip, chatWidth)
+		// Hold the chat body to its width budget so the horizontal split
+		// stays exact: some static hint lines (empty-state prompt, composer
+		// key legend) can run wider than a narrow chatWidth, and an over-wide
+		// left block would shove the stats panel right and clip its border.
+		body = clipBlock(body, chatWidth, innerHeight)
 		if m.ui.showTasksPanel {
 			body = m.renderTasksPanelOverlay(body, contentWidth, innerHeight)
 		} else if panelVisible {
@@ -117,25 +124,94 @@ func (m Model) renderActiveView(width int, height int, pal tabPaletteEntry) stri
 		}
 		content = body
 	}
+	// First-class tabs: anchor the action menu (if open) to the bottom of the
+	// body so it always lands fully on screen instead of overflowing the
+	// frame. Demoted-panel overlays do the same inside renderPanelOverlayBody.
+	content = m.overlayActionMenu(content, contentWidth, innerHeight)
 	if m.ui.selectionModeActive {
+		// Frameless copy/selection mode: a divider plus the raw body. No
+		// border to protect us here, so clip the body to the full inner box
+		// and keep the whole block within height (divider + body) so a long
+		// transcript cannot push the terminal into a scroll.
+		divWidth := max(min(contentWidth-4, width), 1)
 		div := lipgloss.NewStyle().
 			Foreground(pal.Border).
-			Render(strings.Repeat("─", max(contentWidth-4, 20)))
-		return div + "\n" + content
+			Render(strings.Repeat("─", divWidth))
+		body := clipBlock(content, width, max(height-1, 0))
+		return clipBlock(div+"\n"+body, width, height)
 	}
+	content = clipBlock(content, contentWidth, innerHeight)
 	frame := lipgloss.NewStyle().
 		Padding(1, 2).
 		Background(colorPanelBg).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(pal.Border)
-	return frame.Width(width).Height(height).Render(content)
+	return frame.Width(max(width-2, 0)).Height(max(height-2, 0)).Render(content)
 }
 
-func panelContentHeightForActionMenu(height int, open bool) int {
-	if !open {
-		return height
+// clipBlock clips a content block to fit inside a `width` x `height` cell box
+// WITHOUT padding it out: lines longer than width are truncated (ANSI-aware so
+// color resets survive), and rows beyond height are dropped. This is the
+// counterpart lipgloss is missing — .Width()/.Height() pad short content but
+// never trim overflow, so a body taller/wider than its frame's inner box would
+// spill past the border and wrap in the terminal (the "kayma"/broken-line
+// class). Callers run this on content BEFORE handing it to a bordered frame, so
+// the frame only ever pads, never overflows. height<=0 means "do not clip
+// vertically"; width<=0 means "do not clip horizontally".
+func clipBlock(s string, width, height int) string {
+	lines := strings.Split(s, "\n")
+	if height > 0 && len(lines) > height {
+		lines = lines[:height]
 	}
-	return max(height-8, 4)
+	if width > 0 {
+		for i, ln := range lines {
+			if ansi.StringWidth(ln) > width {
+				lines[i] = ansi.Truncate(ln, width, "")
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// normalizeScreen is the final belt-and-suspenders pass over the WHOLE View()
+// output. It guarantees two invariants that keep the workbench from ever
+// shifting or breaking its rules when the terminal is resized to any shape:
+//   - every line is at most `width` cells wide (no wrap → no horizontal drift)
+//   - the output is exactly `height` rows (clip overflow / pad short → the box
+//     always fills the terminal, never scrolls it)
+//
+// In the normal case (chrome + sized body already add up to height and nothing
+// overflows) this is a no-op; it only bites at pathological sizes where the
+// per-frame math cannot physically satisfy the request (e.g. a 1-row terminal).
+func normalizeScreen(s string, width, height int) string {
+	lines := strings.Split(s, "\n")
+	if width > 0 {
+		for i, ln := range lines {
+			if ansi.StringWidth(ln) > width {
+				lines[i] = ansi.Truncate(ln, width, "")
+			}
+		}
+	}
+	if height > 0 {
+		if len(lines) > height {
+			lines = lines[:height]
+		} else {
+			for len(lines) < height {
+				lines = append(lines, "")
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// panelContentHeightForActionMenu used to carve a fixed 8-row slot out of the
+// panel for the action menu, but the menu is now composited centrally by
+// overlayActionMenu (which clips the body to the menu's actual height). So the
+// panel always gets the full height; the parameter is retained for call-site
+// readability. Kept as a function (not inlined) so the historical reservation
+// point stays greppable.
+func panelContentHeightForActionMenu(height int, _ bool) int {
+	return height
 }
 
 func reservedPanelLeftPad(reservedWidth, panelWidth int) string {

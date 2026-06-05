@@ -79,8 +79,11 @@ func TestActionMenu_RendersActionLabels(t *testing.T) {
 	m.filesView = filesViewState{entries: []string{"main.go"}, index: 0}
 	got, _ := m.handleFilesKey(tea.KeyMsg{Type: tea.KeyEnter})
 	gm := got.(Model)
+	gm.activeTab = indexOfString(gm.tabs, "Files")
 
-	view := stripANSI(gm.renderFilesViewV2(140, 30))
+	// The menu is composited centrally now (overlayActionMenu in
+	// renderActiveView), not appended inside the panel renderer.
+	view := stripANSI(gm.renderActiveView(140, 30, paletteForTab("Files", false)))
 	for _, want := range []string{
 		"Open preview",
 		"Pin to chat context",
