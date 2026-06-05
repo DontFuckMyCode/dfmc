@@ -8,6 +8,9 @@
     "build": "vite build",
     "check": "tsc --noEmit"
   },
+  "overrides": {
+    "hono": ">=4.12.21"
+  },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
