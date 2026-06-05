@@ -56,7 +56,7 @@ func TestTabFKeyHintCoversNavigableTabs(t *testing.T) {
 
 func TestRenderTopTabStrip_ShowsPrevActiveNext(t *testing.T) {
 	tabs := []string{"Chat", "Status", "Files", "Patch", "Workflow"}
-	out := renderTopTabStrip(tabs, 2 /* Files */, false, 200)
+	out := renderTopTabStrip(tabs, 2 /* Files */, false, 200, "")
 	// The active tab must surface in upper-case as part of the badge —
 	// that's what makes it scan as "the one I'm on".
 	if !strings.Contains(out, "FILES") {
@@ -75,15 +75,41 @@ func TestRenderTopTabStrip_ShowsPrevActiveNext(t *testing.T) {
 	}
 }
 
+// TestRenderTopTabStrip_AnnouncesOverlayPanel guards the "title still shows
+// only F1..F8" defect: when an F9+ panel overlay is open, the strip's active
+// badge must name that panel and its F-key (not the underlying tab), and offer
+// the esc-return breadcrumb.
+func TestRenderTopTabStrip_AnnouncesOverlayPanel(t *testing.T) {
+	tabs := []string{"Chat", "Files", "Patch", "Workflow", "Activity", "Memory", "Conversations", "Providers"}
+	cases := map[string][2]string{
+		"status":      {"STATUS", "F9"},
+		"codemap":     {"CODEMAP", "F10"},
+		"security":    {"SECURITY", "F12"},
+		"providerlog": {"PROVIDER LOG", "Shift+F7"},
+	}
+	for kind, want := range cases {
+		out := ansiStripForTest(renderTopTabStrip(tabs, 0 /* Chat underneath */, false, 140, kind))
+		if !strings.Contains(out, want[0]) {
+			t.Errorf("overlay %q strip missing panel name %q:\n%s", kind, want[0], out)
+		}
+		if !strings.Contains(out, want[1]) {
+			t.Errorf("overlay %q strip missing F-key %q:\n%s", kind, want[1], out)
+		}
+		if !strings.Contains(out, "esc") {
+			t.Errorf("overlay %q strip missing esc-return breadcrumb:\n%s", kind, out)
+		}
+	}
+}
+
 func TestRenderTopTabStrip_WrapsAroundEnds(t *testing.T) {
 	tabs := []string{"Chat", "Status", "Files"}
 	// Active = first tab; prev should wrap to last (Files).
-	first := renderTopTabStrip(tabs, 0, false, 200)
+	first := renderTopTabStrip(tabs, 0, false, 200, "")
 	if !strings.Contains(first, "Files") {
 		t.Fatalf("first-tab strip should show last tab as prev:\n%s", first)
 	}
 	// Active = last tab; next should wrap to first (Chat).
-	last := renderTopTabStrip(tabs, 2, false, 200)
+	last := renderTopTabStrip(tabs, 2, false, 200, "")
 	if !strings.Contains(last, "Chat") {
 		t.Fatalf("last-tab strip should show first tab as next:\n%s", last)
 	}
@@ -94,7 +120,7 @@ func TestRenderTopTabStrip_WrapsAroundEnds(t *testing.T) {
 // a non-empty active badge.
 func TestRenderTopTabStrip_DegradesAtNarrowWidth(t *testing.T) {
 	tabs := []string{"Chat", "Status", "Files"}
-	out := renderTopTabStrip(tabs, 1, false, 30)
+	out := renderTopTabStrip(tabs, 1, false, 30, "")
 	if !strings.Contains(out, "STATUS") {
 		t.Fatalf("narrow strip must still surface the active tab badge:\n%s", out)
 	}

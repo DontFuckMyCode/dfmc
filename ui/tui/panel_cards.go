@@ -185,8 +185,14 @@ func renderPanelCardGrid(cards []panelCard, totalWidth, columns int, selectedIdx
 	if columns > len(cards) {
 		columns = len(cards)
 	}
+	// Layout budget: `columns` cards of colWidth cells, separated by
+	// `columns-1` gap-cell spacers, must sum to <= totalWidth. A panelCard
+	// renders 4 cells wider than its innerWidth arg (rounded border +2,
+	// horizontal padding +2), so the inner width handed to each card is
+	// colWidth-4. Getting this exact keeps the rightmost card's border from
+	// being clipped by the outer frame (the off-by-N seam class).
 	gap := 1
-	colWidth := (totalWidth - (columns-1)*(gap+2)) / columns
+	colWidth := (totalWidth - (columns-1)*gap) / columns
 	if colWidth < 22 {
 		colWidth = 22
 	}
@@ -194,7 +200,7 @@ func renderPanelCardGrid(cards []panelCard, totalWidth, columns int, selectedIdx
 	// Render each card to its column-width string.
 	rendered := make([]string, len(cards))
 	for i, c := range cards {
-		rendered[i] = renderPanelCard(c, colWidth-2, i == selectedIdx, accent)
+		rendered[i] = renderPanelCard(c, colWidth-4, i == selectedIdx, accent)
 	}
 
 	// Pack into rows of `columns` cells.

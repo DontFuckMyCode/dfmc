@@ -39,9 +39,6 @@ func (m Model) renderPatchView(width int) string {
 
 func (m Model) renderPatchViewSized(width, height int) string {
 	out := m.renderPatchViewV2Sized(width, height)
-	if m.actionMenu.open && m.actionMenu.owner == "Patch" {
-		out += "\n\n" + m.renderActionMenu(width)
-	}
 	return out
 }
 

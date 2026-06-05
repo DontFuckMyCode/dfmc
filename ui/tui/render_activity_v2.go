@@ -97,8 +97,10 @@ func (m Model) renderActivityViewV2(width, height int) string {
 			rightWidth = 28
 			leftWidth = width - 2 - rightWidth - 2
 		}
-		timeline := renderActivityTimeline(filtered, selected, leftWidth, remainingHeight)
-		inspector := renderActivityInspector(selectedEntry, rightWidth, remainingHeight)
+		// Clip each side to its column so an over-long timeline row can't
+		// push the inspector right and clip its border at the outer frame.
+		timeline := clipBlock(renderActivityTimeline(filtered, selected, leftWidth, remainingHeight), leftWidth, 0)
+		inspector := clipBlock(renderActivityInspector(selectedEntry, rightWidth, remainingHeight), rightWidth, 0)
 		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, timeline, "  ", inspector))
 	} else {
 		timelineHeight := max(remainingHeight/2, 5)
@@ -112,9 +114,6 @@ func (m Model) renderActivityViewV2(width, height int) string {
 		lines = append(lines, warnStyle.Render("paused — press G to jump to tail and resume follow"))
 	}
 	out := strings.Join(lines, "\n")
-	if m.actionMenu.open && m.actionMenu.owner == "Activity" {
-		out += "\n\n" + m.renderActionMenu(width)
-	}
 	return out
 }
 

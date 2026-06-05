@@ -126,10 +126,12 @@ func TestTelegramConnectedScreenShowsActionsMenu(t *testing.T) {
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = modelValue(t, next)
-	view = m.renderTelegramPanel()
 	if !m.actionMenu.open || m.actionMenu.owner != "Telegram" {
 		t.Fatalf("enter should open telegram action menu, got %#v", m.actionMenu)
 	}
+	// The menu is now composited centrally by the overlay body (overlayActionMenu)
+	// rather than appended inside the panel renderer, so render through that path.
+	view = ansiStripForTest(m.renderPanelOverlayBody("telegram", 120, 40))
 	if !strings.Contains(view, "Edit allowed users") {
 		t.Fatalf("telegram action menu should be rendered in connected panel, got:\n%s", view)
 	}

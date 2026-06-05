@@ -56,17 +56,9 @@ func (m Model) contextTopBanner(width int) string {
 func (m Model) renderContextView(width int) string {
 	// Route to Context Manager sub-view when active.
 	if m.contextPanel.manager.active {
-		out := m.renderContextManagerView(width, 0)
-		if m.actionMenu.open && m.actionMenu.owner == "CtxMgr" {
-			out += "\n\n" + m.renderActionMenu(width)
-		}
-		return out
+		return m.renderContextManagerView(width, 0)
 	}
-	out := m.renderContextViewInner(width)
-	if m.actionMenu.open && m.actionMenu.owner == "Context" {
-		out += "\n\n" + m.renderActionMenu(width)
-	}
-	return out
+	return m.renderContextViewInner(width)
 }
 
 func (m Model) renderContextViewInner(width int) string {
@@ -158,11 +150,7 @@ func (m Model) renderContextViewSized(width, height int) string {
 	width = clampInt(width, 24, 1000)
 	// Route to Context Manager sub-view when active.
 	if m.contextPanel.manager.active {
-		out := m.renderContextManagerViewSized(width, height)
-		if m.actionMenu.open && m.actionMenu.owner == "CtxMgr" {
-			out += "\n\n" + m.renderActionMenu(width)
-		}
-		return out
+		return m.renderContextManagerViewSized(width, height)
 	}
 	if !m.contextPanel.showActive {
 		return renderContextPanelLines(strings.Split(m.renderContextView(width), "\n"), m.contextPanel.scroll, height)

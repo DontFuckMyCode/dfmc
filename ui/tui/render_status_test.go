@@ -158,7 +158,9 @@ func TestStatusActionMenuRenders(t *testing.T) {
 
 	got, _ := m.handleStatusKey(tea.KeyMsg{Type: tea.KeyRight})
 	gm := got.(Model)
-	view := stripANSI(gm.renderStatusViewSized(120, 20))
+	// Status is a demoted overlay; its action menu is composited centrally by
+	// renderPanelOverlayBody (overlayActionMenu), not the panel renderer.
+	view := stripANSI(gm.renderPanelOverlayBody("status", 120, 24))
 	if !strings.Contains(view, "STATUS ACTIONS") || !strings.Contains(view, "Refresh status snapshot") {
 		t.Fatalf("status action menu should be visible after right, got:\n%s", view)
 	}

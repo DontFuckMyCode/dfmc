@@ -112,9 +112,6 @@ func (m Model) renderPlansView(width int) string {
 
 func (m Model) renderPlansViewSized(width, height int) string {
 	out := m.renderPlansViewInnerSized(width, height)
-	if m.actionMenu.open && m.actionMenu.owner == "Plans" {
-		out += "\n\n" + m.renderActionMenu(width)
-	}
 	return out
 }
 

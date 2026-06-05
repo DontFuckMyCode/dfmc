@@ -205,9 +205,6 @@ func (m Model) renderConversationsViewSized(width, height int) string {
 		cursor+1, len(filtered), len(m.conversations.entries),
 	)))
 	out := strings.Join(lines, "\n")
-	if m.actionMenu.open && m.actionMenu.owner == "Conversations" {
-		out += "\n\n" + m.renderActionMenu(width)
-	}
 	return out
 }
 

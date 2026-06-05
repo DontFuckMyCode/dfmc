@@ -108,9 +108,6 @@ func (m Model) renderCodemapViewSized(width, height int) string {
 	}
 	lines = append(lines, "", strings.Join(summaryParts, subtleStyle.Render(" · ")))
 	out := strings.Join(lines, "\n")
-	if m.actionMenu.open && m.actionMenu.owner == "CodeMap" {
-		out += "\n\n" + m.renderActionMenu(width)
-	}
 	return out
 }
 

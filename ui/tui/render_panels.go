@@ -25,7 +25,7 @@ func (m Model) renderToolsView(width int) string {
 func (m Model) renderFooter(width int) string {
 	maxWidth := max(width-4, 16)
 
-	tab := m.tabs[m.activeTab]
+	tab := m.activePanelName()
 	segments := []string{titleStyle.Render(" " + tab + " ")}
 	segments = append(segments, m.footerSegments(width)...)
 	if pinned := strings.TrimSpace(m.filesView.pinned); pinned != "" {

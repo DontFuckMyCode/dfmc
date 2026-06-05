@@ -227,9 +227,6 @@ func (m Model) renderMemoryViewSized(width, height int) string {
 		cursor+1, len(filtered), len(m.memory.entries), tier,
 	)))
 	body := strings.Join(lines, "\n")
-	if m.actionMenu.open && m.actionMenu.owner == "Memory" {
-		body += "\n\n" + m.renderActionMenu(width)
-	}
 	return body
 }
 

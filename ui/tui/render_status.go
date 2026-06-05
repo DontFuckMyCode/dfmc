@@ -87,14 +87,11 @@ func (m Model) renderStatusViewSized(width, height int) string {
 		footer = append(footer,
 			lipgloss.NewStyle().Foreground(pal.Accent).Render("→ "+jumpTargets[sel]))
 	}
-	parts = append(parts, "", strings.Join(footer, "    "))
+	parts = append(parts, "", truncateSingleLine(strings.Join(footer, "    "), width))
 	if note := strings.TrimSpace(m.notice); note != "" {
 		parts = append(parts, "", subtleStyle.Render(note))
 	}
 	out := strings.Join(parts, "\n")
-	if m.actionMenu.open && m.actionMenu.owner == "Status" {
-		out += "\n\n" + m.renderActionMenu(width)
-	}
 	return out
 }
 
